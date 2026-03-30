@@ -58,7 +58,7 @@ export function registerRecruitTool(
         const spawnArgs = [
           '--dangerously-skip-permissions',
           '--dangerously-load-development-channels', 'server:claude-tempo',
-          '-n', name,
+          '-n', `"${name}"`,
         ];
         const child = spawn('claude', spawnArgs, {
           cwd: workDir,

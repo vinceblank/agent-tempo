@@ -51,7 +51,7 @@ graph TD
 | `set_name` | Set a human-readable name for this session. Used by other players to message you. |
 | `set_part` | Describe what you're working on. Visible to others via `ensemble`. |
 | `listen` | Manual fallback for checking pending messages. |
-| `recruit` | Start a named Claude Code session in a directory. Rejects if the name is already active. |
+| `recruit` | Start a named Claude Code session in a directory. Rejects if the name is already active. **Note:** Recruited sessions require manual acknowledgment of the development channels prompt (see [Known limitations](#known-limitations)). |
 | `report` | Send updates to the conductor (surfaces to Discord/Telegram). No-op if no conductor. |
 | `terminate` | Terminate a player session by name. Use to clean up orphaned sessions. |
 
@@ -178,24 +178,31 @@ CLAUDE_TEMPO_CONDUCTOR=true claude \
 
 ## Starting players
 
-Start a player session in any project directory:
+The recommended way to build an ensemble is to **open multiple terminal windows** and start a session in each one. Each session joins the ensemble automatically and can discover and message the others.
 
 ```bash
-claude-tempo                       # player in "default" ensemble
-claude-tempo my-project            # player in "my-project" ensemble
+# Terminal 1 — conductor
+claude-tempo-conductor
+
+# Terminal 2 — frontend player
+claude-tempo
+
+# Terminal 3 — backend player
+claude-tempo
 ```
 
-Or without the shell shortcut:
+Or without the shell shortcuts:
 
 ```bash
 claude --dangerously-skip-permissions --dangerously-load-development-channels server:claude-tempo
 ```
 
-In any session, try:
+Once sessions are running, try:
 - "Show me the ensemble" — discovers other sessions
 - "Set your name to 'frontend'" — gives your session a human-readable name
 - "Cue frontend: what are you working on?" — sends a message by name
-- "Recruit a session named 'test-runner' in /repos/my-project to run tests" — spawns a new named player
+
+Players can also use `recruit` to spawn additional sessions programmatically, but recruited sessions require manual acknowledgment of a confirmation prompt in the spawned terminal (see [Known limitations](#known-limitations)).
 
 ### Session naming
 
@@ -237,6 +244,10 @@ If you don't specify an ensemble, all sessions join the `default` ensemble.
 - **Durable history**: Full audit trail of every message in Temporal's event history
 - **No custom infrastructure**: No broker daemon, no database — just Temporal
 - **Extensible**: The conductor's signal/query contract is a public API anyone can build on
+
+## Known limitations
+
+- **`recruit` requires manual acknowledgment**: Recruited sessions use `--dangerously-load-development-channels` to enable channel-based message delivery. Claude Code shows an interactive confirmation prompt that must be manually acknowledged (press Enter) in the spawned terminal window. This will be resolved once claude-tempo is published as an approved channel plugin.
 
 ## License
 

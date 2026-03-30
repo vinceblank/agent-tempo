@@ -124,9 +124,9 @@ async function main() {
     `When you receive a message from another session, treat it like a coworker asking for help — respond promptly, then resume your work. ` +
     `Use \`set_name\` to give yourself a human-readable name. ` +
     `Use \`ensemble\` to see who else is active. ` +
-    `Use \`cue\` to ask others for help. ` +
+    `Use \`cue\` to reply directly to the player who messaged you, or to ask others for help. ` +
     `Use \`recruit\` if you need a session in a directory where none exists. ` +
-    `Use \`report\` to send significant updates to the conductor.`;
+    `Use \`report\` to notify the conductor of task completion, blockers, or questions — always report when you finish a recruited task.`;
 
   const mcpServer = new McpServer({
     name: 'claude-tempo',
