@@ -4,6 +4,8 @@ MCP server for multi-session Claude Code coordination via [Temporal](https://tem
 
 Multiple Claude Code sessions discover each other, exchange messages in real time, and coordinate work — across machines, not just localhost.
 
+Inspired by [claude-peers](https://github.com/louislva/claude-peers-mcp) and seeing how it interacted with Claude Code's experimental channel capability. claude-tempo takes the concept further with Temporal as the coordination backbone — adding durable state, cross-machine messaging, structured orchestration, and automatic stale session cleanup.
+
 ## How it works
 
 **claude-tempo** uses Temporal workflows as the coordination layer:
@@ -182,8 +184,8 @@ await conductor.signal('command', {
   source: 'cli',
 });
 
-// Check status
-const status = await conductor.query('status');
+// Check history of commands and reports
+const history = await conductor.query('history');
 ```
 
 You can also connect external channel plugins (e.g., Discord):
@@ -238,6 +240,7 @@ Sessions start with a random 8-character hex ID. Use `set_name` to give a sessio
 - Other players use the name to send messages via `cue` and discover sessions via `ensemble`
 - `recruit` automatically tells the new session to set its name
 - Names must be unique within an ensemble — `set_name` rejects duplicates
+- Names must contain only letters, numbers, hyphens, and underscores
 
 ## Configuration
 
@@ -256,6 +259,16 @@ Sessions start with a random 8-character hex ID. Use `set_name` to give a sessio
 - **Durable history**: Full audit trail of every message in Temporal's event history
 - **No custom infrastructure**: No broker daemon, no database — just Temporal
 - **Extensible**: The conductor's signal/query contract is a public API anyone can build on
+
+## Stale session cleanup
+
+When a Claude Code session crashes or is closed without graceful shutdown, its Temporal workflow detects the problem automatically:
+
+- If a message is sent to a dead session and remains undelivered for **3 minutes**, the workflow self-completes
+- Before exiting, it notifies the conductor with the undelivered message content so work can be reassigned
+- Idle sessions with no pending messages remain running (they aren't hurting anyone) until the 24-hour execution timeout
+
+This means you don't need to manually clean up crashed sessions — just `cue` the dead player and the system handles the rest.
 
 ## Known limitations
 

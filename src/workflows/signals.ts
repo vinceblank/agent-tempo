@@ -2,7 +2,6 @@ import { defineSignal, defineQuery } from '@temporalio/workflow';
 import type {
   SessionMetadata,
   Message,
-  ConductorStatus,
   HistoryEntry,
 } from '../types';
 
@@ -13,7 +12,6 @@ export type {
   Message,
   Command,
   PlayerReport,
-  ConductorStatus,
   HistoryEntry,
 } from '../types';
 
@@ -38,5 +36,4 @@ export const playerReportSignal = defineSignal<[{ playerId: string; text: string
 
 // ── Conductor Queries ──
 
-export const statusQuery = defineQuery<ConductorStatus>('status');
 export const historyQuery = defineQuery<HistoryEntry[]>('history');

@@ -34,6 +34,17 @@ export function registerRecruitTool(
         name: string;
         initialMessage?: string;
       };
+      // Validate name to prevent search attribute query injection
+      if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Invalid name "${name}". Names must contain only letters, numbers, hyphens, and underscores.`,
+          }],
+          isError: true,
+        };
+      }
+
       try {
         // Check if a session with this name is already active
         const existing = await resolveSession(client, config.ensemble, name);
