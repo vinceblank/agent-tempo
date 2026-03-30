@@ -9,9 +9,28 @@ Multiple Claude Code sessions discover each other, exchange messages in real tim
 **claude-tempo** uses Temporal workflows as the coordination layer:
 
 - Each Claude Code session registers as a **player** (a Temporal workflow)
+- Players belong to an **ensemble** — a named group of sessions that can see and message each other
 - Players discover each other via `ensemble`, message via `cue`, and spawn new sessions via `recruit`
 - Players can interact directly (peer-to-peer) — no central hub required
-- **Ensembles** are namespaced — run independent groups of players for different projects
+- An optional **conductor** player acts as an orchestration hub for the ensemble, connected to external interfaces like Discord or Telegram
+
+### Ensembles
+
+An **ensemble** is an isolated group of players identified by name (e.g., `frontend`, `backend`, `default`). Players in one ensemble cannot see or message players in another — they are completely independent.
+
+Each ensemble can have:
+- Any number of **players** working on tasks
+- One optional **conductor** coordinating work and connected to external interfaces
+
+By default, all sessions join the `default` ensemble. Pass an ensemble name when starting a session to create or join a different one:
+
+```bash
+claude-tempo frontend            # joins the "frontend" ensemble
+claude-tempo backend             # joins the "backend" ensemble
+claude-tempo                     # joins the "default" ensemble
+```
+
+This lets you run separate groups of sessions for different projects or concerns without interference.
 
 ```mermaid
 graph TD
@@ -219,20 +238,6 @@ Sessions start with a random 8-character hex ID. Use `set_name` to give a sessio
 - Other players use the name to send messages via `cue` and discover sessions via `ensemble`
 - `recruit` automatically tells the new session to set its name
 - Names must be unique within an ensemble — `set_name` rejects duplicates
-
-## Multiple ensembles
-
-Each ensemble is an independent group of players with its own conductor. Pass the ensemble name when starting a session:
-
-```bash
-claude-tempo frontend            # player in "frontend" ensemble
-claude-tempo-conductor frontend  # conductor for "frontend"
-claude-tempo backend             # player in "backend" ensemble
-```
-
-Players in `frontend` only see other `frontend` players. `recruit` automatically joins the parent's ensemble. Each ensemble gets its own conductor workflow.
-
-If you don't specify an ensemble, all sessions join the `default` ensemble.
 
 ## Configuration
 
