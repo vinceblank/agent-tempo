@@ -1,0 +1,126 @@
+import { z } from 'zod';
+import { spawn } from 'child_process';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Client } from '@temporalio/client';
+import { Config } from '../config';
+import { resolveSession } from './resolve';
+import { defineTool } from './helpers';
+
+const log = (...args: unknown[]) => console.error('[claude-tempo:recruit]', ...args);
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function registerRecruitTool(
+  server: McpServer,
+  client: Client,
+  config: Config,
+  getPlayerId: () => string,
+) {
+  defineTool(
+    server,
+    'recruit',
+    'Start a new named Claude Code session in a directory. Rejects if the name is already active.',
+    {
+      workDir: z.string().describe('The working directory for the new session'),
+      name: z.string().describe('Name for the new session'),
+      initialMessage: z.string().optional()
+        .describe('Optional task or message for the new session (sent after it sets its name)'),
+    },
+    async (args) => {
+      const { workDir, name, initialMessage } = args as {
+        workDir: string;
+        name: string;
+        initialMessage?: string;
+      };
+      try {
+        // Check if a session with this name is already active
+        const existing = await resolveSession(client, config.ensemble, name);
+        if (existing) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Session **${name}** is already active. Use \`cue\` to send it a message, or \`terminate\` it first.`,
+            }],
+            isError: true,
+          };
+        }
+
+        // Record existing workflows so we can find the new one
+        const existingIds = new Set<string>();
+        const listQuery = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${config.ensemble}"`;
+        for await (const wf of client.workflow.list({ query: listQuery })) {
+          existingIds.add(wf.workflowId);
+        }
+
+        // Spawn a new Claude Code session
+        const spawnArgs = [
+          '--dangerously-skip-permissions',
+          '--dangerously-load-development-channels', 'server:claude-tempo',
+          '-n', name,
+        ];
+        const child = spawn('claude', spawnArgs, {
+          cwd: workDir,
+          detached: true,
+          stdio: 'ignore',
+          shell: true,
+          env: {
+            ...process.env,
+            CLAUDE_TEMPO_ENSEMBLE: config.ensemble,
+            CLAUDE_TEMPO_CONDUCTOR: '',
+          },
+        });
+        child.unref();
+
+        log(`Spawned claude process (pid ${child.pid}) in ${workDir} as "${name}"`);
+
+        // Poll for the new workflow to appear (up to ~15s)
+        let newWorkflowId: string | null = null;
+        for (let attempt = 0; attempt < 30; attempt++) {
+          await sleep(500);
+          for await (const wf of client.workflow.list({ query: listQuery })) {
+            if (!existingIds.has(wf.workflowId)) {
+              newWorkflowId = wf.workflowId;
+              break;
+            }
+          }
+          if (newWorkflowId) break;
+        }
+
+        if (!newWorkflowId) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Session "${name}" spawned but did not register within 15 seconds. It may still be starting up. Check \`ensemble\` shortly.`,
+            }],
+          };
+        }
+
+        // Send it a message instructing it to set its name
+        const newHandle = client.workflow.getHandle(newWorkflowId);
+        const nameInstruction = `You have been recruited as "${name}". Call set_name("${name}") immediately.`;
+        const fullMessage = initialMessage
+          ? `${nameInstruction}\n\nThen: ${initialMessage}`
+          : nameInstruction;
+
+        await newHandle.signal('receiveMessage', {
+          from: getPlayerId(),
+          text: fullMessage,
+        });
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Recruited session **${name}** in ${workDir}. It will set its name shortly.${initialMessage ? ' Initial task sent.' : ''}`,
+          }],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: 'text' as const, text: `Failed to recruit: ${err}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+}

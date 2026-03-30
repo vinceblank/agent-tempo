@@ -1,0 +1,26 @@
+{
+  "name": "claude-tempo",
+  "version": "0.1.0",
+  "description": "MCP server for multi-session Claude Code coordination via Temporal",
+  "type": "commonjs",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc && node -e \"const{bundleWorkflowCode}=require('@temporalio/worker');const path=require('path');const fs=require('fs');bundleWorkflowCode({workflowsPath:path.resolve('dist/workflows/session.js')}).then(b=>{fs.writeFileSync('workflow-bundle.js',b.code);console.log('Workflow bundle created')})\"",
+    "dev": "ts-node src/server.ts",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "@temporalio/activity": "~1.11.7",
+    "@temporalio/client": "~1.11.7",
+    "@temporalio/worker": "~1.11.7",
+    "@temporalio/workflow": "~1.11.7",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.5.0"
+  },
+  "license": "MIT"
+}

@@ -5,3 +5,4 @@ dist/
 *.js.map
 *.d.ts
 !jest.config.js
+temporal-data.db
