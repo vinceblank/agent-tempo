@@ -70,14 +70,21 @@ async function main() {
   // Build the MCP server command — always use the compiled dist/server.js
   // Run `npm run build` (or `pnpm build`) before using the bridge.
   const serverJsPath = path.resolve(__dirname, '..', 'dist', 'server.js');
+  const fs = require('fs');
+  if (!fs.existsSync(serverJsPath)) {
+    log(`ERROR: ${serverJsPath} not found. Run 'pnpm build' first.`);
+    process.exit(1);
+  }
+  log(`MCP server path: ${serverJsPath}`);
   const serverCommand = 'node';
   const serverArgs = [serverJsPath];
   const mcpEnv: Record<string, string> = {
+    ...process.env as Record<string, string>,
     CLAUDE_TEMPO_ENSEMBLE: config.ensemble,
     TEMPORAL_ADDRESS: config.temporalAddress,
     TEMPORAL_NAMESPACE: config.temporalNamespace,
     CLAUDE_TEMPO_TASK_QUEUE: config.taskQueue,
-    // Not a conductor
+    CLAUDE_TEMPO_CONDUCTOR: '',
   };
 
   // Spawn Copilot SDK client and session
