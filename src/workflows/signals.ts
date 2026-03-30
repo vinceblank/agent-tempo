@@ -28,6 +28,7 @@ export const setNameSignal = defineSignal<[string]>('setName');
 export const getPartQuery = defineQuery<string>('getPart');
 export const getMetadataQuery = defineQuery<SessionMetadata>('getMetadata');
 export const pendingMessagesQuery = defineQuery<Message[]>('pendingMessages');
+export const allMessagesQuery = defineQuery<Message[]>('allMessages');
 
 // ── Conductor Signals ──
 

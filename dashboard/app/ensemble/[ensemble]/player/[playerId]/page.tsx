@@ -2,6 +2,7 @@
 
 import { use, useState, useCallback } from "react";
 import { ArrowLeft, GitBranch, FolderOpen, Monitor } from "lucide-react";
+import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -25,7 +26,7 @@ export default function PlayerDetailPage({
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message }),
+          body: JSON.stringify({ from: "dashboard", text: message }),
         }
       );
     },
@@ -86,14 +87,14 @@ export default function PlayerDetailPage({
       )}
 
       {/* Messages */}
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 overflow-hidden">
         <div className="space-y-3 p-4">
-          {detail?.pendingMessages.length === 0 ? (
+          {detail?.messages.length === 0 ? (
             <p className="py-12 text-center text-sm text-muted-foreground">
-              No pending messages
+              No messages
             </p>
           ) : (
-            detail?.pendingMessages.map((msg) => (
+            detail?.messages.map((msg) => (
               <div key={msg.id} className="max-w-[80%]">
                 <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                   <span className="font-medium">{msg.from}</span>
@@ -113,7 +114,10 @@ export default function PlayerDetailPage({
                     </Badge>
                   )}
                 </div>
-                <div className="mt-1 rounded-lg bg-muted px-3 py-2 text-sm">
+                <div className={cn(
+                  "mt-1 rounded-lg px-3 py-2 text-sm",
+                  msg.delivered ? "bg-muted" : "bg-muted border border-warning/30"
+                )}>
                   <p className="whitespace-pre-wrap break-words">{msg.text}</p>
                 </div>
               </div>

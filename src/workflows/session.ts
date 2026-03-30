@@ -23,6 +23,7 @@ import {
   getPartQuery,
   getMetadataQuery,
   pendingMessagesQuery,
+  allMessagesQuery,
   commandSignal,
   playerReportSignal,
   historyQuery,
@@ -74,6 +75,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   setHandler(getPartQuery, () => part);
   setHandler(getMetadataQuery, () => input.metadata);
   setHandler(pendingMessagesQuery, () => messages.filter((m) => !m.delivered));
+  setHandler(allMessagesQuery, () => messages);
 
   // ── Conductor State ──
 

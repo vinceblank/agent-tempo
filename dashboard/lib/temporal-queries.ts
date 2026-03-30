@@ -153,19 +153,27 @@ export async function getPlayerDetail(
 ): Promise<{
   metadata: SessionMetadata;
   part: string;
-  pendingMessages: Message[];
+  messages: Message[];
 }> {
   const client = await getTemporalClient();
   const handle = await resolveSession(client, ensemble, playerId);
   if (!handle) {
     throw new Error(`Player "${playerId}" not found in ensemble "${ensemble}"`);
   }
-  const [metadata, part, pendingMessages] = await Promise.all([
+  const [metadata, part] = await Promise.all([
     handle.query(QUERIES.GET_METADATA) as Promise<SessionMetadata>,
     handle.query(QUERIES.GET_PART) as Promise<string>,
-    handle.query(QUERIES.PENDING_MESSAGES) as Promise<Message[]>,
   ]);
-  return { metadata, part, pendingMessages };
+
+  // Try allMessages first (full history), fall back to pendingMessages (older workflows)
+  let messages: Message[];
+  try {
+    messages = await handle.query(QUERIES.ALL_MESSAGES) as Message[];
+  } catch {
+    messages = await handle.query(QUERIES.PENDING_MESSAGES) as Message[];
+  }
+
+  return { metadata, part, messages };
 }
 
 function sleep(ms: number): Promise<void> {

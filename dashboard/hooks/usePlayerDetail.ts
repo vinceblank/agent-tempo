@@ -7,7 +7,7 @@ import type { SessionMetadata, Message } from '@/lib/tempo-types';
 export interface PlayerDetail {
   metadata: SessionMetadata;
   part: string;
-  pendingMessages: Message[];
+  messages: Message[];
 }
 
 export function usePlayerDetail(ensemble: string, playerId: string) {

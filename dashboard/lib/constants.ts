@@ -12,6 +12,7 @@ export const QUERIES = {
   GET_METADATA: 'getMetadata',
   GET_PART: 'getPart',
   PENDING_MESSAGES: 'pendingMessages',
+  ALL_MESSAGES: 'allMessages',
   HISTORY: 'history',
 } as const;
 
