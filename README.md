@@ -391,9 +391,48 @@ When a Claude Code session crashes or is closed without graceful shutdown, its T
 
 This means you don't need to manually clean up crashed sessions — just `cue` the dead player and the system handles the rest.
 
+## Copilot CLI integration
+
+GitHub Copilot CLI sessions can join an ensemble via the **Copilot bridge**. The bridge uses the [Copilot SDK](https://github.com/github/copilot-sdk) to spawn a Copilot session with claude-tempo as an MCP server, and injects incoming messages as prompts.
+
+### Starting a Copilot player manually
+
+```bash
+# Set ensemble name and optional player name
+CLAUDE_TEMPO_ENSEMBLE=default COPILOT_BRIDGE_NAME=copilot-dev npx ts-node src/copilot-bridge.ts
+```
+
+### Recruiting a Copilot player
+
+From any session in the ensemble:
+
+```
+"Recruit a copilot session named 'copilot-dev' with backend copilot"
+```
+
+This uses the `backend: "copilot"` parameter on the `recruit` tool.
+
+### How it works
+
+1. The bridge spawns a Copilot CLI session via the SDK with claude-tempo configured as an MCP server
+2. The MCP server registers the session as a Temporal workflow (same as Claude Code players)
+3. The bridge polls the workflow for pending messages every 2 seconds
+4. When messages arrive, they're injected as prompts via `session.sendAndWait()`
+5. The Copilot session can use all claude-tempo tools (`ensemble`, `cue`, `report`, etc.)
+
+### Requirements
+
+- GitHub Copilot CLI installed and authenticated
+- `@github/copilot-sdk` (included in dependencies)
+
+### Limitations
+
+- No push-based message delivery — the bridge polls for messages (2s interval)
+- Copilot sessions must be spawned via the bridge to participate (not standalone Copilot CLI)
+
 ## Known limitations
 
-- **`recruit` requires manual acknowledgment**: Recruited sessions use `--dangerously-load-development-channels` to enable channel-based message delivery. Claude Code shows an interactive confirmation prompt that must be manually acknowledged (press Enter) in the spawned terminal window. This will be resolved once claude-tempo is published as an approved channel plugin.
+- **Copilot bridge polls for messages**: The Copilot bridge polls for messages every 2 seconds rather than receiving push notifications. This adds slight latency compared to Claude Code's channel-based delivery.
 
 ## License
 
