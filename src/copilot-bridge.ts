@@ -67,12 +67,11 @@ async function main() {
     existingIds.add(wf.workflowId);
   }
 
-  // Build the MCP server command — use ts-node in dev, compiled JS in production
-  const isDev = __filename.endsWith('.ts');
-  const serverCommand = isDev ? 'npx' : 'node';
-  const serverArgs = isDev
-    ? ['ts-node', path.resolve(__dirname, 'server.ts')]
-    : [path.resolve(__dirname, 'server.js')];
+  // Build the MCP server command — always use the compiled dist/server.js
+  // Run `npm run build` (or `pnpm build`) before using the bridge.
+  const serverJsPath = path.resolve(__dirname, '..', 'dist', 'server.js');
+  const serverCommand = 'node';
+  const serverArgs = [serverJsPath];
   const mcpEnv: Record<string, string> = {
     CLAUDE_TEMPO_ENSEMBLE: config.ensemble,
     TEMPORAL_ADDRESS: config.temporalAddress,
