@@ -20,10 +20,24 @@
 
 import * as path from 'path';
 import { Client, Connection } from '@temporalio/client';
-import { CopilotClient, approveAll } from '@github/copilot-sdk';
-import type { CopilotSession } from '@github/copilot-sdk';
 import { getConfig } from './config';
 import { Message } from './types';
+
+// Optional dependency — must be installed separately: npm install @github/copilot-sdk
+let CopilotClient: any;
+let approveAll: any;
+try {
+  const sdk = require('@github/copilot-sdk');
+  CopilotClient = sdk.CopilotClient;
+  approveAll = sdk.approveAll;
+} catch {
+  console.error(
+    'Error: @github/copilot-sdk is not installed.\n' +
+    'Install it with: npm install @github/copilot-sdk\n' +
+    'See the Copilot CLI integration section in the README.',
+  );
+  process.exit(1);
+}
 
 const log = (...args: unknown[]) => console.error('[copilot-bridge]', ...args);
 
@@ -103,11 +117,11 @@ async function main() {
   };
 
   log('Creating Copilot session...');
-  const session: CopilotSession = await copilotClient.createSession(sessionConfig);
+  const session = await copilotClient.createSession(sessionConfig);
   log(`Copilot session created: ${session.sessionId}`);
 
   // Log session events for debugging
-  session.on((event) => {
+  session.on((event: any) => {
     if (event.type === 'assistant.message') {
       log(`[assistant] ${(event as any).data?.content?.substring(0, 200)}`);
     } else if (event.type === 'session.error') {

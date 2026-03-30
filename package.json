@@ -14,8 +14,10 @@
     "copilot-bridge": "ts-node src/copilot-bridge.ts",
     "test": "echo \"No tests yet\" && exit 0"
   },
+  "optionalDependencies": {
+    "@github/copilot-sdk": "^0.2.0"
+  },
   "dependencies": {
-    "@github/copilot-sdk": "^0.2.0",
     "@modelcontextprotocol/sdk": "^1.28.0",
     "@temporalio/activity": "~1.11.7",
     "@temporalio/client": "~1.11.7",

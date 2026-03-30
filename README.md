@@ -391,26 +391,33 @@ When a Claude Code session crashes or is closed without graceful shutdown, its T
 
 This means you don't need to manually clean up crashed sessions — just `cue` the dead player and the system handles the rest.
 
-## Copilot CLI integration
+## Copilot CLI integration (experimental)
 
 GitHub Copilot CLI sessions can join an ensemble via the **Copilot bridge**. The bridge uses the [Copilot SDK](https://github.com/github/copilot-sdk) to spawn a Copilot session with claude-tempo as an MCP server, and injects incoming messages as prompts.
 
-### Starting a Copilot player manually
+### Setup
+
+The Copilot SDK is an optional dependency — install it only if you want Copilot support:
 
 ```bash
-# Set ensemble name and optional player name
+npm install @github/copilot-sdk
+```
+
+You also need:
+- [GitHub Copilot CLI](https://docs.github.com/en/copilot/github-copilot-in-the-cli) installed and authenticated
+- An active GitHub Copilot subscription
+
+### Starting a Copilot player
+
+```bash
+# Start a Copilot player manually
 CLAUDE_TEMPO_ENSEMBLE=default COPILOT_BRIDGE_NAME=copilot-dev npx ts-node src/copilot-bridge.ts
+
+# Or from any session in the ensemble, recruit one:
+# "Recruit a copilot session named 'copilot-dev' with backend copilot"
 ```
 
-### Recruiting a Copilot player
-
-From any session in the ensemble:
-
-```
-"Recruit a copilot session named 'copilot-dev' with backend copilot"
-```
-
-This uses the `backend: "copilot"` parameter on the `recruit` tool.
+The `recruit` tool accepts a `backend` parameter (`"claude"` or `"copilot"`) to choose which CLI to spawn.
 
 ### How it works
 
@@ -420,15 +427,19 @@ This uses the `backend: "copilot"` parameter on the `recruit` tool.
 4. When messages arrive, they're injected as prompts via `session.sendAndWait()`
 5. The Copilot session can use all claude-tempo tools (`ensemble`, `cue`, `report`, etc.)
 
-### Requirements
+### Environment variables
 
-- GitHub Copilot CLI installed and authenticated
-- `@github/copilot-sdk` (included in dependencies)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `COPILOT_BRIDGE_NAME` | *(none)* | Player name (calls `set_name` automatically) |
+| `COPILOT_BRIDGE_MODEL` | *(Copilot default)* | Model override for the Copilot session |
+| `GITHUB_TOKEN` | *(logged-in user)* | GitHub auth token |
 
 ### Limitations
 
 - No push-based message delivery — the bridge polls for messages (2s interval)
 - Copilot sessions must be spawned via the bridge to participate (not standalone Copilot CLI)
+- The `@github/copilot-sdk` adds ~243MB to node_modules when installed
 
 ## Known limitations
 
