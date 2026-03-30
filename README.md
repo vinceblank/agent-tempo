@@ -286,8 +286,11 @@ You also need:
 ### Starting a Copilot player
 
 ```bash
-# Start a Copilot player manually
+# Linux/macOS:
 CLAUDE_TEMPO_ENSEMBLE=default COPILOT_BRIDGE_NAME=copilot-dev npx ts-node src/copilot-bridge.ts
+
+# Windows (PowerShell):
+$env:TEMPORAL_ADDRESS="localhost:7233"; $env:CLAUDE_TEMPO_ENSEMBLE="default"; $env:COPILOT_BRIDGE_NAME="copilot-dev"; npx ts-node src/copilot-bridge.ts
 
 # Or from any session in the ensemble, recruit one:
 # "Recruit a copilot session named 'copilot-dev' with backend copilot"
@@ -295,13 +298,47 @@ CLAUDE_TEMPO_ENSEMBLE=default COPILOT_BRIDGE_NAME=copilot-dev npx ts-node src/co
 
 The `recruit` tool accepts a `backend` parameter (`"claude"` or `"copilot"`) to choose which CLI to spawn.
 
+### Shell shortcuts
+
+Add these functions to your shell profile to simplify launching Copilot bridge sessions:
+
+**Linux/macOS** — add to `~/.bashrc` or `~/.zshrc`:
+
+```bash
+copilot-tempo() {
+  CLAUDE_TEMPO_ENSEMBLE="${1:-default}" COPILOT_BRIDGE_NAME="${2}" \
+    npx ts-node /path/to/claude-tempo/src/copilot-bridge.ts
+}
+```
+
+**Windows** — add to your PowerShell `$PROFILE`:
+
+```powershell
+function copilot-tempo($ensemble = "default", $name = "") {
+  $env:TEMPORAL_ADDRESS = "localhost:7233"
+  $env:CLAUDE_TEMPO_ENSEMBLE = $ensemble
+  $env:COPILOT_BRIDGE_NAME = $name
+  npx ts-node C:\path\to\claude-tempo\src\copilot-bridge.ts
+  $env:CLAUDE_TEMPO_ENSEMBLE = ""
+  $env:COPILOT_BRIDGE_NAME = ""
+}
+```
+
+Usage:
+
+```bash
+copilot-tempo                        # join "default" ensemble, auto-generated name
+copilot-tempo my-project copilot-1   # join "my-project" ensemble as "copilot-1"
+```
+
 ### How it works
 
 1. The bridge spawns a Copilot CLI session via the SDK with claude-tempo configured as an MCP server
 2. The MCP server registers the session as a Temporal workflow (same as Claude Code players)
-3. The bridge polls the workflow for pending messages every 2 seconds
-4. When messages arrive, they're injected as prompts via `session.sendAndWait()`
-5. The Copilot session can use all claude-tempo tools (`ensemble`, `cue`, `report`, etc.)
+3. An initial prompt is sent to trigger MCP server initialization (the SDK lazily starts MCP servers)
+4. The bridge polls the workflow for pending messages every 2 seconds
+5. When messages arrive, they're injected as prompts via `session.sendAndWait()`
+6. The Copilot session can use all claude-tempo tools (`ensemble`, `cue`, `report`, etc.)
 
 ### Environment variables
 
@@ -313,6 +350,8 @@ The `recruit` tool accepts a `backend` parameter (`"claude"` or `"copilot"`) to 
 
 ### Limitations
 
-- No push-based message delivery — the bridge polls for messages (2s interval)
-- Copilot sessions must be spawned via the bridge to participate (not standalone Copilot CLI)
-- The `@github/copilot-sdk` adds ~243MB to node_modules when installed
+- **No interactive access** — Copilot bridge sessions run in the background. Unlike Claude Code sessions where you can chat directly, bridge sessions only respond to cues from other players. To send messages to a bridge session, use `cue` from another player or signal the workflow directly via the Temporal CLI.
+- **No conductor support** — The bridge cannot currently run as a conductor. Conductor sessions require Claude Code.
+- **No push-based message delivery** — the bridge polls for messages (2s interval), unlike Claude Code sessions which receive instant channel notifications.
+- **Copilot sessions must be spawned via the bridge** to participate (not standalone Copilot CLI).
+- **The `@github/copilot-sdk` adds ~243MB** to node_modules when installed.
