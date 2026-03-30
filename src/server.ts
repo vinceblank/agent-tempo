@@ -44,6 +44,16 @@ function getGitInfo(workDir: string): { gitRoot?: string; gitBranch?: string } {
 }
 
 async function main() {
+  // Only activate when explicitly opted in via CLAUDE_TEMPO_ENSEMBLE
+  if (!process.env.CLAUDE_TEMPO_ENSEMBLE) {
+    log('CLAUDE_TEMPO_ENSEMBLE not set — MCP server idle (no workflow started)');
+    // Keep the process alive so Claude Code doesn't see a crash, but do nothing
+    const transport = new StdioServerTransport();
+    const idleServer = new McpServer({ name: 'claude-tempo', version: '0.1.0' });
+    await idleServer.connect(transport);
+    return;
+  }
+
   const config = getConfig();
   const isConductor = process.env.CLAUDE_TEMPO_CONDUCTOR === 'true';
   let playerId = isConductor ? 'conductor' : crypto.randomBytes(4).toString('hex');
