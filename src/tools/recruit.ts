@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { z } from 'zod';
 import { spawn } from 'child_process';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -21,18 +22,21 @@ export function registerRecruitTool(
   defineTool(
     server,
     'recruit',
-    'Start a new named Claude Code session in a directory. Rejects if the name is already active.',
+    'Start a new named session in a directory. Rejects if the name is already active. Supports Claude Code or Copilot CLI backends.',
     {
       workDir: z.string().describe('The working directory for the new session'),
       name: z.string().describe('Name for the new session'),
       initialMessage: z.string().optional()
         .describe('Optional task or message for the new session (sent after it sets its name)'),
+      backend: z.enum(['claude', 'copilot']).default('claude')
+        .describe('Which CLI backend to use: "claude" (default) or "copilot" (GitHub Copilot CLI via SDK)'),
     },
     async (args) => {
-      const { workDir, name, initialMessage } = args as {
+      const { workDir, name, initialMessage, backend } = args as {
         workDir: string;
         name: string;
         initialMessage?: string;
+        backend: 'claude' | 'copilot';
       };
       try {
         // Check if a session with this name is already active
@@ -54,26 +58,46 @@ export function registerRecruitTool(
           existingIds.add(wf.workflowId);
         }
 
-        // Spawn a new Claude Code session
-        const spawnArgs = [
-          '--dangerously-skip-permissions',
-          '--dangerously-load-development-channels', 'server:claude-tempo',
-          '-n', `"${name}"`,
-        ];
-        const child = spawn('claude', spawnArgs, {
-          cwd: workDir,
-          detached: true,
-          stdio: 'ignore',
-          shell: true,
-          env: {
-            ...process.env,
-            CLAUDE_TEMPO_ENSEMBLE: config.ensemble,
-            CLAUDE_TEMPO_CONDUCTOR: '',
-          },
-        });
-        child.unref();
-
-        log(`Spawned claude process (pid ${child.pid}) in ${workDir} as "${name}"`);
+        // Spawn the session using the selected backend
+        if (backend === 'copilot') {
+          // Use ts-node in dev, compiled JS in production
+          const isDev = __filename.endsWith('.ts');
+          const cmd = isDev ? 'npx' : 'node';
+          const cmdArgs = isDev
+            ? ['ts-node', path.resolve(__dirname, '..', 'src', 'copilot-bridge.ts')]
+            : [path.resolve(__dirname, '..', 'copilot-bridge.js')];
+          const child = spawn(cmd, cmdArgs, {
+            cwd: workDir,
+            detached: true,
+            stdio: 'ignore',
+            env: {
+              ...process.env,
+              CLAUDE_TEMPO_ENSEMBLE: config.ensemble,
+              COPILOT_BRIDGE_NAME: name,
+            },
+          });
+          child.unref();
+          log(`Spawned copilot-bridge (pid ${child.pid}) in ${workDir} as "${name}"`);
+        } else {
+          const spawnArgs = [
+            '--dangerously-skip-permissions',
+            '--dangerously-load-development-channels', 'server:claude-tempo',
+            '-n', `"${name}"`,
+          ];
+          const child = spawn('claude', spawnArgs, {
+            cwd: workDir,
+            detached: true,
+            stdio: 'ignore',
+            shell: true,
+            env: {
+              ...process.env,
+              CLAUDE_TEMPO_ENSEMBLE: config.ensemble,
+              CLAUDE_TEMPO_CONDUCTOR: '',
+            },
+          });
+          child.unref();
+          log(`Spawned claude process (pid ${child.pid}) in ${workDir} as "${name}"`);
+        }
 
         // Poll for the new workflow to appear (up to ~15s)
         let newWorkflowId: string | null = null;
@@ -97,17 +121,27 @@ export function registerRecruitTool(
           };
         }
 
-        // Send it a message instructing it to set its name
         const newHandle = client.workflow.getHandle(newWorkflowId);
-        const nameInstruction = `You have been recruited as "${name}". Call set_name("${name}") immediately.`;
-        const fullMessage = initialMessage
-          ? `${nameInstruction}\n\nThen: ${initialMessage}`
-          : nameInstruction;
 
-        await newHandle.signal('receiveMessage', {
-          from: getPlayerId(),
-          text: fullMessage,
-        });
+        // For copilot backend, the bridge handles set_name automatically.
+        // For claude backend, send a message instructing it to set its name.
+        if (backend === 'claude') {
+          const nameInstruction = `You have been recruited as "${name}". Call set_name("${name}") immediately.`;
+          const fullMessage = initialMessage
+            ? `${nameInstruction}\n\nThen: ${initialMessage}`
+            : nameInstruction;
+
+          await newHandle.signal('receiveMessage', {
+            from: getPlayerId(),
+            text: fullMessage,
+          });
+        } else if (initialMessage) {
+          // For copilot, just send the initial task (name is set by the bridge)
+          await newHandle.signal('receiveMessage', {
+            from: getPlayerId(),
+            text: initialMessage,
+          });
+        }
 
         return {
           content: [{

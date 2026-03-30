@@ -16,6 +16,7 @@ claude-tempo is an MCP server that enables multiple Claude Code sessions to coor
 ```
 src/
 ├── server.ts          # MCP server entry point
+├── copilot-bridge.ts  # Copilot SDK bridge for Copilot CLI players
 ├── worker.ts          # Temporal worker setup
 ├── workflows/
 │   ├── session.ts     # claude-session workflow

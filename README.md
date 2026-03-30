@@ -257,9 +257,48 @@ Sessions start with a random 8-character hex ID. Use `set_name` to give a sessio
 - **No custom infrastructure**: No broker daemon, no database — just Temporal
 - **Extensible**: The conductor's signal/query contract is a public API anyone can build on
 
+## Copilot CLI integration
+
+GitHub Copilot CLI sessions can join an ensemble via the **Copilot bridge**. The bridge uses the [Copilot SDK](https://github.com/github/copilot-sdk) to spawn a Copilot session with claude-tempo as an MCP server, and injects incoming messages as prompts.
+
+### Starting a Copilot player manually
+
+```bash
+# Set ensemble name and optional player name
+CLAUDE_TEMPO_ENSEMBLE=default COPILOT_BRIDGE_NAME=copilot-dev npx ts-node src/copilot-bridge.ts
+```
+
+### Recruiting a Copilot player
+
+From any session in the ensemble:
+
+```
+"Recruit a copilot session named 'copilot-dev' with backend copilot"
+```
+
+This uses the `backend: "copilot"` parameter on the `recruit` tool.
+
+### How it works
+
+1. The bridge spawns a Copilot CLI session via the SDK with claude-tempo configured as an MCP server
+2. The MCP server registers the session as a Temporal workflow (same as Claude Code players)
+3. The bridge polls the workflow for pending messages every 2 seconds
+4. When messages arrive, they're injected as prompts via `session.sendAndWait()`
+5. The Copilot session can use all claude-tempo tools (`ensemble`, `cue`, `report`, etc.)
+
+### Requirements
+
+- GitHub Copilot CLI installed and authenticated
+- `@github/copilot-sdk` (included in dependencies)
+
+### Limitations
+
+- No push-based message delivery — the bridge polls for messages (2s interval)
+- Copilot sessions must be spawned via the bridge to participate (not standalone Copilot CLI)
+
 ## Known limitations
 
-- **`recruit` requires manual acknowledgment**: Recruited sessions use `--dangerously-load-development-channels` to enable channel-based message delivery. Claude Code shows an interactive confirmation prompt that must be manually acknowledged (press Enter) in the spawned terminal window. This will be resolved once claude-tempo is published as an approved channel plugin.
+- **`recruit` requires manual acknowledgment (Claude backend)**: Recruited Claude Code sessions use `--dangerously-load-development-channels` to enable channel-based message delivery. Claude Code shows an interactive confirmation prompt that must be manually acknowledged (press Enter) in the spawned terminal window. This will be resolved once claude-tempo is published as an approved channel plugin. The Copilot backend does not have this limitation.
 
 ## License
 
