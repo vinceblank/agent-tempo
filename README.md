@@ -182,18 +182,25 @@ The recommended way to build an ensemble is to **open multiple terminal windows*
 
 ```bash
 # Terminal 1 — conductor
-claude-tempo-conductor
+claude-tempo-conductor             # conductor in "default" ensemble
+claude-tempo-conductor my-project  # conductor in "my-project" ensemble
 
 # Terminal 2 — frontend player
-claude-tempo
+claude-tempo                       # player in "default" ensemble
+claude-tempo my-project            # player in "my-project" ensemble
 
 # Terminal 3 — backend player
-claude-tempo
+claude-tempo                       # player in "default" ensemble
+claude-tempo my-project            # player in "my-project" ensemble
 ```
 
 Or without the shell shortcuts:
 
 ```bash
+# Linux/macOS:
+claude --dangerously-skip-permissions --dangerously-load-development-channels server:claude-tempo
+
+# Windows (PowerShell):
 claude --dangerously-skip-permissions --dangerously-load-development-channels server:claude-tempo
 ```
 
