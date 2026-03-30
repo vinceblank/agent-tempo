@@ -89,7 +89,7 @@ async function main() {
 
   // Spawn Copilot SDK client and session
   const copilotClient = new CopilotClient({
-    logLevel: 'error',
+    logLevel: 'debug',
     env: {
       ...process.env as Record<string, string>,
       ...(process.env.GITHUB_TOKEN ? { GITHUB_TOKEN: process.env.GITHUB_TOKEN } : {}),
@@ -126,27 +126,44 @@ async function main() {
   const session = await copilotClient.createSession(sessionConfig);
   log(`Copilot session created: ${session.sessionId}`);
 
-  // Log session events for debugging
+  // Log ALL session events for debugging
   session.on((event: any) => {
-    if (event.type === 'assistant.message') {
-      log(`[assistant] ${(event as any).data?.content?.substring(0, 200)}`);
-    } else if (event.type === 'session.error') {
-      log(`[error] ${(event as any).data?.message}`);
-    }
+    log(`[event:${event.type}]`, JSON.stringify(event.data ?? event).substring(0, 500));
   });
+
+  // Send an initial prompt to trigger MCP server initialization.
+  // The Copilot SDK doesn't start MCP server subprocesses until the session
+  // processes a message that could use tools. We await this so the workflow
+  // registers before we try to find it, and so subsequent sendAndWait calls
+  // don't collide with this one.
+  log('Sending initial prompt to trigger MCP server startup...');
+  try {
+    await session.sendAndWait(
+      { prompt: 'Call the ensemble tool to list active sessions. Respond in one short sentence.' },
+      120_000,
+    );
+    log('Initial prompt completed successfully');
+  } catch (err: any) {
+    log('Initial prompt error (may be expected):', err?.message);
+  }
 
   // Wait for the MCP server's workflow to appear in Temporal
   log('Waiting for MCP server workflow to register...');
+  log(`List query: ${listQuery}`);
+  log(`Existing workflow IDs: ${[...existingIds].join(', ') || '(none)'}`);
   let newWorkflowId: string | null = null;
   for (let attempt = 0; attempt < 30; attempt++) {
     await new Promise((r) => setTimeout(r, 1000));
+    const found: string[] = [];
     for await (const wf of client.workflow.list({ query: listQuery })) {
+      found.push(wf.workflowId);
       if (!existingIds.has(wf.workflowId)) {
         newWorkflowId = wf.workflowId;
         break;
       }
     }
     if (newWorkflowId) break;
+    if (attempt % 5 === 4) log(`Still waiting... attempt ${attempt + 1}/30, found workflows: [${found.join(', ')}]`);
   }
 
   if (!newWorkflowId) {
@@ -163,8 +180,8 @@ async function main() {
   if (playerName) {
     log(`Sending set_name instruction for "${playerName}"...`);
     await session.sendAndWait(
-      { prompt: `Call set_name("${playerName}") immediately.` },
-      30_000,
+      { prompt: `Call set_name("${playerName}") immediately. Respond in one short sentence.` },
+      120_000,
     );
   }
 
