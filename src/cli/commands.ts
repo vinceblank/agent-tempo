@@ -63,10 +63,18 @@ export async function start(opts: StartOpts) {
     const cmdArgs = isDev
       ? ['ts-node', resolve(__dirname, '..', '..', 'src', 'copilot-bridge.ts')]
       : [resolve(__dirname, '..', 'copilot-bridge.js')];
+
+    // Log bridge output for debugging
+    const fs = require('fs');
+    const logName = opts.name || `copilot-${Date.now()}`;
+    const logPath = join(workDir, 'logs', `${logName}.log`);
+    fs.mkdirSync(join(workDir, 'logs'), { recursive: true });
+    const logFd = fs.openSync(logPath, 'a');
+
     const child = cpSpawn(cmd, cmdArgs, {
       cwd: workDir,
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', logFd, logFd],
       env: {
         ...process.env,
         CLAUDE_TEMPO_ENSEMBLE: opts.ensemble,
@@ -76,6 +84,7 @@ export async function start(opts: StartOpts) {
       },
     });
     child.unref();
+    fs.closeSync(logFd);
     out.success(`Launched copilot bridge${opts.name ? ` "${opts.name}"` : ''} (pid ${child.pid ?? 'unknown'})`);
   } else {
     const claudeArgs = [
