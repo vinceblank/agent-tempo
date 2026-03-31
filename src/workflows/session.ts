@@ -12,6 +12,7 @@ import {
 import {
   SessionInput,
   Message,
+  SentMessage,
   Command,
   PlayerReport,
   HistoryEntry,
@@ -23,6 +24,9 @@ import {
   getPartQuery,
   getMetadataQuery,
   pendingMessagesQuery,
+  allMessagesQuery,
+  recordSentMessageSignal,
+  allSentMessagesQuery,
   commandSignal,
   playerReportSignal,
   historyQuery,
@@ -34,6 +38,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // State (carried across continue-as-new)
   let part = input.part ?? input.autoSummary ?? 'No description set';
   const messages: Message[] = input.messages ?? [];
+  const sentMessages: SentMessage[] = input.sentMessages ?? [];
   let shuttingDown = false;
 
   // ── Player Signal Handlers ──
@@ -69,11 +74,22 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     }
   });
 
+  setHandler(recordSentMessageSignal, (msg) => {
+    sentMessages.push({
+      id: uuid4(),
+      to: msg.to,
+      text: msg.text,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   // ── Player Query Handlers ──
 
   setHandler(getPartQuery, () => part);
   setHandler(getMetadataQuery, () => input.metadata);
   setHandler(pendingMessagesQuery, () => messages.filter((m) => !m.delivered));
+  setHandler(allMessagesQuery, () => messages);
+  setHandler(allSentMessagesQuery, () => sentMessages);
 
   // ── Conductor State ──
 
@@ -141,13 +157,15 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     if (shuttingDown) break;
 
     // Detect stale session: messages pending longer than threshold means poller is dead
-    const now = Date.now();
-    const staleMessages = messages.filter(
-      (m) => !m.delivered && now - new Date(m.timestamp).getTime() > STALE_MESSAGE_MS,
-    );
-    if (staleMessages.length > 0) {
-      staleExit = true;
-      break;
+    if (!input.disableStaleDetection) {
+      const now = Date.now();
+      const staleMessages = messages.filter(
+        (m) => !m.delivered && now - new Date(m.timestamp).getTime() > STALE_MESSAGE_MS,
+      );
+      if (staleMessages.length > 0) {
+        staleExit = true;
+        break;
+      }
     }
 
     // Prevent unbounded history growth
@@ -158,6 +176,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         ...input,
         part,
         messages: messages.filter((m) => !m.delivered),
+        sentMessages: sentMessages.slice(-50),
         ...(input.metadata.isConductor ? { commandHistory, reportHistory } : {}),
       });
     }

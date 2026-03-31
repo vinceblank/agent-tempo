@@ -1,9 +1,11 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
-import { Config } from '../config';
+import { Config, sessionWorkflowId } from '../config';
 import { resolveSession } from './resolve';
 import { defineTool } from './helpers';
+
+const log = (...args: unknown[]) => console.error('[claude-tempo:cue]', ...args);
 
 export function registerCueTool(
   server: McpServer,
@@ -33,6 +35,17 @@ export function registerCueTool(
           from: getPlayerId(),
           text: message,
         });
+
+        // Record outbound message on sender's own workflow
+        try {
+          const senderHandle = client.workflow.getHandle(
+            sessionWorkflowId(config.ensemble, getPlayerId()),
+          );
+          await senderHandle.signal('recordSentMessage', { to: playerId, text: message });
+        } catch (err) {
+          log('Failed to record sent message:', err);
+        }
+
         return {
           content: [{ type: 'text' as const, text: `Message sent to ${playerId}.` }],
         };

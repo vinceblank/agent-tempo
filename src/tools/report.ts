@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
-import { Config, conductorWorkflowId } from '../config';
+import { Config, conductorWorkflowId, sessionWorkflowId } from '../config';
 import { defineTool } from './helpers';
+
+const log = (...args: unknown[]) => console.error('[claude-tempo:report]', ...args);
 
 export function registerReportTool(
   server: McpServer,
@@ -16,7 +18,7 @@ export function registerReportTool(
     'Send an update to the conductor. Use this to report task completion, blockers, or questions. No-op if no conductor is running.',
     {
       text: z.string().describe('The report content'),
-      type: z.string().optional()
+      type: z.enum(['result', 'blocker', 'question']).optional()
         .describe('Type of report: "result" (default, task done), "blocker" (stuck), "question" (need input)'),
     },
     async (args) => {
@@ -29,6 +31,17 @@ export function registerReportTool(
           text,
           type,
         });
+
+        // Record outbound on sender's own workflow
+        try {
+          const senderHandle = client.workflow.getHandle(
+            sessionWorkflowId(config.ensemble, getPlayerId()),
+          );
+          await senderHandle.signal('recordSentMessage', { to: 'conductor', text: `[${type}] ${text}` });
+        } catch (err) {
+          log('Failed to record sent message:', err);
+        }
+
         return {
           content: [{ type: 'text' as const, text: `Report sent to conductor: [${type}] ${text}` }],
         };
