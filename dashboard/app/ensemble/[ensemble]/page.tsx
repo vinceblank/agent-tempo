@@ -220,9 +220,8 @@ export default function EnsemblePage({
         <PlayerPanel
           players={players ?? []}
           selectedId={selectedPlayerId}
-          onSelect={(id) => {
-            setSelectedPlayerId(selectedPlayerId === id ? null : id);
-          }}
+          onSelect={(id) => setSelectedPlayerId(id)}
+          onSelectEnsemble={() => setSelectedPlayerId(null)}
         />
         <div className="flex flex-1 flex-col overflow-hidden">
           {/* Chat Timeline Header */}
@@ -230,12 +229,6 @@ export default function EnsemblePage({
             <div className="flex items-center gap-2 border-b border-border px-4 py-2">
               <PlayerAvatar name={selectedPlayerId} size="sm" />
               <span className="text-sm font-medium">{selectedPlayerId}</span>
-              <button
-                onClick={() => setSelectedPlayerId(null)}
-                className="ml-auto text-xs text-muted-foreground hover:text-foreground"
-              >
-                Back to ensemble
-              </button>
             </div>
           )}
 
