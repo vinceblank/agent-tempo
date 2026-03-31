@@ -35,6 +35,7 @@ export default function EnsemblePage({
   const { data: maestroMetadata } = useMaestroMetadata(ensemble);
   const { data: conductorStatus } = useConductorStatus(ensemble);
   const conductorActive = conductorStatus?.active ?? false;
+  const conductorId = conductorStatus?.conductorId ?? null;
 
   // Auto-start maestro on mount
   useEffect(() => {
@@ -66,10 +67,10 @@ export default function EnsemblePage({
       await fetch(`/api/ensemble/${encodeURIComponent(ensemble)}/maestro`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target: `${ensemble}-conductor`, text: message }),
+        body: JSON.stringify({ target: conductorId, text: message }),
       });
     },
-    [ensemble]
+    [ensemble, conductorId]
   );
 
   const handleRecruit = useCallback(

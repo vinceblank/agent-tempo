@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { hasConductor } from '@/lib/temporal-queries';
+import { findConductor } from '@/lib/temporal-queries';
 
 export async function GET(
   _request: Request,
@@ -7,9 +7,9 @@ export async function GET(
 ) {
   const { ensemble } = await params;
   try {
-    const active = await hasConductor(ensemble);
-    return NextResponse.json({ active });
+    const conductorId = await findConductor(ensemble);
+    return NextResponse.json({ active: !!conductorId, conductorId });
   } catch {
-    return NextResponse.json({ active: false });
+    return NextResponse.json({ active: false, conductorId: null });
   }
 }

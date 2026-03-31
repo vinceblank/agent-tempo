@@ -95,13 +95,14 @@ export async function terminatePlayer(
   await handle.terminate();
 }
 
-export async function hasConductor(ensemble: string): Promise<boolean> {
+export async function findConductor(ensemble: string): Promise<string | null> {
   const players = await listPlayers(ensemble);
-  return players.some((p) =>
+  const conductor = players.find((p) =>
     p.metadata.isConductor ||
     p.metadata.playerId === 'conductor' ||
     p.metadata.playerId === `${ensemble}-conductor`
   );
+  return conductor?.metadata.playerId ?? null;
 }
 
 export async function startMaestro(ensemble: string, workDir?: string): Promise<string> {
