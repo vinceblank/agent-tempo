@@ -26,6 +26,11 @@
     "ts-node": "^10.9.0",
     "typescript": "^5.5.0"
   },
+  "files": [
+    "dist",
+    "CLAUDE.md",
+    "README.md"
+  ],
   "license": "MIT",
   "trustedDependencies": [
     "@swc/core",
