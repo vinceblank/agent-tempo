@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { start, status, init, server, up, help, version } from './cli/commands';
+import { start, status, init, server, up, down, help, version } from './cli/commands';
 import { runPreflight } from './cli/preflight';
 import * as out from './cli/output';
 
@@ -12,6 +12,7 @@ interface ParsedArgs {
   dir: string;
   skipPreflight: boolean;
   background: boolean;
+  keepMcp: boolean;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -22,6 +23,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     dir: process.cwd(),
     skipPreflight: false,
     background: false,
+    keepMcp: false,
   };
 
   let i = 0;
@@ -37,6 +39,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.skipPreflight = true;
     } else if (arg === '--background' || arg === '-d') {
       result.background = true;
+    } else if (arg === '--keep-mcp') {
+      result.keepMcp = true;
     } else if (arg === '--help' || arg === '-h') {
       result.command = 'help';
     } else if (arg === '--version' || arg === '-v') {
@@ -94,6 +98,14 @@ async function main() {
       await server({
         temporalAddress: args.temporalAddress,
         background: args.background,
+      });
+      break;
+
+    case 'down':
+      await down({
+        temporalAddress: args.temporalAddress,
+        removeMcp: !args.keepMcp,
+        dir: args.dir,
       });
       break;
 

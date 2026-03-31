@@ -435,6 +435,95 @@ export async function up(opts: UpOpts) {
   console.log();
 }
 
+// --- Teardown: `down` command ---
+
+interface DownOpts {
+  temporalAddress: string;
+  removeMcp: boolean;
+  dir: string;
+}
+
+export async function down(opts: DownOpts) {
+  out.heading('claude-tempo teardown');
+
+  // Step 1: Terminate all active workflows
+  const temporalUp = await isTemporalReachable(opts.temporalAddress);
+  if (temporalUp) {
+    try {
+      const connection = await Connection.connect({ address: opts.temporalAddress });
+      const client = new Client({ connection });
+      const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+      let terminated = 0;
+      for await (const wf of client.workflow.list({ query })) {
+        try {
+          const handle = client.workflow.getHandle(wf.workflowId);
+          await handle.terminate('claude-tempo down');
+          terminated++;
+        } catch { /* already closed */ }
+      }
+      await connection.close();
+      if (terminated > 0) {
+        out.success(`Terminated ${terminated} active session${terminated !== 1 ? 's' : ''}`);
+      } else {
+        out.log(`  ${out.dim('No active sessions to terminate')}`);
+      }
+    } catch {
+      out.warn('Could not terminate active sessions');
+    }
+  }
+
+  // Step 2: Stop Temporal server
+  if (temporalUp) {
+    // Find and kill the temporal dev server process
+    try {
+      if (process.platform === 'win32') {
+        execFileSync('taskkill', ['/F', '/IM', 'temporal.exe'], { stdio: 'ignore' });
+      } else {
+        // Kill temporal server processes started by start-dev
+        execFileSync('pkill', ['-f', 'temporal server start-dev'], { stdio: 'ignore' });
+      }
+      out.success('Temporal server stopped');
+    } catch {
+      out.warn('Could not stop Temporal server (may need to stop it manually)');
+    }
+  } else {
+    out.log(`  ${out.dim('Temporal not running')}`);
+  }
+
+  // Step 3: Remove .mcp.json entry
+  if (opts.removeMcp) {
+    const mcpPath = join(opts.dir, '.mcp.json');
+    if (existsSync(mcpPath)) {
+      try {
+        const existing = JSON.parse(readFileSync(mcpPath, 'utf8'));
+        if (existing?.mcpServers?.['claude-tempo']) {
+          delete existing.mcpServers['claude-tempo'];
+          // If no other MCP servers remain, remove the file entirely
+          if (Object.keys(existing.mcpServers).length === 0) {
+            const { unlinkSync } = require('fs');
+            unlinkSync(mcpPath);
+            out.success('Removed .mcp.json (no other servers configured)');
+          } else {
+            writeFileSync(mcpPath, JSON.stringify(existing, null, 2) + '\n');
+            out.success('Removed claude-tempo from .mcp.json');
+          }
+        } else {
+          out.log(`  ${out.dim('.mcp.json has no claude-tempo entry')}`);
+        }
+      } catch {
+        out.warn(`Could not update ${mcpPath}`);
+      }
+    } else {
+      out.log(`  ${out.dim('No .mcp.json found')}`);
+    }
+  }
+
+  console.log();
+  out.success('claude-tempo is shut down');
+  out.log(`  ${out.dim('Temporal data preserved in ~/.claude-tempo/ (delete manually to reset)')}`);
+  console.log();
+}
+
 export function help() {
   console.log(`
 ${out.bold('claude-tempo')} — Multi-session Claude Code coordination via Temporal
@@ -447,6 +536,7 @@ ${out.bold('Usage:')}
 
 ${out.bold('Commands:')}
   ${out.cyan('up')}      [ensemble]    First-time setup: start Temporal, configure MCP, launch conductor
+  ${out.cyan('down')}                  Stop Temporal, terminate sessions, remove MCP config
   ${out.cyan('server')}                Start the Temporal dev server and register search attributes
   ${out.cyan('conduct')} [ensemble]    Start a conductor session (one per ensemble)
   ${out.cyan('start')}   [ensemble]    Start a player session
@@ -460,7 +550,8 @@ ${out.bold('Options:')}
   -n, --name <name>           Set the session window name (start/conduct/up only)
   --skip-preflight            Skip preflight checks (start/conduct only)
   --background                Run Temporal in background (server only)
-  --dir <path>                Target directory for init (default: cwd)
+  --keep-mcp                  Don't remove .mcp.json entry (down only)
+  --dir <path>                Target directory for init/down (default: cwd)
 
 ${out.bold('First time? Run this:')}
   ${out.dim('cd your-project')}
