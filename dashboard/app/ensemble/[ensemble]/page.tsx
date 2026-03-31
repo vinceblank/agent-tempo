@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef, use } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Trash2 } from "lucide-react";
+import { Check, Trash2, ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getPlayerIdentity } from "@/lib/player-identity";
 import { PlayerAvatar } from "@/components/dashboard/PlayerAvatar";
@@ -227,6 +227,12 @@ export default function EnsemblePage({
           {/* Chat Timeline Header */}
           {selectedPlayerId && (
             <div className="flex items-center gap-2 border-b border-border px-4 py-2">
+              <button
+                onClick={() => setSelectedPlayerId(null)}
+                className="text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </button>
               <PlayerAvatar name={selectedPlayerId} size="sm" />
               <span className="text-sm font-medium">{selectedPlayerId}</span>
             </div>
