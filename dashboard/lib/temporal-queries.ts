@@ -136,6 +136,7 @@ export async function startMaestro(ensemble: string, workDir?: string): Promise<
       workDir: workDir ?? process.cwd(),
       isConductor: false,
     },
+    disableStaleDetection: true,
   };
 
   const handle = await client.workflow.start('claudeSessionWorkflow', {

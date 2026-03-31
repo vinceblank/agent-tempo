@@ -20,6 +20,7 @@ export interface SessionInput {
   commandHistory?: Command[];
   reportHistory?: PlayerReport[];
   autoSummary?: string;
+  disableStaleDetection?: boolean;
 }
 
 export interface Message {

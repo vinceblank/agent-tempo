@@ -157,13 +157,15 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     if (shuttingDown) break;
 
     // Detect stale session: messages pending longer than threshold means poller is dead
-    const now = Date.now();
-    const staleMessages = messages.filter(
-      (m) => !m.delivered && now - new Date(m.timestamp).getTime() > STALE_MESSAGE_MS,
-    );
-    if (staleMessages.length > 0) {
-      staleExit = true;
-      break;
+    if (!input.disableStaleDetection) {
+      const now = Date.now();
+      const staleMessages = messages.filter(
+        (m) => !m.delivered && now - new Date(m.timestamp).getTime() > STALE_MESSAGE_MS,
+      );
+      if (staleMessages.length > 0) {
+        staleExit = true;
+        break;
+      }
     }
 
     // Prevent unbounded history growth

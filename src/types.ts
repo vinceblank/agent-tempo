@@ -24,6 +24,8 @@ export interface SessionInput {
   /** Restored from continue-as-new (conductor only) */
   reportHistory?: PlayerReport[];
   autoSummary?: string;
+  /** Disable stale session detection (for passive mailbox workflows like maestro) */
+  disableStaleDetection?: boolean;
 }
 
 export interface Message {
