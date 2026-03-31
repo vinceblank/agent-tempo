@@ -95,6 +95,25 @@ export async function terminatePlayer(
   await handle.terminate();
 }
 
+export async function disbandEnsemble(ensemble: string): Promise<number> {
+  const client = await getTemporalClient();
+  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${ensemble}"`;
+  let count = 0;
+
+  for await (const wf of client.workflow.list({ query })) {
+    try {
+      const handle = client.workflow.getHandle(wf.workflowId);
+      await handle.signal(SIGNALS.SHUTDOWN);
+      await handle.terminate();
+      count++;
+    } catch {
+      // Workflow may have already completed
+    }
+  }
+
+  return count;
+}
+
 export async function findConductor(ensemble: string): Promise<string | null> {
   const players = await listPlayers(ensemble);
   const conductor = players.find((p) =>

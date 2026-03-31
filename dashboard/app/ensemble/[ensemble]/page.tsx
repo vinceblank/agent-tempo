@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef, use } from "react";
 import { useRouter } from "next/navigation";
-import { Check } from "lucide-react";
+import { Check, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getPlayerIdentity } from "@/lib/player-identity";
 import { PlayerAvatar } from "@/components/dashboard/PlayerAvatar";
@@ -151,7 +151,24 @@ export default function EnsemblePage({
             </Badge>
           )}
         </div>
-        <RecruitDialog onRecruit={handleRecruit} defaultWorkDir={maestroMetadata?.workDir} />
+        <div className="flex items-center gap-2">
+          <RecruitDialog onRecruit={handleRecruit} defaultWorkDir={maestroMetadata?.workDir} />
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10"
+            onClick={async () => {
+              if (!window.confirm(`Disband ensemble "${ensemble}"? This will terminate all players.`)) return;
+              await fetch(`/api/ensemble/${encodeURIComponent(ensemble)}/disband`, {
+                method: "POST",
+              });
+              router.push("/");
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Disband
+          </Button>
+        </div>
       </div>
 
       {/* Stats */}
