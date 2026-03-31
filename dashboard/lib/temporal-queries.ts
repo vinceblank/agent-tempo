@@ -1,14 +1,15 @@
 import 'server-only';
 import { Client, WorkflowHandle } from '@temporalio/client';
+import { WorkflowIdConflictPolicy } from '@temporalio/client';
 import { spawn } from 'child_process';
 import type {
   SessionMetadata,
+  SessionInput,
   Message,
   SentMessage,
-  HistoryEntry,
 } from './tempo-types';
-import { conductorWorkflowId } from './tempo-config';
-import { getTemporalClient } from './temporal-client';
+import { sessionWorkflowId } from './tempo-config';
+import { getTemporalClient, getTaskQueue } from './temporal-client';
 import { SIGNALS, QUERIES } from './constants';
 
 // ── Helpers ──
@@ -66,28 +67,6 @@ export async function listPlayers(
   return players;
 }
 
-export async function getConductorHistory(
-  ensemble: string,
-): Promise<HistoryEntry[]> {
-  const client = await getTemporalClient();
-  try {
-    const handle = client.workflow.getHandle(conductorWorkflowId(ensemble));
-    return await handle.query(QUERIES.HISTORY);
-  } catch {
-    // Conductor doesn't exist yet — return empty history
-    return [];
-  }
-}
-
-export async function sendCommand(
-  ensemble: string,
-  text: string,
-  source: string,
-): Promise<void> {
-  const client = await getTemporalClient();
-  const handle = client.workflow.getHandle(conductorWorkflowId(ensemble));
-  await handle.signal(SIGNALS.COMMAND, { text, source });
-}
 
 export async function sendMessage(
   ensemble: string,
@@ -119,6 +98,84 @@ export async function terminatePlayer(
 export async function hasConductor(ensemble: string): Promise<boolean> {
   const players = await listPlayers(ensemble);
   return players.some((p) => p.metadata.isConductor);
+}
+
+export async function startMaestro(ensemble: string): Promise<string> {
+  const client = await getTemporalClient();
+  const workflowId = sessionWorkflowId(ensemble, 'maestro');
+
+  const sessionInput: SessionInput = {
+    metadata: {
+      playerId: 'maestro',
+      ensemble,
+      hostname: 'dashboard',
+      workDir: process.cwd(),
+      isConductor: false,
+    },
+  };
+
+  const handle = await client.workflow.start('claudeSessionWorkflow', {
+    workflowId,
+    taskQueue: getTaskQueue(),
+    args: [sessionInput],
+    workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+    workflowExecutionTimeout: '24 hours',
+    searchAttributes: {
+      ClaudeTempoHostname: ['dashboard'],
+      ClaudeTempoEnsemble: [ensemble],
+      ClaudeTempoPlayerId: ['maestro'],
+    },
+  });
+
+  return handle.workflowId;
+}
+
+export async function getMaestroMessages(ensemble: string): Promise<{
+  messages: Message[];
+  sentMessages: SentMessage[];
+}> {
+  const client = await getTemporalClient();
+  const workflowId = sessionWorkflowId(ensemble, 'maestro');
+  try {
+    const handle = client.workflow.getHandle(workflowId);
+    let messages: Message[];
+    try {
+      messages = await handle.query(QUERIES.ALL_MESSAGES) as Message[];
+    } catch {
+      messages = await handle.query(QUERIES.PENDING_MESSAGES) as Message[];
+    }
+    let sentMessages: SentMessage[];
+    try {
+      sentMessages = await handle.query(QUERIES.ALL_SENT_MESSAGES) as SentMessage[];
+    } catch {
+      sentMessages = [];
+    }
+    return { messages, sentMessages };
+  } catch {
+    return { messages: [], sentMessages: [] };
+  }
+}
+
+export async function sendAsMaestro(
+  ensemble: string,
+  targetPlayerId: string,
+  text: string,
+): Promise<void> {
+  const client = await getTemporalClient();
+  const targetHandle = await resolveSession(client, ensemble, targetPlayerId);
+  if (!targetHandle) {
+    throw new Error(`Player "${targetPlayerId}" not found`);
+  }
+  await targetHandle.signal(SIGNALS.RECEIVE_MESSAGE, { from: 'maestro', text });
+
+  // Record outbound on maestro's workflow
+  const maestroId = sessionWorkflowId(ensemble, 'maestro');
+  try {
+    const maestroHandle = client.workflow.getHandle(maestroId);
+    await maestroHandle.signal(SIGNALS.RECORD_SENT_MESSAGE, { to: targetPlayerId, text });
+  } catch {
+    // Maestro workflow may not exist yet
+  }
 }
 
 export async function getPlayerDetail(

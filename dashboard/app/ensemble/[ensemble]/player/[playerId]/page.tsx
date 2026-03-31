@@ -48,14 +48,11 @@ export default function PlayerDetailPage({
   const handleSendMessage = useCallback(
     async (message: string) => {
       await fetch(
-        `/api/ensemble/${encodeURIComponent(ensemble)}/conductor`,
+        `/api/ensemble/${encodeURIComponent(ensemble)}/maestro`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            text: `Tell ${playerId}: ${message}`,
-            source: "dashboard",
-          }),
+          body: JSON.stringify({ target: playerId, text: message }),
         }
       );
     },
