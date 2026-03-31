@@ -57,7 +57,7 @@ async function main() {
 
   const config = getConfig();
   const isConductor = process.env.CLAUDE_TEMPO_CONDUCTOR === 'true';
-  let playerId = isConductor ? 'conductor' : crypto.randomBytes(4).toString('hex');
+  let playerId = isConductor ? 'conductor' : (process.env.CLAUDE_TEMPO_PLAYER_NAME || crypto.randomBytes(4).toString('hex'));
   const getPlayerId = () => playerId;
   const setPlayerId = (id: string) => { playerId = id; };
   const workDir = process.cwd();

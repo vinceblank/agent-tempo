@@ -177,11 +177,12 @@ export function spawnInTerminal(
   }
 
   if (process.platform === 'win32') {
-    const child = spawn(claudeBin, claudeArgs, {
+    // Use 'start' to open a visible terminal window, and pass the full
+    // command as a single string to avoid DEP0190 deprecation warning
+    const child = spawn('cmd.exe', ['/c', 'start', '""', claudeBin, ...claudeArgs], {
       cwd: workDir,
       detached: true,
       stdio: 'ignore',
-      shell: true,
       env: { ...process.env, ...envVars },
     });
     child.unref();

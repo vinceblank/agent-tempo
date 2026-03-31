@@ -142,6 +142,7 @@ The `claude-tempo` CLI handles setup, session management, and diagnostics.
 | Command | Description |
 |---------|-------------|
 | `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor |
+| `down` | Stop Temporal, terminate sessions, remove MCP config |
 | `server` | Start the Temporal dev server and register search attributes |
 | `conduct [ensemble]` | Start a conductor session (one per ensemble) |
 | `start [ensemble]` | Start a player session |
@@ -154,7 +155,7 @@ The `claude-tempo` CLI handles setup, session management, and diagnostics.
 
 ```
 --temporal-address <addr>   Temporal server address (default: localhost:7233)
--n, --name <name>           Set the session window name (start/conduct/up)
+-n, --name <name>           Set the player name for the session (start/conduct/up)
 --skip-preflight            Skip preflight checks (start/conduct)
 --background, -d            Run Temporal in background (server only)
 --dir <path>                Target directory for init (default: cwd)
@@ -211,14 +212,14 @@ claude-tempo server -d              # shorthand
 {
   "mcpServers": {
     "claude-tempo": {
-      "command": "claude-tempo-server",
-      "args": []
+      "command": "npx",
+      "args": ["claude-tempo-server"]
     }
   }
 }
 ```
 
-No source code or absolute paths needed — `claude-tempo-server` is installed on PATH via the npm package.
+Uses `npx` to resolve the server binary, so it works regardless of PATH configuration.
 
 ### `status` — ensemble overview
 
@@ -330,13 +331,13 @@ The `recruit` tool and CLI automatically detect and open sessions in your termin
 | Terminal.app | `.command` file | — | — |
 | gnome-terminal | — | `--` flag | — |
 | konsole / xterm | — | `-e` flag | — |
-| cmd.exe / PowerShell | — | — | `shell:true` |
+| cmd.exe / PowerShell | — | — | `start` command |
 
 All macOS terminals use approaches that preserve the user's full shell environment (fish, zsh, bash) including node version managers (fnm, nvm).
 
 ### Session naming
 
-Sessions start with a random 8-character hex ID. Use `set_name` to give a session a human-readable name:
+Sessions start with a random 8-character hex ID. You can set a name at launch with `-n` or use `set_name` inside a session:
 
 - Names are stored as Temporal search attributes (`ClaudeTempoPlayerId`) and updated in-place — no workflow restart needed
 - Other players use the name to send messages via `cue` and discover sessions via `ensemble`
@@ -353,6 +354,7 @@ Sessions start with a random 8-character hex ID. Use `set_name` to give a sessio
 | `CLAUDE_TEMPO_TASK_QUEUE` | `claude-tempo` | Task queue name |
 | `CLAUDE_TEMPO_ENSEMBLE` | `default` | Ensemble name (isolates groups of players) |
 | `CLAUDE_TEMPO_CONDUCTOR` | `false` | Set to `true` to enable conductor mode |
+| `CLAUDE_TEMPO_PLAYER_NAME` | *(random hex)* | Set a player name on startup (used by `-n` flag) |
 
 ## Development
 
