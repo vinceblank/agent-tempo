@@ -6,6 +6,7 @@ export const SIGNALS = {
   SET_NAME: 'setName',
   SHUTDOWN: 'shutdown',
   MARK_DELIVERED: 'markDelivered',
+  RECORD_SENT_MESSAGE: 'recordSentMessage',
 } as const;
 
 export const QUERIES = {
@@ -14,6 +15,7 @@ export const QUERIES = {
   PENDING_MESSAGES: 'pendingMessages',
   ALL_MESSAGES: 'allMessages',
   HISTORY: 'history',
+  ALL_SENT_MESSAGES: 'allSentMessages',
 } as const;
 
 export const POLL_INTERVALS = {

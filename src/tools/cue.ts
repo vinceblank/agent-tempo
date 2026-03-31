@@ -33,6 +33,17 @@ export function registerCueTool(
           from: getPlayerId(),
           text: message,
         });
+
+        // Record outbound message on sender's own workflow
+        try {
+          const senderHandle = await resolveSession(client, config.ensemble, getPlayerId());
+          if (senderHandle) {
+            await senderHandle.signal('recordSentMessage', { to: playerId, text: message });
+          }
+        } catch {
+          // Don't block the cue if recording fails
+        }
+
         return {
           content: [{ type: 'text' as const, text: `Message sent to ${playerId}.` }],
         };

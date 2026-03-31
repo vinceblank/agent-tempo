@@ -16,6 +16,7 @@ export interface SessionInput {
   metadata: SessionMetadata;
   part?: string;
   messages?: Message[];
+  sentMessages?: SentMessage[];
   commandHistory?: Command[];
   reportHistory?: PlayerReport[];
   autoSummary?: string;
@@ -27,6 +28,13 @@ export interface Message {
   text: string;
   timestamp: string;
   delivered: boolean;
+}
+
+export interface SentMessage {
+  id: string;
+  to: string;
+  text: string;
+  timestamp: string;
 }
 
 export interface Command {

@@ -6,6 +6,7 @@ import type {
   SessionMetadata,
   SessionInput,
   Message,
+  SentMessage,
   HistoryEntry,
 } from './tempo-types';
 import { conductorWorkflowId } from './tempo-config';
@@ -154,6 +155,7 @@ export async function getPlayerDetail(
   metadata: SessionMetadata;
   part: string;
   messages: Message[];
+  sentMessages: SentMessage[];
 }> {
   const client = await getTemporalClient();
   const handle = await resolveSession(client, ensemble, playerId);
@@ -173,7 +175,14 @@ export async function getPlayerDetail(
     messages = await handle.query(QUERIES.PENDING_MESSAGES) as Message[];
   }
 
-  return { metadata, part, messages };
+  let sentMessages: SentMessage[];
+  try {
+    sentMessages = await handle.query(QUERIES.ALL_SENT_MESSAGES) as SentMessage[];
+  } catch {
+    sentMessages = [];
+  }
+
+  return { metadata, part, messages, sentMessages };
 }
 
 function sleep(ms: number): Promise<void> {

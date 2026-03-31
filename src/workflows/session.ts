@@ -12,6 +12,7 @@ import {
 import {
   SessionInput,
   Message,
+  SentMessage,
   Command,
   PlayerReport,
   HistoryEntry,
@@ -24,6 +25,8 @@ import {
   getMetadataQuery,
   pendingMessagesQuery,
   allMessagesQuery,
+  recordSentMessageSignal,
+  allSentMessagesQuery,
   commandSignal,
   playerReportSignal,
   historyQuery,
@@ -35,6 +38,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // State (carried across continue-as-new)
   let part = input.part ?? input.autoSummary ?? 'No description set';
   const messages: Message[] = input.messages ?? [];
+  const sentMessages: SentMessage[] = input.sentMessages ?? [];
   let shuttingDown = false;
 
   // ── Player Signal Handlers ──
@@ -70,12 +74,22 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     }
   });
 
+  setHandler(recordSentMessageSignal, (msg) => {
+    sentMessages.push({
+      id: uuid4(),
+      to: msg.to,
+      text: msg.text,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   // ── Player Query Handlers ──
 
   setHandler(getPartQuery, () => part);
   setHandler(getMetadataQuery, () => input.metadata);
   setHandler(pendingMessagesQuery, () => messages.filter((m) => !m.delivered));
   setHandler(allMessagesQuery, () => messages);
+  setHandler(allSentMessagesQuery, () => sentMessages);
 
   // ── Conductor State ──
 
@@ -160,6 +174,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         ...input,
         part,
         messages: messages.filter((m) => !m.delivered),
+        sentMessages: sentMessages.slice(-50),
         ...(input.metadata.isConductor ? { commandHistory, reportHistory } : {}),
       });
     }

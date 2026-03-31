@@ -17,6 +17,8 @@ export interface SessionInput {
   part?: string;
   /** Restored from continue-as-new (undelivered only) */
   messages?: Message[];
+  /** Restored from continue-as-new */
+  sentMessages?: SentMessage[];
   /** Restored from continue-as-new (conductor only) */
   commandHistory?: Command[];
   /** Restored from continue-as-new (conductor only) */
@@ -30,6 +32,13 @@ export interface Message {
   text: string;
   timestamp: string;
   delivered: boolean;
+}
+
+export interface SentMessage {
+  id: string;
+  to: string;
+  text: string;
+  timestamp: string;
 }
 
 export interface Command {
