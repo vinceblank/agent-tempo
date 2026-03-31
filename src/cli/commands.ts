@@ -72,6 +72,7 @@ export async function start(opts: StartOpts) {
         CLAUDE_TEMPO_ENSEMBLE: opts.ensemble,
         COPILOT_BRIDGE_NAME: opts.name || '',
         TEMPORAL_ADDRESS: opts.temporalAddress,
+        ...(opts.conductor ? { CLAUDE_TEMPO_CONDUCTOR: 'true' } : {}),
       },
     });
     child.unref();
@@ -593,7 +594,7 @@ ${out.bold('Commands:')}
 ${out.bold('Options:')}
   --temporal-address <addr>   Temporal server address (default: localhost:7233)
   -n, --name <name>           Set the session window name (start/conduct/up only)
-  --agent <claude|copilot>    Agent type to spawn (default: claude; start only)
+  --agent <claude|copilot>    Agent type to spawn (default: claude; start/conduct)
   --skip-preflight            Skip preflight checks (start/conduct only)
   --background                Run Temporal in background (server only)
   --keep-mcp                  Don't remove .mcp.json entry (down only)

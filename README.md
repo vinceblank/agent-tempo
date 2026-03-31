@@ -483,7 +483,7 @@ copilot-tempo my-project copilot-1   # join "my-project" ensemble as "copilot-1"
 
 - **`recruit` requires manual acknowledgment (Claude backend)**: Recruited Claude Code sessions use `--dangerously-load-development-channels` to enable channel-based message delivery. Claude Code shows an interactive confirmation prompt that must be manually acknowledged (press Enter) in the spawned terminal window. This will be resolved once claude-tempo is published as an approved channel plugin. The Copilot backend does not have this limitation.
 - **No interactive access** — Copilot bridge sessions run in the background. Unlike Claude Code sessions where you can chat directly, bridge sessions only respond to cues from other players. To send messages to a bridge session, use `cue` from another player or signal the workflow directly via the Temporal CLI.
-- **No conductor support** — The bridge cannot currently run as a conductor. Conductor sessions require Claude Code.
+- **Conductor polling latency** — Copilot conductors poll for messages every 2 seconds, unlike Claude Code conductors which receive instant channel notifications. This adds slight latency to orchestration.
 - **No push-based message delivery** — the bridge polls for messages (2s interval), unlike Claude Code sessions which receive instant channel notifications.
 - **Copilot sessions must be spawned via the bridge** to participate (not standalone Copilot CLI).
 - **The `@github/copilot-sdk` adds ~243MB** to node_modules when installed.

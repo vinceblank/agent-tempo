@@ -76,10 +76,6 @@ async function main() {
 
   switch (args.command) {
     case 'conduct':
-      if (args.agent === 'copilot') {
-        out.error('Copilot sessions cannot run as conductors. Use --agent claude (default).');
-        process.exit(1);
-      }
       await start({
         ensemble,
         conductor: true,
