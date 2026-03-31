@@ -1,9 +1,11 @@
 "use client";
 
-import { use, useState, useCallback, useMemo } from "react";
+import { use, useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, GitBranch, FolderOpen, Monitor, Check, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getPlayerIdentity } from "@/lib/player-identity";
+import { PlayerAvatar } from "@/components/dashboard/PlayerAvatar";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +31,7 @@ export default function PlayerDetailPage({
   const { data: detail, loading } = usePlayerDetail(ensemble, playerId);
   const { data: conductorStatus } = useConductorStatus(ensemble);
   const conductorActive = conductorStatus?.active ?? false;
+  const scrollEndRef = useRef<HTMLDivElement>(null);
 
   const timeline = useMemo<TimelineEntry[]>(() => {
     if (!detail) return [];
@@ -47,6 +50,11 @@ export default function PlayerDetailPage({
     );
     return entries;
   }, [detail]);
+
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    scrollEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [timeline]);
 
   const handleSendMessage = useCallback(
     async (message: string) => {
@@ -82,6 +90,7 @@ export default function PlayerDetailPage({
         >
           <ArrowLeft className="h-4 w-4" />
         </Link>
+        <PlayerAvatar name={playerId} size="sm" />
         <h1 className="text-lg font-semibold">{playerId}</h1>
         {detail?.metadata.isConductor && (
           <Badge variant="secondary" className="text-xs">
@@ -150,64 +159,71 @@ export default function PlayerDetailPage({
                 second: "2-digit",
               });
 
+              const inboundIdentity = !isOutbound
+                ? getPlayerIdentity((msg as Message).from)
+                : null;
+
               return (
                 <div
                   key={msg.id}
-                  className={cn(
-                    "max-w-[80%]",
-                    isOutbound && "ml-auto"
-                  )}
+                  className={cn("flex gap-2", isOutbound && "justify-end")}
                 >
-                  <div
-                    className={cn(
-                      "flex items-center gap-2 text-[10px] text-muted-foreground",
-                      isOutbound && "justify-end"
-                    )}
-                  >
-                    {isOutbound ? (
-                      <>
-                        <span>{timestamp}</span>
-                        <span className="font-medium">
-                          To {(msg as SentMessage).to}
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="font-medium">
-                          From {(msg as Message).from}
-                        </span>
-                        <span>{timestamp}</span>
-                        {(msg as Message).delivered ? (
-                          <Check className="h-3 w-3 text-emerald-500" />
-                        ) : (
-                          <Badge
-                            variant="outline"
-                            className="text-[10px] border-warning/50 text-warning"
-                          >
-                            pending
-                          </Badge>
-                        )}
-                      </>
-                    )}
-                  </div>
-                  <div
-                    className={cn(
-                      "mt-1 rounded-lg px-3 py-2 text-sm",
-                      isOutbound
-                        ? "bg-primary/10 border border-primary/20"
-                        : (msg as Message).delivered
-                          ? "bg-muted"
-                          : "bg-muted border border-warning/30"
-                    )}
-                  >
-                    <p className="whitespace-pre-wrap break-words">
-                      {msg.text}
-                    </p>
+                  {!isOutbound && (
+                    <PlayerAvatar name={(msg as Message).from} size="sm" />
+                  )}
+                  <div className="max-w-[80%]">
+                    <div
+                      className={cn(
+                        "flex items-center gap-2 text-[10px] text-muted-foreground",
+                        isOutbound && "justify-end"
+                      )}
+                    >
+                      {isOutbound ? (
+                        <>
+                          <span>{timestamp}</span>
+                          <span className="font-medium">
+                            To {(msg as SentMessage).to}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className={cn("font-medium", inboundIdentity?.color.text)}>
+                            From {(msg as Message).from}
+                          </span>
+                          <span>{timestamp}</span>
+                          {(msg as Message).delivered ? (
+                            <Check className="h-3 w-3 text-emerald-500" />
+                          ) : (
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] border-warning/50 text-warning"
+                            >
+                              pending
+                            </Badge>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    <div
+                      className={cn(
+                        "mt-1 rounded-lg px-3 py-2 text-sm",
+                        isOutbound
+                          ? "bg-primary/10 border border-primary/20"
+                          : (msg as Message).delivered
+                            ? "bg-muted"
+                            : "bg-muted border border-warning/30"
+                      )}
+                    >
+                      <p className="whitespace-pre-wrap break-words">
+                        {msg.text}
+                      </p>
+                    </div>
                   </div>
                 </div>
               );
             })
           )}
+          <div ref={scrollEndRef} />
         </div>
       </ScrollArea>
 

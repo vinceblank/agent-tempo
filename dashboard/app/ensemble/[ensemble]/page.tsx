@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo, use } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, use } from "react";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getPlayerIdentity } from "@/lib/player-identity";
+import { PlayerAvatar } from "@/components/dashboard/PlayerAvatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -36,6 +38,8 @@ export default function EnsemblePage({
   const { data: conductorStatus } = useConductorStatus(ensemble);
   const conductorActive = conductorStatus?.active ?? false;
   const conductorId = conductorStatus?.conductorId ?? null;
+  const [pendingMessages, setPendingMessages] = useState<SentMessage[]>([]);
+  const scrollEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-start maestro on mount
   useEffect(() => {
@@ -43,6 +47,24 @@ export default function EnsemblePage({
       method: "POST",
     }).catch(() => {});
   }, [ensemble]);
+
+  // Clean up pending messages once they appear in server data
+  useEffect(() => {
+    if (!maestroData?.sentMessages.length) return;
+    setPendingMessages((prev) =>
+      prev.filter(
+        (pm) =>
+          !maestroData.sentMessages.some(
+            (sm) =>
+              sm.text === pm.text &&
+              Math.abs(
+                new Date(sm.timestamp).getTime() -
+                  new Date(pm.timestamp).getTime()
+              ) < 10000
+          )
+      )
+    );
+  }, [maestroData?.sentMessages]);
 
   const timeline = useMemo<TimelineEntry[]>(() => {
     if (!maestroData) return [];
@@ -53,6 +75,19 @@ export default function EnsemblePage({
       ...maestroData.sentMessages.map(
         (m): TimelineEntry => ({ direction: "outbound", message: m })
       ),
+      ...pendingMessages
+        .filter(
+          (pm) =>
+            !maestroData.sentMessages.some(
+              (sm) =>
+                sm.text === pm.text &&
+                Math.abs(
+                  new Date(sm.timestamp).getTime() -
+                    new Date(pm.timestamp).getTime()
+                ) < 10000
+            )
+        )
+        .map((m): TimelineEntry => ({ direction: "outbound", message: m })),
     ];
     entries.sort(
       (a, b) =>
@@ -60,10 +95,17 @@ export default function EnsemblePage({
         new Date(b.message.timestamp).getTime()
     );
     return entries;
-  }, [maestroData]);
+  }, [maestroData, pendingMessages]);
 
   const handleSendCommand = useCallback(
     async (message: string) => {
+      const tempMsg: SentMessage = {
+        id: `pending-${Date.now()}`,
+        to: conductorId!,
+        text: message,
+        timestamp: new Date().toISOString(),
+      };
+      setPendingMessages((prev) => [...prev, tempMsg]);
       await fetch(`/api/ensemble/${encodeURIComponent(ensemble)}/maestro`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -72,6 +114,11 @@ export default function EnsemblePage({
     },
     [ensemble, conductorId]
   );
+
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    scrollEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [timeline]);
 
   const handleRecruit = useCallback(
     async (data: { name: string; workDir: string; initialMessage?: string }) => {
@@ -140,64 +187,71 @@ export default function EnsemblePage({
                     second: "2-digit",
                   });
 
+                  const inboundIdentity = !isOutbound
+                    ? getPlayerIdentity((msg as Message).from)
+                    : null;
+
                   return (
                     <div
                       key={msg.id}
-                      className={cn(
-                        "max-w-[80%]",
-                        isOutbound && "ml-auto"
-                      )}
+                      className={cn("flex gap-2", isOutbound && "justify-end")}
                     >
-                      <div
-                        className={cn(
-                          "flex items-center gap-2 text-[10px] text-muted-foreground",
-                          isOutbound && "justify-end"
-                        )}
-                      >
-                        {isOutbound ? (
-                          <>
-                            <span>{timestamp}</span>
-                            <span className="font-medium">
-                              To {(msg as SentMessage).to}
-                            </span>
-                          </>
-                        ) : (
-                          <>
-                            <span className="font-medium">
-                              From {(msg as Message).from}
-                            </span>
-                            <span>{timestamp}</span>
-                            {(msg as Message).delivered ? (
-                              <Check className="h-3 w-3 text-emerald-500" />
-                            ) : (
-                              <Badge
-                                variant="outline"
-                                className="text-[10px] border-warning/50 text-warning"
-                              >
-                                pending
-                              </Badge>
-                            )}
-                          </>
-                        )}
-                      </div>
-                      <div
-                        className={cn(
-                          "mt-1 rounded-lg px-3 py-2 text-sm",
-                          isOutbound
-                            ? "bg-primary/10 border border-primary/20"
-                            : (msg as Message).delivered
-                              ? "bg-muted"
-                              : "bg-muted border border-warning/30"
-                        )}
-                      >
-                        <p className="whitespace-pre-wrap break-words">
-                          {msg.text}
-                        </p>
+                      {!isOutbound && (
+                        <PlayerAvatar name={(msg as Message).from} size="sm" />
+                      )}
+                      <div className="max-w-[80%]">
+                        <div
+                          className={cn(
+                            "flex items-center gap-2 text-[10px] text-muted-foreground",
+                            isOutbound && "justify-end"
+                          )}
+                        >
+                          {isOutbound ? (
+                            <>
+                              <span>{timestamp}</span>
+                              <span className="font-medium">
+                                To {(msg as SentMessage).to}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span className={cn("font-medium", inboundIdentity?.color.text)}>
+                                From {(msg as Message).from}
+                              </span>
+                              <span>{timestamp}</span>
+                              {(msg as Message).delivered ? (
+                                <Check className="h-3 w-3 text-emerald-500" />
+                              ) : (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] border-warning/50 text-warning"
+                                >
+                                  pending
+                                </Badge>
+                              )}
+                            </>
+                          )}
+                        </div>
+                        <div
+                          className={cn(
+                            "mt-1 rounded-lg px-3 py-2 text-sm",
+                            isOutbound
+                              ? "bg-primary/10 border border-primary/20"
+                              : (msg as Message).delivered
+                                ? "bg-muted"
+                                : "bg-muted border border-warning/30"
+                          )}
+                        >
+                          <p className="whitespace-pre-wrap break-words">
+                            {msg.text}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   );
                 })
               )}
+              <div ref={scrollEndRef} />
             </div>
           </ScrollArea>
 

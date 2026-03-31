@@ -2,6 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { PlayerAvatar } from "@/components/dashboard/PlayerAvatar";
 import type { PlayerEntry } from "@/hooks/usePlayers";
 
 interface PlayerCardProps {
@@ -19,7 +20,7 @@ export function PlayerCard({ player, selected, onClick }: PlayerCardProps) {
         selected ? "border-border bg-muted" : "hover:bg-muted/50"
       )}
     >
-      <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-success" />
+      <PlayerAvatar name={player.metadata.playerId} size="sm" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-sm font-medium">
