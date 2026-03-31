@@ -1,16 +1,14 @@
 import 'server-only';
 import { Client, WorkflowHandle } from '@temporalio/client';
-import { WorkflowIdConflictPolicy } from '@temporalio/client';
 import { spawn } from 'child_process';
 import type {
   SessionMetadata,
-  SessionInput,
   Message,
   SentMessage,
   HistoryEntry,
 } from './tempo-types';
 import { conductorWorkflowId } from './tempo-config';
-import { getTemporalClient, getTaskQueue } from './temporal-client';
+import { getTemporalClient } from './temporal-client';
 import { SIGNALS, QUERIES } from './constants';
 
 // ── Helpers ──
@@ -118,34 +116,9 @@ export async function terminatePlayer(
   await handle.terminate();
 }
 
-export async function startConductor(ensemble: string): Promise<string> {
-  const client = await getTemporalClient();
-  const workflowId = conductorWorkflowId(ensemble);
-
-  const sessionInput: SessionInput = {
-    metadata: {
-      playerId: 'conductor',
-      ensemble,
-      hostname: 'dashboard',
-      workDir: process.cwd(),
-      isConductor: true,
-    },
-  };
-
-  const handle = await client.workflow.start('claudeSessionWorkflow', {
-    workflowId,
-    taskQueue: getTaskQueue(),
-    args: [sessionInput],
-    workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
-    workflowExecutionTimeout: '24 hours',
-    searchAttributes: {
-      ClaudeTempoHostname: ['dashboard'],
-      ClaudeTempoEnsemble: [ensemble],
-      ClaudeTempoPlayerId: ['conductor'],
-    },
-  });
-
-  return handle.workflowId;
+export async function hasConductor(ensemble: string): Promise<boolean> {
+  const players = await listPlayers(ensemble);
+  return players.some((p) => p.metadata.isConductor);
 }
 
 export async function getPlayerDetail(

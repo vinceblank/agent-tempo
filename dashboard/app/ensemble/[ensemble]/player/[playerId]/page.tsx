@@ -10,6 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CommandInput } from "@/components/dashboard/CommandInput";
 import { usePlayerDetail } from "@/hooks/usePlayerDetail";
+import { useConductorStatus } from "@/hooks/useConductorStatus";
 import type { Message, SentMessage } from "@/lib/tempo-types";
 
 type TimelineEntry =
@@ -23,6 +24,8 @@ export default function PlayerDetailPage({
 }) {
   const { ensemble, playerId } = use(params);
   const { data: detail, loading } = usePlayerDetail(ensemble, playerId);
+  const { data: conductorStatus } = useConductorStatus(ensemble);
+  const conductorActive = conductorStatus?.active ?? false;
 
   const timeline = useMemo<TimelineEntry[]>(() => {
     if (!detail) return [];
@@ -45,11 +48,14 @@ export default function PlayerDetailPage({
   const handleSendMessage = useCallback(
     async (message: string) => {
       await fetch(
-        `/api/ensemble/${encodeURIComponent(ensemble)}/player/${encodeURIComponent(playerId)}/message`,
+        `/api/ensemble/${encodeURIComponent(ensemble)}/conductor`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ from: "dashboard", text: message }),
+          body: JSON.stringify({
+            text: `Tell ${playerId}: ${message}`,
+            source: "dashboard",
+          }),
         }
       );
     },
@@ -188,7 +194,11 @@ export default function PlayerDetailPage({
       </ScrollArea>
 
       <Separator />
-      <CommandInput onSend={handleSendMessage} />
+      <CommandInput
+        onSend={handleSendMessage}
+        disabled={!conductorActive}
+        placeholder={conductorActive ? undefined : "Conductor required to send messages"}
+      />
     </div>
   );
 }

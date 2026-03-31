@@ -8,9 +8,11 @@ import { Separator } from "@/components/ui/separator";
 
 interface CommandInputProps {
   onSend: (message: string) => Promise<void>;
+  disabled?: boolean;
+  placeholder?: string;
 }
 
-export function CommandInput({ onSend }: CommandInputProps) {
+export function CommandInput({ onSend, disabled, placeholder }: CommandInputProps) {
   const [value, setValue] = useState("");
   const [sending, setSending] = useState(false);
 
@@ -40,14 +42,14 @@ export function CommandInput({ onSend }: CommandInputProps) {
               handleSubmit();
             }
           }}
-          placeholder="Send a command..."
-          disabled={sending}
+          placeholder={placeholder ?? "Send a command..."}
+          disabled={disabled || sending}
           className="flex-1"
         />
         <Button
           size="icon"
           onClick={handleSubmit}
-          disabled={sending || !value.trim()}
+          disabled={disabled || sending || !value.trim()}
         >
           <Send className="h-4 w-4" />
         </Button>
