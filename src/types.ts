@@ -17,7 +17,15 @@ export interface SessionInput {
   part?: string;
   /** Restored from continue-as-new (undelivered only) */
   messages?: Message[];
+  /** Restored from continue-as-new */
+  sentMessages?: SentMessage[];
+  /** Restored from continue-as-new (conductor only) */
+  commandHistory?: Command[];
+  /** Restored from continue-as-new (conductor only) */
+  reportHistory?: PlayerReport[];
   autoSummary?: string;
+  /** Disable stale session detection (for passive mailbox workflows like maestro) */
+  disableStaleDetection?: boolean;
 }
 
 export interface Message {
@@ -26,6 +34,13 @@ export interface Message {
   text: string;
   timestamp: string;
   delivered: boolean;
+}
+
+export interface SentMessage {
+  id: string;
+  to: string;
+  text: string;
+  timestamp: string;
 }
 
 export interface Command {
@@ -40,12 +55,6 @@ export interface PlayerReport {
   text: string;
   type: 'result' | 'blocker' | 'question';
   timestamp: string;
-}
-
-export interface ConductorStatus {
-  ensemble: Array<{ playerId: string; part: string }>;
-  activeTasks: string[];
-  lastUpdate: string;
 }
 
 export interface HistoryEntry {

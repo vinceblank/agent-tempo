@@ -1,9 +1,11 @@
 import * as path from 'path';
-import { z } from 'zod';
+
 import { spawn } from 'child_process';
+import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config } from '../config';
+import { spawnInTerminal } from '../spawn';
 import { resolveSession } from './resolve';
 import { defineTool } from './helpers';
 
@@ -38,6 +40,17 @@ export function registerRecruitTool(
         initialMessage?: string;
         backend: 'claude' | 'copilot';
       };
+      // Validate name to prevent search attribute query injection
+      if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Invalid name "${name}". Names must contain only letters, numbers, hyphens, and underscores.`,
+          }],
+          isError: true,
+        };
+      }
+
       try {
         // Check if a session with this name is already active
         const existing = await resolveSession(client, config.ensemble, name);
@@ -82,21 +95,13 @@ export function registerRecruitTool(
           const spawnArgs = [
             '--dangerously-skip-permissions',
             '--dangerously-load-development-channels', 'server:claude-tempo',
-            '-n', `"${name}"`,
+            '-n', name,
           ];
-          const child = spawn('claude', spawnArgs, {
-            cwd: workDir,
-            detached: true,
-            stdio: 'ignore',
-            shell: true,
-            env: {
-              ...process.env,
-              CLAUDE_TEMPO_ENSEMBLE: config.ensemble,
-              CLAUDE_TEMPO_CONDUCTOR: '',
-            },
+          const { pid } = spawnInTerminal(spawnArgs, workDir, {
+            CLAUDE_TEMPO_ENSEMBLE: config.ensemble,
+            CLAUDE_TEMPO_CONDUCTOR: '',
           });
-          child.unref();
-          log(`Spawned claude process (pid ${child.pid}) in ${workDir} as "${name}"`);
+          log(`Spawned claude process (pid ${pid}) in ${workDir} as "${name}"`);
         }
 
         // Poll for the new workflow to appear (up to ~15s)

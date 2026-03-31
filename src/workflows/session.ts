@@ -5,16 +5,17 @@ import {
   workflowInfo,
   allHandlersFinished,
   upsertSearchAttributes,
+  getExternalWorkflowHandle,
   uuid4,
 } from '@temporalio/workflow';
 
 import {
   SessionInput,
   Message,
+  SentMessage,
   Command,
   PlayerReport,
   HistoryEntry,
-  ConductorStatus,
   receiveMessageSignal,
   setPartSignal,
   setNameSignal,
@@ -23,16 +24,21 @@ import {
   getPartQuery,
   getMetadataQuery,
   pendingMessagesQuery,
+  allMessagesQuery,
+  recordSentMessageSignal,
+  allSentMessagesQuery,
   commandSignal,
   playerReportSignal,
-  statusQuery,
   historyQuery,
 } from './signals';
 
 export async function claudeSessionWorkflow(input: SessionInput): Promise<void> {
+  const STALE_MESSAGE_MS = 3 * 60 * 1000; // 3 minutes
+
   // State (carried across continue-as-new)
   let part = input.part ?? input.autoSummary ?? 'No description set';
   const messages: Message[] = input.messages ?? [];
+  const sentMessages: SentMessage[] = input.sentMessages ?? [];
   let shuttingDown = false;
 
   // ── Player Signal Handlers ──
@@ -68,17 +74,31 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     }
   });
 
+  setHandler(recordSentMessageSignal, (msg) => {
+    sentMessages.push({
+      id: uuid4(),
+      to: msg.to,
+      text: msg.text,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   // ── Player Query Handlers ──
 
   setHandler(getPartQuery, () => part);
   setHandler(getMetadataQuery, () => input.metadata);
   setHandler(pendingMessagesQuery, () => messages.filter((m) => !m.delivered));
+  setHandler(allMessagesQuery, () => messages);
+  setHandler(allSentMessagesQuery, () => sentMessages);
+
+  // ── Conductor State ──
+
+  const commandHistory: Command[] = input.commandHistory ?? [];
+  const reportHistory: PlayerReport[] = input.reportHistory ?? [];
 
   // ── Conductor-specific Handlers ──
 
   if (input.metadata.isConductor) {
-    const commandHistory: Command[] = [];
-    const reportHistory: PlayerReport[] = [];
 
     setHandler(commandSignal, (cmd) => {
       commandHistory.push({
@@ -110,12 +130,6 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       });
     });
 
-    setHandler(statusQuery, (): ConductorStatus => ({
-      ensemble: [], // Populated by the MCP server via listWorkflows, not the workflow itself
-      activeTasks: [],
-      lastUpdate: new Date().toISOString(),
-    }));
-
     setHandler(historyQuery, (): HistoryEntry[] => {
       const entries: HistoryEntry[] = [
         ...commandHistory.map((c): HistoryEntry => ({
@@ -135,8 +149,24 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
 
   // ── Main Loop ──
 
+  let staleExit = false;
+
   while (!shuttingDown) {
-    await condition(() => shuttingDown, '1 minute');
+    await condition(() => shuttingDown, '5 minutes');
+
+    if (shuttingDown) break;
+
+    // Detect stale session: messages pending longer than threshold means poller is dead
+    if (!input.disableStaleDetection) {
+      const now = Date.now();
+      const staleMessages = messages.filter(
+        (m) => !m.delivered && now - new Date(m.timestamp).getTime() > STALE_MESSAGE_MS,
+      );
+      if (staleMessages.length > 0) {
+        staleExit = true;
+        break;
+      }
+    }
 
     // Prevent unbounded history growth
     const info = workflowInfo();
@@ -146,7 +176,26 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         ...input,
         part,
         messages: messages.filter((m) => !m.delivered),
+        sentMessages: sentMessages.slice(-50),
+        ...(input.metadata.isConductor ? { commandHistory, reportHistory } : {}),
       });
+    }
+  }
+
+  // Notify conductor with undelivered messages before exiting
+  if (staleExit && !input.metadata.isConductor) {
+    try {
+      const undelivered = messages.filter((m) => !m.delivered);
+      const summary = undelivered.map((m) => `  From ${m.from}: ${m.text}`).join('\n');
+      const conductorWfId = `claude-session-${input.metadata.ensemble}-conductor`;
+      const handle = getExternalWorkflowHandle(conductorWfId);
+      await handle.signal(playerReportSignal, {
+        playerId: input.metadata.playerId,
+        text: `Session ended — ${undelivered.length} undelivered message(s):\n${summary}`,
+        type: 'blocker',
+      });
+    } catch {
+      // No conductor running — that's fine
     }
   }
 

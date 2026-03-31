@@ -2,7 +2,7 @@ import { defineSignal, defineQuery } from '@temporalio/workflow';
 import type {
   SessionMetadata,
   Message,
-  ConductorStatus,
+  SentMessage,
   HistoryEntry,
 } from '../types';
 
@@ -13,13 +13,14 @@ export type {
   Message,
   Command,
   PlayerReport,
-  ConductorStatus,
+  SentMessage,
   HistoryEntry,
 } from '../types';
 
 // ── Player Signals ──
 
 export const receiveMessageSignal = defineSignal<[{ from: string; text: string }]>('receiveMessage');
+export const recordSentMessageSignal = defineSignal<[{ to: string; text: string }]>('recordSentMessage');
 export const setPartSignal = defineSignal<[string]>('setPart');
 export const shutdownSignal = defineSignal('shutdown');
 export const markDeliveredSignal = defineSignal<[string[]]>('markDelivered');
@@ -30,6 +31,8 @@ export const setNameSignal = defineSignal<[string]>('setName');
 export const getPartQuery = defineQuery<string>('getPart');
 export const getMetadataQuery = defineQuery<SessionMetadata>('getMetadata');
 export const pendingMessagesQuery = defineQuery<Message[]>('pendingMessages');
+export const allMessagesQuery = defineQuery<Message[]>('allMessages');
+export const allSentMessagesQuery = defineQuery<SentMessage[]>('allSentMessages');
 
 // ── Conductor Signals ──
 
@@ -38,5 +41,4 @@ export const playerReportSignal = defineSignal<[{ playerId: string; text: string
 
 // ── Conductor Queries ──
 
-export const statusQuery = defineQuery<ConductorStatus>('status');
 export const historyQuery = defineQuery<HistoryEntry[]>('history');

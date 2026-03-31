@@ -69,6 +69,12 @@ npm test
 - **Recruit**: Spawning a new Claude Code session as a player
 - **set_name**: Players start with a random hex ID; `set_name` updates the `ClaudeTempoPlayerId` search attribute to a human-readable name
 
+## Dashboard
+
+The ensemble dashboard (Maestro) lives in a separate repository: [vinceblank/maestro](https://github.com/vinceblank/maestro)
+
+It provides a web UI for managing ensembles, communicating with conductors, and monitoring player activity.
+
 ## Commit Convention
 
 Use conventional commits: `type(scope): message`

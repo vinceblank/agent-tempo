@@ -23,6 +23,14 @@ export function registerSetNameTool(
     async (args) => {
       const { name } = args as { name: string };
 
+      // Validate name to prevent search attribute query injection
+      if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+        return {
+          content: [{ type: 'text' as const, text: `Invalid name "${name}". Names must contain only letters, numbers, hyphens, and underscores.` }],
+          isError: true,
+        };
+      }
+
       // Check if the name is already taken
       const existing = await resolveSession(client, config.ensemble, name);
       if (existing && existing.workflowId !== handle.workflowId) {
