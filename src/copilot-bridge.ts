@@ -100,6 +100,7 @@ async function main() {
     TEMPORAL_NAMESPACE: config.temporalNamespace,
     CLAUDE_TEMPO_TASK_QUEUE: config.taskQueue,
     CLAUDE_TEMPO_CONDUCTOR: process.env.CLAUDE_TEMPO_CONDUCTOR || '',
+    CLAUDE_TEMPO_BRIDGE_MODE: '1', // disable MCP server's message poller — bridge handles delivery
   };
 
   // Spawn Copilot SDK client and session

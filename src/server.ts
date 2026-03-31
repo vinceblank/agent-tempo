@@ -159,8 +159,14 @@ async function main() {
   registerReportTool(mcpServer, client, config, getPlayerId);
   registerTerminateTool(mcpServer, client, config, getPlayerId);
 
-  // Start message poller — push messages into Claude Code via channel notifications
-  const stopPoller = startMessagePoller(handle, async (messages) => {
+  // Start message poller — push messages into Claude Code via channel notifications.
+  // Skip when running under the Copilot bridge: the bridge has its own poller that
+  // injects messages via sendAndWait. If both pollers run, this one wins the race and
+  // sends messages via notifications/claude/channel — which Copilot doesn't understand.
+  const isBridgeMode = process.env.CLAUDE_TEMPO_BRIDGE_MODE === '1';
+  const stopPoller = isBridgeMode
+    ? () => {} // no-op — bridge handles message delivery
+    : startMessagePoller(handle, async (messages) => {
     for (const msg of messages) {
       log(`Message from ${msg.from}: ${msg.text}`);
       try {
