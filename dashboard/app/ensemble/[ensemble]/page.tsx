@@ -17,6 +17,7 @@ import { usePlayers } from "@/hooks/usePlayers";
 import { useMaestroMessages } from "@/hooks/useMaestroMessages";
 import { useMaestroMetadata } from "@/hooks/useMaestroMetadata";
 import { useConductorStatus } from "@/hooks/useConductorStatus";
+import { usePlayerDetail } from "@/hooks/usePlayerDetail";
 import type { Message, SentMessage } from "@/lib/tempo-types";
 
 type TimelineEntry =
@@ -40,6 +41,12 @@ export default function EnsemblePage({
   const conductorId = conductorStatus?.conductorId ?? null;
   const [pendingMessages, setPendingMessages] = useState<SentMessage[]>([]);
   const scrollEndRef = useRef<HTMLDivElement>(null);
+
+  // Fetch selected player's messages when a player is selected
+  const { data: playerDetail } = usePlayerDetail(
+    ensemble,
+    selectedPlayerId ?? "__none__"
+  );
 
   // Auto-start maestro on mount
   useEffect(() => {
@@ -97,6 +104,40 @@ export default function EnsemblePage({
     return entries;
   }, [maestroData, pendingMessages]);
 
+  // Player detail timeline (when a player is selected)
+  const playerTimeline = useMemo<TimelineEntry[]>(() => {
+    if (!playerDetail) return [];
+    const entries: TimelineEntry[] = [
+      ...playerDetail.messages.map(
+        (m): TimelineEntry => ({ direction: "inbound", message: m })
+      ),
+      ...playerDetail.sentMessages.map(
+        (m): TimelineEntry => ({ direction: "outbound", message: m })
+      ),
+    ];
+    entries.sort(
+      (a, b) =>
+        new Date(a.message.timestamp).getTime() -
+        new Date(b.message.timestamp).getTime()
+    );
+    return entries;
+  }, [playerDetail]);
+
+  // Active timeline depends on selection
+  const activeTimeline = selectedPlayerId ? playerTimeline : timeline;
+
+  const handleSendToPlayer = useCallback(
+    async (message: string) => {
+      if (!selectedPlayerId) return;
+      await fetch(`/api/ensemble/${encodeURIComponent(ensemble)}/maestro`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target: selectedPlayerId, text: message }),
+      });
+    },
+    [ensemble, selectedPlayerId]
+  );
+
   const handleSendCommand = useCallback(
     async (message: string) => {
       const tempMsg: SentMessage = {
@@ -118,7 +159,7 @@ export default function EnsemblePage({
   // Auto-scroll to bottom on new messages
   useEffect(() => {
     scrollEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [timeline]);
+  }, [activeTimeline]);
 
   const handleRecruit = useCallback(
     async (data: { name: string; workDir: string; initialMessage?: string }) => {
@@ -180,22 +221,32 @@ export default function EnsemblePage({
           players={players ?? []}
           selectedId={selectedPlayerId}
           onSelect={(id) => {
-            setSelectedPlayerId(id);
-            router.push(
-              `/ensemble/${encodeURIComponent(ensemble)}/player/${encodeURIComponent(id)}`
-            );
+            setSelectedPlayerId(selectedPlayerId === id ? null : id);
           }}
         />
         <div className="flex flex-1 flex-col overflow-hidden">
-          {/* Maestro Chat Timeline */}
+          {/* Chat Timeline Header */}
+          {selectedPlayerId && (
+            <div className="flex items-center gap-2 border-b border-border px-4 py-2">
+              <PlayerAvatar name={selectedPlayerId} size="sm" />
+              <span className="text-sm font-medium">{selectedPlayerId}</span>
+              <button
+                onClick={() => setSelectedPlayerId(null)}
+                className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+              >
+                Back to ensemble
+              </button>
+            </div>
+          )}
+
           <ScrollArea className="flex-1 overflow-hidden">
             <div className="space-y-3 p-4">
-              {timeline.length === 0 ? (
+              {activeTimeline.length === 0 ? (
                 <p className="py-12 text-center text-sm text-muted-foreground">
-                  No messages yet
+                  {selectedPlayerId ? "No messages for this player" : "No messages yet"}
                 </p>
               ) : (
-                timeline.map((entry) => {
+                activeTimeline.map((entry) => {
                   const isOutbound = entry.direction === "outbound";
                   const msg = entry.message;
                   const timestamp = new Date(msg.timestamp).toLocaleTimeString([], {
@@ -272,7 +323,12 @@ export default function EnsemblePage({
             </div>
           </ScrollArea>
 
-          {conductorActive ? (
+          {selectedPlayerId ? (
+            <CommandInput
+              onSend={handleSendToPlayer}
+              placeholder={`Send message to ${selectedPlayerId}...`}
+            />
+          ) : conductorActive ? (
             <CommandInput onSend={handleSendCommand} />
           ) : (
             <div className="border-t border-border px-4 py-3 flex items-center justify-between bg-yellow-500/5">
