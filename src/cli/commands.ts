@@ -4,6 +4,7 @@ import { execFileSync, spawn as cpSpawn, ChildProcess } from 'child_process';
 import { homedir } from 'os';
 import { Connection, Client } from '@temporalio/client';
 import { spawnInTerminal } from '../spawn';
+import { conductorWorkflowId } from '../config';
 import { runPreflight } from './preflight';
 import * as out from './output';
 
@@ -34,6 +35,24 @@ export async function start(opts: StartOpts) {
   }
 
   const role = opts.conductor ? 'conductor' : 'player';
+
+  // Check if a conductor workflow already exists for this ensemble
+  if (opts.conductor) {
+    try {
+      const connection = await Connection.connect({ address: opts.temporalAddress });
+      const client = new Client({ connection });
+      const conductorWfId = conductorWorkflowId(opts.ensemble);
+      const handle = client.workflow.getHandle(conductorWfId);
+      const desc = await handle.describe();
+      if (desc.status.name === 'RUNNING') {
+        out.warn(`A conductor workflow already exists for ensemble "${opts.ensemble}". Reconnecting...`);
+      }
+      await connection.close();
+    } catch {
+      // No existing conductor — proceed normally
+    }
+  }
+
   out.log(`Starting ${out.bold(role)} in ensemble ${out.cyan(opts.ensemble)}`);
 
   const claudeArgs = [
@@ -49,6 +68,9 @@ export async function start(opts: StartOpts) {
   };
   if (opts.conductor) {
     envVars.CLAUDE_TEMPO_CONDUCTOR = 'true';
+  }
+  if (opts.name) {
+    envVars.CLAUDE_TEMPO_PLAYER_NAME = opts.name;
   }
 
   const { pid } = spawnInTerminal(claudeArgs, workDir, envVars);
@@ -167,8 +189,8 @@ export async function init(opts: InitOpts) {
   const mcpPath = join(opts.dir, '.mcp.json');
 
   const entry = {
-    command: 'claude-tempo-server',
-    args: [] as string[],
+    command: 'npx',
+    args: ['claude-tempo-server'],
   };
 
   if (existsSync(mcpPath)) {
