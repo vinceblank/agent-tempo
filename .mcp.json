@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "claude-tempo": {
+      "command": "npx",
+      "args": [
+        "claude-tempo-server"
+      ]
+    }
+  }
+}
