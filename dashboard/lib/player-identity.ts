@@ -1,20 +1,17 @@
-import type { ComponentType, SVGProps } from "react";
 import {
-  Violin,
-  Trumpet,
-  Saxophone,
-  Flute,
-  Harp,
-  Cello,
-  FrenchHorn,
-  Clarinet,
-  Tuba,
-  Tambourine,
-  ConductorBaton,
-  MusicStand,
-} from "@/components/icons/instruments";
-
-export type InstrumentIcon = ComponentType<SVGProps<SVGSVGElement>>;
+  Music,
+  Guitar,
+  Drum,
+  Piano,
+  Mic,
+  Radio,
+  Headphones,
+  Volume2,
+  Bell,
+  Disc,
+  Wand2,
+  type LucideIcon,
+} from "lucide-react";
 
 export interface PlayerColor {
   bg: string;
@@ -24,7 +21,7 @@ export interface PlayerColor {
 
 export interface PlayerIdentity {
   color: PlayerColor;
-  Icon: InstrumentIcon;
+  Icon: LucideIcon;
 }
 
 const COLORS: PlayerColor[] = [
@@ -38,19 +35,16 @@ const COLORS: PlayerColor[] = [
   { bg: "bg-indigo-500/15", text: "text-indigo-400", border: "border-indigo-500/30" },
 ];
 
-const ICONS: InstrumentIcon[] = [
-  Violin, Trumpet, Saxophone, Flute, Harp,
-  Cello, FrenchHorn, Clarinet, Tuba, Tambourine,
-];
+const ICONS: LucideIcon[] = [Music, Guitar, Drum, Piano, Mic, Radio, Headphones, Volume2, Bell, Disc];
 
 const MAESTRO_IDENTITY: PlayerIdentity = {
   color: { bg: "bg-yellow-500/15", text: "text-yellow-400", border: "border-yellow-500/30" },
-  Icon: MusicStand,
+  Icon: Wand2,
 };
 
 const CONDUCTOR_IDENTITY: PlayerIdentity = {
   color: { bg: "bg-yellow-500/15", text: "text-yellow-400", border: "border-yellow-500/30" },
-  Icon: ConductorBaton,
+  Icon: Wand2,
 };
 
 function hashName(name: string): number {
