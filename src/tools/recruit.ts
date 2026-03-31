@@ -24,21 +24,21 @@ export function registerRecruitTool(
   defineTool(
     server,
     'recruit',
-    'Start a new named session in a directory. Rejects if the name is already active. Supports Claude Code or Copilot CLI backends.',
+    'Start a new named session in a directory. Rejects if the name is already active. Supports Claude Code or Copilot CLI agents.',
     {
       workDir: z.string().describe('The working directory for the new session'),
       name: z.string().describe('Name for the new session'),
       initialMessage: z.string().optional()
         .describe('Optional task or message for the new session (sent after it sets its name)'),
-      backend: z.enum(['claude', 'copilot']).default('claude')
-        .describe('Which CLI backend to use: "claude" (default) or "copilot" (GitHub Copilot CLI via SDK)'),
+      agent: z.enum(['claude', 'copilot']).default('claude')
+        .describe('Which agent to use: "claude" (default) or "copilot" (GitHub Copilot CLI via SDK)'),
     },
     async (args) => {
-      const { workDir, name, initialMessage, backend } = args as {
+      const { workDir, name, initialMessage, agent } = args as {
         workDir: string;
         name: string;
         initialMessage?: string;
-        backend: 'claude' | 'copilot';
+        agent: 'claude' | 'copilot';
       };
       // Validate name to prevent search attribute query injection
       if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
@@ -72,7 +72,7 @@ export function registerRecruitTool(
         }
 
         // Spawn the session using the selected backend
-        if (backend === 'copilot') {
+        if (agent === 'copilot') {
           // Use ts-node in dev, compiled JS in production
           const isDev = __filename.endsWith('.ts');
           const cmd = isDev ? 'npx' : 'node';
@@ -128,9 +128,9 @@ export function registerRecruitTool(
 
         const newHandle = client.workflow.getHandle(newWorkflowId);
 
-        // For copilot backend, the bridge handles set_name automatically.
-        // For claude backend, send a message instructing it to set its name.
-        if (backend === 'claude') {
+        // For copilot agent, the bridge handles set_name automatically.
+        // For claude agent, send a message instructing it to set its name.
+        if (agent === 'claude') {
           const nameInstruction = `You have been recruited as "${name}". Call set_name("${name}") immediately.`;
           const fullMessage = initialMessage
             ? `${nameInstruction}\n\nThen: ${initialMessage}`
