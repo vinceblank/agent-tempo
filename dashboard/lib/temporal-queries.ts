@@ -325,7 +325,25 @@ export async function recruitPlayer(
     ? `${nameInstruction}\n\nThen: ${initialMessage}`
     : nameInstruction;
 
-  await newHandle.signal(SIGNALS.RECEIVE_MESSAGE, { from: 'dashboard', text: fullMessage });
+  await newHandle.signal(SIGNALS.RECEIVE_MESSAGE, { from: 'maestro', text: fullMessage });
+
+  // Notify conductor that maestro recruited a new player
+  if (!isConductor) {
+    const conductor = await findConductor(ensemble);
+    if (conductor) {
+      const conductorHandle = await resolveSession(client, ensemble, conductor);
+      if (conductorHandle) {
+        try {
+          await conductorHandle.signal(SIGNALS.RECEIVE_MESSAGE, {
+            from: 'maestro',
+            text: `Recruited new player "${name}" in ${workDir}.${initialMessage ? ` Task: ${initialMessage}` : ''}`,
+          });
+        } catch {
+          // Conductor may not be accepting messages
+        }
+      }
+    }
+  }
 
   return `Recruited session "${name}" in ${workDir}.`;
 }
