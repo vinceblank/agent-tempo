@@ -27,9 +27,9 @@ Each ensemble can have:
 By default, all sessions join the `default` ensemble. Pass an ensemble name when starting a session to create or join a different one:
 
 ```bash
-claude-tempo frontend            # joins the "frontend" ensemble
-claude-tempo backend             # joins the "backend" ensemble
-claude-tempo                     # joins the "default" ensemble
+claude-tempo conduct frontend     # conduct the "frontend" ensemble
+claude-tempo start backend        # join the "backend" ensemble
+claude-tempo conduct              # conduct the "default" ensemble
 ```
 
 This lets you run separate groups of sessions for different projects or concerns without interference.
@@ -72,7 +72,7 @@ graph TD
 | `set_name` | Set a human-readable name for this session. Used by other players to message you. |
 | `set_part` | Describe what you're working on. Visible to others via `ensemble`. |
 | `listen` | Manual fallback for checking pending messages. |
-| `recruit` | Start a named Claude Code session in a directory. Rejects if the name is already active. **Note:** Recruited sessions require manual acknowledgment of the development channels prompt (see [Known limitations](#known-limitations)). |
+| `recruit` | Start a named Claude Code session in a directory. Opens a new terminal window automatically. |
 | `report` | Send updates to the conductor (surfaces to Discord/Telegram). No-op if no conductor. |
 | `terminate` | Terminate a player session by name. Use to clean up orphaned sessions. |
 
@@ -82,17 +82,13 @@ graph TD
 - [Temporal CLI](https://docs.temporal.io/cli) (for local dev server)
 - [Claude Code](https://claude.ai/code)
 
-## Setup
+## Quick start
 
 ```bash
-# Clone and install
-git clone https://github.com/vinceblank/claude-tempo.git
-cd claude-tempo && npm install
+# Install
+npm install -g claude-tempo
 
-# Build (compiles TypeScript and pre-bundles workflow code)
-npm run build
-
-# Start Temporal dev server (separate terminal, persists data across restarts)
+# Start Temporal dev server (separate terminal)
 temporal server start-dev --db-filename temporal-data.db
 
 # Register custom search attributes (one-time setup)
@@ -101,43 +97,87 @@ temporal operator search-attribute create --name ClaudeTempoGitRoot --type Keywo
 temporal operator search-attribute create --name ClaudeTempoEnsemble --type Keyword
 temporal operator search-attribute create --name ClaudeTempoPlayerId --type Keyword
 
-# Register as MCP server
-# Linux/macOS:
-claude mcp add --scope user --transport stdio claude-tempo -- npx ts-node src/server.ts
-# Windows:
-claude mcp add --scope user --transport stdio claude-tempo -- cmd /c npx ts-node src/server.ts
+# Set up MCP config in your project
+cd your-project
+claude-tempo init
+
+# Check everything is ready
+claude-tempo preflight
+
+# Start a conductor session
+claude-tempo conduct
 ```
 
-> **Important**: Run `npm run build` after any code changes. This pre-bundles the workflow code so all workers use identical code, preventing stale worker issues.
+## CLI
 
-### Shell shortcuts
+The `claude-tempo` CLI handles setup, session management, and diagnostics.
 
-Add these functions to your shell profile to avoid typing the full launch command each time:
+### Commands
 
-**Linux/macOS** — add to `~/.bashrc` or `~/.zshrc`:
+```
+claude-tempo conduct [ensemble]    Start a conductor session (one per ensemble)
+claude-tempo start   [ensemble]    Start a player session
+claude-tempo status  [ensemble]    Show active sessions and Temporal health
+claude-tempo init                  Create .mcp.json config in the current directory
+claude-tempo preflight             Run preflight checks only
+claude-tempo help                  Show usage info
+```
 
-```bash
-claude-tempo() {
-  CLAUDE_TEMPO_ENSEMBLE="${1:-default}" claude --dangerously-skip-permissions --dangerously-load-development-channels server:claude-tempo
-}
-claude-tempo-conductor() {
-  CLAUDE_TEMPO_ENSEMBLE="${1:-default}" CLAUDE_TEMPO_CONDUCTOR=true claude --dangerously-skip-permissions --dangerously-load-development-channels server:claude-tempo
+### Options
+
+```
+--temporal-address <addr>   Temporal server address (default: localhost:7233)
+-n, --name <name>           Set the session window name (start/conduct only)
+--skip-preflight            Skip preflight checks (start/conduct only)
+--dir <path>                Target directory for init (default: cwd)
+```
+
+### Preflight checks
+
+`claude-tempo preflight` verifies your environment is ready:
+
+- Node.js >= 18
+- Temporal server reachable
+- `claude` binary on PATH
+- `claude-tempo-server` binary on PATH
+- `.mcp.json` configured in the current directory
+
+### Init
+
+`claude-tempo init` creates a `.mcp.json` in the current directory (or merges into an existing one) that configures the claude-tempo MCP server for Claude Code:
+
+```json
+{
+  "mcpServers": {
+    "claude-tempo": {
+      "command": "claude-tempo-server",
+      "args": []
+    }
+  }
 }
 ```
 
-**Windows** — add to your PowerShell `$PROFILE`:
+No source code or absolute paths needed — `claude-tempo-server` is installed on PATH via the npm package.
 
-```powershell
-function claude-tempo($ensemble = "default") {
-  $env:CLAUDE_TEMPO_ENSEMBLE=$ensemble
-  claude --dangerously-skip-permissions --dangerously-load-development-channels server:claude-tempo
-  $env:CLAUDE_TEMPO_ENSEMBLE=""
-}
-function claude-tempo-conductor($ensemble = "default") {
-  $env:CLAUDE_TEMPO_ENSEMBLE=$ensemble; $env:CLAUDE_TEMPO_CONDUCTOR="true"
-  claude --dangerously-skip-permissions --dangerously-load-development-channels server:claude-tempo
-  $env:CLAUDE_TEMPO_ENSEMBLE=""; $env:CLAUDE_TEMPO_CONDUCTOR=""
-}
+### Status
+
+`claude-tempo status` shows all active sessions across ensembles:
+
+```
+Ensemble: myband
+  3 active sessions
+
+  conductor (conductor)
+    Orchestrating the team
+    /Users/me/projects/app  main  my-machine.local
+
+  alice
+    Building the REST endpoints
+    /Users/me/projects/app  feat/api  my-machine.local
+
+  bob
+    Working on the dashboard
+    /Users/me/projects/app  feat/ui  my-machine.local
 ```
 
 ## Starting a conductor
@@ -153,18 +193,8 @@ Without a conductor, players still work fine — they discover each other via `e
 There is one conductor per ensemble. Start one with:
 
 ```bash
-claude-tempo-conductor             # conductor in "default" ensemble
-claude-tempo-conductor my-project  # conductor in "my-project" ensemble
-```
-
-Or without the shell shortcut:
-
-```bash
-# Linux/macOS:
-CLAUDE_TEMPO_CONDUCTOR=true claude --dangerously-skip-permissions --dangerously-load-development-channels server:claude-tempo
-
-# Windows (PowerShell):
-$env:CLAUDE_TEMPO_CONDUCTOR="true"; claude --dangerously-skip-permissions --dangerously-load-development-channels server:claude-tempo
+claude-tempo conduct                # conductor in "default" ensemble
+claude-tempo conduct my-project     # conductor in "my-project" ensemble
 ```
 
 ### External access
@@ -191,7 +221,6 @@ const history = await conductor.query('history');
 You can also connect external channel plugins (e.g., Discord):
 
 ```bash
-# Linux/macOS:
 CLAUDE_TEMPO_CONDUCTOR=true claude \
   --channels plugin:discord@claude-plugins-official \
   --dangerously-skip-permissions --dangerously-load-development-channels server:claude-tempo
@@ -199,38 +228,40 @@ CLAUDE_TEMPO_CONDUCTOR=true claude \
 
 ## Starting players
 
-The recommended way to build an ensemble is to **open multiple terminal windows** and start a session in each one. Each session joins the ensemble automatically and can discover and message the others.
+The recommended way to build an ensemble is to use the CLI to start sessions. Each session opens in a new terminal window with the full shell environment preserved.
 
 ```bash
 # Terminal 1 — conductor
-claude-tempo-conductor             # conductor in "default" ensemble
-claude-tempo-conductor my-project  # conductor in "my-project" ensemble
+claude-tempo conduct my-project
 
 # Terminal 2 — frontend player
-claude-tempo                       # player in "default" ensemble
-claude-tempo my-project            # player in "my-project" ensemble
+claude-tempo start my-project -n frontend
 
 # Terminal 3 — backend player
-claude-tempo                       # player in "default" ensemble
-claude-tempo my-project            # player in "my-project" ensemble
+claude-tempo start my-project -n backend
 ```
 
-Or without the shell shortcuts:
-
-```bash
-# Linux/macOS:
-claude --dangerously-skip-permissions --dangerously-load-development-channels server:claude-tempo
-
-# Windows (PowerShell):
-claude --dangerously-skip-permissions --dangerously-load-development-channels server:claude-tempo
-```
+Or let the conductor `recruit` players directly — this spawns new terminal windows automatically.
 
 Once sessions are running, try:
 - "Show me the ensemble" — discovers other sessions
 - "Set your name to 'frontend'" — gives your session a human-readable name
 - "Cue frontend: what are you working on?" — sends a message by name
 
-Players can also use `recruit` to spawn additional sessions programmatically, but recruited sessions require manual acknowledgment of a confirmation prompt in the spawned terminal (see [Known limitations](#known-limitations)).
+### Terminal support
+
+The `recruit` tool and CLI automatically detect and open sessions in your terminal:
+
+| Terminal | macOS | Linux | Windows |
+|----------|-------|-------|---------|
+| Ghostty | `initial input` via AppleScript | — | — |
+| iTerm2 | `write text` via AppleScript | — | — |
+| Terminal.app | `.command` file | — | — |
+| gnome-terminal | — | `--` flag | — |
+| konsole / xterm | — | `-e` flag | — |
+| cmd.exe / PowerShell | — | — | `shell:true` |
+
+All macOS terminals use approaches that preserve the user's full shell environment (fish, zsh, bash) including node version managers (fnm, nvm).
 
 ### Session naming
 
@@ -251,6 +282,25 @@ Sessions start with a random 8-character hex ID. Use `set_name` to give a sessio
 | `CLAUDE_TEMPO_TASK_QUEUE` | `claude-tempo` | Task queue name |
 | `CLAUDE_TEMPO_ENSEMBLE` | `default` | Ensemble name (isolates groups of players) |
 | `CLAUDE_TEMPO_CONDUCTOR` | `false` | Set to `true` to enable conductor mode |
+
+## Development
+
+```bash
+# Clone and install
+git clone https://github.com/vinceblank/claude-tempo.git
+cd claude-tempo && npm install
+
+# Build (compiles TypeScript and pre-bundles workflow code)
+npm run build
+
+# Run MCP server in development
+npx ts-node src/server.ts
+
+# Link CLI for local testing
+npm link
+```
+
+> **Important**: Run `npm run build` after changing workflow code (`src/workflows/`). The build pre-bundles workflows into `workflow-bundle.js` so all workers use identical code.
 
 ## Why Temporal?
 
