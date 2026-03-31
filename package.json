@@ -4,6 +4,25 @@
   "description": "MCP server for multi-session Claude Code coordination via Temporal",
   "type": "commonjs",
   "main": "dist/server.js",
+  "exports": {
+    ".": "./dist/server.js",
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "default": "./dist/types.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "default": "./dist/config.js"
+    },
+    "./spawn": {
+      "types": "./dist/spawn.d.ts",
+      "default": "./dist/spawn.js"
+    },
+    "./signals": {
+      "types": "./dist/workflows/signals.d.ts",
+      "default": "./dist/workflows/signals.js"
+    }
+  },
   "bin": {
     "claude-tempo": "dist/cli.js",
     "claude-tempo-server": "dist/server.js"
@@ -26,8 +45,17 @@
     "ts-node": "^10.9.0",
     "typescript": "^5.5.0"
   },
+  "typesVersions": {
+    "*": {
+      "types": ["dist/types.d.ts"],
+      "config": ["dist/config.d.ts"],
+      "spawn": ["dist/spawn.d.ts"],
+      "signals": ["dist/workflows/signals.d.ts"]
+    }
+  },
   "files": [
     "dist",
+    "workflow-bundle.js",
     "CLAUDE.md",
     "README.md"
   ],
