@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -18,12 +18,19 @@ interface RecruitDialogProps {
     workDir: string;
     initialMessage?: string;
   }) => Promise<void>;
+  defaultWorkDir?: string;
 }
 
-export function RecruitDialog({ onRecruit }: RecruitDialogProps) {
+export function RecruitDialog({ onRecruit, defaultWorkDir }: RecruitDialogProps) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  const [workDir, setWorkDir] = useState("");
+  const [workDir, setWorkDir] = useState(defaultWorkDir ?? "");
+
+  useEffect(() => {
+    if (defaultWorkDir && !workDir) {
+      setWorkDir(defaultWorkDir);
+    }
+  }, [defaultWorkDir]); // eslint-disable-line react-hooks/exhaustive-deps
   const [initialMessage, setInitialMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 

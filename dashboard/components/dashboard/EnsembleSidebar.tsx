@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Terminal, Box, Moon } from "lucide-react";
+import { Terminal, Box, Moon, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface EnsembleSidebarProps {
@@ -41,6 +41,14 @@ export function EnsembleSidebar({
           </Link>
         ))}
       </nav>
+
+      <Link
+        href="/"
+        className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground mx-2 mb-2"
+      >
+        <Plus className="h-4 w-4" />
+        <span>New Ensemble</span>
+      </Link>
 
       {/* Dark mode indicator */}
       <div className="border-t border-border px-4 py-3">

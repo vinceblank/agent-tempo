@@ -100,7 +100,7 @@ export async function hasConductor(ensemble: string): Promise<boolean> {
   return players.some((p) => p.metadata.isConductor);
 }
 
-export async function startMaestro(ensemble: string): Promise<string> {
+export async function startMaestro(ensemble: string, workDir?: string): Promise<string> {
   const client = await getTemporalClient();
   const workflowId = sessionWorkflowId(ensemble, 'maestro');
 
@@ -109,7 +109,7 @@ export async function startMaestro(ensemble: string): Promise<string> {
       playerId: 'maestro',
       ensemble,
       hostname: 'dashboard',
-      workDir: process.cwd(),
+      workDir: workDir ?? process.cwd(),
       isConductor: false,
     },
   };

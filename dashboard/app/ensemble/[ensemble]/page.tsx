@@ -13,6 +13,7 @@ import { CommandInput } from "@/components/dashboard/CommandInput";
 import { RecruitDialog } from "@/components/dashboard/RecruitDialog";
 import { usePlayers } from "@/hooks/usePlayers";
 import { useMaestroMessages } from "@/hooks/useMaestroMessages";
+import { useMaestroMetadata } from "@/hooks/useMaestroMetadata";
 import { useConductorStatus } from "@/hooks/useConductorStatus";
 import type { Message, SentMessage } from "@/lib/tempo-types";
 
@@ -31,6 +32,7 @@ export default function EnsemblePage({
 
   const { data: players, loading: playersLoading } = usePlayers(ensemble);
   const { data: maestroData } = useMaestroMessages(ensemble);
+  const { data: maestroMetadata } = useMaestroMetadata(ensemble);
   const { data: conductorStatus } = useConductorStatus(ensemble);
   const conductorActive = conductorStatus?.active ?? false;
 
@@ -101,7 +103,7 @@ export default function EnsemblePage({
             </Badge>
           )}
         </div>
-        <RecruitDialog onRecruit={handleRecruit} />
+        <RecruitDialog onRecruit={handleRecruit} defaultWorkDir={maestroMetadata?.workDir} />
       </div>
 
       {/* Stats */}
@@ -210,7 +212,7 @@ export default function EnsemblePage({
                   await fetch(`/api/ensemble/${encodeURIComponent(ensemble)}/recruit`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ name: "conductor", workDir: "C:\\repos\\claude-tempo" }),
+                    body: JSON.stringify({ name: "conductor", workDir: maestroMetadata?.workDir ?? "" }),
                   });
                 }}
               >
