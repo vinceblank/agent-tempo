@@ -22,7 +22,7 @@ export function PlayerPanel({
       </div>
       <ScrollArea className="flex-1">
         <div className="space-y-1 p-2">
-          {players.map((player) => (
+          {players.filter((p) => p.metadata.playerId !== 'maestro').map((player) => (
             <PlayerCard
               key={player.metadata.playerId}
               player={player}

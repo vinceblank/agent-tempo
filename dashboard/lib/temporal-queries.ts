@@ -148,6 +148,16 @@ export async function getMaestroMessages(ensemble: string): Promise<{
     } catch {
       messages = await handle.query(QUERIES.PENDING_MESSAGES) as Message[];
     }
+    // Auto-mark undelivered messages as delivered (maestro has no listener)
+    const undeliveredIds = messages.filter((m) => !m.delivered).map((m) => m.id);
+    if (undeliveredIds.length > 0) {
+      try {
+        await handle.signal(SIGNALS.MARK_DELIVERED, undeliveredIds);
+      } catch {
+        // Best-effort
+      }
+    }
+
     let sentMessages: SentMessage[];
     try {
       sentMessages = await handle.query(QUERIES.ALL_SENT_MESSAGES) as SentMessage[];
