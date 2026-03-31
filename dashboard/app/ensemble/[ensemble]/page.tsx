@@ -66,7 +66,7 @@ export default function EnsemblePage({
       await fetch(`/api/ensemble/${encodeURIComponent(ensemble)}/maestro`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target: "conductor", text: message }),
+        body: JSON.stringify({ target: `${ensemble}-conductor`, text: message }),
       });
     },
     [ensemble]
@@ -212,7 +212,7 @@ export default function EnsemblePage({
                   await fetch(`/api/ensemble/${encodeURIComponent(ensemble)}/recruit`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ name: "conductor", workDir: maestroMetadata?.workDir ?? "" }),
+                    body: JSON.stringify({ name: `${ensemble}-conductor`, workDir: maestroMetadata?.workDir ?? "", isConductor: true }),
                   });
                 }}
               >

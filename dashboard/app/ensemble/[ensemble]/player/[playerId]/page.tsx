@@ -1,9 +1,11 @@
 "use client";
 
 import { use, useState, useCallback, useMemo } from "react";
-import { ArrowLeft, GitBranch, FolderOpen, Monitor, Check } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, GitBranch, FolderOpen, Monitor, Check, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -23,6 +25,7 @@ export default function PlayerDetailPage({
   params: Promise<{ ensemble: string; playerId: string }>;
 }) {
   const { ensemble, playerId } = use(params);
+  const router = useRouter();
   const { data: detail, loading } = usePlayerDetail(ensemble, playerId);
   const { data: conductorStatus } = useConductorStatus(ensemble);
   const conductorActive = conductorStatus?.active ?? false;
@@ -85,6 +88,24 @@ export default function PlayerDetailPage({
             conductor
           </Badge>
         )}
+        <div className="ml-auto">
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10"
+            onClick={async () => {
+              if (!window.confirm(`Terminate ${playerId}?`)) return;
+              await fetch(
+                `/api/ensemble/${encodeURIComponent(ensemble)}/player/${encodeURIComponent(playerId)}`,
+                { method: "DELETE" }
+              );
+              router.push(`/ensemble/${encodeURIComponent(ensemble)}`);
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Terminate
+          </Button>
+        </div>
       </div>
 
       {/* Metadata */}

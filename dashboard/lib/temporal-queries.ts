@@ -97,7 +97,11 @@ export async function terminatePlayer(
 
 export async function hasConductor(ensemble: string): Promise<boolean> {
   const players = await listPlayers(ensemble);
-  return players.some((p) => p.metadata.isConductor);
+  return players.some((p) =>
+    p.metadata.isConductor ||
+    p.metadata.playerId === 'conductor' ||
+    p.metadata.playerId === `${ensemble}-conductor`
+  );
 }
 
 export async function startMaestro(ensemble: string, workDir?: string): Promise<string> {
@@ -224,6 +228,7 @@ export async function recruitPlayer(
   workDir: string,
   name: string,
   initialMessage?: string,
+  isConductor?: boolean,
 ): Promise<string> {
   // Validate name
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
@@ -261,7 +266,7 @@ export async function recruitPlayer(
     env: {
       ...process.env,
       CLAUDE_TEMPO_ENSEMBLE: ensemble,
-      CLAUDE_TEMPO_CONDUCTOR: '',
+      CLAUDE_TEMPO_CONDUCTOR: isConductor ? 'true' : '',
     },
   });
   child.unref();
