@@ -84,7 +84,7 @@ async function main() {
     TEMPORAL_ADDRESS: config.temporalAddress,
     TEMPORAL_NAMESPACE: config.temporalNamespace,
     CLAUDE_TEMPO_TASK_QUEUE: config.taskQueue,
-    CLAUDE_TEMPO_CONDUCTOR: '',
+    CLAUDE_TEMPO_CONDUCTOR: process.env.CLAUDE_TEMPO_CONDUCTOR || '',
   };
 
   // Spawn Copilot SDK client and session
