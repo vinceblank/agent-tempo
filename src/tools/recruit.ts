@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { spawn } from 'child_process';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config } from '../config';
+import { spawnInTerminal } from '../spawn';
 import { resolveSession } from './resolve';
 import { defineTool } from './helpers';
 
@@ -65,26 +65,18 @@ export function registerRecruitTool(
           existingIds.add(wf.workflowId);
         }
 
-        // Spawn a new Claude Code session
+        // Spawn a new Claude Code session in a visible terminal
         const spawnArgs = [
           '--dangerously-skip-permissions',
           '--dangerously-load-development-channels', 'server:claude-tempo',
-          '-n', `"${name}"`,
+          '-n', name,
         ];
-        const child = spawn('claude', spawnArgs, {
-          cwd: workDir,
-          detached: true,
-          stdio: 'ignore',
-          shell: true,
-          env: {
-            ...process.env,
-            CLAUDE_TEMPO_ENSEMBLE: config.ensemble,
-            CLAUDE_TEMPO_CONDUCTOR: '',
-          },
+        const { pid } = spawnInTerminal(spawnArgs, workDir, {
+          CLAUDE_TEMPO_ENSEMBLE: config.ensemble,
+          CLAUDE_TEMPO_CONDUCTOR: '',
         });
-        child.unref();
 
-        log(`Spawned claude process (pid ${child.pid}) in ${workDir} as "${name}"`);
+        log(`Spawned claude process (pid ${pid}) in ${workDir} as "${name}"`);
 
         // Poll for the new workflow to appear (up to ~15s)
         let newWorkflowId: string | null = null;
