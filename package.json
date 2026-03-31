@@ -1,6 +1,6 @@
 {
   "name": "claude-tempo",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "MCP server for multi-session Claude Code coordination via Temporal",
   "type": "commonjs",
   "main": "dist/server.js",
