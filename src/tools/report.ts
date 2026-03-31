@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config, conductorWorkflowId } from '../config';
+import { resolveSession } from './resolve';
 import { defineTool } from './helpers';
 
 export function registerReportTool(
@@ -29,6 +30,17 @@ export function registerReportTool(
           text,
           type,
         });
+
+        // Record outbound on sender's own workflow
+        try {
+          const senderHandle = await resolveSession(client, config.ensemble, getPlayerId());
+          if (senderHandle) {
+            await senderHandle.signal('recordSentMessage', { to: 'conductor', text: `[${type}] ${text}` });
+          }
+        } catch {
+          // Don't block the report if recording fails
+        }
+
         return {
           content: [{ type: 'text' as const, text: `Report sent to conductor: [${type}] ${text}` }],
         };
