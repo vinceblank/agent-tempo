@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "claude-tempo": {
+      "command": "node",
+      "args": ["dist/server.js"],
+      "cwd": "/Users/drewpayment/dev/claude-tempo"
+    }
+  }
+}
