@@ -84,28 +84,53 @@ graph TD
 
 ## Quick start
 
+The fastest way to get going — one command handles everything:
+
 ```bash
 # Install
 npm install -g claude-tempo
 
-# Start Temporal dev server (separate terminal)
-temporal server start-dev --db-filename temporal-data.db
+# Go to your project and run `up`
+cd your-project
+claude-tempo up
+```
 
-# Register custom search attributes (one-time setup)
-temporal operator search-attribute create --name ClaudeTempoHostname --type Keyword
-temporal operator search-attribute create --name ClaudeTempoGitRoot --type Keyword
-temporal operator search-attribute create --name ClaudeTempoEnsemble --type Keyword
-temporal operator search-attribute create --name ClaudeTempoPlayerId --type Keyword
+`claude-tempo up` will:
+1. Check that the Temporal CLI is installed
+2. Start the Temporal dev server if it's not already running (data persists in `~/.claude-tempo/`)
+3. Register the required search attributes automatically
+4. Create `.mcp.json` in your project if it doesn't exist
+5. Launch a conductor session in a new terminal window
 
-# Set up MCP config in your project
+After `up` completes, you're ready to add players:
+
+```bash
+claude-tempo start          # open a player session
+claude-tempo status         # see who's active
+```
+
+Or ask the conductor to `recruit` players for you from inside Claude Code.
+
+### Manual setup
+
+If you prefer more control, you can run each step individually:
+
+```bash
+# Start Temporal dev server (keep this running)
+claude-tempo server
+
+# In your project directory, create .mcp.json
 cd your-project
 claude-tempo init
 
-# Check everything is ready
+# Verify everything is ready
 claude-tempo preflight
 
-# Start a conductor session
+# Start a conductor
 claude-tempo conduct
+
+# Add players
+claude-tempo start
 ```
 
 ## CLI
@@ -114,37 +139,73 @@ The `claude-tempo` CLI handles setup, session management, and diagnostics.
 
 ### Commands
 
-```
-claude-tempo conduct [ensemble]    Start a conductor session (one per ensemble)
-claude-tempo start   [ensemble]    Start a player session
-claude-tempo status  [ensemble]    Show active sessions and Temporal health
-claude-tempo init                  Create .mcp.json config in the current directory
-claude-tempo preflight             Run preflight checks only
-claude-tempo help                  Show usage info
-```
+| Command | Description |
+|---------|-------------|
+| `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor |
+| `server` | Start the Temporal dev server and register search attributes |
+| `conduct [ensemble]` | Start a conductor session (one per ensemble) |
+| `start [ensemble]` | Start a player session |
+| `status [ensemble]` | Show active sessions and Temporal health |
+| `init` | Create `.mcp.json` config in the current directory |
+| `preflight` | Run environment checks only |
+| `help` | Show usage info |
 
 ### Options
 
 ```
 --temporal-address <addr>   Temporal server address (default: localhost:7233)
--n, --name <name>           Set the session window name (start/conduct only)
---skip-preflight            Skip preflight checks (start/conduct only)
+-n, --name <name>           Set the session window name (start/conduct/up)
+--skip-preflight            Skip preflight checks (start/conduct)
+--background, -d            Run Temporal in background (server only)
 --dir <path>                Target directory for init (default: cwd)
 ```
 
-### Preflight checks
+### `up` — first-time setup
 
-`claude-tempo preflight` verifies your environment is ready:
+`claude-tempo up` is the recommended way to get started. It handles everything in order:
 
-- Node.js >= 18
-- Temporal server reachable
-- `claude` binary on PATH
-- `claude-tempo-server` binary on PATH
-- `.mcp.json` configured in the current directory
+```
+$ claude-tempo up myband
 
-### Init
+claude-tempo setup
+  pass temporal CLI installed
+  ... Starting Temporal dev server...
+  pass Temporal started (pid 12345, data in ~/.claude-tempo/)
+  ok Registered search attribute: ClaudeTempoHostname
+  ok Registered search attribute: ClaudeTempoGitRoot
+  ok Registered search attribute: ClaudeTempoEnsemble
+  ok Registered search attribute: ClaudeTempoPlayerId
+  pass .mcp.json created
 
-`claude-tempo init` creates a `.mcp.json` in the current directory (or merges into an existing one) that configures the claude-tempo MCP server for Claude Code:
+Launching conductor in ensemble myband...
+
+ok You're all set!
+  Conductor launched (pid 12346)
+  Ensemble: myband
+
+  What next?
+  claude-tempo start myband    Add a player session
+  claude-tempo status myband   See who's active
+  Or ask the conductor to recruit players for you
+```
+
+### `server` — Temporal management
+
+`claude-tempo server` starts the Temporal dev server with automatic search attribute registration:
+
+```bash
+claude-tempo server                 # foreground (Ctrl+C to stop)
+claude-tempo server --background    # daemonize
+claude-tempo server -d              # shorthand
+```
+
+- Stores data in `~/.claude-tempo/temporal-data.db` (persists across restarts)
+- Registers all required search attributes automatically
+- If Temporal is already running, just registers attributes and exits
+
+### `init` — MCP configuration
+
+`claude-tempo init` creates a `.mcp.json` in the current directory (or merges into an existing one):
 
 ```json
 {
@@ -159,9 +220,9 @@ claude-tempo help                  Show usage info
 
 No source code or absolute paths needed — `claude-tempo-server` is installed on PATH via the npm package.
 
-### Status
+### `status` — ensemble overview
 
-`claude-tempo status` shows all active sessions across ensembles:
+`claude-tempo status` shows all active sessions:
 
 ```
 Ensemble: myband
@@ -179,6 +240,16 @@ Ensemble: myband
     Working on the dashboard
     /Users/me/projects/app  feat/ui  my-machine.local
 ```
+
+### `preflight` — environment checks
+
+`claude-tempo preflight` verifies your environment:
+
+- Node.js >= 18
+- Temporal server reachable
+- `claude` binary on PATH
+- `claude-tempo-server` binary on PATH
+- `.mcp.json` configured in the current directory
 
 ## Starting a conductor
 

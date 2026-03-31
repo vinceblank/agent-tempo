@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { start, status, init, help, version } from './cli/commands';
+import { start, status, init, server, up, help, version } from './cli/commands';
 import { runPreflight } from './cli/preflight';
 import * as out from './cli/output';
 
@@ -11,6 +11,7 @@ interface ParsedArgs {
   name?: string;
   dir: string;
   skipPreflight: boolean;
+  background: boolean;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -20,6 +21,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     temporalAddress: process.env.TEMPORAL_ADDRESS || 'localhost:7233',
     dir: process.cwd(),
     skipPreflight: false,
+    background: false,
   };
 
   let i = 0;
@@ -33,6 +35,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.dir = argv[++i];
     } else if (arg === '--skip-preflight') {
       result.skipPreflight = true;
+    } else if (arg === '--background' || arg === '-d') {
+      result.background = true;
     } else if (arg === '--help' || arg === '-h') {
       result.command = 'help';
     } else if (arg === '--version' || arg === '-v') {
@@ -83,6 +87,21 @@ async function main() {
       await status({
         ensemble: args.positional[1], // undefined = show all
         temporalAddress: args.temporalAddress,
+      });
+      break;
+
+    case 'server':
+      await server({
+        temporalAddress: args.temporalAddress,
+        background: args.background,
+      });
+      break;
+
+    case 'up':
+      await up({
+        ensemble,
+        temporalAddress: args.temporalAddress,
+        name: args.name,
       });
       break;
 
