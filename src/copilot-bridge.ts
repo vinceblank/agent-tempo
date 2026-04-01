@@ -48,6 +48,31 @@ const log = (...args: unknown[]) => {
 };
 
 const POLL_INTERVAL_MS = 2000;
+const CREATE_SESSION_TIMEOUT_MS = 45_000;
+const MAX_CONSECUTIVE_FAILURES = 3;
+const MAX_SESSION_RECREATIONS = 2;
+
+/** Wrap createSession with a timeout so auth/network hangs don't block forever. */
+async function createSessionWithTimeout(
+  copilotClient: any,
+  sessionConfig: any,
+  timeoutMs = CREATE_SESSION_TIMEOUT_MS,
+): Promise<any> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(
+      `createSession timed out after ${timeoutMs / 1000}s — check Copilot auth and network connectivity`,
+    )), timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      copilotClient.createSession(sessionConfig),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
 
 async function main() {
   const config = getConfig();
@@ -143,34 +168,36 @@ async function main() {
   };
 
   log('Creating Copilot session...');
-  const session = await copilotClient.createSession(sessionConfig);
+  let session = await createSessionWithTimeout(copilotClient, sessionConfig);
   log(`Copilot session created: ${session.sessionId}`);
 
-  // Track session health
+  // Track session health — resets to true on any successful interaction
   let sessionAlive = true;
   let lastEventTime = Date.now();
   let lastEventType = 'session.created';
 
-  // Log session events for debugging (unbuffered so we always see them)
-  session.on((event: any) => {
-    lastEventTime = Date.now();
-    lastEventType = event.type;
-    // Log tool calls and completions fully, truncate verbose events
-    if (event.type === 'tool.execution_start' || event.type === 'tool.execution_complete') {
-      log(`[event:${event.type}]`, JSON.stringify(event.data ?? event).substring(0, 800));
-    } else if (event.type === 'assistant.message') {
-      const data = event.data ?? event;
-      const tools = data.toolRequests?.map((t: any) => t.name).join(', ') || 'none';
-      log(`[event:${event.type}] content="${(data.content || '').substring(0, 200)}" tools=[${tools}]`);
-    } else if (event.type === 'session.idle') {
-      log(`[event:session.idle] Session is idle`);
-    } else if (event.type?.includes('error') || event.type?.includes('disconnect')) {
-      log(`[event:${event.type}]`, JSON.stringify(event.data ?? event).substring(0, 500));
-      sessionAlive = false;
-    } else {
-      log(`[event:${event.type}]`);
-    }
-  });
+  function attachEventLogger(s: any) {
+    s.on((event: any) => {
+      lastEventTime = Date.now();
+      lastEventType = event.type;
+      // Log tool calls and completions fully, truncate verbose events
+      if (event.type === 'tool.execution_start' || event.type === 'tool.execution_complete') {
+        log(`[event:${event.type}]`, JSON.stringify(event.data ?? event).substring(0, 800));
+      } else if (event.type === 'assistant.message') {
+        const data = event.data ?? event;
+        const tools = data.toolRequests?.map((t: any) => t.name).join(', ') || 'none';
+        log(`[event:${event.type}] content="${(data.content || '').substring(0, 200)}" tools=[${tools}]`);
+      } else if (event.type === 'session.idle') {
+        log(`[event:session.idle] Session is idle`);
+      } else if (event.type?.includes('error') || event.type?.includes('disconnect')) {
+        log(`[event:${event.type}]`, JSON.stringify(event.data ?? event).substring(0, 500));
+        sessionAlive = false;
+      } else {
+        log(`[event:${event.type}]`);
+      }
+    });
+  }
+  attachEventLogger(session);
 
   // Send an initial prompt to trigger MCP server initialization.
   // The Copilot SDK doesn't start MCP server subprocesses until the session
@@ -243,10 +270,35 @@ async function main() {
     log(`set_name completed in ${Date.now() - t0}ms`);
   }
 
-  // Start message poller — inject messages into the Copilot session
+  // Start message poller — inject messages into the Copilot session.
+  // Tracks consecutive failures and attempts session recreation before giving up.
   let polling = true;
   let processing = false;
   let pollCount = 0;
+  let consecutiveFailures = 0;
+  let sessionRecreations = 0;
+
+  /** Attempt to recreate the Copilot session after repeated failures. */
+  async function recreateSession(): Promise<boolean> {
+    sessionRecreations++;
+    if (sessionRecreations > MAX_SESSION_RECREATIONS) {
+      log(`ERROR: Exceeded max session recreations (${MAX_SESSION_RECREATIONS}). Giving up.`);
+      return false;
+    }
+    log(`Attempting session recreation (${sessionRecreations}/${MAX_SESSION_RECREATIONS})...`);
+    try {
+      await session.disconnect().catch(() => {});
+      session = await createSessionWithTimeout(copilotClient, sessionConfig);
+      attachEventLogger(session);
+      sessionAlive = true;
+      consecutiveFailures = 0;
+      log(`Session recreated successfully: ${session.sessionId}`);
+      return true;
+    } catch (err: any) {
+      log(`Session recreation failed: ${err?.message}`);
+      return false;
+    }
+  }
 
   const poll = async () => {
     if (!polling || processing) return;
@@ -284,14 +336,26 @@ async function main() {
 
       log(`sendAndWait completed in ${elapsed}ms`);
       log(`Response: ${JSON.stringify(result)?.substring(0, 500)}`);
+
+      // Success — reset failure tracking
+      consecutiveFailures = 0;
+      sessionAlive = true;
       processing = false;
     } catch (err: any) {
       processing = false;
-      log(`Poll error: ${err?.message}`);
+      consecutiveFailures++;
+      log(`Poll error (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}): ${err?.message}`);
       log(`Error stack: ${err?.stack?.substring(0, 300)}`);
-      if (err?.message?.includes('timeout') || err?.message?.includes('disconnect')) {
-        log('Session may be dead — will continue polling but expect failures');
-        sessionAlive = false;
+
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        log('Consecutive failure threshold reached — attempting session recovery');
+        const recovered = await recreateSession();
+        if (!recovered) {
+          log('ERROR: Session recovery failed. Shutting down bridge.');
+          polling = false;
+          clearInterval(interval);
+          process.exit(2);
+        }
       }
     }
   };
