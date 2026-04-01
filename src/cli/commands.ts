@@ -267,12 +267,13 @@ function temporalCliExists(): boolean {
   }
 }
 
-function registerSearchAttributes(temporalAddress: string) {
+function registerSearchAttributes(temporalAddress: string, namespace = process.env[ENV.TEMPORAL_NAMESPACE] || 'default') {
   for (const attr of SEARCH_ATTRIBUTES) {
     try {
       execFileSync('temporal', [
         'operator', 'search-attribute', 'create',
         '--address', temporalAddress,
+        '--namespace', namespace,
         '--name', attr.name,
         '--type', attr.type,
       ], { stdio: ['ignore', 'ignore', 'ignore'] });
