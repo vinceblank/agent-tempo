@@ -413,51 +413,26 @@ You also need:
 
 ### Starting a Copilot player
 
+The easiest way to add a Copilot player is via the `recruit` tool from any active session in the ensemble. The `agent` parameter accepts `"claude"` (default) or `"copilot"`:
+
+> "Recruit a copilot session named 'copilot-dev' in /repos/my-project with agent copilot"
+
+This spawns a headless bridge process, registers it as a Temporal workflow, and sets the player name automatically.
+
+<details>
+<summary>Advanced: running the bridge directly</summary>
+
+You can also start the bridge manually with environment variables:
+
 ```bash
-# Directly with env vars (Linux/macOS):
+# Linux/macOS
 CLAUDE_TEMPO_ENSEMBLE=default COPILOT_BRIDGE_NAME=copilot-dev npx ts-node src/copilot-bridge.ts
 
-# Or directly with env vars (Windows PowerShell):
+# Windows PowerShell
 $env:TEMPORAL_ADDRESS="localhost:7233"; $env:CLAUDE_TEMPO_ENSEMBLE="default"; $env:COPILOT_BRIDGE_NAME="copilot-dev"; npx ts-node src/copilot-bridge.ts
-
-# Or from any session in the ensemble, recruit one:
-# "Recruit a copilot session named 'copilot-dev' with agent copilot"
 ```
 
-The `recruit` tool's `agent` parameter accepts `"claude"` (default) or `"copilot"`.
-
-### Shell shortcuts
-
-Add these functions to your shell profile to simplify launching Copilot bridge sessions:
-
-**Linux/macOS** — add to `~/.bashrc` or `~/.zshrc`:
-
-```bash
-copilot-tempo() {
-  CLAUDE_TEMPO_ENSEMBLE="${1:-default}" COPILOT_BRIDGE_NAME="${2}" \
-    npx ts-node /path/to/claude-tempo/src/copilot-bridge.ts
-}
-```
-
-**Windows** — add to your PowerShell `$PROFILE`:
-
-```powershell
-function copilot-tempo($ensemble = "default", $name = "") {
-  $env:TEMPORAL_ADDRESS = "localhost:7233"
-  $env:CLAUDE_TEMPO_ENSEMBLE = $ensemble
-  $env:COPILOT_BRIDGE_NAME = $name
-  npx ts-node C:\path\to\claude-tempo\src\copilot-bridge.ts
-  $env:CLAUDE_TEMPO_ENSEMBLE = ""
-  $env:COPILOT_BRIDGE_NAME = ""
-}
-```
-
-Usage:
-
-```bash
-copilot-tempo                        # join "default" ensemble, auto-generated name
-copilot-tempo my-project copilot-1   # join "my-project" ensemble as "copilot-1"
-```
+</details>
 
 ### How it works
 
