@@ -17,6 +17,7 @@ interface StartOpts {
   temporalAddress: string;
   name?: string;
   skipPreflight?: boolean;
+  agent: 'claude' | 'copilot';
 }
 
 export async function start(opts: StartOpts) {
@@ -53,28 +54,64 @@ export async function start(opts: StartOpts) {
     }
   }
 
-  out.log(`Starting ${out.bold(role)} in ensemble ${out.cyan(opts.ensemble)}`);
+  out.log(`Starting ${out.bold(role)} in ensemble ${out.cyan(opts.ensemble)}${opts.agent === 'copilot' ? out.dim(' (copilot)') : ''}`);
 
-  const claudeArgs = [
-    '--dangerously-skip-permissions',
-    '--dangerously-load-development-channels', 'server:claude-tempo',
-  ];
-  if (opts.name) {
-    claudeArgs.push('-n', opts.name);
-  }
+  if (opts.agent === 'copilot') {
+    // Spawn copilot-bridge as a detached headless subprocess
+    const isDev = __filename.endsWith('.ts');
+    const cmd = isDev ? 'npx' : 'node';
+    const cmdArgs = isDev
+      ? ['ts-node', resolve(__dirname, '..', '..', 'src', 'copilot-bridge.ts')]
+      : [resolve(__dirname, '..', 'copilot-bridge.js')];
 
-  const envVars: Record<string, string> = {
-    CLAUDE_TEMPO_ENSEMBLE: opts.ensemble,
-  };
-  if (opts.conductor) {
-    envVars.CLAUDE_TEMPO_CONDUCTOR = 'true';
-  }
-  if (opts.name) {
-    envVars.CLAUDE_TEMPO_PLAYER_NAME = opts.name;
-  }
+    // Log bridge output for debugging
+    const fs = require('fs');
+    const logName = opts.name || `copilot-${Date.now()}`;
+    const logPath = join(workDir, 'logs', `${logName}.log`);
+    fs.mkdirSync(join(workDir, 'logs'), { recursive: true });
+    const logFd = fs.openSync(logPath, 'a');
 
-  const { pid } = spawnInTerminal(claudeArgs, workDir, envVars);
-  out.success(`Launched ${role} session${opts.name ? ` "${opts.name}"` : ''} (pid ${pid ?? 'unknown'})`);
+    let child: ReturnType<typeof cpSpawn>;
+    try {
+      child = cpSpawn(cmd, cmdArgs, {
+        cwd: workDir,
+        detached: true,
+        stdio: ['ignore', logFd, logFd],
+        env: {
+          ...process.env,
+          CLAUDE_TEMPO_ENSEMBLE: opts.ensemble,
+          COPILOT_BRIDGE_NAME: opts.name || '',
+          TEMPORAL_ADDRESS: opts.temporalAddress,
+          ...(opts.conductor ? { CLAUDE_TEMPO_CONDUCTOR: 'true' } : {}),
+        },
+      });
+      child.unref();
+    } finally {
+      fs.closeSync(logFd);
+    }
+    out.success(`Launched copilot bridge${opts.name ? ` "${opts.name}"` : ''} (pid ${child.pid ?? 'unknown'})`);
+  } else {
+    const claudeArgs = [
+      '--dangerously-skip-permissions',
+      '--dangerously-load-development-channels', 'server:claude-tempo',
+    ];
+    if (opts.name) {
+      claudeArgs.push('-n', opts.name);
+    }
+
+    const envVars: Record<string, string> = {
+      CLAUDE_TEMPO_ENSEMBLE: opts.ensemble,
+    };
+    if (opts.conductor) {
+      envVars.CLAUDE_TEMPO_CONDUCTOR = 'true';
+    }
+    if (opts.name) {
+      envVars.CLAUDE_TEMPO_PLAYER_NAME = opts.name;
+    }
+
+    const { pid } = spawnInTerminal(claudeArgs, workDir, envVars);
+    out.success(`Launched ${role} session${opts.name ? ` "${opts.name}"` : ''} (pid ${pid ?? 'unknown'})`);
+  }
   out.log(`  Ensemble: ${opts.ensemble}`);
   out.log(`  Directory: ${workDir}`);
   out.log(`\nCheck status: ${out.dim('claude-tempo status ' + opts.ensemble)}`);
@@ -570,6 +607,7 @@ ${out.bold('Commands:')}
 ${out.bold('Options:')}
   --temporal-address <addr>   Temporal server address (default: localhost:7233)
   -n, --name <name>           Set the session window name (start/conduct/up only)
+  --agent <claude|copilot>    Agent type to spawn (default: claude; start/conduct)
   --skip-preflight            Skip preflight checks (start/conduct only)
   --background                Run Temporal in background (server only)
   --keep-mcp                  Don't remove .mcp.json entry (down only)
@@ -583,6 +621,7 @@ ${out.bold('Typical workflow:')}
   ${out.dim('claude-tempo server')}               Start Temporal (once, keep running)
   ${out.dim('claude-tempo conduct myband')}       Start a conductor
   ${out.dim('claude-tempo start myband')}         Add player sessions
+  ${out.dim('claude-tempo start myband --agent copilot -n copilot-1')}   Add a Copilot player
   ${out.dim('claude-tempo status myband')}        Check who's active
 
 ${out.bold('Environment:')}

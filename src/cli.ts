@@ -13,6 +13,7 @@ interface ParsedArgs {
   skipPreflight: boolean;
   background: boolean;
   keepMcp: boolean;
+  agent?: 'claude' | 'copilot';
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -41,6 +42,13 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.background = true;
     } else if (arg === '--keep-mcp') {
       result.keepMcp = true;
+    } else if (arg === '--agent' && i + 1 < argv.length) {
+      const val = argv[++i];
+      if (val !== 'claude' && val !== 'copilot') {
+        out.error(`Invalid agent type: "${val}". Must be "claude" or "copilot".`);
+        process.exit(1);
+      }
+      result.agent = val;
     } else if (arg === '--help' || arg === '-h') {
       result.command = 'help';
     } else if (arg === '--version' || arg === '-v') {
@@ -74,6 +82,7 @@ async function main() {
         temporalAddress: args.temporalAddress,
         name: args.name,
         skipPreflight: args.skipPreflight,
+        agent: args.agent ?? 'claude',
       });
       break;
 
@@ -84,6 +93,7 @@ async function main() {
         temporalAddress: args.temporalAddress,
         name: args.name,
         skipPreflight: args.skipPreflight,
+        agent: args.agent ?? 'claude',
       });
       break;
 

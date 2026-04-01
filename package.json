@@ -1,7 +1,11 @@
 {
   "name": "claude-tempo",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "MCP server for multi-session Claude Code coordination via Temporal",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vinceblank/claude-tempo.git"
+  },
   "type": "commonjs",
   "main": "dist/server.js",
   "exports": {
@@ -30,7 +34,11 @@
   "scripts": {
     "build": "tsc && node -e \"const{bundleWorkflowCode}=require('@temporalio/worker');const path=require('path');const fs=require('fs');bundleWorkflowCode({workflowsPath:path.resolve('dist/workflows/session.js')}).then(b=>{fs.writeFileSync('workflow-bundle.js',b.code);console.log('Workflow bundle created')})\"",
     "dev": "ts-node src/server.ts",
+    "copilot-bridge": "ts-node src/copilot-bridge.ts",
     "test": "echo \"No tests yet\" && exit 0"
+  },
+  "optionalDependencies": {
+    "@github/copilot-sdk": "^0.2.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.28.0",
@@ -59,6 +67,9 @@
     "CLAUDE.md",
     "README.md"
   ],
+  "engines": {
+    "node": ">=18"
+  },
   "license": "MIT",
   "trustedDependencies": [
     "@swc/core",

@@ -1,8 +1,11 @@
 node_modules/
 dist/
+logs/
 .env
 *.js
 *.js.map
 *.d.ts
 !jest.config.js
 temporal-data.db
+
+pnpm-lock.yaml
