@@ -393,6 +393,10 @@ When a Claude Code session crashes or is closed without graceful shutdown, its T
 
 This means you don't need to manually clean up crashed sessions — just `cue` the dead player and the system handles the rest.
 
+## Known limitations
+
+- **`recruit` requires manual acknowledgment**: Recruited Claude Code sessions use `--dangerously-load-development-channels` to enable channel-based message delivery. Claude Code shows an interactive confirmation prompt that must be manually acknowledged (press Enter) in the spawned terminal window. This will be resolved once claude-tempo is published as an approved channel plugin. Copilot bridge sessions do not have this limitation.
+
 ## Copilot CLI integration (experimental)
 
 > **Warning:** Copilot bridge support is **experimental** and subject to breaking changes. Copilot bridge sessions are headless — they have no interactive terminal. A Claude conductor (or custom Temporal client) is required to send them work via `cue`. Do not rely on this feature for production workflows.
@@ -453,10 +457,8 @@ $env:TEMPORAL_ADDRESS="localhost:7233"; $env:CLAUDE_TEMPO_ENSEMBLE="default"; $e
 
 ### Limitations
 
-- **`recruit` requires manual acknowledgment (Claude backend)**: Recruited Claude Code sessions use `--dangerously-load-development-channels` to enable channel-based message delivery. Claude Code shows an interactive confirmation prompt that must be manually acknowledged (press Enter) in the spawned terminal window. This will be resolved once claude-tempo is published as an approved channel plugin. The Copilot backend does not have this limitation.
 - **No interactive access** — Copilot bridge sessions run in the background. Unlike Claude Code sessions where you can chat directly, bridge sessions only respond to cues from other players. To send messages to a bridge session, use `cue` from another player or signal the workflow directly via the Temporal CLI.
-- **Conductor polling latency** — Copilot conductors poll for messages every 2 seconds, unlike Claude Code conductors which receive instant channel notifications. This adds slight latency to orchestration.
-- **No push-based message delivery** — the bridge polls for messages (2s interval), unlike Claude Code sessions which receive instant channel notifications.
+- **Polling latency** — the bridge polls for messages every 2 seconds, unlike Claude Code sessions which receive instant channel notifications. This adds slight latency to message delivery and orchestration.
 - **Copilot sessions must be spawned via the bridge** to participate (not standalone Copilot CLI).
 - **The `@github/copilot-sdk` adds ~243MB** to node_modules when installed.
 - **Node 20+ required for Copilot features** — the `@github/copilot-sdk` requires Node.js 20 or later. The rest of claude-tempo works on Node 18+.
