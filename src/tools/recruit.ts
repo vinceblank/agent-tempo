@@ -1,11 +1,9 @@
-import * as path from 'path';
-
-import { spawn } from 'child_process';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
-import { Config } from '../config';
-import { spawnInTerminal } from '../spawn';
+import { Config, ENV } from '../config';
+import { AgentType } from '../types';
+import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { resolveSession } from './resolve';
 import { defineTool } from './helpers';
 
@@ -38,7 +36,7 @@ export function registerRecruitTool(
         workDir: string;
         name: string;
         initialMessage?: string;
-        agent: 'claude' | 'copilot';
+        agent: AgentType;
       };
       // Validate name to prevent search attribute query injection
       if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
@@ -73,25 +71,13 @@ export function registerRecruitTool(
 
         // Spawn the session using the selected backend
         if (agent === 'copilot') {
-          // Use ts-node in dev, compiled JS in production
-          const isDev = __filename.endsWith('.ts');
-          const cmd = isDev ? 'npx' : 'node';
-          const cmdArgs = isDev
-            ? ['ts-node', path.resolve(__dirname, '..', 'src', 'copilot-bridge.ts')]
-            : [path.resolve(__dirname, '..', 'copilot-bridge.js')];
-          const child = spawn(cmd, cmdArgs, {
-            cwd: workDir,
-            detached: true,
-            stdio: 'ignore',
-            env: {
-              ...process.env,
-              CLAUDE_TEMPO_ENSEMBLE: config.ensemble,
-              COPILOT_BRIDGE_NAME: name,
-              TEMPORAL_ADDRESS: config.temporalAddress,
-            },
+          const { pid } = spawnCopilotBridge({
+            name,
+            ensemble: config.ensemble,
+            temporalAddress: config.temporalAddress,
+            workDir,
           });
-          child.unref();
-          log(`Spawned copilot-bridge (pid ${child.pid}) in ${workDir} as "${name}"`);
+          log(`Spawned copilot-bridge (pid ${pid}) in ${workDir} as "${name}"`);
         } else {
           const spawnArgs = [
             '--dangerously-skip-permissions',
@@ -99,8 +85,8 @@ export function registerRecruitTool(
             '-n', name,
           ];
           const { pid } = spawnInTerminal(spawnArgs, workDir, {
-            CLAUDE_TEMPO_ENSEMBLE: config.ensemble,
-            CLAUDE_TEMPO_CONDUCTOR: '',
+            [ENV.ENSEMBLE]: config.ensemble,
+            [ENV.CONDUCTOR]: '',
           });
           log(`Spawned claude process (pid ${pid}) in ${workDir} as "${name}"`);
         }

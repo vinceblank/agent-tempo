@@ -6,7 +6,7 @@ import { execSync } from 'child_process';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { Client, Connection, WorkflowIdConflictPolicy } from '@temporalio/client';
-import { getConfig, conductorWorkflowId } from './config';
+import { getConfig, conductorWorkflowId, ENV } from './config';
 import { createWorker } from './worker';
 import { SessionInput } from './types';
 import { registerEnsembleTool } from './tools/ensemble';
@@ -46,8 +46,8 @@ function getGitInfo(workDir: string): { gitRoot?: string; gitBranch?: string } {
 
 async function main() {
   // Only activate when explicitly opted in via CLAUDE_TEMPO_ENSEMBLE
-  if (!process.env.CLAUDE_TEMPO_ENSEMBLE) {
-    log('CLAUDE_TEMPO_ENSEMBLE not set — MCP server idle (no workflow started)');
+  if (!process.env[ENV.ENSEMBLE]) {
+    log(`${ENV.ENSEMBLE} not set — MCP server idle (no workflow started)`);
     // Keep the process alive so Claude Code doesn't see a crash, but do nothing
     const transport = new StdioServerTransport();
     const idleServer = new McpServer({ name: 'claude-tempo', version: '0.1.0' });
@@ -56,8 +56,8 @@ async function main() {
   }
 
   const config = getConfig();
-  const isConductor = process.env.CLAUDE_TEMPO_CONDUCTOR === 'true';
-  let playerId = isConductor ? 'conductor' : (process.env.CLAUDE_TEMPO_PLAYER_NAME || crypto.randomBytes(4).toString('hex'));
+  const isConductor = process.env[ENV.CONDUCTOR] === 'true';
+  let playerId = isConductor ? 'conductor' : (process.env[ENV.PLAYER_NAME] || crypto.randomBytes(4).toString('hex'));
   const getPlayerId = () => playerId;
   const setPlayerId = (id: string) => { playerId = id; };
   const workDir = process.cwd();
@@ -163,7 +163,7 @@ async function main() {
   // Skip when running under the Copilot bridge: the bridge has its own poller that
   // injects messages via sendAndWait. If both pollers run, this one wins the race and
   // sends messages via notifications/claude/channel — which Copilot doesn't understand.
-  const isBridgeMode = process.env.CLAUDE_TEMPO_BRIDGE_MODE === '1';
+  const isBridgeMode = process.env[ENV.BRIDGE_MODE] === '1';
   const stopPoller = isBridgeMode
     ? () => {} // no-op — bridge handles message delivery
     : startMessagePoller(handle, async (messages) => {

@@ -156,7 +156,6 @@ The `claude-tempo` CLI handles setup, session management, and diagnostics.
 ```
 --temporal-address <addr>   Temporal server address (default: localhost:7233)
 -n, --name <name>           Set the player name for the session (start/conduct/up)
---agent <claude|copilot>    Agent type to spawn (default: claude; start/conduct)
 --skip-preflight            Skip preflight checks (start/conduct)
 --background, -d            Run Temporal in background (server only)
 --dir <path>                Target directory for init (default: cwd)
@@ -187,7 +186,6 @@ ok You're all set!
 
   What next?
   claude-tempo start myband    Add a player session
-  claude-tempo start myband --agent copilot -n copilot-1   Add a Copilot player
   claude-tempo status myband   See who's active
   Or ask the conductor to recruit players for you
 ```
@@ -395,7 +393,13 @@ When a Claude Code session crashes or is closed without graceful shutdown, its T
 
 This means you don't need to manually clean up crashed sessions — just `cue` the dead player and the system handles the rest.
 
+## Known limitations
+
+- **`recruit` requires manual acknowledgment**: Recruited Claude Code sessions use `--dangerously-load-development-channels` to enable channel-based message delivery. Claude Code shows an interactive confirmation prompt that must be manually acknowledged (press Enter) in the spawned terminal window. This will be resolved once claude-tempo is published as an approved channel plugin. Copilot bridge sessions do not have this limitation.
+
 ## Copilot CLI integration (experimental)
+
+> **Warning:** Copilot bridge support is **experimental** and subject to breaking changes. Copilot bridge sessions are headless — they have no interactive terminal. A Claude conductor (or custom Temporal client) is required to send them work via `cue`. Do not rely on this feature for production workflows.
 
 GitHub Copilot CLI sessions can join an ensemble via the **Copilot bridge**. The bridge uses the [Copilot SDK](https://github.com/github/copilot-sdk) to spawn a Copilot session with claude-tempo as an MCP server, and injects incoming messages as prompts.
 
@@ -413,54 +417,26 @@ You also need:
 
 ### Starting a Copilot player
 
-```bash
-# Via CLI (recommended):
-claude-tempo start --agent copilot -n copilot-dev
+The easiest way to add a Copilot player is via the `recruit` tool from any active session in the ensemble. The `agent` parameter accepts `"claude"` (default) or `"copilot"`:
 
-# Or directly with env vars (Linux/macOS):
+> "Recruit a copilot session named 'copilot-dev' in /repos/my-project with agent copilot"
+
+This spawns a headless bridge process, registers it as a Temporal workflow, and sets the player name automatically.
+
+<details>
+<summary>Advanced: running the bridge directly</summary>
+
+You can also start the bridge manually with environment variables:
+
+```bash
+# Linux/macOS
 CLAUDE_TEMPO_ENSEMBLE=default COPILOT_BRIDGE_NAME=copilot-dev npx ts-node src/copilot-bridge.ts
 
-# Or directly with env vars (Windows PowerShell):
+# Windows PowerShell
 $env:TEMPORAL_ADDRESS="localhost:7233"; $env:CLAUDE_TEMPO_ENSEMBLE="default"; $env:COPILOT_BRIDGE_NAME="copilot-dev"; npx ts-node src/copilot-bridge.ts
-
-# Or from any session in the ensemble, recruit one:
-# "Recruit a copilot session named 'copilot-dev' with agent copilot"
 ```
 
-The CLI `--agent` flag and the `recruit` tool's `agent` parameter both accept `"claude"` (default) or `"copilot"`.
-
-### Shell shortcuts
-
-Add these functions to your shell profile to simplify launching Copilot bridge sessions:
-
-**Linux/macOS** — add to `~/.bashrc` or `~/.zshrc`:
-
-```bash
-copilot-tempo() {
-  CLAUDE_TEMPO_ENSEMBLE="${1:-default}" COPILOT_BRIDGE_NAME="${2}" \
-    npx ts-node /path/to/claude-tempo/src/copilot-bridge.ts
-}
-```
-
-**Windows** — add to your PowerShell `$PROFILE`:
-
-```powershell
-function copilot-tempo($ensemble = "default", $name = "") {
-  $env:TEMPORAL_ADDRESS = "localhost:7233"
-  $env:CLAUDE_TEMPO_ENSEMBLE = $ensemble
-  $env:COPILOT_BRIDGE_NAME = $name
-  npx ts-node C:\path\to\claude-tempo\src\copilot-bridge.ts
-  $env:CLAUDE_TEMPO_ENSEMBLE = ""
-  $env:COPILOT_BRIDGE_NAME = ""
-}
-```
-
-Usage:
-
-```bash
-copilot-tempo                        # join "default" ensemble, auto-generated name
-copilot-tempo my-project copilot-1   # join "my-project" ensemble as "copilot-1"
-```
+</details>
 
 ### How it works
 
@@ -481,10 +457,8 @@ copilot-tempo my-project copilot-1   # join "my-project" ensemble as "copilot-1"
 
 ### Limitations
 
-- **`recruit` requires manual acknowledgment (Claude backend)**: Recruited Claude Code sessions use `--dangerously-load-development-channels` to enable channel-based message delivery. Claude Code shows an interactive confirmation prompt that must be manually acknowledged (press Enter) in the spawned terminal window. This will be resolved once claude-tempo is published as an approved channel plugin. The Copilot backend does not have this limitation.
 - **No interactive access** — Copilot bridge sessions run in the background. Unlike Claude Code sessions where you can chat directly, bridge sessions only respond to cues from other players. To send messages to a bridge session, use `cue` from another player or signal the workflow directly via the Temporal CLI.
-- **Conductor polling latency** — Copilot conductors poll for messages every 2 seconds, unlike Claude Code conductors which receive instant channel notifications. This adds slight latency to orchestration.
-- **No push-based message delivery** — the bridge polls for messages (2s interval), unlike Claude Code sessions which receive instant channel notifications.
+- **Polling latency** — the bridge polls for messages every 2 seconds, unlike Claude Code sessions which receive instant channel notifications. This adds slight latency to message delivery and orchestration.
 - **Copilot sessions must be spawned via the bridge** to participate (not standalone Copilot CLI).
 - **The `@github/copilot-sdk` adds ~243MB** to node_modules when installed.
 - **Node 20+ required for Copilot features** — the `@github/copilot-sdk` requires Node.js 20 or later. The rest of claude-tempo works on Node 18+.

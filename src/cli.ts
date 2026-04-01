@@ -3,6 +3,8 @@
 import { start, status, init, server, up, down, help, version } from './cli/commands';
 import { runPreflight } from './cli/preflight';
 import * as out from './cli/output';
+import { AgentType } from './types';
+import { ENV } from './config';
 
 interface ParsedArgs {
   command: string;
@@ -13,14 +15,14 @@ interface ParsedArgs {
   skipPreflight: boolean;
   background: boolean;
   keepMcp: boolean;
-  agent?: 'claude' | 'copilot';
+  agent?: AgentType;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
   const result: ParsedArgs = {
     command: 'help',
     positional: [],
-    temporalAddress: process.env.TEMPORAL_ADDRESS || 'localhost:7233',
+    temporalAddress: process.env[ENV.TEMPORAL_ADDRESS] || 'localhost:7233',
     dir: process.cwd(),
     skipPreflight: false,
     background: false,
@@ -72,7 +74,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const ensemble = args.positional[1] || process.env.CLAUDE_TEMPO_ENSEMBLE || 'default';
+  const ensemble = args.positional[1] || process.env[ENV.ENSEMBLE] || 'default';
 
   switch (args.command) {
     case 'conduct':
