@@ -156,7 +156,6 @@ The `claude-tempo` CLI handles setup, session management, and diagnostics.
 ```
 --temporal-address <addr>   Temporal server address (default: localhost:7233)
 -n, --name <name>           Set the player name for the session (start/conduct/up)
---agent <claude|copilot>    Agent type to spawn (default: claude; start/conduct)
 --skip-preflight            Skip preflight checks (start/conduct)
 --background, -d            Run Temporal in background (server only)
 --dir <path>                Target directory for init (default: cwd)
@@ -187,7 +186,6 @@ ok You're all set!
 
   What next?
   claude-tempo start myband    Add a player session
-  claude-tempo start myband --agent copilot -n copilot-1   Add a Copilot player
   claude-tempo status myband   See who's active
   Or ask the conductor to recruit players for you
 ```
@@ -397,6 +395,8 @@ This means you don't need to manually clean up crashed sessions — just `cue` t
 
 ## Copilot CLI integration (experimental)
 
+> **Warning:** Copilot bridge support is **experimental** and subject to breaking changes. Copilot bridge sessions are headless — they have no interactive terminal. A Claude conductor (or custom Temporal client) is required to send them work via `cue`. Do not rely on this feature for production workflows.
+
 GitHub Copilot CLI sessions can join an ensemble via the **Copilot bridge**. The bridge uses the [Copilot SDK](https://github.com/github/copilot-sdk) to spawn a Copilot session with claude-tempo as an MCP server, and injects incoming messages as prompts.
 
 ### Setup
@@ -414,10 +414,7 @@ You also need:
 ### Starting a Copilot player
 
 ```bash
-# Via CLI (recommended):
-claude-tempo start --agent copilot -n copilot-dev
-
-# Or directly with env vars (Linux/macOS):
+# Directly with env vars (Linux/macOS):
 CLAUDE_TEMPO_ENSEMBLE=default COPILOT_BRIDGE_NAME=copilot-dev npx ts-node src/copilot-bridge.ts
 
 # Or directly with env vars (Windows PowerShell):
@@ -427,7 +424,7 @@ $env:TEMPORAL_ADDRESS="localhost:7233"; $env:CLAUDE_TEMPO_ENSEMBLE="default"; $e
 # "Recruit a copilot session named 'copilot-dev' with agent copilot"
 ```
 
-The CLI `--agent` flag and the `recruit` tool's `agent` parameter both accept `"claude"` (default) or `"copilot"`.
+The `recruit` tool's `agent` parameter accepts `"claude"` (default) or `"copilot"`.
 
 ### Shell shortcuts
 

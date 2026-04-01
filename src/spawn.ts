@@ -277,6 +277,10 @@ export function spawnCopilotBridge(opts: CopilotBridgeOpts): CopilotBridgeResult
     closeSync(logFd);
   }
 
+  if (child.pid != null) {
+    writeFileSync(pidPath, String(child.pid));
+  }
+
   log(`Spawned copilot-bridge (pid ${child.pid}) in ${opts.workDir} as "${opts.name}"`);
   return { pid: child.pid, logPath, pidPath };
 }
