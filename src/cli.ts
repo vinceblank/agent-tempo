@@ -126,6 +126,7 @@ async function main() {
         ensemble,
         temporalAddress: args.temporalAddress,
         name: args.name,
+        agent: args.agent ?? 'claude',
       });
       break;
 
