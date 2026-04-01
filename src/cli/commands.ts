@@ -71,20 +71,24 @@ export async function start(opts: StartOpts) {
     fs.mkdirSync(join(workDir, 'logs'), { recursive: true });
     const logFd = fs.openSync(logPath, 'a');
 
-    const child = cpSpawn(cmd, cmdArgs, {
-      cwd: workDir,
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-      env: {
-        ...process.env,
-        CLAUDE_TEMPO_ENSEMBLE: opts.ensemble,
-        COPILOT_BRIDGE_NAME: opts.name || '',
-        TEMPORAL_ADDRESS: opts.temporalAddress,
-        ...(opts.conductor ? { CLAUDE_TEMPO_CONDUCTOR: 'true' } : {}),
-      },
-    });
-    child.unref();
-    fs.closeSync(logFd);
+    let child: ReturnType<typeof cpSpawn>;
+    try {
+      child = cpSpawn(cmd, cmdArgs, {
+        cwd: workDir,
+        detached: true,
+        stdio: ['ignore', logFd, logFd],
+        env: {
+          ...process.env,
+          CLAUDE_TEMPO_ENSEMBLE: opts.ensemble,
+          COPILOT_BRIDGE_NAME: opts.name || '',
+          TEMPORAL_ADDRESS: opts.temporalAddress,
+          ...(opts.conductor ? { CLAUDE_TEMPO_CONDUCTOR: 'true' } : {}),
+        },
+      });
+      child.unref();
+    } finally {
+      fs.closeSync(logFd);
+    }
     out.success(`Launched copilot bridge${opts.name ? ` "${opts.name}"` : ''} (pid ${child.pid ?? 'unknown'})`);
   } else {
     const claudeArgs = [

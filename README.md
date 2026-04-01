@@ -156,7 +156,7 @@ The `claude-tempo` CLI handles setup, session management, and diagnostics.
 ```
 --temporal-address <addr>   Temporal server address (default: localhost:7233)
 -n, --name <name>           Set the player name for the session (start/conduct/up)
---agent <claude|copilot>    Agent type to spawn (default: claude; start only)
+--agent <claude|copilot>    Agent type to spawn (default: claude; start/conduct)
 --skip-preflight            Skip preflight checks (start/conduct)
 --background, -d            Run Temporal in background (server only)
 --dir <path>                Target directory for init (default: cwd)

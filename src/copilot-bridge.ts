@@ -13,6 +13,7 @@
  *
  * Environment variables:
  *   CLAUDE_TEMPO_ENSEMBLE     — ensemble name (default: "default")
+ *   CLAUDE_TEMPO_PLAYER_NAME  — player ID for workflow registration (set by spawner for deterministic workflow IDs)
  *   COPILOT_BRIDGE_NAME       — player name for set_name (optional)
  *   COPILOT_BRIDGE_MODEL      — model to use (optional)
  *   GITHUB_TOKEN              — GitHub auth token (optional, uses logged-in user by default)
@@ -46,6 +47,10 @@ const log = (...args: unknown[]) => {
   const msg = `[copilot-bridge] ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}\n`;
   fs.writeSync(2, msg);
 };
+
+/** Filter process.env to exclude undefined values (safe to spread as Record<string, string>). */
+const cleanEnv = (): Record<string, string> =>
+  Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined));
 
 const POLL_INTERVAL_MS = 2000;
 const CREATE_SESSION_TIMEOUT_MS = 45_000;
@@ -91,22 +96,15 @@ async function main() {
     namespace: config.temporalNamespace,
   });
 
-  // Record existing workflows so we can find the new one created by the MCP server.
-  // For conductors, the workflow ID is deterministic (claude-session-{ensemble}-conductor),
-  // so on reconnection the MCP server reuses the same workflow. We need to handle both cases:
-  // 1. Fresh start: new workflow ID appears that wasn't in existingIds
-  // 2. Reconnection: MCP server attaches to the existing conductor workflow
-  const existingIds = new Set<string>();
-  const listQuery = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${config.ensemble}"`;
-  for await (const wf of client.workflow.list({ query: listQuery })) {
-    existingIds.add(wf.workflowId);
-  }
-
-  // If we're a conductor reconnecting, we know the exact workflow ID
+  // Determine the expected workflow ID. The MCP server uses the pattern
+  // `claude-session-{ensemble}-{playerId}`, where playerId comes from
+  // CLAUDE_TEMPO_PLAYER_NAME or a random hex. We pass CLAUDE_TEMPO_PLAYER_NAME
+  // to the MCP server env so both sides agree on the ID.
   const isConductor = !!process.env.CLAUDE_TEMPO_CONDUCTOR;
-  const expectedWorkflowId = isConductor
-    ? `claude-session-${config.ensemble}-conductor`
-    : null;
+  const playerIdForWorkflow = isConductor
+    ? 'conductor'
+    : (process.env.CLAUDE_TEMPO_PLAYER_NAME || playerName || `copilot-${Date.now()}`);
+  const expectedWorkflowId = `claude-session-${config.ensemble}-${playerIdForWorkflow}`;
 
   // Build the MCP server command — always use the compiled dist/server.js
   // Run `npm run build` (or `pnpm build`) before using the bridge.
@@ -119,20 +117,21 @@ async function main() {
   const serverCommand = 'node';
   const serverArgs = [serverJsPath];
   const mcpEnv: Record<string, string> = {
-    ...process.env as Record<string, string>,
+    ...cleanEnv(),
     CLAUDE_TEMPO_ENSEMBLE: config.ensemble,
     TEMPORAL_ADDRESS: config.temporalAddress,
     TEMPORAL_NAMESPACE: config.temporalNamespace,
     CLAUDE_TEMPO_TASK_QUEUE: config.taskQueue,
     CLAUDE_TEMPO_CONDUCTOR: process.env.CLAUDE_TEMPO_CONDUCTOR || '',
     CLAUDE_TEMPO_BRIDGE_MODE: '1', // disable MCP server's message poller — bridge handles delivery
+    CLAUDE_TEMPO_PLAYER_NAME: playerIdForWorkflow, // ensures MCP server uses same workflow ID
   };
 
   // Spawn Copilot SDK client and session
   const copilotClient = new CopilotClient({
     logLevel: 'debug',
     env: {
-      ...process.env as Record<string, string>,
+      ...cleanEnv(),
       ...(process.env.GITHUB_TOKEN ? { GITHUB_TOKEN: process.env.GITHUB_TOKEN } : {}),
     },
   });
@@ -216,48 +215,35 @@ async function main() {
     log(`Initial prompt error after ${Date.now()}ms:`, err?.message, err?.stack?.substring(0, 300));
   }
 
-  // Wait for the MCP server's workflow to appear in Temporal
-  log('Waiting for MCP server workflow to register...');
-  log(`List query: ${listQuery}`);
-  log(`Existing workflow IDs: ${[...existingIds].join(', ') || '(none)'}`);
-  if (expectedWorkflowId) {
-    log(`Conductor mode: will accept existing workflow ${expectedWorkflowId}`);
-  }
+  // Wait for the MCP server's workflow to register in Temporal.
+  // We know the exact workflow ID because we pass CLAUDE_TEMPO_PLAYER_NAME to the
+  // MCP server — no need for a time-window heuristic that could misidentify workflows.
+  log(`Waiting for workflow ${expectedWorkflowId} to register...`);
+  const handle = client.workflow.getHandle(expectedWorkflowId);
 
-  let newWorkflowId: string | null = null;
-
-  // Fast path: if we're a conductor reconnecting and the workflow already exists, use it directly
-  if (expectedWorkflowId && existingIds.has(expectedWorkflowId)) {
-    log(`Reconnecting to existing conductor workflow: ${expectedWorkflowId}`);
-    newWorkflowId = expectedWorkflowId;
-  }
-
-  // Otherwise, wait for a new workflow to appear
-  if (!newWorkflowId) {
-    for (let attempt = 0; attempt < 30; attempt++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      const found: string[] = [];
-      for await (const wf of client.workflow.list({ query: listQuery })) {
-        found.push(wf.workflowId);
-        if (!existingIds.has(wf.workflowId)) {
-          newWorkflowId = wf.workflowId;
-          break;
-        }
+  let workflowReady = false;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    try {
+      const desc = await handle.describe();
+      if (desc.status.name === 'RUNNING') {
+        workflowReady = true;
+        break;
       }
-      if (newWorkflowId) break;
-      if (attempt % 5 === 4) log(`Still waiting... attempt ${attempt + 1}/30, found workflows: [${found.join(', ')}]`);
+    } catch {
+      // Workflow not yet started
     }
+    await new Promise((r) => setTimeout(r, 1000));
+    if (attempt % 5 === 4) log(`Still waiting... attempt ${attempt + 1}/30`);
   }
 
-  if (!newWorkflowId) {
-    log('ERROR: MCP server workflow did not register within 30 seconds');
+  if (!workflowReady) {
+    log(`ERROR: Workflow ${expectedWorkflowId} did not register within 30 seconds`);
     await session.disconnect();
     await copilotClient.stop();
     process.exit(1);
   }
 
-  log(`Found workflow: ${newWorkflowId}`);
-  const handle = client.workflow.getHandle(newWorkflowId);
+  log(`Workflow ready: ${expectedWorkflowId}`);
 
   // If a name was requested, send the set_name instruction
   if (playerName) {
@@ -363,6 +349,17 @@ async function main() {
   const interval = setInterval(poll, POLL_INTERVAL_MS);
   log('Message poller started. Bridge is running.');
 
+  // Write PID file so callers can find/kill orphaned bridge processes
+  const pidDir = path.join(workDir, 'logs');
+  const pidFile = path.join(pidDir, `${playerName || playerIdForWorkflow}.pid`);
+  try {
+    fs.mkdirSync(pidDir, { recursive: true });
+    fs.writeFileSync(pidFile, String(process.pid));
+    log(`PID file written: ${pidFile}`);
+  } catch (err: any) {
+    log(`Warning: could not write PID file: ${err?.message}`);
+  }
+
   // Graceful shutdown
   const shutdown = async () => {
     log('Shutting down...');
@@ -378,6 +375,8 @@ async function main() {
     } catch {
       // session may already be disconnected
     }
+    // Clean up PID file
+    try { fs.unlinkSync(pidFile); } catch { /* may already be gone */ }
     await copilotClient.stop();
     process.exit(0);
   };
