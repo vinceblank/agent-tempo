@@ -1,6 +1,6 @@
 {
   "name": "claude-tempo",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "MCP server for multi-session Claude Code coordination via Temporal",
   "repository": {
     "type": "git",
@@ -25,7 +25,9 @@
     "./signals": {
       "types": "./dist/workflows/signals.d.ts",
       "default": "./dist/workflows/signals.js"
-    }
+    },
+    "./workflow-bundle": "./workflow-bundle.js",
+    "./package.json": "./package.json"
   },
   "bin": {
     "claude-tempo": "dist/cli.js",
