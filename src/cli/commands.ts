@@ -384,6 +384,7 @@ interface UpOpts {
   ensemble: string;
   temporalAddress: string;
   name?: string;
+  agent: AgentType;
 }
 
 export async function up(opts: UpOpts) {
@@ -447,17 +448,29 @@ export async function up(opts: UpOpts) {
 
   // Step 5: Launch conductor
   console.log();
-  out.log(`Launching conductor in ensemble ${out.cyan(opts.ensemble)}...`);
-  const claudeArgs = [
-    '--dangerously-skip-permissions',
-    '--dangerously-load-development-channels', 'server:claude-tempo',
-  ];
-  if (opts.name) claudeArgs.push('-n', opts.name);
+  out.log(`Launching conductor in ensemble ${out.cyan(opts.ensemble)}${opts.agent === 'copilot' ? out.dim(' (copilot)') : ''}...`);
 
-  const { pid } = spawnInTerminal(claudeArgs, process.cwd(), {
-    [ENV.ENSEMBLE]: opts.ensemble,
-    [ENV.CONDUCTOR]: 'true',
-  });
+  let pid: number | undefined;
+  if (opts.agent === 'copilot') {
+    ({ pid } = spawnCopilotBridge({
+      name: opts.name || `${opts.ensemble}-conductor`,
+      ensemble: opts.ensemble,
+      temporalAddress: opts.temporalAddress,
+      isConductor: true,
+      workDir: process.cwd(),
+    }));
+  } else {
+    const claudeArgs = [
+      '--dangerously-skip-permissions',
+      '--dangerously-load-development-channels', 'server:claude-tempo',
+    ];
+    if (opts.name) claudeArgs.push('-n', opts.name);
+
+    ({ pid } = spawnInTerminal(claudeArgs, process.cwd(), {
+      [ENV.ENSEMBLE]: opts.ensemble,
+      [ENV.CONDUCTOR]: 'true',
+    }));
+  }
 
   console.log();
   out.success('You\'re all set!');
