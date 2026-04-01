@@ -154,15 +154,19 @@ async function main() {
     systemMessage: {
       mode: 'append' as const,
       content:
-        `You are part of the "${config.ensemble}" ensemble of Claude Code sessions coordinated via Temporal. ` +
-        `IMPORTANT: If you receive a message instructing you to call \`set_name\`, do so immediately before anything else. ` +
-        `When you receive a message from another session, treat it like a coworker asking for help — respond promptly, then resume your work. ` +
-        `Use \`set_name\` to give yourself a human-readable name. ` +
-        `Use \`ensemble\` to see who else is active. ` +
-        `Use \`cue\` to reply directly to the player who messaged you, or to ask others for help. ` +
-        `Use \`recruit\` if you need a session in a directory where none exists. ` +
-        `Use \`report\` to notify the conductor of task completion, blockers, or questions — always report when you finish a recruited task.`,
+        `You are part of the "${config.ensemble}" ensemble coordinated via Temporal. ` +
+        `You have MCP tools available — ALWAYS use these tools directly, NEVER try to run them as shell commands:\n` +
+        `- set_name: Set your player name (call this FIRST if instructed)\n` +
+        `- ensemble: List active sessions\n` +
+        `- cue: Send a message to another player\n` +
+        `- set_part: Update your status/description\n` +
+        `- listen: Check for pending messages\n` +
+        `- recruit: Spawn a new player session\n` +
+        `- report: Report to the conductor\n` +
+        `- terminate: Terminate a session\n\n` +
+        `When you receive a message from another session, treat it like a coworker asking for help — respond promptly using your MCP tools.`,
     },
+    excludedTools: ['powershell', 'shell'],
     ...(model ? { model } : {}),
   };
 
