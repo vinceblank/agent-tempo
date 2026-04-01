@@ -1,6 +1,8 @@
 // Shared types used by both workflow code (V8 sandbox) and Node.js server code.
 // This file must NOT import from @temporalio/* — it's pure TypeScript types.
 
+export type AgentType = 'claude' | 'copilot';
+
 export interface SessionMetadata {
   playerId: string;
   ensemble: string;

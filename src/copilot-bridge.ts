@@ -22,7 +22,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Client, Connection } from '@temporalio/client';
-import { getConfig } from './config';
+import { getConfig, ENV } from './config';
 import { Message } from './types';
 
 // Optional dependency — must be installed separately: npm install @github/copilot-sdk
@@ -81,8 +81,8 @@ async function createSessionWithTimeout(
 
 async function main() {
   const config = getConfig();
-  const playerName = process.env.COPILOT_BRIDGE_NAME;
-  const model = process.env.COPILOT_BRIDGE_MODEL;
+  const playerName = process.env[ENV.BRIDGE_NAME];
+  const model = process.env[ENV.BRIDGE_MODEL];
   const workDir = process.cwd();
 
   log(`Starting Copilot bridge in ${workDir} (ensemble: ${config.ensemble})`);
@@ -100,10 +100,10 @@ async function main() {
   // `claude-session-{ensemble}-{playerId}`, where playerId comes from
   // CLAUDE_TEMPO_PLAYER_NAME or a random hex. We pass CLAUDE_TEMPO_PLAYER_NAME
   // to the MCP server env so both sides agree on the ID.
-  const isConductor = !!process.env.CLAUDE_TEMPO_CONDUCTOR;
+  const isConductor = !!process.env[ENV.CONDUCTOR];
   const playerIdForWorkflow = isConductor
     ? 'conductor'
-    : (process.env.CLAUDE_TEMPO_PLAYER_NAME || playerName || `copilot-${Date.now()}`);
+    : (process.env[ENV.PLAYER_NAME] || playerName || `copilot-${Date.now()}`);
   const expectedWorkflowId = `claude-session-${config.ensemble}-${playerIdForWorkflow}`;
 
   // Build the MCP server command — always use the compiled dist/server.js
@@ -118,13 +118,13 @@ async function main() {
   const serverArgs = [serverJsPath];
   const mcpEnv: Record<string, string> = {
     ...cleanEnv(),
-    CLAUDE_TEMPO_ENSEMBLE: config.ensemble,
-    TEMPORAL_ADDRESS: config.temporalAddress,
-    TEMPORAL_NAMESPACE: config.temporalNamespace,
-    CLAUDE_TEMPO_TASK_QUEUE: config.taskQueue,
-    CLAUDE_TEMPO_CONDUCTOR: process.env.CLAUDE_TEMPO_CONDUCTOR || '',
-    CLAUDE_TEMPO_BRIDGE_MODE: '1', // disable MCP server's message poller — bridge handles delivery
-    CLAUDE_TEMPO_PLAYER_NAME: playerIdForWorkflow, // ensures MCP server uses same workflow ID
+    [ENV.ENSEMBLE]: config.ensemble,
+    [ENV.TEMPORAL_ADDRESS]: config.temporalAddress,
+    [ENV.TEMPORAL_NAMESPACE]: config.temporalNamespace,
+    [ENV.TASK_QUEUE]: config.taskQueue,
+    [ENV.CONDUCTOR]: process.env[ENV.CONDUCTOR] || '',
+    [ENV.BRIDGE_MODE]: '1', // disable MCP server's message poller — bridge handles delivery
+    [ENV.PLAYER_NAME]: playerIdForWorkflow, // ensures MCP server uses same workflow ID
   };
 
   // Spawn Copilot SDK client and session

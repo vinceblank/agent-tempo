@@ -1,7 +1,8 @@
 import { spawn, execFileSync } from 'child_process';
-import { writeFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, mkdirSync, openSync, closeSync, writeFileSync } from 'fs';
+import { join, resolve } from 'path';
 import { tmpdir } from 'os';
+import { ENV } from './config';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:spawn]', ...args);
 
@@ -211,4 +212,71 @@ export function spawnInTerminal(
   }
   child.unref();
   return { pid: child.pid };
+}
+
+// --- Copilot bridge spawning ---
+
+export interface CopilotBridgeOpts {
+  name: string;
+  ensemble: string;
+  temporalAddress: string;
+  isConductor?: boolean;
+  workDir: string;
+  /** Directory for log and PID files. Defaults to `logs/` inside workDir. */
+  logDir?: string;
+}
+
+export interface CopilotBridgeResult {
+  pid: number | undefined;
+  logPath: string;
+  pidPath: string;
+}
+
+/**
+ * Resolve the path to the compiled copilot-bridge.js.
+ * In dev (ts-node), returns a ts-node command; in production, returns the dist path.
+ */
+function resolveBridgePath(): { cmd: string; args: string[] } {
+  const isDev = __filename.endsWith('.ts');
+  if (isDev) {
+    return { cmd: 'npx', args: ['ts-node', resolve(__dirname, 'copilot-bridge.ts')] };
+  }
+  return { cmd: 'node', args: [resolve(__dirname, 'copilot-bridge.js')] };
+}
+
+/**
+ * Spawn a copilot bridge as a detached headless subprocess.
+ * Sets up log file, PID file, and all required env vars.
+ */
+export function spawnCopilotBridge(opts: CopilotBridgeOpts): CopilotBridgeResult {
+  const { cmd, args } = resolveBridgePath();
+  const logDirPath = opts.logDir || join(opts.workDir, 'logs');
+  const logName = opts.name || `copilot-${Date.now()}`;
+  const logPath = join(logDirPath, `${logName}.log`);
+  const pidPath = join(logDirPath, `${logName}.pid`);
+
+  mkdirSync(logDirPath, { recursive: true });
+  const logFd = openSync(logPath, 'a');
+
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(cmd, args, {
+      cwd: opts.workDir,
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+      env: {
+        ...process.env,
+        [ENV.ENSEMBLE]: opts.ensemble,
+        [ENV.BRIDGE_NAME]: opts.name,
+        [ENV.TEMPORAL_ADDRESS]: opts.temporalAddress,
+        ...(opts.isConductor ? { [ENV.CONDUCTOR]: 'true' } : {}),
+      },
+    });
+    child.unref();
+  } finally {
+    closeSync(logFd);
+  }
+
+  log(`Spawned copilot-bridge (pid ${child.pid}) in ${opts.workDir} as "${opts.name}"`);
+  return { pid: child.pid, logPath, pidPath };
 }

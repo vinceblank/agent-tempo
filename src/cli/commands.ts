@@ -3,8 +3,9 @@ import { join, resolve } from 'path';
 import { execFileSync, spawn as cpSpawn, ChildProcess } from 'child_process';
 import { homedir } from 'os';
 import { Connection, Client } from '@temporalio/client';
-import { spawnInTerminal } from '../spawn';
-import { conductorWorkflowId } from '../config';
+import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
+import { conductorWorkflowId, ENV } from '../config';
+import { AgentType } from '../types';
 import { runPreflight } from './preflight';
 import * as out from './output';
 
@@ -17,7 +18,7 @@ interface StartOpts {
   temporalAddress: string;
   name?: string;
   skipPreflight?: boolean;
-  agent: 'claude' | 'copilot';
+  agent: AgentType;
 }
 
 export async function start(opts: StartOpts) {
@@ -57,39 +58,14 @@ export async function start(opts: StartOpts) {
   out.log(`Starting ${out.bold(role)} in ensemble ${out.cyan(opts.ensemble)}${opts.agent === 'copilot' ? out.dim(' (copilot)') : ''}`);
 
   if (opts.agent === 'copilot') {
-    // Spawn copilot-bridge as a detached headless subprocess
-    const isDev = __filename.endsWith('.ts');
-    const cmd = isDev ? 'npx' : 'node';
-    const cmdArgs = isDev
-      ? ['ts-node', resolve(__dirname, '..', '..', 'src', 'copilot-bridge.ts')]
-      : [resolve(__dirname, '..', 'copilot-bridge.js')];
-
-    // Log bridge output for debugging
-    const fs = require('fs');
-    const logName = opts.name || `copilot-${Date.now()}`;
-    const logPath = join(workDir, 'logs', `${logName}.log`);
-    fs.mkdirSync(join(workDir, 'logs'), { recursive: true });
-    const logFd = fs.openSync(logPath, 'a');
-
-    let child: ReturnType<typeof cpSpawn>;
-    try {
-      child = cpSpawn(cmd, cmdArgs, {
-        cwd: workDir,
-        detached: true,
-        stdio: ['ignore', logFd, logFd],
-        env: {
-          ...process.env,
-          CLAUDE_TEMPO_ENSEMBLE: opts.ensemble,
-          COPILOT_BRIDGE_NAME: opts.name || '',
-          TEMPORAL_ADDRESS: opts.temporalAddress,
-          ...(opts.conductor ? { CLAUDE_TEMPO_CONDUCTOR: 'true' } : {}),
-        },
-      });
-      child.unref();
-    } finally {
-      fs.closeSync(logFd);
-    }
-    out.success(`Launched copilot bridge${opts.name ? ` "${opts.name}"` : ''} (pid ${child.pid ?? 'unknown'})`);
+    const { pid } = spawnCopilotBridge({
+      name: opts.name || `copilot-${Date.now()}`,
+      ensemble: opts.ensemble,
+      temporalAddress: opts.temporalAddress,
+      isConductor: opts.conductor,
+      workDir,
+    });
+    out.success(`Launched copilot bridge${opts.name ? ` "${opts.name}"` : ''} (pid ${pid ?? 'unknown'})`);
   } else {
     const claudeArgs = [
       '--dangerously-skip-permissions',
@@ -100,13 +76,13 @@ export async function start(opts: StartOpts) {
     }
 
     const envVars: Record<string, string> = {
-      CLAUDE_TEMPO_ENSEMBLE: opts.ensemble,
+      [ENV.ENSEMBLE]: opts.ensemble,
     };
     if (opts.conductor) {
-      envVars.CLAUDE_TEMPO_CONDUCTOR = 'true';
+      envVars[ENV.CONDUCTOR] = 'true';
     }
     if (opts.name) {
-      envVars.CLAUDE_TEMPO_PLAYER_NAME = opts.name;
+      envVars[ENV.PLAYER_NAME] = opts.name;
     }
 
     const { pid } = spawnInTerminal(claudeArgs, workDir, envVars);
@@ -479,8 +455,8 @@ export async function up(opts: UpOpts) {
   if (opts.name) claudeArgs.push('-n', opts.name);
 
   const { pid } = spawnInTerminal(claudeArgs, process.cwd(), {
-    CLAUDE_TEMPO_ENSEMBLE: opts.ensemble,
-    CLAUDE_TEMPO_CONDUCTOR: 'true',
+    [ENV.ENSEMBLE]: opts.ensemble,
+    [ENV.CONDUCTOR]: 'true',
   });
 
   console.log();

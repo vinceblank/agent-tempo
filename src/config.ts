@@ -1,3 +1,16 @@
+/** Environment variable name constants — use these instead of string literals. */
+export const ENV = {
+  ENSEMBLE: 'CLAUDE_TEMPO_ENSEMBLE',
+  CONDUCTOR: 'CLAUDE_TEMPO_CONDUCTOR',
+  PLAYER_NAME: 'CLAUDE_TEMPO_PLAYER_NAME',
+  TASK_QUEUE: 'CLAUDE_TEMPO_TASK_QUEUE',
+  BRIDGE_NAME: 'COPILOT_BRIDGE_NAME',
+  BRIDGE_MODE: 'CLAUDE_TEMPO_BRIDGE_MODE',
+  BRIDGE_MODEL: 'COPILOT_BRIDGE_MODEL',
+  TEMPORAL_ADDRESS: 'TEMPORAL_ADDRESS',
+  TEMPORAL_NAMESPACE: 'TEMPORAL_NAMESPACE',
+} as const;
+
 export interface Config {
   temporalAddress: string;
   temporalNamespace: string;
@@ -7,10 +20,10 @@ export interface Config {
 
 export function getConfig(): Config {
   return {
-    temporalAddress: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233',
-    temporalNamespace: process.env.TEMPORAL_NAMESPACE ?? 'default',
-    taskQueue: process.env.CLAUDE_TEMPO_TASK_QUEUE ?? 'claude-tempo',
-    ensemble: process.env.CLAUDE_TEMPO_ENSEMBLE ?? 'default',
+    temporalAddress: process.env[ENV.TEMPORAL_ADDRESS] ?? 'localhost:7233',
+    temporalNamespace: process.env[ENV.TEMPORAL_NAMESPACE] ?? 'default',
+    taskQueue: process.env[ENV.TASK_QUEUE] ?? 'claude-tempo',
+    ensemble: process.env[ENV.ENSEMBLE] ?? 'default',
   };
 }
 
