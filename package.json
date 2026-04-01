@@ -63,6 +63,9 @@
     "CLAUDE.md",
     "README.md"
   ],
+  "engines": {
+    "node": ">=18"
+  },
   "license": "MIT",
   "trustedDependencies": [
     "@swc/core",

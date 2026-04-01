@@ -113,6 +113,10 @@ async function main() {
   });
 
   const sessionConfig: Parameters<typeof copilotClient.createSession>[0] = {
+    // approveAll is intentional: Copilot bridge sessions run headless with no
+    // interactive terminal, so there is no way to prompt for permission approval.
+    // All tool calls are auto-approved by design — the bridge operator accepts
+    // this when launching the bridge process.
     onPermissionRequest: approveAll,
     workingDirectory: workDir,
     mcpServers: {

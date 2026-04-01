@@ -487,6 +487,7 @@ copilot-tempo my-project copilot-1   # join "my-project" ensemble as "copilot-1"
 - **No push-based message delivery** — the bridge polls for messages (2s interval), unlike Claude Code sessions which receive instant channel notifications.
 - **Copilot sessions must be spawned via the bridge** to participate (not standalone Copilot CLI).
 - **The `@github/copilot-sdk` adds ~243MB** to node_modules when installed.
+- **Node 20+ required for Copilot features** — the `@github/copilot-sdk` requires Node.js 20 or later. The rest of claude-tempo works on Node 18+.
 
 ## License
 

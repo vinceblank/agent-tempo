@@ -87,6 +87,7 @@ export function registerRecruitTool(
               ...process.env,
               CLAUDE_TEMPO_ENSEMBLE: config.ensemble,
               COPILOT_BRIDGE_NAME: name,
+              TEMPORAL_ADDRESS: config.temporalAddress,
             },
           });
           child.unref();
