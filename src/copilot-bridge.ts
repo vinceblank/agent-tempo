@@ -166,7 +166,7 @@ async function main() {
         `- terminate: Terminate a session\n\n` +
         `When you receive a message from another session, treat it like a coworker asking for help — respond promptly using your MCP tools.`,
     },
-    excludedTools: ['powershell', 'shell'],
+    excludedTools: ['write_powershell', 'read_powershell', 'list_powershell'],
     ...(model ? { model } : {}),
   };
 
@@ -190,6 +190,14 @@ async function main() {
         const data = event.data ?? event;
         const tools = data.toolRequests?.map((t: any) => t.name).join(', ') || 'none';
         log(`[event:${event.type}] content="${(data.content || '').substring(0, 200)}" tools=[${tools}]`);
+      } else if (event.type === 'session.info') {
+        log(`[session.info] ${JSON.stringify(event.data)}`);
+      } else if (event.type === 'session.warning') {
+        log(`[session.warning] ${JSON.stringify(event.data)}`);
+      } else if (event.type === 'session.mcp_servers_loaded') {
+        log(`[mcp_servers_loaded] ${JSON.stringify(event.data)}`);
+      } else if (event.type === 'session.mcp_server_status_changed') {
+        log(`[mcp_server_status_changed] ${JSON.stringify(event.data)}`);
       } else if (event.type === 'session.idle') {
         log(`[event:session.idle] Session is idle`);
       } else if (event.type?.includes('error') || event.type?.includes('disconnect')) {
@@ -215,6 +223,13 @@ async function main() {
       120_000,
     );
     log(`Initial prompt completed in ${Date.now() - t0}ms, result:`, JSON.stringify(initResult)?.substring(0, 300));
+    // Dump available tools for diagnostics
+    try {
+      const toolList = await session.rpc.tools.list({});
+      log('Available tools:', JSON.stringify(toolList.tools?.map((t: any) => t.name || t.namespacedName)));
+    } catch (toolErr: any) {
+      log('Failed to list tools:', toolErr?.message);
+    }
   } catch (err: any) {
     log(`Initial prompt error after ${Date.now()}ms:`, err?.message, err?.stack?.substring(0, 300));
   }
