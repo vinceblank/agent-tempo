@@ -231,6 +231,63 @@ export function getConfig(overrides: CliOverrides = {}): Config {
   };
 }
 
+export type ConfigSource = 'flag' | 'env' | 'config' | 'temporal-cli' | 'default' | 'none';
+
+export interface ConfigWithSources {
+  config: Config;
+  sources: Record<string, ConfigSource>;
+}
+
+/**
+ * Like getConfig(), but also returns which source each value came from.
+ * Used by `claude-tempo config show` to help users debug.
+ */
+export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSources {
+  const temporalCli = loadTemporalCliConfig();
+  const configFile = loadConfigFile();
+
+  function resolveWithSource(
+    key: string,
+    cliVal: string | undefined,
+    envKey: string,
+    fileVal: string | undefined,
+    temporalCliVal: string | undefined,
+    defaultVal?: string,
+  ): { value: string | undefined; source: ConfigSource } {
+    if (cliVal) return { value: cliVal, source: 'flag' };
+    if (process.env[envKey]) return { value: process.env[envKey], source: 'env' };
+    if (fileVal) return { value: fileVal, source: 'config' };
+    if (temporalCliVal) return { value: temporalCliVal, source: 'temporal-cli' };
+    if (defaultVal) return { value: defaultVal, source: 'default' };
+    return { value: undefined, source: 'none' };
+  }
+
+  const address = resolveWithSource('temporalAddress', overrides.temporalAddress, ENV.TEMPORAL_ADDRESS, configFile.temporalAddress, temporalCli.temporalAddress, 'localhost:7233');
+  const namespace = resolveWithSource('temporalNamespace', overrides.temporalNamespace, ENV.TEMPORAL_NAMESPACE, configFile.temporalNamespace, temporalCli.temporalNamespace, 'default');
+  const apiKey = resolveWithSource('temporalApiKey', overrides.temporalApiKey, ENV.TEMPORAL_API_KEY, configFile.temporalApiKey, temporalCli.temporalApiKey);
+  const tlsCert = resolveWithSource('temporalTlsCertPath', overrides.temporalTlsCertPath, ENV.TEMPORAL_TLS_CERT_PATH, configFile.temporalTlsCertPath, temporalCli.temporalTlsCertPath);
+  const tlsKey = resolveWithSource('temporalTlsKeyPath', overrides.temporalTlsKeyPath, ENV.TEMPORAL_TLS_KEY_PATH, configFile.temporalTlsKeyPath, temporalCli.temporalTlsKeyPath);
+
+  return {
+    config: {
+      temporalAddress: address.value!,
+      temporalNamespace: namespace.value!,
+      temporalApiKey: apiKey.value,
+      temporalTlsCertPath: tlsCert.value,
+      temporalTlsKeyPath: tlsKey.value,
+      taskQueue: process.env[ENV.TASK_QUEUE] ?? 'claude-tempo',
+      ensemble: process.env[ENV.ENSEMBLE] ?? 'default',
+    },
+    sources: {
+      temporalAddress: address.source,
+      temporalNamespace: namespace.source,
+      temporalApiKey: apiKey.source,
+      temporalTlsCertPath: tlsCert.source,
+      temporalTlsKeyPath: tlsKey.source,
+    },
+  };
+}
+
 /** Build a workflow ID for a player session: claude-session-{ensemble}-{playerId} */
 export function sessionWorkflowId(ensemble: string, playerId: string): string {
   return `claude-session-${ensemble}-${playerId}`;

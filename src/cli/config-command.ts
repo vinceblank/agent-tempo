@@ -1,8 +1,10 @@
 import * as readline from 'readline';
-import { loadConfigFile, saveConfigFile, CONFIG_FILE_PATH, PersistedConfig } from '../config';
+import { loadConfigFile, saveConfigFile, CONFIG_FILE_PATH, PersistedConfig, getConfigWithSources } from '../config';
 import { createTemporalConnection } from '../connection';
 import { getConfig } from '../config';
 import * as out from './output';
+
+const SECRET_KEYS = new Set(['temporalApiKey']);
 
 /** Read a line from stdin with a prompt and optional default value. */
 function ask(prompt: string, defaultVal?: string, mask = false): Promise<string> {
@@ -157,23 +159,26 @@ export function configSet(key: string, value: string): void {
 export function configShow(): void {
   out.heading('claude-tempo config');
 
-  const config = loadConfigFile();
-  const resolved = getConfig();
+  const { config, sources } = getConfigWithSources();
 
-  const rows: Array<[string, string, string]> = [
-    ['temporalAddress', resolved.temporalAddress, config.temporalAddress || ''],
-    ['temporalNamespace', resolved.temporalNamespace, config.temporalNamespace || ''],
-    ['temporalApiKey', resolved.temporalApiKey ? '****' : '(not set)', config.temporalApiKey ? '****' : ''],
-    ['temporalTlsCertPath', resolved.temporalTlsCertPath || '(not set)', config.temporalTlsCertPath || ''],
-    ['temporalTlsKeyPath', resolved.temporalTlsKeyPath || '(not set)', config.temporalTlsKeyPath || ''],
+  const keys: Array<{ key: string; configKey: keyof typeof sources }> = [
+    { key: 'temporalAddress', configKey: 'temporalAddress' },
+    { key: 'temporalNamespace', configKey: 'temporalNamespace' },
+    { key: 'temporalApiKey', configKey: 'temporalApiKey' },
+    { key: 'temporalTlsCertPath', configKey: 'temporalTlsCertPath' },
+    { key: 'temporalTlsKeyPath', configKey: 'temporalTlsKeyPath' },
   ];
 
   out.log(`  Config file: ${out.dim(CONFIG_FILE_PATH)}`);
   console.log();
-  out.log(`  ${'Key'.padEnd(22)} ${'Resolved'.padEnd(35)} ${out.dim('Config file')}`);
-  out.log(`  ${'─'.repeat(22)} ${'─'.repeat(35)} ${'─'.repeat(20)}`);
-  for (const [key, resolved, file] of rows) {
-    out.log(`  ${key.padEnd(22)} ${resolved.padEnd(35)} ${out.dim(file || '-')}`);
+  out.log(`  ${'Key'.padEnd(22)} ${'Value'.padEnd(30)} ${out.dim('Source')}`);
+  out.log(`  ${'─'.repeat(22)} ${'─'.repeat(30)} ${'─'.repeat(15)}`);
+  for (const { key, configKey } of keys) {
+    const value = (config as any)[configKey];
+    const source = sources[configKey];
+    const isSecret = SECRET_KEYS.has(key);
+    const display = !value ? '(not set)' : isSecret ? '****' : value;
+    out.log(`  ${key.padEnd(22)} ${display.padEnd(30)} ${out.dim(source)}`);
   }
   console.log();
 }
