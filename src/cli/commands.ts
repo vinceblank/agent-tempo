@@ -58,23 +58,25 @@ export async function start(opts: StartOpts) {
 
   out.log(`Starting ${out.bold(role)} in ensemble ${out.cyan(opts.ensemble)}${opts.agent === 'copilot' ? out.dim(' (copilot)') : ''}`);
 
-  // Build env vars to forward to child processes
-  const childEnvVars: Record<string, string> = {};
-  if (config.temporalAddress && config.temporalAddress !== 'localhost:7233') {
-    childEnvVars[ENV.TEMPORAL_ADDRESS] = config.temporalAddress;
-  }
-  if (config.temporalNamespace && config.temporalNamespace !== 'default') {
-    childEnvVars[ENV.TEMPORAL_NAMESPACE] = config.temporalNamespace;
-  }
-  if (config.temporalApiKey) childEnvVars[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
-  if (config.temporalTlsCertPath) childEnvVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
-  if (config.temporalTlsKeyPath) childEnvVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
+  // Always forward all resolved Temporal settings to child processes.
+  // Don't skip defaults — child processes may not have access to the same config file.
+  const temporalEnvVars: Record<string, string> = {
+    [ENV.TEMPORAL_ADDRESS]: config.temporalAddress,
+    [ENV.TEMPORAL_NAMESPACE]: config.temporalNamespace,
+  };
+  if (config.temporalApiKey) temporalEnvVars[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
+  if (config.temporalTlsCertPath) temporalEnvVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
+  if (config.temporalTlsKeyPath) temporalEnvVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
 
   if (opts.agent === 'copilot') {
     const { pid } = spawnCopilotBridge({
       name: opts.name || `copilot-${Date.now()}`,
       ensemble: opts.ensemble,
       temporalAddress: config.temporalAddress,
+      temporalNamespace: config.temporalNamespace,
+      temporalApiKey: config.temporalApiKey,
+      temporalTlsCertPath: config.temporalTlsCertPath,
+      temporalTlsKeyPath: config.temporalTlsKeyPath,
       isConductor: opts.conductor,
       workDir,
     });
@@ -89,7 +91,7 @@ export async function start(opts: StartOpts) {
     }
 
     const envVars: Record<string, string> = {
-      ...childEnvVars,
+      ...temporalEnvVars,
       [ENV.ENSEMBLE]: opts.ensemble,
     };
     if (opts.conductor) {
@@ -462,17 +464,14 @@ export async function up(opts: UpOpts) {
     out.check('.mcp.json created', true);
   }
 
-  // Build env vars to forward to child processes
-  const childEnvVars: Record<string, string> = {};
-  if (config.temporalAddress && config.temporalAddress !== 'localhost:7233') {
-    childEnvVars[ENV.TEMPORAL_ADDRESS] = config.temporalAddress;
-  }
-  if (config.temporalNamespace && config.temporalNamespace !== 'default') {
-    childEnvVars[ENV.TEMPORAL_NAMESPACE] = config.temporalNamespace;
-  }
-  if (config.temporalApiKey) childEnvVars[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
-  if (config.temporalTlsCertPath) childEnvVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
-  if (config.temporalTlsKeyPath) childEnvVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
+  // Always forward all resolved Temporal settings to child processes.
+  const temporalEnvVars: Record<string, string> = {
+    [ENV.TEMPORAL_ADDRESS]: config.temporalAddress,
+    [ENV.TEMPORAL_NAMESPACE]: config.temporalNamespace,
+  };
+  if (config.temporalApiKey) temporalEnvVars[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
+  if (config.temporalTlsCertPath) temporalEnvVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
+  if (config.temporalTlsKeyPath) temporalEnvVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
 
   // Step 5: Launch conductor
   console.log();
@@ -484,6 +483,10 @@ export async function up(opts: UpOpts) {
       name: opts.name || `${opts.ensemble}-conductor`,
       ensemble: opts.ensemble,
       temporalAddress: config.temporalAddress,
+      temporalNamespace: config.temporalNamespace,
+      temporalApiKey: config.temporalApiKey,
+      temporalTlsCertPath: config.temporalTlsCertPath,
+      temporalTlsKeyPath: config.temporalTlsKeyPath,
       isConductor: true,
       workDir: process.cwd(),
     }));
@@ -495,7 +498,7 @@ export async function up(opts: UpOpts) {
     if (opts.name) claudeArgs.push('-n', opts.name);
 
     ({ pid } = spawnInTerminal(claudeArgs, process.cwd(), {
-      ...childEnvVars,
+      ...temporalEnvVars,
       [ENV.ENSEMBLE]: opts.ensemble,
       [ENV.CONDUCTOR]: 'true',
     }));
