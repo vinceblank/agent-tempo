@@ -18,26 +18,28 @@ export function registerRecruitTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
+  ownAgentType: AgentType = 'claude',
 ) {
   defineTool(
     server,
     'recruit',
-    'Start a new named session in a directory. Rejects if the name is already active. Supports Claude Code or Copilot CLI agents.',
+    `Start a new named session in a directory. Rejects if the name is already active. Supports Claude Code or Copilot CLI agents. Defaults to "${ownAgentType}" (same as this session).`,
     {
       workDir: z.string().describe('The working directory for the new session'),
       name: z.string().describe('Name for the new session'),
       initialMessage: z.string().optional()
         .describe('Optional task or message for the new session (sent after it sets its name)'),
-      agent: z.enum(['claude', 'copilot']).default('claude')
-        .describe('Which agent to use: "claude" (default) or "copilot" (GitHub Copilot CLI via SDK)'),
+      agent: z.enum(['claude', 'copilot']).optional()
+        .describe(`Which agent to use (default: "${ownAgentType}", same as this session)`),
     },
     async (args) => {
-      const { workDir, name, initialMessage, agent } = args as {
+      const { workDir, name, initialMessage } = args as {
         workDir: string;
         name: string;
         initialMessage?: string;
-        agent: AgentType;
+        agent?: AgentType;
       };
+      const agent: AgentType = (args as any).agent || ownAgentType;
       // Validate name to prevent search attribute query injection
       if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
         return {

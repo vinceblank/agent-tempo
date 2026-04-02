@@ -156,7 +156,7 @@ async function main() {
   registerSetPartTool(mcpServer, handle);
   registerSetNameTool(mcpServer, client, config, handle, getPlayerId, setPlayerId);
   registerListenTool(mcpServer, handle);
-  registerRecruitTool(mcpServer, client, config, getPlayerId);
+  registerRecruitTool(mcpServer, client, config, getPlayerId, isBridgeMode ? 'copilot' : 'claude');
   registerReportTool(mcpServer, client, config, getPlayerId);
   registerTerminateTool(mcpServer, client, config, getPlayerId);
 
