@@ -12,6 +12,11 @@ import { runPreflight } from './preflight';
 import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
 import * as out from './output';
 
+/** Sanitize a value for use in Temporal visibility queries (strip quotes). */
+function sanitizeQueryValue(value: string): string {
+  return value.replace(/["\\]/g, '');
+}
+
 /** Package root is two levels up from dist/cli/ */
 const PACKAGE_ROOT = resolve(__dirname, '..', '..');
 
@@ -686,7 +691,7 @@ export async function stop(opts: StopOpts) {
     // Stop multiple sessions (--ensemble or --all)
     let query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
     if (opts.ensemble) {
-      query += ` AND ClaudeTempoEnsemble = "${opts.ensemble}"`;
+      query += ` AND ClaudeTempoEnsemble = "${sanitizeQueryValue(opts.ensemble)}"`;
     }
 
     let stopped = 0;
@@ -720,9 +725,9 @@ export async function stop(opts: StopOpts) {
 
 async function stopByName(client: Client, name: string, config: Config, ensemble?: string) {
   // Find the workflow by player name via search attribute
-  let query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoPlayerId = "${name}"`;
+  let query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoPlayerId = "${sanitizeQueryValue(name)}"`;
   if (ensemble) {
-    query += ` AND ClaudeTempoEnsemble = "${ensemble}"`;
+    query += ` AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}"`;
   }
   let found = false;
 

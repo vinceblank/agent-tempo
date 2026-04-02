@@ -32,7 +32,7 @@ This will:
 1. Check that Temporal CLI is installed
 2. Start the Temporal dev server (data persists in `~/.claude-tempo/`)
 3. Register required search attributes
-4. Create `.mcp.json` in your project
+4. Register the claude-tempo MCP server (globally by default)
 5. Launch a conductor session in a new terminal window
 
 Then add players:
@@ -52,7 +52,7 @@ For more control, run each step individually:
 # Start Temporal dev server (keep running)
 claude-tempo server
 
-# In your project directory, create .mcp.json
+# Register claude-tempo MCP server (globally by default)
 cd your-project
 claude-tempo init
 
@@ -352,6 +352,7 @@ export TEMPORAL_API_KEY=tcl_...
 | `CLAUDE_TEMPO_ENSEMBLE` | `default` | Ensemble name |
 | `CLAUDE_TEMPO_CONDUCTOR` | `false` | Enable conductor mode |
 | `CLAUDE_TEMPO_PLAYER_NAME` | *(random hex)* | Player name on startup |
+| `CLAUDE_TEMPO_DEFAULT_AGENT` | `claude` | Default agent type (`claude` or `copilot`) |
 
 ## Stale session cleanup
 
@@ -359,7 +360,7 @@ When a session crashes or closes without graceful shutdown, Temporal detects it 
 
 - If a message to a dead session remains undelivered for **3 minutes**, the workflow self-completes
 - Before exiting, it notifies the conductor with the undelivered message so work can be reassigned
-- Idle sessions with no pending messages remain running until the 24-hour timeout
+- Idle sessions with no pending messages are probed after 1 hour of inactivity via a heartbeat ping; if the ping goes undelivered, the session self-completes
 
 No manual cleanup needed — `cue` a dead player and the system handles the rest.
 

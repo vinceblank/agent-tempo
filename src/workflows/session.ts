@@ -55,6 +55,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       delivered: false,
       isMaestro: msg.isMaestro,
     });
+    lastActivityTime = Date.now();
   });
 
   setHandler(setPartSignal, (newPart) => {
