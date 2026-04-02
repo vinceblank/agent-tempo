@@ -154,8 +154,8 @@ async function main() {
 
     case 'stop':
       await stop({
-        name: args.positional[1] || args.name,
-        ensemble: args.ensemble,
+        name: args.name,
+        ensemble: args.positional[1],
         all: args.all || undefined,
         ...overrides,
       });

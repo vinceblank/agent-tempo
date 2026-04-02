@@ -658,9 +658,9 @@ export async function stop(opts: StopOpts) {
   const config = getConfig(opts);
 
   if (!opts.name && !opts.ensemble && !opts.all) {
-    out.error('Specify a player name, --ensemble <name>, or --all');
-    out.log(`  ${out.dim('claude-tempo stop <name>')}              Stop a specific session`);
-    out.log(`  ${out.dim('claude-tempo stop --ensemble <name>')}   Stop all sessions in an ensemble`);
+    out.error('Specify what to stop:');
+    out.log(`  ${out.dim('claude-tempo stop <ensemble>')}          Stop all sessions in an ensemble`);
+    out.log(`  ${out.dim('claude-tempo stop <ensemble> -n <name>')} Stop a specific session`);
     out.log(`  ${out.dim('claude-tempo stop --all')}               Stop everything`);
     process.exit(1);
   }
@@ -680,8 +680,8 @@ export async function stop(opts: StopOpts) {
   const client = new Client({ connection, namespace: config.temporalNamespace });
 
   if (opts.name) {
-    // Stop a specific player by name
-    await stopByName(client, opts.name, config);
+    // Stop a specific player by name (optionally scoped to ensemble)
+    await stopByName(client, opts.name, config, opts.ensemble);
   } else {
     // Stop multiple sessions (--ensemble or --all)
     let query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
@@ -718,9 +718,12 @@ export async function stop(opts: StopOpts) {
   await connection.close();
 }
 
-async function stopByName(client: Client, name: string, config: Config) {
+async function stopByName(client: Client, name: string, config: Config, ensemble?: string) {
   // Find the workflow by player name via search attribute
-  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoPlayerId = "${name}"`;
+  let query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoPlayerId = "${name}"`;
+  if (ensemble) {
+    query += ` AND ClaudeTempoEnsemble = "${ensemble}"`;
+  }
   let found = false;
 
   for await (const wf of client.workflow.list({ query })) {
@@ -842,7 +845,7 @@ ${out.bold('Commands:')}
   ${out.cyan('server')}                Start the Temporal dev server and register search attributes
   ${out.cyan('conduct')} [ensemble]    Start a conductor session (one per ensemble)
   ${out.cyan('start')}   [ensemble]    Start a player session
-  ${out.cyan('stop')}    <name>        Stop a session by name (or --ensemble / --all)
+  ${out.cyan('stop')}    [ensemble]    Stop sessions (-n <name> for one, or --all)
   ${out.cyan('status')}  [ensemble]    Show active sessions and Temporal health
   ${out.cyan('config')}                Configure Temporal connection settings
   ${out.cyan('init')}                  Register MCP server globally (or --project for .mcp.json)
