@@ -21,6 +21,7 @@ interface ParsedArgs {
   background: boolean;
   keepMcp: boolean;
   all: boolean;
+  project: boolean;
   ensemble?: string;
   agent?: AgentType;
 }
@@ -34,6 +35,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     background: false,
     keepMcp: false,
     all: false,
+    project: false,
   };
 
   let i = 0;
@@ -61,6 +63,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.keepMcp = true;
     } else if (arg === '--all') {
       result.all = true;
+    } else if (arg === '--project') {
+      result.project = true;
     } else if (arg === '--ensemble' && i + 1 < argv.length) {
       result.ensemble = argv[++i];
     } else if (arg === '--agent' && i + 1 < argv.length) {
@@ -175,7 +179,7 @@ async function main() {
       break;
 
     case 'init':
-      await init({ dir: args.dir });
+      await init({ dir: args.dir, project: args.project });
       break;
 
     case 'config':

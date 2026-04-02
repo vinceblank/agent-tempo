@@ -1,9 +1,8 @@
-import { existsSync, readFileSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { join } from 'path';
 import { getConfig, CliOverrides } from '../config';
 import { createTemporalConnection } from '../connection';
 import { resolveClaudePath } from '../spawn';
+import { isMcpConfigured } from './mcp';
 import * as out from './output';
 
 export interface PreflightResult {
@@ -61,17 +60,10 @@ export async function runPreflight(opts: CliOverrides & {
   out.check('claude-tempo-server found', serverOk, serverOk ? serverPath! : 'not on PATH');
   if (!serverOk) errors.push('claude-tempo-server not found on PATH. Run: npm install -g claude-tempo');
 
-  // 5. MCP config in project
-  const mcpPath = join(opts.dir, '.mcp.json');
-  let mcpOk = false;
-  if (existsSync(mcpPath)) {
-    try {
-      const mcp = JSON.parse(readFileSync(mcpPath, 'utf8'));
-      mcpOk = !!mcp?.mcpServers?.['claude-tempo'];
-    } catch { /* invalid json */ }
-  }
-  out.check('.mcp.json configured', mcpOk, mcpOk ? mcpPath : 'missing or no claude-tempo entry');
-  if (!mcpOk) warnings.push(`No claude-tempo MCP config in ${opts.dir}. Run: claude-tempo init`);
+  // 5. MCP config (global or project-level)
+  const mcpOk = isMcpConfigured(opts.dir);
+  out.check('MCP configured', mcpOk, mcpOk ? 'global or project' : 'not found');
+  if (!mcpOk) warnings.push('No claude-tempo MCP config found. Run: claude-tempo init');
 
   console.log();
   return { ok: errors.length === 0, errors, warnings };

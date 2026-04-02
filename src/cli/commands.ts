@@ -9,6 +9,7 @@ import { createTemporalConnection } from '../connection';
 import { shutdownSignal, playerReportSignal } from '../workflows/signals';
 import { AgentType } from '../types';
 import { runPreflight } from './preflight';
+import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
 import * as out from './output';
 
 /** Package root is two levels up from dist/cli/ */
@@ -218,59 +219,6 @@ export async function status(opts: StatusOpts) {
 interface InitOpts {
   dir: string;
   project?: boolean;
-}
-
-/** Check if claude-tempo is registered in `claude mcp list` (global user scope). */
-function isGlobalMcpRegistered(): boolean {
-  try {
-    const output = execFileSync('claude', ['mcp', 'list', '-s', 'user'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    return output.includes('claude-tempo');
-  } catch {
-    return false;
-  }
-}
-
-/** Register claude-tempo globally via `claude mcp add`. */
-function addGlobalMcp(): boolean {
-  try {
-    execFileSync('claude', [
-      'mcp', 'add', 'claude-tempo', '-s', 'user',
-      '--', 'npx', 'claude-tempo-server',
-    ], { stdio: ['ignore', 'ignore', 'pipe'] });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Remove claude-tempo from global MCP config via `claude mcp remove`. */
-export function removeGlobalMcp(): boolean {
-  try {
-    execFileSync('claude', [
-      'mcp', 'remove', 'claude-tempo', '-s', 'user',
-    ], { stdio: ['ignore', 'ignore', 'pipe'] });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Check if claude-tempo MCP is configured (global or project-level). */
-export function isMcpConfigured(projectDir: string): boolean {
-  // Check global first
-  if (isGlobalMcpRegistered()) return true;
-  // Check project-level .mcp.json
-  const mcpPath = join(projectDir, '.mcp.json');
-  if (existsSync(mcpPath)) {
-    try {
-      const mcp = JSON.parse(readFileSync(mcpPath, 'utf8'));
-      return !!mcp?.mcpServers?.['claude-tempo'];
-    } catch { /* invalid json */ }
-  }
-  return false;
 }
 
 export async function init(opts: InitOpts) {
@@ -539,20 +487,12 @@ export async function up(opts: UpOpts) {
   // Step 3: Register search attributes
   registerSearchAttributes(config.temporalAddress, config.temporalNamespace);
 
-  // Step 4: Init .mcp.json if needed
-  const mcpPath = join(process.cwd(), '.mcp.json');
-  let mcpExists = false;
-  if (existsSync(mcpPath)) {
-    try {
-      const mcp = JSON.parse(readFileSync(mcpPath, 'utf8'));
-      mcpExists = !!mcp?.mcpServers?.['claude-tempo'];
-    } catch { /* invalid */ }
-  }
-  if (mcpExists) {
-    out.check('.mcp.json configured', true);
+  // Step 4: Register MCP server if needed
+  if (isMcpConfigured(process.cwd())) {
+    out.check('MCP configured', true);
   } else {
     await init({ dir: process.cwd() });
-    out.check('.mcp.json created', true);
+    out.check('MCP configured', true);
   }
 
   // Always forward all resolved Temporal settings to child processes.
@@ -665,31 +605,35 @@ export async function down(opts: DownOpts) {
     out.log(`  ${out.dim('Temporal not running')}`);
   }
 
-  // Step 4: Remove .mcp.json entry
+  // Step 4: Remove MCP config (global + project-level)
   if (opts.removeMcp) {
+    // Remove global registration
+    if (isGlobalMcpRegistered()) {
+      if (removeGlobalMcp()) {
+        out.success('Removed claude-tempo from global MCP config');
+      } else {
+        out.warn('Could not remove global MCP entry');
+      }
+    }
+
+    // Also remove project-level .mcp.json entry if present
     const mcpPath = join(opts.dir, '.mcp.json');
     if (existsSync(mcpPath)) {
       try {
         const existing = JSON.parse(readFileSync(mcpPath, 'utf8'));
         if (existing?.mcpServers?.['claude-tempo']) {
           delete existing.mcpServers['claude-tempo'];
-          // If no other MCP servers remain, remove the file entirely
           if (Object.keys(existing.mcpServers).length === 0) {
-            const { unlinkSync } = require('fs');
             unlinkSync(mcpPath);
             out.success('Removed .mcp.json (no other servers configured)');
           } else {
             writeFileSync(mcpPath, JSON.stringify(existing, null, 2) + '\n');
             out.success('Removed claude-tempo from .mcp.json');
           }
-        } else {
-          out.log(`  ${out.dim('.mcp.json has no claude-tempo entry')}`);
         }
       } catch {
         out.warn(`Could not update ${mcpPath}`);
       }
-    } else {
-      out.log(`  ${out.dim('No .mcp.json found')}`);
     }
   }
 
@@ -901,7 +845,7 @@ ${out.bold('Commands:')}
   ${out.cyan('stop')}    <name>        Stop a session by name (or --ensemble / --all)
   ${out.cyan('status')}  [ensemble]    Show active sessions and Temporal health
   ${out.cyan('config')}                Configure Temporal connection settings
-  ${out.cyan('init')}                  Create .mcp.json config in the current directory
+  ${out.cyan('init')}                  Register MCP server globally (or --project for .mcp.json)
   ${out.cyan('preflight')}             Run preflight checks only
   ${out.cyan('help')}                  Show this help message
 
@@ -917,7 +861,8 @@ ${out.bold('Other options:')}
   --agent <claude|copilot>    Agent type to spawn (default: from config; start/conduct)
   --skip-preflight            Skip preflight checks (start/conduct only)
   --background                Run Temporal in background (server only)
-  --keep-mcp                  Don't remove .mcp.json entry (down only)
+  --project                   Use per-project .mcp.json instead of global (init only)
+  --keep-mcp                  Don't remove MCP config (down only)
   --all                       Stop all sessions (stop only)
   --ensemble <name>           Target a specific ensemble (stop only)
   -d, --dir <path>            Target directory (default: cwd)
@@ -950,6 +895,7 @@ ${out.bold('Environment:')}
   TEMPORAL_API_KEY            Temporal API key
   TEMPORAL_TLS_CERT_PATH      Path to TLS client certificate
   TEMPORAL_TLS_KEY_PATH       Path to TLS client key
+  CLAUDE_TEMPO_DEFAULT_AGENT  Default agent type: claude or copilot (fallback: claude)
 `);
 }
 
