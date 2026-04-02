@@ -3,6 +3,11 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { AgentType } from './types';
 
+const VALID_AGENTS: AgentType[] = ['claude', 'copilot'];
+function validAgent(value: string | undefined): AgentType {
+  return VALID_AGENTS.includes(value as AgentType) ? (value as AgentType) : 'claude';
+}
+
 /** Environment variable name constants — use these instead of string literals. */
 export const ENV = {
   ENSEMBLE: 'CLAUDE_TEMPO_ENSEMBLE',
@@ -231,10 +236,9 @@ export function getConfig(overrides: CliOverrides = {}): Config {
       overrides.temporalTlsKeyPath, ENV.TEMPORAL_TLS_KEY_PATH,
       configFile.temporalTlsKeyPath, temporalCli.temporalTlsKeyPath,
     ),
-    defaultAgent: (overrides.defaultAgent
+    defaultAgent: validAgent(overrides.defaultAgent
       || process.env[ENV.DEFAULT_AGENT]
-      || configFile.defaultAgent
-      || 'claude') as AgentType,
+      || configFile.defaultAgent),
     taskQueue: process.env[ENV.TASK_QUEUE] ?? 'claude-tempo',
     ensemble: process.env[ENV.ENSEMBLE] ?? 'default',
   };
@@ -285,7 +289,7 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
       temporalApiKey: apiKey.value,
       temporalTlsCertPath: tlsCert.value,
       temporalTlsKeyPath: tlsKey.value,
-      defaultAgent: (defaultAgent.value || 'claude') as AgentType,
+      defaultAgent: validAgent(defaultAgent.value),
       taskQueue: process.env[ENV.TASK_QUEUE] ?? 'claude-tempo',
       ensemble: process.env[ENV.ENSEMBLE] ?? 'default',
     },

@@ -9,7 +9,7 @@ export function isGlobalMcpRegistered(): boolean {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     });
-    return output.includes('claude-tempo');
+    return /\bclaude-tempo\b/.test(output);
   } catch {
     return false;
   }
