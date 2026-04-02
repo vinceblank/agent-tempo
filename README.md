@@ -5,35 +5,18 @@ Multi-session [Claude Code](https://claude.ai/code) coordination via [Temporal](
 Multiple Claude Code sessions discover each other, exchange messages in real time, and coordinate work — across machines, not just localhost.
 
 ```
-  You (CLI / Discord / Telegram / Claude Code)
-    │
-    ▼
-┌──────────────────────────────────────────────────────┐
-│                   Temporal Server                     │
-│                                                      │
-│  ┌───────────┐                                       │
-│  │ Conductor │──cue──┬──────────┬──────────┐         │
-│  └───────────┘       │          │          │         │
-│                      ▼          ▼          ▼         │
-│               ┌──────────┐ ┌────────┐ ┌────────┐    │
-│               │ frontend │ │ backend│ │  tests │    │
-│               └────┬─────┘ └───┬────┘ └───┬────┘    │
-│                    │    ▲      │           │         │
-│                    │    └──cue─┘           │         │
-│                    │                       │         │
-└────────────────────┼───────────────────────┼─────────┘
-                     │                       │
-                     ▼                       ▼
-            ┌─────────────────┐     ┌─────────────────┐
-            │     Host 1      │     │     Host 2      │
-            │  ┌───────────┐  │     │  ┌───────────┐  │
-            │  │  frontend │  │     │  │   tests   │  │
-            │  └───────────┘  │     │  └───────────┘  │
-            │  ┌───────────┐  │     └─────────────────┘
-            │  │  backend  │  │
-            │  └───────────┘  │
-            └─────────────────┘
+                       ┌─────────────────────────────┐
+   Host 1              │      Temporal Server         │         Host 2
+                       │                              │
+ ┌───────────┐  ◄────►│  signals · queries · cue     │◄────►  ┌───────────┐
+ │ frontend  │         │                              │        │   tests   │
+ └───────────┘  ◄────►│                              │        └───────────┘
+ ┌───────────┐         │                              │
+ │  backend  │         └─────────────────────────────┘
+ └───────────┘
 ```
+
+Each Claude Code session registers as a **player** in Temporal. Players discover each other with `ensemble`, exchange messages with `cue`, and coordinate work — across machines, not just localhost. An optional **conductor** orchestrates the group and connects to external interfaces like Discord, Telegram, or a dashboard.
 
 ## Installation
 
