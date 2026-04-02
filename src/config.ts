@@ -47,16 +47,21 @@ export function loadConfigFile(): PersistedConfig {
       return JSON.parse(readFileSync(CONFIG_FILE_PATH, 'utf8'));
     }
   } catch {
-    // Corrupt file — ignore
+    // Corrupt file — warn but don't crash
+    console.error(`[claude-tempo] Warning: could not parse ${CONFIG_FILE_PATH} — ignoring config file`);
   }
   return {};
 }
 
-/** Save config to ~/.claude-tempo/config.json. */
+/** Save config to ~/.claude-tempo/config.json with restrictive permissions. */
 export function saveConfigFile(config: PersistedConfig): void {
-  const { writeFileSync } = require('fs') as typeof import('fs');
+  const { writeFileSync, chmodSync } = require('fs') as typeof import('fs');
   mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
   writeFileSync(CONFIG_FILE_PATH, JSON.stringify(config, null, 2) + '\n');
+  // Restrict permissions to owner-only (like aws credentials, gh hosts.yml)
+  if (process.platform !== 'win32') {
+    try { chmodSync(CONFIG_FILE_PATH, 0o600); } catch { /* best effort */ }
+  }
 }
 
 /**
@@ -97,7 +102,8 @@ export function loadTemporalCliConfig(): PersistedConfig {
  *       tls-key-path: ...
  */
 export function parseTemporalYaml(content: string): PersistedConfig {
-  const lines = content.split('\n');
+  // Normalize CRLF to LF and tabs to spaces for consistent parsing
+  const lines = content.replace(/\r\n/g, '\n').replace(/\t/g, '  ').split('\n');
   const result: PersistedConfig = {};
 
   // Find the active environment name
@@ -112,7 +118,6 @@ export function parseTemporalYaml(content: string): PersistedConfig {
 
   // Find the env block and the active (or first) environment
   let inEnv = false;
-  let currentEnvName = '';
   let targetEnvName = activeEnv;
   let inTargetEnv = false;
 
@@ -128,14 +133,14 @@ export function parseTemporalYaml(content: string): PersistedConfig {
     if (!inEnv) continue;
 
     // Back to top-level (non-indented, non-empty line that isn't part of env block)
-    if (stripped.length > 0 && !stripped.startsWith(' ') && !stripped.startsWith('\t')) {
+    if (stripped.length > 0 && !stripped.startsWith(' ')) {
       break;
     }
 
-    // Environment name (2-space indent)
-    const envMatch = stripped.match(/^  ([a-zA-Z0-9_-]+):\s*$/);
+    // Environment name (2-space indent, may contain dots like "my-ns.abc123")
+    const envMatch = stripped.match(/^  ([a-zA-Z0-9_.:-]+):\s*$/);
     if (envMatch) {
-      currentEnvName = envMatch[1];
+      const currentEnvName = envMatch[1];
       // If no active env specified, use the first one
       if (!targetEnvName) targetEnvName = currentEnvName;
       inTargetEnv = currentEnvName === targetEnvName;
@@ -144,7 +149,7 @@ export function parseTemporalYaml(content: string): PersistedConfig {
 
     if (!inTargetEnv) continue;
 
-    // Key-value pairs (4-space indent)
+    // Key-value pairs (4+ space indent)
     const kvMatch = stripped.match(/^\s{4,}([a-z-]+):\s*(.+)/);
     if (kvMatch) {
       const [, key, value] = kvMatch;

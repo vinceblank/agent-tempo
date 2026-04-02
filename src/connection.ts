@@ -27,9 +27,9 @@ function buildConnectionOptions(config: Config) {
   // API key auth (Temporal Cloud)
   if (config.temporalApiKey) {
     opts.apiKey = config.temporalApiKey;
-    // API key requires TLS — if no cert pair, enable TLS without client certs
+    // API key requires TLS — if no client cert pair, enable server-only TLS
     if (!opts.tls) {
-      opts.tls = {} as any;
+      (opts as any).tls = true;
     }
   }
 
