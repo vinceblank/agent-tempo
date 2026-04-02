@@ -22,7 +22,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Client } from '@temporalio/client';
-import { getConfig, ENV } from './config';
+import { getConfig, ENV, conductorWorkflowId } from './config';
 import { createTemporalConnection } from './connection';
 import { Message } from './types';
 
@@ -166,9 +166,7 @@ async function main() {
         `- recruit: Spawn a new player session\n` +
         `- report: Report to the conductor\n` +
         `- terminate: Terminate a session\n\n` +
-        `When you receive a message from another session, treat it like a coworker asking for help. ` +
-        `IMMEDIATELY cue the sender back with a brief acknowledgment and your planned next step before doing the work. ` +
-        `Then proceed with the task and follow up with results.`,
+        `When you receive a message from another session, treat it like a coworker asking for help — respond promptly using your MCP tools.`,
     },
     excludedTools: ['write_powershell', 'read_powershell', 'list_powershell'],
     ...(model ? { model } : {}),
@@ -279,6 +277,20 @@ async function main() {
     log(`set_name completed in ${Date.now() - t0}ms`);
   }
 
+  // Resolve the conductor's current player name (cached, refreshed on miss).
+  let cachedConductorName: string | null = null;
+  async function getConductorName(): Promise<string | null> {
+    if (cachedConductorName) return cachedConductorName;
+    try {
+      const h = client.workflow.getHandle(conductorWorkflowId(config.ensemble));
+      const meta = await h.query('getMetadata') as { playerId?: string; isConductor?: boolean };
+      if (meta?.isConductor) cachedConductorName = meta.playerId ?? null;
+    } catch { /* no conductor */ }
+    return cachedConductorName;
+  }
+
+  const ACK_INSTRUCTION = '\n\n[IMPORTANT: Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
+
   // Start message poller — inject messages into the Copilot session.
   // Tracks consecutive failures and attempts session recreation before giving up.
   let polling = true;
@@ -327,9 +339,13 @@ async function main() {
       const ids = messages.map((m) => m.id);
       await handle.signal('markDelivered', ids);
 
-      // Format messages into a single prompt
+      // Format messages into a single prompt, appending ack instruction for conductor messages
+      const conductorName = await getConductorName();
       const prompt = messages
-        .map((m) => `[Message from ${m.from}]: ${m.text}`)
+        .map((m) => {
+          const line = `[Message from ${m.from}]: ${m.text}`;
+          return (conductorName && m.from === conductorName) ? line + ACK_INSTRUCTION : line;
+        })
         .join('\n\n');
 
       log(`Injecting ${messages.length} message(s) into Copilot session`);

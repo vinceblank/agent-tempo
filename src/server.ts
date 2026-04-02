@@ -133,9 +133,7 @@ async function main() {
   const serverInstructions = `You are part of the "${config.ensemble}" ensemble of Claude Code sessions coordinated via Temporal. ` +
     `Your temporary player ID is "${playerId}". ` +
     `IMPORTANT: If you receive a message instructing you to call \`set_name\`, do so immediately before anything else. ` +
-    `When you receive a message from another session, treat it like a coworker asking for help. ` +
-    `IMMEDIATELY cue the sender back with a brief acknowledgment and your planned next step before doing the work. ` +
-    `Then proceed with the task and follow up with results. ` +
+    `When you receive a message from another session, treat it like a coworker asking for help — respond promptly, then resume your work. ` +
     `Use \`set_name\` to give yourself a human-readable name. ` +
     `Use \`ensemble\` to see who else is active. ` +
     `Use \`cue\` to reply directly to the player who messaged you, or to ask others for help. ` +
@@ -162,6 +160,20 @@ async function main() {
   registerReportTool(mcpServer, client, config, getPlayerId);
   registerTerminateTool(mcpServer, client, config, getPlayerId);
 
+  // Resolve the conductor's current player name (cached, refreshed on miss).
+  let cachedConductorName: string | null = null;
+  async function getConductorName(): Promise<string | null> {
+    if (cachedConductorName) return cachedConductorName;
+    try {
+      const h = client.workflow.getHandle(conductorWorkflowId(config.ensemble));
+      const meta = await h.query('getMetadata') as { playerId?: string; isConductor?: boolean };
+      if (meta?.isConductor) cachedConductorName = meta.playerId ?? null;
+    } catch { /* no conductor */ }
+    return cachedConductorName;
+  }
+
+  const ACK_INSTRUCTION = '\n\n[IMPORTANT: Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
+
   // Start message poller — push messages into Claude Code via channel notifications.
   // Skip when running under the Copilot bridge: the bridge has its own poller that
   // injects messages via sendAndWait. If both pollers run, this one wins the race and
@@ -169,13 +181,16 @@ async function main() {
   const stopPoller = isBridgeMode
     ? () => {} // no-op — bridge handles message delivery
     : startMessagePoller(handle, async (messages) => {
+    const conductorName = await getConductorName();
     for (const msg of messages) {
       log(`Message from ${msg.from}: ${msg.text}`);
+      const fromConductor = conductorName && msg.from === conductorName;
+      const content = fromConductor ? msg.text + ACK_INSTRUCTION : msg.text;
       try {
         await mcpServer.server.notification({
           method: 'notifications/claude/channel',
           params: {
-            content: msg.text,
+            content,
             meta: {
               from_player: msg.from,
               sent_at: msg.timestamp,
