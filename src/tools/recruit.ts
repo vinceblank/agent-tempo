@@ -91,13 +91,9 @@ export function registerRecruitTool(
           const envVars: Record<string, string> = {
             [ENV.ENSEMBLE]: config.ensemble,
             [ENV.CONDUCTOR]: '',
+            [ENV.TEMPORAL_ADDRESS]: config.temporalAddress,
+            [ENV.TEMPORAL_NAMESPACE]: config.temporalNamespace,
           };
-          if (config.temporalAddress && config.temporalAddress !== 'localhost:7233') {
-            envVars[ENV.TEMPORAL_ADDRESS] = config.temporalAddress;
-          }
-          if (config.temporalNamespace && config.temporalNamespace !== 'default') {
-            envVars[ENV.TEMPORAL_NAMESPACE] = config.temporalNamespace;
-          }
           if (config.temporalApiKey) envVars[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
           if (config.temporalTlsCertPath) envVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
           if (config.temporalTlsKeyPath) envVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
