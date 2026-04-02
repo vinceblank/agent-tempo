@@ -166,7 +166,9 @@ async function main() {
         `- recruit: Spawn a new player session\n` +
         `- report: Report to the conductor\n` +
         `- terminate: Terminate a session\n\n` +
-        `When you receive a message from another session, treat it like a coworker asking for help — respond promptly using your MCP tools.`,
+        `When you receive a message from another session, treat it like a coworker asking for help. ` +
+        `IMMEDIATELY cue the sender back with a brief acknowledgment and your planned next step before doing the work. ` +
+        `Then proceed with the task and follow up with results.`,
     },
     excludedTools: ['write_powershell', 'read_powershell', 'list_powershell'],
     ...(model ? { model } : {}),

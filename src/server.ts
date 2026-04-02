@@ -133,7 +133,9 @@ async function main() {
   const serverInstructions = `You are part of the "${config.ensemble}" ensemble of Claude Code sessions coordinated via Temporal. ` +
     `Your temporary player ID is "${playerId}". ` +
     `IMPORTANT: If you receive a message instructing you to call \`set_name\`, do so immediately before anything else. ` +
-    `When you receive a message from another session, treat it like a coworker asking for help — respond promptly, then resume your work. ` +
+    `When you receive a message from another session, treat it like a coworker asking for help. ` +
+    `IMMEDIATELY cue the sender back with a brief acknowledgment and your planned next step before doing the work. ` +
+    `Then proceed with the task and follow up with results. ` +
     `Use \`set_name\` to give yourself a human-readable name. ` +
     `Use \`ensemble\` to see who else is active. ` +
     `Use \`cue\` to reply directly to the player who messaged you, or to ask others for help. ` +
