@@ -98,7 +98,8 @@ claude-tempo <command> [options]
 | `start [ensemble]` | Start a player session |
 | `status [ensemble]` | Show active sessions and Temporal health |
 | `config` | Configure Temporal connection settings (interactive or `set`/`show`) |
-| `init` | Create `.mcp.json` config in the current directory |
+| `stop [ensemble]` | Stop sessions (`-n <name>` for one, `--all` for everything) |
+| `init` | Register claude-tempo MCP server globally (`--project` for per-directory) |
 | `preflight` | Run environment checks |
 | `help` | Show usage info |
 
@@ -180,18 +181,14 @@ Verifies your environment: Node.js >= 18, Temporal reachable, `claude` on PATH, 
 
 ### `claude-tempo init`
 
-Creates `.mcp.json` in the current directory (or merges into an existing one):
+Registers the claude-tempo MCP server globally so it's available in every Claude Code session:
 
-```json
-{
-  "mcpServers": {
-    "claude-tempo": {
-      "command": "npx",
-      "args": ["claude-tempo-server"]
-    }
-  }
-}
+```bash
+claude-tempo init             # global install (recommended)
+claude-tempo init --project   # per-directory .mcp.json instead
 ```
+
+If the `claude` CLI is not available, falls back to creating `.mcp.json` in the current directory.
 
 ## MCP tools
 
