@@ -1,11 +1,12 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from 'fs';
 import { join, resolve } from 'path';
 import { execFileSync, spawn as cpSpawn } from 'child_process';
 import { homedir } from 'os';
 import { Client, Connection } from '@temporalio/client';
-import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
-import { conductorWorkflowId, ENV, getConfig, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
+import { spawnInTerminal, spawnCopilotBridge, resolveClaudePath } from '../spawn';
+import { conductorWorkflowId, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
 import { createTemporalConnection } from '../connection';
+import { shutdownSignal, playerReportSignal } from '../workflows/signals';
 import { AgentType } from '../types';
 import { runPreflight } from './preflight';
 import * as out from './output';
@@ -216,10 +217,97 @@ export async function status(opts: StatusOpts) {
 
 interface InitOpts {
   dir: string;
+  project?: boolean;
+}
+
+/** Check if claude-tempo is registered in `claude mcp list` (global user scope). */
+function isGlobalMcpRegistered(): boolean {
+  try {
+    const output = execFileSync('claude', ['mcp', 'list', '-s', 'user'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return output.includes('claude-tempo');
+  } catch {
+    return false;
+  }
+}
+
+/** Register claude-tempo globally via `claude mcp add`. */
+function addGlobalMcp(): boolean {
+  try {
+    execFileSync('claude', [
+      'mcp', 'add', 'claude-tempo', '-s', 'user',
+      '--', 'npx', 'claude-tempo-server',
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Remove claude-tempo from global MCP config via `claude mcp remove`. */
+export function removeGlobalMcp(): boolean {
+  try {
+    execFileSync('claude', [
+      'mcp', 'remove', 'claude-tempo', '-s', 'user',
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Check if claude-tempo MCP is configured (global or project-level). */
+export function isMcpConfigured(projectDir: string): boolean {
+  // Check global first
+  if (isGlobalMcpRegistered()) return true;
+  // Check project-level .mcp.json
+  const mcpPath = join(projectDir, '.mcp.json');
+  if (existsSync(mcpPath)) {
+    try {
+      const mcp = JSON.parse(readFileSync(mcpPath, 'utf8'));
+      return !!mcp?.mcpServers?.['claude-tempo'];
+    } catch { /* invalid json */ }
+  }
+  return false;
 }
 
 export async function init(opts: InitOpts) {
-  const mcpPath = join(opts.dir, '.mcp.json');
+  if (opts.project) {
+    // Per-project .mcp.json mode
+    return initProject(opts.dir);
+  }
+
+  // Default: global install via `claude mcp add`
+  if (isGlobalMcpRegistered()) {
+    out.success('claude-tempo already registered globally');
+    out.log(`  ${out.dim('claude mcp list -s user')}`);
+    return;
+  }
+
+  const claudePath = resolveClaudePath();
+  if (claudePath === 'claude') {
+    out.warn('claude binary not found — falling back to project-level .mcp.json');
+    return initProject(opts.dir);
+  }
+
+  if (addGlobalMcp()) {
+    out.success('Registered claude-tempo globally (user scope)');
+    out.log(`  ${out.dim('Available in all Claude Code sessions')}`);
+  } else {
+    out.warn('Failed to register globally — falling back to project-level .mcp.json');
+    return initProject(opts.dir);
+  }
+
+  out.log(`\nNext steps:`);
+  out.log(`  1. Start Temporal:  ${out.dim('temporal server start-dev')}`);
+  out.log(`  2. Start conductor: ${out.dim('claude-tempo conduct')}`);
+}
+
+/** Per-project .mcp.json install (legacy, used with --project flag). */
+function initProject(dir: string) {
+  const mcpPath = join(dir, '.mcp.json');
 
   const entry = {
     command: 'npx',
@@ -234,7 +322,6 @@ export async function init(opts: InitOpts) {
         out.log(`  ${out.dim(mcpPath)}`);
         return;
       }
-      // Merge into existing config
       existing.mcpServers = existing.mcpServers || {};
       existing.mcpServers['claude-tempo'] = entry;
       writeFileSync(mcpPath, JSON.stringify(existing, null, 2) + '\n');
@@ -557,7 +644,10 @@ export async function down(opts: DownOpts) {
     }
   }
 
-  // Step 2: Stop Temporal server
+  // Step 2: Kill bridge processes via PID files
+  killBridgeProcesses();
+
+  // Step 3: Stop Temporal server
   if (temporalUp) {
     // Find and kill the temporal dev server process
     try {
@@ -575,7 +665,7 @@ export async function down(opts: DownOpts) {
     out.log(`  ${out.dim('Temporal not running')}`);
   }
 
-  // Step 3: Remove .mcp.json entry
+  // Step 4: Remove .mcp.json entry
   if (opts.removeMcp) {
     const mcpPath = join(opts.dir, '.mcp.json');
     if (existsSync(mcpPath)) {
@@ -609,6 +699,189 @@ export async function down(opts: DownOpts) {
   console.log();
 }
 
+// --- Stop sessions: `stop` command ---
+
+interface StopOpts extends CliOverrides {
+  /** Stop a specific player by name. */
+  name?: string;
+  /** Stop all sessions in this ensemble. */
+  ensemble?: string;
+  /** Stop every session across all ensembles. */
+  all?: boolean;
+}
+
+export async function stop(opts: StopOpts) {
+  const config = getConfig(opts);
+
+  if (!opts.name && !opts.ensemble && !opts.all) {
+    out.error('Specify a player name, --ensemble <name>, or --all');
+    out.log(`  ${out.dim('claude-tempo stop <name>')}              Stop a specific session`);
+    out.log(`  ${out.dim('claude-tempo stop --ensemble <name>')}   Stop all sessions in an ensemble`);
+    out.log(`  ${out.dim('claude-tempo stop --all')}               Stop everything`);
+    process.exit(1);
+  }
+
+  let connection: Connection;
+  try {
+    connection = await Promise.race([
+      createTemporalConnection(config),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+    ]);
+  } catch {
+    out.error(`Cannot connect to Temporal at ${config.temporalAddress}`);
+    process.exit(1);
+    return;
+  }
+
+  const client = new Client({ connection, namespace: config.temporalNamespace });
+
+  if (opts.name) {
+    // Stop a specific player by name
+    await stopByName(client, opts.name, config);
+  } else {
+    // Stop multiple sessions (--ensemble or --all)
+    let query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+    if (opts.ensemble) {
+      query += ` AND ClaudeTempoEnsemble = "${opts.ensemble}"`;
+    }
+
+    let stopped = 0;
+    for await (const wf of client.workflow.list({ query })) {
+      try {
+        const handle = client.workflow.getHandle(wf.workflowId);
+        await handle.signal(shutdownSignal);
+        stopped++;
+        out.log(`  ${out.dim('stopped')} ${wf.workflowId}`);
+      } catch {
+        // already closed
+      }
+    }
+
+    // Clean up PID files
+    if (opts.ensemble || opts.all) {
+      killBridgeProcesses();
+    }
+
+    if (stopped > 0) {
+      out.success(`Stopped ${stopped} session${stopped !== 1 ? 's' : ''}`);
+    } else {
+      out.log(opts.ensemble
+        ? `No active sessions in ensemble "${opts.ensemble}".`
+        : 'No active sessions found.');
+    }
+  }
+
+  await connection.close();
+}
+
+async function stopByName(client: Client, name: string, config: Config) {
+  // Find the workflow by player name via search attribute
+  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoPlayerId = "${name}"`;
+  let found = false;
+
+  for await (const wf of client.workflow.list({ query })) {
+    found = true;
+    const handle = client.workflow.getHandle(wf.workflowId);
+
+    // Check if this is a conductor — warn about it
+    try {
+      const metadata = (await handle.query('getMetadata')) as Record<string, unknown>;
+      if (metadata.isConductor) {
+        out.warn(`"${name}" is a conductor session`);
+      }
+
+      // Notify the conductor that this session was stopped (if it's not the conductor itself)
+      if (!metadata.isConductor && metadata.ensemble) {
+        try {
+          const conductorWfId = conductorWorkflowId(metadata.ensemble as string);
+          const conductorHandle = client.workflow.getHandle(conductorWfId);
+          await conductorHandle.signal(playerReportSignal, {
+            playerId: name,
+            text: 'Session stopped by CLI',
+            type: 'result' as const,
+          });
+        } catch {
+          // No conductor or conductor not running — fine
+        }
+      }
+    } catch {
+      // Query failed — proceed with shutdown anyway
+    }
+
+    // Send shutdown signal (graceful)
+    try {
+      await handle.signal(shutdownSignal);
+      out.success(`Stopped "${name}"`);
+    } catch {
+      out.warn(`Could not signal "${name}" — it may have already exited`);
+    }
+
+    // Try to kill bridge process via PID file
+    killBridgePid(name);
+    break;
+  }
+
+  if (!found) {
+    out.error(`No active session found with name "${name}"`);
+    process.exit(1);
+  }
+}
+
+/**
+ * Kill a bridge process by reading its PID file from logs/.
+ * Cleans up the PID file after.
+ */
+function killBridgePid(name: string) {
+  const pidPath = join(process.cwd(), 'logs', `${name}.pid`);
+  if (!existsSync(pidPath)) return;
+
+  try {
+    const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
+    if (!isNaN(pid)) {
+      try {
+        process.kill(pid);
+        out.log(`  ${out.dim(`Killed bridge process (pid ${pid})`)}`);
+      } catch {
+        // Process already dead
+      }
+    }
+    unlinkSync(pidPath);
+  } catch {
+    // PID file unreadable — ignore
+  }
+}
+
+/**
+ * Kill all bridge processes found in logs/*.pid and clean up PID files.
+ */
+function killBridgeProcesses() {
+  const logsDir = join(process.cwd(), 'logs');
+  if (!existsSync(logsDir)) return;
+
+  try {
+    const pidFiles = readdirSync(logsDir).filter(f => f.endsWith('.pid'));
+    for (const pidFile of pidFiles) {
+      const pidPath = join(logsDir, pidFile);
+      try {
+        const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
+        if (!isNaN(pid)) {
+          try {
+            process.kill(pid);
+            out.log(`  ${out.dim(`Killed bridge process ${pidFile.replace('.pid', '')} (pid ${pid})`)}`);
+          } catch {
+            // already dead
+          }
+        }
+        unlinkSync(pidPath);
+      } catch {
+        // unreadable — skip
+      }
+    }
+  } catch {
+    // logs dir unreadable
+  }
+}
+
 export function help() {
   console.log(`
 ${out.bold('claude-tempo')} — Multi-session Claude Code coordination via Temporal
@@ -625,6 +898,7 @@ ${out.bold('Commands:')}
   ${out.cyan('server')}                Start the Temporal dev server and register search attributes
   ${out.cyan('conduct')} [ensemble]    Start a conductor session (one per ensemble)
   ${out.cyan('start')}   [ensemble]    Start a player session
+  ${out.cyan('stop')}    <name>        Stop a session by name (or --ensemble / --all)
   ${out.cyan('status')}  [ensemble]    Show active sessions and Temporal health
   ${out.cyan('config')}                Configure Temporal connection settings
   ${out.cyan('init')}                  Create .mcp.json config in the current directory
@@ -640,10 +914,12 @@ ${out.bold('Connection options (all commands):')}
 
 ${out.bold('Other options:')}
   -n, --name <name>           Set the session window name (start/conduct/up only)
-  --agent <claude|copilot>    Agent type to spawn (default: claude; start/conduct)
+  --agent <claude|copilot>    Agent type to spawn (default: from config; start/conduct)
   --skip-preflight            Skip preflight checks (start/conduct only)
   --background                Run Temporal in background (server only)
   --keep-mcp                  Don't remove .mcp.json entry (down only)
+  --all                       Stop all sessions (stop only)
+  --ensemble <name>           Target a specific ensemble (stop only)
   -d, --dir <path>            Target directory (default: cwd)
 
 ${out.bold('Config command:')}
