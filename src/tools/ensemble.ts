@@ -36,6 +36,7 @@ export function registerEnsembleTool(
         gitRoot?: string;
         gitBranch?: string;
         isConductor: boolean;
+        agentType: string;
         isYou: boolean;
       }> = [];
 
@@ -60,6 +61,7 @@ export function registerEnsembleTool(
               gitRoot: metadata.gitRoot,
               gitBranch: metadata.gitBranch,
               isConductor: metadata.isConductor,
+              agentType: metadata.agentType || 'claude',
               isYou: metadata.playerId === getPlayerId(),
             });
           } catch {
@@ -83,6 +85,7 @@ export function registerEnsembleTool(
         const tags = [
           p.isYou ? '(you)' : '',
           p.isConductor ? '(conductor)' : '',
+          p.agentType === 'copilot' ? '[copilot]' : '',
         ].filter(Boolean).join(' ');
 
         return [

@@ -18,26 +18,28 @@ export function registerRecruitTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
+  ownAgentType: AgentType = 'claude',
 ) {
   defineTool(
     server,
     'recruit',
-    'Start a new named session in a directory. Rejects if the name is already active. Supports Claude Code or Copilot CLI agents.',
+    `Start a new named session in a directory. Rejects if the name is already active. Supports Claude Code or Copilot CLI agents. Defaults to "${ownAgentType}" (same as this session).`,
     {
       workDir: z.string().describe('The working directory for the new session'),
       name: z.string().describe('Name for the new session'),
       initialMessage: z.string().optional()
         .describe('Optional task or message for the new session (sent after it sets its name)'),
-      agent: z.enum(['claude', 'copilot']).default('claude')
-        .describe('Which agent to use: "claude" (default) or "copilot" (GitHub Copilot CLI via SDK)'),
+      agent: z.enum(['claude', 'copilot']).optional()
+        .describe(`Which agent to use (default: "${ownAgentType}", same as this session)`),
     },
     async (args) => {
-      const { workDir, name, initialMessage, agent } = args as {
+      const { workDir, name, initialMessage } = args as {
         workDir: string;
         name: string;
         initialMessage?: string;
-        agent: AgentType;
+        agent?: AgentType;
       };
+      const agent: AgentType = (args as any).agent || ownAgentType;
       // Validate name to prevent search attribute query injection
       if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
         return {
@@ -75,6 +77,10 @@ export function registerRecruitTool(
             name,
             ensemble: config.ensemble,
             temporalAddress: config.temporalAddress,
+            temporalNamespace: config.temporalNamespace,
+            temporalApiKey: config.temporalApiKey,
+            temporalTlsCertPath: config.temporalTlsCertPath,
+            temporalTlsKeyPath: config.temporalTlsKeyPath,
             workDir,
           });
           log(`Spawned copilot-bridge (pid ${pid}) in ${workDir} as "${name}"`);
@@ -84,10 +90,16 @@ export function registerRecruitTool(
             '--dangerously-load-development-channels', 'server:claude-tempo',
             '-n', name,
           ];
-          const { pid } = spawnInTerminal(spawnArgs, workDir, {
+          const envVars: Record<string, string> = {
             [ENV.ENSEMBLE]: config.ensemble,
             [ENV.CONDUCTOR]: '',
-          });
+            [ENV.TEMPORAL_ADDRESS]: config.temporalAddress,
+            [ENV.TEMPORAL_NAMESPACE]: config.temporalNamespace,
+          };
+          if (config.temporalApiKey) envVars[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
+          if (config.temporalTlsCertPath) envVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
+          if (config.temporalTlsKeyPath) envVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
+          const { pid } = spawnInTerminal(spawnArgs, workDir, envVars);
           log(`Spawned claude process (pid ${pid}) in ${workDir} as "${name}"`);
         }
 

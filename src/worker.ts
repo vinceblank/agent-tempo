@@ -1,7 +1,8 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { Worker, NativeConnection, bundleWorkflowCode } from '@temporalio/worker';
+import { Worker, bundleWorkflowCode } from '@temporalio/worker';
 import { Config } from './config';
+import { createTemporalNativeConnection } from './connection';
 
 const BUNDLE_PATH = path.resolve(__dirname, '..', 'workflow-bundle.js');
 
@@ -19,9 +20,7 @@ async function getWorkflowBundle(): Promise<{ code: string }> {
 }
 
 export async function createWorker(config: Config): Promise<Worker> {
-  const connection = await NativeConnection.connect({
-    address: config.temporalAddress,
-  });
+  const connection = await createTemporalNativeConnection(config);
 
   const workflowBundle = await getWorkflowBundle();
 

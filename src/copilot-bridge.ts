@@ -21,8 +21,9 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { Client, Connection } from '@temporalio/client';
+import { Client } from '@temporalio/client';
 import { getConfig, ENV } from './config';
+import { createTemporalConnection } from './connection';
 import { Message } from './types';
 
 // Optional dependency — must be installed separately: npm install @github/copilot-sdk
@@ -88,9 +89,7 @@ async function main() {
   log(`Starting Copilot bridge in ${workDir} (ensemble: ${config.ensemble})`);
 
   // Connect Temporal client (for polling only — the MCP server child process runs its own worker)
-  const connection = await Connection.connect({
-    address: config.temporalAddress,
-  });
+  const connection = await createTemporalConnection(config);
   const client = new Client({
     connection,
     namespace: config.temporalNamespace,
@@ -125,6 +124,9 @@ async function main() {
     [ENV.CONDUCTOR]: process.env[ENV.CONDUCTOR] || '',
     [ENV.BRIDGE_MODE]: '1', // disable MCP server's message poller — bridge handles delivery
     [ENV.PLAYER_NAME]: playerIdForWorkflow, // ensures MCP server uses same workflow ID
+    ...(config.temporalApiKey ? { [ENV.TEMPORAL_API_KEY]: config.temporalApiKey } : {}),
+    ...(config.temporalTlsCertPath ? { [ENV.TEMPORAL_TLS_CERT_PATH]: config.temporalTlsCertPath } : {}),
+    ...(config.temporalTlsKeyPath ? { [ENV.TEMPORAL_TLS_KEY_PATH]: config.temporalTlsKeyPath } : {}),
   };
 
   // Spawn Copilot SDK client and session

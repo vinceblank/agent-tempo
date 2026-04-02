@@ -5,8 +5,9 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { Client, Connection, WorkflowIdConflictPolicy } from '@temporalio/client';
+import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { getConfig, conductorWorkflowId, ENV } from './config';
+import { createTemporalConnection } from './connection';
 import { createWorker } from './worker';
 import { SessionInput } from './types';
 import { registerEnsembleTool } from './tools/ensemble';
@@ -66,9 +67,7 @@ async function main() {
   log(`Starting ${isConductor ? 'conductor' : `peer ${playerId}`} in ${workDir}`);
 
   // Connect Temporal client
-  const connection = await Connection.connect({
-    address: config.temporalAddress,
-  });
+  const connection = await createTemporalConnection(config);
   const client = new Client({
     connection,
     namespace: config.temporalNamespace,
@@ -87,6 +86,7 @@ async function main() {
     ? conductorWorkflowId(config.ensemble)
     : `claude-session-${config.ensemble}-${playerId}`;
 
+  const isBridgeMode = process.env[ENV.BRIDGE_MODE] === '1';
   const sessionInput: SessionInput = {
     metadata: {
       playerId,
@@ -96,6 +96,7 @@ async function main() {
       gitRoot,
       gitBranch,
       isConductor,
+      agentType: isBridgeMode ? 'copilot' : 'claude',
     },
     autoSummary: `Session in ${path.basename(workDir)}`,
   };
@@ -155,7 +156,7 @@ async function main() {
   registerSetPartTool(mcpServer, handle);
   registerSetNameTool(mcpServer, client, config, handle, getPlayerId, setPlayerId);
   registerListenTool(mcpServer, handle);
-  registerRecruitTool(mcpServer, client, config, getPlayerId);
+  registerRecruitTool(mcpServer, client, config, getPlayerId, isBridgeMode ? 'copilot' : 'claude');
   registerReportTool(mcpServer, client, config, getPlayerId);
   registerTerminateTool(mcpServer, client, config, getPlayerId);
 
@@ -163,7 +164,6 @@ async function main() {
   // Skip when running under the Copilot bridge: the bridge has its own poller that
   // injects messages via sendAndWait. If both pollers run, this one wins the race and
   // sends messages via notifications/claude/channel — which Copilot doesn't understand.
-  const isBridgeMode = process.env[ENV.BRIDGE_MODE] === '1';
   const stopPoller = isBridgeMode
     ? () => {} // no-op — bridge handles message delivery
     : startMessagePoller(handle, async (messages) => {
