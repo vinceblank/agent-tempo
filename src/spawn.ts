@@ -220,6 +220,10 @@ export interface CopilotBridgeOpts {
   name: string;
   ensemble: string;
   temporalAddress: string;
+  temporalNamespace?: string;
+  temporalApiKey?: string;
+  temporalTlsCertPath?: string;
+  temporalTlsKeyPath?: string;
   isConductor?: boolean;
   workDir: string;
   /** Directory for log and PID files. Defaults to `logs/` inside workDir. */
@@ -270,6 +274,11 @@ export function spawnCopilotBridge(opts: CopilotBridgeOpts): CopilotBridgeResult
         [ENV.BRIDGE_NAME]: opts.name,
         [ENV.TEMPORAL_ADDRESS]: opts.temporalAddress,
         ...(opts.isConductor ? { [ENV.CONDUCTOR]: 'true' } : {}),
+        // Forward Temporal connection settings so child processes can connect
+        ...(opts.temporalNamespace ? { [ENV.TEMPORAL_NAMESPACE]: opts.temporalNamespace } : {}),
+        ...(opts.temporalApiKey ? { [ENV.TEMPORAL_API_KEY]: opts.temporalApiKey } : {}),
+        ...(opts.temporalTlsCertPath ? { [ENV.TEMPORAL_TLS_CERT_PATH]: opts.temporalTlsCertPath } : {}),
+        ...(opts.temporalTlsKeyPath ? { [ENV.TEMPORAL_TLS_KEY_PATH]: opts.temporalTlsKeyPath } : {}),
       },
     });
     child.unref();

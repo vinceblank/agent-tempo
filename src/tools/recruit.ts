@@ -75,6 +75,10 @@ export function registerRecruitTool(
             name,
             ensemble: config.ensemble,
             temporalAddress: config.temporalAddress,
+            temporalNamespace: config.temporalNamespace,
+            temporalApiKey: config.temporalApiKey,
+            temporalTlsCertPath: config.temporalTlsCertPath,
+            temporalTlsKeyPath: config.temporalTlsKeyPath,
             workDir,
           });
           log(`Spawned copilot-bridge (pid ${pid}) in ${workDir} as "${name}"`);
@@ -84,10 +88,20 @@ export function registerRecruitTool(
             '--dangerously-load-development-channels', 'server:claude-tempo',
             '-n', name,
           ];
-          const { pid } = spawnInTerminal(spawnArgs, workDir, {
+          const envVars: Record<string, string> = {
             [ENV.ENSEMBLE]: config.ensemble,
             [ENV.CONDUCTOR]: '',
-          });
+          };
+          if (config.temporalAddress && config.temporalAddress !== 'localhost:7233') {
+            envVars[ENV.TEMPORAL_ADDRESS] = config.temporalAddress;
+          }
+          if (config.temporalNamespace && config.temporalNamespace !== 'default') {
+            envVars[ENV.TEMPORAL_NAMESPACE] = config.temporalNamespace;
+          }
+          if (config.temporalApiKey) envVars[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
+          if (config.temporalTlsCertPath) envVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
+          if (config.temporalTlsKeyPath) envVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
+          const { pid } = spawnInTerminal(spawnArgs, workDir, envVars);
           log(`Spawned claude process (pid ${pid}) in ${workDir} as "${name}"`);
         }
 

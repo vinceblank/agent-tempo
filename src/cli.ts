@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 
 import { start, status, init, server, up, down, help, version } from './cli/commands';
+import { configCommand } from './cli/config-command';
 import { runPreflight } from './cli/preflight';
 import * as out from './cli/output';
 import { AgentType } from './types';
-import { ENV } from './config';
+import { ENV, CliOverrides } from './config';
 
 interface ParsedArgs {
   command: string;
   positional: string[];
-  temporalAddress: string;
+  temporalAddress?: string;
+  temporalNamespace?: string;
+  temporalApiKey?: string;
+  temporalTlsCertPath?: string;
+  temporalTlsKeyPath?: string;
   name?: string;
   dir: string;
   skipPreflight: boolean;
@@ -22,7 +27,6 @@ function parseArgs(argv: string[]): ParsedArgs {
   const result: ParsedArgs = {
     command: 'help',
     positional: [],
-    temporalAddress: process.env[ENV.TEMPORAL_ADDRESS] || 'localhost:7233',
     dir: process.cwd(),
     skipPreflight: false,
     background: false,
@@ -34,6 +38,14 @@ function parseArgs(argv: string[]): ParsedArgs {
     const arg = argv[i];
     if (arg === '--temporal-address' && i + 1 < argv.length) {
       result.temporalAddress = argv[++i];
+    } else if (arg === '--temporal-namespace' && i + 1 < argv.length) {
+      result.temporalNamespace = argv[++i];
+    } else if (arg === '--temporal-api-key' && i + 1 < argv.length) {
+      result.temporalApiKey = argv[++i];
+    } else if (arg === '--temporal-tls-cert' && i + 1 < argv.length) {
+      result.temporalTlsCertPath = argv[++i];
+    } else if (arg === '--temporal-tls-key' && i + 1 < argv.length) {
+      result.temporalTlsKeyPath = argv[++i];
     } else if ((arg === '-n' || arg === '--name') && i + 1 < argv.length) {
       result.name = argv[++i];
     } else if ((arg === '-d' || arg === '--dir') && i + 1 < argv.length) {
@@ -72,19 +84,31 @@ function parseArgs(argv: string[]): ParsedArgs {
   return result;
 }
 
+/** Extract CLI overrides for config resolution. */
+function cliOverrides(args: ParsedArgs): CliOverrides {
+  return {
+    temporalAddress: args.temporalAddress,
+    temporalNamespace: args.temporalNamespace,
+    temporalApiKey: args.temporalApiKey,
+    temporalTlsCertPath: args.temporalTlsCertPath,
+    temporalTlsKeyPath: args.temporalTlsKeyPath,
+  };
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const ensemble = args.positional[1] || process.env[ENV.ENSEMBLE] || 'default';
+  const overrides = cliOverrides(args);
 
   switch (args.command) {
     case 'conduct':
       await start({
         ensemble,
         conductor: true,
-        temporalAddress: args.temporalAddress,
         name: args.name,
         skipPreflight: args.skipPreflight,
         agent: args.agent ?? 'claude',
+        ...overrides,
       });
       break;
 
@@ -92,41 +116,41 @@ async function main() {
       await start({
         ensemble,
         conductor: false,
-        temporalAddress: args.temporalAddress,
         name: args.name,
         skipPreflight: args.skipPreflight,
         agent: args.agent ?? 'claude',
+        ...overrides,
       });
       break;
 
     case 'status':
       await status({
         ensemble: args.positional[1], // undefined = show all
-        temporalAddress: args.temporalAddress,
+        ...overrides,
       });
       break;
 
     case 'server':
       await server({
-        temporalAddress: args.temporalAddress,
         background: args.background,
+        ...overrides,
       });
       break;
 
     case 'down':
       await down({
-        temporalAddress: args.temporalAddress,
         removeMcp: !args.keepMcp,
         dir: args.dir,
+        ...overrides,
       });
       break;
 
     case 'up':
       await up({
         ensemble,
-        temporalAddress: args.temporalAddress,
         name: args.name,
         agent: args.agent ?? 'claude',
+        ...overrides,
       });
       break;
 
@@ -134,10 +158,14 @@ async function main() {
       await init({ dir: args.dir });
       break;
 
+    case 'config':
+      await configCommand(args.positional);
+      break;
+
     case 'preflight':
       const result = await runPreflight({
-        temporalAddress: args.temporalAddress,
-        projectDir: args.dir,
+        dir: args.dir,
+        ...overrides,
       });
       for (const w of result.warnings) out.warn(w);
       if (!result.ok) {

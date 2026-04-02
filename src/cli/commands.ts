@@ -1,10 +1,11 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, resolve } from 'path';
-import { execFileSync, spawn as cpSpawn, ChildProcess } from 'child_process';
+import { execFileSync, spawn as cpSpawn } from 'child_process';
 import { homedir } from 'os';
-import { Connection, Client } from '@temporalio/client';
+import { Client, Connection } from '@temporalio/client';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
-import { conductorWorkflowId, ENV } from '../config';
+import { conductorWorkflowId, ENV, getConfig, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
+import { createTemporalConnection } from '../connection';
 import { AgentType } from '../types';
 import { runPreflight } from './preflight';
 import * as out from './output';
@@ -12,22 +13,22 @@ import * as out from './output';
 /** Package root is two levels up from dist/cli/ */
 const PACKAGE_ROOT = resolve(__dirname, '..', '..');
 
-interface StartOpts {
+interface StartOpts extends CliOverrides {
   ensemble: string;
   conductor: boolean;
-  temporalAddress: string;
   name?: string;
   skipPreflight?: boolean;
   agent: AgentType;
 }
 
 export async function start(opts: StartOpts) {
+  const config = getConfig(opts);
   const workDir = process.cwd();
 
   if (!opts.skipPreflight) {
     const result = await runPreflight({
-      temporalAddress: opts.temporalAddress,
-      projectDir: workDir,
+      dir: workDir,
+      ...opts,
     });
     for (const w of result.warnings) out.warn(w);
     if (!result.ok) {
@@ -41,7 +42,7 @@ export async function start(opts: StartOpts) {
   // Check if a conductor workflow already exists for this ensemble
   if (opts.conductor) {
     try {
-      const connection = await Connection.connect({ address: opts.temporalAddress });
+      const connection = await createTemporalConnection(config);
       const client = new Client({ connection });
       const conductorWfId = conductorWorkflowId(opts.ensemble);
       const handle = client.workflow.getHandle(conductorWfId);
@@ -57,11 +58,23 @@ export async function start(opts: StartOpts) {
 
   out.log(`Starting ${out.bold(role)} in ensemble ${out.cyan(opts.ensemble)}${opts.agent === 'copilot' ? out.dim(' (copilot)') : ''}`);
 
+  // Build env vars to forward to child processes
+  const childEnvVars: Record<string, string> = {};
+  if (config.temporalAddress && config.temporalAddress !== 'localhost:7233') {
+    childEnvVars[ENV.TEMPORAL_ADDRESS] = config.temporalAddress;
+  }
+  if (config.temporalNamespace && config.temporalNamespace !== 'default') {
+    childEnvVars[ENV.TEMPORAL_NAMESPACE] = config.temporalNamespace;
+  }
+  if (config.temporalApiKey) childEnvVars[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
+  if (config.temporalTlsCertPath) childEnvVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
+  if (config.temporalTlsKeyPath) childEnvVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
+
   if (opts.agent === 'copilot') {
     const { pid } = spawnCopilotBridge({
       name: opts.name || `copilot-${Date.now()}`,
       ensemble: opts.ensemble,
-      temporalAddress: opts.temporalAddress,
+      temporalAddress: config.temporalAddress,
       isConductor: opts.conductor,
       workDir,
     });
@@ -76,6 +89,7 @@ export async function start(opts: StartOpts) {
     }
 
     const envVars: Record<string, string> = {
+      ...childEnvVars,
       [ENV.ENSEMBLE]: opts.ensemble,
     };
     if (opts.conductor) {
@@ -93,26 +107,26 @@ export async function start(opts: StartOpts) {
   out.log(`\nCheck status: ${out.dim('claude-tempo status ' + opts.ensemble)}`);
 }
 
-interface StatusOpts {
+interface StatusOpts extends CliOverrides {
   ensemble?: string;
-  temporalAddress: string;
 }
 
 export async function status(opts: StatusOpts) {
+  const config = getConfig(opts);
   let connection: Connection;
   try {
     connection = await Promise.race([
-      Connection.connect({ address: opts.temporalAddress }),
+      createTemporalConnection(config),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
     ]);
   } catch {
-    out.error(`Cannot connect to Temporal at ${opts.temporalAddress}`);
+    out.error(`Cannot connect to Temporal at ${config.temporalAddress}`);
     out.log(`  Run: ${out.dim('temporal server start-dev')}`);
     process.exit(1);
     return; // unreachable, helps TS
   }
 
-  const client = new Client({ connection });
+  const client = new Client({ connection, namespace: config.temporalNamespace });
 
   // Build query
   let query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
@@ -241,7 +255,6 @@ export async function init(opts: InitOpts) {
 
 // --- Temporal server management ---
 
-const CLAUDE_TEMPO_HOME = join(homedir(), '.claude-tempo');
 const DEFAULT_DB_PATH = join(CLAUDE_TEMPO_HOME, 'temporal-data.db');
 
 const SEARCH_ATTRIBUTES = [
@@ -251,8 +264,8 @@ const SEARCH_ATTRIBUTES = [
   { name: 'ClaudeTempoPlayerId', type: 'Keyword' },
 ];
 
-function isTemporalReachable(address: string): Promise<boolean> {
-  return Connection.connect({ address })
+function isTemporalReachable(config: { temporalAddress: string; temporalApiKey?: string; temporalTlsCertPath?: string; temporalTlsKeyPath?: string }): Promise<boolean> {
+  return createTemporalConnection(config as any)
     .then(conn => { conn.close(); return true; })
     .catch(() => false);
 }
@@ -267,7 +280,7 @@ function temporalCliExists(): boolean {
   }
 }
 
-function registerSearchAttributes(temporalAddress: string, namespace = process.env[ENV.TEMPORAL_NAMESPACE] || 'default') {
+function registerSearchAttributes(temporalAddress: string, namespace = 'default') {
   for (const attr of SEARCH_ATTRIBUTES) {
     try {
       execFileSync('temporal', [
@@ -285,12 +298,13 @@ function registerSearchAttributes(temporalAddress: string, namespace = process.e
   }
 }
 
-interface ServerOpts {
-  temporalAddress: string;
+interface ServerOpts extends CliOverrides {
   background: boolean;
 }
 
 export async function server(opts: ServerOpts) {
+  const config = getConfig(opts);
+
   if (!temporalCliExists()) {
     out.error('temporal CLI not found on PATH');
     out.log(`  Install: ${out.dim('https://docs.temporal.io/cli')}`);
@@ -298,18 +312,18 @@ export async function server(opts: ServerOpts) {
   }
 
   // Check if already running
-  const alreadyRunning = await isTemporalReachable(opts.temporalAddress);
+  const alreadyRunning = await isTemporalReachable(config);
   if (alreadyRunning) {
-    out.success(`Temporal already running at ${opts.temporalAddress}`);
+    out.success(`Temporal already running at ${config.temporalAddress}`);
     out.log('  Registering search attributes...');
-    registerSearchAttributes(opts.temporalAddress);
+    registerSearchAttributes(config.temporalAddress, config.temporalNamespace);
     return;
   }
 
   // Ensure data directory exists
   mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
 
-  const port = opts.temporalAddress.split(':')[1] || '7233';
+  const port = config.temporalAddress.split(':')[1] || '7233';
   const args = [
     'server', 'start-dev',
     '--port', port,
@@ -330,7 +344,7 @@ export async function server(opts: ServerOpts) {
     // Wait for it to be ready
     for (let i = 0; i < 20; i++) {
       await new Promise(r => setTimeout(r, 500));
-      if (await isTemporalReachable(opts.temporalAddress)) break;
+      if (await isTemporalReachable(config)) break;
     }
   } else {
     // Foreground — register attributes after startup, then hand over stdio
@@ -342,10 +356,10 @@ export async function server(opts: ServerOpts) {
     const waitForReady = async () => {
       for (let i = 0; i < 20; i++) {
         await new Promise(r => setTimeout(r, 500));
-        if (await isTemporalReachable(opts.temporalAddress)) {
-          out.success(`Temporal running at ${opts.temporalAddress}`);
+        if (await isTemporalReachable(config)) {
+          out.success(`Temporal running at ${config.temporalAddress}`);
           out.log('  Registering search attributes...');
-          registerSearchAttributes(opts.temporalAddress);
+          registerSearchAttributes(config.temporalAddress, config.temporalNamespace);
           out.log(`\n  ${out.dim('Press Ctrl+C to stop')}\n`);
           return;
         }
@@ -374,21 +388,22 @@ export async function server(opts: ServerOpts) {
   // Register search attributes (for background mode — foreground does it inline)
   if (opts.background) {
     out.log('  Registering search attributes...');
-    registerSearchAttributes(opts.temporalAddress);
+    registerSearchAttributes(config.temporalAddress, config.temporalNamespace);
     out.success('Temporal ready');
   }
 }
 
 // --- First-time setup: `up` command ---
 
-interface UpOpts {
+interface UpOpts extends CliOverrides {
   ensemble: string;
-  temporalAddress: string;
   name?: string;
   agent: AgentType;
 }
 
 export async function up(opts: UpOpts) {
+  const config = getConfig(opts);
+
   out.heading('claude-tempo setup');
 
   // Step 1: Check temporal CLI
@@ -401,13 +416,13 @@ export async function up(opts: UpOpts) {
   out.check('temporal CLI installed', true);
 
   // Step 2: Start Temporal if needed
-  const temporalUp = await isTemporalReachable(opts.temporalAddress);
+  const temporalUp = await isTemporalReachable(config);
   if (temporalUp) {
-    out.check('Temporal running', true, opts.temporalAddress);
+    out.check('Temporal running', true, config.temporalAddress);
   } else {
     out.log(`  ${out.dim('...')} Starting Temporal dev server...`);
     mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
-    const port = opts.temporalAddress.split(':')[1] || '7233';
+    const port = config.temporalAddress.split(':')[1] || '7233';
     const child = cpSpawn('temporal', [
       'server', 'start-dev',
       '--port', port,
@@ -419,7 +434,7 @@ export async function up(opts: UpOpts) {
     let ready = false;
     for (let i = 0; i < 20; i++) {
       await new Promise(r => setTimeout(r, 500));
-      if (await isTemporalReachable(opts.temporalAddress)) { ready = true; break; }
+      if (await isTemporalReachable(config)) { ready = true; break; }
     }
     if (!ready) {
       out.error('Temporal did not start within 10 seconds');
@@ -429,7 +444,7 @@ export async function up(opts: UpOpts) {
   }
 
   // Step 3: Register search attributes
-  registerSearchAttributes(opts.temporalAddress);
+  registerSearchAttributes(config.temporalAddress, config.temporalNamespace);
 
   // Step 4: Init .mcp.json if needed
   const mcpPath = join(process.cwd(), '.mcp.json');
@@ -447,6 +462,18 @@ export async function up(opts: UpOpts) {
     out.check('.mcp.json created', true);
   }
 
+  // Build env vars to forward to child processes
+  const childEnvVars: Record<string, string> = {};
+  if (config.temporalAddress && config.temporalAddress !== 'localhost:7233') {
+    childEnvVars[ENV.TEMPORAL_ADDRESS] = config.temporalAddress;
+  }
+  if (config.temporalNamespace && config.temporalNamespace !== 'default') {
+    childEnvVars[ENV.TEMPORAL_NAMESPACE] = config.temporalNamespace;
+  }
+  if (config.temporalApiKey) childEnvVars[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
+  if (config.temporalTlsCertPath) childEnvVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
+  if (config.temporalTlsKeyPath) childEnvVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
+
   // Step 5: Launch conductor
   console.log();
   out.log(`Launching conductor in ensemble ${out.cyan(opts.ensemble)}${opts.agent === 'copilot' ? out.dim(' (copilot)') : ''}...`);
@@ -456,7 +483,7 @@ export async function up(opts: UpOpts) {
     ({ pid } = spawnCopilotBridge({
       name: opts.name || `${opts.ensemble}-conductor`,
       ensemble: opts.ensemble,
-      temporalAddress: opts.temporalAddress,
+      temporalAddress: config.temporalAddress,
       isConductor: true,
       workDir: process.cwd(),
     }));
@@ -468,6 +495,7 @@ export async function up(opts: UpOpts) {
     if (opts.name) claudeArgs.push('-n', opts.name);
 
     ({ pid } = spawnInTerminal(claudeArgs, process.cwd(), {
+      ...childEnvVars,
       [ENV.ENSEMBLE]: opts.ensemble,
       [ENV.CONDUCTOR]: 'true',
     }));
@@ -486,21 +514,22 @@ export async function up(opts: UpOpts) {
 
 // --- Teardown: `down` command ---
 
-interface DownOpts {
-  temporalAddress: string;
+interface DownOpts extends CliOverrides {
   removeMcp: boolean;
   dir: string;
 }
 
 export async function down(opts: DownOpts) {
+  const config = getConfig(opts);
+
   out.heading('claude-tempo teardown');
 
   // Step 1: Terminate all active workflows
-  const temporalUp = await isTemporalReachable(opts.temporalAddress);
+  const temporalUp = await isTemporalReachable(config);
   if (temporalUp) {
     try {
-      const connection = await Connection.connect({ address: opts.temporalAddress });
-      const client = new Client({ connection });
+      const connection = await createTemporalConnection(config);
+      const client = new Client({ connection, namespace: config.temporalNamespace });
       const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
       let terminated = 0;
       for await (const wf of client.workflow.list({ query })) {
@@ -590,18 +619,35 @@ ${out.bold('Commands:')}
   ${out.cyan('conduct')} [ensemble]    Start a conductor session (one per ensemble)
   ${out.cyan('start')}   [ensemble]    Start a player session
   ${out.cyan('status')}  [ensemble]    Show active sessions and Temporal health
+  ${out.cyan('config')}                Configure Temporal connection settings
   ${out.cyan('init')}                  Create .mcp.json config in the current directory
   ${out.cyan('preflight')}             Run preflight checks only
   ${out.cyan('help')}                  Show this help message
 
-${out.bold('Options:')}
-  --temporal-address <addr>   Temporal server address (default: localhost:7233)
+${out.bold('Connection options (all commands):')}
+  --temporal-address <addr>    Temporal server address (default: localhost:7233)
+  --temporal-namespace <ns>    Temporal namespace (default: default)
+  --temporal-api-key <key>     Temporal API key (for Temporal Cloud)
+  --temporal-tls-cert <path>   Path to TLS client certificate
+  --temporal-tls-key <path>    Path to TLS client key
+
+${out.bold('Other options:')}
   -n, --name <name>           Set the session window name (start/conduct/up only)
   --agent <claude|copilot>    Agent type to spawn (default: claude; start/conduct)
   --skip-preflight            Skip preflight checks (start/conduct only)
   --background                Run Temporal in background (server only)
   --keep-mcp                  Don't remove .mcp.json entry (down only)
   -d, --dir <path>            Target directory (default: cwd)
+
+${out.bold('Config command:')}
+  ${out.dim('claude-tempo config')}              Interactive connection setup
+  ${out.dim('claude-tempo config show')}         Show resolved config
+  ${out.dim('claude-tempo config set <k> <v>')}  Set a config value
+
+  Settings are saved to ~/.claude-tempo/config.json.
+  Also reads ~/.config/temporalio/temporal.yaml as a fallback.
+
+  ${out.bold('Resolution order:')} CLI flag > env var > config file > temporal CLI config > default
 
 ${out.bold('First time? Run this:')}
   ${out.dim('cd your-project')}
@@ -617,6 +663,10 @@ ${out.bold('Typical workflow:')}
 ${out.bold('Environment:')}
   CLAUDE_TEMPO_ENSEMBLE       Default ensemble name (fallback: "default")
   TEMPORAL_ADDRESS            Default Temporal address (fallback: localhost:7233)
+  TEMPORAL_NAMESPACE          Default Temporal namespace (fallback: "default")
+  TEMPORAL_API_KEY            Temporal API key
+  TEMPORAL_TLS_CERT_PATH      Path to TLS client certificate
+  TEMPORAL_TLS_KEY_PATH       Path to TLS client key
 `);
 }
 

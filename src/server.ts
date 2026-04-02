@@ -5,8 +5,9 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { Client, Connection, WorkflowIdConflictPolicy } from '@temporalio/client';
+import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { getConfig, conductorWorkflowId, ENV } from './config';
+import { createTemporalConnection } from './connection';
 import { createWorker } from './worker';
 import { SessionInput } from './types';
 import { registerEnsembleTool } from './tools/ensemble';
@@ -66,9 +67,7 @@ async function main() {
   log(`Starting ${isConductor ? 'conductor' : `peer ${playerId}`} in ${workDir}`);
 
   // Connect Temporal client
-  const connection = await Connection.connect({
-    address: config.temporalAddress,
-  });
+  const connection = await createTemporalConnection(config);
   const client = new Client({
     connection,
     namespace: config.temporalNamespace,
