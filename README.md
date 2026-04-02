@@ -367,52 +367,60 @@ No manual cleanup needed — `cue` a dead player and the system handles the rest
 
 > **Warning:** Copilot bridge support is experimental and subject to breaking changes.
 
-GitHub Copilot CLI sessions can join an ensemble via the Copilot bridge. Bridge sessions are headless — they require a Claude conductor or custom Temporal client to receive work via `cue`.
+GitHub Copilot CLI sessions can join an ensemble via the Copilot bridge. Bridge sessions are headless — they require a conductor or another player to receive work via `cue`.
 
 <details>
 <summary>Setup and usage</summary>
 
 ### Prerequisites
 
+- [GitHub Copilot CLI](https://docs.github.com/en/copilot/github-copilot-in-the-cli) installed and authenticated
+- An active GitHub Copilot subscription
+- Node.js 20+
+- Install the Copilot SDK: `npm install @github/copilot-sdk`
+
+### Starting Copilot sessions
+
+Use `--agent copilot` with any session-launching command:
+
 ```bash
-npm install @github/copilot-sdk    # optional dependency (~243MB)
+claude-tempo start myband --agent copilot -n copilot-1      # start a player
+claude-tempo conduct myband --agent copilot                  # start a conductor
+claude-tempo up myband --agent copilot                       # full setup
 ```
 
-Also requires [GitHub Copilot CLI](https://docs.github.com/en/copilot/github-copilot-in-the-cli) installed, authenticated, with an active subscription. Node 20+ required for Copilot features.
-
-### Starting a Copilot player
-
-The easiest way is via `recruit` from any active session:
+Or recruit from within any active session:
 
 > "Recruit a copilot session named 'copilot-dev' in /repos/my-project with agent copilot"
 
-Or start the bridge directly:
+### Setting a default agent
+
+To avoid passing `--agent copilot` every time:
 
 ```bash
-CLAUDE_TEMPO_ENSEMBLE=default COPILOT_BRIDGE_NAME=copilot-dev npx ts-node src/copilot-bridge.ts
+claude-tempo config set default-agent copilot
 ```
 
-### How it works
+Or via environment variable:
 
-1. Bridge spawns a Copilot CLI session via the SDK with claude-tempo as MCP server
-2. MCP server registers the session as a Temporal workflow
-3. Bridge polls for pending messages every 2 seconds
-4. Messages are injected as prompts via `session.sendAndWait()`
-5. The Copilot session can use all claude-tempo tools
+```bash
+export CLAUDE_TEMPO_DEFAULT_AGENT=copilot
+```
 
-### Copilot environment variables
+Resolution order: `--agent` flag → `CLAUDE_TEMPO_DEFAULT_AGENT` env → config file → `claude`.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `COPILOT_BRIDGE_NAME` | *(none)* | Player name |
-| `COPILOT_BRIDGE_MODEL` | *(Copilot default)* | Model override |
-| `GITHUB_TOKEN` | *(logged-in user)* | GitHub auth token |
+### Model override
+
+Set `COPILOT_BRIDGE_MODEL` to use a specific model for Copilot sessions:
+
+```bash
+COPILOT_BRIDGE_MODEL=gpt-4o claude-tempo start myband --agent copilot
+```
 
 ### Limitations
 
-- No interactive access — bridge sessions only respond to cues
-- 2-second polling latency (vs instant for Claude Code sessions)
-- Must be spawned via the bridge to participate
+- Headless only — bridge sessions respond to cues, no interactive terminal
+- ~2-second polling latency (vs instant for Claude Code sessions)
 - `@github/copilot-sdk` adds ~243MB to node_modules
 - Node 20+ required (rest of claude-tempo works on Node 18+)
 
