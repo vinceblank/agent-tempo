@@ -272,8 +272,10 @@ export function spawnCopilotBridge(opts: CopilotBridgeOpts): CopilotBridgeResult
         ...process.env,
         [ENV.ENSEMBLE]: opts.ensemble,
         [ENV.BRIDGE_NAME]: opts.name,
+        [ENV.PLAYER_NAME]: '', // Clear parent's player name so child uses BRIDGE_NAME
+        [ENV.BRIDGE_MODE]: '', // Clear parent's bridge mode
         [ENV.TEMPORAL_ADDRESS]: opts.temporalAddress,
-        ...(opts.isConductor ? { [ENV.CONDUCTOR]: 'true' } : {}),
+        [ENV.CONDUCTOR]: opts.isConductor ? 'true' : '',
         // Forward Temporal connection settings so child processes can connect
         ...(opts.temporalNamespace ? { [ENV.TEMPORAL_NAMESPACE]: opts.temporalNamespace } : {}),
         ...(opts.temporalApiKey ? { [ENV.TEMPORAL_API_KEY]: opts.temporalApiKey } : {}),
