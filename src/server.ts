@@ -160,19 +160,7 @@ async function main() {
   registerReportTool(mcpServer, client, config, getPlayerId);
   registerTerminateTool(mcpServer, client, config, getPlayerId);
 
-  // Resolve the conductor's current player name (cached, refreshed on miss).
-  let cachedConductorName: string | null = null;
-  async function getConductorName(): Promise<string | null> {
-    if (cachedConductorName) return cachedConductorName;
-    try {
-      const h = client.workflow.getHandle(conductorWorkflowId(config.ensemble));
-      const meta = await h.query('getMetadata') as { playerId?: string; isConductor?: boolean };
-      if (meta?.isConductor) cachedConductorName = meta.playerId ?? null;
-    } catch { /* no conductor */ }
-    return cachedConductorName;
-  }
-
-  const ACK_INSTRUCTION = '\n\n[IMPORTANT: Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
+  const MAESTRO_ACK = '\n\n[IMPORTANT: This message is from a human (Maestro). Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
 
   // Start message poller — push messages into Claude Code via channel notifications.
   // Skip when running under the Copilot bridge: the bridge has its own poller that
@@ -181,11 +169,9 @@ async function main() {
   const stopPoller = isBridgeMode
     ? () => {} // no-op — bridge handles message delivery
     : startMessagePoller(handle, async (messages) => {
-    const conductorName = await getConductorName();
     for (const msg of messages) {
       log(`Message from ${msg.from}: ${msg.text}`);
-      const fromConductor = conductorName && msg.from === conductorName;
-      const content = fromConductor ? msg.text + ACK_INSTRUCTION : msg.text;
+      const content = msg.isMaestro ? msg.text + MAESTRO_ACK : msg.text;
       try {
         await mcpServer.server.notification({
           method: 'notifications/claude/channel',

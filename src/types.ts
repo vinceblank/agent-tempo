@@ -37,6 +37,8 @@ export interface Message {
   text: string;
   timestamp: string;
   delivered: boolean;
+  /** True when sent from the Maestro dashboard by a human. */
+  isMaestro?: boolean;
 }
 
 export interface SentMessage {

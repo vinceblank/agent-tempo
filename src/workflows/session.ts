@@ -53,6 +53,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       text: msg.text,
       timestamp: new Date().toISOString(),
       delivered: false,
+      isMaestro: msg.isMaestro,
     });
   });
 

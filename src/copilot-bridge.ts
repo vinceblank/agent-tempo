@@ -22,7 +22,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Client } from '@temporalio/client';
-import { getConfig, ENV, conductorWorkflowId } from './config';
+import { getConfig, ENV } from './config';
 import { createTemporalConnection } from './connection';
 import { Message } from './types';
 
@@ -277,19 +277,7 @@ async function main() {
     log(`set_name completed in ${Date.now() - t0}ms`);
   }
 
-  // Resolve the conductor's current player name (cached, refreshed on miss).
-  let cachedConductorName: string | null = null;
-  async function getConductorName(): Promise<string | null> {
-    if (cachedConductorName) return cachedConductorName;
-    try {
-      const h = client.workflow.getHandle(conductorWorkflowId(config.ensemble));
-      const meta = await h.query('getMetadata') as { playerId?: string; isConductor?: boolean };
-      if (meta?.isConductor) cachedConductorName = meta.playerId ?? null;
-    } catch { /* no conductor */ }
-    return cachedConductorName;
-  }
-
-  const ACK_INSTRUCTION = '\n\n[IMPORTANT: Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
+  const MAESTRO_ACK = '\n\n[IMPORTANT: This message is from a human (Maestro). Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
 
   // Start message poller — inject messages into the Copilot session.
   // Tracks consecutive failures and attempts session recreation before giving up.
@@ -339,12 +327,11 @@ async function main() {
       const ids = messages.map((m) => m.id);
       await handle.signal('markDelivered', ids);
 
-      // Format messages into a single prompt, appending ack instruction for conductor messages
-      const conductorName = await getConductorName();
+      // Format messages into a single prompt, appending ack instruction for Maestro messages
       const prompt = messages
         .map((m) => {
           const line = `[Message from ${m.from}]: ${m.text}`;
-          return (conductorName && m.from === conductorName) ? line + ACK_INSTRUCTION : line;
+          return m.isMaestro ? line + MAESTRO_ACK : line;
         })
         .join('\n\n');
 
