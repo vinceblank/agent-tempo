@@ -36,11 +36,11 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.temporalAddress = argv[++i];
     } else if ((arg === '-n' || arg === '--name') && i + 1 < argv.length) {
       result.name = argv[++i];
-    } else if (arg === '--dir' && i + 1 < argv.length) {
+    } else if ((arg === '-d' || arg === '--dir') && i + 1 < argv.length) {
       result.dir = argv[++i];
     } else if (arg === '--skip-preflight') {
       result.skipPreflight = true;
-    } else if (arg === '--background' || arg === '-d') {
+    } else if (arg === '--background') {
       result.background = true;
     } else if (arg === '--keep-mcp') {
       result.keepMcp = true;

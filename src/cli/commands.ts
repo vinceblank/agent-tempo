@@ -601,7 +601,7 @@ ${out.bold('Options:')}
   --skip-preflight            Skip preflight checks (start/conduct only)
   --background                Run Temporal in background (server only)
   --keep-mcp                  Don't remove .mcp.json entry (down only)
-  --dir <path>                Target directory for init/down (default: cwd)
+  -d, --dir <path>            Target directory (default: cwd)
 
 ${out.bold('First time? Run this:')}
   ${out.dim('cd your-project')}
