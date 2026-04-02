@@ -108,6 +108,7 @@ async function main() {
         name: args.name,
         skipPreflight: args.skipPreflight,
         agent: args.agent ?? 'claude',
+        dir: args.dir,
         ...overrides,
       });
       break;
@@ -119,6 +120,7 @@ async function main() {
         name: args.name,
         skipPreflight: args.skipPreflight,
         agent: args.agent ?? 'claude',
+        dir: args.dir,
         ...overrides,
       });
       break;

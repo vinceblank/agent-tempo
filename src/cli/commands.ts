@@ -19,11 +19,12 @@ interface StartOpts extends CliOverrides {
   name?: string;
   skipPreflight?: boolean;
   agent: AgentType;
+  dir?: string;
 }
 
 export async function start(opts: StartOpts) {
   const config = getConfig(opts);
-  const workDir = process.cwd();
+  const workDir = opts.dir || process.cwd();
 
   if (!opts.skipPreflight) {
     const result = await runPreflight({
