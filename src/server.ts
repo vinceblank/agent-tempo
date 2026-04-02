@@ -106,7 +106,7 @@ async function main() {
     taskQueue: config.taskQueue,
     args: [sessionInput],
     workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
-    workflowExecutionTimeout: '24 hours',
+    // No execution timeout — workflows live until shutdown signal or stale detection.
     searchAttributes: {
       ...(gitRoot ? { ClaudeTempoGitRoot: [gitRoot] } : {}),
       ClaudeTempoHostname: [os.hostname()],

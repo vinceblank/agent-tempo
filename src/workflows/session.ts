@@ -168,9 +168,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       }
     }
 
-    // Prevent unbounded history growth
+    // Prevent unbounded history growth — let the SDK decide when
     const info = workflowInfo();
-    if (info.continueAsNewSuggested || info.historyLength > 10_000) {
+    if (info.continueAsNewSuggested) {
       await condition(allHandlersFinished);
       await continueAsNew<typeof claudeSessionWorkflow>({
         ...input,
