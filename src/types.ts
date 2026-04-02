@@ -11,6 +11,7 @@ export interface SessionMetadata {
   gitRoot?: string;
   gitBranch?: string;
   isConductor: boolean;
+  agentType?: AgentType;
 }
 
 export interface SessionInput {

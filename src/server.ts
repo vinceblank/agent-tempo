@@ -86,6 +86,7 @@ async function main() {
     ? conductorWorkflowId(config.ensemble)
     : `claude-session-${config.ensemble}-${playerId}`;
 
+  const isBridgeMode = process.env[ENV.BRIDGE_MODE] === '1';
   const sessionInput: SessionInput = {
     metadata: {
       playerId,
@@ -95,6 +96,7 @@ async function main() {
       gitRoot,
       gitBranch,
       isConductor,
+      agentType: isBridgeMode ? 'copilot' : 'claude',
     },
     autoSummary: `Session in ${path.basename(workDir)}`,
   };
@@ -162,7 +164,6 @@ async function main() {
   // Skip when running under the Copilot bridge: the bridge has its own poller that
   // injects messages via sendAndWait. If both pollers run, this one wins the race and
   // sends messages via notifications/claude/channel — which Copilot doesn't understand.
-  const isBridgeMode = process.env[ENV.BRIDGE_MODE] === '1';
   const stopPoller = isBridgeMode
     ? () => {} // no-op — bridge handles message delivery
     : startMessagePoller(handle, async (messages) => {

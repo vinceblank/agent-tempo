@@ -145,6 +145,7 @@ export async function status(opts: StatusOpts) {
     branch: string;
     host: string;
     conductor: boolean;
+    agentType: string;
   }> = [];
 
   for await (const wf of client.workflow.list({ query })) {
@@ -164,6 +165,7 @@ export async function status(opts: StatusOpts) {
         branch: (meta.gitBranch as string) || '',
         host: (meta.hostname as string) || '',
         conductor: (meta.isConductor as boolean) || false,
+        agentType: (meta.agentType as string) || 'claude',
       });
     } catch {
       // workflow may have closed between list and query
@@ -200,8 +202,9 @@ export async function status(opts: StatusOpts) {
 
     for (const s of members) {
       const role = s.conductor ? out.yellow(' (conductor)') : '';
+      const agent = s.agentType === 'copilot' ? out.dim(' [copilot]') : '';
       const name = out.bold(s.name);
-      out.log(`  ${name}${role}`);
+      out.log(`  ${name}${role}${agent}`);
       if (s.part) out.log(`    ${out.dim(s.part)}`);
       const details = [s.workDir, s.branch, s.host].filter(Boolean).join('  ');
       if (details) out.log(`    ${out.dim(details)}`);
