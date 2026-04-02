@@ -173,7 +173,6 @@ Starts the Temporal dev server with automatic search attribute registration:
 ```bash
 claude-tempo server                 # foreground (Ctrl+C to stop)
 claude-tempo server --background    # daemonize
-claude-tempo server -d              # shorthand
 ```
 
 Data persists in `~/.claude-tempo/temporal-data.db`. If Temporal is already running, registers attributes and exits.
