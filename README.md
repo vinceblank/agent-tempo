@@ -1,82 +1,42 @@
 # claude-tempo
 
-MCP server for multi-session Claude Code coordination via [Temporal](https://temporal.io).
+Multi-session [Claude Code](https://claude.ai/code) coordination via [Temporal](https://temporal.io).
 
 Multiple Claude Code sessions discover each other, exchange messages in real time, and coordinate work — across machines, not just localhost.
 
-Inspired by [claude-peers](https://github.com/louislva/claude-peers-mcp) and seeing how it interacted with Claude Code's experimental channel capability. claude-tempo takes the concept further with Temporal as the coordination backbone — adding durable state, cross-machine messaging, structured orchestration, and automatic stale session cleanup.
+```
+  You (CLI / Discord / Telegram / Claude Code)
+    │
+    ▼
+┌─────────────────────────────────────────────┐
+│              Temporal Server                 │
+│                                             │
+│  ┌───────────┐                              │
+│  │ Conductor │──cue──┬──────┬──────┐        │
+│  └───────────┘       │      │      │        │
+│                      ▼      ▼      ▼        │
+│                   ┌────┐ ┌────┐ ┌────┐      │
+│                   │ A  │ │ B  │ │ C  │      │
+│                   └──┬─┘ └──┬─┘ └──┬─┘      │
+│                      │      │      │        │
+└──────────────────────┼──────┼──────┼────────┘
+                       │      │      │
+              ┌────────┘      │      └────────┐
+              ▼               ▼               ▼
+         ┌─────────┐    ┌─────────┐    ┌─────────┐
+         │ Host 1  │    │ Host 1  │    │ Host 2  │
+         │ Claude  │    │ Claude  │    │ Claude  │
+         │ Session │    │ Session │    │ Session │
+         └─────────┘    └─────────┘    └─────────┘
+```
 
-## How it works
-
-**claude-tempo** uses Temporal workflows as the coordination layer:
-
-- Each Claude Code session registers as a **player** (a Temporal workflow)
-- Players belong to an **ensemble** — a named group of sessions that can see and message each other
-- Players discover each other via `ensemble`, message via `cue`, and spawn new sessions via `recruit`
-- Players can interact directly (peer-to-peer) — no central hub required
-- An optional **conductor** player acts as an orchestration hub for the ensemble, connected to external interfaces like Discord or Telegram
-
-### Ensembles
-
-An **ensemble** is an isolated group of players identified by name (e.g., `frontend`, `backend`, `default`). Players in one ensemble cannot see or message players in another — they are completely independent.
-
-Each ensemble can have:
-- Any number of **players** working on tasks
-- One optional **conductor** coordinating work and connected to external interfaces
-
-By default, all sessions join the `default` ensemble. Pass an ensemble name when starting a session to create or join a different one:
+## Installation
 
 ```bash
-claude-tempo conduct frontend     # conduct the "frontend" ensemble
-claude-tempo start backend        # join the "backend" ensemble
-claude-tempo conduct              # conduct the "default" ensemble
+npm install -g claude-tempo
 ```
 
-This lets you run separate groups of sessions for different projects or concerns without interference.
-
-```mermaid
-graph TD
-    You["You (Discord / Telegram / CLI / Claude Code)"]
-    You -->|signal / query| Conductor
-
-    subgraph Temporal["Temporal Server"]
-        Conductor["Conductor Workflow"]
-        PA["Player A Workflow"]
-        PB["Player B Workflow"]
-        PC["Player C Workflow"]
-        Conductor -->|cue| PA
-        Conductor -->|cue| PB
-        Conductor -->|cue| PC
-    end
-
-    subgraph Host1["Host 1"]
-        S1["Claude Session A"]
-        S2["Claude Session B"]
-    end
-
-    subgraph Host2["Host 2"]
-        S3["Claude Session C"]
-    end
-
-    PA -.-> S1
-    PB -.-> S2
-    PC -.-> S3
-```
-
-## Tools
-
-| Tool | Description |
-|------|-------------|
-| `ensemble` | Discover active sessions in your ensemble. Scope: `machine`, `repo`, `all`. |
-| `cue` | Send a message to any session by player name. Instant via Temporal signal. |
-| `set_name` | Set a human-readable name for this session. Used by other players to message you. |
-| `set_part` | Describe what you're working on. Visible to others via `ensemble`. |
-| `listen` | Manual fallback for checking pending messages. |
-| `recruit` | Start a named Claude Code session in a directory. Opens a new terminal window automatically. |
-| `report` | Send updates to the conductor (surfaces to Discord/Telegram). No-op if no conductor. |
-| `terminate` | Terminate a player session by name. Use to clean up orphaned sessions. |
-
-## Prerequisites
+### Prerequisites
 
 - [Node.js](https://nodejs.org/) 18+
 - [Temporal CLI](https://docs.temporal.io/cli) (for local dev server)
@@ -84,25 +44,22 @@ graph TD
 
 ## Quick start
 
-The fastest way to get going — one command handles everything:
+One command handles everything:
 
 ```bash
-# Install
-npm install -g claude-tempo
-
-# Go to your project and run `up`
 cd your-project
 claude-tempo up
 ```
 
-`claude-tempo up` will:
-1. Check that the Temporal CLI is installed
-2. Start the Temporal dev server if it's not already running (data persists in `~/.claude-tempo/`)
-3. Register the required search attributes automatically
-4. Create `.mcp.json` in your project if it doesn't exist
+This will:
+
+1. Check that Temporal CLI is installed
+2. Start the Temporal dev server (data persists in `~/.claude-tempo/`)
+3. Register required search attributes
+4. Create `.mcp.json` in your project
 5. Launch a conductor session in a new terminal window
 
-After `up` completes, you're ready to add players:
+Then add players:
 
 ```bash
 claude-tempo start          # open a player session
@@ -113,10 +70,10 @@ Or ask the conductor to `recruit` players for you from inside Claude Code.
 
 ### Manual setup
 
-If you prefer more control, you can run each step individually:
+For more control, run each step individually:
 
 ```bash
-# Start Temporal dev server (keep this running)
+# Start Temporal dev server (keep running)
 claude-tempo server
 
 # In your project directory, create .mcp.json
@@ -133,9 +90,26 @@ claude-tempo conduct
 claude-tempo start
 ```
 
-## CLI
+## Core concepts
 
-The `claude-tempo` CLI handles setup, session management, and diagnostics.
+- **Player** — A Claude Code session registered as a Temporal workflow
+- **Conductor** — An optional orchestration hub connected to external interfaces (one per ensemble)
+- **Ensemble** — A named group of players that can see and message each other, isolated from other ensembles
+- **Cue** — A message sent to a player by name via Temporal signal
+
+Players in one ensemble cannot see or message players in another. By default, sessions join the `default` ensemble:
+
+```bash
+claude-tempo conduct frontend     # conduct the "frontend" ensemble
+claude-tempo start backend        # join the "backend" ensemble
+claude-tempo conduct              # conduct the "default" ensemble
+```
+
+## CLI reference
+
+```
+claude-tempo <command> [options]
+```
 
 ### Commands
 
@@ -148,39 +122,36 @@ The `claude-tempo` CLI handles setup, session management, and diagnostics.
 | `start [ensemble]` | Start a player session |
 | `status [ensemble]` | Show active sessions and Temporal health |
 | `init` | Create `.mcp.json` config in the current directory |
-| `preflight` | Run environment checks only |
+| `preflight` | Run environment checks |
 | `help` | Show usage info |
 
-### Options
+### Global options
 
 ```
 --temporal-address <addr>   Temporal server address (default: localhost:7233)
--n, --name <name>           Set the player name for the session (start/conduct/up)
+-n, --name <name>           Set the player name (start/conduct/up)
 --skip-preflight            Skip preflight checks (start/conduct)
---background, -d            Run Temporal in background (server only)
+-d, --background            Run Temporal in background (server only)
 --dir <path>                Target directory for init (default: cwd)
 ```
 
-### `up` — first-time setup
+### `claude-tempo up`
 
-`claude-tempo up` is the recommended way to get started. It handles everything in order:
+The recommended way to get started:
 
 ```
 $ claude-tempo up myband
 
 claude-tempo setup
-  pass temporal CLI installed
-  ... Starting Temporal dev server...
-  pass Temporal started (pid 12345, data in ~/.claude-tempo/)
-  ok Registered search attribute: ClaudeTempoHostname
-  ok Registered search attribute: ClaudeTempoGitRoot
-  ok Registered search attribute: ClaudeTempoEnsemble
-  ok Registered search attribute: ClaudeTempoPlayerId
-  pass .mcp.json created
+  ✓ temporal CLI installed
+  … Starting Temporal dev server...
+  ✓ Temporal started (pid 12345, data in ~/.claude-tempo/)
+  ✓ Registered search attributes
+  ✓ .mcp.json created
 
 Launching conductor in ensemble myband...
 
-ok You're all set!
+✓ You're all set!
   Conductor launched (pid 12346)
   Ensemble: myband
 
@@ -190,9 +161,9 @@ ok You're all set!
   Or ask the conductor to recruit players for you
 ```
 
-### `server` — Temporal management
+### `claude-tempo server`
 
-`claude-tempo server` starts the Temporal dev server with automatic search attribute registration:
+Starts the Temporal dev server with automatic search attribute registration:
 
 ```bash
 claude-tempo server                 # foreground (Ctrl+C to stop)
@@ -200,30 +171,11 @@ claude-tempo server --background    # daemonize
 claude-tempo server -d              # shorthand
 ```
 
-- Stores data in `~/.claude-tempo/temporal-data.db` (persists across restarts)
-- Registers all required search attributes automatically
-- If Temporal is already running, just registers attributes and exits
+Data persists in `~/.claude-tempo/temporal-data.db`. If Temporal is already running, registers attributes and exits.
 
-### `init` — MCP configuration
+### `claude-tempo status`
 
-`claude-tempo init` creates a `.mcp.json` in the current directory (or merges into an existing one):
-
-```json
-{
-  "mcpServers": {
-    "claude-tempo": {
-      "command": "npx",
-      "args": ["claude-tempo-server"]
-    }
-  }
-}
-```
-
-Uses `npx` to resolve the server binary, so it works regardless of PATH configuration.
-
-### `status` — ensemble overview
-
-`claude-tempo status` shows all active sessions:
+Shows all active sessions:
 
 ```
 Ensemble: myband
@@ -242,42 +194,63 @@ Ensemble: myband
     /Users/me/projects/app  feat/ui  my-machine.local
 ```
 
-### `preflight` — environment checks
+### `claude-tempo preflight`
 
-`claude-tempo preflight` verifies your environment:
+Verifies your environment: Node.js >= 18, Temporal reachable, `claude` on PATH, `claude-tempo-server` on PATH, `.mcp.json` configured.
 
-- Node.js >= 18
-- Temporal server reachable
-- `claude` binary on PATH
-- `claude-tempo-server` binary on PATH
-- `.mcp.json` configured in the current directory
+### `claude-tempo init`
 
-## Starting a conductor
+Creates `.mcp.json` in the current directory (or merges into an existing one):
 
-A **conductor** is an optional special player that acts as an orchestration hub for the ensemble. Use a conductor when you want:
+```json
+{
+  "mcpServers": {
+    "claude-tempo": {
+      "command": "npx",
+      "args": ["claude-tempo-server"]
+    }
+  }
+}
+```
+
+## MCP tools
+
+These tools are available inside Claude Code sessions connected to claude-tempo:
+
+| Tool | Description |
+|------|-------------|
+| `ensemble` | Discover active sessions. Scope: `machine`, `repo`, or `all`. |
+| `cue` | Send a message to a player by name. Delivered instantly via Temporal signal. |
+| `set_name` | Set a human-readable name for this session. |
+| `set_part` | Describe what you're working on. Visible to others via `ensemble`. |
+| `listen` | Manually check for pending messages. |
+| `recruit` | Spawn a new Claude Code session in a directory. Opens a new terminal window. |
+| `report` | Send updates to the conductor. No-op if no conductor exists. |
+| `terminate` | Terminate a player session by name. |
+
+## Conductors
+
+A **conductor** is an optional special player that acts as an orchestration hub. Use one when you want:
 
 - A single session coordinating work across multiple players
 - External access to the ensemble via Discord, Telegram, or any Temporal client
 - A central point for players to `report` progress, blockers, and questions
 
-Without a conductor, players still work fine — they discover each other via `ensemble` and communicate directly via `cue`. The conductor is a hub, not a gatekeeper.
-
-There is one conductor per ensemble. Start one with:
+Without a conductor, players work fine peer-to-peer — they discover each other via `ensemble` and communicate via `cue`.
 
 ```bash
-claude-tempo conduct                # conductor in "default" ensemble
-claude-tempo conduct my-project     # conductor in "my-project" ensemble
+claude-tempo conduct                # default ensemble
+claude-tempo conduct my-project     # named ensemble
 ```
 
 ### External access
 
-The conductor's Temporal workflow exposes a signal/query API that anyone can use — no Claude Code session needed:
+The conductor's Temporal workflow exposes a signal/query API:
 
 ```typescript
 import { Client } from '@temporalio/client';
 
 const client = new Client();
-// Conductor workflow ID: claude-session-{ensemble}-conductor
 const conductor = client.workflow.getHandle('claude-session-default-conductor');
 
 // Send a command
@@ -286,11 +259,11 @@ await conductor.signal('command', {
   source: 'cli',
 });
 
-// Check history of commands and reports
+// Check history
 const history = await conductor.query('history');
 ```
 
-You can also connect external channel plugins (e.g., Discord):
+Connect external channel plugins (e.g., Discord):
 
 ```bash
 CLAUDE_TEMPO_CONDUCTOR=true claude \
@@ -298,170 +271,153 @@ CLAUDE_TEMPO_CONDUCTOR=true claude \
   --dangerously-skip-permissions --dangerously-load-development-channels server:claude-tempo
 ```
 
-## Starting players
+## Players
 
-The recommended way to build an ensemble is to use the CLI to start sessions. Each session opens in a new terminal window with the full shell environment preserved.
+### Starting players
 
 ```bash
 # Terminal 1 — conductor
 claude-tempo conduct my-project
 
-# Terminal 2 — frontend player
+# Terminal 2 — frontend
 claude-tempo start my-project -n frontend
 
-# Terminal 3 — backend player
+# Terminal 3 — backend
 claude-tempo start my-project -n backend
 ```
 
-Or let the conductor `recruit` players directly — this spawns new terminal windows automatically.
+Or let the conductor `recruit` players — this spawns new terminal windows automatically.
 
-Once sessions are running, try:
+Inside a session, try:
 - "Show me the ensemble" — discovers other sessions
-- "Set your name to 'frontend'" — gives your session a human-readable name
-- "Cue frontend: what are you working on?" — sends a message by name
-
-### Terminal support
-
-The `recruit` tool and CLI automatically detect and open sessions in your terminal:
-
-| Terminal | macOS | Linux | Windows |
-|----------|-------|-------|---------|
-| Ghostty | `initial input` via AppleScript | — | — |
-| iTerm2 | `write text` via AppleScript | — | — |
-| Terminal.app | `.command` file | — | — |
-| gnome-terminal | — | `--` flag | — |
-| konsole / xterm | — | `-e` flag | — |
-| cmd.exe / PowerShell | — | — | `start` command |
-
-All macOS terminals use approaches that preserve the user's full shell environment (fish, zsh, bash) including node version managers (fnm, nvm).
+- "Set your name to 'frontend'" — human-readable name
+- "Cue frontend: what are you working on?" — sends a message
 
 ### Session naming
 
-Sessions start with a random 8-character hex ID. You can set a name at launch with `-n` or use `set_name` inside a session:
+Sessions start with a random 8-character hex ID. Set a name at launch with `-n` or use `set_name` inside a session.
 
-- Names are stored as Temporal search attributes (`ClaudeTempoPlayerId`) and updated in-place — no workflow restart needed
-- Other players use the name to send messages via `cue` and discover sessions via `ensemble`
-- `recruit` automatically tells the new session to set its name
-- Names must be unique within an ensemble — `set_name` rejects duplicates
+- Names are stored as Temporal search attributes (`ClaudeTempoPlayerId`)
+- Other players use names to send messages via `cue`
+- `recruit` automatically tells new sessions to set their name
+- Names must be unique within an ensemble
 - Names must contain only letters, numbers, hyphens, and underscores
 
-## Configuration
+### Terminal support
 
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
+`recruit` and the CLI detect your terminal automatically:
+
+| Terminal | macOS | Linux | Windows |
+|----------|-------|-------|---------|
+| Ghostty | ✓ | — | — |
+| iTerm2 | ✓ | — | — |
+| Terminal.app | ✓ | — | — |
+| gnome-terminal | — | ✓ | — |
+| konsole / xterm | — | ✓ | — |
+| cmd.exe / PowerShell | — | — | ✓ |
+
+macOS terminals preserve the full shell environment (fish, zsh, bash) including node version managers (fnm, nvm).
+
+## Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal server address |
 | `TEMPORAL_NAMESPACE` | `default` | Temporal namespace |
 | `CLAUDE_TEMPO_TASK_QUEUE` | `claude-tempo` | Task queue name |
-| `CLAUDE_TEMPO_ENSEMBLE` | `default` | Ensemble name (isolates groups of players) |
-| `CLAUDE_TEMPO_CONDUCTOR` | `false` | Set to `true` to enable conductor mode |
-| `CLAUDE_TEMPO_PLAYER_NAME` | *(random hex)* | Set a player name on startup (used by `-n` flag) |
+| `CLAUDE_TEMPO_ENSEMBLE` | `default` | Ensemble name |
+| `CLAUDE_TEMPO_CONDUCTOR` | `false` | Enable conductor mode |
+| `CLAUDE_TEMPO_PLAYER_NAME` | *(random hex)* | Player name on startup |
+
+## Stale session cleanup
+
+When a session crashes or closes without graceful shutdown, Temporal detects it automatically:
+
+- If a message to a dead session remains undelivered for **3 minutes**, the workflow self-completes
+- Before exiting, it notifies the conductor with the undelivered message so work can be reassigned
+- Idle sessions with no pending messages remain running until the 24-hour timeout
+
+No manual cleanup needed — `cue` a dead player and the system handles the rest.
+
+## Copilot CLI integration (experimental)
+
+> **Warning:** Copilot bridge support is experimental and subject to breaking changes.
+
+GitHub Copilot CLI sessions can join an ensemble via the Copilot bridge. Bridge sessions are headless — they require a Claude conductor or custom Temporal client to receive work via `cue`.
+
+<details>
+<summary>Setup and usage</summary>
+
+### Prerequisites
+
+```bash
+npm install @github/copilot-sdk    # optional dependency (~243MB)
+```
+
+Also requires [GitHub Copilot CLI](https://docs.github.com/en/copilot/github-copilot-in-the-cli) installed, authenticated, with an active subscription. Node 20+ required for Copilot features.
+
+### Starting a Copilot player
+
+The easiest way is via `recruit` from any active session:
+
+> "Recruit a copilot session named 'copilot-dev' in /repos/my-project with agent copilot"
+
+Or start the bridge directly:
+
+```bash
+CLAUDE_TEMPO_ENSEMBLE=default COPILOT_BRIDGE_NAME=copilot-dev npx ts-node src/copilot-bridge.ts
+```
+
+### How it works
+
+1. Bridge spawns a Copilot CLI session via the SDK with claude-tempo as MCP server
+2. MCP server registers the session as a Temporal workflow
+3. Bridge polls for pending messages every 2 seconds
+4. Messages are injected as prompts via `session.sendAndWait()`
+5. The Copilot session can use all claude-tempo tools
+
+### Copilot environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `COPILOT_BRIDGE_NAME` | *(none)* | Player name |
+| `COPILOT_BRIDGE_MODEL` | *(Copilot default)* | Model override |
+| `GITHUB_TOKEN` | *(logged-in user)* | GitHub auth token |
+
+### Limitations
+
+- No interactive access — bridge sessions only respond to cues
+- 2-second polling latency (vs instant for Claude Code sessions)
+- Must be spawned via the bridge to participate
+- `@github/copilot-sdk` adds ~243MB to node_modules
+- Node 20+ required (rest of claude-tempo works on Node 18+)
+
+</details>
 
 ## Development
 
 ```bash
-# Clone and install
 git clone https://github.com/vinceblank/claude-tempo.git
 cd claude-tempo && npm install
 
-# Build (compiles TypeScript and pre-bundles workflow code)
-npm run build
-
-# Run MCP server in development
-npx ts-node src/server.ts
-
-# Link CLI for local testing
-npm link
+npm run build        # compile TypeScript + pre-bundle workflows
+npm test             # run tests
+npm link             # link CLI for local testing
 ```
 
 > **Important**: Run `npm run build` after changing workflow code (`src/workflows/`). The build pre-bundles workflows into `workflow-bundle.js` so all workers use identical code.
 
 ## Why Temporal?
 
-- **Cross-machine**: Any session that can reach the Temporal server can join the ensemble
-- **Instant signaling**: Temporal signals deliver messages between sessions with no broker polling
-- **Durable history**: Full audit trail of every message in Temporal's event history
-- **No custom infrastructure**: No broker daemon, no database — just Temporal
-- **Extensible**: The conductor's signal/query contract is a public API anyone can build on
-
-## Stale session cleanup
-
-When a Claude Code session crashes or is closed without graceful shutdown, its Temporal workflow detects the problem automatically:
-
-- If a message is sent to a dead session and remains undelivered for **3 minutes**, the workflow self-completes
-- Before exiting, it notifies the conductor with the undelivered message content so work can be reassigned
-- Idle sessions with no pending messages remain running (they aren't hurting anyone) until the 24-hour execution timeout
-
-This means you don't need to manually clean up crashed sessions — just `cue` the dead player and the system handles the rest.
+- **Cross-machine** — Any session that can reach the Temporal server can join
+- **Instant signaling** — Temporal signals deliver messages with no polling
+- **Durable history** — Full audit trail in Temporal's event history
+- **No custom infrastructure** — No broker, no database — just Temporal
+- **Extensible** — The conductor's signal/query contract is a public API
 
 ## Known limitations
 
-- **`recruit` requires manual acknowledgment**: Recruited Claude Code sessions use `--dangerously-load-development-channels` to enable channel-based message delivery. Claude Code shows an interactive confirmation prompt that must be manually acknowledged (press Enter) in the spawned terminal window. This will be resolved once claude-tempo is published as an approved channel plugin. Copilot bridge sessions do not have this limitation.
-
-## Copilot CLI integration (experimental)
-
-> **Warning:** Copilot bridge support is **experimental** and subject to breaking changes. Copilot bridge sessions are headless — they have no interactive terminal. A Claude conductor (or custom Temporal client) is required to send them work via `cue`. Do not rely on this feature for production workflows.
-
-GitHub Copilot CLI sessions can join an ensemble via the **Copilot bridge**. The bridge uses the [Copilot SDK](https://github.com/github/copilot-sdk) to spawn a Copilot session with claude-tempo as an MCP server, and injects incoming messages as prompts.
-
-### Setup
-
-The Copilot SDK is an optional dependency — install it only if you want Copilot support:
-
-```bash
-npm install @github/copilot-sdk
-```
-
-You also need:
-- [GitHub Copilot CLI](https://docs.github.com/en/copilot/github-copilot-in-the-cli) installed and authenticated
-- An active GitHub Copilot subscription
-
-### Starting a Copilot player
-
-The easiest way to add a Copilot player is via the `recruit` tool from any active session in the ensemble. The `agent` parameter accepts `"claude"` (default) or `"copilot"`:
-
-> "Recruit a copilot session named 'copilot-dev' in /repos/my-project with agent copilot"
-
-This spawns a headless bridge process, registers it as a Temporal workflow, and sets the player name automatically.
-
-<details>
-<summary>Advanced: running the bridge directly</summary>
-
-You can also start the bridge manually with environment variables:
-
-```bash
-# Linux/macOS
-CLAUDE_TEMPO_ENSEMBLE=default COPILOT_BRIDGE_NAME=copilot-dev npx ts-node src/copilot-bridge.ts
-
-# Windows PowerShell
-$env:TEMPORAL_ADDRESS="localhost:7233"; $env:CLAUDE_TEMPO_ENSEMBLE="default"; $env:COPILOT_BRIDGE_NAME="copilot-dev"; npx ts-node src/copilot-bridge.ts
-```
-
-</details>
-
-### How it works
-
-1. The bridge spawns a Copilot CLI session via the SDK with claude-tempo configured as an MCP server
-2. The MCP server registers the session as a Temporal workflow (same as Claude Code players)
-3. An initial prompt is sent to trigger MCP server initialization (the SDK lazily starts MCP servers)
-4. The bridge polls the workflow for pending messages every 2 seconds
-5. When messages arrive, they're injected as prompts via `session.sendAndWait()`
-6. The Copilot session can use all claude-tempo tools (`ensemble`, `cue`, `report`, etc.)
-
-### Environment variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `COPILOT_BRIDGE_NAME` | *(none)* | Player name (calls `set_name` automatically) |
-| `COPILOT_BRIDGE_MODEL` | *(Copilot default)* | Model override for the Copilot session |
-| `GITHUB_TOKEN` | *(logged-in user)* | GitHub auth token |
-
-### Limitations
-
-- **No interactive access** — Copilot bridge sessions run in the background. Unlike Claude Code sessions where you can chat directly, bridge sessions only respond to cues from other players. To send messages to a bridge session, use `cue` from another player or signal the workflow directly via the Temporal CLI.
-- **Polling latency** — the bridge polls for messages every 2 seconds, unlike Claude Code sessions which receive instant channel notifications. This adds slight latency to message delivery and orchestration.
-- **Copilot sessions must be spawned via the bridge** to participate (not standalone Copilot CLI).
-- **The `@github/copilot-sdk` adds ~243MB** to node_modules when installed.
-- **Node 20+ required for Copilot features** — the `@github/copilot-sdk` requires Node.js 20 or later. The rest of claude-tempo works on Node 18+.
+- **`recruit` requires manual acknowledgment** — Recruited sessions use `--dangerously-load-development-channels`. Claude Code shows a confirmation prompt that must be manually acknowledged in the spawned terminal. This will be resolved once claude-tempo is published as an approved channel plugin. Copilot bridge sessions do not have this limitation.
 
 ## License
 
