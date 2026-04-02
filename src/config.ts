@@ -1,6 +1,12 @@
 import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { AgentType } from './types';
+
+const VALID_AGENTS: AgentType[] = ['claude', 'copilot'];
+function validAgent(value: string | undefined): AgentType {
+  return VALID_AGENTS.includes(value as AgentType) ? (value as AgentType) : 'claude';
+}
 
 /** Environment variable name constants — use these instead of string literals. */
 export const ENV = {
@@ -16,6 +22,7 @@ export const ENV = {
   TEMPORAL_API_KEY: 'TEMPORAL_API_KEY',
   TEMPORAL_TLS_CERT_PATH: 'TEMPORAL_TLS_CERT_PATH',
   TEMPORAL_TLS_KEY_PATH: 'TEMPORAL_TLS_KEY_PATH',
+  DEFAULT_AGENT: 'CLAUDE_TEMPO_DEFAULT_AGENT',
 } as const;
 
 export interface Config {
@@ -24,6 +31,7 @@ export interface Config {
   temporalApiKey?: string;
   temporalTlsCertPath?: string;
   temporalTlsKeyPath?: string;
+  defaultAgent: AgentType;
   taskQueue: string;
   ensemble: string;
 }
@@ -35,6 +43,7 @@ export interface PersistedConfig {
   temporalApiKey?: string;
   temporalTlsCertPath?: string;
   temporalTlsKeyPath?: string;
+  defaultAgent?: AgentType;
 }
 
 export const CLAUDE_TEMPO_HOME = join(homedir(), '.claude-tempo');
@@ -174,6 +183,7 @@ export interface CliOverrides {
   temporalApiKey?: string;
   temporalTlsCertPath?: string;
   temporalTlsKeyPath?: string;
+  defaultAgent?: AgentType;
 }
 
 /**
@@ -226,6 +236,9 @@ export function getConfig(overrides: CliOverrides = {}): Config {
       overrides.temporalTlsKeyPath, ENV.TEMPORAL_TLS_KEY_PATH,
       configFile.temporalTlsKeyPath, temporalCli.temporalTlsKeyPath,
     ),
+    defaultAgent: validAgent(overrides.defaultAgent
+      || process.env[ENV.DEFAULT_AGENT]
+      || configFile.defaultAgent),
     taskQueue: process.env[ENV.TASK_QUEUE] ?? 'claude-tempo',
     ensemble: process.env[ENV.ENSEMBLE] ?? 'default',
   };
@@ -267,6 +280,7 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
   const apiKey = resolveWithSource('temporalApiKey', overrides.temporalApiKey, ENV.TEMPORAL_API_KEY, configFile.temporalApiKey, temporalCli.temporalApiKey);
   const tlsCert = resolveWithSource('temporalTlsCertPath', overrides.temporalTlsCertPath, ENV.TEMPORAL_TLS_CERT_PATH, configFile.temporalTlsCertPath, temporalCli.temporalTlsCertPath);
   const tlsKey = resolveWithSource('temporalTlsKeyPath', overrides.temporalTlsKeyPath, ENV.TEMPORAL_TLS_KEY_PATH, configFile.temporalTlsKeyPath, temporalCli.temporalTlsKeyPath);
+  const defaultAgent = resolveWithSource('defaultAgent', overrides.defaultAgent, ENV.DEFAULT_AGENT, configFile.defaultAgent, undefined, 'claude');
 
   return {
     config: {
@@ -275,6 +289,7 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
       temporalApiKey: apiKey.value,
       temporalTlsCertPath: tlsCert.value,
       temporalTlsKeyPath: tlsKey.value,
+      defaultAgent: validAgent(defaultAgent.value),
       taskQueue: process.env[ENV.TASK_QUEUE] ?? 'claude-tempo',
       ensemble: process.env[ENV.ENSEMBLE] ?? 'default',
     },
@@ -284,6 +299,7 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
       temporalApiKey: apiKey.source,
       temporalTlsCertPath: tlsCert.source,
       temporalTlsKeyPath: tlsKey.source,
+      defaultAgent: defaultAgent.source,
     },
   };
 }

@@ -5,7 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.1] - 2026-04-02
+
+### Added
+
+- **`isMaestro` message flag** — messages sent from the Maestro dashboard carry `isMaestro: true`, signaling to agents that a human sent the message. Agents automatically receive an instruction to acknowledge receipt and share their planned next step.
+- **Heartbeat probe** for orphaned session detection — workflows inject a `_ping` message after 1 hour of inactivity; if undelivered within the stale window, the session exits.
+- **`stop` command** — stop sessions by name (`-n`), by ensemble, or all at once (`--all`). Sends graceful shutdown signals and cleans up bridge PID files.
+- **`defaultAgent` config** — set a default agent type (`claude` or `copilot`) via `claude-tempo config set default-agent copilot`, `CLAUDE_TEMPO_DEFAULT_AGENT` env var, or `--agent` flag.
+- **Global MCP registration** — `claude-tempo init` now registers globally via `claude mcp add` (use `--project` for per-directory `.mcp.json`).
+
+### Changed
+
+- Removed 24-hour workflow execution timeout — workflows now live until shutdown signal or stale detection.
+- `continueAsNew` triggers only on `continueAsNewSuggested` (Temporal best practice), not arbitrary history length.
+- `down` command now cleans up bridge PID files and removes both global and project-level MCP config.
+- Revamped experimental Copilot CLI section in README to focus on CLI commands.
+
+### Fixed
+
+- `isGlobalMcpRegistered` uses word-boundary regex to avoid false-positives on similarly-named MCP servers.
+- `defaultAgent` validated from all sources (env var, config file) — invalid values fall back to `claude`.
+
+## [0.3.0] - 2026-04-01
+
+### Added
+
+- **`config` command** — interactive setup for Temporal connection settings (`claude-tempo config`), plus `config set` / `config show` for scripting. Settings persist in `~/.claude-tempo/config.json`.
+- **Temporal Cloud support** — configure address, namespace, and API key via `config`, env vars, or CLI flags.
+- **Temporal CLI config fallback** — reads `~/.config/temporalio/temporal.yaml` automatically so existing Temporal CLI users don't need to reconfigure.
+- **`connection` subpath export** — `claude-tempo/connection` exposes `createTemporalConnection` for external consumers.
+- **Agent type in session metadata** — `agentType` field on `SessionMetadata`; displayed as `[copilot]` tag in `status` and `ensemble` output.
+- **Recruit inherits agent type** — Copilot sessions recruit copilot agents by default; Claude sessions recruit claude agents.
+- **Config source display** — `config show` displays which source each value came from (flag, env, config, temporal-cli, default).
+
+### Changed
+
+- README overhauled for clarity: installation, quick start, core concepts, CLI reference, MCP tools, conductors, players. Copilot bridge docs collapsed into a `<details>` block.
+- `-d` shorthand now maps to `--dir` (was `--background`).
+
+### Fixed
+
+- Child processes always receive `TEMPORAL_ADDRESS` and `TEMPORAL_NAMESPACE` env vars, even when they match defaults.
+- `recruit` forwards Temporal address and namespace to child sessions.
+- Copilot bridge clears parent env vars (`CLAUDE_TEMPO_PLAYER_NAME`, `BRIDGE_MODE`, `CONDUCTOR`) when spawning children.
+- Config file permissions set to `0600` on Unix (matches credential file conventions).
+- TLS fallback uses `tls: true` for API key auth instead of `tls: {} as any`.
 
 ## [0.2.0] - 2026-03-31
 

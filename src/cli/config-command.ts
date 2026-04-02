@@ -99,6 +99,13 @@ export async function configInteractive(): Promise<void> {
     config.temporalTlsKeyPath = await ask('TLS key path', existing.temporalTlsKeyPath);
   }
 
+  // Default agent type
+  const agentChoice = await choose('Default agent', ['claude', 'copilot']);
+  if (agentChoice === 'copilot') {
+    config.defaultAgent = 'copilot';
+  }
+  // Don't set defaultAgent if claude — it's the default, keeps config clean
+
   saveConfigFile(config);
   out.success(`Saved to ${CONFIG_FILE_PATH}`);
 
@@ -141,6 +148,8 @@ export function configSet(key: string, value: string): void {
     temporalTlsKeyPath: 'temporalTlsKeyPath',
     'temporal-tls-key': 'temporalTlsKeyPath',
     'temporal-tls-key-path': 'temporalTlsKeyPath',
+    defaultAgent: 'defaultAgent',
+    'default-agent': 'defaultAgent',
   };
 
   const configKey = keyMap[key];
@@ -150,7 +159,13 @@ export function configSet(key: string, value: string): void {
     process.exit(1);
   }
 
-  config[configKey] = value;
+  // Validate agent type
+  if (configKey === 'defaultAgent' && value !== 'claude' && value !== 'copilot') {
+    out.error(`Invalid agent type: "${value}". Must be "claude" or "copilot".`);
+    process.exit(1);
+  }
+
+  (config as any)[configKey] = value;
   saveConfigFile(config);
   out.success(`Set ${configKey} = ${configKey.includes('Key') ? '****' : value}`);
 }
@@ -167,6 +182,7 @@ export function configShow(): void {
     { key: 'temporalApiKey', configKey: 'temporalApiKey' },
     { key: 'temporalTlsCertPath', configKey: 'temporalTlsCertPath' },
     { key: 'temporalTlsKeyPath', configKey: 'temporalTlsKeyPath' },
+    { key: 'defaultAgent', configKey: 'defaultAgent' },
   ];
 
   out.log(`  Config file: ${out.dim(CONFIG_FILE_PATH)}`);

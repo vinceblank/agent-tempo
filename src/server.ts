@@ -106,7 +106,7 @@ async function main() {
     taskQueue: config.taskQueue,
     args: [sessionInput],
     workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
-    workflowExecutionTimeout: '24 hours',
+    // No execution timeout — workflows live until shutdown signal or stale detection.
     searchAttributes: {
       ...(gitRoot ? { ClaudeTempoGitRoot: [gitRoot] } : {}),
       ClaudeTempoHostname: [os.hostname()],
@@ -160,6 +160,8 @@ async function main() {
   registerReportTool(mcpServer, client, config, getPlayerId);
   registerTerminateTool(mcpServer, client, config, getPlayerId);
 
+  const MAESTRO_ACK = '\n\n[IMPORTANT: This message is from a human (Maestro). Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
+
   // Start message poller — push messages into Claude Code via channel notifications.
   // Skip when running under the Copilot bridge: the bridge has its own poller that
   // injects messages via sendAndWait. If both pollers run, this one wins the race and
@@ -169,11 +171,12 @@ async function main() {
     : startMessagePoller(handle, async (messages) => {
     for (const msg of messages) {
       log(`Message from ${msg.from}: ${msg.text}`);
+      const content = msg.isMaestro ? msg.text + MAESTRO_ACK : msg.text;
       try {
         await mcpServer.server.notification({
           method: 'notifications/claude/channel',
           params: {
-            content: msg.text,
+            content,
             meta: {
               from_player: msg.from,
               sent_at: msg.timestamp,

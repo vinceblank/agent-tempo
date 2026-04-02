@@ -1,14 +1,21 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from 'fs';
 import { join, resolve } from 'path';
 import { execFileSync, spawn as cpSpawn } from 'child_process';
 import { homedir } from 'os';
 import { Client, Connection } from '@temporalio/client';
-import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
-import { conductorWorkflowId, ENV, getConfig, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
+import { spawnInTerminal, spawnCopilotBridge, resolveClaudePath } from '../spawn';
+import { conductorWorkflowId, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
 import { createTemporalConnection } from '../connection';
+import { shutdownSignal, playerReportSignal } from '../workflows/signals';
 import { AgentType } from '../types';
 import { runPreflight } from './preflight';
+import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
 import * as out from './output';
+
+/** Sanitize a value for use in Temporal visibility queries (strip quotes). */
+function sanitizeQueryValue(value: string): string {
+  return value.replace(/["\\]/g, '');
+}
 
 /** Package root is two levels up from dist/cli/ */
 const PACKAGE_ROOT = resolve(__dirname, '..', '..');
@@ -216,10 +223,44 @@ export async function status(opts: StatusOpts) {
 
 interface InitOpts {
   dir: string;
+  project?: boolean;
 }
 
 export async function init(opts: InitOpts) {
-  const mcpPath = join(opts.dir, '.mcp.json');
+  if (opts.project) {
+    // Per-project .mcp.json mode
+    return initProject(opts.dir);
+  }
+
+  // Default: global install via `claude mcp add`
+  if (isGlobalMcpRegistered()) {
+    out.success('claude-tempo already registered globally');
+    out.log(`  ${out.dim('claude mcp list -s user')}`);
+    return;
+  }
+
+  const claudePath = resolveClaudePath();
+  if (claudePath === 'claude') {
+    out.warn('claude binary not found — falling back to project-level .mcp.json');
+    return initProject(opts.dir);
+  }
+
+  if (addGlobalMcp()) {
+    out.success('Registered claude-tempo globally (user scope)');
+    out.log(`  ${out.dim('Available in all Claude Code sessions')}`);
+  } else {
+    out.warn('Failed to register globally — falling back to project-level .mcp.json');
+    return initProject(opts.dir);
+  }
+
+  out.log(`\nNext steps:`);
+  out.log(`  1. Start Temporal:  ${out.dim('temporal server start-dev')}`);
+  out.log(`  2. Start conductor: ${out.dim('claude-tempo conduct')}`);
+}
+
+/** Per-project .mcp.json install (legacy, used with --project flag). */
+function initProject(dir: string) {
+  const mcpPath = join(dir, '.mcp.json');
 
   const entry = {
     command: 'npx',
@@ -234,7 +275,6 @@ export async function init(opts: InitOpts) {
         out.log(`  ${out.dim(mcpPath)}`);
         return;
       }
-      // Merge into existing config
       existing.mcpServers = existing.mcpServers || {};
       existing.mcpServers['claude-tempo'] = entry;
       writeFileSync(mcpPath, JSON.stringify(existing, null, 2) + '\n');
@@ -452,20 +492,12 @@ export async function up(opts: UpOpts) {
   // Step 3: Register search attributes
   registerSearchAttributes(config.temporalAddress, config.temporalNamespace);
 
-  // Step 4: Init .mcp.json if needed
-  const mcpPath = join(process.cwd(), '.mcp.json');
-  let mcpExists = false;
-  if (existsSync(mcpPath)) {
-    try {
-      const mcp = JSON.parse(readFileSync(mcpPath, 'utf8'));
-      mcpExists = !!mcp?.mcpServers?.['claude-tempo'];
-    } catch { /* invalid */ }
-  }
-  if (mcpExists) {
-    out.check('.mcp.json configured', true);
+  // Step 4: Register MCP server if needed
+  if (isMcpConfigured(process.cwd())) {
+    out.check('MCP configured', true);
   } else {
     await init({ dir: process.cwd() });
-    out.check('.mcp.json created', true);
+    out.check('MCP configured', true);
   }
 
   // Always forward all resolved Temporal settings to child processes.
@@ -557,7 +589,10 @@ export async function down(opts: DownOpts) {
     }
   }
 
-  // Step 2: Stop Temporal server
+  // Step 2: Kill bridge processes via PID files
+  killBridgeProcesses();
+
+  // Step 3: Stop Temporal server
   if (temporalUp) {
     // Find and kill the temporal dev server process
     try {
@@ -575,31 +610,35 @@ export async function down(opts: DownOpts) {
     out.log(`  ${out.dim('Temporal not running')}`);
   }
 
-  // Step 3: Remove .mcp.json entry
+  // Step 4: Remove MCP config (global + project-level)
   if (opts.removeMcp) {
+    // Remove global registration
+    if (isGlobalMcpRegistered()) {
+      if (removeGlobalMcp()) {
+        out.success('Removed claude-tempo from global MCP config');
+      } else {
+        out.warn('Could not remove global MCP entry');
+      }
+    }
+
+    // Also remove project-level .mcp.json entry if present
     const mcpPath = join(opts.dir, '.mcp.json');
     if (existsSync(mcpPath)) {
       try {
         const existing = JSON.parse(readFileSync(mcpPath, 'utf8'));
         if (existing?.mcpServers?.['claude-tempo']) {
           delete existing.mcpServers['claude-tempo'];
-          // If no other MCP servers remain, remove the file entirely
           if (Object.keys(existing.mcpServers).length === 0) {
-            const { unlinkSync } = require('fs');
             unlinkSync(mcpPath);
             out.success('Removed .mcp.json (no other servers configured)');
           } else {
             writeFileSync(mcpPath, JSON.stringify(existing, null, 2) + '\n');
             out.success('Removed claude-tempo from .mcp.json');
           }
-        } else {
-          out.log(`  ${out.dim('.mcp.json has no claude-tempo entry')}`);
         }
       } catch {
         out.warn(`Could not update ${mcpPath}`);
       }
-    } else {
-      out.log(`  ${out.dim('No .mcp.json found')}`);
     }
   }
 
@@ -607,6 +646,192 @@ export async function down(opts: DownOpts) {
   out.success('claude-tempo is shut down');
   out.log(`  ${out.dim('Temporal data preserved in ~/.claude-tempo/ (delete manually to reset)')}`);
   console.log();
+}
+
+// --- Stop sessions: `stop` command ---
+
+interface StopOpts extends CliOverrides {
+  /** Stop a specific player by name. */
+  name?: string;
+  /** Stop all sessions in this ensemble. */
+  ensemble?: string;
+  /** Stop every session across all ensembles. */
+  all?: boolean;
+}
+
+export async function stop(opts: StopOpts) {
+  const config = getConfig(opts);
+
+  if (!opts.name && !opts.ensemble && !opts.all) {
+    out.error('Specify what to stop:');
+    out.log(`  ${out.dim('claude-tempo stop <ensemble>')}          Stop all sessions in an ensemble`);
+    out.log(`  ${out.dim('claude-tempo stop <ensemble> -n <name>')} Stop a specific session`);
+    out.log(`  ${out.dim('claude-tempo stop --all')}               Stop everything`);
+    process.exit(1);
+  }
+
+  let connection: Connection;
+  try {
+    connection = await Promise.race([
+      createTemporalConnection(config),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+    ]);
+  } catch {
+    out.error(`Cannot connect to Temporal at ${config.temporalAddress}`);
+    process.exit(1);
+    return;
+  }
+
+  const client = new Client({ connection, namespace: config.temporalNamespace });
+
+  if (opts.name) {
+    // Stop a specific player by name (optionally scoped to ensemble)
+    await stopByName(client, opts.name, config, opts.ensemble);
+  } else {
+    // Stop multiple sessions (--ensemble or --all)
+    let query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+    if (opts.ensemble) {
+      query += ` AND ClaudeTempoEnsemble = "${sanitizeQueryValue(opts.ensemble)}"`;
+    }
+
+    let stopped = 0;
+    for await (const wf of client.workflow.list({ query })) {
+      try {
+        const handle = client.workflow.getHandle(wf.workflowId);
+        await handle.signal(shutdownSignal);
+        stopped++;
+        out.log(`  ${out.dim('stopped')} ${wf.workflowId}`);
+      } catch {
+        // already closed
+      }
+    }
+
+    // Clean up PID files
+    if (opts.ensemble || opts.all) {
+      killBridgeProcesses();
+    }
+
+    if (stopped > 0) {
+      out.success(`Stopped ${stopped} session${stopped !== 1 ? 's' : ''}`);
+    } else {
+      out.log(opts.ensemble
+        ? `No active sessions in ensemble "${opts.ensemble}".`
+        : 'No active sessions found.');
+    }
+  }
+
+  await connection.close();
+}
+
+async function stopByName(client: Client, name: string, config: Config, ensemble?: string) {
+  // Find the workflow by player name via search attribute
+  let query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoPlayerId = "${sanitizeQueryValue(name)}"`;
+  if (ensemble) {
+    query += ` AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}"`;
+  }
+  let found = false;
+
+  for await (const wf of client.workflow.list({ query })) {
+    found = true;
+    const handle = client.workflow.getHandle(wf.workflowId);
+
+    // Check if this is a conductor — warn about it
+    try {
+      const metadata = (await handle.query('getMetadata')) as Record<string, unknown>;
+      if (metadata.isConductor) {
+        out.warn(`"${name}" is a conductor session`);
+      }
+
+      // Notify the conductor that this session was stopped (if it's not the conductor itself)
+      if (!metadata.isConductor && metadata.ensemble) {
+        try {
+          const conductorWfId = conductorWorkflowId(metadata.ensemble as string);
+          const conductorHandle = client.workflow.getHandle(conductorWfId);
+          await conductorHandle.signal(playerReportSignal, {
+            playerId: name,
+            text: 'Session stopped by CLI',
+            type: 'result' as const,
+          });
+        } catch {
+          // No conductor or conductor not running — fine
+        }
+      }
+    } catch {
+      // Query failed — proceed with shutdown anyway
+    }
+
+    // Send shutdown signal (graceful)
+    try {
+      await handle.signal(shutdownSignal);
+      out.success(`Stopped "${name}"`);
+    } catch {
+      out.warn(`Could not signal "${name}" — it may have already exited`);
+    }
+
+    // Try to kill bridge process via PID file
+    killBridgePid(name);
+    break;
+  }
+
+  if (!found) {
+    out.error(`No active session found with name "${name}"`);
+    process.exit(1);
+  }
+}
+
+/**
+ * Kill a bridge process by reading its PID file from logs/.
+ * Cleans up the PID file after.
+ */
+function killBridgePid(name: string) {
+  const pidPath = join(process.cwd(), 'logs', `${name}.pid`);
+  if (!existsSync(pidPath)) return;
+
+  try {
+    const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
+    if (!isNaN(pid)) {
+      try {
+        process.kill(pid);
+        out.log(`  ${out.dim(`Killed bridge process (pid ${pid})`)}`);
+      } catch {
+        // Process already dead
+      }
+    }
+    unlinkSync(pidPath);
+  } catch {
+    // PID file unreadable — ignore
+  }
+}
+
+/**
+ * Kill all bridge processes found in logs/*.pid and clean up PID files.
+ */
+function killBridgeProcesses() {
+  const logsDir = join(process.cwd(), 'logs');
+  if (!existsSync(logsDir)) return;
+
+  try {
+    const pidFiles = readdirSync(logsDir).filter(f => f.endsWith('.pid'));
+    for (const pidFile of pidFiles) {
+      const pidPath = join(logsDir, pidFile);
+      try {
+        const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
+        if (!isNaN(pid)) {
+          try {
+            process.kill(pid);
+            out.log(`  ${out.dim(`Killed bridge process ${pidFile.replace('.pid', '')} (pid ${pid})`)}`);
+          } catch {
+            // already dead
+          }
+        }
+        unlinkSync(pidPath);
+      } catch {
+        // unreadable — skip
+      }
+    }
+  } catch {
+    // logs dir unreadable
+  }
 }
 
 export function help() {
@@ -625,9 +850,10 @@ ${out.bold('Commands:')}
   ${out.cyan('server')}                Start the Temporal dev server and register search attributes
   ${out.cyan('conduct')} [ensemble]    Start a conductor session (one per ensemble)
   ${out.cyan('start')}   [ensemble]    Start a player session
+  ${out.cyan('stop')}    [ensemble]    Stop sessions (-n <name> for one, or --all)
   ${out.cyan('status')}  [ensemble]    Show active sessions and Temporal health
   ${out.cyan('config')}                Configure Temporal connection settings
-  ${out.cyan('init')}                  Create .mcp.json config in the current directory
+  ${out.cyan('init')}                  Register MCP server globally (or --project for .mcp.json)
   ${out.cyan('preflight')}             Run preflight checks only
   ${out.cyan('help')}                  Show this help message
 
@@ -640,10 +866,13 @@ ${out.bold('Connection options (all commands):')}
 
 ${out.bold('Other options:')}
   -n, --name <name>           Set the session window name (start/conduct/up only)
-  --agent <claude|copilot>    Agent type to spawn (default: claude; start/conduct)
+  --agent <claude|copilot>    Agent type to spawn (default: from config; start/conduct)
   --skip-preflight            Skip preflight checks (start/conduct only)
   --background                Run Temporal in background (server only)
-  --keep-mcp                  Don't remove .mcp.json entry (down only)
+  --project                   Use per-project .mcp.json instead of global (init only)
+  --keep-mcp                  Don't remove MCP config (down only)
+  --all                       Stop all sessions (stop only)
+  --ensemble <name>           Target a specific ensemble (stop only)
   -d, --dir <path>            Target directory (default: cwd)
 
 ${out.bold('Config command:')}
@@ -674,6 +903,7 @@ ${out.bold('Environment:')}
   TEMPORAL_API_KEY            Temporal API key
   TEMPORAL_TLS_CERT_PATH      Path to TLS client certificate
   TEMPORAL_TLS_KEY_PATH       Path to TLS client key
+  CLAUDE_TEMPO_DEFAULT_AGENT  Default agent type: claude or copilot (fallback: claude)
 `);
 }
 

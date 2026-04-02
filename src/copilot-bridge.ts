@@ -277,6 +277,8 @@ async function main() {
     log(`set_name completed in ${Date.now() - t0}ms`);
   }
 
+  const MAESTRO_ACK = '\n\n[IMPORTANT: This message is from a human (Maestro). Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
+
   // Start message poller — inject messages into the Copilot session.
   // Tracks consecutive failures and attempts session recreation before giving up.
   let polling = true;
@@ -325,9 +327,12 @@ async function main() {
       const ids = messages.map((m) => m.id);
       await handle.signal('markDelivered', ids);
 
-      // Format messages into a single prompt
+      // Format messages into a single prompt, appending ack instruction for Maestro messages
       const prompt = messages
-        .map((m) => `[Message from ${m.from}]: ${m.text}`)
+        .map((m) => {
+          const line = `[Message from ${m.from}]: ${m.text}`;
+          return m.isMaestro ? line + MAESTRO_ACK : line;
+        })
         .join('\n\n');
 
       log(`Injecting ${messages.length} message(s) into Copilot session`);

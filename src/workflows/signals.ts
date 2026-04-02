@@ -19,7 +19,7 @@ export type {
 
 // ── Player Signals ──
 
-export const receiveMessageSignal = defineSignal<[{ from: string; text: string }]>('receiveMessage');
+export const receiveMessageSignal = defineSignal<[{ from: string; text: string; isMaestro?: boolean }]>('receiveMessage');
 export const recordSentMessageSignal = defineSignal<[{ to: string; text: string }]>('recordSentMessage');
 export const setPartSignal = defineSignal<[string]>('setPart');
 export const shutdownSignal = defineSignal('shutdown');

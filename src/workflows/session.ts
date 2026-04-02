@@ -35,11 +35,14 @@ import {
 export async function claudeSessionWorkflow(input: SessionInput): Promise<void> {
   const STALE_MESSAGE_MS = 3 * 60 * 1000; // 3 minutes
 
+  const HEARTBEAT_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
   // State (carried across continue-as-new)
   let part = input.part ?? input.autoSummary ?? 'No description set';
   const messages: Message[] = input.messages ?? [];
   const sentMessages: SentMessage[] = input.sentMessages ?? [];
   let shuttingDown = false;
+  let lastActivityTime = Date.now();
 
   // ── Player Signal Handlers ──
 
@@ -50,16 +53,20 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       text: msg.text,
       timestamp: new Date().toISOString(),
       delivered: false,
+      isMaestro: msg.isMaestro,
     });
+    lastActivityTime = Date.now();
   });
 
   setHandler(setPartSignal, (newPart) => {
     part = newPart;
+    lastActivityTime = Date.now();
   });
 
   setHandler(setNameSignal, (newName) => {
     input.metadata.playerId = newName;
     upsertSearchAttributes({ ClaudeTempoPlayerId: [newName] });
+    lastActivityTime = Date.now();
   });
 
   setHandler(shutdownSignal, () => {
@@ -72,6 +79,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         msg.delivered = true;
       }
     }
+    // Any delivery proves the session is alive
+    lastActivityTime = Date.now();
   });
 
   setHandler(recordSentMessageSignal, (msg) => {
@@ -166,11 +175,25 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         staleExit = true;
         break;
       }
+
+      // Heartbeat: if no activity for 1 hour, inject a probe message.
+      // If the session is alive, it will consume and deliver it.
+      // If dead, stale detection will clean up on the next loop iteration.
+      const noPending = messages.every((m) => m.delivered);
+      if (noPending && now - lastActivityTime > HEARTBEAT_INTERVAL_MS) {
+        messages.push({
+          id: uuid4(),
+          from: '_heartbeat',
+          text: '_ping',
+          timestamp: new Date().toISOString(),
+          delivered: false,
+        });
+      }
     }
 
-    // Prevent unbounded history growth
+    // Prevent unbounded history growth — let the SDK decide when
     const info = workflowInfo();
-    if (info.continueAsNewSuggested || info.historyLength > 10_000) {
+    if (info.continueAsNewSuggested) {
       await condition(allHandlersFinished);
       await continueAsNew<typeof claudeSessionWorkflow>({
         ...input,

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
-import { start, status, init, server, up, down, help, version } from './cli/commands';
+import { start, status, init, server, up, down, stop, help, version } from './cli/commands';
 import { configCommand } from './cli/config-command';
 import { runPreflight } from './cli/preflight';
 import * as out from './cli/output';
 import { AgentType } from './types';
-import { ENV, CliOverrides } from './config';
+import { ENV, CliOverrides, getConfig } from './config';
 
 interface ParsedArgs {
   command: string;
@@ -20,6 +20,9 @@ interface ParsedArgs {
   skipPreflight: boolean;
   background: boolean;
   keepMcp: boolean;
+  all: boolean;
+  project: boolean;
+  ensemble?: string;
   agent?: AgentType;
 }
 
@@ -31,6 +34,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     skipPreflight: false,
     background: false,
     keepMcp: false,
+    all: false,
+    project: false,
   };
 
   let i = 0;
@@ -56,6 +61,12 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.background = true;
     } else if (arg === '--keep-mcp') {
       result.keepMcp = true;
+    } else if (arg === '--all') {
+      result.all = true;
+    } else if (arg === '--project') {
+      result.project = true;
+    } else if (arg === '--ensemble' && i + 1 < argv.length) {
+      result.ensemble = argv[++i];
     } else if (arg === '--agent' && i + 1 < argv.length) {
       const val = argv[++i];
       if (val !== 'claude' && val !== 'copilot') {
@@ -99,6 +110,8 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const ensemble = args.positional[1] || process.env[ENV.ENSEMBLE] || 'default';
   const overrides = cliOverrides(args);
+  // Resolve the default agent from config (only needed for commands that use it)
+  const resolvedAgent = (): AgentType => args.agent ?? getConfig(overrides).defaultAgent;
 
   switch (args.command) {
     case 'conduct':
@@ -107,7 +120,7 @@ async function main() {
         conductor: true,
         name: args.name,
         skipPreflight: args.skipPreflight,
-        agent: args.agent ?? 'claude',
+        agent: resolvedAgent(),
         dir: args.dir,
         ...overrides,
       });
@@ -119,7 +132,7 @@ async function main() {
         conductor: false,
         name: args.name,
         skipPreflight: args.skipPreflight,
-        agent: args.agent ?? 'claude',
+        agent: resolvedAgent(),
         dir: args.dir,
         ...overrides,
       });
@@ -139,6 +152,15 @@ async function main() {
       });
       break;
 
+    case 'stop':
+      await stop({
+        name: args.name,
+        ensemble: args.positional[1],
+        all: args.all || undefined,
+        ...overrides,
+      });
+      break;
+
     case 'down':
       await down({
         removeMcp: !args.keepMcp,
@@ -151,13 +173,13 @@ async function main() {
       await up({
         ensemble,
         name: args.name,
-        agent: args.agent ?? 'claude',
+        agent: resolvedAgent(),
         ...overrides,
       });
       break;
 
     case 'init':
-      await init({ dir: args.dir });
+      await init({ dir: args.dir, project: args.project });
       break;
 
     case 'config':
