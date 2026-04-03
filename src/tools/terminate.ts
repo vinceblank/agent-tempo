@@ -42,7 +42,7 @@ export function registerTerminateTool(
         // the MCP server's shutdown handler, and closes the Claude Code session.
         await handle.signal(shutdownSignal);
         return {
-          content: [{ type: 'text' as const, text: `Shutdown signal sent to **${playerId}**. The session will exit gracefully.` }],
+          content: [{ type: 'text' as const, text: `Shutdown signal sent to **${playerId}**. The workflow and MCP server will exit. The Claude Code terminal may remain open and will need to be closed manually.` }],
         };
       } catch (err) {
         return {
