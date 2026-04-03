@@ -115,11 +115,6 @@ export async function claudeSchedulerWorkflow(input: SchedulerInput): Promise<vo
         entries = entries.filter((e) => e.name !== entry.name);
       } else if (entry.type === 'interval' && entry.interval) {
         entry.nextFireAt = new Date(Date.now() + entry.interval).toISOString();
-      } else if (entry.type === 'cron' && entry.cron) {
-        // For cron, the tools layer computes nextFireAt when adding the entry.
-        // After firing, bump by the interval hint or let the tools layer re-signal.
-        // Use a fallback of re-checking in 60s if no interval hint.
-        entry.nextFireAt = new Date(Date.now() + (entry.interval ?? 60_000)).toISOString();
       }
     }
 

@@ -95,9 +95,9 @@ export function registerScheduleTool(
       } else {
         // every (recurring)
         const ms = parseDuration(every!);
-        if (ms === null) {
+        if (ms === null || ms < 10_000) {
           return {
-            content: [{ type: 'text' as const, text: `Invalid duration for "every": ${every}. Use e.g. "30s", "10m", "2h", "1d".` }],
+            content: [{ type: 'text' as const, text: `Invalid or too-short interval for "every": ${every}. Minimum is 10s.` }],
             isError: true,
           };
         }

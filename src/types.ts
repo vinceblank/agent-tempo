@@ -81,8 +81,6 @@ export interface ScheduleEntry {
   nextFireAt: string;
   /** Interval in milliseconds for repeating schedules. */
   interval?: number;
-  /** Cron expression for cron-based schedules. */
-  cron?: string;
   /** ISO timestamp after which the schedule should be removed. */
   until?: string;
   /** Number of remaining fires (decremented each fire, removed at 0). */
@@ -90,5 +88,5 @@ export interface ScheduleEntry {
   /** Total number of times this schedule has fired. */
   firedCount: number;
   /** Schedule type for display purposes. */
-  type: 'once' | 'interval' | 'cron';
+  type: 'once' | 'interval';
 }
