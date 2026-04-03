@@ -32,6 +32,11 @@ export function createScheduleActivities(client: Client): ScheduleActivities {
         // Resolve target player by querying running session workflows
         const handle = await resolveSession(client, ensemble, target);
         if (!handle) {
+          // Notify the creator (or conductor as fallback) about the failure
+          await notifyFailure(
+            client, ensemble, createdBy, scheduleName, target,
+            `Player "${target}" not found — session may have been terminated.`,
+          );
           return { success: false, error: `No active session found for "${target}"` };
         }
 
@@ -51,6 +56,51 @@ export function createScheduleActivities(client: Client): ScheduleActivities {
       }
     },
   };
+}
+
+/**
+ * Notify the schedule creator (or conductor as fallback) that delivery failed.
+ * This lets the creator's AI session decide whether to re-recruit the target.
+ */
+async function notifyFailure(
+  client: Client,
+  ensemble: string,
+  createdBy: string,
+  scheduleName: string,
+  target: string,
+  reason: string,
+) {
+  const failureText = `[scheduled: ${scheduleName}] Delivery to "${target}" failed — ${reason}`;
+
+  // Try the creator first
+  const creatorHandle = await resolveSession(client, ensemble, createdBy);
+  if (creatorHandle) {
+    try {
+      await creatorHandle.signal('receiveMessage', {
+        from: 'scheduler',
+        text: failureText,
+        isScheduled: true,
+        scheduleName,
+      });
+      return;
+    } catch {
+      // creator signal failed, fall through to conductor
+    }
+  }
+
+  // Fallback: notify the conductor
+  try {
+    const conductorId = `claude-session-${ensemble}-conductor`;
+    const conductorHandle = client.workflow.getHandle(conductorId);
+    await conductorHandle.signal('receiveMessage', {
+      from: 'scheduler',
+      text: failureText,
+      isScheduled: true,
+      scheduleName,
+    });
+  } catch {
+    // Nobody available to notify — logged by the workflow
+  }
 }
 
 /**
