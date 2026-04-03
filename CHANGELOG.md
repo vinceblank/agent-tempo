@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Recruit sets `PLAYER_NAME`** — the recruit tool now passes the requested name via env var so the spawned session starts with the correct identity immediately, rather than relying on a `set_name` message the LLM may not act on.
 - **"conductor" name collision guard** — non-conductor sessions are prevented from using "conductor" as a player name, which would collide with the conductor's deterministic workflow ID.
 - **Terminate uses graceful shutdown** — the `terminate` tool now sends a shutdown signal instead of force-killing the workflow, and notifies the target session before shutting it down.
+- **Recruited sessions no longer rename themselves** — the recruit tool previously sent a redundant `set_name` instruction via signal, which could cause the LLM to rename itself incorrectly if confused by concurrent messages. The name is now fully set via env var at startup, and MCP instructions tell pre-named sessions not to call `set_name`.
 - Workflow upserts all search attributes at startup to keep the Temporal UI accurate, even when reconnecting to an existing workflow.
 
 ### Added
