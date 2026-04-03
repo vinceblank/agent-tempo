@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config } from '../config';
+import { shutdownSignal } from '../workflows/signals';
 import { resolveSession } from './resolve';
 import { defineTool } from './helpers';
 
@@ -14,7 +15,7 @@ export function registerTerminateTool(
   defineTool(
     server,
     'terminate',
-    'Terminate a player session by name. Use this to clean up orphaned sessions.',
+    'Terminate a player session by name. Sends a graceful shutdown signal so the session can clean up.',
     {
       playerId: z.string().describe('The player name of the session to terminate'),
     },
@@ -36,19 +37,12 @@ export function registerTerminateTool(
             isError: true,
           };
         }
-        // Warn the session before terminating
-        try {
-          await handle.signal('receiveMessage', {
-            from: getPlayerId(),
-            text: `Your session is being terminated by player ${getPlayerId()}. Please save your work and close this terminal.`,
-          });
-        } catch {
-          // May fail if workflow is in a bad state — proceed with termination
-        }
 
-        await handle.terminate(`Terminated by player ${getPlayerId()}`);
+        // Send graceful shutdown signal — this triggers the workflow's exit path,
+        // the MCP server's shutdown handler, and closes the Claude Code session.
+        await handle.signal(shutdownSignal);
         return {
-          content: [{ type: 'text' as const, text: `Session **${playerId}** terminated. If the Claude Code terminal is still open, the user will need to close it manually.` }],
+          content: [{ type: 'text' as const, text: `Shutdown signal sent to **${playerId}**. The session will exit gracefully.` }],
         };
       } catch (err) {
         return {
