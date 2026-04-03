@@ -19,6 +19,7 @@ interface StartOpts extends CliOverrides {
   ensemble: string;
   conductor: boolean;
   replace?: boolean;
+  resume?: boolean;
   name?: string;
   skipPreflight?: boolean;
   agent: AgentType;
@@ -67,10 +68,14 @@ export async function start(opts: StartOpts) {
             try { await handle.cancel(); } catch { /* already gone */ }
           }
           out.success('Existing conductor stopped');
+        } else if (opts.resume) {
+          out.log(`Resuming conductor for ensemble "${opts.ensemble}" — reconnecting to existing workflow state.\n`);
         } else {
-          out.log(`A conductor workflow already exists for ensemble "${opts.ensemble}".`);
-          out.log(`  Resuming — the new session will reconnect to the existing workflow state.`);
-          out.log(`  Use ${out.dim('--replace')} to stop the existing conductor and start fresh.\n`);
+          out.error(`A conductor is already running for ensemble "${opts.ensemble}".`);
+          out.log(`  ${out.dim('claude-tempo conduct --resume')}    Reconnect a new session to the existing workflow`);
+          out.log(`  ${out.dim('claude-tempo conduct --replace')}   Stop the existing conductor and start fresh`);
+          await connection.close();
+          process.exit(1);
         }
       }
       await connection.close();
@@ -112,7 +117,10 @@ export async function start(opts: StartOpts) {
       '--dangerously-skip-permissions',
       '--dangerously-load-development-channels', 'server:claude-tempo',
     ];
-    if (sessionName) {
+    if (opts.resume && sessionName) {
+      // Resume the previous Claude Code conversation by name
+      claudeArgs.push('--resume', sessionName);
+    } else if (sessionName) {
       claudeArgs.push('-n', sessionName);
     }
 
