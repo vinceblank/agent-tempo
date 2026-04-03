@@ -18,6 +18,7 @@ const PACKAGE_ROOT = resolve(__dirname, '..', '..');
 interface StartOpts extends CliOverrides {
   ensemble: string;
   conductor: boolean;
+  replace?: boolean;
   name?: string;
   skipPreflight?: boolean;
   agent: AgentType;
@@ -46,12 +47,31 @@ export async function start(opts: StartOpts) {
   if (opts.conductor) {
     try {
       const connection = await createTemporalConnection(config);
-      const client = new Client({ connection });
+      const client = new Client({ connection, namespace: config.temporalNamespace });
       const conductorWfId = conductorWorkflowId(opts.ensemble);
       const handle = client.workflow.getHandle(conductorWfId);
       const desc = await handle.describe();
       if (desc.status.name === 'RUNNING') {
-        out.warn(`A conductor workflow already exists for ensemble "${opts.ensemble}". Reconnecting...`);
+        if (opts.replace) {
+          out.log(`Stopping existing conductor for ensemble "${opts.ensemble}"...`);
+          try {
+            await handle.signal(shutdownSignal);
+            // Wait briefly for graceful shutdown
+            for (let i = 0; i < 10; i++) {
+              await new Promise(r => setTimeout(r, 500));
+              const check = await handle.describe();
+              if (check.status.name !== 'RUNNING') break;
+            }
+          } catch {
+            // Force cancel if signal fails
+            try { await handle.cancel(); } catch { /* already gone */ }
+          }
+          out.success('Existing conductor stopped');
+        } else {
+          out.log(`A conductor workflow already exists for ensemble "${opts.ensemble}".`);
+          out.log(`  Resuming — the new session will reconnect to the existing workflow state.`);
+          out.log(`  Use ${out.dim('--replace')} to stop the existing conductor and start fresh.\n`);
+        }
       }
       await connection.close();
     } catch {
@@ -859,7 +879,7 @@ ${out.bold('Commands:')}
   ${out.cyan('up')}      [ensemble]    First-time setup: start Temporal, configure MCP, launch conductor
   ${out.cyan('down')}                  Stop Temporal, terminate sessions, remove MCP config
   ${out.cyan('server')}                Start the Temporal dev server and register search attributes
-  ${out.cyan('conduct')} [ensemble]    Start a conductor session (one per ensemble)
+  ${out.cyan('conduct')} [ensemble]    Start a conductor session (resumes existing, --replace to restart)
   ${out.cyan('start')}   [ensemble]    Start a player session
   ${out.cyan('stop')}    [ensemble]    Stop sessions (-n <name> for one, or --all)
   ${out.cyan('status')}  [ensemble]    Show active sessions and Temporal health

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
-import { Config, ENV } from '../config';
+import { Config, ENV, conductorWorkflowId } from '../config';
 import { AgentType } from '../types';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { resolveSession } from './resolve';
@@ -56,6 +56,26 @@ export function registerRecruitTool(
       }
 
       try {
+        // Check if a conductor already exists when recruiting a conductor
+        if (isConductor) {
+          try {
+            const conductorWfId = conductorWorkflowId(config.ensemble);
+            const conductorHandle = client.workflow.getHandle(conductorWfId);
+            const desc = await conductorHandle.describe();
+            if (desc.status.name === 'RUNNING') {
+              return {
+                content: [{
+                  type: 'text' as const,
+                  text: `A conductor is already running in ensemble "${config.ensemble}". Use \`claude-tempo conduct --replace\` from the CLI to replace it, or \`terminate\` it first.`,
+                }],
+                isError: true,
+              };
+            }
+          } catch {
+            // No existing conductor — proceed
+          }
+        }
+
         // Check if a session with this name is already active
         const existing = await resolveSession(client, config.ensemble, name);
         if (existing) {
