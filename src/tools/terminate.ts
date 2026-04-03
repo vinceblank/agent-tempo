@@ -38,8 +38,19 @@ export function registerTerminateTool(
           };
         }
 
-        // Send graceful shutdown signal — this triggers the workflow's exit path,
-        // the MCP server's shutdown handler, and closes the Claude Code session.
+        // Notify the session before shutting it down. The message poller
+        // delivers this to the Claude session so it knows why it lost its tools.
+        try {
+          await handle.signal('receiveMessage', {
+            from: getPlayerId(),
+            text: `Your session has been terminated by ${getPlayerId()}. Your claude-tempo tools will stop working shortly.`,
+          });
+          // Brief delay to let the poller deliver the message before shutdown
+          await new Promise(r => setTimeout(r, 1000));
+        } catch {
+          // May fail if workflow is in a bad state — proceed with shutdown
+        }
+
         await handle.signal(shutdownSignal);
         return {
           content: [{ type: 'text' as const, text: `Shutdown signal sent to **${playerId}**. The workflow and MCP server will exit. The Claude Code terminal may remain open and will need to be closed manually.` }],
