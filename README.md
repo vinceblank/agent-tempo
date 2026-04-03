@@ -94,7 +94,7 @@ claude-tempo <command> [options]
 | `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor |
 | `down` | Stop Temporal, terminate sessions, remove MCP config |
 | `server` | Start the Temporal dev server and register search attributes |
-| `conduct [ensemble]` | Start a conductor session (one per ensemble) |
+| `conduct [ensemble]` | Start a conductor session (one per ensemble). Use `--resume` or `--replace` if one exists. |
 | `start [ensemble]` | Start a player session |
 | `status [ensemble]` | Show active sessions and Temporal health |
 | `config` | Configure Temporal connection settings (interactive or `set`/`show`) |
@@ -115,6 +115,8 @@ claude-tempo <command> [options]
 --skip-preflight              Skip preflight checks (start/conduct)
 -d, --dir <path>              Target directory (default: cwd)
 --background                  Run Temporal in background (server only)
+--resume                      Resume an existing conductor session (conduct only)
+--replace                     Stop existing conductor and start fresh (conduct only)
 ```
 
 ### `claude-tempo up`
@@ -201,7 +203,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo:
 | `set_name` | Set a human-readable name for this session. |
 | `set_part` | Describe what you're working on. Visible to others via `ensemble`. |
 | `listen` | Manually check for pending messages. |
-| `recruit` | Spawn a new Claude Code session in a directory. Opens a new terminal window. |
+| `recruit` | Spawn a new Claude Code session in a directory. Can recruit a conductor with `conductor: true`. |
 | `report` | Send updates to the conductor. No-op if no conductor exists. |
 | `terminate` | Terminate a player session by name. |
 
@@ -274,11 +276,12 @@ Inside a session, try:
 
 Sessions start with a random 8-character hex ID. Set a name at launch with `-n` or use `set_name` inside a session.
 
-- Names are stored as Temporal search attributes (`ClaudeTempoPlayerId`)
+- Names are stored in workflow metadata and discoverable via metadata queries. Search attributes are also set for Temporal UI visibility.
 - Other players use names to send messages via `cue`
 - `recruit` automatically tells new sessions to set their name
 - Names must be unique within an ensemble
 - Names must contain only letters, numbers, hyphens, and underscores
+- The name "conductor" is reserved for conductor sessions
 
 ### Terminal support
 
