@@ -6,7 +6,7 @@
  */
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
-import { Client, WorkflowHandle } from '@temporalio/client';
+import { Client, WorkflowHandle, WorkflowIdConflictPolicy } from '@temporalio/client';
 import * as path from 'path';
 import * as fs from 'fs';
 import { SessionInput, SessionMetadata } from '../src/types';
@@ -225,4 +225,55 @@ export async function resolveByName(
   }
 
   return null;
+}
+
+/**
+ * Build the deterministic conductor workflow ID for an ensemble.
+ */
+export function conductorWorkflowId(ensemble: string): string {
+  return `claude-session-${ensemble}-conductor`;
+}
+
+/**
+ * Check if a conductor workflow is running for the given ensemble.
+ */
+export async function isConductorRunning(
+  client: Client,
+  ensemble: string,
+): Promise<boolean> {
+  try {
+    const handle = client.workflow.getHandle(conductorWorkflowId(ensemble));
+    const desc = await handle.describe();
+    return desc.status.name === 'RUNNING';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Start a session with USE_EXISTING policy — simulates what the MCP server
+ * does when reconnecting to an existing workflow (e.g., conductor resume).
+ */
+export async function reconnectSession(
+  inputOverrides: Partial<SessionInput> = {},
+): Promise<WorkflowHandle> {
+  const metadata = inputOverrides.metadata ?? playerMetadata();
+  const input: SessionInput = {
+    metadata,
+    autoSummary: `Session in test`,
+    disableStaleDetection: true,
+    ...inputOverrides,
+    ...(inputOverrides.metadata ? {} : { metadata }),
+  };
+
+  const workflowId = metadata.isConductor
+    ? `claude-session-${metadata.ensemble}-conductor`
+    : `claude-session-${metadata.ensemble}-${metadata.playerId}`;
+
+  return testEnv.client.workflow.start('claudeSessionWorkflow', {
+    workflowId,
+    taskQueue: TASK_QUEUE,
+    args: [input],
+    workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+  });
 }
