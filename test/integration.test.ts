@@ -512,5 +512,72 @@ describe('multi-session integration', function () {
         await Promise.all([hCond.result(), hP1.result(), hP2.result()]);
       });
     });
+
+    it('player with same workflow ID as conductor would hijack it via USE_EXISTING', async function () {
+      // This test documents the workflow ID collision: if a player somehow
+      // gets playerId="conductor", its workflow ID matches the conductor's.
+      // The server.ts guard prevents this, but this test shows the consequence
+      // if it were bypassed — the player would reconnect to the conductor's
+      // workflow and see its state.
+      const ensemble = 'collision';
+      await withWorker(async () => {
+        // Start a real conductor with some state
+        const hCond = await startSession({
+          metadata: conductorMetadata({ ensemble }),
+        });
+        await hCond.signal(setPartSignal, 'Conductor state');
+        await hCond.signal(commandSignal, {
+          text: 'Secret command',
+          source: 'maestro-dashboard',
+        });
+
+        // A player using reconnectSession with conductor workflow ID
+        // would see the conductor's state — this is the collision
+        const hCollision = await reconnectSession({
+          metadata: conductorMetadata({ ensemble, playerId: 'conductor' }),
+        });
+        const part = await hCollision.query(getPartQuery);
+        expect(part).to.equal('Conductor state');
+
+        // This proves why the guard in server.ts is necessary
+        await hCond.signal(shutdownSignal);
+        await hCond.result();
+      });
+    });
+
+    it('new messages arrive after conductor resume', async function () {
+      const ensemble = 'cond-resume-new-msg';
+      await withWorker(async () => {
+        // 1. Start conductor
+        const hCond = await startSession({
+          metadata: conductorMetadata({ ensemble }),
+        });
+
+        // 2. Resume
+        const hResumed = await reconnectSession({
+          metadata: conductorMetadata({ ensemble }),
+        });
+
+        // 3. Send new messages after resume
+        await sendMessage(hResumed, 'new-player', 'Joined after resume');
+        await hResumed.signal(playerReportSignal, {
+          playerId: 'new-player',
+          text: 'Task done',
+          type: 'result',
+        });
+
+        // 4. New messages are visible
+        const pending = await hResumed.query(pendingMessagesQuery);
+        expect(pending.length).to.be.greaterThanOrEqual(2);
+        const directMsg = pending.find((m) => m.from === 'new-player' && m.text === 'Joined after resume');
+        expect(directMsg).to.exist;
+
+        const history = await hResumed.query(historyQuery);
+        expect(history).to.have.lengthOf(1);
+
+        await hResumed.signal(shutdownSignal);
+        await hResumed.result();
+      });
+    });
   });
 });
