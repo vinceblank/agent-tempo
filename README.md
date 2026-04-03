@@ -175,6 +175,9 @@ Ensemble: myband
   bob
     Working on the dashboard
     /Users/me/projects/app  feat/ui  my-machine.local
+
+  1 active schedule
+  deploy-watch → ops | every 1h | next: 3:00:00 PM
 ```
 
 ### `claude-tempo preflight`
@@ -236,7 +239,9 @@ Schedules support one-shot delays, fixed times, and recurring intervals with opt
 
 - Scheduled messages arrive with a `[scheduled: name]` prefix so recipients can distinguish them from direct cues
 - The `from` field is set to the schedule creator, so replies go to the right person
+- If the target player is gone when a schedule fires, the creator is notified so they can re-recruit if needed. Falls back to notifying the conductor if the creator is also unavailable
 - Messages include `isScheduled` metadata for dashboard integrations
+- `claude-tempo status` shows active schedules alongside sessions
 - A single durable scheduler workflow per ensemble manages all schedules using Temporal timers
 
 ## Conductors
