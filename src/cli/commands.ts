@@ -12,11 +12,6 @@ import { runPreflight } from './preflight';
 import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
 import * as out from './output';
 
-/** Sanitize a value for use in Temporal visibility queries (strip quotes). */
-function sanitizeQueryValue(value: string): string {
-  return value.replace(/["\\]/g, '');
-}
-
 /** Package root is two levels up from dist/cli/ */
 const PACKAGE_ROOT = resolve(__dirname, '..', '..');
 
@@ -90,12 +85,15 @@ export async function start(opts: StartOpts) {
     });
     out.success(`Launched copilot bridge${opts.name ? ` "${opts.name}"` : ''} (pid ${pid ?? 'unknown'})`);
   } else {
+    // Default conductor name to "conductor" so the Claude Code session name matches
+    const sessionName = opts.name || (opts.conductor ? 'conductor' : undefined);
+
     const claudeArgs = [
       '--dangerously-skip-permissions',
       '--dangerously-load-development-channels', 'server:claude-tempo',
     ];
-    if (opts.name) {
-      claudeArgs.push('-n', opts.name);
+    if (sessionName) {
+      claudeArgs.push('-n', sessionName);
     }
 
     const envVars: Record<string, string> = {
@@ -105,12 +103,12 @@ export async function start(opts: StartOpts) {
     if (opts.conductor) {
       envVars[ENV.CONDUCTOR] = 'true';
     }
-    if (opts.name) {
-      envVars[ENV.PLAYER_NAME] = opts.name;
+    if (sessionName) {
+      envVars[ENV.PLAYER_NAME] = sessionName;
     }
 
     const { pid } = spawnInTerminal(claudeArgs, workDir, envVars);
-    out.success(`Launched ${role} session${opts.name ? ` "${opts.name}"` : ''} (pid ${pid ?? 'unknown'})`);
+    out.success(`Launched ${role} session${sessionName ? ` "${sessionName}"` : ''} (pid ${pid ?? 'unknown'})`);
   }
   out.log(`  Ensemble: ${opts.ensemble}`);
   out.log(`  Directory: ${workDir}`);
@@ -138,11 +136,9 @@ export async function status(opts: StatusOpts) {
 
   const client = new Client({ connection, namespace: config.temporalNamespace });
 
-  // Build query
-  let query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
-  if (opts.ensemble) {
-    query += ` AND ClaudeTempoEnsemble = "${opts.ensemble}"`;
-  }
+  // List all running session workflows, filter by ensemble using metadata queries.
+  // This avoids depending on custom search attributes which are eventually consistent.
+  const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
 
   const sessions: Array<{
     id: string;
@@ -164,11 +160,16 @@ export async function status(opts: StatusOpts) {
         handle.query('getPart').catch(() => ''),
       ]);
       const meta = metadata as Record<string, unknown>;
+      const ensemble = (meta.ensemble as string) || '?';
+
+      // Filter by ensemble if specified
+      if (opts.ensemble && ensemble !== opts.ensemble) continue;
+
       sessions.push({
         id: wf.workflowId,
         name: (meta.playerId as string) || wf.workflowId.split('-').pop() || '?',
         part: (part as string) || '',
-        ensemble: (meta.ensemble as string) || '?',
+        ensemble,
         workDir: (meta.workDir as string) || '?',
         branch: (meta.gitBranch as string) || '',
         host: (meta.hostname as string) || '',
@@ -527,16 +528,20 @@ export async function up(opts: UpOpts) {
       workDir: process.cwd(),
     }));
   } else {
+    // Default conductor name so the Claude Code session name matches the ensemble role
+    const sessionName = opts.name || 'conductor';
+
     const claudeArgs = [
       '--dangerously-skip-permissions',
       '--dangerously-load-development-channels', 'server:claude-tempo',
+      '-n', sessionName,
     ];
-    if (opts.name) claudeArgs.push('-n', opts.name);
 
     ({ pid } = spawnInTerminal(claudeArgs, process.cwd(), {
       ...temporalEnvVars,
       [ENV.ENSEMBLE]: opts.ensemble,
       [ENV.CONDUCTOR]: 'true',
+      [ENV.PLAYER_NAME]: sessionName,
     }));
   }
 
@@ -689,15 +694,23 @@ export async function stop(opts: StopOpts) {
     await stopByName(client, opts.name, config, opts.ensemble);
   } else {
     // Stop multiple sessions (--ensemble or --all)
-    let query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
-    if (opts.ensemble) {
-      query += ` AND ClaudeTempoEnsemble = "${sanitizeQueryValue(opts.ensemble)}"`;
-    }
+    const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
 
     let stopped = 0;
     for await (const wf of client.workflow.list({ query })) {
       try {
         const handle = client.workflow.getHandle(wf.workflowId);
+
+        // Filter by ensemble using metadata if specified
+        if (opts.ensemble) {
+          try {
+            const meta = (await handle.query('getMetadata')) as Record<string, unknown>;
+            if ((meta.ensemble as string) !== opts.ensemble) continue;
+          } catch {
+            continue;
+          }
+        }
+
         await handle.signal(shutdownSignal);
         stopped++;
         out.log(`  ${out.dim('stopped')} ${wf.workflowId}`);
@@ -724,40 +737,42 @@ export async function stop(opts: StopOpts) {
 }
 
 async function stopByName(client: Client, name: string, config: Config, ensemble?: string) {
-  // Find the workflow by player name via search attribute
-  let query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoPlayerId = "${sanitizeQueryValue(name)}"`;
-  if (ensemble) {
-    query += ` AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}"`;
-  }
+  // Find the workflow by player name using metadata queries (not search attributes).
+  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
   let found = false;
 
   for await (const wf of client.workflow.list({ query })) {
-    found = true;
     const handle = client.workflow.getHandle(wf.workflowId);
 
-    // Check if this is a conductor — warn about it
+    // Check metadata to match by name and ensemble
+    let metadata: Record<string, unknown>;
     try {
-      const metadata = (await handle.query('getMetadata')) as Record<string, unknown>;
-      if (metadata.isConductor) {
-        out.warn(`"${name}" is a conductor session`);
-      }
-
-      // Notify the conductor that this session was stopped (if it's not the conductor itself)
-      if (!metadata.isConductor && metadata.ensemble) {
-        try {
-          const conductorWfId = conductorWorkflowId(metadata.ensemble as string);
-          const conductorHandle = client.workflow.getHandle(conductorWfId);
-          await conductorHandle.signal(playerReportSignal, {
-            playerId: name,
-            text: 'Session stopped by CLI',
-            type: 'result' as const,
-          });
-        } catch {
-          // No conductor or conductor not running — fine
-        }
-      }
+      metadata = (await handle.query('getMetadata')) as Record<string, unknown>;
+      if ((metadata.playerId as string) !== name) continue;
+      if (ensemble && (metadata.ensemble as string) !== ensemble) continue;
     } catch {
-      // Query failed — proceed with shutdown anyway
+      continue;
+    }
+
+    found = true;
+
+    if (metadata.isConductor) {
+      out.warn(`"${name}" is a conductor session`);
+    }
+
+    // Notify the conductor that this session was stopped (if it's not the conductor itself)
+    if (!metadata.isConductor && metadata.ensemble) {
+      try {
+        const conductorWfId = conductorWorkflowId(metadata.ensemble as string);
+        const conductorHandle = client.workflow.getHandle(conductorWfId);
+        await conductorHandle.signal(playerReportSignal, {
+          playerId: name,
+          text: 'Session stopped by CLI',
+          type: 'result' as const,
+        });
+      } catch {
+        // No conductor or conductor not running — fine
+      }
     }
 
     // Send shutdown signal (graceful)

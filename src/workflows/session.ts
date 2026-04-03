@@ -37,6 +37,16 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
 
   const HEARTBEAT_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
+  // Ensure search attributes are always current — critical when reconnecting
+  // via WorkflowIdConflictPolicy.USE_EXISTING, which skips the attributes
+  // passed to client.workflow.start().
+  upsertSearchAttributes({
+    ClaudeTempoEnsemble: [input.metadata.ensemble],
+    ClaudeTempoPlayerId: [input.metadata.playerId],
+    ClaudeTempoHostname: [input.metadata.hostname],
+    ...(input.metadata.gitRoot ? { ClaudeTempoGitRoot: [input.metadata.gitRoot] } : {}),
+  });
+
   // State (carried across continue-as-new)
   let part = input.part ?? input.autoSummary ?? 'No description set';
   const messages: Message[] = input.messages ?? [];

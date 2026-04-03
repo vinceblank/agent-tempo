@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-04-03
+
+### Fixed
+
+- **Session discovery uses metadata queries instead of search attributes** — ensemble listing, session resolution, and CLI status/stop commands now query workflow metadata directly instead of relying on custom search attributes (`ClaudeTempoEnsemble`, `ClaudeTempoPlayerId`), which are eventually consistent and could be stale or missing. This fixes a bug where sessions (particularly conductors reconnecting via `WorkflowIdConflictPolicy.USE_EXISTING`) were invisible to the ensemble.
+- Workflow upserts all search attributes at startup to keep the Temporal UI accurate, even when reconnecting to an existing workflow.
+
+### Added
+
+- **Test suite** — 25 tests using Temporal's `TestWorkflowEnvironment` with mocha. Covers workflow lifecycle, signals, queries, conductor behavior, multi-session ensemble discovery, session resolution after rename, and end-to-end coordination scenarios.
+
+### Changed
+
+- Upgraded `@temporalio/*` packages from 1.11.7 to 1.15.0.
+- Upgraded mocha to v11.
+
+### Removed
+
+- `sanitizeQueryValue` helper (no longer needed — visibility queries no longer include user-supplied values).
+
 ## [0.4.1] - 2026-04-02
 
 ### Added
