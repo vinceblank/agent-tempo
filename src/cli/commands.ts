@@ -99,13 +99,9 @@ export async function start(opts: StartOpts) {
     const envVars: Record<string, string> = {
       ...temporalEnvVars,
       [ENV.ENSEMBLE]: opts.ensemble,
+      [ENV.CONDUCTOR]: opts.conductor ? 'true' : '',
+      [ENV.PLAYER_NAME]: sessionName || '',
     };
-    if (opts.conductor) {
-      envVars[ENV.CONDUCTOR] = 'true';
-    }
-    if (sessionName) {
-      envVars[ENV.PLAYER_NAME] = sessionName;
-    }
 
     const { pid } = spawnInTerminal(claudeArgs, workDir, envVars);
     out.success(`Launched ${role} session${sessionName ? ` "${sessionName}"` : ''} (pid ${pid ?? 'unknown'})`);
