@@ -12,17 +12,14 @@ import { runPreflight } from './preflight';
 import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
 import * as out from './output';
 
-/** Sanitize a value for use in Temporal visibility queries (strip quotes). */
-function sanitizeQueryValue(value: string): string {
-  return value.replace(/["\\]/g, '');
-}
-
 /** Package root is two levels up from dist/cli/ */
 const PACKAGE_ROOT = resolve(__dirname, '..', '..');
 
 interface StartOpts extends CliOverrides {
   ensemble: string;
   conductor: boolean;
+  replace?: boolean;
+  resume?: boolean;
   name?: string;
   skipPreflight?: boolean;
   agent: AgentType;
@@ -51,12 +48,35 @@ export async function start(opts: StartOpts) {
   if (opts.conductor) {
     try {
       const connection = await createTemporalConnection(config);
-      const client = new Client({ connection });
+      const client = new Client({ connection, namespace: config.temporalNamespace });
       const conductorWfId = conductorWorkflowId(opts.ensemble);
       const handle = client.workflow.getHandle(conductorWfId);
       const desc = await handle.describe();
       if (desc.status.name === 'RUNNING') {
-        out.warn(`A conductor workflow already exists for ensemble "${opts.ensemble}". Reconnecting...`);
+        if (opts.replace) {
+          out.log(`Stopping existing conductor for ensemble "${opts.ensemble}"...`);
+          try {
+            await handle.signal(shutdownSignal);
+            // Wait briefly for graceful shutdown
+            for (let i = 0; i < 10; i++) {
+              await new Promise(r => setTimeout(r, 500));
+              const check = await handle.describe();
+              if (check.status.name !== 'RUNNING') break;
+            }
+          } catch {
+            // Force cancel if signal fails
+            try { await handle.cancel(); } catch { /* already gone */ }
+          }
+          out.success('Existing conductor stopped');
+        } else if (opts.resume) {
+          out.log(`Resuming conductor for ensemble "${opts.ensemble}" — reconnecting to existing workflow state.\n`);
+        } else {
+          out.error(`A conductor is already running for ensemble "${opts.ensemble}".`);
+          out.log(`  ${out.dim('claude-tempo conduct --resume')}    Reconnect a new session to the existing workflow`);
+          out.log(`  ${out.dim('claude-tempo conduct --replace')}   Stop the existing conductor and start fresh`);
+          await connection.close();
+          process.exit(1);
+        }
       }
       await connection.close();
     } catch {
@@ -90,27 +110,29 @@ export async function start(opts: StartOpts) {
     });
     out.success(`Launched copilot bridge${opts.name ? ` "${opts.name}"` : ''} (pid ${pid ?? 'unknown'})`);
   } else {
+    // Default conductor name to "conductor" so the Claude Code session name matches
+    const sessionName = opts.name || (opts.conductor ? 'conductor' : undefined);
+
     const claudeArgs = [
       '--dangerously-skip-permissions',
       '--dangerously-load-development-channels', 'server:claude-tempo',
     ];
-    if (opts.name) {
-      claudeArgs.push('-n', opts.name);
+    if (opts.resume && sessionName) {
+      // Resume the previous Claude Code conversation by name
+      claudeArgs.push('--resume', sessionName);
+    } else if (sessionName) {
+      claudeArgs.push('-n', sessionName);
     }
 
     const envVars: Record<string, string> = {
       ...temporalEnvVars,
       [ENV.ENSEMBLE]: opts.ensemble,
+      [ENV.CONDUCTOR]: opts.conductor ? 'true' : '',
+      [ENV.PLAYER_NAME]: sessionName || '',
     };
-    if (opts.conductor) {
-      envVars[ENV.CONDUCTOR] = 'true';
-    }
-    if (opts.name) {
-      envVars[ENV.PLAYER_NAME] = opts.name;
-    }
 
     const { pid } = spawnInTerminal(claudeArgs, workDir, envVars);
-    out.success(`Launched ${role} session${opts.name ? ` "${opts.name}"` : ''} (pid ${pid ?? 'unknown'})`);
+    out.success(`Launched ${role} session${sessionName ? ` "${sessionName}"` : ''} (pid ${pid ?? 'unknown'})`);
   }
   out.log(`  Ensemble: ${opts.ensemble}`);
   out.log(`  Directory: ${workDir}`);
@@ -138,11 +160,9 @@ export async function status(opts: StatusOpts) {
 
   const client = new Client({ connection, namespace: config.temporalNamespace });
 
-  // Build query
-  let query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
-  if (opts.ensemble) {
-    query += ` AND ClaudeTempoEnsemble = "${opts.ensemble}"`;
-  }
+  // List all running session workflows, filter by ensemble using metadata queries.
+  // This avoids depending on custom search attributes which are eventually consistent.
+  const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
 
   const sessions: Array<{
     id: string;
@@ -164,11 +184,16 @@ export async function status(opts: StatusOpts) {
         handle.query('getPart').catch(() => ''),
       ]);
       const meta = metadata as Record<string, unknown>;
+      const ensemble = (meta.ensemble as string) || '?';
+
+      // Filter by ensemble if specified
+      if (opts.ensemble && ensemble !== opts.ensemble) continue;
+
       sessions.push({
         id: wf.workflowId,
         name: (meta.playerId as string) || wf.workflowId.split('-').pop() || '?',
         part: (part as string) || '',
-        ensemble: (meta.ensemble as string) || '?',
+        ensemble,
         workDir: (meta.workDir as string) || '?',
         branch: (meta.gitBranch as string) || '',
         host: (meta.hostname as string) || '',
@@ -527,16 +552,20 @@ export async function up(opts: UpOpts) {
       workDir: process.cwd(),
     }));
   } else {
+    // Default conductor name so the Claude Code session name matches the ensemble role
+    const sessionName = opts.name || 'conductor';
+
     const claudeArgs = [
       '--dangerously-skip-permissions',
       '--dangerously-load-development-channels', 'server:claude-tempo',
+      '-n', sessionName,
     ];
-    if (opts.name) claudeArgs.push('-n', opts.name);
 
     ({ pid } = spawnInTerminal(claudeArgs, process.cwd(), {
       ...temporalEnvVars,
       [ENV.ENSEMBLE]: opts.ensemble,
       [ENV.CONDUCTOR]: 'true',
+      [ENV.PLAYER_NAME]: sessionName,
     }));
   }
 
@@ -689,15 +718,23 @@ export async function stop(opts: StopOpts) {
     await stopByName(client, opts.name, config, opts.ensemble);
   } else {
     // Stop multiple sessions (--ensemble or --all)
-    let query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
-    if (opts.ensemble) {
-      query += ` AND ClaudeTempoEnsemble = "${sanitizeQueryValue(opts.ensemble)}"`;
-    }
+    const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
 
     let stopped = 0;
     for await (const wf of client.workflow.list({ query })) {
       try {
         const handle = client.workflow.getHandle(wf.workflowId);
+
+        // Filter by ensemble using metadata if specified
+        if (opts.ensemble) {
+          try {
+            const meta = (await handle.query('getMetadata')) as Record<string, unknown>;
+            if ((meta.ensemble as string) !== opts.ensemble) continue;
+          } catch {
+            continue;
+          }
+        }
+
         await handle.signal(shutdownSignal);
         stopped++;
         out.log(`  ${out.dim('stopped')} ${wf.workflowId}`);
@@ -724,40 +761,42 @@ export async function stop(opts: StopOpts) {
 }
 
 async function stopByName(client: Client, name: string, config: Config, ensemble?: string) {
-  // Find the workflow by player name via search attribute
-  let query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoPlayerId = "${sanitizeQueryValue(name)}"`;
-  if (ensemble) {
-    query += ` AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}"`;
-  }
+  // Find the workflow by player name using metadata queries (not search attributes).
+  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
   let found = false;
 
   for await (const wf of client.workflow.list({ query })) {
-    found = true;
     const handle = client.workflow.getHandle(wf.workflowId);
 
-    // Check if this is a conductor — warn about it
+    // Check metadata to match by name and ensemble
+    let metadata: Record<string, unknown>;
     try {
-      const metadata = (await handle.query('getMetadata')) as Record<string, unknown>;
-      if (metadata.isConductor) {
-        out.warn(`"${name}" is a conductor session`);
-      }
-
-      // Notify the conductor that this session was stopped (if it's not the conductor itself)
-      if (!metadata.isConductor && metadata.ensemble) {
-        try {
-          const conductorWfId = conductorWorkflowId(metadata.ensemble as string);
-          const conductorHandle = client.workflow.getHandle(conductorWfId);
-          await conductorHandle.signal(playerReportSignal, {
-            playerId: name,
-            text: 'Session stopped by CLI',
-            type: 'result' as const,
-          });
-        } catch {
-          // No conductor or conductor not running — fine
-        }
-      }
+      metadata = (await handle.query('getMetadata')) as Record<string, unknown>;
+      if ((metadata.playerId as string) !== name) continue;
+      if (ensemble && (metadata.ensemble as string) !== ensemble) continue;
     } catch {
-      // Query failed — proceed with shutdown anyway
+      continue;
+    }
+
+    found = true;
+
+    if (metadata.isConductor) {
+      out.warn(`"${name}" is a conductor session`);
+    }
+
+    // Notify the conductor that this session was stopped (if it's not the conductor itself)
+    if (!metadata.isConductor && metadata.ensemble) {
+      try {
+        const conductorWfId = conductorWorkflowId(metadata.ensemble as string);
+        const conductorHandle = client.workflow.getHandle(conductorWfId);
+        await conductorHandle.signal(playerReportSignal, {
+          playerId: name,
+          text: 'Session stopped by CLI',
+          type: 'result' as const,
+        });
+      } catch {
+        // No conductor or conductor not running — fine
+      }
     }
 
     // Send shutdown signal (graceful)
@@ -848,7 +887,7 @@ ${out.bold('Commands:')}
   ${out.cyan('up')}      [ensemble]    First-time setup: start Temporal, configure MCP, launch conductor
   ${out.cyan('down')}                  Stop Temporal, terminate sessions, remove MCP config
   ${out.cyan('server')}                Start the Temporal dev server and register search attributes
-  ${out.cyan('conduct')} [ensemble]    Start a conductor session (one per ensemble)
+  ${out.cyan('conduct')} [ensemble]    Start a conductor session (resumes existing, --replace to restart)
   ${out.cyan('start')}   [ensemble]    Start a player session
   ${out.cyan('stop')}    [ensemble]    Stop sessions (-n <name> for one, or --all)
   ${out.cyan('status')}  [ensemble]    Show active sessions and Temporal health

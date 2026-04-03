@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
-import { Config, ENV } from '../config';
+import { Config, ENV, conductorWorkflowId } from '../config';
 import { AgentType } from '../types';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { resolveSession } from './resolve';
@@ -27,6 +27,8 @@ export function registerRecruitTool(
     {
       workDir: z.string().describe('The working directory for the new session'),
       name: z.string().describe('Name for the new session'),
+      conductor: z.boolean().optional()
+        .describe('Whether this session is a conductor (default: false)'),
       initialMessage: z.string().optional()
         .describe('Optional task or message for the new session (sent after it sets its name)'),
       agent: z.enum(['claude', 'copilot']).optional()
@@ -36,11 +38,13 @@ export function registerRecruitTool(
       const { workDir, name, initialMessage } = args as {
         workDir: string;
         name: string;
+        conductor?: boolean;
         initialMessage?: string;
         agent?: AgentType;
       };
+      const isConductor = (args as any).conductor === true;
       const agent: AgentType = (args as any).agent || ownAgentType;
-      // Validate name to prevent search attribute query injection
+      // Validate name
       if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
         return {
           content: [{
@@ -50,8 +54,37 @@ export function registerRecruitTool(
           isError: true,
         };
       }
+      if (name === 'conductor' && !isConductor) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `The name "conductor" is reserved for conductor sessions. Use a different name, or set conductor: true.`,
+          }],
+          isError: true,
+        };
+      }
 
       try {
+        // Check if a conductor already exists when recruiting a conductor
+        if (isConductor) {
+          try {
+            const conductorWfId = conductorWorkflowId(config.ensemble);
+            const conductorHandle = client.workflow.getHandle(conductorWfId);
+            const desc = await conductorHandle.describe();
+            if (desc.status.name === 'RUNNING') {
+              return {
+                content: [{
+                  type: 'text' as const,
+                  text: `A conductor is already running in ensemble "${config.ensemble}". Use \`claude-tempo conduct --replace\` from the CLI to replace it, or \`terminate\` it first.`,
+                }],
+                isError: true,
+              };
+            }
+          } catch {
+            // No existing conductor — proceed
+          }
+        }
+
         // Check if a session with this name is already active
         const existing = await resolveSession(client, config.ensemble, name);
         if (existing) {
@@ -66,7 +99,7 @@ export function registerRecruitTool(
 
         // Record existing workflows so we can find the new one
         const existingIds = new Set<string>();
-        const listQuery = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${config.ensemble}"`;
+        const listQuery = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
         for await (const wf of client.workflow.list({ query: listQuery })) {
           existingIds.add(wf.workflowId);
         }
@@ -81,6 +114,7 @@ export function registerRecruitTool(
             temporalApiKey: config.temporalApiKey,
             temporalTlsCertPath: config.temporalTlsCertPath,
             temporalTlsKeyPath: config.temporalTlsKeyPath,
+            isConductor,
             workDir,
           });
           log(`Spawned copilot-bridge (pid ${pid}) in ${workDir} as "${name}"`);
@@ -92,7 +126,8 @@ export function registerRecruitTool(
           ];
           const envVars: Record<string, string> = {
             [ENV.ENSEMBLE]: config.ensemble,
-            [ENV.CONDUCTOR]: '',
+            [ENV.CONDUCTOR]: isConductor ? 'true' : '',
+            [ENV.PLAYER_NAME]: name,
             [ENV.TEMPORAL_ADDRESS]: config.temporalAddress,
             [ENV.TEMPORAL_NAMESPACE]: config.temporalNamespace,
           };

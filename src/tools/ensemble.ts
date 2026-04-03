@@ -22,11 +22,10 @@ export function registerEnsembleTool(
     },
     async (args) => {
       const scope = (args.scope ?? 'all') as 'machine' | 'repo' | 'all';
-      let query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${config.ensemble}"`;
-
-      if (scope === 'machine') {
-        query += ` AND ClaudeTempoHostname = "${os.hostname()}"`;
-      }
+      // List all running session workflows, then filter by ensemble using
+      // in-memory metadata queries. This avoids depending on custom search
+      // attributes which are eventually consistent and may be missing/stale.
+      const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
 
       const players: Array<{
         playerId: string;
@@ -45,13 +44,19 @@ export function registerEnsembleTool(
           try {
             const handle = client.workflow.getHandle(workflow.workflowId);
             const metadata: SessionMetadata = await handle.query('getMetadata');
-            const part: string = await handle.query('getPart');
 
+            // Filter by ensemble
+            if (metadata.ensemble !== config.ensemble) continue;
+
+            // Filter by scope
+            if (scope === 'machine' && metadata.hostname !== os.hostname()) continue;
             if (scope === 'repo') {
               const ownHandle = client.workflow.getHandle(ownWorkflowId);
               const ownMeta: SessionMetadata = await ownHandle.query('getMetadata');
               if (metadata.gitRoot !== ownMeta.gitRoot) continue;
             }
+
+            const part: string = await handle.query('getPart');
 
             players.push({
               playerId: metadata.playerId,

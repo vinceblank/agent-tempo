@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-04-03
+
+### Fixed
+
+- **Session discovery uses metadata queries instead of search attributes** — ensemble listing, session resolution, and CLI status/stop commands now query workflow metadata directly instead of relying on custom search attributes (`ClaudeTempoEnsemble`, `ClaudeTempoPlayerId`), which are eventually consistent and could be stale or missing. This fixes a bug where sessions (particularly conductors reconnecting via `WorkflowIdConflictPolicy.USE_EXISTING`) were invisible to the ensemble.
+- **Recruit env var leakage** — recruited sessions no longer inherit the parent's `CLAUDE_TEMPO_CONDUCTOR` and `CLAUDE_TEMPO_PLAYER_NAME` env vars. Previously, a conductor recruiting a player would pass its own identity to the child, causing it to think it was the conductor.
+- **Recruit sets `PLAYER_NAME`** — the recruit tool now passes the requested name via env var so the spawned session starts with the correct identity immediately, rather than relying on a `set_name` message the LLM may not act on.
+- **"conductor" name collision guard** — non-conductor sessions are prevented from using "conductor" as a player name, which would collide with the conductor's deterministic workflow ID.
+- **Terminate uses graceful shutdown** — the `terminate` tool now sends a shutdown signal instead of force-killing the workflow, and notifies the target session before shutting it down.
+- Workflow upserts all search attributes at startup to keep the Temporal UI accurate, even when reconnecting to an existing workflow.
+
+### Added
+
+- **`conduct --resume` / `--replace`** — when a conductor is already running, `claude-tempo conduct` now requires an explicit choice: `--resume` reconnects to the existing workflow and resumes the Claude Code conversation, `--replace` stops the existing conductor and starts fresh.
+- **`conductor` parameter on recruit tool** — explicitly controls whether the recruited session is a conductor, rather than relying on env var inheritance.
+- **Test suite** — 33 tests using Temporal's `TestWorkflowEnvironment` with mocha. Covers workflow lifecycle, signals, queries, conductor behavior, multi-session ensemble discovery, session resolution after rename, conductor resume/replace, workflow ID collision, and end-to-end coordination scenarios.
+
+### Changed
+
+- Upgraded `@temporalio/*` packages from 1.11.7 to 1.15.0.
+- Upgraded mocha to v11.
+
+### Removed
+
+- `sanitizeQueryValue` helper (no longer needed — visibility queries no longer include user-supplied values).
+
 ## [0.4.1] - 2026-04-02
 
 ### Added

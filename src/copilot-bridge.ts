@@ -99,10 +99,11 @@ async function main() {
   // `claude-session-{ensemble}-{playerId}`, where playerId comes from
   // CLAUDE_TEMPO_PLAYER_NAME or a random hex. We pass CLAUDE_TEMPO_PLAYER_NAME
   // to the MCP server env so both sides agree on the ID.
-  const isConductor = !!process.env[ENV.CONDUCTOR];
+  const isConductor = process.env[ENV.CONDUCTOR] === 'true';
+  const requestedName = process.env[ENV.PLAYER_NAME] || playerName || '';
   const playerIdForWorkflow = isConductor
     ? 'conductor'
-    : (process.env[ENV.PLAYER_NAME] || playerName || `copilot-${Date.now()}`);
+    : (requestedName && requestedName !== 'conductor' ? requestedName : '') || `copilot-${Date.now()}`;
   const expectedWorkflowId = `claude-session-${config.ensemble}-${playerIdForWorkflow}`;
 
   // Build the MCP server command — always use the compiled dist/server.js
@@ -121,7 +122,7 @@ async function main() {
     [ENV.TEMPORAL_ADDRESS]: config.temporalAddress,
     [ENV.TEMPORAL_NAMESPACE]: config.temporalNamespace,
     [ENV.TASK_QUEUE]: config.taskQueue,
-    [ENV.CONDUCTOR]: process.env[ENV.CONDUCTOR] || '',
+    [ENV.CONDUCTOR]: isConductor ? 'true' : '',
     [ENV.BRIDGE_MODE]: '1', // disable MCP server's message poller — bridge handles delivery
     [ENV.PLAYER_NAME]: playerIdForWorkflow, // ensures MCP server uses same workflow ID
     ...(config.temporalApiKey ? { [ENV.TEMPORAL_API_KEY]: config.temporalApiKey } : {}),

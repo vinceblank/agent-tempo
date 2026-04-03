@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config } from '../config';
+import { shutdownSignal } from '../workflows/signals';
 import { resolveSession } from './resolve';
 import { defineTool } from './helpers';
 
@@ -14,7 +15,7 @@ export function registerTerminateTool(
   defineTool(
     server,
     'terminate',
-    'Terminate a player session by name. Use this to clean up orphaned sessions.',
+    'Terminate a player session by name. Sends a graceful shutdown signal so the session can clean up.',
     {
       playerId: z.string().describe('The player name of the session to terminate'),
     },
@@ -36,19 +37,23 @@ export function registerTerminateTool(
             isError: true,
           };
         }
-        // Warn the session before terminating
+
+        // Notify the session before shutting it down. The message poller
+        // delivers this to the Claude session so it knows why it lost its tools.
         try {
           await handle.signal('receiveMessage', {
             from: getPlayerId(),
-            text: `Your session is being terminated by player ${getPlayerId()}. Please save your work and close this terminal.`,
+            text: `Your session has been terminated by ${getPlayerId()}. Your claude-tempo tools will stop working shortly.`,
           });
+          // Brief delay to let the poller deliver the message before shutdown
+          await new Promise(r => setTimeout(r, 1000));
         } catch {
-          // May fail if workflow is in a bad state — proceed with termination
+          // May fail if workflow is in a bad state — proceed with shutdown
         }
 
-        await handle.terminate(`Terminated by player ${getPlayerId()}`);
+        await handle.signal(shutdownSignal);
         return {
-          content: [{ type: 'text' as const, text: `Session **${playerId}** terminated. If the Claude Code terminal is still open, the user will need to close it manually.` }],
+          content: [{ type: 'text' as const, text: `Shutdown signal sent to **${playerId}**. The workflow and MCP server will exit. The Claude Code terminal may remain open and will need to be closed manually.` }],
         };
       } catch (err) {
         return {

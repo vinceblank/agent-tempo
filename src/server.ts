@@ -58,7 +58,12 @@ async function main() {
 
   const config = getConfig();
   const isConductor = process.env[ENV.CONDUCTOR] === 'true';
-  let playerId = isConductor ? 'conductor' : (process.env[ENV.PLAYER_NAME] || crypto.randomBytes(4).toString('hex'));
+  const requestedName = process.env[ENV.PLAYER_NAME] || '';
+  // Prevent non-conductor sessions from using "conductor" as a name,
+  // which would collide with the conductor's deterministic workflow ID.
+  let playerId = isConductor
+    ? 'conductor'
+    : (requestedName && requestedName !== 'conductor' ? requestedName : '') || crypto.randomBytes(4).toString('hex');
   const getPlayerId = () => playerId;
   const setPlayerId = (id: string) => { playerId = id; };
   const workDir = process.cwd();
