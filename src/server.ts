@@ -138,11 +138,13 @@ async function main() {
   }
 
   // Create MCP server
+  const hasRequestedName = Boolean(requestedName && requestedName !== 'conductor');
   const serverInstructions = `You are part of the "${config.ensemble}" ensemble of Claude Code sessions coordinated via Temporal. ` +
-    `Your temporary player ID is "${playerId}". ` +
-    `IMPORTANT: If you receive a message instructing you to call \`set_name\`, do so immediately before anything else. ` +
+    `Your player name is "${playerId}". ` +
+    (hasRequestedName
+      ? `This name was assigned at startup — do NOT call \`set_name\` unless explicitly asked to rename. `
+      : `IMPORTANT: If you receive a message instructing you to call \`set_name\`, do so immediately before anything else. Use \`set_name\` to give yourself a human-readable name. `) +
     `When you receive a message from another session, treat it like a coworker asking for help — respond promptly, then resume your work. ` +
-    `Use \`set_name\` to give yourself a human-readable name. ` +
     `Use \`ensemble\` to see who else is active. ` +
     `Use \`cue\` to reply directly to the player who messaged you, or to ask others for help. ` +
     `Use \`recruit\` if you need a session in a directory where none exists. ` +

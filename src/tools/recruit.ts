@@ -162,20 +162,11 @@ export function registerRecruitTool(
 
         const newHandle = client.workflow.getHandle(newWorkflowId);
 
-        // For copilot agent, the bridge handles set_name automatically.
-        // For claude agent, send a message instructing it to set its name.
-        if (agent === 'claude') {
-          const nameInstruction = `You have been recruited as "${name}". Call set_name("${name}") immediately.`;
-          const fullMessage = initialMessage
-            ? `${nameInstruction}\n\nThen: ${initialMessage}`
-            : nameInstruction;
-
-          await newHandle.signal('receiveMessage', {
-            from: getPlayerId(),
-            text: fullMessage,
-          });
-        } else if (initialMessage) {
-          // For copilot, just send the initial task (name is set by the bridge)
+        // Name is already set via CLAUDE_TEMPO_PLAYER_NAME env var at startup,
+        // so we only need to send the initial task message if provided.
+        // (Previously we sent a set_name instruction here, but that was redundant
+        // and could cause confusion if the LLM renamed itself incorrectly.)
+        if (initialMessage) {
           await newHandle.signal('receiveMessage', {
             from: getPlayerId(),
             text: initialMessage,
