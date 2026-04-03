@@ -14,13 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Recruit sets `PLAYER_NAME`** — the recruit tool now passes the requested name via env var so the spawned session starts with the correct identity immediately, rather than relying on a `set_name` message the LLM may not act on.
 - **"conductor" name collision guard** — non-conductor sessions are prevented from using "conductor" as a player name, which would collide with the conductor's deterministic workflow ID.
 - **Terminate uses graceful shutdown** — the `terminate` tool now sends a shutdown signal instead of force-killing the workflow, and notifies the target session before shutting it down.
+- **Recruited sessions no longer rename themselves** — the recruit tool previously sent a redundant `set_name` instruction via signal, which could cause the LLM to rename itself incorrectly if confused by concurrent messages. The name is now fully set via env var at startup, and MCP instructions tell pre-named sessions not to call `set_name`.
 - Workflow upserts all search attributes at startup to keep the Temporal UI accurate, even when reconnecting to an existing workflow.
 
 ### Added
 
+- **Scheduling** — new `schedule`, `unschedule`, and `schedules` MCP tools for dynamic message scheduling. Supports one-shot delays (`delay: "10m"`), fixed times (`at: "2026-04-04T01:00:00Z"`), and recurring intervals (`every: "1h"`) with optional bounds (`until`, `count`). Uses a single durable `claudeSchedulerWorkflow` per ensemble with Temporal timers and `continueAsNew`. Scheduled messages use `[scheduled: name]` prefix and set `from` to the creator for natural reply semantics. Includes `isScheduled` metadata for dashboard integrations.
+- **Schedule failure notifications** — when a target player is not found at fire time, the schedule creator is notified. Falls back to the conductor if the creator is also unavailable.
+- **`claude-tempo status` shows schedules** — the status command now displays active schedules alongside session info per ensemble.
 - **`conduct --resume` / `--replace`** — when a conductor is already running, `claude-tempo conduct` now requires an explicit choice: `--resume` reconnects to the existing workflow and resumes the Claude Code conversation, `--replace` stops the existing conductor and starts fresh.
 - **`conductor` parameter on recruit tool** — explicitly controls whether the recruited session is a conductor, rather than relying on env var inheritance.
-- **Test suite** — 33 tests using Temporal's `TestWorkflowEnvironment` with mocha. Covers workflow lifecycle, signals, queries, conductor behavior, multi-session ensemble discovery, session resolution after rename, conductor resume/replace, workflow ID collision, and end-to-end coordination scenarios.
+- **Test suite** — 42 tests using Temporal's `TestWorkflowEnvironment` with mocha. Covers workflow lifecycle, signals, queries, conductor behavior, multi-session ensemble discovery, session resolution after rename, conductor resume/replace, workflow ID collision, end-to-end coordination scenarios, and scheduler workflow (signal/query handlers, one-shot fire, recurring with count bound, failure notification, self-termination).
 
 ### Changed
 

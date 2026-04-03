@@ -4,7 +4,7 @@ import { execFileSync, spawn as cpSpawn } from 'child_process';
 import { homedir } from 'os';
 import { Client, Connection } from '@temporalio/client';
 import { spawnInTerminal, spawnCopilotBridge, resolveClaudePath } from '../spawn';
-import { conductorWorkflowId, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
+import { conductorWorkflowId, schedulerWorkflowId, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
 import { createTemporalConnection } from '../connection';
 import { shutdownSignal, playerReportSignal } from '../workflows/signals';
 import { AgentType } from '../types';
@@ -14,6 +14,13 @@ import * as out from './output';
 
 /** Package root is two levels up from dist/cli/ */
 const PACKAGE_ROOT = resolve(__dirname, '..', '..');
+
+function formatDurationMs(ms: number): string {
+  if (ms >= 86_400_000) return `${ms / 86_400_000}d`;
+  if (ms >= 3_600_000) return `${ms / 3_600_000}h`;
+  if (ms >= 60_000) return `${ms / 60_000}m`;
+  return `${ms / 1000}s`;
+}
 
 interface StartOpts extends CliOverrides {
   ensemble: string;
@@ -205,9 +212,38 @@ export async function status(opts: StatusOpts) {
     }
   }
 
+  // Query scheduler workflows for active schedules
+  const schedulesByEnsemble = new Map<string, Array<{
+    name: string;
+    target: string;
+    nextFireAt: string;
+    interval?: number;
+    type: string;
+    remainingCount?: number;
+    firedCount: number;
+    createdBy: string;
+    message: string;
+  }>>();
+
+  const schedulerQuery = 'WorkflowType = "claudeSchedulerWorkflow" AND ExecutionStatus = "Running"';
+  for await (const wf of client.workflow.list({ query: schedulerQuery })) {
+    try {
+      const handle = client.workflow.getHandle(wf.workflowId);
+      const entries = await handle.query('getSchedules') as any[];
+      if (entries.length > 0) {
+        // Extract ensemble from workflow ID: claude-scheduler-{ensemble}
+        const ensemble = wf.workflowId.replace('claude-scheduler-', '');
+        if (opts.ensemble && ensemble !== opts.ensemble) continue;
+        schedulesByEnsemble.set(ensemble, entries);
+      }
+    } catch {
+      // scheduler may have just completed
+    }
+  }
+
   await connection.close();
 
-  if (sessions.length === 0) {
+  if (sessions.length === 0 && schedulesByEnsemble.size === 0) {
     out.log(opts.ensemble
       ? `No active sessions in ensemble "${opts.ensemble}".`
       : 'No active sessions found.');
@@ -241,6 +277,23 @@ export async function status(opts: StatusOpts) {
       if (s.part) out.log(`    ${out.dim(s.part)}`);
       const details = [s.workDir, s.branch, s.host].filter(Boolean).join('  ');
       if (details) out.log(`    ${out.dim(details)}`);
+    }
+
+    // Show schedules for this ensemble
+    const ensembleSchedules = schedulesByEnsemble.get(ensemble);
+    if (ensembleSchedules && ensembleSchedules.length > 0) {
+      console.log();
+      out.log(`  ${out.dim(`${ensembleSchedules.length} active schedule${ensembleSchedules.length !== 1 ? 's' : ''}`)}`);
+      for (const sched of ensembleSchedules) {
+        const recur = sched.interval
+          ? `every ${formatDurationMs(sched.interval)}`
+          : 'one-shot';
+        const next = new Date(sched.nextFireAt).toLocaleTimeString();
+        const bounds: string[] = [];
+        if (sched.remainingCount != null) bounds.push(`${sched.firedCount}/${sched.firedCount + sched.remainingCount} fired`);
+        const boundsStr = bounds.length ? ` (${bounds.join(', ')})` : '';
+        out.log(`  ${out.bold(sched.name)} → ${sched.target} | ${recur}${boundsStr} | next: ${next}`);
+      }
     }
   }
   console.log();

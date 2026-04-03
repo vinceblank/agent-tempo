@@ -313,3 +313,8 @@ export function sessionWorkflowId(ensemble: string, playerId: string): string {
 export function conductorWorkflowId(ensemble: string): string {
   return `claude-session-${ensemble}-conductor`;
 }
+
+/** Build a workflow ID for the scheduler: claude-scheduler-{ensemble} */
+export function schedulerWorkflowId(ensemble: string): string {
+  return `claude-scheduler-${ensemble}`;
+}

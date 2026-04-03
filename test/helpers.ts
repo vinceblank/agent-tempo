@@ -112,6 +112,22 @@ export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
   return worker.runUntil(fn);
 }
 
+/**
+ * Like withWorker, but also registers the schedule-fire activities
+ * so the scheduler workflow can cue target players.
+ */
+export async function withWorkerAndActivities<T>(fn: () => Promise<T>): Promise<T> {
+  const { createScheduleActivities } = await import('../src/activities/schedule-fire');
+  const scheduleActivities = createScheduleActivities(testEnv.client);
+  const worker = await Worker.create({
+    connection: testEnv.nativeConnection,
+    taskQueue: TASK_QUEUE,
+    workflowBundle,
+    activities: scheduleActivities,
+  });
+  return worker.runUntil(fn);
+}
+
 /** Default metadata for a player session. Override fields as needed. */
 export function playerMetadata(overrides: Partial<SessionMetadata> = {}): SessionMetadata {
   return {

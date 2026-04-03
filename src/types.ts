@@ -67,3 +67,26 @@ export interface HistoryEntry {
   timestamp: string;
   data: Command | PlayerReport;
 }
+
+export interface ScheduleEntry {
+  /** Unique name for this schedule (used as key for add/replace/remove). */
+  name: string;
+  /** The message text to deliver when the schedule fires. */
+  message: string;
+  /** Target player name to deliver the cue to. */
+  target: string;
+  /** Player name of whoever created this schedule. */
+  createdBy: string;
+  /** ISO timestamp of the next fire time. */
+  nextFireAt: string;
+  /** Interval in milliseconds for repeating schedules. */
+  interval?: number;
+  /** ISO timestamp after which the schedule should be removed. */
+  until?: string;
+  /** Number of remaining fires (decremented each fire, removed at 0). */
+  remainingCount?: number;
+  /** Total number of times this schedule has fired. */
+  firedCount: number;
+  /** Schedule type for display purposes. */
+  type: 'once' | 'interval';
+}

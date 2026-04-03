@@ -38,7 +38,7 @@
     "claude-tempo-server": "dist/server.js"
   },
   "scripts": {
-    "build": "tsc && node -e \"const{bundleWorkflowCode}=require('@temporalio/worker');const path=require('path');const fs=require('fs');bundleWorkflowCode({workflowsPath:path.resolve('dist/workflows/session.js')}).then(b=>{fs.writeFileSync('workflow-bundle.js',b.code);console.log('Workflow bundle created')})\"",
+    "build": "tsc && node -e \"const{bundleWorkflowCode}=require('@temporalio/worker');const path=require('path');const fs=require('fs');bundleWorkflowCode({workflowsPath:path.resolve('dist/workflows/index.js')}).then(b=>{fs.writeFileSync('workflow-bundle.js',b.code);console.log('Workflow bundle created')})\"",
     "dev": "ts-node src/server.ts",
     "copilot-bridge": "ts-node src/copilot-bridge.ts",
     "pretest": "tsc -p test/tsconfig.json",
