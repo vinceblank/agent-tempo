@@ -206,44 +206,38 @@ These tools are available inside Claude Code sessions connected to claude-tempo:
 | `recruit` | Spawn a new Claude Code session in a directory. Can recruit a conductor with `conductor: true`. |
 | `report` | Send updates to the conductor. No-op if no conductor exists. |
 | `terminate` | Terminate a player session by name. |
-| `schedule` | Schedule a message to a player: one-shot (`at`/`delay`) or recurring (`every`), with optional bounds (`until`, `count`). |
-| `unschedule` | Remove a named schedule. The schedule stops firing immediately. |
-| `schedules` | List all active schedules in the ensemble. |
+| `schedule` | Create a one-shot or recurring schedule to cue a player. |
+| `unschedule` | Cancel a named schedule. |
+| `schedules` | List all active schedules. |
 
 ## Scheduling
 
-Players can create dynamic schedules to send messages on timers — useful for periodic checks, reminders, and recurring coordination.
+Players can set up schedules to send messages on timers — useful for periodic checks, reminders, and recurring coordination.
 
-### Timing modes
-
-Provide exactly one timing option per schedule:
-
-| Option | Type | Description |
-|--------|------|-------------|
-| `at` | ISO datetime | Fire once at a specific time (e.g. `"2026-04-04T09:00:00Z"`) |
-| `delay` | Duration | Fire once after a delay (e.g. `"30m"`, `"2h"`, `"1d"`) |
-| `every` | Duration | Fire repeatedly on an interval (e.g. `"5m"`, `"1h"`) |
-
-### Optional bounds (recurring only)
-
-- `until` — ISO datetime after which the schedule stops firing
-- `count` — Maximum number of deliveries
+Three tools are available:
+- **`schedule`** — Create a named schedule (one-shot or recurring)
+- **`unschedule`** — Remove a schedule by name
+- **`schedules`** — List all active schedules
 
 ### Examples
 
-```
-schedule(name: "deploy-check", message: "Check deployment status", target: "ops", every: "1h")
-schedule(name: "reminder", message: "Review PR #42", target: "self", delay: "30m")
-schedule(name: "standup", message: "Time for standup", target: "conductor", at: "2026-04-04T09:00:00Z")
-unschedule(name: "deploy-check")
-```
+Tell your session things like:
+
+- *"Schedule a check every hour called 'deploy-watch' — cue ops to check deployment status"*
+- *"Remind me in 30 minutes to review PR #42"*
+- *"Every 5 minutes for the next hour, ping frontend to check their progress"*
+- *"Set up a daily standup reminder at 9am UTC for the conductor"*
+- *"Cancel the deploy-watch schedule"*
+- *"Show me all active schedules"*
+
+Schedules support one-shot delays, fixed times, and recurring intervals with optional bounds (max count or end time).
 
 ### How it works
 
 - Scheduled messages arrive with a `[scheduled: name]` prefix so recipients can distinguish them from direct cues
 - The `from` field is set to the schedule creator, so replies go to the right person
 - Messages include `isScheduled` metadata for dashboard integrations
-- Architecture: a single `claudeSchedulerWorkflow` per ensemble manages all schedules using Temporal's durable timers
+- A single durable scheduler workflow per ensemble manages all schedules using Temporal timers
 
 ## Conductors
 
