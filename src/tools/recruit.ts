@@ -44,12 +44,21 @@ export function registerRecruitTool(
       };
       const isConductor = (args as any).conductor === true;
       const agent: AgentType = (args as any).agent || ownAgentType;
-      // Validate name to prevent search attribute query injection
+      // Validate name
       if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
         return {
           content: [{
             type: 'text' as const,
             text: `Invalid name "${name}". Names must contain only letters, numbers, hyphens, and underscores.`,
+          }],
+          isError: true,
+        };
+      }
+      if (name === 'conductor' && !isConductor) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `The name "conductor" is reserved for conductor sessions. Use a different name, or set conductor: true.`,
           }],
           isError: true,
         };
