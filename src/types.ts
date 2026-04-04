@@ -15,7 +15,7 @@ export interface SessionMetadata {
   isConductor: boolean;
   agentType?: AgentType;
   status?: SessionStatus;
-  /** Agent definition name (e.g., "architect"). */
+  /** Agent definition name (e.g., "tempo-soloist"). */
   playerType?: string;
   /** Short description from the agent definition. */
   playerTypeDescription?: string;
@@ -123,7 +123,7 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
   agent: AgentType;
   systemPrompt?: string;
   targetHostname?: string;
-  /** Agent type name (e.g., "architect"). */
+  /** Agent type name (e.g., "tempo-soloist"). */
   agentDefinition?: string;
   /** Resolved absolute path to .md file (for shipped fallback). */
   agentDefinitionPath?: string;

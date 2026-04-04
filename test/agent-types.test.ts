@@ -102,9 +102,9 @@ describe('agent-types', function () {
 
     it('finds shipped examples from the package', function () {
       // Test against the actual shipped examples
-      const result = resolveAgentType('architect');
+      const result = resolveAgentType('tempo-composer');
       expect(result).to.not.be.null;
-      expect(result!.name).to.equal('architect');
+      expect(result!.name).to.equal('tempo-composer');
       expect(result!.description).to.be.a('string');
     });
   });
@@ -113,9 +113,9 @@ describe('agent-types', function () {
     it('lists shipped agent types', function () {
       const types = listAgentTypes();
       const names = types.map(t => t.name);
-      expect(names).to.include('architect');
-      expect(names).to.include('senior-engineer');
-      expect(names).to.include('qa-engineer');
+      expect(names).to.include('tempo-composer');
+      expect(names).to.include('tempo-soloist');
+      expect(names).to.include('tempo-tuner');
     });
 
     it('handles missing directories gracefully', function () {
@@ -132,7 +132,7 @@ describe('agent-types', function () {
         'name: test-blueprint',
         'players:',
         '  - name: arch',
-        '    type: architect',
+        '    type: tempo-composer',
         '  - name: plain-player',
       ].join('\n'));
 
@@ -140,7 +140,7 @@ describe('agent-types', function () {
 
       const arch = blueprint.players.find(p => p.name === 'arch');
       expect(arch).to.not.be.undefined;
-      expect(arch!._agentDefinition).to.equal('architect');
+      expect(arch!._agentDefinition).to.equal('tempo-composer');
       expect(arch!._agentDefinitionPath).to.be.a('string');
 
       const plain = blueprint.players.find(p => p.name === 'plain-player');

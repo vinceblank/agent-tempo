@@ -31,7 +31,7 @@ export function registerRecruitTool(
       agent: z.enum(['claude', 'copilot']).optional()
         .describe(`Which agent to use (default: "${ownAgentType}", same as this session)`),
       type: z.string().optional()
-        .describe('Agent type name — references a Claude Code agent definition (e.g., "architect")'),
+        .describe('Agent type name — references a Claude Code agent definition (e.g., "tempo-soloist")'),
       systemPrompt: z.string().optional()
         .describe('Path to a .md file to use as custom agent system prompt (--system-prompt)'),
       host: z.string().optional()

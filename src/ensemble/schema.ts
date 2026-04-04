@@ -9,7 +9,7 @@ export interface EnsembleBlueprint {
   };
   players: Array<{
     name: string;
-    type?: string;        // agent definition name (e.g., "architect")
+    type?: string;        // agent definition name (e.g., "tempo-soloist")
     workDir?: string;     // defaults to cwd if omitted
     agent?: string;       // "default", "copilot", or path to agent .md file
     instructions?: string;
