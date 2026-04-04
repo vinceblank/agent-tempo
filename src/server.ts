@@ -103,6 +103,16 @@ async function main() {
   });
   log(`Workflow ${workflowId} started (or reconnected)`);
 
+  // Watch for workflow completion — exit the process when the workflow ends
+  // (e.g., via terminate tool sending shutdownSignal)
+  handle.result().then(() => {
+    log('Workflow completed — exiting');
+    process.exit(0);
+  }).catch(() => {
+    log('Workflow terminated — exiting');
+    process.exit(0);
+  });
+
   // If the workflow was pre-created by a recruiter, update it with real metadata
   // and mark the session as active now that it's connected.
   await handle.signal('updateMetadata', {
