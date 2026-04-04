@@ -13,12 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Three-tier agent type lookup** — project (`.claude/agents/`) → user (`~/.claude/agents/`) → shipped (`examples/agents/`). If found in Claude Code's standard dirs, recruits use `--agent <name>`; shipped examples fall back to `--system-prompt <path>`.
 - **`who_am_i` MCP tool** — Players can query their own identity: name, player type, description, ensemble, role (conductor/player), recruited by, current part, directory, host, branch, and status.
 - **`agent_types` MCP tool** — Conductors can discover available player types with name, description, and source (project/user/shipped).
-- **`recruit` tool `type` parameter** — Recruit with `type: "architect"` to spawn a session using a predefined agent definition. Resolves and validates the type, passes through to the spawn flow.
+- **`recruit` tool `type` parameter** — Recruit with `type: "tempo-composer"` to spawn a session using a predefined agent definition. Resolves and validates the type, passes through to the spawn flow.
 - **Player identity in metadata** — `playerType`, `playerTypeDescription`, and `recruitedBy` fields on `SessionMetadata`, persisted in Temporal workflows and search attributes.
 - **`ensemble` tool shows player types** — Output includes player type in parens, e.g., `**arch** (architect)`.
 - **CLI `agent-types` command** — `list` (show available types), `show <name>` (print full definition), `init` (copy shipped examples to `~/.claude/agents/` for customization).
 - **Saver preserves player types** — `save_ensemble` includes `type` field in saved YAML for typed players.
-- **Shipped examples** — 5 agent definitions (architect, senior-engineer, qa-engineer, code-reviewer, devops) and 2 ensemble blueprints (dev-team, review-squad).
+- **Shipped player types** — 7 music-themed agent definitions: tempo-conductor (coordinator), tempo-composer (architect), tempo-soloist (engineer), tempo-tuner (QA), tempo-critic (reviewer), tempo-roadie (devops), tempo-improv (researcher). All include opinionated Ensemble Collaboration sections with claude-tempo tool usage patterns.
+- **Shipped ensemble blueprints** — 4 pre-built team compositions: tempo-big-band (flagship full-lifecycle with all types, 6-phase pipeline), tempo-dev-team (feature development), tempo-review-squad (parallel code review), tempo-jam-session (exploratory/spike work).
 
 ### Changed
 
