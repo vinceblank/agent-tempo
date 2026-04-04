@@ -16,11 +16,23 @@ claude-tempo is an MCP server that enables multiple Claude Code sessions to coor
 ```
 src/
 ├── server.ts          # MCP server entry point
+├── cli.ts             # CLI entry point (claude-tempo command)
+├── cli/
+│   ├── commands.ts    # CLI command implementations (up, start, conduct, status, stop, …)
+│   ├── config-command.ts # config subcommand (interactive + set/show)
+│   ├── mcp.ts         # MCP server registration helpers (init, global vs project)
+│   ├── output.ts      # Shared CLI output formatting helpers
+│   └── preflight.ts   # Environment preflight checks
 ├── copilot-bridge.ts  # Copilot SDK bridge for Copilot CLI players
 ├── worker.ts          # Temporal worker setup
+├── connection.ts      # Temporal connection factory (shared by server + CLI)
+├── spawn.ts           # Cross-platform process spawning helpers
 ├── workflows/
+│   ├── index.ts       # Workflow exports (re-exports for worker bundle)
 │   ├── session.ts     # claude-session workflow
-│   └── signals.ts     # Signal/query type definitions
+│   ├── scheduler.ts   # durable scheduler workflow (one per ensemble)
+│   ├── scheduler-signals.ts # Scheduler signal/query type definitions
+│   └── signals.ts     # Session signal/query type definitions
 ├── activities/
 │   ├── outbox.ts      # Outbox delivery activities (cue, report, stop, recruit)
 │   └── schedule-fire.ts # Schedule fire activity

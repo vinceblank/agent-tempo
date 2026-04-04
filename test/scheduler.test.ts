@@ -307,6 +307,56 @@ describe('claudeSchedulerWorkflow', function () {
     });
   });
 
+  // ── until field (P2) ──
+
+  describe('until field', function () {
+    it('removes an interval schedule after its until date passes', async function () {
+      this.timeout(15_000);
+
+      await withWorkerAndActivities(async () => {
+        const targetHandle = await startSession({
+          metadata: playerMetadata({ playerId: 'until-target', ensemble: ENSEMBLE }),
+        });
+
+        // Create an interval schedule where `until` is already in the past.
+        // The schedule fires once (nextFireAt is soon), and after that fire the
+        // scheduler checks: until <= now → removes it instead of rescheduling.
+        const entry = makeEntry({
+          name: 'until-test',
+          message: 'should fire once then stop',
+          target: 'until-target',
+          type: 'interval',
+          nextFireAt: new Date(Date.now() + 500).toISOString(),
+          interval: 10_000, // would repeat every 10s if not for `until`
+          until: new Date(Date.now() - 1).toISOString(), // already expired
+          createdBy: 'test-creator',
+        });
+
+        const schedulerHandle = await startScheduler(getClient(), [entry]);
+
+        // Wait for the fire + processing
+        await sleep(3000);
+
+        // Exactly 1 message should have been delivered
+        const messages = await targetHandle.query(allMessagesQuery);
+        const scheduled = messages.filter((m: any) => m.text.includes('[scheduled: until-test]'));
+        expect(scheduled).to.have.lengthOf(1);
+        expect(scheduled[0].text).to.include('should fire once then stop');
+
+        // Schedule should be removed — until expired after the first fire
+        const schedules = await schedulerHandle.query(getSchedulesQuery);
+        const remaining = schedules.filter((s: any) => s.name === 'until-test');
+        expect(remaining).to.have.lengthOf(0);
+
+        // Cleanup
+        await targetHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await targetHandle.result();
+        await schedulerHandle.cancel();
+        try { await schedulerHandle.result(); } catch { /* cancelled */ }
+      });
+    });
+  });
+
   describe('self-termination', function () {
     it('self-terminates when schedule list is empty after grace period', async function () {
       this.timeout(45_000);

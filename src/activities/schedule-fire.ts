@@ -1,5 +1,7 @@
 import { Client } from '@temporalio/client';
+import { conductorWorkflowId } from '../config';
 import { SessionMetadata } from '../types';
+import { resolveSession } from './resolve';
 
 export interface FireScheduleInput {
   ensemble: string;
@@ -131,7 +133,7 @@ async function notifyFailure(
 
   // Fallback: notify the conductor
   try {
-    const conductorId = `claude-session-${ensemble}-conductor`;
+    const conductorId = conductorWorkflowId(ensemble);
     const conductorHandle = client.workflow.getHandle(conductorId);
     await conductorHandle.signal('receiveMessage', {
       from: 'scheduler',
@@ -142,28 +144,4 @@ async function notifyFailure(
   } catch {
     // Nobody available to notify — logged by the workflow
   }
-}
-
-/**
- * Resolve a session by player name — mirrors src/tools/resolve.ts logic.
- * We duplicate here because activities run in Node.js and need their own copy.
- */
-async function resolveSession(
-  client: Client,
-  ensemble: string,
-  playerName: string,
-) {
-  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
-  for await (const wf of client.workflow.list({ query })) {
-    try {
-      const handle = client.workflow.getHandle(wf.workflowId);
-      const metadata: SessionMetadata = await handle.query('getMetadata');
-      if (metadata.ensemble === ensemble && metadata.playerId === playerName) {
-        return handle;
-      }
-    } catch {
-      // Workflow may have just completed — skip
-    }
-  }
-  return null;
 }

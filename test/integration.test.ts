@@ -90,7 +90,8 @@ describe('multi-session integration', function () {
           metadata: playerMetadata({ playerId: 'worker-bee', ensemble }),
         });
 
-        const members = await listEnsemble(getClient(), ensemble);
+        // Poll until both sessions are visible — visibility store is eventually consistent
+        const members = await waitForEnsembleMembers(getClient(), ensemble, 2);
         expect(members).to.have.lengthOf(2);
 
         const conductor = members.find((m) => m.isConductor);

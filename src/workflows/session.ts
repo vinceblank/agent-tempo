@@ -8,6 +8,7 @@ import {
   getExternalWorkflowHandle,
   uuid4,
   proxyActivities,
+  patched,
 } from '@temporalio/workflow';
 
 import type { OutboxActivities } from '../activities/outbox';
@@ -60,6 +61,12 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   const STALE_MESSAGE_MS = 3 * 60 * 1000; // 3 minutes
 
   const HEARTBEAT_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+  // Version marker for v0.10 — records a patch marker in workflow history.
+  // Future workflow changes that alter the command sequence should use
+  // patched('v0.10-<change-name>') to protect in-flight sessions from
+  // non-determinism errors during rolling deploys.
+  patched('v0.10-initial');
 
   // Ensure search attributes are always current — critical when reconnecting
   // via WorkflowIdConflictPolicy.USE_EXISTING, which skips the attributes

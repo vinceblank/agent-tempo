@@ -6,6 +6,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { getConfig, conductorWorkflowId, ENV } from './config';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { version: PKG_VERSION } = require('../package.json');
 import { createTemporalConnection } from './connection';
 import { createWorkers } from './worker';
 import { SessionInput } from './types';
@@ -36,7 +38,7 @@ async function main() {
     log(`${ENV.ENSEMBLE} not set — MCP server idle (no workflow started)`);
     // Keep the process alive so Claude Code doesn't see a crash, but do nothing
     const transport = new StdioServerTransport();
-    const idleServer = new McpServer({ name: 'claude-tempo', version: '0.1.0' });
+    const idleServer = new McpServer({ name: 'claude-tempo', version: PKG_VERSION });
     await idleServer.connect(transport);
     return;
   }
@@ -201,7 +203,7 @@ async function main() {
 
   const mcpServer = new McpServer({
     name: 'claude-tempo',
-    version: '0.1.0',
+    version: PKG_VERSION,
   }, {
     capabilities: {
       experimental: { 'claude/channel': {} },

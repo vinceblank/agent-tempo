@@ -8,10 +8,31 @@
 <p align="center">
   Multi-session <a href="https://claude.ai/code">Claude Code</a> coordination via <a href="https://temporal.io">Temporal</a>.
 </p>
+<p align="center">
+  <a href="https://www.npmjs.com/package/claude-tempo"><img src="https://img.shields.io/npm/v/claude-tempo.svg" alt="npm version"></a>
+  <a href="https://github.com/vinceblank/claude-tempo/actions/workflows/ci.yml"><img src="https://github.com/vinceblank/claude-tempo/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+</p>
 
 Multiple Claude Code sessions discover each other, exchange messages in real time, and coordinate work — across machines, not just localhost.
 
-Each Claude Code session registers as a **player** in Temporal. Players discover each other with `ensemble`, exchange messages with `cue`, and coordinate work — across machines, not just localhost. An optional **conductor** orchestrates the group and connects to external interfaces like Discord, Telegram, or a dashboard.
+Each Claude Code session registers as a **player** in Temporal. Players discover each other with `ensemble`, exchange messages with `cue`, and coordinate work across machines. An optional **conductor** orchestrates the group and connects to external interfaces like Discord, Telegram, or a dashboard.
+
+## Why claude-tempo?
+
+- **Crash-safe durability** — Sessions are Temporal workflows. Crashes, restarts, and network blips don't lose messages or drop coordination state. Dead sessions are detected automatically and the conductor is notified.
+- **Instant signaling** — Temporal signals deliver messages with no polling. Players receive cues the moment they're sent, regardless of which machine they're on.
+- **Built-in scheduling** — Set up one-shot or recurring message schedules without any external infrastructure. Fan-out to all players at once for periodic status checks.
+- **Extensible agent types** — Define reusable player roles as `.md` files. Ship lineups that assemble entire teams in one command. Mix Claude Code and Copilot CLI sessions in the same ensemble.
+
+## Features
+
+| | |
+|---|---|
+| 🔁 **Ensemble Lineups** | YAML configs that define a full team — players, instructions, schedules — and recruit them all in one command |
+| ⏰ **Scheduling** | One-shot and recurring message schedules with fan-out, bounds, and failure notifications |
+| 🎭 **Player Types** | Reusable agent definitions (composer, soloist, critic, etc.) with shipped examples and three-tier lookup |
+| 🌐 **Cross-machine** | Any session that can reach your Temporal server can join the ensemble |
 
 ## Installation
 
@@ -87,123 +108,6 @@ claude-tempo conduct frontend     # conduct the "frontend" ensemble
 claude-tempo start backend        # join the "backend" ensemble
 claude-tempo conduct              # conduct the "default" ensemble
 ```
-
-## CLI reference
-
-```
-claude-tempo <command> [options]
-```
-
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor. Use `--lineup` to load a lineup. |
-| `down` | Stop Temporal, terminate sessions, remove MCP config |
-| `server` | Start the Temporal dev server and register search attributes |
-| `conduct [ensemble]` | Start a conductor session (one per ensemble). Use `--resume` or `--replace` if one exists. |
-| `start [ensemble]` | Start a player session |
-| `status [ensemble]` | Show active sessions and Temporal health |
-| `config` | Configure Temporal connection settings (interactive or `set`/`show`) |
-| `stop [ensemble]` | Stop sessions (`-n <name>` for one, `--all` for everything) |
-| `init` | Register claude-tempo MCP server globally (`--project` for per-directory) |
-| `preflight` | Run environment checks |
-| `ensemble <sub>` | Manage saved lineups (`save`, `list`, `show`) |
-| `agent-types <sub>` | Manage player types (`list`, `show <name>`, `init`) |
-| `help` | Show usage info |
-
-### Global options
-
-```
---temporal-address <addr>     Temporal server address (default: localhost:7233)
---temporal-namespace <ns>     Temporal namespace (default: default)
---temporal-api-key <key>      Temporal Cloud API key
---temporal-tls-cert <path>    mTLS client certificate path
---temporal-tls-key <path>     mTLS client key path
--n, --name <name>             Set the player name (start/conduct/up)
---skip-preflight              Skip preflight checks (start/conduct)
--d, --dir <path>              Target directory (default: cwd)
---background                  Run Temporal in background (server only)
---lineup <name|file>          Load an ensemble lineup by name or file path (up only)
---resume                      Resume an existing conductor session (conduct only)
---replace                     Stop existing conductor and start fresh (conduct only)
-```
-
-### `claude-tempo up`
-
-The recommended way to get started:
-
-```
-$ claude-tempo up myband
-
-claude-tempo setup
-  ✓ temporal CLI installed
-  … Starting Temporal dev server...
-  ✓ Temporal started (pid 12345, data in ~/.claude-tempo/)
-  ✓ Registered search attributes
-  ✓ .mcp.json created
-
-Launching conductor in ensemble myband...
-
-✓ You're all set!
-  Conductor launched (pid 12346)
-  Ensemble: myband
-
-  What next?
-  claude-tempo start myband    Add a player session
-  claude-tempo status myband   See who's active
-  Or ask the conductor to recruit players for you
-```
-
-### `claude-tempo server`
-
-Starts the Temporal dev server with automatic search attribute registration:
-
-```bash
-claude-tempo server                 # foreground (Ctrl+C to stop)
-claude-tempo server --background    # daemonize
-```
-
-Data persists in `~/.claude-tempo/temporal-data.db`. If Temporal is already running, registers attributes and exits.
-
-### `claude-tempo status`
-
-Shows all active sessions:
-
-```
-Ensemble: myband
-  3 active sessions
-
-  conductor (conductor)
-    Orchestrating the team
-    /Users/me/projects/app  main  my-machine.local
-
-  alice
-    Building the REST endpoints
-    /Users/me/projects/app  feat/api  my-machine.local
-
-  bob (pending)
-    Working on the dashboard
-    /Users/me/projects/app  feat/ui  my-machine.local
-
-  1 active schedule
-  deploy-watch → ops | every 1h | next: 3:00:00 PM
-```
-
-### `claude-tempo preflight`
-
-Verifies your environment: Node.js >= 18, Temporal reachable, `claude` on PATH, `claude-tempo-server` on PATH, `.mcp.json` configured.
-
-### `claude-tempo init`
-
-Registers the claude-tempo MCP server globally so it's available in every Claude Code session:
-
-```bash
-claude-tempo init             # global install (recommended)
-claude-tempo init --project   # per-directory .mcp.json instead
-```
-
-If the `claude` CLI is not available, falls back to creating `.mcp.json` in the current directory.
 
 ## MCP tools
 
@@ -503,6 +407,136 @@ macOS terminals preserve the full shell environment (fish, zsh, bash) including 
 
 Windows Terminal is detected automatically via the `WT_SESSION` environment variable. When running inside Windows Terminal, recruited sessions open as new tabs (with the player name as the tab title) instead of separate cmd.exe windows.
 
+## CLI reference
+
+```
+claude-tempo <command> [options]
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor. Use `--lineup` to load a lineup. |
+| `down` | Stop Temporal, terminate sessions, remove MCP config. Use `--keep-mcp` to preserve MCP config. |
+| `server` | Start the Temporal dev server and register search attributes |
+| `conduct [ensemble]` | Start a conductor session (one per ensemble). Use `--resume` or `--replace` if one exists. |
+| `start [ensemble]` | Start a player session |
+| `status [ensemble]` | Show active sessions and Temporal health |
+| `config` | Configure Temporal connection settings (interactive or `set`/`show`) |
+| `stop [ensemble]` | Stop sessions (`-n <name>` for one, `--all` for everything) |
+| `init` | Register claude-tempo MCP server globally (`--project` for per-directory) |
+| `preflight` | Run environment checks |
+| `ensemble <sub>` | Manage saved lineups (`save`, `list`, `show`) |
+| `agent-types <sub>` | Manage player types (`list`, `show <name>`, `init`) |
+| `version` | Print the installed version |
+| `help` | Show usage info |
+
+### Global options
+
+```
+--temporal-address <addr>     Temporal server address (default: localhost:7233)
+--temporal-namespace <ns>     Temporal namespace (default: default)
+--temporal-api-key <key>      Temporal Cloud API key
+--temporal-tls-cert <path>    mTLS client certificate path
+--temporal-tls-key <path>     mTLS client key path
+-n, --name <name>             Set the player name (start/conduct/up)
+--agent <claude|copilot>      Agent backend to use (default: claude)
+--skip-preflight              Skip preflight checks (start/conduct)
+-d, --dir <path>              Target directory (default: cwd)
+--background                  Run Temporal in background (server only)
+--keep-mcp                    Preserve MCP config when tearing down (down only)
+--lineup <name|file>          Load an ensemble lineup by name or file path (up only)
+--resume                      Resume an existing conductor session (conduct only)
+--replace                     Stop existing conductor and start fresh (conduct only)
+-v, --version                 Print version and exit
+```
+
+### `claude-tempo up`
+
+The recommended way to get started:
+
+```
+$ claude-tempo up myband
+
+claude-tempo setup
+  ✓ temporal CLI installed
+  … Starting Temporal dev server...
+  ✓ Temporal started (pid 12345, data in ~/.claude-tempo/)
+  ✓ Registered search attributes
+  ✓ .mcp.json created
+
+Launching conductor in ensemble myband...
+
+✓ You're all set!
+  Conductor launched (pid 12346)
+  Ensemble: myband
+
+  What next?
+  claude-tempo start myband    Add a player session
+  claude-tempo status myband   See who's active
+  Or ask the conductor to recruit players for you
+```
+
+### `claude-tempo server`
+
+Starts the Temporal dev server with automatic search attribute registration:
+
+```bash
+claude-tempo server                 # foreground (Ctrl+C to stop)
+claude-tempo server --background    # daemonize
+```
+
+Data persists in `~/.claude-tempo/temporal-data.db`. If Temporal is already running, registers attributes and exits.
+
+### `claude-tempo status`
+
+Shows all active sessions:
+
+```
+Ensemble: myband
+  3 active sessions
+
+  conductor (conductor)
+    Orchestrating the team
+    /Users/me/projects/app  main  my-machine.local
+
+  alice
+    Building the REST endpoints
+    /Users/me/projects/app  feat/api  my-machine.local
+
+  bob (pending)
+    Working on the dashboard
+    /Users/me/projects/app  feat/ui  my-machine.local
+
+  1 active schedule
+  deploy-watch → ops | every 1h | next: 3:00:00 PM
+```
+
+### `claude-tempo preflight`
+
+Verifies your environment: Node.js >= 18, Temporal reachable, `claude` on PATH, `claude-tempo-server` on PATH, `.mcp.json` configured.
+
+### `claude-tempo init`
+
+Registers the claude-tempo MCP server globally so it's available in every Claude Code session:
+
+```bash
+claude-tempo init             # global install (recommended)
+claude-tempo init --project   # per-directory .mcp.json instead
+```
+
+If the `claude` CLI is not available, falls back to creating `.mcp.json` in the current directory.
+
+### `claude-tempo down`
+
+Stops Temporal, terminates all sessions, and removes MCP config:
+
+```bash
+claude-tempo down              # full teardown
+claude-tempo down --keep-mcp   # stop Temporal and sessions, but preserve MCP config
+```
+
 ## Configuration
 
 Run `claude-tempo config` to save Temporal connection settings so you don't need flags or env vars every time:
@@ -648,13 +682,9 @@ npm link             # link CLI for local testing
 
 > **Important**: Run `npm run build` after changing workflow code (`src/workflows/`). The build pre-bundles workflows into `workflow-bundle.js` so all workers use identical code.
 
-## Why Temporal?
+## Contributing
 
-- **Cross-machine** — Any session that can reach the Temporal server can join
-- **Instant signaling** — Temporal signals deliver messages with no polling
-- **Durable history** — Full audit trail in Temporal's event history
-- **No custom infrastructure** — No broker, no database — just Temporal
-- **Extensible** — The conductor's signal/query contract is a public API
+See [CLAUDE.md](CLAUDE.md) for project structure, key concepts, and development setup. Pull requests are welcome — please run `npm test` before submitting.
 
 ## Known limitations
 

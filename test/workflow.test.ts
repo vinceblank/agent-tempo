@@ -534,4 +534,290 @@ describe('claudeSessionWorkflow', function () {
       });
     });
   });
+
+  // ── Player type metadata (v0.10.0) ──
+
+  describe('player type metadata', function () {
+    it('stores playerType and playerTypeDescription from initial metadata', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({
+            playerId: 'typed-player',
+            playerType: 'tempo-soloist',
+            playerTypeDescription: 'Senior engineer — implements features and fixes bugs',
+          }),
+        });
+
+        const meta = await handle.query(getMetadataQuery);
+        expect(meta.playerType).to.equal('tempo-soloist');
+        expect(meta.playerTypeDescription).to.equal('Senior engineer — implements features and fixes bugs');
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+
+    it('stores recruitedBy from initial metadata', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({
+            playerId: 'recruited-player',
+            recruitedBy: 'conductor',
+          }),
+        });
+
+        const meta = await handle.query(getMetadataQuery);
+        expect(meta.recruitedBy).to.equal('conductor');
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+
+    it('updates playerType via updateMetadata signal', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'type-update' }),
+        });
+
+        // Initially no playerType
+        let meta = await handle.query(getMetadataQuery);
+        expect(meta.playerType).to.be.undefined;
+
+        // Update it
+        await handle.signal(updateMetadataSignal, {
+          playerType: 'tempo-critic',
+          playerTypeDescription: 'Code reviewer',
+        });
+
+        meta = await handle.query(getMetadataQuery);
+        expect(meta.playerType).to.equal('tempo-critic');
+        expect(meta.playerTypeDescription).to.equal('Code reviewer');
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+
+    it('does not overwrite unrelated metadata when updating playerType', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({
+            playerId: 'type-partial-update',
+            ensemble: 'test-ensemble',
+          }),
+        });
+
+        await handle.signal(updateMetadataSignal, { playerType: 'tempo-tuner' });
+
+        const meta = await handle.query(getMetadataQuery);
+        expect(meta.playerType).to.equal('tempo-tuner');
+        // Original fields preserved
+        expect(meta.playerId).to.equal('type-partial-update');
+        expect(meta.ensemble).to.equal('test-ensemble');
+        expect(meta.isConductor).to.equal(false);
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+  });
+
+  // ── ClaudeTempoPlayerType search attribute ──
+
+  describe('ClaudeTempoPlayerType search attribute', function () {
+    /**
+     * Poll describe() until the expected search attribute value appears.
+     * The local TestWorkflowEnvironment propagates upsertSearchAttributes
+     * asynchronously, so describe() can lag briefly after the workflow
+     * executes the upsert call.
+     */
+    async function pollSearchAttr(
+      handle: ReturnType<typeof startSession> extends Promise<infer H> ? H : never,
+      attrName: string,
+      expected: string[],
+      maxMs = 5000,
+    ): Promise<string[] | undefined> {
+      const deadline = Date.now() + maxMs;
+      while (Date.now() < deadline) {
+        const desc = await handle.describe();
+        const value = desc.searchAttributes?.[attrName] as string[] | undefined;
+        if (value && value.length > 0) return value;
+        await new Promise<void>((r) => setTimeout(r, 250));
+      }
+      // Final read — let the assertion produce the failure message
+      const desc = await handle.describe();
+      return desc.searchAttributes?.[attrName] as string[] | undefined;
+    }
+
+    it('sets ClaudeTempoPlayerType search attribute when playerType is in initial metadata', async function () {
+      this.timeout(15_000);
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({
+            playerId: 'search-attr-init',
+            playerType: 'tempo-soloist',
+          }),
+        });
+
+        // Ensure the workflow has started by querying metadata first
+        await handle.query(getMetadataQuery);
+
+        // Poll until the search attribute propagates to describe()
+        const value = await pollSearchAttr(handle, 'ClaudeTempoPlayerType', ['tempo-soloist']);
+        expect(value).to.deep.equal(['tempo-soloist']);
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+
+    it('updates ClaudeTempoPlayerType search attribute via updateMetadata signal', async function () {
+      this.timeout(15_000);
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'search-attr-update' }),
+        });
+
+        // Ensure workflow is running, then update playerType
+        await handle.query(getMetadataQuery);
+        await handle.signal(updateMetadataSignal, { playerType: 'tempo-critic' });
+
+        // Verify the update appears in metadata immediately (query round-trip)
+        const meta = await handle.query(getMetadataQuery);
+        expect(meta.playerType).to.equal('tempo-critic');
+
+        // Poll until the search attribute propagates to describe()
+        const value = await pollSearchAttr(handle, 'ClaudeTempoPlayerType', ['tempo-critic']);
+        expect(value).to.deep.equal(['tempo-critic']);
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+  });
+
+  // ── Termination message (P2) ──
+
+  describe('termination message', function () {
+    it('injects a system message into allMessages when status is set to terminated', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'term-msg-test' }),
+        });
+
+        // Trigger termination
+        await handle.signal(updateMetadataSignal, {
+          status: 'terminated',
+          terminatedBy: 'conductor',
+        });
+
+        // The termination message is pushed by the signal handler before the
+        // workflow exits. Query it before awaiting result.
+        const messages = await handle.query(allMessagesQuery);
+        const termMsg = messages.find(
+          (m) => m.text.includes('terminated') && m.text.includes('conductor'),
+        );
+        expect(termMsg).to.exist;
+        expect(termMsg!.from).to.equal('conductor');
+        expect(termMsg!.delivered).to.equal(false);
+
+        await handle.result();
+      });
+    });
+
+    it('uses "system" as the sender when terminatedBy is not specified', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'term-msg-system' }),
+        });
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+
+        const messages = await handle.query(allMessagesQuery);
+        const termMsg = messages.find((m) => m.text.includes('terminated'));
+        expect(termMsg).to.exist;
+        expect(termMsg!.from).to.equal('system');
+
+        await handle.result();
+      });
+    });
+  });
+
+  // ── isMaestro flag (P2) ──
+
+  describe('isMaestro flag on messages', function () {
+    it('preserves isMaestro=true flag when set on incoming message', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'maestro-flag-test' }),
+        });
+
+        await handle.signal(receiveMessageSignal, {
+          from: 'maestro-dashboard',
+          text: 'Attention: new task assigned',
+          isMaestro: true,
+        });
+        await handle.signal(receiveMessageSignal, {
+          from: 'alice',
+          text: 'Regular peer message',
+        });
+
+        const messages = await handle.query(allMessagesQuery);
+        expect(messages).to.have.lengthOf(2);
+
+        const maestroMsg = messages.find((m) => m.from === 'maestro-dashboard');
+        expect(maestroMsg!.isMaestro).to.equal(true);
+
+        const peerMsg = messages.find((m) => m.from === 'alice');
+        expect(peerMsg!.isMaestro).to.be.undefined;
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+  });
+
+  // ── enableStaleDetection (P2) ──
+
+  describe('enableStaleDetection flag', function () {
+    it('re-enables stale detection via updateMetadata signal without disrupting other fields', async function () {
+      this.timeout(15_000);
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'stale-enable-test' }),
+          disableStaleDetection: true,
+        });
+
+        // Send the enableStaleDetection signal alongside a status update
+        await handle.signal(updateMetadataSignal, {
+          status: 'active',
+          enableStaleDetection: true,
+        });
+
+        // Workflow should still be running and queryable
+        const meta = await handle.query(getMetadataQuery);
+        expect(meta.status).to.equal('active');
+        expect(meta.playerId).to.equal('stale-enable-test');
+
+        // Terminate — because stale detection is now active, the workflow will wait
+        // for the injected termination message to be delivered before exiting.
+        // Simulate the MCP poller delivering it so the workflow can shut down cleanly.
+        await handle.signal(updateMetadataSignal, { status: 'terminated', terminatedBy: 'test' });
+
+        // Poll for the termination message and mark it delivered
+        for (let i = 0; i < 20; i++) {
+          await new Promise<void>((r) => setTimeout(r, 200));
+          const msgs = await handle.query(allMessagesQuery);
+          const termMsg = msgs.find((m) => m.text.includes('terminated') && !m.delivered);
+          if (termMsg) {
+            await handle.signal(markDeliveredSignal, [termMsg.id]);
+            break;
+          }
+        }
+
+        await handle.result();
+      });
+    });
+  });
 });

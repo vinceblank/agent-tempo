@@ -10,26 +10,13 @@ import { loadAndResolveLineup, resolveAgentType } from '../ensemble/agent-types'
 import { readSavedLineup } from '../ensemble/saver';
 import { resolveSession } from './resolve';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
+import { parseDuration } from '../utils/duration';
 import { defineTool } from './helpers';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:load-lineup]', ...args);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** Parse a duration string like "30s", "10m", "2h", "1d" into milliseconds. */
-function parseDuration(dur: string): number | null {
-  const match = dur.match(/^(\d+(?:\.\d+)?)\s*(s|m|h|d)$/i);
-  if (!match) return null;
-  const value = parseFloat(match[1]);
-  switch (match[2].toLowerCase()) {
-    case 's': return value * 1000;
-    case 'm': return value * 60_000;
-    case 'h': return value * 3_600_000;
-    case 'd': return value * 86_400_000;
-    default: return null;
-  }
 }
 
 export function registerLoadLineupTool(
