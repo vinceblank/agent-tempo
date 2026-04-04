@@ -34,6 +34,7 @@ src/
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
 ├── types.ts           # Shared type definitions
 ├── channel.ts         # Claude channel notification helper
+├── git-info.ts        # Git repository detection helper
 └── config.ts          # Env var handling
 ```
 
@@ -66,8 +67,9 @@ npm test
 - **Ensemble**: The set of all active players, namespaced by `CLAUDE_TEMPO_ENSEMBLE`
 - **Cue**: A message sent to a player by name via Temporal signal
 - **Part**: A player's description of what it's working on
-- **Recruit**: Spawning a new Claude Code session as a player
+- **Recruit**: Spawning a new Claude Code session as a player. The workflow is pre-created with the initial message before the process spawns, ensuring reliable delivery.
 - **set_name**: Players start with a random hex ID; `set_name` updates the `ClaudeTempoPlayerId` search attribute to a human-readable name
+- **Session status**: Each session has a status (`pending` → `active` → `stale`) tracked via `ClaudeTempoStatus` search attribute. Pre-created workflows start as `pending`, transition to `active` when the process connects, and become `stale` if messages go undelivered for 3+ minutes.
 
 ## Dashboard
 

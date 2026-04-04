@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config } from '../config';
+import { shutdownSignal } from '../workflows/signals';
 import { resolveSession } from './resolve';
 import { defineTool } from './helpers';
 
@@ -40,16 +41,18 @@ export function registerTerminateTool(
         // Send termination message + set status to 'terminated'.
         // The workflow adds a termination message, waits up to 1 minute for
         // delivery, then completes gracefully.
+        // Send termination message, then shutdown signal.
+        // The message gives the session time to see why it's being terminated.
         await handle.signal('receiveMessage', {
           from: getPlayerId(),
           text: `Your session is being terminated by ${getPlayerId()}. Please save any work and report final status.`,
         });
-        await handle.signal('updateMetadata', {
-          status: 'terminated',
-        });
+        // Brief delay to let the poller deliver the message before shutdown
+        await new Promise(r => setTimeout(r, 2000));
+        await handle.signal(shutdownSignal);
 
         return {
-          content: [{ type: 'text' as const, text: `Termination signal sent to **${playerId}**. The session will complete after delivering the termination message (up to 1 minute).` }],
+          content: [{ type: 'text' as const, text: `Shutdown signal sent to **${playerId}**. The workflow and MCP server will exit. The Claude Code terminal may remain open and will need to be closed manually.` }],
         };
       } catch (err) {
         return {
