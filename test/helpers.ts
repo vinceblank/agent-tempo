@@ -79,6 +79,7 @@ export async function setupTestEnv(): Promise<void> {
         '--search-attribute', 'ClaudeTempoPlayerId=Keyword',
         '--search-attribute', 'ClaudeTempoHostname=Keyword',
         '--search-attribute', 'ClaudeTempoGitRoot=Keyword',
+        '--search-attribute', 'ClaudeTempoStatus=Keyword',
       ],
     },
   });

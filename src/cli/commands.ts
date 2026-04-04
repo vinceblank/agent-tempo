@@ -184,6 +184,7 @@ export async function status(opts: StatusOpts) {
     host: string;
     conductor: boolean;
     agentType: string;
+    status: string;
   }> = [];
 
   for await (const wf of client.workflow.list({ query })) {
@@ -209,6 +210,7 @@ export async function status(opts: StatusOpts) {
         host: (meta.hostname as string) || '',
         conductor: (meta.isConductor as boolean) || false,
         agentType: (meta.agentType as string) || 'claude',
+        status: (meta.status as string) || 'active',
       });
     } catch {
       // workflow may have closed between list and query
@@ -275,8 +277,11 @@ export async function status(opts: StatusOpts) {
     for (const s of members) {
       const role = s.conductor ? out.yellow(' (conductor)') : '';
       const agent = s.agentType === 'copilot' ? out.dim(' [copilot]') : '';
+      const statusLabel = s.status === 'stale' ? out.yellow(' (stale)')
+        : s.status === 'pending' ? out.dim(' (pending)')
+        : '';
       const name = out.bold(s.name);
-      out.log(`  ${name}${role}${agent}`);
+      out.log(`  ${name}${role}${statusLabel}${agent}`);
       if (s.part) out.log(`    ${out.dim(s.part)}`);
       const details = [s.workDir, s.branch, s.host].filter(Boolean).join('  ');
       if (details) out.log(`    ${out.dim(details)}`);
@@ -389,6 +394,7 @@ const SEARCH_ATTRIBUTES = [
   { name: 'ClaudeTempoGitRoot', type: 'Keyword' },
   { name: 'ClaudeTempoEnsemble', type: 'Keyword' },
   { name: 'ClaudeTempoPlayerId', type: 'Keyword' },
+  { name: 'ClaudeTempoStatus', type: 'Keyword' },
 ];
 
 function isTemporalReachable(config: { temporalAddress: string; temporalApiKey?: string; temporalTlsCertPath?: string; temporalTlsKeyPath?: string }): Promise<boolean> {

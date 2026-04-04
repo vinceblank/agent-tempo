@@ -25,6 +25,7 @@ export const setPartSignal = defineSignal<[string]>('setPart');
 export const shutdownSignal = defineSignal('shutdown');
 export const markDeliveredSignal = defineSignal<[string[]]>('markDelivered');
 export const setNameSignal = defineSignal<[string]>('setName');
+export const updateMetadataSignal = defineSignal<[{ hostname?: string; gitBranch?: string; gitRoot?: string; status?: string }]>('updateMetadata');
 
 // ── Player Queries ──
 
