@@ -4,6 +4,7 @@ export interface EnsembleBlueprint {
   name: string;
   description?: string;
   conductor?: {
+    type?: string;        // agent definition name (e.g., "tempo-conductor")
     agent?: string;       // "default", "copilot", or path to agent .md file
     instructions?: string; // natural language instructions sent as initialMessage
   };

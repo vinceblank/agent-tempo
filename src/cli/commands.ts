@@ -664,18 +664,35 @@ export async function up(opts: UpOpts) {
     // Default conductor name so the Claude Code session name matches the ensemble role
     const sessionName = opts.name || 'conductor';
 
+    // Resolve conductor agent type from blueprint
+    const conductorType = blueprint?.conductor?.agent && blueprint.conductor.agent !== 'default' && blueprint.conductor.agent !== 'copilot'
+      ? blueprint.conductor.agent  // custom agent path
+      : undefined;
+    // Also check if the blueprint has a type field (from our schema extension — not standard yet)
+    const conductorTypeName = (blueprint?.conductor as any)?.type as string | undefined;
+    const resolvedConductorType = conductorTypeName ? resolveAgentType(conductorTypeName) : null;
+
     const claudeArgs = [
       '--dangerously-skip-permissions',
       '--dangerously-load-development-channels', 'server:claude-tempo',
       '-n', sessionName,
+      // Pass agent definition if available
+      ...(resolvedConductorType?.nativeResolvable ? ['--agent', resolvedConductorType.name] :
+          resolvedConductorType ? ['--system-prompt', resolvedConductorType.path] :
+          conductorType ? ['--system-prompt', conductorType] : []),
     ];
 
-    ({ pid } = spawnInTerminal(claudeArgs, process.cwd(), {
+    const conductorEnvVars: Record<string, string> = {
       ...temporalEnvVars,
       [ENV.ENSEMBLE]: opts.ensemble,
       [ENV.CONDUCTOR]: 'true',
       [ENV.PLAYER_NAME]: sessionName,
-    }));
+    };
+    if (resolvedConductorType || conductorTypeName) {
+      conductorEnvVars[ENV.PLAYER_TYPE] = resolvedConductorType?.name || conductorTypeName || '';
+    }
+
+    ({ pid } = spawnInTerminal(claudeArgs, process.cwd(), conductorEnvVars));
   }
 
   out.success(`Conductor launched (pid ${pid ?? 'unknown'})`);
@@ -748,17 +765,27 @@ export async function up(opts: UpOpts) {
               workDir: playerWorkDir,
             });
           } else {
+            // Resolve player type from blueprint
+            const playerTypeName = player.type;
+            const resolvedPlayerType = playerTypeName ? resolveAgentType(playerTypeName) : null;
+
             const claudeArgs = [
               '--dangerously-skip-permissions',
               '--dangerously-load-development-channels', 'server:claude-tempo',
               '-n', player.name,
+              ...(resolvedPlayerType?.nativeResolvable ? ['--agent', resolvedPlayerType.name] :
+                  resolvedPlayerType ? ['--system-prompt', resolvedPlayerType.path] : []),
             ];
-            spawnInTerminal(claudeArgs, playerWorkDir, {
+            const playerEnvVars: Record<string, string> = {
               ...temporalEnvVars,
               [ENV.ENSEMBLE]: opts.ensemble,
               [ENV.CONDUCTOR]: '',
               [ENV.PLAYER_NAME]: player.name,
-            });
+            };
+            if (resolvedPlayerType) {
+              playerEnvVars[ENV.PLAYER_TYPE] = resolvedPlayerType.name;
+            }
+            spawnInTerminal(claudeArgs, playerWorkDir, playerEnvVars);
           }
 
           // Poll for the new workflow to appear (up to ~15s)
