@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Ultra-minimal metronome icon: triangle + pendulum (dark mode) -->
+  <!-- Metronome body — single-stroke triangle -->
+  <path d="M32 8 L14 54 L50 54 Z" stroke="#FAF3EE" stroke-width="3" fill="none" stroke-linejoin="round"/>
+  <!-- Pendulum arm (angled right) -->
+  <line x1="32" y1="46" x2="44" y2="14" stroke="#E07A5F" stroke-width="3" stroke-linecap="round"/>
+  <!-- Pivot dot -->
+  <circle cx="32" cy="46" r="3" fill="#E07A5F"/>
+</svg>

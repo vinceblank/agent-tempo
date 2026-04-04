@@ -1,10 +1,128 @@
 import { spawn, execFileSync, execSync } from 'child_process';
-import { existsSync, mkdirSync, openSync, closeSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, openSync, closeSync, writeFileSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 import { ENV } from './config';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:spawn]', ...args);
+
+/** Stable GUID for the claude-tempo Windows Terminal profile. */
+const WT_PROFILE_GUID = '{c1a0d300-0e30-4000-a000-c1a0de00e300}';
+const WT_PROFILE_NAME = 'claude-tempo';
+
+/** Resolve the absolute path to the package's icon file (PNG for Windows Terminal). */
+export function resolveIconPath(): string {
+  // __dirname is src/ in dev or dist/ in production; assets/ is at the package root
+  const packageRoot = resolve(__dirname, '..');
+  return join(packageRoot, 'assets', 'icon-dark-32.png');
+}
+
+/**
+ * Strip // and /* comments from JSON-with-comments (JSONC), leaving strings intact.
+ * Handles escaped quotes inside strings correctly.
+ */
+function stripJsonComments(text: string): string {
+  let result = '';
+  let i = 0;
+  while (i < text.length) {
+    // String literal — copy verbatim until closing quote
+    if (text[i] === '"') {
+      result += '"';
+      i++;
+      while (i < text.length && text[i] !== '"') {
+        if (text[i] === '\\') { result += text[i++]; } // skip escaped char
+        if (i < text.length) { result += text[i++]; }
+      }
+      if (i < text.length) { result += text[i++]; } // closing quote
+    // Line comment
+    } else if (text[i] === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+    // Block comment
+    } else if (text[i] === '/' && text[i + 1] === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
+      i += 2; // skip closing */
+    } else {
+      result += text[i++];
+    }
+  }
+  return result;
+}
+
+/**
+ * Ensure a "claude-tempo" profile exists in Windows Terminal settings.json
+ * with our icon. Returns true if the profile is ready for use.
+ *
+ * Windows Terminal settings path:
+ *   %LOCALAPPDATA%/Packages/Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState/settings.json
+ */
+export function ensureWindowsTerminalProfile(): boolean {
+  if (process.platform !== 'win32') return false;
+
+  const localAppData = process.env.LOCALAPPDATA;
+  if (!localAppData) return false;
+
+  const settingsPath = join(
+    localAppData,
+    'Packages',
+    'Microsoft.WindowsTerminal_8wekyb3d8bbwe',
+    'LocalState',
+    'settings.json',
+  );
+
+  if (!existsSync(settingsPath)) {
+    log('Windows Terminal settings.json not found at', settingsPath);
+    return false;
+  }
+
+  try {
+    const raw = readFileSync(settingsPath, 'utf8');
+    // Windows Terminal settings.json may contain comments — strip them for JSON.parse.
+    // Naive regex would eat "//" inside strings (e.g., URLs). Walk char-by-char instead.
+    const settings = JSON.parse(stripJsonComments(raw));
+
+    if (!settings.profiles?.list) return false;
+
+    const iconPath = resolveIconPath().replace(/\\/g, '/');
+    if (!existsSync(iconPath.replace(/\//g, '\\'))) {
+      log('Icon file not found at', iconPath);
+      return false;
+    }
+    const profiles: unknown[] = settings.profiles.list;
+
+    // Check if our profile already exists (by GUID or name)
+    const existing = profiles.find(
+      (p: any) => p.guid === WT_PROFILE_GUID || p.name === WT_PROFILE_NAME,
+    ) as Record<string, unknown> | undefined;
+
+    if (existing) {
+      // Update icon path if it changed (e.g. package moved)
+      if (existing.icon !== iconPath) {
+        existing.icon = iconPath;
+        writeFileSync(settingsPath, JSON.stringify(settings, null, 4) + '\n');
+        log('Updated claude-tempo profile icon in Windows Terminal');
+      }
+      return true;
+    }
+
+    // Add new profile
+    profiles.push({
+      guid: WT_PROFILE_GUID,
+      name: WT_PROFILE_NAME,
+      commandline: 'cmd.exe',
+      icon: iconPath,
+      hidden: true, // Hide from dropdown — only used programmatically
+    });
+
+    // Write back with original formatting style (4-space indent to match WT default)
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 4) + '\n');
+    log('Created claude-tempo profile in Windows Terminal with icon:', iconPath);
+    return true;
+  } catch (e) {
+    log('Failed to update Windows Terminal settings:', e);
+    return false;
+  }
+}
 
 /** POSIX shell-safe single-quoting (works in bash, zsh, and fish) */
 export function shellQuote(s: string): string {
@@ -190,6 +308,9 @@ export function spawnInTerminal(
         ? claudeArgs[nameIdx + 1]
         : 'claude-tempo';
 
+      // Ensure our profile with icon exists in Windows Terminal settings
+      const hasProfile = ensureWindowsTerminalProfile();
+
       // Build inline env var assignments for cmd /c since wt.exe spawns
       // a new process that won't inherit our env.
       // Escape values for cmd.exe: wrap in quotes and escape inner special chars.
@@ -203,14 +324,17 @@ export function spawnInTerminal(
         : claudeCmd;
 
       // Use `cmd.exe /c start "" wt.exe ...` to resolve the UWP app alias
-      const child = spawn('cmd.exe', [
+      // When our profile exists, use --profile to get the tab icon
+      const wtArgs = [
         '/c', 'start', '',
         'wt.exe', '-w', '0',
         'new-tab',
+        ...(hasProfile ? ['--profile', WT_PROFILE_NAME] : []),
         '--title', tabTitle,
         '-d', workDir,
         'cmd', '/k', innerCmd,
-      ], {
+      ];
+      const child = spawn('cmd.exe', wtArgs, {
         detached: true,
         stdio: 'ignore',
       });

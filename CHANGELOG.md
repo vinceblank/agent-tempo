@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - 2026-04-04
+
+### Added
+
+- **Outbox pattern** — MCP tools (`cue`, `report`, `stop`, `recruit`) no longer signal other workflows directly. Instead, they submit entries to the session's own workflow outbox via `executeUpdate`. A dispatch loop processes entries through activities, decoupling tools from cross-workflow signaling.
+- **Cross-machine recruiting** — the `recruit` tool now accepts an optional `host` parameter to spawn sessions on a remote machine. Spawn activities are routed to per-host task queues (`claude-tempo-{hostname}`).
+- **Per-host task queues** — dual worker architecture: a shared `claude-tempo` queue (workflows + delivery activities) and a per-host `claude-tempo-{hostname}` queue (`spawnProcess` activity only).
+- **Outbox activity layer** (`src/activities/outbox.ts`) — `deliverCue`, `deliverReport`, `terminateSession`, `startRecruitedSession`, and `spawnProcess` activities handle all cross-workflow delivery.
+- **`submitOutbox` workflow update** and **`outbox` query** for inspecting outbox state.
+
+### Changed
+
+- `cue`, `report`, `stop`, and `recruit` tools simplified — each is now validation + a single `executeUpdate` call.
+- `report` tool no longer requires `client`, `config`, or `getPlayerId` parameters.
+- `recruit` tool no longer spawns processes or polls for startup directly — this is handled asynchronously by the outbox dispatch loop.
+- Outbox entries carry through `continueAsNew` (pending/processing entries only).
+
+### Migration
+
+- **Backward compatible**: all existing signals (`receiveMessage`, `playerReport`, `updateMetadata`, etc.) are preserved. Old clients can still signal workflows directly alongside the new outbox path.
+
 ## [0.8.0] - 2026-04-04
 
 ### Added

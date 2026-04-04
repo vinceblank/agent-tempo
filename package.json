@@ -89,6 +89,7 @@
   "files": [
     "dist",
     "workflow-bundle.js",
+    "assets",
     "CLAUDE.md",
     "README.md"
   ],
