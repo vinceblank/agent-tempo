@@ -7,14 +7,46 @@ import { ENV } from './config';
 const log = (...args: unknown[]) => console.error('[claude-tempo:spawn]', ...args);
 
 /** Stable GUID for the claude-tempo Windows Terminal profile. */
-const WT_PROFILE_GUID = '{c1a0d3-t3mp-0000-0000-claude0tempo}';
+const WT_PROFILE_GUID = '{c1a0d300-0e30-4000-a000-c1a0de00e300}';
 const WT_PROFILE_NAME = 'claude-tempo';
 
 /** Resolve the absolute path to the package's icon file (PNG for Windows Terminal). */
 export function resolveIconPath(): string {
   // __dirname is src/ in dev or dist/ in production; assets/ is at the package root
   const packageRoot = resolve(__dirname, '..');
-  return join(packageRoot, 'assets', 'icon-32.png');
+  return join(packageRoot, 'assets', 'icon-dark-32.png');
+}
+
+/**
+ * Strip // and /* comments from JSON-with-comments (JSONC), leaving strings intact.
+ * Handles escaped quotes inside strings correctly.
+ */
+function stripJsonComments(text: string): string {
+  let result = '';
+  let i = 0;
+  while (i < text.length) {
+    // String literal — copy verbatim until closing quote
+    if (text[i] === '"') {
+      result += '"';
+      i++;
+      while (i < text.length && text[i] !== '"') {
+        if (text[i] === '\\') { result += text[i++]; } // skip escaped char
+        if (i < text.length) { result += text[i++]; }
+      }
+      if (i < text.length) { result += text[i++]; } // closing quote
+    // Line comment
+    } else if (text[i] === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+    // Block comment
+    } else if (text[i] === '/' && text[i + 1] === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
+      i += 2; // skip closing */
+    } else {
+      result += text[i++];
+    }
+  }
+  return result;
 }
 
 /**
@@ -45,13 +77,17 @@ export function ensureWindowsTerminalProfile(): boolean {
 
   try {
     const raw = readFileSync(settingsPath, 'utf8');
-    // Windows Terminal settings.json may contain comments — strip them for JSON.parse
-    const stripped = raw.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-    const settings = JSON.parse(stripped);
+    // Windows Terminal settings.json may contain comments — strip them for JSON.parse.
+    // Naive regex would eat "//" inside strings (e.g., URLs). Walk char-by-char instead.
+    const settings = JSON.parse(stripJsonComments(raw));
 
     if (!settings.profiles?.list) return false;
 
     const iconPath = resolveIconPath().replace(/\\/g, '/');
+    if (!existsSync(iconPath.replace(/\//g, '\\'))) {
+      log('Icon file not found at', iconPath);
+      return false;
+    }
     const profiles: unknown[] = settings.profiles.list;
 
     // Check if our profile already exists (by GUID or name)
