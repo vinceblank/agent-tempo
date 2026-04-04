@@ -10,9 +10,9 @@ import {
   receiveMessageSignal,
   setPartSignal,
   setNameSignal,
-  shutdownSignal,
   markDeliveredSignal,
   recordSentMessageSignal,
+  updateMetadataSignal,
   getPartQuery,
   getMetadataQuery,
   pendingMessagesQuery,
@@ -47,7 +47,7 @@ describe('claudeSessionWorkflow', function () {
         expect(result.hostname).to.equal('test-host');
         expect(result.isConductor).to.equal(false);
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -61,7 +61,7 @@ describe('claudeSessionWorkflow', function () {
         const part = await handle.query(getPartQuery);
         expect(part).to.equal('Working on feature X');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -71,7 +71,7 @@ describe('claudeSessionWorkflow', function () {
         const handle = await startSession({
           metadata: playerMetadata({ playerId: 'shutdown-1' }),
         });
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         // Should complete without error
         await handle.result();
       });
@@ -91,7 +91,7 @@ describe('claudeSessionWorkflow', function () {
         const meta = await handle.query(getMetadataQuery);
         expect(meta.playerId).to.equal('alice');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -110,7 +110,7 @@ describe('claudeSessionWorkflow', function () {
         const part = await handle.query(getPartQuery);
         expect(part).to.equal('Refactoring auth module');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -133,7 +133,7 @@ describe('claudeSessionWorkflow', function () {
         expect(pending[0].text).to.equal('Hello from bob');
         expect(pending[0].delivered).to.equal(false);
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -157,7 +157,7 @@ describe('claudeSessionWorkflow', function () {
         expect(all).to.have.lengthOf(1);
         expect(all[0].delivered).to.equal(true);
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -178,7 +178,7 @@ describe('claudeSessionWorkflow', function () {
         expect(all[1].from).to.equal('bob');
         expect(all[2].from).to.equal('charlie');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -196,7 +196,7 @@ describe('claudeSessionWorkflow', function () {
         expect(sent[0].to).to.equal('bob');
         expect(sent[0].text).to.equal('Hi bob');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -215,7 +215,7 @@ describe('claudeSessionWorkflow', function () {
         expect(meta.isConductor).to.equal(true);
         expect(meta.playerId).to.equal('cond-1');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -236,7 +236,7 @@ describe('claudeSessionWorkflow', function () {
         expect(history[0].type).to.equal('command');
         expect((history[0].data as any).text).to.equal('Deploy to staging');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -258,7 +258,7 @@ describe('claudeSessionWorkflow', function () {
         expect(history[0].type).to.equal('report');
         expect((history[0].data as any).playerId).to.equal('alice');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -279,7 +279,7 @@ describe('claudeSessionWorkflow', function () {
         expect(pending[0].from).to.equal('maestro');
         expect(pending[0].text).to.equal('Run tests');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -301,7 +301,7 @@ describe('claudeSessionWorkflow', function () {
         expect(pending[0].from).to.equal('bob');
         expect(pending[0].text).to.include('blocker');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -323,7 +323,213 @@ describe('claudeSessionWorkflow', function () {
         const pending = await handle.query(pendingMessagesQuery);
         expect(pending).to.have.lengthOf(0);
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+  });
+
+  // ── Pre-created workflow (recruit pre-load) ──
+
+  describe('pre-created workflow', function () {
+    it('delivers pre-loaded initial message when session starts', async function () {
+      await withWorker(async () => {
+        // Simulate what recruit does: start workflow with pre-loaded messages
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'precreated-1', status: 'pending' }),
+          messages: [{
+            id: 'pre-msg-1',
+            from: 'conductor',
+            text: 'Review the auth module',
+            timestamp: new Date().toISOString(),
+            delivered: false,
+          }],
+        });
+
+        // The pre-loaded message should be pending immediately
+        const pending = await handle.query(pendingMessagesQuery);
+        expect(pending).to.have.lengthOf(1);
+        expect(pending[0].from).to.equal('conductor');
+        expect(pending[0].text).to.equal('Review the auth module');
+        expect(pending[0].delivered).to.equal(false);
+
+        // All messages should include the pre-loaded one
+        const all = await handle.query(allMessagesQuery);
+        expect(all).to.have.lengthOf(1);
+        expect(all[0].id).to.equal('pre-msg-1');
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+
+    it('pre-loaded message can be delivered alongside new messages', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'precreated-2', status: 'pending' }),
+          messages: [{
+            id: 'pre-msg-2',
+            from: 'conductor',
+            text: 'Initial task',
+            timestamp: new Date().toISOString(),
+            delivered: false,
+          }],
+        });
+
+        // Send an additional message after startup
+        await sendMessage(handle, 'alice', 'Follow-up question');
+
+        const pending = await handle.query(pendingMessagesQuery);
+        expect(pending).to.have.lengthOf(2);
+        expect(pending[0].text).to.equal('Initial task');
+        expect(pending[1].text).to.equal('Follow-up question');
+
+        // Deliver the pre-loaded message
+        await handle.signal(markDeliveredSignal, ['pre-msg-2']);
+
+        const afterDelivery = await handle.query(pendingMessagesQuery);
+        expect(afterDelivery).to.have.lengthOf(1);
+        expect(afterDelivery[0].from).to.equal('alice');
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+  });
+
+  // ── Session status lifecycle ──
+
+  describe('session status lifecycle', function () {
+    it('starts with status from metadata', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'status-init', status: 'pending' }),
+        });
+
+        const meta = await handle.query(getMetadataQuery);
+        expect(meta.status).to.equal('pending');
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+
+    it('defaults to active status when not specified', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'status-default' }),
+        });
+
+        // The workflow upserts ClaudeTempoStatus with input.metadata.status || 'active'
+        // but metadata.status itself remains undefined unless set
+        const meta = await handle.query(getMetadataQuery);
+        // status is undefined in metadata but search attribute defaults to 'active'
+        expect(meta.status).to.satisfy((s: string | undefined) => s === undefined || s === 'active');
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+
+    it('transitions from pending to active via updateMetadata signal', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'status-transition', status: 'pending' }),
+        });
+
+        // Verify starts as pending
+        let meta = await handle.query(getMetadataQuery);
+        expect(meta.status).to.equal('pending');
+
+        // Transition to active (simulates what server.ts does when session connects)
+        await handle.signal(updateMetadataSignal, { status: 'active' });
+
+        meta = await handle.query(getMetadataQuery);
+        expect(meta.status).to.equal('active');
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+  });
+
+  // ── updateMetadata signal ──
+
+  describe('updateMetadata', function () {
+    it('updates hostname', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'meta-host' }),
+        });
+
+        await handle.signal(updateMetadataSignal, { hostname: 'new-host' });
+        const meta = await handle.query(getMetadataQuery);
+        expect(meta.hostname).to.equal('new-host');
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+
+    it('updates gitBranch and gitRoot', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'meta-git' }),
+        });
+
+        await handle.signal(updateMetadataSignal, {
+          gitBranch: 'feature/new',
+          gitRoot: '/repos/project',
+        });
+
+        const meta = await handle.query(getMetadataQuery);
+        expect(meta.gitBranch).to.equal('feature/new');
+        expect(meta.gitRoot).to.equal('/repos/project');
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+
+    it('updates multiple fields in a single signal', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'meta-multi', status: 'pending' }),
+        });
+
+        await handle.signal(updateMetadataSignal, {
+          hostname: 'prod-host',
+          status: 'active',
+          gitBranch: 'main',
+        });
+
+        const meta = await handle.query(getMetadataQuery);
+        expect(meta.hostname).to.equal('prod-host');
+        expect(meta.status).to.equal('active');
+        expect(meta.gitBranch).to.equal('main');
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+
+    it('does not overwrite fields not included in the update', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'meta-partial' }),
+        });
+
+        // Update only hostname
+        await handle.signal(updateMetadataSignal, { hostname: 'updated-host' });
+
+        const meta = await handle.query(getMetadataQuery);
+        expect(meta.hostname).to.equal('updated-host');
+        // Original fields should be preserved
+        expect(meta.playerId).to.equal('meta-partial');
+        expect(meta.ensemble).to.equal('test-ensemble');
+        expect(meta.isConductor).to.equal(false);
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });

@@ -2,7 +2,6 @@
 import * as crypto from 'crypto';
 import * as os from 'os';
 import * as path from 'path';
-import { execSync } from 'child_process';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
@@ -10,13 +9,14 @@ import { getConfig, conductorWorkflowId, ENV } from './config';
 import { createTemporalConnection } from './connection';
 import { createWorker } from './worker';
 import { SessionInput } from './types';
+import { getGitInfo } from './git-info';
 import { registerEnsembleTool } from './tools/ensemble';
 import { registerCueTool } from './tools/cue';
 import { registerSetPartTool } from './tools/set-part';
 import { registerListenTool } from './tools/listen';
 import { registerRecruitTool } from './tools/recruit';
 import { registerReportTool } from './tools/report';
-import { registerTerminateTool } from './tools/terminate';
+import { registerStopTool } from './tools/stop';
 import { registerSetNameTool } from './tools/set-name';
 import { registerScheduleTool } from './tools/schedule';
 import { registerUnscheduleTool } from './tools/unschedule';
@@ -26,29 +26,6 @@ import { registerLoadEnsembleTool } from './tools/load-ensemble';
 import { startMessagePoller } from './channel';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo]', ...args);
-
-function getGitInfo(workDir: string): { gitRoot?: string; gitBranch?: string } {
-  try {
-    const gitRoot = execSync('git rev-parse --show-toplevel', {
-      cwd: workDir,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-    let gitBranch: string | undefined;
-    try {
-      gitBranch = execSync('git rev-parse --abbrev-ref HEAD', {
-        cwd: workDir,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }).trim();
-    } catch {
-      // not on a branch
-    }
-    return { gitRoot, gitBranch };
-  } catch {
-    return {};
-  }
-}
 
 async function main() {
   // Only activate when explicitly opted in via CLAUDE_TEMPO_ENSEMBLE
@@ -116,7 +93,7 @@ async function main() {
     taskQueue: config.taskQueue,
     args: [sessionInput],
     workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
-    // No execution timeout — workflows live until shutdown signal or stale detection.
+    // No execution timeout — workflows live until terminated status or stale detection.
     searchAttributes: {
       ...(gitRoot ? { ClaudeTempoGitRoot: [gitRoot] } : {}),
       ClaudeTempoHostname: [os.hostname()],
@@ -125,6 +102,36 @@ async function main() {
     },
   });
   log(`Workflow ${workflowId} started (or reconnected)`);
+
+  // Watch for workflow completion — exit the process when the workflow ends
+  // (e.g., via stop tool setting status to 'terminated')
+  handle.result().then(() => {
+    log('Workflow completed — shutting down');
+    stopPoller();
+    worker.shutdown();
+    workerRunPromise.catch(() => {}).then(() => process.exit(0));
+  }).catch((err) => {
+    // Only exit on workflow-level errors (cancelled, failed), not transient connection errors
+    const name = err?.name || '';
+    if (name.includes('WorkflowFailed') || name.includes('WorkflowCancelled') || name.includes('WorkflowNotFound')) {
+      log('Workflow ended unexpectedly — shutting down');
+      stopPoller();
+      worker.shutdown();
+      workerRunPromise.catch(() => {}).then(() => process.exit(1));
+    } else {
+      log('Transient error watching workflow result:', err?.message || err);
+    }
+  });
+
+  // If the workflow was pre-created by a recruiter, update it with real metadata
+  // and mark the session as active now that it's connected.
+  await handle.signal('updateMetadata', {
+    hostname: os.hostname(),
+    gitRoot,
+    gitBranch,
+    status: 'active',
+    enableStaleDetection: true,
+  });
 
   // If there's a conductor running, announce ourselves
   if (!isConductor) {
@@ -170,7 +177,7 @@ async function main() {
   registerListenTool(mcpServer, handle);
   registerRecruitTool(mcpServer, client, config, getPlayerId, isBridgeMode ? 'copilot' : 'claude');
   registerReportTool(mcpServer, client, config, getPlayerId);
-  registerTerminateTool(mcpServer, client, config, getPlayerId);
+  registerStopTool(mcpServer, client, config, getPlayerId);
   registerScheduleTool(mcpServer, client, config, getPlayerId);
   registerUnscheduleTool(mcpServer, client, config);
   registerSchedulesTool(mcpServer, client, config);
@@ -216,13 +223,9 @@ async function main() {
     log('Shutting down...');
     stopPoller();
     try {
-      await handle.signal('shutdown');
+      await handle.signal('updateMetadata', { status: 'terminated', terminatedBy: 'system' });
     } catch {
-      try {
-        await handle.cancel();
-      } catch {
-        // workflow may already be gone
-      }
+      // workflow may already be gone
     }
     worker.shutdown();
     await workerRunPromise.catch(() => {});

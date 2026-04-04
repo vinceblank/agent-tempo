@@ -14,7 +14,7 @@ import {
   startSession,
   playerMetadata,
   conductorMetadata,
-  shutdownSignal,
+  updateMetadataSignal,
   allMessagesQuery,
 } from './helpers';
 import {
@@ -194,7 +194,7 @@ players:
         expect(content).to.include(ENSEMBLE);
 
         // Cleanup
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         try { await handle.result(); } catch { /* shutdown */ }
       });
     });
@@ -281,7 +281,7 @@ players:
         await schedulerHandle.cancel();
         try { await schedulerHandle.result(); } catch { /* cancelled */ }
         for (const h of [conductorHandle, player1Handle, player2Handle]) {
-          await h.signal(shutdownSignal);
+          await h.signal(updateMetadataSignal, { status: 'terminated' });
           try { await h.result(); } catch { /* shutdown */ }
         }
       });

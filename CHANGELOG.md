@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-04-04
+
+### Added
+
+- **Pre-created workflows for recruits** — the conductor now creates the recruit's Temporal workflow with the initial message pre-loaded before spawning the process. This eliminates the race condition where slow-starting sessions (e.g., delayed by the dev channels prompt) would miss their initial instructions.
+- **Session status lifecycle** — sessions now have a `status` field (`pending` → `active` → `stale`). Stale sessions stay alive instead of being terminated, preserving workflow state for resume. Status is visible via `ClaudeTempoStatus` search attribute in Temporal UI.
+- **Windows Terminal tabs** — on Windows, recruited sessions open as new tabs in the current Windows Terminal window instead of separate cmd.exe windows. Tab titles show the player name.
+- **`updateMetadata` signal** — sessions signal updated metadata (hostname, git info, status) when connecting, enabling conductor-created workflows to be updated with runtime details.
+
+### Changed
+
+- **Renamed `terminate` MCP tool to `stop`** — aligns with the CLI `stop` command. Both now use the same `updateMetadata({ status: 'terminated' })` mechanism.
+- **Unified shutdown path** — removed the separate `shutdownSignal`. All shutdown (MCP `stop`, CLI `stop`, SIGINT) goes through `status: 'terminated'`. The workflow adds a termination message, waits for delivery, then completes.
+- `claude-tempo status` now shows `(pending)` and `(stale)` indicators next to player names.
+- Stale session detection no longer terminates workflows — marks status as `stale` instead.
+- Pre-created workflows in `pending` status automatically transition to `stale` if the session doesn't connect within 3 minutes.
+
+
 ## [0.7.0] - 2026-04-04
 
 ### Added

@@ -3,6 +3,8 @@
 
 export type AgentType = 'claude' | 'copilot';
 
+export type SessionStatus = 'active' | 'stale' | 'pending' | 'terminated';
+
 export interface SessionMetadata {
   playerId: string;
   ensemble: string;
@@ -12,6 +14,7 @@ export interface SessionMetadata {
   gitBranch?: string;
   isConductor: boolean;
   agentType?: AgentType;
+  status?: SessionStatus;
 }
 
 export interface SessionInput {

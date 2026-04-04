@@ -1,4 +1,4 @@
-import { spawn, execFileSync } from 'child_process';
+import { spawn, execFileSync, execSync } from 'child_process';
 import { existsSync, mkdirSync, openSync, closeSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
@@ -178,8 +178,47 @@ export function spawnInTerminal(
   }
 
   if (process.platform === 'win32') {
-    // Use 'start' to open a visible terminal window, and pass the full
-    // command as a single string to avoid DEP0190 deprecation warning
+    // Detect Windows Terminal: WT_SESSION env var is set when running inside it.
+    // wt.exe is a UWP app execution alias that Node.js can't resolve directly,
+    // but `cmd.exe /c start "" wt.exe ...` works through the Windows shell.
+    const hasWt = Boolean(process.env.WT_SESSION);
+
+    if (hasWt) {
+      // Extract player name from claudeArgs (-n <name>) for tab title
+      const nameIdx = claudeArgs.indexOf('-n');
+      const tabTitle = nameIdx !== -1 && nameIdx + 1 < claudeArgs.length
+        ? claudeArgs[nameIdx + 1]
+        : 'claude-tempo';
+
+      // Build inline env var assignments for cmd /c since wt.exe spawns
+      // a new process that won't inherit our env.
+      // Escape values for cmd.exe: wrap in quotes and escape inner special chars.
+      const cmdEscape = (s: string) => s.replace(/([&|<>^"%])/g, '^$1');
+      const setCmds = Object.entries(envVars)
+        .map(([k, v]) => `set "${k}=${cmdEscape(v)}"`)
+        .join(' && ');
+      const claudeCmd = `${cmdEscape(claudeBin)} ${claudeArgs.map(a => `"${cmdEscape(a)}"`).join(' ')}`;
+      const innerCmd = setCmds
+        ? `${setCmds} && ${claudeCmd}`
+        : claudeCmd;
+
+      // Use `cmd.exe /c start "" wt.exe ...` to resolve the UWP app alias
+      const child = spawn('cmd.exe', [
+        '/c', 'start', '',
+        'wt.exe', '-w', '0',
+        'new-tab',
+        '--title', tabTitle,
+        '-d', workDir,
+        'cmd', '/k', innerCmd,
+      ], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+      return { pid: child.pid };
+    }
+
+    // Fallback: open a new cmd.exe window
     const child = spawn('cmd.exe', ['/c', 'start', '""', claudeBin, ...claudeArgs], {
       cwd: workDir,
       detached: true,

@@ -1,6 +1,13 @@
-# claude-tempo
-
-Multi-session [Claude Code](https://claude.ai/code) coordination via [Temporal](https://temporal.io).
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.svg">
+    <img alt="claude-tempo" src="assets/logo-light.svg" height="140">
+  </picture>
+</p>
+<p align="center">
+  Multi-session <a href="https://claude.ai/code">Claude Code</a> coordination via <a href="https://temporal.io">Temporal</a>.
+</p>
 
 Multiple Claude Code sessions discover each other, exchange messages in real time, and coordinate work — across machines, not just localhost.
 
@@ -174,7 +181,7 @@ Ensemble: myband
     Building the REST endpoints
     /Users/me/projects/app  feat/api  my-machine.local
 
-  bob
+  bob (pending)
     Working on the dashboard
     /Users/me/projects/app  feat/ui  my-machine.local
 
@@ -210,7 +217,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo:
 | `listen` | Manually check for pending messages. |
 | `recruit` | Spawn a new Claude Code session in a directory. Can recruit a conductor with `conductor: true`. |
 | `report` | Send updates to the conductor. No-op if no conductor exists. |
-| `terminate` | Terminate a player session by name. |
+| `stop` | Stop a player session by name. |
 | `schedule` | Create a one-shot or recurring schedule to cue a player. |
 | `unschedule` | Cancel a named schedule. |
 | `schedules` | List all active schedules. |
@@ -398,6 +405,23 @@ Sessions start with a random 8-character hex ID. Set a name at launch with `-n` 
 - Names must contain only letters, numbers, hyphens, and underscores
 - The name "conductor" is reserved for conductor sessions
 
+### Session status lifecycle
+
+Each session has a status that tracks its connection state:
+
+| Status | Meaning |
+|--------|---------|
+| `pending` | Workflow created by `recruit`, but the Claude Code process hasn't connected yet |
+| `active` | Session is running and responsive |
+| `stale` | Messages have gone undelivered for 3+ minutes — the session is likely disconnected |
+
+Status transitions:
+- **`pending` → `active`** — when the spawned session connects and sends its `updateMetadata` signal
+- **`active` → `stale`** — when undelivered messages exceed the stale threshold (3 minutes)
+- Any status → **terminated** — on graceful shutdown or `stop`
+
+`claude-tempo status` shows `(pending)` and `(stale)` indicators next to player names. The `ClaudeTempoStatus` search attribute is also set, so you can filter sessions by status in the Temporal UI (e.g., `ClaudeTempoStatus = "stale"`).
+
 ### Terminal support
 
 `recruit` and the CLI detect your terminal automatically:
@@ -409,9 +433,12 @@ Sessions start with a random 8-character hex ID. Set a name at launch with `-n` 
 | Terminal.app | ✓ | — | — |
 | gnome-terminal | — | ✓ | — |
 | konsole / xterm | — | ✓ | — |
+| Windows Terminal | — | — | ✓ (tabs) |
 | cmd.exe / PowerShell | — | — | ✓ |
 
 macOS terminals preserve the full shell environment (fish, zsh, bash) including node version managers (fnm, nvm).
+
+Windows Terminal is detected automatically via the `WT_SESSION` environment variable. When running inside Windows Terminal, recruited sessions open as new tabs (with the player name as the tab title) instead of separate cmd.exe windows.
 
 ## Configuration
 

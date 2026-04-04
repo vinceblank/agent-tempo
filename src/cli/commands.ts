@@ -6,7 +6,7 @@ import { Client, Connection } from '@temporalio/client';
 import { spawnInTerminal, spawnCopilotBridge, resolveClaudePath } from '../spawn';
 import { conductorWorkflowId, schedulerWorkflowId, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
 import { createTemporalConnection } from '../connection';
-import { shutdownSignal, playerReportSignal } from '../workflows/signals';
+import { playerReportSignal, updateMetadataSignal } from '../workflows/signals';
 import { addScheduleSignal } from '../workflows/scheduler-signals';
 import { AgentType, ScheduleEntry } from '../types';
 import { runPreflight } from './preflight';
@@ -66,7 +66,7 @@ export async function start(opts: StartOpts) {
         if (opts.replace) {
           out.log(`Stopping existing conductor for ensemble "${opts.ensemble}"...`);
           try {
-            await handle.signal(shutdownSignal);
+            await handle.signal(updateMetadataSignal, { status: 'terminated' });
             // Wait briefly for graceful shutdown
             for (let i = 0; i < 10; i++) {
               await new Promise(r => setTimeout(r, 500));
@@ -184,6 +184,7 @@ export async function status(opts: StatusOpts) {
     host: string;
     conductor: boolean;
     agentType: string;
+    status: string;
   }> = [];
 
   for await (const wf of client.workflow.list({ query })) {
@@ -209,6 +210,7 @@ export async function status(opts: StatusOpts) {
         host: (meta.hostname as string) || '',
         conductor: (meta.isConductor as boolean) || false,
         agentType: (meta.agentType as string) || 'claude',
+        status: (meta.status as string) || 'active',
       });
     } catch {
       // workflow may have closed between list and query
@@ -275,8 +277,11 @@ export async function status(opts: StatusOpts) {
     for (const s of members) {
       const role = s.conductor ? out.yellow(' (conductor)') : '';
       const agent = s.agentType === 'copilot' ? out.dim(' [copilot]') : '';
+      const statusLabel = s.status === 'stale' ? out.yellow(' (stale)')
+        : s.status === 'pending' ? out.dim(' (pending)')
+        : '';
       const name = out.bold(s.name);
-      out.log(`  ${name}${role}${agent}`);
+      out.log(`  ${name}${role}${statusLabel}${agent}`);
       if (s.part) out.log(`    ${out.dim(s.part)}`);
       const details = [s.workDir, s.branch, s.host].filter(Boolean).join('  ');
       if (details) out.log(`    ${out.dim(details)}`);
@@ -389,6 +394,7 @@ const SEARCH_ATTRIBUTES = [
   { name: 'ClaudeTempoGitRoot', type: 'Keyword' },
   { name: 'ClaudeTempoEnsemble', type: 'Keyword' },
   { name: 'ClaudeTempoPlayerId', type: 'Keyword' },
+  { name: 'ClaudeTempoStatus', type: 'Keyword' },
 ];
 
 function isTemporalReachable(config: { temporalAddress: string; temporalApiKey?: string; temporalTlsCertPath?: string; temporalTlsKeyPath?: string }): Promise<boolean> {
@@ -987,7 +993,7 @@ export async function stop(opts: StopOpts) {
           }
         }
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         stopped++;
         out.log(`  ${out.dim('stopped')} ${wf.workflowId}`);
       } catch {
@@ -1051,9 +1057,9 @@ async function stopByName(client: Client, name: string, config: Config, ensemble
       }
     }
 
-    // Send shutdown signal (graceful)
+    // Send termination status update (graceful)
     try {
-      await handle.signal(shutdownSignal);
+      await handle.signal(updateMetadataSignal, { status: 'terminated' });
       out.success(`Stopped "${name}"`);
     } catch {
       out.warn(`Could not signal "${name}" — it may have already exited`);

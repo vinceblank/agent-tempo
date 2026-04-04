@@ -166,7 +166,7 @@ async function main() {
         `- listen: Check for pending messages\n` +
         `- recruit: Spawn a new player session\n` +
         `- report: Report to the conductor\n` +
-        `- terminate: Terminate a session\n\n` +
+        `- stop: Stop a session\n\n` +
         `When you receive a message from another session, treat it like a coworker asking for help — respond promptly using your MCP tools.`,
     },
     excludedTools: ['write_powershell', 'read_powershell', 'list_powershell'],
@@ -393,7 +393,7 @@ async function main() {
     polling = false;
     clearInterval(interval);
     try {
-      await handle.signal('shutdown');
+      await handle.signal('updateMetadata', { status: 'terminated', terminatedBy: 'system' });
     } catch {
       // workflow may already be gone
     }

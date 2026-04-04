@@ -11,6 +11,7 @@ import {
 
 import {
   SessionInput,
+  SessionStatus,
   Message,
   SentMessage,
   Command,
@@ -19,8 +20,8 @@ import {
   receiveMessageSignal,
   setPartSignal,
   setNameSignal,
-  shutdownSignal,
   markDeliveredSignal,
+  updateMetadataSignal,
   getPartQuery,
   getMetadataQuery,
   pendingMessagesQuery,
@@ -45,13 +46,13 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     ClaudeTempoPlayerId: [input.metadata.playerId],
     ClaudeTempoHostname: [input.metadata.hostname],
     ...(input.metadata.gitRoot ? { ClaudeTempoGitRoot: [input.metadata.gitRoot] } : {}),
+    ClaudeTempoStatus: [input.metadata.status || 'active'],
   });
 
   // State (carried across continue-as-new)
   let part = input.part ?? input.autoSummary ?? 'No description set';
   const messages: Message[] = input.messages ?? [];
   const sentMessages: SentMessage[] = input.sentMessages ?? [];
-  let shuttingDown = false;
   let lastActivityTime = Date.now();
 
   // ── Player Signal Handlers ──
@@ -79,10 +80,6 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     lastActivityTime = Date.now();
   });
 
-  setHandler(shutdownSignal, () => {
-    shuttingDown = true;
-  });
-
   setHandler(markDeliveredSignal, (ids) => {
     for (const msg of messages) {
       if (ids.includes(msg.id)) {
@@ -90,6 +87,35 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       }
     }
     // Any delivery proves the session is alive
+    lastActivityTime = Date.now();
+  });
+
+  setHandler(updateMetadataSignal, (update) => {
+    if (update.hostname != null) input.metadata.hostname = update.hostname;
+    if (update.gitBranch != null) input.metadata.gitBranch = update.gitBranch;
+    if (update.gitRoot != null) input.metadata.gitRoot = update.gitRoot;
+    if (update.status != null) {
+      input.metadata.status = update.status as SessionStatus;
+      // Re-enable stale detection only when explicitly requested (server.ts sets this)
+      if (update.enableStaleDetection) input.disableStaleDetection = false;
+      // Graceful termination: add termination message so the session sees it
+      if (update.status === 'terminated') {
+        messages.push({
+          id: uuid4(),
+          from: update.terminatedBy || 'system',
+          text: 'Your session is being terminated by ' + (update.terminatedBy || 'system') + '.',
+          timestamp: new Date().toISOString(),
+          delivered: false,
+        });
+      }
+    }
+    upsertSearchAttributes({
+      ClaudeTempoEnsemble: [input.metadata.ensemble],
+      ClaudeTempoPlayerId: [input.metadata.playerId],
+      ClaudeTempoHostname: [input.metadata.hostname],
+      ...(input.metadata.gitRoot ? { ClaudeTempoGitRoot: [input.metadata.gitRoot] } : {}),
+      ClaudeTempoStatus: [input.metadata.status || 'active'],
+    });
     lastActivityTime = Date.now();
   });
 
@@ -168,27 +194,27 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
 
   // ── Main Loop ──
 
-  let staleExit = false;
+  while (input.metadata.status !== 'terminated') {
+    await condition(() => input.metadata.status === 'terminated', '5 minutes');
 
-  while (!shuttingDown) {
-    await condition(() => shuttingDown, '5 minutes');
-
-    if (shuttingDown) break;
-
-    // Detect stale session: messages pending longer than threshold means poller is dead
+    // Detect stale session: messages pending longer than threshold means poller is dead.
+    // Also detect stuck pending: if status is still 'pending' after the threshold,
+    // the spawned process never connected (prompt not acknowledged, crash, etc.).
+    // Mark as stale so the workflow stays alive and can be reconnected later.
     if (!input.disableStaleDetection) {
       const now = Date.now();
       const staleMessages = messages.filter(
         (m) => !m.delivered && now - new Date(m.timestamp).getTime() > STALE_MESSAGE_MS,
       );
-      if (staleMessages.length > 0) {
-        staleExit = true;
-        break;
+      const stuckPending = input.metadata.status === 'pending' && now - lastActivityTime > STALE_MESSAGE_MS;
+      if ((staleMessages.length > 0 || stuckPending) && input.metadata.status !== 'stale') {
+        input.metadata.status = 'stale';
+        upsertSearchAttributes({ ClaudeTempoStatus: ['stale'] });
       }
 
       // Heartbeat: if no activity for 1 hour, inject a probe message.
       // If the session is alive, it will consume and deliver it.
-      // If dead, stale detection will clean up on the next loop iteration.
+      // If dead, stale detection will mark it on the next loop iteration.
       const noPending = messages.every((m) => m.delivered);
       if (noPending && now - lastActivityTime > HEARTBEAT_INTERVAL_MS) {
         messages.push({
@@ -215,23 +241,13 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     }
   }
 
-  // Notify conductor with undelivered messages before exiting
-  if (staleExit && !input.metadata.isConductor) {
-    try {
-      const undelivered = messages.filter((m) => !m.delivered);
-      const summary = undelivered.map((m) => `  From ${m.from}: ${m.text}`).join('\n');
-      const conductorWfId = `claude-session-${input.metadata.ensemble}-conductor`;
-      const handle = getExternalWorkflowHandle(conductorWfId);
-      await handle.signal(playerReportSignal, {
-        playerId: input.metadata.playerId,
-        text: `Session ended — ${undelivered.length} undelivered message(s):\n${summary}`,
-        type: 'blocker',
-      });
-    } catch {
-      // No conductor running — that's fine
-    }
-  }
-
   // Graceful shutdown — wait for in-flight handlers
   await condition(allHandlersFinished);
+
+  // If terminated, wait for the termination message to be delivered.
+  // Skip in test mode (disableStaleDetection) since there's no message poller.
+  if (input.metadata.status === 'terminated' && !input.disableStaleDetection) {
+    const allDelivered = () => messages.every((m) => m.delivered);
+    await condition(allDelivered, '2 minutes');
+  }
 }

@@ -1,8 +1,10 @@
+import * as os from 'os';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from '@temporalio/client';
-import { Config, ENV, conductorWorkflowId } from '../config';
-import { AgentType } from '../types';
+import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
+import { Config, ENV, conductorWorkflowId, sessionWorkflowId } from '../config';
+import { AgentType, SessionInput } from '../types';
+import { getGitInfo } from '../git-info';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { resolveSession } from './resolve';
 import { defineTool } from './helpers';
@@ -79,7 +81,7 @@ export function registerRecruitTool(
               return {
                 content: [{
                   type: 'text' as const,
-                  text: `A conductor is already running in ensemble "${config.ensemble}". Use \`claude-tempo conduct --replace\` from the CLI to replace it, or \`terminate\` it first.`,
+                  text: `A conductor is already running in ensemble "${config.ensemble}". Use \`claude-tempo conduct --replace\` from the CLI to replace it, or \`stop\` it first.`,
                 }],
                 isError: true,
               };
@@ -95,18 +97,57 @@ export function registerRecruitTool(
           return {
             content: [{
               type: 'text' as const,
-              text: `Session **${name}** is already active. Use \`cue\` to send it a message, or \`terminate\` it first.`,
+              text: `Session **${name}** is already active. Use \`cue\` to send it a message, or \`stop\` it first.`,
             }],
             isError: true,
           };
         }
 
-        // Record existing workflows so we can find the new one
-        const existingIds = new Set<string>();
-        const listQuery = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
-        for await (const wf of client.workflow.list({ query: listQuery })) {
-          existingIds.add(wf.workflowId);
-        }
+        // Pre-create the Temporal workflow so the initial message is already loaded
+        const workflowId = isConductor
+          ? conductorWorkflowId(config.ensemble)
+          : sessionWorkflowId(config.ensemble, name);
+
+        const { gitRoot, gitBranch } = getGitInfo(workDir);
+
+        const sessionInput: SessionInput = {
+          metadata: {
+            playerId: name,
+            ensemble: config.ensemble,
+            hostname: os.hostname(),
+            workDir,
+            gitRoot,
+            gitBranch,
+            isConductor,
+            agentType: agent,
+            status: 'pending',
+          },
+          autoSummary: `Session in ${require('path').basename(workDir)}`,
+          disableStaleDetection: true,
+          ...(initialMessage ? {
+            messages: [{
+              id: require('crypto').randomUUID(),
+              from: getPlayerId(),
+              text: initialMessage,
+              timestamp: new Date().toISOString(),
+              delivered: false,
+            }],
+          } : {}),
+        };
+
+        await client.workflow.start('claudeSessionWorkflow', {
+          workflowId,
+          taskQueue: config.taskQueue,
+          args: [sessionInput],
+          workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+          searchAttributes: {
+            ...(gitRoot ? { ClaudeTempoGitRoot: [gitRoot] } : {}),
+            ClaudeTempoHostname: [os.hostname()],
+            ClaudeTempoEnsemble: [config.ensemble],
+            ClaudeTempoPlayerId: [name],
+          },
+        });
+        log(`Pre-created workflow ${workflowId} for recruit "${name}"`);
 
         // Spawn the session using the selected backend
         if (agent === 'copilot') {
@@ -143,45 +184,26 @@ export function registerRecruitTool(
           log(`Spawned claude process (pid ${pid}) in ${workDir} as "${name}"`);
         }
 
-        // Poll for the new workflow to appear (up to ~15s)
-        let newWorkflowId: string | null = null;
-        for (let attempt = 0; attempt < 30; attempt++) {
+        // Brief poll (5s) to confirm the session connected, but don't fail if it hasn't
+        const handle = client.workflow.getHandle(workflowId);
+        let confirmed = false;
+        for (let attempt = 0; attempt < 10; attempt++) {
           await sleep(500);
-          for await (const wf of client.workflow.list({ query: listQuery })) {
-            if (!existingIds.has(wf.workflowId)) {
-              newWorkflowId = wf.workflowId;
+          try {
+            const desc = await handle.describe();
+            if (desc.status.name === 'RUNNING') {
+              confirmed = true;
               break;
             }
-          }
-          if (newWorkflowId) break;
-        }
-
-        if (!newWorkflowId) {
-          return {
-            content: [{
-              type: 'text' as const,
-              text: `Session "${name}" spawned but did not register within 15 seconds. It may still be starting up. Check \`ensemble\` shortly.`,
-            }],
-          };
-        }
-
-        const newHandle = client.workflow.getHandle(newWorkflowId);
-
-        // Name is already set via CLAUDE_TEMPO_PLAYER_NAME env var at startup,
-        // so we only need to send the initial task message if provided.
-        // (Previously we sent a set_name instruction here, but that was redundant
-        // and could cause confusion if the LLM renamed itself incorrectly.)
-        if (initialMessage) {
-          await newHandle.signal('receiveMessage', {
-            from: getPlayerId(),
-            text: initialMessage,
-          });
+          } catch { /* not ready yet */ }
         }
 
         return {
           content: [{
             type: 'text' as const,
-            text: `Recruited session **${name}** in ${workDir}. It will set its name shortly.${initialMessage ? ' Initial task sent.' : ''}`,
+            text: confirmed
+              ? `Recruited session **${name}** in ${workDir}. Workflow running.${initialMessage ? ' Initial task pre-loaded.' : ''}`
+              : `Recruited session **${name}** in ${workDir}. Workflow pre-created, session still starting up.${initialMessage ? ' Initial task pre-loaded.' : ''}`,
           }],
         };
       } catch (err) {
