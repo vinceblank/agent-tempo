@@ -29,9 +29,20 @@ export interface SessionInput {
   commandHistory?: Command[];
   /** Restored from continue-as-new (conductor only) */
   reportHistory?: PlayerReport[];
+  /** Restored from continue-as-new (pending/processing entries only) */
+  outbox?: OutboxEntry[];
   autoSummary?: string;
   /** Disable stale session detection (for passive mailbox workflows like maestro) */
   disableStaleDetection?: boolean;
+  /** Temporal config passed through for outbox activities (spawnProcess needs these) */
+  temporalConfig?: {
+    temporalAddress: string;
+    temporalNamespace: string;
+    temporalApiKey?: string;
+    temporalTlsCertPath?: string;
+    temporalTlsKeyPath?: string;
+    taskQueue: string;
+  };
 }
 
 export interface Message {
@@ -70,6 +81,54 @@ export interface HistoryEntry {
   timestamp: string;
   data: Command | PlayerReport;
 }
+
+// ── Outbox Types ──
+
+export type OutboxEntryStatus = 'pending' | 'processing' | 'delivered' | 'failed';
+
+interface OutboxEntryBase {
+  id: string;
+  createdAt: string;
+  status: OutboxEntryStatus;
+  error?: string;
+  deliveredAt?: string;
+}
+
+export interface CueOutboxEntry extends OutboxEntryBase {
+  type: 'cue';
+  targetPlayerId: string;
+  message: string;
+}
+
+export interface RecruitOutboxEntry extends OutboxEntryBase {
+  type: 'recruit';
+  targetName: string;
+  workDir: string;
+  isConductor: boolean;
+  initialMessage?: string;
+  agent: AgentType;
+  systemPrompt?: string;
+  targetHostname?: string;
+}
+
+export interface ReportOutboxEntry extends OutboxEntryBase {
+  type: 'report';
+  text: string;
+  reportType: 'result' | 'blocker' | 'question';
+}
+
+export interface StopOutboxEntry extends OutboxEntryBase {
+  type: 'stop';
+  targetPlayerId: string;
+}
+
+export type OutboxEntry = CueOutboxEntry | RecruitOutboxEntry | ReportOutboxEntry | StopOutboxEntry;
+
+/** Distributive Omit that works correctly on union types. */
+type DistributiveOmit<T, K extends keyof any> = T extends any ? Omit<T, K> : never;
+
+/** Input type for submitting outbox entries — auto-fields (id, createdAt, status, error, deliveredAt) are added by the workflow. */
+export type OutboxEntryInput = DistributiveOmit<OutboxEntry, 'id' | 'createdAt' | 'status' | 'error' | 'deliveredAt'>;
 
 export interface ScheduleEntry {
   /** Unique name for this schedule (used as key for add/replace/remove). */

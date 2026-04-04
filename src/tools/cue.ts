@@ -1,17 +1,18 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from '@temporalio/client';
-import { Config, sessionWorkflowId } from '../config';
+import { Client, WorkflowHandle } from '@temporalio/client';
+import { Config } from '../config';
 import { resolveSession } from './resolve';
+import { submitOutboxUpdate } from '../workflows/signals';
+import type { OutboxEntryInput } from '../types';
 import { defineTool } from './helpers';
-
-const log = (...args: unknown[]) => console.error('[claude-tempo:cue]', ...args);
 
 export function registerCueTool(
   server: McpServer,
   client: Client,
   config: Config,
   getPlayerId: () => string,
+  handle: WorkflowHandle,
 ) {
   defineTool(
     server,
@@ -24,30 +25,23 @@ export function registerCueTool(
     async (args) => {
       const { playerId, message } = args as { playerId: string; message: string };
       try {
-        const handle = await resolveSession(client, config.ensemble, playerId);
-        if (!handle) {
+        const resolved = await resolveSession(client, config.ensemble, playerId);
+        if (!resolved) {
           return {
             content: [{ type: 'text' as const, text: `No active session found with name "${playerId}".` }],
             isError: true,
           };
         }
-        await handle.signal('receiveMessage', {
-          from: getPlayerId(),
-          text: message,
-        });
 
-        // Record outbound message on sender's own workflow
-        try {
-          const senderHandle = client.workflow.getHandle(
-            sessionWorkflowId(config.ensemble, getPlayerId()),
-          );
-          await senderHandle.signal('recordSentMessage', { to: playerId, text: message });
-        } catch (err) {
-          log('Failed to record sent message:', err);
-        }
+        const entry = {
+          type: 'cue',
+          targetPlayerId: playerId,
+          message,
+        } as OutboxEntryInput;
+        const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 
         return {
-          content: [{ type: 'text' as const, text: `Message sent to ${playerId}.` }],
+          content: [{ type: 'text' as const, text: `Message sent to ${playerId}. (outbox: ${entryId})` }],
         };
       } catch (err) {
         return {

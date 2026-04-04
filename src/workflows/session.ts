@@ -7,7 +7,10 @@ import {
   upsertSearchAttributes,
   getExternalWorkflowHandle,
   uuid4,
+  proxyActivities,
 } from '@temporalio/workflow';
+
+import type { OutboxActivities } from '../activities/outbox';
 
 import {
   SessionInput,
@@ -17,6 +20,8 @@ import {
   Command,
   PlayerReport,
   HistoryEntry,
+  OutboxEntry,
+  OutboxEntryInput,
   receiveMessageSignal,
   setPartSignal,
   setNameSignal,
@@ -31,7 +36,25 @@ import {
   commandSignal,
   playerReportSignal,
   historyQuery,
+  submitOutboxUpdate,
+  outboxQuery,
 } from './signals';
+
+// ── Outbox Activity Proxies ──
+
+const { deliverCue, deliverReport, terminateSession, startRecruitedSession } =
+  proxyActivities<OutboxActivities>({
+    startToCloseTimeout: '30 seconds',
+    retry: { maximumAttempts: 3 },
+  });
+
+function getSpawnProxy(hostname: string) {
+  return proxyActivities<Pick<OutboxActivities, 'spawnProcess'>>({
+    taskQueue: `claude-tempo-${hostname}`,
+    startToCloseTimeout: '2 minutes',
+    retry: { maximumAttempts: 2 },
+  }).spawnProcess;
+}
 
 export async function claudeSessionWorkflow(input: SessionInput): Promise<void> {
   const STALE_MESSAGE_MS = 3 * 60 * 1000; // 3 minutes
@@ -53,7 +76,38 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   let part = input.part ?? input.autoSummary ?? 'No description set';
   const messages: Message[] = input.messages ?? [];
   const sentMessages: SentMessage[] = input.sentMessages ?? [];
+  const outbox: OutboxEntry[] = input.outbox ?? [];
   let lastActivityTime = Date.now();
+
+  // ── Outbox Update + Query Handlers ──
+
+  setHandler(submitOutboxUpdate, (entryInput: OutboxEntryInput) => {
+    const entry: OutboxEntry = {
+      ...entryInput,
+      id: uuid4(),
+      createdAt: new Date().toISOString(),
+      status: 'pending',
+    } as OutboxEntry;
+    outbox.push(entry);
+
+    // Record in sentMessages for history continuity
+    if (entry.type === 'cue') {
+      sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: entry.message, timestamp: entry.createdAt });
+    } else if (entry.type === 'report') {
+      sentMessages.push({ id: entry.id, to: 'conductor', text: `[${entry.reportType}] ${entry.text}`, timestamp: entry.createdAt });
+    } else if (entry.type === 'stop') {
+      sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[stop requested]', timestamp: entry.createdAt });
+    }
+
+    lastActivityTime = Date.now();
+    return entry.id;
+  }, {
+    validator: (entry: OutboxEntryInput) => {
+      if (!entry.type) throw new Error('Outbox entry must have a type');
+    },
+  });
+
+  setHandler(outboxQuery, () => outbox);
 
   // ── Player Signal Handlers ──
 
@@ -194,8 +248,78 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
 
   // ── Main Loop ──
 
+  const hasPendingOutbox = () => outbox.some((e) => e.status === 'pending');
+
   while (input.metadata.status !== 'terminated') {
-    await condition(() => input.metadata.status === 'terminated', '5 minutes');
+    await condition(() => input.metadata.status === 'terminated' || hasPendingOutbox(), '5 minutes');
+
+    // ── Outbox Dispatch ──
+    while (hasPendingOutbox() && input.metadata.status as string !== 'terminated') {
+      const entry = outbox.find((e) => e.status === 'pending')!;
+      entry.status = 'processing';
+      try {
+        switch (entry.type) {
+          case 'cue':
+            await deliverCue({
+              ensemble: input.metadata.ensemble,
+              fromPlayerId: input.metadata.playerId,
+              targetPlayerId: entry.targetPlayerId,
+              message: entry.message,
+            });
+            break;
+          case 'report':
+            await deliverReport({
+              ensemble: input.metadata.ensemble,
+              fromPlayerId: input.metadata.playerId,
+              text: entry.text,
+              reportType: entry.reportType,
+            });
+            break;
+          case 'stop':
+            await terminateSession({
+              ensemble: input.metadata.ensemble,
+              targetPlayerId: entry.targetPlayerId,
+              terminatedBy: input.metadata.playerId,
+            });
+            break;
+          case 'recruit': {
+            const tc = input.temporalConfig;
+            await startRecruitedSession({
+              ensemble: input.metadata.ensemble,
+              targetName: entry.targetName,
+              workDir: entry.workDir,
+              isConductor: entry.isConductor,
+              initialMessage: entry.initialMessage,
+              fromPlayerId: input.metadata.playerId,
+              agent: entry.agent,
+              systemPrompt: entry.systemPrompt,
+              taskQueue: tc?.taskQueue || 'claude-tempo',
+            });
+            const targetHost = entry.targetHostname || input.metadata.hostname;
+            const spawnFn = getSpawnProxy(targetHost);
+            await spawnFn({
+              targetName: entry.targetName,
+              workDir: entry.workDir,
+              isConductor: entry.isConductor,
+              agent: entry.agent,
+              systemPrompt: entry.systemPrompt,
+              ensemble: input.metadata.ensemble,
+              temporalAddress: tc?.temporalAddress || 'localhost:7233',
+              temporalNamespace: tc?.temporalNamespace || 'default',
+              temporalApiKey: tc?.temporalApiKey,
+              temporalTlsCertPath: tc?.temporalTlsCertPath,
+              temporalTlsKeyPath: tc?.temporalTlsKeyPath,
+            });
+            break;
+          }
+        }
+        entry.status = 'delivered';
+        entry.deliveredAt = new Date().toISOString();
+      } catch (err) {
+        entry.status = 'failed';
+        entry.error = String(err);
+      }
+    }
 
     // Detect stale session: messages pending longer than threshold means poller is dead.
     // Also detect stuck pending: if status is still 'pending' after the threshold,
@@ -236,6 +360,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         part,
         messages: messages.filter((m) => !m.delivered),
         sentMessages: sentMessages.slice(-50),
+        outbox: outbox.filter((e) => e.status === 'pending' || e.status === 'processing'),
         ...(input.metadata.isConductor ? { commandHistory, reportHistory } : {}),
       });
     }

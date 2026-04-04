@@ -1,0 +1,248 @@
+import { Client, WorkflowHandle, WorkflowIdConflictPolicy } from '@temporalio/client';
+import { ApplicationFailure } from '@temporalio/activity';
+import * as os from 'os';
+import { Config, conductorWorkflowId, sessionWorkflowId } from '../config';
+import { AgentType, SessionInput, SessionMetadata } from '../types';
+import { getGitInfo } from '../git-info';
+import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
+import { ENV } from '../config';
+
+const log = (...args: unknown[]) => console.error('[claude-tempo:outbox]', ...args);
+
+// ── Activity input types ──
+
+export interface DeliverCueInput {
+  ensemble: string;
+  fromPlayerId: string;
+  targetPlayerId: string;
+  message: string;
+}
+
+export interface DeliverReportInput {
+  ensemble: string;
+  fromPlayerId: string;
+  text: string;
+  reportType: 'result' | 'blocker' | 'question';
+}
+
+export interface TerminateSessionInput {
+  ensemble: string;
+  targetPlayerId: string;
+  terminatedBy: string;
+}
+
+export interface StartRecruitedSessionInput {
+  ensemble: string;
+  targetName: string;
+  workDir: string;
+  isConductor: boolean;
+  initialMessage?: string;
+  fromPlayerId: string;
+  agent: AgentType;
+  systemPrompt?: string;
+  taskQueue: string;
+}
+
+export interface SpawnProcessInput {
+  targetName: string;
+  workDir: string;
+  isConductor: boolean;
+  agent: AgentType;
+  systemPrompt?: string;
+  ensemble: string;
+  temporalAddress: string;
+  temporalNamespace: string;
+  temporalApiKey?: string;
+  temporalTlsCertPath?: string;
+  temporalTlsKeyPath?: string;
+}
+
+// ── Activity result type ──
+
+export interface OutboxActivityResult {
+  success: boolean;
+  error?: string;
+}
+
+// ── Activity interface ──
+
+export interface OutboxActivities {
+  deliverCue(input: DeliverCueInput): Promise<OutboxActivityResult>;
+  deliverReport(input: DeliverReportInput): Promise<OutboxActivityResult>;
+  terminateSession(input: TerminateSessionInput): Promise<OutboxActivityResult>;
+  startRecruitedSession(input: StartRecruitedSessionInput): Promise<OutboxActivityResult>;
+  spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult>;
+}
+
+// ── Helper: resolve session by player name ──
+
+async function resolveSession(
+  client: Client,
+  ensemble: string,
+  playerName: string,
+): Promise<WorkflowHandle | null> {
+  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
+  for await (const wf of client.workflow.list({ query })) {
+    try {
+      const handle = client.workflow.getHandle(wf.workflowId);
+      const metadata: SessionMetadata = await handle.query('getMetadata');
+      if (metadata.ensemble === ensemble && metadata.playerId === playerName) {
+        return handle;
+      }
+    } catch {
+      // Workflow may have just completed — skip
+    }
+  }
+  return null;
+}
+
+/**
+ * Create outbox delivery activities bound to a Temporal client and config.
+ * The returned object is registered with the worker as activities.
+ */
+export function createOutboxActivities(client: Client, config: Config): OutboxActivities {
+  return {
+    async deliverCue(input: DeliverCueInput): Promise<OutboxActivityResult> {
+      const { ensemble, fromPlayerId, targetPlayerId, message } = input;
+      const handle = await resolveSession(client, ensemble, targetPlayerId);
+      if (!handle) {
+        throw ApplicationFailure.nonRetryable(`No active session found for "${targetPlayerId}"`);
+      }
+      await handle.signal('receiveMessage', { from: fromPlayerId, text: message });
+      return { success: true };
+    },
+
+    async deliverReport(input: DeliverReportInput): Promise<OutboxActivityResult> {
+      const { ensemble, fromPlayerId, text, reportType } = input;
+      const conductorId = conductorWorkflowId(ensemble);
+      const handle = client.workflow.getHandle(conductorId);
+      await handle.signal('playerReport', { playerId: fromPlayerId, text, type: reportType });
+      return { success: true };
+    },
+
+    async terminateSession(input: TerminateSessionInput): Promise<OutboxActivityResult> {
+      const { ensemble, targetPlayerId, terminatedBy } = input;
+      const handle = await resolveSession(client, ensemble, targetPlayerId);
+      if (!handle) {
+        throw ApplicationFailure.nonRetryable(`No active session found for "${targetPlayerId}"`);
+      }
+      // Signal target to mark as terminated
+      await handle.signal('updateMetadata', { status: 'terminated', terminatedBy });
+
+      // Notify conductor about the termination (best effort)
+      try {
+        const conductorId = conductorWorkflowId(ensemble);
+        const conductorHandle = client.workflow.getHandle(conductorId);
+        await conductorHandle.signal('receiveMessage', {
+          from: 'system',
+          text: `Session "${targetPlayerId}" was terminated by ${terminatedBy}.`,
+        });
+      } catch {
+        // Conductor may not exist — that's fine
+      }
+
+      return { success: true };
+    },
+
+    async startRecruitedSession(input: StartRecruitedSessionInput): Promise<OutboxActivityResult> {
+      const { ensemble, targetName, workDir, isConductor, initialMessage, fromPlayerId, agent, systemPrompt, taskQueue } = input;
+      try {
+        const workflowId = isConductor
+          ? conductorWorkflowId(ensemble)
+          : sessionWorkflowId(ensemble, targetName);
+
+        const { gitRoot, gitBranch } = getGitInfo(workDir);
+
+        const sessionInput: SessionInput = {
+          metadata: {
+            playerId: targetName,
+            ensemble,
+            hostname: os.hostname(),
+            workDir,
+            gitRoot,
+            gitBranch,
+            isConductor,
+            agentType: agent,
+            status: 'pending',
+          },
+          autoSummary: `Session in ${require('path').basename(workDir)}`,
+          disableStaleDetection: true,
+          ...(initialMessage ? {
+            messages: [{
+              id: require('crypto').randomUUID(),
+              from: fromPlayerId,
+              text: initialMessage,
+              timestamp: new Date().toISOString(),
+              delivered: false,
+            }],
+          } : {}),
+        };
+
+        await client.workflow.start('claudeSessionWorkflow', {
+          workflowId,
+          taskQueue,
+          args: [sessionInput],
+          workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+          searchAttributes: {
+            ...(gitRoot ? { ClaudeTempoGitRoot: [gitRoot] } : {}),
+            ClaudeTempoHostname: [os.hostname()],
+            ClaudeTempoEnsemble: [ensemble],
+            ClaudeTempoPlayerId: [targetName],
+          },
+        });
+
+        log(`Pre-created workflow ${workflowId} for recruit "${targetName}"`);
+        return { success: true };
+      } catch (err) {
+        throw ApplicationFailure.nonRetryable(
+          `Failed to start recruited session "${targetName}": ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+
+    async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = input;
+      try {
+        if (agent === 'copilot') {
+          const { pid } = spawnCopilotBridge({
+            name: targetName,
+            ensemble,
+            temporalAddress,
+            temporalNamespace,
+            temporalApiKey,
+            temporalTlsCertPath,
+            temporalTlsKeyPath,
+            isConductor,
+            workDir,
+          });
+          log(`Spawned copilot-bridge (pid ${pid}) in ${workDir} as "${targetName}"`);
+        } else {
+          const spawnArgs = [
+            '--dangerously-skip-permissions',
+            '--dangerously-load-development-channels', 'server:claude-tempo',
+            '-n', targetName,
+            ...(systemPrompt ? ['--system-prompt', systemPrompt] : []),
+          ];
+          const envVars: Record<string, string> = {
+            [ENV.ENSEMBLE]: ensemble,
+            [ENV.CONDUCTOR]: isConductor ? 'true' : '',
+            [ENV.PLAYER_NAME]: targetName,
+            [ENV.TEMPORAL_ADDRESS]: temporalAddress,
+            [ENV.TEMPORAL_NAMESPACE]: temporalNamespace,
+          };
+          if (temporalApiKey) envVars[ENV.TEMPORAL_API_KEY] = temporalApiKey;
+          if (temporalTlsCertPath) envVars[ENV.TEMPORAL_TLS_CERT_PATH] = temporalTlsCertPath;
+          if (temporalTlsKeyPath) envVars[ENV.TEMPORAL_TLS_KEY_PATH] = temporalTlsKeyPath;
+          const { pid } = spawnInTerminal(spawnArgs, workDir, envVars);
+          log(`Spawned claude process (pid ${pid}) in ${workDir} as "${targetName}"`);
+        }
+
+        return { success: true };
+      } catch (err) {
+        throw ApplicationFailure.nonRetryable(
+          `Failed to spawn process for "${targetName}": ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+  };
+}

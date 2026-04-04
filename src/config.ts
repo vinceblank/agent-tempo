@@ -304,6 +304,11 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
   };
 }
 
+/** Build a per-host task queue name for cross-machine activities: {taskQueue}-{hostname} */
+export function hostTaskQueue(taskQueue: string, hostname: string): string {
+  return `${taskQueue}-${hostname}`;
+}
+
 /** Build a workflow ID for a player session: claude-session-{ensemble}-{playerId} */
 export function sessionWorkflowId(ensemble: string, playerId: string): string {
   return `claude-session-${ensemble}-${playerId}`;

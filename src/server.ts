@@ -7,7 +7,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { getConfig, conductorWorkflowId, ENV } from './config';
 import { createTemporalConnection } from './connection';
-import { createWorker } from './worker';
+import { createWorkers } from './worker';
 import { SessionInput } from './types';
 import { getGitInfo } from './git-info';
 import { registerEnsembleTool } from './tools/ensemble';
@@ -60,11 +60,16 @@ async function main() {
     namespace: config.temporalNamespace,
   });
 
-  // Start the Temporal worker (runs in background)
-  const worker = await createWorker(config);
-  const workerRunPromise = worker.run();
-  workerRunPromise.catch((err) => {
-    log('Worker error:', err);
+  // Start the Temporal workers (runs in background)
+  const { sharedWorker, hostWorker } = await createWorkers(config);
+  const sharedWorkerRunPromise = sharedWorker.run();
+  const hostWorkerRunPromise = hostWorker.run();
+  sharedWorkerRunPromise.catch((err) => {
+    log('Shared worker error:', err);
+    process.exit(1);
+  });
+  hostWorkerRunPromise.catch((err) => {
+    log('Host worker error:', err);
     process.exit(1);
   });
 
@@ -86,6 +91,14 @@ async function main() {
       agentType: isBridgeMode ? 'copilot' : 'claude',
     },
     autoSummary: `Session in ${path.basename(workDir)}`,
+    temporalConfig: {
+      temporalAddress: config.temporalAddress,
+      temporalNamespace: config.temporalNamespace,
+      temporalApiKey: config.temporalApiKey,
+      temporalTlsCertPath: config.temporalTlsCertPath,
+      temporalTlsKeyPath: config.temporalTlsKeyPath,
+      taskQueue: config.taskQueue,
+    },
   };
 
   const handle = await client.workflow.start('claudeSessionWorkflow', {
@@ -105,19 +118,25 @@ async function main() {
 
   // Watch for workflow completion — exit the process when the workflow ends
   // (e.g., via stop tool setting status to 'terminated')
+  const shutdownWorkers = () => {
+    sharedWorker.shutdown();
+    hostWorker.shutdown();
+    return Promise.all([
+      sharedWorkerRunPromise.catch(() => {}),
+      hostWorkerRunPromise.catch(() => {}),
+    ]);
+  };
   handle.result().then(() => {
     log('Workflow completed — shutting down');
     stopPoller();
-    worker.shutdown();
-    workerRunPromise.catch(() => {}).then(() => process.exit(0));
+    shutdownWorkers().then(() => process.exit(0));
   }).catch((err) => {
     // Only exit on workflow-level errors (cancelled, failed), not transient connection errors
     const name = err?.name || '';
     if (name.includes('WorkflowFailed') || name.includes('WorkflowCancelled') || name.includes('WorkflowNotFound')) {
       log('Workflow ended unexpectedly — shutting down');
       stopPoller();
-      worker.shutdown();
-      workerRunPromise.catch(() => {}).then(() => process.exit(1));
+      shutdownWorkers().then(() => process.exit(1));
     } else {
       log('Transient error watching workflow result:', err?.message || err);
     }
@@ -171,13 +190,13 @@ async function main() {
 
   // Register tools
   registerEnsembleTool(mcpServer, client, config, getPlayerId, workflowId);
-  registerCueTool(mcpServer, client, config, getPlayerId);
+  registerCueTool(mcpServer, client, config, getPlayerId, handle);
   registerSetPartTool(mcpServer, handle);
   registerSetNameTool(mcpServer, client, config, handle, getPlayerId, setPlayerId);
   registerListenTool(mcpServer, handle);
-  registerRecruitTool(mcpServer, client, config, getPlayerId, isBridgeMode ? 'copilot' : 'claude');
-  registerReportTool(mcpServer, client, config, getPlayerId);
-  registerStopTool(mcpServer, client, config, getPlayerId);
+  registerRecruitTool(mcpServer, client, config, getPlayerId, handle, isBridgeMode ? 'copilot' : 'claude');
+  registerReportTool(mcpServer, handle);
+  registerStopTool(mcpServer, client, config, getPlayerId, handle);
   registerScheduleTool(mcpServer, client, config, getPlayerId);
   registerUnscheduleTool(mcpServer, client, config);
   registerSchedulesTool(mcpServer, client, config);
@@ -227,8 +246,7 @@ async function main() {
     } catch {
       // workflow may already be gone
     }
-    worker.shutdown();
-    await workerRunPromise.catch(() => {});
+    await shutdownWorkers();
     process.exit(0);
   };
 

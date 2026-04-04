@@ -25,6 +25,8 @@ import {
   commandSignal,
   playerReportSignal,
   historyQuery,
+  submitOutboxUpdate,
+  outboxQuery,
 } from '../src/workflows/signals';
 
 // Re-export signals/queries for convenience in test files
@@ -43,6 +45,8 @@ export {
   commandSignal,
   playerReportSignal,
   historyQuery,
+  submitOutboxUpdate,
+  outboxQuery,
 };
 
 let testEnv: TestWorkflowEnvironment;
@@ -271,6 +275,37 @@ export async function isConductorRunning(
  * Start a session with USE_EXISTING policy — simulates what the MCP server
  * does when reconnecting to an existing workflow (e.g., conductor resume).
  */
+/**
+ * Like withWorker, but registers both schedule-fire and outbox activities.
+ * spawnProcess is stubbed to avoid launching real terminals in tests.
+ */
+export async function withWorkerAndOutboxActivities<T>(fn: () => Promise<T>): Promise<T> {
+  const { createScheduleActivities } = await import('../src/activities/schedule-fire');
+  const { createOutboxActivities } = await import('../src/activities/outbox');
+
+  const scheduleActivities = createScheduleActivities(testEnv.client);
+  const outboxActivities = createOutboxActivities(testEnv.client, {
+    temporalAddress: '',
+    temporalNamespace: 'default',
+    taskQueue: TASK_QUEUE,
+    ensemble: 'test-ensemble',
+    defaultAgent: 'claude',
+  });
+
+  const worker = await Worker.create({
+    connection: testEnv.nativeConnection,
+    taskQueue: TASK_QUEUE,
+    workflowBundle,
+    activities: {
+      ...scheduleActivities,
+      ...outboxActivities,
+      // Stub spawnProcess to avoid launching real terminals
+      spawnProcess: async () => ({ success: true }),
+    },
+  });
+  return worker.runUntil(fn);
+}
+
 export async function reconnectSession(
   inputOverrides: Partial<SessionInput> = {},
 ): Promise<WorkflowHandle> {

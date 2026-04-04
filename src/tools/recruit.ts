@@ -1,25 +1,19 @@
-import * as os from 'os';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
-import { Config, ENV, conductorWorkflowId, sessionWorkflowId } from '../config';
-import { AgentType, SessionInput } from '../types';
-import { getGitInfo } from '../git-info';
-import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
+import { Client, WorkflowHandle } from '@temporalio/client';
+import { Config, conductorWorkflowId } from '../config';
+import { AgentType } from '../types';
 import { resolveSession } from './resolve';
+import { submitOutboxUpdate } from '../workflows/signals';
+import type { OutboxEntryInput } from '../types';
 import { defineTool } from './helpers';
-
-const log = (...args: unknown[]) => console.error('[claude-tempo:recruit]', ...args);
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export function registerRecruitTool(
   server: McpServer,
   client: Client,
   config: Config,
   getPlayerId: () => string,
+  handle: WorkflowHandle,
   ownAgentType: AgentType = 'claude',
 ) {
   defineTool(
@@ -37,6 +31,8 @@ export function registerRecruitTool(
         .describe(`Which agent to use (default: "${ownAgentType}", same as this session)`),
       systemPrompt: z.string().optional()
         .describe('Path to a .md file to use as custom agent system prompt (--system-prompt)'),
+      host: z.string().optional()
+        .describe('Target hostname for cross-machine recruiting. Omit for local spawn.'),
     },
     async (args) => {
       const { workDir, name, initialMessage } = args as {
@@ -46,10 +42,13 @@ export function registerRecruitTool(
         initialMessage?: string;
         agent?: AgentType;
         systemPrompt?: string;
+        host?: string;
       };
       const isConductor = (args as any).conductor === true;
       const agent: AgentType = (args as any).agent || ownAgentType;
       const systemPrompt = (args as any).systemPrompt as string | undefined;
+      const host = (args as any).host as string | undefined;
+
       // Validate name
       if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
         return {
@@ -103,107 +102,22 @@ export function registerRecruitTool(
           };
         }
 
-        // Pre-create the Temporal workflow so the initial message is already loaded
-        const workflowId = isConductor
-          ? conductorWorkflowId(config.ensemble)
-          : sessionWorkflowId(config.ensemble, name);
-
-        const { gitRoot, gitBranch } = getGitInfo(workDir);
-
-        const sessionInput: SessionInput = {
-          metadata: {
-            playerId: name,
-            ensemble: config.ensemble,
-            hostname: os.hostname(),
-            workDir,
-            gitRoot,
-            gitBranch,
-            isConductor,
-            agentType: agent,
-            status: 'pending',
-          },
-          autoSummary: `Session in ${require('path').basename(workDir)}`,
-          disableStaleDetection: true,
-          ...(initialMessage ? {
-            messages: [{
-              id: require('crypto').randomUUID(),
-              from: getPlayerId(),
-              text: initialMessage,
-              timestamp: new Date().toISOString(),
-              delivered: false,
-            }],
-          } : {}),
-        };
-
-        await client.workflow.start('claudeSessionWorkflow', {
-          workflowId,
-          taskQueue: config.taskQueue,
-          args: [sessionInput],
-          workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
-          searchAttributes: {
-            ...(gitRoot ? { ClaudeTempoGitRoot: [gitRoot] } : {}),
-            ClaudeTempoHostname: [os.hostname()],
-            ClaudeTempoEnsemble: [config.ensemble],
-            ClaudeTempoPlayerId: [name],
-          },
-        });
-        log(`Pre-created workflow ${workflowId} for recruit "${name}"`);
-
-        // Spawn the session using the selected backend
-        if (agent === 'copilot') {
-          const { pid } = spawnCopilotBridge({
-            name,
-            ensemble: config.ensemble,
-            temporalAddress: config.temporalAddress,
-            temporalNamespace: config.temporalNamespace,
-            temporalApiKey: config.temporalApiKey,
-            temporalTlsCertPath: config.temporalTlsCertPath,
-            temporalTlsKeyPath: config.temporalTlsKeyPath,
-            isConductor,
-            workDir,
-          });
-          log(`Spawned copilot-bridge (pid ${pid}) in ${workDir} as "${name}"`);
-        } else {
-          const spawnArgs = [
-            '--dangerously-skip-permissions',
-            '--dangerously-load-development-channels', 'server:claude-tempo',
-            '-n', name,
-            ...(systemPrompt ? ['--system-prompt', systemPrompt] : []),
-          ];
-          const envVars: Record<string, string> = {
-            [ENV.ENSEMBLE]: config.ensemble,
-            [ENV.CONDUCTOR]: isConductor ? 'true' : '',
-            [ENV.PLAYER_NAME]: name,
-            [ENV.TEMPORAL_ADDRESS]: config.temporalAddress,
-            [ENV.TEMPORAL_NAMESPACE]: config.temporalNamespace,
-          };
-          if (config.temporalApiKey) envVars[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
-          if (config.temporalTlsCertPath) envVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
-          if (config.temporalTlsKeyPath) envVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
-          const { pid } = spawnInTerminal(spawnArgs, workDir, envVars);
-          log(`Spawned claude process (pid ${pid}) in ${workDir} as "${name}"`);
-        }
-
-        // Brief poll (5s) to confirm the session connected, but don't fail if it hasn't
-        const handle = client.workflow.getHandle(workflowId);
-        let confirmed = false;
-        for (let attempt = 0; attempt < 10; attempt++) {
-          await sleep(500);
-          try {
-            const desc = await handle.describe();
-            if (desc.status.name === 'RUNNING') {
-              confirmed = true;
-              break;
-            }
-          } catch { /* not ready yet */ }
-        }
+        const entry = {
+          type: 'recruit',
+          targetName: name,
+          workDir,
+          isConductor,
+          initialMessage,
+          agent,
+          systemPrompt,
+          targetHostname: host,
+        } as OutboxEntryInput;
+        const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 
         return {
           content: [{
             type: 'text' as const,
-            text: confirmed
-              ? `Recruited session **${name}** in ${workDir}. Workflow running.${initialMessage ? ' Initial task pre-loaded.' : ''}`
-              : `Recruited session **${name}** in ${workDir}. Workflow pre-created, session still starting up.${initialMessage ? ' Initial task pre-loaded.' : ''}`,
+            text: `Recruit request submitted for **${name}** in ${workDir}. The session will be spawned shortly. (outbox: ${entryId})`,
           }],
         };
       } catch (err) {

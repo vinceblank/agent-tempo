@@ -1,9 +1,11 @@
-import { defineSignal, defineQuery } from '@temporalio/workflow';
+import { defineSignal, defineQuery, defineUpdate } from '@temporalio/workflow';
 import type {
   SessionMetadata,
   Message,
   SentMessage,
   HistoryEntry,
+  OutboxEntry,
+  OutboxEntryInput,
 } from '../types';
 
 // Re-export types for convenience within workflow code
@@ -16,6 +18,13 @@ export type {
   PlayerReport,
   SentMessage,
   HistoryEntry,
+  OutboxEntry,
+  OutboxEntryInput,
+  OutboxEntryStatus,
+  CueOutboxEntry,
+  RecruitOutboxEntry,
+  ReportOutboxEntry,
+  StopOutboxEntry,
 } from '../types';
 
 // ── Player Signals ──
@@ -43,3 +52,8 @@ export const playerReportSignal = defineSignal<[{ playerId: string; text: string
 // ── Conductor Queries ──
 
 export const historyQuery = defineQuery<HistoryEntry[]>('history');
+
+// ── Outbox Update + Query ──
+
+export const submitOutboxUpdate = defineUpdate<string, [OutboxEntryInput]>('submitOutbox');
+export const outboxQuery = defineQuery<OutboxEntry[]>('outbox');
