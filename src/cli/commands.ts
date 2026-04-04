@@ -532,7 +532,7 @@ export async function server(opts: ServerOpts) {
 interface UpOpts extends CliOverrides {
   ensemble: string;
   name?: string;
-  from?: string;
+  blueprint?: string;
   agent: AgentType;
 }
 
@@ -598,8 +598,44 @@ export async function up(opts: UpOpts) {
   if (config.temporalTlsCertPath) temporalEnvVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
   if (config.temporalTlsKeyPath) temporalEnvVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
 
-  // Load blueprint if --from is provided
-  const blueprint = opts.from ? loadBlueprint(resolve(opts.from)) : undefined;
+  // Load blueprint if --blueprint is provided (also accepts --from for backward compat)
+  let blueprint;
+  const blueprintArg = opts.blueprint;
+  if (blueprintArg) {
+    // Resolve by name or file path
+    let blueprintPath: string;
+    if (existsSync(resolve(blueprintArg))) {
+      // Direct file path
+      blueprintPath = resolve(blueprintArg);
+    } else {
+      // Try saved blueprints (~/.claude-tempo/ensembles/)
+      const ensemblesDir = join(CLAUDE_TEMPO_HOME, 'ensembles');
+      const savedYaml = join(ensemblesDir, `${blueprintArg}.yaml`);
+      const savedYml = join(ensemblesDir, `${blueprintArg}.yml`);
+      if (existsSync(savedYaml)) {
+        blueprintPath = savedYaml;
+      } else if (existsSync(savedYml)) {
+        blueprintPath = savedYml;
+      } else {
+        // Try shipped examples
+        const shippedPath = join(PACKAGE_ROOT, 'examples', 'ensembles', `${blueprintArg}.yaml`);
+        const shippedYml = join(PACKAGE_ROOT, 'examples', 'ensembles', `${blueprintArg}.yml`);
+        if (existsSync(shippedPath)) {
+          blueprintPath = shippedPath;
+        } else if (existsSync(shippedYml)) {
+          blueprintPath = shippedYml;
+        } else {
+          out.error(`Blueprint "${blueprintArg}" not found as file, saved blueprint, or shipped example`);
+          const saved = listBlueprints();
+          if (saved.length) out.log(`  Saved: ${saved.map(b => b.name).join(', ')}`);
+          const shipped = readdirSync(join(PACKAGE_ROOT, 'examples', 'ensembles')).filter(f => f.endsWith('.yaml') || f.endsWith('.yml')).map(f => f.replace(/\.ya?ml$/, ''));
+          if (shipped.length) out.log(`  Shipped: ${shipped.join(', ')}`);
+          process.exit(1);
+        }
+      }
+    }
+    blueprint = loadBlueprint(blueprintPath);
+  }
   if (blueprint) {
     out.check('Blueprint loaded', true, blueprint.name);
   }
@@ -1307,7 +1343,7 @@ ${out.bold('Other options:')}
   --project                   Use per-project .mcp.json instead of global (init only)
   --keep-mcp                  Don't remove MCP config (down only)
   --all                       Stop all sessions (stop only)
-  --from <file>               Load ensemble from a YAML blueprint (up only)
+  --blueprint <name|file>      Load ensemble blueprint by name or file path (up only)
   --ensemble <name>           Target a specific ensemble (stop only)
   -d, --dir <path>            Target directory (default: cwd)
 
