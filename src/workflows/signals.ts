@@ -34,7 +34,7 @@ export const recordSentMessageSignal = defineSignal<[{ to: string; text: string 
 export const setPartSignal = defineSignal<[string]>('setPart');
 export const markDeliveredSignal = defineSignal<[string[]]>('markDelivered');
 export const setNameSignal = defineSignal<[string]>('setName');
-export const updateMetadataSignal = defineSignal<[{ hostname?: string; gitBranch?: string; gitRoot?: string; status?: string; terminatedBy?: string; enableStaleDetection?: boolean }]>('updateMetadata');
+export const updateMetadataSignal = defineSignal<[{ hostname?: string; gitBranch?: string; gitRoot?: string; status?: string; terminatedBy?: string; enableStaleDetection?: boolean; playerType?: string; playerTypeDescription?: string }]>('updateMetadata');
 
 // ── Player Queries ──
 

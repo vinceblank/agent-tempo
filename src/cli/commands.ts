@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, copyFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { execFileSync, spawn as cpSpawn } from 'child_process';
 import { homedir } from 'os';
@@ -13,6 +13,7 @@ import { runPreflight } from './preflight';
 import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
 import { loadBlueprint } from '../ensemble/loader';
 import { saveBlueprint, listBlueprints, readSavedBlueprint } from '../ensemble/saver';
+import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
 import * as out from './output';
 
 /** Package root is two levels up from dist/cli/ */
@@ -1131,6 +1132,83 @@ function killBridgeProcesses() {
   }
 }
 
+// --- Agent types commands ---
+
+interface AgentTypesCommandOpts {
+  subcommand?: string;
+  name?: string;
+}
+
+export async function agentTypesCommand(opts: AgentTypesCommandOpts) {
+  switch (opts.subcommand) {
+    case 'list': {
+      const types = listAgentTypes();
+      if (types.length === 0) {
+        out.log('No agent types found.');
+        out.log(`  Run ${out.dim('claude-tempo agent-types init')} to install shipped examples.`);
+        return;
+      }
+      out.heading('Available agent types');
+      for (const t of types) {
+        const src = t.source === 'shipped' ? out.dim('(shipped)') : t.source === 'user' ? out.dim('(user)') : out.dim('(project)');
+        out.log(`  ${out.bold(t.name)} ${src}`);
+        if (t.description) out.log(`    ${t.description}`);
+      }
+      console.log();
+      break;
+    }
+    case 'show': {
+      if (!opts.name) {
+        out.error('Usage: claude-tempo agent-types show <name>');
+        process.exit(1);
+      }
+      const info = resolveAgentType(opts.name);
+      if (!info) {
+        out.error(`No agent type found named "${opts.name}"`);
+        out.log(`  Run ${out.dim('claude-tempo agent-types list')} to see available types.`);
+        process.exit(1);
+      }
+      out.log(`${out.bold(info.name)} ${out.dim(`(${info.source}: ${info.path})`)}\n`);
+      console.log(readFileSync(info.path, 'utf8'));
+      break;
+    }
+    case 'init': {
+      const shippedDir = join(PACKAGE_ROOT, 'examples', 'agents');
+      const targetDir = join(homedir(), '.claude', 'agents');
+      mkdirSync(targetDir, { recursive: true });
+
+      if (!existsSync(shippedDir)) {
+        out.error(`Shipped examples not found at ${shippedDir}`);
+        process.exit(1);
+      }
+
+      const files = readdirSync(shippedDir).filter(f => f.endsWith('.md'));
+      let copied = 0;
+      let skipped = 0;
+      for (const file of files) {
+        const target = join(targetDir, file);
+        if (existsSync(target)) {
+          out.log(`  ${out.dim('skip')} ${file} (already exists)`);
+          skipped++;
+        } else {
+          copyFileSync(join(shippedDir, file), target);
+          out.success(`${file} → ${target}`);
+          copied++;
+        }
+      }
+      console.log();
+      out.log(`Copied ${copied} agent definitions to ${targetDir}${skipped ? ` (${skipped} skipped)` : ''}`);
+      break;
+    }
+    default:
+      out.error('Usage: claude-tempo agent-types <list|show|init> [name]');
+      out.log(`\n  ${out.dim('claude-tempo agent-types list')}          List available agent types`);
+      out.log(`  ${out.dim('claude-tempo agent-types show <name>')}   Display an agent definition`);
+      out.log(`  ${out.dim('claude-tempo agent-types init')}          Copy shipped examples to ~/.claude/agents/`);
+      process.exit(1);
+  }
+}
+
 // --- Ensemble blueprint commands ---
 
 interface EnsembleCommandOpts extends CliOverrides {
@@ -1208,6 +1286,7 @@ ${out.bold('Commands:')}
   ${out.cyan('stop')}    [ensemble]    Stop sessions (-n <name> for one, or --all)
   ${out.cyan('status')}  [ensemble]    Show active sessions and Temporal health
   ${out.cyan('ensemble')} <sub>       Manage saved ensemble blueprints (save/list/show)
+  ${out.cyan('agent-types')} <sub>    Manage player type definitions (list/show/init)
   ${out.cyan('config')}                Configure Temporal connection settings
   ${out.cyan('init')}                  Register MCP server globally (or --project for .mcp.json)
   ${out.cyan('preflight')}             Run preflight checks only

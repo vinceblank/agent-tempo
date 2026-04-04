@@ -24,14 +24,21 @@ src/
 ├── activities/
 │   ├── outbox.ts      # Outbox delivery activities (cue, report, stop, recruit)
 │   └── schedule-fire.ts # Schedule fire activity
+├── ensemble/
+│   ├── schema.ts      # Blueprint type definitions
+│   ├── loader.ts      # Load and validate YAML blueprints
+│   ├── saver.ts       # Save live ensemble state to YAML
+│   └── agent-types.ts # Agent type discovery, resolution, and blueprint resolution
 ├── tools/
 │   ├── ensemble.ts    # Discover active sessions
 │   ├── cue.ts         # Send message to peer (via outbox)
 │   ├── set-name.ts    # Set session name
 │   ├── set-part.ts    # Update own summary
+│   ├── who-am-i.ts    # Query own identity, role, and session details
+│   ├── agent-types.ts # Discover available player types (agent definitions)
 │   ├── resolve.ts     # Search-attribute session lookup
 │   ├── listen.ts      # Manual message check
-│   ├── recruit.ts     # Spawn new session (via outbox)
+│   ├── recruit.ts     # Spawn new session (via outbox), supports `type` param
 │   ├── report.ts      # Report to conductor (via outbox)
 │   ├── stop.ts        # Stop a session (via outbox)
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
@@ -79,6 +86,8 @@ npm test
 - **Session status**: Each session has a status (`pending` → `active` → `stale`) tracked via `ClaudeTempoStatus` search attribute. Pre-created workflows start as `pending`, transition to `active` when the process connects, and become `stale` if messages go undelivered for 3+ minutes.
 - **Outbox**: Outbound requests (cue, report, stop, recruit) go through the session's own workflow outbox instead of directly signaling other workflows. The workflow's dispatch loop processes entries via activities, decoupling tools from cross-workflow signaling.
 - **Per-host task queues**: Each host runs a `claude-tempo-{hostname}` activity worker for local-only operations (e.g., `spawnProcess`). This enables cross-machine recruiting — the `recruit` tool accepts an optional `host` parameter to route the spawn to a remote machine's task queue.
+- **Player types**: Reusable agent definitions in Claude Code's standard subagent format (`.md` files with YAML frontmatter). Ensemble blueprints can reference types by name via a `type` field on players. Three-tier lookup: project `.claude/agents/` → user `~/.claude/agents/` → shipped `examples/agents/`. Players know their type via workflow metadata and the `who_am_i` tool.
+- **Agent type discovery**: The `agent_types` MCP tool and `claude-tempo agent-types` CLI command let conductors discover available player types. Shipped examples (architect, senior-engineer, qa-engineer, code-reviewer, devops) work out of the box.
 
 ## Dashboard
 

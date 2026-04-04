@@ -41,6 +41,8 @@ export interface StartRecruitedSessionInput {
   agent: AgentType;
   systemPrompt?: string;
   taskQueue: string;
+  agentDefinition?: string;
+  agentDefinitionDescription?: string;
 }
 
 export interface SpawnProcessInput {
@@ -55,6 +57,9 @@ export interface SpawnProcessInput {
   temporalApiKey?: string;
   temporalTlsCertPath?: string;
   temporalTlsKeyPath?: string;
+  agentDefinition?: string;
+  agentDefinitionPath?: string;
+  nativeResolvable?: boolean;
 }
 
 // ── Activity result type ──
@@ -145,7 +150,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async startRecruitedSession(input: StartRecruitedSessionInput): Promise<OutboxActivityResult> {
-      const { ensemble, targetName, workDir, isConductor, initialMessage, fromPlayerId, agent, systemPrompt, taskQueue } = input;
+      const { ensemble, targetName, workDir, isConductor, initialMessage, fromPlayerId, agent, systemPrompt, taskQueue, agentDefinition, agentDefinitionDescription } = input;
       try {
         const workflowId = isConductor
           ? conductorWorkflowId(ensemble)
@@ -164,6 +169,9 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             isConductor,
             agentType: agent,
             status: 'pending',
+            ...(agentDefinition ? { playerType: agentDefinition } : {}),
+            ...(agentDefinitionDescription ? { playerTypeDescription: agentDefinitionDescription } : {}),
+            recruitedBy: fromPlayerId,
           },
           autoSummary: `Session in ${require('path').basename(workDir)}`,
           disableStaleDetection: true,
@@ -201,7 +209,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
-      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = input;
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath, agentDefinition, agentDefinitionPath, nativeResolvable } = input;
       try {
         if (agent === 'copilot') {
           const { pid } = spawnCopilotBridge({
@@ -217,11 +225,21 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           });
           log(`Spawned copilot-bridge (pid ${pid}) in ${workDir} as "${targetName}"`);
         } else {
+          // Resolve agent flags: --agent (native) > --system-prompt (shipped/legacy)
+          let agentFlags: string[] = [];
+          if (agentDefinition && nativeResolvable) {
+            agentFlags = ['--agent', agentDefinition];
+          } else if (agentDefinitionPath) {
+            agentFlags = ['--system-prompt', agentDefinitionPath];
+          } else if (systemPrompt) {
+            agentFlags = ['--system-prompt', systemPrompt];
+          }
+
           const spawnArgs = [
             '--dangerously-skip-permissions',
             '--dangerously-load-development-channels', 'server:claude-tempo',
             '-n', targetName,
-            ...(systemPrompt ? ['--system-prompt', systemPrompt] : []),
+            ...agentFlags,
           ];
           const envVars: Record<string, string> = {
             [ENV.ENSEMBLE]: ensemble,
@@ -230,6 +248,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             [ENV.TEMPORAL_ADDRESS]: temporalAddress,
             [ENV.TEMPORAL_NAMESPACE]: temporalNamespace,
           };
+          if (agentDefinition) envVars[ENV.PLAYER_TYPE] = agentDefinition;
           if (temporalApiKey) envVars[ENV.TEMPORAL_API_KEY] = temporalApiKey;
           if (temporalTlsCertPath) envVars[ENV.TEMPORAL_TLS_CERT_PATH] = temporalTlsCertPath;
           if (temporalTlsKeyPath) envVars[ENV.TEMPORAL_TLS_KEY_PATH] = temporalTlsKeyPath;

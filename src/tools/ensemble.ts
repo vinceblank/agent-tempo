@@ -36,6 +36,7 @@ export function registerEnsembleTool(
         gitBranch?: string;
         isConductor: boolean;
         agentType: string;
+        playerType?: string;
         status?: string;
         isYou: boolean;
       }> = [];
@@ -68,6 +69,7 @@ export function registerEnsembleTool(
               gitBranch: metadata.gitBranch,
               isConductor: metadata.isConductor,
               agentType: metadata.agentType || 'claude',
+              playerType: metadata.playerType,
               status: metadata.status,
               isYou: metadata.playerId === getPlayerId(),
             });
@@ -97,8 +99,12 @@ export function registerEnsembleTool(
           p.status === 'pending' ? '(pending)' : '',
         ].filter(Boolean).join(' ');
 
+        const nameDisplay = p.playerType
+          ? `**${p.playerId}** (${p.playerType})`
+          : `**${p.playerId}**`;
+
         return [
-          `**${p.playerId}** ${tags}`.trim(),
+          `${nameDisplay} ${tags}`.trim(),
           `  Part: ${p.part}`,
           `  Dir: ${p.workDir}`,
           p.gitBranch ? `  Branch: ${p.gitBranch}` : '',

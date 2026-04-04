@@ -48,8 +48,10 @@ export async function saveBlueprint(
         };
       } else {
         const name = (meta.playerId as string) || wf.workflowId.split('-').pop() || 'unknown';
+        const playerType = (meta.playerType as string) || undefined;
         players.push({
           name,
+          type: playerType,
           workDir,
           agent: agentType === 'copilot' ? 'copilot' : undefined,
         });

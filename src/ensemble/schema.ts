@@ -9,9 +9,14 @@ export interface EnsembleBlueprint {
   };
   players: Array<{
     name: string;
+    type?: string;        // agent definition name (e.g., "architect")
     workDir?: string;     // defaults to cwd if omitted
     agent?: string;       // "default", "copilot", or path to agent .md file
     instructions?: string;
+    /** Transient: resolved agent definition name (set by loadAndResolveBlueprint). */
+    _agentDefinition?: string;
+    /** Transient: resolved absolute path to .md file (set by loadAndResolveBlueprint). */
+    _agentDefinitionPath?: string;
   }>;
   schedules?: Array<{
     name: string;

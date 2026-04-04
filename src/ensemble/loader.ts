@@ -59,7 +59,13 @@ export function loadBlueprint(filePath: string): EnsembleBlueprint {
     name: doc.name,
     description: doc.description,
     conductor: doc.conductor,
-    players: doc.players,
+    players: doc.players.map((p: any) => ({
+      name: p.name,
+      ...(p.type != null && { type: p.type }),
+      ...(p.workDir != null && { workDir: p.workDir }),
+      ...(p.agent != null && { agent: p.agent }),
+      ...(p.instructions != null && { instructions: p.instructions }),
+    })),
     schedules: doc.schedules,
   };
 }

@@ -5,6 +5,7 @@ import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { Config, CLAUDE_TEMPO_HOME, schedulerWorkflowId, ENV } from '../config';
 import { AgentType } from '../types';
 import { loadBlueprint } from '../ensemble/loader';
+import { loadAndResolveBlueprint, resolveAgentType } from '../ensemble/agent-types';
 import { readSavedBlueprint } from '../ensemble/saver';
 import { resolveSession } from './resolve';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
@@ -96,7 +97,7 @@ export function registerLoadEnsembleTool(
           }
         }
 
-        const blueprint = loadBlueprint(filePath);
+        const blueprint = loadAndResolveBlueprint(filePath);
         const recruited: string[] = [];
         const failed: string[] = [];
 
@@ -106,7 +107,9 @@ export function registerLoadEnsembleTool(
           const workDir = player.workDir || process.cwd();
           const agentType: AgentType = player.agent === 'copilot' ? 'copilot' : 'claude';
           const isCustomAgent = player.agent && player.agent !== 'default' && player.agent !== 'copilot';
-          const systemPrompt = isCustomAgent ? player.agent : undefined;
+          const systemPrompt = player._agentDefinition ? undefined : (isCustomAgent ? player.agent : undefined);
+          const agentDefinition = player._agentDefinition;
+          const agentDefinitionPath = player._agentDefinitionPath;
 
           // Skip if already active
           const existing = await resolveSession(client, config.ensemble, playerName);
@@ -149,11 +152,24 @@ export function registerLoadEnsembleTool(
                 workDir,
               });
             } else {
+              // Determine agent flags: --agent for natively resolvable types, --system-prompt for shipped/custom
+              let agentFlags: string[] = [];
+              if (agentDefinition) {
+                const typeInfo = resolveAgentType(agentDefinition);
+                if (typeInfo?.nativeResolvable) {
+                  agentFlags = ['--agent', agentDefinition];
+                } else if (agentDefinitionPath) {
+                  agentFlags = ['--system-prompt', agentDefinitionPath];
+                }
+              } else if (systemPrompt) {
+                agentFlags = ['--system-prompt', systemPrompt];
+              }
+
               const spawnArgs = [
                 '--dangerously-skip-permissions',
                 '--dangerously-load-development-channels', 'server:claude-tempo',
                 '-n', playerName,
-                ...(systemPrompt ? ['--system-prompt', systemPrompt] : []),
+                ...agentFlags,
               ];
               const envVars: Record<string, string> = {
                 [ENV.ENSEMBLE]: config.ensemble,
@@ -162,6 +178,7 @@ export function registerLoadEnsembleTool(
                 [ENV.TEMPORAL_ADDRESS]: config.temporalAddress,
                 [ENV.TEMPORAL_NAMESPACE]: config.temporalNamespace,
               };
+              if (agentDefinition) envVars[ENV.PLAYER_TYPE] = agentDefinition;
               if (config.temporalApiKey) envVars[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
               if (config.temporalTlsCertPath) envVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
               if (config.temporalTlsKeyPath) envVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;

@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] - 2026-04-04
+
+### Added
+
+- **Player types** — Reusable agent definitions using Claude Code's standard subagent format (`.md` files with YAML frontmatter). Ensemble blueprints can reference player types by name via a `type` field on players.
+- **Three-tier agent type lookup** — project (`.claude/agents/`) → user (`~/.claude/agents/`) → shipped (`examples/agents/`). If found in Claude Code's standard dirs, recruits use `--agent <name>`; shipped examples fall back to `--system-prompt <path>`.
+- **`who_am_i` MCP tool** — Players can query their own identity: name, player type, description, ensemble, role (conductor/player), recruited by, current part, directory, host, branch, and status.
+- **`agent_types` MCP tool** — Conductors can discover available player types with name, description, and source (project/user/shipped).
+- **`recruit` tool `type` parameter** — Recruit with `type: "architect"` to spawn a session using a predefined agent definition. Resolves and validates the type, passes through to the spawn flow.
+- **Player identity in metadata** — `playerType`, `playerTypeDescription`, and `recruitedBy` fields on `SessionMetadata`, persisted in Temporal workflows and search attributes.
+- **`ensemble` tool shows player types** — Output includes player type in parens, e.g., `**arch** (architect)`.
+- **CLI `agent-types` command** — `list` (show available types), `show <name>` (print full definition), `init` (copy shipped examples to `~/.claude/agents/` for customization).
+- **Saver preserves player types** — `save_ensemble` includes `type` field in saved YAML for typed players.
+- **Shipped examples** — 5 agent definitions (architect, senior-engineer, qa-engineer, code-reviewer, devops) and 2 ensemble blueprints (dev-team, review-squad).
+
+### Changed
+
+- `load_ensemble` tool and `up --from` CLI now resolve player type references via `loadAndResolveBlueprint()`.
+- MCP server instructions now include player type info when available.
+- `examples/` directory included in npm package.
+
+### Migration
+
+- **Backward compatible**: the `type` field on players is optional. Existing blueprints without `type` work unchanged. Players recruited without a type behave exactly as before.
+
 ## [0.9.0] - 2026-04-04
 
 ### Added

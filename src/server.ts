@@ -23,7 +23,10 @@ import { registerUnscheduleTool } from './tools/unschedule';
 import { registerSchedulesTool } from './tools/schedules';
 import { registerSaveEnsembleTool } from './tools/save-ensemble';
 import { registerLoadEnsembleTool } from './tools/load-ensemble';
+import { registerAgentTypesTool } from './tools/agent-types';
+import { registerWhoAmITool } from './tools/who-am-i';
 import { startMessagePoller } from './channel';
+import { resolveAgentType } from './ensemble/agent-types';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo]', ...args);
 
@@ -142,6 +145,18 @@ async function main() {
     }
   });
 
+  // Resolve player type identity from env (set by recruiter's spawnProcess)
+  const playerType = process.env[ENV.PLAYER_TYPE] || undefined;
+  let playerTypeDescription: string | undefined;
+  if (playerType) {
+    try {
+      const info = resolveAgentType(playerType);
+      playerTypeDescription = info?.description;
+    } catch {
+      // Resolution failure is non-fatal — type is still set
+    }
+  }
+
   // If the workflow was pre-created by a recruiter, update it with real metadata
   // and mark the session as active now that it's connected.
   await handle.signal('updateMetadata', {
@@ -150,6 +165,8 @@ async function main() {
     gitBranch,
     status: 'active',
     enableStaleDetection: true,
+    ...(playerType ? { playerType } : {}),
+    ...(playerTypeDescription ? { playerTypeDescription } : {}),
   });
 
   // If there's a conductor running, announce ourselves
@@ -167,8 +184,12 @@ async function main() {
 
   // Create MCP server
   const hasRequestedName = Boolean(requestedName && requestedName !== 'conductor');
+  const playerTypeLine = playerType
+    ? `Your player type is "${playerType}"${playerTypeDescription ? ` (${playerTypeDescription})` : ''}. `
+    : '';
   const serverInstructions = `You are part of the "${config.ensemble}" ensemble of Claude Code sessions coordinated via Temporal. ` +
     `Your player name is "${playerId}". ` +
+    playerTypeLine +
     (hasRequestedName
       ? `This name was assigned at startup — do NOT call \`set_name\` unless explicitly asked to rename. `
       : `IMPORTANT: If you receive a message instructing you to call \`set_name\`, do so immediately before anything else. Use \`set_name\` to give yourself a human-readable name. `) +
@@ -202,6 +223,8 @@ async function main() {
   registerSchedulesTool(mcpServer, client, config);
   registerSaveEnsembleTool(mcpServer, client, config, getPlayerId, isConductor);
   registerLoadEnsembleTool(mcpServer, client, config, getPlayerId, isBridgeMode ? 'copilot' : 'claude');
+  registerAgentTypesTool(mcpServer);
+  registerWhoAmITool(mcpServer, handle, getPlayerId);
 
   const MAESTRO_ACK = '\n\n[IMPORTANT: This message is from a human (Maestro). Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
 
