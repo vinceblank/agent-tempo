@@ -191,11 +191,13 @@ export function spawnInTerminal(
         : 'claude-tempo';
 
       // Build inline env var assignments for cmd /c since wt.exe spawns
-      // a new process that won't inherit our env
+      // a new process that won't inherit our env.
+      // Escape values for cmd.exe: wrap in quotes and escape inner special chars.
+      const cmdEscape = (s: string) => s.replace(/([&|<>^"%])/g, '^$1');
       const setCmds = Object.entries(envVars)
-        .map(([k, v]) => `set "${k}=${v}"`)
+        .map(([k, v]) => `set "${k}=${cmdEscape(v)}"`)
         .join(' && ');
-      const claudeCmd = `${claudeBin} ${claudeArgs.join(' ')}`;
+      const claudeCmd = `${cmdEscape(claudeBin)} ${claudeArgs.map(a => `"${cmdEscape(a)}"`).join(' ')}`;
       const innerCmd = setCmds
         ? `${setCmds} && ${claudeCmd}`
         : claudeCmd;

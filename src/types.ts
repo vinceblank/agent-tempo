@@ -3,7 +3,7 @@
 
 export type AgentType = 'claude' | 'copilot';
 
-export type SessionStatus = 'active' | 'stale' | 'pending';
+export type SessionStatus = 'active' | 'stale' | 'pending' | 'terminated';
 
 export interface SessionMetadata {
   playerId: string;

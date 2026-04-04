@@ -11,6 +11,7 @@ import {
 
 import {
   SessionInput,
+  SessionStatus,
   Message,
   SentMessage,
   Command,
@@ -99,7 +100,13 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     if (update.hostname != null) input.metadata.hostname = update.hostname;
     if (update.gitBranch != null) input.metadata.gitBranch = update.gitBranch;
     if (update.gitRoot != null) input.metadata.gitRoot = update.gitRoot;
-    if (update.status != null) input.metadata.status = update.status as 'active' | 'stale' | 'pending';
+    if (update.status != null) {
+      input.metadata.status = update.status as SessionStatus;
+      // Re-enable stale detection when session connects (transitions to active)
+      if (update.status === 'active') input.disableStaleDetection = false;
+      // Graceful termination: add termination message and trigger shutdown
+      if (update.status === 'terminated') shuttingDown = true;
+    }
     upsertSearchAttributes({
       ClaudeTempoEnsemble: [input.metadata.ensemble],
       ClaudeTempoPlayerId: [input.metadata.playerId],
@@ -234,4 +241,10 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
 
   // Graceful shutdown — wait for in-flight handlers
   await condition(allHandlersFinished);
+
+  // If terminated, wait up to 1 minute for the termination message to be delivered
+  if (input.metadata.status === 'terminated') {
+    const allDelivered = () => messages.every((m) => m.delivered);
+    await condition(allDelivered, '1 minute');
+  }
 }
