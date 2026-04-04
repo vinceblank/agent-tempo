@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-04-04
+
+### Added
+
+- **Ensemble blueprints** — define reusable ensemble configurations as YAML files with players, instructions, schedules, and custom agents. Blueprints can be loaded from the CLI (`claude-tempo up --from`), from inside a session (`load_ensemble`), or saved from a running ensemble (`save_ensemble`).
+- **`save_ensemble` MCP tool** — snapshot the current ensemble state (players, schedules) as a YAML blueprint file. Conductor only.
+- **`load_ensemble` MCP tool** — load a blueprint to recruit players sequentially and create schedules. Accepts a saved blueprint name or explicit file path.
+- **`claude-tempo up --from`** — load an ensemble blueprint during first-time setup.
+- **`claude-tempo ensemble` CLI commands** — `save`, `list`, and `show` subcommands for managing saved blueprints in `~/.claude-tempo/ensembles/`.
+- **`systemPrompt` parameter on recruit tool** — pass a path to a `.md` file to use as the session's custom agent system prompt (`--system-prompt`). Enables custom agent files in blueprints.
+- **`target: "all"` schedule fan-out** — schedules can target `"all"` to deliver a message to every active player in the ensemble, skipping the conductor. Individual delivery failures are reported without failing the whole fire.
+
 ## [0.6.0] - 2026-04-03
 
 ### Added

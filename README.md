@@ -91,7 +91,7 @@ claude-tempo <command> [options]
 
 | Command | Description |
 |---------|-------------|
-| `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor |
+| `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor. Use `--from` to load a blueprint. |
 | `down` | Stop Temporal, terminate sessions, remove MCP config |
 | `server` | Start the Temporal dev server and register search attributes |
 | `conduct [ensemble]` | Start a conductor session (one per ensemble). Use `--resume` or `--replace` if one exists. |
@@ -101,6 +101,7 @@ claude-tempo <command> [options]
 | `stop [ensemble]` | Stop sessions (`-n <name>` for one, `--all` for everything) |
 | `init` | Register claude-tempo MCP server globally (`--project` for per-directory) |
 | `preflight` | Run environment checks |
+| `ensemble <sub>` | Manage saved blueprints (`save`, `list`, `show`) |
 | `help` | Show usage info |
 
 ### Global options
@@ -115,6 +116,7 @@ claude-tempo <command> [options]
 --skip-preflight              Skip preflight checks (start/conduct)
 -d, --dir <path>              Target directory (default: cwd)
 --background                  Run Temporal in background (server only)
+--from <file>                 Load an ensemble blueprint on startup (up only)
 --resume                      Resume an existing conductor session (conduct only)
 --replace                     Stop existing conductor and start fresh (conduct only)
 ```
@@ -212,6 +214,8 @@ These tools are available inside Claude Code sessions connected to claude-tempo:
 | `schedule` | Create a one-shot or recurring schedule to cue a player. |
 | `unschedule` | Cancel a named schedule. |
 | `schedules` | List all active schedules. |
+| `save_ensemble` | Save the current ensemble as a YAML blueprint (conductor only). |
+| `load_ensemble` | Load a blueprint to recruit players and create schedules. |
 
 ## Scheduling
 
@@ -243,6 +247,80 @@ Schedules support one-shot delays, fixed times, and recurring intervals with opt
 - Messages include `isScheduled` metadata for dashboard integrations
 - `claude-tempo status` shows active schedules alongside sessions
 - A single durable scheduler workflow per ensemble manages all schedules using Temporal timers
+
+## Ensemble Blueprints
+
+Define reusable ensemble configurations as YAML files. A blueprint specifies which players to recruit, what instructions to give them, what schedules to create, and optionally which custom agent files to use.
+
+### Example blueprint
+
+```yaml
+name: my-project
+conductor:
+  instructions: "Coordinate the frontend and backend teams"
+players:
+  - name: frontend
+    workDir: /repos/my-app
+    instructions: "Build the React dashboard in src/components"
+  - name: backend
+    workDir: /repos/my-api
+    instructions: "Implement the REST endpoints in src/routes"
+  - name: ops
+    workDir: /repos/infra
+    agent: agents/ops-agent.md
+    instructions: "Monitor deployments and run health checks"
+schedules:
+  - name: status-check
+    message: "Report your current progress and any blockers"
+    target: all
+    every: 30m
+  - name: deploy-reminder
+    message: "Check if the staging deploy succeeded"
+    target: ops
+    delay: 10m
+```
+
+### Three ways to use blueprints
+
+1. **From the CLI** — load a blueprint when starting an ensemble:
+
+   ```bash
+   claude-tempo up --from my-blueprint.yaml
+   ```
+
+2. **From inside a session** — use the `load_ensemble` tool:
+
+   *"Load the blueprint from ~/.claude-tempo/ensembles/my-project.yaml"*
+
+3. **Save the current state** — snapshot a running ensemble as a blueprint (conductor only):
+
+   *"Save this ensemble as a blueprint called my-project"*
+
+### Natural language examples
+
+Tell your session things like:
+
+- *"Load the my-project blueprint"*
+- *"Save this ensemble as a blueprint"*
+- *"Load the blueprint from /repos/configs/team.yaml"*
+
+### Fan-out schedules
+
+Use `target: "all"` in a schedule to deliver a message to every active player (excluding the conductor). This is useful for periodic status checks or broadcast announcements:
+
+- *"Schedule a message every 30 minutes to all players asking for a progress update"*
+
+### Custom agents
+
+The `agent` field on a player can be a path to a `.md` file that will be used as the session's system prompt via `--system-prompt`. This lets you create specialized agents with domain-specific instructions:
+
+```yaml
+players:
+  - name: security-reviewer
+    workDir: /repos/my-app
+    agent: agents/security-review.md
+    instructions: "Review the latest PR for security issues"
+```
 
 ## Conductors
 
