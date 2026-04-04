@@ -197,6 +197,28 @@ export async function sendMessage(
 }
 
 /**
+ * Poll listEnsemble until at least `expectedCount` members are visible, or
+ * the timeout elapses. Temporal's visibility store is eventually consistent —
+ * a workflow that has just started may not appear in list queries immediately.
+ * Use this in tests that start multiple sessions and then assert the count.
+ */
+export async function waitForEnsembleMembers(
+  client: Client,
+  ensemble: string,
+  expectedCount: number,
+  timeoutMs = 5000,
+): Promise<SessionMetadata[]> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const members = await listEnsemble(client, ensemble);
+    if (members.length >= expectedCount) return members;
+    await new Promise<void>((r) => setTimeout(r, 100));
+  }
+  // Final attempt — let the caller's assertion produce the failure message
+  return listEnsemble(client, ensemble);
+}
+
+/**
  * Query all running session workflows and return those matching the
  * given ensemble — mirrors the production ensemble tool logic.
  */

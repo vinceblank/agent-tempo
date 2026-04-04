@@ -10,6 +10,7 @@ import {
   playerMetadata,
   conductorMetadata,
   listEnsemble,
+  waitForEnsembleMembers,
   resolveByName,
   isConductorRunning,
   conductorWorkflowId,
@@ -49,7 +50,8 @@ describe('multi-session integration', function () {
           metadata: playerMetadata({ playerId: 'p2', ensemble }),
         });
 
-        const members = await listEnsemble(getClient(), ensemble);
+        // Poll until both sessions appear — visibility store is eventually consistent
+        const members = await waitForEnsembleMembers(getClient(), ensemble, 2);
         const ids = members.map((m) => m.playerId).sort();
         expect(ids).to.deep.equal(['p1', 'p2']);
 
