@@ -396,6 +396,7 @@ const SEARCH_ATTRIBUTES = [
   { name: 'ClaudeTempoEnsemble', type: 'Keyword' },
   { name: 'ClaudeTempoPlayerId', type: 'Keyword' },
   { name: 'ClaudeTempoStatus', type: 'Keyword' },
+  { name: 'ClaudeTempoPlayerType', type: 'Keyword' },
 ];
 
 function isTemporalReachable(config: { temporalAddress: string; temporalApiKey?: string; temporalTlsCertPath?: string; temporalTlsKeyPath?: string }): Promise<boolean> {
