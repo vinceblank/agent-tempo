@@ -21,8 +21,8 @@ import { registerSetNameTool } from './tools/set-name';
 import { registerScheduleTool } from './tools/schedule';
 import { registerUnscheduleTool } from './tools/unschedule';
 import { registerSchedulesTool } from './tools/schedules';
-import { registerSaveEnsembleTool } from './tools/save-ensemble';
-import { registerLoadEnsembleTool } from './tools/load-ensemble';
+import { registerSaveLineupTool } from './tools/save-lineup';
+import { registerLoadLineupTool } from './tools/load-lineup';
 import { registerAgentTypesTool } from './tools/agent-types';
 import { registerWhoAmITool } from './tools/who-am-i';
 import { startMessagePoller } from './channel';
@@ -221,8 +221,8 @@ async function main() {
   registerScheduleTool(mcpServer, client, config, getPlayerId);
   registerUnscheduleTool(mcpServer, client, config);
   registerSchedulesTool(mcpServer, client, config);
-  registerSaveEnsembleTool(mcpServer, client, config, getPlayerId, isConductor);
-  registerLoadEnsembleTool(mcpServer, client, config, getPlayerId, isBridgeMode ? 'copilot' : 'claude');
+  registerSaveLineupTool(mcpServer, client, config, getPlayerId, isConductor);
+  registerLoadLineupTool(mcpServer, client, config, getPlayerId, isBridgeMode ? 'copilot' : 'claude');
   registerAgentTypesTool(mcpServer);
   registerWhoAmITool(mcpServer, handle, getPlayerId);
 

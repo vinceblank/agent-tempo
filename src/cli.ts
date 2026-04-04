@@ -16,7 +16,7 @@ interface ParsedArgs {
   temporalTlsCertPath?: string;
   temporalTlsKeyPath?: string;
   name?: string;
-  blueprint?: string;
+  lineup?: string;
   dir: string;
   skipPreflight: boolean;
   background: boolean;
@@ -56,8 +56,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.temporalTlsCertPath = argv[++i];
     } else if (arg === '--temporal-tls-key' && i + 1 < argv.length) {
       result.temporalTlsKeyPath = argv[++i];
-    } else if (arg === '--blueprint' && i + 1 < argv.length) {
-      result.blueprint = argv[++i];
+    } else if (arg === '--lineup' && i + 1 < argv.length) {
+      result.lineup = argv[++i];
     } else if ((arg === '-n' || arg === '--name') && i + 1 < argv.length) {
       result.name = argv[++i];
     } else if ((arg === '-d' || arg === '--dir') && i + 1 < argv.length) {
@@ -186,7 +186,7 @@ async function main() {
       await up({
         ensemble,
         name: args.name,
-        blueprint: args.blueprint,
+        lineup: args.lineup,
         agent: resolvedAgent(),
         ...overrides,
       });

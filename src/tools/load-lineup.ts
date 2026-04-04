@@ -1,17 +1,18 @@
 import { z } from 'zod';
+import { existsSync } from 'fs';
 import { join } from 'path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { Config, CLAUDE_TEMPO_HOME, schedulerWorkflowId, ENV } from '../config';
 import { AgentType } from '../types';
-import { loadBlueprint } from '../ensemble/loader';
-import { loadAndResolveBlueprint, resolveAgentType } from '../ensemble/agent-types';
-import { readSavedBlueprint } from '../ensemble/saver';
+import { loadLineup } from '../ensemble/loader';
+import { loadAndResolveLineup, resolveAgentType } from '../ensemble/agent-types';
+import { readSavedLineup } from '../ensemble/saver';
 import { resolveSession } from './resolve';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { defineTool } from './helpers';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:load-ensemble]', ...args);
+const log = (...args: unknown[]) => console.error('[claude-tempo:load-lineup]', ...args);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -31,7 +32,7 @@ function parseDuration(dur: string): number | null {
   }
 }
 
-export function registerLoadEnsembleTool(
+export function registerLoadLineupTool(
   server: McpServer,
   client: Client,
   config: Config,
@@ -40,26 +41,26 @@ export function registerLoadEnsembleTool(
 ) {
   defineTool(
     server,
-    'load_ensemble',
-    'Load an ensemble blueprint — recruits players and creates schedules.',
+    'load_lineup',
+    'Load an ensemble lineup — recruits players and creates schedules.',
     {
-      name: z.string().optional().describe('Name of a saved blueprint (from ~/.claude-tempo/ensembles/)'),
-      path: z.string().optional().describe('Explicit file path to a blueprint YAML file'),
+      name: z.string().optional().describe('Name of a saved lineup (from ~/.claude-tempo/ensembles/)'),
+      path: z.string().optional().describe('Explicit file path to a lineup YAML file'),
     },
     async (args) => {
-      const blueprintName = (args as any).name as string | undefined;
-      const blueprintPath = (args as any).path as string | undefined;
+      const lineupName = (args as any).name as string | undefined;
+      const lineupPath = (args as any).path as string | undefined;
 
-      if (!blueprintName && !blueprintPath) {
+      if (!lineupName && !lineupPath) {
         return {
           content: [{
             type: 'text' as const,
-            text: 'Provide either `name` (saved blueprint) or `path` (file path). Exactly one is required.',
+            text: 'Provide either `name` (saved lineup) or `path` (file path). Exactly one is required.',
           }],
           isError: true,
         };
       }
-      if (blueprintName && blueprintPath) {
+      if (lineupName && lineupPath) {
         return {
           content: [{
             type: 'text' as const,
@@ -72,37 +73,36 @@ export function registerLoadEnsembleTool(
       try {
         // Resolve the file path
         let filePath: string;
-        if (blueprintPath) {
-          filePath = blueprintPath;
+        if (lineupPath) {
+          filePath = lineupPath;
         } else {
-          // Try to find saved blueprint by name
-          const savedContent = readSavedBlueprint(blueprintName!);
+          // Try to find saved lineup by name
+          const savedContent = readSavedLineup(lineupName!);
           if (!savedContent) {
             return {
               content: [{
                 type: 'text' as const,
-                text: `No saved blueprint found with name "${blueprintName}". Check ~/.claude-tempo/ensembles/.`,
+                text: `No saved lineup found with name "${lineupName}". Check ~/.claude-tempo/ensembles/.`,
               }],
               isError: true,
             };
           }
-          // readSavedBlueprint returns content, but loadBlueprint wants a path.
+          // readSavedLineup returns content, but loadLineup wants a path.
           // Construct the path directly.
           const ensemblesDir = join(CLAUDE_TEMPO_HOME, 'ensembles');
           // Try both extensions
-          const { existsSync } = require('fs');
-          filePath = join(ensemblesDir, `${blueprintName}.yaml`);
+          filePath = join(ensemblesDir, `${lineupName}.yaml`);
           if (!existsSync(filePath)) {
-            filePath = join(ensemblesDir, `${blueprintName}.yml`);
+            filePath = join(ensemblesDir, `${lineupName}.yml`);
           }
         }
 
-        const blueprint = loadAndResolveBlueprint(filePath);
+        const lineup = loadAndResolveLineup(filePath);
         const recruited: string[] = [];
         const failed: string[] = [];
 
         // Recruit players sequentially
-        for (const player of blueprint.players) {
+        for (const player of lineup.players) {
           const playerName = player.name;
           const workDir = player.workDir || process.cwd();
           const agentType: AgentType = player.agent === 'copilot' ? 'copilot' : 'claude';
@@ -156,6 +156,9 @@ export function registerLoadEnsembleTool(
               let agentFlags: string[] = [];
               if (agentDefinition) {
                 const typeInfo = resolveAgentType(agentDefinition);
+                if (!typeInfo) {
+                  log(`Warning: agent type "${agentDefinition}" not found at spawn time — spawning without type`);
+                }
                 if (typeInfo?.nativeResolvable) {
                   agentFlags = ['--agent', agentDefinition];
                 } else if (agentDefinitionPath) {
@@ -226,8 +229,8 @@ export function registerLoadEnsembleTool(
 
         // Create schedules
         const schedulesCreated: string[] = [];
-        if (blueprint.schedules && blueprint.schedules.length > 0) {
-          for (const sched of blueprint.schedules) {
+        if (lineup.schedules && lineup.schedules.length > 0) {
+          for (const sched of lineup.schedules) {
             try {
               const now = Date.now();
               let nextFireAt: number;
@@ -286,7 +289,7 @@ export function registerLoadEnsembleTool(
         }
 
         // Build summary
-        const lines: string[] = [`Loaded blueprint **${blueprint.name}**.`];
+        const lines: string[] = [`Loaded lineup **${lineup.name}**.`];
         if (recruited.length > 0) {
           lines.push(`Recruited: ${recruited.join(', ')}`);
         }
@@ -305,7 +308,7 @@ export function registerLoadEnsembleTool(
         };
       } catch (err) {
         return {
-          content: [{ type: 'text' as const, text: `Failed to load blueprint: ${err}` }],
+          content: [{ type: 'text' as const, text: `Failed to load lineup: ${err}` }],
           isError: true,
         };
       }

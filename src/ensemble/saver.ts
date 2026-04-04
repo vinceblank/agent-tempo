@@ -3,7 +3,7 @@ import { join } from 'path';
 import { Client } from '@temporalio/client';
 import { stringify as yamlStringify } from 'yaml';
 import { CLAUDE_TEMPO_HOME, schedulerWorkflowId } from '../config';
-import { EnsembleBlueprint } from './schema';
+import { EnsembleLineup } from './schema';
 
 const ENSEMBLES_DIR = join(CLAUDE_TEMPO_HOME, 'ensembles');
 
@@ -13,20 +13,21 @@ function ensemblesDir(): string {
 }
 
 /**
- * Save the current live ensemble state to a YAML blueprint file.
+ * Save the current live ensemble state to a YAML lineup file.
  * Queries all running sessions and active schedules from Temporal.
  */
-export async function saveBlueprint(
+export async function saveLineup(
   client: Client,
   ensemble: string,
   filePath?: string,
+  name?: string,
 ): Promise<string> {
-  const outputPath = filePath || join(ensemblesDir(), `${ensemble}.yaml`);
+  const outputPath = filePath || join(ensemblesDir(), `${name || ensemble}.yaml`);
 
   // Query all running session workflows
   const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
-  const players: EnsembleBlueprint['players'] = [];
-  let conductor: EnsembleBlueprint['conductor'] | undefined;
+  const players: EnsembleLineup['players'] = [];
+  let conductor: EnsembleLineup['conductor'] | undefined;
 
   for await (const wf of client.workflow.list({ query })) {
     try {
@@ -62,13 +63,13 @@ export async function saveBlueprint(
   }
 
   // Query active schedules
-  const schedules: EnsembleBlueprint['schedules'] = [];
+  const schedules: EnsembleLineup['schedules'] = [];
   try {
     const schedulerWfId = schedulerWorkflowId(ensemble);
     const handle = client.workflow.getHandle(schedulerWfId);
     const entries = await handle.query('getSchedules') as any[];
     for (const entry of entries) {
-      const sched: EnsembleBlueprint['schedules'] extends (infer T)[] | undefined ? T : never = {
+      const sched: EnsembleLineup['schedules'] extends (infer T)[] | undefined ? T : never = {
         name: entry.name,
         message: entry.message,
         target: entry.target,
@@ -88,7 +89,7 @@ export async function saveBlueprint(
     // No scheduler running or no schedules
   }
 
-  const blueprint: EnsembleBlueprint = {
+  const lineup: EnsembleLineup = {
     name: ensemble,
     conductor,
     players,
@@ -99,14 +100,14 @@ export async function saveBlueprint(
   const parentDir = outputPath.substring(0, outputPath.lastIndexOf('/') >= 0 ? outputPath.lastIndexOf('/') : outputPath.lastIndexOf('\\'));
   if (parentDir) mkdirSync(parentDir, { recursive: true });
 
-  writeFileSync(outputPath, yamlStringify(blueprint));
+  writeFileSync(outputPath, yamlStringify(lineup));
   return outputPath;
 }
 
 /**
- * List all saved ensemble blueprints in ~/.claude-tempo/ensembles/.
+ * List all saved ensemble lineups in ~/.claude-tempo/ensembles/.
  */
-export function listBlueprints(): Array<{ name: string; path: string }> {
+export function listLineups(): Array<{ name: string; path: string }> {
   const dir = ensemblesDir();
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
@@ -118,9 +119,9 @@ export function listBlueprints(): Array<{ name: string; path: string }> {
 }
 
 /**
- * Read a saved blueprint by name from ~/.claude-tempo/ensembles/.
+ * Read a saved lineup by name from ~/.claude-tempo/ensembles/.
  */
-export function readSavedBlueprint(name: string): string | null {
+export function readSavedLineup(name: string): string | null {
   const dir = ensemblesDir();
   for (const ext of ['.yaml', '.yml']) {
     const path = join(dir, name + ext);

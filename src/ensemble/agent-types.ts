@@ -3,8 +3,8 @@ import { join, resolve } from 'path';
 import { homedir } from 'os';
 import { parse as parseYaml } from 'yaml';
 import { AgentTypeInfo } from '../types';
-import { EnsembleBlueprint } from './schema';
-import { loadBlueprint } from './loader';
+import { EnsembleLineup } from './schema';
+import { loadLineup } from './loader';
 
 /**
  * Parse YAML frontmatter from a markdown file.
@@ -110,14 +110,14 @@ export function resolveAgentType(name: string, cwd?: string): AgentTypeInfo | nu
 }
 
 /**
- * Load and resolve a blueprint, validating and resolving `type` fields on each player.
+ * Load and resolve a lineup, validating and resolving `type` fields on each player.
  * Players without `type` pass through unchanged.
  * Throws if a referenced type is not found.
  */
-export function loadAndResolveBlueprint(filePath: string, cwd?: string): EnsembleBlueprint {
-  const blueprint = loadBlueprint(filePath);
+export function loadAndResolveLineup(filePath: string, cwd?: string): EnsembleLineup {
+  const lineup = loadLineup(filePath);
 
-  for (const player of blueprint.players) {
+  for (const player of lineup.players) {
     if (!player.type) continue;
 
     const info = resolveAgentType(player.type, cwd);
@@ -133,5 +133,5 @@ export function loadAndResolveBlueprint(filePath: string, cwd?: string): Ensembl
     player._agentDefinitionPath = info.path;
   }
 
-  return blueprint;
+  return lineup;
 }

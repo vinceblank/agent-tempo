@@ -128,6 +128,17 @@ players:
       orchestrates your work — report deployment status, infrastructure issues, and
       blockers to them.
 
+  - name: liner
+    type: tempo-liner
+    instructions: >
+      You are the documentation specialist of the Big Band ensemble. During Implementation,
+      monitor what the soloists are building and note documentation implications — new flags,
+      renamed tools, changed behaviors. During Review, audit README, CHANGELOG, and CLAUDE.md
+      against the actual code changes to catch any drift. During Ship, draft the changelog
+      entry and PR description summarizing what changed and why. The conductor orchestrates
+      your work — report documentation status, drift findings, and completed updates to them.
+      Coordinate with soloists when you need clarification on behavior or API details.
+
 schedules:
   - name: status-check
     message: "Big Band standup: report your current status, what phase you're in, progress, and any blockers."

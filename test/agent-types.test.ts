@@ -2,7 +2,7 @@ import { expect } from 'chai';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { parseFrontmatter, listAgentTypes, resolveAgentType, loadAndResolveBlueprint } from '../src/ensemble/agent-types';
+import { parseFrontmatter, listAgentTypes, resolveAgentType, loadAndResolveLineup } from '../src/ensemble/agent-types';
 
 // Create a temp directory for each test run
 const TEST_DIR = join(tmpdir(), `claude-tempo-agent-types-test-${Date.now()}`);
@@ -14,7 +14,7 @@ function createAgentFile(dir: string, filename: string, content: string) {
   writeFileSync(join(dir, filename), content);
 }
 
-function createBlueprintFile(dir: string, filename: string, content: string) {
+function createLineupFile(dir: string, filename: string, content: string) {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, filename), content);
 }
@@ -125,56 +125,56 @@ describe('agent-types', function () {
     });
   });
 
-  describe('loadAndResolveBlueprint', function () {
-    it('resolves player types in a blueprint', function () {
-      const blueprintDir = join(TEST_DIR, 'blueprints');
-      createBlueprintFile(blueprintDir, 'test.yaml', [
-        'name: test-blueprint',
+  describe('loadAndResolveLineup', function () {
+    it('resolves player types in a lineup', function () {
+      const lineupDir = join(TEST_DIR, 'lineups');
+      createLineupFile(lineupDir, 'test.yaml', [
+        'name: test-lineup',
         'players:',
         '  - name: arch',
         '    type: tempo-composer',
         '  - name: plain-player',
       ].join('\n'));
 
-      const blueprint = loadAndResolveBlueprint(join(blueprintDir, 'test.yaml'));
+      const lineup = loadAndResolveLineup(join(lineupDir, 'test.yaml'));
 
-      const arch = blueprint.players.find(p => p.name === 'arch');
+      const arch = lineup.players.find(p => p.name === 'arch');
       expect(arch).to.not.be.undefined;
       expect(arch!._agentDefinition).to.equal('tempo-composer');
       expect(arch!._agentDefinitionPath).to.be.a('string');
 
-      const plain = blueprint.players.find(p => p.name === 'plain-player');
+      const plain = lineup.players.find(p => p.name === 'plain-player');
       expect(plain).to.not.be.undefined;
       expect(plain!._agentDefinition).to.be.undefined;
     });
 
     it('throws for unknown player type with helpful message', function () {
-      const blueprintDir = join(TEST_DIR, 'blueprints');
-      createBlueprintFile(blueprintDir, 'bad.yaml', [
-        'name: bad-blueprint',
+      const lineupDir = join(TEST_DIR, 'lineups');
+      createLineupFile(lineupDir, 'bad.yaml', [
+        'name: bad-lineup',
         'players:',
         '  - name: mystery',
         '    type: nonexistent-agent',
       ].join('\n'));
 
-      expect(() => loadAndResolveBlueprint(join(blueprintDir, 'bad.yaml'))).to.throw(
+      expect(() => loadAndResolveLineup(join(lineupDir, 'bad.yaml'))).to.throw(
         /Unknown agent type "nonexistent-agent"/,
       );
     });
 
-    it('works with blueprint that has no type fields (backward compat)', function () {
-      const blueprintDir = join(TEST_DIR, 'blueprints');
-      createBlueprintFile(blueprintDir, 'plain.yaml', [
-        'name: plain-blueprint',
+    it('works with lineup that has no type fields (backward compat)', function () {
+      const lineupDir = join(TEST_DIR, 'lineups');
+      createLineupFile(lineupDir, 'plain.yaml', [
+        'name: plain-lineup',
         'players:',
         '  - name: alice',
         '  - name: bob',
       ].join('\n'));
 
-      const blueprint = loadAndResolveBlueprint(join(blueprintDir, 'plain.yaml'));
-      expect(blueprint.players).to.have.length(2);
-      expect(blueprint.players[0]._agentDefinition).to.be.undefined;
-      expect(blueprint.players[1]._agentDefinition).to.be.undefined;
+      const lineup = loadAndResolveLineup(join(lineupDir, 'plain.yaml'));
+      expect(lineup.players).to.have.length(2);
+      expect(lineup.players[0]._agentDefinition).to.be.undefined;
+      expect(lineup.players[1]._agentDefinition).to.be.undefined;
     });
   });
 });

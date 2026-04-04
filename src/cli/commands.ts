@@ -11,8 +11,8 @@ import { addScheduleSignal } from '../workflows/scheduler-signals';
 import { AgentType, ScheduleEntry } from '../types';
 import { runPreflight } from './preflight';
 import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
-import { loadBlueprint } from '../ensemble/loader';
-import { saveBlueprint, listBlueprints, readSavedBlueprint } from '../ensemble/saver';
+import { loadLineup } from '../ensemble/loader';
+import { saveLineup, listLineups, readSavedLineup } from '../ensemble/saver';
 import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
 import * as out from './output';
 
@@ -533,7 +533,7 @@ export async function server(opts: ServerOpts) {
 interface UpOpts extends CliOverrides {
   ensemble: string;
   name?: string;
-  blueprint?: string;
+  lineup?: string;
   agent: AgentType;
 }
 
@@ -620,35 +620,35 @@ export async function up(opts: UpOpts) {
   if (config.temporalTlsCertPath) temporalEnvVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
   if (config.temporalTlsKeyPath) temporalEnvVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
 
-  // Load blueprint if --blueprint is provided (also accepts --from for backward compat)
-  let blueprint;
-  const blueprintArg = opts.blueprint;
-  if (blueprintArg) {
+  // Load lineup if --lineup is provided
+  let lineup;
+  const lineupArg = opts.lineup;
+  if (lineupArg) {
     // Resolve by name or file path
-    let blueprintPath: string;
-    if (existsSync(resolve(blueprintArg))) {
+    let lineupPath: string;
+    if (existsSync(resolve(lineupArg))) {
       // Direct file path
-      blueprintPath = resolve(blueprintArg);
+      lineupPath = resolve(lineupArg);
     } else {
-      // Try saved blueprints (~/.claude-tempo/ensembles/)
+      // Try saved lineups (~/.claude-tempo/ensembles/)
       const ensemblesDir = join(CLAUDE_TEMPO_HOME, 'ensembles');
-      const savedYaml = join(ensemblesDir, `${blueprintArg}.yaml`);
-      const savedYml = join(ensemblesDir, `${blueprintArg}.yml`);
+      const savedYaml = join(ensemblesDir, `${lineupArg}.yaml`);
+      const savedYml = join(ensemblesDir, `${lineupArg}.yml`);
       if (existsSync(savedYaml)) {
-        blueprintPath = savedYaml;
+        lineupPath = savedYaml;
       } else if (existsSync(savedYml)) {
-        blueprintPath = savedYml;
+        lineupPath = savedYml;
       } else {
         // Try shipped examples
-        const shippedPath = join(PACKAGE_ROOT, 'examples', 'ensembles', `${blueprintArg}.yaml`);
-        const shippedYml = join(PACKAGE_ROOT, 'examples', 'ensembles', `${blueprintArg}.yml`);
+        const shippedPath = join(PACKAGE_ROOT, 'examples', 'ensembles', `${lineupArg}.yaml`);
+        const shippedYml = join(PACKAGE_ROOT, 'examples', 'ensembles', `${lineupArg}.yml`);
         if (existsSync(shippedPath)) {
-          blueprintPath = shippedPath;
+          lineupPath = shippedPath;
         } else if (existsSync(shippedYml)) {
-          blueprintPath = shippedYml;
+          lineupPath = shippedYml;
         } else {
-          out.error(`Blueprint "${blueprintArg}" not found as file, saved blueprint, or shipped example`);
-          const saved = listBlueprints();
+          out.error(`Lineup "${lineupArg}" not found as file, saved lineup, or shipped example`);
+          const saved = listLineups();
           if (saved.length) out.log(`  Saved: ${saved.map(b => b.name).join(', ')}`);
           const shipped = readdirSync(join(PACKAGE_ROOT, 'examples', 'ensembles')).filter(f => f.endsWith('.yaml') || f.endsWith('.yml')).map(f => f.replace(/\.ya?ml$/, ''));
           if (shipped.length) out.log(`  Shipped: ${shipped.join(', ')}`);
@@ -656,14 +656,14 @@ export async function up(opts: UpOpts) {
         }
       }
     }
-    blueprint = loadBlueprint(blueprintPath);
+    lineup = loadLineup(lineupPath);
   }
-  if (blueprint) {
-    out.check('Blueprint loaded', true, blueprint.name);
+  if (lineup) {
+    out.check('Lineup loaded', true, lineup.name);
   }
 
-  // Resolve conductor agent from blueprint or CLI flags
-  const conductorAgent: AgentType = blueprint?.conductor?.agent === 'copilot' ? 'copilot' : opts.agent;
+  // Resolve conductor agent from lineup or CLI flags
+  const conductorAgent: AgentType = lineup?.conductor?.agent === 'copilot' ? 'copilot' : opts.agent;
 
   // Step 5: Launch conductor
   console.log();
@@ -686,12 +686,12 @@ export async function up(opts: UpOpts) {
     // Default conductor name so the Claude Code session name matches the ensemble role
     const sessionName = opts.name || 'conductor';
 
-    // Resolve conductor agent type from blueprint
-    const conductorType = blueprint?.conductor?.agent && blueprint.conductor.agent !== 'default' && blueprint.conductor.agent !== 'copilot'
-      ? blueprint.conductor.agent  // custom agent path
+    // Resolve conductor agent type from lineup
+    const conductorType = lineup?.conductor?.agent && lineup.conductor.agent !== 'default' && lineup.conductor.agent !== 'copilot'
+      ? lineup.conductor.agent  // custom agent path
       : undefined;
-    // Also check if the blueprint has a type field (from our schema extension — not standard yet)
-    const conductorTypeName = (blueprint?.conductor as any)?.type as string | undefined;
+    // Also check if the lineup has a type field
+    const conductorTypeName = lineup?.conductor?.type;
     const resolvedConductorType = conductorTypeName ? resolveAgentType(conductorTypeName) : null;
 
     const claudeArgs = [
@@ -719,8 +719,8 @@ export async function up(opts: UpOpts) {
 
   out.success(`Conductor launched (pid ${pid ?? 'unknown'})`);
 
-  // Step 6: If blueprint provided, recruit players and create schedules
-  if (blueprint) {
+  // Step 6: If lineup provided, recruit players and create schedules
+  if (lineup) {
     // Connect to Temporal to send signals
     const connection = await createTemporalConnection(config);
     const client = new Client({ connection, namespace: config.temporalNamespace });
@@ -739,17 +739,17 @@ export async function up(opts: UpOpts) {
     }
 
     if (!conductorReady) {
-      out.warn('Conductor did not register within 15s — skipping blueprint players/schedules');
+      out.warn('Conductor did not register within 15s — skipping lineup players/schedules');
     } else {
       out.check('Conductor registered', true);
 
       // Send conductor instructions if provided
-      if (blueprint.conductor?.instructions) {
+      if (lineup.conductor?.instructions) {
         try {
           const handle = client.workflow.getHandle(conductorWfId);
           await handle.signal('receiveMessage', {
-            from: 'blueprint',
-            text: blueprint.conductor.instructions,
+            from: 'lineup',
+            text: lineup.conductor.instructions,
           });
           out.check('Conductor instructions sent', true);
         } catch (err) {
@@ -758,11 +758,11 @@ export async function up(opts: UpOpts) {
       }
 
       // Recruit players sequentially (each polls for ~15s)
-      if (blueprint.players.length > 0) {
+      if (lineup.players.length > 0) {
         console.log();
-        out.log(`Recruiting ${blueprint.players.length} player${blueprint.players.length !== 1 ? 's' : ''} from blueprint...`);
+        out.log(`Recruiting ${lineup.players.length} player${lineup.players.length !== 1 ? 's' : ''} from lineup...`);
 
-        for (const player of blueprint.players) {
+        for (const player of lineup.players) {
           const playerAgent: AgentType = player.agent === 'copilot' ? 'copilot' : 'claude';
           const playerWorkDir = player.workDir || process.cwd();
 
@@ -787,7 +787,7 @@ export async function up(opts: UpOpts) {
               workDir: playerWorkDir,
             });
           } else {
-            // Resolve player type from blueprint
+            // Resolve player type from lineup
             const playerTypeName = player.type;
             const resolvedPlayerType = playerTypeName ? resolveAgentType(playerTypeName) : null;
 
@@ -827,7 +827,7 @@ export async function up(opts: UpOpts) {
             try {
               const handle = client.workflow.getHandle(newWorkflowId);
               await handle.signal('receiveMessage', {
-                from: 'blueprint',
+                from: 'lineup',
                 text: player.instructions,
               });
             } catch { /* best effort */ }
@@ -839,13 +839,13 @@ export async function up(opts: UpOpts) {
       }
 
       // Create schedules
-      if (blueprint.schedules && blueprint.schedules.length > 0) {
+      if (lineup.schedules && lineup.schedules.length > 0) {
         console.log();
-        out.log(`Creating ${blueprint.schedules.length} schedule${blueprint.schedules.length !== 1 ? 's' : ''}...`);
+        out.log(`Creating ${lineup.schedules.length} schedule${lineup.schedules.length !== 1 ? 's' : ''}...`);
 
-        for (const sched of blueprint.schedules) {
+        for (const sched of lineup.schedules) {
           try {
-            const entry = blueprintScheduleToEntry(sched);
+            const entry = lineupScheduleToEntry(sched);
             const schedulerWfId = schedulerWorkflowId(opts.ensemble);
             const handle = client.workflow.getHandle(schedulerWfId);
             await handle.signal(addScheduleSignal, entry);
@@ -863,22 +863,22 @@ export async function up(opts: UpOpts) {
   console.log();
   out.success('You\'re all set!');
   out.log(`  Ensemble: ${out.cyan(opts.ensemble)}`);
-  if (!blueprint) {
+  if (!lineup) {
     out.log(`\n  ${out.bold('What next?')}`);
     out.log(`  ${out.dim('claude-tempo start ' + opts.ensemble)}    Add a player session`);
     out.log(`  ${out.dim('claude-tempo status ' + opts.ensemble)}   See who\'s active`);
     out.log(`  Or ask the conductor to ${out.dim('recruit')} players for you`);
   } else {
-    out.log(`  Blueprint: ${out.dim(blueprint.name)}`);
-    out.log(`  Players: ${blueprint.players.length}`);
-    if (blueprint.schedules?.length) out.log(`  Schedules: ${blueprint.schedules.length}`);
+    out.log(`  Lineup: ${out.dim(lineup.name)}`);
+    out.log(`  Players: ${lineup.players.length}`);
+    if (lineup.schedules?.length) out.log(`  Schedules: ${lineup.schedules.length}`);
     out.log(`\n  ${out.dim('claude-tempo status ' + opts.ensemble)}   See who\'s active`);
   }
   console.log();
 }
 
-/** Convert a blueprint schedule definition to a ScheduleEntry for the scheduler workflow. */
-function blueprintScheduleToEntry(sched: NonNullable<import('../ensemble/schema').EnsembleBlueprint['schedules']>[number]): ScheduleEntry {
+/** Convert a lineup schedule definition to a ScheduleEntry for the scheduler workflow. */
+function lineupScheduleToEntry(sched: NonNullable<import('../ensemble/schema').EnsembleLineup['schedules']>[number]): ScheduleEntry {
   const now = Date.now();
   let nextFireAt: string;
   let interval: number | undefined;
@@ -900,7 +900,7 @@ function blueprintScheduleToEntry(sched: NonNullable<import('../ensemble/schema'
     name: sched.name,
     message: sched.message,
     target: sched.target,
-    createdBy: 'blueprint',
+    createdBy: 'lineup',
     nextFireAt,
     interval,
     until: sched.until,
@@ -1294,7 +1294,7 @@ export async function agentTypesCommand(opts: AgentTypesCommandOpts) {
   }
 }
 
-// --- Ensemble blueprint commands ---
+// --- Ensemble lineup commands ---
 
 interface EnsembleCommandOpts extends CliOverrides {
   subcommand?: string;
@@ -1309,7 +1309,7 @@ export async function ensembleCommand(opts: EnsembleCommandOpts) {
       const client = new Client({ connection, namespace: config.temporalNamespace });
       const ensemble = opts.name || config.ensemble;
       try {
-        const path = await saveBlueprint(client, ensemble);
+        const path = await saveLineup(client, ensemble);
         out.success(`Saved ensemble "${ensemble}" to ${path}`);
       } finally {
         await connection.close();
@@ -1317,13 +1317,13 @@ export async function ensembleCommand(opts: EnsembleCommandOpts) {
       break;
     }
     case 'list': {
-      const blueprints = listBlueprints();
-      if (blueprints.length === 0) {
+      const lineups = listLineups();
+      if (lineups.length === 0) {
         out.log('No saved ensembles. Use `claude-tempo ensemble save [name]` to save one.');
         return;
       }
       out.heading('Saved ensembles');
-      for (const bp of blueprints) {
+      for (const bp of lineups) {
         out.log(`  ${out.bold(bp.name)}  ${out.dim(bp.path)}`);
       }
       console.log();
@@ -1334,7 +1334,7 @@ export async function ensembleCommand(opts: EnsembleCommandOpts) {
         out.error('Usage: claude-tempo ensemble show <name>');
         process.exit(1);
       }
-      const content = readSavedBlueprint(opts.name);
+      const content = readSavedLineup(opts.name);
       if (!content) {
         out.error(`No saved ensemble named "${opts.name}"`);
         out.log(`  Run ${out.dim('claude-tempo ensemble list')} to see available ensembles.`);
@@ -1347,7 +1347,7 @@ export async function ensembleCommand(opts: EnsembleCommandOpts) {
       out.error('Usage: claude-tempo ensemble <save|list|show> [name]');
       out.log(`\n  ${out.dim('claude-tempo ensemble save [name]')}   Save current ensemble state`);
       out.log(`  ${out.dim('claude-tempo ensemble list')}          List saved ensembles`);
-      out.log(`  ${out.dim('claude-tempo ensemble show <name>')}   Display a saved blueprint`);
+      out.log(`  ${out.dim('claude-tempo ensemble show <name>')}   Display a saved lineup`);
       process.exit(1);
   }
 }
@@ -1370,7 +1370,7 @@ ${out.bold('Commands:')}
   ${out.cyan('start')}   [ensemble]    Start a player session
   ${out.cyan('stop')}    [ensemble]    Stop sessions (-n <name> for one, or --all)
   ${out.cyan('status')}  [ensemble]    Show active sessions and Temporal health
-  ${out.cyan('ensemble')} <sub>       Manage saved ensemble blueprints (save/list/show)
+  ${out.cyan('ensemble')} <sub>       Manage saved ensemble lineups (save/list/show)
   ${out.cyan('agent-types')} <sub>    Manage player type definitions (list/show/init)
   ${out.cyan('config')}                Configure Temporal connection settings
   ${out.cyan('init')}                  Register MCP server globally (or --project for .mcp.json)
@@ -1392,7 +1392,7 @@ ${out.bold('Other options:')}
   --project                   Use per-project .mcp.json instead of global (init only)
   --keep-mcp                  Don't remove MCP config (down only)
   --all                       Stop all sessions (stop only)
-  --blueprint <name|file>      Load ensemble blueprint by name or file path (up only)
+  --lineup <name|file>         Load ensemble lineup by name or file path (up only)
   --ensemble <name>           Target a specific ensemble (stop only)
   -d, --dir <path>            Target directory (default: cwd)
 
