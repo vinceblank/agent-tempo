@@ -1,6 +1,13 @@
-# claude-tempo
-
-Multi-session [Claude Code](https://claude.ai/code) coordination via [Temporal](https://temporal.io).
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.svg">
+    <img alt="claude-tempo" src="assets/logo-light.svg" height="140">
+  </picture>
+</p>
+<p align="center">
+  Multi-session <a href="https://claude.ai/code">Claude Code</a> coordination via <a href="https://temporal.io">Temporal</a>.
+</p>
 
 Multiple Claude Code sessions discover each other, exchange messages in real time, and coordinate work — across machines, not just localhost.
 
@@ -210,7 +217,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo:
 | `listen` | Manually check for pending messages. |
 | `recruit` | Spawn a new Claude Code session in a directory. Can recruit a conductor with `conductor: true`. |
 | `report` | Send updates to the conductor. No-op if no conductor exists. |
-| `terminate` | Terminate a player session by name. |
+| `stop` | Stop a player session by name. |
 | `schedule` | Create a one-shot or recurring schedule to cue a player. |
 | `unschedule` | Cancel a named schedule. |
 | `schedules` | List all active schedules. |
@@ -411,7 +418,7 @@ Each session has a status that tracks its connection state:
 Status transitions:
 - **`pending` → `active`** — when the spawned session connects and sends its `updateMetadata` signal
 - **`active` → `stale`** — when undelivered messages exceed the stale threshold (3 minutes)
-- Any status → **terminated** — on graceful shutdown or `terminate`
+- Any status → **terminated** — on graceful shutdown or `stop`
 
 `claude-tempo status` shows `(pending)` and `(stale)` indicators next to player names. The `ClaudeTempoStatus` search attribute is also set, so you can filter sessions by status in the Temporal UI (e.g., `ClaudeTempoStatus = "stale"`).
 

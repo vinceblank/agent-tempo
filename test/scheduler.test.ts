@@ -9,7 +9,7 @@ import {
   getClient,
   startSession,
   playerMetadata,
-  shutdownSignal,
+  updateMetadataSignal,
   allMessagesQuery,
   withWorkerAndActivities,
 } from './helpers';
@@ -219,7 +219,7 @@ describe('claudeSchedulerWorkflow', function () {
         expect(schedules).to.have.lengthOf(0);
 
         // Cleanup
-        await targetHandle.signal(shutdownSignal);
+        await targetHandle.signal(updateMetadataSignal, { status: 'terminated' });
         await targetHandle.result();
         // Scheduler should self-terminate since empty
         await schedulerHandle.cancel();
@@ -263,7 +263,7 @@ describe('claudeSchedulerWorkflow', function () {
         expect(remaining).to.have.lengthOf(0);
 
         // Cleanup
-        await targetHandle.signal(shutdownSignal);
+        await targetHandle.signal(updateMetadataSignal, { status: 'terminated' });
         await targetHandle.result();
         await schedulerHandle.cancel();
         try { await schedulerHandle.result(); } catch { /* cancelled */ }
@@ -299,7 +299,7 @@ describe('claudeSchedulerWorkflow', function () {
         expect(scheduled[0].text).to.include('[scheduled: meta-test]');
         expect(scheduled[0].from).to.equal('meta-creator');
 
-        await targetHandle.signal(shutdownSignal);
+        await targetHandle.signal(updateMetadataSignal, { status: 'terminated' });
         await targetHandle.result();
         await schedulerHandle.cancel();
         try { await schedulerHandle.result(); } catch { /* cancelled */ }

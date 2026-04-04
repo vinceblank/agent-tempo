@@ -6,7 +6,7 @@ import { Client, Connection } from '@temporalio/client';
 import { spawnInTerminal, spawnCopilotBridge, resolveClaudePath } from '../spawn';
 import { conductorWorkflowId, schedulerWorkflowId, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
 import { createTemporalConnection } from '../connection';
-import { shutdownSignal, playerReportSignal } from '../workflows/signals';
+import { playerReportSignal, updateMetadataSignal } from '../workflows/signals';
 import { addScheduleSignal } from '../workflows/scheduler-signals';
 import { AgentType, ScheduleEntry } from '../types';
 import { runPreflight } from './preflight';
@@ -66,7 +66,7 @@ export async function start(opts: StartOpts) {
         if (opts.replace) {
           out.log(`Stopping existing conductor for ensemble "${opts.ensemble}"...`);
           try {
-            await handle.signal(shutdownSignal);
+            await handle.signal(updateMetadataSignal, { status: 'terminated' });
             // Wait briefly for graceful shutdown
             for (let i = 0; i < 10; i++) {
               await new Promise(r => setTimeout(r, 500));
@@ -993,7 +993,7 @@ export async function stop(opts: StopOpts) {
           }
         }
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         stopped++;
         out.log(`  ${out.dim('stopped')} ${wf.workflowId}`);
       } catch {
@@ -1057,9 +1057,9 @@ async function stopByName(client: Client, name: string, config: Config, ensemble
       }
     }
 
-    // Send shutdown signal (graceful)
+    // Send termination status update (graceful)
     try {
-      await handle.signal(shutdownSignal);
+      await handle.signal(updateMetadataSignal, { status: 'terminated' });
       out.success(`Stopped "${name}"`);
     } catch {
       out.warn(`Could not signal "${name}" — it may have already exited`);

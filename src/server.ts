@@ -16,7 +16,7 @@ import { registerSetPartTool } from './tools/set-part';
 import { registerListenTool } from './tools/listen';
 import { registerRecruitTool } from './tools/recruit';
 import { registerReportTool } from './tools/report';
-import { registerTerminateTool } from './tools/terminate';
+import { registerStopTool } from './tools/stop';
 import { registerSetNameTool } from './tools/set-name';
 import { registerScheduleTool } from './tools/schedule';
 import { registerUnscheduleTool } from './tools/unschedule';
@@ -93,7 +93,7 @@ async function main() {
     taskQueue: config.taskQueue,
     args: [sessionInput],
     workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
-    // No execution timeout — workflows live until shutdown signal or stale detection.
+    // No execution timeout — workflows live until terminated status or stale detection.
     searchAttributes: {
       ...(gitRoot ? { ClaudeTempoGitRoot: [gitRoot] } : {}),
       ClaudeTempoHostname: [os.hostname()],
@@ -104,7 +104,7 @@ async function main() {
   log(`Workflow ${workflowId} started (or reconnected)`);
 
   // Watch for workflow completion — exit the process when the workflow ends
-  // (e.g., via terminate tool sending shutdownSignal)
+  // (e.g., via terminate tool setting status to 'terminated')
   handle.result().then(() => {
     log('Workflow completed — exiting');
     process.exit(0);
@@ -120,6 +120,7 @@ async function main() {
     gitRoot,
     gitBranch,
     status: 'active',
+    enableStaleDetection: true,
   });
 
   // If there's a conductor running, announce ourselves
@@ -166,7 +167,7 @@ async function main() {
   registerListenTool(mcpServer, handle);
   registerRecruitTool(mcpServer, client, config, getPlayerId, isBridgeMode ? 'copilot' : 'claude');
   registerReportTool(mcpServer, client, config, getPlayerId);
-  registerTerminateTool(mcpServer, client, config, getPlayerId);
+  registerStopTool(mcpServer, client, config, getPlayerId);
   registerScheduleTool(mcpServer, client, config, getPlayerId);
   registerUnscheduleTool(mcpServer, client, config);
   registerSchedulesTool(mcpServer, client, config);
@@ -212,13 +213,9 @@ async function main() {
     log('Shutting down...');
     stopPoller();
     try {
-      await handle.signal('shutdown');
+      await handle.signal('updateMetadata', { status: 'terminated', terminatedBy: 'system' });
     } catch {
-      try {
-        await handle.cancel();
-      } catch {
-        // workflow may already be gone
-      }
+      // workflow may already be gone
     }
     worker.shutdown();
     await workerRunPromise.catch(() => {});

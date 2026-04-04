@@ -30,7 +30,7 @@ src/
 │   ├── listen.ts      # Manual message check
 │   ├── recruit.ts     # Spawn new session
 │   ├── report.ts      # Report to conductor
-│   ├── terminate.ts   # Terminate a session
+│   ├── stop.ts        # Stop a session
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
 ├── types.ts           # Shared type definitions
 ├── channel.ts         # Claude channel notification helper

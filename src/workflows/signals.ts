@@ -23,10 +23,9 @@ export type {
 export const receiveMessageSignal = defineSignal<[{ from: string; text: string; isMaestro?: boolean }]>('receiveMessage');
 export const recordSentMessageSignal = defineSignal<[{ to: string; text: string }]>('recordSentMessage');
 export const setPartSignal = defineSignal<[string]>('setPart');
-export const shutdownSignal = defineSignal('shutdown');
 export const markDeliveredSignal = defineSignal<[string[]]>('markDelivered');
 export const setNameSignal = defineSignal<[string]>('setName');
-export const updateMetadataSignal = defineSignal<[{ hostname?: string; gitBranch?: string; gitRoot?: string; status?: string }]>('updateMetadata');
+export const updateMetadataSignal = defineSignal<[{ hostname?: string; gitBranch?: string; gitRoot?: string; status?: string; terminatedBy?: string; enableStaleDetection?: boolean }]>('updateMetadata');
 
 // ── Player Queries ──
 

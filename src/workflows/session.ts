@@ -20,7 +20,6 @@ import {
   receiveMessageSignal,
   setPartSignal,
   setNameSignal,
-  shutdownSignal,
   markDeliveredSignal,
   updateMetadataSignal,
   getPartQuery,
@@ -54,7 +53,6 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   let part = input.part ?? input.autoSummary ?? 'No description set';
   const messages: Message[] = input.messages ?? [];
   const sentMessages: SentMessage[] = input.sentMessages ?? [];
-  let shuttingDown = false;
   let lastActivityTime = Date.now();
 
   // ── Player Signal Handlers ──
@@ -82,10 +80,6 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     lastActivityTime = Date.now();
   });
 
-  setHandler(shutdownSignal, () => {
-    shuttingDown = true;
-  });
-
   setHandler(markDeliveredSignal, (ids) => {
     for (const msg of messages) {
       if (ids.includes(msg.id)) {
@@ -102,10 +96,18 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     if (update.gitRoot != null) input.metadata.gitRoot = update.gitRoot;
     if (update.status != null) {
       input.metadata.status = update.status as SessionStatus;
-      // Re-enable stale detection when session connects (transitions to active)
-      if (update.status === 'active') input.disableStaleDetection = false;
-      // Graceful termination: add termination message and trigger shutdown
-      if (update.status === 'terminated') shuttingDown = true;
+      // Re-enable stale detection only when explicitly requested (server.ts sets this)
+      if (update.enableStaleDetection) input.disableStaleDetection = false;
+      // Graceful termination: add termination message so the session sees it
+      if (update.status === 'terminated') {
+        messages.push({
+          id: uuid4(),
+          from: update.terminatedBy || 'system',
+          text: 'Your session is being terminated by ' + (update.terminatedBy || 'system') + '.',
+          timestamp: new Date().toISOString(),
+          delivered: false,
+        });
+      }
     }
     upsertSearchAttributes({
       ClaudeTempoEnsemble: [input.metadata.ensemble],
@@ -192,10 +194,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
 
   // ── Main Loop ──
 
-  while (!shuttingDown) {
-    await condition(() => shuttingDown, '5 minutes');
-
-    if (shuttingDown) break;
+  while (input.metadata.status !== 'terminated') {
+    await condition(() => input.metadata.status === 'terminated', '5 minutes');
 
     // Detect stale session: messages pending longer than threshold means poller is dead.
     // Instead of terminating, mark the session as stale so the workflow stays alive
@@ -242,9 +242,10 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // Graceful shutdown — wait for in-flight handlers
   await condition(allHandlersFinished);
 
-  // If terminated, wait up to 1 minute for the termination message to be delivered
-  if (input.metadata.status === 'terminated') {
+  // If terminated, wait for the termination message to be delivered.
+  // Skip in test mode (disableStaleDetection) since there's no message poller.
+  if (input.metadata.status === 'terminated' && !input.disableStaleDetection) {
     const allDelivered = () => messages.every((m) => m.delivered);
-    await condition(allDelivered, '1 minute');
+    await condition(allDelivered, '2 minutes');
   }
 }

@@ -81,7 +81,7 @@ export function registerRecruitTool(
               return {
                 content: [{
                   type: 'text' as const,
-                  text: `A conductor is already running in ensemble "${config.ensemble}". Use \`claude-tempo conduct --replace\` from the CLI to replace it, or \`terminate\` it first.`,
+                  text: `A conductor is already running in ensemble "${config.ensemble}". Use \`claude-tempo conduct --replace\` from the CLI to replace it, or \`stop\` it first.`,
                 }],
                 isError: true,
               };
@@ -97,7 +97,7 @@ export function registerRecruitTool(
           return {
             content: [{
               type: 'text' as const,
-              text: `Session **${name}** is already active. Use \`cue\` to send it a message, or \`terminate\` it first.`,
+              text: `Session **${name}** is already active. Use \`cue\` to send it a message, or \`stop\` it first.`,
             }],
             isError: true,
           };

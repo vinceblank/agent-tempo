@@ -15,7 +15,7 @@ import {
   conductorWorkflowId,
   setNameSignal,
   setPartSignal,
-  shutdownSignal,
+  updateMetadataSignal,
   markDeliveredSignal,
   getMetadataQuery,
   getPartQuery,
@@ -53,8 +53,8 @@ describe('multi-session integration', function () {
         const ids = members.map((m) => m.playerId).sort();
         expect(ids).to.deep.equal(['p1', 'p2']);
 
-        await h1.signal(shutdownSignal);
-        await h2.signal(shutdownSignal);
+        await h1.signal(updateMetadataSignal, { status: 'terminated' });
+        await h2.signal(updateMetadataSignal, { status: 'terminated' });
         await Promise.all([h1.result(), h2.result()]);
       });
     });
@@ -72,8 +72,8 @@ describe('multi-session integration', function () {
         expect(members).to.have.lengthOf(1);
         expect(members[0].playerId).to.equal('in-scope');
 
-        await h1.signal(shutdownSignal);
-        await h2.signal(shutdownSignal);
+        await h1.signal(updateMetadataSignal, { status: 'terminated' });
+        await h2.signal(updateMetadataSignal, { status: 'terminated' });
         await Promise.all([h1.result(), h2.result()]);
       });
     });
@@ -95,8 +95,8 @@ describe('multi-session integration', function () {
         expect(conductor).to.exist;
         expect(conductor!.playerId).to.equal('conductor');
 
-        await hCond.signal(shutdownSignal);
-        await hPlayer.signal(shutdownSignal);
+        await hCond.signal(updateMetadataSignal, { status: 'terminated' });
+        await hPlayer.signal(updateMetadataSignal, { status: 'terminated' });
         await Promise.all([hCond.result(), hPlayer.result()]);
       });
     });
@@ -118,7 +118,7 @@ describe('multi-session integration', function () {
         const meta = await resolved!.query(getMetadataQuery);
         expect(meta.playerId).to.equal('findme');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -141,7 +141,7 @@ describe('multi-session integration', function () {
         const byNew = await resolveByName(getClient(), ensemble, 'permanent-name');
         expect(byNew).to.not.be.null;
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -198,8 +198,8 @@ describe('multi-session integration', function () {
         expect(resolvedOld).to.be.null;
 
         // Cleanup
-        await hCond.signal(shutdownSignal);
-        await hPlayer.signal(shutdownSignal);
+        await hCond.signal(updateMetadataSignal, { status: 'terminated' });
+        await hPlayer.signal(updateMetadataSignal, { status: 'terminated' });
         await Promise.all([hCond.result(), hPlayer.result()]);
       });
     });
@@ -227,8 +227,8 @@ describe('multi-session integration', function () {
         expect(pending[0].from).to.equal('reporter');
         expect(pending[0].text).to.include('Build succeeded');
 
-        await hCond.signal(shutdownSignal);
-        await hPlayer.signal(shutdownSignal);
+        await hCond.signal(updateMetadataSignal, { status: 'terminated' });
+        await hPlayer.signal(updateMetadataSignal, { status: 'terminated' });
         await Promise.all([hCond.result(), hPlayer.result()]);
       });
     });
@@ -254,8 +254,8 @@ describe('multi-session integration', function () {
         const alicePending = await h1.query(pendingMessagesQuery);
         expect(alicePending).to.have.lengthOf(0);
 
-        await h1.signal(shutdownSignal);
-        await h2.signal(shutdownSignal);
+        await h1.signal(updateMetadataSignal, { status: 'terminated' });
+        await h2.signal(updateMetadataSignal, { status: 'terminated' });
         await Promise.all([h1.result(), h2.result()]);
       });
     });
@@ -288,7 +288,7 @@ describe('multi-session integration', function () {
 
         // Cleanup
         for (const h of handles) {
-          await h.signal(shutdownSignal);
+          await h.signal(updateMetadataSignal, { status: 'terminated' });
         }
         await Promise.all(handles.map((h) => h.result()));
       });
@@ -311,7 +311,7 @@ describe('multi-session integration', function () {
         // Now running
         expect(await isConductorRunning(getClient(), ensemble)).to.be.true;
 
-        await hCond.signal(shutdownSignal);
+        await hCond.signal(updateMetadataSignal, { status: 'terminated' });
         await hCond.result();
 
         // Stopped
@@ -369,7 +369,7 @@ describe('multi-session integration', function () {
         const conductor = members.find((m) => m.isConductor);
         expect(conductor).to.exist;
 
-        await hResumed.signal(shutdownSignal);
+        await hResumed.signal(updateMetadataSignal, { status: 'terminated' });
         await hResumed.result();
       });
     });
@@ -388,7 +388,7 @@ describe('multi-session integration', function () {
         });
 
         // 2. Stop the conductor (simulate --replace)
-        await hCond.signal(shutdownSignal);
+        await hCond.signal(updateMetadataSignal, { status: 'terminated' });
         await hCond.result();
         expect(await isConductorRunning(getClient(), ensemble)).to.be.false;
 
@@ -407,7 +407,7 @@ describe('multi-session integration', function () {
         const msgs = await hNew.query(allMessagesQuery);
         expect(msgs).to.have.lengthOf(0);
 
-        await hNew.signal(shutdownSignal);
+        await hNew.signal(updateMetadataSignal, { status: 'terminated' });
         await hNew.result();
       });
     });
@@ -437,7 +437,7 @@ describe('multi-session integration', function () {
         expect(stillPending[0].from).to.equal('alice');
         expect(stillPending[1].from).to.equal('bob');
 
-        await hResumed.signal(shutdownSignal);
+        await hResumed.signal(updateMetadataSignal, { status: 'terminated' });
         await hResumed.result();
       });
     });
@@ -465,8 +465,8 @@ describe('multi-session integration', function () {
         expect(players).to.have.lengthOf(1);
         expect(players[0].playerId).to.equal('almost-conductor');
 
-        await hCond.signal(shutdownSignal);
-        await hPlayer.signal(shutdownSignal);
+        await hCond.signal(updateMetadataSignal, { status: 'terminated' });
+        await hPlayer.signal(updateMetadataSignal, { status: 'terminated' });
         await Promise.all([hCond.result(), hPlayer.result()]);
       });
     });
@@ -506,9 +506,9 @@ describe('multi-session integration', function () {
         expect(await resolveByName(getClient(), ensemble, 'conductor')).to.be.null;
 
         // Cleanup
-        await hCond.signal(shutdownSignal);
-        await hP1.signal(shutdownSignal);
-        await hP2.signal(shutdownSignal);
+        await hCond.signal(updateMetadataSignal, { status: 'terminated' });
+        await hP1.signal(updateMetadataSignal, { status: 'terminated' });
+        await hP2.signal(updateMetadataSignal, { status: 'terminated' });
         await Promise.all([hCond.result(), hP1.result(), hP2.result()]);
       });
     });
@@ -540,7 +540,7 @@ describe('multi-session integration', function () {
         expect(part).to.equal('Conductor state');
 
         // This proves why the guard in server.ts is necessary
-        await hCond.signal(shutdownSignal);
+        await hCond.signal(updateMetadataSignal, { status: 'terminated' });
         await hCond.result();
       });
     });
@@ -575,7 +575,7 @@ describe('multi-session integration', function () {
         const history = await hResumed.query(historyQuery);
         expect(history).to.have.lengthOf(1);
 
-        await hResumed.signal(shutdownSignal);
+        await hResumed.signal(updateMetadataSignal, { status: 'terminated' });
         await hResumed.result();
       });
     });

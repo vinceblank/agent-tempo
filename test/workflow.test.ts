@@ -10,7 +10,6 @@ import {
   receiveMessageSignal,
   setPartSignal,
   setNameSignal,
-  shutdownSignal,
   markDeliveredSignal,
   recordSentMessageSignal,
   updateMetadataSignal,
@@ -48,7 +47,7 @@ describe('claudeSessionWorkflow', function () {
         expect(result.hostname).to.equal('test-host');
         expect(result.isConductor).to.equal(false);
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -62,7 +61,7 @@ describe('claudeSessionWorkflow', function () {
         const part = await handle.query(getPartQuery);
         expect(part).to.equal('Working on feature X');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -72,7 +71,7 @@ describe('claudeSessionWorkflow', function () {
         const handle = await startSession({
           metadata: playerMetadata({ playerId: 'shutdown-1' }),
         });
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         // Should complete without error
         await handle.result();
       });
@@ -92,7 +91,7 @@ describe('claudeSessionWorkflow', function () {
         const meta = await handle.query(getMetadataQuery);
         expect(meta.playerId).to.equal('alice');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -111,7 +110,7 @@ describe('claudeSessionWorkflow', function () {
         const part = await handle.query(getPartQuery);
         expect(part).to.equal('Refactoring auth module');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -134,7 +133,7 @@ describe('claudeSessionWorkflow', function () {
         expect(pending[0].text).to.equal('Hello from bob');
         expect(pending[0].delivered).to.equal(false);
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -158,7 +157,7 @@ describe('claudeSessionWorkflow', function () {
         expect(all).to.have.lengthOf(1);
         expect(all[0].delivered).to.equal(true);
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -179,7 +178,7 @@ describe('claudeSessionWorkflow', function () {
         expect(all[1].from).to.equal('bob');
         expect(all[2].from).to.equal('charlie');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -197,7 +196,7 @@ describe('claudeSessionWorkflow', function () {
         expect(sent[0].to).to.equal('bob');
         expect(sent[0].text).to.equal('Hi bob');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -216,7 +215,7 @@ describe('claudeSessionWorkflow', function () {
         expect(meta.isConductor).to.equal(true);
         expect(meta.playerId).to.equal('cond-1');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -237,7 +236,7 @@ describe('claudeSessionWorkflow', function () {
         expect(history[0].type).to.equal('command');
         expect((history[0].data as any).text).to.equal('Deploy to staging');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -259,7 +258,7 @@ describe('claudeSessionWorkflow', function () {
         expect(history[0].type).to.equal('report');
         expect((history[0].data as any).playerId).to.equal('alice');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -280,7 +279,7 @@ describe('claudeSessionWorkflow', function () {
         expect(pending[0].from).to.equal('maestro');
         expect(pending[0].text).to.equal('Run tests');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -302,7 +301,7 @@ describe('claudeSessionWorkflow', function () {
         expect(pending[0].from).to.equal('bob');
         expect(pending[0].text).to.include('blocker');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -324,7 +323,7 @@ describe('claudeSessionWorkflow', function () {
         const pending = await handle.query(pendingMessagesQuery);
         expect(pending).to.have.lengthOf(0);
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -359,7 +358,7 @@ describe('claudeSessionWorkflow', function () {
         expect(all).to.have.lengthOf(1);
         expect(all[0].id).to.equal('pre-msg-1');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -392,7 +391,7 @@ describe('claudeSessionWorkflow', function () {
         expect(afterDelivery).to.have.lengthOf(1);
         expect(afterDelivery[0].from).to.equal('alice');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -410,7 +409,7 @@ describe('claudeSessionWorkflow', function () {
         const meta = await handle.query(getMetadataQuery);
         expect(meta.status).to.equal('pending');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -427,7 +426,7 @@ describe('claudeSessionWorkflow', function () {
         // status is undefined in metadata but search attribute defaults to 'active'
         expect(meta.status).to.satisfy((s: string | undefined) => s === undefined || s === 'active');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -448,7 +447,7 @@ describe('claudeSessionWorkflow', function () {
         meta = await handle.query(getMetadataQuery);
         expect(meta.status).to.equal('active');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -467,7 +466,7 @@ describe('claudeSessionWorkflow', function () {
         const meta = await handle.query(getMetadataQuery);
         expect(meta.hostname).to.equal('new-host');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -487,7 +486,7 @@ describe('claudeSessionWorkflow', function () {
         expect(meta.gitBranch).to.equal('feature/new');
         expect(meta.gitRoot).to.equal('/repos/project');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -509,7 +508,7 @@ describe('claudeSessionWorkflow', function () {
         expect(meta.status).to.equal('active');
         expect(meta.gitBranch).to.equal('main');
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
@@ -530,7 +529,7 @@ describe('claudeSessionWorkflow', function () {
         expect(meta.ensemble).to.equal('test-ensemble');
         expect(meta.isConductor).to.equal(false);
 
-        await handle.signal(shutdownSignal);
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
