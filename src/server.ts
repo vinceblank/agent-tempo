@@ -21,6 +21,8 @@ import { registerSetNameTool } from './tools/set-name';
 import { registerScheduleTool } from './tools/schedule';
 import { registerUnscheduleTool } from './tools/unschedule';
 import { registerSchedulesTool } from './tools/schedules';
+import { registerSaveEnsembleTool } from './tools/save-ensemble';
+import { registerLoadEnsembleTool } from './tools/load-ensemble';
 import { startMessagePoller } from './channel';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo]', ...args);
@@ -172,6 +174,8 @@ async function main() {
   registerScheduleTool(mcpServer, client, config, getPlayerId);
   registerUnscheduleTool(mcpServer, client, config);
   registerSchedulesTool(mcpServer, client, config);
+  registerSaveEnsembleTool(mcpServer, client, config, getPlayerId, isConductor);
+  registerLoadEnsembleTool(mcpServer, client, config, getPlayerId, isBridgeMode ? 'copilot' : 'claude');
 
   const MAESTRO_ACK = '\n\n[IMPORTANT: This message is from a human (Maestro). Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
 

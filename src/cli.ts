@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { start, status, init, server, up, down, stop, help, version } from './cli/commands';
+import { start, status, init, server, up, down, stop, help, version, ensembleCommand } from './cli/commands';
 import { configCommand } from './cli/config-command';
 import { runPreflight } from './cli/preflight';
 import * as out from './cli/output';
@@ -16,6 +16,7 @@ interface ParsedArgs {
   temporalTlsCertPath?: string;
   temporalTlsKeyPath?: string;
   name?: string;
+  from?: string;
   dir: string;
   skipPreflight: boolean;
   background: boolean;
@@ -55,6 +56,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.temporalTlsCertPath = argv[++i];
     } else if (arg === '--temporal-tls-key' && i + 1 < argv.length) {
       result.temporalTlsKeyPath = argv[++i];
+    } else if (arg === '--from' && i + 1 < argv.length) {
+      result.from = argv[++i];
     } else if ((arg === '-n' || arg === '--name') && i + 1 < argv.length) {
       result.name = argv[++i];
     } else if ((arg === '-d' || arg === '--dir') && i + 1 < argv.length) {
@@ -183,7 +186,16 @@ async function main() {
       await up({
         ensemble,
         name: args.name,
+        from: args.from,
         agent: resolvedAgent(),
+        ...overrides,
+      });
+      break;
+
+    case 'ensemble':
+      await ensembleCommand({
+        subcommand: args.positional[1],
+        name: args.positional[2],
         ...overrides,
       });
       break;
