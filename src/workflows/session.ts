@@ -198,14 +198,16 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     await condition(() => input.metadata.status === 'terminated', '5 minutes');
 
     // Detect stale session: messages pending longer than threshold means poller is dead.
-    // Instead of terminating, mark the session as stale so the workflow stays alive
-    // and can be reconnected later.
+    // Also detect stuck pending: if status is still 'pending' after the threshold,
+    // the spawned process never connected (prompt not acknowledged, crash, etc.).
+    // Mark as stale so the workflow stays alive and can be reconnected later.
     if (!input.disableStaleDetection) {
       const now = Date.now();
       const staleMessages = messages.filter(
         (m) => !m.delivered && now - new Date(m.timestamp).getTime() > STALE_MESSAGE_MS,
       );
-      if (staleMessages.length > 0 && input.metadata.status !== 'stale') {
+      const stuckPending = input.metadata.status === 'pending' && now - lastActivityTime > STALE_MESSAGE_MS;
+      if ((staleMessages.length > 0 || stuckPending) && input.metadata.status !== 'stale') {
         input.metadata.status = 'stale';
         upsertSearchAttributes({ ClaudeTempoStatus: ['stale'] });
       }

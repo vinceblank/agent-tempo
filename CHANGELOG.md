@@ -16,8 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Renamed `terminate` MCP tool to `stop`** — aligns with the CLI `stop` command. Both now use the same `updateMetadata({ status: 'terminated' })` mechanism.
+- **Unified shutdown path** — removed the separate `shutdownSignal`. All shutdown (MCP `stop`, CLI `stop`, SIGINT) goes through `status: 'terminated'`. The workflow adds a termination message, waits for delivery, then completes.
 - `claude-tempo status` now shows `(pending)` and `(stale)` indicators next to player names.
 - Stale session detection no longer terminates workflows — marks status as `stale` instead.
+- Pre-created workflows in `pending` status automatically transition to `stale` if the session doesn't connect within 3 minutes.
+
 
 ## [0.7.0] - 2026-04-04
 

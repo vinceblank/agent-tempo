@@ -104,13 +104,23 @@ async function main() {
   log(`Workflow ${workflowId} started (or reconnected)`);
 
   // Watch for workflow completion — exit the process when the workflow ends
-  // (e.g., via terminate tool setting status to 'terminated')
+  // (e.g., via stop tool setting status to 'terminated')
   handle.result().then(() => {
-    log('Workflow completed — exiting');
-    process.exit(0);
-  }).catch(() => {
-    log('Workflow terminated — exiting');
-    process.exit(0);
+    log('Workflow completed — shutting down');
+    stopPoller();
+    worker.shutdown();
+    workerRunPromise.catch(() => {}).then(() => process.exit(0));
+  }).catch((err) => {
+    // Only exit on workflow-level errors (cancelled, failed), not transient connection errors
+    const name = err?.name || '';
+    if (name.includes('WorkflowFailed') || name.includes('WorkflowCancelled') || name.includes('WorkflowNotFound')) {
+      log('Workflow ended unexpectedly — shutting down');
+      stopPoller();
+      worker.shutdown();
+      workerRunPromise.catch(() => {}).then(() => process.exit(1));
+    } else {
+      log('Transient error watching workflow result:', err?.message || err);
+    }
   });
 
   // If the workflow was pre-created by a recruiter, update it with real metadata

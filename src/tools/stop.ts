@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
-import { Config } from '../config';
+import { Config, conductorWorkflowId } from '../config';
 import { resolveSession } from './resolve';
 import { defineTool } from './helpers';
 
@@ -14,7 +14,7 @@ export function registerStopTool(
   defineTool(
     server,
     'stop',
-    'Stop a player session by name. Sends a termination message and waits for delivery.',
+    'Stop a player session by name. Signals termination and the session exits gracefully.',
     {
       playerId: z.string().describe('The player name of the session to stop'),
     },
@@ -37,10 +37,21 @@ export function registerStopTool(
           };
         }
 
+        // Notify the conductor before stopping (matches CLI stop behavior)
+        try {
+          const conductorHandle = client.workflow.getHandle(conductorWorkflowId(config.ensemble));
+          await conductorHandle.signal('receiveMessage', {
+            from: getPlayerId(),
+            text: `Stopping session **${playerId}**.`,
+          });
+        } catch {
+          // No conductor running — that's fine
+        }
+
         await handle.signal('updateMetadata', { status: 'terminated', terminatedBy: getPlayerId() });
 
         return {
-          content: [{ type: 'text' as const, text: `Terminated **${playerId}** via status update. The workflow will exit gracefully.` }],
+          content: [{ type: 'text' as const, text: `Stop signal sent to **${playerId}**. The session will exit gracefully.` }],
         };
       } catch (err) {
         return {
