@@ -582,6 +582,27 @@ export async function up(opts: UpOpts) {
   // Step 3: Register search attributes
   registerSearchAttributes(config.temporalAddress, config.temporalNamespace);
 
+  // Step 3.5: Install shipped agent types to ~/.claude/agents/ (if not already there)
+  const userAgentsDir = join(homedir(), '.claude', 'agents');
+  const shippedAgentsPath = join(PACKAGE_ROOT, 'examples', 'agents');
+  if (existsSync(shippedAgentsPath)) {
+    mkdirSync(userAgentsDir, { recursive: true });
+    const shipped = readdirSync(shippedAgentsPath).filter(f => f.endsWith('.md'));
+    let installed = 0;
+    for (const file of shipped) {
+      const dest = join(userAgentsDir, file);
+      if (!existsSync(dest)) {
+        copyFileSync(join(shippedAgentsPath, file), dest);
+        installed++;
+      }
+    }
+    if (installed > 0) {
+      out.success(`Installed ${installed} agent type${installed !== 1 ? 's' : ''} to ~/.claude/agents/`);
+    } else {
+      out.dim(`  Agent types already installed (${shipped.length} in ~/.claude/agents/)`);
+    }
+  }
+
   // Step 4: Register MCP server if needed
   if (isMcpConfigured(process.cwd())) {
     out.check('MCP configured', true);
