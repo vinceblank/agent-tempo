@@ -90,6 +90,7 @@
     "dist",
     "workflow-bundle.js",
     "assets",
+    "examples",
     "CLAUDE.md",
     "README.md"
   ],

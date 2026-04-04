@@ -98,7 +98,7 @@ claude-tempo <command> [options]
 
 | Command | Description |
 |---------|-------------|
-| `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor. Use `--from` to load a blueprint. |
+| `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor. Use `--lineup` to load a lineup. |
 | `down` | Stop Temporal, terminate sessions, remove MCP config |
 | `server` | Start the Temporal dev server and register search attributes |
 | `conduct [ensemble]` | Start a conductor session (one per ensemble). Use `--resume` or `--replace` if one exists. |
@@ -108,7 +108,8 @@ claude-tempo <command> [options]
 | `stop [ensemble]` | Stop sessions (`-n <name>` for one, `--all` for everything) |
 | `init` | Register claude-tempo MCP server globally (`--project` for per-directory) |
 | `preflight` | Run environment checks |
-| `ensemble <sub>` | Manage saved blueprints (`save`, `list`, `show`) |
+| `ensemble <sub>` | Manage saved lineups (`save`, `list`, `show`) |
+| `agent-types <sub>` | Manage player types (`list`, `show <name>`, `init`) |
 | `help` | Show usage info |
 
 ### Global options
@@ -123,7 +124,7 @@ claude-tempo <command> [options]
 --skip-preflight              Skip preflight checks (start/conduct)
 -d, --dir <path>              Target directory (default: cwd)
 --background                  Run Temporal in background (server only)
---from <file>                 Load an ensemble blueprint on startup (up only)
+--lineup <name|file>          Load an ensemble lineup by name or file path (up only)
 --resume                      Resume an existing conductor session (conduct only)
 --replace                     Stop existing conductor and start fresh (conduct only)
 ```
@@ -221,8 +222,10 @@ These tools are available inside Claude Code sessions connected to claude-tempo:
 | `schedule` | Create a one-shot or recurring schedule to cue a player. |
 | `unschedule` | Cancel a named schedule. |
 | `schedules` | List all active schedules. |
-| `save_ensemble` | Save the current ensemble as a YAML blueprint (conductor only). |
-| `load_ensemble` | Load a blueprint to recruit players and create schedules. |
+| `who_am_i` | Get your identity, role, player type, and session details. |
+| `agent_types` | List available player types with name, description, and source. |
+| `save_lineup` | Save the current ensemble as a YAML lineup (conductor only). |
+| `load_lineup` | Load a lineup to recruit players and create schedules. |
 
 ## Scheduling
 
@@ -255,11 +258,11 @@ Schedules support one-shot delays, fixed times, and recurring intervals with opt
 - `claude-tempo status` shows active schedules alongside sessions
 - A single durable scheduler workflow per ensemble manages all schedules using Temporal timers
 
-## Ensemble Blueprints
+## Ensemble Lineups
 
-Define reusable ensemble configurations as YAML files. A blueprint specifies which players to recruit, what instructions to give them, what schedules to create, and optionally which custom agent files to use.
+Define reusable ensemble configurations as YAML files. A lineup specifies which players to recruit, what instructions to give them, what schedules to create, and optionally which custom agent files to use.
 
-### Example blueprint
+### Example lineup
 
 ```yaml
 name: my-project
@@ -287,29 +290,29 @@ schedules:
     delay: 10m
 ```
 
-### Three ways to use blueprints
+### Three ways to use lineups
 
-1. **From the CLI** — load a blueprint when starting an ensemble:
+1. **From the CLI** — load a lineup when starting an ensemble:
 
    ```bash
-   claude-tempo up --from my-blueprint.yaml
+   claude-tempo up --lineup my-lineup.yaml
    ```
 
-2. **From inside a session** — use the `load_ensemble` tool:
+2. **From inside a session** — use the `load_lineup` tool:
 
-   *"Load the blueprint from ~/.claude-tempo/ensembles/my-project.yaml"*
+   *"Load the lineup from ~/.claude-tempo/ensembles/my-project.yaml"*
 
-3. **Save the current state** — snapshot a running ensemble as a blueprint (conductor only):
+3. **Save the current state** — snapshot a running ensemble as a lineup (conductor only):
 
-   *"Save this ensemble as a blueprint called my-project"*
+   *"Save this ensemble as a lineup called my-project"*
 
 ### Natural language examples
 
 Tell your session things like:
 
-- *"Load the my-project blueprint"*
-- *"Save this ensemble as a blueprint"*
-- *"Load the blueprint from /repos/configs/team.yaml"*
+- *"Load the my-project lineup"*
+- *"Save this ensemble as a lineup"*
+- *"Load the lineup from /repos/configs/team.yaml"*
 
 ### Fan-out schedules
 
@@ -327,6 +330,66 @@ players:
     workDir: /repos/my-app
     agent: agents/security-review.md
     instructions: "Review the latest PR for security issues"
+```
+
+## Player Types
+
+Player types are reusable agent definitions in Claude Code's standard subagent format — `.md` files with YAML frontmatter specifying name, description, and optional model. They let you define specialized roles once and reuse them across lineups.
+
+### How player types work
+
+Reference a type by name in a lineup's `type` field:
+
+```yaml
+players:
+  - name: arch
+    type: tempo-composer
+  - name: eng
+    type: tempo-soloist
+```
+
+When a player is recruited with a type, the agent definition is resolved and passed to the session. Players know their type via the `who_am_i` tool.
+
+### Three-tier lookup
+
+Player types are resolved in order (first match wins):
+
+1. **Project** — `.claude/agents/` in the project directory
+2. **User** — `~/.claude/agents/` in the user's home directory
+3. **Shipped** — `examples/agents/` bundled with claude-tempo
+
+Project and user types are resolved natively by Claude Code via `--agent <name>`. Shipped types fall back to `--system-prompt <path>`.
+
+### Shipped player types
+
+| Type | Description |
+|------|-------------|
+| `tempo-conductor` | Orchestrates the ensemble — breaks down tasks, delegates to players, tracks progress |
+| `tempo-composer` | Software architect — designs system structure, defines interfaces, makes technology decisions |
+| `tempo-soloist` | Senior engineer — implements features, fixes bugs, writes tests, delivers working code |
+| `tempo-tuner` | QA engineer — designs test strategies, finds bugs, validates edge cases |
+| `tempo-critic` | Code reviewer — evaluates changes for correctness, security, performance, maintainability |
+| `tempo-roadie` | DevOps engineer — manages CI/CD, deployments, infrastructure, environment configuration |
+| `tempo-improv` | Researcher and explorer — investigates unknowns, runs spikes, evaluates options |
+| `tempo-liner` | Documentation specialist — owns README, CHANGELOG, CLAUDE.md, and PR descriptions |
+
+### Shipped lineups
+
+| Lineup | Description |
+|--------|-------------|
+| `tempo-big-band` | Full-lifecycle ensemble with all 8 player types — design, implement, test, review, and ship |
+| `tempo-dev-team` | Feature development — conductor, composer, two soloists, and a tuner |
+| `tempo-review-squad` | Three critics with different focus areas for thorough parallel code review |
+| `tempo-jam-session` | Exploratory ensemble for spikes, research, and problems where the path is unclear |
+
+### Discovery
+
+Use the `agent_types` MCP tool inside a session or the CLI:
+
+```bash
+claude-tempo agent-types list          # show available types
+claude-tempo agent-types show <name>   # print full definition
+claude-tempo agent-types init          # copy shipped examples to ~/.claude/agents/
 ```
 
 ## Conductors

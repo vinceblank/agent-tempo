@@ -1,0 +1,23 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { defineTool } from './helpers';
+import { listAgentTypes } from '../ensemble/agent-types';
+
+export function registerAgentTypesTool(server: McpServer) {
+  defineTool(
+    server,
+    'agent_types',
+    'List available player types (agent definitions) that can be used when recruiting',
+    {},
+    async () => {
+      const types = listAgentTypes();
+      if (types.length === 0) {
+        return { content: [{ type: 'text' as const, text: 'No agent types found.' }] };
+      }
+      const lines = types.map(t => {
+        const src = t.source === 'shipped' ? '(shipped)' : t.source === 'user' ? '(user)' : '(project)';
+        return `**${t.name}** ${src}\n  ${t.description || 'No description'}`;
+      });
+      return { content: [{ type: 'text' as const, text: lines.join('\n\n') }] };
+    },
+  );
+}

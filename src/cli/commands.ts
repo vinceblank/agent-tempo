@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, copyFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { execFileSync, spawn as cpSpawn } from 'child_process';
 import { homedir } from 'os';
@@ -11,8 +11,9 @@ import { addScheduleSignal } from '../workflows/scheduler-signals';
 import { AgentType, ScheduleEntry } from '../types';
 import { runPreflight } from './preflight';
 import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
-import { loadBlueprint } from '../ensemble/loader';
-import { saveBlueprint, listBlueprints, readSavedBlueprint } from '../ensemble/saver';
+import { loadLineup } from '../ensemble/loader';
+import { saveLineup, listLineups, readSavedLineup } from '../ensemble/saver';
+import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
 import * as out from './output';
 
 /** Package root is two levels up from dist/cli/ */
@@ -395,6 +396,7 @@ const SEARCH_ATTRIBUTES = [
   { name: 'ClaudeTempoEnsemble', type: 'Keyword' },
   { name: 'ClaudeTempoPlayerId', type: 'Keyword' },
   { name: 'ClaudeTempoStatus', type: 'Keyword' },
+  { name: 'ClaudeTempoPlayerType', type: 'Keyword' },
 ];
 
 function isTemporalReachable(config: { temporalAddress: string; temporalApiKey?: string; temporalTlsCertPath?: string; temporalTlsKeyPath?: string }): Promise<boolean> {
@@ -531,7 +533,7 @@ export async function server(opts: ServerOpts) {
 interface UpOpts extends CliOverrides {
   ensemble: string;
   name?: string;
-  from?: string;
+  lineup?: string;
   agent: AgentType;
 }
 
@@ -580,6 +582,27 @@ export async function up(opts: UpOpts) {
   // Step 3: Register search attributes
   registerSearchAttributes(config.temporalAddress, config.temporalNamespace);
 
+  // Step 3.5: Install shipped agent types to ~/.claude/agents/ (if not already there)
+  const userAgentsDir = join(homedir(), '.claude', 'agents');
+  const shippedAgentsPath = join(PACKAGE_ROOT, 'examples', 'agents');
+  if (existsSync(shippedAgentsPath)) {
+    mkdirSync(userAgentsDir, { recursive: true });
+    const shipped = readdirSync(shippedAgentsPath).filter(f => f.endsWith('.md'));
+    let installed = 0;
+    for (const file of shipped) {
+      const dest = join(userAgentsDir, file);
+      if (!existsSync(dest)) {
+        copyFileSync(join(shippedAgentsPath, file), dest);
+        installed++;
+      }
+    }
+    if (installed > 0) {
+      out.success(`Installed ${installed} agent type${installed !== 1 ? 's' : ''} to ~/.claude/agents/`);
+    } else {
+      out.dim(`  Agent types already installed (${shipped.length} in ~/.claude/agents/)`);
+    }
+  }
+
   // Step 4: Register MCP server if needed
   if (isMcpConfigured(process.cwd())) {
     out.check('MCP configured', true);
@@ -597,14 +620,50 @@ export async function up(opts: UpOpts) {
   if (config.temporalTlsCertPath) temporalEnvVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
   if (config.temporalTlsKeyPath) temporalEnvVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
 
-  // Load blueprint if --from is provided
-  const blueprint = opts.from ? loadBlueprint(resolve(opts.from)) : undefined;
-  if (blueprint) {
-    out.check('Blueprint loaded', true, blueprint.name);
+  // Load lineup if --lineup is provided
+  let lineup;
+  const lineupArg = opts.lineup;
+  if (lineupArg) {
+    // Resolve by name or file path
+    let lineupPath: string;
+    if (existsSync(resolve(lineupArg))) {
+      // Direct file path
+      lineupPath = resolve(lineupArg);
+    } else {
+      // Try saved lineups (~/.claude-tempo/ensembles/)
+      const ensemblesDir = join(CLAUDE_TEMPO_HOME, 'ensembles');
+      const savedYaml = join(ensemblesDir, `${lineupArg}.yaml`);
+      const savedYml = join(ensemblesDir, `${lineupArg}.yml`);
+      if (existsSync(savedYaml)) {
+        lineupPath = savedYaml;
+      } else if (existsSync(savedYml)) {
+        lineupPath = savedYml;
+      } else {
+        // Try shipped examples
+        const shippedPath = join(PACKAGE_ROOT, 'examples', 'ensembles', `${lineupArg}.yaml`);
+        const shippedYml = join(PACKAGE_ROOT, 'examples', 'ensembles', `${lineupArg}.yml`);
+        if (existsSync(shippedPath)) {
+          lineupPath = shippedPath;
+        } else if (existsSync(shippedYml)) {
+          lineupPath = shippedYml;
+        } else {
+          out.error(`Lineup "${lineupArg}" not found as file, saved lineup, or shipped example`);
+          const saved = listLineups();
+          if (saved.length) out.log(`  Saved: ${saved.map(b => b.name).join(', ')}`);
+          const shipped = readdirSync(join(PACKAGE_ROOT, 'examples', 'ensembles')).filter(f => f.endsWith('.yaml') || f.endsWith('.yml')).map(f => f.replace(/\.ya?ml$/, ''));
+          if (shipped.length) out.log(`  Shipped: ${shipped.join(', ')}`);
+          process.exit(1);
+        }
+      }
+    }
+    lineup = loadLineup(lineupPath);
+  }
+  if (lineup) {
+    out.check('Lineup loaded', true, lineup.name);
   }
 
-  // Resolve conductor agent from blueprint or CLI flags
-  const conductorAgent: AgentType = blueprint?.conductor?.agent === 'copilot' ? 'copilot' : opts.agent;
+  // Resolve conductor agent from lineup or CLI flags
+  const conductorAgent: AgentType = lineup?.conductor?.agent === 'copilot' ? 'copilot' : opts.agent;
 
   // Step 5: Launch conductor
   console.log();
@@ -627,24 +686,41 @@ export async function up(opts: UpOpts) {
     // Default conductor name so the Claude Code session name matches the ensemble role
     const sessionName = opts.name || 'conductor';
 
+    // Resolve conductor agent type from lineup
+    const conductorType = lineup?.conductor?.agent && lineup.conductor.agent !== 'default' && lineup.conductor.agent !== 'copilot'
+      ? lineup.conductor.agent  // custom agent path
+      : undefined;
+    // Also check if the lineup has a type field
+    const conductorTypeName = lineup?.conductor?.type;
+    const resolvedConductorType = conductorTypeName ? resolveAgentType(conductorTypeName) : null;
+
     const claudeArgs = [
       '--dangerously-skip-permissions',
       '--dangerously-load-development-channels', 'server:claude-tempo',
       '-n', sessionName,
+      // Pass agent definition if available
+      ...(resolvedConductorType?.nativeResolvable ? ['--agent', resolvedConductorType.name] :
+          resolvedConductorType ? ['--system-prompt', resolvedConductorType.path] :
+          conductorType ? ['--system-prompt', conductorType] : []),
     ];
 
-    ({ pid } = spawnInTerminal(claudeArgs, process.cwd(), {
+    const conductorEnvVars: Record<string, string> = {
       ...temporalEnvVars,
       [ENV.ENSEMBLE]: opts.ensemble,
       [ENV.CONDUCTOR]: 'true',
       [ENV.PLAYER_NAME]: sessionName,
-    }));
+    };
+    if (resolvedConductorType || conductorTypeName) {
+      conductorEnvVars[ENV.PLAYER_TYPE] = resolvedConductorType?.name || conductorTypeName || '';
+    }
+
+    ({ pid } = spawnInTerminal(claudeArgs, process.cwd(), conductorEnvVars));
   }
 
   out.success(`Conductor launched (pid ${pid ?? 'unknown'})`);
 
-  // Step 6: If blueprint provided, recruit players and create schedules
-  if (blueprint) {
+  // Step 6: If lineup provided, recruit players and create schedules
+  if (lineup) {
     // Connect to Temporal to send signals
     const connection = await createTemporalConnection(config);
     const client = new Client({ connection, namespace: config.temporalNamespace });
@@ -663,17 +739,17 @@ export async function up(opts: UpOpts) {
     }
 
     if (!conductorReady) {
-      out.warn('Conductor did not register within 15s — skipping blueprint players/schedules');
+      out.warn('Conductor did not register within 15s — skipping lineup players/schedules');
     } else {
       out.check('Conductor registered', true);
 
       // Send conductor instructions if provided
-      if (blueprint.conductor?.instructions) {
+      if (lineup.conductor?.instructions) {
         try {
           const handle = client.workflow.getHandle(conductorWfId);
           await handle.signal('receiveMessage', {
-            from: 'blueprint',
-            text: blueprint.conductor.instructions,
+            from: 'lineup',
+            text: lineup.conductor.instructions,
           });
           out.check('Conductor instructions sent', true);
         } catch (err) {
@@ -682,11 +758,11 @@ export async function up(opts: UpOpts) {
       }
 
       // Recruit players sequentially (each polls for ~15s)
-      if (blueprint.players.length > 0) {
+      if (lineup.players.length > 0) {
         console.log();
-        out.log(`Recruiting ${blueprint.players.length} player${blueprint.players.length !== 1 ? 's' : ''} from blueprint...`);
+        out.log(`Recruiting ${lineup.players.length} player${lineup.players.length !== 1 ? 's' : ''} from lineup...`);
 
-        for (const player of blueprint.players) {
+        for (const player of lineup.players) {
           const playerAgent: AgentType = player.agent === 'copilot' ? 'copilot' : 'claude';
           const playerWorkDir = player.workDir || process.cwd();
 
@@ -711,17 +787,27 @@ export async function up(opts: UpOpts) {
               workDir: playerWorkDir,
             });
           } else {
+            // Resolve player type from lineup
+            const playerTypeName = player.type;
+            const resolvedPlayerType = playerTypeName ? resolveAgentType(playerTypeName) : null;
+
             const claudeArgs = [
               '--dangerously-skip-permissions',
               '--dangerously-load-development-channels', 'server:claude-tempo',
               '-n', player.name,
+              ...(resolvedPlayerType?.nativeResolvable ? ['--agent', resolvedPlayerType.name] :
+                  resolvedPlayerType ? ['--system-prompt', resolvedPlayerType.path] : []),
             ];
-            spawnInTerminal(claudeArgs, playerWorkDir, {
+            const playerEnvVars: Record<string, string> = {
               ...temporalEnvVars,
               [ENV.ENSEMBLE]: opts.ensemble,
               [ENV.CONDUCTOR]: '',
               [ENV.PLAYER_NAME]: player.name,
-            });
+            };
+            if (resolvedPlayerType) {
+              playerEnvVars[ENV.PLAYER_TYPE] = resolvedPlayerType.name;
+            }
+            spawnInTerminal(claudeArgs, playerWorkDir, playerEnvVars);
           }
 
           // Poll for the new workflow to appear (up to ~15s)
@@ -741,7 +827,7 @@ export async function up(opts: UpOpts) {
             try {
               const handle = client.workflow.getHandle(newWorkflowId);
               await handle.signal('receiveMessage', {
-                from: 'blueprint',
+                from: 'lineup',
                 text: player.instructions,
               });
             } catch { /* best effort */ }
@@ -753,13 +839,13 @@ export async function up(opts: UpOpts) {
       }
 
       // Create schedules
-      if (blueprint.schedules && blueprint.schedules.length > 0) {
+      if (lineup.schedules && lineup.schedules.length > 0) {
         console.log();
-        out.log(`Creating ${blueprint.schedules.length} schedule${blueprint.schedules.length !== 1 ? 's' : ''}...`);
+        out.log(`Creating ${lineup.schedules.length} schedule${lineup.schedules.length !== 1 ? 's' : ''}...`);
 
-        for (const sched of blueprint.schedules) {
+        for (const sched of lineup.schedules) {
           try {
-            const entry = blueprintScheduleToEntry(sched);
+            const entry = lineupScheduleToEntry(sched);
             const schedulerWfId = schedulerWorkflowId(opts.ensemble);
             const handle = client.workflow.getHandle(schedulerWfId);
             await handle.signal(addScheduleSignal, entry);
@@ -777,22 +863,22 @@ export async function up(opts: UpOpts) {
   console.log();
   out.success('You\'re all set!');
   out.log(`  Ensemble: ${out.cyan(opts.ensemble)}`);
-  if (!blueprint) {
+  if (!lineup) {
     out.log(`\n  ${out.bold('What next?')}`);
     out.log(`  ${out.dim('claude-tempo start ' + opts.ensemble)}    Add a player session`);
     out.log(`  ${out.dim('claude-tempo status ' + opts.ensemble)}   See who\'s active`);
     out.log(`  Or ask the conductor to ${out.dim('recruit')} players for you`);
   } else {
-    out.log(`  Blueprint: ${out.dim(blueprint.name)}`);
-    out.log(`  Players: ${blueprint.players.length}`);
-    if (blueprint.schedules?.length) out.log(`  Schedules: ${blueprint.schedules.length}`);
+    out.log(`  Lineup: ${out.dim(lineup.name)}`);
+    out.log(`  Players: ${lineup.players.length}`);
+    if (lineup.schedules?.length) out.log(`  Schedules: ${lineup.schedules.length}`);
     out.log(`\n  ${out.dim('claude-tempo status ' + opts.ensemble)}   See who\'s active`);
   }
   console.log();
 }
 
-/** Convert a blueprint schedule definition to a ScheduleEntry for the scheduler workflow. */
-function blueprintScheduleToEntry(sched: NonNullable<import('../ensemble/schema').EnsembleBlueprint['schedules']>[number]): ScheduleEntry {
+/** Convert a lineup schedule definition to a ScheduleEntry for the scheduler workflow. */
+function lineupScheduleToEntry(sched: NonNullable<import('../ensemble/schema').EnsembleLineup['schedules']>[number]): ScheduleEntry {
   const now = Date.now();
   let nextFireAt: string;
   let interval: number | undefined;
@@ -814,7 +900,7 @@ function blueprintScheduleToEntry(sched: NonNullable<import('../ensemble/schema'
     name: sched.name,
     message: sched.message,
     target: sched.target,
-    createdBy: 'blueprint',
+    createdBy: 'lineup',
     nextFireAt,
     interval,
     until: sched.until,
@@ -1131,7 +1217,84 @@ function killBridgeProcesses() {
   }
 }
 
-// --- Ensemble blueprint commands ---
+// --- Agent types commands ---
+
+interface AgentTypesCommandOpts {
+  subcommand?: string;
+  name?: string;
+}
+
+export async function agentTypesCommand(opts: AgentTypesCommandOpts) {
+  switch (opts.subcommand) {
+    case 'list': {
+      const types = listAgentTypes();
+      if (types.length === 0) {
+        out.log('No agent types found.');
+        out.log(`  Run ${out.dim('claude-tempo agent-types init')} to install shipped examples.`);
+        return;
+      }
+      out.heading('Available agent types');
+      for (const t of types) {
+        const src = t.source === 'shipped' ? out.dim('(shipped)') : t.source === 'user' ? out.dim('(user)') : out.dim('(project)');
+        out.log(`  ${out.bold(t.name)} ${src}`);
+        if (t.description) out.log(`    ${t.description}`);
+      }
+      console.log();
+      break;
+    }
+    case 'show': {
+      if (!opts.name) {
+        out.error('Usage: claude-tempo agent-types show <name>');
+        process.exit(1);
+      }
+      const info = resolveAgentType(opts.name);
+      if (!info) {
+        out.error(`No agent type found named "${opts.name}"`);
+        out.log(`  Run ${out.dim('claude-tempo agent-types list')} to see available types.`);
+        process.exit(1);
+      }
+      out.log(`${out.bold(info.name)} ${out.dim(`(${info.source}: ${info.path})`)}\n`);
+      console.log(readFileSync(info.path, 'utf8'));
+      break;
+    }
+    case 'init': {
+      const shippedDir = join(PACKAGE_ROOT, 'examples', 'agents');
+      const targetDir = join(homedir(), '.claude', 'agents');
+      mkdirSync(targetDir, { recursive: true });
+
+      if (!existsSync(shippedDir)) {
+        out.error(`Shipped examples not found at ${shippedDir}`);
+        process.exit(1);
+      }
+
+      const files = readdirSync(shippedDir).filter(f => f.endsWith('.md'));
+      let copied = 0;
+      let skipped = 0;
+      for (const file of files) {
+        const target = join(targetDir, file);
+        if (existsSync(target)) {
+          out.log(`  ${out.dim('skip')} ${file} (already exists)`);
+          skipped++;
+        } else {
+          copyFileSync(join(shippedDir, file), target);
+          out.success(`${file} → ${target}`);
+          copied++;
+        }
+      }
+      console.log();
+      out.log(`Copied ${copied} agent definitions to ${targetDir}${skipped ? ` (${skipped} skipped)` : ''}`);
+      break;
+    }
+    default:
+      out.error('Usage: claude-tempo agent-types <list|show|init> [name]');
+      out.log(`\n  ${out.dim('claude-tempo agent-types list')}          List available agent types`);
+      out.log(`  ${out.dim('claude-tempo agent-types show <name>')}   Display an agent definition`);
+      out.log(`  ${out.dim('claude-tempo agent-types init')}          Copy shipped examples to ~/.claude/agents/`);
+      process.exit(1);
+  }
+}
+
+// --- Ensemble lineup commands ---
 
 interface EnsembleCommandOpts extends CliOverrides {
   subcommand?: string;
@@ -1146,7 +1309,7 @@ export async function ensembleCommand(opts: EnsembleCommandOpts) {
       const client = new Client({ connection, namespace: config.temporalNamespace });
       const ensemble = opts.name || config.ensemble;
       try {
-        const path = await saveBlueprint(client, ensemble);
+        const path = await saveLineup(client, ensemble);
         out.success(`Saved ensemble "${ensemble}" to ${path}`);
       } finally {
         await connection.close();
@@ -1154,13 +1317,13 @@ export async function ensembleCommand(opts: EnsembleCommandOpts) {
       break;
     }
     case 'list': {
-      const blueprints = listBlueprints();
-      if (blueprints.length === 0) {
+      const lineups = listLineups();
+      if (lineups.length === 0) {
         out.log('No saved ensembles. Use `claude-tempo ensemble save [name]` to save one.');
         return;
       }
       out.heading('Saved ensembles');
-      for (const bp of blueprints) {
+      for (const bp of lineups) {
         out.log(`  ${out.bold(bp.name)}  ${out.dim(bp.path)}`);
       }
       console.log();
@@ -1171,7 +1334,7 @@ export async function ensembleCommand(opts: EnsembleCommandOpts) {
         out.error('Usage: claude-tempo ensemble show <name>');
         process.exit(1);
       }
-      const content = readSavedBlueprint(opts.name);
+      const content = readSavedLineup(opts.name);
       if (!content) {
         out.error(`No saved ensemble named "${opts.name}"`);
         out.log(`  Run ${out.dim('claude-tempo ensemble list')} to see available ensembles.`);
@@ -1184,7 +1347,7 @@ export async function ensembleCommand(opts: EnsembleCommandOpts) {
       out.error('Usage: claude-tempo ensemble <save|list|show> [name]');
       out.log(`\n  ${out.dim('claude-tempo ensemble save [name]')}   Save current ensemble state`);
       out.log(`  ${out.dim('claude-tempo ensemble list')}          List saved ensembles`);
-      out.log(`  ${out.dim('claude-tempo ensemble show <name>')}   Display a saved blueprint`);
+      out.log(`  ${out.dim('claude-tempo ensemble show <name>')}   Display a saved lineup`);
       process.exit(1);
   }
 }
@@ -1207,7 +1370,8 @@ ${out.bold('Commands:')}
   ${out.cyan('start')}   [ensemble]    Start a player session
   ${out.cyan('stop')}    [ensemble]    Stop sessions (-n <name> for one, or --all)
   ${out.cyan('status')}  [ensemble]    Show active sessions and Temporal health
-  ${out.cyan('ensemble')} <sub>       Manage saved ensemble blueprints (save/list/show)
+  ${out.cyan('ensemble')} <sub>       Manage saved ensemble lineups (save/list/show)
+  ${out.cyan('agent-types')} <sub>    Manage player type definitions (list/show/init)
   ${out.cyan('config')}                Configure Temporal connection settings
   ${out.cyan('init')}                  Register MCP server globally (or --project for .mcp.json)
   ${out.cyan('preflight')}             Run preflight checks only
@@ -1228,7 +1392,7 @@ ${out.bold('Other options:')}
   --project                   Use per-project .mcp.json instead of global (init only)
   --keep-mcp                  Don't remove MCP config (down only)
   --all                       Stop all sessions (stop only)
-  --from <file>               Load ensemble from a YAML blueprint (up only)
+  --lineup <name|file>         Load ensemble lineup by name or file path (up only)
   --ensemble <name>           Target a specific ensemble (stop only)
   -d, --dir <path>            Target directory (default: cwd)
 

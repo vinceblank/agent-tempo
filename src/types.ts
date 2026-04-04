@@ -15,6 +15,20 @@ export interface SessionMetadata {
   isConductor: boolean;
   agentType?: AgentType;
   status?: SessionStatus;
+  /** Agent definition name (e.g., "tempo-soloist"). */
+  playerType?: string;
+  /** Short description from the agent definition. */
+  playerTypeDescription?: string;
+  /** Player ID of who recruited this player. */
+  recruitedBy?: string;
+}
+
+export interface AgentTypeInfo {
+  name: string;
+  description?: string;
+  source: 'project' | 'user' | 'shipped';
+  path: string;
+  nativeResolvable: boolean;
 }
 
 export interface SessionInput {
@@ -109,6 +123,14 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
   agent: AgentType;
   systemPrompt?: string;
   targetHostname?: string;
+  /** Agent type name (e.g., "tempo-soloist"). */
+  agentDefinition?: string;
+  /** Resolved absolute path to .md file (for shipped fallback). */
+  agentDefinitionPath?: string;
+  /** Short description from the agent definition frontmatter. */
+  agentDefinitionDescription?: string;
+  /** Whether the agent definition is in a Claude Code-resolvable location. */
+  nativeResolvable?: boolean;
 }
 
 export interface ReportOutboxEntry extends OutboxEntryBase {

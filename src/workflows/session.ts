@@ -69,6 +69,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     ClaudeTempoPlayerId: [input.metadata.playerId],
     ClaudeTempoHostname: [input.metadata.hostname],
     ...(input.metadata.gitRoot ? { ClaudeTempoGitRoot: [input.metadata.gitRoot] } : {}),
+    ...(input.metadata.playerType ? { ClaudeTempoPlayerType: [input.metadata.playerType] } : {}),
     ClaudeTempoStatus: [input.metadata.status || 'active'],
   });
 
@@ -148,6 +149,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     if (update.hostname != null) input.metadata.hostname = update.hostname;
     if (update.gitBranch != null) input.metadata.gitBranch = update.gitBranch;
     if (update.gitRoot != null) input.metadata.gitRoot = update.gitRoot;
+    if (update.playerType != null) input.metadata.playerType = update.playerType;
+    if (update.playerTypeDescription != null) input.metadata.playerTypeDescription = update.playerTypeDescription;
     if (update.status != null) {
       input.metadata.status = update.status as SessionStatus;
       // Re-enable stale detection only when explicitly requested (server.ts sets this)
@@ -168,6 +171,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       ClaudeTempoPlayerId: [input.metadata.playerId],
       ClaudeTempoHostname: [input.metadata.hostname],
       ...(input.metadata.gitRoot ? { ClaudeTempoGitRoot: [input.metadata.gitRoot] } : {}),
+      ...(input.metadata.playerType ? { ClaudeTempoPlayerType: [input.metadata.playerType] } : {}),
       ClaudeTempoStatus: [input.metadata.status || 'active'],
     });
     lastActivityTime = Date.now();
@@ -294,6 +298,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               agent: entry.agent,
               systemPrompt: entry.systemPrompt,
               taskQueue: tc?.taskQueue || 'claude-tempo',
+              agentDefinition: entry.agentDefinition,
+              agentDefinitionDescription: entry.agentDefinitionDescription,
             });
             const targetHost = entry.targetHostname || input.metadata.hostname;
             const spawnFn = getSpawnProxy(targetHost);
@@ -309,6 +315,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               temporalApiKey: tc?.temporalApiKey,
               temporalTlsCertPath: tc?.temporalTlsCertPath,
               temporalTlsKeyPath: tc?.temporalTlsKeyPath,
+              agentDefinition: entry.agentDefinition,
+              agentDefinitionPath: entry.agentDefinitionPath,
+              nativeResolvable: entry.nativeResolvable,
             });
             break;
           }

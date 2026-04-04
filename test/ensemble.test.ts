@@ -1,5 +1,5 @@
 /**
- * Tests for the ensemble blueprints feature: loading, validation, saving, and fan-out.
+ * Tests for the ensemble lineups feature: loading, validation, saving, and fan-out.
  */
 import { expect } from 'chai';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'fs';
@@ -22,8 +22,8 @@ import {
   getSchedulesQuery,
 } from '../src/workflows/scheduler-signals';
 import { ScheduleEntry } from '../src/types';
-import { loadBlueprint } from '../src/ensemble/loader';
-import { listBlueprints } from '../src/ensemble/saver';
+import { loadLineup } from '../src/ensemble/loader';
+import { listLineups } from '../src/ensemble/saver';
 
 const ENSEMBLE = 'test-ensemble';
 const SCHEDULER_TASK_QUEUE = 'test-claude-tempo';
@@ -39,7 +39,7 @@ function makeTmpDir(): string {
   return dir;
 }
 
-describe('ensemble blueprints', function () {
+describe('ensemble lineups', function () {
   let tmpDir: string;
 
   before(async function () {
@@ -53,10 +53,10 @@ describe('ensemble blueprints', function () {
     try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* cleanup best effort */ }
   });
 
-  // ── Blueprint loading ──
+  // ── Lineup loading ──
 
-  describe('loadBlueprint', function () {
-    it('loads a valid YAML blueprint and returns correct structure', function () {
+  describe('loadLineup', function () {
+    it('loads a valid YAML lineup and returns correct structure', function () {
       const yamlContent = `
 name: my-ensemble
 description: A test ensemble
@@ -80,25 +80,25 @@ schedules:
       const filePath = join(tmpDir, 'valid.yaml');
       writeFileSync(filePath, yamlContent);
 
-      const bp = loadBlueprint(filePath);
+      const lineup = loadLineup(filePath);
 
-      expect(bp.name).to.equal('my-ensemble');
-      expect(bp.description).to.equal('A test ensemble');
-      expect(bp.conductor).to.deep.include({ agent: 'copilot', instructions: 'Coordinate the team' });
-      expect(bp.players).to.have.lengthOf(2);
-      expect(bp.players[0].name).to.equal('alice');
-      expect(bp.players[0].workDir).to.equal('/tmp/alice');
-      expect(bp.players[0].instructions).to.equal('Work on frontend');
-      expect(bp.players[1].name).to.equal('bob');
-      expect(bp.players[1].agent).to.equal('copilot');
-      expect(bp.schedules).to.have.lengthOf(1);
-      expect(bp.schedules![0].name).to.equal('standup');
-      expect(bp.schedules![0].target).to.equal('all');
-      expect(bp.schedules![0].every).to.equal('1h');
-      expect(bp.schedules![0].count).to.equal(5);
+      expect(lineup.name).to.equal('my-ensemble');
+      expect(lineup.description).to.equal('A test ensemble');
+      expect(lineup.conductor).to.deep.include({ agent: 'copilot', instructions: 'Coordinate the team' });
+      expect(lineup.players).to.have.lengthOf(2);
+      expect(lineup.players[0].name).to.equal('alice');
+      expect(lineup.players[0].workDir).to.equal('/tmp/alice');
+      expect(lineup.players[0].instructions).to.equal('Work on frontend');
+      expect(lineup.players[1].name).to.equal('bob');
+      expect(lineup.players[1].agent).to.equal('copilot');
+      expect(lineup.schedules).to.have.lengthOf(1);
+      expect(lineup.schedules![0].name).to.equal('standup');
+      expect(lineup.schedules![0].target).to.equal('all');
+      expect(lineup.schedules![0].every).to.equal('1h');
+      expect(lineup.schedules![0].count).to.equal(5);
     });
 
-    it('loads a minimal blueprint with only name and players', function () {
+    it('loads a minimal lineup with only name and players', function () {
       const yamlContent = `
 name: minimal
 players:
@@ -107,72 +107,72 @@ players:
       const filePath = join(tmpDir, 'minimal.yaml');
       writeFileSync(filePath, yamlContent);
 
-      const bp = loadBlueprint(filePath);
+      const lineup = loadLineup(filePath);
 
-      expect(bp.name).to.equal('minimal');
-      expect(bp.players).to.have.lengthOf(1);
-      expect(bp.players[0].name).to.equal('solo-player');
-      expect(bp.conductor).to.be.undefined;
-      expect(bp.schedules).to.be.undefined;
+      expect(lineup.name).to.equal('minimal');
+      expect(lineup.players).to.have.lengthOf(1);
+      expect(lineup.players[0].name).to.equal('solo-player');
+      expect(lineup.conductor).to.be.undefined;
+      expect(lineup.schedules).to.be.undefined;
     });
   });
 
-  // ── Blueprint validation ──
+  // ── Lineup validation ──
 
-  describe('loadBlueprint validation', function () {
-    it('rejects blueprint with missing name', function () {
+  describe('loadLineup validation', function () {
+    it('rejects lineup with missing name', function () {
       const filePath = join(tmpDir, 'no-name.yaml');
       writeFileSync(filePath, `players:\n  - name: test\n`);
 
-      expect(() => loadBlueprint(filePath)).to.throw('"name" is required');
+      expect(() => loadLineup(filePath)).to.throw('"name" is required');
     });
 
-    it('rejects blueprint with missing players', function () {
+    it('rejects lineup with missing players', function () {
       const filePath = join(tmpDir, 'no-players.yaml');
       writeFileSync(filePath, `name: test\n`);
 
-      expect(() => loadBlueprint(filePath)).to.throw('"players" must be an array');
+      expect(() => loadLineup(filePath)).to.throw('"players" must be an array');
     });
 
-    it('rejects blueprint with invalid player name', function () {
+    it('rejects lineup with invalid player name', function () {
       const filePath = join(tmpDir, 'bad-player-name.yaml');
       writeFileSync(filePath, `name: test\nplayers:\n  - name: "bad name!"\n`);
 
-      expect(() => loadBlueprint(filePath)).to.throw('invalid characters');
+      expect(() => loadLineup(filePath)).to.throw('invalid characters');
     });
 
-    it('rejects blueprint with empty player name', function () {
+    it('rejects lineup with empty player name', function () {
       const filePath = join(tmpDir, 'empty-player-name.yaml');
       writeFileSync(filePath, `name: test\nplayers:\n  - name: ""\n`);
 
-      expect(() => loadBlueprint(filePath)).to.throw('players[0].name is required');
+      expect(() => loadLineup(filePath)).to.throw('players[0].name is required');
     });
 
     it('rejects schedule missing timing fields', function () {
       const filePath = join(tmpDir, 'bad-schedule.yaml');
       writeFileSync(filePath, `name: test\nplayers:\n  - name: p1\nschedules:\n  - name: sched\n    message: hello\n    target: p1\n`);
 
-      expect(() => loadBlueprint(filePath)).to.throw('at least one of: at, delay, every');
+      expect(() => loadLineup(filePath)).to.throw('at least one of: at, delay, every');
     });
 
     it('rejects schedule missing message', function () {
       const filePath = join(tmpDir, 'sched-no-msg.yaml');
       writeFileSync(filePath, `name: test\nplayers:\n  - name: p1\nschedules:\n  - name: sched\n    target: p1\n    every: 1h\n`);
 
-      expect(() => loadBlueprint(filePath)).to.throw('schedules[0].message is required');
+      expect(() => loadLineup(filePath)).to.throw('schedules[0].message is required');
     });
 
     it('rejects schedule missing target', function () {
       const filePath = join(tmpDir, 'sched-no-target.yaml');
       writeFileSync(filePath, `name: test\nplayers:\n  - name: p1\nschedules:\n  - name: sched\n    message: hello\n    every: 1h\n`);
 
-      expect(() => loadBlueprint(filePath)).to.throw('schedules[0].target is required');
+      expect(() => loadLineup(filePath)).to.throw('schedules[0].target is required');
     });
   });
 
-  // ── Blueprint saving ──
+  // ── Lineup saving ──
 
-  describe('saveBlueprint', function () {
+  describe('saveLineup', function () {
     it('saves live ensemble state to YAML', async function () {
       this.timeout(30_000);
       await withWorkerAndActivities(async () => {
@@ -181,10 +181,10 @@ players:
           metadata: playerMetadata({ playerId: 'save-test-player', ensemble: ENSEMBLE }),
         });
 
-        // Import saveBlueprint here to use the test client
-        const { saveBlueprint } = await import('../src/ensemble/saver');
+        // Import saveLineup here to use the test client
+        const { saveLineup } = await import('../src/ensemble/saver');
         const outputPath = join(tmpDir, 'saved-ensemble.yaml');
-        const resultPath = await saveBlueprint(getClient(), ENSEMBLE, outputPath);
+        const resultPath = await saveLineup(getClient(), ENSEMBLE, outputPath);
 
         expect(resultPath).to.equal(outputPath);
         expect(existsSync(outputPath)).to.be.true;
@@ -200,9 +200,9 @@ players:
     });
   });
 
-  // ── listBlueprints ──
+  // ── listLineups ──
 
-  describe('listBlueprints', function () {
+  describe('listLineups', function () {
     it('lists YAML files in the ensembles directory', function () {
       // We need to use the actual ensembles dir for this test
       const { CLAUDE_TEMPO_HOME } = require('../src/config');
@@ -213,8 +213,8 @@ players:
       writeFileSync(testFile, 'name: list-test\nplayers:\n  - name: p1\n');
 
       try {
-        const blueprints = listBlueprints();
-        const found = blueprints.find(bp => bp.name === 'list-test');
+        const lineups = listLineups();
+        const found = lineups.find(l => l.name === 'list-test');
         expect(found).to.not.be.undefined;
         expect(found!.path).to.equal(testFile);
       } finally {

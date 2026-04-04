@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] - 2026-04-04
+
+### Added
+
+- **Player types** — Reusable agent definitions using Claude Code's standard subagent format (`.md` files with YAML frontmatter). Ensemble lineups can reference player types by name via a `type` field on players.
+- **Three-tier agent type lookup** — project (`.claude/agents/`) → user (`~/.claude/agents/`) → shipped (`examples/agents/`). If found in Claude Code's standard dirs, recruits use `--agent <name>`; shipped examples fall back to `--system-prompt <path>`.
+- **`who_am_i` MCP tool** — Players can query their own identity: name, player type, description, ensemble, role (conductor/player), recruited by, current part, directory, host, branch, and status.
+- **`agent_types` MCP tool** — Conductors can discover available player types with name, description, and source (project/user/shipped).
+- **`recruit` tool `type` parameter** — Recruit with `type: "tempo-composer"` to spawn a session using a predefined agent definition. Resolves and validates the type, passes through to the spawn flow.
+- **Player identity in metadata** — `playerType`, `playerTypeDescription`, and `recruitedBy` fields on `SessionMetadata`, persisted in Temporal workflows and search attributes.
+- **`ensemble` tool shows player types** — Output includes player type in parens, e.g., `**arch** (architect)`.
+- **CLI `agent-types` command** — `list` (show available types), `show <name>` (print full definition), `init` (copy shipped examples to `~/.claude/agents/` for customization).
+- **Saver preserves player types** — `save_lineup` includes `type` field in saved YAML for typed players.
+- **Shipped player types** — 8 music-themed agent definitions: tempo-conductor (coordinator), tempo-composer (architect), tempo-soloist (engineer), tempo-tuner (QA), tempo-critic (reviewer), tempo-roadie (devops), tempo-improv (researcher), tempo-liner (documentation). All include opinionated Ensemble Collaboration sections with claude-tempo tool usage patterns.
+- **Shipped ensemble lineups** — 4 pre-built team compositions: tempo-big-band (flagship full-lifecycle with all 8 player types, 6-phase pipeline), tempo-dev-team (feature development), tempo-review-squad (parallel code review), tempo-jam-session (exploratory/spike work).
+
+### Changed
+
+- `load_lineup` tool and `up --lineup` CLI now resolve player type references via `loadAndResolveLineup()`.
+- MCP server instructions now include player type info when available.
+- `examples/` directory included in npm package.
+
+### Migration
+
+- **Backward compatible**: the `type` field on players is optional. Existing lineups without `type` work unchanged. Players recruited without a type behave exactly as before.
+
 ## [0.9.0] - 2026-04-04
 
 ### Added
@@ -48,12 +74,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **Ensemble blueprints** — define reusable ensemble configurations as YAML files with players, instructions, schedules, and custom agents. Blueprints can be loaded from the CLI (`claude-tempo up --from`), from inside a session (`load_ensemble`), or saved from a running ensemble (`save_ensemble`).
-- **`save_ensemble` MCP tool** — snapshot the current ensemble state (players, schedules) as a YAML blueprint file. Conductor only.
-- **`load_ensemble` MCP tool** — load a blueprint to recruit players sequentially and create schedules. Accepts a saved blueprint name or explicit file path.
-- **`claude-tempo up --from`** — load an ensemble blueprint during first-time setup.
-- **`claude-tempo ensemble` CLI commands** — `save`, `list`, and `show` subcommands for managing saved blueprints in `~/.claude-tempo/ensembles/`.
-- **`systemPrompt` parameter on recruit tool** — pass a path to a `.md` file to use as the session's custom agent system prompt (`--system-prompt`). Enables custom agent files in blueprints.
+- **Ensemble lineups** — define reusable ensemble configurations as YAML files with players, instructions, schedules, and custom agents. Lineups can be loaded from the CLI (`claude-tempo up --lineup`), from inside a session (`load_lineup`), or saved from a running ensemble (`save_lineup`).
+- **`save_lineup` MCP tool** — snapshot the current ensemble state (players, schedules) as a YAML lineup file. Conductor only.
+- **`load_lineup` MCP tool** — load a lineup to recruit players sequentially and create schedules. Accepts a saved lineup name or explicit file path.
+- **`claude-tempo up --lineup`** — load an ensemble lineup during first-time setup.
+- **`claude-tempo ensemble` CLI commands** — `save`, `list`, and `show` subcommands for managing saved lineups in `~/.claude-tempo/ensembles/`.
+- **`systemPrompt` parameter on recruit tool** — pass a path to a `.md` file to use as the session's custom agent system prompt (`--system-prompt`). Enables custom agent files in lineups.
 - **`target: "all"` schedule fan-out** — schedules can target `"all"` to deliver a message to every active player in the ensemble, skipping the conductor. Individual delivery failures are reported without failing the whole fire.
 
 ## [0.6.0] - 2026-04-03

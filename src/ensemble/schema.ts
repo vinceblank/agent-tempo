@@ -1,17 +1,23 @@
-// Ensemble blueprint types — defines the structure of a saved/loaded ensemble configuration.
+// Ensemble lineup types — defines the structure of a saved/loaded ensemble configuration.
 
-export interface EnsembleBlueprint {
+export interface EnsembleLineup {
   name: string;
   description?: string;
   conductor?: {
+    type?: string;        // agent definition name (e.g., "tempo-conductor")
     agent?: string;       // "default", "copilot", or path to agent .md file
     instructions?: string; // natural language instructions sent as initialMessage
   };
   players: Array<{
     name: string;
+    type?: string;        // agent definition name (e.g., "tempo-soloist")
     workDir?: string;     // defaults to cwd if omitted
     agent?: string;       // "default", "copilot", or path to agent .md file
     instructions?: string;
+    /** Transient: resolved agent definition name (set by loadAndResolveLineup). */
+    _agentDefinition?: string;
+    /** Transient: resolved absolute path to .md file (set by loadAndResolveLineup). */
+    _agentDefinitionPath?: string;
   }>;
   schedules?: Array<{
     name: string;
