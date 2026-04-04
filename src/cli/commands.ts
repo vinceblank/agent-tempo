@@ -7,9 +7,12 @@ import { spawnInTerminal, spawnCopilotBridge, resolveClaudePath } from '../spawn
 import { conductorWorkflowId, schedulerWorkflowId, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
 import { createTemporalConnection } from '../connection';
 import { shutdownSignal, playerReportSignal } from '../workflows/signals';
-import { AgentType } from '../types';
+import { addScheduleSignal } from '../workflows/scheduler-signals';
+import { AgentType, ScheduleEntry } from '../types';
 import { runPreflight } from './preflight';
 import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
+import { loadBlueprint } from '../ensemble/loader';
+import { saveBlueprint, listBlueprints, readSavedBlueprint } from '../ensemble/saver';
 import * as out from './output';
 
 /** Package root is two levels up from dist/cli/ */
@@ -522,6 +525,7 @@ export async function server(opts: ServerOpts) {
 interface UpOpts extends CliOverrides {
   ensemble: string;
   name?: string;
+  from?: string;
   agent: AgentType;
 }
 
@@ -587,12 +591,21 @@ export async function up(opts: UpOpts) {
   if (config.temporalTlsCertPath) temporalEnvVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
   if (config.temporalTlsKeyPath) temporalEnvVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
 
+  // Load blueprint if --from is provided
+  const blueprint = opts.from ? loadBlueprint(resolve(opts.from)) : undefined;
+  if (blueprint) {
+    out.check('Blueprint loaded', true, blueprint.name);
+  }
+
+  // Resolve conductor agent from blueprint or CLI flags
+  const conductorAgent: AgentType = blueprint?.conductor?.agent === 'copilot' ? 'copilot' : opts.agent;
+
   // Step 5: Launch conductor
   console.log();
-  out.log(`Launching conductor in ensemble ${out.cyan(opts.ensemble)}${opts.agent === 'copilot' ? out.dim(' (copilot)') : ''}...`);
+  out.log(`Launching conductor in ensemble ${out.cyan(opts.ensemble)}${conductorAgent === 'copilot' ? out.dim(' (copilot)') : ''}...`);
 
   let pid: number | undefined;
-  if (opts.agent === 'copilot') {
+  if (conductorAgent === 'copilot') {
     ({ pid } = spawnCopilotBridge({
       name: opts.name || `${opts.ensemble}-conductor`,
       ensemble: opts.ensemble,
@@ -622,15 +635,201 @@ export async function up(opts: UpOpts) {
     }));
   }
 
+  out.success(`Conductor launched (pid ${pid ?? 'unknown'})`);
+
+  // Step 6: If blueprint provided, recruit players and create schedules
+  if (blueprint) {
+    // Connect to Temporal to send signals
+    const connection = await createTemporalConnection(config);
+    const client = new Client({ connection, namespace: config.temporalNamespace });
+
+    // Wait for conductor workflow to appear
+    out.log(`\n  Waiting for conductor to register...`);
+    const conductorWfId = conductorWorkflowId(opts.ensemble);
+    let conductorReady = false;
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      try {
+        const handle = client.workflow.getHandle(conductorWfId);
+        const desc = await handle.describe();
+        if (desc.status.name === 'RUNNING') { conductorReady = true; break; }
+      } catch { /* not yet */ }
+    }
+
+    if (!conductorReady) {
+      out.warn('Conductor did not register within 15s — skipping blueprint players/schedules');
+    } else {
+      out.check('Conductor registered', true);
+
+      // Send conductor instructions if provided
+      if (blueprint.conductor?.instructions) {
+        try {
+          const handle = client.workflow.getHandle(conductorWfId);
+          await handle.signal('receiveMessage', {
+            from: 'blueprint',
+            text: blueprint.conductor.instructions,
+          });
+          out.check('Conductor instructions sent', true);
+        } catch (err) {
+          out.warn(`Could not send conductor instructions: ${err}`);
+        }
+      }
+
+      // Recruit players sequentially (each polls for ~15s)
+      if (blueprint.players.length > 0) {
+        console.log();
+        out.log(`Recruiting ${blueprint.players.length} player${blueprint.players.length !== 1 ? 's' : ''} from blueprint...`);
+
+        for (const player of blueprint.players) {
+          const playerAgent: AgentType = player.agent === 'copilot' ? 'copilot' : 'claude';
+          const playerWorkDir = player.workDir || process.cwd();
+
+          // Record existing workflows to detect the new one
+          const existingIds = new Set<string>();
+          const listQuery = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
+          for await (const wf of client.workflow.list({ query: listQuery })) {
+            existingIds.add(wf.workflowId);
+          }
+
+          // Spawn the player
+          if (playerAgent === 'copilot') {
+            spawnCopilotBridge({
+              name: player.name,
+              ensemble: opts.ensemble,
+              temporalAddress: config.temporalAddress,
+              temporalNamespace: config.temporalNamespace,
+              temporalApiKey: config.temporalApiKey,
+              temporalTlsCertPath: config.temporalTlsCertPath,
+              temporalTlsKeyPath: config.temporalTlsKeyPath,
+              isConductor: false,
+              workDir: playerWorkDir,
+            });
+          } else {
+            const claudeArgs = [
+              '--dangerously-skip-permissions',
+              '--dangerously-load-development-channels', 'server:claude-tempo',
+              '-n', player.name,
+            ];
+            spawnInTerminal(claudeArgs, playerWorkDir, {
+              ...temporalEnvVars,
+              [ENV.ENSEMBLE]: opts.ensemble,
+              [ENV.CONDUCTOR]: '',
+              [ENV.PLAYER_NAME]: player.name,
+            });
+          }
+
+          // Poll for the new workflow to appear (up to ~15s)
+          let newWorkflowId: string | null = null;
+          for (let attempt = 0; attempt < 30; attempt++) {
+            await new Promise(r => setTimeout(r, 500));
+            for await (const wf of client.workflow.list({ query: listQuery })) {
+              if (!existingIds.has(wf.workflowId)) {
+                newWorkflowId = wf.workflowId;
+                break;
+              }
+            }
+            if (newWorkflowId) break;
+          }
+
+          if (newWorkflowId && player.instructions) {
+            try {
+              const handle = client.workflow.getHandle(newWorkflowId);
+              await handle.signal('receiveMessage', {
+                from: 'blueprint',
+                text: player.instructions,
+              });
+            } catch { /* best effort */ }
+          }
+
+          const status = newWorkflowId ? out.green('ok') : out.yellow('slow');
+          out.log(`  ${status} ${out.bold(player.name)} in ${playerWorkDir}`);
+        }
+      }
+
+      // Create schedules
+      if (blueprint.schedules && blueprint.schedules.length > 0) {
+        console.log();
+        out.log(`Creating ${blueprint.schedules.length} schedule${blueprint.schedules.length !== 1 ? 's' : ''}...`);
+
+        for (const sched of blueprint.schedules) {
+          try {
+            const entry = blueprintScheduleToEntry(sched);
+            const schedulerWfId = schedulerWorkflowId(opts.ensemble);
+            const handle = client.workflow.getHandle(schedulerWfId);
+            await handle.signal(addScheduleSignal, entry);
+            out.check(sched.name, true, `→ ${sched.target}`);
+          } catch (err) {
+            out.warn(`Could not create schedule "${sched.name}": ${err}`);
+          }
+        }
+      }
+    }
+
+    await connection.close();
+  }
+
   console.log();
   out.success('You\'re all set!');
-  out.log(`  Conductor launched (pid ${pid ?? 'unknown'})`);
   out.log(`  Ensemble: ${out.cyan(opts.ensemble)}`);
-  out.log(`\n  ${out.bold('What next?')}`);
-  out.log(`  ${out.dim('claude-tempo start ' + opts.ensemble)}    Add a player session`);
-  out.log(`  ${out.dim('claude-tempo status ' + opts.ensemble)}   See who\'s active`);
-  out.log(`  Or ask the conductor to ${out.dim('recruit')} players for you`);
+  if (!blueprint) {
+    out.log(`\n  ${out.bold('What next?')}`);
+    out.log(`  ${out.dim('claude-tempo start ' + opts.ensemble)}    Add a player session`);
+    out.log(`  ${out.dim('claude-tempo status ' + opts.ensemble)}   See who\'s active`);
+    out.log(`  Or ask the conductor to ${out.dim('recruit')} players for you`);
+  } else {
+    out.log(`  Blueprint: ${out.dim(blueprint.name)}`);
+    out.log(`  Players: ${blueprint.players.length}`);
+    if (blueprint.schedules?.length) out.log(`  Schedules: ${blueprint.schedules.length}`);
+    out.log(`\n  ${out.dim('claude-tempo status ' + opts.ensemble)}   See who\'s active`);
+  }
   console.log();
+}
+
+/** Convert a blueprint schedule definition to a ScheduleEntry for the scheduler workflow. */
+function blueprintScheduleToEntry(sched: NonNullable<import('../ensemble/schema').EnsembleBlueprint['schedules']>[number]): ScheduleEntry {
+  const now = Date.now();
+  let nextFireAt: string;
+  let interval: number | undefined;
+
+  if (sched.every) {
+    interval = parseDuration(sched.every);
+    nextFireAt = sched.delay
+      ? new Date(now + parseDuration(sched.delay)).toISOString()
+      : new Date(now + interval).toISOString();
+  } else if (sched.at) {
+    nextFireAt = new Date(sched.at).toISOString();
+  } else if (sched.delay) {
+    nextFireAt = new Date(now + parseDuration(sched.delay)).toISOString();
+  } else {
+    nextFireAt = new Date(now + 60_000).toISOString(); // default: 1 minute
+  }
+
+  return {
+    name: sched.name,
+    message: sched.message,
+    target: sched.target,
+    createdBy: 'blueprint',
+    nextFireAt,
+    interval,
+    until: sched.until,
+    remainingCount: sched.count,
+    firedCount: 0,
+    type: interval ? 'interval' : 'once',
+  };
+}
+
+/** Parse a human duration string like "10m", "1h", "30s" to milliseconds. */
+function parseDuration(s: string): number {
+  const match = s.match(/^(\d+(?:\.\d+)?)\s*(s|m|h|d)$/);
+  if (!match) throw new Error(`Invalid duration: "${s}"`);
+  const value = parseFloat(match[1]);
+  switch (match[2]) {
+    case 's': return value * 1_000;
+    case 'm': return value * 60_000;
+    case 'h': return value * 3_600_000;
+    case 'd': return value * 86_400_000;
+    default: throw new Error(`Unknown duration unit: "${match[2]}"`);
+  }
 }
 
 // --- Teardown: `down` command ---
@@ -926,6 +1125,64 @@ function killBridgeProcesses() {
   }
 }
 
+// --- Ensemble blueprint commands ---
+
+interface EnsembleCommandOpts extends CliOverrides {
+  subcommand?: string;
+  name?: string;
+}
+
+export async function ensembleCommand(opts: EnsembleCommandOpts) {
+  switch (opts.subcommand) {
+    case 'save': {
+      const config = getConfig(opts);
+      const connection = await createTemporalConnection(config);
+      const client = new Client({ connection, namespace: config.temporalNamespace });
+      const ensemble = opts.name || config.ensemble;
+      try {
+        const path = await saveBlueprint(client, ensemble);
+        out.success(`Saved ensemble "${ensemble}" to ${path}`);
+      } finally {
+        await connection.close();
+      }
+      break;
+    }
+    case 'list': {
+      const blueprints = listBlueprints();
+      if (blueprints.length === 0) {
+        out.log('No saved ensembles. Use `claude-tempo ensemble save [name]` to save one.');
+        return;
+      }
+      out.heading('Saved ensembles');
+      for (const bp of blueprints) {
+        out.log(`  ${out.bold(bp.name)}  ${out.dim(bp.path)}`);
+      }
+      console.log();
+      break;
+    }
+    case 'show': {
+      if (!opts.name) {
+        out.error('Usage: claude-tempo ensemble show <name>');
+        process.exit(1);
+      }
+      const content = readSavedBlueprint(opts.name);
+      if (!content) {
+        out.error(`No saved ensemble named "${opts.name}"`);
+        out.log(`  Run ${out.dim('claude-tempo ensemble list')} to see available ensembles.`);
+        process.exit(1);
+      }
+      console.log(content);
+      break;
+    }
+    default:
+      out.error('Usage: claude-tempo ensemble <save|list|show> [name]');
+      out.log(`\n  ${out.dim('claude-tempo ensemble save [name]')}   Save current ensemble state`);
+      out.log(`  ${out.dim('claude-tempo ensemble list')}          List saved ensembles`);
+      out.log(`  ${out.dim('claude-tempo ensemble show <name>')}   Display a saved blueprint`);
+      process.exit(1);
+  }
+}
+
 export function help() {
   console.log(`
 ${out.bold('claude-tempo')} — Multi-session Claude Code coordination via Temporal
@@ -944,6 +1201,7 @@ ${out.bold('Commands:')}
   ${out.cyan('start')}   [ensemble]    Start a player session
   ${out.cyan('stop')}    [ensemble]    Stop sessions (-n <name> for one, or --all)
   ${out.cyan('status')}  [ensemble]    Show active sessions and Temporal health
+  ${out.cyan('ensemble')} <sub>       Manage saved ensemble blueprints (save/list/show)
   ${out.cyan('config')}                Configure Temporal connection settings
   ${out.cyan('init')}                  Register MCP server globally (or --project for .mcp.json)
   ${out.cyan('preflight')}             Run preflight checks only
@@ -964,6 +1222,7 @@ ${out.bold('Other options:')}
   --project                   Use per-project .mcp.json instead of global (init only)
   --keep-mcp                  Don't remove MCP config (down only)
   --all                       Stop all sessions (stop only)
+  --from <file>               Load ensemble from a YAML blueprint (up only)
   --ensemble <name>           Target a specific ensemble (stop only)
   -d, --dir <path>            Target directory (default: cwd)
 

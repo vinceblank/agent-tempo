@@ -1,6 +1,6 @@
 {
   "name": "claude-tempo",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "MCP server for multi-session Claude Code coordination via Temporal",
   "repository": {
     "type": "git",
@@ -53,6 +53,7 @@
     "@temporalio/client": "~1.15.0",
     "@temporalio/worker": "~1.15.0",
     "@temporalio/workflow": "~1.15.0",
+    "yaml": "^2.8.3",
     "zod": "^3.25.76"
   },
   "devDependencies": {

@@ -29,7 +29,49 @@ export function createScheduleActivities(client: Client): ScheduleActivities {
       const { ensemble, scheduleName, message, target, createdBy } = input;
 
       try {
-        // Resolve target player by querying running session workflows
+        const text = `[scheduled: ${scheduleName}] ${message}`;
+
+        // Handle target "all" — deliver to every active player except the conductor
+        if (target === 'all') {
+          const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
+          const failures: string[] = [];
+          let delivered = 0;
+
+          for await (const wf of client.workflow.list({ query })) {
+            try {
+              const handle = client.workflow.getHandle(wf.workflowId);
+              const metadata: SessionMetadata = await handle.query('getMetadata');
+              if (metadata.ensemble !== ensemble) continue;
+              if (metadata.isConductor) continue; // skip conductor
+
+              await handle.signal('receiveMessage', {
+                from: createdBy,
+                text,
+                isScheduled: true,
+                scheduleName,
+              });
+              delivered++;
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              failures.push(`${wf.workflowId}: ${msg}`);
+            }
+          }
+
+          if (delivered === 0 && failures.length === 0) {
+            await notifyFailure(
+              client, ensemble, createdBy, scheduleName, target,
+              'No active players found in the ensemble.',
+            );
+            return { success: false, error: 'No active players found' };
+          }
+
+          return {
+            success: failures.length === 0,
+            error: failures.length > 0 ? `Delivered to ${delivered} players, ${failures.length} failed: ${failures.join('; ')}` : undefined,
+          };
+        }
+
+        // Resolve single target player by querying running session workflows
         const handle = await resolveSession(client, ensemble, target);
         if (!handle) {
           // Notify the creator (or conductor as fallback) about the failure
@@ -41,7 +83,6 @@ export function createScheduleActivities(client: Client): ScheduleActivities {
         }
 
         // Send cue signal with from set to the original creator's name
-        const text = `[scheduled: ${scheduleName}] ${message}`;
         await handle.signal('receiveMessage', {
           from: createdBy,
           text,

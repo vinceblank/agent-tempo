@@ -33,6 +33,8 @@ export function registerRecruitTool(
         .describe('Optional task or message for the new session (sent after it sets its name)'),
       agent: z.enum(['claude', 'copilot']).optional()
         .describe(`Which agent to use (default: "${ownAgentType}", same as this session)`),
+      systemPrompt: z.string().optional()
+        .describe('Path to a .md file to use as custom agent system prompt (--system-prompt)'),
     },
     async (args) => {
       const { workDir, name, initialMessage } = args as {
@@ -41,9 +43,11 @@ export function registerRecruitTool(
         conductor?: boolean;
         initialMessage?: string;
         agent?: AgentType;
+        systemPrompt?: string;
       };
       const isConductor = (args as any).conductor === true;
       const agent: AgentType = (args as any).agent || ownAgentType;
+      const systemPrompt = (args as any).systemPrompt as string | undefined;
       // Validate name
       if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
         return {
@@ -123,6 +127,7 @@ export function registerRecruitTool(
             '--dangerously-skip-permissions',
             '--dangerously-load-development-channels', 'server:claude-tempo',
             '-n', name,
+            ...(systemPrompt ? ['--system-prompt', systemPrompt] : []),
           ];
           const envVars: Record<string, string> = {
             [ENV.ENSEMBLE]: config.ensemble,
