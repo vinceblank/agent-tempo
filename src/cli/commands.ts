@@ -281,9 +281,12 @@ export async function status(opts: StatusOpts) {
       const agent = s.agentType === 'copilot' ? out.dim(' [copilot]') : '';
       const statusLabel = s.status === 'stale' ? out.yellow(' (stale)')
         : s.status === 'pending' ? out.dim(' (pending)')
+        : s.status === 'blocked' ? out.yellow(' (blocked)')
         : '';
+      // Show PID info for copilot bridge sessions
+      const pidInfo = s.agentType === 'copilot' ? getBridgePidInfo(s.name) : '';
       const name = out.bold(s.name);
-      out.log(`  ${name}${role}${statusLabel}${agent}`);
+      out.log(`  ${name}${role}${statusLabel}${agent}${pidInfo}`);
       if (s.part) out.log(`    ${out.dim(s.part)}`);
       const details = [s.workDir, s.branch, s.host].filter(Boolean).join('  ');
       if (details) out.log(`    ${out.dim(details)}`);
@@ -1188,6 +1191,28 @@ async function stopByName(client: Client, name: string, config: Config, ensemble
   if (!found) {
     out.error(`No active session found with name "${name}"`);
     process.exit(1);
+  }
+}
+
+/**
+ * Read PID info for a copilot bridge session from its PID file.
+ * Returns a formatted string like " (pid 12345)" or "" if no PID file found.
+ */
+function getBridgePidInfo(name: string): string {
+  const pidPath = join(process.cwd(), 'logs', `${name}.pid`);
+  if (!existsSync(pidPath)) return '';
+  try {
+    const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
+    if (isNaN(pid)) return '';
+    // Check if process is still alive
+    try {
+      process.kill(pid, 0); // signal 0 = existence check, doesn't kill
+      return out.dim(` (pid ${pid})`);
+    } catch {
+      return out.dim(` (pid ${pid}, dead)`);
+    }
+  } catch {
+    return '';
   }
 }
 
