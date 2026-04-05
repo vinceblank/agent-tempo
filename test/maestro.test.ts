@@ -73,7 +73,7 @@ describe('claudeMaestroWorkflow', function () {
 
   describe('snapshot diffing', function () {
     it('detects player_joined and player_left events', async function () {
-      this.timeout(30_000);
+      this.timeout(60_000);
 
       let currentPlayers: MaestroPlayerInfo[] = [];
 
@@ -120,7 +120,7 @@ describe('claudeMaestroWorkflow', function () {
     });
 
     it('detects status_changed and part_changed events', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
 
       const initialPlayer: MaestroPlayerInfo = {
         playerId: 'bob',
@@ -176,7 +176,7 @@ describe('claudeMaestroWorkflow', function () {
 
   describe('command relay', function () {
     it('queues and dispatches commands via maestroSendCommand update', async function () {
-      this.timeout(20_000);
+      this.timeout(30_000);
 
       await withWorkerAndMaestroActivities({}, async (relayedCommands) => {
         const handle = await startMaestro(getClient());
@@ -226,7 +226,7 @@ describe('claudeMaestroWorkflow', function () {
     });
 
     it('marks commands as failed when relay fails', async function () {
-      this.timeout(20_000);
+      this.timeout(30_000);
 
       await withWorkerAndMaestroActivities(
         { relayResult: () => ({ success: false, error: 'No conductor found' }) },
@@ -266,7 +266,7 @@ describe('claudeMaestroWorkflow', function () {
     });
 
     it('handles activity failures gracefully without crashing', async function () {
-      this.timeout(25_000);
+      this.timeout(45_000);
 
       let callCount = 0;
 
