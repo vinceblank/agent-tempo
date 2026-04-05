@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.13.1] - 2026-04-05
+
+### Fixed
+
+- **Conductor naming** — Four locations hardcoded `'conductor'` as the player name, ignoring lineup and CLI overrides. Conductor name now flows correctly through `schema → loader → CLI → server`. Also fixes a latent bug where default conductors were unnecessarily prompted to call `set_name` (#39)
+
 ## [0.13.0] - 2026-04-05
 
 ### Added
