@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.0] - 2026-04-05
+
+### Added
+
+- **Maestro workflow** — durable `claudeMaestroWorkflow` that runs alongside the conductor, monitoring ensemble state in real time: tracks player joins/leaves, status changes (`active`/`stale`/`blocked`), and part updates. Accessible via Maestro signals/queries/updates (#45)
+- **`scanEnsembleSessions` shared helper** — centralises Temporal ensemble querying, used by both the Maestro workflow and the `ensemble` MCP tool
+- **Branch coordination rules** — conductor and player instructions injected at server startup, reminding conductors to provision worktrees and players to check their assigned branch before starting work
+- **Wire protocol** — Maestro workflow signals, queries, and updates documented in `docs/WIRE-PROTOCOL.md`
+
 ## [0.16.3] - 2026-04-05
 
 ### Fixed
