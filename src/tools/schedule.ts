@@ -4,6 +4,7 @@ import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { Config, schedulerWorkflowId } from '../config';
 import { parseDuration } from '../utils/duration';
 import { defineTool } from './helpers';
+import { SCHEDULE_NAME_MAX, SCHEDULE_MESSAGE_MAX, PLAYER_NAME_MAX } from '../utils/validation';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:schedule]', ...args);
 
@@ -18,9 +19,9 @@ export function registerScheduleTool(
     'schedule',
     'Schedule a message to be sent to a player at a specific time, after a delay, or on a recurring interval.',
     {
-      name: z.string().describe('Unique name for this schedule'),
-      message: z.string().describe('The message to deliver'),
-      target: z.string().describe('Player name to deliver to ("self" = this session)'),
+      name: z.string().max(SCHEDULE_NAME_MAX).describe('Unique name for this schedule'),
+      message: z.string().max(SCHEDULE_MESSAGE_MAX).describe('The message to deliver'),
+      target: z.string().max(PLAYER_NAME_MAX).describe('Player name to deliver to ("self" = this session)'),
       at: z.string().optional().describe('ISO datetime for one-shot delivery (e.g. "2026-04-03T20:00:00Z")'),
       delay: z.string().optional().describe('Duration until first delivery (e.g. "10m", "2h", "1d")'),
       every: z.string().optional().describe('Recurring interval (e.g. "5m", "1h")'),

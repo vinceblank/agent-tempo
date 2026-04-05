@@ -115,6 +115,11 @@ describe('multi-session integration', function () {
           metadata: playerMetadata({ playerId: 'findme', ensemble }),
         });
 
+        // Wait for the visibility store to catch up before resolving by name.
+        // client.workflow.list() is eventually consistent — without this,
+        // resolveByName can return null immediately after startSession.
+        await waitForEnsembleMembers(getClient(), ensemble, 1);
+
         const resolved = await resolveByName(getClient(), ensemble, 'findme');
         expect(resolved).to.not.be.null;
 

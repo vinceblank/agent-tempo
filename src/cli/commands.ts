@@ -735,7 +735,7 @@ export async function up(opts: UpOpts) {
         const handle = client.workflow.getHandle(conductorWfId);
         const desc = await handle.describe();
         if (desc.status.name === 'RUNNING') { conductorReady = true; break; }
-      } catch { /* not yet */ }
+      } catch { /* Conductor workflow not yet registered — keep polling */ }
     }
 
     if (!conductorReady) {
@@ -830,7 +830,7 @@ export async function up(opts: UpOpts) {
                 from: 'lineup',
                 text: player.instructions,
               });
-            } catch { /* best effort */ }
+            } catch { /* Instruction delivery is best-effort — player may not be ready yet */ }
           }
 
           const status = newWorkflowId ? out.green('ok') : out.yellow('slow');

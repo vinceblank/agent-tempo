@@ -16,8 +16,10 @@ const BUNDLE_PATH = path.resolve(__dirname, '..', 'workflow-bundle.js');
 async function getWorkflowBundle(): Promise<{ code: string }> {
   // Use pre-built bundle if it exists, otherwise bundle from source
   if (fs.existsSync(BUNDLE_PATH)) {
+    log(`Loading pre-built workflow bundle from ${BUNDLE_PATH}`);
     return { code: fs.readFileSync(BUNDLE_PATH, 'utf-8') };
   }
+  log('No pre-built workflow bundle found — bundling from source (run `npm run build` to avoid this)');
   const bundle = await bundleWorkflowCode({
     workflowsPath: path.resolve(__dirname, 'workflows', 'index'),
   });

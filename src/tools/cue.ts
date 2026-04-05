@@ -6,6 +6,7 @@ import { resolveSession } from './resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
 import { defineTool } from './helpers';
+import { PLAYER_NAME_MAX, MESSAGE_MAX } from '../utils/validation';
 
 export function registerCueTool(
   server: McpServer,
@@ -19,8 +20,8 @@ export function registerCueTool(
     'cue',
     'Send a message to another Claude Code session by player name. Delivered instantly via Temporal signal.',
     {
-      playerId: z.string().describe('The player name of the target session'),
-      message: z.string().describe('The message to send'),
+      playerId: z.string().max(PLAYER_NAME_MAX).describe('The player name of the target session'),
+      message: z.string().max(MESSAGE_MAX).describe('The message to send'),
     },
     async (args) => {
       const { playerId, message } = args as { playerId: string; message: string };

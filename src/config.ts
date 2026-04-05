@@ -2,6 +2,7 @@ import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { AgentType } from './types';
+import { validateEnsembleName } from './utils/validation';
 
 const VALID_AGENTS: AgentType[] = ['claude', 'copilot'];
 function validAgent(value: string | undefined): AgentType {
@@ -214,7 +215,7 @@ export function getConfig(overrides: CliOverrides = {}): Config {
     return cliVal || process.env[envKey] || fileVal || temporalCliVal || undefined;
   };
 
-  return {
+  const config: Config = {
     temporalAddress: resolve(
       overrides.temporalAddress, ENV.TEMPORAL_ADDRESS,
       configFile.temporalAddress, temporalCli.temporalAddress,
@@ -243,6 +244,13 @@ export function getConfig(overrides: CliOverrides = {}): Config {
     taskQueue: process.env[ENV.TASK_QUEUE] ?? 'claude-tempo',
     ensemble: process.env[ENV.ENSEMBLE] ?? 'default',
   };
+
+  const ensembleError = validateEnsembleName(config.ensemble);
+  if (ensembleError) {
+    throw new Error(ensembleError);
+  }
+
+  return config;
 }
 
 export type ConfigSource = 'flag' | 'env' | 'config' | 'temporal-cli' | 'default' | 'none';

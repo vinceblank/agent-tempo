@@ -57,9 +57,6 @@ export interface SpawnProcessInput {
   ensemble: string;
   temporalAddress: string;
   temporalNamespace: string;
-  temporalApiKey?: string;
-  temporalTlsCertPath?: string;
-  temporalTlsKeyPath?: string;
   agentDefinition?: string;
   agentDefinitionPath?: string;
   nativeResolvable?: boolean;
@@ -190,7 +187,9 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
-      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath, agentDefinition, agentDefinitionPath, nativeResolvable } = input;
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable } = input;
+      // Read secrets from the worker's config closure — never from workflow state
+      const { temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = config;
       try {
         if (agent === 'copilot') {
           const { pid } = spawnCopilotBridge({

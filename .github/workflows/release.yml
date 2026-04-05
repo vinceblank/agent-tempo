@@ -1,0 +1,80 @@
+# Release workflow — triggered by pushing a version tag (e.g. git tag v1.0.0 && git push --tags)
+#
+# Required secret:
+#   NPM_TOKEN — an npm Automation token with publish access to the claude-tempo package.
+#   Set it at: https://github.com/vinceblank/claude-tempo/settings/secrets/actions
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to create GitHub Releases
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run tests
+        run: npm test
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Extract changelog for this version
+        id: changelog
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          # Extract the block between this version header and the next
+          NOTES=$(awk "/^## \[${VERSION}\]/{found=1; next} found && /^## \[/{exit} found{print}" CHANGELOG.md)
+          # Use a multiline-safe delimiter for GITHUB_OUTPUT
+          {
+            echo "notes<<__CHANGELOG_EOF__"
+            echo "$NOTES"
+            echo "__CHANGELOG_EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: actions/github-script@v7
+        env:
+          CHANGELOG_NOTES: ${{ steps.changelog.outputs.notes }}
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const body = (process.env.CHANGELOG_NOTES || '').trim();
+
+            await github.rest.releases.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: tag,
+              body: body || `Release ${tag}`,
+              draft: false,
+              prerelease: tag.includes('-'),
+            });

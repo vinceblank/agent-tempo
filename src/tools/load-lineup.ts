@@ -11,7 +11,9 @@ import { readSavedLineup } from '../ensemble/saver';
 import { resolveSession } from './resolve';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { parseDuration } from '../utils/duration';
+import { safeLineupPath } from '../utils/safe-path';
 import { defineTool } from './helpers';
+import { PLAYER_NAME_MAX, PATH_MAX } from '../utils/validation';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:load-lineup]', ...args);
 
@@ -31,8 +33,8 @@ export function registerLoadLineupTool(
     'load_lineup',
     'Load an ensemble lineup — recruits players and creates schedules.',
     {
-      name: z.string().optional().describe('Name of a saved lineup (from ~/.claude-tempo/ensembles/)'),
-      path: z.string().optional().describe('Explicit file path to a lineup YAML file'),
+      name: z.string().max(PLAYER_NAME_MAX).optional().describe('Name of a saved lineup (from ~/.claude-tempo/ensembles/)'),
+      path: z.string().max(PATH_MAX).optional().describe('Explicit file path to a lineup YAML file'),
     },
     async (args) => {
       const lineupName = (args as any).name as string | undefined;
@@ -84,6 +86,9 @@ export function registerLoadLineupTool(
           }
         }
 
+        // Validate the resolved path is within allowed roots
+        filePath = safeLineupPath(filePath, process.cwd());
+
         const lineup = loadAndResolveLineup(filePath);
         const recruited: string[] = [];
         const failed: string[] = [];
@@ -110,8 +115,8 @@ export function registerLoadLineupTool(
                   from: getPlayerId(),
                   text: player.instructions,
                 });
-              } catch {
-                // best effort
+              } catch (err) {
+                log(`Failed to send instructions to already-active player "${playerName}":`, err);
               }
             }
             continue;
@@ -132,6 +137,7 @@ export function registerLoadLineupTool(
                 ensemble: config.ensemble,
                 temporalAddress: config.temporalAddress,
                 temporalNamespace: config.temporalNamespace,
+                // Secrets read from config (env/file), not workflow state
                 temporalApiKey: config.temporalApiKey,
                 temporalTlsCertPath: config.temporalTlsCertPath,
                 temporalTlsKeyPath: config.temporalTlsKeyPath,
@@ -205,8 +211,8 @@ export function registerLoadLineupTool(
                 from: getPlayerId(),
                 text: player.instructions,
               });
-            } catch {
-              // best effort
+            } catch (err) {
+              log(`Failed to send instructions to newly recruited player "${playerName}":`, err);
             }
           }
 

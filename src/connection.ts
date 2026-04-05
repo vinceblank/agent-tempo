@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { Connection } from '@temporalio/client';
 import { NativeConnection } from '@temporalio/worker';
 import { Config } from './config';
@@ -16,6 +16,13 @@ function buildConnectionOptions(config: Config) {
 
   // mTLS certificate pair
   if (config.temporalTlsCertPath && config.temporalTlsKeyPath) {
+    // Validate cert/key files exist before attempting to read
+    if (!existsSync(config.temporalTlsCertPath)) {
+      throw new Error(`TLS certificate file not found: ${config.temporalTlsCertPath} (TEMPORAL_TLS_CERT_PATH)`);
+    }
+    if (!existsSync(config.temporalTlsKeyPath)) {
+      throw new Error(`TLS key file not found: ${config.temporalTlsKeyPath} (TEMPORAL_TLS_KEY_PATH)`);
+    }
     opts.tls = {
       clientCertPair: {
         crt: readFileSync(config.temporalTlsCertPath),
