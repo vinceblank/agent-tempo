@@ -259,6 +259,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         timestamp: new Date().toISOString(),
         delivered: false,
       });
+      // Command processing counts as implicit outbound for blocked detection
+      lastActivityTime = Date.now();
+      lastOutboundTime = Date.now();
     });
 
     setHandler(playerReportSignal, (report) => {

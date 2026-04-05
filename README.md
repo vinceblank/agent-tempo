@@ -478,6 +478,8 @@ claude-tempo <command> [options]
 | `stop [ensemble]` | Stop sessions (`-n <name>` for one, `--all` for everything) |
 | `init` | Register claude-tempo MCP server globally (`--project` for per-directory) |
 | `preflight` | Run environment checks |
+| `broadcast <msg>` | Send a message to all active players. Use `--type` to filter by player type, `--include-stale` to include stale sessions. |
+| `encore <name>` | Revive a stale player session by name. Use `--host` to target a remote machine. |
 | `ensemble <sub>` | Manage saved lineups (`save`, `list`, `show`) |
 | `agent-types <sub>` | Manage player types (`list`, `show <name>`, `init`) |
 | `version` | Print the installed version |
