@@ -119,7 +119,7 @@ The following custom Temporal search attributes are written by `claudeSessionWor
 | `ClaudeTempoEnsemble` | `Keyword` | Ensemble namespace (from `CLAUDE_TEMPO_ENSEMBLE` env var). Scopes sessions to a named group. |
 | `ClaudeTempoPlayerId` | `Keyword` | Human-readable player name (or hex ID before `set_name` is called). |
 | `ClaudeTempoHostname` | `Keyword` | Hostname of the machine running the session. Used to route spawn activities to the correct per-host task queue. |
-| `ClaudeTempoStatus` | `Keyword` | Session lifecycle state: `pending` → `active` → `stale` \| `terminated`. |
+| `ClaudeTempoStatus` | `Keyword` | Session lifecycle state: `pending` → `active` → `stale` \| `blocked` \| `terminated`. `blocked` means the session is alive (delivering messages) but has produced no outbound activity for 5+ minutes — it may be stuck or spinning. Auto-recovers to `active` on next outbound. |
 | `ClaudeTempoGitRoot` | `Keyword` | Absolute path to the git repository root on the session's host. |
 | `ClaudeTempoPlayerType` | `Keyword` | Agent type name (e.g. `tempo-soloist`), set from the player's agent definition. |
 
