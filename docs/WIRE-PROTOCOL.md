@@ -46,13 +46,14 @@ Queries on a `claudeSessionWorkflow` instance (synchronous, read-only).
 
 ---
 
-## Session Update
+## Session Updates
 
 Workflow updates on a `claudeSessionWorkflow` instance (transactional, returns a value).
 
 | Update Name | Input | Return | Description |
 |-------------|-------|--------|-------------|
 | `submitOutbox` | `OutboxEntryInput` | `string` (entry ID) | Appends an outbox entry (cue, report, stop, recruit, or encore) to the session's outbox queue and returns its generated UUID. The workflow's dispatch loop processes entries asynchronously via activities. This is the sole write path for all outbound operations. **Encore entries** (`type: 'encore'`) re-engage a player in a new session context; fields: `targetPlayerId: string`, `targetHostname?: string`, `contextMessageCount?: number`. |
+| `checkAndSetStatus` | `{ expectedStatus: string; newStatus: string }` | `boolean` | Atomically transitions the session's status from `expectedStatus` to `newStatus`. Returns `true` on success, `false` if the current status did not match `expectedStatus`. Used internally to guard state transitions (e.g., prevent double-encore, validate active/stale preconditions). |
 
 ---
 

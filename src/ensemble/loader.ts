@@ -65,6 +65,7 @@ export function loadLineup(filePath: string): EnsembleLineup {
       ...(p.workDir != null && { workDir: p.workDir }),
       ...(p.agent != null && { agent: p.agent }),
       ...(p.instructions != null && { instructions: p.instructions }),
+      ...(Array.isArray(p.allowedTools) && { allowedTools: p.allowedTools.map(String) }),
     })),
     schedules: doc.schedules,
   };

@@ -162,11 +162,17 @@ export function registerLoadLineupTool(
                 agentFlags = ['--system-prompt', systemPrompt];
               }
 
+              // Build --allowedTools flag from agent definition or lineup
+              const allowedToolsFlags = player.allowedTools && player.allowedTools.length > 0
+                ? ['--allowedTools', ...player.allowedTools]
+                : [];
+
               const spawnArgs = [
                 '--dangerously-skip-permissions',
                 '--dangerously-load-development-channels', 'server:claude-tempo',
                 '-n', playerName,
                 ...agentFlags,
+                ...allowedToolsFlags,
               ];
               const envVars: Record<string, string> = {
                 [ENV.ENSEMBLE]: config.ensemble,

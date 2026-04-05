@@ -60,6 +60,7 @@ export function registerRecruitTool(
       let agentDefinitionPath: string | undefined;
       let agentDefinitionDescription: string | undefined;
       let nativeResolvable: boolean | undefined;
+      let allowedTools: string[] | undefined;
       if (agentTypeName) {
         const info = resolveAgentType(agentTypeName);
         if (!info) {
@@ -76,6 +77,7 @@ export function registerRecruitTool(
         agentDefinitionPath = info.path;
         agentDefinitionDescription = info.description;
         nativeResolvable = info.nativeResolvable;
+        allowedTools = info.allowedTools;
       }
 
       // Validate name
@@ -145,6 +147,7 @@ export function registerRecruitTool(
           agentDefinitionPath,
           agentDefinitionDescription,
           nativeResolvable,
+          allowedTools,
         } as OutboxEntryInput;
         const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 

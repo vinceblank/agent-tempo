@@ -14,6 +14,7 @@ export interface EnsembleLineup {
     workDir?: string;     // defaults to cwd if omitted
     agent?: string;       // "default", "copilot", or path to agent .md file
     instructions?: string;
+    allowedTools?: string[]; // Tool restrictions (e.g., ["Read", "Glob", "Grep"])
     /** Transient: resolved agent definition name (set by loadAndResolveLineup). */
     _agentDefinition?: string;
     /** Transient: resolved absolute path to .md file (set by loadAndResolveLineup). */
