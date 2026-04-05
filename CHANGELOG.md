@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.16.0] - 2026-04-05
+
+### Added
+
+- **`blocked` session status** — Sessions that receive delivered messages but produce no outbound activity for 5+ minutes are automatically marked `blocked`. Auto-recovers to `active` when the session resumes output. Blocked sessions are excluded from broadcast (#34)
+
+### Fixed
+
+- **Encore session UUID** — Encore previously passed the player name to `--resume`, which triggers an interactive picker when multiple Claude Code sessions share a name. Now generates a UUID at recruit time (`--session-id`) and uses it for deterministic `--resume` on encore. Falls back to player name for legacy sessions (#44)
+
 ## [0.15.0] - 2026-04-05
 
 ### Added
