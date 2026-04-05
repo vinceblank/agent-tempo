@@ -14,7 +14,7 @@ import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured }
 import { loadLineup } from '../ensemble/loader';
 import { saveLineup, listLineups, readSavedLineup } from '../ensemble/saver';
 import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
-import { ENCORE_DEFAULT_CONTEXT_MESSAGES, PREVIEW_MAX_LENGTH, shouldIncludeInBroadcast } from '../utils/validation';
+import { ENCORE_DEFAULT_CONTEXT_MESSAGES, PREVIEW_MAX_LENGTH, shouldIncludeInBroadcast, validateEnsembleName } from '../utils/validation';
 import * as out from './output';
 
 /** Package root is two levels up from dist/cli/ */
@@ -928,35 +928,61 @@ function parseDuration(s: string): number {
 // --- Teardown: `down` command ---
 
 interface DownOpts extends CliOverrides {
+  ensemble: string;
+  all: boolean;
   removeMcp: boolean;
   dir: string;
 }
 
 export async function down(opts: DownOpts) {
   const config = getConfig(opts);
+  const ensembleName = opts.ensemble;
+
+  // Validate ensemble name before interpolating into query strings
+  const nameErr = validateEnsembleName(ensembleName);
+  if (nameErr) { out.error(nameErr); process.exit(1); }
 
   out.heading('claude-tempo teardown');
+  out.log(`  Ensemble: ${out.bold(ensembleName)}${opts.all ? ' (--all: will also stop Temporal server)' : ''}`);
 
-  // Step 1: Terminate all active workflows
+  // Step 1: Terminate workflows for the target ensemble
   const temporalUp = await isTemporalReachable(config);
+  let hasRemainingWorkflows = false;
   if (temporalUp) {
     try {
       const connection = await createTemporalConnection(config);
       const client = new Client({ connection, namespace: config.temporalNamespace });
-      const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+
+      // Terminate session workflows scoped to this ensemble
+      const sessionQuery = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${ensembleName}"`;
       let terminated = 0;
-      for await (const wf of client.workflow.list({ query })) {
+      for await (const wf of client.workflow.list({ query: sessionQuery })) {
         try {
           const handle = client.workflow.getHandle(wf.workflowId);
           await handle.terminate('claude-tempo down');
           terminated++;
         } catch { /* already closed */ }
       }
+
+      // Also terminate the ensemble's scheduler workflow
+      try {
+        const schedulerHandle = client.workflow.getHandle(schedulerWorkflowId(ensembleName));
+        await schedulerHandle.terminate('claude-tempo down');
+        terminated++;
+      } catch { /* no scheduler or already closed */ }
+
+      // Check if other workflows still running (to decide whether to kill Temporal)
+      const allRunningQuery = 'ExecutionStatus = "Running"';
+      for await (const _ of client.workflow.list({ query: allRunningQuery })) {
+        hasRemainingWorkflows = true;
+        break;
+      }
+
       await connection.close();
       if (terminated > 0) {
-        out.success(`Terminated ${terminated} active session${terminated !== 1 ? 's' : ''}`);
+        out.success(`Terminated ${terminated} workflow${terminated !== 1 ? 's' : ''} in ensemble "${ensembleName}"`);
       } else {
-        out.log(`  ${out.dim('No active sessions to terminate')}`);
+        out.warn(`No active workflows found for ensemble "${ensembleName}"`);
       }
     } catch {
       out.warn('Could not terminate active sessions');
@@ -966,8 +992,8 @@ export async function down(opts: DownOpts) {
   // Step 2: Kill bridge processes via PID files
   killBridgeProcesses();
 
-  // Step 3: Stop Temporal server
-  if (temporalUp) {
+  // Step 3: Stop Temporal server — only if --all flag or no other workflows remain
+  if (temporalUp && (opts.all || !hasRemainingWorkflows)) {
     // Find and kill the temporal dev server process
     try {
       if (process.platform === 'win32') {
@@ -980,6 +1006,8 @@ export async function down(opts: DownOpts) {
     } catch {
       out.warn('Could not stop Temporal server (may need to stop it manually)');
     }
+  } else if (temporalUp) {
+    out.log(`  ${out.dim('Temporal server left running (other ensembles still active)')}`);
   } else {
     out.log(`  ${out.dim('Temporal not running')}`);
   }
