@@ -270,7 +270,12 @@ export interface MaestroPendingCommand {
 /** Input for the Maestro workflow. */
 export interface MaestroInput {
   ensemble: string;
+  /** Restored from continue-as-new. */
   players?: MaestroPlayerInfo[];
+  /** Restored from continue-as-new (ring buffer, max 200). */
   events?: MaestroEvent[];
+  /** Restored from continue-as-new. */
   pendingCommands?: MaestroPendingCommand[];
+  /** Refresh interval in milliseconds (default 10000). Lowered in tests. */
+  pollIntervalMs?: number;
 }

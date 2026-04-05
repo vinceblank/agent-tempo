@@ -1,6 +1,9 @@
 /**
  * Tests for the Maestro workflow — ensemble monitoring and command relay.
  * Follows the scheduler.test.ts pattern: shared testEnv, withWorkerAndMaestroActivities helper.
+ *
+ * Uses pollIntervalMs: 500 so the workflow refreshes every 0.5s instead of 10s,
+ * making tests fast without needing time-skipping.
  */
 import { expect } from 'chai';
 import { Client, WorkflowHandle } from '@temporalio/client';
@@ -8,7 +11,6 @@ import {
   setupTestEnv,
   teardownTestEnv,
   getClient,
-  skipTime,
   TASK_QUEUE,
   withWorkerAndMaestroActivities,
 } from './helpers';
@@ -22,6 +24,8 @@ import {
 import type { MaestroPlayerInfo } from '../src/types';
 
 const ENSEMBLE = 'test-ensemble';
+/** Fast poll for tests — 500ms instead of the default 10s. */
+const FAST_POLL_MS = 500;
 
 function maestroWorkflowId(ensemble: string): string {
   return `claude-maestro-${ensemble}`;
@@ -29,13 +33,22 @@ function maestroWorkflowId(ensemble: string): string {
 
 async function startMaestro(
   client: Client,
-  input: { ensemble: string; players?: MaestroPlayerInfo[] } = { ensemble: ENSEMBLE },
+  overrides: { ensemble?: string; players?: MaestroPlayerInfo[] } = {},
 ): Promise<WorkflowHandle> {
+  const input = {
+    ensemble: overrides.ensemble ?? ENSEMBLE,
+    players: overrides.players,
+    pollIntervalMs: FAST_POLL_MS,
+  };
   return client.workflow.start('claudeMaestroWorkflow', {
     workflowId: maestroWorkflowId(input.ensemble),
     taskQueue: TASK_QUEUE,
     args: [input],
   });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 describe('claudeMaestroWorkflow', function () {
@@ -50,6 +63,7 @@ describe('claudeMaestroWorkflow', function () {
 
   describe('initial state and queries', function () {
     it('starts with empty state and responds to queries', async function () {
+      this.timeout(10_000);
       await withWorkerAndMaestroActivities({}, async () => {
         const handle = await startMaestro(getClient());
 
@@ -79,8 +93,8 @@ describe('claudeMaestroWorkflow', function () {
         async () => {
           const handle = await startMaestro(getClient());
 
-          // Wait for first refresh (empty -> empty, no events)
-          await skipTime(12_000);
+          // Wait for first refresh cycle (fast poll = 500ms + activity time)
+          await sleep(2000);
 
           // Simulate a player joining
           currentPlayers = [{
@@ -94,7 +108,7 @@ describe('claudeMaestroWorkflow', function () {
           }];
 
           // Wait for next refresh cycle
-          await skipTime(12_000);
+          await sleep(2000);
 
           const events = await handle.query(maestroEventsQuery);
           const joinEvents = events.filter(e => e.type === 'player_joined');
@@ -103,7 +117,7 @@ describe('claudeMaestroWorkflow', function () {
 
           // Now remove the player
           currentPlayers = [];
-          await skipTime(12_000);
+          await sleep(2000);
 
           const events2 = await handle.query(maestroEventsQuery);
           const leftEvents = events2.filter(e => e.type === 'player_left');
@@ -136,12 +150,11 @@ describe('claudeMaestroWorkflow', function () {
         async () => {
           // Start with bob already in the snapshot to avoid a player_joined on first diff
           const handle = await startMaestro(getClient(), {
-            ensemble: ENSEMBLE,
             players: [{ ...initialPlayer }],
           });
 
           // Wait for a refresh cycle
-          await skipTime(12_000);
+          await sleep(2000);
 
           // Change status and part
           currentPlayers = [{
@@ -150,7 +163,7 @@ describe('claudeMaestroWorkflow', function () {
             status: 'stale',
           }];
 
-          await skipTime(12_000);
+          await sleep(2000);
 
           const events = await handle.query(maestroEventsQuery);
 
@@ -185,8 +198,8 @@ describe('claudeMaestroWorkflow', function () {
         expect(cmdId).to.be.a('string');
         expect(cmdId).to.have.length.greaterThan(0);
 
-        // Wait for dispatch
-        await skipTime(12_000);
+        // Wait for dispatch (update sets commandQueued flag, wakes the loop immediately)
+        await sleep(2000);
 
         // Verify the command was relayed
         expect(relayedCommands).to.have.length.greaterThanOrEqual(1);
@@ -205,6 +218,7 @@ describe('claudeMaestroWorkflow', function () {
     });
 
     it('rejects empty command text in update validator', async function () {
+      this.timeout(10_000);
       await withWorkerAndMaestroActivities({}, async () => {
         const handle = await startMaestro(getClient());
 
@@ -234,7 +248,8 @@ describe('claudeMaestroWorkflow', function () {
             args: [{ text: 'do something', source: 'test' }],
           });
 
-          await skipTime(12_000);
+          // Wait for dispatch
+          await sleep(2000);
 
           const cmds = await handle.query(maestroPendingCommandsQuery);
           const cmd = cmds.find(c => c.id === cmdId);
@@ -251,6 +266,7 @@ describe('claudeMaestroWorkflow', function () {
 
   describe('lifecycle', function () {
     it('shuts down gracefully on maestroShutdown signal', async function () {
+      this.timeout(10_000);
       await withWorkerAndMaestroActivities({}, async () => {
         const handle = await startMaestro(getClient());
 
@@ -278,8 +294,8 @@ describe('claudeMaestroWorkflow', function () {
         async () => {
           const handle = await startMaestro(getClient());
 
-          // Wait for a few cycles - some will fail (retries exhausted), some will succeed
-          await skipTime(15_000);
+          // Wait for a few cycles — some will fail (retries exhausted), some will succeed
+          await sleep(5000);
 
           // Workflow should still be running despite activity failures
           const desc = await handle.describe();

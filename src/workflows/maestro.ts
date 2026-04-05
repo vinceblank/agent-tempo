@@ -33,12 +33,14 @@ const { refreshEnsembleState, relayCommandToConductor } =
     retry: { maximumAttempts: 3 },
   });
 
-const REFRESH_INTERVAL_MS = 10_000; // 10 seconds
+const DEFAULT_REFRESH_INTERVAL_MS = 10_000; // 10 seconds
 const MAX_EVENTS = 200;
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes with no running sessions
 
 export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> {
   patched('v0.17-initial');
+
+  const refreshIntervalMs = input.pollIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
 
   let players: MaestroPlayerInfo[] = input.players ?? [];
   const events: MaestroEvent[] = input.events ?? [];
@@ -86,7 +88,7 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
   while (!shutdownRequested) {
     // Wait for either the refresh interval or a queued command
     commandQueued = false;
-    await condition(() => shutdownRequested || commandQueued, `${REFRESH_INTERVAL_MS} milliseconds`);
+    await condition(() => shutdownRequested || commandQueued, `${refreshIntervalMs} milliseconds`);
 
     if (shutdownRequested) break;
 
@@ -189,6 +191,7 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
         events,
         // Only carry pending commands; delivered/failed are historical
         pendingCommands: pendingCommands.filter((c) => c.status === 'pending'),
+        pollIntervalMs: input.pollIntervalMs,
       });
     }
   }
