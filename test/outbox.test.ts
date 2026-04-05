@@ -81,6 +81,28 @@ describe('outbox', function () {
         await handle.result();
       });
     });
+
+    it('records encore in sentMessages', async function () {
+      this.timeout(30_000);
+      await withWorkerAndOutboxActivities(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'outbox-encore-sent' }),
+        });
+
+        const entryId = await handle.executeUpdate(submitOutboxUpdate, {
+          args: [{ type: 'encore', targetPlayerId: 'stale-target', contextMessageCount: 5 }],
+        });
+
+        const sent = await handle.query(allSentMessagesQuery);
+        const match = sent.find((s) => s.id === entryId);
+        expect(match).to.exist;
+        expect(match!.to).to.equal('stale-target');
+        expect(match!.text).to.equal('[encore requested]');
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
   });
 
   // ── Outbox cue delivery ──
@@ -458,6 +480,65 @@ describe('outbox', function () {
 
         await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
+      });
+    });
+  });
+
+  // ── broadcast delivery (fan-out) ──
+
+  describe('broadcast delivery', function () {
+    it('delivers a broadcast message to all 3 target sessions via outbox fan-out', async function () {
+      this.timeout(30_000);
+      await withWorkerAndOutboxActivities(async () => {
+        const ensemble = `broadcast-${Date.now()}`;
+
+        const sender = await startSession({
+          metadata: playerMetadata({ playerId: 'broadcaster', ensemble }),
+        });
+        const alice = await startSession({
+          metadata: playerMetadata({ playerId: 'alice-bc', ensemble }),
+        });
+        const bob = await startSession({
+          metadata: playerMetadata({ playerId: 'bob-bc', ensemble }),
+        });
+        const carol = await startSession({
+          metadata: playerMetadata({ playerId: 'carol-bc', ensemble }),
+        });
+
+        // Submit 3 cue outbox entries (simulating what the broadcast tool does)
+        for (const target of ['alice-bc', 'bob-bc', 'carol-bc']) {
+          await sender.executeUpdate(submitOutboxUpdate, {
+            args: [{ type: 'cue', targetPlayerId: target, message: 'broadcast hello' }],
+          });
+        }
+
+        // Wait for dispatch loop to deliver all
+        await sleep(3000);
+
+        // Verify all 3 recipients received the message
+        for (const [name, handle] of [['alice-bc', alice], ['bob-bc', bob], ['carol-bc', carol]] as const) {
+          const msgs = await handle.query(pendingMessagesQuery);
+          const match = msgs.find((m) => m.from === 'broadcaster' && m.text === 'broadcast hello');
+          expect(match, `${name} should have received broadcast`).to.exist;
+        }
+
+        // Verify all outbox entries are delivered
+        const outbox = await sender.query(outboxQuery);
+        const cueEntries = outbox.filter((e) => e.type === 'cue');
+        expect(cueEntries).to.have.length(3);
+        for (const entry of cueEntries) {
+          expect(entry.status).to.equal('delivered');
+        }
+
+        // Clean up
+        await sender.signal(updateMetadataSignal, { status: 'terminated' });
+        await alice.signal(updateMetadataSignal, { status: 'terminated' });
+        await bob.signal(updateMetadataSignal, { status: 'terminated' });
+        await carol.signal(updateMetadataSignal, { status: 'terminated' });
+        await sender.result();
+        await alice.result();
+        await bob.result();
+        await carol.result();
       });
     });
   });

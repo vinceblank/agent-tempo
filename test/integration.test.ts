@@ -461,7 +461,7 @@ describe('multi-session integration', function () {
           metadata: playerMetadata({ playerId: 'almost-conductor', ensemble }),
         });
 
-        const members = await listEnsemble(getClient(), ensemble);
+        const members = await waitForEnsembleMembers(getClient(), ensemble, 2);
         expect(members).to.have.lengthOf(2);
 
         // Only the one with isConductor=true should be flagged as conductor

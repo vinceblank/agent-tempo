@@ -4,12 +4,13 @@ import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { Config, conductorWorkflowId, sessionWorkflowId } from '../config';
-import { ENCORE_DEFAULT_CONTEXT_MESSAGES } from '../utils/validation';
+import { ENCORE_DEFAULT_CONTEXT_MESSAGES, PREVIEW_MAX_LENGTH } from '../utils/validation';
 import { AgentType, SessionInput } from '../types';
 import { getGitInfo } from '../git-info';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { ENV } from '../config';
 import { resolveSession } from './resolve';
+import { resolveAgentType } from '../ensemble/agent-types';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:outbox]', ...args);
 
@@ -278,23 +279,28 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           throw ApplicationFailure.nonRetryable(`No session found for "${targetPlayerId}"`);
         }
 
-        // Query current state
-        const metadata = await handle.query('getMetadata') as Record<string, any>;
-        const status = metadata.status as string;
-
-        if (status !== 'stale') {
+        // Atomically transition status from 'stale' to 'pending' — prevents double-spawn races
+        const transitioned = await handle.executeUpdate('checkAndSetStatus', {
+          args: [{ expectedStatus: 'stale', newStatus: 'pending' }],
+        });
+        if (!transitioned) {
+          // Read current status for a useful error message
+          const metadata = await handle.query('getMetadata') as Record<string, any>;
+          const status = metadata.status as string;
           throw ApplicationFailure.nonRetryable(
-            `Cannot encore "${targetPlayerId}" — status is "${status}" (must be "stale")`,
+            `Cannot encore "${targetPlayerId}" — status is "${status}" (must be "stale"). Another encore may already be in progress.`,
           );
         }
 
+        // Query context (status is now locked to 'pending', safe from races)
+        const metadata = await handle.query('getMetadata') as Record<string, any>;
         const part = await handle.query('getPart') as string;
         const allMessages = await handle.query('allMessages') as Array<{ from: string; text: string; timestamp: string }>;
 
         // Build context message from recent messages
         const recentMessages = allMessages.slice(-contextMessageCount);
         const msgSummary = recentMessages.length > 0
-          ? recentMessages.map(m => `[${m.from}] ${m.text.slice(0, 200)}`).join('\n')
+          ? recentMessages.map(m => `[${m.from}] ${m.text.slice(0, PREVIEW_MAX_LENGTH)}`).join('\n')
           : '(no recent messages)';
 
         const contextMessage = [
@@ -306,8 +312,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           'Resume where you left off. Use `ensemble` to see who is active.',
         ].filter(Boolean).join('\n');
 
-        // Reset status to pending and inject context message
-        await handle.signal('updateMetadata', { status: 'pending' });
+        // Inject context message (status already set to pending atomically above)
         await handle.signal('receiveMessage', { from: fromPlayerId, text: contextMessage });
 
         log(`Encore prepared for "${targetPlayerId}" — status reset to pending, context injected`);
@@ -319,7 +324,6 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         let nativeResolvable: boolean | undefined;
         if (playerType) {
           try {
-            const { resolveAgentType } = require('../ensemble/agent-types');
             const info = resolveAgentType(playerType);
             if (info) {
               agentDefinitionPath = info.path;

@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
 import { Message, SentMessage } from '../types';
 import { defineTool } from './helpers';
+import { PREVIEW_MAX_LENGTH } from '../utils/validation';
 
 interface TimelineEntry {
   direction: 'received' | 'sent';
@@ -29,13 +30,13 @@ export function registerRecallTool(
       includeSent: z.boolean().optional().describe('Include sent messages in the timeline (default: false)'),
     },
     async (args) => {
-      const { since, from: fromFilter, includeSent } = args as {
+      const { limit: rawLimit, since, from: fromFilter, includeSent } = args as {
         limit?: number;
         since?: string;
         from?: string;
         includeSent?: boolean;
       };
-      const limit = ((args as any).limit as number | undefined) ?? 20;
+      const limit = rawLimit ?? 20;
 
       // Validate since
       let sinceTs: number | undefined;
@@ -102,7 +103,7 @@ export function registerRecallTool(
           const status = e.direction === 'received' ? (e.delivered ? '' : ' (undelivered)') : '';
           const ts = e.timestamp;
           // Truncate long messages in the summary
-          const preview = e.text.length > 200 ? e.text.slice(0, 200) + '...' : e.text;
+          const preview = e.text.length > PREVIEW_MAX_LENGTH ? e.text.slice(0, PREVIEW_MAX_LENGTH) + '...' : e.text;
           return `[${ts}] ${dir}${status}\n  ${preview}`;
         });
 

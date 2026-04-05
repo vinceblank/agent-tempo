@@ -6,7 +6,7 @@ import { SessionMetadata } from '../types';
 import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
 import { defineTool } from './helpers';
-import { MESSAGE_MAX } from '../utils/validation';
+import { MESSAGE_MAX, shouldIncludeInBroadcast } from '../utils/validation';
 
 export function registerBroadcastTool(
   server: McpServer,
@@ -25,9 +25,12 @@ export function registerBroadcastTool(
       includeStale: z.boolean().optional().describe('Include stale sessions (default: false)'),
     },
     async (args) => {
-      const { message } = args as { message: string; type?: string; includeStale?: boolean };
-      const playerType = (args as any).type as string | undefined;
-      const includeStale = (args as any).includeStale === true;
+      const { message, type: playerType, includeStale: rawIncludeStale } = args as {
+        message: string;
+        type?: string;
+        includeStale?: boolean;
+      };
+      const includeStale = rawIncludeStale === true;
 
       try {
         const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
@@ -44,15 +47,8 @@ export function registerBroadcastTool(
             // Exclude sender
             if (metadata.playerId === getPlayerId()) continue;
 
-            // Exclude non-active by default (skip pending, terminated, stale)
-            if (!includeStale) {
-              const status = metadata.status || 'active';
-              if (status === 'pending' || status === 'terminated' || status === 'stale') continue;
-            } else {
-              // Even with includeStale, skip pending and terminated
-              const status = metadata.status || 'active';
-              if (status === 'pending' || status === 'terminated') continue;
-            }
+            // Filter by status
+            if (!shouldIncludeInBroadcast(metadata.status, includeStale)) continue;
 
             // Filter by player type if specified
             if (playerType && metadata.playerType !== playerType) continue;
@@ -72,7 +68,6 @@ export function registerBroadcastTool(
               type: 'text' as const,
               text: 'No active players matched the broadcast filter.',
             }],
-            isError: true,
           };
         }
 

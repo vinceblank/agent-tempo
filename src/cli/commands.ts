@@ -14,7 +14,7 @@ import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured }
 import { loadLineup } from '../ensemble/loader';
 import { saveLineup, listLineups, readSavedLineup } from '../ensemble/saver';
 import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
-import { ENCORE_DEFAULT_CONTEXT_MESSAGES } from '../utils/validation';
+import { ENCORE_DEFAULT_CONTEXT_MESSAGES, PREVIEW_MAX_LENGTH, shouldIncludeInBroadcast } from '../utils/validation';
 import * as out from './output';
 
 /** Package root is two levels up from dist/cli/ */
@@ -1332,14 +1332,8 @@ export async function broadcast(opts: BroadcastOpts) {
 
       if (metadata.ensemble !== ensemble) continue;
 
-      // Exclude non-active by default
-      if (!opts.includeStale) {
-        const status = metadata.status || 'active';
-        if (status === 'pending' || status === 'terminated' || status === 'stale') continue;
-      } else {
-        const status = metadata.status || 'active';
-        if (status === 'pending' || status === 'terminated') continue;
-      }
+      // Filter by status
+      if (!shouldIncludeInBroadcast(metadata.status, !!opts.includeStale)) continue;
 
       // Filter by player type if specified
       if (opts.type && metadata.playerType !== opts.type) continue;
@@ -1385,8 +1379,13 @@ interface EncoreOpts extends CliOverrides {
 }
 
 export async function encore(opts: EncoreOpts) {
-  const config = getConfig(opts);
+  if (opts.host) {
+    out.error('Cross-machine encore is not supported via the CLI. Use the MCP `encore` tool with --host instead (it routes through the outbox and per-host task queues).');
+    process.exit(1);
+    return;
+  }
 
+  const config = getConfig(opts);
   let connection: Connection;
   try {
     connection = await Promise.race([
@@ -1442,7 +1441,7 @@ export async function encore(opts: EncoreOpts) {
   const recentMessages = allMessages.slice(-ENCORE_DEFAULT_CONTEXT_MESSAGES);
 
   const msgSummary = recentMessages.length > 0
-    ? recentMessages.map(m => `[${m.from}] ${m.text.slice(0, 200)}`).join('\n')
+    ? recentMessages.map(m => `[${m.from}] ${m.text.slice(0, PREVIEW_MAX_LENGTH)}`).join('\n')
     : '(no recent messages)';
 
   const contextMessage = [

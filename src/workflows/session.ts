@@ -37,6 +37,7 @@ import {
   commandSignal,
   playerReportSignal,
   historyQuery,
+  checkAndSetStatusUpdate,
   submitOutboxUpdate,
   outboxQuery,
 } from './signals';
@@ -67,6 +68,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // patched('v0.10-<change-name>') to protect in-flight sessions from
   // non-determinism errors during rolling deploys.
   patched('v0.10-initial');
+  patched('v0.11-check-and-set-status');
 
   // Ensure search attributes are always current — critical when reconnecting
   // via WorkflowIdConflictPolicy.USE_EXISTING, which skips the attributes
@@ -105,6 +107,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       sentMessages.push({ id: entry.id, to: 'conductor', text: `[${entry.reportType}] ${entry.text}`, timestamp: entry.createdAt });
     } else if (entry.type === 'stop') {
       sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[stop requested]', timestamp: entry.createdAt });
+    } else if (entry.type === 'encore') {
+      sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[encore requested]', timestamp: entry.createdAt });
     }
 
     lastActivityTime = Date.now();
@@ -182,6 +186,15 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       ClaudeTempoStatus: [input.metadata.status || 'active'],
     });
     lastActivityTime = Date.now();
+  });
+
+  // Atomic status transition — used by encore to prevent double-spawn races
+  setHandler(checkAndSetStatusUpdate, ({ expectedStatus, newStatus }) => {
+    if (input.metadata.status !== expectedStatus) return false;
+    input.metadata.status = newStatus as SessionStatus;
+    upsertSearchAttributes({ ClaudeTempoStatus: [newStatus] });
+    lastActivityTime = Date.now();
+    return true;
   });
 
   setHandler(recordSentMessageSignal, (msg) => {
@@ -334,19 +347,37 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
             });
             const encoreHost = entry.targetHostname || encoreResult.hostname;
             const encoreSpawnFn = getSpawnProxy(encoreHost);
-            await encoreSpawnFn({
-              targetName: entry.targetPlayerId,
-              workDir: encoreResult.workDir,
-              isConductor: encoreResult.isConductor,
-              agent: encoreResult.agent,
-              ensemble: input.metadata.ensemble,
-              temporalAddress: encoreResult.temporalAddress,
-              temporalNamespace: encoreResult.temporalNamespace,
-              agentDefinition: encoreResult.agentDefinition,
-              agentDefinitionPath: encoreResult.agentDefinitionPath,
-              nativeResolvable: encoreResult.nativeResolvable,
-              resume: true,
-            });
+            try {
+              await encoreSpawnFn({
+                targetName: entry.targetPlayerId,
+                workDir: encoreResult.workDir,
+                isConductor: encoreResult.isConductor,
+                agent: encoreResult.agent,
+                ensemble: input.metadata.ensemble,
+                temporalAddress: encoreResult.temporalAddress,
+                temporalNamespace: encoreResult.temporalNamespace,
+                agentDefinition: encoreResult.agentDefinition,
+                agentDefinitionPath: encoreResult.agentDefinitionPath,
+                nativeResolvable: encoreResult.nativeResolvable,
+                resume: true,
+              });
+            } catch (spawnErr) {
+              // Spawn failed after status was reset to pending — revert to stale
+              // so the target isn't stuck in pending with no running process
+              try {
+                // Workflow ID format is hardcoded here because workflow code cannot
+                // import config helpers (they depend on Node APIs unavailable in the
+                // Temporal sandbox). Mirrors sessionWorkflowId/conductorWorkflowId.
+                const targetWfId = encoreResult.isConductor
+                  ? `claude-session-${input.metadata.ensemble}-conductor`
+                  : `claude-session-${input.metadata.ensemble}-${entry.targetPlayerId}`;
+                const targetHandle = getExternalWorkflowHandle(targetWfId);
+                await targetHandle.signal('updateMetadata', { status: 'stale' });
+              } catch {
+                // Best-effort revert — target workflow may have terminated
+              }
+              throw spawnErr;
+            }
             break;
           }
         }

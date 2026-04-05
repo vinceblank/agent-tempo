@@ -26,9 +26,11 @@ export function registerEncoreTool(
       contextMessages: z.number().min(1).max(50).optional().describe('Number of recent messages to include as context (default: 10)'),
     },
     async (args) => {
-      const { playerId } = args as { playerId: string; host?: string; contextMessages?: number };
-      const host = (args as any).host as string | undefined;
-      const contextMessages = (args as any).contextMessages as number | undefined;
+      const { playerId, host, contextMessages } = args as {
+        playerId: string;
+        host?: string;
+        contextMessages?: number;
+      };
 
       // Cannot encore yourself
       if (playerId === getPlayerId()) {

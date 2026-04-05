@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.11.0] - 2026-04-05
+
+### Added
+
+- **`broadcast` MCP tool** — Send a message to all active players in the ensemble with a single call. Fan-out is implemented via outbox entries, so each delivery is individually durable. Optional `type` parameter limits recipients to a specific player type (e.g., `"tempo-soloist"`). Optional `includeStale` flag extends delivery to stale sessions (pending and terminated sessions are always excluded).
+- **`encore` MCP tool** — Revive a stale player session. Restarts the Claude process and reconnects to the existing Temporal workflow, restoring recent message context (configurable via `contextMessages`, default 10). Validates session status before submitting — returns a clear error if the target is active (use `cue`), pending (wait), or terminated (use `recruit`). Cross-machine encore supported via the optional `host` parameter.
+- **`recall` MCP tool** — Read your own message history from the Temporal workflow. Returns received messages by default (newest first, limit 20). Supports `includeSent: true` for a merged sent/received timeline, plus `limit` (max 100), `since` (ISO timestamp), and `from` (sender name) filters.
+- **`EncoreOutboxEntry` type** — New outbox entry type (`type: 'encore'`) carrying `targetPlayerId`, optional `targetHostname`, and optional `contextMessageCount`. Processed by the outbox dispatch loop via a new encore activity.
+
 ## [0.10.0] - 2026-04-04
 
 ### Added

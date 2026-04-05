@@ -31,6 +31,20 @@ export const SCHEDULE_MESSAGE_MAX = 10240;
 /** Default number of recent messages to include as context in an encore. */
 export const ENCORE_DEFAULT_CONTEXT_MESSAGES = 10;
 
+/** Maximum length for message preview truncation. */
+export const PREVIEW_MAX_LENGTH = 200;
+
+/**
+ * Whether a session should be included in a broadcast based on its status.
+ * Always excludes pending and terminated. Excludes stale unless includeStale is true.
+ */
+export function shouldIncludeInBroadcast(status: string | undefined, includeStale: boolean): boolean {
+  const s = status || 'active';
+  if (s === 'pending' || s === 'terminated') return false;
+  if (s === 'stale' && !includeStale) return false;
+  return true;
+}
+
 /** Validate a player name string. Returns an error message or null if valid. */
 export function validatePlayerName(name: string): string | null {
   if (name.length > PLAYER_NAME_MAX) {

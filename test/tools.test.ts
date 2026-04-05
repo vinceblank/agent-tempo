@@ -416,12 +416,12 @@ function makeClientWithPlayers(
 }
 
 describe('broadcast tool validation', function () {
-  it('returns error when no active players match (empty ensemble)', async function () {
+  it('returns success (not error) when no active players match (empty ensemble)', async function () {
     const call = extractHandler((server) =>
       registerBroadcastTool(server, makeTestClient(), testConfig, getPlayerId, fakeHandle),
     );
     const result = await call({ message: 'hello everyone' });
-    expect(result.isError).to.be.true;
+    expect(result.isError).to.not.equal(true);
     expect(result.content[0].text).to.include('No active players');
   });
 
@@ -499,6 +499,66 @@ describe('broadcast tool validation', function () {
     const result = await call({ message: 'revive', includeStale: true });
     expect(result.isError).to.not.equal(true);
     expect(result.content[0].text).to.include('stale-player');
+  });
+
+  it('excludes pending sessions', async function () {
+    const call = extractHandler((server) =>
+      registerBroadcastTool(
+        server,
+        makeClientWithPlayers([
+          { playerId: 'pending-player', status: 'pending' },
+          { playerId: 'active-player', status: 'active' },
+        ]),
+        testConfig,
+        getPlayerId,
+        fakeHandle,
+      ),
+    );
+    const result = await call({ message: 'hello' });
+    expect(result.isError).to.not.equal(true);
+    expect(result.content[0].text).to.include('active-player');
+    expect(result.content[0].text).to.not.include('pending-player');
+  });
+
+  it('excludes terminated sessions', async function () {
+    const call = extractHandler((server) =>
+      registerBroadcastTool(
+        server,
+        makeClientWithPlayers([
+          { playerId: 'terminated-player', status: 'terminated' },
+          { playerId: 'active-player', status: 'active' },
+        ]),
+        testConfig,
+        getPlayerId,
+        fakeHandle,
+      ),
+    );
+    const result = await call({ message: 'hello' });
+    expect(result.isError).to.not.equal(true);
+    expect(result.content[0].text).to.include('active-player');
+    expect(result.content[0].text).to.not.include('terminated-player');
+  });
+
+  it('excludes pending and terminated even when includeStale is true', async function () {
+    const call = extractHandler((server) =>
+      registerBroadcastTool(
+        server,
+        makeClientWithPlayers([
+          { playerId: 'pending-player', status: 'pending' },
+          { playerId: 'terminated-player', status: 'terminated' },
+          { playerId: 'stale-player', status: 'stale' },
+        ]),
+        testConfig,
+        getPlayerId,
+        fakeHandle,
+      ),
+    );
+    const result = await call({ message: 'hello', includeStale: true });
+    expect(result.isError).to.not.equal(true);
+    // Only stale should be included
+    expect(result.content[0].text).to.include('stale-player');
+    expect(result.content[0].text).to.not.include('pending-player');
+    expect(result.content[0].text).to.not.include('terminated-player');
   });
 
   it('reports N recipients in success response', async function () {
