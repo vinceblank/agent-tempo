@@ -31,6 +31,18 @@ export const SCHEDULE_MESSAGE_MAX = 10240;
 /** Maximum cron expression length. */
 export const CRON_EXPRESSION_MAX = 128;
 
+/** Maximum quality gate task name length. */
+export const GATE_TASK_MAX = 64;
+
+/** Maximum number of criteria per quality gate. */
+export const GATE_CRITERIA_MAX = 20;
+
+/** Maximum length for individual criterion text. */
+export const GATE_CRITERION_TEXT_MAX = 512;
+
+/** Maximum length for gate criterion notes. */
+export const GATE_NOTES_MAX = 1024;
+
 /** Default number of recent messages to include as context in an encore. */
 export const ENCORE_DEFAULT_CONTEXT_MESSAGES = 10;
 

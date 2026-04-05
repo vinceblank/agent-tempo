@@ -133,6 +133,9 @@ These tools are available inside Claude Code sessions connected to claude-tempo:
 | `broadcast` | Send a message to all active players. Optional `type` filter limits to a specific player type. |
 | `encore` | Revive a stale player session — restarts the process and reconnects to the existing workflow with context restored. |
 | `recall` | Read your own message history. Shows received messages by default; pass `includeSent: true` for the full timeline. |
+| `quality_gate` | Define or replace a quality gate for a task — a named checklist of criteria that must pass. Conductor only. |
+| `evaluate_gate` | Mark one or more criteria on a quality gate as passed or failed. Conductor only. |
+| `gates` | List quality gates and their status. Filter by task name or status (`open`, `passed`, `failed`). Conductor only. |
 
 ## Scheduling
 

@@ -62,6 +62,9 @@ src/
 │   ├── schedule.ts    # Create one-shot or recurring schedules
 │   ├── unschedule.ts  # Cancel a named schedule
 │   ├── schedules.ts   # List active schedules
+│   ├── quality-gate.ts # Define quality gates for tasks (conductor only)
+│   ├── evaluate-gate.ts # Mark gate criteria as passed/failed (conductor only)
+│   ├── gates.ts       # List quality gates and their status (conductor only)
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
 ├── utils/
 │   └── validation.ts  # Shared validation constants (name/message/path limits, encore defaults) and helpers
@@ -116,6 +119,7 @@ npm test
 - **Agent type discovery**: The `agent_types` MCP tool and `claude-tempo agent-types` CLI command let conductors discover available player types. Shipped examples (tempo-conductor, tempo-composer, tempo-soloist, tempo-tuner, tempo-critic, tempo-roadie, tempo-improv, tempo-liner) work out of the box. Ensemble lineups: tempo-big-band (full lifecycle), tempo-dev-team (feature work), tempo-review-squad (parallel review), tempo-jam-session (exploration).
 - **Schedule**: A one-shot or recurring message delivery configured via the `schedule` tool. Backed by a durable `claudeSchedulerWorkflow` — survives restarts. Supports delay (`delay`), fixed time (`at`), recurring interval (`every`), and cron expressions (`cron`) with optional IANA timezone (`timezone`). Cron schedules use `croner` for expression parsing and next-fire computation. Managed via `schedule`, `unschedule`, and `schedules` tools.
 - **Lineup**: A YAML file defining an ensemble configuration — which players to recruit, their types, working directories, and optional startup messages. Load via `load_lineup` to bootstrap a full ensemble in one step; save via `save_lineup` to snapshot a running ensemble's state for later reuse.
+- **Quality Gate**: A named checklist of criteria a conductor tracks to verify a task is complete. Created via `quality_gate` (conductor only), evaluated via `evaluate_gate`, and listed via `gates`. Each criterion has a `pending` → `passed` | `failed` status; the gate's aggregate status is derived automatically (all passed → `passed`, any failed → `failed`, else `open`). Gates are stored in the conductor workflow and survive `continueAsNew`.
 - **Wire protocol**: All Temporal signal, query, update, and workflow names are documented in [`docs/WIRE-PROTOCOL.md`](docs/WIRE-PROTOCOL.md). These names are stable as of v0.10 — renaming or removing any is a breaking change requiring a major version bump.
 
 ## Dashboard
