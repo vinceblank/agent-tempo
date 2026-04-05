@@ -5,11 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [0.14.0] - 2026-04-05
+## [0.15.0] - 2026-04-05
 
 ### Added
 
 - **`worktree` MCP tool** — Conductors can provision isolated git worktrees for players. `create` checks out a new branch in a sibling directory, installs dependencies, and notifies the player with the path; `remove` cleans up the worktree after the task completes and notifies the player; `list` shows all active worktree assignments. Worktree state is stored in the conductor workflow (`WorktreeEntry`) and survives `continueAsNew`. Cross-machine worktrees are not supported — conductor and player must be on the same host (#36).
+
+### Changed
+
+- Lineup player schema no longer accepts `isolation`/`branch` fields — worktree provisioning is now done via the `worktree` tool at the conductor level rather than inline at lineup load time
+
+## [0.14.0] - 2026-04-05
+
+### Added
+
+- **Worktree isolation** — Lineup players support `isolation: worktree` (with a required `branch` field). When set, `load_lineup` auto-creates a git worktree and runs `npm install` before recruiting (#36)
 
 ### Fixed
 
