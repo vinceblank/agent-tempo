@@ -234,7 +234,7 @@ async function main() {
         `- Before assigning parallel work on different branches, provision git worktrees via the \`worktree\` tool so each player has an isolated checkout.\n` +
         `- No player should switch branches without your approval — if a player needs a different branch, provision a worktree for them.\n` +
         `- Before shipping, verify the branch diff scope matches the assigned task (no unrelated changes).`
-      : `\n\nDo not switch git branches without the conductor's approval. If you need a different branch, ask the conductor to provision a worktree.`);
+      : `\n\nDo not switch git branches without coordinating with the conductor or other players sharing your working directory. If you need a different branch, ask the conductor to provision a worktree, or use the \`worktree\` tool for branch isolation.`);
 
   const mcpServer = new McpServer({
     name: 'claude-tempo',
