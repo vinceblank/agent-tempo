@@ -57,6 +57,8 @@ const POLL_INTERVAL_MS = 2000;
 const CREATE_SESSION_TIMEOUT_MS = 45_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const MAX_SESSION_RECREATIONS = 2;
+/** Check workflow status every N polls (~30s at 2s interval). */
+const WORKFLOW_STATUS_CHECK_INTERVAL = 15;
 
 /** Wrap createSession with a timeout so auth/network hangs don't block forever. */
 async function createSessionWithTimeout(
@@ -237,6 +239,10 @@ async function main() {
     log(`Initial prompt error after ${Date.now()}ms:`, err?.message, err?.stack?.substring(0, 300));
   }
 
+  // PID file paths — computed early so early-exit paths can clean up
+  const pidDir = path.join(workDir, 'logs');
+  const pidFile = path.join(pidDir, `${playerName || playerIdForWorkflow}.pid`);
+
   // Wait for the MCP server's workflow to register in Temporal.
   // We know the exact workflow ID because we pass CLAUDE_TEMPO_PLAYER_NAME to the
   // MCP server — no need for a time-window heuristic that could misidentify workflows.
@@ -262,6 +268,8 @@ async function main() {
     log(`ERROR: Workflow ${expectedWorkflowId} did not register within 30 seconds`);
     await session.disconnect();
     await copilotClient.stop();
+    // Clean up PID file to avoid stale entries in `claude-tempo status`
+    try { fs.unlinkSync(pidFile); } catch { /* may not exist yet */ }
     process.exit(1);
   }
 
@@ -280,6 +288,15 @@ async function main() {
 
   const MAESTRO_ACK = '\n\n[IMPORTANT: This message is from a human (Maestro). Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
 
+  // Write PID file so callers can find/kill orphaned bridge processes
+  try {
+    fs.mkdirSync(pidDir, { recursive: true });
+    fs.writeFileSync(pidFile, String(process.pid));
+    log(`PID file written: ${pidFile}`);
+  } catch (err: any) {
+    log(`Warning: could not write PID file: ${err?.message}`);
+  }
+
   // Start message poller — inject messages into the Copilot session.
   // Tracks consecutive failures and attempts session recreation before giving up.
   let polling = true;
@@ -287,6 +304,29 @@ async function main() {
   let pollCount = 0;
   let consecutiveFailures = 0;
   let sessionRecreations = 0;
+  // interval declared here, assigned after poll is defined
+  let interval: ReturnType<typeof setInterval> | undefined;
+
+  // Shared cleanup — disconnects session, removes PID file, stops client.
+  // `signalTermination` controls whether we also signal the workflow to terminate
+  // (skip if the workflow is already gone).
+  let shuttingDown = false;
+  const cleanup = async (signalTermination: boolean) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    polling = false;
+    clearInterval(interval);
+    if (signalTermination) {
+      try {
+        await handle.signal('updateMetadata', { status: 'terminated', terminatedBy: 'system' });
+      } catch {
+        // workflow may already be gone
+      }
+    }
+    try { await session.disconnect(); } catch { /* already disconnected */ }
+    try { fs.unlinkSync(pidFile); } catch { /* already gone */ }
+    await copilotClient.stop();
+  };
 
   /** Attempt to recreate the Copilot session after repeated failures. */
   async function recreateSession(): Promise<boolean> {
@@ -318,6 +358,24 @@ async function main() {
     if (pollCount % 30 === 0) { // every ~60 seconds
       const silenceSec = ((Date.now() - lastEventTime) / 1000).toFixed(0);
       log(`[health] poll #${pollCount}, sessionAlive=${sessionAlive}, lastEvent=${lastEventType} ${silenceSec}s ago`);
+    }
+
+    // Periodic workflow status check — detect external termination/completion
+    if (pollCount % WORKFLOW_STATUS_CHECK_INTERVAL === 0) {
+      try {
+        const desc = await handle.describe();
+        const wfStatus = desc.status.name;
+        if (wfStatus !== 'RUNNING') {
+          log(`Workflow status is ${wfStatus} — exiting cleanly`);
+          await cleanup(false); // workflow already gone, don't signal
+          process.exit(0);
+        }
+      } catch (err: any) {
+        // If we can't describe (e.g., workflow not found), it was likely terminated
+        log(`Workflow describe failed: ${err?.message} — treating as terminated`);
+        await cleanup(false);
+        process.exit(0);
+      }
     }
 
     try {
@@ -365,46 +423,20 @@ async function main() {
         const recovered = await recreateSession();
         if (!recovered) {
           log('ERROR: Session recovery failed. Shutting down bridge.');
-          polling = false;
-          clearInterval(interval);
+          await cleanup(true);
           process.exit(2);
         }
       }
     }
   };
 
-  const interval = setInterval(poll, POLL_INTERVAL_MS);
+  interval = setInterval(poll, POLL_INTERVAL_MS);
   log('Message poller started. Bridge is running.');
 
-  // Write PID file so callers can find/kill orphaned bridge processes
-  const pidDir = path.join(workDir, 'logs');
-  const pidFile = path.join(pidDir, `${playerName || playerIdForWorkflow}.pid`);
-  try {
-    fs.mkdirSync(pidDir, { recursive: true });
-    fs.writeFileSync(pidFile, String(process.pid));
-    log(`PID file written: ${pidFile}`);
-  } catch (err: any) {
-    log(`Warning: could not write PID file: ${err?.message}`);
-  }
-
-  // Graceful shutdown
+  // Graceful shutdown on SIGINT/SIGTERM — signal the workflow before exiting
   const shutdown = async () => {
-    log('Shutting down...');
-    polling = false;
-    clearInterval(interval);
-    try {
-      await handle.signal('updateMetadata', { status: 'terminated', terminatedBy: 'system' });
-    } catch {
-      // workflow may already be gone
-    }
-    try {
-      await session.disconnect();
-    } catch {
-      // session may already be disconnected
-    }
-    // Clean up PID file
-    try { fs.unlinkSync(pidFile); } catch { /* may already be gone */ }
-    await copilotClient.stop();
+    log('Shutting down (signal received)...');
+    await cleanup(true);
     process.exit(0);
   };
 
