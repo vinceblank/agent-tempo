@@ -363,6 +363,116 @@ describe('load_lineup tool validation', function () {
   });
 });
 
+describe('load_lineup conductor section', function () {
+  const { writeFileSync, mkdirSync, rmSync } = require('fs');
+  const { join } = require('path');
+
+  // Use a subdir of cwd so safeLineupPath allows access
+  let tmpDir: string;
+
+  before(function () {
+    tmpDir = join(process.cwd(), `.test-lineup-${Date.now()}`);
+    mkdirSync(tmpDir, { recursive: true });
+  });
+
+  after(function () {
+    try { rmSync(tmpDir, { recursive: true }); } catch { /* ignore */ }
+  });
+
+  it('applies conductor name, type, and instructions from lineup', async function () {
+    // Write a lineup YAML with conductor section
+    const lineupPath = join(tmpDir, 'test-conductor.yaml');
+    writeFileSync(lineupPath, [
+      'name: test-conductor-lineup',
+      'conductor:',
+      '  name: my-conductor',
+      '  instructions: "You are the lead conductor."',
+      'players: []',
+    ].join('\n'));
+
+    // Track signals sent to the conductor handle
+    const signals: Array<{ name: string; args: any }> = [];
+    const conductorHandle = {
+      workflowId: `claude-session-${testConfig.ensemble}-conductor`,
+      executeUpdate: async () => 'fake-entry-id',
+      signal: async (name: string, ...args: any[]) => { signals.push({ name, args: args[0] }); },
+      describe: async () => ({ status: { name: 'RUNNING' } }),
+    } as unknown as WorkflowHandle;
+
+    // Fake client whose resolveSession returns null (name not taken)
+    const clientForConductor = {
+      workflow: {
+        getHandle: () => conductorHandle,
+        start: async () => ({ runId: 'fake' }),
+        list: async function* () { /* no workflows */ },
+      },
+    } as unknown as Client;
+
+    let updatedPlayerId = '';
+    const call = extractHandler((server) =>
+      registerLoadLineupTool(
+        server, clientForConductor, testConfig, getPlayerId, 'claude',
+        conductorHandle,
+        (id: string) => { updatedPlayerId = id; },
+        true, // isConductor
+      ),
+    );
+
+    const result = await call({ path: lineupPath });
+    expect(result.isError).to.be.undefined;
+    expect(result.content[0].text).to.include('test-conductor-lineup');
+    expect(result.content[0].text).to.include('Conductor:');
+    expect(result.content[0].text).to.include('my-conductor');
+    expect(result.content[0].text).to.include('instructions delivered');
+
+    // Verify setName signal was sent
+    const setNameSignal = signals.find(s => s.name === 'setName');
+    expect(setNameSignal).to.exist;
+    expect(setNameSignal!.args).to.equal('my-conductor');
+
+    // Verify setPlayerId was called
+    expect(updatedPlayerId).to.equal('my-conductor');
+
+    // Verify instructions were sent via receiveMessage
+    const msgSignal = signals.find(s => s.name === 'receiveMessage');
+    expect(msgSignal).to.exist;
+    expect(msgSignal!.args.text).to.equal('You are the lead conductor.');
+    expect(msgSignal!.args.from).to.equal('lineup');
+  });
+
+  it('skips conductor section for non-conductor sessions', async function () {
+    const lineupPath = join(tmpDir, 'test-skip.yaml');
+    writeFileSync(lineupPath, [
+      'name: test-skip-lineup',
+      'conductor:',
+      '  name: my-conductor',
+      '  instructions: "Hello"',
+      'players: []',
+    ].join('\n'));
+
+    const signals: Array<{ name: string; args: any }> = [];
+    const handle = {
+      executeUpdate: async () => 'fake-entry-id',
+      signal: async (name: string, ...args: any[]) => { signals.push({ name, args: args[0] }); },
+    } as unknown as WorkflowHandle;
+
+    const call = extractHandler((server) =>
+      registerLoadLineupTool(
+        server, makeTestClient(), testConfig, getPlayerId, 'claude',
+        handle,
+        () => {},
+        false, // NOT conductor
+      ),
+    );
+
+    const result = await call({ path: lineupPath });
+    expect(result.isError).to.be.undefined;
+    expect(result.content[0].text).to.not.include('Conductor:');
+    // No signals should have been sent for conductor section
+    expect(signals).to.have.length(0);
+  });
+});
+
 // ─────────────────────────────────────────────
 // broadcast tool
 // ─────────────────────────────────────────────

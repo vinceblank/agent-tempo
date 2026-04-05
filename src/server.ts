@@ -259,7 +259,7 @@ async function main() {
   registerUnscheduleTool(mcpServer, client, config);
   registerSchedulesTool(mcpServer, client, config);
   registerSaveLineupTool(mcpServer, client, config, getPlayerId, isConductor);
-  registerLoadLineupTool(mcpServer, client, config, getPlayerId, isBridgeMode ? 'copilot' : 'claude');
+  registerLoadLineupTool(mcpServer, client, config, getPlayerId, isBridgeMode ? 'copilot' : 'claude', handle, setPlayerId, isConductor);
   registerAgentTypesTool(mcpServer);
   registerWhoAmITool(mcpServer, handle, getPlayerId);
   registerBroadcastTool(mcpServer, client, config, getPlayerId, handle);

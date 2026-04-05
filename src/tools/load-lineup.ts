@@ -3,7 +3,7 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import { Cron } from 'croner';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
+import { Client, WorkflowHandle, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { Config, CLAUDE_TEMPO_HOME, schedulerWorkflowId, ENV } from '../config';
 import { AgentType } from '../types';
 import { loadLineup } from '../ensemble/loader';
@@ -28,6 +28,9 @@ export function registerLoadLineupTool(
   config: Config,
   getPlayerId: () => string,
   ownAgentType: AgentType = 'claude',
+  handle?: WorkflowHandle,
+  setPlayerId?: (id: string) => void,
+  isConductor?: boolean,
 ) {
   defineTool(
     server,
@@ -93,6 +96,61 @@ export function registerLoadLineupTool(
         const lineup = loadAndResolveLineup(filePath);
         const recruited: string[] = [];
         const failed: string[] = [];
+        const conductorActions: string[] = [];
+
+        // Apply conductor section if present and this session is the conductor
+        if (lineup.conductor && isConductor && handle) {
+          // Apply conductor name
+          if (lineup.conductor.name && lineup.conductor.name !== getPlayerId()) {
+            try {
+              // Check if the name is already taken
+              const existing = await resolveSession(client, config.ensemble, lineup.conductor.name);
+              if (existing && existing.workflowId !== handle.workflowId) {
+                failed.push(`conductor name "${lineup.conductor.name}": already taken by another session`);
+              } else {
+                await handle.signal('setName', lineup.conductor.name);
+                if (setPlayerId) setPlayerId(lineup.conductor.name);
+                conductorActions.push(`name → ${lineup.conductor.name}`);
+                log(`Conductor name set to "${lineup.conductor.name}"`);
+              }
+            } catch (err) {
+              failed.push(`conductor name: ${err}`);
+            }
+          }
+
+          // Apply conductor type (update metadata)
+          if (lineup.conductor.type) {
+            try {
+              const typeInfo = resolveAgentType(lineup.conductor.type);
+              if (typeInfo) {
+                await handle.signal('updateMetadata', {
+                  playerType: typeInfo.name,
+                  playerTypeDescription: typeInfo.description || '',
+                });
+                conductorActions.push(`type → ${typeInfo.name}`);
+                log(`Conductor type set to "${typeInfo.name}"`);
+              } else {
+                failed.push(`conductor type "${lineup.conductor.type}": agent type not found`);
+              }
+            } catch (err) {
+              failed.push(`conductor type: ${err}`);
+            }
+          }
+
+          // Send conductor instructions
+          if (lineup.conductor.instructions) {
+            try {
+              await handle.signal('receiveMessage', {
+                from: 'lineup',
+                text: lineup.conductor.instructions,
+              });
+              conductorActions.push('instructions delivered');
+              log('Conductor instructions delivered');
+            } catch (err) {
+              failed.push(`conductor instructions: ${err}`);
+            }
+          }
+        }
 
         // Recruit players sequentially
         for (const player of lineup.players) {
@@ -308,6 +366,9 @@ export function registerLoadLineupTool(
 
         // Build summary
         const lines: string[] = [`Loaded lineup **${lineup.name}**.`];
+        if (conductorActions.length > 0) {
+          lines.push(`Conductor: ${conductorActions.join(', ')}`);
+        }
         if (recruited.length > 0) {
           lines.push(`Recruited: ${recruited.join(', ')}`);
         }
