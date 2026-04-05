@@ -6,7 +6,7 @@
  * making tests fast without needing time-skipping.
  */
 import { expect } from 'chai';
-import { Client, WorkflowHandle } from '@temporalio/client';
+import { Client, WorkflowHandle, WorkflowUpdateFailedError } from '@temporalio/client';
 import {
   setupTestEnv,
   teardownTestEnv,
@@ -227,12 +227,10 @@ describe('claudeMaestroWorkflow', function () {
           });
           expect.fail('Should have thrown');
         } catch (err: any) {
-          // Temporal wraps validator errors — check message and cause chain
-          const fullMessage = String(err.message) + String(err.cause?.message ?? '');
-          expect(fullMessage).to.satisfy(
-            (msg: string) => msg.includes('Command text must not be empty') || msg.includes('Update failed'),
-            `Expected validator rejection, got: ${err.message}`,
-          );
+          // Temporal wraps validator errors as WorkflowUpdateFailedError.
+          // The original validator message is in err.cause.message.
+          expect(err).to.be.instanceOf(WorkflowUpdateFailedError);
+          expect(err.cause?.message).to.include('Command text must not be empty');
         }
 
         await handle.signal(maestroShutdownSignal);
