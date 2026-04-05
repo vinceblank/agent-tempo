@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.14.0] - 2026-04-05
+
+### Added
+
+- **Worktree isolation** — Lineup players now support `isolation: worktree` (with a required `branch` field). When set, `load_lineup` auto-creates a git worktree at a temp path and runs `npm install` before recruiting. Uses `execFileSync` with args arrays to prevent shell injection. `worktreePath` flows through session metadata and is documented in the wire protocol (#36)
+
+### Fixed
+
+- **`down` command scoping** — The `down` command previously ignored the ensemble argument and terminated all running workflows across all ensembles. Now filters by `ClaudeTempoEnsemble` search attribute and validates the ensemble name to prevent query injection (#37)
+
 ## [0.13.1] - 2026-04-05
 
 ### Fixed
