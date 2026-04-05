@@ -21,6 +21,8 @@ export interface SessionMetadata {
   playerTypeDescription?: string;
   /** Player ID of who recruited this player. */
   recruitedBy?: string;
+  /** Worktree path if this session was spawned in an isolated worktree. */
+  worktreePath?: string;
 }
 
 export interface AgentTypeInfo {

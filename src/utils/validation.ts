@@ -43,6 +43,9 @@ export const GATE_CRITERION_TEXT_MAX = 512;
 /** Maximum length for gate criterion notes. */
 export const GATE_NOTES_MAX = 1024;
 
+/** Timeout for npm install in worktrees (60s). */
+export const WORKTREE_INSTALL_TIMEOUT = 60000;
+
 /** Default number of recent messages to include as context in an encore. */
 export const ENCORE_DEFAULT_CONTEXT_MESSAGES = 10;
 
