@@ -30,6 +30,9 @@ import {
   setQualityGateSignal,
   evaluateGateCriteriaSignal,
   qualityGatesQuery,
+  setWorktreeSignal,
+  removeWorktreeSignal,
+  worktreesQuery,
 } from '../src/workflows/signals';
 
 // Re-export signals/queries for convenience in test files
@@ -53,6 +56,9 @@ export {
   setQualityGateSignal,
   evaluateGateCriteriaSignal,
   qualityGatesQuery,
+  setWorktreeSignal,
+  removeWorktreeSignal,
+  worktreesQuery,
 };
 
 let testEnv: TestWorkflowEnvironment;

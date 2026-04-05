@@ -75,6 +75,8 @@ Conductor-specific signals, only registered when `input.metadata.isConductor` is
 | `playerReport` | `{ playerId: string; text: string; type: 'result' \| 'blocker' \| 'question' }` | Delivers a report from a player to the conductor. Appended to `reportHistory` and injected into the conductor's inbox. |
 | `setQualityGate` | `{ task: string; criteria: string[]; createdBy: string }` | Defines or replaces a quality gate for the given task. Each criterion starts as `'pending'`. If a gate with the same `task` already exists, it is fully replaced. |
 | `evaluateGateCriteria` | `{ task: string; evaluations: Array<{ index: number; status: 'passed' \| 'failed'; notes?: string }>; evaluatedBy: string }` | Marks one or more criteria on an existing quality gate as `'passed'` or `'failed'`. Out-of-bounds indices are silently ignored. Gate aggregate status is re-derived after each evaluation. |
+| `setWorktree` | `WorktreeEntry` | Records a worktree assignment for a player. `WorktreeEntry` has fields: `player`, `path`, `branch`, `gitRoot`, `createdAt`, `createdBy`. Upserts by player name. |
+| `removeWorktree` | `string` | Removes a worktree entry by player name. |
 
 ---
 
@@ -84,6 +86,7 @@ Conductor-specific signals, only registered when `input.metadata.isConductor` is
 |------------|-------------|-------------|
 | `history` | `HistoryEntry[]` | Returns the conductor's combined command + report history, sorted chronologically. Each entry has a `type` (`'command'` or `'report'`) and a `timestamp`. |
 | `qualityGates` | `QualityGate[]` | Returns all quality gates. Each gate has a `task` key, `criteria` array, `createdBy`, `createdAt`, and a derived `status` (`'open'`, `'passed'`, or `'failed'`). |
+| `worktrees` | `WorktreeEntry[]` | Returns all active worktree assignments. Each entry has `player`, `path`, `branch`, `gitRoot`, `createdAt`, and `createdBy`. |
 
 ---
 
@@ -143,6 +146,17 @@ Types referenced above are defined in `src/types.ts` and re-exported from `src/w
 | `createdBy` | `string` | Player ID of the conductor that created the gate. |
 | `createdAt` | `string` | ISO timestamp of gate creation. |
 | `status` | `'open' \| 'passed' \| 'failed'` | Derived: all criteria passed → `'passed'`; any failed → `'failed'`; otherwise `'open'`. |
+
+### `WorktreeEntry`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `player` | `string` | Player name assigned to this worktree. Used as the upsert key. |
+| `path` | `string` | Absolute path to the worktree directory. |
+| `branch` | `string` | Git branch checked out in the worktree. |
+| `gitRoot` | `string` | Absolute path to the original git root (used by `git worktree remove`). |
+| `createdAt` | `string` | ISO timestamp of worktree creation. |
+| `createdBy` | `string` | Player ID of the conductor that created the worktree. |
 
 ### `RecruitOutboxEntry` (selected fields)
 

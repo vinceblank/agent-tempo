@@ -16,8 +16,6 @@ export interface EnsembleLineup {
     agent?: string;       // "default", "copilot", or path to agent .md file
     instructions?: string;
     allowedTools?: string[]; // Tool restrictions (e.g., ["Read", "Glob", "Grep"])
-    isolation?: 'worktree'; // Run in a git worktree for code isolation
-    branch?: string;        // Branch name for the worktree (defaults to {ensemble}/{player-name})
     /** Transient: resolved agent definition name (set by loadAndResolveLineup). */
     _agentDefinition?: string;
     /** Transient: resolved absolute path to .md file (set by loadAndResolveLineup). */

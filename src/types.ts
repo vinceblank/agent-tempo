@@ -53,6 +53,8 @@ export interface SessionInput {
   disableStaleDetection?: boolean;
   /** Restored from continue-as-new (conductor only) */
   qualityGates?: QualityGate[];
+  /** Restored from continue-as-new (conductor only) */
+  worktrees?: WorktreeEntry[];
   /** Temporal config passed through for outbox activities (non-secret fields only). */
   temporalConfig?: {
     temporalAddress: string;
@@ -181,6 +183,23 @@ export interface QualityGate {
   createdAt: string;
   /** Derived: all passed → passed, any failed → failed, else open. */
   status: 'open' | 'passed' | 'failed';
+}
+
+// ── Worktree Types ──
+
+export interface WorktreeEntry {
+  /** Player name assigned to this worktree. */
+  player: string;
+  /** Absolute path to worktree directory. */
+  path: string;
+  /** Git branch for this worktree. */
+  branch: string;
+  /** Original git root (for git worktree remove). */
+  gitRoot: string;
+  /** ISO timestamp of creation. */
+  createdAt: string;
+  /** Player ID of creator. */
+  createdBy: string;
 }
 
 export interface ScheduleEntry {

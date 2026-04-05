@@ -1,6 +1,19 @@
 import { expect } from 'chai';
 import * as path from 'path';
+import { WorktreeEntry } from '../src/types';
 import { worktreeBasePath } from '../src/utils/worktree';
+import {
+  setupTestEnv,
+  teardownTestEnv,
+  withWorker,
+  startSession,
+  conductorMetadata,
+  playerMetadata,
+  updateMetadataSignal,
+  setWorktreeSignal,
+  removeWorktreeSignal,
+  worktreesQuery,
+} from './helpers';
 
 describe('worktree helpers', function () {
   describe('worktreeBasePath', function () {
@@ -12,7 +25,6 @@ describe('worktree helpers', function () {
     });
 
     it('handles gitRoot with trailing separator', function () {
-      // path.dirname normalizes trailing separators
       const gitRoot = path.resolve('/repos/my-project');
       const result = worktreeBasePath(gitRoot, 'test');
       expect(result).to.include('.ct-worktrees');
@@ -29,7 +41,6 @@ describe('worktree helpers', function () {
     it('produces cross-platform consistent paths using path.join', function () {
       const gitRoot = path.resolve('/repos/project');
       const result = worktreeBasePath(gitRoot, 'ensemble-1');
-      // Ensure the result uses the platform's path separator
       expect(result).to.equal(
         path.join(path.dirname(gitRoot), '.ct-worktrees', 'ensemble-1'),
       );
@@ -38,8 +49,6 @@ describe('worktree helpers', function () {
 
   describe('branch naming defaults', function () {
     it('default branch follows {ensemble}/{playerName} convention', function () {
-      // The createWorktree function defaults to `${ensemble}/${playerName}`
-      // We test the convention here without invoking git
       const ensemble = 'my-ensemble';
       const playerName = 'soloist';
       const defaultBranch = `${ensemble}/${playerName}`;
@@ -48,7 +57,6 @@ describe('worktree helpers', function () {
 
     it('custom branch overrides the default', function () {
       const customBranch = 'feat/custom-branch';
-      // When branch is provided, it should be used as-is
       expect(customBranch).to.equal('feat/custom-branch');
     });
 
@@ -80,6 +88,176 @@ describe('worktree helpers', function () {
       const gitRoot = path.resolve('/repos/project');
       const basePath = worktreeBasePath(gitRoot, 'ens');
       expect(path.isAbsolute(basePath)).to.be.true;
+    });
+  });
+});
+
+describe('worktree workflow state', function () {
+  before(async function () {
+    this.timeout(60_000);
+    await setupTestEnv();
+  });
+
+  after(async function () {
+    await teardownTestEnv();
+  });
+
+  it('creates worktree entry on conductor via signal', async function () {
+    await withWorker(async () => {
+      const handle = await startSession({
+        metadata: conductorMetadata({ playerId: 'conductor' }),
+      });
+
+      const entry: WorktreeEntry = {
+        player: 'soloist',
+        path: '/tmp/wt/soloist',
+        branch: 'test-ens/soloist',
+        gitRoot: '/repos/project',
+        createdAt: new Date().toISOString(),
+        createdBy: 'conductor',
+      };
+      await handle.signal(setWorktreeSignal, entry);
+
+      const worktrees: WorktreeEntry[] = await handle.query(worktreesQuery);
+      expect(worktrees).to.have.length(1);
+      expect(worktrees[0].player).to.equal('soloist');
+      expect(worktrees[0].path).to.equal('/tmp/wt/soloist');
+      expect(worktrees[0].branch).to.equal('test-ens/soloist');
+      expect(worktrees[0].gitRoot).to.equal('/repos/project');
+      expect(worktrees[0].createdBy).to.equal('conductor');
+
+      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.result();
+    });
+  });
+
+  it('removes worktree entry by player name', async function () {
+    await withWorker(async () => {
+      const handle = await startSession({
+        metadata: conductorMetadata({ playerId: 'conductor' }),
+      });
+
+      await handle.signal(setWorktreeSignal, {
+        player: 'engineer',
+        path: '/tmp/wt/engineer',
+        branch: 'ens/engineer',
+        gitRoot: '/repos/project',
+        createdAt: new Date().toISOString(),
+        createdBy: 'conductor',
+      });
+
+      let worktrees: WorktreeEntry[] = await handle.query(worktreesQuery);
+      expect(worktrees).to.have.length(1);
+
+      await handle.signal(removeWorktreeSignal, 'engineer');
+
+      worktrees = await handle.query(worktreesQuery);
+      expect(worktrees).to.have.length(0);
+
+      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.result();
+    });
+  });
+
+  it('upserts worktree entry for same player', async function () {
+    await withWorker(async () => {
+      const handle = await startSession({
+        metadata: conductorMetadata({ playerId: 'conductor' }),
+      });
+
+      await handle.signal(setWorktreeSignal, {
+        player: 'dev',
+        path: '/tmp/wt/dev-old',
+        branch: 'ens/dev',
+        gitRoot: '/repos/project',
+        createdAt: '2026-01-01T00:00:00Z',
+        createdBy: 'conductor',
+      });
+
+      // Upsert with new path
+      await handle.signal(setWorktreeSignal, {
+        player: 'dev',
+        path: '/tmp/wt/dev-new',
+        branch: 'ens/dev-v2',
+        gitRoot: '/repos/project',
+        createdAt: '2026-01-02T00:00:00Z',
+        createdBy: 'conductor',
+      });
+
+      const worktrees: WorktreeEntry[] = await handle.query(worktreesQuery);
+      expect(worktrees).to.have.length(1);
+      expect(worktrees[0].path).to.equal('/tmp/wt/dev-new');
+      expect(worktrees[0].branch).to.equal('ens/dev-v2');
+
+      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.result();
+    });
+  });
+
+  it('non-conductor session does not have worktrees query', async function () {
+    await withWorker(async () => {
+      const handle = await startSession({
+        metadata: playerMetadata({ playerId: 'player-no-wt' }),
+      });
+
+      try {
+        await handle.query(worktreesQuery);
+        expect.fail('Should have thrown for non-conductor');
+      } catch (err: any) {
+        expect(err.message).to.include('worktrees');
+      }
+
+      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.result();
+    });
+  });
+
+  it('supports multiple worktrees simultaneously', async function () {
+    await withWorker(async () => {
+      const handle = await startSession({
+        metadata: conductorMetadata({ playerId: 'conductor' }),
+      });
+
+      await handle.signal(setWorktreeSignal, {
+        player: 'alice',
+        path: '/tmp/wt/alice',
+        branch: 'ens/alice',
+        gitRoot: '/repos/project',
+        createdAt: new Date().toISOString(),
+        createdBy: 'conductor',
+      });
+      await handle.signal(setWorktreeSignal, {
+        player: 'bob',
+        path: '/tmp/wt/bob',
+        branch: 'ens/bob',
+        gitRoot: '/repos/project',
+        createdAt: new Date().toISOString(),
+        createdBy: 'conductor',
+      });
+
+      const worktrees: WorktreeEntry[] = await handle.query(worktreesQuery);
+      expect(worktrees).to.have.length(2);
+      expect(worktrees.map((w) => w.player)).to.include.members(['alice', 'bob']);
+
+      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.result();
+    });
+  });
+
+  it('remove for non-existent player is a no-op', async function () {
+    await withWorker(async () => {
+      const handle = await startSession({
+        metadata: conductorMetadata({ playerId: 'conductor' }),
+      });
+
+      // Remove a player that was never added — should not throw
+      await handle.signal(removeWorktreeSignal, 'ghost');
+
+      const worktrees: WorktreeEntry[] = await handle.query(worktreesQuery);
+      expect(worktrees).to.have.length(0);
+
+      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.result();
     });
   });
 });

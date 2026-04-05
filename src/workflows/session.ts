@@ -24,6 +24,7 @@ import {
   OutboxEntry,
   OutboxEntryInput,
   QualityGate,
+  WorktreeEntry,
   receiveMessageSignal,
   setPartSignal,
   setNameSignal,
@@ -44,6 +45,9 @@ import {
   setQualityGateSignal,
   evaluateGateCriteriaSignal,
   qualityGatesQuery,
+  setWorktreeSignal,
+  removeWorktreeSignal,
+  worktreesQuery,
 } from './signals';
 
 // ── Outbox Activity Proxies ──
@@ -74,6 +78,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   patched('v0.10-initial');
   patched('v0.11-check-and-set-status');
   patched('v0.13-quality-gates');
+  patched('v0.14-worktrees');
 
   // Ensure search attributes are always current — critical when reconnecting
   // via WorkflowIdConflictPolicy.USE_EXISTING, which skips the attributes
@@ -225,6 +230,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   const commandHistory: Command[] = input.commandHistory ?? [];
   const reportHistory: PlayerReport[] = input.reportHistory ?? [];
   const qualityGates: QualityGate[] = input.qualityGates ?? [];
+  const worktrees: WorktreeEntry[] = input.worktrees ?? [];
 
   // ── Conductor-specific Handlers ──
 
@@ -318,6 +324,26 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     });
 
     setHandler(qualityGatesQuery, () => qualityGates);
+
+    // ── Worktree Handlers ──
+
+    setHandler(setWorktreeSignal, (entry: WorktreeEntry) => {
+      const existing = worktrees.findIndex((w) => w.player === entry.player);
+      if (existing >= 0) {
+        worktrees[existing] = entry;
+      } else {
+        worktrees.push(entry);
+      }
+    });
+
+    setHandler(removeWorktreeSignal, (playerName: string) => {
+      const idx = worktrees.findIndex((w) => w.player === playerName);
+      if (idx >= 0) {
+        worktrees.splice(idx, 1);
+      }
+    });
+
+    setHandler(worktreesQuery, () => worktrees);
   }
 
   // ── Main Loop ──
@@ -482,7 +508,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         messages: messages.filter((m) => !m.delivered),
         sentMessages: sentMessages.slice(-50),
         outbox: outbox.filter((e) => e.status === 'pending' || e.status === 'processing'),
-        ...(input.metadata.isConductor ? { commandHistory, reportHistory, qualityGates } : {}),
+        ...(input.metadata.isConductor ? { commandHistory, reportHistory, qualityGates, worktrees } : {}),
       });
     }
   }
