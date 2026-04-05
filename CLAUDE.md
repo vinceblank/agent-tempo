@@ -131,3 +131,14 @@ Examples:
 - `feat(tools): add ensemble discovery tool`
 - `fix(workflow): handle signal delivery edge case`
 - `docs: update getting started guide`
+
+## Release Process
+
+**Correct order — never deviate:**
+
+1. Merge the feature PR into `main` (squash merge)
+2. Bump `version` in `package.json` and add a `## [x.y.z]` entry in `CHANGELOG.md` on `main`
+3. Commit: `chore: bump version to vX.Y.Z`
+4. Tag the bump commit: `git tag vX.Y.Z && git push origin vX.Y.Z`
+
+The release workflow triggers on `v*` tag pushes and publishes to npm. **Never tag before the version bump commit exists on main, and never tag a commit that doesn't match the version in `package.json`.** Tagging prematurely (e.g., before a feature PR merges) publishes the old version to npm and forces a patch bump to recover.

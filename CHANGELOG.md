@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.11.1] - 2026-04-05
+
+### Changed
+
+- Version bump to correct release sequencing — `0.11.0` was published prematurely (before the feature PR merged). This `0.11.1` release contains all the same changes as the intended `0.11.0` and is the canonical release of the broadcast/encore/recall feature set.
+
 ## [0.11.0] - 2026-04-05
 
 ### Added
