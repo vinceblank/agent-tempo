@@ -228,7 +228,13 @@ async function main() {
     `Use \`ensemble\` to see who else is active. ` +
     `Use \`cue\` to reply directly to the player who messaged you, or to ask others for help. ` +
     `Use \`recruit\` if you need a session in a directory where none exists. ` +
-    `Use \`report\` to notify the conductor of task completion, blockers, or questions — always report when you finish a recruited task.`;
+    `Use \`report\` to notify the conductor of task completion, blockers, or questions — always report when you finish a recruited task.` +
+    (isConductor
+      ? `\n\nOperational rules:\n` +
+        `- Before assigning parallel work on different branches, provision git worktrees via the \`worktree\` tool so each player has an isolated checkout.\n` +
+        `- No player should switch branches without your approval — if a player needs a different branch, provision a worktree for them.\n` +
+        `- Before shipping, verify the branch diff scope matches the assigned task (no unrelated changes).`
+      : `\n\nDo not switch git branches without the conductor's approval. If no conductor exists, broadcast your intent to the ensemble first. Prefer using the \`worktree\` tool for branch isolation.`);
 
   const mcpServer = new McpServer({
     name: 'claude-tempo',

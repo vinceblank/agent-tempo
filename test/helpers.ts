@@ -9,7 +9,7 @@ import { Worker } from '@temporalio/worker';
 import { Client, WorkflowHandle, WorkflowIdConflictPolicy } from '@temporalio/client';
 import * as path from 'path';
 import * as fs from 'fs';
-import { SessionInput, SessionMetadata } from '../src/types';
+import { SessionInput, SessionMetadata, MaestroPlayerInfo } from '../src/types';
 import {
   receiveMessageSignal,
   setPartSignal,
@@ -122,6 +122,15 @@ export async function teardownTestEnv(): Promise<void> {
 /** Get the Temporal client from the test environment. */
 export function getClient(): Client {
   return testEnv.client;
+}
+
+/**
+ * Fast-forward the test environment's clock without waiting real time.
+ * Uses Temporal's time-skipping test server — workflow timers and
+ * `condition(..., timeout)` calls see the skipped time immediately.
+ */
+export async function skipTime(durationMs: number): Promise<void> {
+  await testEnv.sleep(durationMs);
 }
 
 /**
@@ -402,6 +411,48 @@ export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): P
       await hostWorkerPromise.catch(() => {});
     }
   });
+}
+
+/**
+ * Like withWorkerAndActivities, but registers mocked Maestro activities.
+ * The `mockPlayers` callback controls what `refreshEnsembleState` returns.
+ * The `relayedCommands` array captures relayed command inputs.
+ */
+export async function withWorkerAndMaestroActivities<T>(
+  opts: {
+    mockPlayers?: () => MaestroPlayerInfo[];
+    relayResult?: () => { success: boolean; error?: string };
+  },
+  fn: (relayedCommands: Array<{ text: string; source: string; replyTo?: string }>) => Promise<T>,
+): Promise<T> {
+  const mockPlayers = opts.mockPlayers ?? (() => []);
+  const relayResult = opts.relayResult ?? (() => ({ success: true }));
+  const relayedCommands: Array<{ text: string; source: string; replyTo?: string }> = [];
+
+  const { createScheduleActivities } = await import('../src/activities/schedule-fire');
+  const scheduleActivities = createScheduleActivities(testEnv.client);
+
+  const worker = await Worker.create({
+    connection: testEnv.nativeConnection,
+    taskQueue: TASK_QUEUE,
+    workflowBundle,
+    activities: {
+      ...scheduleActivities,
+      refreshEnsembleState: async (_ensemble: string) => mockPlayers(),
+      relayCommandToConductor: async (input: { text: string; source: string; replyTo?: string }) => {
+        relayedCommands.push(input);
+        return relayResult();
+      },
+      fetchConductorHistory: async () => ({ success: true, history: [] }),
+      deliverCue: async () => {},
+      deliverReport: async () => {},
+      terminateSession: async () => {},
+      startRecruitedSession: async () => ({ claudeSessionId: 'test' }),
+      performEncore: async () => ({ hostname: 'test-host', workDir: '/tmp', isConductor: false, agent: 'claude', temporalAddress: '', temporalNamespace: 'default' }),
+      spawnProcess: async () => ({ success: true }),
+    },
+  });
+  return worker.runUntil(() => fn(relayedCommands));
 }
 
 export async function reconnectSession(

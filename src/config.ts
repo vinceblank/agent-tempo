@@ -332,3 +332,8 @@ export function conductorWorkflowId(ensemble: string): string {
 export function schedulerWorkflowId(ensemble: string): string {
   return `claude-scheduler-${ensemble}`;
 }
+
+/** Build a workflow ID for the Maestro: claude-maestro-{ensemble} */
+export function maestroWorkflowId(ensemble: string): string {
+  return `claude-maestro-${ensemble}`;
+}

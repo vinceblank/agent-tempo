@@ -8,6 +8,7 @@ import { createTemporalNativeConnection } from './connection';
 import { createTemporalConnection } from './connection';
 import { createScheduleActivities } from './activities/schedule-fire';
 import { createOutboxActivities } from './activities/outbox';
+import { createMaestroActivities } from './activities/maestro';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:worker]', ...args);
 
@@ -48,6 +49,7 @@ export async function createWorkers(config: Config): Promise<DualWorkers> {
   const client = new Client({ connection: clientConnection, namespace: config.temporalNamespace });
   const scheduleActivities = createScheduleActivities(client);
   const outboxActivities = createOutboxActivities(client, config);
+  const maestroActivities = createMaestroActivities(client);
 
   const workflowBundle = await getWorkflowBundle();
 
@@ -63,6 +65,7 @@ export async function createWorkers(config: Config): Promise<DualWorkers> {
     shutdownForceTime: SHUTDOWN_FORCE_TIME,
     activities: {
       ...scheduleActivities,
+      ...maestroActivities,
       // Shared-queue delivery activities (everything except spawnProcess)
       deliverCue: outboxActivities.deliverCue,
       deliverReport: outboxActivities.deliverReport,
