@@ -8,6 +8,7 @@ import {
   setupTestEnv,
   teardownTestEnv,
   getClient,
+  skipTime,
   TASK_QUEUE,
   withWorkerAndMaestroActivities,
 } from './helpers';
@@ -35,10 +36,6 @@ async function startMaestro(
     taskQueue: TASK_QUEUE,
     args: [input],
   });
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 describe('claudeMaestroWorkflow', function () {
@@ -73,7 +70,7 @@ describe('claudeMaestroWorkflow', function () {
 
   describe('snapshot diffing', function () {
     it('detects player_joined and player_left events', async function () {
-      this.timeout(60_000);
+      this.timeout(15_000);
 
       let currentPlayers: MaestroPlayerInfo[] = [];
 
@@ -83,7 +80,7 @@ describe('claudeMaestroWorkflow', function () {
           const handle = await startMaestro(getClient());
 
           // Wait for first refresh (empty -> empty, no events)
-          await sleep(12_000);
+          await skipTime(12_000);
 
           // Simulate a player joining
           currentPlayers = [{
@@ -97,7 +94,7 @@ describe('claudeMaestroWorkflow', function () {
           }];
 
           // Wait for next refresh cycle
-          await sleep(12_000);
+          await skipTime(12_000);
 
           const events = await handle.query(maestroEventsQuery);
           const joinEvents = events.filter(e => e.type === 'player_joined');
@@ -106,7 +103,7 @@ describe('claudeMaestroWorkflow', function () {
 
           // Now remove the player
           currentPlayers = [];
-          await sleep(12_000);
+          await skipTime(12_000);
 
           const events2 = await handle.query(maestroEventsQuery);
           const leftEvents = events2.filter(e => e.type === 'player_left');
@@ -120,7 +117,7 @@ describe('claudeMaestroWorkflow', function () {
     });
 
     it('detects status_changed and part_changed events', async function () {
-      this.timeout(45_000);
+      this.timeout(15_000);
 
       const initialPlayer: MaestroPlayerInfo = {
         playerId: 'bob',
@@ -144,7 +141,7 @@ describe('claudeMaestroWorkflow', function () {
           });
 
           // Wait for a refresh cycle
-          await sleep(12_000);
+          await skipTime(12_000);
 
           // Change status and part
           currentPlayers = [{
@@ -153,7 +150,7 @@ describe('claudeMaestroWorkflow', function () {
             status: 'stale',
           }];
 
-          await sleep(12_000);
+          await skipTime(12_000);
 
           const events = await handle.query(maestroEventsQuery);
 
@@ -176,7 +173,7 @@ describe('claudeMaestroWorkflow', function () {
 
   describe('command relay', function () {
     it('queues and dispatches commands via maestroSendCommand update', async function () {
-      this.timeout(30_000);
+      this.timeout(15_000);
 
       await withWorkerAndMaestroActivities({}, async (relayedCommands) => {
         const handle = await startMaestro(getClient());
@@ -189,7 +186,7 @@ describe('claudeMaestroWorkflow', function () {
         expect(cmdId).to.have.length.greaterThan(0);
 
         // Wait for dispatch
-        await sleep(12_000);
+        await skipTime(12_000);
 
         // Verify the command was relayed
         expect(relayedCommands).to.have.length.greaterThanOrEqual(1);
@@ -226,7 +223,7 @@ describe('claudeMaestroWorkflow', function () {
     });
 
     it('marks commands as failed when relay fails', async function () {
-      this.timeout(30_000);
+      this.timeout(15_000);
 
       await withWorkerAndMaestroActivities(
         { relayResult: () => ({ success: false, error: 'No conductor found' }) },
@@ -237,7 +234,7 @@ describe('claudeMaestroWorkflow', function () {
             args: [{ text: 'do something', source: 'test' }],
           });
 
-          await sleep(12_000);
+          await skipTime(12_000);
 
           const cmds = await handle.query(maestroPendingCommandsQuery);
           const cmd = cmds.find(c => c.id === cmdId);
@@ -266,7 +263,7 @@ describe('claudeMaestroWorkflow', function () {
     });
 
     it('handles activity failures gracefully without crashing', async function () {
-      this.timeout(45_000);
+      this.timeout(15_000);
 
       let callCount = 0;
 
@@ -282,7 +279,7 @@ describe('claudeMaestroWorkflow', function () {
           const handle = await startMaestro(getClient());
 
           // Wait for a few cycles - some will fail (retries exhausted), some will succeed
-          await sleep(15_000);
+          await skipTime(15_000);
 
           // Workflow should still be running despite activity failures
           const desc = await handle.describe();

@@ -125,6 +125,15 @@ export function getClient(): Client {
 }
 
 /**
+ * Fast-forward the test environment's clock without waiting real time.
+ * Uses Temporal's time-skipping test server — workflow timers and
+ * `condition(..., timeout)` calls see the skipped time immediately.
+ */
+export async function skipTime(durationMs: number): Promise<void> {
+  await testEnv.sleep(durationMs);
+}
+
+/**
  * Create and start a Worker that runs for the duration of `fn`.
  * The worker is shut down when `fn` resolves or rejects.
  */
