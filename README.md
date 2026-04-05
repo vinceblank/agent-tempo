@@ -133,6 +133,9 @@ These tools are available inside Claude Code sessions connected to claude-tempo:
 | `broadcast` | Send a message to all active players. Optional `type` filter limits to a specific player type. |
 | `encore` | Revive a stale player session — restarts the process and reconnects to the existing workflow with context restored. |
 | `recall` | Read your own message history. Shows received messages by default; pass `includeSent: true` for the full timeline. |
+| `quality_gate` | Define or replace a quality gate for a task — a named checklist of criteria that must pass. Conductor only. |
+| `evaluate_gate` | Mark one or more criteria on a quality gate as passed or failed. Conductor only. |
+| `gates` | List quality gates and their status. Filter by task name or status (`open`, `passed`, `failed`). Conductor only. |
 
 ## Scheduling
 
@@ -173,6 +176,24 @@ The `timezone` parameter accepts any IANA timezone (e.g. `"America/New_York"`, `
 - Messages include `isScheduled` metadata for dashboard integrations
 - `claude-tempo status` shows active schedules alongside sessions
 - A single durable scheduler workflow per ensemble manages all schedules using Temporal timers
+
+## Quality Gates
+
+Conductors can define named checklists of criteria to verify task completion. Three conductor-only tools are available: `quality_gate` (create or replace a gate), `evaluate_gate` (mark criteria as passed or failed), and `gates` (list all gates with optional filters).
+
+### Examples
+
+Tell your conductor things like:
+
+- *"Set a quality gate 'pr-ready' with criteria: tests pass, no lint errors, code reviewed"*
+- *"Mark criteria 0 and 1 on 'pr-ready' as passed"*
+- *"Show me all open quality gates"*
+- *"Check whether 'deploy-staging' has passed"*
+
+### How it works
+
+- Gate status is derived from criteria: all passed → `passed`; any failed → `failed`; otherwise `open`
+- Gates survive `continueAsNew` for the conductor workflow's lifetime
 
 ## Ensemble Lineups
 

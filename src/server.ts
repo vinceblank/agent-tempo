@@ -30,6 +30,9 @@ import { registerWhoAmITool } from './tools/who-am-i';
 import { registerBroadcastTool } from './tools/broadcast';
 import { registerRecallTool } from './tools/recall';
 import { registerEncoreTool } from './tools/encore';
+import { registerQualityGateTool } from './tools/quality-gate';
+import { registerEvaluateGateTool } from './tools/evaluate-gate';
+import { registerGatesTool } from './tools/gates';
 import { startMessagePoller } from './channel';
 import { resolveAgentType } from './ensemble/agent-types';
 
@@ -254,6 +257,13 @@ async function main() {
   registerBroadcastTool(mcpServer, client, config, getPlayerId, handle);
   registerRecallTool(mcpServer, handle, getPlayerId);
   registerEncoreTool(mcpServer, client, config, getPlayerId, handle);
+
+  // Conductor-only tools
+  if (isConductor) {
+    registerQualityGateTool(mcpServer, handle, getPlayerId);
+    registerEvaluateGateTool(mcpServer, handle, getPlayerId);
+    registerGatesTool(mcpServer, handle);
+  }
 
   const MAESTRO_ACK = '\n\n[IMPORTANT: This message is from a human (Maestro). Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
 

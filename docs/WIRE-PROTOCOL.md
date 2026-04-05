@@ -73,6 +73,8 @@ Conductor-specific signals, only registered when `input.metadata.isConductor` is
 |-------------|---------|-------------|
 | `command` | `{ text: string; source: string; replyTo?: string }` | Delivers an external command (e.g. from Maestro or a human operator) to the conductor session. The command is appended to `commandHistory` and injected into the conductor's inbox as a message. |
 | `playerReport` | `{ playerId: string; text: string; type: 'result' \| 'blocker' \| 'question' }` | Delivers a report from a player to the conductor. Appended to `reportHistory` and injected into the conductor's inbox. |
+| `setQualityGate` | `{ task: string; criteria: string[]; createdBy: string }` | Defines or replaces a quality gate for the given task. Each criterion starts as `'pending'`. If a gate with the same `task` already exists, it is fully replaced. |
+| `evaluateGateCriteria` | `{ task: string; evaluations: Array<{ index: number; status: 'passed' \| 'failed'; notes?: string }>; evaluatedBy: string }` | Marks one or more criteria on an existing quality gate as `'passed'` or `'failed'`. Out-of-bounds indices are silently ignored. Gate aggregate status is re-derived after each evaluation. |
 
 ---
 
@@ -81,6 +83,7 @@ Conductor-specific signals, only registered when `input.metadata.isConductor` is
 | Query Name | Return Type | Description |
 |------------|-------------|-------------|
 | `history` | `HistoryEntry[]` | Returns the conductor's combined command + report history, sorted chronologically. Each entry has a `type` (`'command'` or `'report'`) and a `timestamp`. |
+| `qualityGates` | `QualityGate[]` | Returns all quality gates. Each gate has a `task` key, `criteria` array, `createdBy`, `createdAt`, and a derived `status` (`'open'`, `'passed'`, or `'failed'`). |
 
 ---
 
@@ -130,6 +133,16 @@ Types referenced above are defined in `src/types.ts` and re-exported from `src/w
 | `type` | `'once' \| 'interval' \| 'cron'` | Schedule kind. |
 | `cronExpression` | `string?` | Cron expression (e.g. `"0 9 * * 1-5"`). Only present when `type: 'cron'`. |
 | `timezone` | `string?` | IANA timezone for cron evaluation (e.g. `"America/New_York"`). Defaults to `"UTC"` when `type: 'cron'` and omitted. |
+
+### `QualityGate` (selected fields)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `task` | `string` | Unique key identifying the task this gate covers. |
+| `criteria` | `QualityGateCriterion[]` | Ordered list of criteria. Each has `text`, `status` (`'pending' \| 'passed' \| 'failed'`), and optional `evaluatedBy`, `evaluatedAt`, `notes`. |
+| `createdBy` | `string` | Player ID of the conductor that created the gate. |
+| `createdAt` | `string` | ISO timestamp of gate creation. |
+| `status` | `'open' \| 'passed' \| 'failed'` | Derived: all criteria passed → `'passed'`; any failed → `'failed'`; otherwise `'open'`. |
 
 ### `RecruitOutboxEntry` (selected fields)
 

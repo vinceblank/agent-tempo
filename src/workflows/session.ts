@@ -23,6 +23,7 @@ import {
   HistoryEntry,
   OutboxEntry,
   OutboxEntryInput,
+  QualityGate,
   receiveMessageSignal,
   setPartSignal,
   setNameSignal,
@@ -40,6 +41,9 @@ import {
   checkAndSetStatusUpdate,
   submitOutboxUpdate,
   outboxQuery,
+  setQualityGateSignal,
+  evaluateGateCriteriaSignal,
+  qualityGatesQuery,
 } from './signals';
 
 // ── Outbox Activity Proxies ──
@@ -69,6 +73,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // non-determinism errors during rolling deploys.
   patched('v0.10-initial');
   patched('v0.11-check-and-set-status');
+  patched('v0.13-quality-gates');
 
   // Ensure search attributes are always current — critical when reconnecting
   // via WorkflowIdConflictPolicy.USE_EXISTING, which skips the attributes
@@ -218,6 +223,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
 
   const commandHistory: Command[] = input.commandHistory ?? [];
   const reportHistory: PlayerReport[] = input.reportHistory ?? [];
+  const qualityGates: QualityGate[] = input.qualityGates ?? [];
 
   // ── Conductor-specific Handlers ──
 
@@ -268,6 +274,49 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       ];
       return entries.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     });
+
+    // ── Quality Gate Handlers ──
+
+    /** Derive aggregate gate status from individual criteria. */
+    function deriveGateStatus(gate: QualityGate): 'open' | 'passed' | 'failed' {
+      if (gate.criteria.length === 0) return 'open';
+      if (gate.criteria.some((c) => c.status === 'failed')) return 'failed';
+      if (gate.criteria.every((c) => c.status === 'passed')) return 'passed';
+      return 'open';
+    }
+
+    setHandler(setQualityGateSignal, ({ task, criteria, createdBy }) => {
+      const existing = qualityGates.findIndex((g) => g.task === task);
+      const gate: QualityGate = {
+        task,
+        criteria: criteria.map((text) => ({ text, status: 'pending' as const })),
+        createdBy,
+        createdAt: new Date().toISOString(),
+        status: 'open',
+      };
+      if (existing >= 0) {
+        qualityGates[existing] = gate;
+      } else {
+        qualityGates.push(gate);
+      }
+    });
+
+    setHandler(evaluateGateCriteriaSignal, ({ task, evaluations, evaluatedBy }) => {
+      const gate = qualityGates.find((g) => g.task === task);
+      if (!gate) return;
+      const now = new Date().toISOString();
+      for (const ev of evaluations) {
+        if (ev.index >= 0 && ev.index < gate.criteria.length) {
+          gate.criteria[ev.index].status = ev.status;
+          gate.criteria[ev.index].evaluatedBy = evaluatedBy;
+          gate.criteria[ev.index].evaluatedAt = now;
+          if (ev.notes) gate.criteria[ev.index].notes = ev.notes;
+        }
+      }
+      gate.status = deriveGateStatus(gate);
+    });
+
+    setHandler(qualityGatesQuery, () => qualityGates);
   }
 
   // ── Main Loop ──
@@ -432,7 +481,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         messages: messages.filter((m) => !m.delivered),
         sentMessages: sentMessages.slice(-50),
         outbox: outbox.filter((e) => e.status === 'pending' || e.status === 'processing'),
-        ...(input.metadata.isConductor ? { commandHistory, reportHistory } : {}),
+        ...(input.metadata.isConductor ? { commandHistory, reportHistory, qualityGates } : {}),
       });
     }
   }

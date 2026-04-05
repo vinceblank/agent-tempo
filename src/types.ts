@@ -49,6 +49,8 @@ export interface SessionInput {
   autoSummary?: string;
   /** Disable stale session detection (for passive mailbox workflows like maestro) */
   disableStaleDetection?: boolean;
+  /** Restored from continue-as-new (conductor only) */
+  qualityGates?: QualityGate[];
   /** Temporal config passed through for outbox activities (non-secret fields only). */
   temporalConfig?: {
     temporalAddress: string;
@@ -158,6 +160,26 @@ type DistributiveOmit<T, K extends keyof any> = T extends any ? Omit<T, K> : nev
 
 /** Input type for submitting outbox entries — auto-fields (id, createdAt, status, error, deliveredAt) are added by the workflow. */
 export type OutboxEntryInput = DistributiveOmit<OutboxEntry, 'id' | 'createdAt' | 'status' | 'error' | 'deliveredAt'>;
+
+// ── Quality Gate Types ──
+
+export interface QualityGateCriterion {
+  text: string;
+  status: 'pending' | 'passed' | 'failed';
+  evaluatedBy?: string;
+  evaluatedAt?: string;
+  notes?: string;
+}
+
+export interface QualityGate {
+  /** Unique key identifying the task this gate covers. */
+  task: string;
+  criteria: QualityGateCriterion[];
+  createdBy: string;
+  createdAt: string;
+  /** Derived: all passed → passed, any failed → failed, else open. */
+  status: 'open' | 'passed' | 'failed';
+}
 
 export interface ScheduleEntry {
   /** Unique name for this schedule (used as key for add/replace/remove). */

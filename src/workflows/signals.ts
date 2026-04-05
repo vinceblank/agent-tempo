@@ -6,6 +6,7 @@ import type {
   HistoryEntry,
   OutboxEntry,
   OutboxEntryInput,
+  QualityGate,
 } from '../types';
 
 // Re-export types for convenience within workflow code
@@ -26,6 +27,8 @@ export type {
   ReportOutboxEntry,
   StopOutboxEntry,
   EncoreOutboxEntry,
+  QualityGate,
+  QualityGateCriterion,
 } from '../types';
 
 // ── Player Signals ──
@@ -63,3 +66,9 @@ export const checkAndSetStatusUpdate = defineUpdate<boolean, [{ expectedStatus: 
 
 export const submitOutboxUpdate = defineUpdate<string, [OutboxEntryInput]>('submitOutbox');
 export const outboxQuery = defineQuery<OutboxEntry[]>('outbox');
+
+// ── Quality Gate Signals + Query (conductor-only) ──
+
+export const setQualityGateSignal = defineSignal<[{ task: string; criteria: string[]; createdBy: string }]>('setQualityGate');
+export const evaluateGateCriteriaSignal = defineSignal<[{ task: string; evaluations: Array<{ index: number; status: 'passed' | 'failed'; notes?: string }>; evaluatedBy: string }]>('evaluateGateCriteria');
+export const qualityGatesQuery = defineQuery<QualityGate[]>('qualityGates');

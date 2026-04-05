@@ -27,6 +27,9 @@ import {
   historyQuery,
   submitOutboxUpdate,
   outboxQuery,
+  setQualityGateSignal,
+  evaluateGateCriteriaSignal,
+  qualityGatesQuery,
 } from '../src/workflows/signals';
 
 // Re-export signals/queries for convenience in test files
@@ -47,6 +50,9 @@ export {
   historyQuery,
   submitOutboxUpdate,
   outboxQuery,
+  setQualityGateSignal,
+  evaluateGateCriteriaSignal,
+  qualityGatesQuery,
 };
 
 let testEnv: TestWorkflowEnvironment;
