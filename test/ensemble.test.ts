@@ -16,6 +16,7 @@ import {
   conductorMetadata,
   updateMetadataSignal,
   allMessagesQuery,
+  waitForEnsembleMembers,
 } from './helpers';
 import {
   addScheduleSignal,
@@ -216,6 +217,9 @@ players:
         const handle = await startSession({
           metadata: playerMetadata({ playerId: 'save-test-player', ensemble: ENSEMBLE }),
         });
+
+        // Wait for the workflow to appear in the search index before querying
+        await waitForEnsembleMembers(getClient(), ENSEMBLE, 1);
 
         // Import saveLineup here to use the test client
         const { saveLineup } = await import('../src/ensemble/saver');
