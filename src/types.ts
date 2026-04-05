@@ -48,13 +48,10 @@ export interface SessionInput {
   autoSummary?: string;
   /** Disable stale session detection (for passive mailbox workflows like maestro) */
   disableStaleDetection?: boolean;
-  /** Temporal config passed through for outbox activities (spawnProcess needs these) */
+  /** Temporal config passed through for outbox activities (non-secret fields only). */
   temporalConfig?: {
     temporalAddress: string;
     temporalNamespace: string;
-    temporalApiKey?: string;
-    temporalTlsCertPath?: string;
-    temporalTlsKeyPath?: string;
     taskQueue: string;
   };
 }

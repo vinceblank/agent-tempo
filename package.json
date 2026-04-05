@@ -2,10 +2,16 @@
   "name": "claude-tempo",
   "version": "0.10.0",
   "description": "MCP server for multi-session Claude Code coordination via Temporal",
+  "keywords": ["mcp", "claude", "temporal", "multi-agent", "orchestration", "claude-code"],
+  "homepage": "https://github.com/vinceblank/claude-tempo",
+  "bugs": {
+    "url": "https://github.com/vinceblank/claude-tempo/issues"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/vinceblank/claude-tempo.git"
   },
+  "types": "./dist/server.d.ts",
   "type": "commonjs",
   "main": "dist/server.js",
   "exports": {
@@ -39,6 +45,7 @@
   },
   "scripts": {
     "build": "tsc && node -e \"const{bundleWorkflowCode}=require('@temporalio/worker');const path=require('path');const fs=require('fs');bundleWorkflowCode({workflowsPath:path.resolve('dist/workflows/index.js')}).then(b=>{fs.writeFileSync('workflow-bundle.js',b.code);console.log('Workflow bundle created')})\"",
+    "prepublishOnly": "npm run build && npm test",
     "dev": "ts-node src/server.ts",
     "copilot-bridge": "ts-node src/copilot-bridge.ts",
     "pretest": "tsc -p test/tsconfig.json",
@@ -48,13 +55,13 @@
     "@github/copilot-sdk": "^0.2.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.28.0",
+    "@modelcontextprotocol/sdk": "~1.28.0",
     "@temporalio/activity": "~1.15.0",
     "@temporalio/client": "~1.15.0",
     "@temporalio/worker": "~1.15.0",
     "@temporalio/workflow": "~1.15.0",
     "yaml": "^2.8.3",
-    "zod": "^3.25.76"
+    "zod": "~3.25.76"
   },
   "devDependencies": {
     "@temporalio/testing": "~1.15.0",

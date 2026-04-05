@@ -90,7 +90,8 @@ describe('multi-session integration', function () {
           metadata: playerMetadata({ playerId: 'worker-bee', ensemble }),
         });
 
-        const members = await listEnsemble(getClient(), ensemble);
+        // Poll until both sessions are visible — visibility store is eventually consistent
+        const members = await waitForEnsembleMembers(getClient(), ensemble, 2);
         expect(members).to.have.lengthOf(2);
 
         const conductor = members.find((m) => m.isConductor);
@@ -113,6 +114,11 @@ describe('multi-session integration', function () {
         const handle = await startSession({
           metadata: playerMetadata({ playerId: 'findme', ensemble }),
         });
+
+        // Wait for the visibility store to catch up before resolving by name.
+        // client.workflow.list() is eventually consistent — without this,
+        // resolveByName can return null immediately after startSession.
+        await waitForEnsembleMembers(getClient(), ensemble, 1);
 
         const resolved = await resolveByName(getClient(), ensemble, 'findme');
         expect(resolved).to.not.be.null;

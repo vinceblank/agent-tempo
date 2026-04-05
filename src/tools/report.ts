@@ -4,6 +4,7 @@ import { WorkflowHandle } from '@temporalio/client';
 import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
 import { defineTool } from './helpers';
+import { MESSAGE_MAX } from '../utils/validation';
 
 export function registerReportTool(
   server: McpServer,
@@ -14,7 +15,7 @@ export function registerReportTool(
     'report',
     'Send an update to the conductor. Use this to report task completion, blockers, or questions. No-op if no conductor is running.',
     {
-      text: z.string().describe('The report content'),
+      text: z.string().max(MESSAGE_MAX).describe('The report content'),
       type: z.enum(['result', 'blocker', 'question']).optional()
         .describe('Type of report: "result" (default, task done), "blocker" (stuck), "question" (need input)'),
     },

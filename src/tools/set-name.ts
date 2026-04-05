@@ -4,6 +4,7 @@ import { WorkflowHandle, Client } from '@temporalio/client';
 import { Config } from '../config';
 import { resolveSession } from './resolve';
 import { defineTool } from './helpers';
+import { PLAYER_NAME_MAX, validatePlayerName } from '../utils/validation';
 
 export function registerSetNameTool(
   server: McpServer,
@@ -18,15 +19,16 @@ export function registerSetNameTool(
     'set_name',
     'Set a human-readable name for this session. Visible to other players in the ensemble.',
     {
-      name: z.string().describe('The name for this session (e.g., "UX", "API", "test-runner")'),
+      name: z.string().max(PLAYER_NAME_MAX).describe('The name for this session (e.g., "UX", "API", "test-runner")'),
     },
     async (args) => {
       const { name } = args as { name: string };
 
       // Validate name to prevent search attribute query injection
-      if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+      const nameError = validatePlayerName(name);
+      if (nameError) {
         return {
-          content: [{ type: 'text' as const, text: `Invalid name "${name}". Names must contain only letters, numbers, hyphens, and underscores.` }],
+          content: [{ type: 'text' as const, text: nameError }],
           isError: true,
         };
       }

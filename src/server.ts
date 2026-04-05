@@ -6,6 +6,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { getConfig, conductorWorkflowId, ENV } from './config';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { version: PKG_VERSION } = require('../package.json');
 import { createTemporalConnection } from './connection';
 import { createWorkers } from './worker';
 import { SessionInput } from './types';
@@ -36,7 +38,7 @@ async function main() {
     log(`${ENV.ENSEMBLE} not set — MCP server idle (no workflow started)`);
     // Keep the process alive so Claude Code doesn't see a crash, but do nothing
     const transport = new StdioServerTransport();
-    const idleServer = new McpServer({ name: 'claude-tempo', version: '0.1.0' });
+    const idleServer = new McpServer({ name: 'claude-tempo', version: PKG_VERSION });
     await idleServer.connect(transport);
     return;
   }
@@ -56,15 +58,39 @@ async function main() {
 
   log(`Starting ${isConductor ? 'conductor' : `peer ${playerId}`} in ${workDir}`);
 
-  // Connect Temporal client
-  const connection = await createTemporalConnection(config);
+  // Connect Temporal client — friendly error messages for common failures
+  let connection: Awaited<ReturnType<typeof createTemporalConnection>>;
+  try {
+    connection = await createTemporalConnection(config);
+  } catch (err: any) {
+    const code = err?.code || '';
+    const msg = err?.message || String(err);
+    if (code === 'ECONNREFUSED' || msg.includes('ECONNREFUSED')) {
+      log(`Cannot connect to Temporal at ${config.temporalAddress} — is the server running?`);
+      log('  Start it with: temporal server start-dev');
+    } else if (msg.includes('ENOENT') || msg.includes('no such file')) {
+      log(`TLS certificate/key file not found: ${msg}`);
+      log('  Check TEMPORAL_TLS_CERT_PATH and TEMPORAL_TLS_KEY_PATH');
+    } else {
+      log(`Failed to connect to Temporal: ${msg}`);
+    }
+    process.exit(1);
+  }
   const client = new Client({
     connection,
     namespace: config.temporalNamespace,
   });
 
   // Start the Temporal workers (runs in background)
-  const { sharedWorker, hostWorker } = await createWorkers(config);
+  let sharedWorker: Awaited<ReturnType<typeof createWorkers>>['sharedWorker'];
+  let hostWorker: Awaited<ReturnType<typeof createWorkers>>['hostWorker'];
+  try {
+    ({ sharedWorker, hostWorker } = await createWorkers(config));
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    log(`Failed to create workers: ${msg}`);
+    process.exit(1);
+  }
   const sharedWorkerRunPromise = sharedWorker.run();
   const hostWorkerRunPromise = hostWorker.run();
   sharedWorkerRunPromise.catch((err) => {
@@ -97,9 +123,6 @@ async function main() {
     temporalConfig: {
       temporalAddress: config.temporalAddress,
       temporalNamespace: config.temporalNamespace,
-      temporalApiKey: config.temporalApiKey,
-      temporalTlsCertPath: config.temporalTlsCertPath,
-      temporalTlsKeyPath: config.temporalTlsKeyPath,
       taskQueue: config.taskQueue,
     },
   };
@@ -201,7 +224,7 @@ async function main() {
 
   const mcpServer = new McpServer({
     name: 'claude-tempo',
-    version: '0.1.0',
+    version: PKG_VERSION,
   }, {
     capabilities: {
       experimental: { 'claude/channel': {} },
@@ -260,16 +283,45 @@ async function main() {
   await mcpServer.connect(transport);
   log('MCP server connected');
 
-  // Graceful shutdown
+  // Graceful shutdown (idempotent — safe to call multiple times)
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     log('Shutting down...');
+
+    // Hard exit safety net in case graceful shutdown hangs
+    const hardExit = setTimeout(() => {
+      log('Shutdown timeout — forcing exit');
+      process.exit(1);
+    }, 20_000);
+    hardExit.unref();
+
+    // 1. Stop the message poller first
     stopPoller();
+
+    // 2. Signal workflow termination (5s timeout)
     try {
-      await handle.signal('updateMetadata', { status: 'terminated', terminatedBy: 'system' });
+      await Promise.race([
+        handle.signal('updateMetadata', { status: 'terminated', terminatedBy: 'system' }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('signal timeout')), 5_000)),
+      ]);
     } catch {
-      // workflow may already be gone
+      // workflow may already be gone or signal timed out
     }
-    await shutdownWorkers();
+
+    // 3. Shutdown workers (best effort)
+    await shutdownWorkers().catch((err) => {
+      log('Worker shutdown error:', err);
+    });
+
+    // 4. Close Temporal connection
+    try {
+      connection.close();
+    } catch {
+      // best effort
+    }
+
     process.exit(0);
   };
 

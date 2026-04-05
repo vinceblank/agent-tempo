@@ -52,7 +52,14 @@ export {
 let testEnv: TestWorkflowEnvironment;
 let workflowBundle: { code: string };
 
-const TASK_QUEUE = 'test-claude-tempo';
+export const TASK_QUEUE = 'test-claude-tempo';
+
+/**
+ * Per-host task queue for spawnProcess activities.
+ * The workflow routes spawnProcess to `claude-tempo-{hostname}`.
+ * Tests use hostname 'test-host', so the queue is `claude-tempo-test-host`.
+ */
+const HOST_TASK_QUEUE = 'claude-tempo-test-host';
 
 /**
  * Locate the pre-built workflow bundle. `npm run build` must be run first.
@@ -84,6 +91,7 @@ export async function setupTestEnv(): Promise<void> {
         '--search-attribute', 'ClaudeTempoHostname=Keyword',
         '--search-attribute', 'ClaudeTempoGitRoot=Keyword',
         '--search-attribute', 'ClaudeTempoStatus=Keyword',
+        '--search-attribute', 'ClaudeTempoPlayerType=Keyword',
       ],
     },
   });
@@ -326,6 +334,62 @@ export async function withWorkerAndOutboxActivities<T>(fn: () => Promise<T>): Pr
     },
   });
   return worker.runUntil(fn);
+}
+
+/**
+ * Like withWorkerAndOutboxActivities, but also registers a second worker on the
+ * per-host task queue used by `spawnProcess` during recruit dispatch.
+ *
+ * The session workflow routes `spawnProcess` to `claude-tempo-{hostname}`.
+ * Tests use hostname 'test-host' (see playerMetadata), so we need a worker on
+ * `claude-tempo-test-host` with a stubbed spawnProcess to avoid launching real terminals.
+ */
+export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): Promise<T> {
+  const { createScheduleActivities } = await import('../src/activities/schedule-fire');
+  const { createOutboxActivities } = await import('../src/activities/outbox');
+
+  const scheduleActivities = createScheduleActivities(testEnv.client);
+  const outboxActivities = createOutboxActivities(testEnv.client, {
+    temporalAddress: '',
+    temporalNamespace: 'default',
+    taskQueue: TASK_QUEUE,
+    ensemble: 'test-ensemble',
+    defaultAgent: 'claude',
+  });
+
+  // Main worker: workflow execution + all outbox + schedule activities
+  const mainWorker = await Worker.create({
+    connection: testEnv.nativeConnection,
+    taskQueue: TASK_QUEUE,
+    workflowBundle,
+    activities: {
+      ...scheduleActivities,
+      ...outboxActivities,
+      spawnProcess: async () => ({ success: true }),
+    },
+  });
+
+  // Per-host worker: handles spawnProcess for the 'test-host' hostname.
+  // spawnProcess is routed to `claude-tempo-{hostname}` by the session workflow.
+  // No workflowBundle — this worker only polls for activity tasks, matching
+  // the production per-host worker config in src/worker.ts.
+  const hostWorker = await Worker.create({
+    connection: testEnv.nativeConnection,
+    taskQueue: `claude-tempo-test-host`,
+    activities: {
+      spawnProcess: async () => ({ success: true }),
+    },
+  });
+
+  return mainWorker.runUntil(async () => {
+    const hostWorkerPromise = hostWorker.run();
+    try {
+      return await fn();
+    } finally {
+      hostWorker.shutdown();
+      await hostWorkerPromise.catch(() => {});
+    }
+  });
 }
 
 export async function reconnectSession(

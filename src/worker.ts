@@ -9,13 +9,17 @@ import { createTemporalConnection } from './connection';
 import { createScheduleActivities } from './activities/schedule-fire';
 import { createOutboxActivities } from './activities/outbox';
 
+const log = (...args: unknown[]) => console.error('[claude-tempo:worker]', ...args);
+
 const BUNDLE_PATH = path.resolve(__dirname, '..', 'workflow-bundle.js');
 
 async function getWorkflowBundle(): Promise<{ code: string }> {
   // Use pre-built bundle if it exists, otherwise bundle from source
   if (fs.existsSync(BUNDLE_PATH)) {
+    log(`Loading pre-built workflow bundle from ${BUNDLE_PATH}`);
     return { code: fs.readFileSync(BUNDLE_PATH, 'utf-8') };
   }
+  log('No pre-built workflow bundle found — bundling from source (run `npm run build` to avoid this)');
   const bundle = await bundleWorkflowCode({
     workflowsPath: path.resolve(__dirname, 'workflows', 'index'),
   });
@@ -47,11 +51,16 @@ export async function createWorkers(config: Config): Promise<DualWorkers> {
 
   const workflowBundle = await getWorkflowBundle();
 
+  const SHUTDOWN_GRACE_TIME = '10s';
+  const SHUTDOWN_FORCE_TIME = '15s';
+
   const sharedWorker = await Worker.create({
     connection,
     namespace: config.temporalNamespace,
     taskQueue: config.taskQueue,
     workflowBundle,
+    shutdownGraceTime: SHUTDOWN_GRACE_TIME,
+    shutdownForceTime: SHUTDOWN_FORCE_TIME,
     activities: {
       ...scheduleActivities,
       // Shared-queue delivery activities (everything except spawnProcess)
@@ -68,6 +77,8 @@ export async function createWorkers(config: Config): Promise<DualWorkers> {
     connection: hostConnection,
     namespace: config.temporalNamespace,
     taskQueue: hostTaskQueue(config.taskQueue, os.hostname()),
+    shutdownGraceTime: SHUTDOWN_GRACE_TIME,
+    shutdownForceTime: SHUTDOWN_FORCE_TIME,
     activities: {
       spawnProcess: outboxActivities.spawnProcess,
     },
@@ -76,8 +87,13 @@ export async function createWorkers(config: Config): Promise<DualWorkers> {
   return { sharedWorker, hostWorker };
 }
 
-/** @deprecated Use createWorkers() instead — kept for backward compat during migration */
-export async function createWorker(config: Config): Promise<Worker> {
-  const { sharedWorker } = await createWorkers(config);
-  return sharedWorker;
+/**
+ * @deprecated Removed in v0.10 — use `createWorkers()` instead.
+ * The old single-worker API silently leaked the hostWorker and broke
+ * cross-machine recruiting.
+ */
+export async function createWorker(_config: Config): Promise<never> {
+  throw new Error(
+    'createWorker() has been removed. Use createWorkers() instead — it returns { sharedWorker, hostWorker } and both must be run.',
+  );
 }

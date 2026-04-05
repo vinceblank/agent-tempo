@@ -8,6 +8,7 @@ import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
 import { defineTool } from './helpers';
 import { resolveAgentType, listAgentTypes } from '../ensemble/agent-types';
+import { PLAYER_NAME_MAX, MESSAGE_MAX, PATH_MAX, validatePlayerName } from '../utils/validation';
 
 export function registerRecruitTool(
   server: McpServer,
@@ -22,11 +23,11 @@ export function registerRecruitTool(
     'recruit',
     `Start a new named session in a directory. Rejects if the name is already active. Supports Claude Code or Copilot CLI agents. Defaults to "${ownAgentType}" (same as this session).`,
     {
-      workDir: z.string().describe('The working directory for the new session'),
-      name: z.string().describe('Name for the new session'),
+      workDir: z.string().max(PATH_MAX).describe('The working directory for the new session'),
+      name: z.string().max(PLAYER_NAME_MAX).describe('Name for the new session'),
       conductor: z.boolean().optional()
         .describe('Whether this session is a conductor (default: false)'),
-      initialMessage: z.string().optional()
+      initialMessage: z.string().max(MESSAGE_MAX).optional()
         .describe('Optional task or message for the new session (sent after it sets its name)'),
       agent: z.enum(['claude', 'copilot']).optional()
         .describe(`Which agent to use (default: "${ownAgentType}", same as this session)`),
@@ -78,11 +79,12 @@ export function registerRecruitTool(
       }
 
       // Validate name
-      if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+      const nameError = validatePlayerName(name);
+      if (nameError) {
         return {
           content: [{
             type: 'text' as const,
-            text: `Invalid name "${name}". Names must contain only letters, numbers, hyphens, and underscores.`,
+            text: nameError,
           }],
           isError: true,
         };

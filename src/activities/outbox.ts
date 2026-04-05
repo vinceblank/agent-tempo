@@ -1,11 +1,14 @@
-import { Client, WorkflowHandle, WorkflowIdConflictPolicy } from '@temporalio/client';
+import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { ApplicationFailure } from '@temporalio/activity';
 import * as os from 'os';
+import * as path from 'path';
+import * as crypto from 'crypto';
 import { Config, conductorWorkflowId, sessionWorkflowId } from '../config';
-import { AgentType, SessionInput, SessionMetadata } from '../types';
+import { AgentType, SessionInput } from '../types';
 import { getGitInfo } from '../git-info';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { ENV } from '../config';
+import { resolveSession } from './resolve';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:outbox]', ...args);
 
@@ -54,9 +57,6 @@ export interface SpawnProcessInput {
   ensemble: string;
   temporalAddress: string;
   temporalNamespace: string;
-  temporalApiKey?: string;
-  temporalTlsCertPath?: string;
-  temporalTlsKeyPath?: string;
   agentDefinition?: string;
   agentDefinitionPath?: string;
   nativeResolvable?: boolean;
@@ -77,28 +77,6 @@ export interface OutboxActivities {
   terminateSession(input: TerminateSessionInput): Promise<OutboxActivityResult>;
   startRecruitedSession(input: StartRecruitedSessionInput): Promise<OutboxActivityResult>;
   spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult>;
-}
-
-// ── Helper: resolve session by player name ──
-
-async function resolveSession(
-  client: Client,
-  ensemble: string,
-  playerName: string,
-): Promise<WorkflowHandle | null> {
-  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
-  for await (const wf of client.workflow.list({ query })) {
-    try {
-      const handle = client.workflow.getHandle(wf.workflowId);
-      const metadata: SessionMetadata = await handle.query('getMetadata');
-      if (metadata.ensemble === ensemble && metadata.playerId === playerName) {
-        return handle;
-      }
-    } catch {
-      // Workflow may have just completed — skip
-    }
-  }
-  return null;
 }
 
 /**
@@ -173,11 +151,11 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             ...(agentDefinitionDescription ? { playerTypeDescription: agentDefinitionDescription } : {}),
             recruitedBy: fromPlayerId,
           },
-          autoSummary: `Session in ${require('path').basename(workDir)}`,
+          autoSummary: `Session in ${path.basename(workDir)}`,
           disableStaleDetection: true,
           ...(initialMessage ? {
             messages: [{
-              id: require('crypto').randomUUID(),
+              id: crypto.randomUUID(),
               from: fromPlayerId,
               text: initialMessage,
               timestamp: new Date().toISOString(),
@@ -209,7 +187,9 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
-      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath, agentDefinition, agentDefinitionPath, nativeResolvable } = input;
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable } = input;
+      // Read secrets from the worker's config closure — never from workflow state
+      const { temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = config;
       try {
         if (agent === 'copilot') {
           const { pid } = spawnCopilotBridge({

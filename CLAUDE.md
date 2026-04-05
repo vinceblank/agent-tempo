@@ -16,11 +16,23 @@ claude-tempo is an MCP server that enables multiple Claude Code sessions to coor
 ```
 src/
 ├── server.ts          # MCP server entry point
+├── cli.ts             # CLI entry point (claude-tempo command)
+├── cli/
+│   ├── commands.ts    # CLI command implementations (up, start, conduct, status, stop, …)
+│   ├── config-command.ts # config subcommand (interactive + set/show)
+│   ├── mcp.ts         # MCP server registration helpers (init, global vs project)
+│   ├── output.ts      # Shared CLI output formatting helpers
+│   └── preflight.ts   # Environment preflight checks
 ├── copilot-bridge.ts  # Copilot SDK bridge for Copilot CLI players
 ├── worker.ts          # Temporal worker setup
+├── connection.ts      # Temporal connection factory (shared by server + CLI)
+├── spawn.ts           # Cross-platform process spawning helpers
 ├── workflows/
+│   ├── index.ts       # Workflow exports (re-exports for worker bundle)
 │   ├── session.ts     # claude-session workflow
-│   └── signals.ts     # Signal/query type definitions
+│   ├── scheduler.ts   # durable scheduler workflow (one per ensemble)
+│   ├── scheduler-signals.ts # Scheduler signal/query type definitions
+│   └── signals.ts     # Session signal/query type definitions
 ├── activities/
 │   ├── outbox.ts      # Outbox delivery activities (cue, report, stop, recruit)
 │   └── schedule-fire.ts # Schedule fire activity
@@ -93,6 +105,9 @@ npm test
 - **Per-host task queues**: Each host runs a `claude-tempo-{hostname}` activity worker for local-only operations (e.g., `spawnProcess`). This enables cross-machine recruiting — the `recruit` tool accepts an optional `host` parameter to route the spawn to a remote machine's task queue.
 - **Player types**: Reusable agent definitions in Claude Code's standard subagent format (`.md` files with YAML frontmatter). Ensemble lineups can reference types by name via a `type` field on players. Three-tier lookup: project `.claude/agents/` → user `~/.claude/agents/` → shipped `examples/agents/`. Players know their type via workflow metadata and the `who_am_i` tool.
 - **Agent type discovery**: The `agent_types` MCP tool and `claude-tempo agent-types` CLI command let conductors discover available player types. Shipped examples (tempo-conductor, tempo-composer, tempo-soloist, tempo-tuner, tempo-critic, tempo-roadie, tempo-improv, tempo-liner) work out of the box. Ensemble lineups: tempo-big-band (full lifecycle), tempo-dev-team (feature work), tempo-review-squad (parallel review), tempo-jam-session (exploration).
+- **Schedule**: A one-shot or recurring message delivery configured via the `schedule` tool. Backed by a durable `claudeSchedulerWorkflow` — survives restarts. Supports delay, cron-style intervals, and time-bounded delivery. Managed via `schedule`, `unschedule`, and `schedules` tools.
+- **Lineup**: A YAML file defining an ensemble configuration — which players to recruit, their types, working directories, and optional startup messages. Load via `load_lineup` to bootstrap a full ensemble in one step; save via `save_lineup` to snapshot a running ensemble's state for later reuse.
+- **Wire protocol**: All Temporal signal, query, update, and workflow names are documented in [`docs/WIRE-PROTOCOL.md`](docs/WIRE-PROTOCOL.md). These names are stable as of v0.10 — renaming or removing any is a breaking change requiring a major version bump.
 
 ## Dashboard
 
