@@ -43,7 +43,7 @@ import {
 
 // ── Outbox Activity Proxies ──
 
-const { deliverCue, deliverReport, terminateSession, startRecruitedSession } =
+const { deliverCue, deliverReport, terminateSession, startRecruitedSession, performEncore } =
   proxyActivities<OutboxActivities>({
     startToCloseTimeout: '30 seconds',
     retry: { maximumAttempts: 3 },
@@ -322,6 +322,30 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               agentDefinition: entry.agentDefinition,
               agentDefinitionPath: entry.agentDefinitionPath,
               nativeResolvable: entry.nativeResolvable,
+            });
+            break;
+          }
+          case 'encore': {
+            const encoreResult = await performEncore({
+              ensemble: input.metadata.ensemble,
+              targetPlayerId: entry.targetPlayerId,
+              fromPlayerId: input.metadata.playerId,
+              contextMessageCount: entry.contextMessageCount,
+            });
+            const encoreHost = entry.targetHostname || encoreResult.hostname;
+            const encoreSpawnFn = getSpawnProxy(encoreHost);
+            await encoreSpawnFn({
+              targetName: entry.targetPlayerId,
+              workDir: encoreResult.workDir,
+              isConductor: encoreResult.isConductor,
+              agent: encoreResult.agent,
+              ensemble: input.metadata.ensemble,
+              temporalAddress: encoreResult.temporalAddress,
+              temporalNamespace: encoreResult.temporalNamespace,
+              agentDefinition: encoreResult.agentDefinition,
+              agentDefinitionPath: encoreResult.agentDefinitionPath,
+              nativeResolvable: encoreResult.nativeResolvable,
+              resume: true,
             });
             break;
           }

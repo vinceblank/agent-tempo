@@ -778,6 +778,122 @@ describe('claudeSessionWorkflow', function () {
     });
   });
 
+  // ── recall — underlying query behavior ──
+  //
+  // The `recall` tool builds its timeline by querying `allMessages` and
+  // `allSentMessages` directly. These tests verify the shape and ordering
+  // that recall depends on — separate from the tool-layer filtering tests
+  // in tools.test.ts.
+
+  describe('recall — message query behavior', function () {
+    it('allMessagesQuery returns empty array when no messages have been received', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'recall-empty' }),
+        });
+
+        const msgs = await handle.query(allMessagesQuery);
+        expect(msgs).to.be.an('array').with.lengthOf(0);
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+
+    it('message entries have all fields recall needs: id, from, text, timestamp, delivered', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'recall-shape' }),
+        });
+
+        await sendMessage(handle, 'alice', 'test message');
+        const msgs = await handle.query(allMessagesQuery);
+
+        expect(msgs).to.have.lengthOf(1);
+        const m = msgs[0];
+        expect(m).to.have.property('id').that.is.a('string').with.length.greaterThan(0);
+        expect(m).to.have.property('from', 'alice');
+        expect(m).to.have.property('text', 'test message');
+        expect(m).to.have.property('timestamp').that.is.a('string');
+        expect(m).to.have.property('delivered').that.is.a('boolean');
+        // timestamp must be a valid ISO string — recall's "since" filter depends on it
+        expect(Date.parse(m.timestamp)).to.not.be.NaN;
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+
+    it('allMessagesQuery preserves insertion order (oldest first) — recall sorts from this', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'recall-order' }),
+        });
+
+        await sendMessage(handle, 'a', 'first');
+        await sendMessage(handle, 'b', 'second');
+        await sendMessage(handle, 'c', 'third');
+
+        const msgs = await handle.query(allMessagesQuery);
+        expect(msgs).to.have.lengthOf(3);
+        expect(msgs[0].text).to.equal('first');
+        expect(msgs[1].text).to.equal('second');
+        expect(msgs[2].text).to.equal('third');
+        // Timestamps are non-decreasing — recall's sort relies on valid timestamps
+        expect(Date.parse(msgs[2].timestamp)).to.be.at.least(Date.parse(msgs[0].timestamp));
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+
+    it('allMessagesQuery includes both delivered and undelivered messages', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'recall-delivery-mix' }),
+        });
+
+        await sendMessage(handle, 'alice', 'message 1');
+        await sendMessage(handle, 'bob', 'message 2');
+
+        // Deliver only the first message
+        const before = await handle.query(allMessagesQuery);
+        await handle.signal(markDeliveredSignal, [before[0].id]);
+
+        const all = await handle.query(allMessagesQuery);
+        expect(all).to.have.lengthOf(2);
+        expect(all.find((m) => m.text === 'message 1')!.delivered).to.equal(true);
+        expect(all.find((m) => m.text === 'message 2')!.delivered).to.equal(false);
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+
+    it('allSentMessagesQuery returns sent messages with id, to, text, timestamp fields', async function () {
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'recall-sent-shape' }),
+        });
+
+        await handle.signal(recordSentMessageSignal, { to: 'bob', text: 'outgoing 1' });
+        await handle.signal(recordSentMessageSignal, { to: 'carol', text: 'outgoing 2' });
+
+        const sent = await handle.query(allSentMessagesQuery);
+        expect(sent).to.have.lengthOf(2);
+        const s = sent[0];
+        expect(s).to.have.property('id').that.is.a('string');
+        expect(s).to.have.property('to', 'bob');
+        expect(s).to.have.property('text', 'outgoing 1');
+        expect(s).to.have.property('timestamp').that.is.a('string');
+        expect(Date.parse(s.timestamp)).to.not.be.NaN;
+
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+      });
+    });
+  });
+
   // ── enableStaleDetection (P2) ──
 
   describe('enableStaleDetection flag', function () {

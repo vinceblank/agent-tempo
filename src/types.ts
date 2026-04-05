@@ -141,7 +141,14 @@ export interface StopOutboxEntry extends OutboxEntryBase {
   targetPlayerId: string;
 }
 
-export type OutboxEntry = CueOutboxEntry | RecruitOutboxEntry | ReportOutboxEntry | StopOutboxEntry;
+export interface EncoreOutboxEntry extends OutboxEntryBase {
+  type: 'encore';
+  targetPlayerId: string;
+  targetHostname?: string;
+  contextMessageCount?: number;
+}
+
+export type OutboxEntry = CueOutboxEntry | RecruitOutboxEntry | ReportOutboxEntry | StopOutboxEntry | EncoreOutboxEntry;
 
 /** Distributive Omit that works correctly on union types. */
 type DistributiveOmit<T, K extends keyof any> = T extends any ? Omit<T, K> : never;

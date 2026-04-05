@@ -25,6 +25,7 @@ export type {
   RecruitOutboxEntry,
   ReportOutboxEntry,
   StopOutboxEntry,
+  EncoreOutboxEntry,
 } from '../types';
 
 // ── Player Signals ──

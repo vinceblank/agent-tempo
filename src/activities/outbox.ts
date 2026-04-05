@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { Config, conductorWorkflowId, sessionWorkflowId } from '../config';
+import { ENCORE_DEFAULT_CONTEXT_MESSAGES } from '../utils/validation';
 import { AgentType, SessionInput } from '../types';
 import { getGitInfo } from '../git-info';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
@@ -60,6 +61,27 @@ export interface SpawnProcessInput {
   agentDefinition?: string;
   agentDefinitionPath?: string;
   nativeResolvable?: boolean;
+  /** When true, use --resume instead of -n (reconnect to existing session). */
+  resume?: boolean;
+}
+
+export interface PerformEncoreInput {
+  ensemble: string;
+  targetPlayerId: string;
+  fromPlayerId: string;
+  contextMessageCount?: number;
+}
+
+export interface EncoreResult {
+  workDir: string;
+  hostname: string;
+  isConductor: boolean;
+  agent: AgentType;
+  agentDefinition?: string;
+  agentDefinitionPath?: string;
+  nativeResolvable?: boolean;
+  temporalAddress: string;
+  temporalNamespace: string;
 }
 
 // ── Activity result type ──
@@ -77,6 +99,7 @@ export interface OutboxActivities {
   terminateSession(input: TerminateSessionInput): Promise<OutboxActivityResult>;
   startRecruitedSession(input: StartRecruitedSessionInput): Promise<OutboxActivityResult>;
   spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult>;
+  performEncore(input: PerformEncoreInput): Promise<EncoreResult>;
 }
 
 /**
@@ -187,7 +210,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
-      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable } = input;
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume } = input;
       // Read secrets from the worker's config closure — never from workflow state
       const { temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = config;
       try {
@@ -215,10 +238,13 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             agentFlags = ['--system-prompt', systemPrompt];
           }
 
+          // Use --resume for encore (reconnect to existing session) or -n for new sessions
+          const nameArgs = resume ? ['--resume', targetName] : ['-n', targetName];
+
           const spawnArgs = [
             '--dangerously-skip-permissions',
             '--dangerously-load-development-channels', 'server:claude-tempo',
-            '-n', targetName,
+            ...nameArgs,
             ...agentFlags,
           ];
           const envVars: Record<string, string> = {
@@ -233,13 +259,92 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           if (temporalTlsCertPath) envVars[ENV.TEMPORAL_TLS_CERT_PATH] = temporalTlsCertPath;
           if (temporalTlsKeyPath) envVars[ENV.TEMPORAL_TLS_KEY_PATH] = temporalTlsKeyPath;
           const { pid } = spawnInTerminal(spawnArgs, workDir, envVars);
-          log(`Spawned claude process (pid ${pid}) in ${workDir} as "${targetName}"`);
+          log(`Spawned claude process (pid ${pid}) in ${workDir} as "${targetName}" (resume=${!!resume})`);
         }
 
         return { success: true };
       } catch (err) {
         throw ApplicationFailure.nonRetryable(
           `Failed to spawn process for "${targetName}": ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+
+    async performEncore(input: PerformEncoreInput): Promise<EncoreResult> {
+      const { ensemble, targetPlayerId, fromPlayerId, contextMessageCount = ENCORE_DEFAULT_CONTEXT_MESSAGES } = input;
+      try {
+        const handle = await resolveSession(client, ensemble, targetPlayerId);
+        if (!handle) {
+          throw ApplicationFailure.nonRetryable(`No session found for "${targetPlayerId}"`);
+        }
+
+        // Query current state
+        const metadata = await handle.query('getMetadata') as Record<string, any>;
+        const status = metadata.status as string;
+
+        if (status !== 'stale') {
+          throw ApplicationFailure.nonRetryable(
+            `Cannot encore "${targetPlayerId}" — status is "${status}" (must be "stale")`,
+          );
+        }
+
+        const part = await handle.query('getPart') as string;
+        const allMessages = await handle.query('allMessages') as Array<{ from: string; text: string; timestamp: string }>;
+
+        // Build context message from recent messages
+        const recentMessages = allMessages.slice(-contextMessageCount);
+        const msgSummary = recentMessages.length > 0
+          ? recentMessages.map(m => `[${m.from}] ${m.text.slice(0, 200)}`).join('\n')
+          : '(no recent messages)';
+
+        const contextMessage = [
+          `🎵 **Encore** — you've been revived by ${fromPlayerId}.`,
+          part ? `Your last status: ${part}` : '',
+          `Recent messages (last ${recentMessages.length}):`,
+          msgSummary,
+          '',
+          'Resume where you left off. Use `ensemble` to see who is active.',
+        ].filter(Boolean).join('\n');
+
+        // Reset status to pending and inject context message
+        await handle.signal('updateMetadata', { status: 'pending' });
+        await handle.signal('receiveMessage', { from: fromPlayerId, text: contextMessage });
+
+        log(`Encore prepared for "${targetPlayerId}" — status reset to pending, context injected`);
+
+        // Return spawn parameters from the target's metadata
+        const agentType = (metadata.agentType as string) || 'claude';
+        const playerType = metadata.playerType as string | undefined;
+        let agentDefinitionPath: string | undefined;
+        let nativeResolvable: boolean | undefined;
+        if (playerType) {
+          try {
+            const { resolveAgentType } = require('../ensemble/agent-types');
+            const info = resolveAgentType(playerType);
+            if (info) {
+              agentDefinitionPath = info.path;
+              nativeResolvable = info.nativeResolvable;
+            }
+          } catch {
+            // Agent type resolution failure is non-fatal
+          }
+        }
+
+        return {
+          workDir: metadata.workDir as string,
+          hostname: metadata.hostname as string,
+          isConductor: metadata.isConductor as boolean,
+          agent: agentType === 'copilot' ? 'copilot' : 'claude',
+          agentDefinition: playerType,
+          agentDefinitionPath,
+          nativeResolvable,
+          temporalAddress: config.temporalAddress,
+          temporalNamespace: config.temporalNamespace,
+        };
+      } catch (err) {
+        if (err instanceof ApplicationFailure) throw err;
+        throw ApplicationFailure.nonRetryable(
+          `Encore failed for "${targetPlayerId}": ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     },

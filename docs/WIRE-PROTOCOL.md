@@ -52,7 +52,7 @@ Workflow updates on a `claudeSessionWorkflow` instance (transactional, returns a
 
 | Update Name | Input | Return | Description |
 |-------------|-------|--------|-------------|
-| `submitOutbox` | `OutboxEntryInput` | `string` (entry ID) | Appends an outbox entry (cue, report, stop, or recruit) to the session's outbox queue and returns its generated UUID. The workflow's dispatch loop processes entries asynchronously via activities. This is the sole write path for all outbound operations. |
+| `submitOutbox` | `OutboxEntryInput` | `string` (entry ID) | Appends an outbox entry (cue, report, stop, recruit, or encore) to the session's outbox queue and returns its generated UUID. The workflow's dispatch loop processes entries asynchronously via activities. This is the sole write path for all outbound operations. **Encore entries** (`type: 'encore'`) re-engage a player in a new session context; fields: `targetPlayerId: string`, `targetHostname?: string`, `contextMessageCount?: number`. |
 
 ---
 

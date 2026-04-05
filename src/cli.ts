@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { start, status, init, server, up, down, stop, help, version, ensembleCommand, agentTypesCommand } from './cli/commands';
+import { start, status, init, server, up, down, stop, help, version, ensembleCommand, agentTypesCommand, broadcast, encore } from './cli/commands';
 import { configCommand } from './cli/config-command';
 import { runPreflight } from './cli/preflight';
 import * as out from './cli/output';
@@ -27,6 +27,9 @@ interface ParsedArgs {
   resume: boolean;
   ensemble?: string;
   agent?: AgentType;
+  type?: string;
+  includeStale: boolean;
+  host?: string;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -41,6 +44,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     project: false,
     replace: false,
     resume: false,
+    includeStale: false,
   };
 
   let i = 0;
@@ -78,6 +82,12 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.resume = true;
     } else if (arg === '--ensemble' && i + 1 < argv.length) {
       result.ensemble = argv[++i];
+    } else if (arg === '--type' && i + 1 < argv.length) {
+      result.type = argv[++i];
+    } else if (arg === '--include-stale') {
+      result.includeStale = true;
+    } else if (arg === '--host' && i + 1 < argv.length) {
+      result.host = argv[++i];
     } else if (arg === '--agent' && i + 1 < argv.length) {
       const val = argv[++i];
       if (val !== 'claude' && val !== 'copilot') {
@@ -191,6 +201,37 @@ async function main() {
         ...overrides,
       });
       break;
+
+    case 'broadcast': {
+      const msg = args.positional.slice(1).join(' ');
+      if (!msg) {
+        out.error('Usage: claude-tempo broadcast <message> [--ensemble <name>] [--type <player-type>] [--include-stale]');
+        process.exit(1);
+      }
+      await broadcast({
+        message: msg,
+        ensemble: args.ensemble || ensemble,
+        type: args.type,
+        includeStale: args.includeStale,
+        ...overrides,
+      });
+      break;
+    }
+
+    case 'encore': {
+      const encoreName = args.positional[1] || args.name;
+      if (!encoreName) {
+        out.error('Usage: claude-tempo encore <name> [--ensemble <name>] [--host <hostname>]');
+        process.exit(1);
+      }
+      await encore({
+        name: encoreName,
+        ensemble: args.ensemble || ensemble,
+        host: args.host,
+        ...overrides,
+      });
+      break;
+    }
 
     case 'ensemble':
       await ensembleCommand({
