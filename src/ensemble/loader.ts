@@ -31,12 +31,6 @@ export function loadLineup(filePath: string): EnsembleLineup {
     if (!/^[a-zA-Z0-9_-]+$/.test(p.name)) {
       throw new Error(`Invalid lineup: players[${i}].name "${p.name}" contains invalid characters`);
     }
-    if (p.isolation != null && p.isolation !== 'worktree') {
-      throw new Error(`Invalid lineup: players[${i}].isolation must be "worktree" if specified`);
-    }
-    if (p.branch != null && (typeof p.branch !== 'string' || !p.branch)) {
-      throw new Error(`Invalid lineup: players[${i}].branch must be a non-empty string`);
-    }
   }
 
   // Validate schedules if present
@@ -82,8 +76,6 @@ export function loadLineup(filePath: string): EnsembleLineup {
       ...(p.agent != null && { agent: p.agent }),
       ...(p.instructions != null && { instructions: p.instructions }),
       ...(Array.isArray(p.allowedTools) && { allowedTools: p.allowedTools.map(String) }),
-      ...(p.isolation != null && { isolation: p.isolation }),
-      ...(p.branch != null && { branch: p.branch }),
     })),
     schedules: doc.schedules,
   };

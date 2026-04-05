@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **Worktree isolation** — Lineup players now support `isolation: worktree` (with a required `branch` field). When set, `load_lineup` auto-creates a git worktree at a temp path and runs `npm install` before recruiting. Uses `execFileSync` with args arrays to prevent shell injection. `worktreePath` flows through session metadata and is documented in the wire protocol (#36)
+- **`worktree` MCP tool** — Conductors can provision isolated git worktrees for players. `create` checks out a new branch in a sibling directory, installs dependencies, and notifies the player with the path; `remove` cleans up the worktree after the task completes and notifies the player; `list` shows all active worktree assignments. Worktree state is stored in the conductor workflow (`WorktreeEntry`) and survives `continueAsNew`. Cross-machine worktrees are not supported — conductor and player must be on the same host (#36).
 
 ### Fixed
 

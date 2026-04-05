@@ -65,9 +65,13 @@ src/
 │   ├── quality-gate.ts # Define quality gates for tasks (conductor only)
 │   ├── evaluate-gate.ts # Mark gate criteria as passed/failed (conductor only)
 │   ├── gates.ts       # List quality gates and their status (conductor only)
+│   ├── worktree.ts    # Manage git worktrees for player isolation (conductor only)
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
 ├── utils/
-│   └── validation.ts  # Shared validation constants (name/message/path limits, encore defaults) and helpers
+│   ├── validation.ts  # Shared validation constants (name/message/path limits, encore defaults) and helpers
+│   ├── worktree.ts    # Git worktree create/remove helpers (cross-platform)
+│   ├── safe-path.ts   # Path safety utilities
+│   └── duration.ts    # Duration parsing helpers
 ├── types.ts           # Shared type definitions
 ├── channel.ts         # Claude channel notification helper
 ├── git-info.ts        # Git repository detection helper
@@ -120,6 +124,7 @@ npm test
 - **Schedule**: A one-shot or recurring message delivery configured via the `schedule` tool. Backed by a durable `claudeSchedulerWorkflow` — survives restarts. Supports delay (`delay`), fixed time (`at`), recurring interval (`every`), and cron expressions (`cron`) with optional IANA timezone (`timezone`). Cron schedules use `croner` for expression parsing and next-fire computation. Managed via `schedule`, `unschedule`, and `schedules` tools.
 - **Lineup**: A YAML file defining an ensemble configuration — which players to recruit, their types, working directories, and optional startup messages. Load via `load_lineup` to bootstrap a full ensemble in one step; save via `save_lineup` to snapshot a running ensemble's state for later reuse.
 - **Quality Gate**: A named checklist of criteria a conductor tracks to verify a task is complete. Created via `quality_gate` (conductor only), evaluated via `evaluate_gate`, and listed via `gates`. Each criterion has a `pending` → `passed` | `failed` status; the gate's aggregate status is derived automatically (all passed → `passed`, any failed → `failed`, else `open`). Gates are stored in the conductor workflow and survive `continueAsNew`.
+- **Worktree**: A git worktree provisioned by the conductor for a player, giving them an isolated checkout on a separate branch. Managed via the `worktree` tool (conductor only): `create` provisions the worktree and notifies the player, `remove` cleans up after the task, `list` shows all active worktrees. Worktree assignments are stored in the conductor workflow (`WorktreeEntry` records: player, path, branch, gitRoot, createdAt, createdBy).
 - **Wire protocol**: All Temporal signal, query, update, and workflow names are documented in [`docs/WIRE-PROTOCOL.md`](docs/WIRE-PROTOCOL.md). These names are stable as of v0.10 — renaming or removing any is a breaking change requiring a major version bump.
 
 ## Dashboard

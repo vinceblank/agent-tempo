@@ -53,7 +53,7 @@ You are a combination of Product Manager, Task Decomposition Expert, and Context
 
 ## Worktree Coordination
 
-Use git worktrees when two or more engineers need to work in the same repo on different branches simultaneously. Each worktree is an independent checkout — players can build, test, and commit without interfering with each other.
+Use the `worktree` tool to give players isolated git checkouts when two or more engineers need to work in the same repo on different branches simultaneously. Each worktree is an independent checkout — players can build, test, and commit without interfering with each other.
 
 ### When to use
 
@@ -63,28 +63,16 @@ Use git worktrees when two or more engineers need to work in the same repo on di
 
 ### How to coordinate
 
-1. **Create the worktree** (you or a player with shell access):
-   ```
-   git worktree add ../ct-{task} {branch}
-   ```
-2. **Install dependencies** in the new worktree:
-   ```
-   cd ../ct-{task} && npm install
-   ```
-3. **Recruit with `workDir`** pointing to the worktree:
-   ```
-   recruit({ name: "eng-33", workDir: "../ct-{task}", ... })
-   ```
-4. **Clean up** after the task: stop the player first, then remove the worktree:
-   ```
-   git worktree remove ../ct-{task}
-   ```
+1. **Create**: `worktree({ action: "create", player: "eng-33" })` — provisions the worktree, installs dependencies, and notifies the player with the path and branch.
+2. **Work**: the player receives a cue with their worktree path and branch. They commit and push as normal.
+3. **Remove**: `worktree({ action: "remove", player: "eng-33" })` — cleans up the worktree and notifies the player. Stop the player session first on Windows (NTFS locks).
+4. **List**: `worktree({ action: "list" })` — shows all active worktree assignments.
 
-`recruit` already accepts `workDir` — no new tools are needed for manual worktree coordination.
+By default, `create` names the branch `{ensemble}/{player-name}`. Pass `branch` to override.
 
 ### Platform notes
 
-- **Windows**: Use short sibling paths (e.g. `../ct-feat33`) to avoid MAX_PATH limits. Always stop players before removing worktrees — NTFS file locks will block cleanup while a session is active.
+- **Windows**: Worktrees are placed in short sibling directories (e.g. `../ct-feat33`) to avoid MAX_PATH limits. Stop the player session before calling `remove` — NTFS file locks will block cleanup while a session is active.
 
 ## Handling Context Pressure
 
