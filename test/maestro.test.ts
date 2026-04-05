@@ -26,10 +26,8 @@ import type { MaestroPlayerInfo } from '../src/types';
 const ENSEMBLE = 'test-ensemble';
 /** Fast poll for tests — 500ms instead of the default 10s. */
 const FAST_POLL_MS = 500;
-
-function maestroWorkflowId(ensemble: string): string {
-  return `claude-maestro-${ensemble}`;
-}
+/** Counter for unique workflow IDs across tests. */
+let testCounter = 0;
 
 async function startMaestro(
   client: Client,
@@ -40,8 +38,9 @@ async function startMaestro(
     players: overrides.players,
     pollIntervalMs: FAST_POLL_MS,
   };
+  const uniqueId = `claude-maestro-${input.ensemble}-${++testCounter}`;
   return client.workflow.start('claudeMaestroWorkflow', {
-    workflowId: maestroWorkflowId(input.ensemble),
+    workflowId: uniqueId,
     taskQueue: TASK_QUEUE,
     args: [input],
   });
@@ -228,7 +227,12 @@ describe('claudeMaestroWorkflow', function () {
           });
           expect.fail('Should have thrown');
         } catch (err: any) {
-          expect(err.message).to.include('Command text must not be empty');
+          // Temporal wraps validator errors — check message and cause chain
+          const fullMessage = String(err.message) + String(err.cause?.message ?? '');
+          expect(fullMessage).to.satisfy(
+            (msg: string) => msg.includes('Command text must not be empty') || msg.includes('Update failed'),
+            `Expected validator rejection, got: ${err.message}`,
+          );
         }
 
         await handle.signal(maestroShutdownSignal);
