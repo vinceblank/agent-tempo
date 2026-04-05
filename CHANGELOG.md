@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.13.0] - 2026-04-05
+
+### Added
+
+- **Quality Gates** — Conductors can define named checklists of pass/fail criteria to track task completion. Three new MCP tools: `quality_gate` (create or replace a gate), `evaluate_gate` (mark criteria as passed or failed), and `gates` (list all gates, filterable by task or status). Gate aggregate status is derived automatically: all passed → `passed`; any failed → `failed`; otherwise `open`. Gates survive `continueAsNew`.
+
 ## [0.12.0] - 2026-04-05
 
 ### Added
