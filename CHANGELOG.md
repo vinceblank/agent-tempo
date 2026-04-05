@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.16.1] - 2026-04-05
+
+### Fixed
+
+- **Conductor false-blocked detection** — `commandSignal` handler now updates `lastOutboundTime`, preventing conductors from being incorrectly marked `blocked` when processing Maestro commands
+- **Docs** — Added `broadcast` and `encore` CLI commands to README reference table
+
 ## [0.16.0] - 2026-04-05
 
 ### Added
