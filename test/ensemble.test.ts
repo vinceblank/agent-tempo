@@ -148,6 +148,22 @@ players:
       expect(() => loadLineup(filePath)).to.throw('players[0].name is required');
     });
 
+    it('accepts lineup with custom conductor name', function () {
+      const filePath = join(tmpDir, 'custom-conductor-name.yaml');
+      writeFileSync(filePath, `name: test\nconductor:\n  name: maestro\nplayers:\n  - name: p1\n`);
+
+      const lineup = loadLineup(filePath);
+      expect(lineup.conductor).to.exist;
+      expect(lineup.conductor!.name).to.equal('maestro');
+    });
+
+    it('rejects lineup with invalid conductor name', function () {
+      const filePath = join(tmpDir, 'bad-conductor-name.yaml');
+      writeFileSync(filePath, `name: test\nconductor:\n  name: "bad name!"\nplayers:\n  - name: p1\n`);
+
+      expect(() => loadLineup(filePath)).to.throw('conductor.name');
+    });
+
     it('rejects schedule missing timing fields', function () {
       const filePath = join(tmpDir, 'bad-schedule.yaml');
       writeFileSync(filePath, `name: test\nplayers:\n  - name: p1\nschedules:\n  - name: sched\n    message: hello\n    target: p1\n`);

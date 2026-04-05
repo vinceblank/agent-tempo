@@ -479,6 +479,37 @@ describe('multi-session integration', function () {
       });
     });
 
+    it('conductor respects custom name from metadata', async function () {
+      const ensemble = 'custom-cond-name';
+      await withWorker(async () => {
+        // Start a conductor with a custom name (simulates lineup conductor.name)
+        const hCond = await startSession({
+          metadata: conductorMetadata({ playerId: 'maestro', ensemble }),
+        });
+
+        const hPlayer = await startSession({
+          metadata: playerMetadata({ playerId: 'worker-1', ensemble }),
+        });
+
+        const members = await waitForEnsembleMembers(getClient(), ensemble, 2);
+        expect(members).to.have.lengthOf(2);
+
+        // Conductor should have the custom name, not default 'conductor'
+        const cond = members.find((m) => m.isConductor);
+        expect(cond).to.exist;
+        expect(cond!.playerId).to.equal('maestro');
+
+        // Should be resolvable by custom name
+        expect(await resolveByName(getClient(), ensemble, 'maestro')).to.not.be.null;
+        // Should NOT be resolvable by default 'conductor' name
+        expect(await resolveByName(getClient(), ensemble, 'conductor')).to.be.null;
+
+        await hCond.signal(updateMetadataSignal, { status: 'terminated' });
+        await hPlayer.signal(updateMetadataSignal, { status: 'terminated' });
+        await Promise.all([hCond.result(), hPlayer.result()]);
+      });
+    });
+
     it('conductor and players survive conductor rename', async function () {
       const ensemble = 'cond-rename-survive';
       await withWorker(async () => {

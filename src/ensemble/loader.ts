@@ -55,6 +55,16 @@ export function loadLineup(filePath: string): EnsembleLineup {
     }
   }
 
+  // Validate conductor name if present
+  if (doc.conductor?.name != null) {
+    if (typeof doc.conductor.name !== 'string' || !doc.conductor.name) {
+      throw new Error(`Invalid lineup: conductor.name must be a non-empty string`);
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(doc.conductor.name)) {
+      throw new Error(`Invalid lineup: conductor.name "${doc.conductor.name}" contains invalid characters`);
+    }
+  }
+
   return {
     name: doc.name,
     description: doc.description,

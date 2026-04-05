@@ -685,7 +685,7 @@ export async function up(opts: UpOpts) {
     }));
   } else {
     // Default conductor name so the Claude Code session name matches the ensemble role
-    const sessionName = opts.name || 'conductor';
+    const sessionName = opts.name || lineup?.conductor?.name || 'conductor';
 
     // Resolve conductor agent type from lineup
     const conductorType = lineup?.conductor?.agent && lineup.conductor.agent !== 'default' && lineup.conductor.agent !== 'copilot'
