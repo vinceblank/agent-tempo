@@ -130,6 +130,9 @@ These tools are available inside Claude Code sessions connected to claude-tempo:
 | `agent_types` | List available player types with name, description, and source. |
 | `save_lineup` | Save the current ensemble as a YAML lineup (conductor only). |
 | `load_lineup` | Load a lineup to recruit players and create schedules. |
+| `broadcast` | Send a message to all active players. Optional `type` filter limits to a specific player type. |
+| `encore` | Revive a stale player session — restarts the process and reconnects to the existing workflow with context restored. |
+| `recall` | Read your own message history. Shows received messages by default; pass `includeSent: true` for the full timeline. |
 
 ## Scheduling
 

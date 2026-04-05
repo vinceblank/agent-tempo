@@ -25,6 +25,7 @@ export type {
   RecruitOutboxEntry,
   ReportOutboxEntry,
   StopOutboxEntry,
+  EncoreOutboxEntry,
 } from '../types';
 
 // ── Player Signals ──
@@ -52,6 +53,11 @@ export const playerReportSignal = defineSignal<[{ playerId: string; text: string
 // ── Conductor Queries ──
 
 export const historyQuery = defineQuery<HistoryEntry[]>('history');
+
+// ── Atomic Status Transition ──
+
+/** Atomically transition status from expectedStatus to newStatus. Returns true on success, false if current status didn't match. */
+export const checkAndSetStatusUpdate = defineUpdate<boolean, [{ expectedStatus: string; newStatus: string }]>('checkAndSetStatus');
 
 // ── Outbox Update + Query ──
 

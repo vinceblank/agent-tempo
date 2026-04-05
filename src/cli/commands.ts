@@ -8,12 +8,13 @@ import { conductorWorkflowId, schedulerWorkflowId, ENV, getConfig, Config, CliOv
 import { createTemporalConnection } from '../connection';
 import { playerReportSignal, updateMetadataSignal } from '../workflows/signals';
 import { addScheduleSignal } from '../workflows/scheduler-signals';
-import { AgentType, ScheduleEntry } from '../types';
+import { AgentType, ScheduleEntry, SessionMetadata } from '../types';
 import { runPreflight } from './preflight';
 import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
 import { loadLineup } from '../ensemble/loader';
 import { saveLineup, listLineups, readSavedLineup } from '../ensemble/saver';
 import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
+import { ENCORE_DEFAULT_CONTEXT_MESSAGES, PREVIEW_MAX_LENGTH, shouldIncludeInBroadcast } from '../utils/validation';
 import * as out from './output';
 
 /** Package root is two levels up from dist/cli/ */
@@ -1294,6 +1295,209 @@ export async function agentTypesCommand(opts: AgentTypesCommandOpts) {
   }
 }
 
+// --- Broadcast command ---
+
+interface BroadcastOpts extends CliOverrides {
+  ensemble?: string;
+  message: string;
+  type?: string;
+  includeStale?: boolean;
+}
+
+export async function broadcast(opts: BroadcastOpts) {
+  const config = getConfig(opts);
+
+  let connection: Connection;
+  try {
+    connection = await Promise.race([
+      createTemporalConnection(config),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+    ]);
+  } catch {
+    out.error(`Cannot connect to Temporal at ${config.temporalAddress}`);
+    process.exit(1);
+    return;
+  }
+
+  const client = new Client({ connection, namespace: config.temporalNamespace });
+  const ensemble = opts.ensemble || config.ensemble;
+
+  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
+  const targets: Array<{ playerId: string; workflowId: string }> = [];
+
+  for await (const wf of client.workflow.list({ query })) {
+    try {
+      const handle = client.workflow.getHandle(wf.workflowId);
+      const metadata: SessionMetadata = await handle.query('getMetadata');
+
+      if (metadata.ensemble !== ensemble) continue;
+
+      // Filter by status
+      if (!shouldIncludeInBroadcast(metadata.status, !!opts.includeStale)) continue;
+
+      // Filter by player type if specified
+      if (opts.type && metadata.playerType !== opts.type) continue;
+
+      targets.push({ playerId: metadata.playerId, workflowId: wf.workflowId });
+    } catch {
+      // Workflow may have just completed — skip it
+    }
+  }
+
+  if (targets.length === 0) {
+    out.warn('No active players matched the broadcast filter.');
+    await connection.close();
+    return;
+  }
+
+  // Signal each target directly (CLI bypasses outbox)
+  let sent = 0;
+  for (const target of targets) {
+    try {
+      const handle = client.workflow.getHandle(target.workflowId);
+      await handle.signal('receiveMessage', {
+        from: 'cli',
+        text: opts.message,
+      });
+      sent++;
+      out.log(`  ${out.green('✓')} ${target.playerId}`);
+    } catch (err) {
+      out.warn(`  ${target.playerId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  out.success(`Broadcast sent to ${sent}/${targets.length} player${targets.length === 1 ? '' : 's'}`);
+  await connection.close();
+}
+
+// --- Encore command ---
+
+interface EncoreOpts extends CliOverrides {
+  name: string;
+  ensemble?: string;
+  host?: string;
+}
+
+export async function encore(opts: EncoreOpts) {
+  if (opts.host) {
+    out.error('Cross-machine encore is not supported via the CLI. Use the MCP `encore` tool with --host instead (it routes through the outbox and per-host task queues).');
+    process.exit(1);
+    return;
+  }
+
+  const config = getConfig(opts);
+  let connection: Connection;
+  try {
+    connection = await Promise.race([
+      createTemporalConnection(config),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+    ]);
+  } catch {
+    out.error(`Cannot connect to Temporal at ${config.temporalAddress}`);
+    process.exit(1);
+    return;
+  }
+
+  const client = new Client({ connection, namespace: config.temporalNamespace });
+  const ensemble = opts.ensemble || config.ensemble;
+
+  // Resolve the target session
+  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
+  let targetHandle: import('@temporalio/client').WorkflowHandle | null = null;
+  let targetMeta: SessionMetadata | null = null;
+
+  for await (const wf of client.workflow.list({ query })) {
+    try {
+      const handle = client.workflow.getHandle(wf.workflowId);
+      const metadata: SessionMetadata = await handle.query('getMetadata');
+      if (metadata.ensemble === ensemble && metadata.playerId === opts.name) {
+        targetHandle = handle;
+        targetMeta = metadata;
+        break;
+      }
+    } catch {
+      // skip
+    }
+  }
+
+  if (!targetHandle || !targetMeta) {
+    out.error(`No session found with name "${opts.name}" in ensemble "${ensemble}".`);
+    await connection.close();
+    process.exit(1);
+    return;
+  }
+
+  const status = targetMeta.status || 'active';
+  if (status !== 'stale') {
+    out.error(`Session "${opts.name}" is ${status}, not stale. Encore only works on stale sessions.`);
+    await connection.close();
+    process.exit(1);
+    return;
+  }
+
+  // Query context
+  const part = await targetHandle.query('getPart') as string;
+  const allMessages = await targetHandle.query('allMessages') as Array<{ from: string; text: string; timestamp: string }>;
+  const recentMessages = allMessages.slice(-ENCORE_DEFAULT_CONTEXT_MESSAGES);
+
+  const msgSummary = recentMessages.length > 0
+    ? recentMessages.map(m => `[${m.from}] ${m.text.slice(0, PREVIEW_MAX_LENGTH)}`).join('\n')
+    : '(no recent messages)';
+
+  const contextMessage = [
+    `🎵 **Encore** — you've been revived via CLI.`,
+    part ? `Your last status: ${part}` : '',
+    `Recent messages (last ${recentMessages.length}):`,
+    msgSummary,
+    '',
+    'Resume where you left off. Use `ensemble` to see who is active.',
+  ].filter(Boolean).join('\n');
+
+  // Reset status and inject context message
+  await targetHandle.signal('updateMetadata', { status: 'pending' });
+  await targetHandle.signal('receiveMessage', { from: 'system', text: contextMessage });
+
+  out.log(`Reviving "${opts.name}" in ${targetMeta.workDir}...`);
+
+  // Resolve agent flags
+  let agentFlags: string[] = [];
+  if (targetMeta.playerType) {
+    try {
+      const info = resolveAgentType(targetMeta.playerType);
+      if (info?.nativeResolvable) {
+        agentFlags = ['--agent', targetMeta.playerType];
+      } else if (info?.path) {
+        agentFlags = ['--system-prompt', info.path];
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
+  const spawnArgs = [
+    '--dangerously-skip-permissions',
+    '--dangerously-load-development-channels', 'server:claude-tempo',
+    '--resume', opts.name,
+    ...agentFlags,
+  ];
+  const envVars: Record<string, string> = {
+    [ENV.ENSEMBLE]: ensemble,
+    [ENV.CONDUCTOR]: targetMeta.isConductor ? 'true' : '',
+    [ENV.PLAYER_NAME]: opts.name,
+    [ENV.TEMPORAL_ADDRESS]: config.temporalAddress,
+    [ENV.TEMPORAL_NAMESPACE]: config.temporalNamespace,
+  };
+  if (targetMeta.playerType) envVars[ENV.PLAYER_TYPE] = targetMeta.playerType;
+  if (config.temporalApiKey) envVars[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
+  if (config.temporalTlsCertPath) envVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
+  if (config.temporalTlsKeyPath) envVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
+
+  const { pid } = spawnInTerminal(spawnArgs, targetMeta.workDir, envVars);
+  out.success(`Encore! "${opts.name}" revived (pid ${pid})`);
+
+  await connection.close();
+}
+
 // --- Ensemble lineup commands ---
 
 interface EnsembleCommandOpts extends CliOverrides {
@@ -1371,6 +1575,8 @@ ${out.bold('Commands:')}
   ${out.cyan('stop')}    [ensemble]    Stop sessions (-n <name> for one, or --all)
   ${out.cyan('status')}  [ensemble]    Show active sessions and Temporal health
   ${out.cyan('ensemble')} <sub>       Manage saved ensemble lineups (save/list/show)
+  ${out.cyan('broadcast')} <message>   Send a message to all active players
+  ${out.cyan('encore')}   <name>      Revive a stale player session (reconnect with context)
   ${out.cyan('agent-types')} <sub>    Manage player type definitions (list/show/init)
   ${out.cyan('config')}                Configure Temporal connection settings
   ${out.cyan('init')}                  Register MCP server globally (or --project for .mcp.json)

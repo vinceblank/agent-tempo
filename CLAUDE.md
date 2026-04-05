@@ -34,7 +34,7 @@ src/
 │   ├── scheduler-signals.ts # Scheduler signal/query type definitions
 │   └── signals.ts     # Session signal/query type definitions
 ├── activities/
-│   ├── outbox.ts      # Outbox delivery activities (cue, report, stop, recruit)
+│   ├── outbox.ts      # Outbox delivery activities (cue, report, stop, recruit, encore)
 │   └── schedule-fire.ts # Schedule fire activity
 ├── ensemble/
 │   ├── schema.ts      # Lineup type definitions
@@ -53,12 +53,17 @@ src/
 │   ├── recruit.ts     # Spawn new session (via outbox), supports `type` param
 │   ├── report.ts      # Report to conductor (via outbox)
 │   ├── stop.ts        # Stop a session (via outbox)
+│   ├── broadcast.ts   # Send message to all active players (via outbox fan-out)
+│   ├── encore.ts      # Revive a stale session (via outbox)
+│   ├── recall.ts      # Read own message history (received + sent)
 │   ├── load-lineup.ts # Load an ensemble lineup, recruit players
 │   ├── save-lineup.ts # Save current ensemble state as a lineup
 │   ├── schedule.ts    # Create one-shot or recurring schedules
 │   ├── unschedule.ts  # Cancel a named schedule
 │   ├── schedules.ts   # List active schedules
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
+├── utils/
+│   └── validation.ts  # Shared validation constants (name/message/path limits, encore defaults) and helpers
 ├── types.ts           # Shared type definitions
 ├── channel.ts         # Claude channel notification helper
 ├── git-info.ts        # Git repository detection helper
@@ -101,7 +106,10 @@ npm test
 - **Recruit**: Spawning a new Claude Code session as a player. The workflow is pre-created with the initial message before the process spawns, ensuring reliable delivery.
 - **set_name**: Players start with a random hex ID; `set_name` updates the `ClaudeTempoPlayerId` search attribute to a human-readable name
 - **Session status**: Each session has a status (`pending` → `active` → `stale`) tracked via `ClaudeTempoStatus` search attribute. Pre-created workflows start as `pending`, transition to `active` when the process connects, and become `stale` if messages go undelivered for 3+ minutes.
-- **Outbox**: Outbound requests (cue, report, stop, recruit) go through the session's own workflow outbox instead of directly signaling other workflows. The workflow's dispatch loop processes entries via activities, decoupling tools from cross-workflow signaling.
+- **Outbox**: Outbound requests (cue, report, stop, recruit, encore) go through the session's own workflow outbox instead of directly signaling other workflows. The workflow's dispatch loop processes entries via activities, decoupling tools from cross-workflow signaling.
+- **Encore**: Revives a `stale` player session by restarting the Claude process and reconnecting to the existing Temporal workflow, with recent message context restored. Cannot encore `active`, `pending`, or `terminated` sessions — use `cue`, wait, or `recruit` respectively.
+- **Broadcast**: Fan-out variant of `cue` — sends a message to all active players in the ensemble in a single call. Optionally filtered by player type. Skips the sender, pending sessions, and (by default) stale sessions.
+- **Recall**: Queries a session's own message history from the Temporal workflow. Shows received messages by default; pass `includeSent: true` to also see sent messages. Supports `limit`, `since`, and `from` filters.
 - **Per-host task queues**: Each host runs a `claude-tempo-{hostname}` activity worker for local-only operations (e.g., `spawnProcess`). This enables cross-machine recruiting — the `recruit` tool accepts an optional `host` parameter to route the spawn to a remote machine's task queue.
 - **Player types**: Reusable agent definitions in Claude Code's standard subagent format (`.md` files with YAML frontmatter). Ensemble lineups can reference types by name via a `type` field on players. Three-tier lookup: project `.claude/agents/` → user `~/.claude/agents/` → shipped `examples/agents/`. Players know their type via workflow metadata and the `who_am_i` tool.
 - **Agent type discovery**: The `agent_types` MCP tool and `claude-tempo agent-types` CLI command let conductors discover available player types. Shipped examples (tempo-conductor, tempo-composer, tempo-soloist, tempo-tuner, tempo-critic, tempo-roadie, tempo-improv, tempo-liner) work out of the box. Ensemble lineups: tempo-big-band (full lifecycle), tempo-dev-team (feature work), tempo-review-squad (parallel review), tempo-jam-session (exploration).

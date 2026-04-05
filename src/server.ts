@@ -27,6 +27,9 @@ import { registerSaveLineupTool } from './tools/save-lineup';
 import { registerLoadLineupTool } from './tools/load-lineup';
 import { registerAgentTypesTool } from './tools/agent-types';
 import { registerWhoAmITool } from './tools/who-am-i';
+import { registerBroadcastTool } from './tools/broadcast';
+import { registerRecallTool } from './tools/recall';
+import { registerEncoreTool } from './tools/encore';
 import { startMessagePoller } from './channel';
 import { resolveAgentType } from './ensemble/agent-types';
 
@@ -248,6 +251,9 @@ async function main() {
   registerLoadLineupTool(mcpServer, client, config, getPlayerId, isBridgeMode ? 'copilot' : 'claude');
   registerAgentTypesTool(mcpServer);
   registerWhoAmITool(mcpServer, handle, getPlayerId);
+  registerBroadcastTool(mcpServer, client, config, getPlayerId, handle);
+  registerRecallTool(mcpServer, handle, getPlayerId);
+  registerEncoreTool(mcpServer, client, config, getPlayerId, handle);
 
   const MAESTRO_ACK = '\n\n[IMPORTANT: This message is from a human (Maestro). Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
 
