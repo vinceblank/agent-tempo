@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.16.2] - 2026-04-05
+
+### Fixed
+
+- **Flaky CI test** — `saveLineup` test now waits for Temporal search index to index the new workflow before querying, fixing a race condition that caused intermittent CI failures
+
 ## [0.16.1] - 2026-04-05
 
 ### Fixed
