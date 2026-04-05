@@ -46,13 +46,14 @@ Queries on a `claudeSessionWorkflow` instance (synchronous, read-only).
 
 ---
 
-## Session Update
+## Session Updates
 
 Workflow updates on a `claudeSessionWorkflow` instance (transactional, returns a value).
 
 | Update Name | Input | Return | Description |
 |-------------|-------|--------|-------------|
 | `submitOutbox` | `OutboxEntryInput` | `string` (entry ID) | Appends an outbox entry (cue, report, stop, recruit, or encore) to the session's outbox queue and returns its generated UUID. The workflow's dispatch loop processes entries asynchronously via activities. This is the sole write path for all outbound operations. **Encore entries** (`type: 'encore'`) re-engage a player in a new session context; fields: `targetPlayerId: string`, `targetHostname?: string`, `contextMessageCount?: number`. |
+| `checkAndSetStatus` | `{ expectedStatus: string; newStatus: string }` | `boolean` | Atomically transitions the session's status from `expectedStatus` to `newStatus`. Returns `true` on success, `false` if the current status did not match `expectedStatus`. Used internally to guard state transitions (e.g., prevent double-encore, validate active/stale preconditions). |
 
 ---
 
@@ -89,7 +90,7 @@ Signals sent **to** a `claudeSchedulerWorkflow` instance.
 
 | Signal Name | Payload | Description |
 |-------------|---------|-------------|
-| `addSchedule` | `ScheduleEntry` | Registers a new named schedule (one-shot or recurring cron). If a schedule with the same name already exists it is replaced. |
+| `addSchedule` | `ScheduleEntry` | Registers a new named schedule. If a schedule with the same name already exists it is replaced. `ScheduleEntry.type` is `'once'`, `'interval'`, or `'cron'`. Cron schedules include `cronExpression` and optional `timezone`. |
 | `removeSchedule` | `string` (schedule name) | Cancels and removes a named schedule. No-op if the name is not found. |
 
 ---
@@ -121,3 +122,17 @@ The following custom Temporal search attributes are written by `claudeSessionWor
 ## Type Reference
 
 Types referenced above are defined in `src/types.ts` and re-exported from `src/workflows/signals.ts` and `src/workflows/scheduler-signals.ts`. Consult those files for the full field shapes.
+
+### `ScheduleEntry` (selected fields)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `'once' \| 'interval' \| 'cron'` | Schedule kind. |
+| `cronExpression` | `string?` | Cron expression (e.g. `"0 9 * * 1-5"`). Only present when `type: 'cron'`. |
+| `timezone` | `string?` | IANA timezone for cron evaluation (e.g. `"America/New_York"`). Defaults to `"UTC"` when `type: 'cron'` and omitted. |
+
+### `RecruitOutboxEntry` (selected fields)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `allowedTools` | `string[]?` | Tool restrictions from the agent type's `allowedTools` frontmatter. When present, passed to the Claude Code session via `--allowedTools`. Omitted when no restriction applies. |

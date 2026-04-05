@@ -14,6 +14,7 @@ export interface EnsembleLineup {
     workDir?: string;     // defaults to cwd if omitted
     agent?: string;       // "default", "copilot", or path to agent .md file
     instructions?: string;
+    allowedTools?: string[]; // Tool restrictions (e.g., ["Read", "Glob", "Grep"])
     /** Transient: resolved agent definition name (set by loadAndResolveLineup). */
     _agentDefinition?: string;
     /** Transient: resolved absolute path to .md file (set by loadAndResolveLineup). */
@@ -26,6 +27,8 @@ export interface EnsembleLineup {
     at?: string;          // ISO datetime
     delay?: string;       // duration like "10m"
     every?: string;       // recurring interval like "1h"
+    cron?: string;        // cron expression like "0 9 * * 1-5"
+    timezone?: string;    // IANA timezone for cron (e.g., "America/New_York")
     until?: string;       // ISO datetime
     count?: number;       // max fires
   }>;

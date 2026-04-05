@@ -307,6 +307,153 @@ describe('claudeSchedulerWorkflow', function () {
     });
   });
 
+  // ── cron schedules ──
+
+  describe('cron schedules', function () {
+    it('fires a cron schedule and re-computes next fire time', async function () {
+      this.timeout(15_000);
+
+      await withWorkerAndActivities(async () => {
+        const targetHandle = await startSession({
+          metadata: playerMetadata({ playerId: 'cron-target', ensemble: ENSEMBLE }),
+        });
+
+        const entry = makeEntry({
+          name: 'cron-test',
+          message: 'cron ping',
+          target: 'cron-target',
+          type: 'cron',
+          nextFireAt: new Date(Date.now() + 1000).toISOString(),
+          cronExpression: '* * * * * *',
+          timezone: 'UTC',
+          remainingCount: 2,
+          createdBy: 'test-creator',
+        });
+        const schedulerHandle = await startScheduler(getClient(), [entry]);
+
+        await sleep(6000);
+
+        const messages = await targetHandle.query(allMessagesQuery);
+        const scheduled = messages.filter((m: any) => m.text.includes('[scheduled: cron-test]'));
+        expect(scheduled).to.have.lengthOf(2);
+
+        const schedules = await schedulerHandle.query(getSchedulesQuery);
+        const remaining = schedules.filter((s: any) => s.name === 'cron-test');
+        expect(remaining).to.have.lengthOf(0);
+
+        await targetHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await targetHandle.result();
+        await schedulerHandle.cancel();
+        try { await schedulerHandle.result(); } catch { /* cancelled */ }
+      });
+    });
+
+    it('stores cron expression and timezone in schedule entry', async function () {
+      await withWorkerAndActivities(async () => {
+        const handle = await startScheduler(getClient());
+
+        const entry = makeEntry({
+          name: 'cron-meta-test',
+          message: 'check cron fields',
+          target: 'someone',
+          type: 'cron',
+          nextFireAt: new Date(Date.now() + 60_000).toISOString(),
+          cronExpression: '0 9 * * 1-5',
+          timezone: 'America/New_York',
+        });
+        await handle.signal(addScheduleSignal, entry);
+
+        const schedules = await handle.query(getSchedulesQuery);
+        expect(schedules).to.have.lengthOf(1);
+        expect(schedules[0].type).to.equal('cron');
+        expect(schedules[0].cronExpression).to.equal('0 9 * * 1-5');
+        expect(schedules[0].timezone).to.equal('America/New_York');
+
+        await handle.cancel();
+        try { await handle.result(); } catch { /* cancelled */ }
+      });
+    });
+
+    it('removes cron schedule when until expires', async function () {
+      this.timeout(15_000);
+
+      await withWorkerAndActivities(async () => {
+        const targetHandle = await startSession({
+          metadata: playerMetadata({ playerId: 'cron-expire-target', ensemble: ENSEMBLE }),
+        });
+
+        const entry = makeEntry({
+          name: 'cron-until-test',
+          message: 'cron with until',
+          target: 'cron-expire-target',
+          type: 'cron',
+          nextFireAt: new Date(Date.now() + 1000).toISOString(),
+          cronExpression: '* * * * * *',
+          timezone: 'UTC',
+          until: new Date(Date.now() + 2500).toISOString(),
+          createdBy: 'test-creator',
+        });
+        const schedulerHandle = await startScheduler(getClient(), [entry]);
+
+        await sleep(6000);
+
+        const schedules = await schedulerHandle.query(getSchedulesQuery);
+        const remaining = schedules.filter((s: any) => s.name === 'cron-until-test');
+        expect(remaining).to.have.lengthOf(0);
+
+        const messages = await targetHandle.query(allMessagesQuery);
+        const scheduled = messages.filter((m: any) => m.text.includes('[scheduled: cron-until-test]'));
+        expect(scheduled.length).to.be.greaterThanOrEqual(1);
+
+        await targetHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await targetHandle.result();
+        await schedulerHandle.cancel();
+        try { await schedulerHandle.result(); } catch { /* cancelled */ }
+      });
+    });
+  });
+
+  // ── at + every combination (lineup bug fix) ──
+
+  describe('at + every combination', function () {
+    it('fires an interval schedule starting at the specified time', async function () {
+      this.timeout(15_000);
+
+      await withWorkerAndActivities(async () => {
+        const targetHandle = await startSession({
+          metadata: playerMetadata({ playerId: 'at-every-target', ensemble: ENSEMBLE }),
+        });
+
+        const entry = makeEntry({
+          name: 'at-every-test',
+          message: 'nightly triage',
+          target: 'at-every-target',
+          type: 'interval',
+          nextFireAt: new Date(Date.now() + 1000).toISOString(),
+          interval: 1000,
+          remainingCount: 3,
+          createdBy: 'test-creator',
+        });
+        const schedulerHandle = await startScheduler(getClient(), [entry]);
+
+        await sleep(6000);
+
+        const messages = await targetHandle.query(allMessagesQuery);
+        const scheduled = messages.filter((m: any) => m.text.includes('[scheduled: at-every-test]'));
+        expect(scheduled).to.have.lengthOf(3);
+
+        const schedules = await schedulerHandle.query(getSchedulesQuery);
+        const remaining = schedules.filter((s: any) => s.name === 'at-every-test');
+        expect(remaining).to.have.lengthOf(0);
+
+        await targetHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await targetHandle.result();
+        await schedulerHandle.cancel();
+        try { await schedulerHandle.result(); } catch { /* cancelled */ }
+      });
+    });
+  });
+
   // ── until field (P2) ──
 
   describe('until field', function () {

@@ -84,6 +84,26 @@ describe('agent-types', function () {
       const fm = parseFrontmatter(noFm);
       expect(fm).to.deep.equal({});
     });
+
+    it('extracts allowedTools array from frontmatter', function () {
+      const filePath = join(TEST_DIR, 'with-allowed-tools.md');
+      writeFileSync(filePath, [
+        '---',
+        'name: restricted-agent',
+        'description: A read-only agent',
+        'allowedTools: [Read, Glob, Grep]',
+        '---',
+        '',
+        'You are a read-only agent.',
+      ].join('\n'));
+      const fm = parseFrontmatter(filePath);
+      expect(fm.allowedTools).to.deep.equal(['Read', 'Glob', 'Grep']);
+    });
+
+    it('returns no allowedTools when not specified', function () {
+      const fm = parseFrontmatter(join(PROJECT_AGENTS, 'project-only.md'));
+      expect(fm.allowedTools).to.be.undefined;
+    });
   });
 
   describe('resolveAgentType', function () {
@@ -93,6 +113,27 @@ describe('agent-types', function () {
       expect(result!.name).to.equal('project-only');
       expect(result!.source).to.equal('project');
       expect(result!.nativeResolvable).to.be.true;
+    });
+
+    it('includes allowedTools when defined in frontmatter', function () {
+      createAgentFile(PROJECT_AGENTS, 'restricted.md', [
+        '---',
+        'name: restricted',
+        'description: Read-only agent',
+        'allowedTools: [Read, Glob, Grep]',
+        '---',
+        '',
+        'Read-only agent.',
+      ].join('\n'));
+      const result = resolveAgentType('restricted', join(TEST_DIR, 'project'));
+      expect(result).to.not.be.null;
+      expect(result!.allowedTools).to.deep.equal(['Read', 'Glob', 'Grep']);
+    });
+
+    it('omits allowedTools when not in frontmatter', function () {
+      const result = resolveAgentType('project-only', join(TEST_DIR, 'project'));
+      expect(result).to.not.be.null;
+      expect(result!.allowedTools).to.be.undefined;
     });
 
     it('returns null for unknown agent type', function () {
@@ -160,6 +201,109 @@ describe('agent-types', function () {
       expect(() => loadAndResolveLineup(join(lineupDir, 'bad.yaml'))).to.throw(
         /Unknown agent type "nonexistent-agent"/,
       );
+    });
+
+    it('resolves allowedTools from agent type into lineup player', function () {
+      // Create an agent type with allowedTools in the project agents dir
+      createAgentFile(PROJECT_AGENTS, 'read-only-type.md', [
+        '---',
+        'name: read-only-type',
+        'description: Read-only agent type',
+        'allowedTools: [Read, Glob, Grep]',
+        '---',
+        '',
+        'Read-only type.',
+      ].join('\n'));
+
+      const lineupDir = join(TEST_DIR, 'lineups');
+      createLineupFile(lineupDir, 'restricted.yaml', [
+        'name: restricted-lineup',
+        'players:',
+        '  - name: reader',
+        '    type: read-only-type',
+      ].join('\n'));
+
+      const lineup = loadAndResolveLineup(
+        join(lineupDir, 'restricted.yaml'),
+        join(TEST_DIR, 'project'),
+      );
+
+      const reader = lineup.players.find(p => p.name === 'reader');
+      expect(reader).to.not.be.undefined;
+      expect(reader!._agentDefinition).to.equal('read-only-type');
+      expect(reader!.allowedTools).to.deep.equal(['Read', 'Glob', 'Grep']);
+    });
+
+    it('empty allowedTools in type does not override lineup-level restriction', function () {
+      // Create an agent type with empty allowedTools
+      createAgentFile(PROJECT_AGENTS, 'empty-tools-type.md', [
+        '---',
+        'name: empty-tools-type',
+        'description: Agent with empty allowedTools',
+        'allowedTools: []',
+        '---',
+        '',
+        'Agent with no tool restrictions.',
+      ].join('\n'));
+
+      const lineupDir = join(TEST_DIR, 'lineups');
+      createLineupFile(lineupDir, 'empty-override.yaml', [
+        'name: empty-override-lineup',
+        'players:',
+        '  - name: worker',
+        '    type: empty-tools-type',
+        '    allowedTools: [Read, Glob]',
+      ].join('\n'));
+
+      const lineup = loadAndResolveLineup(
+        join(lineupDir, 'empty-override.yaml'),
+        join(TEST_DIR, 'project'),
+      );
+
+      const worker = lineup.players.find(p => p.name === 'worker');
+      expect(worker).to.not.be.undefined;
+      // Empty type allowedTools should NOT override lineup-level restriction
+      expect(worker!.allowedTools).to.deep.equal(['Read', 'Glob']);
+    });
+
+    it('type allowedTools overrides lineup-level allowedTools', function () {
+      const lineupDir = join(TEST_DIR, 'lineups');
+      createLineupFile(lineupDir, 'override.yaml', [
+        'name: override-lineup',
+        'players:',
+        '  - name: reader',
+        '    type: read-only-type',
+        '    allowedTools: [Read, Glob, Grep, Edit, Write]',
+      ].join('\n'));
+
+      const lineup = loadAndResolveLineup(
+        join(lineupDir, 'override.yaml'),
+        join(TEST_DIR, 'project'),
+      );
+
+      const reader = lineup.players.find(p => p.name === 'reader');
+      expect(reader).to.not.be.undefined;
+      // Type wins over lineup (security principle)
+      expect(reader!.allowedTools).to.deep.equal(['Read', 'Glob', 'Grep']);
+    });
+
+    it('preserves lineup allowedTools when no type is specified', function () {
+      const lineupDir = join(TEST_DIR, 'lineups');
+      createLineupFile(lineupDir, 'direct-tools.yaml', [
+        'name: direct-tools-lineup',
+        'players:',
+        '  - name: custom',
+        '    allowedTools: [Read, WebFetch]',
+      ].join('\n'));
+
+      const lineup = loadAndResolveLineup(
+        join(lineupDir, 'direct-tools.yaml'),
+        join(TEST_DIR, 'project'),
+      );
+
+      const custom = lineup.players.find(p => p.name === 'custom');
+      expect(custom).to.not.be.undefined;
+      expect(custom!.allowedTools).to.deep.equal(['Read', 'WebFetch']);
     });
 
     it('works with lineup that has no type fields (backward compat)', function () {

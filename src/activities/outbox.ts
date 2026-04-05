@@ -48,6 +48,7 @@ export interface StartRecruitedSessionInput {
   taskQueue: string;
   agentDefinition?: string;
   agentDefinitionDescription?: string;
+  allowedTools?: string[];
 }
 
 export interface SpawnProcessInput {
@@ -64,6 +65,8 @@ export interface SpawnProcessInput {
   nativeResolvable?: boolean;
   /** When true, use --resume instead of -n (reconnect to existing session). */
   resume?: boolean;
+  /** Tool restrictions from the agent definition frontmatter. */
+  allowedTools?: string[];
 }
 
 export interface PerformEncoreInput {
@@ -81,6 +84,7 @@ export interface EncoreResult {
   agentDefinition?: string;
   agentDefinitionPath?: string;
   nativeResolvable?: boolean;
+  allowedTools?: string[];
   temporalAddress: string;
   temporalNamespace: string;
 }
@@ -211,11 +215,14 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
-      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume } = input;
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, allowedTools } = input;
       // Read secrets from the worker's config closure — never from workflow state
       const { temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = config;
       try {
         if (agent === 'copilot') {
+          if (allowedTools && allowedTools.length > 0) {
+            log(`Warning: allowedTools [${allowedTools.join(', ')}] specified for copilot agent "${targetName}" — copilot bridge does not support --allowedTools, skipping`);
+          }
           const { pid } = spawnCopilotBridge({
             name: targetName,
             ensemble,
@@ -242,11 +249,17 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           // Use --resume for encore (reconnect to existing session) or -n for new sessions
           const nameArgs = resume ? ['--resume', targetName] : ['-n', targetName];
 
+          // Build --allowedTools flag from agent definition frontmatter
+          const allowedToolsFlags = allowedTools && allowedTools.length > 0
+            ? ['--allowedTools', ...allowedTools]
+            : [];
+
           const spawnArgs = [
             '--dangerously-skip-permissions',
             '--dangerously-load-development-channels', 'server:claude-tempo',
             ...nameArgs,
             ...agentFlags,
+            ...allowedToolsFlags,
           ];
           const envVars: Record<string, string> = {
             [ENV.ENSEMBLE]: ensemble,
@@ -322,12 +335,14 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         const playerType = metadata.playerType as string | undefined;
         let agentDefinitionPath: string | undefined;
         let nativeResolvable: boolean | undefined;
+        let allowedTools: string[] | undefined;
         if (playerType) {
           try {
             const info = resolveAgentType(playerType);
             if (info) {
               agentDefinitionPath = info.path;
               nativeResolvable = info.nativeResolvable;
+              allowedTools = info.allowedTools;
             }
           } catch {
             // Agent type resolution failure is non-fatal
@@ -342,6 +357,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           agentDefinition: playerType,
           agentDefinitionPath,
           nativeResolvable,
+          allowedTools,
           temporalAddress: config.temporalAddress,
           temporalNamespace: config.temporalNamespace,
         };

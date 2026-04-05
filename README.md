@@ -150,11 +150,20 @@ Tell your session things like:
 - *"Schedule a check every hour called 'deploy-watch' — cue ops to check deployment status"*
 - *"Remind me in 30 minutes to review PR #42"*
 - *"Every 5 minutes for the next hour, ping frontend to check their progress"*
-- *"Set up a daily standup reminder at 9am UTC for the conductor"*
+- *"Set up a daily standup at 9am New York time, weekdays only"*
 - *"Cancel the deploy-watch schedule"*
 - *"Show me all active schedules"*
 
-Schedules support one-shot delays, fixed times, and recurring intervals with optional bounds (max count or end time).
+Schedules support four timing modes — all accept optional bounds (`count` max fires, `until` end time):
+
+| Mode | Parameter | Example |
+|------|-----------|---------|
+| One-shot delay | `delay` | `"10m"`, `"2h"`, `"1d"` |
+| Fixed time | `at` | `"2026-04-03T20:00:00Z"` |
+| Recurring interval | `every` | `"5m"`, `"1h"` |
+| Cron expression | `cron` + optional `timezone` | `"0 9 * * 1-5"` (weekdays 9am) |
+
+The `timezone` parameter accepts any IANA timezone (e.g. `"America/New_York"`, `"Europe/London"`). Defaults to UTC when omitted.
 
 ### How it works
 
@@ -241,7 +250,7 @@ players:
 
 ## Player Types
 
-Player types are reusable agent definitions in Claude Code's standard subagent format — `.md` files with YAML frontmatter specifying name, description, and optional model. They let you define specialized roles once and reuse them across lineups.
+Player types are reusable agent definitions in Claude Code's standard subagent format — `.md` files with YAML frontmatter specifying name, description, optional model, and optional tool restrictions. They let you define specialized roles once and reuse them across lineups.
 
 ### How player types work
 
@@ -256,6 +265,23 @@ players:
 ```
 
 When a player is recruited with a type, the agent definition is resolved and passed to the session. Players know their type via the `who_am_i` tool.
+
+### Tool restrictions (`allowedTools`)
+
+Agent type frontmatter may include an `allowedTools` array to restrict which tools the spawned session can use. When present, it is passed to the Claude Code session via `--allowedTools` and overrides any lineup-level setting.
+
+```yaml
+---
+name: tempo-reviewer
+description: Read-only code reviewer
+allowedTools:
+  - Read
+  - Glob
+  - Grep
+---
+```
+
+This is useful for security-sensitive roles (read-only reviewers, auditors) or to prevent specific players from making changes outside their scope. Sessions launched without a type, or with a type that omits `allowedTools`, receive no tool restrictions.
 
 ### Three-tier lookup
 

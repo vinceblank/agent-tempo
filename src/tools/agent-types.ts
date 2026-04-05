@@ -15,7 +15,10 @@ export function registerAgentTypesTool(server: McpServer) {
       }
       const lines = types.map(t => {
         const src = t.source === 'shipped' ? '(shipped)' : t.source === 'user' ? '(user)' : '(project)';
-        return `**${t.name}** ${src}\n  ${t.description || 'No description'}`;
+        const tools = t.allowedTools && t.allowedTools.length > 0
+          ? `\n  Allowed tools: ${t.allowedTools.join(', ')}`
+          : '';
+        return `**${t.name}** ${src}\n  ${t.description || 'No description'}${tools}`;
       });
       return { content: [{ type: 'text' as const, text: lines.join('\n\n') }] };
     },

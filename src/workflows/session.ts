@@ -320,6 +320,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               taskQueue: tc?.taskQueue || 'claude-tempo',
               agentDefinition: entry.agentDefinition,
               agentDefinitionDescription: entry.agentDefinitionDescription,
+              allowedTools: entry.allowedTools,
             });
             const targetHost = entry.targetHostname || input.metadata.hostname;
             const spawnFn = getSpawnProxy(targetHost);
@@ -335,6 +336,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               agentDefinition: entry.agentDefinition,
               agentDefinitionPath: entry.agentDefinitionPath,
               nativeResolvable: entry.nativeResolvable,
+              allowedTools: entry.allowedTools,
             });
             break;
           }
@@ -359,6 +361,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
                 agentDefinition: encoreResult.agentDefinition,
                 agentDefinitionPath: encoreResult.agentDefinitionPath,
                 nativeResolvable: encoreResult.nativeResolvable,
+                allowedTools: encoreResult.allowedTools,
                 resume: true,
               });
             } catch (spawnErr) {

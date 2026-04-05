@@ -5,6 +5,7 @@ import {
   workflowInfo,
   allHandlersFinished,
   proxyActivities,
+  patched,
 } from '@temporalio/workflow';
 
 import {
@@ -17,7 +18,7 @@ import {
 import type { ScheduleEntry } from '../types';
 import type { ScheduleActivities } from '../activities/schedule-fire';
 
-const { fireSchedule } = proxyActivities<ScheduleActivities>({
+const { fireSchedule, computeNextCronFire } = proxyActivities<ScheduleActivities>({
   startToCloseTimeout: '30 seconds',
   retry: { maximumAttempts: 3 },
 });
@@ -115,6 +116,16 @@ export async function claudeSchedulerWorkflow(input: SchedulerInput): Promise<vo
         entries = entries.filter((e) => e.name !== entry.name);
       } else if (entry.type === 'interval' && entry.interval) {
         entry.nextFireAt = new Date(Date.now() + entry.interval).toISOString();
+      } else if (patched('v0.12-cron-schedule') && entry.type === 'cron' && entry.cronExpression) {
+        const nextFire = await computeNextCronFire({
+          cronExpression: entry.cronExpression,
+          timezone: entry.timezone,
+        });
+        if (nextFire) {
+          entry.nextFireAt = nextFire;
+        } else {
+          entries = entries.filter((e) => e.name !== entry.name);
+        }
       }
     }
 

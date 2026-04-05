@@ -81,6 +81,7 @@ export function listAgentTypes(cwd?: string): AgentTypeInfo[] {
         source,
         path: filePath,
         nativeResolvable,
+        ...(Array.isArray(fm.allowedTools) ? { allowedTools: fm.allowedTools.map(String) } : {}),
       });
     }
   }
@@ -104,6 +105,7 @@ export function resolveAgentType(name: string, cwd?: string): AgentTypeInfo | nu
       source,
       path: filePath,
       nativeResolvable,
+      ...(Array.isArray(fm.allowedTools) ? { allowedTools: fm.allowedTools.map(String) } : {}),
     };
   }
   return null;
@@ -131,6 +133,11 @@ export function loadAndResolveLineup(filePath: string, cwd?: string): EnsembleLi
 
     player._agentDefinition = info.name;
     player._agentDefinitionPath = info.path;
+    // Type's allowedTools is the security authority — overrides lineup-level setting
+    // Empty array means "not specified" (no restriction), so don't override
+    if (info.allowedTools && info.allowedTools.length > 0) {
+      player.allowedTools = info.allowedTools;
+    }
   }
 
   return lineup;

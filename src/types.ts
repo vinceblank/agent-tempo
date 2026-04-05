@@ -29,6 +29,7 @@ export interface AgentTypeInfo {
   source: 'project' | 'user' | 'shipped';
   path: string;
   nativeResolvable: boolean;
+  allowedTools?: string[];
 }
 
 export interface SessionInput {
@@ -128,6 +129,8 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
   agentDefinitionDescription?: string;
   /** Whether the agent definition is in a Claude Code-resolvable location. */
   nativeResolvable?: boolean;
+  /** Tool restrictions from the agent definition frontmatter. */
+  allowedTools?: string[];
 }
 
 export interface ReportOutboxEntry extends OutboxEntryBase {
@@ -176,5 +179,9 @@ export interface ScheduleEntry {
   /** Total number of times this schedule has fired. */
   firedCount: number;
   /** Schedule type for display purposes. */
-  type: 'once' | 'interval';
+  type: 'once' | 'interval' | 'cron';
+  /** Cron expression string (e.g., "0 9 * * 1-5"). Stored for re-computing next fire. */
+  cronExpression?: string;
+  /** IANA timezone for cron evaluation (e.g., "America/New_York"). Defaults to UTC. */
+  timezone?: string;
 }
