@@ -34,6 +34,9 @@ import { registerQualityGateTool } from './tools/quality-gate';
 import { registerEvaluateGateTool } from './tools/evaluate-gate';
 import { registerGatesTool } from './tools/gates';
 import { registerWorktreeTool } from './tools/worktree';
+import { registerStageTool } from './tools/stage';
+import { registerStagesTool } from './tools/stages';
+import { registerCancelStageTool } from './tools/cancel-stage';
 import { startMessagePoller } from './channel';
 import { resolveAgentType } from './ensemble/agent-types';
 
@@ -272,6 +275,9 @@ async function main() {
     registerEvaluateGateTool(mcpServer, handle, getPlayerId);
     registerGatesTool(mcpServer, handle);
     registerWorktreeTool(mcpServer, client, config, handle, getPlayerId);
+    registerStageTool(mcpServer, handle, getPlayerId);
+    registerStagesTool(mcpServer, handle);
+    registerCancelStageTool(mcpServer, handle);
   }
 
   const MAESTRO_ACK = '\n\n[IMPORTANT: This message is from a human (Maestro). Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
