@@ -90,7 +90,7 @@ Signals sent **to** a `claudeSchedulerWorkflow` instance.
 
 | Signal Name | Payload | Description |
 |-------------|---------|-------------|
-| `addSchedule` | `ScheduleEntry` | Registers a new named schedule (one-shot or recurring cron). If a schedule with the same name already exists it is replaced. |
+| `addSchedule` | `ScheduleEntry` | Registers a new named schedule. If a schedule with the same name already exists it is replaced. `ScheduleEntry.type` is `'once'`, `'interval'`, or `'cron'`. Cron schedules include `cronExpression` and optional `timezone`. |
 | `removeSchedule` | `string` (schedule name) | Cancels and removes a named schedule. No-op if the name is not found. |
 
 ---
@@ -122,3 +122,17 @@ The following custom Temporal search attributes are written by `claudeSessionWor
 ## Type Reference
 
 Types referenced above are defined in `src/types.ts` and re-exported from `src/workflows/signals.ts` and `src/workflows/scheduler-signals.ts`. Consult those files for the full field shapes.
+
+### `ScheduleEntry` (selected fields)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `'once' \| 'interval' \| 'cron'` | Schedule kind. |
+| `cronExpression` | `string?` | Cron expression (e.g. `"0 9 * * 1-5"`). Only present when `type: 'cron'`. |
+| `timezone` | `string?` | IANA timezone for cron evaluation (e.g. `"America/New_York"`). Defaults to `"UTC"` when `type: 'cron'` and omitted. |
+
+### `RecruitOutboxEntry` (selected fields)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `allowedTools` | `string[]?` | Tool restrictions from the agent type's `allowedTools` frontmatter. When present, passed to the Claude Code session via `--allowedTools`. Omitted when no restriction applies. |

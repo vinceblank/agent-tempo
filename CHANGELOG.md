@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.12.0] - 2026-04-05
+
+### Added
+
+- **Cron schedule support** — The `schedule` tool now accepts a `cron` parameter (e.g. `"0 9 * * 1-5"`) alongside an optional `timezone` (IANA, e.g. `"America/New_York"`). Cron schedules use `croner` for expression parsing and next-fire computation. `ScheduleEntry.type` gains a new `'cron'` value; `cronExpression` and `timezone` fields are stored on the entry.
+- **`allowedTools` agent type frontmatter** — Agent type `.md` files may include an `allowedTools` array to restrict which tools a recruited session can use. Resolved by `agent_types` and passed through `RecruitOutboxEntry` to the spawn activity, which appends `--allowedTools` to the Claude Code launch command. The type's value is authoritative and overrides any lineup-level setting.
+
+### Fixed
+
+- **`at` + `every` schedule combination** — Specifying both `at` and `every` now correctly returns a validation error ("provide exactly one timing option") instead of silently ignoring `at`.
+
 ## [0.11.1] - 2026-04-05
 
 ### Changed
