@@ -50,7 +50,9 @@ export function registerSchedulesTool(
 
         const lines = schedules.map((s) => {
           const next = s.nextFireAt; // already ISO string
-          const recur = s.interval ? `every ${formatDuration(s.interval)}` : 'one-shot';
+          const recur = s.cronExpression
+            ? `cron: ${s.cronExpression} (${s.timezone || 'UTC'})`
+            : s.interval ? `every ${formatDuration(s.interval)}` : 'one-shot';
           const bounds: string[] = [];
           if (s.until) bounds.push(`until ${s.until}`);
           if (s.remainingCount != null) bounds.push(`${s.firedCount}/${s.firedCount + s.remainingCount} fired`);

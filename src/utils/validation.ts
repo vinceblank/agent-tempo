@@ -28,6 +28,9 @@ export const SCHEDULE_NAME_MAX = 64;
 /** Maximum schedule message size (10KB). */
 export const SCHEDULE_MESSAGE_MAX = 10240;
 
+/** Maximum cron expression length. */
+export const CRON_EXPRESSION_MAX = 128;
+
 /** Default number of recent messages to include as context in an encore. */
 export const ENCORE_DEFAULT_CONTEXT_MESSAGES = 10;
 

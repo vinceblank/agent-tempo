@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { existsSync } from 'fs';
 import { join } from 'path';
+import { Cron } from 'croner';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { Config, CLAUDE_TEMPO_HOME, schedulerWorkflowId, ENV } from '../config';
@@ -228,9 +229,17 @@ export function registerLoadLineupTool(
               const now = Date.now();
               let nextFireAt: number;
               let interval: number | undefined;
+              let cronExpression: string | undefined;
+              let timezone: string | undefined;
 
               if (sched.at) {
                 nextFireAt = Date.parse(sched.at);
+                // Support at + every: use `at` as the initial fire time, `every` as the interval
+                if (sched.every) {
+                  const ms = parseDuration(sched.every);
+                  if (!ms) throw new Error(`Invalid interval: ${sched.every}`);
+                  interval = ms;
+                }
               } else if (sched.delay) {
                 const ms = parseDuration(sched.delay);
                 if (!ms) throw new Error(`Invalid delay: ${sched.delay}`);
@@ -240,17 +249,27 @@ export function registerLoadLineupTool(
                 if (!ms) throw new Error(`Invalid interval: ${sched.every}`);
                 nextFireAt = now + ms;
                 interval = ms;
+              } else if (sched.cron) {
+                cronExpression = sched.cron;
+                timezone = sched.timezone || 'UTC';
+                const job = new Cron(cronExpression, { timezone });
+                const next = job.nextRun();
+                if (!next) throw new Error(`Cron expression "${sched.cron}" has no upcoming fire time`);
+                nextFireAt = next.getTime();
               } else {
                 throw new Error('No timing specified');
               }
 
+              const type = sched.cron ? 'cron' as const : (sched.every || interval) ? 'interval' as const : 'once' as const;
               const scheduleEntry = {
                 name: sched.name,
                 message: sched.message,
                 target: sched.target,
-                type: sched.every ? 'interval' : 'once',
+                type,
                 nextFireAt: new Date(nextFireAt).toISOString(),
                 interval,
+                cronExpression,
+                timezone,
                 until: sched.until,
                 remainingCount: sched.count,
                 firedCount: 0,

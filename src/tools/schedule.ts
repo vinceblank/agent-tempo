@@ -1,10 +1,11 @@
 import { z } from 'zod';
+import { Cron } from 'croner';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { Config, schedulerWorkflowId } from '../config';
 import { parseDuration } from '../utils/duration';
 import { defineTool } from './helpers';
-import { SCHEDULE_NAME_MAX, SCHEDULE_MESSAGE_MAX, PLAYER_NAME_MAX } from '../utils/validation';
+import { SCHEDULE_NAME_MAX, SCHEDULE_MESSAGE_MAX, PLAYER_NAME_MAX, CRON_EXPRESSION_MAX } from '../utils/validation';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:schedule]', ...args);
 
@@ -17,7 +18,7 @@ export function registerScheduleTool(
   defineTool(
     server,
     'schedule',
-    'Schedule a message to be sent to a player at a specific time, after a delay, or on a recurring interval.',
+    'Schedule a message to be sent to a player at a specific time, after a delay, on a recurring interval, or via cron expression.',
     {
       name: z.string().max(SCHEDULE_NAME_MAX).describe('Unique name for this schedule'),
       message: z.string().max(SCHEDULE_MESSAGE_MAX).describe('The message to deliver'),
@@ -25,17 +26,21 @@ export function registerScheduleTool(
       at: z.string().optional().describe('ISO datetime for one-shot delivery (e.g. "2026-04-03T20:00:00Z")'),
       delay: z.string().optional().describe('Duration until first delivery (e.g. "10m", "2h", "1d")'),
       every: z.string().optional().describe('Recurring interval (e.g. "5m", "1h")'),
+      cron: z.string().max(CRON_EXPRESSION_MAX).optional().describe('Cron expression for recurring delivery (e.g. "0 9 * * 1-5" = weekdays at 9am). Mutually exclusive with at/delay/every.'),
+      timezone: z.string().optional().describe('IANA timezone for cron evaluation (e.g. "America/New_York"). Defaults to UTC. Only used with cron.'),
       until: z.string().optional().describe('ISO datetime — stop recurring after this time'),
       count: z.number().optional().describe('Max number of deliveries for recurring schedules'),
     },
     async (args) => {
-      const { name, message, at, delay, every, until, count } = args as {
+      const { name, message, at, delay, every, cron, timezone, until, count } = args as {
         name: string;
         message: string;
         target: string;
         at?: string;
         delay?: string;
         every?: string;
+        cron?: string;
+        timezone?: string;
         until?: string;
         count?: number;
       };
@@ -47,12 +52,23 @@ export function registerScheduleTool(
       }
 
       // Validate exactly one timing option
-      const timingCount = [at, delay, every].filter(Boolean).length;
+      const timingCount = [at, delay, every, cron].filter(Boolean).length;
       if (timingCount !== 1) {
         return {
           content: [{
             type: 'text' as const,
-            text: 'Provide exactly one timing option: `at`, `delay`, or `every`.',
+            text: 'Provide exactly one timing option: `at`, `delay`, `every`, or `cron`.',
+          }],
+          isError: true,
+        };
+      }
+
+      // timezone only valid with cron
+      if (timezone && !cron) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: '`timezone` can only be used with `cron`.',
           }],
           isError: true,
         };
@@ -80,9 +96,9 @@ export function registerScheduleTool(
           };
         }
         nextFireAt = now + ms;
-      } else {
-        // every (recurring)
-        const ms = parseDuration(every!);
+      } else if (every) {
+        // every (recurring interval)
+        const ms = parseDuration(every);
         if (ms === null || ms < 10_000) {
           return {
             content: [{ type: 'text' as const, text: `Invalid or too-short interval for "every": ${every}. Minimum is 10s.` }],
@@ -91,6 +107,25 @@ export function registerScheduleTool(
         }
         nextFireAt = now + ms;
         interval = ms;
+      } else {
+        // cron (recurring via cron expression)
+        try {
+          const job = new Cron(cron!, { timezone: timezone || 'UTC' });
+          const next = job.nextRun();
+          if (!next) {
+            return {
+              content: [{ type: 'text' as const, text: `Cron expression "${cron}" has no upcoming fire time.` }],
+              isError: true,
+            };
+          }
+          nextFireAt = next.getTime();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return {
+            content: [{ type: 'text' as const, text: `Invalid cron expression "${cron}": ${msg}` }],
+            isError: true,
+          };
+        }
       }
 
       // Parse optional until
@@ -106,7 +141,7 @@ export function registerScheduleTool(
         untilMs = ts;
       }
 
-      const type = every ? 'interval' : 'once';
+      const type = cron ? 'cron' : every ? 'interval' : 'once';
       const scheduleEntry = {
         name,
         message,
@@ -114,6 +149,8 @@ export function registerScheduleTool(
         type,
         nextFireAt: new Date(nextFireAt).toISOString(),
         interval,
+        cronExpression: cron,
+        timezone: cron ? (timezone || 'UTC') : undefined,
         until: untilMs ? new Date(untilMs).toISOString() : undefined,
         remainingCount: count,
         firedCount: 0,
@@ -143,7 +180,11 @@ export function registerScheduleTool(
         }
 
         const fireDate = new Date(nextFireAt).toISOString();
-        const recur = interval ? ` (repeating every ${every})` : ' (one-shot)';
+        const recur = cron
+          ? ` (cron: ${cron}, tz: ${timezone || 'UTC'})`
+          : interval
+            ? ` (repeating every ${every})`
+            : ' (one-shot)';
         return {
           content: [{
             type: 'text' as const,

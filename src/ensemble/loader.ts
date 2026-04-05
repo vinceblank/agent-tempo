@@ -49,8 +49,8 @@ export function loadLineup(filePath: string): EnsembleLineup {
       if (typeof s.target !== 'string' || !s.target) {
         throw new Error(`Invalid lineup: schedules[${i}].target is required`);
       }
-      if (!s.at && !s.delay && !s.every) {
-        throw new Error(`Invalid lineup: schedules[${i}] must have at least one of: at, delay, every`);
+      if (!s.at && !s.delay && !s.every && !s.cron) {
+        throw new Error(`Invalid lineup: schedules[${i}] must have at least one of: at, delay, every, cron`);
       }
     }
   }

@@ -26,6 +26,8 @@ export interface EnsembleLineup {
     at?: string;          // ISO datetime
     delay?: string;       // duration like "10m"
     every?: string;       // recurring interval like "1h"
+    cron?: string;        // cron expression like "0 9 * * 1-5"
+    timezone?: string;    // IANA timezone for cron (e.g., "America/New_York")
     until?: string;       // ISO datetime
     count?: number;       // max fires
   }>;

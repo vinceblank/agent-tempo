@@ -1,4 +1,5 @@
 import { Client } from '@temporalio/client';
+import { Cron } from 'croner';
 import { conductorWorkflowId } from '../config';
 import { SessionMetadata } from '../types';
 import { resolveSession } from './resolve';
@@ -16,9 +17,15 @@ export interface FireScheduleResult {
   error?: string;
 }
 
+export interface ComputeNextCronInput {
+  cronExpression: string;
+  timezone?: string;
+}
+
 /** Activity interface — used by proxyActivities in the scheduler workflow. */
 export interface ScheduleActivities {
   fireSchedule(input: FireScheduleInput): Promise<FireScheduleResult>;
+  computeNextCronFire(input: ComputeNextCronInput): Promise<string | null>;
 }
 
 /**
@@ -27,6 +34,12 @@ export interface ScheduleActivities {
  */
 export function createScheduleActivities(client: Client): ScheduleActivities {
   return {
+    async computeNextCronFire(input: ComputeNextCronInput): Promise<string | null> {
+      const job = new Cron(input.cronExpression, { timezone: input.timezone || 'UTC' });
+      const next = job.nextRun();
+      return next ? next.toISOString() : null;
+    },
+
     async fireSchedule(input: FireScheduleInput): Promise<FireScheduleResult> {
       const { ensemble, scheduleName, message, target, createdBy } = input;
 

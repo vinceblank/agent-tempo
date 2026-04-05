@@ -152,7 +152,27 @@ players:
       const filePath = join(tmpDir, 'bad-schedule.yaml');
       writeFileSync(filePath, `name: test\nplayers:\n  - name: p1\nschedules:\n  - name: sched\n    message: hello\n    target: p1\n`);
 
-      expect(() => loadLineup(filePath)).to.throw('at least one of: at, delay, every');
+      expect(() => loadLineup(filePath)).to.throw('at least one of: at, delay, every, cron');
+    });
+
+    it('accepts schedule with cron timing', function () {
+      const filePath = join(tmpDir, 'cron-schedule.yaml');
+      writeFileSync(filePath, `name: test\nplayers:\n  - name: p1\nschedules:\n  - name: nightly\n    message: run\n    target: p1\n    cron: "0 2 * * *"\n    timezone: America/Detroit\n`);
+
+      const lineup = loadLineup(filePath);
+      expect(lineup.schedules).to.have.lengthOf(1);
+      expect(lineup.schedules![0].cron).to.equal('0 2 * * *');
+      expect(lineup.schedules![0].timezone).to.equal('America/Detroit');
+    });
+
+    it('accepts schedule with at + every combination', function () {
+      const filePath = join(tmpDir, 'at-every-schedule.yaml');
+      writeFileSync(filePath, `name: test\nplayers:\n  - name: p1\nschedules:\n  - name: nightly-triage\n    message: run triage\n    target: p1\n    at: "2026-04-05T02:00:00Z"\n    every: 24h\n`);
+
+      const lineup = loadLineup(filePath);
+      expect(lineup.schedules).to.have.lengthOf(1);
+      expect(lineup.schedules![0].at).to.equal('2026-04-05T02:00:00Z');
+      expect(lineup.schedules![0].every).to.equal('24h');
     });
 
     it('rejects schedule missing message', function () {

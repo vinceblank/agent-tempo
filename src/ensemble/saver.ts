@@ -74,7 +74,10 @@ export async function saveLineup(
         message: entry.message,
         target: entry.target,
       };
-      if (entry.interval) {
+      if (entry.cronExpression) {
+        sched.cron = entry.cronExpression;
+        if (entry.timezone) sched.timezone = entry.timezone;
+      } else if (entry.interval) {
         sched.every = formatDurationMs(entry.interval);
       }
       if (entry.until) {
