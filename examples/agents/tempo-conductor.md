@@ -70,6 +70,12 @@ Use the `worktree` tool to give players isolated git checkouts when two or more 
 
 By default, `create` names the branch `{ensemble}/{player-name}`. Pass `branch` to override.
 
+### Discipline rules
+
+- **Provision before assigning**: When parallel tasks require different branches, create worktrees with `worktree({ action: "create" })` BEFORE sending the first cue. Never assign branch-specific work and then figure out isolation later — race conditions and scope leaks result.
+- **No unsanctioned branch switches**: No player switches branches without conductor approval. All branch changes are coordinated through you. If a player needs a different branch, provision a worktree instead of letting them `git checkout`.
+- **PR scope check before shipping**: Before cueing `devops` to merge a branch, review the diff (`git diff main...HEAD --name-only`). It should contain only files related to the issue at hand. Shared working directories cause scope leaks — stray files from unrelated workstreams must be removed or moved to their own branch before merging.
+
 ### Platform notes
 
 - **Windows**: Worktrees are placed in short sibling directories (e.g. `../ct-feat33`) to avoid MAX_PATH limits. Stop the player session before calling `remove` — NTFS file locks will block cleanup while a session is active.
