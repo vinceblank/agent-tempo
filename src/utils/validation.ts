@@ -46,6 +46,9 @@ export const GATE_NOTES_MAX = 1024;
 /** Timeout for npm install in worktrees (60s). */
 export const WORKTREE_INSTALL_TIMEOUT = 60000;
 
+/** Window for blocked session detection (5 minutes). */
+export const BLOCKED_WINDOW_MS = 5 * 60 * 1000;
+
 /** Default number of recent messages to include as context in an encore. */
 export const ENCORE_DEFAULT_CONTEXT_MESSAGES = 10;
 
@@ -54,11 +57,11 @@ export const PREVIEW_MAX_LENGTH = 200;
 
 /**
  * Whether a session should be included in a broadcast based on its status.
- * Always excludes pending and terminated. Excludes stale unless includeStale is true.
+ * Always excludes pending, terminated, and blocked. Excludes stale unless includeStale is true.
  */
 export function shouldIncludeInBroadcast(status: string | undefined, includeStale: boolean): boolean {
   const s = status || 'active';
-  if (s === 'pending' || s === 'terminated') return false;
+  if (s === 'pending' || s === 'terminated' || s === 'blocked') return false;
   if (s === 'stale' && !includeStale) return false;
   return true;
 }

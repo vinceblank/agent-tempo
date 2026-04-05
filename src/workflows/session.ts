@@ -79,6 +79,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   patched('v0.11-check-and-set-status');
   patched('v0.13-quality-gates');
   patched('v0.14-worktrees');
+  patched('v0.15-blocked-detection');
 
   // Ensure search attributes are always current — critical when reconnecting
   // via WorkflowIdConflictPolicy.USE_EXISTING, which skips the attributes
@@ -98,6 +99,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   const sentMessages: SentMessage[] = input.sentMessages ?? [];
   const outbox: OutboxEntry[] = input.outbox ?? [];
   let lastActivityTime = Date.now();
+  let lastOutboundTime = Date.now();
 
   // ── Outbox Update + Query Handlers ──
 
@@ -122,6 +124,12 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     }
 
     lastActivityTime = Date.now();
+    lastOutboundTime = Date.now();
+    // Auto-recover from blocked when player sends outbound
+    if (input.metadata.status === 'blocked') {
+      input.metadata.status = 'active';
+      upsertSearchAttributes({ ClaudeTempoStatus: ['active'] });
+    }
     return entry.id;
   }, {
     validator: (entry: OutboxEntryInput) => {
@@ -148,6 +156,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   setHandler(setPartSignal, (newPart) => {
     part = newPart;
     lastActivityTime = Date.now();
+    lastOutboundTime = Date.now();
   });
 
   setHandler(setNameSignal, (newName) => {
@@ -481,6 +490,19 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       if ((staleMessages.length > 0 || stuckPending) && input.metadata.status !== 'stale') {
         input.metadata.status = 'stale';
         upsertSearchAttributes({ ClaudeTempoStatus: ['stale'] });
+      }
+
+      // Detect blocked session: active session with messages delivered but no outbound
+      // activity for 5+ minutes. The session is alive but may be stuck or spinning.
+      const BLOCKED_WINDOW_MS = 5 * 60 * 1000;
+      const hasDeliveredMessages = messages.some((m) => m.delivered);
+      if (
+        input.metadata.status === 'active' &&
+        hasDeliveredMessages &&
+        now - lastOutboundTime > BLOCKED_WINDOW_MS
+      ) {
+        input.metadata.status = 'blocked';
+        upsertSearchAttributes({ ClaudeTempoStatus: ['blocked'] });
       }
 
       // Heartbeat: if no activity for 1 hour, inject a probe message.
