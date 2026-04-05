@@ -70,6 +70,9 @@ src/
 │   ├── evaluate-gate.ts # Mark gate criteria as passed/failed (conductor only)
 │   ├── gates.ts       # List quality gates and their status (conductor only)
 │   ├── worktree.ts    # Manage git worktrees for player isolation (conductor only)
+│   ├── stage.ts       # Define a stage — fan-out/fan-in tracking for parallel tasks (conductor only)
+│   ├── stages.ts      # List stages and their status (conductor only)
+│   ├── cancel-stage.ts # Cancel an active stage (conductor only)
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
 ├── utils/
 │   ├── validation.ts  # Shared validation constants (name/message/path limits, encore defaults) and helpers
@@ -129,6 +132,7 @@ npm test
 - **Lineup**: A YAML file defining an ensemble configuration — which players to recruit, their types, working directories, and optional startup messages. Load via `load_lineup` to bootstrap a full ensemble in one step; save via `save_lineup` to snapshot a running ensemble's state for later reuse.
 - **Quality Gate**: A named checklist of criteria a conductor tracks to verify a task is complete. Created via `quality_gate` (conductor only), evaluated via `evaluate_gate`, and listed via `gates`. Each criterion has a `pending` → `passed` | `failed` status; the gate's aggregate status is derived automatically (all passed → `passed`, any failed → `failed`, else `open`). Gates are stored in the conductor workflow and survive `continueAsNew`.
 - **Worktree**: A git worktree provisioned by the conductor for a player, giving them an isolated checkout on a separate branch. Managed via the `worktree` tool (conductor only): `create` provisions the worktree and notifies the player, `remove` cleans up after the task, `list` shows all active worktrees. Worktree assignments are stored in the conductor workflow (`WorktreeEntry` records: player, path, branch, gitRoot, createdAt, createdBy).
+- **Stage**: A fan-out/fan-in tracking primitive for the conductor. Created via `stage` (conductor only), listing via `stages`, cancelled via `cancel_stage`. Each stage tracks a set of players; when a tracked player sends a `report`, their stage status updates automatically (`waiting` → `reported` or `blocked`). When all players have reported, the conductor is notified that the stage is complete. If `failurePolicy` is `'halt'` (default), a blocker from any player fails the entire stage. Stages are stored in the conductor workflow and survive `continueAsNew`.
 - **Maestro**: A durable `claudeMaestroWorkflow` (one per ensemble, ID: `claude-maestro-{ensemble}`) that acts as an ensemble state aggregator for external integrations. It periodically polls all session metadata to maintain a player snapshot and ring-buffer event log, and accepts commands via the `maestroSendCommand` update for relay to the conductor. The Maestro dashboard ([vinceblank/maestro](https://github.com/vinceblank/maestro)) connects to this workflow to display live ensemble state. Implemented in `src/workflows/maestro.ts` with activities in `src/activities/maestro.ts`.
 - **Wire protocol**: All Temporal signal, query, update, and workflow names are documented in [`docs/WIRE-PROTOCOL.md`](docs/WIRE-PROTOCOL.md). These names are stable as of v0.10 — renaming or removing any is a breaking change requiring a major version bump.
 

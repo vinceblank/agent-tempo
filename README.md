@@ -137,6 +137,9 @@ These tools are available inside Claude Code sessions connected to claude-tempo:
 | `quality_gate` | Define or replace a quality gate for a task — a named checklist of criteria that must pass. Conductor only. |
 | `evaluate_gate` | Mark one or more criteria on a quality gate as passed or failed. Conductor only. |
 | `gates` | List quality gates and their status. Filter by task name or status (`open`, `passed`, `failed`). Conductor only. |
+| `stage` | Define a stage — tracks a set of players doing parallel work and auto-notifies when all report. Conductor only. |
+| `stages` | List stages and their status. Conductor only. |
+| `cancel_stage` | Cancel an active stage by name. Conductor only. |
 
 ## Scheduling
 
