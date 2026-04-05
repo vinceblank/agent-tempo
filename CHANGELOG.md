@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.16.3] - 2026-04-05
+
+### Fixed
+
+- **Copilot bridge graceful shutdown** — Bridge process now watches workflow status via Temporal query and terminates cleanly when the session ends, fixing a PID file leak on exit (#13)
+
 ## [0.16.2] - 2026-04-05
 
 ### Fixed
