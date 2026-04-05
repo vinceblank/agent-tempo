@@ -271,6 +271,15 @@ async function main() {
       out.success('All checks passed');
       break;
 
+    case 'tui': {
+      const config = getConfig(overrides);
+      const ensemble = args.ensemble || args.positional[0] || config.ensemble;
+      // Dynamic import — TUI module uses ESM ink
+      const { run: runTui } = await import('./tui/index');
+      await runTui({ config, ensemble });
+      break;
+    }
+
     case 'version':
       version();
       break;

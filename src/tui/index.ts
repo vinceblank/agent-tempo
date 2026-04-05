@@ -1,0 +1,55 @@
+/**
+ * TUI entry point — dynamically loads ink (ESM) and renders the app.
+ * Called from the CLI command via: const { run } = await import('../tui/index.js');
+ */
+import React from 'react';
+import { Client } from '@temporalio/client';
+import { createTemporalConnection } from '../connection';
+import { Config } from '../config';
+import { createTuiApi } from './core-api';
+import { loadInk } from './ink-loader';
+import { InkProvider } from './ink-context';
+import { App } from './App';
+import { isTerminalLargeEnough, MIN_COLUMNS, MIN_ROWS } from './utils/platform';
+
+export interface TuiOpts {
+  config: Config;
+  ensemble: string;
+}
+
+export async function run(opts: TuiOpts): Promise<void> {
+  // Check terminal size
+  if (!isTerminalLargeEnough()) {
+    console.error(
+      `Terminal too small (minimum ${MIN_COLUMNS}x${MIN_ROWS}). ` +
+      `Current: ${process.stdout.columns || '?'}x${process.stdout.rows || '?'}`,
+    );
+    process.exit(1);
+  }
+
+  // Load ink dynamically (ESM)
+  const ink = await loadInk();
+
+  // Connect to Temporal
+  let connection;
+  try {
+    connection = await createTemporalConnection(opts.config);
+  } catch (err) {
+    console.error(`Cannot connect to Temporal at ${opts.config.temporalAddress}`);
+    console.error(`  Run: temporal server start-dev`);
+    process.exit(1);
+  }
+
+  const client = new Client({ connection, namespace: opts.config.temporalNamespace });
+  const api = createTuiApi(client, opts.ensemble);
+
+  // Render the TUI
+  const app = ink.render(
+    React.createElement(InkProvider, { ink, children: React.createElement(App, { api }) }),
+  );
+
+  await app.waitUntilExit();
+
+  // Cleanup
+  await connection.close();
+}
