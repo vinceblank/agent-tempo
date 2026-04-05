@@ -2,9 +2,9 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlink
 import { join, resolve } from 'path';
 import { execFileSync, spawn as cpSpawn } from 'child_process';
 import { homedir } from 'os';
-import { Client, Connection } from '@temporalio/client';
+import { Client, Connection, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { spawnInTerminal, spawnCopilotBridge, resolveClaudePath } from '../spawn';
-import { conductorWorkflowId, schedulerWorkflowId, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
+import { conductorWorkflowId, schedulerWorkflowId, maestroWorkflowId, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
 import { createTemporalConnection } from '../connection';
 import { playerReportSignal, updateMetadataSignal } from '../workflows/signals';
 import { addScheduleSignal } from '../workflows/scheduler-signals';
@@ -25,6 +25,27 @@ function formatDurationMs(ms: number): string {
   if (ms >= 3_600_000) return `${ms / 3_600_000}h`;
   if (ms >= 60_000) return `${ms / 60_000}m`;
   return `${ms / 1000}s`;
+}
+
+/**
+ * Ensure the Maestro workflow is running for the given ensemble.
+ * Idempotent — uses USE_EXISTING conflict policy.
+ */
+async function ensureMaestroWorkflow(client: Client, config: Config, ensemble: string): Promise<void> {
+  const wfId = maestroWorkflowId(ensemble);
+  try {
+    await client.workflow.start('claudeMaestroWorkflow', {
+      workflowId: wfId,
+      taskQueue: config.taskQueue,
+      args: [{ ensemble }],
+      workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+      searchAttributes: {
+        ClaudeTempoEnsemble: [ensemble],
+      },
+    });
+  } catch {
+    // Maestro is non-critical — log but don't fail
+  }
 }
 
 interface StartOpts extends CliOverrides {
@@ -148,6 +169,19 @@ export async function start(opts: StartOpts) {
   }
   out.log(`  Ensemble: ${opts.ensemble}`);
   out.log(`  Directory: ${workDir}`);
+
+  // Start Maestro workflow when launching a conductor
+  if (opts.conductor) {
+    try {
+      const connection = await createTemporalConnection(config);
+      const client = new Client({ connection, namespace: config.temporalNamespace });
+      await ensureMaestroWorkflow(client, config, opts.ensemble);
+      await connection.close();
+    } catch {
+      // Maestro is non-critical
+    }
+  }
+
   out.log(`\nCheck status: ${out.dim('claude-tempo status ' + opts.ensemble)}`);
 }
 
@@ -743,6 +777,9 @@ export async function up(opts: UpOpts) {
       out.warn('Conductor did not register within 15s — skipping lineup players/schedules');
     } else {
       out.check('Conductor registered', true);
+
+      // Ensure Maestro workflow is running
+      await ensureMaestroWorkflow(client, config, opts.ensemble);
 
       // Send conductor instructions if provided
       if (lineup.conductor?.instructions) {

@@ -4,6 +4,7 @@ import { Client } from '@temporalio/client';
 import * as os from 'os';
 import { Config } from '../config';
 import { SessionMetadata } from '../types';
+import { scanEnsembleSessions } from '../activities/resolve';
 import { defineTool } from './helpers';
 
 export function registerEnsembleTool(
@@ -22,67 +23,39 @@ export function registerEnsembleTool(
     },
     async (args) => {
       const scope = (args.scope ?? 'all') as 'machine' | 'repo' | 'all';
-      // List all running session workflows, then filter by ensemble using
-      // in-memory metadata queries. This avoids depending on custom search
-      // attributes which are eventually consistent and may be missing/stale.
-      const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
 
-      const players: Array<{
-        playerId: string;
-        part: string;
-        hostname: string;
-        workDir: string;
-        gitRoot?: string;
-        gitBranch?: string;
-        isConductor: boolean;
-        agentType: string;
-        playerType?: string;
-        status?: string;
-        isYou: boolean;
-      }> = [];
-
+      let sessions;
       try {
-        for await (const workflow of client.workflow.list({ query })) {
-          try {
-            const handle = client.workflow.getHandle(workflow.workflowId);
-            const metadata: SessionMetadata = await handle.query('getMetadata');
-
-            // Filter by ensemble
-            if (metadata.ensemble !== config.ensemble) continue;
-
-            // Filter by scope
-            if (scope === 'machine' && metadata.hostname !== os.hostname()) continue;
-            if (scope === 'repo') {
-              const ownHandle = client.workflow.getHandle(ownWorkflowId);
-              const ownMeta: SessionMetadata = await ownHandle.query('getMetadata');
-              if (metadata.gitRoot !== ownMeta.gitRoot) continue;
-            }
-
-            const part: string = await handle.query('getPart');
-
-            players.push({
-              playerId: metadata.playerId,
-              part,
-              hostname: metadata.hostname,
-              workDir: metadata.workDir,
-              gitRoot: metadata.gitRoot,
-              gitBranch: metadata.gitBranch,
-              isConductor: metadata.isConductor,
-              agentType: metadata.agentType || 'claude',
-              playerType: metadata.playerType,
-              status: metadata.status,
-              isYou: metadata.playerId === getPlayerId(),
-            });
-          } catch {
-            // Workflow may have just completed — skip it
-          }
-        }
+        sessions = await scanEnsembleSessions(client, config.ensemble);
       } catch (err) {
         return {
           content: [{ type: 'text' as const, text: `Error listing workflows: ${err}` }],
           isError: true,
         };
       }
+
+      // Apply scope filters
+      let ownGitRoot: string | undefined;
+      if (scope === 'repo') {
+        try {
+          const ownHandle = client.workflow.getHandle(ownWorkflowId);
+          const ownMeta: SessionMetadata = await ownHandle.query('getMetadata');
+          ownGitRoot = ownMeta.gitRoot;
+        } catch {
+          // Can't determine own git root — skip repo filtering
+        }
+      }
+
+      const players = sessions
+        .filter((s) => {
+          if (scope === 'machine' && s.hostname !== os.hostname()) return false;
+          if (scope === 'repo' && ownGitRoot && s.gitRoot !== ownGitRoot) return false;
+          return true;
+        })
+        .map((s) => ({
+          ...s,
+          isYou: s.playerId === getPlayerId(),
+        }));
 
       if (players.length === 0) {
         return {
