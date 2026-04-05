@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.1] - 2026-04-05
+
+### Fixed
+
+- **`load_lineup` conductor section** — `load_lineup` MCP tool now correctly applies the `conductor` section of YAML lineups, recruiting the conductor player as expected (#48)
+
 ## [0.17.0] - 2026-04-05
 
 ### Added
