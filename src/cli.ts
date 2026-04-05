@@ -186,6 +186,8 @@ async function main() {
 
     case 'down':
       await down({
+        ensemble,
+        all: args.all,
         removeMcp: !args.keepMcp,
         dir: args.dir,
         ...overrides,
