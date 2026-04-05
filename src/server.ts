@@ -52,10 +52,11 @@ async function main() {
   const config = getConfig();
   const isConductor = process.env[ENV.CONDUCTOR] === 'true';
   const requestedName = process.env[ENV.PLAYER_NAME] || '';
-  // Prevent non-conductor sessions from using "conductor" as a name,
+  // Conductors use their requested name or fall back to 'conductor'.
+  // Non-conductors are prevented from using "conductor" as a name,
   // which would collide with the conductor's deterministic workflow ID.
   let playerId = isConductor
-    ? 'conductor'
+    ? (requestedName || 'conductor')
     : (requestedName && requestedName !== 'conductor' ? requestedName : '') || crypto.randomBytes(4).toString('hex');
   const getPlayerId = () => playerId;
   const setPlayerId = (id: string) => { playerId = id; };
@@ -212,7 +213,7 @@ async function main() {
   }
 
   // Create MCP server
-  const hasRequestedName = Boolean(requestedName && requestedName !== 'conductor');
+  const hasRequestedName = isConductor || Boolean(requestedName && requestedName !== 'conductor');
   const playerTypeLine = playerType
     ? `Your player type is "${playerType}"${playerTypeDescription ? ` (${playerTypeDescription})` : ''}. `
     : '';

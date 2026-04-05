@@ -44,7 +44,10 @@ export async function saveLineup(
       const workDir = (meta.workDir as string) || undefined;
 
       if (isConductor) {
+        const conductorName = (meta.playerId as string) || undefined;
         conductor = {
+          // Only save name if it's not the default 'conductor'
+          ...(conductorName && conductorName !== 'conductor' ? { name: conductorName } : {}),
           agent: agentType === 'copilot' ? 'copilot' : undefined,
         };
       } else {
