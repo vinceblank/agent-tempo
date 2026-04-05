@@ -15,6 +15,7 @@ import { parseDuration } from '../utils/duration';
 import { safeLineupPath } from '../utils/safe-path';
 import { defineTool } from './helpers';
 import { PLAYER_NAME_MAX, PATH_MAX } from '../utils/validation';
+import { createWorktree, installDependencies } from '../utils/worktree';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:load-lineup]', ...args);
 
@@ -97,7 +98,8 @@ export function registerLoadLineupTool(
         // Recruit players sequentially
         for (const player of lineup.players) {
           const playerName = player.name;
-          const workDir = player.workDir || process.cwd();
+          let workDir = player.workDir || process.cwd();
+          let worktreePath: string | undefined;
           const agentType: AgentType = player.agent === 'copilot' ? 'copilot' : 'claude';
           const isCustomAgent = player.agent && player.agent !== 'default' && player.agent !== 'copilot';
           const systemPrompt = player._agentDefinition ? undefined : (isCustomAgent ? player.agent : undefined);
@@ -121,6 +123,32 @@ export function registerLoadLineupTool(
               }
             }
             continue;
+          }
+
+          // Create worktree if isolation is requested
+          if (player.isolation === 'worktree') {
+            try {
+              // Determine git root: use the player's workDir as the git root,
+              // or fall back to cwd (which should be a git repo).
+              const gitRoot = workDir;
+              const result = createWorktree({
+                gitRoot,
+                ensemble: config.ensemble,
+                playerName,
+                branch: player.branch,
+              });
+              worktreePath = result.path;
+              workDir = result.path;
+              log(`Worktree for "${playerName}": ${result.path} (branch: ${result.branch}, created: ${result.created})`);
+
+              // Install dependencies — blocking but failure is non-fatal
+              if (result.created) {
+                installDependencies(result.path);
+              }
+            } catch (err) {
+              failed.push(`${playerName}: worktree creation failed — ${err}`);
+              continue;
+            }
           }
 
           // Record existing workflows to detect the new one
@@ -208,6 +236,16 @@ export function registerLoadLineupTool(
           if (!newWorkflowId) {
             failed.push(`${playerName}: spawned but did not register within 15s`);
             continue;
+          }
+
+          // Record worktree path in session metadata
+          if (worktreePath && newWorkflowId) {
+            try {
+              const newHandle = client.workflow.getHandle(newWorkflowId);
+              await newHandle.signal('updateMetadata', { worktreePath });
+            } catch (err) {
+              log(`Failed to set worktreePath metadata for "${playerName}":`, err);
+            }
           }
 
           // Send initial instructions if provided
