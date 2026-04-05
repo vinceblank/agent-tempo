@@ -69,7 +69,7 @@ jobs:
             const tag = context.ref.replace('refs/tags/', '');
             const body = (process.env.CHANGELOG_NOTES || '').trim();
 
-            await github.rest.releases.createRelease({
+            await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
