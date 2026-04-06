@@ -359,8 +359,8 @@ export async function init(opts: InitOpts) {
   }
 
   // Default: global install via `claude mcp add`
-  if (isGlobalMcpRegistered()) {
-    out.success('claude-tempo already registered globally');
+  if (isGlobalMcpRegistered() || isMcpConfigured(opts.dir)) {
+    out.success('claude-tempo already registered');
     out.log(`  ${out.dim('claude mcp list -s user')}`);
     return;
   }
@@ -389,8 +389,7 @@ function initProject(dir: string) {
   const mcpPath = join(dir, '.mcp.json');
 
   const entry = {
-    command: 'npx',
-    args: ['claude-tempo-server'],
+    command: 'claude-tempo-server',
   };
 
   if (existsSync(mcpPath)) {
