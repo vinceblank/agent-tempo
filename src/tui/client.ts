@@ -5,8 +5,8 @@
  * Supports multi-ensemble discovery via the Global Maestro workflow,
  * with fallback to per-ensemble Maestro and direct workflow list.
  */
-import { Client } from '@temporalio/client';
-import { maestroWorkflowId, schedulerWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID } from '../config';
+import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
+import { maestroWorkflowId, schedulerWorkflowId, sessionWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID } from '../config';
 import type {
   MaestroPlayerInfo,
   MaestroRelayMessage,
@@ -59,6 +59,15 @@ export interface TempoClient {
   isConnected(): Promise<boolean>;
   /** Check if the Global Maestro workflow is running. */
   hasGlobalMaestro(): Promise<boolean>;
+
+  // ── Maestro session (TUI-owned workflow for two-way messaging) ──
+
+  /** Ensure a maestro session workflow exists for the ensemble (create or reuse). */
+  ensureMaestroSession(ensemble: string): Promise<string>;
+  /** Send a message as the maestro to a target player. */
+  sendAsMaestro(ensemble: string, targetPlayer: string, text: string): Promise<void>;
+  /** Get messages received + sent by the maestro session. */
+  getMaestroMessages(ensemble: string): Promise<{ received: Message[]; sent: SentMessage[] }>;
 }
 
 // ── Implementation ──
@@ -332,6 +341,100 @@ export function createTempoClient(client: Client): TempoClient {
         return desc.status.name === 'RUNNING';
       } catch {
         return false;
+      }
+    },
+
+    // ── Maestro session (TUI-owned workflow for two-way messaging) ──
+
+    async ensureMaestroSession(ensemble: string): Promise<string> {
+      const workflowId = sessionWorkflowId(ensemble, 'maestro');
+
+      const sessionInput = {
+        metadata: {
+          playerId: 'maestro',
+          ensemble,
+          hostname: 'dashboard',
+          workDir: process.cwd(),
+          isConductor: false,
+        },
+        disableStaleDetection: true,
+      };
+
+      const wfHandle = await client.workflow.start('claudeSessionWorkflow', {
+        workflowId,
+        taskQueue: 'claude-tempo',
+        args: [sessionInput],
+        workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+        workflowExecutionTimeout: '24 hours',
+        searchAttributes: {
+          ClaudeTempoHostname: ['dashboard'],
+          ClaudeTempoEnsemble: [ensemble],
+          ClaudeTempoPlayerId: ['maestro'],
+        },
+      });
+
+      return wfHandle.workflowId;
+    },
+
+    async sendAsMaestro(ensemble: string, targetPlayer: string, text: string): Promise<void> {
+      // Resolve target player workflow via search attributes
+      const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${ensemble}" AND ClaudeTempoPlayerId = "${targetPlayer}"`;
+      let targetHandle;
+      for await (const wf of client.workflow.list({ query })) {
+        targetHandle = handle(wf.workflowId);
+        break;
+      }
+      if (!targetHandle) {
+        throw new Error(`Player "${targetPlayer}" not found in ensemble "${ensemble}"`);
+      }
+
+      // Signal the target with the message
+      await targetHandle.signal('receiveMessage', { from: 'maestro', text, isMaestro: true });
+
+      // Record outbound on maestro's own workflow
+      const maestroId = sessionWorkflowId(ensemble, 'maestro');
+      try {
+        const maestroHandle = handle(maestroId);
+        await maestroHandle.signal('recordSentMessage', { to: targetPlayer, text });
+      } catch {
+        // Best-effort — maestro workflow may not exist yet
+      }
+    },
+
+    async getMaestroMessages(ensemble: string): Promise<{ received: Message[]; sent: SentMessage[] }> {
+      const maestroId = sessionWorkflowId(ensemble, 'maestro');
+      try {
+        const h = handle(maestroId);
+
+        // Query received messages (allMessages preferred, pendingMessages fallback)
+        let received: Message[];
+        try {
+          received = await h.query('allMessages');
+        } catch {
+          received = await h.query('pendingMessages');
+        }
+
+        // Auto-mark undelivered messages as delivered (maestro has no listener)
+        const undeliveredIds = received.filter(m => !m.delivered).map(m => m.id);
+        if (undeliveredIds.length > 0) {
+          try {
+            await h.signal('markDelivered', undeliveredIds);
+          } catch {
+            // Best-effort
+          }
+        }
+
+        // Query sent messages
+        let sent: SentMessage[];
+        try {
+          sent = await h.query('allSentMessages');
+        } catch {
+          sent = [];
+        }
+
+        return { received, sent };
+      } catch {
+        return { received: [], sent: [] };
       }
     },
   };

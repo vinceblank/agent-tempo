@@ -67,11 +67,12 @@ export function App({ api, ensemble }: AppProps) {
 
   // ── Refs for values read by useInput/useCallback (avoids stale closures + excess re-renders) ──
   const lastSeenMsgRef = React.useRef<string | undefined>(state.lastSeenMessageId);
+  const lastSeenMaestroRef = React.useRef<string | undefined>(undefined);
   const stateRef = React.useRef(state);
   stateRef.current = state; // Always current on every render
 
   // ── Refs for poll dedup (skip dispatches when data hasn't changed) ──
-  const lastPollRef = React.useRef({ playerCount: 0, lastMsgId: '', historyLen: 0, scheduleCount: 0 });
+  const lastPollRef = React.useRef({ playerCount: 0, lastMsgId: '', historyLen: 0, scheduleCount: 0, maestroMsgCount: 0 });
   const handleHistoryUpdate = useCallback((entries: string[]) => {
     saveHistory(entries);
   }, []);
@@ -585,6 +586,17 @@ export function App({ api, ensemble }: AppProps) {
         addCheck(`Conductor: ${conductorName}`, true);
       }
 
+      // Step 4: Ensure maestro session for two-way messaging
+      if (state.activeEnsemble || ensembleName !== 'no ensembles') {
+        const ens = state.activeEnsemble || ensembleName;
+        try {
+          await api.ensureMaestroSession(ens);
+          addCheck('Maestro session ready', true);
+        } catch {
+          // Non-fatal — messaging will fall back to Maestro relay
+        }
+      }
+
       // Mark splash as connected with summary
       dispatch({
         type: 'SET_SPLASH_CONNECTED',
@@ -625,14 +637,16 @@ export function App({ api, ensemble }: AppProps) {
           const ensembles = await api.discoverEnsembles();
           dispatch({ type: 'REFRESH_ENSEMBLES', ensembles });
         } else {
-          const [players, messages, history, schedules] = await Promise.all([
+          // Fetch relay messages + maestro direct messages in parallel
+          const [players, messages, history, schedules, maestroMsgs] = await Promise.all([
             api.getPlayers(state.activeEnsemble),
             api.getMessages(state.activeEnsemble, 50),
             api.getConductorHistory(state.activeEnsemble),
             api.getSchedules(state.activeEnsemble),
+            api.getMaestroMessages(state.activeEnsemble),
           ]);
 
-          // Detect new messages and commit them to Static
+          // Detect new relay messages and commit them to Static
           if (messages.length > 0 && lastSeenMsgRef.current) {
             const lastIdx = messages.findIndex(m => m.id === lastSeenMsgRef.current);
             const newMessages = lastIdx >= 0 ? messages.slice(lastIdx + 1) : [];
@@ -653,6 +667,30 @@ export function App({ api, ensemble }: AppProps) {
             }
           }
 
+          // Detect new maestro direct messages
+          if (maestroMsgs.received.length > 0 && lastSeenMaestroRef.current) {
+            const lastIdx = maestroMsgs.received.findIndex(m => m.id === lastSeenMaestroRef.current);
+            const newDirect = lastIdx >= 0 ? maestroMsgs.received.slice(lastIdx + 1) : [];
+            for (const m of newDirect) {
+              const time = new Date(m.timestamp);
+              const hh = String(time.getHours()).padStart(2, '0');
+              const mm = String(time.getMinutes()).padStart(2, '0');
+              const text = m.text.length > 60 ? m.text.slice(0, 57) + '...' : m.text;
+              dispatch({
+                type: 'COMMIT_STATIC',
+                item: {
+                  id: `dm-${m.id}`,
+                  type: 'message',
+                  content: `[${hh}:${mm}] ${m.from} \u2192 you: ${text.replace(/\n/g, ' ')}`,
+                  timestamp: Date.now(),
+                },
+              });
+            }
+          }
+          if (maestroMsgs.received.length > 0) {
+            lastSeenMaestroRef.current = maestroMsgs.received[maestroMsgs.received.length - 1].id;
+          }
+
           // Skip dispatch if data hasn't changed (avoids unnecessary re-renders)
           const lastMsg = messages.length > 0 ? messages[messages.length - 1].id : '';
           const pollKey = {
@@ -660,12 +698,14 @@ export function App({ api, ensemble }: AppProps) {
             lastMsgId: lastMsg,
             historyLen: history.length,
             scheduleCount: schedules.length,
+            maestroMsgCount: maestroMsgs.received.length,
           };
           const prev = lastPollRef.current;
           const changed = pollKey.playerCount !== prev.playerCount
             || pollKey.lastMsgId !== prev.lastMsgId
             || pollKey.historyLen !== prev.historyLen
-            || pollKey.scheduleCount !== prev.scheduleCount;
+            || pollKey.scheduleCount !== prev.scheduleCount
+            || pollKey.maestroMsgCount !== prev.maestroMsgCount;
 
           if (changed) {
             dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
