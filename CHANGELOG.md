@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.18.0] - 2026-04-06
+
+### Added
+
+- **Pipeline Stages** — Conductors can track fan-out/fan-in of parallel work via `stage`, `stages`, and `cancel_stage` tools. Define a stage with player names, cue the players, and the workflow auto-notifies when all players report. Supports `halt` (fail on first blocker) and `continue` (wait for all) failure policies. (#26)
+
+### Fixed
+
+- Ensemble MCP tool now displays `(blocked)` status tag (was already detected but not rendered)
+
 ## [0.17.1] - 2026-04-05
 
 ### Fixed

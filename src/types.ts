@@ -57,6 +57,8 @@ export interface SessionInput {
   qualityGates?: QualityGate[];
   /** Restored from continue-as-new (conductor only) */
   worktrees?: WorktreeEntry[];
+  /** Restored from continue-as-new (conductor only) */
+  stages?: StageEntry[];
   /** Temporal config passed through for outbox activities (non-secret fields only). */
   temporalConfig?: {
     temporalAddress: string;
@@ -202,6 +204,33 @@ export interface WorktreeEntry {
   createdAt: string;
   /** Player ID of creator. */
   createdBy: string;
+}
+
+// ── Stage Types ──
+
+export interface StagePlayerStatus {
+  playerId: string;
+  status: 'waiting' | 'reported' | 'blocked';
+  reportType?: 'result' | 'blocker' | 'question';
+  reportText?: string;
+  reportedAt?: string;
+}
+
+export interface StageEntry {
+  /** Unique name identifying this stage. */
+  name: string;
+  /** Players tracked in this stage. */
+  players: StagePlayerStatus[];
+  /** Aggregate status: active until all report or a blocker halts. */
+  status: 'active' | 'complete' | 'failed' | 'cancelled';
+  /** What happens when a player reports a blocker. */
+  failurePolicy: 'halt' | 'continue';
+  /** ISO timestamp of creation. */
+  createdAt: string;
+  /** Player ID of the conductor that created the stage. */
+  createdBy: string;
+  /** ISO timestamp of completion/failure/cancellation. */
+  completedAt?: string;
 }
 
 export interface ScheduleEntry {

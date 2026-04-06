@@ -8,6 +8,7 @@ import type {
   OutboxEntryInput,
   QualityGate,
   WorktreeEntry,
+  StageEntry,
 } from '../types';
 
 // Re-export types for convenience within workflow code
@@ -31,6 +32,8 @@ export type {
   QualityGate,
   QualityGateCriterion,
   WorktreeEntry,
+  StageEntry,
+  StagePlayerStatus,
 } from '../types';
 
 // ── Player Signals ──
@@ -80,3 +83,9 @@ export const qualityGatesQuery = defineQuery<QualityGate[]>('qualityGates');
 export const setWorktreeSignal = defineSignal<[WorktreeEntry]>('setWorktree');
 export const removeWorktreeSignal = defineSignal<[string]>('removeWorktree');
 export const worktreesQuery = defineQuery<WorktreeEntry[]>('worktrees');
+
+// ── Stage Signals + Query (conductor-only) ──
+
+export const setStageSignal = defineSignal<[{ name: string; players: string[]; failurePolicy?: 'halt' | 'continue'; createdBy: string }]>('setStage');
+export const cancelStageSignal = defineSignal<[string]>('cancelStage');
+export const stagesQuery = defineQuery<StageEntry[]>('stages');

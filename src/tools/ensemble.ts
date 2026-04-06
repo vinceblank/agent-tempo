@@ -70,6 +70,7 @@ export function registerEnsembleTool(
           p.agentType === 'copilot' ? '[copilot]' : '',
           p.status === 'stale' ? '(stale)' : '',
           p.status === 'pending' ? '(pending)' : '',
+          p.status === 'blocked' ? '(blocked)' : '',
         ].filter(Boolean).join(' ');
 
         const nameDisplay = p.playerType

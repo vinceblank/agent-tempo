@@ -13,6 +13,12 @@ export const PLAYER_NAME_MAX = 64;
  */
 export const ENSEMBLE_NAME_REGEX = /^[a-zA-Z0-9]([a-zA-Z0-9._-]{0,62}[a-zA-Z0-9])?$/;
 
+/** Stage name max length. */
+export const STAGE_NAME_MAX = 64;
+
+/** Maximum players per stage. */
+export const STAGE_PLAYERS_MAX = 20;
+
 /** Maximum message size for cue/report (100KB). */
 export const MESSAGE_MAX = 102400;
 

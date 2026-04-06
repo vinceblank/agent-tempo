@@ -78,6 +78,8 @@ Conductor-specific signals, only registered when `input.metadata.isConductor` is
 | `evaluateGateCriteria` | `{ task: string; evaluations: Array<{ index: number; status: 'passed' \| 'failed'; notes?: string }>; evaluatedBy: string }` | Marks one or more criteria on an existing quality gate as `'passed'` or `'failed'`. Out-of-bounds indices are silently ignored. Gate aggregate status is re-derived after each evaluation. |
 | `setWorktree` | `WorktreeEntry` | Records a worktree assignment for a player. `WorktreeEntry` has fields: `player`, `path`, `branch`, `gitRoot`, `createdAt`, `createdBy`. Upserts by player name. |
 | `removeWorktree` | `string` | Removes a worktree entry by player name. |
+| `setStage` | `{ name: string; players: string[]; failurePolicy?: 'halt' \| 'continue'; createdBy: string }` | Creates or replaces a stage — a fan-out/fan-in tracking primitive. Each player starts as `'waiting'`; when they report, their status updates automatically. If `failurePolicy` is `'halt'` (default), a blocker from any player fails the stage. |
+| `cancelStage` | `string` (stage name) | Cancels an active stage by name. Sets status to `'cancelled'`. No-op if the stage is already complete/failed/cancelled. |
 
 ---
 
@@ -88,6 +90,7 @@ Conductor-specific signals, only registered when `input.metadata.isConductor` is
 | `history` | `HistoryEntry[]` | Returns the conductor's combined command + report history, sorted chronologically. Each entry has a `type` (`'command'` or `'report'`) and a `timestamp`. |
 | `qualityGates` | `QualityGate[]` | Returns all quality gates. Each gate has a `task` key, `criteria` array, `createdBy`, `createdAt`, and a derived `status` (`'open'`, `'passed'`, or `'failed'`). |
 | `worktrees` | `WorktreeEntry[]` | Returns all active worktree assignments. Each entry has `player`, `path`, `branch`, `gitRoot`, `createdAt`, and `createdBy`. |
+| `stages` | `StageEntry[]` | Returns all stages. Each entry has `name`, `players` (with per-player status), `status` (`'active'`, `'complete'`, `'failed'`, `'cancelled'`), `failurePolicy`, `createdAt`, `createdBy`, and optional `completedAt`. |
 
 ---
 
@@ -190,6 +193,18 @@ Types referenced above are defined in `src/types.ts` and re-exported from `src/w
 | `gitRoot` | `string` | Absolute path to the original git root (used by `git worktree remove`). |
 | `createdAt` | `string` | ISO timestamp of worktree creation. |
 | `createdBy` | `string` | Player ID of the conductor that created the worktree. |
+
+### `StageEntry`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `string` | Unique name identifying this stage. |
+| `players` | `StagePlayerStatus[]` | Tracked players. Each has `playerId`, `status` (`'waiting'` \| `'reported'` \| `'blocked'`), and optional `reportType`, `reportText`, `reportedAt`. |
+| `status` | `'active' \| 'complete' \| 'failed' \| 'cancelled'` | Aggregate status. `complete` when all players report results; `failed` when a blocker is received and `failurePolicy` is `'halt'`. |
+| `failurePolicy` | `'halt' \| 'continue'` | What happens when a player reports a blocker. `halt` fails the stage immediately; `continue` marks the player as blocked but keeps the stage active. |
+| `createdAt` | `string` | ISO timestamp of stage creation. |
+| `createdBy` | `string` | Player ID of the conductor that created the stage. |
+| `completedAt` | `string?` | ISO timestamp of completion, failure, or cancellation. |
 
 ### `RecruitOutboxEntry` (selected fields)
 
