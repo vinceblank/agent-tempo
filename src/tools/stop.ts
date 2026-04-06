@@ -5,7 +5,8 @@ import { Config } from '../config';
 import { resolveSession } from './resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
+import { validatePlayerName } from '../utils/validation';
 
 export function registerStopTool(
   server: McpServer,
@@ -24,20 +25,17 @@ export function registerStopTool(
     async (args) => {
       const { playerId } = args as { playerId: string };
 
+      const nameError = validatePlayerName(playerId);
+      if (nameError) return fail(nameError);
+
       if (playerId === getPlayerId()) {
-        return {
-          content: [{ type: 'text' as const, text: 'Cannot stop your own session.' }],
-          isError: true,
-        };
+        return fail('Cannot stop your own session.');
       }
 
       try {
         const resolved = await resolveSession(client, config.ensemble, playerId);
         if (!resolved) {
-          return {
-            content: [{ type: 'text' as const, text: `No active session found with name "${playerId}".` }],
-            isError: true,
-          };
+          return fail(`No active session found with name "${playerId}".`);
         }
 
         const entry = {
@@ -46,14 +44,9 @@ export function registerStopTool(
         } as OutboxEntryInput;
         const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 
-        return {
-          content: [{ type: 'text' as const, text: `Stop signal sent to **${playerId}**. The session will exit gracefully. (outbox: ${entryId})` }],
-        };
+        return ok(`Stop signal sent to **${playerId}**. The session will exit gracefully. (outbox: ${entryId})`);
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to stop: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to stop: ${formatError(err)}`);
       }
     },
   );

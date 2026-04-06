@@ -5,7 +5,7 @@ import { Config } from '../config';
 import { WorktreeEntry } from '../types';
 import { resolveSession } from './resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 import { createWorktree, installDependencies, removeWorktree } from '../utils/worktree';
 import { PLAYER_NAME_MAX } from '../utils/validation';
 
@@ -36,29 +36,20 @@ export function registerWorktreeTool(
         switch (action) {
           case 'create': {
             if (!player) {
-              return {
-                content: [{ type: 'text' as const, text: '`player` is required for create action.' }],
-                isError: true,
-              };
+              return fail('`player` is required for create action.');
             }
 
             // Verify player exists
             const targetHandle = await resolveSession(client, config.ensemble, player);
             if (!targetHandle) {
-              return {
-                content: [{ type: 'text' as const, text: `No active session found for "${player}".` }],
-                isError: true,
-              };
+              return fail(`No active session found for "${player}".`);
             }
 
             // Check target is on same host (cross-machine worktrees not supported)
             const targetMeta = await targetHandle.query('getMetadata') as { hostname?: string };
             const { hostname } = await import('os').then((os) => ({ hostname: os.hostname() }));
             if (targetMeta.hostname && targetMeta.hostname !== hostname) {
-              return {
-                content: [{ type: 'text' as const, text: `Cannot create worktree for "${player}" — they are on host "${targetMeta.hostname}" but worktrees must be created locally.` }],
-                isError: true,
-              };
+              return fail(`Cannot create worktree for "${player}" — they are on host "${targetMeta.hostname}" but worktrees must be created locally.`);
             }
 
             const gitRoot = process.cwd();
@@ -103,30 +94,19 @@ export function registerWorktreeTool(
               }],
             });
 
-            return {
-              content: [{
-                type: 'text' as const,
-                text: `Worktree created for **${player}**:\n- Path: \`${result.path}\`\n- Branch: \`${result.branch}\`\n- Created: ${result.created ? 'new' : 'reused existing'}\n\nPlayer has been notified.`,
-              }],
-            };
+            return ok(`Worktree created for **${player}**:\n- Path: \`${result.path}\`\n- Branch: \`${result.branch}\`\n- Created: ${result.created ? 'new' : 'reused existing'}\n\nPlayer has been notified.`);
           }
 
           case 'remove': {
             if (!player) {
-              return {
-                content: [{ type: 'text' as const, text: '`player` is required for remove action.' }],
-                isError: true,
-              };
+              return fail('`player` is required for remove action.');
             }
 
             // Look up worktree entry from conductor state
             const entries: WorktreeEntry[] = await handle.query('worktrees');
             const entry = entries.find((w) => w.player === player);
             if (!entry) {
-              return {
-                content: [{ type: 'text' as const, text: `No worktree found for player "${player}".` }],
-                isError: true,
-              };
+              return fail(`No worktree found for player "${player}".`);
             }
 
             // Remove from disk
@@ -148,38 +128,23 @@ export function registerWorktreeTool(
               // Player may no longer be active — non-fatal
             }
 
-            return {
-              content: [{
-                type: 'text' as const,
-                text: `Worktree for **${player}** removed (branch: \`${entry.branch}\`).`,
-              }],
-            };
+            return ok(`Worktree for **${player}** removed (branch: \`${entry.branch}\`).`);
           }
 
           case 'list': {
             const entries: WorktreeEntry[] = await handle.query('worktrees');
             if (entries.length === 0) {
-              return {
-                content: [{ type: 'text' as const, text: 'No active worktrees.' }],
-              };
+              return ok('No active worktrees.');
             }
 
             const lines = entries.map((w) =>
               `- **${w.player}**: \`${w.path}\` (branch: \`${w.branch}\`, created: ${w.createdAt} by ${w.createdBy})`,
             );
-            return {
-              content: [{
-                type: 'text' as const,
-                text: `${entries.length} active worktree${entries.length === 1 ? '' : 's'}:\n${lines.join('\n')}`,
-              }],
-            };
+            return ok(`${entries.length} active worktree${entries.length === 1 ? '' : 's'}:\n${lines.join('\n')}`);
           }
         }
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Worktree operation failed: ${err}` }],
-          isError: true,
-        };
+        return fail(`Worktree operation failed: ${formatError(err)}`);
       }
     },
   );

@@ -5,7 +5,7 @@ import { Config } from '../config';
 import { SessionMetadata } from '../types';
 import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 import { MESSAGE_MAX, shouldIncludeInBroadcast } from '../utils/validation';
 
 export function registerBroadcastTool(
@@ -63,12 +63,7 @@ export function registerBroadcastTool(
         }
 
         if (targets.length === 0) {
-          return {
-            content: [{
-              type: 'text' as const,
-              text: 'No active players matched the broadcast filter.',
-            }],
-          };
+          return ok('No active players matched the broadcast filter.');
         }
 
         // Fan out cue outbox entries for each target
@@ -84,17 +79,9 @@ export function registerBroadcastTool(
         }
 
         const names = targets.map((t) => t.playerId);
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `Broadcast sent to ${targets.length} player${targets.length === 1 ? '' : 's'}: ${names.join(', ')}`,
-          }],
-        };
+        return ok(`Broadcast sent to ${targets.length} player${targets.length === 1 ? '' : 's'}: ${names.join(', ')}`);
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to broadcast: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to broadcast: ${formatError(err)}`);
       }
     },
   );

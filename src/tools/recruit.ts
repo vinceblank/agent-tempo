@@ -6,7 +6,7 @@ import { AgentType } from '../types';
 import { resolveSession } from './resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 import { resolveAgentType, listAgentTypes } from '../ensemble/agent-types';
 import { PLAYER_NAME_MAX, MESSAGE_MAX, PATH_MAX, validatePlayerName } from '../utils/validation';
 
@@ -65,13 +65,7 @@ export function registerRecruitTool(
         const info = resolveAgentType(agentTypeName);
         if (!info) {
           const available = listAgentTypes().map(t => t.name);
-          return {
-            content: [{
-              type: 'text' as const,
-              text: `Unknown agent type "${agentTypeName}". Available types: ${available.length ? available.join(', ') : '(none)'}`,
-            }],
-            isError: true,
-          };
+          return fail(`Unknown agent type "${agentTypeName}". Available types: ${available.length ? available.join(', ') : '(none)'}`);
         }
         agentDefinition = info.name;
         agentDefinitionPath = info.path;
@@ -83,22 +77,10 @@ export function registerRecruitTool(
       // Validate name
       const nameError = validatePlayerName(name);
       if (nameError) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: nameError,
-          }],
-          isError: true,
-        };
+        return fail(nameError);
       }
       if (name === 'conductor' && !isConductor) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `The name "conductor" is reserved for conductor sessions. Use a different name, or set conductor: true.`,
-          }],
-          isError: true,
-        };
+        return fail(`The name "conductor" is reserved for conductor sessions. Use a different name, or set conductor: true.`);
       }
 
       try {
@@ -109,13 +91,7 @@ export function registerRecruitTool(
             const conductorHandle = client.workflow.getHandle(conductorWfId);
             const desc = await conductorHandle.describe();
             if (desc.status.name === 'RUNNING') {
-              return {
-                content: [{
-                  type: 'text' as const,
-                  text: `A conductor is already running in ensemble "${config.ensemble}". Use \`claude-tempo conduct --replace\` from the CLI to replace it, or \`stop\` it first.`,
-                }],
-                isError: true,
-              };
+              return fail(`A conductor is already running in ensemble "${config.ensemble}". Use \`claude-tempo conduct --replace\` from the CLI to replace it, or \`stop\` it first.`);
             }
           } catch {
             // No existing conductor — proceed
@@ -125,13 +101,7 @@ export function registerRecruitTool(
         // Check if a session with this name is already active
         const existing = await resolveSession(client, config.ensemble, name);
         if (existing) {
-          return {
-            content: [{
-              type: 'text' as const,
-              text: `Session **${name}** is already active. Use \`cue\` to send it a message, or \`stop\` it first.`,
-            }],
-            isError: true,
-          };
+          return fail(`Session **${name}** is already active. Use \`cue\` to send it a message, or \`stop\` it first.`);
         }
 
         const entry = {
@@ -151,17 +121,9 @@ export function registerRecruitTool(
         } as OutboxEntryInput;
         const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `Recruit request submitted for **${name}** in ${workDir}. The session will be spawned shortly. (outbox: ${entryId})`,
-          }],
-        };
+        return ok(`Recruit request submitted for **${name}** in ${workDir}. The session will be spawned shortly. (outbox: ${entryId})`);
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to recruit: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to recruit: ${formatError(err)}`);
       }
     },
   );

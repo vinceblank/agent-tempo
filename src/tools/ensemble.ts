@@ -5,7 +5,7 @@ import * as os from 'os';
 import { Config } from '../config';
 import { SessionMetadata } from '../types';
 import { scanEnsembleSessions } from '../activities/resolve';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 
 export function registerEnsembleTool(
   server: McpServer,
@@ -28,10 +28,7 @@ export function registerEnsembleTool(
       try {
         sessions = await scanEnsembleSessions(client, config.ensemble);
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Error listing workflows: ${err}` }],
-          isError: true,
-        };
+        return fail(`Error listing workflows: ${formatError(err)}`);
       }
 
       // Apply scope filters
@@ -58,9 +55,7 @@ export function registerEnsembleTool(
         }));
 
       if (players.length === 0) {
-        return {
-          content: [{ type: 'text' as const, text: 'No active sessions found.' }],
-        };
+        return ok('No active sessions found.');
       }
 
       const lines = players.map((p) => {
@@ -86,9 +81,7 @@ export function registerEnsembleTool(
         ].filter(Boolean).join('\n');
       });
 
-      return {
-        content: [{ type: 'text' as const, text: lines.join('\n\n') }],
-      };
+      return ok(lines.join('\n\n'));
     },
   );
 }

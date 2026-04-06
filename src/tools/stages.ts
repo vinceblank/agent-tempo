@@ -1,6 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 import type { StageEntry } from '../types';
 
 export function registerStagesTool(
@@ -17,9 +17,7 @@ export function registerStagesTool(
         const stages: StageEntry[] = await handle.query('stages');
 
         if (stages.length === 0) {
-          return {
-            content: [{ type: 'text' as const, text: 'No stages defined.' }],
-          };
+          return ok('No stages defined.');
         }
 
         const lines = stages.map((s) => {
@@ -42,14 +40,9 @@ export function registerStagesTool(
           ].join('\n');
         });
 
-        return {
-          content: [{ type: 'text' as const, text: lines.join('\n\n') }],
-        };
+        return ok(lines.join('\n\n'));
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to query stages: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to query stages: ${formatError(err)}`);
       }
     },
   );

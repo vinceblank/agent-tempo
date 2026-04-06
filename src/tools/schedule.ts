@@ -4,7 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { Config, schedulerWorkflowId } from '../config';
 import { parseDuration } from '../utils/duration';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 import { SCHEDULE_NAME_MAX, SCHEDULE_MESSAGE_MAX, PLAYER_NAME_MAX, CRON_EXPRESSION_MAX } from '../utils/validation';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:schedule]', ...args);
@@ -54,24 +54,12 @@ export function registerScheduleTool(
       // Validate exactly one timing option
       const timingCount = [at, delay, every, cron].filter(Boolean).length;
       if (timingCount !== 1) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: 'Provide exactly one timing option: `at`, `delay`, `every`, or `cron`.',
-          }],
-          isError: true,
-        };
+        return fail('Provide exactly one timing option: `at`, `delay`, `every`, or `cron`.');
       }
 
       // timezone only valid with cron
       if (timezone && !cron) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: '`timezone` can only be used with `cron`.',
-          }],
-          isError: true,
-        };
+        return fail('`timezone` can only be used with `cron`.');
       }
 
       const now = Date.now();
@@ -81,29 +69,20 @@ export function registerScheduleTool(
       if (at) {
         const ts = Date.parse(at);
         if (isNaN(ts)) {
-          return {
-            content: [{ type: 'text' as const, text: `Invalid ISO datetime for "at": ${at}` }],
-            isError: true,
-          };
+          return fail(`Invalid ISO datetime for "at": ${at}`);
         }
         nextFireAt = ts;
       } else if (delay) {
         const ms = parseDuration(delay);
         if (ms === null) {
-          return {
-            content: [{ type: 'text' as const, text: `Invalid duration for "delay": ${delay}. Use e.g. "30s", "10m", "2h", "1d".` }],
-            isError: true,
-          };
+          return fail(`Invalid duration for "delay": ${delay}. Use e.g. "30s", "10m", "2h", "1d".`);
         }
         nextFireAt = now + ms;
       } else if (every) {
         // every (recurring interval)
         const ms = parseDuration(every);
         if (ms === null || ms < 10_000) {
-          return {
-            content: [{ type: 'text' as const, text: `Invalid or too-short interval for "every": ${every}. Minimum is 10s.` }],
-            isError: true,
-          };
+          return fail(`Invalid or too-short interval for "every": ${every}. Minimum is 10s.`);
         }
         nextFireAt = now + ms;
         interval = ms;
@@ -113,18 +92,11 @@ export function registerScheduleTool(
           const job = new Cron(cron!, { timezone: timezone || 'UTC' });
           const next = job.nextRun();
           if (!next) {
-            return {
-              content: [{ type: 'text' as const, text: `Cron expression "${cron}" has no upcoming fire time.` }],
-              isError: true,
-            };
+            return fail(`Cron expression "${cron}" has no upcoming fire time.`);
           }
           nextFireAt = next.getTime();
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          return {
-            content: [{ type: 'text' as const, text: `Invalid cron expression "${cron}": ${msg}` }],
-            isError: true,
-          };
+          return fail(`Invalid cron expression "${cron}": ${formatError(err)}`);
         }
       }
 
@@ -133,10 +105,7 @@ export function registerScheduleTool(
       if (until) {
         const ts = Date.parse(until);
         if (isNaN(ts)) {
-          return {
-            content: [{ type: 'text' as const, text: `Invalid ISO datetime for "until": ${until}` }],
-            isError: true,
-          };
+          return fail(`Invalid ISO datetime for "until": ${until}`);
         }
         untilMs = ts;
       }
@@ -185,17 +154,9 @@ export function registerScheduleTool(
           : interval
             ? ` (repeating every ${every})`
             : ' (one-shot)';
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `Schedule **${name}** created. Next fire: ${fireDate}${recur}. Target: ${target}.`,
-          }],
-        };
+        return ok(`Schedule **${name}** created. Next fire: ${fireDate}${recur}. Target: ${target}.`);
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to create schedule: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to create schedule: ${formatError(err)}`);
       }
     },
   );

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
 import { QualityGate } from '../types';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 import { GATE_TASK_MAX } from '../utils/validation';
 
 export function registerGatesTool(
@@ -31,9 +31,7 @@ export function registerGatesTool(
         }
 
         if (filtered.length === 0) {
-          return {
-            content: [{ type: 'text' as const, text: 'No quality gates found matching the filter.' }],
-          };
+          return ok('No quality gates found matching the filter.');
         }
 
         const lines = filtered.map((g) => {
@@ -47,17 +45,9 @@ export function registerGatesTool(
           return `${icon} **${g.task}** [${g.status}] (by ${g.createdBy}, ${g.createdAt})\n${criteriaLines.join('\n')}`;
         });
 
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `${filtered.length} quality gate${filtered.length === 1 ? '' : 's'}:\n\n${lines.join('\n\n')}`,
-          }],
-        };
+        return ok(`${filtered.length} quality gate${filtered.length === 1 ? '' : 's'}:\n\n${lines.join('\n\n')}`);
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to query gates: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to query gates: ${formatError(err)}`);
       }
     },
   );

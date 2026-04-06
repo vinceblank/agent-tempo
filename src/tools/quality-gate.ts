@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 import { GATE_TASK_MAX, GATE_CRITERIA_MAX, GATE_CRITERION_TEXT_MAX } from '../utils/validation';
 
 export function registerQualityGateTool(
@@ -27,17 +27,9 @@ export function registerQualityGateTool(
         });
 
         const lines = criteria.map((c, i) => `  ${i}. [ ] ${c}`);
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `Quality gate **${task}** set with ${criteria.length} criteria:\n${lines.join('\n')}`,
-          }],
-        };
+        return ok(`Quality gate **${task}** set with ${criteria.length} criteria:\n${lines.join('\n')}`);
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to set quality gate: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to set quality gate: ${formatError(err)}`);
       }
     },
   );

@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
 import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 import { MESSAGE_MAX } from '../utils/validation';
 
 export function registerReportTool(
@@ -30,14 +30,9 @@ export function registerReportTool(
         } as OutboxEntryInput;
         const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 
-        return {
-          content: [{ type: 'text' as const, text: `Report sent to conductor: [${type}] ${text} (outbox: ${entryId})` }],
-        };
+        return ok(`Report sent to conductor: [${type}] ${text} (outbox: ${entryId})`);
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to send report: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to send report: ${formatError(err)}`);
       }
     },
   );

@@ -13,7 +13,7 @@ import { resolveSession } from './resolve';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { parseDuration } from '../utils/duration';
 import { safeLineupPath } from '../utils/safe-path';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 import { PLAYER_NAME_MAX, PATH_MAX } from '../utils/validation';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:load-lineup]', ...args);
@@ -45,22 +45,10 @@ export function registerLoadLineupTool(
       const lineupPath = (args as any).path as string | undefined;
 
       if (!lineupName && !lineupPath) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: 'Provide either `name` (saved lineup) or `path` (file path). Exactly one is required.',
-          }],
-          isError: true,
-        };
+        return fail('Provide either `name` (saved lineup) or `path` (file path). Exactly one is required.');
       }
       if (lineupName && lineupPath) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: 'Provide either `name` or `path`, not both.',
-          }],
-          isError: true,
-        };
+        return fail('Provide either `name` or `path`, not both.');
       }
 
       try {
@@ -72,13 +60,7 @@ export function registerLoadLineupTool(
           // Try to find saved lineup by name
           const savedContent = readSavedLineup(lineupName!);
           if (!savedContent) {
-            return {
-              content: [{
-                type: 'text' as const,
-                text: `No saved lineup found with name "${lineupName}". Check ~/.claude-tempo/ensembles/.`,
-              }],
-              isError: true,
-            };
+            return fail(`No saved lineup found with name "${lineupName}". Check ~/.claude-tempo/ensembles/.`);
           }
           // readSavedLineup returns content, but loadLineup wants a path.
           // Construct the path directly.
@@ -379,17 +361,9 @@ export function registerLoadLineupTool(
           lines.push(`Failures:\n${failed.map(f => `  - ${f}`).join('\n')}`);
         }
 
-        return {
-          content: [{
-            type: 'text' as const,
-            text: lines.join('\n'),
-          }],
-        };
+        return ok(lines.join('\n'));
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to load lineup: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to load lineup: ${formatError(err)}`);
       }
     },
   );

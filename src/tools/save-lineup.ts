@@ -4,7 +4,7 @@ import { Client } from '@temporalio/client';
 import { Config } from '../config';
 import { saveLineup } from '../ensemble/saver';
 import { safeLineupPath } from '../utils/safe-path';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 import { PLAYER_NAME_MAX, PATH_MAX } from '../utils/validation';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:save-lineup]', ...args);
@@ -26,13 +26,7 @@ export function registerSaveLineupTool(
     },
     async (args) => {
       if (!isConductor) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: 'Only the conductor can save ensemble lineups.',
-          }],
-          isError: true,
-        };
+        return fail('Only the conductor can save ensemble lineups.');
       }
 
       const lineupName = (args as any).name as string | undefined;
@@ -49,17 +43,9 @@ export function registerSaveLineupTool(
         const outputPath = await saveLineup(client, config.ensemble, validatedPath, lineupName);
         log(`Saved lineup to ${outputPath}`);
 
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `Ensemble lineup saved to **${outputPath}**.`,
-          }],
-        };
+        return ok(`Ensemble lineup saved to **${outputPath}**.`);
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to save ensemble: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to save ensemble: ${formatError(err)}`);
       }
     },
   );

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
 import { Message, SentMessage } from '../types';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 import { PREVIEW_MAX_LENGTH } from '../utils/validation';
 
 interface TimelineEntry {
@@ -43,10 +43,7 @@ export function registerRecallTool(
       if (since) {
         sinceTs = Date.parse(since);
         if (isNaN(sinceTs)) {
-          return {
-            content: [{ type: 'text' as const, text: `Invalid ISO timestamp for "since": ${since}` }],
-            isError: true,
-          };
+          return fail(`Invalid ISO timestamp for "since": ${since}`);
         }
       }
 
@@ -92,9 +89,7 @@ export function registerRecallTool(
         filtered = filtered.slice(0, limit);
 
         if (filtered.length === 0) {
-          return {
-            content: [{ type: 'text' as const, text: 'No messages found matching the filter.' }],
-          };
+          return ok('No messages found matching the filter.');
         }
 
         // Format output
@@ -107,17 +102,9 @@ export function registerRecallTool(
           return `[${ts}] ${dir}${status}\n  ${preview}`;
         });
 
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `${filtered.length} message${filtered.length === 1 ? '' : 's'}:\n\n${lines.join('\n\n')}`,
-          }],
-        };
+        return ok(`${filtered.length} message${filtered.length === 1 ? '' : 's'}:\n\n${lines.join('\n\n')}`);
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to recall messages: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to recall messages: ${formatError(err)}`);
       }
     },
   );

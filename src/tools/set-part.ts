@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 import { PART_MAX } from '../utils/validation';
 
 export function registerSetPartTool(
@@ -19,14 +19,9 @@ export function registerSetPartTool(
       const { part } = args as { part: string };
       try {
         await handle.signal('setPart', part);
-        return {
-          content: [{ type: 'text' as const, text: `Part updated: "${part}"` }],
-        };
+        return ok(`Part updated: "${part}"`);
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to update part: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to update part: ${formatError(err)}`);
       }
     },
   );

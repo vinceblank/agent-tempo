@@ -5,8 +5,8 @@ import { Config } from '../config';
 import { resolveSession } from './resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
-import { defineTool } from './helpers';
-import { PLAYER_NAME_MAX, MESSAGE_MAX } from '../utils/validation';
+import { defineTool, ok, fail, formatError } from './helpers';
+import { PLAYER_NAME_MAX, MESSAGE_MAX, validatePlayerName } from '../utils/validation';
 
 export function registerCueTool(
   server: McpServer,
@@ -25,13 +25,14 @@ export function registerCueTool(
     },
     async (args) => {
       const { playerId, message } = args as { playerId: string; message: string };
+
+      const nameError = validatePlayerName(playerId);
+      if (nameError) return fail(nameError);
+
       try {
         const resolved = await resolveSession(client, config.ensemble, playerId);
         if (!resolved) {
-          return {
-            content: [{ type: 'text' as const, text: `No active session found with name "${playerId}".` }],
-            isError: true,
-          };
+          return fail(`No active session found with name "${playerId}".`);
         }
 
         const entry = {
@@ -41,14 +42,9 @@ export function registerCueTool(
         } as OutboxEntryInput;
         const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 
-        return {
-          content: [{ type: 'text' as const, text: `Message sent to ${playerId}. (outbox: ${entryId})` }],
-        };
+        return ok(`Message sent to ${playerId}. (outbox: ${entryId})`);
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to send message to ${playerId}: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to send message to ${playerId}: ${formatError(err)}`);
       }
     },
   );
