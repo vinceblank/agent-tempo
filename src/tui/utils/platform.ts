@@ -215,26 +215,23 @@ function gridToStrings(grid: string[][]): string[] {
  * Renders to 14 character rows of half-block cells.
  */
 export function metronomePixelFrames(): HalfBlockCell[][][] {
-  const W = 32;
-  const H = 28;
+  const W = 40;
+  const H = 32;
 
-  // SVG coordinates scaled to 32×28 grid:
+  // SVG coordinates scaled to 40×32 grid:
   // SVG viewport 64×64, triangle: apex(32,8) → bl(14,54) → br(50,54)
-  // Scale: x * 32/64 = x/2, y * 28/64 ≈ y * 0.4375
-  const apex = { x: 16, y: 2 };
-  const bl = { x: 7, y: 24 };
-  const br = { x: 25, y: 24 };
-  const pivotY = 20; // ~46 * 0.4375
-  const pivotX = 16;
+  // Scale: x * 40/64 = x * 0.625, y * 32/64 = y/2
+  const apex = { x: 20, y: 4 };
+  const bl = { x: 9, y: 27 };
+  const br = { x: 31, y: 27 };
+  const pivotY = 23; // ~46/2
+  const pivotX = 20;
 
   // Pendulum tip positions for 3 frames (extending above apex)
-  // SVG pendulum: from pivot(32,46) to tip(44,14) — that's center-right
-  // Left frame: mirror to left
-  // Center frame: straight up
   const armTips = [
-    { x: 10, y: 0 },  // left
-    { x: 16, y: 0 },  // center (straight up)
-    { x: 22, y: 0 },  // right
+    { x: 12, y: 0 },  // left
+    { x: 20, y: 0 },  // center (straight up)
+    { x: 28, y: 0 },  // right
   ];
 
   function buildFrame(tipIdx: number): string[] {
@@ -242,18 +239,17 @@ export function metronomePixelFrames(): HalfBlockCell[][][] {
 
     // Draw pendulum arm FIRST (triangle outline draws over it where they overlap)
     const tip = armTips[tipIdx];
-    drawLine(grid, pivotX, pivotY, tip.x, tip.y, 'A', 2);
+    drawLine(grid, pivotX, pivotY, tip.x, tip.y, 'A', 1);
 
-    // Draw pivot dot
-    drawCircle(grid, pivotX, pivotY, 2, 'P');
+    // Draw pivot dot (radius 1 for thin look)
+    drawCircle(grid, pivotX, pivotY, 1, 'P');
 
-    // Draw triangle outline (cream, 2px thick) — draws OVER arm where overlapping
-    drawLine(grid, apex.x, apex.y, bl.x, bl.y, 'T', 2); // left edge
-    drawLine(grid, apex.x, apex.y, br.x, br.y, 'T', 2); // right edge
-    drawLine(grid, bl.x, bl.y, br.x, br.y, 'T', 2);     // base
+    // Draw triangle outline (1px stroke for thin, clean lines)
+    drawLine(grid, apex.x, apex.y, bl.x, bl.y, 'T', 1); // left edge
+    drawLine(grid, apex.x, apex.y, br.x, br.y, 'T', 1); // right edge
+    drawLine(grid, bl.x, bl.y, br.x, br.y, 'T', 1);     // base
 
     // Restore arm pixels that were overwritten by triangle at overlap points
-    // (arm should show through the triangle outline at crossing points)
     drawLine(grid, pivotX, pivotY, tip.x, tip.y, 'A', 1);
     drawCircle(grid, pivotX, pivotY, 1, 'P');
 

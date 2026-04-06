@@ -881,6 +881,11 @@ export const COMMANDS: Record<string, CommandDef> = {
     usage: '/quit',
     handler: null, // Handled directly in App.tsx
   },
+  exit: {
+    description: 'Exit the TUI (alias for /quit)',
+    usage: '/exit',
+    handler: null, // Handled directly in App.tsx
+  },
 };
 
 /** Get sorted list of command names for display. */

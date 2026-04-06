@@ -256,7 +256,7 @@ export function App({ api, ensemble }: AppProps) {
 
     if (parsed) {
       // Slash command
-      if (parsed.name === 'quit') {
+      if (parsed.name === 'quit' || parsed.name === 'exit') {
         exit();
         return;
       }
