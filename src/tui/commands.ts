@@ -117,8 +117,13 @@ async function handleCue(
           }
         }
       } catch {
-        // Fall through with empty ensemble — sendMessage may handle it
+        // Fall through — ensemble may still be empty
       }
+    }
+
+    if (!ensemble) {
+      commitStatic(dispatch, 'error', `Player "${target}" not found in any ensemble.`);
+      return;
     }
 
     try {
