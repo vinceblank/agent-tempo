@@ -98,6 +98,7 @@ describe('claudeMaestroWorkflow', function () {
           // Simulate a player joining
           currentPlayers = [{
             playerId: 'alice',
+            ensemble: ENSEMBLE,
             part: 'Working on feature',
             hostname: 'test-host',
             workDir: '/tmp/test',
@@ -134,6 +135,7 @@ describe('claudeMaestroWorkflow', function () {
 
       const initialPlayer: MaestroPlayerInfo = {
         playerId: 'bob',
+        ensemble: ENSEMBLE,
         part: 'Initial part',
         hostname: 'test-host',
         workDir: '/tmp/test',

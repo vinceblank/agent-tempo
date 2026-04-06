@@ -444,6 +444,61 @@ export async function withWorkerAndMaestroActivities<T>(
         return relayResult();
       },
       fetchConductorHistory: async () => ({ success: true, history: [] }),
+      discoverEnsembles: async () => [],
+      deliverMaestroMessage: async () => ({ success: true }),
+      fetchPlayerMessages: async () => ({ success: true, messages: [] }),
+      deliverCue: async () => {},
+      deliverReport: async () => {},
+      terminateSession: async () => {},
+      startRecruitedSession: async () => ({ claudeSessionId: 'test' }),
+      performEncore: async () => ({ hostname: 'test-host', workDir: '/tmp', isConductor: false, agent: 'claude', temporalAddress: '', temporalNamespace: 'default' }),
+      spawnProcess: async () => ({ success: true }),
+    },
+  });
+  return worker.runUntil(() => fn(relayedCommands));
+}
+
+/**
+ * Like withWorkerAndMaestroActivities, but for the global Maestro workflow.
+ * Supports multiple ensembles via the `mockEnsembles` and `mockPlayersByEnsemble` callbacks.
+ */
+export async function withWorkerAndGlobalMaestroActivities<T>(
+  opts: {
+    mockEnsembles?: () => string[];
+    mockPlayersByEnsemble?: (ensemble: string) => MaestroPlayerInfo[];
+    relayResult?: () => { success: boolean; error?: string };
+    deliverResult?: () => { success: boolean; error?: string };
+    fetchMessagesResult?: () => { success: boolean; messages: any[]; error?: string };
+    fetchHistoryResult?: () => { success: boolean; history: any[]; error?: string };
+  },
+  fn: (relayedCommands: Array<{ ensemble: string; text: string; source: string; replyTo?: string }>) => Promise<T>,
+): Promise<T> {
+  const mockEnsembles = opts.mockEnsembles ?? (() => []);
+  const mockPlayersByEnsemble = opts.mockPlayersByEnsemble ?? (() => []);
+  const relayResult = opts.relayResult ?? (() => ({ success: true }));
+  const deliverResult = opts.deliverResult ?? (() => ({ success: true }));
+  const fetchMessagesResult = opts.fetchMessagesResult ?? (() => ({ success: true, messages: [] }));
+  const fetchHistoryResult = opts.fetchHistoryResult ?? (() => ({ success: true, history: [] }));
+  const relayedCommands: Array<{ ensemble: string; text: string; source: string; replyTo?: string }> = [];
+
+  const { createScheduleActivities } = await import('../src/activities/schedule-fire');
+  const scheduleActivities = createScheduleActivities(testEnv.client);
+
+  const worker = await Worker.create({
+    connection: testEnv.nativeConnection,
+    taskQueue: TASK_QUEUE,
+    workflowBundle,
+    activities: {
+      ...scheduleActivities,
+      discoverEnsembles: async () => mockEnsembles(),
+      refreshEnsembleState: async (ensemble: string) => mockPlayersByEnsemble(ensemble),
+      relayCommandToConductor: async (input: { ensemble: string; text: string; source: string; replyTo?: string }) => {
+        relayedCommands.push(input);
+        return relayResult();
+      },
+      deliverMaestroMessage: async () => deliverResult(),
+      fetchPlayerMessages: async () => fetchMessagesResult(),
+      fetchConductorHistory: async () => fetchHistoryResult(),
       deliverCue: async () => {},
       deliverReport: async () => {},
       terminateSession: async () => {},
