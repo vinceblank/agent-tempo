@@ -21,7 +21,7 @@ import { ErrorView } from './components/ErrorView';
 import { RecruitWizard } from './components/RecruitWizard';
 import { TitleBar } from './components/TitleBar';
 import { PromptArea } from './components/PromptArea';
-import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS } from './commands';
+import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames } from './commands';
 import { THEME } from './utils/theme';
 import type { TempoClient } from './client';
 
@@ -90,6 +90,13 @@ export function App({ api, ensemble }: AppProps) {
     }
     return '/cue /recruit /stop /broadcast /help /quit';
   }, [state.phase, state.chatTarget]);
+
+  // ── Completion data for prompt ──
+  const commandNamesList = useMemo(() => getCommandNames(), []);
+  const playerNamesList = useMemo(
+    () => state.players.map(p => p.playerId),
+    [state.players],
+  );
 
   // ── Command submission handler ──
   const handleSubmit = useCallback(async (input: string) => {
@@ -586,6 +593,8 @@ export function App({ api, ensemble }: AppProps) {
       onChange: (value: string) => dispatch({ type: 'SET_INPUT', value }),
       onSubmit: handleSubmit,
       disabled: state.phase === 'error' || state.phase === 'recruit',
+      commandNames: commandNamesList,
+      playerNames: playerNamesList,
     }),
   );
 }
