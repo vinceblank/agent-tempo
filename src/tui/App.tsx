@@ -60,8 +60,51 @@ export function App({ api, ensemble }: AppProps) {
   useInput(useCallback((input: string, key: any) => {
     if (key.ctrl && input === 'c') {
       exit();
+      return;
     }
-  }, [exit]));
+
+    // Stop confirmation mode
+    if (state.confirmingStop) {
+      if (input === 'y' || input === 'Y') {
+        const target = state.confirmingStop;
+        dispatch({ type: 'CANCEL_STOP' });
+        // Execute the stop
+        (async () => {
+          try {
+            const ensembles = await api.discoverEnsembles();
+            for (const ens of ensembles) {
+              try {
+                await api.terminatePlayer(ens.name, target);
+                dispatch({
+                  type: 'COMMIT_STATIC',
+                  item: { id: nextStaticId(), type: 'info', content: `\u2714 Stopped player: ${target}`, timestamp: Date.now() },
+                });
+                return;
+              } catch {
+                // Try next ensemble
+              }
+            }
+            dispatch({
+              type: 'COMMIT_STATIC',
+              item: { id: nextStaticId(), type: 'error', content: `\u2717 Player "${target}" not found in any ensemble.`, timestamp: Date.now() },
+            });
+          } catch (err) {
+            dispatch({
+              type: 'COMMIT_STATIC',
+              item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to stop ${target}: ${err}`, timestamp: Date.now() },
+            });
+          }
+        })();
+      } else if (input === 'n' || input === 'N' || key.escape) {
+        dispatch({ type: 'CANCEL_STOP' });
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: { id: nextStaticId(), type: 'info', content: 'Stop cancelled.', timestamp: Date.now() },
+        });
+      }
+      return;
+    }
+  }, [exit, state.confirmingStop, api]));
 
   // ── Context string for title bar ──
   const contextString = useMemo(() => {
@@ -82,6 +125,9 @@ export function App({ api, ensemble }: AppProps) {
 
   // ── Hint text for prompt area ──
   const promptHints = useMemo(() => {
+    if (state.confirmingStop) {
+      return `Stop ${state.confirmingStop}? [y/N]`;
+    }
     if (state.phase === 'recruit') {
       return 'Follow the prompts above. Esc to cancel.';
     }
@@ -89,7 +135,7 @@ export function App({ api, ensemble }: AppProps) {
       return 'Type a message to send, or /back to exit chat mode';
     }
     return '/cue /recruit /stop /broadcast /help /quit';
-  }, [state.phase, state.chatTarget]);
+  }, [state.phase, state.chatTarget, state.confirmingStop]);
 
   // ── Completion data for prompt ──
   const commandNamesList = useMemo(() => getCommandNames(), []);
@@ -592,7 +638,7 @@ export function App({ api, ensemble }: AppProps) {
       value: state.inputValue,
       onChange: (value: string) => dispatch({ type: 'SET_INPUT', value }),
       onSubmit: handleSubmit,
-      disabled: state.phase === 'error' || state.phase === 'recruit',
+      disabled: state.phase === 'error' || state.phase === 'recruit' || !!state.confirmingStop,
       commandNames: commandNamesList,
       playerNames: playerNamesList,
     }),

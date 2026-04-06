@@ -136,6 +136,8 @@ export interface TuiState {
   inputValue: string;
   /** Player name when in chat mode (bare text sends cue to this target). */
   chatTarget?: string;
+  /** Player name pending stop confirmation (null = not confirming). */
+  confirmingStop?: string;
   /** Recruit wizard state (active when phase === 'recruit'). */
   recruitState?: RecruitState;
 }
@@ -169,6 +171,7 @@ export function initialState(ensemble?: string): TuiState {
     staticItems: [],
     inputValue: '',
     chatTarget: undefined,
+    confirmingStop: undefined,
   };
 }
 
@@ -197,6 +200,9 @@ export type TuiAction =
   | { type: 'SET_INPUT'; value: string }
   | { type: 'ENTER_CHAT'; target: string }
   | { type: 'EXIT_CHAT' }
+  // Stop confirmation
+  | { type: 'CONFIRM_STOP'; player: string }
+  | { type: 'CANCEL_STOP' }
   // Recruit wizard
   | { type: 'ENTER_RECRUIT'; answers?: Partial<RecruitAnswers> }
   | { type: 'RECRUIT_NEXT_STEP'; answer: Partial<RecruitAnswers> }
@@ -354,6 +360,14 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'EXIT_CHAT':
       return { ...state, phase: 'main' as TuiPhase, chatTarget: undefined };
+
+    // ── Stop confirmation ──
+
+    case 'CONFIRM_STOP':
+      return { ...state, confirmingStop: action.player };
+
+    case 'CANCEL_STOP':
+      return { ...state, confirmingStop: undefined };
 
     // ── Recruit wizard ──
 

@@ -179,11 +179,82 @@ async function handlePlayers(
   }
 }
 
-/** /stop <player> — terminate a player session. */
-async function handleStop(
+/** /player <name> — show detailed player info. */
+async function handlePlayer(
   args: string[],
   dispatch: (action: TuiAction) => void,
   api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  if (args.length === 0) {
+    commitStatic(dispatch, 'error', 'Usage: /player <name>');
+    return;
+  }
+
+  const target = args[0];
+  const icons = statusIcons(supportsUnicode());
+
+  try {
+    // Find the player across ensembles
+    const ensembles = ctx.activeEnsemble
+      ? [{ name: ctx.activeEnsemble }]
+      : await api.discoverEnsembles();
+
+    for (const ens of ensembles) {
+      const players = await api.getPlayers(ens.name);
+      const player = players.find(p => p.playerId === target);
+      if (!player) continue;
+
+      // Get detailed metadata
+      const metadata = await api.getPlayerMetadata(ens.name, target);
+      const messages = await api.getPlayerMessages(ens.name, target);
+
+      const statusIcon = player.status === 'active' ? icons.active
+        : player.status === 'stale' ? icons.stale
+        : player.status === 'pending' ? icons.pending
+        : icons.terminated;
+
+      const lines: string[] = [];
+      lines.push(`\n  Player: ${target}`);
+      lines.push(`  Type: ${player.playerType || player.agentType || '(default)'}`);
+      lines.push(`  Status: ${statusIcon} ${player.status || 'unknown'}`);
+      if (player.part) lines.push(`  Part: ${player.part}`);
+      if (metadata?.gitBranch) lines.push(`  Branch: ${metadata.gitBranch}`);
+      if (metadata?.workDir) lines.push(`  Dir: ${metadata.workDir}`);
+      if (player.hostname) lines.push(`  Host: ${player.hostname}`);
+      if (player.isConductor) lines.push(`  Role: ${icons.conductor} Conductor`);
+      lines.push(`  Ensemble: ${ens.name}`);
+
+      // Recent messages (last 5)
+      const recent = messages.slice(-5);
+      if (recent.length > 0) {
+        lines.push('');
+        lines.push(`  Recent messages (last ${recent.length}):`);
+        for (const m of recent) {
+          const time = formatTimestamp(m.timestamp);
+          const isSent = 'direction' in m && (m as any).direction === 'sent';
+          const dir = isSent
+            ? `${target} ${icons.arrow} ${'to' in m ? (m as any).to : '?'}`
+            : `${'from' in m ? (m as any).from : '?'} ${icons.arrow} ${target}`;
+          const text = m.text.length > 50 ? m.text.slice(0, 47) + '...' : m.text;
+          lines.push(`  ${time}  ${dir}: ${text.replace(/\n/g, ' ')}`);
+        }
+      }
+
+      commitStatic(dispatch, 'command-output', lines.join('\n'));
+      return;
+    }
+
+    commitStatic(dispatch, 'error', `Player "${target}" not found in any ensemble.`);
+  } catch (err) {
+    commitStatic(dispatch, 'error', `Failed to get player info: ${err}`);
+  }
+}
+
+/** /stop <player> — request stop confirmation. */
+async function handleStop(
+  args: string[],
+  dispatch: (action: TuiAction) => void,
 ): Promise<void> {
   if (args.length === 0) {
     commitStatic(dispatch, 'error', 'Usage: /stop <player>');
@@ -191,22 +262,8 @@ async function handleStop(
   }
 
   const target = args[0];
-  try {
-    // Discover the ensemble this player belongs to
-    const ensembles = await api.discoverEnsembles();
-    for (const ens of ensembles) {
-      try {
-        await api.terminatePlayer(ens.name, target);
-        commitStatic(dispatch, 'info', `\u2714 Stopped player: ${target}`);
-        return;
-      } catch {
-        // Try next ensemble
-      }
-    }
-    commitStatic(dispatch, 'error', `\u2717 Player "${target}" not found in any ensemble.`);
-  } catch (err) {
-    commitStatic(dispatch, 'error', `\u2717 Failed to stop ${target}: ${err}`);
-  }
+  // Enter confirmation mode — App.tsx handles the y/n input
+  dispatch({ type: 'CONFIRM_STOP', player: target });
 }
 
 /** /broadcast <message> — send a message to all active players. */
@@ -644,6 +701,11 @@ export const COMMANDS: Record<string, CommandDef> = {
     description: 'Cancel a named schedule',
     usage: '/unschedule <name>',
     handler: handleUnschedule,
+  },
+  player: {
+    description: 'Show detailed player info',
+    usage: '/player <name>',
+    handler: handlePlayer,
   },
   players: {
     description: 'List players in the current ensemble',
