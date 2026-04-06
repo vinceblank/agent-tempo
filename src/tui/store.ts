@@ -16,7 +16,17 @@ import type { EnsembleSummary } from './client';
 
 // ── State ──
 
+/**
+ * TuiView tracks the *navigation hierarchy* (home → ensemble → player).
+ * It determines what data to fetch and what breadcrumb context to show.
+ */
 export type TuiView = 'home' | 'ensemble' | 'player';
+
+/**
+ * TuiPhase tracks the *application lifecycle* (splash → main → chat/error).
+ * It determines which component renders in the live content area.
+ * A phase can span multiple views (e.g., 'main' shows either home or ensemble view).
+ */
 export type TuiPhase = 'splash' | 'connecting' | 'connected' | 'main' | 'chat' | 'recruit' | 'error';
 
 // ── Static items (committed scroll history) ──

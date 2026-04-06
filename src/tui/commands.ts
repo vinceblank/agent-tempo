@@ -4,6 +4,7 @@
  * implementations for each command.
  */
 import type { TempoClient } from './client';
+import type { TuiAction, StaticItem } from './store';
 import { statusIcons, supportsUnicode } from './utils/platform';
 
 // ── Types ──
@@ -26,7 +27,7 @@ export interface CommandContext {
 /** Handler function signature for slash commands. */
 export type CommandHandler = (
   args: string[],
-  dispatch: (action: any) => void,
+  dispatch: (action: TuiAction) => void,
   api: TempoClient,
   ctx: CommandContext,
 ) => Promise<void>;
@@ -68,7 +69,11 @@ function nextId(): string {
   return `cmd-${++_staticIdCounter}`;
 }
 
-function commitStatic(dispatch: (action: any) => void, type: string, content: string): void {
+function commitStatic(
+  dispatch: (action: TuiAction) => void,
+  type: StaticItem['type'],
+  content: string,
+): void {
   dispatch({
     type: 'COMMIT_STATIC',
     item: { id: nextId(), type, content, timestamp: Date.now() },
@@ -80,7 +85,7 @@ function commitStatic(dispatch: (action: any) => void, type: string, content: st
 /** /cue <player> [message] — enter chat mode or send a quick cue. */
 async function handleCue(
   args: string[],
-  dispatch: (action: any) => void,
+  dispatch: (action: TuiAction) => void,
   api: TempoClient,
   ctx: CommandContext,
 ): Promise<void> {
@@ -138,7 +143,7 @@ async function handleCue(
 /** /players — list players in the current ensemble. */
 async function handlePlayers(
   _args: string[],
-  dispatch: (action: any) => void,
+  dispatch: (action: TuiAction) => void,
   api: TempoClient,
 ): Promise<void> {
   // The player data is already in state via polling; format from recent poll data.
@@ -177,7 +182,7 @@ async function handlePlayers(
 /** /stop <player> — terminate a player session. */
 async function handleStop(
   args: string[],
-  dispatch: (action: any) => void,
+  dispatch: (action: TuiAction) => void,
   api: TempoClient,
 ): Promise<void> {
   if (args.length === 0) {
@@ -207,7 +212,7 @@ async function handleStop(
 /** /broadcast <message> — send a message to all active players. */
 async function handleBroadcast(
   args: string[],
-  dispatch: (action: any) => void,
+  dispatch: (action: TuiAction) => void,
   api: TempoClient,
 ): Promise<void> {
   if (args.length === 0) {
@@ -241,7 +246,7 @@ async function handleBroadcast(
 /** /recall [player] — fetch message history. */
 async function handleRecall(
   args: string[],
-  dispatch: (action: any) => void,
+  dispatch: (action: TuiAction) => void,
   api: TempoClient,
 ): Promise<void> {
   try {
@@ -285,7 +290,7 @@ async function handleRecall(
 /** /recruit [name] — launch the recruit wizard. Pre-fills name if given. */
 async function handleRecruit(
   args: string[],
-  dispatch: (action: any) => void,
+  dispatch: (action: TuiAction) => void,
   _api: TempoClient,
 ): Promise<void> {
   // Parse optional inline args: /recruit name --type foo --dir /path
@@ -305,7 +310,7 @@ async function handleRecruit(
 /** /encore <player> — revive a stale player. */
 async function handleEncore(
   args: string[],
-  dispatch: (action: any) => void,
+  dispatch: (action: TuiAction) => void,
   api: TempoClient,
 ): Promise<void> {
   if (args.length === 0) {
@@ -340,7 +345,7 @@ async function handleEncore(
 /** /schedule — list active schedules. */
 async function handleSchedule(
   args: string[],
-  dispatch: (action: any) => void,
+  dispatch: (action: TuiAction) => void,
   api: TempoClient,
 ): Promise<void> {
   try {
@@ -376,7 +381,7 @@ async function handleSchedule(
 /** /unschedule <name> — cancel a schedule. */
 async function handleUnschedule(
   args: string[],
-  dispatch: (action: any) => void,
+  dispatch: (action: TuiAction) => void,
   _api: TempoClient,
 ): Promise<void> {
   if (args.length === 0) {
@@ -390,7 +395,7 @@ async function handleUnschedule(
 /** /gates — list quality gates. */
 async function handleGates(
   _args: string[],
-  dispatch: (action: any) => void,
+  dispatch: (action: TuiAction) => void,
   api: TempoClient,
 ): Promise<void> {
   try {
@@ -434,7 +439,7 @@ async function handleGates(
 /** /stages — list stages. */
 async function handleStages(
   _args: string[],
-  dispatch: (action: any) => void,
+  dispatch: (action: TuiAction) => void,
   api: TempoClient,
 ): Promise<void> {
   try {
@@ -481,7 +486,7 @@ async function handleStages(
 /** /worktree [list] — list active worktrees. */
 async function handleWorktree(
   args: string[],
-  dispatch: (action: any) => void,
+  dispatch: (action: TuiAction) => void,
   api: TempoClient,
 ): Promise<void> {
   const subcommand = args[0] || 'list';

@@ -4,7 +4,7 @@
  * Ink 4 is ESM-only. Our project is CJS. This module dynamically imports ink
  * at runtime via import(), which handles ESM from CJS contexts.
  *
- * React 18 is CJS and works with normal require().
+ * React 19 is CJS and works with normal require().
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */

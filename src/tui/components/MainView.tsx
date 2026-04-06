@@ -79,7 +79,7 @@ export function MainView({ ensemble, players, messages, schedules }: MainViewPro
     const msgText = truncate(m.text.replace(/\n/g, ' '), 50);
     const color = m.text.includes('stale') ? THEME.warning : THEME.textMuted;
 
-    return React.createElement(Text, { key: i, color },
+    return React.createElement(Text, { key: m.id || `msg-${i}`, color },
       `  ${time}  ${m.from} ${icons.arrow} ${m.to}: ${msgText}`,
     );
   });

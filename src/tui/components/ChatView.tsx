@@ -72,7 +72,7 @@ export function ChatView({
     // Wrap message body to reasonable width
     const lines = msg.text.split('\n');
 
-    return React.createElement(Box, { key: i, flexDirection: 'column', paddingX: 1, marginTop: i > 0 ? 0 : 0 },
+    return React.createElement(Box, { key: `${msg.from}-${msg.timestamp}-${i}`, flexDirection: 'column', paddingX: 1 },
       // Sender + timestamp on same line
       React.createElement(Box, { justifyContent: 'space-between', width: '100%' },
         React.createElement(Text, { color: senderColor }, `  ${senderLabel}`),
