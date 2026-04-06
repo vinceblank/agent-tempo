@@ -58,6 +58,10 @@ export interface RecruitState {
   error?: string;
   /** Whether the recruit API call is in progress. */
   submitting?: boolean;
+  /** Phase before entering the wizard (restored on exit). */
+  preRecruitPhase: TuiPhase;
+  /** Chat target before entering the wizard (restored on exit). */
+  preRecruitChatTarget?: string;
 }
 
 export const RECRUIT_STEPS: RecruitStep[] = ['name', 'agent', 'type', 'workDir', 'message', 'host', 'confirm'];
@@ -338,6 +342,8 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         recruitState: {
           step: 'name',
           answers: { ...DEFAULT_RECRUIT_ANSWERS, ...action.answers },
+          preRecruitPhase: state.phase,
+          preRecruitChatTarget: state.chatTarget,
         },
       };
 
@@ -345,7 +351,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       if (!state.recruitState) return state;
       const answers = { ...state.recruitState.answers, ...action.answer };
       const currentIdx = RECRUIT_STEPS.indexOf(state.recruitState.step);
-      const nextStep = RECRUIT_STEPS[currentIdx + 1] || 'confirm';
+      const nextStep = RECRUIT_STEPS[currentIdx + 1] ?? state.recruitState.step;
       return {
         ...state,
         recruitState: { ...state.recruitState, step: nextStep, answers },
@@ -382,8 +388,16 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         },
       };
 
-    case 'EXIT_RECRUIT':
-      return { ...state, phase: 'main' as TuiPhase, recruitState: undefined };
+    case 'EXIT_RECRUIT': {
+      const restorePhase = state.recruitState?.preRecruitPhase || 'main';
+      const restoreChat = state.recruitState?.preRecruitChatTarget;
+      return {
+        ...state,
+        phase: restorePhase,
+        chatTarget: restoreChat,
+        recruitState: undefined,
+      };
+    }
 
     default:
       return state;

@@ -334,10 +334,16 @@ export function App({ api, ensemble }: AppProps) {
 
   const handleRecruitConfirm = useCallback(async () => {
     if (!state.recruitState) return;
+
+    const ensemble = state.activeEnsemble;
+    if (!ensemble) {
+      dispatch({ type: 'RECRUIT_DONE', error: 'No active ensemble. Start one with: claude-tempo up <name>' });
+      return;
+    }
+
     dispatch({ type: 'RECRUIT_SUBMIT' });
 
     const a = state.recruitState.answers;
-    const ensemble = state.activeEnsemble || '';
 
     try {
       // Build recruit command for the conductor

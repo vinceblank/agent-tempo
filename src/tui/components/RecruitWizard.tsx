@@ -42,6 +42,11 @@ export function RecruitWizard({ state, onAnswer, onBack, onConfirm, onCancel, on
       onCancel();
       return;
     }
+    // Backspace on empty input goes back a step (except on first step)
+    if (key.backspace && state.step !== 'name' && state.step !== 'done' && !inputValue) {
+      onBack();
+      return;
+    }
     // Agent selection step: arrow keys to toggle
     if (state.step === 'agent') {
       if (key.leftArrow || key.rightArrow) {
@@ -52,7 +57,7 @@ export function RecruitWizard({ state, onAnswer, onBack, onConfirm, onCancel, on
         setInputValue('');
       }
     }
-    // Confirm step
+    // Confirm step: Enter to confirm, Backspace to go back
     if (state.step === 'confirm') {
       if (key.return) {
         onConfirm();
@@ -64,7 +69,7 @@ export function RecruitWizard({ state, onAnswer, onBack, onConfirm, onCancel, on
         onDone();
       }
     }
-  }, [state.step, agentIndex, onAnswer, onCancel, onConfirm, onDone]));
+  }, [state.step, agentIndex, inputValue, onAnswer, onBack, onCancel, onConfirm, onDone]));
 
   // Text input submit for text steps
   const handleTextSubmit = useCallback((value: string) => {
@@ -189,7 +194,7 @@ export function RecruitWizard({ state, onAnswer, onBack, onConfirm, onCancel, on
     // Header
     React.createElement(Box, { paddingX: 1, marginBottom: 1 },
       React.createElement(Text, { bold: true, color: THEME.accent }, 'Recruit New Player'),
-      React.createElement(Text, { color: THEME.dim }, '  (Esc to cancel)'),
+      React.createElement(Text, { color: THEME.dim }, '  (Esc to cancel, Backspace to go back)'),
     ),
     // Completed steps
     ...completedSteps,
