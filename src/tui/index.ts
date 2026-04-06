@@ -6,7 +6,7 @@ import React from 'react';
 import { Client } from '@temporalio/client';
 import { createTemporalConnection } from '../connection';
 import { Config } from '../config';
-import { createTuiApi } from './core-api';
+import { createTempoClient } from './client';
 import { loadInk } from './ink-loader';
 import { InkProvider } from './ink-context';
 import { App } from './App';
@@ -50,7 +50,7 @@ export async function run(opts: TuiOpts): Promise<void> {
 
   try {
     const client = new Client({ connection, namespace: opts.config.temporalNamespace });
-    const api = createTuiApi(client);
+    const api = createTempoClient(client);
 
     // Render the TUI
     const app = ink.render(

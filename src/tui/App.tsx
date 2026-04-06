@@ -22,13 +22,13 @@ import { TitleBar } from './components/TitleBar';
 import { PromptArea } from './components/PromptArea';
 import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS } from './commands';
 import { THEME } from './utils/theme';
-import type { TuiApi } from './core-api';
+import type { TempoClient } from './client';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const packageVersion: string = require('../../package.json').version;
 
 interface AppProps {
-  api: TuiApi;
+  api: TempoClient;
   /** If provided, start directly in ensemble view. */
   ensemble?: string;
 }
@@ -214,13 +214,14 @@ export function App({ api, ensemble }: AppProps) {
       // Load initial data
       if (state.activeEnsemble) {
         try {
-          const [players, messages, history] = await Promise.all([
+          const [players, messages, history, schedules] = await Promise.all([
             api.getPlayers(state.activeEnsemble),
             api.getMessages(state.activeEnsemble, 50),
             api.getConductorHistory(state.activeEnsemble),
+            api.getSchedules(state.activeEnsemble),
           ]);
           if (cancelled) return;
-          dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history });
+          dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
         } catch {
           // Non-fatal — will retry in poll loop
         }
@@ -274,12 +275,13 @@ export function App({ api, ensemble }: AppProps) {
           const ensembles = await api.discoverEnsembles();
           dispatch({ type: 'REFRESH_ENSEMBLES', ensembles });
         } else {
-          const [players, messages, history] = await Promise.all([
+          const [players, messages, history, schedules] = await Promise.all([
             api.getPlayers(state.activeEnsemble),
             api.getMessages(state.activeEnsemble, 50),
             api.getConductorHistory(state.activeEnsemble),
+            api.getSchedules(state.activeEnsemble),
           ]);
-          dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history });
+          dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
         }
       } catch {
         // Silently skip failed polls
@@ -349,6 +351,7 @@ export function App({ api, ensemble }: AppProps) {
         ensemble: state.activeEnsemble,
         players: state.players,
         messages: state.messages,
+        schedules: state.schedules.map(s => ({ name: s.name, spec: s.type, target: s.target })),
       });
     }
 

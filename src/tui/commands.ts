@@ -3,7 +3,7 @@
  * Parses user input into structured commands and provides handler
  * implementations for each command.
  */
-import type { TuiApi } from './core-api';
+import type { TempoClient } from './client';
 import { statusIcons, supportsUnicode } from './utils/platform';
 
 // ── Types ──
@@ -21,7 +21,7 @@ export interface ParsedCommand {
 export type CommandHandler = (
   args: string[],
   dispatch: (action: any) => void,
-  api: TuiApi,
+  api: TempoClient,
 ) => Promise<void>;
 
 /** Command definition with metadata. */
@@ -74,7 +74,7 @@ function commitStatic(dispatch: (action: any) => void, type: string, content: st
 async function handleCue(
   args: string[],
   dispatch: (action: any) => void,
-  api: TuiApi,
+  api: TempoClient,
 ): Promise<void> {
   if (args.length === 0) {
     commitStatic(dispatch, 'error', 'Usage: /cue <player> [message]');
@@ -103,7 +103,7 @@ async function handleCue(
 async function handlePlayers(
   _args: string[],
   dispatch: (action: any) => void,
-  api: TuiApi,
+  api: TempoClient,
 ): Promise<void> {
   // The player data is already in state via polling; format from recent poll data.
   // We can't access state directly here, so we'll fetch fresh data.
@@ -142,7 +142,7 @@ async function handlePlayers(
 async function handleStop(
   args: string[],
   dispatch: (action: any) => void,
-  api: TuiApi,
+  api: TempoClient,
 ): Promise<void> {
   if (args.length === 0) {
     commitStatic(dispatch, 'error', 'Usage: /stop <player>');
@@ -172,7 +172,7 @@ async function handleStop(
 async function handleBroadcast(
   args: string[],
   dispatch: (action: any) => void,
-  api: TuiApi,
+  api: TempoClient,
 ): Promise<void> {
   if (args.length === 0) {
     commitStatic(dispatch, 'error', 'Usage: /broadcast <message>');
@@ -206,7 +206,7 @@ async function handleBroadcast(
 async function handleRecall(
   args: string[],
   dispatch: (action: any) => void,
-  api: TuiApi,
+  api: TempoClient,
 ): Promise<void> {
   try {
     const ensembles = await api.discoverEnsembles();
@@ -250,7 +250,7 @@ async function handleRecall(
 async function handleRecruit(
   args: string[],
   dispatch: (action: any) => void,
-  _api: TuiApi,
+  _api: TempoClient,
 ): Promise<void> {
   if (args.length === 0) {
     commitStatic(dispatch, 'info', 'Recruit wizard coming soon. Usage: /recruit <name> [--type <type>] [--dir <path>]');
@@ -259,17 +259,224 @@ async function handleRecruit(
   commitStatic(dispatch, 'info', `Recruit for "${args[0]}" — coming soon.`);
 }
 
-/** /encore <player> — placeholder. */
+/** /encore <player> — revive a stale player. */
 async function handleEncore(
   args: string[],
   dispatch: (action: any) => void,
-  _api: TuiApi,
+  api: TempoClient,
 ): Promise<void> {
   if (args.length === 0) {
     commitStatic(dispatch, 'error', 'Usage: /encore <player>');
     return;
   }
-  commitStatic(dispatch, 'info', `Encore for "${args[0]}" — coming soon.`);
+
+  const target = args[0];
+  try {
+    // Find the stale player's ensemble and send encore via conductor
+    const ensembles = await api.discoverEnsembles();
+    for (const ens of ensembles) {
+      const players = await api.getPlayers(ens.name);
+      const player = players.find(p => p.playerId === target);
+      if (player) {
+        if (player.status !== 'stale') {
+          commitStatic(dispatch, 'error', `Player "${target}" is ${player.status}, not stale. Encore only works on stale sessions.`);
+          return;
+        }
+        // Send encore command via conductor
+        await api.sendCommand(ens.name, `/encore ${target}`, 'tui');
+        commitStatic(dispatch, 'info', `\u21BB Encore requested for ${target}. The conductor will revive the session.`);
+        return;
+      }
+    }
+    commitStatic(dispatch, 'error', `Player "${target}" not found in any ensemble.`);
+  } catch (err) {
+    commitStatic(dispatch, 'error', `Encore failed for ${target}: ${err}`);
+  }
+}
+
+/** /schedule — list active schedules. */
+async function handleSchedule(
+  args: string[],
+  dispatch: (action: any) => void,
+  api: TempoClient,
+): Promise<void> {
+  try {
+    const ensembles = await api.discoverEnsembles();
+    if (ensembles.length === 0) {
+      commitStatic(dispatch, 'info', 'No ensembles running.');
+      return;
+    }
+
+    const lines: string[] = [];
+    for (const ens of ensembles) {
+      const schedules = await api.getSchedules(ens.name);
+      if (schedules.length > 0) {
+        lines.push(`\n  ${ens.name} — ${schedules.length} schedule${schedules.length !== 1 ? 's' : ''}:`);
+        for (const s of schedules) {
+          const nextFire = formatTimestamp(s.nextFireAt);
+          const fired = s.firedCount > 0 ? ` (fired ${s.firedCount}x)` : '';
+          lines.push(`    \u21BB ${s.name.padEnd(20)} ${s.type.padEnd(8)} \u2192 ${s.target}  next: ${nextFire}${fired}`);
+        }
+      }
+    }
+
+    if (lines.length === 0) {
+      commitStatic(dispatch, 'info', 'No active schedules.');
+    } else {
+      commitStatic(dispatch, 'command-output', lines.join('\n'));
+    }
+  } catch (err) {
+    commitStatic(dispatch, 'error', `Failed to fetch schedules: ${err}`);
+  }
+}
+
+/** /unschedule <name> — cancel a schedule. */
+async function handleUnschedule(
+  args: string[],
+  dispatch: (action: any) => void,
+  _api: TempoClient,
+): Promise<void> {
+  if (args.length === 0) {
+    commitStatic(dispatch, 'error', 'Usage: /unschedule <name>');
+    return;
+  }
+  // TODO: Wire to scheduler workflow signal when TUI has ensemble context
+  commitStatic(dispatch, 'info', `Unschedule "${args[0]}" — not yet available from TUI. Use: claude-tempo unschedule ${args[0]}`);
+}
+
+/** /gates — list quality gates. */
+async function handleGates(
+  _args: string[],
+  dispatch: (action: any) => void,
+  api: TempoClient,
+): Promise<void> {
+  try {
+    const ensembles = await api.discoverEnsembles();
+    if (ensembles.length === 0) {
+      commitStatic(dispatch, 'info', 'No ensembles running.');
+      return;
+    }
+
+    const icons = statusIcons(supportsUnicode());
+    const lines: string[] = [];
+
+    for (const ens of ensembles) {
+      const gates = await api.getGates(ens.name);
+      if (gates.length > 0) {
+        lines.push(`\n  ${ens.name} — ${gates.length} gate${gates.length !== 1 ? 's' : ''}:`);
+        for (const g of gates) {
+          const icon = g.status === 'passed' ? icons.check
+            : g.status === 'failed' ? icons.cross
+            : '\u25CB'; // open circle
+          const statusColor = g.status === 'passed' ? 'passed' : g.status === 'failed' ? 'FAILED' : 'open';
+          lines.push(`    ${icon} ${g.task.padEnd(30)} [${statusColor}]`);
+          for (const c of g.criteria) {
+            const cIcon = c.status === 'passed' ? icons.check : c.status === 'failed' ? icons.cross : icons.pending;
+            lines.push(`      ${cIcon} ${c.text} [${c.status}]`);
+          }
+        }
+      }
+    }
+
+    if (lines.length === 0) {
+      commitStatic(dispatch, 'info', 'No quality gates defined.');
+    } else {
+      commitStatic(dispatch, 'command-output', lines.join('\n'));
+    }
+  } catch (err) {
+    commitStatic(dispatch, 'error', `Failed to fetch gates: ${err}`);
+  }
+}
+
+/** /stages — list stages. */
+async function handleStages(
+  _args: string[],
+  dispatch: (action: any) => void,
+  api: TempoClient,
+): Promise<void> {
+  try {
+    const ensembles = await api.discoverEnsembles();
+    if (ensembles.length === 0) {
+      commitStatic(dispatch, 'info', 'No ensembles running.');
+      return;
+    }
+
+    const icons = statusIcons(supportsUnicode());
+    const lines: string[] = [];
+
+    for (const ens of ensembles) {
+      const stages = await api.getStages(ens.name);
+      if (stages.length > 0) {
+        lines.push(`\n  ${ens.name} — ${stages.length} stage${stages.length !== 1 ? 's' : ''}:`);
+        for (const s of stages) {
+          const icon = s.status === 'complete' ? icons.check
+            : s.status === 'failed' ? icons.cross
+            : s.status === 'cancelled' ? icons.terminated
+            : icons.active;
+          lines.push(`    ${icon} ${s.name.padEnd(25)} [${s.status}] (${s.failurePolicy})`);
+          for (const p of s.players) {
+            const pIcon = p.status === 'reported' ? icons.check
+              : p.status === 'blocked' ? icons.cross
+              : icons.pending;
+            const detail = p.reportText ? ` — ${p.reportText.slice(0, 40)}` : '';
+            lines.push(`      ${pIcon} ${p.playerId.padEnd(18)} [${p.status}]${detail}`);
+          }
+        }
+      }
+    }
+
+    if (lines.length === 0) {
+      commitStatic(dispatch, 'info', 'No stages defined.');
+    } else {
+      commitStatic(dispatch, 'command-output', lines.join('\n'));
+    }
+  } catch (err) {
+    commitStatic(dispatch, 'error', `Failed to fetch stages: ${err}`);
+  }
+}
+
+/** /worktree [list] — list active worktrees. */
+async function handleWorktree(
+  args: string[],
+  dispatch: (action: any) => void,
+  api: TempoClient,
+): Promise<void> {
+  const subcommand = args[0] || 'list';
+
+  if (subcommand !== 'list') {
+    commitStatic(dispatch, 'info', `Worktree ${subcommand} — not yet available from TUI. Use: claude-tempo worktree ${args.join(' ')}`);
+    return;
+  }
+
+  try {
+    const ensembles = await api.discoverEnsembles();
+    if (ensembles.length === 0) {
+      commitStatic(dispatch, 'info', 'No ensembles running.');
+      return;
+    }
+
+    const lines: string[] = [];
+
+    for (const ens of ensembles) {
+      const worktrees = await api.getWorktrees(ens.name);
+      if (worktrees.length > 0) {
+        lines.push(`\n  ${ens.name} — ${worktrees.length} worktree${worktrees.length !== 1 ? 's' : ''}:`);
+        for (const w of worktrees) {
+          const created = formatTimestamp(w.createdAt);
+          lines.push(`    ${w.player.padEnd(18)} ${w.branch.padEnd(25)} ${w.path}`);
+          lines.push(`      created: ${created} by ${w.createdBy}`);
+        }
+      }
+    }
+
+    if (lines.length === 0) {
+      commitStatic(dispatch, 'info', 'No active worktrees.');
+    } else {
+      commitStatic(dispatch, 'command-output', lines.join('\n'));
+    }
+  } catch (err) {
+    commitStatic(dispatch, 'error', `Failed to fetch worktrees: ${err}`);
+  }
 }
 
 // ── Utility ──
@@ -318,14 +525,14 @@ export const COMMANDS: Record<string, CommandDef> = {
     handler: handleRecall,
   },
   schedule: {
-    description: 'Create a scheduled message',
-    usage: '/schedule <name> --to <player> --every <interval> <message>',
-    handler: null,
+    description: 'List active schedules',
+    usage: '/schedule',
+    handler: handleSchedule,
   },
   unschedule: {
     description: 'Cancel a named schedule',
     usage: '/unschedule <name>',
-    handler: null,
+    handler: handleUnschedule,
   },
   players: {
     description: 'List players in the current ensemble',
@@ -335,17 +542,17 @@ export const COMMANDS: Record<string, CommandDef> = {
   gates: {
     description: 'List quality gates and their status',
     usage: '/gates',
-    handler: null,
+    handler: handleGates,
   },
   stages: {
     description: 'List stages and their status',
     usage: '/stages',
-    handler: null,
+    handler: handleStages,
   },
   worktree: {
     description: 'Manage git worktrees for player isolation',
-    usage: '/worktree <create|remove|list> [args...]',
-    handler: null,
+    usage: '/worktree [list]',
+    handler: handleWorktree,
   },
   help: {
     description: 'Show available commands',

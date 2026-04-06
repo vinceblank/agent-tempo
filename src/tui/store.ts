@@ -10,8 +10,9 @@ import type {
   HistoryEntry,
   Message,
   SentMessage,
+  ScheduleEntry,
 } from '../types';
-import type { EnsembleSummary } from './core-api';
+import type { EnsembleSummary } from './client';
 
 // ── State ──
 
@@ -51,6 +52,8 @@ export interface TuiState {
   messages: MaestroRelayMessage[];
   /** Conductor history in the active ensemble. */
   conductorHistory: HistoryEntry[];
+  /** Active schedules in the ensemble. */
+  schedules: ScheduleEntry[];
   /** Currently highlighted player index (ensemble view). */
   selectedPlayerIndex: number;
 
@@ -90,6 +93,7 @@ export function initialState(ensemble?: string): TuiState {
     players: [],
     messages: [],
     conductorHistory: [],
+    schedules: [],
     selectedPlayerIndex: 0,
 
     activePlayer: null,
@@ -116,7 +120,7 @@ export type TuiAction =
   | { type: 'NAVIGATE_PLAYER'; playerId: string }
   // Data refresh
   | { type: 'REFRESH_ENSEMBLES'; ensembles: EnsembleSummary[] }
-  | { type: 'REFRESH_ENSEMBLE_DATA'; players: MaestroPlayerInfo[]; messages: MaestroRelayMessage[]; history: HistoryEntry[] }
+  | { type: 'REFRESH_ENSEMBLE_DATA'; players: MaestroPlayerInfo[]; messages: MaestroRelayMessage[]; history: HistoryEntry[]; schedules?: ScheduleEntry[] }
   | { type: 'REFRESH_PLAYER_DATA'; metadata: any; messages: Array<Message | (SentMessage & { direction: 'sent' })> }
   // Selection
   | { type: 'SELECT_NEXT' }
@@ -152,6 +156,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         players: [],
         messages: [],
         conductorHistory: [],
+        schedules: [],
         playerMetadata: null,
         playerMessages: [],
         selectedPlayerIndex: 0,
@@ -168,6 +173,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         players: [],
         messages: [],
         conductorHistory: [],
+        schedules: [],
         playerMetadata: null,
         playerMessages: [],
         selectedPlayerIndex: 0,
@@ -201,6 +207,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         players: action.players,
         messages: action.messages,
         conductorHistory: action.history,
+        schedules: action.schedules ?? state.schedules,
         // Clamp selection index
         selectedPlayerIndex: Math.min(state.selectedPlayerIndex, Math.max(0, action.players.length - 1)),
       };

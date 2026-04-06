@@ -6,13 +6,17 @@
  * with fallback to per-ensemble Maestro and direct workflow list.
  */
 import { Client } from '@temporalio/client';
-import { maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID } from '../config';
+import { maestroWorkflowId, schedulerWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID } from '../config';
 import type {
   MaestroPlayerInfo,
   MaestroRelayMessage,
   HistoryEntry,
   Message,
   SentMessage,
+  ScheduleEntry,
+  QualityGate,
+  StageEntry,
+  WorktreeEntry,
 } from '../types';
 
 // ── Public Types ──
@@ -24,7 +28,7 @@ export interface EnsembleSummary {
   conductorStatus?: string;
 }
 
-export interface TuiApi {
+export interface TempoClient {
   /** Discover all running ensembles across the cluster. */
   discoverEnsembles(): Promise<EnsembleSummary[]>;
   /** Get current player snapshot for an ensemble. */
@@ -43,6 +47,14 @@ export interface TuiApi {
   sendMessage(ensemble: string, to: string, text: string, source: string): Promise<string>;
   /** Terminate a player's workflow. */
   terminatePlayer(ensemble: string, playerId: string): Promise<void>;
+  /** Get active schedules for an ensemble. */
+  getSchedules(ensemble: string): Promise<ScheduleEntry[]>;
+  /** Get quality gates from the conductor workflow. */
+  getGates(ensemble: string): Promise<QualityGate[]>;
+  /** Get stages from the conductor workflow. */
+  getStages(ensemble: string): Promise<StageEntry[]>;
+  /** Get worktrees from the conductor workflow. */
+  getWorktrees(ensemble: string): Promise<WorktreeEntry[]>;
   /** Check if the Temporal connection is alive. */
   isConnected(): Promise<boolean>;
   /** Check if the Global Maestro workflow is running. */
@@ -51,7 +63,7 @@ export interface TuiApi {
 
 // ── Implementation ──
 
-export function createTuiApi(client: Client): TuiApi {
+export function createTempoClient(client: Client): TempoClient {
   const globalMaestroId = GLOBAL_MAESTRO_WORKFLOW_ID;
 
   /** Helper: get a workflow handle by ID. */
@@ -246,6 +258,55 @@ export function createTuiApi(client: Client): TuiApi {
         return true; // Connected but no workflows
       } catch {
         return false;
+      }
+    },
+
+    async getSchedules(ensemble: string): Promise<ScheduleEntry[]> {
+      try {
+        const h = handle(schedulerWorkflowId(ensemble));
+        return await h.query('getSchedules');
+      } catch {
+        return [];
+      }
+    },
+
+    async getGates(ensemble: string): Promise<QualityGate[]> {
+      // Gates are stored on the conductor's workflow — find it first
+      try {
+        const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${ensemble}" AND ClaudeTempoIsConductor = true`;
+        for await (const wf of client.workflow.list({ query })) {
+          const h = handle(wf.workflowId);
+          return await h.query('qualityGates');
+        }
+        return [];
+      } catch {
+        return [];
+      }
+    },
+
+    async getStages(ensemble: string): Promise<StageEntry[]> {
+      try {
+        const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${ensemble}" AND ClaudeTempoIsConductor = true`;
+        for await (const wf of client.workflow.list({ query })) {
+          const h = handle(wf.workflowId);
+          return await h.query('stages');
+        }
+        return [];
+      } catch {
+        return [];
+      }
+    },
+
+    async getWorktrees(ensemble: string): Promise<WorktreeEntry[]> {
+      try {
+        const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${ensemble}" AND ClaudeTempoIsConductor = true`;
+        for await (const wf of client.workflow.list({ query })) {
+          const h = handle(wf.workflowId);
+          return await h.query('worktrees');
+        }
+        return [];
+      } catch {
+        return [];
       }
     },
 
