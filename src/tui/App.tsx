@@ -21,12 +21,24 @@ export function App({ api, ensemble }: AppProps) {
   const [state, dispatch] = useReducer(tuiReducer, initialState(ensemble));
   const { exit } = useApp();
 
-  // Global keyboard: Ctrl-C to exit from any view
+  // Hoisted callbacks for HomeView (must be unconditional — React hooks rules)
+  const handleSelect = useCallback((name: string) => {
+    dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: name });
+  }, []);
+  const handleNavigate = useCallback((direction: 'up' | 'down') => {
+    dispatch({ type: direction === 'up' ? 'SELECT_PREV' : 'SELECT_NEXT' });
+  }, []);
+  const handleQuit = useCallback(() => exit(), [exit]);
+
+  // Global keyboard: q to quit, Ctrl-C to quit, Esc to go back
   useInput(useCallback((input: string, key: any) => {
-    if (key.ctrl && input === 'c') {
+    if (input === 'q' || (key.ctrl && input === 'c')) {
       exit();
     }
-  }, [exit]));
+    if (key.escape && state.view !== 'home') {
+      dispatch({ type: 'NAVIGATE_HOME' });
+    }
+  }, [exit, state.view]));
 
   // ── Startup sequence: splash → connected ──
   useEffect(() => {
@@ -132,13 +144,9 @@ export function App({ api, ensemble }: AppProps) {
     return React.createElement(HomeView, {
       ensembles: state.ensembles,
       selectedIndex: state.selectedEnsembleIndex,
-      onSelect: useCallback((name: string) => {
-        dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: name });
-      }, []),
-      onNavigate: useCallback((direction: 'up' | 'down') => {
-        dispatch({ type: direction === 'up' ? 'SELECT_PREV' : 'SELECT_NEXT' });
-      }, []),
-      onQuit: useCallback(() => exit(), [exit]),
+      onSelect: handleSelect,
+      onNavigate: handleNavigate,
+      onQuit: handleQuit,
     });
   }
 
