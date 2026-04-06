@@ -318,7 +318,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
             continue; // Don't check completion for a failed stage
           }
         } else {
-          // 'question' — no stage effect, player is still working
+          // 'question' or 'update' — no stage effect, player is still working
           continue;
         }
 

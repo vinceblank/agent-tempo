@@ -27,7 +27,7 @@ export interface DeliverReportInput {
   ensemble: string;
   fromPlayerId: string;
   text: string;
-  reportType: 'result' | 'blocker' | 'question';
+  reportType: 'result' | 'blocker' | 'question' | 'update';
 }
 
 export interface TerminateSessionInput {

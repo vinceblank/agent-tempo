@@ -146,7 +146,7 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
 export interface ReportOutboxEntry extends OutboxEntryBase {
   type: 'report';
   text: string;
-  reportType: 'result' | 'blocker' | 'question';
+  reportType: 'result' | 'blocker' | 'question' | 'update';
 }
 
 export interface StopOutboxEntry extends OutboxEntryBase {
@@ -211,7 +211,7 @@ export interface WorktreeEntry {
 export interface StagePlayerStatus {
   playerId: string;
   status: 'waiting' | 'reported' | 'blocked';
-  reportType?: 'result' | 'blocker' | 'question';
+  reportType?: 'result' | 'blocker' | 'question' | 'update';
   reportText?: string;
   reportedAt?: string;
 }
