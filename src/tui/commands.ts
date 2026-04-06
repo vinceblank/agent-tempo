@@ -132,7 +132,7 @@ async function handleCue(
     }
 
     try {
-      await api.sendMessage(ensemble, target, message, 'tui');
+      await api.sendMessage(ensemble, target, message, 'maestro');
       commitStatic(dispatch, 'message', `\u2714 Delivered to ${target}: ${message}`);
     } catch (err) {
       commitStatic(dispatch, 'error', `\u2717 Failed to deliver to ${target}: ${err}`);
@@ -286,7 +286,7 @@ async function handleBroadcast(
       for (const p of players) {
         if (p.status === 'active') {
           try {
-            await api.sendMessage(ens.name, p.playerId, message, 'tui');
+            await api.sendMessage(ens.name, p.playerId, message, 'maestro');
             sent++;
           } catch {
             // Skip individual failures
@@ -388,7 +388,7 @@ async function handleEncore(
           return;
         }
         // Send encore command via conductor
-        await api.sendCommand(ens.name, `/encore ${target}`, 'tui');
+        await api.sendCommand(ens.name, `/encore ${target}`, 'maestro');
         commitStatic(dispatch, 'info', `\u21BB Encore requested for ${target}. The conductor will revive the session.`);
         return;
       }
@@ -692,7 +692,7 @@ async function handleLineup(
 
     const filePath = args[1] || `ensemble-${ensemble}.yml`;
     try {
-      await api.sendCommand(ensemble, `/save_lineup ${filePath}`, 'tui');
+      await api.sendCommand(ensemble, `/save_lineup ${filePath}`, 'maestro');
       commitStatic(dispatch, 'info', `\u2714 Lineup save requested: ${filePath}`);
     } catch (err) {
       commitStatic(dispatch, 'error', `\u2717 Failed to save lineup: ${err}`);

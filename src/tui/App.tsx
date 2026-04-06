@@ -144,7 +144,7 @@ export function App({ api, ensemble }: AppProps) {
         } else {
           (async () => {
             try {
-              await api.sendCommand(activeEns, `/load_lineup ${lineupPath}`, 'tui');
+              await api.sendCommand(activeEns, `/load_lineup ${lineupPath}`, 'maestro');
               dispatch({
                 type: 'COMMIT_STATIC',
                 item: { id: nextStaticId(), type: 'info', content: `\u2714 Lineup load requested: ${lineupPath}`, timestamp: Date.now() },
@@ -357,10 +357,10 @@ export function App({ api, ensemble }: AppProps) {
       try {
         if (isConductorTarget) {
           // Send as command to conductor (routes through Maestro)
-          await api.sendCommand(state.activeEnsemble, trimmed, 'tui');
+          await api.sendCommand(state.activeEnsemble, trimmed, 'maestro');
         } else {
           // Send as direct message to player
-          await api.sendMessage(state.activeEnsemble, state.chatTarget, trimmed, 'tui');
+          await api.sendMessage(state.activeEnsemble, state.chatTarget, trimmed, 'maestro');
         }
         dispatch({
           type: 'COMMIT_STATIC',
@@ -650,7 +650,7 @@ export function App({ api, ensemble }: AppProps) {
       if (a.host !== 'localhost') parts.push(`--host ${a.host}`);
       if (a.initialMessage) parts.push(`-- ${a.initialMessage}`);
 
-      await api.sendCommand(activeEns, parts.join(' '), 'tui');
+      await api.sendCommand(activeEns, parts.join(' '), 'maestro');
       dispatch({ type: 'RECRUIT_DONE' });
       dispatch({
         type: 'COMMIT_STATIC',
@@ -710,7 +710,7 @@ export function App({ api, ensemble }: AppProps) {
       }
       parts.push(a.message);
 
-      await api.sendCommand(activeEns, parts.join(' '), 'tui');
+      await api.sendCommand(activeEns, parts.join(' '), 'maestro');
       dispatch({ type: 'SCHEDULE_DONE' });
       dispatch({
         type: 'COMMIT_STATIC',
