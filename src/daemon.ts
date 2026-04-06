@@ -33,41 +33,37 @@ async function main() {
   const { sharedWorker, hostWorker } = await createWorkers(config);
   log('Workers created — processing tasks');
 
-  // Graceful shutdown handler
-  let shuttingDown = false;
-  const shutdown = async () => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    log('Shutting down...');
-
-    // Hard exit safety net
-    const hardExit = setTimeout(() => {
-      log('Shutdown timeout — forcing exit');
-      process.exit(1);
-    }, 15_000);
-    hardExit.unref();
-
+  // Register signal handlers BEFORE running workers — ensures we catch
+  // signals even during worker startup. Handlers just trigger graceful
+  // drain; they do NOT call process.exit() — that happens after workers
+  // finish processing in-flight activities below.
+  const hardExit = () => {
+    log('Shutdown timeout — forcing exit');
+    try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+    process.exit(1);
+  };
+  const shutdown = () => {
+    log('Shutting down (draining in-flight activities)...');
+    // Safety net: force exit if workers don't stop within 15s
+    const timer = setTimeout(hardExit, 15_000);
+    timer.unref();
     sharedWorker.shutdown();
     hostWorker.shutdown();
-
-    // Remove PID file
-    try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
-
-    log('Daemon stopped');
-    process.exit(0);
   };
-
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
-  // Run both workers — blocks until shutdown
+  // Run both workers — blocks until shutdown + drain completes
   try {
     await Promise.all([sharedWorker.run(), hostWorker.run()]);
   } catch (err) {
     log('Worker error:', err);
-    try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
-    process.exit(1);
   }
+
+  // Workers have stopped — clean up PID file and exit
+  try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+  log('Daemon stopped');
+  process.exit(0);
 }
 
 main().catch((err) => {

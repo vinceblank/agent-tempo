@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, copyFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, copyFileSync, statSync, openSync, readSync, closeSync } from 'fs';
 import { join, resolve } from 'path';
 import { execFileSync, spawn as cpSpawn } from 'child_process';
 import { homedir } from 'os';
@@ -1050,7 +1050,8 @@ export async function down(opts: DownOpts) {
   killBridgeProcesses();
 
   // Step 2.5: Stop worker daemon — only if --all or no other workflows remain
-  if (opts.all || !hasRemainingWorkflows) {
+  // hasRemainingWorkflows is only meaningful when Temporal was reachable
+  if (opts.all || (temporalUp && !hasRemainingWorkflows)) {
     if (stopDaemon()) {
       out.success('Worker daemon stopped');
     }
@@ -1726,11 +1727,18 @@ export async function daemon(opts: DaemonOpts) {
       }
       // Tail the log file
       if (process.platform === 'win32') {
-        // On Windows, read the last 50 lines
-        const content = readFileSync(DAEMON_LOG_PATH, 'utf8');
-        const lines = content.split('\n');
-        const tail = lines.slice(-50).join('\n');
-        console.log(tail);
+        // On Windows, read the last 32KB of the log (size-capped to avoid OOM on large logs)
+        const MAX_TAIL_BYTES = 32 * 1024;
+        const stat = statSync(DAEMON_LOG_PATH);
+        const fd = openSync(DAEMON_LOG_PATH, 'r');
+        const readStart = Math.max(0, stat.size - MAX_TAIL_BYTES);
+        const buf = Buffer.alloc(Math.min(stat.size, MAX_TAIL_BYTES));
+        readSync(fd, buf, 0, buf.length, readStart);
+        closeSync(fd);
+        const chunk = buf.toString('utf8');
+        // Skip partial first line if we didn't read from the start
+        const lines = readStart > 0 ? chunk.split('\n').slice(1) : chunk.split('\n');
+        console.log(lines.slice(-50).join('\n'));
       } else {
         // On Unix, use tail -f for live following
         const child = cpSpawn('tail', ['-f', '-n', '50', DAEMON_LOG_PATH], {
