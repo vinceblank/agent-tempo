@@ -14,6 +14,10 @@ import { useInk } from './ink-context';
 import { tuiReducer, initialState } from './store';
 import type { StaticItem } from './store';
 import { Splash } from './components/Splash';
+import { MainView } from './components/MainView';
+import { ChatView } from './components/ChatView';
+import type { ChatMessage } from './components/ChatView';
+import { ErrorView } from './components/ErrorView';
 import { TitleBar } from './components/TitleBar';
 import { PromptArea } from './components/PromptArea';
 import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS } from './commands';
@@ -301,31 +305,55 @@ export function App({ api, ensemble }: AppProps) {
     React.createElement(Text, { color: THEME.border }, '\u2500'.repeat(Math.max(20, (process.stdout.columns || 80) - 4))),
   );
 
-  // Live content area
+  // Live content area — route by phase
   function renderLiveContent() {
     if (state.phase === 'error') {
-      return React.createElement(Box, { flexDirection: 'column', padding: 1 },
-        React.createElement(Text, { color: THEME.error, bold: true }, 'Error'),
-        React.createElement(Text, { color: THEME.error }, state.error || 'Unknown error'),
-      );
+      return React.createElement(ErrorView, {
+        version: packageVersion,
+        checks: [
+          { label: 'Daemon running', passed: true },
+          { label: `Cannot reach Temporal`, passed: false, detail: state.error },
+        ],
+        errorDetail: state.error,
+      });
     }
 
-    // Main view: show player summary if in ensemble, or ensemble list
-    if (state.activeEnsemble && state.players.length > 0) {
-      return React.createElement(Box, { flexDirection: 'column', paddingX: 1 },
-        React.createElement(Text, { bold: true, color: THEME.text }, 'Players:'),
-        ...state.players.map(p =>
-          React.createElement(Text, {
-            key: p.playerId,
-            color: p.isConductor ? THEME.warning : p.status === 'active' ? THEME.success : THEME.dim,
-          },
-            `  ${p.isConductor ? '\u2605' : '\u2022'} ${p.playerId} [${p.status || '?'}]${p.part ? ' \u2014 ' + p.part : ''}`,
-          ),
-        ),
-      );
+    if (state.phase === 'chat' && state.chatTarget) {
+      // Build chat messages from relay messages filtered to this conversation
+      const chatMessages: ChatMessage[] = state.messages
+        .filter(m => m.from === state.chatTarget || m.to === state.chatTarget)
+        .map(m => ({
+          direction: m.to === state.chatTarget ? 'sent' as const : 'received' as const,
+          from: m.from,
+          text: m.text,
+          timestamp: m.timestamp,
+        }));
+      const received = chatMessages.filter(m => m.direction === 'received').length;
+      const sent = chatMessages.filter(m => m.direction === 'sent').length;
+      const targetPlayer = state.players.find(p => p.playerId === state.chatTarget);
+
+      return React.createElement(ChatView, {
+        targetPlayer: state.chatTarget,
+        targetPart: targetPlayer?.part,
+        targetBranch: targetPlayer?.gitBranch,
+        targetStatus: targetPlayer?.status,
+        receivedCount: received,
+        sentCount: sent,
+        messages: chatMessages,
+      });
     }
 
-    if (!state.activeEnsemble && state.ensembles.length > 0) {
+    // Main view — show ensemble state
+    if (state.activeEnsemble) {
+      return React.createElement(MainView, {
+        ensemble: state.activeEnsemble,
+        players: state.players,
+        messages: state.messages,
+      });
+    }
+
+    // No active ensemble — show ensemble list or help
+    if (state.ensembles.length > 0) {
       return React.createElement(Box, { flexDirection: 'column', paddingX: 1 },
         React.createElement(Text, { bold: true, color: THEME.text }, 'Ensembles:'),
         ...state.ensembles.map(ens =>

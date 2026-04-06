@@ -2,69 +2,98 @@
  * Full-screen splash screen with ASCII art metronome animation.
  * Shown during startup while connecting to Temporal/Maestro.
  *
- * Layout (top to bottom, all centered):
- * 1. Animated metronome (ping-pong: left→center→right→center)
- * 2. Block-letter title (or simple text if terminal < 70 cols)
- * 3. Status line (yellow, dim)
- * 4. Ensemble name (dim)
- * 5. Version number (dim)
+ * Two sub-phases:
+ * 1. Connecting — animated metronome, spinner + status, progressive checklist
+ * 2. Connected — completed checklist, summary box, ready prompt
+ *
+ * After connected, the parent commits this block to <Static> and transitions.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useInk } from '../ink-context';
-import { metronomeArt, titleArt, titleArtFits, supportsUnicode, getTerminalSize } from '../utils/platform';
+import { metronomeArt, supportsUnicode } from '../utils/platform';
+
+// ── Theme colors ──
+const ACCENT = '#E07A5F';
+const SUCCESS = '#81C784';
+const WARNING = '#F2CC8F';
+const DIM = '#6B7280';
+const TEXT = '#FAF3EE';
+
+// ── Braille spinner frames ──
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+// ── Ping-pong sequence for 3 metronome frames ──
+const PING_PONG = [0, 1, 2, 1];
 
 export interface SplashProps {
   status: string;
   ensemble: string;
   version: string;
+  /** Checklist items to display progressively. */
+  checks?: SplashCheck[];
+  /** Whether the connection is complete. */
+  connected?: boolean;
+  /** Summary info shown after connection. */
+  summary?: {
+    ensemble: string;
+    playerCount: number;
+    conductor?: string;
+    scheduleCount?: number;
+    uptime?: string;
+  };
 }
 
-/** Terracotta color for pendulum/pivot characters. */
-const TERRACOTTA = '#E07A5F';
-
-/** Pendulum and pivot characters to color as terracotta. */
-const PENDULUM_CHARS = /[o╱╲│|/\\]/;
-
-/**
- * Ping-pong frame sequence: 0→1→2→1→0→1→2→...
- * With 3 frames, the sequence is [0, 1, 2, 1] repeating.
- */
-const PING_PONG_SEQUENCE = [0, 1, 2, 1];
+export interface SplashCheck {
+  label: string;
+  done: boolean;
+  error?: boolean;
+}
 
 /**
- * Classify each character in a metronome line as either pendulum/pivot
- * (terracotta) or body (cyan). Lines 0-5 are the pendulum area;
- * lines 6+ are the body (all cyan).
+ * Classify metronome art lines: lines 0-5 are pendulum area,
+ * lines 6+ are the body (base/box).
  */
 function isBodyLine(lineIndex: number): boolean {
   return lineIndex >= 6;
 }
 
-export function Splash({ status, ensemble, version }: SplashProps) {
+/** Characters that belong to the pendulum/pivot. */
+const PENDULUM_CHARS = /[o╱╲│|/\\●]/;
+
+export function Splash({ status, ensemble, version, checks, connected, summary }: SplashProps) {
   const { Box, Text } = useInk();
-  const [tick, setTick] = useState(0);
+  const [metronomeTick, setMetronomeTick] = useState(0);
+  const [spinnerTick, setSpinnerTick] = useState(0);
   const unicode = supportsUnicode();
-  const frames = metronomeArt(unicode);
-  const { columns } = getTerminalSize();
-  const showBlockTitle = titleArtFits(columns);
+  const frames = useMemo(() => metronomeArt(unicode), [unicode]);
 
+  // Metronome animation — 120ms ping-pong
   useEffect(() => {
+    if (connected) return; // Stop animating once connected
     const timer = setInterval(() => {
-      setTick((t) => (t + 1) % PING_PONG_SEQUENCE.length);
-    }, 300);
+      setMetronomeTick((t) => (t + 1) % PING_PONG.length);
+    }, 120);
     return () => clearInterval(timer);
-  }, []);
+  }, [connected]);
 
-  const frameIndex = PING_PONG_SEQUENCE[tick];
+  // Spinner animation — 80ms
+  useEffect(() => {
+    if (connected) return;
+    const timer = setInterval(() => {
+      setSpinnerTick((t) => (t + 1) % SPINNER_FRAMES.length);
+    }, 80);
+    return () => clearInterval(timer);
+  }, [connected]);
+
+  const frameIndex = PING_PONG[metronomeTick];
   const currentFrame = frames[frameIndex];
 
-  // ── Metronome art ──
+  // ── Metronome art with color splitting ──
   const metronomeLines = currentFrame.map((line, lineIdx) => {
     if (isBodyLine(lineIdx)) {
-      // Body lines: all cyan
-      return React.createElement(Text, { key: lineIdx, color: 'cyan' }, line);
+      return React.createElement(Text, { key: lineIdx, color: DIM }, line);
     }
-    // Pendulum area: color pendulum/pivot chars as terracotta, rest as cyan
+    // Pendulum area: split into pendulum (accent) and space segments
     const segments: React.ReactNode[] = [];
     let buf = '';
     let bufIsPendulum = false;
@@ -81,7 +110,7 @@ export function Splash({ status, ensemble, version }: SplashProps) {
         segments.push(
           React.createElement(Text, {
             key: segments.length,
-            color: bufIsPendulum ? TERRACOTTA : 'cyan',
+            color: bufIsPendulum ? ACCENT : DIM,
           }, buf),
         );
         buf = ch;
@@ -92,7 +121,7 @@ export function Splash({ status, ensemble, version }: SplashProps) {
       segments.push(
         React.createElement(Text, {
           key: segments.length,
-          color: bufIsPendulum ? TERRACOTTA : 'cyan',
+          color: bufIsPendulum ? ACCENT : DIM,
         }, buf),
       );
     }
@@ -100,18 +129,41 @@ export function Splash({ status, ensemble, version }: SplashProps) {
     return React.createElement(Box, { key: lineIdx }, ...segments);
   });
 
-  // ── Title ──
-  const titleElement = showBlockTitle
-    ? React.createElement(Box, { flexDirection: 'column', alignItems: 'center', marginTop: 1 },
-        ...titleArt(unicode).map((line, i) =>
-          React.createElement(Text, { key: i, bold: true, color: 'cyan' }, line),
+  // ── Checklist ──
+  const checkElements = (checks || []).map((check, i) => {
+    if (check.error) {
+      return React.createElement(Text, { key: i, color: '#EF5350' },
+        `  \u2717 ${check.label}`,
+      );
+    }
+    if (check.done) {
+      return React.createElement(Text, { key: i, color: SUCCESS },
+        `  \u2713 ${check.label}`,
+      );
+    }
+    // In-progress: spinner
+    return React.createElement(Text, { key: i, color: DIM },
+      `  ${SPINNER_FRAMES[spinnerTick]} ${check.label}`,
+    );
+  });
+
+  // ── Connected summary box ──
+  const summaryBox = connected && summary
+    ? React.createElement(Box, {
+        flexDirection: 'column',
+        borderStyle: 'single',
+        borderColor: DIM,
+        paddingX: 1,
+        marginTop: 1,
+      },
+        React.createElement(Text, { color: TEXT },
+          `Ensemble: ${summary.ensemble}  \u00B7  Players: ${summary.playerCount}${summary.scheduleCount != null ? `  \u00B7  Schedules: ${summary.scheduleCount}` : ''}`,
+        ),
+        React.createElement(Text, { color: DIM },
+          `Conductor: ${summary.conductor || 'none'}${summary.uptime ? `  \u00B7  Uptime: ${summary.uptime}` : ''}`,
         ),
       )
-    : React.createElement(Box, { marginTop: 1 },
-        React.createElement(Text, { bold: true, color: 'cyan' },
-          unicode ? '\u266A claude-tempo' : '# claude-tempo',
-        ),
-      );
+    : null;
 
   return React.createElement(Box, {
     flexDirection: 'column',
@@ -123,19 +175,39 @@ export function Splash({ status, ensemble, version }: SplashProps) {
     React.createElement(Box, { flexDirection: 'column', alignItems: 'center' },
       ...metronomeLines,
     ),
-    // Title
-    titleElement,
-    // Status
-    React.createElement(Box, { marginTop: 1 },
-      React.createElement(Text, { color: 'yellow', dimColor: true }, status),
+    // Title + tagline + version
+    React.createElement(Box, { flexDirection: 'column', alignItems: 'center', marginTop: 1 },
+      React.createElement(Text, { bold: true, color: ACCENT }, 'claude-tempo'),
+      React.createElement(Text, { color: DIM }, 'Multi-session orchestration via Temporal'),
+      React.createElement(Text, { color: '#374151' }, `v${version}`),
     ),
-    // Ensemble
-    React.createElement(Box, { marginTop: 0 },
-      React.createElement(Text, { dimColor: true }, `ensemble: ${ensemble}`),
-    ),
-    // Version
-    React.createElement(Box, { marginTop: 1 },
-      React.createElement(Text, { dimColor: true }, `v${version}`),
-    ),
+    // Status spinner (only when connecting)
+    !connected
+      ? React.createElement(Box, { marginTop: 2 },
+          React.createElement(Text, { color: WARNING },
+            `${SPINNER_FRAMES[spinnerTick]} ${status}`,
+          ),
+        )
+      : null,
+    // Checklist
+    checkElements.length > 0
+      ? React.createElement(Box, { flexDirection: 'column', marginTop: 1 },
+          ...checkElements,
+        )
+      : null,
+    // Summary box (connected state)
+    summaryBox,
+    // Ready message (connected state)
+    connected
+      ? React.createElement(Box, { marginTop: 1 },
+          React.createElement(Text, { color: TEXT }, 'Ready. Type /help for commands.'),
+        )
+      : null,
+    // Bottom hint
+    !connected
+      ? React.createElement(Box, { marginTop: 2 },
+          React.createElement(Text, { color: '#3D4556' }, 'Press Ctrl+C to cancel'),
+        )
+      : null,
   );
 }
