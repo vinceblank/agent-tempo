@@ -128,7 +128,22 @@ export function PromptArea({
     if (paletteVisible) {
       if (key.upArrow) { onPaletteUp?.(); return; }
       if (key.downArrow) { onPaletteDown?.(); return; }
-      if (key.return || key.tab) { onPaletteSelect?.(); return; }
+      if (key.tab) { onPaletteSelect?.(); return; }
+      if (key.return) {
+        // If the input already looks like a complete command, submit it directly
+        // instead of re-inserting from the palette
+        const trimmedInput = value.trim();
+        const cmdName = trimmedInput.startsWith('/') ? trimmedInput.slice(1).toLowerCase() : '';
+        if (cmdName && commandNames.includes(cmdName)) {
+          // Complete command typed — dismiss palette and submit
+          onPaletteToggle?.(false);
+          // Fall through to the Enter/submit handler below
+        } else {
+          // Partial input — select from palette
+          onPaletteSelect?.();
+          return;
+        }
+      }
       if (key.escape) { onPaletteToggle?.(false); return; }
       // Fall through to normal input handling for typing
     }

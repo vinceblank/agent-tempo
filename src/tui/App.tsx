@@ -76,6 +76,12 @@ export function App({ api, ensemble }: AppProps) {
       return;
     }
 
+    // Esc on splash exits the TUI
+    if (key.escape && (state.phase === 'splash' || state.phase === 'connecting')) {
+      exit();
+      return;
+    }
+
     // Scrollback navigation (Page Up/Down, Home/End)
     if (key.pageUp) { dispatch({ type: 'SCROLL_UP', lines: 10 }); return; }
     if (key.pageDown) { dispatch({ type: 'SCROLL_DOWN', lines: 10 }); return; }
