@@ -199,6 +199,27 @@ Tell your conductor things like:
 - Gate status is derived from criteria: all passed → `passed`; any failed → `failed`; otherwise `open`
 - Gates survive `continueAsNew` for the conductor workflow's lifetime
 
+## Pipeline Stages
+
+Conductors can track fan-out/fan-in of parallel work using stages. Define a stage with a set of players, cue them to work, and the conductor is automatically notified when all players have reported — without polling.
+
+Three conductor-only tools: `stage` (create a stage), `stages` (list all stages), `cancel_stage` (cancel an active stage).
+
+### Examples
+
+Tell your conductor things like:
+
+- *"Create a stage called 'review' with players: critic-1, critic-2, critic-3"*
+- *"Show me the status of all pipeline stages"*
+- *"Cancel the 'deploy' stage"*
+
+### How it works
+
+- When a tracked player sends a `report`, their status updates automatically (`waiting` → `reported` or `blocked`)
+- When all players have reported, the conductor is notified that the stage is complete
+- Two failure policies: `halt` (default — fail the stage on first blocker) and `continue` (keep the stage active until all players report)
+- Stages survive `continueAsNew` for the conductor workflow's lifetime
+
 ## Ensemble Lineups
 
 Define reusable ensemble configurations as YAML files. A lineup specifies which players to recruit, what instructions to give them, what schedules to create, and optionally which custom agent files to use.
@@ -435,10 +456,12 @@ Each session has a status that tracks its connection state:
 | `pending` | Workflow created by `recruit`, but the Claude Code process hasn't connected yet |
 | `active` | Session is running and responsive |
 | `stale` | Messages have gone undelivered for 3+ minutes — the session is likely disconnected |
+| `blocked` | Messages are being delivered but the session has produced no outbound activity for 5+ minutes — it may be stuck or spinning |
 
 Status transitions:
 - **`pending` → `active`** — when the spawned session connects and sends its `updateMetadata` signal
 - **`active` → `stale`** — when undelivered messages exceed the stale threshold (3 minutes)
+- **`active` → `blocked`** — when delivered messages produce no outbound response for 5+ minutes; auto-recovers to `active` on next outbound activity
 - Any status → **terminated** — on graceful shutdown or `stop`
 
 `claude-tempo status` shows `(pending)` and `(stale)` indicators next to player names. The `ClaudeTempoStatus` search attribute is also set, so you can filter sessions by status in the Temporal UI (e.g., `ClaudeTempoStatus = "stale"`).
@@ -724,6 +747,18 @@ COPILOT_BRIDGE_MODEL=gpt-4o claude-tempo start myband --agent copilot
 - Node 20+ required (rest of claude-tempo works on Node 18+)
 
 </details>
+
+## Maestro Dashboard
+
+The **Maestro** workflow runs alongside the conductor, monitoring ensemble state in real time — tracking player joins/leaves, status changes, and part updates. It also accepts commands from external sources for relay to the conductor.
+
+The [Maestro dashboard](https://github.com/vinceblank/maestro) is a web UI that connects to this workflow and provides a live view of your ensemble:
+
+- Player list with status, part, host, and git branch
+- Event log of recent ensemble activity
+- Command input to interact with the conductor
+
+The Maestro workflow starts automatically with the conductor and requires no additional setup. Connect the dashboard to your Temporal server's address and namespace to get started.
 
 ## Development
 
