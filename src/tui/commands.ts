@@ -399,12 +399,18 @@ async function handleEncore(
   }
 }
 
-/** /schedule — list active schedules. */
+/** /schedule [create] — list schedules or enter creation wizard. */
 async function handleSchedule(
   args: string[],
   dispatch: (action: TuiAction) => void,
   api: TempoClient,
 ): Promise<void> {
+  // /schedule create → enter wizard
+  if (args.length > 0 && args[0].toLowerCase() === 'create') {
+    dispatch({ type: 'ENTER_SCHEDULE_WIZARD' });
+    return;
+  }
+
   try {
     const ensembles = await api.discoverEnsembles();
     if (ensembles.length === 0) {
@@ -806,8 +812,8 @@ export const COMMANDS: Record<string, CommandDef> = {
     handler: handleRecall,
   },
   schedule: {
-    description: 'List active schedules',
-    usage: '/schedule',
+    description: 'List schedules or create a new one',
+    usage: '/schedule [create]',
     handler: handleSchedule,
   },
   unschedule: {

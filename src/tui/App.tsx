@@ -22,6 +22,7 @@ import { RecruitWizard } from './components/RecruitWizard';
 import { TitleBar } from './components/TitleBar';
 import { PromptArea } from './components/PromptArea';
 import { StatusBar } from './components/StatusBar';
+import { ScheduleWizard } from './components/ScheduleWizard';
 import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames } from './commands';
 import { THEME } from './utils/theme';
 import { loadHistory, saveHistory } from './utils/history';
@@ -607,6 +608,62 @@ export function App({ api, ensemble }: AppProps) {
     dispatch({ type: 'EXIT_RECRUIT' });
   }, []);
 
+  // ── Schedule wizard callbacks ──
+  const handleScheduleAnswer = useCallback((answer: any) => {
+    dispatch({ type: 'SCHEDULE_NEXT_STEP', answer });
+  }, []);
+
+  const handleScheduleBack = useCallback(() => {
+    dispatch({ type: 'SCHEDULE_PREV_STEP' });
+  }, []);
+
+  const handleScheduleConfirm = useCallback(async () => {
+    if (!state.scheduleWizard) return;
+
+    const ensemble = state.activeEnsemble;
+    if (!ensemble) {
+      dispatch({ type: 'SCHEDULE_DONE', error: 'No active ensemble.' });
+      return;
+    }
+
+    dispatch({ type: 'SCHEDULE_SUBMIT' });
+
+    const a = state.scheduleWizard.answers;
+    try {
+      // Build schedule command for the conductor
+      const parts = [`/schedule ${a.name} --to ${a.target}`];
+      if (a.schedType === 'delay') parts.push(`--delay ${a.timing}`);
+      else if (a.schedType === 'at') parts.push(`--at ${a.timing}`);
+      else if (a.schedType === 'every') parts.push(`--every ${a.timing}`);
+      else if (a.schedType === 'cron') {
+        parts.push(`--cron "${a.timing}"`);
+        if (a.timezone) parts.push(`--timezone ${a.timezone}`);
+      }
+      parts.push(a.message);
+
+      await api.sendCommand(ensemble, parts.join(' '), 'tui');
+      dispatch({ type: 'SCHEDULE_DONE' });
+      dispatch({
+        type: 'COMMIT_STATIC',
+        item: { id: nextStaticId(), type: 'info', content: `\u2714 Schedule "${a.name}" creation requested.`, timestamp: Date.now() },
+      });
+    } catch (err) {
+      dispatch({ type: 'SCHEDULE_DONE', error: String(err) });
+    }
+  }, [state.scheduleWizard, state.activeEnsemble, api]);
+
+  const handleScheduleCancel = useCallback(() => {
+    dispatch({ type: 'EXIT_SCHEDULE_WIZARD' });
+    dispatch({
+      type: 'COMMIT_STATIC',
+      item: { id: nextStaticId(), type: 'info', content: 'Schedule creation cancelled.', timestamp: Date.now() },
+    });
+  }, []);
+
+  const handleScheduleDone = useCallback(() => {
+    dispatch({ type: 'EXIT_SCHEDULE_WIZARD' });
+  }, []);
+
   // Live content area — route by phase
   function renderLiveContent() {
     if (state.phase === 'error') {
@@ -629,6 +686,17 @@ export function App({ api, ensemble }: AppProps) {
         onConfirm: handleRecruitConfirm,
         onCancel: handleRecruitCancel,
         onDone: handleRecruitDone,
+      });
+    }
+
+    if (state.phase === 'schedule-create' && state.scheduleWizard) {
+      return React.createElement(ScheduleWizard, {
+        state: state.scheduleWizard,
+        onAnswer: handleScheduleAnswer,
+        onBack: handleScheduleBack,
+        onConfirm: handleScheduleConfirm,
+        onCancel: handleScheduleCancel,
+        onDone: handleScheduleDone,
       });
     }
 
@@ -757,7 +825,7 @@ export function App({ api, ensemble }: AppProps) {
       value: state.inputValue,
       onChange: (value: string) => dispatch({ type: 'SET_INPUT', value }),
       onSubmit: handleSubmit,
-      disabled: state.phase === 'error' || state.phase === 'recruit' || !!state.confirmingStop || !!state.confirmingLineup,
+      disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingLineup,
       commandNames: commandNamesList,
       playerNames: playerNamesList,
       initialHistory: cmdHistory,

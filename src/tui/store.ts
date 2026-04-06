@@ -27,7 +27,7 @@ export type TuiView = 'home' | 'ensemble' | 'player';
  * It determines which component renders in the live content area.
  * A phase can span multiple views (e.g., 'main' shows either home or ensemble view).
  */
-export type TuiPhase = 'splash' | 'connecting' | 'connected' | 'main' | 'chat' | 'recruit' | 'error';
+export type TuiPhase = 'splash' | 'connecting' | 'connected' | 'main' | 'chat' | 'recruit' | 'schedule-create' | 'error';
 
 // ── Static items (committed scroll history) ──
 
@@ -65,6 +65,41 @@ export interface RecruitState {
 }
 
 export const RECRUIT_STEPS: RecruitStep[] = ['name', 'agent', 'type', 'workDir', 'message', 'host', 'confirm'];
+
+// ── Schedule wizard ──
+
+export type ScheduleStep = 'target' | 'message' | 'schedType' | 'timing' | 'timezone' | 'confirm' | 'done';
+
+export type ScheduleType = 'delay' | 'at' | 'every' | 'cron';
+
+export interface ScheduleAnswers {
+  target: string;
+  message: string;
+  schedType: ScheduleType;
+  timing: string;
+  timezone: string;
+  name: string;
+}
+
+export interface ScheduleWizardState {
+  step: ScheduleStep;
+  answers: ScheduleAnswers;
+  error?: string;
+  submitting?: boolean;
+  prePhase: TuiPhase;
+  preChatTarget?: string;
+}
+
+export const SCHEDULE_STEPS: ScheduleStep[] = ['target', 'message', 'schedType', 'timing', 'timezone', 'confirm'];
+
+export const DEFAULT_SCHEDULE_ANSWERS: ScheduleAnswers = {
+  target: '',
+  message: '',
+  schedType: 'every',
+  timing: '',
+  timezone: '',
+  name: '',
+};
 
 export const DEFAULT_RECRUIT_ANSWERS: RecruitAnswers = {
   name: '',
@@ -148,6 +183,8 @@ export interface TuiState {
   confirmingLineup?: { action: 'load'; path: string; summary: string };
   /** Recruit wizard state (active when phase === 'recruit'). */
   recruitState?: RecruitState;
+  /** Schedule creation wizard state (active when phase === 'schedule-create'). */
+  scheduleWizard?: ScheduleWizardState;
 }
 
 export function initialState(ensemble?: string): TuiState {
@@ -182,6 +219,7 @@ export function initialState(ensemble?: string): TuiState {
     scrollOffset: 0,
     hasNewBelow: false,
     confirmingStop: undefined,
+    scheduleWizard: undefined,
   };
 }
 
@@ -228,6 +266,13 @@ export type TuiAction =
   | { type: 'RECRUIT_SUBMIT' }
   | { type: 'RECRUIT_DONE'; error?: string }
   | { type: 'EXIT_RECRUIT' }
+  // Schedule wizard
+  | { type: 'ENTER_SCHEDULE_WIZARD'; answers?: Partial<ScheduleAnswers> }
+  | { type: 'SCHEDULE_NEXT_STEP'; answer: Partial<ScheduleAnswers> }
+  | { type: 'SCHEDULE_PREV_STEP' }
+  | { type: 'SCHEDULE_SUBMIT' }
+  | { type: 'SCHEDULE_DONE'; error?: string }
+  | { type: 'EXIT_SCHEDULE_WIZARD' }
   // Legacy compat — used by current App.tsx during transition
   | { type: 'REFRESH_ALL'; players: MaestroPlayerInfo[]; messages: MaestroRelayMessage[]; history: HistoryEntry[] };
 
@@ -491,6 +536,82 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         phase: restorePhase,
         chatTarget: restoreChat,
         recruitState: undefined,
+      };
+    }
+
+    // ── Schedule wizard ──
+
+    case 'ENTER_SCHEDULE_WIZARD':
+      return {
+        ...state,
+        phase: 'schedule-create' as TuiPhase,
+        scheduleWizard: {
+          step: 'target',
+          answers: { ...DEFAULT_SCHEDULE_ANSWERS, ...action.answers },
+          prePhase: state.phase,
+          preChatTarget: state.chatTarget,
+        },
+      };
+
+    case 'SCHEDULE_NEXT_STEP': {
+      if (!state.scheduleWizard) return state;
+      const answers = { ...state.scheduleWizard.answers, ...action.answer };
+      const currentIdx = SCHEDULE_STEPS.indexOf(state.scheduleWizard.step);
+      // Skip timezone step for non-cron types
+      let nextIdx = currentIdx + 1;
+      if (SCHEDULE_STEPS[nextIdx] === 'timezone' && answers.schedType !== 'cron') {
+        nextIdx++;
+      }
+      const nextStep = SCHEDULE_STEPS[nextIdx] ?? state.scheduleWizard.step;
+      return {
+        ...state,
+        scheduleWizard: { ...state.scheduleWizard, step: nextStep, answers },
+      };
+    }
+
+    case 'SCHEDULE_PREV_STEP': {
+      if (!state.scheduleWizard) return state;
+      const currentIdx = SCHEDULE_STEPS.indexOf(state.scheduleWizard.step);
+      if (currentIdx <= 0) return state;
+      let prevIdx = currentIdx - 1;
+      // Skip timezone going back for non-cron
+      if (SCHEDULE_STEPS[prevIdx] === 'timezone' && state.scheduleWizard.answers.schedType !== 'cron') {
+        prevIdx--;
+      }
+      const prevStep = SCHEDULE_STEPS[Math.max(0, prevIdx)];
+      return {
+        ...state,
+        scheduleWizard: { ...state.scheduleWizard, step: prevStep },
+      };
+    }
+
+    case 'SCHEDULE_SUBMIT':
+      if (!state.scheduleWizard) return state;
+      return {
+        ...state,
+        scheduleWizard: { ...state.scheduleWizard, submitting: true },
+      };
+
+    case 'SCHEDULE_DONE':
+      if (!state.scheduleWizard) return state;
+      return {
+        ...state,
+        scheduleWizard: {
+          ...state.scheduleWizard,
+          step: 'done',
+          submitting: false,
+          error: action.error,
+        },
+      };
+
+    case 'EXIT_SCHEDULE_WIZARD': {
+      const restoreP = state.scheduleWizard?.prePhase || 'main';
+      const restoreC = state.scheduleWizard?.preChatTarget;
+      return {
+        ...state,
+        phase: restoreP,
+        chatTarget: restoreC,
+        scheduleWizard: undefined,
       };
     }
 
