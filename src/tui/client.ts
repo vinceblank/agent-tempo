@@ -216,14 +216,13 @@ export function createTempoClient(client: Client): TempoClient {
     },
 
     async sendCommand(ensemble: string, text: string, source: string): Promise<string> {
-      // Try Global Maestro first
+      // Route commands through Maestro hub → conductor's commandSignal
       try {
         const h = handle(globalMaestroId);
         return await h.executeUpdate('maestroGlobalSendCommand', {
           args: [{ ensemble, text, source }],
         });
       } catch {
-        // Fall back to per-ensemble Maestro
         const h = handle(maestroWorkflowId(ensemble));
         return await h.executeUpdate('maestroSendCommand', {
           args: [{ text, source }],
@@ -232,10 +231,26 @@ export function createTempoClient(client: Client): TempoClient {
     },
 
     async sendMessage(ensemble: string, to: string, text: string, source: string): Promise<string> {
-      const h = handle(globalMaestroId);
-      return await h.executeUpdate('maestroSendMessage', {
-        args: [{ ensemble, to, text, source }],
-      });
+      // Direct signal with isMaestro flag — matches web Maestro pattern
+      const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${ensemble}" AND ClaudeTempoPlayerId = "${to}"`;
+      for await (const wf of client.workflow.list({ query })) {
+        const h = handle(wf.workflowId);
+        await h.signal('receiveMessage', {
+          from: source,
+          text,
+          isMaestro: true,
+        });
+        return `maestro-msg-${Date.now()}`;
+      }
+      // Fallback: try via Maestro hub if direct resolution fails
+      try {
+        const h = handle(globalMaestroId);
+        return await h.executeUpdate('maestroSendMessage', {
+          args: [{ ensemble, to, text, source }],
+        });
+      } catch {
+        throw new Error(`Player "${to}" not found in ensemble "${ensemble}"`);
+      }
     },
 
     async terminatePlayer(ensemble: string, playerId: string): Promise<void> {
