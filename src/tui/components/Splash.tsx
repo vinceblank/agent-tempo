@@ -29,8 +29,8 @@ export interface SplashProps {
   connected?: boolean;
   /** Available ensembles (shown when connected). */
   ensembles?: EnsembleInfo[];
-  /** Called when user presses Enter to continue from splash. */
-  onContinue?: () => void;
+  /** Called when user presses Enter. Receives selected ensemble name (or undefined if none). */
+  onContinue?: (selectedEnsemble?: string) => void;
   // Legacy props (kept for backward compat but ignored)
   checks?: any[];
   summary?: any;
@@ -52,14 +52,31 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
   const { Box, Text, useInput } = useInk();
   const [metronomeTick, setMetronomeTick] = useState(0);
   const [spinnerTick, setSpinnerTick] = useState(0);
+  const [selectedIdx, setSelectedIdx] = useState(0);
   const brailleFrames = useMemo(() => metronomeBrailleFrames(), []);
 
-  // Handle Enter to continue
+  const ensembleCount = ensembles?.length ?? 0;
+  const hasMultiple = ensembleCount > 1;
+
+  // Handle keys: ↑↓ to select ensemble, Enter to continue
+  const inputRef = React.useRef({ connected, onContinue, ensembles, selectedIdx, hasMultiple });
+  inputRef.current = { connected, onContinue, ensembles, selectedIdx, hasMultiple };
+
   useInput(React.useCallback((_input: string, key: any) => {
-    if (connected && onContinue && key.return) {
-      onContinue();
+    const r = inputRef.current;
+    if (!r.connected || !r.onContinue) return;
+
+    if (key.return) {
+      const selected = r.ensembles?.[r.selectedIdx]?.name;
+      r.onContinue(selected);
+      return;
     }
-  }, [connected, onContinue]));
+
+    if (r.hasMultiple) {
+      if (key.upArrow) { setSelectedIdx(i => Math.max(0, i - 1)); return; }
+      if (key.downArrow) { setSelectedIdx(i => Math.min((r.ensembles?.length ?? 1) - 1, i + 1)); return; }
+    }
+  }, []));
 
   // Metronome animation — runs continuously until unmount
   useEffect(() => {
@@ -92,19 +109,40 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
   // ── Compact ensemble list (max 5) ──
   const ensembleElements: React.ReactNode[] = [];
   if (connected && ensembles && ensembles.length > 0) {
-    const shown = ensembles.slice(0, MAX_ENSEMBLES_SHOWN);
-    for (const ens of shown) {
-      const icon = ens.hasConductor ? '\u2605' : '\u2022';
+    // Window around selectedIdx for large lists
+    let startIdx = 0;
+    if (ensembles.length > MAX_ENSEMBLES_SHOWN) {
+      startIdx = Math.max(0, Math.min(selectedIdx - Math.floor(MAX_ENSEMBLES_SHOWN / 2), ensembles.length - MAX_ENSEMBLES_SHOWN));
+    }
+    const visible = ensembles.slice(startIdx, startIdx + MAX_ENSEMBLES_SHOWN);
+
+    if (startIdx > 0) {
       ensembleElements.push(
-        React.createElement(Text, { key: ens.name, color: THEME.textMuted },
-          `  ${icon} ${ens.name} (${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''})`,
+        React.createElement(Text, { key: 'scroll-up', color: THEME.dim }, `  \u2191 ${startIdx} more`),
+      );
+    }
+
+    for (let i = 0; i < visible.length; i++) {
+      const ens = visible[i];
+      const actualIdx = startIdx + i;
+      const isSelected = actualIdx === selectedIdx;
+      const icon = ens.hasConductor ? '\u2605' : '\u2022';
+      const indicator = hasMultiple ? (isSelected ? '\u25B8 ' : '  ') : '  ';
+      ensembleElements.push(
+        React.createElement(Text, {
+          key: ens.name,
+          color: isSelected ? THEME.accent : THEME.textMuted,
+          bold: isSelected,
+        },
+          `  ${indicator}${icon} ${ens.name} (${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''})`,
         ),
       );
     }
-    if (ensembles.length > MAX_ENSEMBLES_SHOWN) {
+
+    if (startIdx + MAX_ENSEMBLES_SHOWN < ensembles.length) {
       ensembleElements.push(
-        React.createElement(Text, { key: 'more', color: THEME.dim },
-          `  \u2026 and ${ensembles.length - MAX_ENSEMBLES_SHOWN} more`,
+        React.createElement(Text, { key: 'scroll-down', color: THEME.dim },
+          `  \u2193 ${ensembles.length - startIdx - MAX_ENSEMBLES_SHOWN} more`,
         ),
       );
     }
@@ -141,7 +179,8 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
     // Press Enter to continue (connected) / Ctrl+C to cancel (connecting)
     React.createElement(Box, { marginTop: 2 },
       connected
-        ? React.createElement(Text, { bold: true, color: THEME.accent }, 'Press Enter to continue')
+        ? React.createElement(Text, { bold: true, color: THEME.accent },
+            hasMultiple ? '\u2191\u2193 to select, Enter to connect' : 'Press Enter to continue')
         : React.createElement(Text, { color: THEME.muted }, 'Press Ctrl+C to cancel'),
     ),
   );

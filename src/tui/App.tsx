@@ -747,24 +747,45 @@ export function App({ api, ensemble }: AppProps) {
   }, [state.phase, state.activeEnsemble, api]);
 
   // ── Splash continue callback (must be before early return — Rules of Hooks) ──
-  const handleSplashContinue = useCallback(() => {
+  const handleSplashContinue = useCallback(async (selectedEnsemble?: string) => {
+    const s = stateRef.current;
+    const ensName = selectedEnsemble || s.activeEnsemble || 'all';
+
+    // Switch to the selected ensemble if different from current
+    if (selectedEnsemble && selectedEnsemble !== s.activeEnsemble) {
+      dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: selectedEnsemble });
+      // Load data for the selected ensemble
+      try {
+        const [players, messages, history, schedules] = await Promise.all([
+          api.getPlayers(selectedEnsemble),
+          api.getMessages(selectedEnsemble, 50),
+          api.getConductorHistory(selectedEnsemble),
+          api.getSchedules(selectedEnsemble),
+        ]);
+        dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
+        const conductor = players.find(p => p.isConductor);
+        if (conductor) dispatch({ type: 'SET_CONDUCTOR', name: conductor.playerId });
+      } catch { /* polling will retry */ }
+    }
+
     dispatch({
       type: 'COMMIT_STATIC',
       item: {
         id: nextStaticId(),
         type: 'splash-done',
-        content: `Connected to Temporal \u2022 ${state.activeEnsemble || 'all'} \u2022 ${state.players.length} players \u2022 v${packageVersion}`,
+        content: `Connected to Temporal \u2022 ${ensName} \u2022 v${packageVersion}`,
         timestamp: Date.now(),
       },
     });
-    // Default to conductor chat if available, otherwise main view
-    const conductor = state.conductorName;
+
+    // Enter conductor chat if available, otherwise main view
+    const conductor = stateRef.current.conductorName;
     if (conductor) {
       dispatch({ type: 'ENTER_CHAT', target: conductor });
     } else {
       dispatch({ type: 'SET_PHASE', phase: 'main' });
     }
-  }, [state.activeEnsemble, state.players.length, state.conductorName]);
+  }, [api]);
 
   // ── Recruit wizard callbacks (must be before early return — Rules of Hooks) ──
   const handleRecruitAnswer = useCallback((answer: any) => {
