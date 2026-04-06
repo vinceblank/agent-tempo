@@ -873,13 +873,6 @@ export function App({ api, ensemble }: AppProps) {
     React.createElement(Box, { key: 'divider-bottom', paddingX: 1 },
       React.createElement(Text, { color: THEME.border }, dividerLine),
     ),
-    // Command palette (above prompt when visible)
-    state.paletteVisible && filteredPaletteCommands.length >= 0
-      ? React.createElement(CommandPalette, {
-          commands: filteredPaletteCommands,
-          selectedIndex: clampedPaletteIndex,
-        })
-      : null,
     // Prompt area
     React.createElement(PromptArea, {
       hints: promptHints,
@@ -897,5 +890,12 @@ export function App({ api, ensemble }: AppProps) {
       onPaletteDown: handlePaletteDown,
       onPaletteSelect: handlePaletteSelect,
     }),
+    // Command palette (below prompt — drops down like Claude Code)
+    state.paletteVisible && filteredPaletteCommands.length >= 0
+      ? React.createElement(CommandPalette, {
+          commands: filteredPaletteCommands,
+          selectedIndex: clampedPaletteIndex,
+        })
+      : null,
   );
 }
