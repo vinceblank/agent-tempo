@@ -88,50 +88,51 @@ export function metronomeFrames(unicode = supportsUnicode()): string[] {
  * - Body lines (base, sides): cyan
  * - Pendulum arm + pivot (o): #E07A5F (terracotta)
  */
+/**
+ * Multi-line metronome ASCII art — 3 frames (left, center, right).
+ * Triangle body with pendulum swinging from a pivot at the bottom,
+ * matching the actual claude-tempo SVG logo.
+ *
+ * Color guide for consumers:
+ * - Body lines (triangle outline): cyan / dim
+ * - Pendulum arm + pivot (●): #E07A5F (terracotta)
+ * - Body line index: lines 0-6 are the triangle, line 7 is the base
+ */
 export function metronomeArt(unicode = supportsUnicode()): string[][] {
   if (unicode) {
     return [
       // Frame 0: pendulum left
       [
-        '       o       ',
-        '      ╱        ',
-        '     ╱         ',
-        '    ╱          ',
-        '   ╱           ',
-        '  ╱            ',
-        '  ┌───────────┐',
-        '  │           │',
-        '  │           │',
-        '  │           │',
-        '  └───────────┘',
+        '       ╱╲       ',
+        '      ╱  ╲      ',
+        '     ╱    ╲     ',
+        '    ╱  ╱   ╲    ',
+        '   ╱ ╱     ╲   ',
+        '  ╱╱       ╲  ',
+        ' ╱● ─ ─ ─ ─ ╲ ',
+        ' ‾‾‾‾‾‾‾‾‾‾‾‾‾ ',
       ],
       // Frame 1: pendulum center
       [
-        '       o       ',
-        '       │       ',
-        '       │       ',
-        '       │       ',
-        '       │       ',
-        '       │       ',
-        '  ┌───────────┐',
-        '  │           │',
-        '  │           │',
-        '  │           │',
-        '  └───────────┘',
+        '       ╱╲       ',
+        '      ╱  ╲      ',
+        '     ╱  │ ╲     ',
+        '    ╱   │  ╲    ',
+        '   ╱    │   ╲   ',
+        '  ╱     │    ╲  ',
+        ' ╱ ─ ─ ●─ ─ ─╲ ',
+        ' ‾‾‾‾‾‾‾‾‾‾‾‾‾ ',
       ],
       // Frame 2: pendulum right
       [
-        '       o       ',
-        '        ╲      ',
-        '         ╲     ',
-        '          ╲    ',
-        '           ╲   ',
-        '            ╲  ',
-        '  ┌───────────┐',
-        '  │           │',
-        '  │           │',
-        '  │           │',
-        '  └───────────┘',
+        '       ╱╲       ',
+        '      ╱  ╲      ',
+        '     ╱    ╲     ',
+        '    ╱   ╲  ╲    ',
+        '   ╱     ╲ ╲   ',
+        '  ╱       ╲╲  ',
+        ' ╱─ ─ ─ ─ ●╲ ',
+        ' ‾‾‾‾‾‾‾‾‾‾‾‾‾ ',
       ],
     ];
   }
@@ -140,45 +141,36 @@ export function metronomeArt(unicode = supportsUnicode()): string[][] {
   return [
     // Frame 0: pendulum left
     [
-      '       o       ',
-      '      /        ',
-      '     /         ',
-      '    /          ',
-      '   /           ',
-      '  /            ',
-      '  +-----------+',
-      '  |           |',
-      '  |           |',
-      '  |           |',
-      '  +-----------+',
+      '       /\\       ',
+      '      /  \\      ',
+      '     /    \\     ',
+      '    /  /   \\    ',
+      '   / /     \\   ',
+      '  //       \\  ',
+      ' /o - - - - \\ ',
+      ' ~~~~~~~~~~~~~ ',
     ],
     // Frame 1: pendulum center
     [
-      '       o       ',
-      '       |       ',
-      '       |       ',
-      '       |       ',
-      '       |       ',
-      '       |       ',
-      '  +-----------+',
-      '  |           |',
-      '  |           |',
-      '  |           |',
-      '  +-----------+',
+      '       /\\       ',
+      '      /  \\      ',
+      '     /  | \\     ',
+      '    /   |  \\    ',
+      '   /    |   \\   ',
+      '  /     |    \\  ',
+      ' / - - o- - -\\ ',
+      ' ~~~~~~~~~~~~~ ',
     ],
     // Frame 2: pendulum right
     [
-      '       o       ',
-      '        \\      ',
-      '         \\     ',
-      '          \\    ',
-      '           \\   ',
-      '            \\  ',
-      '  +-----------+',
-      '  |           |',
-      '  |           |',
-      '  |           |',
-      '  +-----------+',
+      '       /\\       ',
+      '      /  \\      ',
+      '     /    \\     ',
+      '    /   \\  \\    ',
+      '   /     \\ \\   ',
+      '  /       \\\\  ',
+      ' /- - - - o\\ ',
+      ' ~~~~~~~~~~~~~ ',
     ],
   ];
 }

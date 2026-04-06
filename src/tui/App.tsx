@@ -462,19 +462,8 @@ export function App({ api, ensemble }: AppProps) {
         await new Promise(r => setTimeout(r, MIN_SPLASH_MS - elapsed));
       }
 
-      if (!cancelled) {
-        // Commit splash completion to history
-        dispatch({
-          type: 'COMMIT_STATIC',
-          item: {
-            id: nextStaticId(),
-            type: 'splash-done',
-            content: `Connected to Temporal \u2022 ${ensembleName} \u2022 ${playerCount} players \u2022 v${packageVersion}`,
-            timestamp: Date.now(),
-          },
-        });
-        dispatch({ type: 'SET_PHASE', phase: 'main' });
-      }
+      // Splash stays visible — user must press Enter to continue.
+      // The SET_SPLASH_CONNECTED dispatch above marks it as ready.
     }
 
     connect().catch((err) => {
@@ -538,6 +527,20 @@ export function App({ api, ensemble }: AppProps) {
 
     return () => clearInterval(interval);
   }, [state.phase, state.activeEnsemble, api]);
+
+  // ── Splash continue callback (must be before early return — Rules of Hooks) ──
+  const handleSplashContinue = useCallback(() => {
+    dispatch({
+      type: 'COMMIT_STATIC',
+      item: {
+        id: nextStaticId(),
+        type: 'splash-done',
+        content: `Connected to Temporal \u2022 ${state.activeEnsemble || 'all'} \u2022 ${state.players.length} players \u2022 v${packageVersion}`,
+        timestamp: Date.now(),
+      },
+    });
+    dispatch({ type: 'SET_PHASE', phase: 'main' });
+  }, [state.activeEnsemble, state.players.length]);
 
   // ── Recruit wizard callbacks (must be before early return — Rules of Hooks) ──
   const handleRecruitAnswer = useCallback((answer: any) => {
@@ -663,6 +666,8 @@ export function App({ api, ensemble }: AppProps) {
       checks: state.splashChecks,
       connected: state.splashConnected,
       summary: state.splashSummary,
+      ensembles: state.ensembles.map(e => ({ name: e.name, playerCount: e.playerCount, hasConductor: e.hasConductor })),
+      onContinue: handleSplashContinue,
     });
   }
 

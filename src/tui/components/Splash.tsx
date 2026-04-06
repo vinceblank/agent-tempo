@@ -25,6 +25,12 @@ const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', 
 // ── Ping-pong sequence for 3 metronome frames ──
 const PING_PONG = [0, 1, 2, 1];
 
+export interface EnsembleInfo {
+  name: string;
+  playerCount: number;
+  hasConductor: boolean;
+}
+
 export interface SplashProps {
   status: string;
   ensemble: string;
@@ -41,6 +47,10 @@ export interface SplashProps {
     scheduleCount?: number;
     uptime?: string;
   };
+  /** Available ensembles (shown when connected). */
+  ensembles?: EnsembleInfo[];
+  /** Called when user presses Enter to continue from splash. */
+  onContinue?: () => void;
 }
 
 export interface SplashCheck {
@@ -50,18 +60,25 @@ export interface SplashCheck {
 }
 
 /**
- * Classify metronome art lines: lines 0-5 are pendulum area,
- * lines 6+ are the body (base/box).
+ * The base line (underbar) is rendered in dim.
+ * All other lines use color splitting for pendulum vs body.
  */
-function isBodyLine(lineIndex: number): boolean {
-  return lineIndex >= 6;
+function isBaseLine(lineIndex: number): boolean {
+  return lineIndex >= 7;
 }
 
-/** Characters that belong to the pendulum/pivot. */
-const PENDULUM_CHARS = /[o╱╲│|/\\●]/;
+/** Characters that belong to the pendulum arm and pivot (accent color). */
+const PENDULUM_CHARS = /[│|●o]/;
 
-export function Splash({ status, ensemble, version, checks, connected, summary }: SplashProps) {
-  const { Box, Text } = useInk();
+export function Splash({ status, ensemble, version, checks, connected, summary, ensembles, onContinue }: SplashProps) {
+  const { Box, Text, useInput } = useInk();
+
+  // Handle Enter to continue
+  useInput(React.useCallback((input: string, key: any) => {
+    if (connected && onContinue && key.return) {
+      onContinue();
+    }
+  }, [connected, onContinue]));
   const [metronomeTick, setMetronomeTick] = useState(0);
   const [spinnerTick, setSpinnerTick] = useState(0);
   const unicode = supportsUnicode();
@@ -90,7 +107,7 @@ export function Splash({ status, ensemble, version, checks, connected, summary }
 
   // ── Metronome art with color splitting ──
   const metronomeLines = currentFrame.map((line, lineIdx) => {
-    if (isBodyLine(lineIdx)) {
+    if (isBaseLine(lineIdx)) {
       return React.createElement(Text, { key: lineIdx, color: DIM }, line);
     }
     // Pendulum area: split into pendulum (accent) and space segments
@@ -197,13 +214,31 @@ export function Splash({ status, ensemble, version, checks, connected, summary }
       : null,
     // Summary box (connected state)
     summaryBox,
-    // Ready message (connected state)
-    connected
-      ? React.createElement(Box, { marginTop: 1 },
-          React.createElement(Text, { color: TEXT }, 'Ready. Type /help for commands.'),
+    // Ensemble list (connected state)
+    connected && ensembles && ensembles.length > 0
+      ? React.createElement(Box, { flexDirection: 'column', marginTop: 1 },
+          React.createElement(Text, { color: DIM },
+            `  ${ensembles.length} ensemble${ensembles.length !== 1 ? 's' : ''} available:`,
+          ),
+          ...ensembles.map(ens =>
+            React.createElement(Text, { key: ens.name, color: TEXT },
+              `    ${ens.hasConductor ? '\u2605' : '\u2022'} ${ens.name} (${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''})`,
+            ),
+          ),
         )
       : null,
-    // Bottom hint
+    connected && (!ensembles || ensembles.length === 0)
+      ? React.createElement(Box, { marginTop: 1 },
+          React.createElement(Text, { color: DIM }, '  No ensembles running. Start one with: claude-tempo up <name>'),
+        )
+      : null,
+    // Press Enter to continue (connected state)
+    connected
+      ? React.createElement(Box, { marginTop: 2 },
+          React.createElement(Text, { bold: true, color: ACCENT }, '  Press Enter to continue'),
+        )
+      : null,
+    // Bottom hint (connecting state)
     !connected
       ? React.createElement(Box, { marginTop: 2 },
           React.createElement(Text, { color: '#3D4556' }, 'Press Ctrl+C to cancel'),
