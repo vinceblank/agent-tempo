@@ -5,13 +5,7 @@
  */
 import React from 'react';
 import { useInk } from '../ink-context';
-import type { Message, SentMessage } from '../../types';
-
-// ── Theme colors ──
-const ACCENT = '#E07A5F';
-const DIM = '#6B7280';
-const TEXT = '#FAF3EE';
-const TEXT_SECONDARY = '#9CA3AF';
+import { THEME } from '../utils/theme';
 
 export interface ChatMessage {
   direction: 'received' | 'sent';
@@ -53,16 +47,16 @@ export function ChatView({
 
   // ── Header info ──
   const header = React.createElement(Box, { flexDirection: 'column', paddingX: 1, marginBottom: 0 },
-    React.createElement(Text, { bold: true, color: ACCENT },
+    React.createElement(Text, { bold: true, color: THEME.accent },
       `  Conversation with ${targetPlayer}`,
     ),
     targetPart
-      ? React.createElement(Text, { color: DIM }, `  Part: ${targetPart}`)
+      ? React.createElement(Text, { color: THEME.dim }, `  Part: ${targetPart}`)
       : null,
-    React.createElement(Text, { color: DIM },
+    React.createElement(Text, { color: THEME.dim },
       `  ${targetBranch ? `Branch: ${targetBranch} \u00B7 ` : ''}${receivedCount} received, ${sentCount} sent`,
     ),
-    React.createElement(Text, { color: DIM },
+    React.createElement(Text, { color: THEME.dim },
       '  ' + '\u2500'.repeat(55),
     ),
   );
@@ -71,8 +65,8 @@ export function ChatView({
   const messageElements = messages.map((msg, i) => {
     const isSelf = msg.direction === 'sent';
     const senderLabel = isSelf ? 'you (self)' : msg.from;
-    const senderColor = isSelf ? DIM : ACCENT;
-    const bodyColor = isSelf ? TEXT_SECONDARY : TEXT;
+    const senderColor = isSelf ? THEME.dim : THEME.accent;
+    const bodyColor = isSelf ? THEME.textMuted : THEME.text;
     const time = formatTime(msg.timestamp);
 
     // Wrap message body to reasonable width
@@ -82,7 +76,7 @@ export function ChatView({
       // Sender + timestamp on same line
       React.createElement(Box, { justifyContent: 'space-between', width: '100%' },
         React.createElement(Text, { color: senderColor }, `  ${senderLabel}`),
-        React.createElement(Text, { color: DIM }, time),
+        React.createElement(Text, { color: THEME.dim }, time),
       ),
       // Message body
       ...lines.map((line, li) =>
@@ -98,7 +92,7 @@ export function ChatView({
       ...messageElements,
       messages.length === 0
         ? React.createElement(Box, { paddingX: 1, marginTop: 1 },
-            React.createElement(Text, { color: DIM }, '  No messages yet. Type to send a cue.'),
+            React.createElement(Text, { color: THEME.dim }, '  No messages yet. Type to send a cue.'),
           )
         : null,
     ),

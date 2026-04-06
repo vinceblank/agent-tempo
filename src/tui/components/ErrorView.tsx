@@ -3,17 +3,10 @@
  * Shows a static metronome, error checklist, troubleshooting box,
  * and retry countdown.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useInk } from '../ink-context';
 import { metronomeArt, supportsUnicode } from '../utils/platform';
-
-// ── Theme colors ──
-const ACCENT = '#E07A5F';
-const SUCCESS = '#81C784';
-const ERROR = '#EF5350';
-const WARNING = '#F2CC8F';
-const DIM = '#6B7280';
-const TEXT = '#FAF3EE';
+import { THEME } from '../utils/theme';
 
 export interface ErrorCheck {
   label: string;
@@ -34,6 +27,10 @@ export interface ErrorViewProps {
   retryAttempt?: number;
   /** Max retry attempts. */
   retryMax?: number;
+  /** Called when user presses 'r' to retry. */
+  onRetry?: () => void;
+  /** Called when user presses 'q' to quit. */
+  onQuit?: () => void;
 }
 
 export function ErrorView({
@@ -44,25 +41,33 @@ export function ErrorView({
   retryIn,
   retryAttempt,
   retryMax,
+  onRetry,
+  onQuit,
 }: ErrorViewProps) {
-  const { Box, Text } = useInk();
+  const { Box, Text, useInput } = useInk();
+
+  // Wire up keybindings
+  useInput(useCallback((input: string) => {
+    if (input === 'r' && onRetry) onRetry();
+    if (input === 'q' && onQuit) onQuit();
+  }, [onRetry, onQuit]));
   const unicode = supportsUnicode();
 
   // Static metronome — always center frame (index 1)
   const frames = metronomeArt(unicode);
   const staticFrame = frames[1];
   const metronomeLines = staticFrame.map((line, i) =>
-    React.createElement(Text, { key: i, color: DIM }, line),
+    React.createElement(Text, { key: i, color: THEME.dim }, line),
   );
 
   // ── Checklist ──
   const checkElements = checks.map((check, i) =>
     React.createElement(Box, { key: i, flexDirection: 'column' },
-      React.createElement(Text, { color: check.passed ? SUCCESS : ERROR },
+      React.createElement(Text, { color: check.passed ? THEME.success : THEME.error },
         `  ${check.passed ? '\u2713' : '\u2717'} ${check.label}`,
       ),
       check.detail && !check.passed
-        ? React.createElement(Text, { color: DIM }, `    ${check.detail}`)
+        ? React.createElement(Text, { color: THEME.dim }, `    ${check.detail}`)
         : null,
     ),
   );
@@ -71,23 +76,23 @@ export function ErrorView({
   const troubleshootingBox = React.createElement(Box, {
     flexDirection: 'column',
     borderStyle: 'single',
-    borderColor: DIM,
+    borderColor: THEME.dim,
     paddingX: 1,
     paddingY: 0,
     marginTop: 1,
   },
-    React.createElement(Text, { bold: true, color: WARNING }, '  Troubleshooting'),
+    React.createElement(Text, { bold: true, color: THEME.warning }, '  Troubleshooting'),
     React.createElement(Box, { height: 1 }),
-    React.createElement(Text, { color: TEXT }, '  1. Start the Temporal dev server:'),
-    React.createElement(Text, { color: ACCENT }, '     $ temporal server start-dev'),
+    React.createElement(Text, { color: THEME.text}, '  1. Start the Temporal dev server:'),
+    React.createElement(Text, { color: THEME.accent }, '     $ temporal server start-dev'),
     React.createElement(Box, { height: 0 }),
-    React.createElement(Text, { color: TEXT }, '  2. Or specify a custom address:'),
-    React.createElement(Text, { color: ACCENT }, '     $ TEMPORAL_ADDRESS=host:7233 claude-tempo'),
+    React.createElement(Text, { color: THEME.text}, '  2. Or specify a custom address:'),
+    React.createElement(Text, { color: THEME.accent }, '     $ TEMPORAL_ADDRESS=host:7233 claude-tempo'),
     React.createElement(Box, { height: 0 }),
-    React.createElement(Text, { color: TEXT }, '  3. Check if Temporal is running:'),
-    React.createElement(Text, { color: ACCENT }, '     $ temporal operator cluster health'),
+    React.createElement(Text, { color: THEME.text}, '  3. Check if Temporal is running:'),
+    React.createElement(Text, { color: THEME.accent }, '     $ temporal operator cluster health'),
     React.createElement(Box, { height: 1 }),
-    React.createElement(Text, { color: DIM },
+    React.createElement(Text, { color: THEME.dim },
       '  Docs: https://github.com/vinceblank/claude-tempo#setup',
     ),
   );
@@ -95,7 +100,7 @@ export function ErrorView({
   // ── Retry progress ──
   const retryElement = retrying
     ? React.createElement(Box, { marginTop: 1 },
-        React.createElement(Text, { color: DIM },
+        React.createElement(Text, { color: THEME.dim },
           `  Retrying in ${retryIn ?? '?'}s... (attempt ${retryAttempt ?? '?'}/${retryMax ?? 5})`,
         ),
       )
@@ -113,13 +118,13 @@ export function ErrorView({
     ),
     // Title
     React.createElement(Box, { flexDirection: 'column', alignItems: 'center', marginTop: 1 },
-      React.createElement(Text, { bold: true, color: ACCENT }, 'claude-tempo'),
-      React.createElement(Text, { color: DIM }, 'Multi-session orchestration via Temporal'),
-      React.createElement(Text, { color: '#374151' }, `v${version}`),
+      React.createElement(Text, { bold: true, color: THEME.accent }, 'claude-tempo'),
+      React.createElement(Text, { color: THEME.dim }, 'Multi-session orchestration via Temporal'),
+      React.createElement(Text, { color: THEME.muted }, `v${version}`),
     ),
     // Error header
     React.createElement(Box, { marginTop: 2 },
-      React.createElement(Text, { bold: true, color: ERROR },
+      React.createElement(Text, { bold: true, color: THEME.error },
         `  \u26A0 Connection Failed`,
       ),
     ),
@@ -135,7 +140,7 @@ export function ErrorView({
     retryElement,
     // Keybindings
     React.createElement(Box, { marginTop: 2 },
-      React.createElement(Text, { color: DIM }, '[r] retry now    [q] quit    [?] help'),
+      React.createElement(Text, { color: THEME.dim }, '[r] retry now    [q] quit    [?] help'),
     ),
   );
 }

@@ -8,12 +8,7 @@ import { useInk } from '../ink-context';
 import { statusIcons, supportsUnicode } from '../utils/platform';
 import type { MaestroPlayerInfo, MaestroRelayMessage } from '../../types';
 
-// ── Theme colors ──
-const ACCENT = '#E07A5F';
-const SUCCESS = '#81C784';
-const WARNING = '#F2CC8F';
-const DIM = '#6B7280';
-const TEXT_SECONDARY = '#9CA3AF';
+import { THEME } from '../utils/theme';
 
 export interface ScheduleInfo {
   name: string;
@@ -63,9 +58,9 @@ export function MainView({ ensemble, players, messages, schedules }: MainViewPro
       : p.status === 'pending' ? icons.pending
       : icons.terminated;
 
-    const color = p.status === 'active' ? SUCCESS
-      : p.status === 'stale' ? WARNING
-      : DIM;
+    const color = p.status === 'active' ? THEME.success
+      : p.status === 'stale' ? THEME.warning
+      : THEME.dim;
 
     const typeName = p.playerType || p.agentType || '';
     const part = p.part || (p.status === 'stale' ? `stale \u2014 last seen recently` : '');
@@ -82,7 +77,7 @@ export function MainView({ ensemble, players, messages, schedules }: MainViewPro
   const activityRows = recentMessages.map((m, i) => {
     const time = formatTime(m.timestamp);
     const msgText = truncate(m.text.replace(/\n/g, ' '), 50);
-    const color = m.text.includes('stale') ? WARNING : TEXT_SECONDARY;
+    const color = m.text.includes('stale') ? THEME.warning : THEME.textMuted;
 
     return React.createElement(Text, { key: i, color },
       `  ${time}  ${m.from} ${icons.arrow} ${m.to}: ${msgText}`,
@@ -91,7 +86,7 @@ export function MainView({ ensemble, players, messages, schedules }: MainViewPro
 
   // ── Schedules section ──
   const scheduleRows = (schedules || []).map((s, i) =>
-    React.createElement(Text, { key: i, color: TEXT_SECONDARY },
+    React.createElement(Text, { key: i, color: THEME.textMuted },
       `  \u21BB ${pad(s.name, 20)}${pad(s.spec, 18)}${icons.arrow} ${s.target}`,
     ),
   );
@@ -99,28 +94,28 @@ export function MainView({ ensemble, players, messages, schedules }: MainViewPro
   return React.createElement(Box, { flexDirection: 'column', height: '100%', paddingX: 1 },
     // Players header
     React.createElement(Box, { marginTop: 1 },
-      React.createElement(Text, { bold: true, color: ACCENT }, '  Players'),
+      React.createElement(Text, { bold: true, color: THEME.accent }, '  Players'),
     ),
     React.createElement(Box, { height: 1 }),
     ...playerRows,
     players.length === 0
-      ? React.createElement(Text, { color: DIM }, '  No players')
+      ? React.createElement(Text, { color: THEME.dim }, '  No players')
       : null,
 
     // Recent Activity header
     React.createElement(Box, { marginTop: 1 },
-      React.createElement(Text, { bold: true, color: ACCENT }, '  Recent Activity'),
+      React.createElement(Text, { bold: true, color: THEME.accent }, '  Recent Activity'),
     ),
     React.createElement(Box, { height: 1 }),
     ...activityRows,
     recentMessages.length === 0
-      ? React.createElement(Text, { color: DIM }, '  No activity yet')
+      ? React.createElement(Text, { color: THEME.dim }, '  No activity yet')
       : null,
 
     // Schedules header (only if there are schedules)
     schedules && schedules.length > 0
       ? React.createElement(Box, { flexDirection: 'column', marginTop: 1 },
-          React.createElement(Text, { bold: true, color: ACCENT },
+          React.createElement(Text, { bold: true, color: THEME.accent },
             `  Schedules (${schedules.length} active)`,
           ),
           React.createElement(Box, { height: 1 }),

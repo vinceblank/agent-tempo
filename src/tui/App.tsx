@@ -38,6 +38,18 @@ function nextStaticId(): string {
   return `static-${++staticIdCounter}`;
 }
 
+/** Color for static item text. */
+function staticItemColor(item: StaticItem): string {
+  switch (item.type) {
+    case 'error': return THEME.error;
+    case 'message': return THEME.accent;
+    case 'splash-done': return THEME.success;
+    case 'info': return THEME.textMuted;
+    case 'command-output': return THEME.text;
+    default: return THEME.text;
+  }
+}
+
 export function App({ api, ensemble }: AppProps) {
   const { Box, Text, Static, useApp, useInput } = useInk();
   const [state, dispatch] = useReducer(tuiReducer, initialState(ensemble));
@@ -141,7 +153,8 @@ export function App({ api, ensemble }: AppProps) {
 
       // Execute handler
       try {
-        await cmd.handler(parsed.args, dispatch, api);
+        const ctx = { activeEnsemble: state.activeEnsemble };
+        await cmd.handler(parsed.args, dispatch, api, ctx);
       } catch (err) {
         dispatch({
           type: 'COMMIT_STATIC',
@@ -302,10 +315,9 @@ export function App({ api, ensemble }: AppProps) {
     });
   }
 
-  // Divider helper
-  const Divider = () => React.createElement(Box, { paddingX: 1 },
-    React.createElement(Text, { color: THEME.border }, '\u2500'.repeat(Math.max(20, (process.stdout.columns || 80) - 4))),
-  );
+  // Divider — thin horizontal rule
+  const dividerWidth = Math.max(20, (process.stdout.columns || 80) - 4);
+  const dividerLine = '\u2500'.repeat(dividerWidth);
 
   // Live content area — route by phase
   function renderLiveContent() {
@@ -317,6 +329,7 @@ export function App({ api, ensemble }: AppProps) {
           { label: `Cannot reach Temporal`, passed: false, detail: state.error },
         ],
         errorDetail: state.error,
+        onQuit: () => exit(),
       });
     }
 
@@ -372,37 +385,30 @@ export function App({ api, ensemble }: AppProps) {
     );
   }
 
-  // Color for static item text
-  function staticItemColor(item: StaticItem): string {
-    switch (item.type) {
-      case 'error': return THEME.error;
-      case 'message': return THEME.accent;
-      case 'splash-done': return THEME.success;
-      case 'info': return THEME.textMuted;
-      case 'command-output': return THEME.text;
-      default: return THEME.text;
-    }
-  }
-
   return React.createElement(Box, { flexDirection: 'column', height: '100%' },
     // Title bar
     React.createElement(TitleBar, { context: contextString }),
     // Top divider
-    React.createElement(Divider, null),
+    React.createElement(Box, { key: 'divider-top', paddingX: 1 },
+      React.createElement(Text, { color: THEME.border }, dividerLine),
+    ),
     // Static scroll-up history
-    React.createElement(Static, { items: state.staticItems },
-      ...state.staticItems.map((item: StaticItem) =>
+    // Ink's <Static> takes a render function child via `children` prop.
+    React.createElement(Static, {
+      items: state.staticItems,
+      children: (item: StaticItem) =>
         React.createElement(Box, { key: item.id, paddingX: 1 },
           React.createElement(Text, { color: staticItemColor(item) }, item.content),
         ),
-      ),
-    ),
+    } as any),
     // Live content area
     React.createElement(Box, { flexGrow: 1 },
       renderLiveContent(),
     ),
     // Bottom divider
-    React.createElement(Divider, null),
+    React.createElement(Box, { key: 'divider-bottom', paddingX: 1 },
+      React.createElement(Text, { color: THEME.border }, dividerLine),
+    ),
     // Prompt area
     React.createElement(PromptArea, {
       hints: promptHints,

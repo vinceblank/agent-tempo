@@ -17,11 +17,18 @@ export interface ParsedCommand {
   raw: string;
 }
 
+/** Context passed to command handlers from the shell. */
+export interface CommandContext {
+  /** Current active ensemble (null if viewing all ensembles). */
+  activeEnsemble: string | null;
+}
+
 /** Handler function signature for slash commands. */
 export type CommandHandler = (
   args: string[],
   dispatch: (action: any) => void,
   api: TempoClient,
+  ctx: CommandContext,
 ) => Promise<void>;
 
 /** Command definition with metadata. */
@@ -75,6 +82,7 @@ async function handleCue(
   args: string[],
   dispatch: (action: any) => void,
   api: TempoClient,
+  ctx: CommandContext,
 ): Promise<void> {
   if (args.length === 0) {
     commitStatic(dispatch, 'error', 'Usage: /cue <player> [message]');
@@ -90,8 +98,31 @@ async function handleCue(
   } else {
     // Quick cue — send message without entering chat mode
     const message = args.slice(1).join(' ');
+
+    // Resolve ensemble — use active or discover
+    let ensemble = ctx.activeEnsemble || '';
+    if (!ensemble) {
+      try {
+        const ensembles = await api.discoverEnsembles();
+        if (ensembles.length === 1) {
+          ensemble = ensembles[0].name;
+        } else if (ensembles.length > 1) {
+          // Try to find which ensemble the target is in
+          for (const ens of ensembles) {
+            const players = await api.getPlayers(ens.name);
+            if (players.some(p => p.playerId === target)) {
+              ensemble = ens.name;
+              break;
+            }
+          }
+        }
+      } catch {
+        // Fall through with empty ensemble — sendMessage may handle it
+      }
+    }
+
     try {
-      await api.sendMessage('', target, message, 'tui');
+      await api.sendMessage(ensemble, target, message, 'tui');
       commitStatic(dispatch, 'message', `\u2192 ${target}: ${message}`);
     } catch (err) {
       commitStatic(dispatch, 'error', `Failed to send cue to ${target}: ${err}`);
