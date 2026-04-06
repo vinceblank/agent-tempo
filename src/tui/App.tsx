@@ -1,13 +1,23 @@
 /**
- * Root TUI application component.
- * Routes between views based on state: home → ensemble → player.
- * Handles the startup sequence (splash → connected) and polling loops.
+ * Root TUI application component — chat-focused shell with slash commands.
+ *
+ * Layout (top to bottom):
+ * - TitleBar (pinned)
+ * - Divider
+ * - Static scroll-up history
+ * - Live content area (splash, main, chat, error)
+ * - Divider
+ * - PromptArea (pinned)
  */
-import React, { useReducer, useEffect, useCallback } from 'react';
+import React, { useReducer, useEffect, useCallback, useMemo } from 'react';
 import { useInk } from './ink-context';
 import { tuiReducer, initialState } from './store';
+import type { StaticItem } from './store';
 import { Splash } from './components/Splash';
-import { HomeView } from './components/HomeView';
+import { TitleBar } from './components/TitleBar';
+import { PromptArea } from './components/PromptArea';
+import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS } from './commands';
+import { THEME } from './utils/theme';
 import type { TuiApi } from './core-api';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -15,35 +25,169 @@ const packageVersion: string = require('../../package.json').version;
 
 interface AppProps {
   api: TuiApi;
-  /** If provided, start directly in ensemble view (backwards compat). */
+  /** If provided, start directly in ensemble view. */
   ensemble?: string;
 }
 
+let staticIdCounter = 0;
+function nextStaticId(): string {
+  return `static-${++staticIdCounter}`;
+}
+
 export function App({ api, ensemble }: AppProps) {
-  const { Box, Text, useApp, useInput } = useInk();
+  const { Box, Text, Static, useApp, useInput } = useInk();
   const [state, dispatch] = useReducer(tuiReducer, initialState(ensemble));
   const { exit } = useApp();
 
-  // Hoisted callbacks for HomeView (must be unconditional — React hooks rules)
-  const handleSelect = useCallback((name: string) => {
-    dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: name });
-  }, []);
-  const handleNavigate = useCallback((direction: 'up' | 'down') => {
-    dispatch({ type: direction === 'up' ? 'SELECT_PREV' : 'SELECT_NEXT' });
-  }, []);
-  const handleQuit = useCallback(() => exit(), [exit]);
-
-  // Global keyboard: q to quit, Ctrl-C to quit, Esc to go back
+  // ── Global keybindings ──
   useInput(useCallback((input: string, key: any) => {
-    if (input === 'q' || (key.ctrl && input === 'c')) {
+    if (key.ctrl && input === 'c') {
       exit();
     }
-    if (key.escape && state.view !== 'home') {
-      dispatch({ type: 'NAVIGATE_HOME' });
-    }
-  }, [exit, state.view]));
+  }, [exit]));
 
-  // ── Startup sequence: splash → connected ──
+  // ── Context string for title bar ──
+  const contextString = useMemo(() => {
+    if (state.phase === 'splash') return 'Starting up...';
+    if (state.phase === 'error') return 'Error';
+    if (state.chatTarget) {
+      const player = state.players.find(p => p.playerId === state.chatTarget);
+      const status = player?.status || 'unknown';
+      return `cue \u2192 ${state.chatTarget} \u00b7 ${status}`;
+    }
+    if (state.activeEnsemble) {
+      const count = state.players.length;
+      return `${state.activeEnsemble} \u00b7 ${count} player${count !== 1 ? 's' : ''} \u00b7 Connected`;
+    }
+    const count = state.ensembles.length;
+    return `${count} ensemble${count !== 1 ? 's' : ''} \u00b7 Connected`;
+  }, [state.phase, state.chatTarget, state.activeEnsemble, state.players, state.ensembles]);
+
+  // ── Hint text for prompt area ──
+  const promptHints = useMemo(() => {
+    if (state.chatTarget) {
+      return 'Type a message to send, or /back to exit chat mode';
+    }
+    return '/cue /recruit /stop /broadcast /help /quit';
+  }, [state.chatTarget]);
+
+  // ── Command submission handler ──
+  const handleSubmit = useCallback(async (input: string) => {
+    const trimmed = input.trim();
+    if (!trimmed) return;
+
+    dispatch({ type: 'SET_INPUT', value: '' });
+
+    const parsed = parseCommand(trimmed);
+
+    if (parsed) {
+      // Slash command
+      if (parsed.name === 'quit') {
+        exit();
+        return;
+      }
+      if (parsed.name === 'back') {
+        if (state.chatTarget) {
+          dispatch({ type: 'EXIT_CHAT' });
+        } else if (state.activeEnsemble) {
+          dispatch({ type: 'NAVIGATE_HOME' });
+        }
+        return;
+      }
+      if (parsed.name === 'help') {
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: {
+            id: nextStaticId(),
+            type: 'command-output',
+            content: formatHelpSummary(),
+            timestamp: Date.now(),
+          },
+        });
+        return;
+      }
+
+      if (!isValidCommand(parsed.name)) {
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: {
+            id: nextStaticId(),
+            type: 'error',
+            content: `Unknown command: /${parsed.name}. Type /help for available commands.`,
+            timestamp: Date.now(),
+          },
+        });
+        return;
+      }
+
+      // Command exists but handler not yet implemented
+      const cmd = COMMANDS[parsed.name];
+      if (!cmd.handler) {
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: {
+            id: nextStaticId(),
+            type: 'info',
+            content: `/${parsed.name}: coming soon. Usage: ${cmd.usage}`,
+            timestamp: Date.now(),
+          },
+        });
+        return;
+      }
+
+      // Execute handler
+      try {
+        await cmd.handler(parsed.args, dispatch, api);
+      } catch (err) {
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: {
+            id: nextStaticId(),
+            type: 'error',
+            content: `Error running /${parsed.name}: ${err}`,
+            timestamp: Date.now(),
+          },
+        });
+      }
+    } else if (state.chatTarget) {
+      // Bare text in chat mode → send cue to target
+      try {
+        await api.sendMessage(state.activeEnsemble!, state.chatTarget, trimmed, 'tui');
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: {
+            id: nextStaticId(),
+            type: 'message',
+            content: `\u2192 ${state.chatTarget}: ${trimmed}`,
+            timestamp: Date.now(),
+          },
+        });
+      } catch (err) {
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: {
+            id: nextStaticId(),
+            type: 'error',
+            content: `Failed to send: ${err}`,
+            timestamp: Date.now(),
+          },
+        });
+      }
+    } else {
+      // Bare text in main mode — hint to use commands
+      dispatch({
+        type: 'COMMIT_STATIC',
+        item: {
+          id: nextStaticId(),
+          type: 'info',
+          content: 'Use /commands to interact. Type /help for available commands.',
+          timestamp: Date.now(),
+        },
+      });
+    }
+  }, [state.chatTarget, state.activeEnsemble, api, exit]);
+
+  // ── Startup sequence: splash → main/connected ──
   useEffect(() => {
     let cancelled = false;
 
@@ -63,9 +207,8 @@ export function App({ api, ensemble }: AppProps) {
 
       dispatch({ type: 'SET_SPLASH_STATUS', status: 'Loading ensembles...' });
 
-      // Load initial data based on starting view
+      // Load initial data
       if (state.activeEnsemble) {
-        // Direct ensemble view — load ensemble data
         try {
           const [players, messages, history] = await Promise.all([
             api.getPlayers(state.activeEnsemble),
@@ -78,7 +221,6 @@ export function App({ api, ensemble }: AppProps) {
           // Non-fatal — will retry in poll loop
         }
       } else {
-        // Home view — discover ensembles
         try {
           const ensembles = await api.discoverEnsembles();
           if (cancelled) return;
@@ -95,7 +237,17 @@ export function App({ api, ensemble }: AppProps) {
       }
 
       if (!cancelled) {
-        dispatch({ type: 'SET_PHASE', phase: 'connected' });
+        // Commit splash completion to history
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: {
+            id: nextStaticId(),
+            type: 'splash-done',
+            content: `Connected to Temporal \u2022 v${packageVersion}`,
+            timestamp: Date.now(),
+          },
+        });
+        dispatch({ type: 'SET_PHASE', phase: 'main' });
       }
     }
 
@@ -110,14 +262,14 @@ export function App({ api, ensemble }: AppProps) {
 
   // ── Polling loop ──
   useEffect(() => {
-    if (state.phase !== 'connected') return;
+    if (state.phase !== 'main' && state.phase !== 'chat' && state.phase !== 'connected') return;
 
     const interval = setInterval(async () => {
       try {
-        if (state.view === 'home') {
+        if (!state.activeEnsemble) {
           const ensembles = await api.discoverEnsembles();
           dispatch({ type: 'REFRESH_ENSEMBLES', ensembles });
-        } else if (state.view === 'ensemble' && state.activeEnsemble) {
+        } else {
           const [players, messages, history] = await Promise.all([
             api.getPlayers(state.activeEnsemble),
             api.getMessages(state.activeEnsemble, 50),
@@ -126,15 +278,16 @@ export function App({ api, ensemble }: AppProps) {
           dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history });
         }
       } catch {
-        // Silently skip failed polls — next cycle will retry
+        // Silently skip failed polls
       }
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [state.phase, state.view, state.activeEnsemble, api]);
+  }, [state.phase, state.activeEnsemble, api]);
 
-  // ── Render by phase ──
+  // ── Render ──
 
+  // Splash phase: full-screen splash only
   if (state.phase === 'splash' || state.phase === 'connecting') {
     return React.createElement(Splash, {
       status: state.splashStatus,
@@ -143,77 +296,89 @@ export function App({ api, ensemble }: AppProps) {
     });
   }
 
-  if (state.phase === 'error') {
-    return React.createElement(Box, { flexDirection: 'column', padding: 1 },
-      React.createElement(Text, { color: 'red', bold: true }, 'Error'),
-      React.createElement(Text, { color: 'red' }, state.error || 'Unknown error'),
-      React.createElement(Text, { dimColor: true, wrap: 'wrap' }, '\nPress q to exit.'),
+  // Divider helper
+  const Divider = () => React.createElement(Box, { paddingX: 1 },
+    React.createElement(Text, { color: THEME.border }, '\u2500'.repeat(Math.max(20, (process.stdout.columns || 80) - 4))),
+  );
+
+  // Live content area
+  function renderLiveContent() {
+    if (state.phase === 'error') {
+      return React.createElement(Box, { flexDirection: 'column', padding: 1 },
+        React.createElement(Text, { color: THEME.error, bold: true }, 'Error'),
+        React.createElement(Text, { color: THEME.error }, state.error || 'Unknown error'),
+      );
+    }
+
+    // Main view: show player summary if in ensemble, or ensemble list
+    if (state.activeEnsemble && state.players.length > 0) {
+      return React.createElement(Box, { flexDirection: 'column', paddingX: 1 },
+        React.createElement(Text, { bold: true, color: THEME.text }, 'Players:'),
+        ...state.players.map(p =>
+          React.createElement(Text, {
+            key: p.playerId,
+            color: p.isConductor ? THEME.warning : p.status === 'active' ? THEME.success : THEME.dim,
+          },
+            `  ${p.isConductor ? '\u2605' : '\u2022'} ${p.playerId} [${p.status || '?'}]${p.part ? ' \u2014 ' + p.part : ''}`,
+          ),
+        ),
+      );
+    }
+
+    if (!state.activeEnsemble && state.ensembles.length > 0) {
+      return React.createElement(Box, { flexDirection: 'column', paddingX: 1 },
+        React.createElement(Text, { bold: true, color: THEME.text }, 'Ensembles:'),
+        ...state.ensembles.map(ens =>
+          React.createElement(Text, { key: ens.name, color: THEME.textMuted },
+            `  ${ens.name} (${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''})${ens.hasConductor ? ' \u2605' : ''}`,
+          ),
+        ),
+      );
+    }
+
+    return React.createElement(Box, { paddingX: 1 },
+      React.createElement(Text, { color: THEME.dim }, 'Type /help to get started.'),
     );
   }
 
-  // ── View routing ──
-
-  if (state.view === 'home') {
-    return React.createElement(HomeView, {
-      ensembles: state.ensembles,
-      selectedIndex: state.selectedEnsembleIndex,
-      onSelect: handleSelect,
-      onNavigate: handleNavigate,
-      onQuit: handleQuit,
-    });
+  // Color for static item text
+  function staticItemColor(item: StaticItem): string {
+    switch (item.type) {
+      case 'error': return THEME.error;
+      case 'message': return THEME.accent;
+      case 'splash-done': return THEME.success;
+      case 'info': return THEME.textMuted;
+      case 'command-output': return THEME.text;
+      default: return THEME.text;
+    }
   }
 
-  if (state.view === 'player') {
-    // Phase 2 placeholder — player detail view
-    return React.createElement(Box, { flexDirection: 'column', padding: 1 },
-      React.createElement(Text, { bold: true, color: 'cyan' }, `Player: ${state.activePlayer}`),
-      React.createElement(Text, { dimColor: true }, `Ensemble: ${state.activeEnsemble}`),
-      React.createElement(Text, { dimColor: true }, '\nPlayer detail view coming in Phase 2.'),
-      React.createElement(Text, { dimColor: true }, 'Press Esc to go back.'),
-    );
-  }
-
-  // Default: ensemble view (or Phase 2 placeholder for now)
   return React.createElement(Box, { flexDirection: 'column', height: '100%' },
-    // Top bar
-    React.createElement(Box, { borderStyle: 'single', paddingX: 1 },
-      React.createElement(Text, { bold: true, color: 'cyan' }, 'claude-tempo'),
-      React.createElement(Text, null, ' | '),
-      React.createElement(Text, { color: 'green' }, state.activeEnsemble || ''),
-      React.createElement(Text, null, ' | '),
-      React.createElement(Text, { dimColor: true }, `${state.players.length} players`),
-      React.createElement(Text, null, ' | '),
-      React.createElement(Text, { dimColor: true }, 'Esc: back  q: quit'),
-    ),
-    // Body panels
-    React.createElement(Box, { flexGrow: 1, flexDirection: 'row' },
-      // Left: player list
-      React.createElement(Box, { flexDirection: 'column', width: '40%', borderStyle: 'single', paddingX: 1 },
-        React.createElement(Text, { bold: true, underline: true }, 'Players'),
-        ...state.players.map((p: typeof state.players[number]) =>
-          React.createElement(Box, { key: p.playerId, marginTop: 0 },
-            React.createElement(Text, {
-              color: p.isConductor ? 'yellow' : p.status === 'active' ? 'green' : p.status === 'stale' ? 'gray' : 'white',
-            }, `${p.isConductor ? '\u2605' : '\u2022'} ${p.playerId}`),
-            React.createElement(Text, { dimColor: true }, ` [${p.status || 'unknown'}]`),
-          ),
+    // Title bar
+    React.createElement(TitleBar, { context: contextString }),
+    // Top divider
+    React.createElement(Divider, null),
+    // Static scroll-up history
+    React.createElement(Static, { items: state.staticItems },
+      ...state.staticItems.map((item: StaticItem) =>
+        React.createElement(Box, { key: item.id, paddingX: 1 },
+          React.createElement(Text, { color: staticItemColor(item) }, item.content),
         ),
-        state.players.length === 0
-          ? React.createElement(Text, { dimColor: true }, 'No players')
-          : null,
-      ),
-      // Right: message timeline
-      React.createElement(Box, { flexDirection: 'column', flexGrow: 1, borderStyle: 'single', paddingX: 1 },
-        React.createElement(Text, { bold: true, underline: true }, 'Messages'),
-        ...state.messages.slice(-10).map((m: typeof state.messages[number], i: number) =>
-          React.createElement(Text, { key: i, dimColor: true },
-            `${m.from} \u2192 ${m.to}: ${m.text.length > 60 ? m.text.slice(0, 57) + '...' : m.text}`,
-          ),
-        ),
-        state.messages.length === 0
-          ? React.createElement(Text, { dimColor: true }, 'No messages yet')
-          : null,
       ),
     ),
+    // Live content area
+    React.createElement(Box, { flexGrow: 1 },
+      renderLiveContent(),
+    ),
+    // Bottom divider
+    React.createElement(Divider, null),
+    // Prompt area
+    React.createElement(PromptArea, {
+      hints: promptHints,
+      value: state.inputValue,
+      onChange: (value: string) => dispatch({ type: 'SET_INPUT', value }),
+      onSubmit: handleSubmit,
+      disabled: state.phase === 'error',
+    }),
   );
 }

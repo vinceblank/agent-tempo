@@ -19,6 +19,8 @@ export interface InkExports {
   useStdout: any;
   Static: any;
   Spacer: any;
+  TextInput: any;
+  Spinner: any;
 }
 
 let cached: InkExports | null = null;
@@ -33,7 +35,11 @@ export async function loadInk(): Promise<InkExports> {
   // Use indirect import() to prevent TypeScript from converting it to require()
   // when compiling to CommonJS. ink 4+ is ESM-only and needs a real import().
   const dynamicImport = new Function('specifier', 'return import(specifier)');
-  const ink = await dynamicImport('ink');
+  const [ink, inkTextInput, inkSpinner] = await Promise.all([
+    dynamicImport('ink'),
+    dynamicImport('ink-text-input'),
+    dynamicImport('ink-spinner'),
+  ]);
 
   cached = {
     render: ink.render,
@@ -45,6 +51,8 @@ export async function loadInk(): Promise<InkExports> {
     useStdout: ink.useStdout,
     Static: ink.Static,
     Spacer: ink.Spacer,
+    TextInput: inkTextInput.default || inkTextInput.TextInput,
+    Spinner: inkSpinner.default || inkSpinner.Spinner,
   };
 
   return cached;

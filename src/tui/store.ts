@@ -16,7 +16,16 @@ import type { EnsembleSummary } from './core-api';
 // ── State ──
 
 export type TuiView = 'home' | 'ensemble' | 'player';
-export type TuiPhase = 'splash' | 'connecting' | 'connected' | 'error';
+export type TuiPhase = 'splash' | 'connecting' | 'connected' | 'main' | 'chat' | 'recruit' | 'error';
+
+// ── Static items (committed scroll history) ──
+
+export interface StaticItem {
+  id: string;
+  type: 'splash-done' | 'command-output' | 'message' | 'error' | 'info';
+  content: string;
+  timestamp: number;
+}
 
 export interface TuiState {
   phase: TuiPhase;
@@ -58,6 +67,14 @@ export interface TuiState {
   focusZone: 'sidebar' | 'timeline' | 'input';
   /** Current text in the input bar. */
   inputText: string;
+
+  // ── Chat shell ──
+  /** Committed scroll-up history items. */
+  staticItems: StaticItem[];
+  /** Current prompt input value. */
+  inputValue: string;
+  /** Player name when in chat mode (bare text sends cue to this target). */
+  chatTarget?: string;
 }
 
 export function initialState(ensemble?: string): TuiState {
@@ -81,6 +98,10 @@ export function initialState(ensemble?: string): TuiState {
 
     focusZone: 'sidebar',
     inputText: '',
+
+    staticItems: [],
+    inputValue: '',
+    chatTarget: undefined,
   };
 }
 
@@ -102,6 +123,11 @@ export type TuiAction =
   | { type: 'SELECT_PREV' }
   | { type: 'CYCLE_FOCUS' }
   | { type: 'SET_INPUT_TEXT'; text: string }
+  // Chat shell actions
+  | { type: 'COMMIT_STATIC'; item: StaticItem }
+  | { type: 'SET_INPUT'; value: string }
+  | { type: 'ENTER_CHAT'; target: string }
+  | { type: 'EXIT_CHAT' }
   // Legacy compat — used by current App.tsx during transition
   | { type: 'REFRESH_ALL'; players: MaestroPlayerInfo[]; messages: MaestroRelayMessage[]; history: HistoryEntry[] };
 
@@ -229,6 +255,20 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'SET_INPUT_TEXT':
       return { ...state, inputText: action.text };
+
+    // ── Chat shell ──
+
+    case 'COMMIT_STATIC':
+      return { ...state, staticItems: [...state.staticItems, action.item] };
+
+    case 'SET_INPUT':
+      return { ...state, inputValue: action.value };
+
+    case 'ENTER_CHAT':
+      return { ...state, phase: 'chat' as TuiPhase, chatTarget: action.target };
+
+    case 'EXIT_CHAT':
+      return { ...state, phase: 'main' as TuiPhase, chatTarget: undefined };
 
     default:
       return state;
