@@ -9,7 +9,7 @@ import { getConfig, conductorWorkflowId, ENV } from './config';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { version: PKG_VERSION } = require('../package.json');
 import { createTemporalConnection } from './connection';
-import { createWorkers } from './worker';
+import { isDaemonRunning, startDaemon } from './cli/daemon';
 import { SessionInput } from './types';
 import { getGitInfo } from './git-info';
 import { registerEnsembleTool } from './tools/ensemble';
@@ -92,26 +92,21 @@ async function main() {
     namespace: config.temporalNamespace,
   });
 
-  // Start the Temporal workers (runs in background)
-  let sharedWorker: Awaited<ReturnType<typeof createWorkers>>['sharedWorker'];
-  let hostWorker: Awaited<ReturnType<typeof createWorkers>>['hostWorker'];
-  try {
-    ({ sharedWorker, hostWorker } = await createWorkers(config));
-  } catch (err: any) {
-    const msg = err?.message || String(err);
-    log(`Failed to create workers: ${msg}`);
-    process.exit(1);
+  // Ensure the worker daemon is running (starts it if needed).
+  // Sessions no longer run in-process workers — the daemon handles all task processing.
+  if (!isDaemonRunning()) {
+    log('Worker daemon not running — starting it...');
+    try {
+      const daemonPid = await startDaemon(config);
+      log(`Worker daemon started (pid ${daemonPid})`);
+    } catch (err: any) {
+      log(`Failed to start worker daemon: ${err?.message || err}`);
+      log('Start it manually with: claude-tempo daemon start');
+      process.exit(1);
+    }
+  } else {
+    log('Worker daemon already running');
   }
-  const sharedWorkerRunPromise = sharedWorker.run();
-  const hostWorkerRunPromise = hostWorker.run();
-  sharedWorkerRunPromise.catch((err) => {
-    log('Shared worker error:', err);
-    process.exit(1);
-  });
-  hostWorkerRunPromise.catch((err) => {
-    log('Host worker error:', err);
-    process.exit(1);
-  });
 
   // Start the session workflow
   const workflowId = isConductor
@@ -155,25 +150,18 @@ async function main() {
 
   // Watch for workflow completion — exit the process when the workflow ends
   // (e.g., via stop tool setting status to 'terminated')
-  const shutdownWorkers = () => {
-    sharedWorker.shutdown();
-    hostWorker.shutdown();
-    return Promise.all([
-      sharedWorkerRunPromise.catch(() => {}),
-      hostWorkerRunPromise.catch(() => {}),
-    ]);
-  };
+  // Note: daemon is NOT stopped here — it serves all sessions, not just this one.
   handle.result().then(() => {
     log('Workflow completed — shutting down');
     stopPoller();
-    shutdownWorkers().then(() => process.exit(0));
+    process.exit(0);
   }).catch((err) => {
     // Only exit on workflow-level errors (cancelled, failed), not transient connection errors
     const name = err?.name || '';
     if (name.includes('WorkflowFailed') || name.includes('WorkflowCancelled') || name.includes('WorkflowNotFound')) {
       log('Workflow ended unexpectedly — shutting down');
       stopPoller();
-      shutdownWorkers().then(() => process.exit(1));
+      process.exit(1);
     } else {
       log('Transient error watching workflow result:', err?.message || err);
     }
@@ -341,12 +329,7 @@ async function main() {
       // workflow may already be gone or signal timed out
     }
 
-    // 3. Shutdown workers (best effort)
-    await shutdownWorkers().catch((err) => {
-      log('Worker shutdown error:', err);
-    });
-
-    // 4. Close Temporal connection
+    // 3. Close Temporal connection (daemon is left running — it serves all sessions)
     try {
       connection.close();
     } catch {
