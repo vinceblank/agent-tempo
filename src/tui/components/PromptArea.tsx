@@ -3,6 +3,9 @@
  *
  * Uses useInput for raw key handling instead of ink-text-input, giving full
  * control over Tab (completion) and Up/Down arrows (history).
+ *
+ * All mutable state accessed via refs to keep useInput callback stable
+ * and avoid input lag from callback recreation on every keystroke.
  */
 import React, { useState, useCallback, useRef } from 'react';
 import { useInk } from '../ink-context';
@@ -62,56 +65,63 @@ export function PromptArea({
 }: PromptAreaProps) {
   const { Box, Text, useInput } = useInk();
 
-  // ── Command history ──
+  // ── Internal state ──
   const [history, setHistory] = useState<string[]>(() => [...initialHistory]);
   const [historyIndex, setHistoryIndex] = useState(-1);
-  // Stash the current input when user starts browsing history
   const savedInput = useRef('');
-
-  // ── Tab completion ──
   const [completionHint, setCompletionHint] = useState('');
   const [tabMatches, setTabMatches] = useState<string[]>([]);
   const [tabCycleIndex, setTabCycleIndex] = useState(0);
 
-  // Clear completion hint when input changes from typing
-  const handleChange = useCallback((newValue: string) => {
-    onChange(newValue);
+  // ── Ref for all values the useInput callback reads (stable callback pattern) ──
+  const ref = useRef({
+    value, onChange, onSubmit, disabled, commandNames, playerNames,
+    history, historyIndex, tabMatches, tabCycleIndex,
+    paletteVisible, onPaletteToggle, onPaletteUp, onPaletteDown, onPaletteSelect,
+    onHistoryUpdate,
+  });
+  ref.current = {
+    value, onChange, onSubmit, disabled, commandNames, playerNames,
+    history, historyIndex, tabMatches, tabCycleIndex,
+    paletteVisible, onPaletteToggle, onPaletteUp, onPaletteDown, onPaletteSelect,
+    onHistoryUpdate,
+  };
+
+  // ── Helpers (read from ref) ──
+
+  const doChange = useCallback((newValue: string) => {
+    const r = ref.current;
+    r.onChange(newValue);
     setCompletionHint('');
     setTabMatches([]);
     setTabCycleIndex(0);
-    // Show/hide command palette based on "/" prefix
-    if (onPaletteToggle) {
+    if (r.onPaletteToggle) {
       const trimmed = newValue.trimStart();
-      const shouldShow = trimmed.startsWith('/') && !trimmed.includes(' ');
-      onPaletteToggle(shouldShow);
+      r.onPaletteToggle(trimmed.startsWith('/') && !trimmed.includes(' '));
     }
-  }, [onChange, onPaletteToggle]);
+  }, []);
 
-  // Compute completions for the current input
   const getCompletions = useCallback((input: string): string[] => {
+    const r = ref.current;
     const trimmed = input.trimStart();
 
-    // Command completion: /par → /parseCommand, /players
     if (trimmed.startsWith('/') && !trimmed.includes(' ')) {
       const partial = trimmed.slice(1).toLowerCase();
-      if (!partial) return commandNames.map(c => `/${c} `);
-      return commandNames
+      if (!partial) return r.commandNames.map(c => `/${c} `);
+      return r.commandNames
         .filter(c => c.startsWith(partial) && c !== partial)
         .map(c => `/${c} `);
     }
 
-    // Argument completion: /cue tem → /cue tempo-eng
     if (trimmed.startsWith('/') && trimmed.includes(' ')) {
       const spaceIdx = trimmed.indexOf(' ');
       const cmdName = trimmed.slice(1, spaceIdx).toLowerCase();
-
       if (PLAYER_ARG_COMMANDS.has(cmdName)) {
         const afterCmd = trimmed.slice(spaceIdx + 1);
-        // Only complete the first argument (player name)
         if (!afterCmd.includes(' ')) {
           const partial = afterCmd.toLowerCase();
-          if (!partial) return playerNames.map(p => `/${cmdName} ${p} `);
-          return playerNames
+          if (!partial) return r.playerNames.map(p => `/${cmdName} ${p} `);
+          return r.playerNames
             .filter(p => p.toLowerCase().startsWith(partial) && p.toLowerCase() !== partial)
             .map(p => `/${cmdName} ${p} `);
         }
@@ -119,90 +129,75 @@ export function PromptArea({
     }
 
     return [];
-  }, [commandNames, playerNames]);
+  }, []);
 
+  // ── Stable useInput callback (never recreated) ──
   useInput(useCallback((input: string, key: any) => {
-    if (disabled) return;
+    const r = ref.current;
+    if (r.disabled) return;
 
     // ── Command palette mode ──
-    if (paletteVisible) {
-      if (key.upArrow) { onPaletteUp?.(); return; }
-      if (key.downArrow) { onPaletteDown?.(); return; }
-      if (key.tab) { onPaletteSelect?.(); return; }
+    if (r.paletteVisible) {
+      if (key.upArrow) { r.onPaletteUp?.(); return; }
+      if (key.downArrow) { r.onPaletteDown?.(); return; }
+      if (key.tab) { r.onPaletteSelect?.(); return; }
       if (key.return) {
-        // If the input already looks like a complete command, submit it directly
-        // instead of re-inserting from the palette
-        const trimmedInput = value.trim();
+        const trimmedInput = r.value.trim();
         const cmdName = trimmedInput.startsWith('/') ? trimmedInput.slice(1).toLowerCase() : '';
-        if (cmdName && commandNames.includes(cmdName)) {
-          // Complete command typed — dismiss palette and submit
-          onPaletteToggle?.(false);
-          // Fall through to the Enter/submit handler below
+        if (cmdName && r.commandNames.includes(cmdName)) {
+          r.onPaletteToggle?.(false);
+          // Fall through to Enter/submit below
         } else {
-          // Partial input — select from palette
-          onPaletteSelect?.();
+          r.onPaletteSelect?.();
           return;
         }
       }
-      if (key.escape) { onPaletteToggle?.(false); return; }
-      // Fall through to normal input handling for typing
+      if (key.escape) { r.onPaletteToggle?.(false); return; }
     }
 
     // Tab: complete
     if (key.tab) {
-      const matches = tabMatches.length > 0 ? tabMatches : getCompletions(value);
-
+      const matches = r.tabMatches.length > 0 ? r.tabMatches : getCompletions(r.value);
       if (matches.length === 0) return;
-
       if (matches.length === 1) {
-        // Single match — apply it
-        onChange(matches[0]);
+        r.onChange(matches[0]);
         setCompletionHint('');
         setTabMatches([]);
         setTabCycleIndex(0);
       } else {
-        // Multiple matches — cycle through them
-        const newMatches = tabMatches.length > 0 ? tabMatches : matches;
-        const idx = tabMatches.length > 0 ? (tabCycleIndex + 1) % newMatches.length : 0;
-        onChange(newMatches[idx]);
+        const newMatches = r.tabMatches.length > 0 ? r.tabMatches : matches;
+        const idx = r.tabMatches.length > 0 ? (r.tabCycleIndex + 1) % newMatches.length : 0;
+        r.onChange(newMatches[idx]);
         setTabMatches(newMatches);
         setTabCycleIndex(idx);
-        // Show all options as hint
-        const options = newMatches.map(m => {
-          // Extract the last word (completed part)
-          const parts = m.trim().split(/\s+/);
-          return parts[parts.length - 1];
-        });
+        const options = newMatches.map(m => m.trim().split(/\s+/).pop() || '');
         setCompletionHint(options.join('  '));
       }
       return;
     }
 
-    // Up arrow: previous history (only when palette not visible)
-    if (key.upArrow && !paletteVisible) {
-      if (history.length === 0) return;
-      if (historyIndex === -1) {
-        // Start browsing — save current input
-        savedInput.current = value;
-      }
-      const newIdx = Math.min(historyIndex + 1, history.length - 1);
+    // Up arrow: previous history
+    if (key.upArrow && !r.paletteVisible) {
+      if (r.history.length === 0) return;
+      if (r.historyIndex === -1) savedInput.current = r.value;
+      const newIdx = Math.min(r.historyIndex + 1, r.history.length - 1);
       setHistoryIndex(newIdx);
-      onChange(history[history.length - 1 - newIdx]);
+      r.onChange(r.history[r.history.length - 1 - newIdx]);
       setCompletionHint('');
       setTabMatches([]);
       return;
     }
 
-    // Down arrow: next history (only when palette not visible)
-    if (key.downArrow && !paletteVisible) {
-      if (historyIndex <= 0) {
+    // Down arrow: next history
+    if (key.downArrow && !r.paletteVisible) {
+      if (r.historyIndex <= 0) {
         setHistoryIndex(-1);
-        onChange(savedInput.current);
+        r.onChange(savedInput.current);
         return;
       }
-      const newIdx = historyIndex - 1;
+      const newIdx = r.historyIndex - 1;
       setHistoryIndex(newIdx);
-      onChange(history[history.length - 1 - newIdx]);
+      r.onChange(r.history[r.history.length - 1 - newIdx]);
       setCompletionHint('');
       setTabMatches([]);
       return;
@@ -210,18 +205,16 @@ export function PromptArea({
 
     // Enter: submit
     if (key.return) {
-      const trimmed = value.trim();
+      const trimmed = r.value.trim();
       if (trimmed) {
-        // Push to history (avoid duplicates of the last entry)
-        if (history.length === 0 || history[history.length - 1] !== trimmed) {
-          const updated = [...history, trimmed].slice(-MAX_HISTORY);
+        if (r.history.length === 0 || r.history[r.history.length - 1] !== trimmed) {
+          const updated = [...r.history, trimmed].slice(-MAX_HISTORY);
           setHistory(updated);
-          // Persist history to disk
-          if (onHistoryUpdate) onHistoryUpdate(updated);
+          if (r.onHistoryUpdate) r.onHistoryUpdate(updated);
         }
         setHistoryIndex(-1);
         savedInput.current = '';
-        onSubmit(trimmed);
+        r.onSubmit(trimmed);
       }
       setCompletionHint('');
       setTabMatches([]);
@@ -230,35 +223,28 @@ export function PromptArea({
 
     // Backspace
     if (key.backspace || key.delete) {
-      if (value.length > 0) {
-        handleChange(value.slice(0, -1));
-      }
+      if (r.value.length > 0) doChange(r.value.slice(0, -1));
       return;
     }
 
     // Regular character input
     if (input && !key.ctrl && !key.meta) {
-      handleChange(value + input);
+      doChange(r.value + input);
     }
-  }, [disabled, value, onChange, onSubmit, history, historyIndex, getCompletions, tabMatches, tabCycleIndex, handleChange, paletteVisible, onPaletteUp, onPaletteDown, onPaletteSelect, onPaletteToggle]));
+  }, [doChange, getCompletions])); // Stable — reads ref.current
 
   // ── Render ──
-
-  // Show cursor as a block character after the text
   const cursorChar = '\u2588'; // █
 
   return React.createElement(Box, { flexDirection: 'column', paddingX: 1 },
-    // Hint line
     React.createElement(Box, null,
       React.createElement(Text, { color: THEME.dim }, hints),
     ),
-    // Completion hint (shown when tab cycling)
     completionHint
       ? React.createElement(Box, null,
           React.createElement(Text, { color: THEME.muted }, `  ${completionHint}`),
         )
       : null,
-    // Input line
     React.createElement(Box, null,
       React.createElement(Text, { bold: true, color: THEME.accent }, '> '),
       disabled
