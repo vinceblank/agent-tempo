@@ -818,28 +818,7 @@ export function App({ api, ensemble }: AppProps) {
     dispatch({ type: 'EXIT_SCHEDULE_WIZARD' });
   }, []);
 
-  // ── Render ──
-
-  // Splash phase: full-screen splash only
-  if (state.phase === 'splash' || state.phase === 'connecting') {
-    return React.createElement(Splash, {
-      status: state.splashStatus,
-      ensemble: state.activeEnsemble || 'all',
-      version: packageVersion,
-      checks: state.splashChecks,
-      connected: state.splashConnected,
-      summary: state.splashSummary,
-      ensembles: state.ensembles.map(e => ({ name: e.name, playerCount: e.playerCount, hasConductor: e.hasConductor })),
-      onContinue: handleSplashContinue,
-    });
-  }
-
-  // Divider — thin horizontal rule
-  const dividerWidth = Math.max(20, (process.stdout.columns || 80) - 4);
-  const dividerLine = '\u2500'.repeat(dividerWidth);
-
-  // Live content area — route by phase
-  // ── Memoize chat messages (expensive merge+sort+dedup, only recompute when data changes) ──
+  // ── Memoize chat messages (must be before early return — Rules of Hooks) ──
   const memoizedChatData = useMemo(() => {
     if (!state.chatTarget) return null;
     const isConductorChat = state.chatTarget === state.conductorName;
@@ -882,6 +861,26 @@ export function App({ api, ensemble }: AppProps) {
       isConductor: isConductorChat,
     };
   }, [state.chatTarget, state.conductorName, state.conductorHistory, state.messages, state.sentMessages]);
+
+  // ── Render ──
+
+  // Splash phase: full-screen splash only
+  if (state.phase === 'splash' || state.phase === 'connecting') {
+    return React.createElement(Splash, {
+      status: state.splashStatus,
+      ensemble: state.activeEnsemble || 'all',
+      version: packageVersion,
+      checks: state.splashChecks,
+      connected: state.splashConnected,
+      summary: state.splashSummary,
+      ensembles: state.ensembles.map(e => ({ name: e.name, playerCount: e.playerCount, hasConductor: e.hasConductor })),
+      onContinue: handleSplashContinue,
+    });
+  }
+
+  // Divider — thin horizontal rule
+  const dividerWidth = Math.max(20, (process.stdout.columns || 80) - 4);
+  const dividerLine = '\u2500'.repeat(dividerWidth);
 
   function renderLiveContent() {
     if (state.phase === 'error') {
