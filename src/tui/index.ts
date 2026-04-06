@@ -14,7 +14,8 @@ import { isTerminalLargeEnough, MIN_COLUMNS, MIN_ROWS } from './utils/platform';
 
 export interface TuiOpts {
   config: Config;
-  ensemble: string;
+  /** If provided, start in single-ensemble view. If omitted, start in home (multi-ensemble) view. */
+  ensemble?: string;
 }
 
 export async function run(opts: TuiOpts): Promise<void> {

@@ -280,10 +280,12 @@ async function main() {
 
     case 'tui': {
       const config = getConfig(overrides);
-      const ensemble = args.ensemble || args.positional[0] || config.ensemble;
+      // If --ensemble or positional arg given, start in single-ensemble view.
+      // Otherwise, start in multi-ensemble home view.
+      const tuiEnsemble = args.ensemble || args.positional[1] || undefined;
       // Dynamic import — TUI module uses ESM ink
       const { run: runTui } = await import('./tui/index');
-      await runTui({ config, ensemble });
+      await runTui({ config, ensemble: tuiEnsemble });
       break;
     }
 

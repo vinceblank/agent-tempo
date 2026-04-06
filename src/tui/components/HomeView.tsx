@@ -6,16 +6,7 @@ import React, { useCallback } from 'react';
 import { useInk } from '../ink-context';
 import { supportsUnicode, statusIcons } from '../utils/platform';
 import { Footer } from './Footer';
-
-// Defined locally until store.ts consolidates the type.
-export interface EnsembleSummary {
-  /** Ensemble name. */
-  name: string;
-  /** Number of active players. */
-  playerCount: number;
-  /** Whether a conductor is running. */
-  hasConductor: boolean;
-}
+import type { EnsembleSummary } from '../core-api';
 
 export interface HomeViewProps {
   ensembles: EnsembleSummary[];
