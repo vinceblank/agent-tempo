@@ -65,21 +65,24 @@ export function App({ api, ensemble }: AppProps) {
   // ── Persistent command history ──
   const [cmdHistory] = React.useState(() => loadHistory());
 
-  // ── Ref for last seen message ID (avoids stale closure in polling effect) ──
+  // ── Refs for values read by useInput/useCallback (avoids stale closures + excess re-renders) ──
   const lastSeenMsgRef = React.useRef<string | undefined>(state.lastSeenMessageId);
+  const stateRef = React.useRef(state);
+  stateRef.current = state; // Always current on every render
   const handleHistoryUpdate = useCallback((entries: string[]) => {
     saveHistory(entries);
   }, []);
 
-  // ── Global keybindings ──
+  // ── Global keybindings (uses stateRef to avoid recreating on every poll) ──
   useInput(useCallback((input: string, key: any) => {
+    const s = stateRef.current;
     if (key.ctrl && input === 'c') {
       exit();
       return;
     }
 
     // Esc on splash exits the TUI
-    if (key.escape && (state.phase === 'splash' || state.phase === 'connecting')) {
+    if (key.escape && (s.phase === 'splash' || s.phase === 'connecting')) {
       exit();
       return;
     }
@@ -91,14 +94,13 @@ export function App({ api, ensemble }: AppProps) {
     if (key.end || (key.ctrl && input === 'e')) { dispatch({ type: 'SCROLL_END' }); return; }
 
     // Picker overlay navigation
-    if (state.pickerVisible) {
+    if (s.pickerVisible) {
       if (key.escape) { dispatch({ type: 'HIDE_PICKER' }); return; }
       if (key.upArrow) { dispatch({ type: 'PICKER_UP' }); return; }
       if (key.downArrow) { dispatch({ type: 'PICKER_DOWN' }); return; }
       if (key.return) {
-        // Select current item
-        if (state.pickerType === 'players') {
-          const player = state.players[state.pickerIndex];
+        if (s.pickerType === 'players') {
+          const player = s.players[s.pickerIndex];
           if (player) {
             dispatch({ type: 'HIDE_PICKER' });
             dispatch({ type: 'ENTER_CHAT', target: player.playerId });
@@ -107,8 +109,8 @@ export function App({ api, ensemble }: AppProps) {
               item: { id: nextStaticId(), type: 'info', content: `Entering chat with ${player.playerId}.`, timestamp: Date.now() },
             });
           }
-        } else if (state.pickerType === 'ensembles') {
-          const ens = state.ensembles[state.pickerIndex];
+        } else if (s.pickerType === 'ensembles') {
+          const ens = s.ensembles[s.pickerIndex];
           if (ens) {
             dispatch({ type: 'HIDE_PICKER' });
             dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: ens.name });
@@ -120,15 +122,14 @@ export function App({ api, ensemble }: AppProps) {
         }
         return;
       }
-      return; // Absorb all other keys while picker is open
+      return;
     }
 
     // Stop confirmation mode
-    if (state.confirmingStop) {
+    if (s.confirmingStop) {
       if (input === 'y' || input === 'Y') {
-        const target = state.confirmingStop;
+        const target = s.confirmingStop;
         dispatch({ type: 'CANCEL_STOP' });
-        // Execute the stop
         (async () => {
           try {
             const ensembles = await api.discoverEnsembles();
@@ -166,10 +167,10 @@ export function App({ api, ensemble }: AppProps) {
     }
 
     // Lineup confirmation mode
-    if (state.confirmingLineup) {
+    if (s.confirmingLineup) {
       if (input === 'y' || input === 'Y') {
-        const { path: lineupPath } = state.confirmingLineup;
-        const activeEns = state.activeEnsemble;
+        const { path: lineupPath } = s.confirmingLineup;
+        const activeEns = s.activeEnsemble;
         dispatch({ type: 'CANCEL_LINEUP' });
         if (!activeEns) {
           dispatch({
@@ -201,7 +202,7 @@ export function App({ api, ensemble }: AppProps) {
       }
       return;
     }
-  }, [exit, state.confirmingStop, state.confirmingLineup, state.activeEnsemble, state.pickerVisible, state.pickerType, state.pickerIndex, state.players, state.ensembles, api]));
+  }, [exit, api])); // Stable deps only — reads stateRef.current for everything else
 
   // ── Context string for title bar ──
   const contextString = useMemo(() => {
@@ -323,9 +324,10 @@ export function App({ api, ensemble }: AppProps) {
   const handleSubmit = useCallback(async (input: string) => {
     const trimmed = input.trim();
     if (!trimmed) return;
+    const s = stateRef.current;
 
     dispatch({ type: 'SET_INPUT', value: '' });
-    if (state.paletteVisible) dispatch({ type: 'HIDE_PALETTE' });
+    if (s.paletteVisible) dispatch({ type: 'HIDE_PALETTE' });
 
     const parsed = parseCommand(trimmed);
 
@@ -343,11 +345,11 @@ export function App({ api, ensemble }: AppProps) {
       }
       if (parsed.name === 'back') {
         // Return to conductor chat (or exit to main if no conductor)
-        if (state.chatTarget && state.chatTarget !== state.conductorName && state.conductorName) {
-          dispatch({ type: 'ENTER_CHAT', target: state.conductorName });
-        } else if (state.chatTarget) {
+        if (s.chatTarget && s.chatTarget !== s.conductorName && s.conductorName) {
+          dispatch({ type: 'ENTER_CHAT', target: s.conductorName });
+        } else if (s.chatTarget) {
           dispatch({ type: 'EXIT_CHAT' });
-        } else if (state.activeEnsemble) {
+        } else if (s.activeEnsemble) {
           dispatch({ type: 'NAVIGATE_HOME' });
         }
         return;
@@ -395,7 +397,7 @@ export function App({ api, ensemble }: AppProps) {
 
       // Execute handler
       try {
-        const ctx = { activeEnsemble: state.activeEnsemble };
+        const ctx = { activeEnsemble: s.activeEnsemble };
         await cmd.handler(parsed.args, dispatch, api, ctx);
       } catch (err) {
         dispatch({
@@ -408,32 +410,29 @@ export function App({ api, ensemble }: AppProps) {
           },
         });
       }
-    } else if (state.chatTarget) {
+    } else if (s.chatTarget) {
       // Bare text in chat mode → send to target
-      if (!state.activeEnsemble) {
+      if (!s.activeEnsemble) {
         dispatch({
           type: 'COMMIT_STATIC',
           item: { id: nextStaticId(), type: 'error', content: 'No active ensemble. Use /ensemble <name> first.', timestamp: Date.now() },
         });
         return;
       }
-      const isConductorTarget = state.chatTarget === state.conductorName;
+      const isConductorTarget = s.chatTarget === s.conductorName;
       try {
         if (isConductorTarget) {
-          // Send as command to conductor (routes through Maestro)
-          await api.sendCommand(state.activeEnsemble, trimmed, 'maestro');
+          await api.sendCommand(s.activeEnsemble!, trimmed, 'maestro');
         } else {
-          // Send as direct message to player
-          await api.sendMessage(state.activeEnsemble, state.chatTarget, trimmed, 'maestro');
+          await api.sendMessage(s.activeEnsemble!, s.chatTarget!, trimmed, 'maestro');
         }
-        // Track sent message locally for ChatView
-        dispatch({ type: 'APPEND_SENT_MESSAGE', to: state.chatTarget!, text: trimmed });
+        dispatch({ type: 'APPEND_SENT_MESSAGE', to: s.chatTarget!, text: trimmed });
         dispatch({
           type: 'COMMIT_STATIC',
           item: {
             id: nextStaticId(),
             type: 'message',
-            content: `\u2714 ${isConductorTarget ? '\u2605' : ''} ${state.chatTarget}: ${trimmed}`,
+            content: `\u2714 ${isConductorTarget ? '\u2605' : ''} ${s.chatTarget}: ${trimmed}`,
             timestamp: Date.now(),
           },
         });
@@ -460,7 +459,7 @@ export function App({ api, ensemble }: AppProps) {
         },
       });
     }
-  }, [state.chatTarget, state.activeEnsemble, api, exit]);
+  }, [api, exit]); // Reads stateRef.current for chatTarget/activeEnsemble
 
   // ── Startup sequence: splash → main/connected ──
   useEffect(() => {
