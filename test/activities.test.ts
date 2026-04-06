@@ -706,6 +706,7 @@ describe('maestro activities', function () {
       const players = await activities.refreshEnsembleState('e1');
       expect(players).to.have.length(1);
       expect(players[0].playerId).to.equal('alice');
+      expect(players[0].ensemble).to.equal('e1');
       expect(players[0].part).to.equal('coding features');
       expect(players[0].hostname).to.equal('h1');
       expect(players[0].playerType).to.equal('tempo-soloist');

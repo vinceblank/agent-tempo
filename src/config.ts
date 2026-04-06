@@ -337,3 +337,6 @@ export function schedulerWorkflowId(ensemble: string): string {
 export function maestroWorkflowId(ensemble: string): string {
   return `claude-maestro-${ensemble}`;
 }
+
+/** Workflow ID for the single global Maestro instance. */
+export const GLOBAL_MAESTRO_WORKFLOW_ID = 'claude-maestro-global';

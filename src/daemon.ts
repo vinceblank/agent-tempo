@@ -9,11 +9,38 @@
  * on graceful shutdown (SIGTERM/SIGINT).
  */
 import * as fs from 'fs';
-import { getConfig, CLAUDE_TEMPO_HOME } from './config';
+import { Client } from '@temporalio/client';
+import { WorkflowIdConflictPolicy } from '@temporalio/client';
+import { getConfig, CLAUDE_TEMPO_HOME, GLOBAL_MAESTRO_WORKFLOW_ID } from './config';
 import { createWorkers } from './worker';
+import { createTemporalConnection } from './connection';
 import { DAEMON_PID_PATH, DAEMON_LOG_PATH } from './cli/daemon';
+import type { GlobalMaestroInput } from './types';
 
 const log = (...args: unknown[]) => console.error(`[claude-tempo:daemon ${new Date().toISOString()}]`, ...args);
+
+/**
+ * Ensure the global Maestro workflow is running.
+ * Uses USE_EXISTING conflict policy so it's safe to call on every daemon start.
+ */
+async function ensureGlobalMaestro(config: ReturnType<typeof getConfig>): Promise<void> {
+  try {
+    const connection = await createTemporalConnection(config);
+    const client = new Client({ connection, namespace: config.temporalNamespace });
+
+    const input: GlobalMaestroInput = {};
+    await client.workflow.start('claudeGlobalMaestroWorkflow', {
+      workflowId: GLOBAL_MAESTRO_WORKFLOW_ID,
+      taskQueue: config.taskQueue,
+      args: [input],
+      workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+    });
+    log(`Global Maestro ensured (id: ${GLOBAL_MAESTRO_WORKFLOW_ID})`);
+  } catch (err) {
+    // Non-fatal — the global maestro is optional for basic operation
+    log('Failed to ensure global Maestro (non-fatal):', err instanceof Error ? err.message : String(err));
+  }
+}
 
 async function main() {
   // Ensure daemon directory exists
@@ -60,6 +87,11 @@ async function main() {
   sharedWorker = workers.sharedWorker;
   hostWorker = workers.hostWorker;
   log('Workers created — processing tasks');
+
+  // Auto-start the global Maestro workflow (non-blocking, non-fatal)
+  ensureGlobalMaestro(config).catch((err) => {
+    log('ensureGlobalMaestro background error:', err);
+  });
 
   // Run both workers — blocks until shutdown + drain completes
   try {
