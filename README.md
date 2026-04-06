@@ -40,7 +40,7 @@ cd your-project
 claude-tempo up
 ```
 
-This will start the Temporal dev server, register the MCP server globally, start the worker daemon, and launch a conductor session in a new terminal.
+This starts the Temporal dev server, registers the MCP server globally, starts the worker daemon, and launches a conductor session in a new terminal.
 
 Then add players:
 
@@ -72,34 +72,107 @@ Inside any Claude Code session connected to claude-tempo:
 - "Cue backend: what are you working on?" — send a message to another player
 - "Recruit a soloist in /repos/api" — spawn a new player session
 
+📖 **[Full documentation](docs/README.md)**
+
 ## Core Concepts
 
-Each Claude Code session registers as a **player** in Temporal. Players discover each other with `ensemble`, exchange messages with `cue`, and coordinate work across machines. An optional **conductor** orchestrates the group and connects to external interfaces. All players in the same **ensemble** can see and message each other; ensembles are isolated from each other. By default, sessions join the `default` ensemble.
+Each Claude Code session registers as a **player** in Temporal. Players discover each other with `ensemble`, exchange messages with `cue`, and coordinate work across machines. An optional **conductor** orchestrates the group and connects to external interfaces. All players in the same **ensemble** can see and message each other; ensembles are isolated from each other.
 
 ```bash
 claude-tempo conduct frontend   # conduct the "frontend" ensemble
 claude-tempo start backend      # join the "backend" ensemble
 ```
 
-## Full Documentation
+## What You Can Do
 
-| Doc | Description |
-|-----|-------------|
-| [docs/tools.md](docs/tools.md) | MCP tools reference |
-| [docs/cli.md](docs/cli.md) | CLI command reference |
-| [docs/scheduling.md](docs/scheduling.md) | Scheduling — one-shot, recurring, cron, fan-out |
-| [docs/orchestration.md](docs/orchestration.md) | Quality Gates, Pipeline Stages, Git Worktrees |
-| [docs/ensembles.md](docs/ensembles.md) | Lineups, Player Types, Agent Type Discovery |
-| [docs/configuration.md](docs/configuration.md) | Configuration — env vars, config file, Temporal Cloud |
-| [docs/copilot.md](docs/copilot.md) | Copilot CLI integration (experimental) |
-| [docs/dashboard.md](docs/dashboard.md) | TUI Dashboard and Maestro web dashboard |
-| [docs/daemon.md](docs/daemon.md) | Worker Daemon |
-| [docs/troubleshooting.md](docs/troubleshooting.md) | Stale sessions, common issues, upgrade notes |
-| [docs/WIRE-PROTOCOL.md](docs/WIRE-PROTOCOL.md) | Stable Temporal signal/query/update names |
+### Terminal UI
+
+Run `claude-tempo` (no arguments) to launch the built-in TUI — a chat-focused shell for managing your ensemble without leaving the terminal.
+
+```bash
+claude-tempo                        # launch TUI (multi-ensemble view)
+claude-tempo tui --ensemble myteam  # connect directly to an ensemble
+```
+
+Inside the TUI, type `/help` to see all available slash commands: `/cue`, `/broadcast`, `/recruit`, `/stop`, `/encore`, `/recall`, `/search`, `/players`, `/schedule`, `/gates`, `/stages`, `/worktree`, and more. See [docs/dashboard.md](docs/dashboard.md) for the full TUI reference.
+
+### Scheduling
+
+Send messages on a delay, at a fixed time, on a recurring interval, or via cron expression:
+
+```bash
+# From inside Claude Code (via MCP tools)
+schedule: { name: "standup", cron: "0 9 * * 1-5", target: "conductor", message: "Daily standup" }
+```
+
+Supports `delay`, `at`, `every`, and `cron` with optional IANA timezone. See [docs/scheduling.md](docs/scheduling.md).
+
+### Lineups
+
+Define your entire ensemble as a YAML file and bootstrap it in one command:
+
+```bash
+claude-tempo up --lineup lineups/dev-team.yml
+```
+
+Shipped lineups: `tempo-big-band` (full lifecycle), `tempo-dev-team` (feature work), `tempo-review-squad` (parallel review), `tempo-jam-session` (exploration). See [docs/ensembles.md](docs/ensembles.md).
+
+### Orchestration
+
+Conductors can track parallel work with **Quality Gates**, **Pipeline Stages**, and **Git Worktrees**:
+
+- **Quality Gates** — named checklists of criteria; auto-aggregate to `passed`/`failed`/`open`
+- **Pipeline Stages** — fan-out/fan-in tracking; conductor is notified when all players report
+- **Git Worktrees** — provision isolated branches for players; clean up when done
+
+See [docs/orchestration.md](docs/orchestration.md).
+
+## Command Discovery
+
+```bash
+claude-tempo --help          # all CLI commands
+claude-tempo <command> --help # flags for a specific command
+```
+
+Inside the TUI, type `/help` for slash commands. Inside Claude Code, use the `ensemble` tool to see who's active and explore from there.
+
+### Key commands
+
+**Session management**
+| Command | Description |
+|---------|-------------|
+| `claude-tempo up` | Start everything (Temporal + daemon + conductor) |
+| `claude-tempo start [ensemble]` | Open a player session |
+| `claude-tempo conduct [ensemble]` | Start a conductor session |
+| `claude-tempo status` | Show active sessions |
+| `claude-tempo down` | Stop everything |
+
+**Lineups**
+| Command | Description |
+|---------|-------------|
+| `claude-tempo up --lineup <file>` | Bootstrap from a lineup YAML |
+| `claude-tempo ensemble save <name>` | Save current ensemble as a lineup |
+| `claude-tempo ensemble list` | List saved lineups |
+
+**Player types**
+| Command | Description |
+|---------|-------------|
+| `claude-tempo agent-types list` | List available player types |
+| `claude-tempo agent-types show <name>` | Show a player type definition |
+| `claude-tempo agent-types init <name>` | Create a new player type |
+
+**Infrastructure**
+| Command | Description |
+|---------|-------------|
+| `claude-tempo daemon start\|stop\|status\|logs` | Manage the worker daemon |
+| `claude-tempo config` | Configure env vars interactively |
+| `claude-tempo preflight` | Verify environment |
+
+See [docs/cli.md](docs/cli.md) for the full CLI reference including all flags and examples.
 
 ## Maestro Dashboard
 
-The [Maestro dashboard](https://github.com/vinceblank/maestro) is a web UI that connects to your Temporal server and provides a live view of your ensemble — player status, event log, and command input. See [docs/dashboard.md](docs/dashboard.md) for details.
+The [Maestro dashboard](https://github.com/vinceblank/maestro) is a web UI that connects to your Temporal server and provides a live view of your ensemble — player status, event log, and command input. See [docs/dashboard.md](docs/dashboard.md).
 
 ## Development
 
