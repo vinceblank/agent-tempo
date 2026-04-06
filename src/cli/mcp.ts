@@ -20,7 +20,7 @@ export function addGlobalMcp(): boolean {
   try {
     execFileSync('claude', [
       'mcp', 'add', 'claude-tempo', '-s', 'user',
-      '--', 'npx', 'claude-tempo-server',
+      '--', 'claude-tempo-server',
     ], { stdio: ['ignore', 'ignore', 'pipe'] });
     return true;
   } catch {
