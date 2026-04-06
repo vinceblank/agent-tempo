@@ -80,98 +80,153 @@ export function metronomeFrames(unicode = supportsUnicode()): string[] {
   return ['\\', '|', '/', '|'];
 }
 
+// ── Pixel Art Metronome ──
+
 /**
- * Multi-line metronome ASCII art — 3 frames (left, center, right).
- * Each frame is an array of lines, ~11 lines tall.
- *
- * Color guide for consumers:
- * - Body lines (base, sides): cyan
- * - Pendulum arm + pivot (o): #E07A5F (terracotta)
+ * Color palette for pixel art.
+ * ' ' = transparent, 'B' = body, 'A' = arm, 'P' = pivot
  */
+export const PIXEL_COLORS: Record<string, string> = {
+  B: '#1B2838', // body - dark slate
+  A: '#E07A5F', // arm - terracotta
+  P: '#E07A5F', // pivot - terracotta (same as arm)
+};
+
+/** A single half-block cell with optional fg/bg colors. */
+export interface HalfBlockCell {
+  char: string;
+  fg?: string;
+  bg?: string;
+}
+
 /**
- * Multi-line metronome ASCII art — 3 frames (left, center, right).
- * Triangle body with pendulum swinging from a pivot at the bottom,
- * matching the actual claude-tempo SVG logo.
+ * Convert two pixel rows into a row of half-block cells.
+ * Each character cell encodes 2 vertical pixels:
+ * - ▀ = top pixel (fg), bottom transparent
+ * - ▄ = bottom pixel (fg), top transparent
+ * - █ = both pixels same color (fg)
+ * - ▄ with bg = top pixel (bg), bottom pixel (fg)
+ */
+export function renderHalfBlockRow(topRow: string, bottomRow: string): HalfBlockCell[] {
+  const width = Math.max(topRow.length, bottomRow.length);
+  const cells: HalfBlockCell[] = [];
+
+  for (let x = 0; x < width; x++) {
+    const top = topRow[x] || ' ';
+    const bottom = bottomRow[x] || ' ';
+    const topColor = PIXEL_COLORS[top];
+    const bottomColor = PIXEL_COLORS[bottom];
+
+    if (!topColor && !bottomColor) {
+      cells.push({ char: ' ' });
+    } else if (topColor && !bottomColor) {
+      cells.push({ char: '\u2580', fg: topColor }); // ▀
+    } else if (!topColor && bottomColor) {
+      cells.push({ char: '\u2584', fg: bottomColor }); // ▄
+    } else if (topColor === bottomColor) {
+      cells.push({ char: '\u2588', fg: topColor }); // █
+    } else {
+      // Two different colors: ▄ with fg=bottom, bg=top
+      cells.push({ char: '\u2584', fg: bottomColor, bg: topColor });
+    }
+  }
+
+  return cells;
+}
+
+/**
+ * Convert a pixel grid (array of strings) into half-block cell rows.
+ * Grid height must be even (padded with empty row if odd).
+ */
+export function pixelGridToHalfBlocks(grid: string[]): HalfBlockCell[][] {
+  const rows: HalfBlockCell[][] = [];
+  const padded = grid.length % 2 === 0 ? grid : [...grid, ''];
+
+  for (let y = 0; y < padded.length; y += 2) {
+    rows.push(renderHalfBlockRow(padded[y], padded[y + 1]));
+  }
+
+  return rows;
+}
+
+/**
+ * Pixel art metronome — 3 frames (left, center, right).
+ * Each frame is a pixel grid (16 wide × 12 tall) that renders
+ * to 6 character rows of half-block cells.
  *
- * Color guide for consumers:
- * - Body lines (triangle outline): cyan / dim
- * - Pendulum arm + pivot (●): #E07A5F (terracotta)
- * - Body line index: lines 0-6 are the triangle, line 7 is the base
+ * Matches the SVG logo: solid triangle body, pendulum from bottom pivot.
+ */
+export function metronomePixelFrames(): HalfBlockCell[][][] {
+  // 16 wide × 12 tall pixel grids
+  // ' '=transparent, B=body, A=arm, P=pivot
+  const center = [
+    '      BBBB      ', // row 0  (tip)
+    '     BBBBBB     ', // row 1
+    '    BBBBBBBB    ', // row 2
+    '   BBBBABBBBB   ', // row 3  (arm top)
+    '  BBBBBABBBBBB  ', // row 4
+    ' BBBBBBABBBBBBB ', // row 5
+    'BBBBBBBABBBBBBBB', // row 6
+    'BBBBBBBPBBBBBBBB', // row 7  (pivot)
+    'BBBBBBBBBBBBBBBB', // row 8  (base top)
+    'BBBBBBBBBBBBBBBB', // row 9  (base bottom)
+    '                ', // row 10
+    '                ', // row 11
+  ];
+
+  const left = [
+    '      BBBB      ', // row 0
+    '     BBBBBB     ', // row 1
+    '    BABBBBBB    ', // row 2  (arm top-left)
+    '   BBBABBBBB    ', // row 3
+    '  BBBBABBBBBB   ', // row 4
+    ' BBBBBABBBBBBB  ', // row 5
+    'BBBBBBABBBBBBBBB', // row 6
+    'BBBBBBBPBBBBBBBB', // row 7  (pivot)
+    'BBBBBBBBBBBBBBBB', // row 8
+    'BBBBBBBBBBBBBBBB', // row 9
+    '                ', // row 10
+    '                ', // row 11
+  ];
+
+  const right = [
+    '      BBBB      ', // row 0
+    '     BBBBBB     ', // row 1
+    '    BBBBBABB    ', // row 2  (arm top-right)
+    '   BBBBBABBB    ', // row 3
+    '  BBBBBBABBBB   ', // row 4
+    ' BBBBBBBABBBBB  ', // row 5
+    'BBBBBBBBABBBBBBB', // row 6
+    'BBBBBBBPBBBBBBBB', // row 7  (pivot)
+    'BBBBBBBBBBBBBBBB', // row 8
+    'BBBBBBBBBBBBBBBB', // row 9
+    '                ', // row 10
+    '                ', // row 11
+  ];
+
+  return [
+    pixelGridToHalfBlocks(left),
+    pixelGridToHalfBlocks(center),
+    pixelGridToHalfBlocks(right),
+  ];
+}
+
+/**
+ * Legacy string-based metronome art for non-pixel contexts.
+ * @deprecated Use metronomePixelFrames() for the splash screen.
  */
 export function metronomeArt(unicode = supportsUnicode()): string[][] {
   if (unicode) {
     return [
-      // Frame 0: pendulum left
-      [
-        '       ╱╲       ',
-        '      ╱  ╲      ',
-        '     ╱    ╲     ',
-        '    ╱  ╱   ╲    ',
-        '   ╱ ╱     ╲   ',
-        '  ╱╱       ╲  ',
-        ' ╱● ─ ─ ─ ─ ╲ ',
-        ' ‾‾‾‾‾‾‾‾‾‾‾‾‾ ',
-      ],
-      // Frame 1: pendulum center
-      [
-        '       ╱╲       ',
-        '      ╱  ╲      ',
-        '     ╱  │ ╲     ',
-        '    ╱   │  ╲    ',
-        '   ╱    │   ╲   ',
-        '  ╱     │    ╲  ',
-        ' ╱ ─ ─ ●─ ─ ─╲ ',
-        ' ‾‾‾‾‾‾‾‾‾‾‾‾‾ ',
-      ],
-      // Frame 2: pendulum right
-      [
-        '       ╱╲       ',
-        '      ╱  ╲      ',
-        '     ╱    ╲     ',
-        '    ╱   ╲  ╲    ',
-        '   ╱     ╲ ╲   ',
-        '  ╱       ╲╲  ',
-        ' ╱─ ─ ─ ─ ●╲ ',
-        ' ‾‾‾‾‾‾‾‾‾‾‾‾‾ ',
-      ],
+      ['   /\\   ', '  /  \\  ', ' / ╱  \\ ', '/╱  ●  \\', '‾‾‾‾‾‾‾‾'],
+      ['   /\\   ', '  / | \\ ', ' /  |  \\', '/  ●   \\', '‾‾‾‾‾‾‾‾'],
+      ['   /\\   ', '  /  ╲ \\', ' /   ╲ \\', '/   ● ╲\\', '‾‾‾‾‾‾‾‾'],
     ];
   }
-
-  // ASCII fallback
   return [
-    // Frame 0: pendulum left
-    [
-      '       /\\       ',
-      '      /  \\      ',
-      '     /    \\     ',
-      '    /  /   \\    ',
-      '   / /     \\   ',
-      '  //       \\  ',
-      ' /o - - - - \\ ',
-      ' ~~~~~~~~~~~~~ ',
-    ],
-    // Frame 1: pendulum center
-    [
-      '       /\\       ',
-      '      /  \\      ',
-      '     /  | \\     ',
-      '    /   |  \\    ',
-      '   /    |   \\   ',
-      '  /     |    \\  ',
-      ' / - - o- - -\\ ',
-      ' ~~~~~~~~~~~~~ ',
-    ],
-    // Frame 2: pendulum right
-    [
-      '       /\\       ',
-      '      /  \\      ',
-      '     /    \\     ',
-      '    /   \\  \\    ',
-      '   /     \\ \\   ',
-      '  /       \\\\  ',
-      ' /- - - - o\\ ',
-      ' ~~~~~~~~~~~~~ ',
-    ],
+    ['   /\\   ', '  /  \\  ', ' / /  \\', '/o    \\', '~~~~~~~~'],
+    ['   /\\   ', '  / | \\', ' /  | \\', '/  o  \\', '~~~~~~~~'],
+    ['   /\\   ', '  /  \\ \\', ' /   \\\\', '/    o\\', '~~~~~~~~'],
   ];
 }
 

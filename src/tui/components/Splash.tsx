@@ -10,14 +10,9 @@
  */
 import React, { useState, useEffect, useMemo } from 'react';
 import { useInk } from '../ink-context';
-import { metronomeArt, supportsUnicode } from '../utils/platform';
-
-// ── Theme colors ──
-const ACCENT = '#E07A5F';
-const SUCCESS = '#81C784';
-const WARNING = '#F2CC8F';
-const DIM = '#6B7280';
-const TEXT = '#FAF3EE';
+import { metronomePixelFrames } from '../utils/platform';
+import type { HalfBlockCell } from '../utils/platform';
+import { THEME } from '../utils/theme';
 
 // ── Braille spinner frames ──
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -59,16 +54,37 @@ export interface SplashCheck {
   error?: boolean;
 }
 
-/**
- * The base line (underbar) is rendered in dim.
- * All other lines use color splitting for pendulum vs body.
- */
-function isBaseLine(lineIndex: number): boolean {
-  return lineIndex >= 7;
-}
+/** Render a single row of half-block cells as React elements. */
+function renderHalfBlockRow(cells: HalfBlockCell[], Box: any, Text: any, key: string): React.ReactNode {
+  // Group consecutive cells with same fg+bg to reduce element count
+  const elements: React.ReactNode[] = [];
+  let buf = '';
+  let bufFg: string | undefined;
+  let bufBg: string | undefined;
 
-/** Characters that belong to the pendulum arm and pivot (accent color). */
-const PENDULUM_CHARS = /[│|●o]/;
+  function flush() {
+    if (!buf) return;
+    const props: any = { key: elements.length };
+    if (bufFg) props.color = bufFg;
+    if (bufBg) props.backgroundColor = bufBg;
+    elements.push(React.createElement(Text, props, buf));
+    buf = '';
+  }
+
+  for (const cell of cells) {
+    if (cell.fg === bufFg && cell.bg === bufBg) {
+      buf += cell.char;
+    } else {
+      flush();
+      buf = cell.char;
+      bufFg = cell.fg;
+      bufBg = cell.bg;
+    }
+  }
+  flush();
+
+  return React.createElement(Box, { key }, ...elements);
+}
 
 export function Splash({ status, ensemble, version, checks, connected, summary, ensembles, onContinue }: SplashProps) {
   const { Box, Text, useInput } = useInk();
@@ -81,19 +97,17 @@ export function Splash({ status, ensemble, version, checks, connected, summary, 
   }, [connected, onContinue]));
   const [metronomeTick, setMetronomeTick] = useState(0);
   const [spinnerTick, setSpinnerTick] = useState(0);
-  const unicode = supportsUnicode();
-  const frames = useMemo(() => metronomeArt(unicode), [unicode]);
+  const pixelFrames = useMemo(() => metronomePixelFrames(), []);
 
-  // Metronome animation — 120ms ping-pong
+  // Metronome animation — keeps running until component unmounts
   useEffect(() => {
-    if (connected) return; // Stop animating once connected
     const timer = setInterval(() => {
       setMetronomeTick((t) => (t + 1) % PING_PONG.length);
-    }, 120);
+    }, 150);
     return () => clearInterval(timer);
-  }, [connected]);
+  }, []);
 
-  // Spinner animation — 80ms
+  // Spinner animation — stops once connected
   useEffect(() => {
     if (connected) return;
     const timer = setInterval(() => {
@@ -103,63 +117,27 @@ export function Splash({ status, ensemble, version, checks, connected, summary, 
   }, [connected]);
 
   const frameIndex = PING_PONG[metronomeTick];
-  const currentFrame = frames[frameIndex];
+  const currentFrame = pixelFrames[frameIndex];
 
-  // ── Metronome art with color splitting ──
-  const metronomeLines = currentFrame.map((line, lineIdx) => {
-    if (isBaseLine(lineIdx)) {
-      return React.createElement(Text, { key: lineIdx, color: DIM }, line);
-    }
-    // Pendulum area: split into pendulum (accent) and space segments
-    const segments: React.ReactNode[] = [];
-    let buf = '';
-    let bufIsPendulum = false;
-
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      const isPendulum = PENDULUM_CHARS.test(ch) && ch !== ' ';
-      if (i === 0) {
-        bufIsPendulum = isPendulum;
-        buf = ch;
-      } else if (isPendulum === bufIsPendulum) {
-        buf += ch;
-      } else {
-        segments.push(
-          React.createElement(Text, {
-            key: segments.length,
-            color: bufIsPendulum ? ACCENT : DIM,
-          }, buf),
-        );
-        buf = ch;
-        bufIsPendulum = isPendulum;
-      }
-    }
-    if (buf) {
-      segments.push(
-        React.createElement(Text, {
-          key: segments.length,
-          color: bufIsPendulum ? ACCENT : DIM,
-        }, buf),
-      );
-    }
-
-    return React.createElement(Box, { key: lineIdx }, ...segments);
-  });
+  // ── Pixel art metronome rendering ──
+  const metronomeLines = currentFrame.map((row, i) =>
+    renderHalfBlockRow(row, Box, Text, `metro-${i}`),
+  );
 
   // ── Checklist ──
   const checkElements = (checks || []).map((check, i) => {
     if (check.error) {
-      return React.createElement(Text, { key: i, color: '#EF5350' },
+      return React.createElement(Text, { key: i, color: THEME.error },
         `  \u2717 ${check.label}`,
       );
     }
     if (check.done) {
-      return React.createElement(Text, { key: i, color: SUCCESS },
+      return React.createElement(Text, { key: i, color: THEME.success },
         `  \u2713 ${check.label}`,
       );
     }
     // In-progress: spinner
-    return React.createElement(Text, { key: i, color: DIM },
+    return React.createElement(Text, { key: i, color: THEME.dim },
       `  ${SPINNER_FRAMES[spinnerTick]} ${check.label}`,
     );
   });
@@ -169,14 +147,14 @@ export function Splash({ status, ensemble, version, checks, connected, summary, 
     ? React.createElement(Box, {
         flexDirection: 'column',
         borderStyle: 'single',
-        borderColor: DIM,
+        borderColor: THEME.dim,
         paddingX: 1,
         marginTop: 1,
       },
-        React.createElement(Text, { color: TEXT },
+        React.createElement(Text, { color: THEME.text },
           `Ensemble: ${summary.ensemble}  \u00B7  Players: ${summary.playerCount}${summary.scheduleCount != null ? `  \u00B7  Schedules: ${summary.scheduleCount}` : ''}`,
         ),
-        React.createElement(Text, { color: DIM },
+        React.createElement(Text, { color: THEME.dim },
           `Conductor: ${summary.conductor || 'none'}${summary.uptime ? `  \u00B7  Uptime: ${summary.uptime}` : ''}`,
         ),
       )
@@ -194,14 +172,14 @@ export function Splash({ status, ensemble, version, checks, connected, summary, 
     ),
     // Title + tagline + version
     React.createElement(Box, { flexDirection: 'column', alignItems: 'center', marginTop: 1 },
-      React.createElement(Text, { bold: true, color: ACCENT }, 'claude-tempo'),
-      React.createElement(Text, { color: DIM }, 'Multi-session orchestration via Temporal'),
-      React.createElement(Text, { color: '#374151' }, `v${version}`),
+      React.createElement(Text, { bold: true, color: THEME.accent }, 'claude-tempo'),
+      React.createElement(Text, { color: THEME.dim }, 'Multi-session orchestration via Temporal'),
+      React.createElement(Text, { color: THEME.muted }, `v${version}`),
     ),
     // Status spinner (only when connecting)
     !connected
       ? React.createElement(Box, { marginTop: 2 },
-          React.createElement(Text, { color: WARNING },
+          React.createElement(Text, { color: THEME.warning },
             `${SPINNER_FRAMES[spinnerTick]} ${status}`,
           ),
         )
@@ -217,11 +195,11 @@ export function Splash({ status, ensemble, version, checks, connected, summary, 
     // Ensemble list (connected state)
     connected && ensembles && ensembles.length > 0
       ? React.createElement(Box, { flexDirection: 'column', marginTop: 1 },
-          React.createElement(Text, { color: DIM },
+          React.createElement(Text, { color: THEME.dim },
             `  ${ensembles.length} ensemble${ensembles.length !== 1 ? 's' : ''} available:`,
           ),
           ...ensembles.map(ens =>
-            React.createElement(Text, { key: ens.name, color: TEXT },
+            React.createElement(Text, { key: ens.name, color: THEME.text },
               `    ${ens.hasConductor ? '\u2605' : '\u2022'} ${ens.name} (${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''})`,
             ),
           ),
@@ -229,19 +207,19 @@ export function Splash({ status, ensemble, version, checks, connected, summary, 
       : null,
     connected && (!ensembles || ensembles.length === 0)
       ? React.createElement(Box, { marginTop: 1 },
-          React.createElement(Text, { color: DIM }, '  No ensembles running. Start one with: claude-tempo up <name>'),
+          React.createElement(Text, { color: THEME.dim }, '  No ensembles running. Start one with: claude-tempo up <name>'),
         )
       : null,
     // Press Enter to continue (connected state)
     connected
       ? React.createElement(Box, { marginTop: 2 },
-          React.createElement(Text, { bold: true, color: ACCENT }, '  Press Enter to continue'),
+          React.createElement(Text, { bold: true, color: THEME.accent }, '  Press Enter to continue'),
         )
       : null,
     // Bottom hint (connecting state)
     !connected
       ? React.createElement(Box, { marginTop: 2 },
-          React.createElement(Text, { color: '#3D4556' }, 'Press Ctrl+C to cancel'),
+          React.createElement(Text, { color: THEME.muted }, 'Press Ctrl+C to cancel'),
         )
       : null,
   );
