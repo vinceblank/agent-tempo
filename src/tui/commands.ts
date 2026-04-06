@@ -282,17 +282,24 @@ async function handleRecall(
   }
 }
 
-/** /recruit — placeholder. */
+/** /recruit [name] — launch the recruit wizard. Pre-fills name if given. */
 async function handleRecruit(
   args: string[],
   dispatch: (action: any) => void,
   _api: TempoClient,
 ): Promise<void> {
-  if (args.length === 0) {
-    commitStatic(dispatch, 'info', 'Recruit wizard coming soon. Usage: /recruit <name> [--type <type>] [--dir <path>]');
-    return;
+  // Parse optional inline args: /recruit name --type foo --dir /path
+  const answers: Record<string, string> = {};
+  if (args.length > 0 && !args[0].startsWith('--')) {
+    answers.name = args[0];
   }
-  commitStatic(dispatch, 'info', `Recruit for "${args[0]}" — coming soon.`);
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--type' && args[i + 1]) answers.playerType = args[++i];
+    if (args[i] === '--dir' && args[i + 1]) answers.workDir = args[++i];
+    if (args[i] === '--agent' && args[i + 1]) answers.agent = args[++i];
+    if (args[i] === '--host' && args[i + 1]) answers.host = args[++i];
+  }
+  dispatch({ type: 'ENTER_RECRUIT', answers });
 }
 
 /** /encore <player> — revive a stale player. */

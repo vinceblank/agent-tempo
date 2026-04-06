@@ -28,6 +28,39 @@ export interface StaticItem {
   timestamp: number;
 }
 
+// ── Recruit wizard ──
+
+export type RecruitStep = 'name' | 'agent' | 'type' | 'workDir' | 'message' | 'host' | 'confirm' | 'done';
+
+export interface RecruitAnswers {
+  name: string;
+  agent: 'claude' | 'copilot';
+  playerType: string;
+  workDir: string;
+  initialMessage: string;
+  host: string;
+}
+
+export interface RecruitState {
+  step: RecruitStep;
+  answers: RecruitAnswers;
+  /** Error from the recruit API call, if any. */
+  error?: string;
+  /** Whether the recruit API call is in progress. */
+  submitting?: boolean;
+}
+
+export const RECRUIT_STEPS: RecruitStep[] = ['name', 'agent', 'type', 'workDir', 'message', 'host', 'confirm'];
+
+export const DEFAULT_RECRUIT_ANSWERS: RecruitAnswers = {
+  name: '',
+  agent: 'claude',
+  playerType: '',
+  workDir: process.cwd(),
+  initialMessage: '',
+  host: 'localhost',
+};
+
 export interface TuiState {
   phase: TuiPhase;
   /** Current view in the navigation hierarchy. */
@@ -78,6 +111,8 @@ export interface TuiState {
   inputValue: string;
   /** Player name when in chat mode (bare text sends cue to this target). */
   chatTarget?: string;
+  /** Recruit wizard state (active when phase === 'recruit'). */
+  recruitState?: RecruitState;
 }
 
 export function initialState(ensemble?: string): TuiState {
@@ -132,6 +167,13 @@ export type TuiAction =
   | { type: 'SET_INPUT'; value: string }
   | { type: 'ENTER_CHAT'; target: string }
   | { type: 'EXIT_CHAT' }
+  // Recruit wizard
+  | { type: 'ENTER_RECRUIT'; answers?: Partial<RecruitAnswers> }
+  | { type: 'RECRUIT_NEXT_STEP'; answer: Partial<RecruitAnswers> }
+  | { type: 'RECRUIT_PREV_STEP' }
+  | { type: 'RECRUIT_SUBMIT' }
+  | { type: 'RECRUIT_DONE'; error?: string }
+  | { type: 'EXIT_RECRUIT' }
   // Legacy compat — used by current App.tsx during transition
   | { type: 'REFRESH_ALL'; players: MaestroPlayerInfo[]; messages: MaestroRelayMessage[]; history: HistoryEntry[] };
 
@@ -276,6 +318,62 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'EXIT_CHAT':
       return { ...state, phase: 'main' as TuiPhase, chatTarget: undefined };
+
+    // ── Recruit wizard ──
+
+    case 'ENTER_RECRUIT':
+      return {
+        ...state,
+        phase: 'recruit' as TuiPhase,
+        recruitState: {
+          step: 'name',
+          answers: { ...DEFAULT_RECRUIT_ANSWERS, ...action.answers },
+        },
+      };
+
+    case 'RECRUIT_NEXT_STEP': {
+      if (!state.recruitState) return state;
+      const answers = { ...state.recruitState.answers, ...action.answer };
+      const currentIdx = RECRUIT_STEPS.indexOf(state.recruitState.step);
+      const nextStep = RECRUIT_STEPS[currentIdx + 1] || 'confirm';
+      return {
+        ...state,
+        recruitState: { ...state.recruitState, step: nextStep, answers },
+      };
+    }
+
+    case 'RECRUIT_PREV_STEP': {
+      if (!state.recruitState) return state;
+      const currentIdx = RECRUIT_STEPS.indexOf(state.recruitState.step);
+      if (currentIdx <= 0) return state;
+      const prevStep = RECRUIT_STEPS[currentIdx - 1];
+      return {
+        ...state,
+        recruitState: { ...state.recruitState, step: prevStep },
+      };
+    }
+
+    case 'RECRUIT_SUBMIT':
+      if (!state.recruitState) return state;
+      return {
+        ...state,
+        recruitState: { ...state.recruitState, submitting: true },
+      };
+
+    case 'RECRUIT_DONE':
+      if (!state.recruitState) return state;
+      return {
+        ...state,
+        recruitState: {
+          ...state.recruitState,
+          step: 'done',
+          submitting: false,
+          error: action.error,
+        },
+      };
+
+    case 'EXIT_RECRUIT':
+      return { ...state, phase: 'main' as TuiPhase, recruitState: undefined };
 
     default:
       return state;

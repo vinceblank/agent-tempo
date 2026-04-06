@@ -18,6 +18,7 @@ import { MainView } from './components/MainView';
 import { ChatView } from './components/ChatView';
 import type { ChatMessage } from './components/ChatView';
 import { ErrorView } from './components/ErrorView';
+import { RecruitWizard } from './components/RecruitWizard';
 import { TitleBar } from './components/TitleBar';
 import { PromptArea } from './components/PromptArea';
 import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS } from './commands';
@@ -81,11 +82,14 @@ export function App({ api, ensemble }: AppProps) {
 
   // ── Hint text for prompt area ──
   const promptHints = useMemo(() => {
+    if (state.phase === 'recruit') {
+      return 'Follow the prompts above. Esc to cancel.';
+    }
     if (state.chatTarget) {
       return 'Type a message to send, or /back to exit chat mode';
     }
     return '/cue /recruit /stop /broadcast /help /quit';
-  }, [state.chatTarget]);
+  }, [state.phase, state.chatTarget]);
 
   // ── Command submission handler ──
   const handleSubmit = useCallback(async (input: string) => {
@@ -319,6 +323,59 @@ export function App({ api, ensemble }: AppProps) {
   const dividerWidth = Math.max(20, (process.stdout.columns || 80) - 4);
   const dividerLine = '\u2500'.repeat(dividerWidth);
 
+  // ── Recruit wizard callbacks ──
+  const handleRecruitAnswer = useCallback((answer: any) => {
+    dispatch({ type: 'RECRUIT_NEXT_STEP', answer });
+  }, []);
+
+  const handleRecruitBack = useCallback(() => {
+    dispatch({ type: 'RECRUIT_PREV_STEP' });
+  }, []);
+
+  const handleRecruitConfirm = useCallback(async () => {
+    if (!state.recruitState) return;
+    dispatch({ type: 'RECRUIT_SUBMIT' });
+
+    const a = state.recruitState.answers;
+    const ensemble = state.activeEnsemble || '';
+
+    try {
+      // Build recruit command for the conductor
+      const parts = [`/recruit ${a.name}`];
+      if (a.playerType) parts.push(`--type ${a.playerType}`);
+      if (a.agent !== 'claude') parts.push(`--agent ${a.agent}`);
+      if (a.workDir) parts.push(`--dir ${a.workDir}`);
+      if (a.host !== 'localhost') parts.push(`--host ${a.host}`);
+      if (a.initialMessage) parts.push(`-- ${a.initialMessage}`);
+
+      await api.sendCommand(ensemble, parts.join(' '), 'tui');
+      dispatch({ type: 'RECRUIT_DONE' });
+      dispatch({
+        type: 'COMMIT_STATIC',
+        item: {
+          id: nextStaticId(),
+          type: 'info',
+          content: `\u2714 Recruit requested: ${a.name} (${a.agent}${a.playerType ? ', type: ' + a.playerType : ''})`,
+          timestamp: Date.now(),
+        },
+      });
+    } catch (err) {
+      dispatch({ type: 'RECRUIT_DONE', error: String(err) });
+    }
+  }, [state.recruitState, state.activeEnsemble, api]);
+
+  const handleRecruitCancel = useCallback(() => {
+    dispatch({ type: 'EXIT_RECRUIT' });
+    dispatch({
+      type: 'COMMIT_STATIC',
+      item: { id: nextStaticId(), type: 'info', content: 'Recruit cancelled.', timestamp: Date.now() },
+    });
+  }, []);
+
+  const handleRecruitDone = useCallback(() => {
+    dispatch({ type: 'EXIT_RECRUIT' });
+  }, []);
+
   // Live content area — route by phase
   function renderLiveContent() {
     if (state.phase === 'error') {
@@ -330,6 +387,17 @@ export function App({ api, ensemble }: AppProps) {
         ],
         errorDetail: state.error,
         onQuit: () => exit(),
+      });
+    }
+
+    if (state.phase === 'recruit' && state.recruitState) {
+      return React.createElement(RecruitWizard, {
+        state: state.recruitState,
+        onAnswer: handleRecruitAnswer,
+        onBack: handleRecruitBack,
+        onConfirm: handleRecruitConfirm,
+        onCancel: handleRecruitCancel,
+        onDone: handleRecruitDone,
       });
     }
 
@@ -415,7 +483,7 @@ export function App({ api, ensemble }: AppProps) {
       value: state.inputValue,
       onChange: (value: string) => dispatch({ type: 'SET_INPUT', value }),
       onSubmit: handleSubmit,
-      disabled: state.phase === 'error',
+      disabled: state.phase === 'error' || state.phase === 'recruit',
     }),
   );
 }
