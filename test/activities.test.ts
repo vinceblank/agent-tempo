@@ -78,6 +78,9 @@ function mockHandle(opts: {
       if (name === 'history') return opts.history ?? [];
       return undefined;
     },
+    async describe() {
+      return { status: { name: 'RUNNING' }, workflowId: `claude-session-test-ensemble-${defaultMetadata.playerId}` };
+    },
     async executeUpdate(name: string, updateOpts: { args: unknown[] }) {
       if (opts.updateFn) return opts.updateFn(name, updateOpts);
       // Default: checkAndSetStatus succeeds if status matches
@@ -318,7 +321,7 @@ describe('deliverReport', function () {
     });
   });
 
-  it('throws when conductor workflow not found', async function () {
+  it('throws nonRetryable when conductor workflow not found', async function () {
     const client = mockClient([]);
     const activities = createOutboxActivities(client as any, mockConfig());
 
@@ -331,7 +334,8 @@ describe('deliverReport', function () {
       });
       expect.fail('should have thrown');
     } catch (err) {
-      expect(err).to.be.instanceOf(Error);
+      expect(err).to.be.instanceOf(ApplicationFailure);
+      expect((err as ApplicationFailure).message).to.include('conductor');
     }
   });
 });
