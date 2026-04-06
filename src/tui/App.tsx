@@ -24,6 +24,8 @@ import { PromptArea } from './components/PromptArea';
 import { StatusBar } from './components/StatusBar';
 import { ScheduleWizard } from './components/ScheduleWizard';
 import { CommandPalette } from './components/CommandPalette';
+import { Picker } from './components/Picker';
+import type { PickerItem } from './components/Picker';
 import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames } from './commands';
 import { THEME } from './utils/theme';
 import { loadHistory, saveHistory } from './utils/history';
@@ -87,6 +89,39 @@ export function App({ api, ensemble }: AppProps) {
     if (key.pageDown) { dispatch({ type: 'SCROLL_DOWN', lines: 10 }); return; }
     if (key.home || (key.ctrl && input === 'a')) { dispatch({ type: 'SCROLL_HOME' }); return; }
     if (key.end || (key.ctrl && input === 'e')) { dispatch({ type: 'SCROLL_END' }); return; }
+
+    // Picker overlay navigation
+    if (state.pickerVisible) {
+      if (key.escape) { dispatch({ type: 'HIDE_PICKER' }); return; }
+      if (key.upArrow) { dispatch({ type: 'PICKER_UP' }); return; }
+      if (key.downArrow) { dispatch({ type: 'PICKER_DOWN' }); return; }
+      if (key.return) {
+        // Select current item
+        if (state.pickerType === 'players') {
+          const player = state.players[state.pickerIndex];
+          if (player) {
+            dispatch({ type: 'HIDE_PICKER' });
+            dispatch({ type: 'ENTER_CHAT', target: player.playerId });
+            dispatch({
+              type: 'COMMIT_STATIC',
+              item: { id: nextStaticId(), type: 'info', content: `Entering chat with ${player.playerId}.`, timestamp: Date.now() },
+            });
+          }
+        } else if (state.pickerType === 'ensembles') {
+          const ens = state.ensembles[state.pickerIndex];
+          if (ens) {
+            dispatch({ type: 'HIDE_PICKER' });
+            dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: ens.name });
+            dispatch({
+              type: 'COMMIT_STATIC',
+              item: { id: nextStaticId(), type: 'info', content: `Switched to ensemble: ${ens.name}`, timestamp: Date.now() },
+            });
+          }
+        }
+        return;
+      }
+      return; // Absorb all other keys while picker is open
+    }
 
     // Stop confirmation mode
     if (state.confirmingStop) {
@@ -166,7 +201,7 @@ export function App({ api, ensemble }: AppProps) {
       }
       return;
     }
-  }, [exit, state.confirmingStop, state.confirmingLineup, state.activeEnsemble, api]));
+  }, [exit, state.confirmingStop, state.confirmingLineup, state.activeEnsemble, state.pickerVisible, state.pickerType, state.pickerIndex, state.players, state.ensembles, api]));
 
   // ── Context string for title bar ──
   const contextString = useMemo(() => {
@@ -213,6 +248,35 @@ export function App({ api, ensemble }: AppProps) {
     () => state.players.map(p => p.playerId),
     [state.players],
   );
+
+  // ── Picker items ──
+  const pickerItems = useMemo((): PickerItem[] => {
+    if (!state.pickerVisible) return [];
+
+    if (state.pickerType === 'players') {
+      return state.players.map(p => ({
+        id: p.playerId,
+        label: p.playerId,
+        detail: `${p.playerType || p.agentType || ''} [${p.status || '?'}]`,
+        meta: p.part || undefined,
+        icon: p.isConductor ? '\u2605' : p.status === 'active' ? '\u25CF' : p.status === 'stale' ? '\u25CB' : '\u25D4',
+        color: p.status === 'active' ? THEME.success : p.status === 'stale' ? THEME.warning : THEME.dim,
+        current: p.playerId === state.chatTarget,
+      }));
+    }
+
+    if (state.pickerType === 'ensembles') {
+      return state.ensembles.map(ens => ({
+        id: ens.name,
+        label: ens.name,
+        detail: `${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''}`,
+        meta: ens.hasConductor ? '\u2605 conductor' : undefined,
+        current: ens.name === state.activeEnsemble,
+      }));
+    }
+
+    return [];
+  }, [state.pickerVisible, state.pickerType, state.players, state.ensembles, state.chatTarget, state.activeEnsemble]);
 
   // ── Command palette ──
   const allPaletteCommands = useMemo(() =>
@@ -898,6 +962,15 @@ export function App({ api, ensemble }: AppProps) {
     React.createElement(Box, { flexGrow: 1 },
       renderLiveContent(),
     ),
+    // Picker overlay
+    state.pickerVisible
+      ? React.createElement(Picker, {
+          title: state.pickerType === 'players' ? 'Select Player' : 'Select Ensemble',
+          items: pickerItems,
+          selectedIndex: state.pickerIndex,
+          hint: '\u2191\u2193 navigate, Enter select, Esc dismiss',
+        })
+      : null,
     // Status bar
     React.createElement(StatusBar, {
       ensemble: state.activeEnsemble,

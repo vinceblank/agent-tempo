@@ -140,14 +140,22 @@ async function handleCue(
   }
 }
 
-/** /players — list players in the current ensemble. */
+/** /players — show interactive player picker. */
 async function handlePlayers(
+  _args: string[],
+  dispatch: (action: TuiAction) => void,
+  _api: TempoClient,
+): Promise<void> {
+  // Show picker overlay — data comes from store (already polled)
+  dispatch({ type: 'SHOW_PICKER', pickerType: 'players' });
+}
+
+/** /players — fallback text list (unused, kept for reference). */
+async function _handlePlayersText(
   _args: string[],
   dispatch: (action: TuiAction) => void,
   api: TempoClient,
 ): Promise<void> {
-  // The player data is already in state via polling; format from recent poll data.
-  // We can't access state directly here, so we'll fetch fresh data.
   try {
     const ensembles = await api.discoverEnsembles();
     if (ensembles.length === 0) {
@@ -155,7 +163,6 @@ async function handlePlayers(
       return;
     }
 
-    // Show all players across ensembles
     const icons = statusIcons(supportsUnicode());
     const lines: string[] = [];
 
@@ -703,36 +710,13 @@ async function handleLineup(
   commitStatic(dispatch, 'error', `Unknown lineup subcommand: ${subcommand}. Use: load, save`);
 }
 
-/** /ensembles — list all discovered ensembles. */
+/** /ensembles — show interactive ensemble picker. */
 async function handleEnsembles(
   _args: string[],
   dispatch: (action: TuiAction) => void,
-  api: TempoClient,
-  ctx: CommandContext,
+  _api: TempoClient,
 ): Promise<void> {
-  try {
-    const ensembles = await api.discoverEnsembles();
-    if (ensembles.length === 0) {
-      commitStatic(dispatch, 'info', 'No ensembles running.');
-      return;
-    }
-
-    const icons = statusIcons(supportsUnicode());
-    const lines: string[] = [`\n  ${ensembles.length} ensemble${ensembles.length !== 1 ? 's' : ''} discovered:\n`];
-
-    for (const ens of ensembles) {
-      const active = ens.name === ctx.activeEnsemble ? ' \u25C0 active' : '';
-      const conductor = ens.hasConductor ? ` ${icons.conductor}` : '';
-      lines.push(`    ${ens.name.padEnd(20)} ${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''}${conductor}${active}`);
-    }
-
-    lines.push('');
-    lines.push('  Switch with: /ensemble <name>');
-
-    commitStatic(dispatch, 'command-output', lines.join('\n'));
-  } catch (err) {
-    commitStatic(dispatch, 'error', `Failed to discover ensembles: ${err}`);
-  }
+  dispatch({ type: 'SHOW_PICKER', pickerType: 'ensembles' });
 }
 
 /** /ensemble <name> — switch active ensemble context. */

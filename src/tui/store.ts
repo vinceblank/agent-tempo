@@ -190,6 +190,10 @@ export interface TuiState {
   /** Command palette state. */
   paletteVisible: boolean;
   paletteIndex: number;
+  /** Interactive picker overlay state. */
+  pickerVisible: boolean;
+  pickerType: 'players' | 'ensembles' | null;
+  pickerIndex: number;
 }
 
 export function initialState(ensemble?: string): TuiState {
@@ -225,6 +229,9 @@ export function initialState(ensemble?: string): TuiState {
     hasNewBelow: false,
     paletteVisible: false,
     paletteIndex: 0,
+    pickerVisible: false,
+    pickerType: null,
+    pickerIndex: 0,
     confirmingStop: undefined,
     scheduleWizard: undefined,
   };
@@ -262,6 +269,11 @@ export type TuiAction =
   | { type: 'PALETTE_UP' }
   | { type: 'PALETTE_DOWN' }
   | { type: 'PALETTE_SET_INDEX'; index: number }
+  // Picker overlay
+  | { type: 'SHOW_PICKER'; pickerType: 'players' | 'ensembles' }
+  | { type: 'HIDE_PICKER' }
+  | { type: 'PICKER_UP' }
+  | { type: 'PICKER_DOWN' }
   // Scrollback
   | { type: 'SCROLL_UP'; lines?: number }
   | { type: 'SCROLL_DOWN'; lines?: number }
@@ -481,6 +493,20 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'PALETTE_SET_INDEX':
       return { ...state, paletteIndex: action.index };
+
+    // ── Picker overlay ──
+
+    case 'SHOW_PICKER':
+      return { ...state, pickerVisible: true, pickerType: action.pickerType, pickerIndex: 0 };
+
+    case 'HIDE_PICKER':
+      return { ...state, pickerVisible: false, pickerType: null, pickerIndex: 0 };
+
+    case 'PICKER_UP':
+      return { ...state, pickerIndex: Math.max(0, state.pickerIndex - 1) };
+
+    case 'PICKER_DOWN':
+      return { ...state, pickerIndex: state.pickerIndex + 1 }; // Clamped by item count in App
 
     case 'SET_CONDUCTOR':
       return { ...state, conductorName: action.name };
