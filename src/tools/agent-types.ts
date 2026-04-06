@@ -1,5 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { defineTool } from './helpers';
+import { defineTool, ok } from './helpers';
 import { listAgentTypes } from '../ensemble/agent-types';
 
 export function registerAgentTypesTool(server: McpServer) {
@@ -11,7 +11,7 @@ export function registerAgentTypesTool(server: McpServer) {
     async () => {
       const types = listAgentTypes();
       if (types.length === 0) {
-        return { content: [{ type: 'text' as const, text: 'No agent types found.' }] };
+        return ok('No agent types found.');
       }
       const lines = types.map(t => {
         const src = t.source === 'shipped' ? '(shipped)' : t.source === 'user' ? '(user)' : '(project)';
@@ -20,7 +20,7 @@ export function registerAgentTypesTool(server: McpServer) {
           : '';
         return `**${t.name}** ${src}\n  ${t.description || 'No description'}${tools}`;
       });
-      return { content: [{ type: 'text' as const, text: lines.join('\n\n') }] };
+      return ok(lines.join('\n\n'));
     },
   );
 }

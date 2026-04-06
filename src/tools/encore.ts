@@ -6,8 +6,8 @@ import { SessionMetadata } from '../types';
 import { resolveSession } from './resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
-import { defineTool } from './helpers';
-import { PLAYER_NAME_MAX } from '../utils/validation';
+import { defineTool, ok, fail, formatError } from './helpers';
+import { PLAYER_NAME_MAX, validatePlayerName } from '../utils/validation';
 
 export function registerEncoreTool(
   server: McpServer,
@@ -32,22 +32,19 @@ export function registerEncoreTool(
         contextMessages?: number;
       };
 
+      const nameError = validatePlayerName(playerId);
+      if (nameError) return fail(nameError);
+
       // Cannot encore yourself
       if (playerId === getPlayerId()) {
-        return {
-          content: [{ type: 'text' as const, text: 'Cannot encore your own session.' }],
-          isError: true,
-        };
+        return fail('Cannot encore your own session.');
       }
 
       try {
         // Resolve the target session
         const resolved = await resolveSession(client, config.ensemble, playerId);
         if (!resolved) {
-          return {
-            content: [{ type: 'text' as const, text: `No session found with name "${playerId}".` }],
-            isError: true,
-          };
+          return fail(`No session found with name "${playerId}".`);
         }
 
         // Check status
@@ -55,22 +52,13 @@ export function registerEncoreTool(
         const status = metadata.status || 'active';
 
         if (status === 'active') {
-          return {
-            content: [{ type: 'text' as const, text: `Session "${playerId}" is already active. Use \`cue\` to send it a message.` }],
-            isError: true,
-          };
+          return fail(`Session "${playerId}" is already active. Use \`cue\` to send it a message.`);
         }
         if (status === 'pending') {
-          return {
-            content: [{ type: 'text' as const, text: `Session "${playerId}" is pending (still starting up). Wait for it to become active or stale.` }],
-            isError: true,
-          };
+          return fail(`Session "${playerId}" is pending (still starting up). Wait for it to become active or stale.`);
         }
         if (status === 'terminated') {
-          return {
-            content: [{ type: 'text' as const, text: `Session "${playerId}" is terminated. Use \`recruit\` to start a fresh session instead.` }],
-            isError: true,
-          };
+          return fail(`Session "${playerId}" is terminated. Use \`recruit\` to start a fresh session instead.`);
         }
 
         // Status is 'stale' — submit encore outbox entry
@@ -82,17 +70,9 @@ export function registerEncoreTool(
         } as OutboxEntryInput;
         const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `Encore request submitted for **${playerId}**. The session will be revived with context restored. (outbox: ${entryId})`,
-          }],
-        };
+        return ok(`Encore request submitted for **${playerId}**. The session will be revived with context restored. (outbox: ${entryId})`);
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to encore: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to encore: ${formatError(err)}`);
       }
     },
   );

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 import { STAGE_NAME_MAX } from '../utils/validation';
 
 export function registerCancelStageTool(
@@ -21,17 +21,9 @@ export function registerCancelStageTool(
       try {
         await handle.signal('cancelStage', name);
 
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `Stage **${name}** cancelled.`,
-          }],
-        };
+        return ok(`Stage **${name}** cancelled.`);
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to cancel stage: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to cancel stage: ${formatError(err)}`);
       }
     },
   );

@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config, schedulerWorkflowId } from '../config';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 
 import type { ScheduleEntry } from '../types';
 
@@ -31,21 +31,11 @@ export function registerSchedulesTool(
         try {
           schedules = await handle.query('getSchedules');
         } catch {
-          return {
-            content: [{
-              type: 'text' as const,
-              text: 'No scheduler running — no schedules exist yet.',
-            }],
-          };
+          return ok('No scheduler running — no schedules exist yet.');
         }
 
         if (schedules.length === 0) {
-          return {
-            content: [{
-              type: 'text' as const,
-              text: 'No active schedules.',
-            }],
-          };
+          return ok('No active schedules.');
         }
 
         const lines = schedules.map((s) => {
@@ -61,17 +51,9 @@ export function registerSchedulesTool(
           return `• **${s.name}** → ${s.target} | ${recur}${boundsStr} | next: ${next}\n  msg: ${msgPreview}`;
         });
 
-        return {
-          content: [{
-            type: 'text' as const,
-            text: lines.join('\n'),
-          }],
-        };
+        return ok(lines.join('\n'));
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to query schedules: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to query schedules: ${formatError(err)}`);
       }
     },
   );

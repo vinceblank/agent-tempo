@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 import { STAGE_NAME_MAX, STAGE_PLAYERS_MAX, PLAYER_NAME_REGEX } from '../utils/validation';
 
 export function registerStageTool(
@@ -34,17 +34,9 @@ export function registerStageTool(
         });
 
         const playerList = players.map((p) => `  - ${p}`).join('\n');
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `Stage **${name}** created tracking ${players.length} player(s) [policy: ${failurePolicy || 'halt'}]:\n${playerList}`,
-          }],
-        };
+        return ok(`Stage **${name}** created tracking ${players.length} player(s) [policy: ${failurePolicy || 'halt'}]:\n${playerList}`);
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to create stage: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to create stage: ${formatError(err)}`);
       }
     },
   );

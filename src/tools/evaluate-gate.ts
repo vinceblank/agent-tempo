@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
-import { defineTool } from './helpers';
+import { defineTool, ok, fail, formatError } from './helpers';
 import { GATE_TASK_MAX, GATE_NOTES_MAX } from '../utils/validation';
 
 export function registerEvaluateGateTool(
@@ -36,17 +36,9 @@ export function registerEvaluateGateTool(
         const summary = evaluations
           .map((ev) => `  ${ev.index}: ${ev.status === 'passed' ? '\u2705' : '\u274c'} ${ev.status}${ev.notes ? ` — ${ev.notes}` : ''}`)
           .join('\n');
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `Evaluated ${evaluations.length} criteria on gate **${task}**:\n${summary}`,
-          }],
-        };
+        return ok(`Evaluated ${evaluations.length} criteria on gate **${task}**:\n${summary}`);
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to evaluate gate: ${err}` }],
-          isError: true,
-        };
+        return fail(`Failed to evaluate gate: ${formatError(err)}`);
       }
     },
   );

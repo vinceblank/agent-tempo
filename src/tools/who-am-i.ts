@@ -1,7 +1,7 @@
 import { WorkflowHandle } from '@temporalio/client';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SessionMetadata } from '../types';
-import { defineTool } from './helpers';
+import { defineTool, ok } from './helpers';
 
 export function registerWhoAmITool(
   server: McpServer,
@@ -26,6 +26,6 @@ export function registerWhoAmITool(
       `**Status:** ${metadata.status || 'active'}`,
     ].filter(Boolean);
 
-    return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    return ok(lines.join('\n'));
   });
 }
