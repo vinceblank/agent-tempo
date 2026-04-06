@@ -56,7 +56,7 @@ export function ChatView({
     React.createElement(Text, { color: THEME.dim },
       `  ${targetBranch ? `Branch: ${targetBranch} \u00B7 ` : ''}${receivedCount} received, ${sentCount} sent`,
     ),
-    React.createElement(Text, { color: THEME.dim },
+    React.createElement(Text, { color: THEME.border },
       '  ' + '\u2500'.repeat(55),
     ),
   );

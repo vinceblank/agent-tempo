@@ -91,6 +91,11 @@ export function MainView({ ensemble, players, messages, schedules }: MainViewPro
     ),
   );
 
+  // Section separator
+  const separator = () => React.createElement(Box, { paddingX: 1, marginTop: 1 },
+    React.createElement(Text, { color: THEME.border }, '  ' + '\u2500'.repeat(50)),
+  );
+
   return React.createElement(Box, { flexDirection: 'column', height: '100%', paddingX: 1 },
     // Players header
     React.createElement(Box, { marginTop: 1 },
@@ -101,6 +106,9 @@ export function MainView({ ensemble, players, messages, schedules }: MainViewPro
     players.length === 0
       ? React.createElement(Text, { color: THEME.dim }, '  No players')
       : null,
+
+    // Separator
+    separator(),
 
     // Recent Activity header
     React.createElement(Box, { marginTop: 1 },
@@ -114,9 +122,12 @@ export function MainView({ ensemble, players, messages, schedules }: MainViewPro
 
     // Schedules header (only if there are schedules)
     schedules && schedules.length > 0
-      ? React.createElement(Box, { flexDirection: 'column', marginTop: 1 },
-          React.createElement(Text, { bold: true, color: THEME.accent },
-            `  Schedules (${schedules.length} active)`,
+      ? React.createElement(Box, { flexDirection: 'column' },
+          separator(),
+          React.createElement(Box, { marginTop: 1 },
+            React.createElement(Text, { bold: true, color: THEME.accent },
+              `  Schedules (${schedules.length} active)`,
+            ),
           ),
           React.createElement(Box, { height: 1 }),
           ...scheduleRows,

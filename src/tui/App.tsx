@@ -21,6 +21,7 @@ import { ErrorView } from './components/ErrorView';
 import { RecruitWizard } from './components/RecruitWizard';
 import { TitleBar } from './components/TitleBar';
 import { PromptArea } from './components/PromptArea';
+import { StatusBar } from './components/StatusBar';
 import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames } from './commands';
 import { THEME } from './utils/theme';
 import type { TempoClient } from './client';
@@ -690,6 +691,13 @@ export function App({ api, ensemble }: AppProps) {
     React.createElement(Box, { flexGrow: 1 },
       renderLiveContent(),
     ),
+    // Status bar
+    React.createElement(StatusBar, {
+      ensemble: state.activeEnsemble,
+      players: state.players,
+      scheduleCount: state.schedules.length,
+      connected: true,
+    }),
     // Bottom divider
     React.createElement(Box, { key: 'divider-bottom', paddingX: 1 },
       React.createElement(Text, { color: THEME.border }, dividerLine),

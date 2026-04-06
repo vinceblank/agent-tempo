@@ -210,7 +210,10 @@ export function PromptArea({
       React.createElement(Text, { bold: true, color: THEME.accent }, '> '),
       disabled
         ? React.createElement(Text, { color: THEME.muted }, '...')
-        : React.createElement(Text, { color: THEME.text }, `${value}${cursorChar}`),
+        : React.createElement(React.Fragment, null,
+            React.createElement(Text, { color: THEME.text }, value),
+            React.createElement(Text, { color: THEME.accent }, cursorChar),
+          ),
     ),
   );
 }
