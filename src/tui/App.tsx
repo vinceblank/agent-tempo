@@ -4,17 +4,18 @@
  */
 import React, { useReducer, useEffect, useCallback } from 'react';
 import { useInk } from './ink-context';
-import { tuiReducer, initialState, TuiState, TuiAction } from './store';
+import { tuiReducer, initialState } from './store';
 import { Splash } from './components/Splash';
 import type { TuiApi } from './core-api';
 
 interface AppProps {
   api: TuiApi;
+  ensemble: string;
 }
 
-export function App({ api }: AppProps) {
+export function App({ api, ensemble }: AppProps) {
   const { Box, Text, useApp, useInput } = useInk();
-  const [state, dispatch] = useReducer(tuiReducer, initialState(api.ensemble));
+  const [state, dispatch] = useReducer(tuiReducer, initialState(ensemble));
   const { exit } = useApp();
 
   // Keyboard: q/Ctrl-C to exit
@@ -43,14 +44,14 @@ export function App({ api }: AppProps) {
       dispatch({ type: 'SET_SPLASH_STATUS', status: 'Loading ensemble state...' });
 
       // Initial data load
-      const [players, events, history] = await Promise.all([
-        api.getPlayers(),
-        api.getEvents(50),
-        api.getConductorHistory(),
+      const [players, messages, history] = await Promise.all([
+        api.getPlayers(ensemble),
+        api.getMessages(ensemble, 50),
+        api.getConductorHistory(ensemble),
       ]);
       if (cancelled) return;
 
-      dispatch({ type: 'REFRESH_ALL', players, events, history });
+      dispatch({ type: 'REFRESH_ALL', players, messages, history });
       dispatch({ type: 'SET_PHASE', phase: 'connected' });
     }
 
@@ -69,12 +70,12 @@ export function App({ api }: AppProps) {
 
     const interval = setInterval(async () => {
       try {
-        const [players, events, history] = await Promise.all([
-          api.getPlayers(),
-          api.getEvents(50),
-          api.getConductorHistory(),
+        const [players, messages, history] = await Promise.all([
+          api.getPlayers(ensemble),
+          api.getMessages(ensemble, 50),
+          api.getConductorHistory(ensemble),
         ]);
-        dispatch({ type: 'REFRESH_ALL', players, events, history });
+        dispatch({ type: 'REFRESH_ALL', players, messages, history });
       } catch {
         // Silently skip failed polls — next cycle will retry
       }
@@ -88,7 +89,7 @@ export function App({ api }: AppProps) {
   if (state.phase === 'splash' || state.phase === 'connecting') {
     return React.createElement(Splash, {
       status: state.splashStatus,
-      ensemble: state.ensemble,
+      ensemble: state.activeEnsemble || ensemble,
     });
   }
 
@@ -106,7 +107,7 @@ export function App({ api }: AppProps) {
     React.createElement(Box, { borderStyle: 'single', paddingX: 1 },
       React.createElement(Text, { bold: true, color: 'cyan' }, `claude-tempo`),
       React.createElement(Text, null, ` | `),
-      React.createElement(Text, { color: 'green' }, api.ensemble),
+      React.createElement(Text, { color: 'green' }, ensemble),
       React.createElement(Text, null, ` | `),
       React.createElement(Text, { dimColor: true }, `${state.players.length} players`),
       React.createElement(Text, null, ` | `),
@@ -129,17 +130,16 @@ export function App({ api }: AppProps) {
           ? React.createElement(Text, { dimColor: true }, 'No players')
           : null,
       ),
-      // Right: activity log
+      // Right: message timeline
       React.createElement(Box, { flexDirection: 'column', flexGrow: 1, borderStyle: 'single', paddingX: 1 },
-        React.createElement(Text, { bold: true, underline: true }, 'Activity'),
-        ...state.events.slice(-10).map((e: typeof state.events[number], i: number) =>
+        React.createElement(Text, { bold: true, underline: true }, 'Messages'),
+        ...state.messages.slice(-10).map((m: typeof state.messages[number], i: number) =>
           React.createElement(Text, { key: i, dimColor: true },
-            `${e.type === 'player_joined' ? '+' : e.type === 'player_left' ? '-' : '~'} ${e.playerId}` +
-            (e.newValue ? ` -> ${e.newValue}` : ''),
+            `${m.from} -> ${m.to}: ${m.text.length > 60 ? m.text.slice(0, 57) + '...' : m.text}`,
           ),
         ),
-        state.events.length === 0
-          ? React.createElement(Text, { dimColor: true }, 'No events yet')
+        state.messages.length === 0
+          ? React.createElement(Text, { dimColor: true }, 'No messages yet')
           : null,
       ),
     ),

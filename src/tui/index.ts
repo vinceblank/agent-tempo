@@ -41,11 +41,11 @@ export async function run(opts: TuiOpts): Promise<void> {
   }
 
   const client = new Client({ connection, namespace: opts.config.temporalNamespace });
-  const api = createTuiApi(client, opts.ensemble);
+  const api = createTuiApi(client);
 
   // Render the TUI
   const app = ink.render(
-    React.createElement(InkProvider, { ink, children: React.createElement(App, { api }) }),
+    React.createElement(InkProvider, { ink, children: React.createElement(App, { api, ensemble: opts.ensemble }) }),
   );
 
   await app.waitUntilExit();
