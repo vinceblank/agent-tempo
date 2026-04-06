@@ -85,17 +85,21 @@ src/
 │   ├── ink-loader.ts  # Dynamic ESM loader for Ink (avoids CJS/ESM conflicts)
 │   ├── ink-context.tsx # React context for injected Ink primitives
 │   ├── components/
-│   │   ├── Splash.tsx     # Splash/connecting screen component
-│   │   ├── TitleBar.tsx   # Pinned title bar showing ensemble/player context
-│   │   ├── PromptArea.tsx # Pinned input area with hint text
-│   │   ├── MainView.tsx   # Main ensemble view (players, messages, schedules)
-│   │   ├── ChatView.tsx   # Per-player chat view (entered via /cue <player>)
-│   │   └── ErrorView.tsx  # Error state view with diagnostic checks
+│   │   ├── Splash.tsx         # Splash/connecting screen component
+│   │   ├── TitleBar.tsx       # Pinned title bar showing ensemble/player context
+│   │   ├── PromptArea.tsx     # Pinned input area with hint text
+│   │   ├── MainView.tsx       # Main ensemble view (players, messages, schedules)
+│   │   ├── ChatView.tsx       # Per-player chat view (entered via /cue <player>)
+│   │   ├── ErrorView.tsx      # Error state view with diagnostic checks
+│   │   ├── StatusBar.tsx      # Persistent status bar (player counts, schedule count, connection health)
+│   │   ├── ScheduleWizard.tsx # Step-by-step wizard for /schedule create
+│   │   └── RecruitWizard.tsx  # Step-by-step wizard for /recruit
 │   └── utils/
-│       ├── format.ts      # Display formatting helpers
-│       ├── platform.ts    # Terminal size detection helpers
-│       ├── theme.ts       # THEME constants (colors, borders, icons)
-│       └── fullscreen.ts  # Fullscreen/alternate-screen helpers
+│       ├── format.ts          # Display formatting helpers
+│       ├── platform.ts        # Terminal size detection helpers
+│       ├── theme.ts           # THEME constants (colors, borders, icons)
+│       ├── fullscreen.ts      # Fullscreen/alternate-screen helpers
+│       └── history.ts         # Persistent command history (~/.claude-tempo/tui-history.json)
 ├── utils/
 │   ├── validation.ts  # Shared validation constants (name/message/path limits, encore defaults) and helpers
 │   ├── worktree.ts    # Git worktree create/remove helpers (cross-platform)

@@ -812,7 +812,10 @@ The built-in terminal UI provides a chat-focused shell for managing your ensembl
 ### Launching
 
 ```bash
-# Multi-ensemble mode — lists all running ensembles
+# Default — bare command launches TUI in multi-ensemble mode
+claude-tempo
+
+# Explicit TUI launch
 claude-tempo tui
 
 # Direct ensemble mode — connects straight to a named ensemble
@@ -824,9 +827,10 @@ claude-tempo tui --ensemble my-ensemble
 The TUI has a persistent layout:
 
 - **TitleBar** (pinned top) — shows the current ensemble, player count, and connection state; in chat mode shows the target player and their status
-- **Scroll area** — command output and sent messages accumulate here as scrollback history
+- **Scroll area** — command output and sent messages accumulate here as scrollback history; navigate with **Page Up / Page Down / Home / End**
+- **StatusBar** — persistent one-line summary of player counts by status, schedule count, and connection health
 - **Live view** — real-time ensemble state (players, recent messages, schedules); switches to a per-player chat view in `/cue` mode
-- **PromptArea** (pinned bottom) — type slash commands or, in chat mode, bare text to send to the target player
+- **PromptArea** (pinned bottom) — type slash commands or, in chat mode, bare text to send to the target player; use **↑ / ↓** to navigate persistent command history (saved to `~/.claude-tempo/tui-history.json`)
 
 > Screenshot placeholder — will be added once the feature lands on `main`.
 
@@ -836,12 +840,14 @@ The TUI has a persistent layout:
 |---|---|
 | `/cue <player> [message]` | Enter chat mode with a player, or send a quick one-off message |
 | `/broadcast <message>` | Send a message to all active players across all ensembles |
-| `/recruit <name> [--type <type>] [--dir <path>]` | Spawn a new player session |
+| `/recruit [name]` | Launch the recruit wizard to spawn a new player session |
 | `/stop <player>` | Terminate a player session |
 | `/encore <player>` | Revive a stale player session |
 | `/recall [player]` | Show recent message history (optionally filtered to one player) |
+| `/search <term>` | Search message history across all ensembles |
 | `/players` | List all players with status, type, and current part |
 | `/schedule` | List active schedules across all ensembles |
+| `/schedule create` | Launch the interactive schedule creation wizard |
 | `/unschedule <name>` | Cancel a named schedule |
 | `/gates` | List quality gates and their criteria status |
 | `/stages` | List stages and per-player report status |

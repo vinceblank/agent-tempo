@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.20.0]
+
+### Added
+
+- Complete TUI rewrite — multi-ensemble home screen, view router, adaptive polling (#58)
+- TempoClient API layer replacing core-api.ts with Maestro-first fallback (#58)
+- 10 new components: ChatView, CommandPalette, ErrorView, MainView, Picker, PromptArea, RecruitWizard, ScheduleWizard, StatusBar, TitleBar (#58)
+- Slash command system with parser, registry, tab completion, persistent history (#58)
+- Two-way conductor chat via Global Maestro relay (#58)
+- Interactive wizards for recruiting and scheduling (#58)
+- Message search, scrollback navigation, player detail view (#58)
+- Splash screen with connection checklist (#58)
+- `claude-tempo tui` as default CLI command (#58)
+
+### Fixed
+
+- TUI input lag eliminated — animation timers removed, Yoga nodes flattened, stale ref fix (#58)
+- Live message lists capped at ~20 entries to prevent render slowdown (#58)
+
 ## [0.19.0] - 2026-04-07
 
 ### Fixed
