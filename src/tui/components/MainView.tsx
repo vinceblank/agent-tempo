@@ -24,8 +24,9 @@ export interface MainViewProps {
 }
 
 /** Pad or truncate a string to exactly `len` chars. */
+/** Pad or truncate with ellipsis to exactly `len` chars. */
 function pad(s: string, len: number): string {
-  if (s.length >= len) return s.slice(0, len);
+  if (s.length > len) return s.slice(0, len - 1) + '\u2026';
   return s + ' '.repeat(len - s.length);
 }
 
@@ -56,18 +57,20 @@ export function MainView({ ensemble, players, messages, schedules }: MainViewPro
       : p.status === 'active' ? icons.active
       : p.status === 'stale' ? icons.stale
       : p.status === 'pending' ? icons.pending
-      : icons.terminated;
+      : p.status === 'terminated' ? icons.terminated
+      : icons.blocked; // blocked or unknown
 
     const color = p.status === 'active' ? THEME.success
       : p.status === 'stale' ? THEME.warning
-      : THEME.dim;
+      : p.status === 'terminated' ? THEME.dim
+      : THEME.textMuted;
 
     const typeName = p.playerType || p.agentType || '';
-    const part = p.part || (p.status === 'stale' ? `stale \u2014 last seen recently` : '');
+    const part = p.part || '';
 
     return React.createElement(Box, { key: p.playerId },
       React.createElement(Text, { color },
-        `  ${icon} ${pad(p.playerId, 18)}${pad(typeName, 13)}${truncate(part, 40)}`,
+        `  ${icon} ${pad(p.playerId, 20)} ${pad(typeName, 22)} ${truncate(part, 35)}`,
       ),
     );
   });
