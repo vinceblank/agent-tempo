@@ -7,7 +7,7 @@ import React from 'react';
 import { useInk } from '../ink-context';
 import { THEME } from '../utils/theme';
 
-const MAX_VISIBLE = 10;
+const MAX_VISIBLE = 6;
 
 export interface PaletteCommand {
   name: string;
