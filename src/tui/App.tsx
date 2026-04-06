@@ -214,21 +214,51 @@ export function App({ api, ensemble }: AppProps) {
 
     async function connect() {
       const splashStart = Date.now();
-      const MIN_SPLASH_MS = 2000;
+      const MIN_SPLASH_MS = 2500;
+      type Check = { label: string; done: boolean; error?: boolean };
+      const checks: Check[] = [];
 
+      // Helper: push a check and dispatch
+      function addCheck(label: string, done: boolean, error?: boolean) {
+        checks.push({ label, done, error });
+        if (!cancelled) dispatch({ type: 'SET_SPLASH_CHECKS', checks: [...checks] });
+      }
+
+      // Helper: mark the last pending check as done
+      function completeLastCheck() {
+        if (checks.length > 0) {
+          checks[checks.length - 1] = { ...checks[checks.length - 1], done: true };
+          if (!cancelled) dispatch({ type: 'SET_SPLASH_CHECKS', checks: [...checks] });
+        }
+      }
+
+      // Step 1: Connect to Temporal
       dispatch({ type: 'SET_SPLASH_STATUS', status: 'Connecting to Temporal...' });
+      addCheck('Connecting to Temporal server...', false);
 
       const connected = await api.isConnected();
       if (cancelled) return;
 
       if (!connected) {
+        checks[checks.length - 1] = { label: 'Cannot reach Temporal server', done: true, error: true };
+        dispatch({ type: 'SET_SPLASH_CHECKS', checks: [...checks] });
         dispatch({ type: 'SET_PHASE', phase: 'error', error: 'Cannot connect to Temporal. Run `claude-tempo up` first.' });
         return;
       }
 
-      dispatch({ type: 'SET_SPLASH_STATUS', status: 'Loading ensembles...' });
+      completeLastCheck();
+      checks[checks.length - 1] = { label: 'Temporal server connected', done: true };
+      dispatch({ type: 'SET_SPLASH_CHECKS', checks: [...checks] });
 
-      // Load initial data
+      // Step 2: Discover ensembles / load data
+      dispatch({ type: 'SET_SPLASH_STATUS', status: 'Discovering ensembles...' });
+      addCheck('Discovering ensembles...', false);
+
+      let playerCount = 0;
+      let conductorName: string | undefined;
+      let scheduleCount = 0;
+      let ensembleName = state.activeEnsemble || 'all';
+
       if (state.activeEnsemble) {
         try {
           const [players, messages, history, schedules] = await Promise.all([
@@ -239,6 +269,10 @@ export function App({ api, ensemble }: AppProps) {
           ]);
           if (cancelled) return;
           dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
+          playerCount = players.length;
+          conductorName = players.find(p => p.isConductor)?.playerId;
+          scheduleCount = schedules.length;
+          ensembleName = state.activeEnsemble;
         } catch {
           // Non-fatal — will retry in poll loop
         }
@@ -247,10 +281,39 @@ export function App({ api, ensemble }: AppProps) {
           const ensembles = await api.discoverEnsembles();
           if (cancelled) return;
           dispatch({ type: 'REFRESH_ENSEMBLES', ensembles });
+          if (ensembles.length > 0) {
+            ensembleName = ensembles.length === 1 ? ensembles[0].name : `${ensembles.length} ensembles`;
+            playerCount = ensembles.reduce((sum, e) => sum + e.playerCount, 0);
+          }
         } catch {
           // Non-fatal
         }
       }
+
+      if (cancelled) return;
+
+      // Complete ensemble check
+      completeLastCheck();
+      checks[checks.length - 1] = { label: `Ensemble ${ensembleName} connected`, done: true };
+      dispatch({ type: 'SET_SPLASH_CHECKS', checks: [...checks] });
+
+      // Step 3: Player summary
+      const activeCount = playerCount;
+      addCheck(`${activeCount} player${activeCount !== 1 ? 's' : ''} found`, true);
+      if (conductorName) {
+        addCheck(`Conductor: ${conductorName}`, true);
+      }
+
+      // Mark splash as connected with summary
+      dispatch({
+        type: 'SET_SPLASH_CONNECTED',
+        summary: {
+          ensemble: ensembleName,
+          playerCount,
+          conductor: conductorName,
+          scheduleCount: scheduleCount > 0 ? scheduleCount : undefined,
+        },
+      });
 
       // Ensure splash is visible for at least MIN_SPLASH_MS
       const elapsed = Date.now() - splashStart;
@@ -265,7 +328,7 @@ export function App({ api, ensemble }: AppProps) {
           item: {
             id: nextStaticId(),
             type: 'splash-done',
-            content: `Connected to Temporal \u2022 v${packageVersion}`,
+            content: `Connected to Temporal \u2022 ${ensembleName} \u2022 ${playerCount} players \u2022 v${packageVersion}`,
             timestamp: Date.now(),
           },
         });
@@ -316,6 +379,9 @@ export function App({ api, ensemble }: AppProps) {
       status: state.splashStatus,
       ensemble: state.activeEnsemble || 'all',
       version: packageVersion,
+      checks: state.splashChecks,
+      connected: state.splashConnected,
+      summary: state.splashSummary,
     });
   }
 

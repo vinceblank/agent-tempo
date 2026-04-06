@@ -83,6 +83,17 @@ export interface TuiState {
   error?: string;
   /** Splash screen status text. */
   splashStatus: string;
+  /** Progressive checklist items shown during splash. */
+  splashChecks: Array<{ label: string; done: boolean; error?: boolean }>;
+  /** Whether the splash connection sequence is complete. */
+  splashConnected: boolean;
+  /** Summary info shown in splash after connection. */
+  splashSummary?: {
+    ensemble: string;
+    playerCount: number;
+    conductor?: string;
+    scheduleCount?: number;
+  };
 
   // ── Home view ──
   /** Known ensembles. */
@@ -134,6 +145,9 @@ export function initialState(ensemble?: string): TuiState {
     phase: 'splash',
     view: ensemble ? 'ensemble' : 'home',
     splashStatus: 'Starting up...',
+    splashChecks: [],
+    splashConnected: false,
+    splashSummary: undefined,
 
     ensembles: [],
     selectedEnsembleIndex: 0,
@@ -163,6 +177,8 @@ export function initialState(ensemble?: string): TuiState {
 export type TuiAction =
   | { type: 'SET_PHASE'; phase: TuiPhase; error?: string }
   | { type: 'SET_SPLASH_STATUS'; status: string }
+  | { type: 'SET_SPLASH_CHECKS'; checks: Array<{ label: string; done: boolean; error?: boolean }> }
+  | { type: 'SET_SPLASH_CONNECTED'; summary?: TuiState['splashSummary'] }
   // Navigation
   | { type: 'NAVIGATE_HOME' }
   | { type: 'NAVIGATE_ENSEMBLE'; ensemble: string }
@@ -200,6 +216,12 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'SET_SPLASH_STATUS':
       return { ...state, splashStatus: action.status };
+
+    case 'SET_SPLASH_CHECKS':
+      return { ...state, splashChecks: action.checks };
+
+    case 'SET_SPLASH_CONNECTED':
+      return { ...state, splashConnected: true, splashSummary: action.summary };
 
     // ── Navigation ──
 
