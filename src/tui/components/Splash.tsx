@@ -1,12 +1,8 @@
 /**
- * Full-screen splash screen with ASCII art metronome animation.
- * Shown during startup while connecting to Temporal/Maestro.
+ * Splash screen — minimal welcome screen with animated metronome.
  *
- * Two sub-phases:
- * 1. Connecting — animated metronome, spinner + status, progressive checklist
- * 2. Connected — completed checklist, summary box, ready prompt
- *
- * After connected, the parent commits this block to <Static> and transitions.
+ * Shows: logo, title, one-line connection status, compact ensemble list,
+ * and "Press Enter to continue" prompt.
  */
 import React, { useState, useEffect, useMemo } from 'react';
 import { useInk } from '../ink-context';
@@ -14,11 +10,10 @@ import { metronomePixelFrames } from '../utils/platform';
 import type { HalfBlockCell } from '../utils/platform';
 import { THEME } from '../utils/theme';
 
-// ── Braille spinner frames ──
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
-// ── Ping-pong sequence for 3 metronome frames ──
+// ── Animation constants ──
+const SPINNER_FRAMES = ['\u280B', '\u2819', '\u2839', '\u2838', '\u283C', '\u2834', '\u2826', '\u2827', '\u2807', '\u280F'];
 const PING_PONG = [0, 1, 2, 1];
+const MAX_ENSEMBLES_SHOWN = 5;
 
 export interface EnsembleInfo {
   name: string;
@@ -30,33 +25,19 @@ export interface SplashProps {
   status: string;
   ensemble: string;
   version: string;
-  /** Checklist items to display progressively. */
-  checks?: SplashCheck[];
   /** Whether the connection is complete. */
   connected?: boolean;
-  /** Summary info shown after connection. */
-  summary?: {
-    ensemble: string;
-    playerCount: number;
-    conductor?: string;
-    scheduleCount?: number;
-    uptime?: string;
-  };
   /** Available ensembles (shown when connected). */
   ensembles?: EnsembleInfo[];
   /** Called when user presses Enter to continue from splash. */
   onContinue?: () => void;
+  // Legacy props (kept for backward compat but ignored)
+  checks?: any[];
+  summary?: any;
 }
 
-export interface SplashCheck {
-  label: string;
-  done: boolean;
-  error?: boolean;
-}
-
-/** Render a single row of half-block cells as React elements. */
+/** Render a row of half-block cells as grouped React Text elements. */
 function renderHalfBlockRow(cells: HalfBlockCell[], Box: any, Text: any, key: string): React.ReactNode {
-  // Group consecutive cells with same fg+bg to reduce element count
   const elements: React.ReactNode[] = [];
   let buf = '';
   let bufFg: string | undefined;
@@ -86,20 +67,20 @@ function renderHalfBlockRow(cells: HalfBlockCell[], Box: any, Text: any, key: st
   return React.createElement(Box, { key }, ...elements);
 }
 
-export function Splash({ status, ensemble, version, checks, connected, summary, ensembles, onContinue }: SplashProps) {
+export function Splash({ status, version, connected, ensembles, onContinue }: SplashProps) {
   const { Box, Text, useInput } = useInk();
-
-  // Handle Enter to continue
-  useInput(React.useCallback((input: string, key: any) => {
-    if (connected && onContinue && key.return) {
-      onContinue();
-    }
-  }, [connected, onContinue]));
   const [metronomeTick, setMetronomeTick] = useState(0);
   const [spinnerTick, setSpinnerTick] = useState(0);
   const pixelFrames = useMemo(() => metronomePixelFrames(), []);
 
-  // Metronome animation — keeps running until component unmounts
+  // Handle Enter to continue
+  useInput(React.useCallback((_input: string, key: any) => {
+    if (connected && onContinue && key.return) {
+      onContinue();
+    }
+  }, [connected, onContinue]));
+
+  // Metronome animation — runs continuously until unmount
   useEffect(() => {
     const timer = setInterval(() => {
       setMetronomeTick((t) => (t + 1) % PING_PONG.length);
@@ -116,49 +97,43 @@ export function Splash({ status, ensemble, version, checks, connected, summary, 
     return () => clearInterval(timer);
   }, [connected]);
 
+  // ── Metronome rendering ──
   const frameIndex = PING_PONG[metronomeTick];
-  const currentFrame = pixelFrames[frameIndex];
-
-  // ── Pixel art metronome rendering ──
-  const metronomeLines = currentFrame.map((row, i) =>
+  const metronomeLines = pixelFrames[frameIndex].map((row, i) =>
     renderHalfBlockRow(row, Box, Text, `metro-${i}`),
   );
 
-  // ── Checklist ──
-  const checkElements = (checks || []).map((check, i) => {
-    if (check.error) {
-      return React.createElement(Text, { key: i, color: THEME.error },
-        `  \u2717 ${check.label}`,
-      );
-    }
-    if (check.done) {
-      return React.createElement(Text, { key: i, color: THEME.success },
-        `  \u2713 ${check.label}`,
-      );
-    }
-    // In-progress: spinner
-    return React.createElement(Text, { key: i, color: THEME.dim },
-      `  ${SPINNER_FRAMES[spinnerTick]} ${check.label}`,
-    );
-  });
+  // ── One-line connection status ──
+  const statusElement = connected
+    ? React.createElement(Text, { color: THEME.success }, '\u2713 Connected')
+    : React.createElement(Text, { color: THEME.warning }, `${SPINNER_FRAMES[spinnerTick]} ${status}`);
 
-  // ── Connected summary box ──
-  const summaryBox = connected && summary
-    ? React.createElement(Box, {
-        flexDirection: 'column',
-        borderStyle: 'single',
-        borderColor: THEME.dim,
-        paddingX: 1,
-        marginTop: 1,
-      },
-        React.createElement(Text, { color: THEME.text },
-          `Ensemble: ${summary.ensemble}  \u00B7  Players: ${summary.playerCount}${summary.scheduleCount != null ? `  \u00B7  Schedules: ${summary.scheduleCount}` : ''}`,
+  // ── Compact ensemble list (max 5) ──
+  const ensembleElements: React.ReactNode[] = [];
+  if (connected && ensembles && ensembles.length > 0) {
+    const shown = ensembles.slice(0, MAX_ENSEMBLES_SHOWN);
+    for (const ens of shown) {
+      const icon = ens.hasConductor ? '\u2605' : '\u2022';
+      ensembleElements.push(
+        React.createElement(Text, { key: ens.name, color: THEME.textMuted },
+          `  ${icon} ${ens.name} (${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''})`,
         ),
-        React.createElement(Text, { color: THEME.dim },
-          `Conductor: ${summary.conductor || 'none'}${summary.uptime ? `  \u00B7  Uptime: ${summary.uptime}` : ''}`,
+      );
+    }
+    if (ensembles.length > MAX_ENSEMBLES_SHOWN) {
+      ensembleElements.push(
+        React.createElement(Text, { key: 'more', color: THEME.dim },
+          `  \u2026 and ${ensembles.length - MAX_ENSEMBLES_SHOWN} more`,
         ),
-      )
-    : null;
+      );
+    }
+  } else if (connected) {
+    ensembleElements.push(
+      React.createElement(Text, { key: 'none', color: THEME.dim },
+        '  No ensembles running',
+      ),
+    );
+  }
 
   return React.createElement(Box, {
     flexDirection: 'column',
@@ -166,7 +141,7 @@ export function Splash({ status, ensemble, version, checks, connected, summary, 
     justifyContent: 'center',
     height: '100%',
   },
-    // Metronome
+    // Metronome logo
     React.createElement(Box, { flexDirection: 'column', alignItems: 'center' },
       ...metronomeLines,
     ),
@@ -176,51 +151,17 @@ export function Splash({ status, ensemble, version, checks, connected, summary, 
       React.createElement(Text, { color: THEME.dim }, 'Multi-session orchestration via Temporal'),
       React.createElement(Text, { color: THEME.muted }, `v${version}`),
     ),
-    // Status spinner (only when connecting)
-    !connected
-      ? React.createElement(Box, { marginTop: 2 },
-          React.createElement(Text, { color: THEME.warning },
-            `${SPINNER_FRAMES[spinnerTick]} ${status}`,
-          ),
-        )
+    // One-line connection status
+    React.createElement(Box, { marginTop: 2 }, statusElement),
+    // Ensemble list (only when connected)
+    ensembleElements.length > 0
+      ? React.createElement(Box, { flexDirection: 'column', marginTop: 1 }, ...ensembleElements)
       : null,
-    // Checklist
-    checkElements.length > 0
-      ? React.createElement(Box, { flexDirection: 'column', marginTop: 1 },
-          ...checkElements,
-        )
-      : null,
-    // Summary box (connected state)
-    summaryBox,
-    // Ensemble list (connected state)
-    connected && ensembles && ensembles.length > 0
-      ? React.createElement(Box, { flexDirection: 'column', marginTop: 1 },
-          React.createElement(Text, { color: THEME.dim },
-            `  ${ensembles.length} ensemble${ensembles.length !== 1 ? 's' : ''} available:`,
-          ),
-          ...ensembles.map(ens =>
-            React.createElement(Text, { key: ens.name, color: THEME.text },
-              `    ${ens.hasConductor ? '\u2605' : '\u2022'} ${ens.name} (${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''})`,
-            ),
-          ),
-        )
-      : null,
-    connected && (!ensembles || ensembles.length === 0)
-      ? React.createElement(Box, { marginTop: 1 },
-          React.createElement(Text, { color: THEME.dim }, '  No ensembles running. Start one with: claude-tempo up <name>'),
-        )
-      : null,
-    // Press Enter to continue (connected state)
-    connected
-      ? React.createElement(Box, { marginTop: 2 },
-          React.createElement(Text, { bold: true, color: THEME.accent }, '  Press Enter to continue'),
-        )
-      : null,
-    // Bottom hint (connecting state)
-    !connected
-      ? React.createElement(Box, { marginTop: 2 },
-          React.createElement(Text, { color: THEME.muted }, 'Press Ctrl+C to cancel'),
-        )
-      : null,
+    // Press Enter to continue (connected) / Ctrl+C to cancel (connecting)
+    React.createElement(Box, { marginTop: 2 },
+      connected
+        ? React.createElement(Text, { bold: true, color: THEME.accent }, 'Press Enter to continue')
+        : React.createElement(Text, { color: THEME.muted }, 'Press Ctrl+C to cancel'),
+    ),
   );
 }
