@@ -10,6 +10,9 @@ import { Splash } from './components/Splash';
 import { HomeView } from './components/HomeView';
 import type { TuiApi } from './core-api';
 
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const packageVersion: string = require('../../package.json').version;
+
 interface AppProps {
   api: TuiApi;
   /** If provided, start directly in ensemble view (backwards compat). */
@@ -127,6 +130,7 @@ export function App({ api, ensemble }: AppProps) {
     return React.createElement(Splash, {
       status: state.splashStatus,
       ensemble: state.activeEnsemble || 'all',
+      version: packageVersion,
     });
   }
 
