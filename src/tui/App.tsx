@@ -69,6 +69,9 @@ export function App({ api, ensemble }: AppProps) {
   const lastSeenMsgRef = React.useRef<string | undefined>(state.lastSeenMessageId);
   const stateRef = React.useRef(state);
   stateRef.current = state; // Always current on every render
+
+  // ── Refs for poll dedup (skip dispatches when data hasn't changed) ──
+  const lastPollRef = React.useRef({ playerCount: 0, lastMsgId: '', historyLen: 0, scheduleCount: 0 });
   const handleHistoryUpdate = useCallback((entries: string[]) => {
     saveHistory(entries);
   }, []);
@@ -650,11 +653,28 @@ export function App({ api, ensemble }: AppProps) {
             }
           }
 
-          dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
+          // Skip dispatch if data hasn't changed (avoids unnecessary re-renders)
+          const lastMsg = messages.length > 0 ? messages[messages.length - 1].id : '';
+          const pollKey = {
+            playerCount: players.length,
+            lastMsgId: lastMsg,
+            historyLen: history.length,
+            scheduleCount: schedules.length,
+          };
+          const prev = lastPollRef.current;
+          const changed = pollKey.playerCount !== prev.playerCount
+            || pollKey.lastMsgId !== prev.lastMsgId
+            || pollKey.historyLen !== prev.historyLen
+            || pollKey.scheduleCount !== prev.scheduleCount;
+
+          if (changed) {
+            dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
+            lastPollRef.current = pollKey;
+          }
 
           // Update ref so next poll uses the latest ID
           if (messages.length > 0) {
-            lastSeenMsgRef.current = messages[messages.length - 1].id;
+            lastSeenMsgRef.current = lastMsg;
           }
         }
       } catch {
@@ -819,6 +839,50 @@ export function App({ api, ensemble }: AppProps) {
   const dividerLine = '\u2500'.repeat(dividerWidth);
 
   // Live content area — route by phase
+  // ── Memoize chat messages (expensive merge+sort+dedup, only recompute when data changes) ──
+  const memoizedChatData = useMemo(() => {
+    if (!state.chatTarget) return null;
+    const isConductorChat = state.chatTarget === state.conductorName;
+
+    let chatMessages: ChatMessage[];
+    if (isConductorChat) {
+      const fromHistory: ChatMessage[] = state.conductorHistory.map(entry => {
+        if (entry.type === 'command') {
+          const cmd = entry.data as { text: string; source: string; timestamp: string };
+          return { direction: 'sent' as const, from: cmd.source || 'maestro', text: cmd.text, timestamp: entry.timestamp || cmd.timestamp };
+        } else {
+          const report = entry.data as { playerId: string; text: string; type: string; timestamp: string };
+          return { direction: 'received' as const, from: report.playerId, text: `[${report.type}] ${report.text}`, timestamp: entry.timestamp || report.timestamp };
+        }
+      });
+      const fromSent: ChatMessage[] = state.sentMessages
+        .filter(m => m.to === state.chatTarget)
+        .map(m => ({ direction: 'sent' as const, from: 'maestro', text: m.text, timestamp: m.timestamp }));
+      const seen = new Set<string>();
+      chatMessages = [...fromHistory, ...fromSent]
+        .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+        .filter(m => { const k = `${m.direction}:${m.timestamp}:${m.text.slice(0, 50)}`; if (seen.has(k)) return false; seen.add(k); return true; });
+    } else {
+      const fromRelay: ChatMessage[] = state.messages
+        .filter(m => m.from === state.chatTarget || m.to === state.chatTarget)
+        .map(m => ({ direction: m.to === state.chatTarget ? 'sent' as const : 'received' as const, from: m.from, text: m.text, timestamp: m.timestamp }));
+      const fromSent: ChatMessage[] = state.sentMessages
+        .filter(m => m.to === state.chatTarget)
+        .map(m => ({ direction: 'sent' as const, from: 'maestro', text: m.text, timestamp: m.timestamp }));
+      const seen = new Set<string>();
+      chatMessages = [...fromRelay, ...fromSent]
+        .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+        .filter(m => { const k = `${m.direction}:${m.timestamp}:${m.text.slice(0, 50)}`; if (seen.has(k)) return false; seen.add(k); return true; });
+    }
+
+    return {
+      messages: chatMessages,
+      received: chatMessages.filter(m => m.direction === 'received').length,
+      sent: chatMessages.filter(m => m.direction === 'sent').length,
+      isConductor: isConductorChat,
+    };
+  }, [state.chatTarget, state.conductorName, state.conductorHistory, state.messages, state.sentMessages]);
+
   function renderLiveContent() {
     if (state.phase === 'error') {
       return React.createElement(ErrorView, {
@@ -854,86 +918,7 @@ export function App({ api, ensemble }: AppProps) {
       });
     }
 
-    if (state.chatTarget) {
-      const isConductorChat = state.chatTarget === state.conductorName;
-      let chatMessages: ChatMessage[];
-
-      if (isConductorChat) {
-        // Build from conductorHistory (commands + reports) + local sentMessages
-        const fromHistory: ChatMessage[] = state.conductorHistory.map(entry => {
-          if (entry.type === 'command') {
-            const cmd = entry.data as { text: string; source: string; timestamp: string };
-            return {
-              direction: 'sent' as const,
-              from: cmd.source || 'maestro',
-              text: cmd.text,
-              timestamp: entry.timestamp || cmd.timestamp,
-            };
-          } else {
-            const report = entry.data as { playerId: string; text: string; type: string; timestamp: string };
-            return {
-              direction: 'received' as const,
-              from: report.playerId,
-              text: `[${report.type}] ${report.text}`,
-              timestamp: entry.timestamp || report.timestamp,
-            };
-          }
-        });
-
-        // Add locally sent messages not yet in history
-        const fromSent: ChatMessage[] = state.sentMessages
-          .filter(m => m.to === state.chatTarget)
-          .map(m => ({
-            direction: 'sent' as const,
-            from: 'maestro',
-            text: m.text,
-            timestamp: m.timestamp,
-          }));
-
-        // Merge and deduplicate by timestamp + text (sent messages may appear in both)
-        const seen = new Set<string>();
-        chatMessages = [...fromHistory, ...fromSent]
-          .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
-          .filter(m => {
-            const key = `${m.direction}:${m.timestamp}:${m.text.slice(0, 50)}`;
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-          });
-      } else {
-        // Build from relay messages filtered to this conversation
-        const fromRelay: ChatMessage[] = state.messages
-          .filter(m => m.from === state.chatTarget || m.to === state.chatTarget)
-          .map(m => ({
-            direction: m.to === state.chatTarget ? 'sent' as const : 'received' as const,
-            from: m.from,
-            text: m.text,
-            timestamp: m.timestamp,
-          }));
-
-        // Add locally sent messages
-        const fromSent: ChatMessage[] = state.sentMessages
-          .filter(m => m.to === state.chatTarget)
-          .map(m => ({
-            direction: 'sent' as const,
-            from: 'maestro',
-            text: m.text,
-            timestamp: m.timestamp,
-          }));
-
-        const seen = new Set<string>();
-        chatMessages = [...fromRelay, ...fromSent]
-          .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
-          .filter(m => {
-            const key = `${m.direction}:${m.timestamp}:${m.text.slice(0, 50)}`;
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-          });
-      }
-
-      const received = chatMessages.filter(m => m.direction === 'received').length;
-      const sent = chatMessages.filter(m => m.direction === 'sent').length;
+    if (state.chatTarget && memoizedChatData) {
       const targetPlayer = state.players.find(p => p.playerId === state.chatTarget);
 
       return React.createElement(ChatView, {
@@ -941,10 +926,10 @@ export function App({ api, ensemble }: AppProps) {
         targetPart: targetPlayer?.part,
         targetBranch: targetPlayer?.gitBranch,
         targetStatus: targetPlayer?.status,
-        isConductor: state.chatTarget === state.conductorName,
-        receivedCount: received,
-        sentCount: sent,
-        messages: chatMessages,
+        isConductor: memoizedChatData.isConductor,
+        receivedCount: memoizedChatData.received,
+        sentCount: memoizedChatData.sent,
+        messages: memoizedChatData.messages,
       });
     }
 

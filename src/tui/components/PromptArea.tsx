@@ -47,7 +47,7 @@ export interface PromptAreaProps {
   onPaletteSelect?: () => void;
 }
 
-export function PromptArea({
+export const PromptArea = React.memo(function PromptArea({
   hints,
   value,
   onChange,
@@ -255,4 +255,4 @@ export function PromptArea({
           ),
     ),
   );
-}
+});
