@@ -14,7 +14,8 @@ This document is the authoritative reference for all Temporal signal, query, upd
 |------|-------------|
 | `claudeSessionWorkflow` | The main workflow for a player session. One instance per active Claude Code session. Carries all message state, outbox entries, and conductor history across `continueAsNew` boundaries. |
 | `claudeSchedulerWorkflow` | Durable scheduler workflow — one per ensemble. Manages named one-shot and recurring schedules, firing them by signalling the target session at the configured time. |
-| `claudeMaestroWorkflow` | Ensemble management hub — one per ensemble. Workflow ID pattern: `claude-maestro-{ensemble}`. Aggregates a snapshot of all players, maintains a ring-buffer event log (max 200 entries), and queues commands for relay to the conductor. Survives restarts via `continueAsNew`. |
+| `claudeMaestroWorkflow` | Per-ensemble management hub — one per ensemble. Workflow ID pattern: `claude-maestro-{ensemble}`. Aggregates a snapshot of all players, maintains a ring-buffer event log (max 200 entries), and queues commands for relay to the conductor. Survives restarts via `continueAsNew`. |
+| `claudeGlobalMaestroWorkflow` | Global ensemble hub — single instance spanning ALL ensembles. Workflow ID: `claude-maestro-global`. Aggregates players by ensemble, maintains a cross-ensemble message ring buffer (max 500 entries), and exposes on-demand player/conductor history via updates. Survives restarts via `continueAsNew`. |
 
 ---
 
@@ -114,17 +115,17 @@ Signals sent **to** a `claudeSchedulerWorkflow` instance.
 
 ---
 
-## Maestro Signal
+## Per-Ensemble Maestro Signal
 
 Signal sent **to** a `claudeMaestroWorkflow` instance.
 
 | Signal Name | Payload | Description |
 |-------------|---------|-------------|
-| `maestroShutdown` | *(none)* | Gracefully shuts down the Maestro workflow. |
+| `maestroShutdown` | *(none)* | Gracefully shuts down the per-ensemble Maestro workflow. |
 
 ---
 
-## Maestro Queries
+## Per-Ensemble Maestro Queries
 
 Queries on a `claudeMaestroWorkflow` instance (synchronous, read-only).
 
@@ -136,13 +137,48 @@ Queries on a `claudeMaestroWorkflow` instance (synchronous, read-only).
 
 ---
 
-## Maestro Update
+## Per-Ensemble Maestro Update
 
 Workflow update on a `claudeMaestroWorkflow` instance (transactional, returns a value).
 
 | Update Name | Input | Return | Description |
 |-------------|-------|--------|-------------|
 | `maestroSendCommand` | `{ text: string; source: string; replyTo?: string }` | `string` (command ID) | Enqueues a command for relay to the conductor. Returns the generated command ID. The Maestro workflow relays it to the conductor via the `command` signal. |
+
+---
+
+## Global Maestro Signal
+
+Signal sent **to** a `claudeGlobalMaestroWorkflow` instance (`claude-maestro-global`).
+
+| Signal Name | Payload | Description |
+|-------------|---------|-------------|
+| `maestroNotifyMessage` | `MaestroRelayMessage` | Push-notify the global Maestro of a relayed message. Used for Phase 2 push-based dashboard updates. |
+
+---
+
+## Global Maestro Queries
+
+Queries on a `claudeGlobalMaestroWorkflow` instance (synchronous, read-only).
+
+| Query Name | Return Type | Description |
+|------------|-------------|-------------|
+| `maestroEnsembles` | `string[]` | All ensemble names currently known to the global Maestro. |
+| `maestroPlayersByEnsemble` | `Record<string, MaestroPlayerInfo[]>` | All players grouped by ensemble. Each `MaestroPlayerInfo` includes an `ensemble` field. |
+| `maestroRecentMessages` | `MaestroRelayMessage[]` | Ring buffer of recent messages relayed across all ensembles (max 500). |
+
+---
+
+## Global Maestro Updates
+
+Workflow updates on a `claudeGlobalMaestroWorkflow` instance (transactional, returns a value).
+
+| Update Name | Input | Return | Description |
+|-------------|-------|--------|-------------|
+| `maestroSendMessage` | `{ ensemble: string; to: string; text: string; source: string }` | `string` (message ID) | Send a message to a specific player in a specific ensemble via Maestro relay. Returns the generated message ID. |
+| `maestroFetchPlayerMessages` | `{ ensemble: string; playerId: string }` | `Array<Message \| SentMessage>` | On-demand fetch of a player's merged received/sent message history from their session workflow. |
+| `maestroFetchConductorHistory` | `{ ensemble: string }` | `{ success: boolean; history: HistoryEntry[]; error?: string }` | On-demand fetch of a conductor's command/report history. Returns soft failure (`success: false`) if no conductor is running. |
+| `maestroGlobalSendCommand` | `{ ensemble: string; text: string; source: string; replyTo?: string }` | `string` (command ID) | Queue a command for relay to a specific ensemble's conductor. Ensemble-scoped variant of the per-ensemble `maestroSendCommand`. |
 
 ---
 
@@ -217,6 +253,7 @@ Types referenced above are defined in `src/types.ts` and re-exported from `src/w
 | Field | Type | Description |
 |-------|------|-------------|
 | `playerId` | `string` | Human-readable player name. |
+| `ensemble` | `string` | Ensemble this player belongs to. Used by the global Maestro for cross-ensemble aggregation. |
 | `part` | `string` | Player's current part description. |
 | `hostname` | `string` | Machine hostname. |
 | `workDir` | `string` | Working directory path. |
@@ -226,6 +263,18 @@ Types referenced above are defined in `src/types.ts` and re-exported from `src/w
 | `agentType` | `string` | Agent backend (`claude` or `copilot`). |
 | `playerType` | `string?` | Named agent type (e.g. `tempo-soloist`), if set. |
 | `status` | `string?` | Session lifecycle status (`pending`, `active`, `stale`, `blocked`, `terminated`). |
+
+### `MaestroRelayMessage`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Generated UUID for this relay message. |
+| `ensemble` | `string` | Ensemble this message belongs to. |
+| `from` | `string` | Sending player ID. |
+| `to` | `string` | Recipient player ID. |
+| `text` | `string` | Message content. |
+| `timestamp` | `string` | ISO timestamp of relay. |
+| `direction` | `'inbound' \| 'outbound'` | Whether the message was inbound to or outbound from the tracked player. |
 
 ### `MaestroEvent`
 
