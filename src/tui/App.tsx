@@ -64,6 +64,12 @@ export function App({ api, ensemble }: AppProps) {
       return;
     }
 
+    // Scrollback navigation (Page Up/Down, Home/End)
+    if (key.pageUp) { dispatch({ type: 'SCROLL_UP', lines: 10 }); return; }
+    if (key.pageDown) { dispatch({ type: 'SCROLL_DOWN', lines: 10 }); return; }
+    if (key.home || (key.ctrl && input === 'a')) { dispatch({ type: 'SCROLL_HOME' }); return; }
+    if (key.end || (key.ctrl && input === 'e')) { dispatch({ type: 'SCROLL_END' }); return; }
+
     // Stop confirmation mode
     if (state.confirmingStop) {
       if (input === 'y' || input === 'Y') {
@@ -678,15 +684,51 @@ export function App({ api, ensemble }: AppProps) {
     React.createElement(Box, { key: 'divider-top', paddingX: 1 },
       React.createElement(Text, { color: THEME.border }, dividerLine),
     ),
-    // Static scroll-up history
-    // Ink's <Static> takes a render function child via `children` prop.
-    React.createElement(Static, {
-      items: state.staticItems,
-      children: (item: StaticItem) =>
-        React.createElement(Box, { key: item.id, paddingX: 1 },
-          React.createElement(Text, { color: staticItemColor(item) }, item.content),
-        ),
-    } as any),
+    // Scrollback history viewport
+    (() => {
+      const items = state.staticItems;
+      const viewportHeight = Math.max(5, (process.stdout.rows || 24) - 10); // Reserve space for title/status/prompt
+      const endIdx = items.length - state.scrollOffset;
+      const startIdx = Math.max(0, endIdx - viewportHeight);
+      const visibleItems = items.slice(startIdx, endIdx);
+
+      const elements: React.ReactNode[] = [];
+
+      // Scroll-up indicator
+      if (startIdx > 0) {
+        elements.push(
+          React.createElement(Box, { key: 'scroll-up-indicator', paddingX: 1 },
+            React.createElement(Text, { color: THEME.dim }, `\u2191 ${startIdx} more message${startIdx !== 1 ? 's' : ''} above`),
+          ),
+        );
+      }
+
+      // Visible items
+      for (const item of visibleItems) {
+        elements.push(
+          React.createElement(Box, { key: item.id, paddingX: 1 },
+            React.createElement(Text, { color: staticItemColor(item) }, item.content),
+          ),
+        );
+      }
+
+      // New messages below indicator
+      if (state.hasNewBelow && state.scrollOffset > 0) {
+        elements.push(
+          React.createElement(Box, { key: 'scroll-down-indicator', paddingX: 1 },
+            React.createElement(Text, { color: THEME.warning }, '\u2193 new messages below \u2193'),
+          ),
+        );
+      } else if (state.scrollOffset > 0) {
+        elements.push(
+          React.createElement(Box, { key: 'scrolled-indicator', paddingX: 1 },
+            React.createElement(Text, { color: THEME.dim }, `\u2500\u2500\u2500 scrolled (${state.scrollOffset} below) \u2500\u2500\u2500`),
+          ),
+        );
+      }
+
+      return React.createElement(Box, { flexDirection: 'column', flexGrow: 1 }, ...elements);
+    })(),
     // Live content area
     React.createElement(Box, { flexGrow: 1 },
       renderLiveContent(),

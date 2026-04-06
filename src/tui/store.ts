@@ -138,6 +138,10 @@ export interface TuiState {
   chatTarget?: string;
   /** ID of the last message seen (for detecting new arrivals in polling). */
   lastSeenMessageId?: string;
+  /** Scroll offset from the bottom of staticItems (0 = at bottom/live). */
+  scrollOffset: number;
+  /** Whether new messages arrived while scrolled up. */
+  hasNewBelow: boolean;
   /** Player name pending stop confirmation (null = not confirming). */
   confirmingStop?: string;
   /** Lineup confirmation state (pending load). */
@@ -175,6 +179,8 @@ export function initialState(ensemble?: string): TuiState {
     staticItems: [],
     inputValue: '',
     chatTarget: undefined,
+    scrollOffset: 0,
+    hasNewBelow: false,
     confirmingStop: undefined,
   };
 }
@@ -204,6 +210,11 @@ export type TuiAction =
   | { type: 'SET_INPUT'; value: string }
   | { type: 'ENTER_CHAT'; target: string }
   | { type: 'EXIT_CHAT' }
+  // Scrollback
+  | { type: 'SCROLL_UP'; lines?: number }
+  | { type: 'SCROLL_DOWN'; lines?: number }
+  | { type: 'SCROLL_HOME' }
+  | { type: 'SCROLL_END' }
   // Stop confirmation
   | { type: 'CONFIRM_STOP'; player: string }
   | { type: 'CANCEL_STOP' }
@@ -359,8 +370,38 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     // ── Chat shell ──
 
-    case 'COMMIT_STATIC':
-      return { ...state, staticItems: [...state.staticItems, action.item] };
+    case 'COMMIT_STATIC': {
+      const newItems = [...state.staticItems, action.item];
+      // If scrolled up, flag new messages below; otherwise stay at bottom
+      if (state.scrollOffset > 0) {
+        return { ...state, staticItems: newItems, hasNewBelow: true };
+      }
+      return { ...state, staticItems: newItems };
+    }
+
+    // ── Scrollback ──
+
+    case 'SCROLL_UP': {
+      const step = action.lines ?? 5;
+      const maxOffset = Math.max(0, state.staticItems.length - 1);
+      return { ...state, scrollOffset: Math.min(state.scrollOffset + step, maxOffset) };
+    }
+
+    case 'SCROLL_DOWN': {
+      const step = action.lines ?? 5;
+      const newOffset = Math.max(0, state.scrollOffset - step);
+      return {
+        ...state,
+        scrollOffset: newOffset,
+        hasNewBelow: newOffset > 0 ? state.hasNewBelow : false,
+      };
+    }
+
+    case 'SCROLL_HOME':
+      return { ...state, scrollOffset: Math.max(0, state.staticItems.length - 1) };
+
+    case 'SCROLL_END':
+      return { ...state, scrollOffset: 0, hasNewBelow: false };
 
     case 'SET_INPUT':
       return { ...state, inputValue: action.value };
