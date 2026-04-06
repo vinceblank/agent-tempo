@@ -34,7 +34,7 @@ src/
 │   ├── index.ts       # Workflow exports (re-exports for worker bundle)
 │   ├── session.ts     # claude-session workflow
 │   ├── scheduler.ts   # durable scheduler workflow (one per ensemble)
-│   ├── maestro.ts     # Maestro ensemble hub workflow (one per ensemble)
+│   ├── maestro.ts     # Maestro workflows — per-ensemble hub (one per ensemble) and global hub (one instance spanning all ensembles)
 │   ├── maestro-signals.ts # Maestro signal/query/update type definitions
 │   ├── scheduler-signals.ts # Scheduler signal/query type definitions
 │   └── signals.ts     # Session signal/query type definitions
@@ -76,6 +76,18 @@ src/
 │   ├── stages.ts      # List stages and their status (conductor only)
 │   ├── cancel-stage.ts # Cancel an active stage (conductor only)
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
+├── tui/
+│   ├── index.ts       # TUI entry point — connects to Temporal and renders the Ink app
+│   ├── App.tsx        # Root TUI component — routes between splash, dashboard, and error states
+│   ├── store.ts       # TUI state reducer (phase, players, events, conductor history)
+│   ├── core-api.ts    # TUI API layer — wraps Temporal queries via the Maestro workflow
+│   ├── ink-loader.ts  # Dynamic ESM loader for Ink (avoids CJS/ESM conflicts)
+│   ├── ink-context.tsx # React context for injected Ink primitives
+│   ├── components/
+│   │   └── Splash.tsx # Splash/connecting screen component
+│   └── utils/
+│       ├── format.ts  # Display formatting helpers
+│       └── platform.ts # Terminal size detection helpers
 ├── utils/
 │   ├── validation.ts  # Shared validation constants (name/message/path limits, encore defaults) and helpers
 │   ├── worktree.ts    # Git worktree create/remove helpers (cross-platform)

@@ -4,7 +4,7 @@ import { execFileSync, spawn as cpSpawn } from 'child_process';
 import { homedir } from 'os';
 import { Client, Connection, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { spawnInTerminal, spawnCopilotBridge, resolveClaudePath } from '../spawn';
-import { conductorWorkflowId, schedulerWorkflowId, maestroWorkflowId, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
+import { conductorWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
 import { createTemporalConnection } from '../connection';
 import { playerReportSignal, updateMetadataSignal } from '../workflows/signals';
 import { addScheduleSignal } from '../workflows/scheduler-signals';
@@ -984,7 +984,8 @@ function parseDuration(s: string): number {
 // --- Teardown: `down` command ---
 
 interface DownOpts extends CliOverrides {
-  ensemble: string;
+  /** Explicitly specified ensemble name. If undefined, auto-detect from running workflows. */
+  ensemble?: string;
   all: boolean;
   removeMcp: boolean;
   dir: string;
@@ -992,16 +993,68 @@ interface DownOpts extends CliOverrides {
 
 export async function down(opts: DownOpts) {
   const config = getConfig(opts);
-  const ensembleName = opts.ensemble;
+  let ensembleName = opts.ensemble;
+
+  // Auto-detect ensemble if not explicitly specified
+  if (!ensembleName && !opts.all) {
+    const temporalUp = await isTemporalReachable(config);
+    if (!temporalUp) {
+      out.error('No ensembles running (Temporal is not reachable).');
+      process.exit(1);
+    }
+    let connection: Connection | undefined;
+    try {
+      connection = await createTemporalConnection(config);
+      const client = new Client({ connection, namespace: config.temporalNamespace });
+      const runningEnsembles = new Set<string>();
+      const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+      for await (const wf of client.workflow.list({ query })) {
+        const vals = wf.searchAttributes?.ClaudeTempoEnsemble;
+        if (Array.isArray(vals) && vals.length > 0) {
+          runningEnsembles.add(String(vals[0]));
+        }
+      }
+
+      if (runningEnsembles.size === 0) {
+        out.error('No ensembles running.');
+        process.exit(1);
+      } else if (runningEnsembles.size === 1) {
+        ensembleName = [...runningEnsembles][0];
+      } else {
+        out.error(`Multiple ensembles running. Please specify which one to tear down:`);
+        for (const name of [...runningEnsembles].sort()) {
+          out.log(`  - claude-tempo down ${name}`);
+        }
+        out.log(`  - claude-tempo down --all`);
+        process.exit(1);
+      }
+    } catch (err) {
+      out.error(`Could not detect running ensembles: ${(err as Error).message}`);
+      process.exit(1);
+    } finally {
+      await connection?.close();
+    }
+  }
+
+  // When --all is set without a specific ensemble, we terminate everything
+  if (!ensembleName && opts.all) {
+    ensembleName = undefined;
+  }
 
   // Validate ensemble name before interpolating into query strings
-  const nameErr = validateEnsembleName(ensembleName);
-  if (nameErr) { out.error(nameErr); process.exit(1); }
+  if (ensembleName) {
+    const nameErr = validateEnsembleName(ensembleName);
+    if (nameErr) { out.error(nameErr); process.exit(1); }
+  }
 
   out.heading('claude-tempo teardown');
-  out.log(`  Ensemble: ${out.bold(ensembleName)}${opts.all ? ' (--all: will also stop Temporal server)' : ''}`);
+  if (ensembleName) {
+    out.log(`  Ensemble: ${out.bold(ensembleName)}${opts.all ? ' (--all: will also stop Temporal server)' : ''}`);
+  } else {
+    out.log(`  ${out.bold('Tearing down all ensembles')} (--all)`);
+  }
 
-  // Step 1: Terminate workflows for the target ensemble
+  // Step 1: Terminate workflows for the target ensemble (or all ensembles)
   const temporalUp = await isTemporalReachable(config);
   let hasRemainingWorkflows = false;
   if (temporalUp) {
@@ -1009,10 +1062,20 @@ export async function down(opts: DownOpts) {
       const connection = await createTemporalConnection(config);
       const client = new Client({ connection, namespace: config.temporalNamespace });
 
-      // Terminate session workflows scoped to this ensemble
-      const sessionQuery = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${ensembleName}"`;
+      // Terminate session workflows — scoped to ensemble if specified, otherwise all
+      const sessionQuery = ensembleName
+        ? `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${ensembleName}"`
+        : `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
       let terminated = 0;
+      const discoveredEnsembles = new Set<string>();
       for await (const wf of client.workflow.list({ query: sessionQuery })) {
+        // Track ensemble names for scheduler/maestro cleanup in --all mode
+        if (!ensembleName) {
+          const vals = wf.searchAttributes?.ClaudeTempoEnsemble;
+          if (Array.isArray(vals) && vals.length > 0) {
+            discoveredEnsembles.add(String(vals[0]));
+          }
+        }
         try {
           const handle = client.workflow.getHandle(wf.workflowId);
           await handle.terminate('claude-tempo down');
@@ -1020,25 +1083,47 @@ export async function down(opts: DownOpts) {
         } catch { /* already closed */ }
       }
 
-      // Also terminate the ensemble's scheduler workflow
-      try {
-        const schedulerHandle = client.workflow.getHandle(schedulerWorkflowId(ensembleName));
-        await schedulerHandle.terminate('claude-tempo down');
-        terminated++;
-      } catch { /* no scheduler or already closed */ }
+      // Terminate scheduler and maestro workflows for each ensemble
+      const ensemblesToClean = ensembleName ? [ensembleName] : [...discoveredEnsembles];
+      for (const name of ensemblesToClean) {
+        // Scheduler
+        try {
+          const schedulerHandle = client.workflow.getHandle(schedulerWorkflowId(name));
+          await schedulerHandle.terminate('claude-tempo down');
+          terminated++;
+        } catch { /* no scheduler or already closed */ }
+        // Per-ensemble Maestro
+        try {
+          const maestroHandle = client.workflow.getHandle(maestroWorkflowId(name));
+          await maestroHandle.terminate('claude-tempo down');
+          terminated++;
+        } catch { /* no maestro or already closed */ }
+      }
+
+      // Terminate global Maestro when tearing down all ensembles
+      if (!ensembleName) {
+        try {
+          const globalMaestroHandle = client.workflow.getHandle(GLOBAL_MAESTRO_WORKFLOW_ID);
+          await globalMaestroHandle.terminate('claude-tempo down');
+          terminated++;
+        } catch { /* no global maestro or already closed */ }
+      }
 
       // Check if other workflows still running (to decide whether to kill Temporal)
-      const allRunningQuery = 'ExecutionStatus = "Running"';
-      for await (const _ of client.workflow.list({ query: allRunningQuery })) {
-        hasRemainingWorkflows = true;
-        break;
+      if (!opts.all) {
+        const allRunningQuery = 'ExecutionStatus = "Running"';
+        for await (const _ of client.workflow.list({ query: allRunningQuery })) {
+          hasRemainingWorkflows = true;
+          break;
+        }
       }
 
       await connection.close();
+      const scope = ensembleName ? `in ensemble "${ensembleName}"` : 'across all ensembles';
       if (terminated > 0) {
-        out.success(`Terminated ${terminated} workflow${terminated !== 1 ? 's' : ''} in ensemble "${ensembleName}"`);
+        out.success(`Terminated ${terminated} workflow${terminated !== 1 ? 's' : ''} ${scope}`);
       } else {
-        out.warn(`No active workflows found for ensemble "${ensembleName}"`);
+        out.warn(`No active workflows found ${scope}`);
       }
     } catch {
       out.warn('Could not terminate active sessions');
@@ -1078,7 +1163,26 @@ export async function down(opts: DownOpts) {
     out.log(`  ${out.dim('Temporal not running')}`);
   }
 
-  // Step 4: Remove MCP config (global + project-level)
+  // Step 4: Check for npx usage, then remove MCP config
+  // npx check must happen BEFORE removal since step 4 deletes the entry
+  let hasNpxWarning = false;
+  const projectMcpPath = join(opts.dir, '.mcp.json');
+  if (existsSync(projectMcpPath)) {
+    try {
+      const mcpContent = JSON.parse(readFileSync(projectMcpPath, 'utf8'));
+      const tempoEntry = mcpContent?.mcpServers?.['claude-tempo'];
+      if (tempoEntry) {
+        const cmd = tempoEntry.command ?? '';
+        const entryArgs: string[] = tempoEntry.args ?? [];
+        if (cmd === 'npx' || entryArgs.some((a: string) => a === 'npx')) {
+          hasNpxWarning = true;
+        }
+      }
+    } catch {
+      // Corrupt .mcp.json — ignore
+    }
+  }
+
   if (opts.removeMcp) {
     // Remove global registration
     if (isGlobalMcpRegistered()) {
@@ -1090,24 +1194,30 @@ export async function down(opts: DownOpts) {
     }
 
     // Also remove project-level .mcp.json entry if present
-    const mcpPath = join(opts.dir, '.mcp.json');
-    if (existsSync(mcpPath)) {
+    if (existsSync(projectMcpPath)) {
       try {
-        const existing = JSON.parse(readFileSync(mcpPath, 'utf8'));
+        const existing = JSON.parse(readFileSync(projectMcpPath, 'utf8'));
         if (existing?.mcpServers?.['claude-tempo']) {
           delete existing.mcpServers['claude-tempo'];
           if (Object.keys(existing.mcpServers).length === 0) {
-            unlinkSync(mcpPath);
+            unlinkSync(projectMcpPath);
             out.success('Removed .mcp.json (no other servers configured)');
           } else {
-            writeFileSync(mcpPath, JSON.stringify(existing, null, 2) + '\n');
+            writeFileSync(projectMcpPath, JSON.stringify(existing, null, 2) + '\n');
             out.success('Removed claude-tempo from .mcp.json');
           }
         }
       } catch {
-        out.warn(`Could not update ${mcpPath}`);
+        out.warn(`Could not update ${projectMcpPath}`);
       }
     }
+  }
+
+  if (hasNpxWarning) {
+    console.log();
+    out.warn('Your .mcp.json uses npx which may cache stale versions.');
+    out.log(`  ${out.dim('Consider removing it — user-level registration is preferred.')}`);
+    out.log(`  ${out.dim('Run: claude-tempo init')}`);
   }
 
   console.log();

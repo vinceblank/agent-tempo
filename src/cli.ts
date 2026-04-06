@@ -186,7 +186,7 @@ async function main() {
 
     case 'down':
       await down({
-        ensemble,
+        ensemble: args.ensemble || args.positional[1] || process.env[ENV.ENSEMBLE],
         all: args.all,
         removeMcp: !args.keepMcp,
         dir: args.dir,

@@ -25,7 +25,7 @@ Signals sent **to** a `claudeSessionWorkflow` instance.
 
 | Signal Name | Payload | Description |
 |-------------|---------|-------------|
-| `receiveMessage` | `{ from: string; text: string; isMaestro?: boolean }` | Delivers an inbound message from another player (or Maestro) into the session's inbox. The session's poller consumes pending messages and forwards them to Claude. |
+| `receiveMessage` | `{ from: string; text: string; isMaestro?: boolean; isScheduled?: boolean; scheduleName?: string }` | Delivers an inbound message from another player (or Maestro) into the session's inbox. The session's poller consumes pending messages and forwards them to Claude. `isScheduled: true` and `scheduleName` are set when the message was fired by the scheduler workflow — useful for dashboard integrations that want to distinguish scheduled messages from direct cues. |
 | `recordSentMessage` | `{ to: string; text: string }` | Records an outbound message in the session's sent-message history without triggering any delivery. Used for audit/history continuity. |
 | `setPart` | `string` | Updates the player's current "part" — a short description of what the session is working on, visible to other players via `ensemble`. |
 | `markDelivered` | `string[]` | Marks one or more messages (by ID) as delivered. Resets stale-detection timer; any delivery proves the session is alive. |
