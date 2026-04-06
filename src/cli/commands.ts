@@ -15,6 +15,7 @@ import { loadLineup } from '../ensemble/loader';
 import { saveLineup, listLineups, readSavedLineup } from '../ensemble/saver';
 import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
 import { ENCORE_DEFAULT_CONTEXT_MESSAGES, PREVIEW_MAX_LENGTH, shouldIncludeInBroadcast, validateEnsembleName } from '../utils/validation';
+import { isDaemonRunning, startDaemon, stopDaemon, getDaemonStatus, DAEMON_LOG_PATH } from './daemon';
 import * as out from './output';
 
 /** Package root is two levels up from dist/cli/ */
@@ -641,6 +642,22 @@ export async function up(opts: UpOpts) {
     }
   }
 
+  // Step 3.7: Start worker daemon if not already running
+  if (isDaemonRunning()) {
+    const daemonStatus = getDaemonStatus();
+    out.check('Worker daemon running', true, `pid ${daemonStatus.pid}`);
+  } else {
+    out.log(`  ${out.dim('...')} Starting worker daemon...`);
+    try {
+      const daemonPid = await startDaemon(config);
+      out.check('Worker daemon started', true, `pid ${daemonPid}`);
+    } catch (err: any) {
+      out.error(`Failed to start worker daemon: ${err.message || err}`);
+      out.log(`  ${out.dim('You can start it manually: claude-tempo daemon start')}`);
+      process.exit(1);
+    }
+  }
+
   // Step 4: Register MCP server if needed
   if (isMcpConfigured(process.cwd())) {
     out.check('MCP configured', true);
@@ -1031,6 +1048,15 @@ export async function down(opts: DownOpts) {
 
   // Step 2: Kill bridge processes via PID files
   killBridgeProcesses();
+
+  // Step 2.5: Stop worker daemon — only if --all or no other workflows remain
+  if (opts.all || !hasRemainingWorkflows) {
+    if (stopDaemon()) {
+      out.success('Worker daemon stopped');
+    }
+  } else if (isDaemonRunning()) {
+    out.log(`  ${out.dim('Worker daemon left running (other ensembles still active)')}`);
+  }
 
   // Step 3: Stop Temporal server — only if --all flag or no other workflows remain
   if (temporalUp && (opts.all || !hasRemainingWorkflows)) {
@@ -1646,6 +1672,95 @@ export async function ensembleCommand(opts: EnsembleCommandOpts) {
   }
 }
 
+// --- Daemon command ---
+
+interface DaemonOpts extends CliOverrides {
+  subcommand?: string;
+}
+
+export async function daemon(opts: DaemonOpts) {
+  const config = getConfig(opts);
+
+  switch (opts.subcommand) {
+    case 'start': {
+      if (isDaemonRunning()) {
+        const status = getDaemonStatus();
+        out.success(`Daemon already running (pid ${status.pid})`);
+        return;
+      }
+      out.log('Starting daemon...');
+      try {
+        const pid = await startDaemon(config);
+        out.success(`Daemon started (pid ${pid})`);
+        out.log(`  ${out.dim('Logs: ' + DAEMON_LOG_PATH)}`);
+      } catch (err: any) {
+        out.error(err.message || String(err));
+        process.exit(1);
+      }
+      break;
+    }
+
+    case 'stop': {
+      if (stopDaemon()) {
+        out.success('Daemon stopped');
+      } else {
+        out.warn('Daemon is not running');
+      }
+      break;
+    }
+
+    case 'status': {
+      const status = getDaemonStatus();
+      if (status.running) {
+        out.success(`Daemon running (pid ${status.pid})`);
+      } else {
+        out.log('Daemon is not running');
+      }
+      break;
+    }
+
+    case 'logs': {
+      if (!existsSync(DAEMON_LOG_PATH)) {
+        out.warn('No daemon log file found');
+        return;
+      }
+      // Tail the log file
+      if (process.platform === 'win32') {
+        // On Windows, read the last 50 lines
+        const content = readFileSync(DAEMON_LOG_PATH, 'utf8');
+        const lines = content.split('\n');
+        const tail = lines.slice(-50).join('\n');
+        console.log(tail);
+      } else {
+        // On Unix, use tail -f for live following
+        const child = cpSpawn('tail', ['-f', '-n', '50', DAEMON_LOG_PATH], {
+          stdio: 'inherit',
+        });
+        child.on('error', () => {
+          // Fallback: just read the file
+          const content = readFileSync(DAEMON_LOG_PATH, 'utf8');
+          const lines = content.split('\n');
+          console.log(lines.slice(-50).join('\n'));
+        });
+        // Keep running until user presses Ctrl+C
+        await new Promise<void>((resolve) => {
+          child.on('exit', () => resolve());
+          process.on('SIGINT', () => { child.kill(); resolve(); });
+        });
+      }
+      break;
+    }
+
+    default:
+      out.error('Usage: claude-tempo daemon <start|stop|status|logs>');
+      out.log(`\n  ${out.dim('claude-tempo daemon start')}    Start the worker daemon`);
+      out.log(`  ${out.dim('claude-tempo daemon stop')}     Stop the worker daemon`);
+      out.log(`  ${out.dim('claude-tempo daemon status')}   Check daemon status`);
+      out.log(`  ${out.dim('claude-tempo daemon logs')}     Tail daemon log output`);
+      process.exit(1);
+  }
+}
+
 export function help() {
   console.log(`
 ${out.bold('claude-tempo')} — Multi-session Claude Code coordination via Temporal
@@ -1668,6 +1783,7 @@ ${out.bold('Commands:')}
   ${out.cyan('broadcast')} <message>   Send a message to all active players
   ${out.cyan('encore')}   <name>      Revive a stale player session (reconnect with context)
   ${out.cyan('agent-types')} <sub>    Manage player type definitions (list/show/init)
+  ${out.cyan('daemon')}    <sub>       Manage the worker daemon (start/stop/status/logs)
   ${out.cyan('config')}                Configure Temporal connection settings
   ${out.cyan('init')}                  Register MCP server globally (or --project for .mcp.json)
   ${out.cyan('preflight')}             Run preflight checks only

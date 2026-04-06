@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { start, status, init, server, up, down, stop, help, version, ensembleCommand, agentTypesCommand, broadcast, encore } from './cli/commands';
+import { start, status, init, server, up, down, stop, help, version, ensembleCommand, agentTypesCommand, broadcast, encore, daemon } from './cli/commands';
 import { configCommand } from './cli/config-command';
 import { runPreflight } from './cli/preflight';
 import * as out from './cli/output';
@@ -247,6 +247,13 @@ async function main() {
       await agentTypesCommand({
         subcommand: args.positional[1],
         name: args.positional[2],
+      });
+      break;
+
+    case 'daemon':
+      await daemon({
+        subcommand: args.positional[1],
+        ...overrides,
       });
       break;
 
