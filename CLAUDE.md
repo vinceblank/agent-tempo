@@ -78,16 +78,24 @@ src/
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
 ├── tui/
 │   ├── index.ts       # TUI entry point — connects to Temporal and renders the Ink app
-│   ├── App.tsx        # Root TUI component — routes between splash, dashboard, and error states
-│   ├── store.ts       # TUI state reducer (phase, players, events, conductor history)
-│   ├── core-api.ts    # TUI API layer — wraps Temporal queries via the Maestro workflow
+│   ├── App.tsx        # Root TUI component — chat-focused shell with slash commands
+│   ├── store.ts       # TUI state reducer (phase, players, messages, schedules, static history)
+│   ├── client.ts      # TempoClient interface and implementation — wraps Temporal queries via Maestro
+│   ├── commands.ts    # Slash command parser and registry (/cue, /players, /broadcast, etc.)
 │   ├── ink-loader.ts  # Dynamic ESM loader for Ink (avoids CJS/ESM conflicts)
 │   ├── ink-context.tsx # React context for injected Ink primitives
 │   ├── components/
-│   │   └── Splash.tsx # Splash/connecting screen component
+│   │   ├── Splash.tsx     # Splash/connecting screen component
+│   │   ├── TitleBar.tsx   # Pinned title bar showing ensemble/player context
+│   │   ├── PromptArea.tsx # Pinned input area with hint text
+│   │   ├── MainView.tsx   # Main ensemble view (players, messages, schedules)
+│   │   ├── ChatView.tsx   # Per-player chat view (entered via /cue <player>)
+│   │   └── ErrorView.tsx  # Error state view with diagnostic checks
 │   └── utils/
-│       ├── format.ts  # Display formatting helpers
-│       └── platform.ts # Terminal size detection helpers
+│       ├── format.ts      # Display formatting helpers
+│       ├── platform.ts    # Terminal size detection helpers
+│       ├── theme.ts       # THEME constants (colors, borders, icons)
+│       └── fullscreen.ts  # Fullscreen/alternate-screen helpers
 ├── utils/
 │   ├── validation.ts  # Shared validation constants (name/message/path limits, encore defaults) and helpers
 │   ├── worktree.ts    # Git worktree create/remove helpers (cross-platform)
@@ -151,6 +159,7 @@ npm test
 - **Worktree**: A git worktree provisioned by the conductor for a player, giving them an isolated checkout on a separate branch. Managed via the `worktree` tool (conductor only): `create` provisions the worktree and notifies the player, `remove` cleans up after the task, `list` shows all active worktrees. Worktree assignments are stored in the conductor workflow (`WorktreeEntry` records: player, path, branch, gitRoot, createdAt, createdBy).
 - **Stage**: A fan-out/fan-in tracking primitive for the conductor. Created via `stage` (conductor only), listing via `stages`, cancelled via `cancel_stage`. Each stage tracks a set of players; when a tracked player sends a `report`, their stage status updates automatically (`waiting` → `reported` or `blocked`). When all players have reported, the conductor is notified that the stage is complete. If `failurePolicy` is `'halt'` (default), a blocker from any player fails the entire stage. Stages are stored in the conductor workflow and survive `continueAsNew`.
 - **Maestro**: Two Maestro workflow variants exist. The **per-ensemble** `claudeMaestroWorkflow` (ID: `claude-maestro-{ensemble}`) monitors a single ensemble — maintains a player snapshot and ring-buffer event log (max 200 entries), and queues commands for relay to the conductor via `maestroSendCommand`. The **global** `claudeGlobalMaestroWorkflow` (ID: `claude-maestro-global`) spans all ensembles — aggregates players by ensemble, maintains a cross-ensemble message ring buffer (max 500 entries), and exposes on-demand player/conductor history via `maestroFetchPlayerMessages` and `maestroFetchConductorHistory` updates. The Maestro dashboard ([vinceblank/maestro](https://github.com/vinceblank/maestro)) can connect to either. Both are implemented in `src/workflows/maestro.ts` with activities in `src/activities/maestro.ts`.
+- **TempoClient**: The TUI's API layer (`src/tui/client.ts`) — a TypeScript interface and implementation that wraps Temporal queries to the Maestro and conductor workflows. Provides `discoverEnsembles`, `getPlayers`, `getMessages`, `getConductorHistory`, `sendMessage`, `sendCommand`, `getGates`, `getStages`, `getWorktrees`, and `terminatePlayer`. Uses Global Maestro as the primary source with graceful fallback to per-ensemble Maestro and direct workflow list queries.
 - **Wire protocol**: All Temporal signal, query, update, and workflow names are documented in [`docs/WIRE-PROTOCOL.md`](docs/WIRE-PROTOCOL.md). These names are stable as of v0.10 — renaming or removing any is a breaking change requiring a major version bump.
 - **Daemon**: A standalone background process (`src/daemon.ts`) that runs all Temporal workers. Auto-started by any claude-tempo command if not already running. PID stored at `~/.claude-tempo/daemon.pid`; logs at `~/.claude-tempo/daemon.log`. Sessions are now pure MCP clients — they no longer run in-process workers. Managed via `claude-tempo daemon start|stop|status|logs`.
 
