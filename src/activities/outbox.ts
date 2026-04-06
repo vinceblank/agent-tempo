@@ -134,10 +134,18 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
 
     async deliverReport(input: DeliverReportInput): Promise<OutboxActivityResult> {
       const { ensemble, fromPlayerId, text, reportType } = input;
-      const conductorId = conductorWorkflowId(ensemble);
-      const handle = client.workflow.getHandle(conductorId);
-      await handle.signal('playerReport', { playerId: fromPlayerId, text, type: reportType });
-      return { success: true };
+      try {
+        const conductorId = conductorWorkflowId(ensemble);
+        const handle = client.workflow.getHandle(conductorId);
+        await handle.describe(); // throws if conductor workflow is not running
+        await handle.signal('playerReport', { playerId: fromPlayerId, text, type: reportType });
+        return { success: true };
+      } catch (err) {
+        if (err instanceof ApplicationFailure) throw err;
+        throw ApplicationFailure.nonRetryable(
+          `Failed to deliver report to conductor: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     },
 
     async terminateSession(input: TerminateSessionInput): Promise<OutboxActivityResult> {

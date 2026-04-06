@@ -1,5 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from '@temporalio/client';
+import { Client, WorkflowNotFoundError } from '@temporalio/client';
 import { Config, schedulerWorkflowId } from '../config';
 import { defineTool, ok, fail, formatError } from './helpers';
 
@@ -30,8 +30,11 @@ export function registerSchedulesTool(
         let schedules: ScheduleEntry[];
         try {
           schedules = await handle.query('getSchedules');
-        } catch {
-          return ok('No scheduler running — no schedules exist yet.');
+        } catch (err) {
+          if (err instanceof WorkflowNotFoundError) {
+            return ok('No scheduler running — no schedules exist yet.');
+          }
+          throw err;
         }
 
         if (schedules.length === 0) {
