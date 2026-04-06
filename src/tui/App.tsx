@@ -24,6 +24,7 @@ import { PromptArea } from './components/PromptArea';
 import { StatusBar } from './components/StatusBar';
 import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames } from './commands';
 import { THEME } from './utils/theme';
+import { loadHistory, saveHistory } from './utils/history';
 import type { TempoClient } from './client';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -56,6 +57,12 @@ export function App({ api, ensemble }: AppProps) {
   const { Box, Text, Static, useApp, useInput } = useInk();
   const [state, dispatch] = useReducer(tuiReducer, initialState(ensemble));
   const { exit } = useApp();
+
+  // ── Persistent command history ──
+  const [cmdHistory] = React.useState(() => loadHistory());
+  const handleHistoryUpdate = useCallback((entries: string[]) => {
+    saveHistory(entries);
+  }, []);
 
   // ── Global keybindings ──
   useInput(useCallback((input: string, key: any) => {
@@ -753,6 +760,8 @@ export function App({ api, ensemble }: AppProps) {
       disabled: state.phase === 'error' || state.phase === 'recruit' || !!state.confirmingStop || !!state.confirmingLineup,
       commandNames: commandNamesList,
       playerNames: playerNamesList,
+      initialHistory: cmdHistory,
+      onHistoryUpdate: handleHistoryUpdate,
     }),
   );
 }

@@ -28,6 +28,10 @@ export interface PromptAreaProps {
   commandNames?: string[];
   /** Available player names for argument completion. */
   playerNames?: string[];
+  /** Initial command history (loaded from disk). */
+  initialHistory?: string[];
+  /** Called when history is updated (for persistence). */
+  onHistoryUpdate?: (entries: string[]) => void;
 }
 
 export function PromptArea({
@@ -38,11 +42,13 @@ export function PromptArea({
   disabled,
   commandNames = [],
   playerNames = [],
+  initialHistory = [],
+  onHistoryUpdate,
 }: PromptAreaProps) {
   const { Box, Text, useInput } = useInk();
 
   // ── Command history ──
-  const [history] = useState<string[]>(() => []);
+  const [history] = useState<string[]>(() => [...initialHistory]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   // Stash the current input when user starts browsing history
   const savedInput = useRef('');
@@ -165,6 +171,8 @@ export function PromptArea({
         if (history.length === 0 || history[history.length - 1] !== trimmed) {
           history.push(trimmed);
           if (history.length > MAX_HISTORY) history.shift();
+          // Persist history to disk
+          if (onHistoryUpdate) onHistoryUpdate([...history]);
         }
         setHistoryIndex(-1);
         savedInput.current = '';
