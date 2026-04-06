@@ -5,7 +5,7 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { useInk } from '../ink-context';
-import { metronomeArt, supportsUnicode } from '../utils/platform';
+import { metronomeBrailleFrames } from '../utils/platform';
 import { THEME } from '../utils/theme';
 
 export interface ErrorCheck {
@@ -51,13 +51,15 @@ export function ErrorView({
     if (input === 'r' && onRetry) onRetry();
     if (input === 'q' && onQuit) onQuit();
   }, [onRetry, onQuit]));
-  const unicode = supportsUnicode();
-
-  // Static metronome — always center frame (index 1)
-  const frames = metronomeArt(unicode);
-  const staticFrame = frames[1];
-  const metronomeLines = staticFrame.map((line, i) =>
-    React.createElement(Text, { key: i, color: THEME.dim }, line),
+  // Static metronome — always center frame (index 1), rendered dim
+  const brailleFrames = metronomeBrailleFrames();
+  const staticFrame = brailleFrames[1];
+  const metronomeLines = staticFrame.map((segments, i) =>
+    React.createElement(Box, { key: i },
+      ...segments.map((seg, j) =>
+        React.createElement(Text, { key: j, color: THEME.dim }, seg.char),
+      ),
+    ),
   );
 
   // ── Checklist ──

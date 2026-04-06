@@ -6,8 +6,8 @@
  */
 import React, { useState, useEffect, useMemo } from 'react';
 import { useInk } from '../ink-context';
-import { metronomePixelFrames } from '../utils/platform';
-import type { HalfBlockCell } from '../utils/platform';
+import { metronomeBrailleFrames } from '../utils/platform';
+import type { BrailleLine } from '../utils/platform';
 import { THEME } from '../utils/theme';
 
 // ── Animation constants ──
@@ -36,42 +36,23 @@ export interface SplashProps {
   summary?: any;
 }
 
-/** Render a row of half-block cells as grouped React Text elements. */
-function renderHalfBlockRow(cells: HalfBlockCell[], Box: any, Text: any, key: string): React.ReactNode {
-  const elements: React.ReactNode[] = [];
-  let buf = '';
-  let bufFg: string | undefined;
-  let bufBg: string | undefined;
-
-  function flush() {
-    if (!buf) return;
-    const props: any = { key: elements.length };
-    if (bufFg) props.color = bufFg;
-    if (bufBg) props.backgroundColor = bufBg;
-    elements.push(React.createElement(Text, props, buf));
-    buf = '';
-  }
-
-  for (const cell of cells) {
-    if (cell.fg === bufFg && cell.bg === bufBg) {
-      buf += cell.char;
-    } else {
-      flush();
-      buf = cell.char;
-      bufFg = cell.fg;
-      bufBg = cell.bg;
-    }
-  }
-  flush();
-
-  return React.createElement(Box, { key }, ...elements);
+/** Render a braille line as colored React Text elements. */
+function renderBrailleLine(segments: BrailleLine, Box: any, Text: any, key: string): React.ReactNode {
+  return React.createElement(Box, { key },
+    ...segments.map((seg, i) =>
+      React.createElement(Text, {
+        key: i,
+        color: seg.color || undefined,
+      }, seg.char),
+    ),
+  );
 }
 
 export function Splash({ status, version, connected, ensembles, onContinue }: SplashProps) {
   const { Box, Text, useInput } = useInk();
   const [metronomeTick, setMetronomeTick] = useState(0);
   const [spinnerTick, setSpinnerTick] = useState(0);
-  const pixelFrames = useMemo(() => metronomePixelFrames(), []);
+  const brailleFrames = useMemo(() => metronomeBrailleFrames(), []);
 
   // Handle Enter to continue
   useInput(React.useCallback((_input: string, key: any) => {
@@ -99,8 +80,8 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
 
   // ── Metronome rendering ──
   const frameIndex = PING_PONG[metronomeTick];
-  const metronomeLines = pixelFrames[frameIndex].map((row, i) =>
-    renderHalfBlockRow(row, Box, Text, `metro-${i}`),
+  const metronomeLines = brailleFrames[frameIndex].map((line, i) =>
+    renderBrailleLine(line, Box, Text, `metro-${i}`),
   );
 
   // ── One-line connection status ──

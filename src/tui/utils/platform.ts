@@ -82,203 +82,199 @@ export function metronomeFrames(unicode = supportsUnicode()): string[] {
 
 // ── Pixel Art Metronome ──
 
-/**
- * Color palette for pixel art.
- * ' ' = transparent, 'T' = triangle outline, 'A' = arm, 'P' = pivot
- */
-export const PIXEL_COLORS: Record<string, string> = {
-  T: '#FAF3EE', // triangle outline - cream/white
-  B: '#FAF3EE', // alias for triangle (backward compat)
-  A: '#E07A5F', // arm - terracotta
-  P: '#E07A5F', // pivot - terracotta
-};
+// ── Braille Rendering ──
 
-/** A single half-block cell with optional fg/bg colors. */
-export interface HalfBlockCell {
+/**
+ * Braille dot matrix bit positions.
+ * Each character = 2 cols × 4 rows of dots.
+ * Bit layout: col0=[0,1,2,6], col1=[3,4,5,7]
+ */
+const BRAILLE_BASE = 0x2800;
+const BRAILLE_DOTS: [number, number][] = [
+  [0, 0], // bit 0: row 0, col 0
+  [1, 0], // bit 1: row 1, col 0
+  [2, 0], // bit 2: row 2, col 0
+  [0, 1], // bit 3: row 0, col 1
+  [1, 1], // bit 4: row 1, col 1
+  [2, 1], // bit 5: row 2, col 1
+  [3, 0], // bit 6: row 3, col 0
+  [3, 1], // bit 7: row 3, col 1
+];
+
+/** A colored text segment for braille rendering. */
+export interface BrailleSegment {
   char: string;
-  fg?: string;
-  bg?: string;
+  color: string;
 }
 
+/** A row of braille segments (may have mixed colors). */
+export type BrailleLine = BrailleSegment[];
+
 /**
- * Convert two pixel rows into a row of half-block cells.
- * Each character cell encodes 2 vertical pixels:
- * - ▀ = top pixel (fg), bottom transparent
- * - ▄ = bottom pixel (fg), top transparent
- * - █ = both pixels same color (fg)
- * - ▄ with bg = top pixel (bg), bottom pixel (fg)
+ * Braille dot canvas — plot dots at high resolution, encode to braille characters.
+ * Each character cell = 2 dots wide × 4 dots tall.
  */
-export function renderHalfBlockRow(topRow: string, bottomRow: string): HalfBlockCell[] {
-  const width = Math.max(topRow.length, bottomRow.length);
-  const cells: HalfBlockCell[] = [];
+class BrailleCanvas {
+  /** Dot grid: dotRows × dotCols, each cell stores a color tag or 0 (empty). */
+  private dots: number[][];
+  /** Character grid dimensions. */
+  readonly charCols: number;
+  readonly charRows: number;
+  /** Dot grid dimensions. */
+  readonly dotCols: number;
+  readonly dotRows: number;
 
-  for (let x = 0; x < width; x++) {
-    const top = topRow[x] || ' ';
-    const bottom = bottomRow[x] || ' ';
-    const topColor = PIXEL_COLORS[top];
-    const bottomColor = PIXEL_COLORS[bottom];
+  /** Color tags: 1 = triangle (cream), 2 = arm/pivot (terracotta). */
+  static TRIANGLE = 1;
+  static ARM = 2;
 
-    if (!topColor && !bottomColor) {
-      cells.push({ char: ' ' });
-    } else if (topColor && !bottomColor) {
-      cells.push({ char: '\u2580', fg: topColor }); // ▀
-    } else if (!topColor && bottomColor) {
-      cells.push({ char: '\u2584', fg: bottomColor }); // ▄
-    } else if (topColor === bottomColor) {
-      cells.push({ char: '\u2588', fg: topColor }); // █
-    } else {
-      // Two different colors: ▄ with fg=bottom, bg=top
-      cells.push({ char: '\u2584', fg: bottomColor, bg: topColor });
+  constructor(charCols: number, charRows: number) {
+    this.charCols = charCols;
+    this.charRows = charRows;
+    this.dotCols = charCols * 2;
+    this.dotRows = charRows * 4;
+    this.dots = Array.from({ length: this.dotRows }, () => Array(this.dotCols).fill(0));
+  }
+
+  /** Set a dot at (x, y) in dot coordinates. */
+  set(x: number, y: number, color: number): void {
+    if (x >= 0 && x < this.dotCols && y >= 0 && y < this.dotRows) {
+      this.dots[y][x] = color;
     }
   }
 
-  return cells;
-}
+  /** Draw a line using Bresenham's algorithm. */
+  line(x0: number, y0: number, x1: number, y1: number, color: number): void {
+    const dx = Math.abs(x1 - x0);
+    const dy = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1;
+    const sy = y0 < y1 ? 1 : -1;
+    let err = dx - dy;
+    let cx = x0, cy = y0;
 
-/**
- * Convert a pixel grid (array of strings) into half-block cell rows.
- * Grid height must be even (padded with empty row if odd).
- */
-export function pixelGridToHalfBlocks(grid: string[]): HalfBlockCell[][] {
-  const rows: HalfBlockCell[][] = [];
-  const padded = grid.length % 2 === 0 ? grid : [...grid, ''];
-
-  for (let y = 0; y < padded.length; y += 2) {
-    rows.push(renderHalfBlockRow(padded[y], padded[y + 1]));
-  }
-
-  return rows;
-}
-
-/**
- * Draw a line on a pixel grid using Bresenham's algorithm.
- */
-function drawLine(grid: string[][], x0: number, y0: number, x1: number, y1: number, color: string, thickness = 1): void {
-  const dx = Math.abs(x1 - x0);
-  const dy = Math.abs(y1 - y0);
-  const sx = x0 < x1 ? 1 : -1;
-  const sy = y0 < y1 ? 1 : -1;
-  let err = dx - dy;
-  let cx = x0, cy = y0;
-
-  while (true) {
-    // Draw with thickness
-    for (let ty = -Math.floor(thickness / 2); ty <= Math.floor(thickness / 2); ty++) {
-      for (let tx = -Math.floor(thickness / 2); tx <= Math.floor(thickness / 2); tx++) {
-        const py = cy + ty;
-        const px = cx + tx;
-        if (py >= 0 && py < grid.length && px >= 0 && px < grid[0].length) {
-          grid[py][px] = color;
-        }
-      }
+    while (true) {
+      this.set(cx, cy, color);
+      if (cx === x1 && cy === y1) break;
+      const e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; cx += sx; }
+      if (e2 < dx) { err += dx; cy += sy; }
     }
-    if (cx === x1 && cy === y1) break;
-    const e2 = 2 * err;
-    if (e2 > -dy) { err -= dy; cx += sx; }
-    if (e2 < dx) { err += dx; cy += sy; }
   }
-}
 
-/**
- * Draw a filled circle on a pixel grid.
- */
-function drawCircle(grid: string[][], cx: number, cy: number, r: number, color: string): void {
-  for (let y = cy - r; y <= cy + r; y++) {
-    for (let x = cx - r; x <= cx + r; x++) {
-      if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r) {
-        if (y >= 0 && y < grid.length && x >= 0 && x < grid[0].length) {
-          grid[y][x] = color;
+  /** Draw a filled circle. */
+  circle(cx: number, cy: number, r: number, color: number): void {
+    for (let y = cy - r; y <= cy + r; y++) {
+      for (let x = cx - r; x <= cx + r; x++) {
+        if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r) {
+          this.set(x, y, color);
         }
       }
     }
   }
+
+  /**
+   * Encode the canvas to braille character lines with color segments.
+   * For cells with mixed colors (triangle + arm overlap), arm wins (accent).
+   */
+  render(): BrailleLine[] {
+    const COLORS: Record<number, string> = {
+      [BrailleCanvas.TRIANGLE]: '#FAF3EE',
+      [BrailleCanvas.ARM]: '#E07A5F',
+    };
+
+    const lines: BrailleLine[] = [];
+
+    for (let cr = 0; cr < this.charRows; cr++) {
+      const segments: BrailleSegment[] = [];
+      let buf = '';
+      let bufColor = '';
+
+      for (let cc = 0; cc < this.charCols; cc++) {
+        let code = BRAILLE_BASE;
+        let cellColor = 0; // dominant color in this cell
+
+        for (let bit = 0; bit < 8; bit++) {
+          const [dr, dc] = BRAILLE_DOTS[bit];
+          const dotY = cr * 4 + dr;
+          const dotX = cc * 2 + dc;
+          const val = this.dots[dotY]?.[dotX] || 0;
+          if (val) {
+            code |= (1 << bit);
+            // Arm/pivot wins over triangle for color priority
+            if (val === BrailleCanvas.ARM || cellColor === 0) {
+              cellColor = val;
+            }
+          }
+        }
+
+        const char = code === BRAILLE_BASE ? ' ' : String.fromCharCode(code);
+        const color = cellColor ? (COLORS[cellColor] || '') : '';
+
+        if (color === bufColor) {
+          buf += char;
+        } else {
+          if (buf) segments.push({ char: buf, color: bufColor });
+          buf = char;
+          bufColor = color;
+        }
+      }
+      if (buf) segments.push({ char: buf, color: bufColor });
+
+      lines.push(segments);
+    }
+
+    return lines;
+  }
 }
 
 /**
- * Create an empty pixel grid.
+ * Braille metronome — 3 frames (left, center, right).
+ * Renders at 60×48 dot resolution (30 cols × 12 rows of braille characters).
+ * Thin hairline triangle outline with thin pendulum arm and small pivot dot.
  */
-function createGrid(width: number, height: number): string[][] {
-  return Array.from({ length: height }, () => Array(width).fill(' '));
-}
+export function metronomeBrailleFrames(): BrailleLine[][] {
+  const COLS = 30;
+  const ROWS = 12;
 
-/**
- * Convert a 2D grid to string array for half-block rendering.
- */
-function gridToStrings(grid: string[][]): string[] {
-  return grid.map(row => row.join(''));
-}
+  // SVG: viewport 64×64, triangle apex(32,8)→bl(14,54)→br(50,54), pivot(32,46)
+  // Dot resolution: 60×48
+  // Scale: x * 60/64 ≈ x * 0.9375, y * 48/64 = y * 0.75
+  const apex = { x: 30, y: 6 };
+  const bl = { x: 13, y: 40 };
+  const br = { x: 47, y: 40 };
+  const pivot = { x: 30, y: 34 };
 
-/**
- * Pixel art metronome — 3 frames (left, center, right).
- * High-res (32 wide × 28 tall) outline-only triangle with pendulum line.
- * Matches the actual SVG logo: outline triangle, diagonal pendulum arm, pivot dot.
- * Renders to 14 character rows of half-block cells.
- */
-export function metronomePixelFrames(): HalfBlockCell[][][] {
-  const W = 40;
-  const H = 32;
-
-  // SVG coordinates scaled to 40×32 grid:
-  // SVG viewport 64×64, triangle: apex(32,8) → bl(14,54) → br(50,54)
-  // Scale: x * 40/64 = x * 0.625, y * 32/64 = y/2
-  const apex = { x: 20, y: 4 };
-  const bl = { x: 9, y: 27 };
-  const br = { x: 31, y: 27 };
-  const pivotY = 23; // ~46/2
-  const pivotX = 20;
-
-  // Pendulum tip positions for 3 frames (extending above apex)
-  const armTips = [
-    { x: 12, y: 0 },  // left
-    { x: 20, y: 0 },  // center (straight up)
-    { x: 28, y: 0 },  // right
+  // Pendulum tips — extend above apex
+  const tips = [
+    { x: 18, y: 1 },  // left
+    { x: 30, y: 1 },  // center
+    { x: 42, y: 1 },  // right
   ];
 
-  function buildFrame(tipIdx: number): string[] {
-    const grid = createGrid(W, H);
+  function buildFrame(tipIdx: number): BrailleLine[] {
+    const canvas = new BrailleCanvas(COLS, ROWS);
+    const T = BrailleCanvas.TRIANGLE;
+    const A = BrailleCanvas.ARM;
 
-    // Draw pendulum arm FIRST (triangle outline draws over it where they overlap)
-    const tip = armTips[tipIdx];
-    drawLine(grid, pivotX, pivotY, tip.x, tip.y, 'A', 1);
+    // Draw triangle outline (thin hairlines)
+    canvas.line(apex.x, apex.y, bl.x, bl.y, T);
+    canvas.line(apex.x, apex.y, br.x, br.y, T);
+    canvas.line(bl.x, bl.y, br.x, br.y, T);
 
-    // Draw pivot dot (radius 1 for thin look)
-    drawCircle(grid, pivotX, pivotY, 1, 'P');
+    // Draw pendulum arm (thin line, draws over triangle where they cross)
+    const tip = tips[tipIdx];
+    canvas.line(pivot.x, pivot.y, tip.x, tip.y, A);
 
-    // Draw triangle outline (1px stroke for thin, clean lines)
-    drawLine(grid, apex.x, apex.y, bl.x, bl.y, 'T', 1); // left edge
-    drawLine(grid, apex.x, apex.y, br.x, br.y, 'T', 1); // right edge
-    drawLine(grid, bl.x, bl.y, br.x, br.y, 'T', 1);     // base
+    // Draw pivot dot
+    canvas.circle(pivot.x, pivot.y, 2, A);
 
-    // Restore arm pixels that were overwritten by triangle at overlap points
-    drawLine(grid, pivotX, pivotY, tip.x, tip.y, 'A', 1);
-    drawCircle(grid, pivotX, pivotY, 1, 'P');
-
-    return gridToStrings(grid);
+    return canvas.render();
   }
 
   return [
-    pixelGridToHalfBlocks(buildFrame(0)), // left
-    pixelGridToHalfBlocks(buildFrame(1)), // center
-    pixelGridToHalfBlocks(buildFrame(2)), // right
-  ];
-}
-
-/**
- * Legacy string-based metronome art for non-pixel contexts.
- * @deprecated Use metronomePixelFrames() for the splash screen.
- */
-export function metronomeArt(unicode = supportsUnicode()): string[][] {
-  if (unicode) {
-    return [
-      ['   /\\   ', '  /  \\  ', ' / ╱  \\ ', '/╱  ●  \\', '‾‾‾‾‾‾‾‾'],
-      ['   /\\   ', '  / | \\ ', ' /  |  \\', '/  ●   \\', '‾‾‾‾‾‾‾‾'],
-      ['   /\\   ', '  /  ╲ \\', ' /   ╲ \\', '/   ● ╲\\', '‾‾‾‾‾‾‾‾'],
-    ];
-  }
-  return [
-    ['   /\\   ', '  /  \\  ', ' / /  \\', '/o    \\', '~~~~~~~~'],
-    ['   /\\   ', '  / | \\', ' /  | \\', '/  o  \\', '~~~~~~~~'],
-    ['   /\\   ', '  /  \\ \\', ' /   \\\\', '/    o\\', '~~~~~~~~'],
+    buildFrame(0), // left
+    buildFrame(1), // center
+    buildFrame(2), // right
   ];
 }
 
