@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.19.0] - 2026-04-06
+
+### Added
+
+- **Worker Daemon** — standalone background process (`src/daemon.ts`) running Temporal workers. Sessions are now pure MCP clients. Auto-starts on first use; PID at `~/.claude-tempo/daemon.pid`, logs at `~/.claude-tempo/daemon.log`. Managed via `claude-tempo daemon start|stop|status|logs`. (#57)
+
+### Changed
+
+- Sessions no longer run in-process Temporal workers — all worker duties delegated to the daemon.
+
 ## [0.18.0] - 2026-04-06
 
 ### Added

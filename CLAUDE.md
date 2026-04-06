@@ -18,14 +18,16 @@ claude-tempo is an MCP server that enables multiple Claude Code sessions to coor
 src/
 ├── server.ts          # MCP server entry point
 ├── cli.ts             # CLI entry point (claude-tempo command)
+├── daemon.ts          # Daemon entry point — runs Temporal workers as a detached background process
 ├── cli/
 │   ├── commands.ts    # CLI command implementations (up, start, conduct, status, stop, …)
 │   ├── config-command.ts # config subcommand (interactive + set/show)
+│   ├── daemon.ts      # Daemon management utilities (start, stop, status, logs, isDaemonRunning)
 │   ├── mcp.ts         # MCP server registration helpers (init, global vs project)
 │   ├── output.ts      # Shared CLI output formatting helpers
 │   └── preflight.ts   # Environment preflight checks
 ├── copilot-bridge.ts  # Copilot SDK bridge for Copilot CLI players
-├── worker.ts          # Temporal worker setup
+├── worker.ts          # Temporal worker setup (used by daemon only)
 ├── connection.ts      # Temporal connection factory (shared by server + CLI)
 ├── spawn.ts           # Cross-platform process spawning helpers
 ├── workflows/
@@ -94,6 +96,9 @@ npm install
 # Start Temporal dev server (separate terminal)
 temporal server start-dev
 
+# Start the daemon (runs Temporal workers in background)
+claude-tempo daemon start
+
 # Run in development
 npx ts-node src/server.ts
 
@@ -107,9 +112,9 @@ npm test
 > **Important**: Always run `npm run build` after changing workflow code (`src/workflows/`).
 > The build pre-bundles workflows into `workflow-bundle.js` so all workers use identical code.
 
-> **Dual workers**: Each session runs two Temporal workers — a shared `claude-tempo` queue
-> (workflows + delivery activities) and a per-host `claude-tempo-{hostname}` queue (spawn activities only).
-> Both are created via `createWorkers()` in `src/worker.ts`.
+> **Daemon workers**: Temporal workers are no longer run in-process by sessions. The daemon
+> (`src/daemon.ts`) runs as a detached background process and owns all worker duties. Sessions are
+> pure MCP clients. The daemon is auto-started by any claude-tempo command if not already running.
 
 ## Key Concepts
 
@@ -135,6 +140,7 @@ npm test
 - **Stage**: A fan-out/fan-in tracking primitive for the conductor. Created via `stage` (conductor only), listing via `stages`, cancelled via `cancel_stage`. Each stage tracks a set of players; when a tracked player sends a `report`, their stage status updates automatically (`waiting` → `reported` or `blocked`). When all players have reported, the conductor is notified that the stage is complete. If `failurePolicy` is `'halt'` (default), a blocker from any player fails the entire stage. Stages are stored in the conductor workflow and survive `continueAsNew`.
 - **Maestro**: A durable `claudeMaestroWorkflow` (one per ensemble, ID: `claude-maestro-{ensemble}`) that acts as an ensemble state aggregator for external integrations. It periodically polls all session metadata to maintain a player snapshot and ring-buffer event log, and accepts commands via the `maestroSendCommand` update for relay to the conductor. The Maestro dashboard ([vinceblank/maestro](https://github.com/vinceblank/maestro)) connects to this workflow to display live ensemble state. Implemented in `src/workflows/maestro.ts` with activities in `src/activities/maestro.ts`.
 - **Wire protocol**: All Temporal signal, query, update, and workflow names are documented in [`docs/WIRE-PROTOCOL.md`](docs/WIRE-PROTOCOL.md). These names are stable as of v0.10 — renaming or removing any is a breaking change requiring a major version bump.
+- **Daemon**: A standalone background process (`src/daemon.ts`) that runs all Temporal workers. Auto-started by any claude-tempo command if not already running. PID stored at `~/.claude-tempo/daemon.pid`; logs at `~/.claude-tempo/daemon.log`. Sessions are now pure MCP clients — they no longer run in-process workers. Managed via `claude-tempo daemon start|stop|status|logs`.
 
 ## Dashboard
 

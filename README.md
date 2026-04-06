@@ -61,7 +61,8 @@ This will:
 2. Start the Temporal dev server (data persists in `~/.claude-tempo/`)
 3. Register required search attributes
 4. Register the claude-tempo MCP server (globally by default)
-5. Launch a conductor session in a new terminal window
+5. Start the worker daemon in the background
+6. Launch a conductor session in a new terminal window
 
 Then add players:
 
@@ -508,6 +509,7 @@ claude-tempo <command> [options]
 | `encore <name>` | Revive a stale player session by name. Use `--host` to target a remote machine. |
 | `ensemble <sub>` | Manage saved lineups (`save`, `list`, `show`) |
 | `agent-types <sub>` | Manage player types (`list`, `show <name>`, `init`) |
+| `daemon <sub>` | Manage the worker daemon (`start`, `stop`, `status`, `logs`) |
 | `version` | Print the installed version |
 | `help` | Show usage info |
 
@@ -759,6 +761,27 @@ The [Maestro dashboard](https://github.com/vinceblank/maestro) is a web UI that 
 - Command input to interact with the conductor
 
 The Maestro workflow starts automatically with the conductor and requires no additional setup. Connect the dashboard to your Temporal server's address and namespace to get started.
+
+## Worker Daemon
+
+The **worker daemon** is a standalone background process that runs Temporal workers — it replaces the per-session workers from earlier versions. Sessions are now pure MCP clients.
+
+The daemon auto-starts the first time any claude-tempo command needs it. You can also manage it explicitly:
+
+```bash
+claude-tempo daemon start    # start the daemon (no-op if already running)
+claude-tempo daemon stop     # stop the daemon
+claude-tempo daemon status   # show running state and PID
+claude-tempo daemon logs     # tail daemon logs
+```
+
+### How it works
+
+- On first use, any claude-tempo command calls `startDaemon()` and waits up to 10 seconds for it to confirm startup (by writing `~/.claude-tempo/daemon.pid`)
+- The daemon runs detached — it survives terminal closes and session restarts
+- All Temporal worker duties (workflow execution, activity dispatch) run in the daemon
+- Logs are written to `~/.claude-tempo/daemon.log`
+- On Linux/macOS, the daemon is stopped via `SIGTERM`; on Windows, the process is killed directly
 
 ## Development
 
