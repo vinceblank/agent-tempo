@@ -84,12 +84,13 @@ export function metronomeFrames(unicode = supportsUnicode()): string[] {
 
 /**
  * Color palette for pixel art.
- * ' ' = transparent, 'B' = body, 'A' = arm, 'P' = pivot
+ * ' ' = transparent, 'T' = triangle outline, 'A' = arm, 'P' = pivot
  */
 export const PIXEL_COLORS: Record<string, string> = {
-  B: '#1B2838', // body - dark slate
+  T: '#FAF3EE', // triangle outline - cream/white
+  B: '#FAF3EE', // alias for triangle (backward compat)
   A: '#E07A5F', // arm - terracotta
-  P: '#E07A5F', // pivot - terracotta (same as arm)
+  P: '#E07A5F', // pivot - terracotta
 };
 
 /** A single half-block cell with optional fg/bg colors. */
@@ -150,64 +151,119 @@ export function pixelGridToHalfBlocks(grid: string[]): HalfBlockCell[][] {
 }
 
 /**
+ * Draw a line on a pixel grid using Bresenham's algorithm.
+ */
+function drawLine(grid: string[][], x0: number, y0: number, x1: number, y1: number, color: string, thickness = 1): void {
+  const dx = Math.abs(x1 - x0);
+  const dy = Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let err = dx - dy;
+  let cx = x0, cy = y0;
+
+  while (true) {
+    // Draw with thickness
+    for (let ty = -Math.floor(thickness / 2); ty <= Math.floor(thickness / 2); ty++) {
+      for (let tx = -Math.floor(thickness / 2); tx <= Math.floor(thickness / 2); tx++) {
+        const py = cy + ty;
+        const px = cx + tx;
+        if (py >= 0 && py < grid.length && px >= 0 && px < grid[0].length) {
+          grid[py][px] = color;
+        }
+      }
+    }
+    if (cx === x1 && cy === y1) break;
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; cx += sx; }
+    if (e2 < dx) { err += dx; cy += sy; }
+  }
+}
+
+/**
+ * Draw a filled circle on a pixel grid.
+ */
+function drawCircle(grid: string[][], cx: number, cy: number, r: number, color: string): void {
+  for (let y = cy - r; y <= cy + r; y++) {
+    for (let x = cx - r; x <= cx + r; x++) {
+      if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r) {
+        if (y >= 0 && y < grid.length && x >= 0 && x < grid[0].length) {
+          grid[y][x] = color;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Create an empty pixel grid.
+ */
+function createGrid(width: number, height: number): string[][] {
+  return Array.from({ length: height }, () => Array(width).fill(' '));
+}
+
+/**
+ * Convert a 2D grid to string array for half-block rendering.
+ */
+function gridToStrings(grid: string[][]): string[] {
+  return grid.map(row => row.join(''));
+}
+
+/**
  * Pixel art metronome — 3 frames (left, center, right).
- * Each frame is a pixel grid (16 wide × 12 tall) that renders
- * to 6 character rows of half-block cells.
- *
- * Matches the SVG logo: solid triangle body, pendulum from bottom pivot.
+ * High-res (32 wide × 28 tall) outline-only triangle with pendulum line.
+ * Matches the actual SVG logo: outline triangle, diagonal pendulum arm, pivot dot.
+ * Renders to 14 character rows of half-block cells.
  */
 export function metronomePixelFrames(): HalfBlockCell[][][] {
-  // 16 wide × 12 tall pixel grids
-  // ' '=transparent, B=body, A=arm, P=pivot
-  const center = [
-    '      BBBB      ', // row 0  (tip)
-    '     BBBBBB     ', // row 1
-    '    BBBBBBBB    ', // row 2
-    '   BBBBABBBBB   ', // row 3  (arm top)
-    '  BBBBBABBBBBB  ', // row 4
-    ' BBBBBBABBBBBBB ', // row 5
-    'BBBBBBBABBBBBBBB', // row 6
-    'BBBBBBBPBBBBBBBB', // row 7  (pivot)
-    'BBBBBBBBBBBBBBBB', // row 8  (base top)
-    'BBBBBBBBBBBBBBBB', // row 9  (base bottom)
-    '                ', // row 10
-    '                ', // row 11
+  const W = 32;
+  const H = 28;
+
+  // SVG coordinates scaled to 32×28 grid:
+  // SVG viewport 64×64, triangle: apex(32,8) → bl(14,54) → br(50,54)
+  // Scale: x * 32/64 = x/2, y * 28/64 ≈ y * 0.4375
+  const apex = { x: 16, y: 2 };
+  const bl = { x: 7, y: 24 };
+  const br = { x: 25, y: 24 };
+  const pivotY = 20; // ~46 * 0.4375
+  const pivotX = 16;
+
+  // Pendulum tip positions for 3 frames (extending above apex)
+  // SVG pendulum: from pivot(32,46) to tip(44,14) — that's center-right
+  // Left frame: mirror to left
+  // Center frame: straight up
+  const armTips = [
+    { x: 10, y: 0 },  // left
+    { x: 16, y: 0 },  // center (straight up)
+    { x: 22, y: 0 },  // right
   ];
 
-  const left = [
-    '      BBBB      ', // row 0
-    '     BBBBBB     ', // row 1
-    '    BABBBBBB    ', // row 2  (arm top-left)
-    '   BBBABBBBB    ', // row 3
-    '  BBBBABBBBBB   ', // row 4
-    ' BBBBBABBBBBBB  ', // row 5
-    'BBBBBBABBBBBBBBB', // row 6
-    'BBBBBBBPBBBBBBBB', // row 7  (pivot)
-    'BBBBBBBBBBBBBBBB', // row 8
-    'BBBBBBBBBBBBBBBB', // row 9
-    '                ', // row 10
-    '                ', // row 11
-  ];
+  function buildFrame(tipIdx: number): string[] {
+    const grid = createGrid(W, H);
 
-  const right = [
-    '      BBBB      ', // row 0
-    '     BBBBBB     ', // row 1
-    '    BBBBBABB    ', // row 2  (arm top-right)
-    '   BBBBBABBB    ', // row 3
-    '  BBBBBBABBBB   ', // row 4
-    ' BBBBBBBABBBBB  ', // row 5
-    'BBBBBBBBABBBBBBB', // row 6
-    'BBBBBBBPBBBBBBBB', // row 7  (pivot)
-    'BBBBBBBBBBBBBBBB', // row 8
-    'BBBBBBBBBBBBBBBB', // row 9
-    '                ', // row 10
-    '                ', // row 11
-  ];
+    // Draw pendulum arm FIRST (triangle outline draws over it where they overlap)
+    const tip = armTips[tipIdx];
+    drawLine(grid, pivotX, pivotY, tip.x, tip.y, 'A', 2);
+
+    // Draw pivot dot
+    drawCircle(grid, pivotX, pivotY, 2, 'P');
+
+    // Draw triangle outline (cream, 2px thick) — draws OVER arm where overlapping
+    drawLine(grid, apex.x, apex.y, bl.x, bl.y, 'T', 2); // left edge
+    drawLine(grid, apex.x, apex.y, br.x, br.y, 'T', 2); // right edge
+    drawLine(grid, bl.x, bl.y, br.x, br.y, 'T', 2);     // base
+
+    // Restore arm pixels that were overwritten by triangle at overlap points
+    // (arm should show through the triangle outline at crossing points)
+    drawLine(grid, pivotX, pivotY, tip.x, tip.y, 'A', 1);
+    drawCircle(grid, pivotX, pivotY, 1, 'P');
+
+    return gridToStrings(grid);
+  }
 
   return [
-    pixelGridToHalfBlocks(left),
-    pixelGridToHalfBlocks(center),
-    pixelGridToHalfBlocks(right),
+    pixelGridToHalfBlocks(buildFrame(0)), // left
+    pixelGridToHalfBlocks(buildFrame(1)), // center
+    pixelGridToHalfBlocks(buildFrame(2)), // right
   ];
 }
 
