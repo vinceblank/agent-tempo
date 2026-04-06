@@ -173,6 +173,8 @@ export interface TuiState {
   chatTarget?: string;
   /** Name of the conductor in the active ensemble. */
   conductorName?: string;
+  /** Locally tracked sent messages (TUI has no workflow to query). */
+  sentMessages: Array<{ to: string; text: string; timestamp: string }>;
   /** ID of the last message seen (for detecting new arrivals in polling). */
   lastSeenMessageId?: string;
   /** Scroll offset from the bottom of staticItems (0 = at bottom/live). */
@@ -225,6 +227,7 @@ export function initialState(ensemble?: string): TuiState {
     staticItems: [],
     inputValue: '',
     chatTarget: undefined,
+    sentMessages: [],
     scrollOffset: 0,
     hasNewBelow: false,
     paletteVisible: false,
@@ -261,6 +264,7 @@ export type TuiAction =
   | { type: 'COMMIT_STATIC'; item: StaticItem }
   | { type: 'SET_INPUT'; value: string }
   | { type: 'SET_CONDUCTOR'; name?: string }
+  | { type: 'APPEND_SENT_MESSAGE'; to: string; text: string }
   | { type: 'ENTER_CHAT'; target: string }
   | { type: 'EXIT_CHAT' }
   // Command palette
@@ -510,6 +514,12 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'SET_CONDUCTOR':
       return { ...state, conductorName: action.name };
+
+    case 'APPEND_SENT_MESSAGE':
+      return {
+        ...state,
+        sentMessages: [...state.sentMessages, { to: action.to, text: action.text, timestamp: new Date().toISOString() }],
+      };
 
     case 'ENTER_CHAT':
       return { ...state, phase: 'chat' as TuiPhase, chatTarget: action.target };

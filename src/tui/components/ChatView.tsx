@@ -92,8 +92,8 @@ export function ChatView({
 
   return React.createElement(Box, { flexDirection: 'column', height: '100%' },
     header,
-    // Scrollable message area
-    React.createElement(Box, { flexDirection: 'column', flexGrow: 1, overflow: 'hidden' },
+    // Message area — pinned to bottom (newest messages at bottom)
+    React.createElement(Box, { flexDirection: 'column', flexGrow: 1, overflow: 'hidden', justifyContent: 'flex-end' },
       ...messageElements,
       messages.length === 0
         ? React.createElement(Box, { paddingX: 1, marginTop: 1 },

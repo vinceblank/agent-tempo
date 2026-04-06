@@ -426,6 +426,8 @@ export function App({ api, ensemble }: AppProps) {
           // Send as direct message to player
           await api.sendMessage(state.activeEnsemble, state.chatTarget, trimmed, 'maestro');
         }
+        // Track sent message locally for ChatView
+        dispatch({ type: 'APPEND_SENT_MESSAGE', to: state.chatTarget!, text: trimmed });
         dispatch({
           type: 'COMMIT_STATIC',
           item: {
@@ -854,15 +856,83 @@ export function App({ api, ensemble }: AppProps) {
     }
 
     if (state.chatTarget) {
-      // Build chat messages from relay messages filtered to this conversation
-      const chatMessages: ChatMessage[] = state.messages
-        .filter(m => m.from === state.chatTarget || m.to === state.chatTarget)
-        .map(m => ({
-          direction: m.to === state.chatTarget ? 'sent' as const : 'received' as const,
-          from: m.from,
-          text: m.text,
-          timestamp: m.timestamp,
-        }));
+      const isConductorChat = state.chatTarget === state.conductorName;
+      let chatMessages: ChatMessage[];
+
+      if (isConductorChat) {
+        // Build from conductorHistory (commands + reports) + local sentMessages
+        const fromHistory: ChatMessage[] = state.conductorHistory.map(entry => {
+          if (entry.type === 'command') {
+            const cmd = entry.data as { text: string; source: string; timestamp: string };
+            return {
+              direction: 'sent' as const,
+              from: cmd.source || 'maestro',
+              text: cmd.text,
+              timestamp: entry.timestamp || cmd.timestamp,
+            };
+          } else {
+            const report = entry.data as { playerId: string; text: string; type: string; timestamp: string };
+            return {
+              direction: 'received' as const,
+              from: report.playerId,
+              text: `[${report.type}] ${report.text}`,
+              timestamp: entry.timestamp || report.timestamp,
+            };
+          }
+        });
+
+        // Add locally sent messages not yet in history
+        const fromSent: ChatMessage[] = state.sentMessages
+          .filter(m => m.to === state.chatTarget)
+          .map(m => ({
+            direction: 'sent' as const,
+            from: 'maestro',
+            text: m.text,
+            timestamp: m.timestamp,
+          }));
+
+        // Merge and deduplicate by timestamp + text (sent messages may appear in both)
+        const seen = new Set<string>();
+        chatMessages = [...fromHistory, ...fromSent]
+          .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+          .filter(m => {
+            const key = `${m.direction}:${m.timestamp}:${m.text.slice(0, 50)}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+      } else {
+        // Build from relay messages filtered to this conversation
+        const fromRelay: ChatMessage[] = state.messages
+          .filter(m => m.from === state.chatTarget || m.to === state.chatTarget)
+          .map(m => ({
+            direction: m.to === state.chatTarget ? 'sent' as const : 'received' as const,
+            from: m.from,
+            text: m.text,
+            timestamp: m.timestamp,
+          }));
+
+        // Add locally sent messages
+        const fromSent: ChatMessage[] = state.sentMessages
+          .filter(m => m.to === state.chatTarget)
+          .map(m => ({
+            direction: 'sent' as const,
+            from: 'maestro',
+            text: m.text,
+            timestamp: m.timestamp,
+          }));
+
+        const seen = new Set<string>();
+        chatMessages = [...fromRelay, ...fromSent]
+          .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+          .filter(m => {
+            const key = `${m.direction}:${m.timestamp}:${m.text.slice(0, 50)}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+      }
+
       const received = chatMessages.filter(m => m.direction === 'received').length;
       const sent = chatMessages.filter(m => m.direction === 'sent').length;
       const targetPlayer = state.players.find(p => p.playerId === state.chatTarget);
