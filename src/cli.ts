@@ -34,7 +34,7 @@ interface ParsedArgs {
 
 function parseArgs(argv: string[]): ParsedArgs {
   const result: ParsedArgs = {
-    command: 'help',
+    command: 'tui',
     positional: [],
     dir: process.cwd(),
     skipPreflight: false,
@@ -294,9 +294,13 @@ async function main() {
       break;
 
     case 'help':
-    default:
       help();
       break;
+
+    default:
+      out.error(`Unknown command: ${args.command}`);
+      out.log(`Run ${out.dim('claude-tempo --help')} for usage.`);
+      process.exit(1);
   }
 }
 
