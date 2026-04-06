@@ -30,8 +30,10 @@ let cached: InkExports | null = null;
 export async function loadInk(): Promise<InkExports> {
   if (cached) return cached;
 
-  // @ts-expect-error — ink is ESM-only, dynamic import resolves at runtime
-  const ink = await import('ink');
+  // Use indirect import() to prevent TypeScript from converting it to require()
+  // when compiling to CommonJS. ink 4+ is ESM-only and needs a real import().
+  const dynamicImport = new Function('specifier', 'return import(specifier)');
+  const ink = await dynamicImport('ink');
 
   cached = {
     render: ink.render,

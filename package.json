@@ -68,6 +68,8 @@
     "@temporalio/worker": "~1.15.0",
     "@temporalio/workflow": "~1.15.0",
     "croner": "^10.0.1",
+    "ink": "^6.8.0",
+    "react": "^19.2.4",
     "yaml": "^2.8.3",
     "zod": "~3.25.76"
   },
