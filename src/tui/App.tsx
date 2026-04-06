@@ -48,6 +48,9 @@ export function App({ api, ensemble }: AppProps) {
     let cancelled = false;
 
     async function connect() {
+      const splashStart = Date.now();
+      const MIN_SPLASH_MS = 2000;
+
       dispatch({ type: 'SET_SPLASH_STATUS', status: 'Connecting to Temporal...' });
 
       const connected = await api.isConnected();
@@ -83,6 +86,12 @@ export function App({ api, ensemble }: AppProps) {
         } catch {
           // Non-fatal
         }
+      }
+
+      // Ensure splash is visible for at least MIN_SPLASH_MS
+      const elapsed = Date.now() - splashStart;
+      if (elapsed < MIN_SPLASH_MS) {
+        await new Promise(r => setTimeout(r, MIN_SPLASH_MS - elapsed));
       }
 
       if (!cancelled) {

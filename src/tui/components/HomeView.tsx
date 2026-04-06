@@ -4,7 +4,7 @@
  */
 import React, { useCallback } from 'react';
 import { useInk } from '../ink-context';
-import { supportsUnicode, statusIcons } from '../utils/platform';
+import { supportsUnicode, statusIcons, titleArt, titleArtFits, getTerminalSize } from '../utils/platform';
 import { Footer } from './Footer';
 import type { EnsembleSummary } from '../core-api';
 
@@ -36,15 +36,31 @@ export function HomeView({ ensembles, selectedIndex, onSelect, onQuit, onNavigat
   }, [onQuit, onNavigate, onSelect, ensembles, selectedIndex]));
 
   const title = unicode ? '\u266A claude-tempo' : '# claude-tempo';
+  const { columns } = getTerminalSize();
+  const showArt = titleArtFits(columns);
+  const artLines = showArt ? titleArt(unicode) : [];
+
+  /** Render the header — block-letter title if it fits, plain text fallback. */
+  function renderHeader() {
+    if (showArt) {
+      return React.createElement(Box, { flexDirection: 'column', alignItems: 'center', marginBottom: 1 },
+        ...artLines.map((line, i) =>
+          React.createElement(Text, { key: `art-${i}`, bold: true, color: 'cyan' }, line),
+        ),
+        React.createElement(Text, { dimColor: true }, `v${VERSION}`),
+      );
+    }
+    return React.createElement(Box, { paddingX: 1, marginBottom: 1 },
+      React.createElement(Text, { bold: true, color: 'cyan' }, title),
+      React.createElement(Text, { dimColor: true }, `  v${VERSION}`),
+    );
+  }
 
   // ── Empty state ──
   if (ensembles.length === 0) {
     return React.createElement(Box, { flexDirection: 'column', height: '100%' },
       // Header
-      React.createElement(Box, { paddingX: 1, marginBottom: 1 },
-        React.createElement(Text, { bold: true, color: 'cyan' }, title),
-        React.createElement(Text, { dimColor: true }, `  v${VERSION}`),
-      ),
+      renderHeader(),
       // Empty message
       React.createElement(Box, { flexGrow: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'center' },
         React.createElement(Text, { dimColor: true }, 'No ensembles running.'),
@@ -61,10 +77,7 @@ export function HomeView({ ensembles, selectedIndex, onSelect, onQuit, onNavigat
   // ── Ensemble list ──
   return React.createElement(Box, { flexDirection: 'column', height: '100%' },
     // Header
-    React.createElement(Box, { paddingX: 1, marginBottom: 1 },
-      React.createElement(Text, { bold: true, color: 'cyan' }, title),
-      React.createElement(Text, { dimColor: true }, `  v${VERSION}`),
-    ),
+    renderHeader(),
     // List
     React.createElement(Box, { flexDirection: 'column', flexGrow: 1, paddingX: 1 },
       ...ensembles.map((ens, i) => {
