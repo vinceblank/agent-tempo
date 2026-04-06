@@ -111,7 +111,7 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
   } else if (connected) {
     ensembleElements.push(
       React.createElement(Text, { key: 'none', color: THEME.dim },
-        '  No ensembles running',
+        '  No ensembles running yet. Press Enter to get started.',
       ),
     );
   }

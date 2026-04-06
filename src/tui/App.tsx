@@ -633,17 +633,38 @@ export function App({ api, ensemble }: AppProps) {
 
     const interval = setInterval(async () => {
       try {
-        if (!state.activeEnsemble) {
+        const s = stateRef.current;
+        if (!s.activeEnsemble) {
           const ensembles = await api.discoverEnsembles();
           dispatch({ type: 'REFRESH_ENSEMBLES', ensembles });
+
+          // Auto-connect when an ensemble appears
+          if (ensembles.length > 0 && !s.activeEnsemble) {
+            const autoEns = ensembles[0].name;
+            dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: autoEns });
+            dispatch({
+              type: 'COMMIT_STATIC',
+              item: { id: `auto-${Date.now()}`, type: 'info', content: `\u2714 Auto-connected to ensemble: ${autoEns}`, timestamp: Date.now() },
+            });
+            // Find conductor and enter chat
+            try {
+              const players = await api.getPlayers(autoEns);
+              const conductor = players.find(p => p.isConductor);
+              if (conductor) {
+                dispatch({ type: 'SET_CONDUCTOR', name: conductor.playerId });
+                dispatch({ type: 'ENTER_CHAT', target: conductor.playerId });
+              }
+            } catch { /* best effort */ }
+          }
         } else {
           // Fetch relay messages + maestro direct messages in parallel
+          const ens = s.activeEnsemble!;
           const [players, messages, history, schedules, maestroMsgs] = await Promise.all([
-            api.getPlayers(state.activeEnsemble),
-            api.getMessages(state.activeEnsemble, 50),
-            api.getConductorHistory(state.activeEnsemble),
-            api.getSchedules(state.activeEnsemble),
-            api.getMaestroMessages(state.activeEnsemble),
+            api.getPlayers(ens),
+            api.getMessages(ens, 50),
+            api.getConductorHistory(ens),
+            api.getSchedules(ens),
+            api.getMaestroMessages(ens),
           ]);
 
           // Detect new relay messages and commit them to Static
@@ -994,8 +1015,27 @@ export function App({ api, ensemble }: AppProps) {
       );
     }
 
-    return React.createElement(Box, { paddingX: 1 },
-      React.createElement(Text, { color: THEME.dim }, 'Type /help to get started.'),
+    // Onboarding view — no ensembles running
+    return React.createElement(Box, {
+      flexDirection: 'column',
+      borderStyle: 'single',
+      borderColor: THEME.border,
+      paddingX: 2,
+      paddingY: 1,
+      marginX: 2,
+    },
+      React.createElement(Text, { bold: true, color: THEME.accent }, 'Getting Started'),
+      React.createElement(Box, { height: 1 }),
+      React.createElement(Text, { color: THEME.text }, 'No ensembles are running.'),
+      React.createElement(Box, { height: 1 }),
+      React.createElement(Text, { color: THEME.text }, 'Create an ensemble:'),
+      React.createElement(Text, { color: THEME.accent }, '  /up <name>'),
+      React.createElement(Box, { height: 1 }),
+      React.createElement(Text, { color: THEME.text }, 'Or load a lineup:'),
+      React.createElement(Text, { color: THEME.accent }, '  /lineup load <file.yml>'),
+      React.createElement(Box, { height: 1 }),
+      React.createElement(Text, { color: THEME.dim }, 'The TUI will auto-detect ensembles as they start.'),
+      React.createElement(Text, { color: THEME.dim }, 'Type /help for all available commands.'),
     );
   }
 
