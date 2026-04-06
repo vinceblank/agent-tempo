@@ -28,30 +28,38 @@ async function main() {
   // Get config from env vars (passed by startDaemon via spawn env)
   const config = getConfig({});
 
-  // Create and run both workers
-  log(`Connecting to Temporal at ${config.temporalAddress} (namespace: ${config.temporalNamespace})`);
-  const { sharedWorker, hostWorker } = await createWorkers(config);
-  log('Workers created — processing tasks');
+  // Use mutable refs so signal handlers can be registered before workers
+  // are created — closes the narrow window where a SIGTERM during
+  // createWorkers() would be missed.
+  let sharedWorker: Awaited<ReturnType<typeof createWorkers>>['sharedWorker'] | null = null;
+  let hostWorker: Awaited<ReturnType<typeof createWorkers>>['hostWorker'] | null = null;
 
-  // Register signal handlers BEFORE running workers — ensures we catch
-  // signals even during worker startup. Handlers just trigger graceful
-  // drain; they do NOT call process.exit() — that happens after workers
-  // finish processing in-flight activities below.
+  // Register signal handlers first — idempotent, drain-only (no process.exit).
+  let shuttingDown = false;
   const hardExit = () => {
     log('Shutdown timeout — forcing exit');
     try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
     process.exit(1);
   };
   const shutdown = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     log('Shutting down (draining in-flight activities)...');
     // Safety net: force exit if workers don't stop within 15s
     const timer = setTimeout(hardExit, 15_000);
     timer.unref();
-    sharedWorker.shutdown();
-    hostWorker.shutdown();
+    sharedWorker?.shutdown();
+    hostWorker?.shutdown();
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+
+  // Create workers (signal handlers already active via mutable refs)
+  log(`Connecting to Temporal at ${config.temporalAddress} (namespace: ${config.temporalNamespace})`);
+  const workers = await createWorkers(config);
+  sharedWorker = workers.sharedWorker;
+  hostWorker = workers.hostWorker;
+  log('Workers created — processing tasks');
 
   // Run both workers — blocks until shutdown + drain completes
   try {
