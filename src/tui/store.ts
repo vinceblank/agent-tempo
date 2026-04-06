@@ -136,8 +136,12 @@ export interface TuiState {
   inputValue: string;
   /** Player name when in chat mode (bare text sends cue to this target). */
   chatTarget?: string;
+  /** ID of the last message seen (for detecting new arrivals in polling). */
+  lastSeenMessageId?: string;
   /** Player name pending stop confirmation (null = not confirming). */
   confirmingStop?: string;
+  /** Lineup confirmation state (pending load). */
+  confirmingLineup?: { action: 'load'; path: string; summary: string };
   /** Recruit wizard state (active when phase === 'recruit'). */
   recruitState?: RecruitState;
 }
@@ -203,6 +207,9 @@ export type TuiAction =
   // Stop confirmation
   | { type: 'CONFIRM_STOP'; player: string }
   | { type: 'CANCEL_STOP' }
+  // Lineup confirmation
+  | { type: 'CONFIRM_LINEUP'; action: 'load'; path: string; summary: string }
+  | { type: 'CANCEL_LINEUP' }
   // Recruit wizard
   | { type: 'ENTER_RECRUIT'; answers?: Partial<RecruitAnswers> }
   | { type: 'RECRUIT_NEXT_STEP'; answer: Partial<RecruitAnswers> }
@@ -285,16 +292,19 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         selectedEnsembleIndex: Math.min(state.selectedEnsembleIndex, Math.max(0, action.ensembles.length - 1)),
       };
 
-    case 'REFRESH_ENSEMBLE_DATA':
+    case 'REFRESH_ENSEMBLE_DATA': {
+      const lastMsg = action.messages.length > 0 ? action.messages[action.messages.length - 1] : null;
       return {
         ...state,
         players: action.players,
         messages: action.messages,
         conductorHistory: action.history,
         schedules: action.schedules ?? state.schedules,
+        lastSeenMessageId: lastMsg?.id ?? state.lastSeenMessageId,
         // Clamp selection index
         selectedPlayerIndex: Math.min(state.selectedPlayerIndex, Math.max(0, action.players.length - 1)),
       };
+    }
 
     case 'REFRESH_PLAYER_DATA':
       return {
@@ -368,6 +378,14 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'CANCEL_STOP':
       return { ...state, confirmingStop: undefined };
+
+    // ── Lineup confirmation ──
+
+    case 'CONFIRM_LINEUP':
+      return { ...state, confirmingLineup: { action: action.action, path: action.path, summary: action.summary } };
+
+    case 'CANCEL_LINEUP':
+      return { ...state, confirmingLineup: undefined };
 
     // ── Recruit wizard ──
 

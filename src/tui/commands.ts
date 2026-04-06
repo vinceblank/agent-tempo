@@ -584,6 +584,56 @@ async function handleWorktree(
   }
 }
 
+/** /lineup load|save — manage ensemble lineups. */
+async function handleLineup(
+  args: string[],
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  if (args.length === 0) {
+    commitStatic(dispatch, 'error', 'Usage: /lineup load <file> | /lineup save [file]');
+    return;
+  }
+
+  const subcommand = args[0].toLowerCase();
+
+  if (subcommand === 'load') {
+    if (args.length < 2) {
+      commitStatic(dispatch, 'error', 'Usage: /lineup load <file.yml>');
+      return;
+    }
+    const filePath = args[1];
+    // Enter lineup confirmation mode — App.tsx handles y/n
+    dispatch({
+      type: 'CONFIRM_LINEUP',
+      action: 'load',
+      path: filePath,
+      summary: `Load lineup from: ${filePath}`,
+    });
+    return;
+  }
+
+  if (subcommand === 'save') {
+    const ensemble = ctx.activeEnsemble;
+    if (!ensemble) {
+      commitStatic(dispatch, 'error', 'No active ensemble. Use /ensemble <name> first.');
+      return;
+    }
+
+    const filePath = args[1] || `ensemble-${ensemble}.yml`;
+    try {
+      await api.sendCommand(ensemble, `/save_lineup ${filePath}`, 'tui');
+      commitStatic(dispatch, 'info', `\u2714 Lineup save requested: ${filePath}`);
+    } catch (err) {
+      commitStatic(dispatch, 'error', `\u2717 Failed to save lineup: ${err}`);
+    }
+    return;
+  }
+
+  commitStatic(dispatch, 'error', `Unknown lineup subcommand: ${subcommand}. Use: load, save`);
+}
+
 /** /ensembles — list all discovered ensembles. */
 async function handleEnsembles(
   _args: string[],
@@ -726,6 +776,11 @@ export const COMMANDS: Record<string, CommandDef> = {
     description: 'Manage git worktrees for player isolation',
     usage: '/worktree [list]',
     handler: handleWorktree,
+  },
+  lineup: {
+    description: 'Load or save an ensemble lineup',
+    usage: '/lineup load <file> | save [file]',
+    handler: handleLineup,
   },
   ensembles: {
     description: 'List all discovered ensembles',

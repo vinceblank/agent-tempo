@@ -104,7 +104,44 @@ export function App({ api, ensemble }: AppProps) {
       }
       return;
     }
-  }, [exit, state.confirmingStop, api]));
+
+    // Lineup confirmation mode
+    if (state.confirmingLineup) {
+      if (input === 'y' || input === 'Y') {
+        const { path: lineupPath } = state.confirmingLineup;
+        const ensemble = state.activeEnsemble;
+        dispatch({ type: 'CANCEL_LINEUP' });
+        if (!ensemble) {
+          dispatch({
+            type: 'COMMIT_STATIC',
+            item: { id: nextStaticId(), type: 'error', content: 'No active ensemble.', timestamp: Date.now() },
+          });
+        } else {
+          (async () => {
+            try {
+              await api.sendCommand(ensemble, `/load_lineup ${lineupPath}`, 'tui');
+              dispatch({
+                type: 'COMMIT_STATIC',
+                item: { id: nextStaticId(), type: 'info', content: `\u2714 Lineup load requested: ${lineupPath}`, timestamp: Date.now() },
+              });
+            } catch (err) {
+              dispatch({
+                type: 'COMMIT_STATIC',
+                item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to load lineup: ${err}`, timestamp: Date.now() },
+              });
+            }
+          })();
+        }
+      } else if (input === 'n' || input === 'N' || key.escape) {
+        dispatch({ type: 'CANCEL_LINEUP' });
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: { id: nextStaticId(), type: 'info', content: 'Lineup load cancelled.', timestamp: Date.now() },
+        });
+      }
+      return;
+    }
+  }, [exit, state.confirmingStop, state.confirmingLineup, state.activeEnsemble, api]));
 
   // ── Context string for title bar ──
   const contextString = useMemo(() => {
@@ -126,7 +163,10 @@ export function App({ api, ensemble }: AppProps) {
   // ── Hint text for prompt area ──
   const promptHints = useMemo(() => {
     if (state.confirmingStop) {
-      return `Stop ${state.confirmingStop}? [y/N]`;
+      return `Stop ${state.confirmingStop}? This will terminate their session. [y/N]`;
+    }
+    if (state.confirmingLineup) {
+      return `${state.confirmingLineup.summary} [y/N]`;
     }
     if (state.phase === 'recruit') {
       return 'Follow the prompts above. Esc to cancel.';
@@ -444,6 +484,28 @@ export function App({ api, ensemble }: AppProps) {
             api.getConductorHistory(state.activeEnsemble),
             api.getSchedules(state.activeEnsemble),
           ]);
+
+          // Detect new messages and commit them to Static
+          if (messages.length > 0 && state.lastSeenMessageId) {
+            const lastIdx = messages.findIndex(m => m.id === state.lastSeenMessageId);
+            const newMessages = lastIdx >= 0 ? messages.slice(lastIdx + 1) : [];
+            for (const m of newMessages) {
+              const time = new Date(m.timestamp);
+              const hh = String(time.getHours()).padStart(2, '0');
+              const mm = String(time.getMinutes()).padStart(2, '0');
+              const text = m.text.length > 60 ? m.text.slice(0, 57) + '...' : m.text;
+              dispatch({
+                type: 'COMMIT_STATIC',
+                item: {
+                  id: `msg-${m.id}`,
+                  type: 'message',
+                  content: `[${hh}:${mm}] ${m.from} \u2192 ${m.to}: ${text.replace(/\n/g, ' ')}`,
+                  timestamp: Date.now(),
+                },
+              });
+            }
+          }
+
           dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
         }
       } catch {
@@ -638,7 +700,7 @@ export function App({ api, ensemble }: AppProps) {
       value: state.inputValue,
       onChange: (value: string) => dispatch({ type: 'SET_INPUT', value }),
       onSubmit: handleSubmit,
-      disabled: state.phase === 'error' || state.phase === 'recruit' || !!state.confirmingStop,
+      disabled: state.phase === 'error' || state.phase === 'recruit' || !!state.confirmingStop || !!state.confirmingLineup,
       commandNames: commandNamesList,
       playerNames: playerNamesList,
     }),
