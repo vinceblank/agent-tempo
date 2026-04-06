@@ -584,6 +584,69 @@ async function handleWorktree(
   }
 }
 
+/** /search <term> — search message history. */
+async function handleSearch(
+  args: string[],
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  if (args.length === 0) {
+    commitStatic(dispatch, 'error', 'Usage: /search <term>');
+    return;
+  }
+
+  const term = args.join(' ');
+  const termLower = term.toLowerCase();
+
+  try {
+    // Fetch messages from ensemble(s)
+    const ensembles = ctx.activeEnsemble
+      ? [{ name: ctx.activeEnsemble }]
+      : await api.discoverEnsembles();
+
+    const allResults: Array<{ ensemble: string; from: string; to: string; text: string; timestamp: string }> = [];
+
+    for (const ens of ensembles) {
+      const messages = await api.getMessages(ens.name, 100);
+      for (const m of messages) {
+        const haystack = `${m.from} ${m.to} ${m.text}`.toLowerCase();
+        if (haystack.includes(termLower)) {
+          allResults.push({
+            ensemble: ens.name,
+            from: m.from,
+            to: m.to,
+            text: m.text,
+            timestamp: m.timestamp,
+          });
+        }
+      }
+    }
+
+    if (allResults.length === 0) {
+      commitStatic(dispatch, 'info', `No messages matching "${term}".`);
+      return;
+    }
+
+    const lines: string[] = [`\n  ${allResults.length} result${allResults.length !== 1 ? 's' : ''} for "${term}":\n`];
+
+    for (const r of allResults.slice(-20)) {
+      const time = formatTimestamp(r.timestamp);
+      const text = r.text.replace(/\n/g, ' ');
+      const truncated = text.length > 70 ? text.slice(0, 67) + '...' : text;
+      lines.push(`  ${time}  ${r.from} \u2192 ${r.to}: ${truncated}`);
+    }
+
+    if (allResults.length > 20) {
+      lines.push(`\n  ... and ${allResults.length - 20} more. Narrow your search for fewer results.`);
+    }
+
+    commitStatic(dispatch, 'command-output', lines.join('\n'));
+  } catch (err) {
+    commitStatic(dispatch, 'error', `Search failed: ${err}`);
+  }
+}
+
 /** /lineup load|save — manage ensemble lineups. */
 async function handleLineup(
   args: string[],
@@ -791,6 +854,11 @@ export const COMMANDS: Record<string, CommandDef> = {
     description: 'Switch active ensemble context',
     usage: '/ensemble <name>',
     handler: handleEnsemble,
+  },
+  search: {
+    description: 'Search message history',
+    usage: '/search <term>',
+    handler: handleSearch,
   },
   help: {
     description: 'Show available commands',
