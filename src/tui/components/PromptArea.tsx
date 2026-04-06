@@ -48,7 +48,7 @@ export function PromptArea({
   const { Box, Text, useInput } = useInk();
 
   // ── Command history ──
-  const [history] = useState<string[]>(() => [...initialHistory]);
+  const [history, setHistory] = useState<string[]>(() => [...initialHistory]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   // Stash the current input when user starts browsing history
   const savedInput = useRef('');
@@ -169,10 +169,10 @@ export function PromptArea({
       if (trimmed) {
         // Push to history (avoid duplicates of the last entry)
         if (history.length === 0 || history[history.length - 1] !== trimmed) {
-          history.push(trimmed);
-          if (history.length > MAX_HISTORY) history.shift();
+          const updated = [...history, trimmed].slice(-MAX_HISTORY);
+          setHistory(updated);
           // Persist history to disk
-          if (onHistoryUpdate) onHistoryUpdate([...history]);
+          if (onHistoryUpdate) onHistoryUpdate(updated);
         }
         setHistoryIndex(-1);
         savedInput.current = '';

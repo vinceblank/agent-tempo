@@ -819,7 +819,7 @@ export const COMMANDS: Record<string, CommandDef> = {
   unschedule: {
     description: 'Cancel a named schedule',
     usage: '/unschedule <name>',
-    handler: handleUnschedule,
+    handler: null, // Stub — not yet wired to scheduler workflow
   },
   player: {
     description: 'Show detailed player info',

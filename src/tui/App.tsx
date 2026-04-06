@@ -55,12 +55,15 @@ function staticItemColor(item: StaticItem): string {
 }
 
 export function App({ api, ensemble }: AppProps) {
-  const { Box, Text, Static, useApp, useInput } = useInk();
+  const { Box, Text, useApp, useInput } = useInk();
   const [state, dispatch] = useReducer(tuiReducer, initialState(ensemble));
   const { exit } = useApp();
 
   // ── Persistent command history ──
   const [cmdHistory] = React.useState(() => loadHistory());
+
+  // ── Ref for last seen message ID (avoids stale closure in polling effect) ──
+  const lastSeenMsgRef = React.useRef<string | undefined>(state.lastSeenMessageId);
   const handleHistoryUpdate = useCallback((entries: string[]) => {
     saveHistory(entries);
   }, []);
@@ -124,9 +127,9 @@ export function App({ api, ensemble }: AppProps) {
     if (state.confirmingLineup) {
       if (input === 'y' || input === 'Y') {
         const { path: lineupPath } = state.confirmingLineup;
-        const ensemble = state.activeEnsemble;
+        const activeEns = state.activeEnsemble;
         dispatch({ type: 'CANCEL_LINEUP' });
-        if (!ensemble) {
+        if (!activeEns) {
           dispatch({
             type: 'COMMIT_STATIC',
             item: { id: nextStaticId(), type: 'error', content: 'No active ensemble.', timestamp: Date.now() },
@@ -134,7 +137,7 @@ export function App({ api, ensemble }: AppProps) {
         } else {
           (async () => {
             try {
-              await api.sendCommand(ensemble, `/load_lineup ${lineupPath}`, 'tui');
+              await api.sendCommand(activeEns, `/load_lineup ${lineupPath}`, 'tui');
               dispatch({
                 type: 'COMMIT_STATIC',
                 item: { id: nextStaticId(), type: 'info', content: `\u2714 Lineup load requested: ${lineupPath}`, timestamp: Date.now() },
@@ -501,8 +504,8 @@ export function App({ api, ensemble }: AppProps) {
           ]);
 
           // Detect new messages and commit them to Static
-          if (messages.length > 0 && state.lastSeenMessageId) {
-            const lastIdx = messages.findIndex(m => m.id === state.lastSeenMessageId);
+          if (messages.length > 0 && lastSeenMsgRef.current) {
+            const lastIdx = messages.findIndex(m => m.id === lastSeenMsgRef.current);
             const newMessages = lastIdx >= 0 ? messages.slice(lastIdx + 1) : [];
             for (const m of newMessages) {
               const time = new Date(m.timestamp);
@@ -522,6 +525,11 @@ export function App({ api, ensemble }: AppProps) {
           }
 
           dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
+
+          // Update ref so next poll uses the latest ID
+          if (messages.length > 0) {
+            lastSeenMsgRef.current = messages[messages.length - 1].id;
+          }
         }
       } catch {
         // Silently skip failed polls
@@ -531,25 +539,7 @@ export function App({ api, ensemble }: AppProps) {
     return () => clearInterval(interval);
   }, [state.phase, state.activeEnsemble, api]);
 
-  // ── Render ──
-
-  // Splash phase: full-screen splash only
-  if (state.phase === 'splash' || state.phase === 'connecting') {
-    return React.createElement(Splash, {
-      status: state.splashStatus,
-      ensemble: state.activeEnsemble || 'all',
-      version: packageVersion,
-      checks: state.splashChecks,
-      connected: state.splashConnected,
-      summary: state.splashSummary,
-    });
-  }
-
-  // Divider — thin horizontal rule
-  const dividerWidth = Math.max(20, (process.stdout.columns || 80) - 4);
-  const dividerLine = '\u2500'.repeat(dividerWidth);
-
-  // ── Recruit wizard callbacks ──
+  // ── Recruit wizard callbacks (must be before early return — Rules of Hooks) ──
   const handleRecruitAnswer = useCallback((answer: any) => {
     dispatch({ type: 'RECRUIT_NEXT_STEP', answer });
   }, []);
@@ -561,8 +551,8 @@ export function App({ api, ensemble }: AppProps) {
   const handleRecruitConfirm = useCallback(async () => {
     if (!state.recruitState) return;
 
-    const ensemble = state.activeEnsemble;
-    if (!ensemble) {
+    const activeEns = state.activeEnsemble;
+    if (!activeEns) {
       dispatch({ type: 'RECRUIT_DONE', error: 'No active ensemble. Start one with: claude-tempo up <name>' });
       return;
     }
@@ -572,7 +562,6 @@ export function App({ api, ensemble }: AppProps) {
     const a = state.recruitState.answers;
 
     try {
-      // Build recruit command for the conductor
       const parts = [`/recruit ${a.name}`];
       if (a.playerType) parts.push(`--type ${a.playerType}`);
       if (a.agent !== 'claude') parts.push(`--agent ${a.agent}`);
@@ -580,7 +569,7 @@ export function App({ api, ensemble }: AppProps) {
       if (a.host !== 'localhost') parts.push(`--host ${a.host}`);
       if (a.initialMessage) parts.push(`-- ${a.initialMessage}`);
 
-      await api.sendCommand(ensemble, parts.join(' '), 'tui');
+      await api.sendCommand(activeEns, parts.join(' '), 'tui');
       dispatch({ type: 'RECRUIT_DONE' });
       dispatch({
         type: 'COMMIT_STATIC',
@@ -620,8 +609,8 @@ export function App({ api, ensemble }: AppProps) {
   const handleScheduleConfirm = useCallback(async () => {
     if (!state.scheduleWizard) return;
 
-    const ensemble = state.activeEnsemble;
-    if (!ensemble) {
+    const activeEns = state.activeEnsemble;
+    if (!activeEns) {
       dispatch({ type: 'SCHEDULE_DONE', error: 'No active ensemble.' });
       return;
     }
@@ -630,7 +619,6 @@ export function App({ api, ensemble }: AppProps) {
 
     const a = state.scheduleWizard.answers;
     try {
-      // Build schedule command for the conductor
       const parts = [`/schedule ${a.name} --to ${a.target}`];
       if (a.schedType === 'delay') parts.push(`--delay ${a.timing}`);
       else if (a.schedType === 'at') parts.push(`--at ${a.timing}`);
@@ -641,7 +629,7 @@ export function App({ api, ensemble }: AppProps) {
       }
       parts.push(a.message);
 
-      await api.sendCommand(ensemble, parts.join(' '), 'tui');
+      await api.sendCommand(activeEns, parts.join(' '), 'tui');
       dispatch({ type: 'SCHEDULE_DONE' });
       dispatch({
         type: 'COMMIT_STATIC',
@@ -663,6 +651,24 @@ export function App({ api, ensemble }: AppProps) {
   const handleScheduleDone = useCallback(() => {
     dispatch({ type: 'EXIT_SCHEDULE_WIZARD' });
   }, []);
+
+  // ── Render ──
+
+  // Splash phase: full-screen splash only
+  if (state.phase === 'splash' || state.phase === 'connecting') {
+    return React.createElement(Splash, {
+      status: state.splashStatus,
+      ensemble: state.activeEnsemble || 'all',
+      version: packageVersion,
+      checks: state.splashChecks,
+      connected: state.splashConnected,
+      summary: state.splashSummary,
+    });
+  }
+
+  // Divider — thin horizontal rule
+  const dividerWidth = Math.max(20, (process.stdout.columns || 80) - 4);
+  const dividerLine = '\u2500'.repeat(dividerWidth);
 
   // Live content area — route by phase
   function renderLiveContent() {
