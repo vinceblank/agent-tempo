@@ -133,9 +133,9 @@ async function handleCue(
 
     try {
       await api.sendMessage(ensemble, target, message, 'tui');
-      commitStatic(dispatch, 'message', `\u2192 ${target}: ${message}`);
+      commitStatic(dispatch, 'message', `\u2714 Delivered to ${target}: ${message}`);
     } catch (err) {
-      commitStatic(dispatch, 'error', `Failed to send cue to ${target}: ${err}`);
+      commitStatic(dispatch, 'error', `\u2717 Failed to deliver to ${target}: ${err}`);
     }
   }
 }
@@ -197,15 +197,15 @@ async function handleStop(
     for (const ens of ensembles) {
       try {
         await api.terminatePlayer(ens.name, target);
-        commitStatic(dispatch, 'info', `\u2717 Stopped player: ${target}`);
+        commitStatic(dispatch, 'info', `\u2714 Stopped player: ${target}`);
         return;
       } catch {
         // Try next ensemble
       }
     }
-    commitStatic(dispatch, 'error', `Player "${target}" not found in any ensemble.`);
+    commitStatic(dispatch, 'error', `\u2717 Player "${target}" not found in any ensemble.`);
   } catch (err) {
-    commitStatic(dispatch, 'error', `Failed to stop ${target}: ${err}`);
+    commitStatic(dispatch, 'error', `\u2717 Failed to stop ${target}: ${err}`);
   }
 }
 
@@ -237,9 +237,9 @@ async function handleBroadcast(
         }
       }
     }
-    commitStatic(dispatch, 'message', `\u21D2 Broadcast sent to ${sent} player${sent !== 1 ? 's' : ''}: ${message}`);
+    commitStatic(dispatch, 'message', `\u2714 Broadcast delivered to ${sent} player${sent !== 1 ? 's' : ''}: ${message}`);
   } catch (err) {
-    commitStatic(dispatch, 'error', `Broadcast failed: ${err}`);
+    commitStatic(dispatch, 'error', `\u2717 Broadcast failed: ${err}`);
   }
 }
 
@@ -527,6 +527,69 @@ async function handleWorktree(
   }
 }
 
+/** /ensembles — list all discovered ensembles. */
+async function handleEnsembles(
+  _args: string[],
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  try {
+    const ensembles = await api.discoverEnsembles();
+    if (ensembles.length === 0) {
+      commitStatic(dispatch, 'info', 'No ensembles running.');
+      return;
+    }
+
+    const icons = statusIcons(supportsUnicode());
+    const lines: string[] = [`\n  ${ensembles.length} ensemble${ensembles.length !== 1 ? 's' : ''} discovered:\n`];
+
+    for (const ens of ensembles) {
+      const active = ens.name === ctx.activeEnsemble ? ' \u25C0 active' : '';
+      const conductor = ens.hasConductor ? ` ${icons.conductor}` : '';
+      lines.push(`    ${ens.name.padEnd(20)} ${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''}${conductor}${active}`);
+    }
+
+    lines.push('');
+    lines.push('  Switch with: /ensemble <name>');
+
+    commitStatic(dispatch, 'command-output', lines.join('\n'));
+  } catch (err) {
+    commitStatic(dispatch, 'error', `Failed to discover ensembles: ${err}`);
+  }
+}
+
+/** /ensemble <name> — switch active ensemble context. */
+async function handleEnsemble(
+  args: string[],
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+): Promise<void> {
+  if (args.length === 0) {
+    commitStatic(dispatch, 'error', 'Usage: /ensemble <name>');
+    return;
+  }
+
+  const name = args[0];
+
+  try {
+    const ensembles = await api.discoverEnsembles();
+    const match = ensembles.find(e => e.name === name);
+
+    if (!match) {
+      const available = ensembles.map(e => e.name).join(', ') || 'none';
+      commitStatic(dispatch, 'error', `Ensemble "${name}" not found. Available: ${available}`);
+      return;
+    }
+
+    // Switch ensemble — clears old data, polling will refresh
+    dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: name });
+    commitStatic(dispatch, 'info', `\u2714 Switched to ensemble: ${name} (${match.playerCount} player${match.playerCount !== 1 ? 's' : ''})`);
+  } catch (err) {
+    commitStatic(dispatch, 'error', `Failed to switch ensemble: ${err}`);
+  }
+}
+
 // ── Utility ──
 
 function formatTimestamp(ts: string): string {
@@ -601,6 +664,16 @@ export const COMMANDS: Record<string, CommandDef> = {
     description: 'Manage git worktrees for player isolation',
     usage: '/worktree [list]',
     handler: handleWorktree,
+  },
+  ensembles: {
+    description: 'List all discovered ensembles',
+    usage: '/ensembles',
+    handler: handleEnsembles,
+  },
+  ensemble: {
+    description: 'Switch active ensemble context',
+    usage: '/ensemble <name>',
+    handler: handleEnsemble,
   },
   help: {
     description: 'Show available commands',

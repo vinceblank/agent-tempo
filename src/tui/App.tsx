@@ -172,14 +172,21 @@ export function App({ api, ensemble }: AppProps) {
       }
     } else if (state.chatTarget) {
       // Bare text in chat mode → send cue to target
+      if (!state.activeEnsemble) {
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: { id: nextStaticId(), type: 'error', content: 'No active ensemble. Use /ensemble <name> first.', timestamp: Date.now() },
+        });
+        return;
+      }
       try {
-        await api.sendMessage(state.activeEnsemble!, state.chatTarget, trimmed, 'tui');
+        await api.sendMessage(state.activeEnsemble, state.chatTarget, trimmed, 'tui');
         dispatch({
           type: 'COMMIT_STATIC',
           item: {
             id: nextStaticId(),
             type: 'message',
-            content: `\u2192 ${state.chatTarget}: ${trimmed}`,
+            content: `\u2714 ${state.chatTarget}: ${trimmed}`,
             timestamp: Date.now(),
           },
         });
@@ -189,7 +196,7 @@ export function App({ api, ensemble }: AppProps) {
           item: {
             id: nextStaticId(),
             type: 'error',
-            content: `Failed to send: ${err}`,
+            content: `\u2717 Failed to deliver: ${err}`,
             timestamp: Date.now(),
           },
         });
@@ -282,8 +289,31 @@ export function App({ api, ensemble }: AppProps) {
           if (cancelled) return;
           dispatch({ type: 'REFRESH_ENSEMBLES', ensembles });
           if (ensembles.length > 0) {
-            ensembleName = ensembles.length === 1 ? ensembles[0].name : `${ensembles.length} ensembles`;
             playerCount = ensembles.reduce((sum, e) => sum + e.playerCount, 0);
+
+            // Auto-select: if exactly 1 ensemble, switch to it; if multiple, pick the first
+            const autoSelect = ensembles[0].name;
+            dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: autoSelect });
+            ensembleName = autoSelect;
+
+            // Load data for the auto-selected ensemble
+            try {
+              const [players, messages, history, schedules] = await Promise.all([
+                api.getPlayers(autoSelect),
+                api.getMessages(autoSelect, 50),
+                api.getConductorHistory(autoSelect),
+                api.getSchedules(autoSelect),
+              ]);
+              if (cancelled) return;
+              dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
+              playerCount = players.length;
+              conductorName = players.find(p => p.isConductor)?.playerId;
+              scheduleCount = schedules.length;
+            } catch {
+              // Non-fatal
+            }
+          } else {
+            ensembleName = 'no ensembles';
           }
         } catch {
           // Non-fatal
