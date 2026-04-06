@@ -871,8 +871,13 @@ export const COMMANDS: Record<string, CommandDef> = {
     usage: '/help [command]',
     handler: null, // Handled directly in App.tsx
   },
+  dashboard: {
+    description: 'Show player/schedule dashboard',
+    usage: '/dashboard',
+    handler: null, // Handled directly in App.tsx
+  },
   back: {
-    description: 'Go back to the previous view',
+    description: 'Return to conductor chat',
     usage: '/back',
     handler: null, // Handled directly in App.tsx
   },

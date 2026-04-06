@@ -19,6 +19,7 @@ export interface ChatViewProps {
   targetPart?: string;
   targetBranch?: string;
   targetStatus?: string;
+  isConductor?: boolean;
   receivedCount: number;
   sentCount: number;
   messages: ChatMessage[];
@@ -39,16 +40,20 @@ export function ChatView({
   targetPart,
   targetBranch,
   targetStatus,
+  isConductor,
   receivedCount,
   sentCount,
   messages,
 }: ChatViewProps) {
   const { Box, Text } = useInk();
 
+  const icon = isConductor ? '\u2605 ' : '';
+  const label = isConductor ? 'Conductor' : 'Conversation with';
+
   // ── Header info ──
   const header = React.createElement(Box, { flexDirection: 'column', paddingX: 1, marginBottom: 0 },
     React.createElement(Text, { bold: true, color: THEME.accent },
-      `  Conversation with ${targetPlayer}`,
+      `  ${icon}${label} ${targetPlayer}`,
     ),
     targetPart
       ? React.createElement(Text, { color: THEME.dim }, `  Part: ${targetPart}`)

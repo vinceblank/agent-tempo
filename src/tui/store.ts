@@ -169,8 +169,10 @@ export interface TuiState {
   staticItems: StaticItem[];
   /** Current prompt input value. */
   inputValue: string;
-  /** Player name when in chat mode (bare text sends cue to this target). */
+  /** Player name when in chat mode (bare text sends message to this target). */
   chatTarget?: string;
+  /** Name of the conductor in the active ensemble. */
+  conductorName?: string;
   /** ID of the last message seen (for detecting new arrivals in polling). */
   lastSeenMessageId?: string;
   /** Scroll offset from the bottom of staticItems (0 = at bottom/live). */
@@ -251,6 +253,7 @@ export type TuiAction =
   // Chat shell actions
   | { type: 'COMMIT_STATIC'; item: StaticItem }
   | { type: 'SET_INPUT'; value: string }
+  | { type: 'SET_CONDUCTOR'; name?: string }
   | { type: 'ENTER_CHAT'; target: string }
   | { type: 'EXIT_CHAT' }
   // Command palette
@@ -478,6 +481,9 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'PALETTE_SET_INDEX':
       return { ...state, paletteIndex: action.index };
+
+    case 'SET_CONDUCTOR':
+      return { ...state, conductorName: action.name };
 
     case 'ENTER_CHAT':
       return { ...state, phase: 'chat' as TuiPhase, chatTarget: action.target };

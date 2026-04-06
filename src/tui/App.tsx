@@ -173,9 +173,11 @@ export function App({ api, ensemble }: AppProps) {
     if (state.phase === 'splash') return 'Starting up...';
     if (state.phase === 'error') return 'Error';
     if (state.chatTarget) {
+      const isConductor = state.chatTarget === state.conductorName;
       const player = state.players.find(p => p.playerId === state.chatTarget);
       const status = player?.status || 'unknown';
-      return `cue \u2192 ${state.chatTarget} \u00b7 ${status}`;
+      const icon = isConductor ? '\u2605' : '\u2022';
+      return `${icon} ${state.chatTarget} \u00b7 ${status}${state.activeEnsemble ? ` \u00b7 ${state.activeEnsemble}` : ''}`;
     }
     if (state.activeEnsemble) {
       const count = state.players.length;
@@ -197,7 +199,10 @@ export function App({ api, ensemble }: AppProps) {
       return 'Follow the prompts above. Esc to cancel.';
     }
     if (state.chatTarget) {
-      return 'Type a message to send, or /back to exit chat mode';
+      const isConductor = state.chatTarget === state.conductorName;
+      return isConductor
+        ? 'Type a message for the conductor. /players to switch, /dashboard for overview'
+        : `Chatting with ${state.chatTarget}. /back to return to conductor`;
     }
     return '/cue /recruit /stop /broadcast /help /quit';
   }, [state.phase, state.chatTarget, state.confirmingStop]);
@@ -266,8 +271,17 @@ export function App({ api, ensemble }: AppProps) {
         exit();
         return;
       }
+      if (parsed.name === 'dashboard' || parsed.name === 'status') {
+        // Show dashboard view (exit chat mode temporarily)
+        dispatch({ type: 'EXIT_CHAT' });
+        dispatch({ type: 'SET_PHASE', phase: 'main' });
+        return;
+      }
       if (parsed.name === 'back') {
-        if (state.chatTarget) {
+        // Return to conductor chat (or exit to main if no conductor)
+        if (state.chatTarget && state.chatTarget !== state.conductorName && state.conductorName) {
+          dispatch({ type: 'ENTER_CHAT', target: state.conductorName });
+        } else if (state.chatTarget) {
           dispatch({ type: 'EXIT_CHAT' });
         } else if (state.activeEnsemble) {
           dispatch({ type: 'NAVIGATE_HOME' });
@@ -331,7 +345,7 @@ export function App({ api, ensemble }: AppProps) {
         });
       }
     } else if (state.chatTarget) {
-      // Bare text in chat mode → send cue to target
+      // Bare text in chat mode → send to target
       if (!state.activeEnsemble) {
         dispatch({
           type: 'COMMIT_STATIC',
@@ -339,14 +353,21 @@ export function App({ api, ensemble }: AppProps) {
         });
         return;
       }
+      const isConductorTarget = state.chatTarget === state.conductorName;
       try {
-        await api.sendMessage(state.activeEnsemble, state.chatTarget, trimmed, 'tui');
+        if (isConductorTarget) {
+          // Send as command to conductor (routes through Maestro)
+          await api.sendCommand(state.activeEnsemble, trimmed, 'tui');
+        } else {
+          // Send as direct message to player
+          await api.sendMessage(state.activeEnsemble, state.chatTarget, trimmed, 'tui');
+        }
         dispatch({
           type: 'COMMIT_STATIC',
           item: {
             id: nextStaticId(),
             type: 'message',
-            content: `\u2714 ${state.chatTarget}: ${trimmed}`,
+            content: `\u2714 ${isConductorTarget ? '\u2605' : ''} ${state.chatTarget}: ${trimmed}`,
             timestamp: Date.now(),
           },
         });
@@ -438,6 +459,7 @@ export function App({ api, ensemble }: AppProps) {
           dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
           playerCount = players.length;
           conductorName = players.find(p => p.isConductor)?.playerId;
+          if (conductorName) dispatch({ type: 'SET_CONDUCTOR', name: conductorName });
           scheduleCount = schedules.length;
           ensembleName = state.activeEnsemble;
         } catch {
@@ -468,6 +490,7 @@ export function App({ api, ensemble }: AppProps) {
               dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
               playerCount = players.length;
               conductorName = players.find(p => p.isConductor)?.playerId;
+              if (conductorName) dispatch({ type: 'SET_CONDUCTOR', name: conductorName });
               scheduleCount = schedules.length;
             } catch {
               // Non-fatal
@@ -588,8 +611,14 @@ export function App({ api, ensemble }: AppProps) {
         timestamp: Date.now(),
       },
     });
-    dispatch({ type: 'SET_PHASE', phase: 'main' });
-  }, [state.activeEnsemble, state.players.length]);
+    // Default to conductor chat if available, otherwise main view
+    const conductor = state.conductorName;
+    if (conductor) {
+      dispatch({ type: 'ENTER_CHAT', target: conductor });
+    } else {
+      dispatch({ type: 'SET_PHASE', phase: 'main' });
+    }
+  }, [state.activeEnsemble, state.players.length, state.conductorName]);
 
   // ── Recruit wizard callbacks (must be before early return — Rules of Hooks) ──
   const handleRecruitAnswer = useCallback((answer: any) => {
@@ -760,7 +789,7 @@ export function App({ api, ensemble }: AppProps) {
       });
     }
 
-    if (state.phase === 'chat' && state.chatTarget) {
+    if (state.chatTarget) {
       // Build chat messages from relay messages filtered to this conversation
       const chatMessages: ChatMessage[] = state.messages
         .filter(m => m.from === state.chatTarget || m.to === state.chatTarget)
@@ -779,6 +808,7 @@ export function App({ api, ensemble }: AppProps) {
         targetPart: targetPlayer?.part,
         targetBranch: targetPlayer?.gitBranch,
         targetStatus: targetPlayer?.status,
+        isConductor: state.chatTarget === state.conductorName,
         receivedCount: received,
         sentCount: sent,
         messages: chatMessages,
