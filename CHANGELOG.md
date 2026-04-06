@@ -5,11 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [0.19.0] - 2026-04-06
+## [0.19.0-beta.0] - 2026-04-06
 
 ### Added
 
+- **Global Maestro** — single `claudeGlobalMaestroWorkflow` (ID: `claude-maestro-global`) spanning all ensembles. Full inbox/outbox relay for third-party dashboards: 4 poll queries, 3 on-demand updates, 1 command relay. Daemon auto-starts it on boot. (#61)
 - **Worker Daemon** — standalone background process (`src/daemon.ts`) running Temporal workers. Sessions are now pure MCP clients. Auto-starts on first use; PID at `~/.claude-tempo/daemon.pid`, logs at `~/.claude-tempo/daemon.log`. Managed via `claude-tempo daemon start|stop|status|logs`. (#57)
+- Beta release workflow — prerelease tags publish to npm `beta` dist-tag.
 
 ### Changed
 
