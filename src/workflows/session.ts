@@ -48,6 +48,10 @@ import {
   setWorktreeSignal,
   removeWorktreeSignal,
   worktreesQuery,
+  setStageSignal,
+  cancelStageSignal,
+  stagesQuery,
+  StageEntry,
 } from './signals';
 
 // ── Outbox Activity Proxies ──
@@ -80,6 +84,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   patched('v0.13-quality-gates');
   patched('v0.14-worktrees');
   patched('v0.15-blocked-detection');
+  patched('v0.18-stages');
 
   // Ensure search attributes are always current — critical when reconnecting
   // via WorkflowIdConflictPolicy.USE_EXISTING, which skips the attributes
@@ -241,6 +246,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   const reportHistory: PlayerReport[] = input.reportHistory ?? [];
   const qualityGates: QualityGate[] = input.qualityGates ?? [];
   const worktrees: WorktreeEntry[] = input.worktrees ?? [];
+  const stages: StageEntry[] = input.stages ?? [];
 
   // ── Conductor-specific Handlers ──
 
@@ -277,6 +283,75 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         timestamp: new Date().toISOString(),
         delivered: false,
       });
+
+      // ── Stage tracking: update player status in any active stage ──
+      for (const stage of stages) {
+        if (stage.status !== 'active') continue;
+
+        const playerEntry = stage.players.find((p) => p.playerId === report.playerId);
+        if (!playerEntry || playerEntry.status !== 'waiting') continue;
+
+        const now = new Date().toISOString();
+
+        if (report.type === 'result') {
+          playerEntry.status = 'reported';
+          playerEntry.reportType = 'result';
+          playerEntry.reportText = report.text;
+          playerEntry.reportedAt = now;
+        } else if (report.type === 'blocker') {
+          playerEntry.status = 'blocked';
+          playerEntry.reportType = 'blocker';
+          playerEntry.reportText = report.text;
+          playerEntry.reportedAt = now;
+
+          // Halt policy: fail stage immediately on any blocker
+          if (stage.failurePolicy === 'halt') {
+            stage.status = 'failed';
+            stage.completedAt = now;
+            messages.push({
+              id: uuid4(),
+              from: '_stage',
+              text: `[stage failed] "${stage.name}" halted — ${report.playerId} reported blocker: ${report.text}`,
+              timestamp: now,
+              delivered: false,
+            });
+            continue; // Don't check completion for a failed stage
+          }
+        } else {
+          // 'question' — no stage effect, player is still working
+          continue;
+        }
+
+        // Check if all players in the stage are done (reported or blocked)
+        const allDone = stage.players.every((p) => p.status !== 'waiting');
+        if (allDone) {
+          const blocked = stage.players.filter((p) => p.status === 'blocked');
+          if (blocked.length > 0) {
+            // Some players blocked (continue policy — didn't halt above)
+            stage.status = 'failed';
+            stage.completedAt = now;
+            const blockerNames = blocked.map((p) => p.playerId).join(', ');
+            messages.push({
+              id: uuid4(),
+              from: '_stage',
+              text: `[stage failed] "${stage.name}" completed with ${blocked.length} blocker(s): ${blockerNames}`,
+              timestamp: now,
+              delivered: false,
+            });
+          } else {
+            // All players reported successfully
+            stage.status = 'complete';
+            stage.completedAt = now;
+            messages.push({
+              id: uuid4(),
+              from: '_stage',
+              text: `[stage complete] "${stage.name}" — all ${stage.players.length} players reported successfully.`,
+              timestamp: now,
+              delivered: false,
+            });
+          }
+        }
+      }
     });
 
     setHandler(historyQuery, (): HistoryEntry[] => {
@@ -357,6 +432,46 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     });
 
     setHandler(worktreesQuery, () => worktrees);
+
+    // ── Stage Handlers ──
+
+    setHandler(setStageSignal, ({ name, players, failurePolicy, createdBy }) => {
+      const entry: StageEntry = {
+        name,
+        players: players.map((playerId) => ({
+          playerId,
+          status: 'waiting' as const,
+        })),
+        status: 'active',
+        failurePolicy: failurePolicy || 'halt',
+        createdAt: new Date().toISOString(),
+        createdBy,
+      };
+      const existing = stages.findIndex((s) => s.name === name);
+      if (existing >= 0) {
+        stages[existing] = entry;
+      } else {
+        stages.push(entry);
+      }
+    });
+
+    setHandler(cancelStageSignal, (name: string) => {
+      const stage = stages.find((s) => s.name === name);
+      if (stage && stage.status === 'active') {
+        stage.status = 'cancelled';
+        stage.completedAt = new Date().toISOString();
+        // Notify conductor
+        messages.push({
+          id: uuid4(),
+          from: '_stage',
+          text: `[stage cancelled] "${name}" was cancelled.`,
+          timestamp: new Date().toISOString(),
+          delivered: false,
+        });
+      }
+    });
+
+    setHandler(stagesQuery, () => stages);
   }
 
   // ── Main Loop ──
@@ -536,7 +651,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         messages: messages.filter((m) => !m.delivered),
         sentMessages: sentMessages.slice(-50),
         outbox: outbox.filter((e) => e.status === 'pending' || e.status === 'processing'),
-        ...(input.metadata.isConductor ? { commandHistory, reportHistory, qualityGates, worktrees } : {}),
+        ...(input.metadata.isConductor ? { commandHistory, reportHistory, qualityGates, worktrees, stages } : {}),
       });
     }
   }
