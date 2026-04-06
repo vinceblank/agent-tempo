@@ -23,6 +23,7 @@ import { TitleBar } from './components/TitleBar';
 import { PromptArea } from './components/PromptArea';
 import { StatusBar } from './components/StatusBar';
 import { ScheduleWizard } from './components/ScheduleWizard';
+import { CommandPalette } from './components/CommandPalette';
 import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames } from './commands';
 import { THEME } from './utils/theme';
 import { loadHistory, saveHistory } from './utils/history';
@@ -202,12 +203,54 @@ export function App({ api, ensemble }: AppProps) {
     [state.players],
   );
 
+  // ── Command palette ──
+  const allPaletteCommands = useMemo(() =>
+    getCommandNames().map(name => ({
+      name,
+      usage: COMMANDS[name].usage,
+      description: COMMANDS[name].description,
+    })),
+  []);
+
+  const filteredPaletteCommands = useMemo(() => {
+    if (!state.paletteVisible) return [];
+    const filter = state.inputValue.trimStart().slice(1).toLowerCase(); // strip leading /
+    if (!filter) return allPaletteCommands;
+    return allPaletteCommands.filter(c => c.name.startsWith(filter));
+  }, [state.paletteVisible, state.inputValue, allPaletteCommands]);
+
+  // Clamp palette index
+  const clampedPaletteIndex = Math.min(state.paletteIndex, Math.max(0, filteredPaletteCommands.length - 1));
+
+  const handlePaletteToggle = useCallback((visible: boolean) => {
+    dispatch(visible ? { type: 'SHOW_PALETTE' } : { type: 'HIDE_PALETTE' });
+  }, []);
+
+  const handlePaletteUp = useCallback(() => {
+    dispatch({ type: 'PALETTE_UP' });
+  }, []);
+
+  const handlePaletteDown = useCallback(() => {
+    if (state.paletteIndex < filteredPaletteCommands.length - 1) {
+      dispatch({ type: 'PALETTE_DOWN' });
+    }
+  }, [state.paletteIndex, filteredPaletteCommands.length]);
+
+  const handlePaletteSelect = useCallback(() => {
+    if (filteredPaletteCommands.length > 0) {
+      const selected = filteredPaletteCommands[clampedPaletteIndex];
+      dispatch({ type: 'SET_INPUT', value: `/${selected.name} ` });
+      dispatch({ type: 'HIDE_PALETTE' });
+    }
+  }, [filteredPaletteCommands, clampedPaletteIndex]);
+
   // ── Command submission handler ──
   const handleSubmit = useCallback(async (input: string) => {
     const trimmed = input.trim();
     if (!trimmed) return;
 
     dispatch({ type: 'SET_INPUT', value: '' });
+    if (state.paletteVisible) dispatch({ type: 'HIDE_PALETTE' });
 
     const parsed = parseCommand(trimmed);
 
@@ -830,6 +873,13 @@ export function App({ api, ensemble }: AppProps) {
     React.createElement(Box, { key: 'divider-bottom', paddingX: 1 },
       React.createElement(Text, { color: THEME.border }, dividerLine),
     ),
+    // Command palette (above prompt when visible)
+    state.paletteVisible && filteredPaletteCommands.length >= 0
+      ? React.createElement(CommandPalette, {
+          commands: filteredPaletteCommands,
+          selectedIndex: clampedPaletteIndex,
+        })
+      : null,
     // Prompt area
     React.createElement(PromptArea, {
       hints: promptHints,
@@ -841,6 +891,11 @@ export function App({ api, ensemble }: AppProps) {
       playerNames: playerNamesList,
       initialHistory: cmdHistory,
       onHistoryUpdate: handleHistoryUpdate,
+      paletteVisible: state.paletteVisible,
+      onPaletteToggle: handlePaletteToggle,
+      onPaletteUp: handlePaletteUp,
+      onPaletteDown: handlePaletteDown,
+      onPaletteSelect: handlePaletteSelect,
     }),
   );
 }

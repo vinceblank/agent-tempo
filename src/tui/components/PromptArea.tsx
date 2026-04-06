@@ -32,6 +32,16 @@ export interface PromptAreaProps {
   initialHistory?: string[];
   /** Called when history is updated (for persistence). */
   onHistoryUpdate?: (entries: string[]) => void;
+  /** Whether the command palette is visible. */
+  paletteVisible?: boolean;
+  /** Called when palette should show/hide. */
+  onPaletteToggle?: (visible: boolean) => void;
+  /** Called to navigate palette up. */
+  onPaletteUp?: () => void;
+  /** Called to navigate palette down. */
+  onPaletteDown?: () => void;
+  /** Called when palette item is selected. */
+  onPaletteSelect?: () => void;
 }
 
 export function PromptArea({
@@ -44,6 +54,11 @@ export function PromptArea({
   playerNames = [],
   initialHistory = [],
   onHistoryUpdate,
+  paletteVisible,
+  onPaletteToggle,
+  onPaletteUp,
+  onPaletteDown,
+  onPaletteSelect,
 }: PromptAreaProps) {
   const { Box, Text, useInput } = useInk();
 
@@ -64,7 +79,13 @@ export function PromptArea({
     setCompletionHint('');
     setTabMatches([]);
     setTabCycleIndex(0);
-  }, [onChange]);
+    // Show/hide command palette based on "/" prefix
+    if (onPaletteToggle) {
+      const trimmed = newValue.trimStart();
+      const shouldShow = trimmed.startsWith('/') && !trimmed.includes(' ');
+      onPaletteToggle(shouldShow);
+    }
+  }, [onChange, onPaletteToggle]);
 
   // Compute completions for the current input
   const getCompletions = useCallback((input: string): string[] => {
@@ -103,6 +124,15 @@ export function PromptArea({
   useInput(useCallback((input: string, key: any) => {
     if (disabled) return;
 
+    // ── Command palette mode ──
+    if (paletteVisible) {
+      if (key.upArrow) { onPaletteUp?.(); return; }
+      if (key.downArrow) { onPaletteDown?.(); return; }
+      if (key.return || key.tab) { onPaletteSelect?.(); return; }
+      if (key.escape) { onPaletteToggle?.(false); return; }
+      // Fall through to normal input handling for typing
+    }
+
     // Tab: complete
     if (key.tab) {
       const matches = tabMatches.length > 0 ? tabMatches : getCompletions(value);
@@ -133,8 +163,8 @@ export function PromptArea({
       return;
     }
 
-    // Up arrow: previous history
-    if (key.upArrow) {
+    // Up arrow: previous history (only when palette not visible)
+    if (key.upArrow && !paletteVisible) {
       if (history.length === 0) return;
       if (historyIndex === -1) {
         // Start browsing — save current input
@@ -148,8 +178,8 @@ export function PromptArea({
       return;
     }
 
-    // Down arrow: next history (or back to current input)
-    if (key.downArrow) {
+    // Down arrow: next history (only when palette not visible)
+    if (key.downArrow && !paletteVisible) {
       if (historyIndex <= 0) {
         setHistoryIndex(-1);
         onChange(savedInput.current);
@@ -195,7 +225,7 @@ export function PromptArea({
     if (input && !key.ctrl && !key.meta) {
       handleChange(value + input);
     }
-  }, [disabled, value, onChange, onSubmit, history, historyIndex, getCompletions, tabMatches, tabCycleIndex, handleChange]));
+  }, [disabled, value, onChange, onSubmit, history, historyIndex, getCompletions, tabMatches, tabCycleIndex, handleChange, paletteVisible, onPaletteUp, onPaletteDown, onPaletteSelect, onPaletteToggle]));
 
   // ── Render ──
 

@@ -185,6 +185,9 @@ export interface TuiState {
   recruitState?: RecruitState;
   /** Schedule creation wizard state (active when phase === 'schedule-create'). */
   scheduleWizard?: ScheduleWizardState;
+  /** Command palette state. */
+  paletteVisible: boolean;
+  paletteIndex: number;
 }
 
 export function initialState(ensemble?: string): TuiState {
@@ -218,6 +221,8 @@ export function initialState(ensemble?: string): TuiState {
     chatTarget: undefined,
     scrollOffset: 0,
     hasNewBelow: false,
+    paletteVisible: false,
+    paletteIndex: 0,
     confirmingStop: undefined,
     scheduleWizard: undefined,
   };
@@ -248,6 +253,12 @@ export type TuiAction =
   | { type: 'SET_INPUT'; value: string }
   | { type: 'ENTER_CHAT'; target: string }
   | { type: 'EXIT_CHAT' }
+  // Command palette
+  | { type: 'SHOW_PALETTE' }
+  | { type: 'HIDE_PALETTE' }
+  | { type: 'PALETTE_UP' }
+  | { type: 'PALETTE_DOWN' }
+  | { type: 'PALETTE_SET_INDEX'; index: number }
   // Scrollback
   | { type: 'SCROLL_UP'; lines?: number }
   | { type: 'SCROLL_DOWN'; lines?: number }
@@ -450,6 +461,23 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'SET_INPUT':
       return { ...state, inputValue: action.value };
+
+    // ── Command palette ──
+
+    case 'SHOW_PALETTE':
+      return { ...state, paletteVisible: true, paletteIndex: 0 };
+
+    case 'HIDE_PALETTE':
+      return { ...state, paletteVisible: false, paletteIndex: 0 };
+
+    case 'PALETTE_UP':
+      return { ...state, paletteIndex: Math.max(0, state.paletteIndex - 1) };
+
+    case 'PALETTE_DOWN':
+      return { ...state, paletteIndex: state.paletteIndex + 1 }; // Clamped in component
+
+    case 'PALETTE_SET_INDEX':
+      return { ...state, paletteIndex: action.index };
 
     case 'ENTER_CHAT':
       return { ...state, phase: 'chat' as TuiPhase, chatTarget: action.target };
