@@ -72,10 +72,144 @@ export function statusIcons(unicode = supportsUnicode()) {
   };
 }
 
-/** Metronome animation frames. */
+/** Metronome animation frames (single-character). */
 export function metronomeFrames(unicode = supportsUnicode()): string[] {
   if (unicode) {
     return ['\u2572', '|', '\u2571', '|']; // ╲ | ╱ |
   }
   return ['\\', '|', '/', '|'];
+}
+
+/**
+ * Multi-line metronome ASCII art — 3 frames (left, center, right).
+ * Each frame is an array of lines, ~11 lines tall.
+ *
+ * Color guide for consumers:
+ * - Body lines (base, sides): cyan
+ * - Pendulum arm + pivot (o): #E07A5F (terracotta)
+ */
+export function metronomeArt(unicode = supportsUnicode()): string[][] {
+  if (unicode) {
+    return [
+      // Frame 0: pendulum left
+      [
+        '       o       ',
+        '      ╱        ',
+        '     ╱         ',
+        '    ╱          ',
+        '   ╱           ',
+        '  ╱            ',
+        '  ┌───────────┐',
+        '  │           │',
+        '  │           │',
+        '  │           │',
+        '  └───────────┘',
+      ],
+      // Frame 1: pendulum center
+      [
+        '       o       ',
+        '       │       ',
+        '       │       ',
+        '       │       ',
+        '       │       ',
+        '       │       ',
+        '  ┌───────────┐',
+        '  │           │',
+        '  │           │',
+        '  │           │',
+        '  └───────────┘',
+      ],
+      // Frame 2: pendulum right
+      [
+        '       o       ',
+        '        ╲      ',
+        '         ╲     ',
+        '          ╲    ',
+        '           ╲   ',
+        '            ╲  ',
+        '  ┌───────────┐',
+        '  │           │',
+        '  │           │',
+        '  │           │',
+        '  └───────────┘',
+      ],
+    ];
+  }
+
+  // ASCII fallback
+  return [
+    // Frame 0: pendulum left
+    [
+      '       o       ',
+      '      /        ',
+      '     /         ',
+      '    /          ',
+      '   /           ',
+      '  /            ',
+      '  +-----------+',
+      '  |           |',
+      '  |           |',
+      '  |           |',
+      '  +-----------+',
+    ],
+    // Frame 1: pendulum center
+    [
+      '       o       ',
+      '       |       ',
+      '       |       ',
+      '       |       ',
+      '       |       ',
+      '       |       ',
+      '  +-----------+',
+      '  |           |',
+      '  |           |',
+      '  |           |',
+      '  +-----------+',
+    ],
+    // Frame 2: pendulum right
+    [
+      '       o       ',
+      '        \\      ',
+      '         \\     ',
+      '          \\    ',
+      '           \\   ',
+      '            \\  ',
+      '  +-----------+',
+      '  |           |',
+      '  |           |',
+      '  |           |',
+      '  +-----------+',
+    ],
+  ];
+}
+
+/**
+ * Block-letter "claude-tempo" title art (figlet "small" style).
+ * 5 lines tall, ~62 characters wide.
+ *
+ * Color guide for consumers: cyan bold
+ */
+export function titleArt(unicode = supportsUnicode()): string[] {
+  if (unicode) {
+    return [
+      ' ┌─┐┬  ┌─┐┬ ┬┌┬┐┌─┐  ─┬─┌─┐┌┬┐┌─┐┌─┐',
+      ' │  │  ├─┤│ │ ││├┤    │ ├┤ │││├─┘│ │',
+      ' └─┘┴─┘┴ ┴└─┘─┴┘└─┘   ┴ └─┘┴ ┴┴  └─┘',
+    ];
+  }
+
+  return [
+    ' __  _    __   _  _  ___  ___    ___ ___  __  __ ___  ___',
+    '/ _|| |  / _| | || ||   \\| __|  |_ _| __|/  \\/  | _ \\/ _ \\',
+    '| (_|| |_| (_| | || || |) | _|    | || _|| |\\/| |  _/ (_) |',
+    ' \\__||___|\\__| \\_,_||___/|___|   |_||___|_|  |_|_|  \\___/',
+  ];
+}
+
+/** Minimum terminal width for the title art to display without wrapping. */
+const TITLE_ART_MIN_WIDTH = 70;
+
+/** Whether the title art fits in the given terminal width. */
+export function titleArtFits(columns: number): boolean {
+  return columns >= TITLE_ART_MIN_WIDTH;
 }

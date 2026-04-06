@@ -11,6 +11,7 @@ import { loadInk } from './ink-loader';
 import { InkProvider } from './ink-context';
 import { App } from './App';
 import { isTerminalLargeEnough, MIN_COLUMNS, MIN_ROWS } from './utils/platform';
+import { enterFullscreen, exitFullscreen, registerFullscreenCleanup } from './utils/fullscreen';
 
 export interface TuiOpts {
   config: Config;
@@ -41,16 +42,27 @@ export async function run(opts: TuiOpts): Promise<void> {
     process.exit(1);
   }
 
-  const client = new Client({ connection, namespace: opts.config.temporalNamespace });
-  const api = createTuiApi(client);
+  // Enter fullscreen (alternate screen buffer)
+  const isFullscreen = enterFullscreen();
+  if (isFullscreen) {
+    registerFullscreenCleanup();
+  }
 
-  // Render the TUI
-  const app = ink.render(
-    React.createElement(InkProvider, { ink, children: React.createElement(App, { api, ensemble: opts.ensemble }) }),
-  );
+  try {
+    const client = new Client({ connection, namespace: opts.config.temporalNamespace });
+    const api = createTuiApi(client);
 
-  await app.waitUntilExit();
+    // Render the TUI
+    const app = ink.render(
+      React.createElement(InkProvider, { ink, children: React.createElement(App, { api, ensemble: opts.ensemble }) }),
+    );
 
-  // Cleanup
-  await connection.close();
+    await app.waitUntilExit();
+  } finally {
+    if (isFullscreen) {
+      exitFullscreen();
+    }
+    // Cleanup
+    await connection.close();
+  }
 }
