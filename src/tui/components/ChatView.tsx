@@ -1,7 +1,7 @@
 /**
  * ChatView — conversation with a specific player.
- * Entered when user runs `/cue <player>`. Shows message thread.
- * Bare text (no `/`) sends as a cue to the target player.
+ * Renders as a SINGLE Text element (1 Yoga node) with newlines for rows.
+ * All nested Text = ink-virtual-text (0 Yoga nodes).
  */
 import React from 'react';
 import { useInk } from '../ink-context';
@@ -45,61 +45,77 @@ export function ChatView({
   sentCount,
   messages,
 }: ChatViewProps) {
-  const { Box, Text } = useInk();
+  const { Text } = useInk();
 
   const icon = isConductor ? '\u2605 ' : '';
   const label = isConductor ? 'Conductor' : 'Conversation with';
 
-  // ── Header info ──
-  const header = React.createElement(Box, { flexDirection: 'column', paddingX: 1, marginBottom: 0 },
-    React.createElement(Text, { bold: true, color: THEME.accent },
+  const children: React.ReactNode[] = [];
+
+  // ── Header ──
+  children.push(
+    React.createElement(Text, { key: 'h1', bold: true, color: THEME.accent },
       `  ${icon}${label} ${targetPlayer}`,
     ),
-    targetPart
-      ? React.createElement(Text, { color: THEME.dim }, `  Part: ${targetPart}`)
-      : null,
-    React.createElement(Text, { color: THEME.dim },
+  );
+  if (targetPart) {
+    children.push('\n');
+    children.push(React.createElement(Text, { key: 'h2', color: THEME.dim }, `  Part: ${targetPart}`));
+  }
+  children.push('\n');
+  children.push(
+    React.createElement(Text, { key: 'h3', color: THEME.dim },
       `  ${targetBranch ? `Branch: ${targetBranch} \u00B7 ` : ''}${receivedCount} received, ${sentCount} sent`,
     ),
-    React.createElement(Text, { color: THEME.border },
-      '  ' + '\u2500'.repeat(55),
-    ),
+  );
+  children.push('\n');
+  children.push(
+    React.createElement(Text, { key: 'h4', color: THEME.border }, '  ' + '\u2500'.repeat(55)),
   );
 
-  // ── Message thread ──
-  const messageElements = messages.map((msg, i) => {
-    const isSelf = msg.direction === 'sent';
-    const senderLabel = isSelf ? 'you (self)' : msg.from;
-    const senderColor = isSelf ? THEME.dim : THEME.accent;
-    const bodyColor = isSelf ? THEME.textMuted : THEME.text;
-    const time = formatTime(msg.timestamp);
-
-    // Wrap message body to reasonable width
-    const lines = msg.text.split('\n');
-
-    return React.createElement(Box, { key: `${msg.from}-${msg.timestamp}-${i}`, flexDirection: 'column', paddingX: 1 },
-      // Sender + timestamp on same line
-      React.createElement(Box, { justifyContent: 'space-between', width: '100%' },
-        React.createElement(Text, { color: senderColor }, `  ${senderLabel}`),
-        React.createElement(Text, { color: THEME.dim }, time),
-      ),
-      // Message body
-      ...lines.map((line, li) =>
-        React.createElement(Text, { key: li, color: bodyColor }, `  ${line}`),
-      ),
+  // ── Messages ──
+  if (messages.length === 0) {
+    children.push('\n');
+    children.push(
+      React.createElement(Text, { key: 'empty', color: THEME.dim }, '  No messages yet. Type to send a cue.'),
     );
-  });
+  } else {
+    // Limit to last 20 messages to keep React element count low (~100 vs 1000+)
+    const MAX_VISIBLE = 20;
+    const visibleMessages = messages.length > MAX_VISIBLE ? messages.slice(-MAX_VISIBLE) : messages;
+    if (messages.length > MAX_VISIBLE) {
+      children.push('\n');
+      children.push(
+        React.createElement(Text, { key: 'truncated', color: THEME.dim },
+          `  \u2191 ${messages.length - MAX_VISIBLE} earlier messages \u00B7 /recall for full history`,
+        ),
+      );
+    }
+    for (let i = 0; i < visibleMessages.length; i++) {
+      const msg = visibleMessages[i];
+      const isSelf = msg.direction === 'sent';
+      const senderLabel = isSelf ? 'you (self)' : msg.from;
+      const senderColor = isSelf ? THEME.dim : THEME.accent;
+      const bodyColor = isSelf ? THEME.textMuted : THEME.text;
+      const time = formatTime(msg.timestamp);
 
-  return React.createElement(Box, { flexDirection: 'column', height: '100%' },
-    header,
-    // Message area — pinned to bottom (newest messages at bottom)
-    React.createElement(Box, { flexDirection: 'column', flexGrow: 1, overflow: 'hidden', justifyContent: 'flex-end' },
-      ...messageElements,
-      messages.length === 0
-        ? React.createElement(Box, { paddingX: 1, marginTop: 1 },
-            React.createElement(Text, { color: THEME.dim }, '  No messages yet. Type to send a cue.'),
-          )
-        : null,
-    ),
-  );
+      children.push('\n');
+      // Sender + timestamp
+      children.push(
+        React.createElement(React.Fragment, { key: `s-${i}` },
+          React.createElement(Text, { color: senderColor }, `  ${senderLabel}`),
+          React.createElement(Text, { color: THEME.dim }, `  ${time}`),
+        ),
+      );
+      // Message body
+      const lines = msg.text.split('\n');
+      for (let li = 0; li < lines.length; li++) {
+        children.push('\n');
+        children.push(React.createElement(Text, { key: `b-${i}-${li}`, color: bodyColor }, `  ${lines[li]}`));
+      }
+    }
+  }
+
+  // Single Text element
+  return React.createElement(Text, null, ...children);
 }

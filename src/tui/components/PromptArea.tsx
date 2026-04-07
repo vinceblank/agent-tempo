@@ -1,13 +1,17 @@
 /**
  * PromptArea — pinned bottom input area with tab completion and command history.
  *
- * Uses useInput for raw key handling instead of ink-text-input, giving full
- * control over Tab (completion) and Up/Down arrows (history).
+ * UNCONTROLLED: Input value lives in local useState, NOT in parent state.
+ * This prevents parent re-renders on every keystroke, keeping Yoga node
+ * recalculation to this subtree only (~4 nodes).
  *
- * All mutable state accessed via refs to keep useInput callback stable
- * and avoid input lag from callback recreation on every keystroke.
+ * Parent communicates via:
+ * - inputRef.current.setValue(v) — to set input programmatically (palette select)
+ * - inputRef.current.getValue() — to read current value
+ * - onInputChange(v) — called on every keystroke (for palette filtering via ref, no dispatch)
+ * - onSubmit(v) — called on Enter
  */
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useImperativeHandle } from 'react';
 import { useInk } from '../ink-context';
 import { THEME } from '../utils/theme';
 
@@ -16,13 +20,14 @@ const MAX_HISTORY = 50;
 /** Commands that take a player name as their first argument. */
 const PLAYER_ARG_COMMANDS = new Set(['cue', 'stop', 'encore', 'recall']);
 
+export interface PromptAreaHandle {
+  setValue: (v: string) => void;
+  getValue: () => string;
+}
+
 export interface PromptAreaProps {
   /** Hint text displayed above the input. */
   hints: string;
-  /** Current input value (controlled). */
-  value: string;
-  /** Called when input text changes. */
-  onChange: (value: string) => void;
   /** Called when user presses Enter. */
   onSubmit: (value: string) => void;
   /** Disable input (e.g., during splash or recruit wizard). */
@@ -35,6 +40,8 @@ export interface PromptAreaProps {
   initialHistory?: string[];
   /** Called when history is updated (for persistence). */
   onHistoryUpdate?: (entries: string[]) => void;
+  /** Called on every input change (lightweight — caller should use ref, not dispatch). */
+  onInputChange?: (value: string) => void;
   /** Whether the command palette is visible. */
   paletteVisible?: boolean;
   /** Called when palette should show/hide. */
@@ -45,25 +52,43 @@ export interface PromptAreaProps {
   onPaletteDown?: () => void;
   /** Called when palette item is selected. */
   onPaletteSelect?: () => void;
+  /** Ref for parent to read/set input value. */
+  inputRef?: React.Ref<PromptAreaHandle>;
 }
 
 export const PromptArea = React.memo(function PromptArea({
   hints,
-  value,
-  onChange,
   onSubmit,
   disabled,
   commandNames = [],
   playerNames = [],
   initialHistory = [],
   onHistoryUpdate,
+  onInputChange,
   paletteVisible,
   onPaletteToggle,
   onPaletteUp,
   onPaletteDown,
   onPaletteSelect,
+  inputRef,
 }: PromptAreaProps) {
   const { Box, Text, useInput } = useInk();
+
+  // ── LOCAL input state (uncontrolled — no parent dispatch per keystroke) ──
+  const [value, setValueState] = useState('');
+  const valueRef = useRef('');
+
+  const setValue = useCallback((v: string) => {
+    valueRef.current = v;
+    ref.current.value = v; // Keep ref in sync between renders (prevents stale reads on rapid input)
+    setValueState(v);
+  }, []);
+
+  // ── Expose handle for parent ──
+  useImperativeHandle(inputRef, () => ({
+    setValue: (v: string) => setValue(v),
+    getValue: () => valueRef.current,
+  }), [setValue]);
 
   // ── Internal state ──
   const [history, setHistory] = useState<string[]>(() => [...initialHistory]);
@@ -75,31 +100,37 @@ export const PromptArea = React.memo(function PromptArea({
 
   // ── Ref for all values the useInput callback reads (stable callback pattern) ──
   const ref = useRef({
-    value, onChange, onSubmit, disabled, commandNames, playerNames,
+    value: '', onSubmit, disabled, commandNames, playerNames,
     history, historyIndex, tabMatches, tabCycleIndex,
     paletteVisible, onPaletteToggle, onPaletteUp, onPaletteDown, onPaletteSelect,
-    onHistoryUpdate,
+    onHistoryUpdate, onInputChange,
   });
   ref.current = {
-    value, onChange, onSubmit, disabled, commandNames, playerNames,
+    value: valueRef.current, onSubmit, disabled, commandNames, playerNames,
     history, historyIndex, tabMatches, tabCycleIndex,
     paletteVisible, onPaletteToggle, onPaletteUp, onPaletteDown, onPaletteSelect,
-    onHistoryUpdate,
+    onHistoryUpdate, onInputChange,
   };
 
   // ── Helpers (read from ref) ──
 
   const doChange = useCallback((newValue: string) => {
     const r = ref.current;
-    r.onChange(newValue);
-    setCompletionHint('');
-    setTabMatches([]);
-    setTabCycleIndex(0);
+    setValue(newValue);
+    r.onInputChange?.(newValue);
+    // Avoid new refs when already in default state — prevents unnecessary re-renders
+    setCompletionHint(prev => prev === '' ? prev : '');
+    setTabMatches(prev => prev.length === 0 ? prev : []);
+    setTabCycleIndex(prev => prev === 0 ? prev : 0);
+    // Only toggle palette when visibility actually changes — avoids parent dispatch on every keystroke
     if (r.onPaletteToggle) {
       const trimmed = newValue.trimStart();
-      r.onPaletteToggle(trimmed.startsWith('/') && !trimmed.includes(' '));
+      const shouldShow = trimmed.startsWith('/') && !trimmed.includes(' ');
+      if (shouldShow !== !!r.paletteVisible) {
+        r.onPaletteToggle(shouldShow);
+      }
     }
-  }, []);
+  }, [setValue]);
 
   const getCompletions = useCallback((input: string): string[] => {
     const r = ref.current;
@@ -160,14 +191,16 @@ export const PromptArea = React.memo(function PromptArea({
       const matches = r.tabMatches.length > 0 ? r.tabMatches : getCompletions(r.value);
       if (matches.length === 0) return;
       if (matches.length === 1) {
-        r.onChange(matches[0]);
+        setValue(matches[0]);
+        r.onInputChange?.(matches[0]);
         setCompletionHint('');
         setTabMatches([]);
         setTabCycleIndex(0);
       } else {
         const newMatches = r.tabMatches.length > 0 ? r.tabMatches : matches;
         const idx = r.tabMatches.length > 0 ? (r.tabCycleIndex + 1) % newMatches.length : 0;
-        r.onChange(newMatches[idx]);
+        setValue(newMatches[idx]);
+        r.onInputChange?.(newMatches[idx]);
         setTabMatches(newMatches);
         setTabCycleIndex(idx);
         const options = newMatches.map(m => m.trim().split(/\s+/).pop() || '');
@@ -182,7 +215,9 @@ export const PromptArea = React.memo(function PromptArea({
       if (r.historyIndex === -1) savedInput.current = r.value;
       const newIdx = Math.min(r.historyIndex + 1, r.history.length - 1);
       setHistoryIndex(newIdx);
-      r.onChange(r.history[r.history.length - 1 - newIdx]);
+      const histValue = r.history[r.history.length - 1 - newIdx];
+      setValue(histValue);
+      r.onInputChange?.(histValue);
       setCompletionHint('');
       setTabMatches([]);
       return;
@@ -192,12 +227,15 @@ export const PromptArea = React.memo(function PromptArea({
     if (key.downArrow && !r.paletteVisible) {
       if (r.historyIndex <= 0) {
         setHistoryIndex(-1);
-        r.onChange(savedInput.current);
+        setValue(savedInput.current);
+        r.onInputChange?.(savedInput.current);
         return;
       }
       const newIdx = r.historyIndex - 1;
       setHistoryIndex(newIdx);
-      r.onChange(r.history[r.history.length - 1 - newIdx]);
+      const histValue = r.history[r.history.length - 1 - newIdx];
+      setValue(histValue);
+      r.onInputChange?.(histValue);
       setCompletionHint('');
       setTabMatches([]);
       return;
@@ -216,6 +254,8 @@ export const PromptArea = React.memo(function PromptArea({
         savedInput.current = '';
         r.onSubmit(trimmed);
       }
+      setValue('');
+      r.onInputChange?.('');
       setCompletionHint('');
       setTabMatches([]);
       return;
@@ -231,21 +271,18 @@ export const PromptArea = React.memo(function PromptArea({
     if (input && !key.ctrl && !key.meta) {
       doChange(r.value + input);
     }
-  }, [doChange, getCompletions])); // Stable — reads ref.current
+  }, [doChange, getCompletions, setValue])); // Stable — reads ref.current
 
-  // ── Render ──
+  // ── Render (minimal nodes: 1 Box + 2-3 Text, nested Text = 0 Yoga nodes) ──
   const cursorChar = '\u2588'; // █
 
   return React.createElement(Box, { flexDirection: 'column', paddingX: 1 },
-    React.createElement(Box, null,
-      React.createElement(Text, { color: THEME.dim }, hints),
-    ),
+    React.createElement(Text, { color: THEME.dim }, hints),
     completionHint
-      ? React.createElement(Box, null,
-          React.createElement(Text, { color: THEME.muted }, `  ${completionHint}`),
-        )
+      ? React.createElement(Text, { color: THEME.muted }, `  ${completionHint}`)
       : null,
-    React.createElement(Box, null,
+    // Prompt line: nested <Text> inside <Text> creates ink-virtual-text (0 Yoga nodes)
+    React.createElement(Text, null,
       React.createElement(Text, { bold: true, color: THEME.accent }, '> '),
       disabled
         ? React.createElement(Text, { color: THEME.muted }, '...')

@@ -1,13 +1,12 @@
 /**
  * MainView — single-column ensemble dashboard.
- * Shows players, recent activity, and schedules.
- * Replaces HomeView in the chat-focused TUI redesign.
+ * Renders as a SINGLE Text element (1 Yoga node) with newlines for rows.
+ * All nested Text = ink-virtual-text (0 Yoga nodes).
  */
 import React from 'react';
 import { useInk } from '../ink-context';
 import { statusIcons, supportsUnicode } from '../utils/platform';
 import type { MaestroPlayerInfo, MaestroRelayMessage } from '../../types';
-
 import { THEME } from '../utils/theme';
 
 export interface ScheduleInfo {
@@ -23,7 +22,6 @@ export interface MainViewProps {
   schedules?: ScheduleInfo[];
 }
 
-/** Pad or truncate a string to exactly `len` chars. */
 /** Pad or truncate with ellipsis to exactly `len` chars. */
 function pad(s: string, len: number): string {
   if (s.length > len) return s.slice(0, len - 1) + '\u2026';
@@ -47,94 +45,97 @@ function truncate(text: string, max: number): string {
 }
 
 export function MainView({ ensemble, players, messages, schedules }: MainViewProps) {
-  const { Box, Text } = useInk();
+  const { Text } = useInk();
   const unicode = supportsUnicode();
   const icons = statusIcons(unicode);
 
+  const children: React.ReactNode[] = [];
+
   // ── Players section ──
-  const playerRows = players.map((p) => {
-    const icon = p.isConductor ? icons.conductor
-      : p.status === 'active' ? icons.active
-      : p.status === 'stale' ? icons.stale
-      : p.status === 'pending' ? icons.pending
-      : p.status === 'terminated' ? icons.terminated
-      : icons.blocked; // blocked or unknown
+  children.push('\n');
+  children.push(React.createElement(Text, { key: 'ph', bold: true, color: THEME.accent }, '  Players'));
+  children.push('\n');
 
-    const color = p.status === 'active' ? THEME.success
-      : p.status === 'stale' ? THEME.warning
-      : p.status === 'terminated' ? THEME.dim
-      : THEME.textMuted;
+  if (players.length === 0) {
+    children.push(React.createElement(Text, { key: 'np', color: THEME.dim }, '  No players'));
+  } else {
+    for (let i = 0; i < players.length; i++) {
+      const p = players[i];
+      const icon = p.isConductor ? icons.conductor
+        : p.status === 'active' ? icons.active
+        : p.status === 'stale' ? icons.stale
+        : p.status === 'pending' ? icons.pending
+        : p.status === 'terminated' ? icons.terminated
+        : icons.blocked;
 
-    const typeName = p.playerType || p.agentType || '';
-    const part = p.part || '';
+      const color = p.status === 'active' ? THEME.success
+        : p.status === 'stale' ? THEME.warning
+        : p.status === 'terminated' ? THEME.dim
+        : THEME.textMuted;
 
-    return React.createElement(Box, { key: p.playerId },
-      React.createElement(Text, { color },
-        `  ${icon} ${pad(p.playerId, 20)} ${pad(typeName, 22)} ${truncate(part, 35)}`,
+      const typeName = p.playerType || p.agentType || '';
+      const part = p.part || '';
+
+      if (i > 0) children.push('\n');
+      children.push(
+        React.createElement(Text, { key: p.playerId, color },
+          `  ${icon} ${pad(p.playerId, 20)} ${pad(typeName, 22)} ${truncate(part, 35)}`,
+        ),
+      );
+    }
+  }
+
+  // ── Separator ──
+  children.push('\n');
+  children.push(React.createElement(Text, { key: 'sep1', color: THEME.border }, '  ' + '\u2500'.repeat(50)));
+
+  // ── Recent Activity section ──
+  children.push('\n');
+  children.push(React.createElement(Text, { key: 'ah', bold: true, color: THEME.accent }, '  Recent Activity'));
+  children.push('\n');
+
+  const recentMessages = messages.slice(-8);
+  if (recentMessages.length === 0) {
+    children.push(React.createElement(Text, { key: 'na', color: THEME.dim }, '  No activity yet'));
+  } else {
+    for (let i = 0; i < recentMessages.length; i++) {
+      const m = recentMessages[i];
+      const time = formatTime(m.timestamp);
+      const msgText = truncate(m.text.replace(/\n/g, ' '), 50);
+      const color = m.text.includes('stale') ? THEME.warning : THEME.textMuted;
+
+      if (i > 0) children.push('\n');
+      children.push(
+        React.createElement(Text, { key: m.id || `msg-${i}`, color },
+          `  ${time}  ${m.from} ${icons.arrow} ${m.to}: ${msgText}`,
+        ),
+      );
+    }
+  }
+
+  // ── Schedules section (only if there are schedules) ──
+  if (schedules && schedules.length > 0) {
+    children.push('\n');
+    children.push(React.createElement(Text, { key: 'sep2', color: THEME.border }, '  ' + '\u2500'.repeat(50)));
+    children.push('\n');
+    children.push(
+      React.createElement(Text, { key: 'sh', bold: true, color: THEME.accent },
+        `  Schedules (${schedules.length} active)`,
       ),
     );
-  });
+    children.push('\n');
 
-  // ── Recent activity section ──
-  const recentMessages = messages.slice(-8);
-  const activityRows = recentMessages.map((m, i) => {
-    const time = formatTime(m.timestamp);
-    const msgText = truncate(m.text.replace(/\n/g, ' '), 50);
-    const color = m.text.includes('stale') ? THEME.warning : THEME.textMuted;
+    for (let i = 0; i < schedules.length; i++) {
+      const s = schedules[i];
+      if (i > 0) children.push('\n');
+      children.push(
+        React.createElement(Text, { key: `sched-${i}`, color: THEME.textMuted },
+          `  \u21BB ${pad(s.name, 20)}${pad(s.spec, 18)}${icons.arrow} ${s.target}`,
+        ),
+      );
+    }
+  }
 
-    return React.createElement(Text, { key: m.id || `msg-${i}`, color },
-      `  ${time}  ${m.from} ${icons.arrow} ${m.to}: ${msgText}`,
-    );
-  });
-
-  // ── Schedules section ──
-  const scheduleRows = (schedules || []).map((s, i) =>
-    React.createElement(Text, { key: i, color: THEME.textMuted },
-      `  \u21BB ${pad(s.name, 20)}${pad(s.spec, 18)}${icons.arrow} ${s.target}`,
-    ),
-  );
-
-  // Section separator
-  const separator = () => React.createElement(Box, { paddingX: 1, marginTop: 1 },
-    React.createElement(Text, { color: THEME.border }, '  ' + '\u2500'.repeat(50)),
-  );
-
-  return React.createElement(Box, { flexDirection: 'column', height: '100%', paddingX: 1 },
-    // Players header
-    React.createElement(Box, { marginTop: 1 },
-      React.createElement(Text, { bold: true, color: THEME.accent }, '  Players'),
-    ),
-    React.createElement(Box, { height: 1 }),
-    ...playerRows,
-    players.length === 0
-      ? React.createElement(Text, { color: THEME.dim }, '  No players')
-      : null,
-
-    // Separator
-    separator(),
-
-    // Recent Activity header
-    React.createElement(Box, { marginTop: 1 },
-      React.createElement(Text, { bold: true, color: THEME.accent }, '  Recent Activity'),
-    ),
-    React.createElement(Box, { height: 1 }),
-    ...activityRows,
-    recentMessages.length === 0
-      ? React.createElement(Text, { color: THEME.dim }, '  No activity yet')
-      : null,
-
-    // Schedules header (only if there are schedules)
-    schedules && schedules.length > 0
-      ? React.createElement(Box, { flexDirection: 'column' },
-          separator(),
-          React.createElement(Box, { marginTop: 1 },
-            React.createElement(Text, { bold: true, color: THEME.accent },
-              `  Schedules (${schedules.length} active)`,
-            ),
-          ),
-          React.createElement(Box, { height: 1 }),
-          ...scheduleRows,
-        )
-      : null,
-  );
+  // Single Text element — all children are ink-virtual-text (0 Yoga nodes)
+  return React.createElement(Text, null, ...children);
 }

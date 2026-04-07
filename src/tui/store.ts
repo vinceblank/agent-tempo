@@ -200,7 +200,7 @@ export interface TuiState {
 
 export function initialState(ensemble?: string): TuiState {
   return {
-    phase: 'splash',
+    phase: 'main',
     view: ensemble ? 'ensemble' : 'home',
     splashStatus: 'Starting up...',
     splashChecks: [],
@@ -484,9 +484,11 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     // ── Command palette ──
 
     case 'SHOW_PALETTE':
+      if (state.paletteVisible && state.paletteIndex === 0) return state;
       return { ...state, paletteVisible: true, paletteIndex: 0 };
 
     case 'HIDE_PALETTE':
+      if (!state.paletteVisible && state.paletteIndex === 0) return state;
       return { ...state, paletteVisible: false, paletteIndex: 0 };
 
     case 'PALETTE_UP':

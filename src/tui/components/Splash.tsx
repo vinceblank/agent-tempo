@@ -158,7 +158,7 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    height: '100%',
+    flexGrow: 1,
   },
     // Metronome logo
     React.createElement(Box, { flexDirection: 'column', alignItems: 'center' },

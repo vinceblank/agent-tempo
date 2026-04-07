@@ -9,11 +9,25 @@
  * - Divider
  * - PromptArea (pinned)
  */
-import React, { useReducer, useEffect, useCallback, useMemo } from 'react';
+import React, { useReducer, useEffect, useCallback, useMemo, useState } from 'react';
 import { useInk } from './ink-context';
 import { tuiReducer, initialState } from './store';
 import type { StaticItem } from './store';
-import { Splash } from './components/Splash';
+import type { PromptAreaHandle } from './components/PromptArea';
+
+/**
+ * Track terminal rows so the root Box height stays < stdout.rows.
+ * Prevents Ink's fullscreen bypass (clearTerminal + full rewrite).
+ */
+function useTerminalRows(): number {
+  const [rows, setRows] = useState(process.stdout.rows || 24);
+  useEffect(() => {
+    const onResize = () => setRows(process.stdout.rows || 24);
+    process.stdout.on('resize', onResize);
+    return () => { process.stdout.off('resize', onResize); };
+  }, []);
+  return rows;
+}
 import { MainView } from './components/MainView';
 import { ChatView } from './components/ChatView';
 import type { ChatMessage } from './components/ChatView';
@@ -61,9 +75,15 @@ export function App({ api, ensemble }: AppProps) {
   const { Box, Text, useApp, useInput } = useInk();
   const [state, dispatch] = useReducer(tuiReducer, initialState(ensemble));
   const { exit } = useApp();
+  const termRows = useTerminalRows();
 
   // ── Persistent command history ──
   const [cmdHistory] = React.useState(() => loadHistory());
+
+  // ── Prompt ref (uncontrolled — input lives in PromptArea, not parent state) ──
+  const promptRef = React.useRef<PromptAreaHandle>(null);
+  // Input value ref for palette filtering (no dispatch per keystroke)
+  const inputValueRef = React.useRef('');
 
   // ── Refs for values read by useInput/useCallback (avoids stale closures + excess re-renders) ──
   const lastSeenMsgRef = React.useRef<string | undefined>(state.lastSeenMessageId);
@@ -81,12 +101,6 @@ export function App({ api, ensemble }: AppProps) {
   useInput(useCallback((input: string, key: any) => {
     const s = stateRef.current;
     if (key.ctrl && input === 'c') {
-      exit();
-      return;
-    }
-
-    // Esc on splash exits the TUI
-    if (key.escape && (s.phase === 'splash' || s.phase === 'connecting')) {
       exit();
       return;
     }
@@ -296,12 +310,25 @@ export function App({ api, ensemble }: AppProps) {
     })),
   []);
 
+  // Palette filter state — updated via onInputChange ref callback (no dispatch per keystroke)
+  const [paletteFilter, setPaletteFilter] = useState('');
+  const handleInputChange = useCallback((value: string) => {
+    inputValueRef.current = value;
+    // Only update palette filter state when it actually changes — avoids unnecessary re-renders
+    const trimmed = value.trimStart();
+    if (trimmed.startsWith('/') && !trimmed.includes(' ')) {
+      setPaletteFilter(trimmed.slice(1).toLowerCase());
+    } else {
+      // Functional update: return same ref if already empty → React skips re-render
+      setPaletteFilter(prev => prev === '' ? prev : '');
+    }
+  }, []);
+
   const filteredPaletteCommands = useMemo(() => {
     if (!state.paletteVisible) return [];
-    const filter = state.inputValue.trimStart().slice(1).toLowerCase(); // strip leading /
-    if (!filter) return allPaletteCommands;
-    return allPaletteCommands.filter(c => c.name.startsWith(filter));
-  }, [state.paletteVisible, state.inputValue, allPaletteCommands]);
+    if (!paletteFilter) return allPaletteCommands;
+    return allPaletteCommands.filter(c => c.name.startsWith(paletteFilter));
+  }, [state.paletteVisible, paletteFilter, allPaletteCommands]);
 
   // Clamp palette index
   const clampedPaletteIndex = Math.min(state.paletteIndex, Math.max(0, filteredPaletteCommands.length - 1));
@@ -323,7 +350,8 @@ export function App({ api, ensemble }: AppProps) {
   const handlePaletteSelect = useCallback(() => {
     if (filteredPaletteCommands.length > 0) {
       const selected = filteredPaletteCommands[clampedPaletteIndex];
-      dispatch({ type: 'SET_INPUT', value: `/${selected.name} ` });
+      promptRef.current?.setValue(`/${selected.name} `);
+      inputValueRef.current = `/${selected.name} `;
       dispatch({ type: 'HIDE_PALETTE' });
     }
   }, [filteredPaletteCommands, clampedPaletteIndex]);
@@ -334,7 +362,8 @@ export function App({ api, ensemble }: AppProps) {
     if (!trimmed) return;
     const s = stateRef.current;
 
-    dispatch({ type: 'SET_INPUT', value: '' });
+    // PromptArea clears itself on Enter (uncontrolled). Just clear our ref + palette.
+    inputValueRef.current = '';
     if (s.paletteVisible) dispatch({ type: 'HIDE_PALETTE' });
 
     const parsed = parseCommand(trimmed);
@@ -469,165 +498,31 @@ export function App({ api, ensemble }: AppProps) {
     }
   }, [api, exit]); // Reads stateRef.current for chatTarget/activeEnsemble
 
-  // ── Startup sequence: splash → main/connected ──
+  // ── Lightweight startup: check connectivity + ensure maestro session ──
+  // Phase starts at 'main' — polling handles all data discovery.
   useEffect(() => {
     let cancelled = false;
+    (async () => {
+      try {
+        // Check Temporal connectivity
+        const connected = await api.isConnected();
+        if (cancelled) return;
+        if (!connected) {
+          dispatch({ type: 'SET_PHASE', phase: 'error', error: 'Cannot connect to Temporal. Run `claude-tempo up` first.' });
+          return;
+        }
 
-    async function connect() {
-      const splashStart = Date.now();
-      const MIN_SPLASH_MS = 2500;
-      type Check = { label: string; done: boolean; error?: boolean };
-      const checks: Check[] = [];
-
-      // Helper: push a check and dispatch
-      function addCheck(label: string, done: boolean, error?: boolean) {
-        checks.push({ label, done, error });
-        if (!cancelled) dispatch({ type: 'SET_SPLASH_CHECKS', checks: [...checks] });
-      }
-
-      // Helper: mark the last pending check as done
-      function completeLastCheck() {
-        if (checks.length > 0) {
-          checks[checks.length - 1] = { ...checks[checks.length - 1], done: true };
-          if (!cancelled) dispatch({ type: 'SET_SPLASH_CHECKS', checks: [...checks] });
+        // Ensure maestro session (best effort)
+        const ens = stateRef.current.activeEnsemble;
+        if (ens) {
+          try { await api.ensureMaestroSession(ens); } catch { /* non-fatal */ }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          dispatch({ type: 'SET_PHASE', phase: 'error', error: String(err) });
         }
       }
-
-      // Step 1: Connect to Temporal
-      dispatch({ type: 'SET_SPLASH_STATUS', status: 'Connecting to Temporal...' });
-      addCheck('Connecting to Temporal server...', false);
-
-      const connected = await api.isConnected();
-      if (cancelled) return;
-
-      if (!connected) {
-        checks[checks.length - 1] = { label: 'Cannot reach Temporal server', done: true, error: true };
-        dispatch({ type: 'SET_SPLASH_CHECKS', checks: [...checks] });
-        dispatch({ type: 'SET_PHASE', phase: 'error', error: 'Cannot connect to Temporal. Run `claude-tempo up` first.' });
-        return;
-      }
-
-      completeLastCheck();
-      checks[checks.length - 1] = { label: 'Temporal server connected', done: true };
-      dispatch({ type: 'SET_SPLASH_CHECKS', checks: [...checks] });
-
-      // Step 2: Discover ensembles / load data
-      dispatch({ type: 'SET_SPLASH_STATUS', status: 'Discovering ensembles...' });
-      addCheck('Discovering ensembles...', false);
-
-      let playerCount = 0;
-      let conductorName: string | undefined;
-      let scheduleCount = 0;
-      let ensembleName = state.activeEnsemble || 'all';
-
-      if (state.activeEnsemble) {
-        try {
-          const [players, messages, history, schedules] = await Promise.all([
-            api.getPlayers(state.activeEnsemble),
-            api.getMessages(state.activeEnsemble, 50),
-            api.getConductorHistory(state.activeEnsemble),
-            api.getSchedules(state.activeEnsemble),
-          ]);
-          if (cancelled) return;
-          dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
-          playerCount = players.length;
-          conductorName = players.find(p => p.isConductor)?.playerId;
-          if (conductorName) dispatch({ type: 'SET_CONDUCTOR', name: conductorName });
-          scheduleCount = schedules.length;
-          ensembleName = state.activeEnsemble;
-        } catch {
-          // Non-fatal — will retry in poll loop
-        }
-      } else {
-        try {
-          const ensembles = await api.discoverEnsembles();
-          if (cancelled) return;
-          dispatch({ type: 'REFRESH_ENSEMBLES', ensembles });
-          if (ensembles.length > 0) {
-            playerCount = ensembles.reduce((sum, e) => sum + e.playerCount, 0);
-
-            // Auto-select: if exactly 1 ensemble, switch to it; if multiple, pick the first
-            const autoSelect = ensembles[0].name;
-            dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: autoSelect });
-            ensembleName = autoSelect;
-
-            // Load data for the auto-selected ensemble
-            try {
-              const [players, messages, history, schedules] = await Promise.all([
-                api.getPlayers(autoSelect),
-                api.getMessages(autoSelect, 50),
-                api.getConductorHistory(autoSelect),
-                api.getSchedules(autoSelect),
-              ]);
-              if (cancelled) return;
-              dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
-              playerCount = players.length;
-              conductorName = players.find(p => p.isConductor)?.playerId;
-              if (conductorName) dispatch({ type: 'SET_CONDUCTOR', name: conductorName });
-              scheduleCount = schedules.length;
-            } catch {
-              // Non-fatal
-            }
-          } else {
-            ensembleName = 'no ensembles';
-          }
-        } catch {
-          // Non-fatal
-        }
-      }
-
-      if (cancelled) return;
-
-      // Complete ensemble check
-      completeLastCheck();
-      checks[checks.length - 1] = { label: `Ensemble ${ensembleName} connected`, done: true };
-      dispatch({ type: 'SET_SPLASH_CHECKS', checks: [...checks] });
-
-      // Step 3: Player summary
-      const activeCount = playerCount;
-      addCheck(`${activeCount} player${activeCount !== 1 ? 's' : ''} found`, true);
-      if (conductorName) {
-        addCheck(`Conductor: ${conductorName}`, true);
-      }
-
-      // Step 4: Ensure maestro session for two-way messaging
-      if (state.activeEnsemble || ensembleName !== 'no ensembles') {
-        const ens = state.activeEnsemble || ensembleName;
-        try {
-          await api.ensureMaestroSession(ens);
-          addCheck('Maestro session ready', true);
-        } catch {
-          // Non-fatal — messaging will fall back to Maestro relay
-        }
-      }
-
-      // Mark splash as connected with summary
-      dispatch({
-        type: 'SET_SPLASH_CONNECTED',
-        summary: {
-          ensemble: ensembleName,
-          playerCount,
-          conductor: conductorName,
-          scheduleCount: scheduleCount > 0 ? scheduleCount : undefined,
-        },
-      });
-
-      // Ensure splash is visible for at least MIN_SPLASH_MS
-      const elapsed = Date.now() - splashStart;
-      if (elapsed < MIN_SPLASH_MS) {
-        await new Promise(r => setTimeout(r, MIN_SPLASH_MS - elapsed));
-      }
-
-      // Splash stays visible — user must press Enter to continue.
-      // The SET_SPLASH_CONNECTED dispatch above marks it as ready.
-    }
-
-    connect().catch((err) => {
-      if (!cancelled) {
-        dispatch({ type: 'SET_PHASE', phase: 'error', error: String(err) });
-      }
-    });
-
+    })();
     return () => { cancelled = true; };
   }, [api]);
 
@@ -766,58 +661,6 @@ export function App({ api, ensemble }: AppProps) {
 
     return () => clearInterval(interval);
   }, [state.phase, state.activeEnsemble, api]);
-
-  // ── Splash continue callback (must be before early return — Rules of Hooks) ──
-  const handleSplashContinue = useCallback(async (selectedEnsemble?: string) => {
-    const s = stateRef.current;
-    const ensName = selectedEnsemble || s.activeEnsemble || 'all';
-
-    // Switch to the selected ensemble if different from current
-    if (selectedEnsemble && selectedEnsemble !== s.activeEnsemble) {
-      dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: selectedEnsemble });
-      // Load data for the selected ensemble
-      try {
-        const [players, messages, history, schedules] = await Promise.all([
-          api.getPlayers(selectedEnsemble),
-          api.getMessages(selectedEnsemble, 50),
-          api.getConductorHistory(selectedEnsemble),
-          api.getSchedules(selectedEnsemble),
-        ]);
-        dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
-        const conductor = players.find(p => p.isConductor);
-        if (conductor) dispatch({ type: 'SET_CONDUCTOR', name: conductor.playerId });
-      } catch { /* polling will retry */ }
-    }
-
-    dispatch({
-      type: 'COMMIT_STATIC',
-      item: {
-        id: nextStaticId(),
-        type: 'splash-done',
-        content: `Connected to Temporal \u2022 ${ensName} \u2022 v${packageVersion}`,
-        timestamp: Date.now(),
-      },
-    });
-
-    // Enter conductor chat if available, otherwise main view with guidance
-    const conductor = stateRef.current.conductorName;
-    if (conductor) {
-      dispatch({ type: 'ENTER_CHAT', target: conductor });
-    } else {
-      dispatch({ type: 'SET_PHASE', phase: 'main' });
-      if (stateRef.current.activeEnsemble) {
-        dispatch({
-          type: 'COMMIT_STATIC',
-          item: {
-            id: nextStaticId(),
-            type: 'info',
-            content: 'No conductor in this ensemble. Use /dashboard to see players, or /cue <player> to message directly.',
-            timestamp: Date.now(),
-          },
-        });
-      }
-    }
-  }, [api]);
 
   // ── Recruit wizard callbacks (must be before early return — Rules of Hooks) ──
   const handleRecruitAnswer = useCallback((answer: any) => {
@@ -978,20 +821,6 @@ export function App({ api, ensemble }: AppProps) {
 
   // ── Render ──
 
-  // Splash phase: full-screen splash only
-  if (state.phase === 'splash' || state.phase === 'connecting') {
-    return React.createElement(Splash, {
-      status: state.splashStatus,
-      ensemble: state.activeEnsemble || 'all',
-      version: packageVersion,
-      checks: state.splashChecks,
-      connected: state.splashConnected,
-      summary: state.splashSummary,
-      ensembles: state.ensembles.map(e => ({ name: e.name, playerCount: e.playerCount, hasConductor: e.hasConductor })),
-      onContinue: handleSplashContinue,
-    });
-  }
-
   // Divider — thin horizontal rule
   const dividerWidth = Math.max(20, (process.stdout.columns || 80) - 4);
   const dividerLine = '\u2500'.repeat(dividerWidth);
@@ -1056,108 +885,118 @@ export function App({ api, ensemble }: AppProps) {
       });
     }
 
-    // No active ensemble — show ensemble list or help
+    // No active ensemble — show ensemble list or help (single Text, 1 Yoga node)
     if (state.ensembles.length > 0) {
-      return React.createElement(Box, { flexDirection: 'column', paddingX: 1 },
-        React.createElement(Text, { bold: true, color: THEME.text }, 'Ensembles:'),
-        ...state.ensembles.map(ens =>
+      const ensLines: React.ReactNode[] = [
+        React.createElement(Text, { key: 'eh', bold: true, color: THEME.text }, 'Ensembles:'),
+      ];
+      for (const ens of state.ensembles) {
+        ensLines.push('\n');
+        ensLines.push(
           React.createElement(Text, { key: ens.name, color: THEME.textMuted },
             `  ${ens.name} (${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''})${ens.hasConductor ? ' \u2605' : ''}`,
           ),
+        );
+      }
+      return React.createElement(Text, null, ...ensLines);
+    }
+
+    // Onboarding view — no ensembles running (single Text, 1 Yoga node)
+    return React.createElement(Text, null,
+      '\n',
+      React.createElement(Text, { bold: true, color: THEME.accent }, '  Getting Started'), '\n',
+      '\n',
+      React.createElement(Text, { color: THEME.text }, '  No ensembles are running.'), '\n',
+      '\n',
+      React.createElement(Text, { color: THEME.text }, '  Create an ensemble:'), '\n',
+      React.createElement(Text, { color: THEME.accent }, '    /up <name>'), '\n',
+      '\n',
+      React.createElement(Text, { color: THEME.text }, '  Or load a lineup:'), '\n',
+      React.createElement(Text, { color: THEME.accent }, '    /lineup load <file.yml>'), '\n',
+      '\n',
+      React.createElement(Text, { color: THEME.dim }, '  The TUI will auto-detect ensembles as they start.'), '\n',
+      React.createElement(Text, { color: THEME.dim }, '  Type /help for all available commands.'),
+    );
+  }
+
+  // ── Build scroll history as a single Text element (0 Box wrappers) ──
+  const scrollHistoryElement = (() => {
+    const items = state.staticItems;
+    const viewportHeight = Math.max(5, termRows - 10); // Reserve space for title/status/prompt
+    const endIdx = items.length - state.scrollOffset;
+    const startIdx = Math.max(0, endIdx - viewportHeight);
+    const visibleItems = items.slice(startIdx, endIdx);
+
+    const children: React.ReactNode[] = [];
+
+    // Scroll-up indicator
+    if (startIdx > 0) {
+      children.push(
+        React.createElement(Text, { key: 'scroll-up', color: THEME.dim },
+          `  \u2191 ${startIdx} more message${startIdx !== 1 ? 's' : ''} above`,
         ),
       );
     }
 
-    // Onboarding view — no ensembles running
-    return React.createElement(Box, {
-      flexDirection: 'column',
-      borderStyle: 'single',
-      borderColor: THEME.border,
-      paddingX: 2,
-      paddingY: 1,
-      marginX: 2,
-    },
-      React.createElement(Text, { bold: true, color: THEME.accent }, 'Getting Started'),
-      React.createElement(Box, { height: 1 }),
-      React.createElement(Text, { color: THEME.text }, 'No ensembles are running.'),
-      React.createElement(Box, { height: 1 }),
-      React.createElement(Text, { color: THEME.text }, 'Create an ensemble:'),
-      React.createElement(Text, { color: THEME.accent }, '  /up <name>'),
-      React.createElement(Box, { height: 1 }),
-      React.createElement(Text, { color: THEME.text }, 'Or load a lineup:'),
-      React.createElement(Text, { color: THEME.accent }, '  /lineup load <file.yml>'),
-      React.createElement(Box, { height: 1 }),
-      React.createElement(Text, { color: THEME.dim }, 'The TUI will auto-detect ensembles as they start.'),
-      React.createElement(Text, { color: THEME.dim }, 'Type /help for all available commands.'),
-    );
-  }
+    // Visible items — each as nested Text (ink-virtual-text, 0 Yoga nodes)
+    for (const item of visibleItems) {
+      if (children.length > 0) children.push('\n');
+      children.push(
+        React.createElement(Text, { key: item.id, color: staticItemColor(item) }, `  ${item.content}`),
+      );
+    }
 
-  return React.createElement(Box, { flexDirection: 'column', height: '100%' },
-    // Title bar
+    // Scroll indicators
+    if (state.hasNewBelow && state.scrollOffset > 0) {
+      children.push('\n');
+      children.push(
+        React.createElement(Text, { key: 'scroll-down', color: THEME.warning }, '  \u2193 new messages below \u2193'),
+      );
+    } else if (state.scrollOffset > 0) {
+      children.push('\n');
+      children.push(
+        React.createElement(Text, { key: 'scrolled', color: THEME.dim },
+          `  \u2500\u2500\u2500 scrolled (${state.scrollOffset} below) \u2500\u2500\u2500`,
+        ),
+      );
+    }
+
+    // Single Text element wrapping all scroll items (1 Yoga node total)
+    return children.length > 0
+      ? React.createElement(Text, { key: 'scroll-history' }, ...children)
+      : null;
+  })();
+
+  // Layout: header (2 lines) + content (variable) + footer (4 lines)
+  // Content height is calculated to guarantee footer is always visible.
+  const HEADER_LINES = 2; // TitleBar + top divider
+  const FOOTER_LINES = 4; // StatusBar + bottom divider + PromptArea (hints + input)
+  const contentHeight = Math.max(3, termRows - 1 - HEADER_LINES - FOOTER_LINES);
+
+  // Root Box: height constrained to termRows-1 to force Ink incremental rendering path
+  return React.createElement(Box, { flexDirection: 'column', height: termRows - 1, overflow: 'hidden' },
+    // Title bar (1 Text node)
     React.createElement(TitleBar, { context: contextString }),
-    // Top divider
-    React.createElement(Box, { key: 'divider-top', paddingX: 1 },
-      React.createElement(Text, { color: THEME.border }, dividerLine),
-    ),
-    // Scrollback history viewport
-    (() => {
-      const items = state.staticItems;
-      const viewportHeight = Math.max(5, (process.stdout.rows || 24) - 10); // Reserve space for title/status/prompt
-      const endIdx = items.length - state.scrollOffset;
-      const startIdx = Math.max(0, endIdx - viewportHeight);
-      const visibleItems = items.slice(startIdx, endIdx);
-
-      const elements: React.ReactNode[] = [];
-
-      // Scroll-up indicator
-      if (startIdx > 0) {
-        elements.push(
-          React.createElement(Box, { key: 'scroll-up-indicator', paddingX: 1 },
-            React.createElement(Text, { color: THEME.dim }, `\u2191 ${startIdx} more message${startIdx !== 1 ? 's' : ''} above`),
-          ),
-        );
-      }
-
-      // Visible items
-      for (const item of visibleItems) {
-        elements.push(
-          React.createElement(Box, { key: item.id, paddingX: 1 },
-            React.createElement(Text, { color: staticItemColor(item) }, item.content),
-          ),
-        );
-      }
-
-      // New messages below indicator
-      if (state.hasNewBelow && state.scrollOffset > 0) {
-        elements.push(
-          React.createElement(Box, { key: 'scroll-down-indicator', paddingX: 1 },
-            React.createElement(Text, { color: THEME.warning }, '\u2193 new messages below \u2193'),
-          ),
-        );
-      } else if (state.scrollOffset > 0) {
-        elements.push(
-          React.createElement(Box, { key: 'scrolled-indicator', paddingX: 1 },
-            React.createElement(Text, { color: THEME.dim }, `\u2500\u2500\u2500 scrolled (${state.scrollOffset} below) \u2500\u2500\u2500`),
-          ),
-        );
-      }
-
-      return React.createElement(Box, { flexDirection: 'column', flexGrow: 1 }, ...elements);
-    })(),
-    // Live content area
-    React.createElement(Box, { flexGrow: 1 },
+    // Top divider (1 Text node, no Box wrapper)
+    React.createElement(Text, { color: THEME.border }, ` ${dividerLine} `),
+    // Content area — explicit height guarantees footer is visible
+    React.createElement(Box, { flexDirection: 'column', height: contentHeight, overflow: 'hidden' },
+      // Scrollback history (1 Text node with nested virtual-text)
+      scrollHistoryElement,
+      // Live content area
       renderLiveContent(),
+      // Picker overlay (1 Text node when visible)
+      state.pickerVisible
+        ? React.createElement(Picker, {
+            title: state.pickerType === 'players' ? 'Select Player' : 'Select Ensemble',
+            items: pickerItems,
+            selectedIndex: state.pickerIndex,
+            hint: '\u2191\u2193 navigate, Enter select, Esc dismiss',
+          })
+        : null,
     ),
-    // Picker overlay
-    state.pickerVisible
-      ? React.createElement(Picker, {
-          title: state.pickerType === 'players' ? 'Select Player' : 'Select Ensemble',
-          items: pickerItems,
-          selectedIndex: state.pickerIndex,
-          hint: '\u2191\u2193 navigate, Enter select, Esc dismiss',
-        })
-      : null,
-    // Status bar
+    // ── Footer (fixed height, always visible) ──
+    // Status bar (1 Text node)
     React.createElement(StatusBar, {
       ensemble: state.activeEnsemble,
       players: state.players,
@@ -1165,28 +1004,26 @@ export function App({ api, ensemble }: AppProps) {
       connected: true,
       conductorName: state.conductorName,
     }),
-    // Bottom divider
-    React.createElement(Box, { key: 'divider-bottom', paddingX: 1 },
-      React.createElement(Text, { color: THEME.border }, dividerLine),
-    ),
-    // Prompt area
+    // Bottom divider (1 Text node, no Box wrapper)
+    React.createElement(Text, { color: THEME.border }, ` ${dividerLine} `),
+    // Prompt area (1 Box + 2-3 Text nodes — uncontrolled, no parent dispatch per keystroke)
     React.createElement(PromptArea, {
       hints: promptHints,
-      value: state.inputValue,
-      onChange: (value: string) => dispatch({ type: 'SET_INPUT', value }),
       onSubmit: handleSubmit,
       disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingLineup,
       commandNames: commandNamesList,
       playerNames: playerNamesList,
       initialHistory: cmdHistory,
       onHistoryUpdate: handleHistoryUpdate,
+      onInputChange: handleInputChange,
       paletteVisible: state.paletteVisible,
       onPaletteToggle: handlePaletteToggle,
       onPaletteUp: handlePaletteUp,
       onPaletteDown: handlePaletteDown,
       onPaletteSelect: handlePaletteSelect,
+      inputRef: promptRef,
     }),
-    // Command palette (below prompt — drops down like Claude Code)
+    // Command palette (1 Text node when visible)
     state.paletteVisible && filteredPaletteCommands.length >= 0
       ? React.createElement(CommandPalette, {
           commands: filteredPaletteCommands,

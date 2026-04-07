@@ -1,25 +1,27 @@
 /**
  * TitleBar — pinned top bar for the TUI shell.
- * Left: "claude-tempo" in terracotta bold.
- * Right: context string in dim (changes per screen).
+ * Renders as a SINGLE Text element (1 Yoga node). Nested Text = ink-virtual-text (0 nodes).
  */
 import React from 'react';
 import { useInk } from '../ink-context';
 import { THEME } from '../utils/theme';
 
 export interface TitleBarProps {
-  /** Context text displayed on the right side (e.g., "acme-app · 5 players · Connected"). */
+  /** Context text displayed on the right side. */
   context: string;
 }
 
 export function TitleBar({ context }: TitleBarProps) {
-  const { Box, Text } = useInk();
+  const { Text } = useInk();
+  const cols = process.stdout.columns || 80;
+  const left = 'claude-tempo';
+  // Pad between left and right to push context to the right edge
+  const padding = Math.max(1, cols - left.length - context.length - 4); // -4 for paddingX
 
-  return React.createElement(Box, {
-    paddingX: 1,
-    justifyContent: 'space-between',
-  },
-    React.createElement(Text, { bold: true, color: THEME.accent }, 'claude-tempo'),
+  return React.createElement(Text, null,
+    '  ',
+    React.createElement(Text, { bold: true, color: THEME.accent }, left),
+    ' '.repeat(padding),
     React.createElement(Text, { color: THEME.dim }, context),
   );
 }

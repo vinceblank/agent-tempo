@@ -1,7 +1,6 @@
 /**
  * CommandPalette — dropdown overlay showing filtered slash commands.
- * Appears above the prompt when user types "/" as first character.
- * Arrow keys navigate, Enter/Tab selects, Esc dismisses.
+ * Renders as a SINGLE Text element (1 Yoga node) with newlines for rows.
  */
 import React from 'react';
 import { useInk } from '../ink-context';
@@ -16,19 +15,15 @@ export interface PaletteCommand {
 }
 
 export interface CommandPaletteProps {
-  /** Filtered list of matching commands. */
   commands: PaletteCommand[];
-  /** Currently highlighted index. */
   selectedIndex: number;
 }
 
 export function CommandPalette({ commands, selectedIndex }: CommandPaletteProps) {
-  const { Box, Text } = useInk();
+  const { Text } = useInk();
 
   if (commands.length === 0) {
-    return React.createElement(Box, { paddingX: 2 },
-      React.createElement(Text, { color: THEME.dim }, 'No matching commands'),
-    );
+    return React.createElement(Text, { color: THEME.dim }, '    No matching commands');
   }
 
   // Window the visible commands around the selected index
@@ -38,32 +33,59 @@ export function CommandPalette({ commands, selectedIndex }: CommandPaletteProps)
   }
   const visible = commands.slice(startIdx, startIdx + MAX_VISIBLE);
 
-  const rows = visible.map((cmd, i) => {
+  const lines: string[] = [];
+
+  // Scroll-up indicator
+  if (startIdx > 0) {
+    lines.push(`    \u2191 ${startIdx} more above`);
+  }
+
+  // Visible rows (plain text — color via outer Text)
+  for (let i = 0; i < visible.length; i++) {
+    const cmd = visible[i];
     const actualIdx = startIdx + i;
     const isSelected = actualIdx === selectedIndex;
-    const indicator = isSelected ? '\u25B8 ' : '  '; // ▸ or space
+    const indicator = isSelected ? '\u25B8 ' : '  ';
+    lines.push(`  ${indicator}/${cmd.name}  ${cmd.description}`);
+  }
 
-    return React.createElement(Box, { key: cmd.name },
-      React.createElement(Text, { color: isSelected ? THEME.accent : THEME.dim }, indicator),
-      React.createElement(Text, {
-        color: isSelected ? THEME.accent : THEME.success,
-        bold: isSelected,
-      }, `/${cmd.name}`),
-      React.createElement(Text, { color: THEME.muted }, `  ${cmd.description}`),
-    );
-  });
-
-  // Scroll indicators
-  const hasAbove = startIdx > 0;
+  // Scroll-down indicator
   const hasBelow = startIdx + MAX_VISIBLE < commands.length;
+  if (hasBelow) {
+    lines.push(`    \u2193 ${commands.length - startIdx - MAX_VISIBLE} more below`);
+  }
 
-  return React.createElement(Box, { flexDirection: 'column', paddingX: 1 },
-    hasAbove
-      ? React.createElement(Text, { color: THEME.dim }, `  \u2191 ${startIdx} more above`)
-      : null,
-    ...rows,
-    hasBelow
-      ? React.createElement(Text, { color: THEME.dim }, `  \u2193 ${commands.length - startIdx - MAX_VISIBLE} more below`)
-      : null,
-  );
+  // Single Text element with newlines — all one Yoga node
+  // Use nested Text for selected item highlighting
+  const children: React.ReactNode[] = [];
+  let lineIdx = 0;
+
+  if (startIdx > 0) {
+    children.push(React.createElement(Text, { key: 'above', color: THEME.dim }, lines[lineIdx]));
+    children.push('\n');
+    lineIdx++;
+  }
+
+  for (let i = 0; i < visible.length; i++) {
+    const cmd = visible[i];
+    const actualIdx = startIdx + i;
+    const isSelected = actualIdx === selectedIndex;
+    const indicator = isSelected ? '\u25B8 ' : '  ';
+
+    if (i > 0) children.push('\n');
+    children.push(
+      React.createElement(React.Fragment, { key: cmd.name },
+        React.createElement(Text, { color: isSelected ? THEME.accent : THEME.dim }, `  ${indicator}`),
+        React.createElement(Text, { color: isSelected ? THEME.accent : THEME.success, bold: isSelected }, `/${cmd.name}`),
+        React.createElement(Text, { color: THEME.muted }, `  ${cmd.description}`),
+      ),
+    );
+  }
+
+  if (hasBelow) {
+    children.push('\n');
+    children.push(React.createElement(Text, { key: 'below', color: THEME.dim }, `    \u2193 ${commands.length - startIdx - MAX_VISIBLE} more below`));
+  }
+
+  return React.createElement(Text, null, ...children);
 }

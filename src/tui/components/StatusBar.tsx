@@ -1,7 +1,6 @@
 /**
  * StatusBar — persistent one-line status summary.
- * Rendered between the live content area and the prompt divider.
- * Shows ensemble name, player breakdown, schedule count, and connection health.
+ * Renders as a SINGLE Text element (1 Yoga node). Nested Text = ink-virtual-text (0 nodes).
  */
 import React from 'react';
 import { useInk } from '../ink-context';
@@ -17,7 +16,7 @@ export interface StatusBarProps {
 }
 
 export function StatusBar({ ensemble, players, scheduleCount, connected, conductorName }: StatusBarProps) {
-  const { Box, Text } = useInk();
+  const { Text } = useInk();
 
   // Player breakdown by status
   const active = players.filter(p => p.status === 'active').length;
@@ -25,7 +24,6 @@ export function StatusBar({ ensemble, players, scheduleCount, connected, conduct
   const pending = players.filter(p => p.status === 'pending').length;
   const blocked = players.filter(p => p.status === 'blocked').length;
 
-  // Build breakdown parts
   const parts: string[] = [];
   if (active > 0) parts.push(`${active} active`);
   if (stale > 0) parts.push(`${stale} stale`);
@@ -33,37 +31,40 @@ export function StatusBar({ ensemble, players, scheduleCount, connected, conduct
   if (pending > 0) parts.push(`${pending} pending`);
   const breakdown = parts.length > 0 ? ` (${parts.join(', ')})` : '';
 
-  // Connection indicator
   const healthColor = connected ? THEME.success : THEME.error;
+  const healthDot = connected ? '\u25CF' : '\u25CB';
   const healthLabel = connected ? 'Connected' : 'Disconnected';
 
-  return React.createElement(Box, { paddingX: 1 },
-    // Ensemble name
-    ensemble
-      ? React.createElement(Text, { color: THEME.accent }, ensemble)
-      : React.createElement(Text, { color: THEME.dim }, 'no ensemble'),
-    React.createElement(Text, { color: THEME.dim }, ' \u00B7 '),
-    // Player count
-    React.createElement(Text, { color: THEME.dim },
-      `${players.length} player${players.length !== 1 ? 's' : ''}${breakdown}`,
-    ),
-    // Schedule count
-    scheduleCount > 0
-      ? React.createElement(React.Fragment, null,
-          React.createElement(Text, { color: THEME.dim }, ' \u00B7 '),
-          React.createElement(Text, { color: THEME.dim }, `${scheduleCount} schedule${scheduleCount !== 1 ? 's' : ''}`),
-        )
-      : null,
-    // Conductor status
-    ensemble && !conductorName
-      ? React.createElement(React.Fragment, null,
-          React.createElement(Text, { color: THEME.dim }, ' \u00B7 '),
-          React.createElement(Text, { color: THEME.warning }, '\u26A0 No conductor'),
-        )
-      : null,
-    // Health indicator
-    React.createElement(Text, { color: THEME.dim }, ' \u00B7 '),
-    React.createElement(Text, { color: healthColor }, '\u25CF'),
-    React.createElement(Text, { color: THEME.dim }, ` ${healthLabel}`),
+  const ensembleLabel = ensemble || 'no ensemble';
+  const playerLabel = `${players.length} player${players.length !== 1 ? 's' : ''}${breakdown}`;
+
+  const children: React.ReactNode[] = [
+    '  ',
+    React.createElement(Text, { key: 'ens', color: ensemble ? THEME.accent : THEME.dim }, ensembleLabel),
+    React.createElement(Text, { key: 's1', color: THEME.dim }, ' \u00B7 '),
+    React.createElement(Text, { key: 'pl', color: THEME.dim }, playerLabel),
+  ];
+
+  if (scheduleCount > 0) {
+    children.push(
+      React.createElement(Text, { key: 's2', color: THEME.dim }, ' \u00B7 '),
+      React.createElement(Text, { key: 'sc', color: THEME.dim }, `${scheduleCount} schedule${scheduleCount !== 1 ? 's' : ''}`),
+    );
+  }
+
+  if (ensemble && !conductorName) {
+    children.push(
+      React.createElement(Text, { key: 's3', color: THEME.dim }, ' \u00B7 '),
+      React.createElement(Text, { key: 'nc', color: THEME.warning }, '\u26A0 No conductor'),
+    );
+  }
+
+  children.push(
+    React.createElement(Text, { key: 's4', color: THEME.dim }, ' \u00B7 '),
+    React.createElement(Text, { key: 'hd', color: healthColor }, healthDot),
+    React.createElement(Text, { key: 'hl', color: THEME.dim }, ` ${healthLabel}`),
   );
+
+  // Single Text element — all children are ink-virtual-text (0 Yoga nodes)
+  return React.createElement(Text, null, ...children);
 }
