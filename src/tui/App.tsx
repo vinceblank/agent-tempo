@@ -221,7 +221,8 @@ export function App({ api, ensemble }: AppProps) {
     }
     if (state.activeEnsemble) {
       const count = state.players.length;
-      return `${state.activeEnsemble} \u00b7 ${count} player${count !== 1 ? 's' : ''} \u00b7 Connected`;
+      const conductorInfo = state.conductorName ? '' : ' \u00b7 No conductor';
+      return `${state.activeEnsemble} \u00b7 ${count} player${count !== 1 ? 's' : ''}${conductorInfo} \u00b7 Connected`;
     }
     const count = state.ensembles.length;
     return `${count} ensemble${count !== 1 ? 's' : ''} \u00b7 Connected`;
@@ -731,6 +732,23 @@ export function App({ api, ensemble }: AppProps) {
           if (changed) {
             dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
             lastPollRef.current = pollKey;
+
+            // Auto-detect conductor: if none was known but one appeared, set it + auto-enter chat
+            const currentS = stateRef.current;
+            if (!currentS.conductorName) {
+              const conductor = players.find(p => p.isConductor);
+              if (conductor) {
+                dispatch({ type: 'SET_CONDUCTOR', name: conductor.playerId });
+                // Auto-enter conductor chat if not already chatting with someone
+                if (!currentS.chatTarget && (currentS.phase === 'main' || currentS.phase === 'connected')) {
+                  dispatch({ type: 'ENTER_CHAT', target: conductor.playerId });
+                  dispatch({
+                    type: 'COMMIT_STATIC',
+                    item: { id: `conductor-${Date.now()}`, type: 'info', content: `\u2605 Conductor ${conductor.playerId} connected. Entering chat.`, timestamp: Date.now() },
+                  });
+                }
+              }
+            }
           }
 
           // Update ref so next poll uses the latest ID
@@ -778,12 +796,23 @@ export function App({ api, ensemble }: AppProps) {
       },
     });
 
-    // Enter conductor chat if available, otherwise main view
+    // Enter conductor chat if available, otherwise main view with guidance
     const conductor = stateRef.current.conductorName;
     if (conductor) {
       dispatch({ type: 'ENTER_CHAT', target: conductor });
     } else {
       dispatch({ type: 'SET_PHASE', phase: 'main' });
+      if (stateRef.current.activeEnsemble) {
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: {
+            id: nextStaticId(),
+            type: 'info',
+            content: 'No conductor in this ensemble. Use /dashboard to see players, or /cue <player> to message directly.',
+            timestamp: Date.now(),
+          },
+        });
+      }
     }
   }, [api]);
 
