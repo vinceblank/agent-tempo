@@ -11,6 +11,7 @@ import {
 import {
   addScheduleSignal,
   removeScheduleSignal,
+  updateScheduleTargetSignal,
   getSchedulesQuery,
   getScheduleQuery,
 } from './scheduler-signals';
@@ -48,6 +49,18 @@ export async function claudeSchedulerWorkflow(input: SchedulerInput): Promise<vo
 
   setHandler(removeScheduleSignal, (name) => {
     entries = entries.filter((e) => e.name !== name);
+    dirty = true;
+  });
+
+  setHandler(updateScheduleTargetSignal, (oldName, newName) => {
+    for (const entry of entries) {
+      if (entry.target === oldName) {
+        entry.target = newName;
+      }
+      if (entry.createdBy === oldName) {
+        entry.createdBy = newName;
+      }
+    }
     dirty = true;
   });
 

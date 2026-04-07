@@ -103,6 +103,7 @@ Signals sent **to** a `claudeSchedulerWorkflow` instance.
 |-------------|---------|-------------|
 | `addSchedule` | `ScheduleEntry` | Registers a new named schedule. If a schedule with the same name already exists it is replaced. `ScheduleEntry.type` is `'once'`, `'interval'`, or `'cron'`. Cron schedules include `cronExpression` and optional `timezone`. |
 | `removeSchedule` | `string` (schedule name) | Cancels and removes a named schedule. No-op if the name is not found. |
+| `updateScheduleTarget` | `[string, string]` (oldName, newName) | Rewrites schedule `target` and `createdBy` fields from `oldName` to `newName`. Fired by `set_name` when a player renames. No-op if no entries match. |
 
 ---
 

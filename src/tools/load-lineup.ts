@@ -269,9 +269,22 @@ export function registerLoadLineupTool(
 
         // Create schedules
         const schedulesCreated: string[] = [];
+        const scheduleWarnings: string[] = [];
         if (lineup.schedules && lineup.schedules.length > 0) {
+          // Build valid target set from lineup player names + special values
+          const validTargets = new Set<string>(lineup.players.map((p) => p.name));
+          validTargets.add('conductor');
+          validTargets.add('all');
+
           for (const sched of lineup.schedules) {
             try {
+              // Validate schedule target against known player names
+              if (!validTargets.has(sched.target)) {
+                scheduleWarnings.push(
+                  `schedule "${sched.name}": target "${sched.target}" does not match any player in this lineup (known: ${[...validTargets].join(', ')})`
+                );
+              }
+
               const now = Date.now();
               let nextFireAt: number;
               let interval: number | undefined;
@@ -356,6 +369,9 @@ export function registerLoadLineupTool(
         }
         if (schedulesCreated.length > 0) {
           lines.push(`Schedules created: ${schedulesCreated.join(', ')}`);
+        }
+        if (scheduleWarnings.length > 0) {
+          lines.push(`⚠ Schedule target warnings:\n${scheduleWarnings.map(w => `  - ${w}`).join('\n')}`);
         }
         if (failed.length > 0) {
           lines.push(`Failures:\n${failed.map(f => `  - ${f}`).join('\n')}`);
