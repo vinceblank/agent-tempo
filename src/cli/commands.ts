@@ -1,14 +1,16 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, copyFileSync, statSync, openSync, readSync, closeSync } from 'fs';
-import { join, resolve } from 'path';
+import { basename, join, resolve } from 'path';
 import { execFileSync, spawn as cpSpawn } from 'child_process';
-import { homedir } from 'os';
+import { homedir, hostname } from 'os';
+import { randomUUID } from 'crypto';
 import { Client, Connection, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { spawnInTerminal, spawnCopilotBridge, resolveClaudePath } from '../spawn';
-import { conductorWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
+import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
+import { getGitInfo } from '../git-info';
 import { createTemporalConnection } from '../connection';
 import { playerReportSignal, updateMetadataSignal } from '../workflows/signals';
 import { addScheduleSignal } from '../workflows/scheduler-signals';
-import { AgentType, ScheduleEntry, SessionMetadata } from '../types';
+import { AgentType, ScheduleEntry, SessionInput, SessionMetadata } from '../types';
 import { runPreflight } from './preflight';
 import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
 import { loadLineup } from '../ensemble/loader';
@@ -719,14 +721,77 @@ export async function up(opts: UpOpts) {
   // Resolve conductor agent from lineup or CLI flags
   const conductorAgent: AgentType = lineup?.conductor?.agent === 'copilot' ? 'copilot' : opts.agent;
 
-  // Step 5: Launch conductor
+  // Step 5: Connect to Temporal and pre-create conductor workflow before spawning
   console.log();
   out.log(`Launching conductor in ensemble ${out.cyan(opts.ensemble)}${conductorAgent === 'copilot' ? out.dim(' (copilot)') : ''}...`);
 
+  const connection = await createTemporalConnection(config);
+  const client = new Client({ connection, namespace: config.temporalNamespace });
+
+  const sessionName = opts.name || lineup?.conductor?.name || (conductorAgent === 'copilot' ? `${opts.ensemble}-conductor` : 'conductor');
+  const conductorWfId = conductorWorkflowId(opts.ensemble);
+
+  // Resolve conductor agent type from lineup
+  const conductorType = lineup?.conductor?.agent && lineup.conductor.agent !== 'default' && lineup.conductor.agent !== 'copilot'
+    ? lineup.conductor.agent
+    : undefined;
+  const conductorTypeName = lineup?.conductor?.type;
+  const resolvedConductorType = conductorTypeName ? resolveAgentType(conductorTypeName) : null;
+
+  // Pre-create conductor workflow — holds messages safely before process connects
+  const conductorSessionId = randomUUID();
+  const { gitRoot: conductorGitRoot, gitBranch: conductorGitBranch } = getGitInfo(process.cwd());
+  const conductorInput: SessionInput = {
+    metadata: {
+      playerId: sessionName,
+      ensemble: opts.ensemble,
+      hostname: hostname(),
+      workDir: process.cwd(),
+      gitRoot: conductorGitRoot,
+      gitBranch: conductorGitBranch,
+      isConductor: true,
+      agentType: conductorAgent,
+      status: 'pending',
+      claudeSessionId: conductorSessionId,
+      ...(resolvedConductorType ? { playerType: resolvedConductorType.name, playerTypeDescription: resolvedConductorType.description || '' } : {}),
+    },
+    autoSummary: `Conductor session`,
+    disableStaleDetection: true,
+    temporalConfig: {
+      temporalAddress: config.temporalAddress,
+      temporalNamespace: config.temporalNamespace,
+      taskQueue: config.taskQueue,
+    },
+    ...(lineup?.conductor?.instructions ? {
+      messages: [{
+        id: randomUUID(),
+        from: 'lineup',
+        text: lineup.conductor.instructions,
+        timestamp: new Date().toISOString(),
+        delivered: false,
+      }],
+    } : {}),
+  };
+
+  await client.workflow.start('claudeSessionWorkflow', {
+    workflowId: conductorWfId,
+    taskQueue: config.taskQueue,
+    args: [conductorInput],
+    workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+    searchAttributes: {
+      ...(conductorGitRoot ? { ClaudeTempoGitRoot: [conductorGitRoot] } : {}),
+      ClaudeTempoHostname: [hostname()],
+      ClaudeTempoEnsemble: [opts.ensemble],
+      ClaudeTempoPlayerId: [sessionName],
+    },
+  });
+  out.check('Conductor workflow pre-created', true);
+
+  // Spawn the conductor process
   let pid: number | undefined;
   if (conductorAgent === 'copilot') {
     ({ pid } = spawnCopilotBridge({
-      name: opts.name || `${opts.ensemble}-conductor`,
+      name: sessionName,
       ensemble: opts.ensemble,
       temporalAddress: config.temporalAddress,
       temporalNamespace: config.temporalNamespace,
@@ -737,22 +802,10 @@ export async function up(opts: UpOpts) {
       workDir: process.cwd(),
     }));
   } else {
-    // Default conductor name so the Claude Code session name matches the ensemble role
-    const sessionName = opts.name || lineup?.conductor?.name || 'conductor';
-
-    // Resolve conductor agent type from lineup
-    const conductorType = lineup?.conductor?.agent && lineup.conductor.agent !== 'default' && lineup.conductor.agent !== 'copilot'
-      ? lineup.conductor.agent  // custom agent path
-      : undefined;
-    // Also check if the lineup has a type field
-    const conductorTypeName = lineup?.conductor?.type;
-    const resolvedConductorType = conductorTypeName ? resolveAgentType(conductorTypeName) : null;
-
     const claudeArgs = [
       '--dangerously-skip-permissions',
       '--dangerously-load-development-channels', 'server:claude-tempo',
       '-n', sessionName,
-      // Pass agent definition if available
       ...(resolvedConductorType?.nativeResolvable ? ['--agent', resolvedConductorType.name] :
           resolvedConductorType ? ['--system-prompt', resolvedConductorType.path] :
           conductorType ? ['--system-prompt', conductorType] : []),
@@ -775,62 +828,82 @@ export async function up(opts: UpOpts) {
 
   // Step 6: If lineup provided, recruit players and create schedules
   if (lineup) {
-    // Connect to Temporal to send signals
-    const connection = await createTemporalConnection(config);
-    const client = new Client({ connection, namespace: config.temporalNamespace });
+    // Ensure Maestro workflow is running
+    await ensureMaestroWorkflow(client, config, opts.ensemble);
 
-    // Wait for conductor workflow to appear
-    out.log(`\n  Waiting for conductor to register...`);
-    const conductorWfId = conductorWorkflowId(opts.ensemble);
-    let conductorReady = false;
-    for (let i = 0; i < 30; i++) {
-      await new Promise(r => setTimeout(r, 500));
-      try {
-        const handle = client.workflow.getHandle(conductorWfId);
-        const desc = await handle.describe();
-        if (desc.status.name === 'RUNNING') { conductorReady = true; break; }
-      } catch { /* Conductor workflow not yet registered — keep polling */ }
+    if (lineup.conductor?.instructions) {
+      out.check('Conductor instructions baked into workflow', true);
     }
 
-    if (!conductorReady) {
-      out.warn('Conductor did not register within 15s — skipping lineup players/schedules');
-    } else {
-      out.check('Conductor registered', true);
+    // Pre-create and spawn players — no polling needed
+    if (lineup.players.length > 0) {
+      console.log();
+      out.log(`Recruiting ${lineup.players.length} player${lineup.players.length !== 1 ? 's' : ''} from lineup...`);
 
-      // Ensure Maestro workflow is running
-      await ensureMaestroWorkflow(client, config, opts.ensemble);
+      for (const player of lineup.players) {
+        const playerAgent: AgentType = player.agent === 'copilot' ? 'copilot' : 'claude';
+        const playerWorkDir = player.workDir || process.cwd();
+        const playerTypeName = player.type;
+        const resolvedPlayerType = playerTypeName ? resolveAgentType(playerTypeName) : null;
 
-      // Send conductor instructions if provided
-      if (lineup.conductor?.instructions) {
+        // Pre-create player workflow with initial message baked in
+        const playerSessionId = randomUUID();
+        const playerWfId = sessionWorkflowId(opts.ensemble, player.name);
+        const { gitRoot: playerGitRoot, gitBranch: playerGitBranch } = getGitInfo(playerWorkDir);
+
+        const playerInput: SessionInput = {
+          metadata: {
+            playerId: player.name,
+            ensemble: opts.ensemble,
+            hostname: hostname(),
+            workDir: playerWorkDir,
+            gitRoot: playerGitRoot,
+            gitBranch: playerGitBranch,
+            isConductor: false,
+            agentType: playerAgent,
+            status: 'pending',
+            claudeSessionId: playerSessionId,
+            recruitedBy: sessionName,
+            ...(resolvedPlayerType ? { playerType: resolvedPlayerType.name, playerTypeDescription: resolvedPlayerType.description || '' } : {}),
+          },
+          autoSummary: `Session in ${basename(resolve(playerWorkDir))}`,
+          disableStaleDetection: true,
+          temporalConfig: {
+            temporalAddress: config.temporalAddress,
+            temporalNamespace: config.temporalNamespace,
+            taskQueue: config.taskQueue,
+          },
+          ...(player.instructions ? {
+            messages: [{
+              id: randomUUID(),
+              from: 'lineup',
+              text: player.instructions,
+              timestamp: new Date().toISOString(),
+              delivered: false,
+            }],
+          } : {}),
+        };
+
         try {
-          const handle = client.workflow.getHandle(conductorWfId);
-          await handle.signal('receiveMessage', {
-            from: 'lineup',
-            text: lineup.conductor.instructions,
+          await client.workflow.start('claudeSessionWorkflow', {
+            workflowId: playerWfId,
+            taskQueue: config.taskQueue,
+            args: [playerInput],
+            workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+            searchAttributes: {
+              ...(playerGitRoot ? { ClaudeTempoGitRoot: [playerGitRoot] } : {}),
+              ClaudeTempoHostname: [hostname()],
+              ClaudeTempoEnsemble: [opts.ensemble],
+              ClaudeTempoPlayerId: [player.name],
+            },
           });
-          out.check('Conductor instructions sent', true);
         } catch (err) {
-          out.warn(`Could not send conductor instructions: ${err}`);
+          out.warn(`Could not pre-create workflow for "${player.name}": ${err}`);
+          continue;
         }
-      }
 
-      // Recruit players sequentially (each polls for ~15s)
-      if (lineup.players.length > 0) {
-        console.log();
-        out.log(`Recruiting ${lineup.players.length} player${lineup.players.length !== 1 ? 's' : ''} from lineup...`);
-
-        for (const player of lineup.players) {
-          const playerAgent: AgentType = player.agent === 'copilot' ? 'copilot' : 'claude';
-          const playerWorkDir = player.workDir || process.cwd();
-
-          // Record existing workflows to detect the new one
-          const existingIds = new Set<string>();
-          const listQuery = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
-          for await (const wf of client.workflow.list({ query: listQuery })) {
-            existingIds.add(wf.workflowId);
-          }
-
-          // Spawn the player
+        // Spawn the player process
+        try {
           if (playerAgent === 'copilot') {
             spawnCopilotBridge({
               name: player.name,
@@ -844,10 +917,6 @@ export async function up(opts: UpOpts) {
               workDir: playerWorkDir,
             });
           } else {
-            // Resolve player type from lineup
-            const playerTypeName = player.type;
-            const resolvedPlayerType = playerTypeName ? resolveAgentType(playerTypeName) : null;
-
             const claudeArgs = [
               '--dangerously-skip-permissions',
               '--dangerously-load-development-channels', 'server:claude-tempo',
@@ -866,56 +935,33 @@ export async function up(opts: UpOpts) {
             }
             spawnInTerminal(claudeArgs, playerWorkDir, playerEnvVars);
           }
-
-          // Poll for the new workflow to appear (up to ~15s)
-          let newWorkflowId: string | null = null;
-          for (let attempt = 0; attempt < 30; attempt++) {
-            await new Promise(r => setTimeout(r, 500));
-            for await (const wf of client.workflow.list({ query: listQuery })) {
-              if (!existingIds.has(wf.workflowId)) {
-                newWorkflowId = wf.workflowId;
-                break;
-              }
-            }
-            if (newWorkflowId) break;
-          }
-
-          if (newWorkflowId && player.instructions) {
-            try {
-              const handle = client.workflow.getHandle(newWorkflowId);
-              await handle.signal('receiveMessage', {
-                from: 'lineup',
-                text: player.instructions,
-              });
-            } catch { /* Instruction delivery is best-effort — player may not be ready yet */ }
-          }
-
-          const status = newWorkflowId ? out.green('ok') : out.yellow('slow');
-          out.log(`  ${status} ${out.bold(player.name)} in ${playerWorkDir}`);
-        }
-      }
-
-      // Create schedules
-      if (lineup.schedules && lineup.schedules.length > 0) {
-        console.log();
-        out.log(`Creating ${lineup.schedules.length} schedule${lineup.schedules.length !== 1 ? 's' : ''}...`);
-
-        for (const sched of lineup.schedules) {
-          try {
-            const entry = lineupScheduleToEntry(sched);
-            const schedulerWfId = schedulerWorkflowId(opts.ensemble);
-            const handle = client.workflow.getHandle(schedulerWfId);
-            await handle.signal(addScheduleSignal, entry);
-            out.check(sched.name, true, `→ ${sched.target}`);
-          } catch (err) {
-            out.warn(`Could not create schedule "${sched.name}": ${err}`);
-          }
+          out.log(`  ${out.green('ok')} ${out.bold(player.name)} in ${playerWorkDir}`);
+        } catch (err) {
+          out.warn(`Could not spawn "${player.name}": ${err}`);
         }
       }
     }
 
-    await connection.close();
+    // Create schedules
+    if (lineup.schedules && lineup.schedules.length > 0) {
+      console.log();
+      out.log(`Creating ${lineup.schedules.length} schedule${lineup.schedules.length !== 1 ? 's' : ''}...`);
+
+      for (const sched of lineup.schedules) {
+        try {
+          const entry = lineupScheduleToEntry(sched);
+          const schedulerWfId = schedulerWorkflowId(opts.ensemble);
+          const handle = client.workflow.getHandle(schedulerWfId);
+          await handle.signal(addScheduleSignal, entry);
+          out.check(sched.name, true, `→ ${sched.target}`);
+        } catch (err) {
+          out.warn(`Could not create schedule "${sched.name}": ${err}`);
+        }
+      }
+    }
   }
+
+  await connection.close();
 
   console.log();
   out.success('You\'re all set!');
