@@ -245,8 +245,11 @@ export function App({ api, ensemble }: AppProps) {
         ? 'Type a message for the conductor. /players to switch, /dashboard for overview'
         : `Chatting with ${state.chatTarget}. /back to return to conductor`;
     }
+    if (state.activeEnsemble && !state.conductorName) {
+      return '\u26A0 No conductor. /recruit-conductor to recruit one, or /cue <player> to message directly';
+    }
     return '/cue /recruit /stop /broadcast /help /quit';
-  }, [state.phase, state.chatTarget, state.confirmingStop]);
+  }, [state.phase, state.chatTarget, state.confirmingStop, state.activeEnsemble, state.conductorName]);
 
   // ── Completion data for prompt ──
   const commandNamesList = useMemo(() => getCommandNames(), []);
@@ -1160,6 +1163,7 @@ export function App({ api, ensemble }: AppProps) {
       players: state.players,
       scheduleCount: state.schedules.length,
       connected: true,
+      conductorName: state.conductorName,
     }),
     // Bottom divider
     React.createElement(Box, { key: 'divider-bottom', paddingX: 1 },

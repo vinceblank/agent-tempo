@@ -13,9 +13,10 @@ export interface StatusBarProps {
   players: MaestroPlayerInfo[];
   scheduleCount: number;
   connected: boolean;
+  conductorName?: string;
 }
 
-export function StatusBar({ ensemble, players, scheduleCount, connected }: StatusBarProps) {
+export function StatusBar({ ensemble, players, scheduleCount, connected, conductorName }: StatusBarProps) {
   const { Box, Text } = useInk();
 
   // Player breakdown by status
@@ -51,6 +52,13 @@ export function StatusBar({ ensemble, players, scheduleCount, connected }: Statu
       ? React.createElement(React.Fragment, null,
           React.createElement(Text, { color: THEME.dim }, ' \u00B7 '),
           React.createElement(Text, { color: THEME.dim }, `${scheduleCount} schedule${scheduleCount !== 1 ? 's' : ''}`),
+        )
+      : null,
+    // Conductor status
+    ensemble && !conductorName
+      ? React.createElement(React.Fragment, null,
+          React.createElement(Text, { color: THEME.dim }, ' \u00B7 '),
+          React.createElement(Text, { color: THEME.warning }, '\u26A0 No conductor'),
         )
       : null,
     // Health indicator

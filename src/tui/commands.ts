@@ -660,6 +660,37 @@ async function handleSearch(
   }
 }
 
+/** /recruit-conductor — one-shot recruit a conductor for the current ensemble. */
+async function handleRecruitConductor(
+  _args: string[],
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  const ensemble = ctx.activeEnsemble;
+  if (!ensemble) {
+    commitStatic(dispatch, 'error', 'No active ensemble. Use /up <name> first.');
+    return;
+  }
+
+  commitStatic(dispatch, 'info', '\u2026 Recruiting conductor (tempo-conductor)...');
+
+  try {
+    await api.sendCommand(ensemble, '/recruit conductor --type tempo-conductor --conductor', 'maestro');
+    commitStatic(dispatch, 'info', '\u2714 Conductor recruitment requested. It will appear shortly.');
+  } catch (err) {
+    // Fallback: shell out if no conductor to receive the command
+    const { exec } = require('child_process') as typeof import('child_process');
+    exec(`claude-tempo conduct ${ensemble}`, { timeout: 30000 }, (execErr: any) => {
+      if (execErr) {
+        commitStatic(dispatch, 'error', `\u2717 Failed to recruit conductor: ${execErr.message || execErr}`);
+      } else {
+        commitStatic(dispatch, 'info', '\u2714 Conductor started. Auto-connecting...');
+      }
+    });
+  }
+}
+
 /** /up <name> — create a new ensemble from within the TUI. */
 async function handleUp(
   args: string[],
@@ -886,6 +917,11 @@ export const COMMANDS: Record<string, CommandDef> = {
     description: 'Show available commands',
     usage: '/help [command]',
     handler: null, // Handled directly in App.tsx
+  },
+  'recruit-conductor': {
+    description: 'Recruit a conductor for the current ensemble',
+    usage: '/recruit-conductor',
+    handler: handleRecruitConductor,
   },
   up: {
     description: 'Create a new ensemble',
