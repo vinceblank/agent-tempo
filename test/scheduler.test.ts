@@ -16,6 +16,7 @@ import {
 import {
   addScheduleSignal,
   removeScheduleSignal,
+  updateScheduleTargetSignal,
   getSchedulesQuery,
   getScheduleQuery,
 } from '../src/workflows/scheduler-signals';
@@ -157,6 +158,83 @@ describe('claudeSchedulerWorkflow', function () {
         expect(schedules).to.have.lengthOf(0);
 
         // Should self-terminate since empty — cancel to not wait 30s
+        await handle.cancel();
+        try { await handle.result(); } catch { /* cancelled */ }
+      });
+    });
+
+    it('updates schedule targets on player rename via updateScheduleTarget signal', async function () {
+      await withWorkerAndActivities(async () => {
+        const handle = await startScheduler(getClient());
+
+        // Add two schedules targeting the same player, and one targeting a different player
+        const entry1 = makeEntry({
+          name: 'sched-a',
+          message: 'msg-a',
+          target: 'old-name',
+          createdBy: 'old-name',
+          nextFireAt: new Date(Date.now() + 60_000).toISOString(),
+        });
+        const entry2 = makeEntry({
+          name: 'sched-b',
+          message: 'msg-b',
+          target: 'old-name',
+          createdBy: 'someone-else',
+          nextFireAt: new Date(Date.now() + 60_000).toISOString(),
+        });
+        const entry3 = makeEntry({
+          name: 'sched-c',
+          message: 'msg-c',
+          target: 'other-player',
+          createdBy: 'old-name',
+          nextFireAt: new Date(Date.now() + 60_000).toISOString(),
+        });
+        await handle.signal(addScheduleSignal, entry1);
+        await handle.signal(addScheduleSignal, entry2);
+        await handle.signal(addScheduleSignal, entry3);
+
+        // Rename old-name → new-name
+        await handle.signal(updateScheduleTargetSignal, 'old-name', 'new-name');
+
+        const schedules = await handle.query(getSchedulesQuery);
+        expect(schedules).to.have.lengthOf(3);
+
+        const schedA = schedules.find(s => s.name === 'sched-a')!;
+        expect(schedA.target).to.equal('new-name');
+        expect(schedA.createdBy).to.equal('new-name');
+
+        const schedB = schedules.find(s => s.name === 'sched-b')!;
+        expect(schedB.target).to.equal('new-name');
+        expect(schedB.createdBy).to.equal('someone-else'); // unchanged — different creator
+
+        const schedC = schedules.find(s => s.name === 'sched-c')!;
+        expect(schedC.target).to.equal('other-player'); // unchanged — different target
+        expect(schedC.createdBy).to.equal('new-name'); // updated — was old-name
+
+        await handle.cancel();
+        try { await handle.result(); } catch { /* cancelled */ }
+      });
+    });
+
+    it('updateScheduleTarget is a no-op when no schedules match', async function () {
+      await withWorkerAndActivities(async () => {
+        const handle = await startScheduler(getClient());
+
+        const entry = makeEntry({
+          name: 'no-match',
+          message: 'msg',
+          target: 'player-x',
+          nextFireAt: new Date(Date.now() + 60_000).toISOString(),
+        });
+        await handle.signal(addScheduleSignal, entry);
+
+        // Rename a player that has no schedules
+        await handle.signal(updateScheduleTargetSignal, 'nonexistent', 'irrelevant');
+
+        const schedules = await handle.query(getSchedulesQuery);
+        expect(schedules).to.have.lengthOf(1);
+        expect(schedules[0].target).to.equal('player-x'); // unchanged
+
         await handle.cancel();
         try { await handle.result(); } catch { /* cancelled */ }
       });

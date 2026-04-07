@@ -4,6 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { Config, schedulerWorkflowId } from '../config';
 import { parseDuration } from '../utils/duration';
+import { resolveSession } from './resolve';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { SCHEDULE_NAME_MAX, SCHEDULE_MESSAGE_MAX, PLAYER_NAME_MAX, CRON_EXPRESSION_MAX } from '../utils/validation';
 
@@ -49,6 +50,19 @@ export function registerScheduleTool(
       // Resolve "self" to the current player name
       if (target === 'self') {
         target = getPlayerId();
+      }
+
+      // Validate target player exists (warn, don't block)
+      let targetWarning: string | undefined;
+      if (target !== 'all' && target !== 'conductor') {
+        try {
+          const targetHandle = await resolveSession(client, config.ensemble, target);
+          if (!targetHandle) {
+            targetWarning = `Warning: player "${target}" is not currently active. The schedule will be created but may fail to deliver until the player joins.`;
+          }
+        } catch {
+          // Resolution failed — don't block schedule creation
+        }
       }
 
       // Validate exactly one timing option
@@ -154,7 +168,8 @@ export function registerScheduleTool(
           : interval
             ? ` (repeating every ${every})`
             : ' (one-shot)';
-        return ok(`Schedule **${name}** created. Next fire: ${fireDate}${recur}. Target: ${target}.`);
+        const msg = `Schedule **${name}** created. Next fire: ${fireDate}${recur}. Target: ${target}.`;
+        return ok(targetWarning ? `${msg}\n\n⚠ ${targetWarning}` : msg);
       } catch (err) {
         return fail(`Failed to create schedule: ${formatError(err)}`);
       }
