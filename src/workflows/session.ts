@@ -105,6 +105,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   const outbox: OutboxEntry[] = input.outbox ?? [];
   let lastActivityTime = Date.now();
   let lastOutboundTime = Date.now();
+  let lastInboundDeliveredTime = 0; // 0 = no inbound delivered yet
 
   // ── Outbox Update + Query Handlers ──
 
@@ -178,6 +179,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     }
     // Any delivery proves the session is alive
     lastActivityTime = Date.now();
+    // Track when inbound messages are delivered (consumed by the session).
+    // Used by blocked detection: only blocked if unanswered inbound exists.
+    lastInboundDeliveredTime = Date.now();
   });
 
   setHandler(updateMetadataSignal, (update) => {
@@ -613,14 +617,17 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         upsertSearchAttributes({ ClaudeTempoStatus: ['stale'] });
       }
 
-      // Detect blocked session: active session with messages delivered but no outbound
-      // activity for 5+ minutes. The session is alive but may be stuck or spinning.
+      // Detect blocked session: active session with unanswered inbound messages.
+      // Only "blocked" if the last delivered inbound arrived AFTER the last outbound,
+      // meaning the player received a message but hasn't responded in 5+ minutes.
+      // If the last action was outbound (cue/report/etc.), the player answered — they're
+      // idle (waiting for work), not blocked.
       const BLOCKED_WINDOW_MS = 5 * 60 * 1000;
-      const hasDeliveredMessages = messages.some((m) => m.delivered);
+      const hasUnansweredInbound = lastInboundDeliveredTime > 0 && lastInboundDeliveredTime > lastOutboundTime;
       if (
         input.metadata.status === 'active' &&
-        hasDeliveredMessages &&
-        now - lastOutboundTime > BLOCKED_WINDOW_MS
+        hasUnansweredInbound &&
+        now - lastInboundDeliveredTime > BLOCKED_WINDOW_MS
       ) {
         input.metadata.status = 'blocked';
         upsertSearchAttributes({ ClaudeTempoStatus: ['blocked'] });
