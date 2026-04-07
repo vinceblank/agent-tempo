@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.19.0-beta.5] - 2026-04-07
+
+### Fixed
+
+- Schedule targets now validated against player names at lineup load time; mismatches warn instead of silently failing (#74)
+- `set_name` propagates renames to scheduler via new `updateScheduleTarget` signal (#74)
+- `schedule` tool validates target player exists at creation time (#74)
+- Conductor no longer blocks player recruitment on 15s timeout — workflow pre-created before spawn (#56)
+- `load_lineup` migrated to outbox recruit pattern — eliminates spawn+poll loops (#56)
+
 ## [0.19.0-beta.0] - 2026-04-06
 
 ### Added
