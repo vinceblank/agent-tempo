@@ -336,6 +336,158 @@ describe('stop tool validation', function () {
   });
 });
 
+describe('stop tool force-terminate', function () {
+  it('force-terminates a session directly via Temporal API', async function () {
+    let terminatedWith: string | undefined;
+    // Create a client where resolveSession finds an existing session
+    const clientWithSession = {
+      workflow: {
+        getHandle: (_id: string) => ({
+          describe: async () => { throw new Error('workflow not found'); },
+          signal: async () => {},
+          terminate: async (reason: string) => { terminatedWith = reason; },
+        }),
+        start: async () => ({ runId: 'fake-run-id' }),
+        list: async function* () {
+          yield { workflowId: 'wf-target' };
+        },
+      },
+    } as unknown as Client;
+    // Patch getHandle to return a handle with query support for resolveSession
+    (clientWithSession.workflow as any).getHandle = (_id: string) => ({
+      query: async (name: string) => {
+        if (name === 'getMetadata') return { ensemble: 'test-ensemble', playerId: 'target-player' } as any;
+        return '';
+      },
+      signal: async () => {},
+      terminate: async (reason: string) => { terminatedWith = reason; },
+    });
+
+    const call = extractHandler((server) =>
+      registerStopTool(server, clientWithSession, testConfig, getPlayerId, fakeHandle),
+    );
+
+    const result = await call({ playerId: 'target-player', force: true });
+    expect(result.isError).to.be.undefined;
+    expect(result.content[0].text).to.include('force-terminated');
+    expect(terminatedWith).to.include('Force terminated');
+  });
+
+  it('force-terminate still rejects self-stop', async function () {
+    const call = extractHandler((server) =>
+      registerStopTool(server, makeTestClient(), testConfig, getPlayerId, fakeHandle),
+    );
+    const result = await call({ playerId: TEST_PLAYER_ID, force: true });
+    expect(result.isError).to.be.true;
+    expect(result.content[0].text).to.equal('Cannot stop your own session.');
+  });
+
+  it('force-terminate returns error when session not found', async function () {
+    const call = extractHandler((server) =>
+      registerStopTool(server, makeTestClient(), testConfig, getPlayerId, fakeHandle),
+    );
+    const result = await call({ playerId: 'nonexistent', force: true });
+    expect(result.isError).to.be.true;
+    expect(result.content[0].text).to.include('No active session found');
+  });
+
+  it('graceful stop (default) uses outbox, not direct terminate', async function () {
+    let outboxCalled = false;
+    const fakeOutboxHandle = {
+      executeUpdate: async () => { outboxCalled = true; return 'fake-entry-id'; },
+    } as unknown as WorkflowHandle;
+
+    // Client with a findable session
+    const clientWithSession = {
+      workflow: {
+        getHandle: (_id: string) => ({
+          query: async (name: string) => {
+            if (name === 'getMetadata') return { ensemble: 'test-ensemble', playerId: 'target-player' } as any;
+            return '';
+          },
+          signal: async () => {},
+          terminate: async () => { throw new Error('Should not be called'); },
+        }),
+        start: async () => ({ runId: 'fake-run-id' }),
+        list: async function* () {
+          yield { workflowId: 'wf-target' };
+        },
+      },
+    } as unknown as Client;
+
+    const call = extractHandler((server) =>
+      registerStopTool(server, clientWithSession, testConfig, getPlayerId, fakeOutboxHandle),
+    );
+
+    const result = await call({ playerId: 'target-player' });
+    expect(result.isError).to.be.undefined;
+    expect(result.content[0].text).to.include('gracefully');
+    expect(outboxCalled).to.be.true;
+  });
+});
+
+describe('recruit tool force-terminate existing', function () {
+  it('force-terminates existing session before recruiting', async function () {
+    let terminatedWith: string | undefined;
+    const clientWithSession = {
+      workflow: {
+        getHandle: (_id: string) => ({
+          describe: async () => { throw new Error('workflow not found'); },
+          query: async (name: string) => {
+            if (name === 'getMetadata') return { ensemble: 'test-ensemble', playerId: 'existing-player' } as any;
+            return '';
+          },
+          signal: async () => {},
+          terminate: async (reason: string) => { terminatedWith = reason; },
+        }),
+        start: async () => ({ runId: 'fake-run-id' }),
+        list: async function* () {
+          yield { workflowId: 'wf-existing' };
+        },
+      },
+    } as unknown as Client;
+
+    const call = extractHandler((server) =>
+      registerRecruitTool(server, clientWithSession, testConfig, getPlayerId, fakeHandle, 'claude'),
+    );
+
+    const result = await call({ workDir: '/tmp', name: 'existing-player', force: true });
+    // Should proceed past the existing session check (force-terminated it)
+    expect(terminatedWith).to.include('Force-terminated');
+    // Should reach the outbox submit (recruit succeeds)
+    expect(result.isError).to.be.undefined;
+    expect(result.content[0].text).to.include('Recruit request submitted');
+  });
+
+  it('without force, rejects when session already exists', async function () {
+    const clientWithSession = {
+      workflow: {
+        getHandle: (_id: string) => ({
+          describe: async () => { throw new Error('workflow not found'); },
+          query: async (name: string) => {
+            if (name === 'getMetadata') return { ensemble: 'test-ensemble', playerId: 'existing-player' } as any;
+            return '';
+          },
+          signal: async () => {},
+        }),
+        start: async () => ({ runId: 'fake-run-id' }),
+        list: async function* () {
+          yield { workflowId: 'wf-existing' };
+        },
+      },
+    } as unknown as Client;
+
+    const call = extractHandler((server) =>
+      registerRecruitTool(server, clientWithSession, testConfig, getPlayerId, fakeHandle, 'claude'),
+    );
+
+    const result = await call({ workDir: '/tmp', name: 'existing-player' });
+    expect(result.isError).to.be.true;
+    expect(result.content[0].text).to.include('already active');
+    expect(result.content[0].text).to.include('force: true');
+  });
+});
+
 // ─────────────────────────────────────────────
 // load_lineup tool
 // ─────────────────────────────────────────────
