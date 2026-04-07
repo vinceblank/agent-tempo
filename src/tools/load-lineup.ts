@@ -4,23 +4,19 @@ import { join } from 'path';
 import { Cron } from 'croner';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle, WorkflowIdConflictPolicy } from '@temporalio/client';
-import { Config, CLAUDE_TEMPO_HOME, schedulerWorkflowId, ENV } from '../config';
+import { Config, CLAUDE_TEMPO_HOME, schedulerWorkflowId } from '../config';
 import { AgentType } from '../types';
-import { loadLineup } from '../ensemble/loader';
 import { loadAndResolveLineup, resolveAgentType } from '../ensemble/agent-types';
 import { readSavedLineup } from '../ensemble/saver';
 import { resolveSession } from './resolve';
-import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
+import { submitOutboxUpdate } from '../workflows/signals';
+import type { OutboxEntryInput } from '../types';
 import { parseDuration } from '../utils/duration';
 import { safeLineupPath } from '../utils/safe-path';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { PLAYER_NAME_MAX, PATH_MAX } from '../utils/validation';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:load-lineup]', ...args);
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export function registerLoadLineupTool(
   server: McpServer,
@@ -62,7 +58,7 @@ export function registerLoadLineupTool(
           if (!savedContent) {
             return fail(`No saved lineup found with name "${lineupName}". Check ~/.claude-tempo/ensembles/.`);
           }
-          // readSavedLineup returns content, but loadLineup wants a path.
+          // readSavedLineup returns content, but we need a path.
           // Construct the path directly.
           const ensemblesDir = join(CLAUDE_TEMPO_HOME, 'ensembles');
           // Try both extensions
@@ -134,7 +130,7 @@ export function registerLoadLineupTool(
           }
         }
 
-        // Recruit players sequentially
+        // Recruit players via outbox — no polling needed
         for (const player of lineup.players) {
           const playerName = player.name;
           const workDir = player.workDir || process.cwd();
@@ -144,18 +140,19 @@ export function registerLoadLineupTool(
           const agentDefinition = player._agentDefinition;
           const agentDefinitionPath = player._agentDefinitionPath;
 
-          // Skip if already active
+          // Skip if already active — send instructions via cue instead
           const existing = await resolveSession(client, config.ensemble, playerName);
           if (existing) {
             log(`Player "${playerName}" already active — skipping recruit`);
             recruited.push(`${playerName} (already active)`);
-            // Still send instructions if provided
-            if (player.instructions) {
+            if (player.instructions && handle) {
               try {
-                await existing.signal('receiveMessage', {
-                  from: getPlayerId(),
-                  text: player.instructions,
-                });
+                const cueEntry = {
+                  type: 'cue',
+                  targetPlayerId: playerName,
+                  message: player.instructions,
+                } as OutboxEntryInput;
+                await handle.executeUpdate(submitOutboxUpdate, { args: [cueEntry] });
               } catch (err) {
                 log(`Failed to send instructions to already-active player "${playerName}":`, err);
               }
@@ -163,108 +160,34 @@ export function registerLoadLineupTool(
             continue;
           }
 
-          // Record existing workflows to detect the new one
-          const existingIds = new Set<string>();
-          const listQuery = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
-          for await (const wf of client.workflow.list({ query: listQuery })) {
-            existingIds.add(wf.workflowId);
+          // Submit recruit via outbox — pre-creates workflow with pending status
+          if (!handle) {
+            failed.push(`${playerName}: load_lineup requires a workflow handle to recruit`);
+            continue;
           }
-
-          // Spawn
           try {
-            if (agentType === 'copilot') {
-              spawnCopilotBridge({
-                name: playerName,
-                ensemble: config.ensemble,
-                temporalAddress: config.temporalAddress,
-                temporalNamespace: config.temporalNamespace,
-                // Secrets read from config (env/file), not workflow state
-                temporalApiKey: config.temporalApiKey,
-                temporalTlsCertPath: config.temporalTlsCertPath,
-                temporalTlsKeyPath: config.temporalTlsKeyPath,
-                isConductor: false,
-                workDir,
-              });
-            } else {
-              // Determine agent flags: --agent for natively resolvable types, --system-prompt for shipped/custom
-              let agentFlags: string[] = [];
-              if (agentDefinition) {
-                const typeInfo = resolveAgentType(agentDefinition);
-                if (!typeInfo) {
-                  log(`Warning: agent type "${agentDefinition}" not found at spawn time — spawning without type`);
-                }
-                if (typeInfo?.nativeResolvable) {
-                  agentFlags = ['--agent', agentDefinition];
-                } else if (agentDefinitionPath) {
-                  agentFlags = ['--system-prompt', agentDefinitionPath];
-                }
-              } else if (systemPrompt) {
-                agentFlags = ['--system-prompt', systemPrompt];
-              }
-
-              // Build --allowedTools flag from agent definition or lineup
-              const allowedToolsFlags = player.allowedTools && player.allowedTools.length > 0
-                ? ['--allowedTools', ...player.allowedTools]
-                : [];
-
-              const spawnArgs = [
-                '--dangerously-skip-permissions',
-                '--dangerously-load-development-channels', 'server:claude-tempo',
-                '-n', playerName,
-                ...agentFlags,
-                ...allowedToolsFlags,
-              ];
-              const envVars: Record<string, string> = {
-                [ENV.ENSEMBLE]: config.ensemble,
-                [ENV.CONDUCTOR]: '',
-                [ENV.PLAYER_NAME]: playerName,
-                [ENV.TEMPORAL_ADDRESS]: config.temporalAddress,
-                [ENV.TEMPORAL_NAMESPACE]: config.temporalNamespace,
-              };
-              if (agentDefinition) envVars[ENV.PLAYER_TYPE] = agentDefinition;
-              if (config.temporalApiKey) envVars[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
-              if (config.temporalTlsCertPath) envVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
-              if (config.temporalTlsKeyPath) envVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
-              spawnInTerminal(spawnArgs, workDir, envVars);
-            }
+            // Resolve full agent type info (description, nativeResolvable) if available
+            const resolvedType = agentDefinition ? resolveAgentType(agentDefinition) : null;
+            const entry = {
+              type: 'recruit',
+              targetName: playerName,
+              workDir,
+              isConductor: false,
+              initialMessage: player.instructions,
+              agent: agentType,
+              systemPrompt: agentDefinition ? undefined : systemPrompt,
+              agentDefinition: resolvedType?.name || agentDefinition,
+              agentDefinitionPath: resolvedType?.path || agentDefinitionPath,
+              agentDefinitionDescription: resolvedType?.description,
+              nativeResolvable: resolvedType?.nativeResolvable,
+              allowedTools: player.allowedTools,
+            } as OutboxEntryInput;
+            await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
+            recruited.push(playerName);
+            log(`Recruit request submitted for "${playerName}" in ${workDir}`);
           } catch (err) {
-            failed.push(`${playerName}: spawn failed — ${err}`);
-            continue;
+            failed.push(`${playerName}: recruit failed — ${err}`);
           }
-
-          // Poll for the new workflow to appear (up to ~15s)
-          let newWorkflowId: string | null = null;
-          for (let attempt = 0; attempt < 30; attempt++) {
-            await sleep(500);
-            for await (const wf of client.workflow.list({ query: listQuery })) {
-              if (!existingIds.has(wf.workflowId)) {
-                newWorkflowId = wf.workflowId;
-                break;
-              }
-            }
-            if (newWorkflowId) break;
-          }
-
-          if (!newWorkflowId) {
-            failed.push(`${playerName}: spawned but did not register within 15s`);
-            continue;
-          }
-
-          // Send initial instructions if provided
-          if (player.instructions) {
-            try {
-              const newHandle = client.workflow.getHandle(newWorkflowId);
-              await newHandle.signal('receiveMessage', {
-                from: getPlayerId(),
-                text: player.instructions,
-              });
-            } catch (err) {
-              log(`Failed to send instructions to newly recruited player "${playerName}":`, err);
-            }
-          }
-
-          recruited.push(playerName);
-          log(`Recruited "${playerName}" in ${workDir}`);
         }
 
         // Create schedules
