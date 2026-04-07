@@ -37,6 +37,8 @@ export function registerRecruitTool(
         .describe('Path to a .md file to use as custom agent system prompt (--system-prompt)'),
       host: z.string().optional()
         .describe('Target hostname for cross-machine recruiting. Omit for local spawn.'),
+      force: z.boolean().optional()
+        .describe('Force-terminate any existing session with this name before recruiting. Use when a previous session is orphaned or stuck.'),
     },
     async (args) => {
       const { workDir, name, initialMessage } = args as {
@@ -48,12 +50,14 @@ export function registerRecruitTool(
         type?: string;
         systemPrompt?: string;
         host?: string;
+        force?: boolean;
       };
       const isConductor = (args as any).conductor === true;
       const agent: AgentType = (args as any).agent || ownAgentType;
       const agentTypeName = (args as any).type as string | undefined;
       const systemPrompt = (args as any).systemPrompt as string | undefined;
       const host = (args as any).host as string | undefined;
+      const force = (args as any).force === true;
 
       // Resolve agent type if provided
       let agentDefinition: string | undefined;
@@ -91,7 +95,11 @@ export function registerRecruitTool(
             const conductorHandle = client.workflow.getHandle(conductorWfId);
             const desc = await conductorHandle.describe();
             if (desc.status.name === 'RUNNING') {
-              return fail(`A conductor is already running in ensemble "${config.ensemble}". Use \`claude-tempo conduct --replace\` from the CLI to replace it, or \`stop\` it first.`);
+              if (force) {
+                await conductorHandle.terminate(`Force-terminated for re-recruit by ${getPlayerId()}`);
+              } else {
+                return fail(`A conductor is already running in ensemble "${config.ensemble}". Use \`claude-tempo conduct --replace\` from the CLI to replace it, \`stop\` it first, or use \`force: true\` to replace it.`);
+              }
             }
           } catch {
             // No existing conductor — proceed
@@ -101,7 +109,23 @@ export function registerRecruitTool(
         // Check if a session with this name is already active
         const existing = await resolveSession(client, config.ensemble, name);
         if (existing) {
-          return fail(`Session **${name}** is already active. Use \`cue\` to send it a message, or \`stop\` it first.`);
+          if (force) {
+            // Force-terminate the existing session before recruiting
+            await existing.terminate(`Force-terminated for re-recruit by ${getPlayerId()}`);
+            // Best-effort notify conductor
+            try {
+              const condId = conductorWorkflowId(config.ensemble);
+              const condHandle = client.workflow.getHandle(condId);
+              await condHandle.signal('receiveMessage', {
+                from: 'system',
+                text: `Session "${name}" was force-terminated for re-recruit by ${getPlayerId()}.`,
+              });
+            } catch {
+              // Conductor may not exist — that's fine
+            }
+          } else {
+            return fail(`Session **${name}** is already active. Use \`cue\` to send it a message, \`stop\` it first, or use \`force: true\` to replace it.`);
+          }
         }
 
         const entry = {

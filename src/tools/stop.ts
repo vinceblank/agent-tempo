@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle } from '@temporalio/client';
-import { Config } from '../config';
+import { Config, conductorWorkflowId } from '../config';
 import { resolveSession } from './resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
@@ -18,12 +18,13 @@ export function registerStopTool(
   defineTool(
     server,
     'stop',
-    'Stop a player session by name. Signals termination and the session exits gracefully.',
+    'Stop a player session by name. By default signals graceful termination via the outbox. Use force=true to directly terminate the Temporal workflow when normal signaling fails (e.g., orphaned workflows where the process was killed externally).',
     {
       playerId: z.string().describe('The player name of the session to stop'),
+      force: z.boolean().optional().describe('Force-terminate the workflow directly via Temporal API, bypassing the outbox signal path. Use when the session is orphaned or unresponsive.'),
     },
     async (args) => {
-      const { playerId } = args as { playerId: string };
+      const { playerId, force } = args as { playerId: string; force?: boolean };
 
       const nameError = validatePlayerName(playerId);
       if (nameError) return fail(nameError);
@@ -38,6 +39,27 @@ export function registerStopTool(
           return fail(`No active session found with name "${playerId}".`);
         }
 
+        if (force) {
+          // Force-terminate: bypass outbox, directly terminate the Temporal workflow
+          const reason = `Force terminated by ${getPlayerId()}`;
+          await resolved.terminate(reason);
+
+          // Best-effort notify conductor
+          try {
+            const condId = conductorWorkflowId(config.ensemble);
+            const condHandle = client.workflow.getHandle(condId);
+            await condHandle.signal('receiveMessage', {
+              from: 'system',
+              text: `Session "${playerId}" was force-terminated by ${getPlayerId()}.`,
+            });
+          } catch {
+            // Conductor may not exist — that's fine
+          }
+
+          return ok(`**${playerId}** has been force-terminated. The Temporal workflow was terminated directly.`);
+        }
+
+        // Graceful stop via outbox signal
         const entry = {
           type: 'stop',
           targetPlayerId: playerId,
