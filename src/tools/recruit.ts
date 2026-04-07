@@ -112,6 +112,17 @@ export function registerRecruitTool(
           if (force) {
             // Force-terminate the existing session before recruiting
             await existing.terminate(`Force-terminated for re-recruit by ${getPlayerId()}`);
+            // Best-effort notify conductor
+            try {
+              const condId = conductorWorkflowId(config.ensemble);
+              const condHandle = client.workflow.getHandle(condId);
+              await condHandle.signal('receiveMessage', {
+                from: 'system',
+                text: `Session "${name}" was force-terminated for re-recruit by ${getPlayerId()}.`,
+              });
+            } catch {
+              // Conductor may not exist — that's fine
+            }
           } else {
             return fail(`Session **${name}** is already active. Use \`cue\` to send it a message, \`stop\` it first, or use \`force: true\` to replace it.`);
           }
