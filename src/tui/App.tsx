@@ -95,6 +95,8 @@ export function App({ api, ensemble }: AppProps) {
 
   // ── Refs for poll dedup (skip dispatches when data hasn't changed) ──
   const lastPollRef = React.useRef({ playerCount: 0, lastMsgId: '', historyLen: 0, scheduleCount: 0, maestroMsgCount: 0 });
+  // Track which messages have been committed to Static (overflow from live area)
+  const overflowCommittedRef = React.useRef(new Set<string>());
 
   // Reset stale refs when switching ensembles
   useEffect(() => {
@@ -493,13 +495,9 @@ export function App({ api, ensemble }: AppProps) {
       const target = s.chatTarget;
       try {
         if (target) {
-          // Optimistic local echo — show immediately, send async
+          // Optimistic local echo — appears in live conversation stream
           const isConductorTarget = target === s.conductorName;
           dispatch({ type: 'APPEND_SENT_MESSAGE', to: target, text: trimmed });
-          dispatch({
-            type: 'COMMIT_STATIC',
-            item: { id: nextStaticId(), type: 'message', content: `\u276F ${trimmed}`, timestamp: Date.now() },
-          });
           const sendPromise = isConductorTarget
             ? api.sendCommand(s.activeEnsemble!, trimmed, 'maestro')
             : api.sendMessage(s.activeEnsemble!, target, trimmed, 'maestro');
@@ -511,10 +509,6 @@ export function App({ api, ensemble }: AppProps) {
           // Maestro view — send to conductor as maestro (optimistic)
           const conductorTarget = s.conductorName || 'conductor';
           dispatch({ type: 'APPEND_SENT_MESSAGE', to: conductorTarget, text: trimmed });
-          dispatch({
-            type: 'COMMIT_STATIC',
-            item: { id: nextStaticId(), type: 'message', content: `\u276F ${trimmed}`, timestamp: Date.now() },
-          });
           api.sendCommand(s.activeEnsemble!, trimmed, 'maestro').catch(err => dispatch({
             type: 'COMMIT_STATIC',
             item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to deliver: ${err}`, timestamp: Date.now() },
@@ -611,82 +605,9 @@ export function App({ api, ensemble }: AppProps) {
             api.getMaestroMessages(ens),
           ]);
 
-          // Commit new relay messages to Static (full text, not truncated)
-          if (messages.length > 0) {
-            const prevId = lastSeenMsgRef.current;
-            const newMsgs = prevId
-              ? (() => { const idx = messages.findIndex(m => m.id === prevId); return idx >= 0 ? messages.slice(idx + 1) : messages; })()
-              : messages; // First poll — hydrate all
-            for (let mi = 0; mi < newMsgs.length; mi++) {
-              const m = newMsgs[mi];
-              const time = new Date(m.timestamp);
-              const hh = String(time.getHours()).padStart(2, '0');
-              const mm = String(time.getMinutes()).padStart(2, '0');
-              const lines = m.text.split('\n');
-              // Blank line separator between messages
-              if (mi > 0 || prevId) {
-                dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: '', timestamp: Date.now() } });
-              }
-              // First line: ← player: message  HH:MM
-              dispatch({
-                type: 'COMMIT_STATIC',
-                item: {
-                  id: `msg-${m.id}`,
-                  type: 'message',
-                  content: `\u2190 ${m.from}: ${lines[0]}  ${hh}:${mm}`,
-                  timestamp: Date.now(),
-                },
-              });
-              // Continuation lines indented
-              const indent = '  ' + ' '.repeat(m.from.length + 2);
-              for (const line of lines.slice(1)) {
-                dispatch({
-                  type: 'COMMIT_STATIC',
-                  item: {
-                    id: nextStaticId(),
-                    type: 'command-output',
-                    content: `${indent}${line}`,
-                    timestamp: Date.now(),
-                  },
-                });
-              }
-            }
-          }
-
-          // Commit new maestro direct messages
-          if (maestroMsgs.received.length > 0) {
-            const prevDmId = lastSeenMaestroRef.current;
-            const newDirect = prevDmId
-              ? (() => { const idx = maestroMsgs.received.findIndex(m => m.id === prevDmId); return idx >= 0 ? maestroMsgs.received.slice(idx + 1) : []; })()
-              : maestroMsgs.received; // First poll — hydrate all
-            for (const m of newDirect) {
-              const time = new Date(m.timestamp);
-              const hh = String(time.getHours()).padStart(2, '0');
-              const mm = String(time.getMinutes()).padStart(2, '0');
-              const lines = m.text.split('\n');
-              dispatch({
-                type: 'COMMIT_STATIC',
-                item: {
-                  id: `dm-${m.id}`,
-                  type: 'message',
-                  content: `\u2190 ${m.from}: ${lines[0]}  ${hh}:${mm}`,
-                  timestamp: Date.now(),
-                },
-              });
-              const indent = '  ' + ' '.repeat(m.from.length + 2);
-              for (const line of lines.slice(1)) {
-                dispatch({
-                  type: 'COMMIT_STATIC',
-                  item: {
-                    id: nextStaticId(),
-                    type: 'command-output',
-                    content: `${indent}${line}`,
-                    timestamp: Date.now(),
-                  },
-                });
-              }
-            }
-          }
+          // Messages flow into state via REFRESH_ENSEMBLE_DATA below.
+          // The live conversation stream handles display; overflow to Static
+          // happens in the render when messages exceed the viewport.
           if (maestroMsgs.received.length > 0) {
             lastSeenMaestroRef.current = maestroMsgs.received[maestroMsgs.received.length - 1].id;
           }
@@ -991,33 +912,36 @@ export function App({ api, ensemble }: AppProps) {
     // Main view — conversation stream (like Claude Code)
     if (state.activeEnsemble) {
       // Build merged conversation from relay messages + sent messages + conductor history
-      const allConvoMsgs: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out' }> = [];
+      // Build conversation from clean, non-overlapping sources:
+      // - sentMessages: outbound (local echo, instant)
+      // - Maestro DMs (in state.messages with to='maestro'): inbound replies
+      // - Conductor history reports only (not commands — those duplicate sentMessages)
+      const allConvoMsgs: Array<{ id: string; from: string; text: string; timestamp: string; direction: 'in' | 'out' }> = [];
 
-      // Relay messages
-      for (const m of state.messages) {
-        allConvoMsgs.push({ id: m.id, from: m.from, to: m.to, text: m.text, timestamp: m.timestamp, direction: 'in' });
+      // Outbound: local echo (sentMessages)
+      for (const m of state.sentMessages) {
+        allConvoMsgs.push({ id: `sent-${m.timestamp}`, from: 'you', text: m.text, timestamp: m.timestamp, direction: 'out' });
       }
 
-      // Conductor history
-      for (const entry of state.conductorHistory) {
-        if (entry.type === 'command') {
-          const cmd = entry.data as { text: string; source: string; timestamp: string };
-          allConvoMsgs.push({ id: `ch-${entry.timestamp}`, from: cmd.source || 'maestro', to: 'conductor', text: cmd.text, timestamp: entry.timestamp || cmd.timestamp, direction: 'out' });
-        } else {
-          const report = entry.data as { playerId: string; text: string; type: string; timestamp: string };
-          allConvoMsgs.push({ id: `cr-${entry.timestamp}`, from: report.playerId, to: 'maestro', text: `[${report.type}] ${report.text}`, timestamp: entry.timestamp || report.timestamp, direction: 'in' });
+      // Inbound: messages addressed to maestro + conductor reports
+      for (const m of state.messages) {
+        if (m.to === 'maestro' || m.from !== 'maestro') {
+          allConvoMsgs.push({ id: m.id, from: m.from, text: m.text, timestamp: m.timestamp, direction: 'in' });
         }
       }
 
-      // Sent messages (local echo)
-      for (const m of state.sentMessages) {
-        allConvoMsgs.push({ id: `sent-${m.timestamp}`, from: 'you', to: m.to, text: m.text, timestamp: m.timestamp, direction: 'out' });
+      // Inbound: conductor history reports (skip commands — those are our sent messages)
+      for (const entry of state.conductorHistory) {
+        if (entry.type === 'report') {
+          const report = entry.data as { playerId: string; text: string; type: string; timestamp: string };
+          allConvoMsgs.push({ id: `cr-${entry.timestamp}`, from: report.playerId, text: `[${report.type}] ${report.text}`, timestamp: entry.timestamp || report.timestamp, direction: 'in' });
+        }
       }
 
-      // Deduplicate + sort
+      // Dedup by text content + direction (timestamps differ across sources)
       const seen = new Set<string>();
       const sorted = allConvoMsgs
-        .filter(m => { const k = `${m.direction}:${m.timestamp}:${m.text.slice(0, 40)}`; if (seen.has(k)) return false; seen.add(k); return true; })
+        .filter(m => { const k = `${m.direction}:${m.text.slice(0, 60)}`; if (seen.has(k)) return false; seen.add(k); return true; })
         .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
       // Format messages as lines, take the tail that fits the viewport
@@ -1025,11 +949,28 @@ export function App({ api, ensemble }: AppProps) {
       for (const m of sorted) {
         let time = '';
         try { const d = new Date(m.timestamp); time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; } catch { time = '??:??'; }
-        formatted.push({ sender: m.direction === 'out' ? `you \u2192 ${m.to}` : m.from, time, body: m.text, direction: m.direction });
+        formatted.push({ sender: m.from, time, body: m.text, direction: m.direction });
       }
 
       // Each message is ~2 lines (content + blank separator). Full content area.
       const maxVisible = Math.max(2, Math.floor(contentHeight / 2));
+
+      // Overflow: commit messages above the viewport to Static scrollback
+      if (formatted.length > maxVisible) {
+        const overflow = formatted.slice(0, formatted.length - maxVisible);
+        for (const msg of overflow) {
+          const key = `${msg.direction}:${msg.body.slice(0, 60)}`;
+          if (!overflowCommittedRef.current.has(key)) {
+            overflowCommittedRef.current.add(key);
+            if (msg.direction === 'out') {
+              dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'message', content: `\u276F ${msg.body.split('\n')[0]}`, timestamp: Date.now() } });
+            } else {
+              dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'message', content: `\u2190 ${msg.sender}: ${msg.body.split('\n')[0]}  ${msg.time}`, timestamp: Date.now() } });
+            }
+          }
+        }
+      }
+
       const visibleMsgs = formatted.slice(-maxVisible);
 
       console.error(`[tui:convo] msgs=${state.messages.length} history=${state.conductorHistory.length} sent=${state.sentMessages.length} formatted=${formatted.length} visible=${visibleMsgs.length}`);
