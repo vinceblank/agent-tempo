@@ -481,11 +481,11 @@ export function App({ api, ensemble }: AppProps) {
           dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `Stopping ${id}...`, timestamp: Date.now() } });
           // Delegate to command handler
           const cmd = COMMANDS['stop'];
-          if (cmd?.handler) cmd.handler([id], dispatch, api, { activeEnsemble: stateRef.current.activeEnsemble || undefined, chatTarget: stateRef.current.chatTarget || null });
+          if (cmd?.handler) cmd.handler([id], dispatch, api, { activeEnsemble: stateRef.current.activeEnsemble });
         },
         encore: (id) => {
           const cmd = COMMANDS['encore'];
-          if (cmd?.handler) cmd.handler([id], dispatch, api, { activeEnsemble: stateRef.current.activeEnsemble || undefined, chatTarget: stateRef.current.chatTarget || null });
+          if (cmd?.handler) cmd.handler([id], dispatch, api, { activeEnsemble: stateRef.current.activeEnsemble });
         },
         players: (id) => {
           dispatch({ type: 'ENTER_CHAT', target: id });
