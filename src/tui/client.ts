@@ -388,6 +388,8 @@ export function createTempoClient(client: Client): TempoClient {
           hostname: 'dashboard',
           workDir: process.cwd(),
           isConductor: false,
+          status: 'active',
+          agentType: 'claude',
         },
         disableStaleDetection: true,
       };

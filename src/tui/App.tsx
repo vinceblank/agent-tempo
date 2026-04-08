@@ -1098,9 +1098,8 @@ export function App({ api, ensemble }: AppProps) {
 
   // Layout: header (2 lines) + content (variable) + footer (4 lines)
   // Content height is calculated to guarantee footer is always visible.
-  const HEADER_LINES = 2; // TitleBar + top divider
   const FOOTER_LINES = 4; // StatusBar + bottom divider + PromptArea (hints + input)
-  const contentHeight = Math.max(3, termRows - 1 - HEADER_LINES - FOOTER_LINES);
+  const contentHeight = Math.max(3, termRows - 1 - FOOTER_LINES);
 
   // Splash phase — full screen, no chrome (title/status/prompt hidden)
   if (state.phase === 'splash') {
@@ -1117,11 +1116,7 @@ export function App({ api, ensemble }: AppProps) {
     }),
     // Live area — height constrained to termRows-1
     React.createElement(Box, { flexDirection: 'column', height: termRows - 1, overflow: 'hidden' },
-      // Title bar (1 Text node)
-      React.createElement(TitleBar, { context: contextString }),
-      // Top divider (1 Text node, no Box wrapper)
-      React.createElement(Text, { color: THEME.border }, ` ${dividerLine} `),
-      // Content area — explicit height guarantees footer is visible
+      // Content area — full height above footer
       React.createElement(Box, { flexDirection: 'column', height: contentHeight, overflow: 'hidden' },
         // Live content area
         renderLiveContent(),
