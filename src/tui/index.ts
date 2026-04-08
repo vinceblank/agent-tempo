@@ -109,6 +109,7 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
     isConnected: async () => false,
     hasGlobalMaestro: async () => false,
     getSchedules: async () => [],
+    cancelSchedule: fail,
     getGates: async () => [],
     getStages: async () => [],
     getWorktrees: async () => [],

@@ -49,6 +49,8 @@ export interface TempoClient {
   terminatePlayer(ensemble: string, playerId: string): Promise<void>;
   /** Get active schedules for an ensemble. */
   getSchedules(ensemble: string): Promise<ScheduleEntry[]>;
+  /** Cancel a named schedule in an ensemble. */
+  cancelSchedule(ensemble: string, name: string): Promise<void>;
   /** Get quality gates from the conductor workflow. */
   getGates(ensemble: string): Promise<QualityGate[]>;
   /** Get stages from the conductor workflow. */
@@ -343,6 +345,11 @@ export function createTempoClient(client: Client): TempoClient {
       } catch {
         return [];
       }
+    },
+
+    async cancelSchedule(ensemble: string, name: string): Promise<void> {
+      const h = handle(schedulerWorkflowId(ensemble));
+      await h.signal('removeSchedule', name);
     },
 
     async getGates(ensemble: string): Promise<QualityGate[]> {

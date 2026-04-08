@@ -435,18 +435,30 @@ async function handleSchedule(
   }
 }
 
-/** /unschedule <name> — cancel a schedule. */
+/** /unschedule <name> — cancel a named schedule. */
 async function handleUnschedule(
   args: string[],
   dispatch: (action: TuiAction) => void,
-  _api: TempoClient,
+  api: TempoClient,
+  ctx: CommandContext,
 ): Promise<void> {
   if (args.length === 0) {
     commitStatic(dispatch, 'error', 'Usage: /unschedule <name>');
     return;
   }
-  // TODO: Wire to scheduler workflow signal when TUI has ensemble context
-  commitStatic(dispatch, 'info', `Unschedule "${args[0]}" — not yet available from TUI. Use: claude-tempo unschedule ${args[0]}`);
+
+  if (!ctx.activeEnsemble) {
+    commitStatic(dispatch, 'error', 'No active ensemble. Select one with /ensemble first.');
+    return;
+  }
+
+  const name = args[0];
+  try {
+    await api.cancelSchedule(ctx.activeEnsemble, name);
+    commitStatic(dispatch, 'message', `\u2714 Schedule "${name}" cancelled.`);
+  } catch (err) {
+    commitStatic(dispatch, 'error', `\u2717 Failed to cancel schedule "${name}": ${err}`);
+  }
 }
 
 /** /status — show ensemble status overlay. */
@@ -872,7 +884,7 @@ export const COMMANDS: Record<string, CommandDef> = {
   unschedule: {
     description: 'Cancel a named schedule',
     usage: '/unschedule <name>',
-    handler: null, // Stub — not yet wired to scheduler workflow
+    handler: handleUnschedule,
   },
   player: {
     description: 'Show detailed player info',
