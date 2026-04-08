@@ -762,19 +762,12 @@ export async function up(opts: UpOpts) {
           return;
 
         case '3':
-          // Tear down and start fresh
+          // Terminate existing workflows, then fall through to normal up flow
           console.log();
-          out.log('Tearing down...');
-          await down({
-            ensemble: opts.ensemble,
-            all: false,
-            removeMcp: false,
-            keepDaemon: true,
-            yes: true,
-            dir: process.cwd(),
-          });
-          console.log();
-          out.log('Starting fresh...');
+          try { await client.workflow.getHandle(conductorWfId).terminate('up: fresh start'); } catch { /* may not exist */ }
+          try { await client.workflow.getHandle(schedulerWorkflowId(opts.ensemble)).terminate('up: fresh start'); } catch { /* may not exist */ }
+          try { await client.workflow.getHandle(maestroWorkflowId(opts.ensemble)).terminate('up: fresh start'); } catch { /* may not exist */ }
+          out.success('Existing ensemble torn down');
           // Fall through to normal up flow below
           break;
 
