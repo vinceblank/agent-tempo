@@ -5,10 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [0.20.0]
+## [0.20.1] - 2026-04-08
+
+### Fixed
+
+- `claude-tempo up` now detects an existing running conductor and prompts with options: join as player, reconnect, tear down and start fresh, or cancel. Prevents two sessions from silently sharing the same Temporal workflow (#85)
+
+## [0.20.0] - 2026-04-08
 
 ### Added
 
+- `claude-tempo upgrade [version]` command for graceful self-update — stops daemon, installs new version, restarts daemon (#79, #82)
 - Complete TUI rewrite — multi-ensemble home screen, view router, adaptive polling (#58)
 - TempoClient API layer replacing core-api.ts with Maestro-first fallback (#58)
 - 10 new components: ChatView, CommandPalette, ErrorView, MainView, Picker, PromptArea, RecruitWizard, ScheduleWizard, StatusBar, TitleBar (#58)
@@ -19,8 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Splash screen with connection checklist (#58)
 - `claude-tempo tui` as default CLI command (#58)
 
+### Changed
+
+- `down` command now always stops the daemon, requires confirmation when no ensemble is specified, and exits with code 1 in non-TTY environments (#78, #83)
+
 ### Fixed
 
+- `load_lineup` MCP tool now resolves shipped example lineups by name, in addition to saved lineups and file paths (#80, #81)
+- Blocked detection no longer triggers on informational messages — broadcasts, schedule-fires, heartbeats, and system notifications now set `responseRequested: false`, preventing false positives (#75, #66)
 - TUI input lag eliminated — animation timers removed, Yoga nodes flattened, stale ref fix (#58)
 - Live message lists capped at ~20 entries to prevent render slowdown (#58)
 

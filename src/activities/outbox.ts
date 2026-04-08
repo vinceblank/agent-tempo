@@ -164,6 +164,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         await conductorHandle.signal('receiveMessage', {
           from: 'system',
           text: `Session "${targetPlayerId}" was terminated by ${terminatedBy}.`,
+          responseRequested: false,
         });
       } catch {
         // Conductor may not exist — that's fine
@@ -351,7 +352,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         ].filter(Boolean).join('\n');
 
         // Inject context message (status already set to pending atomically above)
-        await handle.signal('receiveMessage', { from: fromPlayerId, text: contextMessage });
+        await handle.signal('receiveMessage', { from: fromPlayerId, text: contextMessage, responseRequested: false });
 
         log(`Encore prepared for "${targetPlayerId}" — status reset to pending, context injected`);
 

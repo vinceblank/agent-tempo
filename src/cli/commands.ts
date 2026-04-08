@@ -1,3 +1,4 @@
+import * as readline from 'readline';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, copyFileSync, statSync, openSync, readSync, closeSync } from 'fs';
 import { basename, join, resolve } from 'path';
 import { execFileSync, spawn as cpSpawn } from 'child_process';
@@ -13,7 +14,7 @@ import { addScheduleSignal } from '../workflows/scheduler-signals';
 import { AgentType, ScheduleEntry, SessionInput, SessionMetadata } from '../types';
 import { runPreflight } from './preflight';
 import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
-import { loadLineup } from '../ensemble/loader';
+import { loadLineup, resolveLineupPath } from '../ensemble/loader';
 import { saveLineup, listLineups, readSavedLineup } from '../ensemble/saver';
 import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
 import { ENCORE_DEFAULT_CONTEXT_MESSAGES, PREVIEW_MAX_LENGTH, shouldIncludeInBroadcast, validateEnsembleName } from '../utils/validation';
@@ -680,39 +681,13 @@ export async function up(opts: UpOpts) {
   let lineup;
   const lineupArg = opts.lineup;
   if (lineupArg) {
-    // Resolve by name or file path
-    let lineupPath: string;
-    if (existsSync(resolve(lineupArg))) {
-      // Direct file path
-      lineupPath = resolve(lineupArg);
-    } else {
-      // Try saved lineups (~/.claude-tempo/ensembles/)
-      const ensemblesDir = join(CLAUDE_TEMPO_HOME, 'ensembles');
-      const savedYaml = join(ensemblesDir, `${lineupArg}.yaml`);
-      const savedYml = join(ensemblesDir, `${lineupArg}.yml`);
-      if (existsSync(savedYaml)) {
-        lineupPath = savedYaml;
-      } else if (existsSync(savedYml)) {
-        lineupPath = savedYml;
-      } else {
-        // Try shipped examples
-        const shippedPath = join(PACKAGE_ROOT, 'examples', 'ensembles', `${lineupArg}.yaml`);
-        const shippedYml = join(PACKAGE_ROOT, 'examples', 'ensembles', `${lineupArg}.yml`);
-        if (existsSync(shippedPath)) {
-          lineupPath = shippedPath;
-        } else if (existsSync(shippedYml)) {
-          lineupPath = shippedYml;
-        } else {
-          out.error(`Lineup "${lineupArg}" not found as file, saved lineup, or shipped example`);
-          const saved = listLineups();
-          if (saved.length) out.log(`  Saved: ${saved.map(b => b.name).join(', ')}`);
-          const shipped = readdirSync(join(PACKAGE_ROOT, 'examples', 'ensembles')).filter(f => f.endsWith('.yaml') || f.endsWith('.yml')).map(f => f.replace(/\.ya?ml$/, ''));
-          if (shipped.length) out.log(`  Shipped: ${shipped.join(', ')}`);
-          process.exit(1);
-        }
-      }
+    try {
+      const resolution = resolveLineupPath(lineupArg);
+      lineup = loadLineup(resolution.path);
+    } catch (err: any) {
+      out.error(err.message);
+      process.exit(1);
     }
-    lineup = loadLineup(lineupPath);
   }
   if (lineup) {
     out.check('Lineup loaded', true, lineup.name);
@@ -721,15 +696,94 @@ export async function up(opts: UpOpts) {
   // Resolve conductor agent from lineup or CLI flags
   const conductorAgent: AgentType = lineup?.conductor?.agent === 'copilot' ? 'copilot' : opts.agent;
 
-  // Step 5: Connect to Temporal and pre-create conductor workflow before spawning
+  // Step 5: Connect to Temporal and check for existing conductor
   console.log();
-  out.log(`Launching conductor in ensemble ${out.cyan(opts.ensemble)}${conductorAgent === 'copilot' ? out.dim(' (copilot)') : ''}...`);
 
   const connection = await createTemporalConnection(config);
   const client = new Client({ connection, namespace: config.temporalNamespace });
 
-  const sessionName = opts.name || lineup?.conductor?.name || (conductorAgent === 'copilot' ? `${opts.ensemble}-conductor` : 'conductor');
   const conductorWfId = conductorWorkflowId(opts.ensemble);
+
+  // Check if a conductor is already running
+  try {
+    const existingHandle = client.workflow.getHandle(conductorWfId);
+    const desc = await existingHandle.describe();
+    if (desc.status.name === 'RUNNING') {
+      if (!process.stdin.isTTY) {
+        out.error(`A conductor is already running for ensemble "${opts.ensemble}".`);
+        out.log(`  Use ${out.dim('--resume')} to reconnect, or ${out.dim('claude-tempo start')} to join as a player.`);
+        process.exit(1);
+      }
+
+      out.warn(`A conductor is already running for ensemble "${opts.ensemble}".`);
+      console.log();
+      out.log(`  1) Join as a new player session`);
+      out.log(`  2) Reconnect to the existing conductor (--resume)`);
+      out.log(`  3) Tear down and start fresh`);
+      out.log(`  4) Cancel`);
+      console.log();
+
+      const choice = await new Promise<string>((res) => {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        rl.question(`  ${out.cyan('?')} Choose an option [1-4]: `, (answer) => {
+          rl.close();
+          res(answer.trim());
+        });
+      });
+
+      switch (choice) {
+        case '1':
+          // Join as a player — delegate to start()
+          console.log();
+          out.log('Joining as a player session...');
+          await start({
+            ensemble: opts.ensemble,
+            conductor: false,
+            name: opts.name,
+            skipPreflight: true, // infrastructure already verified above
+            agent: opts.agent,
+            dir: process.cwd(),
+          });
+          return;
+
+        case '2':
+          // Reconnect to existing conductor
+          console.log();
+          out.log('Reconnecting to existing conductor...');
+          await start({
+            ensemble: opts.ensemble,
+            conductor: true,
+            resume: true,
+            name: opts.name,
+            skipPreflight: true,
+            agent: opts.agent,
+            dir: process.cwd(),
+          });
+          return;
+
+        case '3':
+          // Terminate existing workflows, then fall through to normal up flow
+          console.log();
+          try { await client.workflow.getHandle(conductorWfId).terminate('up: fresh start'); } catch { /* may not exist */ }
+          try { await client.workflow.getHandle(schedulerWorkflowId(opts.ensemble)).terminate('up: fresh start'); } catch { /* may not exist */ }
+          try { await client.workflow.getHandle(maestroWorkflowId(opts.ensemble)).terminate('up: fresh start'); } catch { /* may not exist */ }
+          out.success('Existing ensemble torn down');
+          // Fall through to normal up flow below
+          break;
+
+        case '4':
+        default:
+          out.log('Cancelled.');
+          process.exit(0);
+      }
+    }
+  } catch {
+    // No existing conductor — proceed normally
+  }
+
+  out.log(`Launching conductor in ensemble ${out.cyan(opts.ensemble)}${conductorAgent === 'copilot' ? out.dim(' (copilot)') : ''}...`);
+
+  const sessionName = opts.name || lineup?.conductor?.name || (conductorAgent === 'copilot' ? `${opts.ensemble}-conductor` : 'conductor');
 
   // Resolve conductor agent type from lineup
   const conductorType = lineup?.conductor?.agent && lineup.conductor.agent !== 'default' && lineup.conductor.agent !== 'copilot'
@@ -1027,6 +1081,21 @@ function parseDuration(s: string): number {
   }
 }
 
+/** Prompt the user for y/n confirmation. Exits with code 1 in non-TTY environments. */
+async function confirmPrompt(message: string): Promise<boolean> {
+  if (!process.stdin.isTTY) {
+    out.error('Non-interactive environment: use --yes / -y to confirm teardown.');
+    process.exit(1);
+  }
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise<boolean>((resolve) => {
+    rl.question(`${message} [y/N] `, (answer) => {
+      rl.close();
+      resolve(answer.trim().toLowerCase() === 'y');
+    });
+  });
+}
+
 // --- Teardown: `down` command ---
 
 interface DownOpts extends CliOverrides {
@@ -1034,6 +1103,8 @@ interface DownOpts extends CliOverrides {
   ensemble?: string;
   all: boolean;
   removeMcp: boolean;
+  keepDaemon: boolean;
+  yes: boolean;
   dir: string;
 }
 
@@ -1066,13 +1137,40 @@ export async function down(opts: DownOpts) {
         process.exit(1);
       } else if (runningEnsembles.size === 1) {
         ensembleName = [...runningEnsembles][0];
-      } else {
-        out.error(`Multiple ensembles running. Please specify which one to tear down:`);
-        for (const name of [...runningEnsembles].sort()) {
-          out.log(`  - claude-tempo down ${name}`);
+        // Auto-detected ensemble requires confirmation unless --yes
+        if (!opts.yes) {
+          out.heading('claude-tempo teardown');
+          out.log(`  This will destroy ensemble ${out.bold(ensembleName)}: all sessions, daemon, and Temporal server.`);
+          const confirmed = await confirmPrompt('Proceed?');
+          if (!confirmed) {
+            out.log('Aborted.');
+            process.exit(0);
+          }
         }
-        out.log(`  - claude-tempo down --all`);
-        process.exit(1);
+      } else {
+        // Multiple ensembles: require confirmation or --yes for each
+        if (!opts.yes) {
+          out.heading('claude-tempo teardown');
+          out.log(`  Multiple ensembles running:`);
+          for (const name of [...runningEnsembles].sort()) {
+            out.log(`    - ${name}`);
+          }
+          out.log('');
+          out.log(`  This will destroy ${out.bold('all')} of them: sessions, daemon, and Temporal server.`);
+          const confirmed = await confirmPrompt('Proceed?');
+          if (!confirmed) {
+            out.log('Aborted. To tear down a specific ensemble:');
+            for (const name of [...runningEnsembles].sort()) {
+              out.log(`  - claude-tempo down ${name}`);
+            }
+            process.exit(0);
+          }
+          // Treat as --all since user confirmed tearing down everything
+          opts.all = true;
+        } else {
+          // --yes with multiple ensembles: treat as --all
+          opts.all = true;
+        }
       }
     } catch (err) {
       out.error(`Could not detect running ensembles: ${(err as Error).message}`);
@@ -1179,9 +1277,12 @@ export async function down(opts: DownOpts) {
   // Step 2: Kill bridge processes via PID files
   killBridgeProcesses();
 
-  // Step 2.5: Stop worker daemon — only if --all or no other workflows remain
-  // hasRemainingWorkflows is only meaningful when Temporal was reachable
-  if (opts.all || (temporalUp && !hasRemainingWorkflows)) {
+  // Step 2.5: Stop worker daemon — unless --keep-daemon or other ensembles still active
+  if (opts.keepDaemon) {
+    if (isDaemonRunning()) {
+      out.log(`  ${out.dim('Worker daemon left running (--keep-daemon)')}`);
+    }
+  } else if (opts.all || !hasRemainingWorkflows) {
     if (stopDaemon()) {
       out.success('Worker daemon stopped');
     }
@@ -1630,6 +1731,7 @@ export async function broadcast(opts: BroadcastOpts) {
       await handle.signal('receiveMessage', {
         from: 'cli',
         text: opts.message,
+        responseRequested: false,
       });
       sent++;
       out.log(`  ${out.green('✓')} ${target.playerId}`);
@@ -1727,7 +1829,7 @@ export async function encore(opts: EncoreOpts) {
 
   // Reset status and inject context message
   await targetHandle.signal('updateMetadata', { status: 'pending' });
-  await targetHandle.signal('receiveMessage', { from: 'system', text: contextMessage });
+  await targetHandle.signal('receiveMessage', { from: 'system', text: contextMessage, responseRequested: false });
 
   out.log(`Reviving "${opts.name}" in ${targetMeta.workDir}...`);
 
@@ -1936,7 +2038,7 @@ ${out.bold('Usage:')}
 
 ${out.bold('Commands:')}
   ${out.cyan('up')}      [ensemble]    First-time setup: start Temporal, configure MCP, launch conductor
-  ${out.cyan('down')}                  Stop Temporal, terminate sessions, remove MCP config
+  ${out.cyan('down')}    [ensemble]    Tear down everything: sessions, daemon, Temporal server, MCP config
   ${out.cyan('server')}                Start the Temporal dev server and register search attributes
   ${out.cyan('conduct')} [ensemble]    Start a conductor session (resumes existing, --replace to restart)
   ${out.cyan('start')}   [ensemble]    Start a player session
@@ -1947,6 +2049,7 @@ ${out.bold('Commands:')}
   ${out.cyan('encore')}   <name>      Revive a stale player session (reconnect with context)
   ${out.cyan('agent-types')} <sub>    Manage player type definitions (list/show/init)
   ${out.cyan('daemon')}    <sub>       Manage the worker daemon (start/stop/status/logs)
+  ${out.cyan('upgrade')}  [version]    Upgrade claude-tempo to latest (or specific version)
   ${out.cyan('config')}                Configure Temporal connection settings
   ${out.cyan('init')}                  Register MCP server globally (or --project for .mcp.json)
   ${out.cyan('preflight')}             Run preflight checks only
@@ -1966,9 +2069,11 @@ ${out.bold('Other options:')}
   --background                Run Temporal in background (server only)
   --project                   Use per-project .mcp.json instead of global (init only)
   --keep-mcp                  Don't remove MCP config (down only)
+  --keep-daemon               Don't stop the worker daemon (down only)
+  -y, --yes                   Skip confirmation prompt (down only)
   --all                       Stop all sessions (stop only)
   --lineup <name|file>         Load ensemble lineup by name or file path (up only)
-  --ensemble <name>           Target a specific ensemble (stop only)
+  --ensemble <name>           Target a specific ensemble (stop/down)
   -d, --dir <path>            Target directory (default: cwd)
 
 ${out.bold('Config command:')}
@@ -2010,4 +2115,183 @@ export function version() {
   } catch {
     out.log('claude-tempo (unknown version)');
   }
+}
+
+// ── upgrade command ──────────────────────────────────────────────────────────
+
+interface UpgradeOpts extends CliOverrides {
+  version?: string; // target version (e.g. "0.20.0", "latest"); defaults to "latest"
+}
+
+export async function upgrade(opts: UpgradeOpts) {
+  const config = getConfig(opts);
+  const targetVersion = opts.version || 'latest';
+  const installSpec = targetVersion === 'latest' ? 'claude-tempo' : `claude-tempo@${targetVersion}`;
+
+  // Read current version
+  let currentVersion = 'unknown';
+  try {
+    const pkg = JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8'));
+    currentVersion = pkg.version || 'unknown';
+  } catch { /* ignore */ }
+
+  out.heading('claude-tempo upgrade');
+  out.log(`  Current: v${currentVersion}`);
+  out.log(`  Target:  ${targetVersion}`);
+  console.log();
+
+  // Check for active sessions — warn the user
+  let activeSessions = 0;
+  try {
+    const connection = await Promise.race([
+      createTemporalConnection(config),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+    ]);
+    const client = new Client({ connection, namespace: config.temporalNamespace });
+    const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+    for await (const _wf of client.workflow.list({ query })) {
+      activeSessions++;
+    }
+  } catch {
+    // Can't connect to Temporal — that's fine, proceed with upgrade
+  }
+
+  if (activeSessions > 0) {
+    out.warn(`${activeSessions} active session(s) detected. They will lose daemon connectivity during upgrade.`);
+    out.log(`  ${out.dim('Consider running: claude-tempo stop --all')}`);
+    console.log();
+  }
+
+  // Stop the daemon gracefully (releases .node file locks)
+  const daemonWasRunning = isDaemonRunning();
+  if (daemonWasRunning) {
+    out.log('Stopping daemon...');
+    stopDaemon();
+    // Wait for process to exit — important on Windows for file lock release
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && isDaemonRunning()) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+    if (isDaemonRunning()) {
+      out.error('Daemon did not stop in time. Try: claude-tempo daemon stop');
+      process.exit(1);
+    }
+    out.success('Daemon stopped');
+  }
+
+  // Build the detached updater script.
+  // This is a self-contained Node.js script (no native module deps) that:
+  //   1. Waits for the CLI process to exit (by PID)
+  //   2. Runs npm install -g
+  //   3. Verifies the install
+  //   4. Restarts the daemon
+  const cliPid = process.pid;
+  const isWin = process.platform === 'win32';
+
+  const updaterScript = `
+const { execFileSync } = require('child_process');
+const fs = require('fs');
+
+const PID = ${cliPid};
+const INSTALL_SPEC = ${JSON.stringify(installSpec)};
+const TARGET = ${JSON.stringify(targetVersion)};
+const IS_WIN = ${isWin};
+const LOG_PATH = ${JSON.stringify(join(CLAUDE_TEMPO_HOME, 'upgrade.log'))};
+
+function log(msg) {
+  const line = new Date().toISOString() + ' ' + msg;
+  try { fs.appendFileSync(LOG_PATH, line + '\\n'); } catch {}
+  console.log(msg);
+}
+
+function isPidAlive(pid) {
+  try { process.kill(pid, 0); return true; }
+  catch { return false; }
+}
+
+async function main() {
+  // Wait for CLI process to exit (up to 10s)
+  log('Waiting for CLI process (pid ' + PID + ') to exit...');
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline && isPidAlive(PID)) {
+    await new Promise(r => setTimeout(r, 300));
+  }
+  if (isPidAlive(PID)) {
+    log('WARNING: CLI process still alive after 10s, proceeding anyway');
+  }
+
+  // Run npm install -g
+  log('Installing ' + INSTALL_SPEC + '...');
+  try {
+    const npmCmd = IS_WIN ? 'npm.cmd' : 'npm';
+    execFileSync(npmCmd, ['install', '-g', INSTALL_SPEC], {
+      stdio: 'inherit',
+      timeout: 120000,
+    });
+    log('Install completed');
+  } catch (err) {
+    log('Install FAILED: ' + err.message);
+    log('Recovery: npm install -g ' + INSTALL_SPEC);
+    process.exit(1);
+  }
+
+  // Verify installation
+  try {
+    const tempoCmd = IS_WIN ? 'claude-tempo.cmd' : 'claude-tempo';
+    const ver = execFileSync(tempoCmd, ['--version'], {
+      encoding: 'utf8',
+      timeout: 10000,
+    }).trim();
+    log('Verified: ' + ver);
+  } catch (err) {
+    log('WARNING: Could not verify installation: ' + err.message);
+    log('Recovery: npm install -g claude-tempo');
+  }
+
+  // Restart the daemon
+  log('Restarting daemon...');
+  try {
+    const tempoCmd = IS_WIN ? 'claude-tempo.cmd' : 'claude-tempo';
+    execFileSync(tempoCmd, ['daemon', 'start'], {
+      stdio: 'inherit',
+      timeout: 30000,
+    });
+    log('Daemon restarted');
+  } catch (err) {
+    log('WARNING: Daemon restart failed: ' + err.message);
+    log('Run manually: claude-tempo daemon start');
+  }
+
+  log('Upgrade complete!');
+}
+
+main().catch(err => {
+  log('Upgrade failed: ' + err.message);
+  process.exit(1);
+});
+`.trim();
+
+  // Clear previous upgrade log before spawning
+  const logPath = join(CLAUDE_TEMPO_HOME, 'upgrade.log');
+  try { writeFileSync(logPath, ''); } catch { /* ignore */ }
+
+  // Spawn the updater as a detached child process
+  out.log(`Spawning upgrade process for ${out.cyan(installSpec)}...`);
+
+  const child = cpSpawn(process.execPath, ['-e', updaterScript], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env },
+  });
+  child.unref();
+
+  console.log();
+  out.success('Upgrade started in background');
+  out.log(`  ${out.dim('Monitor progress: ')}`);
+  if (isWin) {
+    out.log(`    ${out.dim('powershell Get-Content -Wait "' + logPath + '"')}`);
+  } else {
+    out.log(`    ${out.dim('tail -f ' + logPath)}`);
+  }
+  out.log(`  ${out.dim('If it fails, run manually: npm install -g ' + installSpec)}`);
 }
