@@ -575,8 +575,9 @@ export function App({ api, ensemble }: AppProps) {
           const ensembles = await api.discoverEnsembles();
           dispatch({ type: 'REFRESH_ENSEMBLES', ensembles });
 
-          // Auto-connect when an ensemble appears
-          if (ensembles.length > 0 && !s.activeEnsemble) {
+          // Auto-connect only when exactly 1 ensemble is running
+          // Multiple ensembles → show picker (handled by renderLiveContent)
+          if (ensembles.length === 1 && !s.activeEnsemble) {
             const autoEns = ensembles[0].name;
             dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: autoEns });
             dispatch({
@@ -949,7 +950,7 @@ export function App({ api, ensemble }: AppProps) {
     }
     if (state.ensembles.length > 0) {
       const ensLines: React.ReactNode[] = [
-        React.createElement(Text, { key: 'eh', bold: true, color: THEME.text }, 'Ensembles:'),
+        React.createElement(Text, { key: 'eh', bold: true, color: THEME.text }, `${state.ensembles.length} ensembles running:`),
       ];
       for (const ens of state.ensembles) {
         ensLines.push('\n');
@@ -959,6 +960,11 @@ export function App({ api, ensemble }: AppProps) {
           ),
         );
       }
+      ensLines.push('\n');
+      ensLines.push('\n');
+      ensLines.push(
+        React.createElement(Text, { key: 'hint', color: THEME.dim }, '  Type /ensemble <name> to connect'),
+      );
       return React.createElement(Text, null, ...ensLines);
     }
 
