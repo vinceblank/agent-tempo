@@ -102,11 +102,26 @@ export function App({ api, ensemble }: AppProps) {
   // Callback for picker selection — set before showing picker, called on Enter
   const pickerCallbackRef = React.useRef<((id: string) => void) | null>(null);
 
-  // Reset stale refs when switching ensembles
+  // Reset stale refs when switching ensembles + add separator
+  const prevEnsembleRef = React.useRef(state.activeEnsemble);
   useEffect(() => {
     lastSeenMsgRef.current = undefined;
     lastSeenMaestroRef.current = undefined;
     lastPollRef.current = { playerCount: 0, lastMsgId: '', historyLen: 0, scheduleCount: 0, maestroMsgCount: 0 };
+    overflowCommittedRef.current.clear();
+    // Add separator when switching between ensembles (not on initial load)
+    if (state.activeEnsemble && prevEnsembleRef.current !== state.activeEnsemble && prevEnsembleRef.current !== undefined) {
+      dispatch({
+        type: 'COMMIT_STATIC',
+        item: {
+          id: nextStaticId(),
+          type: 'info',
+          content: `\u2500\u2500 Switched to ensemble: ${state.activeEnsemble} \u2500\u2500`,
+          timestamp: Date.now(),
+        },
+      });
+    }
+    prevEnsembleRef.current = state.activeEnsemble;
   }, [state.activeEnsemble]);
   // Commit overflow messages to Static scrollback after render (not during render)
   useEffect(() => {
@@ -489,8 +504,12 @@ export function App({ api, ensemble }: AppProps) {
             type: 'COMMIT_STATIC',
             item: { id: nextStaticId(), type: 'info', content: `\u2500\u2500 returned to maestro view \u2500\u2500`, timestamp: Date.now() },
           });
-        } else if (!s.activeEnsemble) {
+        } else if (s.activeEnsemble) {
           dispatch({ type: 'NAVIGATE_HOME' });
+          dispatch({
+            type: 'COMMIT_STATIC',
+            item: { id: nextStaticId(), type: 'info', content: `\u2500\u2500 returned to home view \u2500\u2500`, timestamp: Date.now() },
+          });
         }
         return;
       }
@@ -658,6 +677,14 @@ export function App({ api, ensemble }: AppProps) {
     })();
     return () => { cancelled = true; };
   }, [api]);
+
+  // ── Ensure maestro session exists when ensemble changes ──
+  useEffect(() => {
+    if (!state.activeEnsemble) return;
+    api.ensureMaestroSession(state.activeEnsemble).catch(err =>
+      console.error('[tui] maestro session:', err)
+    );
+  }, [state.activeEnsemble, api]);
 
   // ── Polling loop ──
   useEffect(() => {
