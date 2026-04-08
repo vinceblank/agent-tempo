@@ -294,15 +294,12 @@ export function App({ api, ensemble }: AppProps) {
       return 'Follow the prompts above. Esc to cancel.';
     }
     if (state.chatTarget) {
-      const isConductor = state.chatTarget === state.conductorName;
-      return isConductor
-        ? 'Type a message for the conductor. /players to switch, /dashboard for overview'
-        : `Chatting with ${state.chatTarget}. /back to return to conductor`;
+      return `Chatting with ${state.chatTarget}. /back to return.`;
     }
-    if (state.activeEnsemble && !state.conductorName) {
-      return '\u26A0 No conductor. /recruit-conductor to recruit one, or /cue <player> to message directly';
+    if (state.activeEnsemble) {
+      return 'Type a message. /chat <player> for direct chat. /help for commands.';
     }
-    return '/cue /recruit /stop /broadcast /help /quit';
+    return '/help /quit';
   }, [state.phase, state.chatTarget, state.confirmingStop, state.confirmingDisband, state.activeEnsemble, state.conductorName]);
 
   // ── Completion data for prompt ──
@@ -420,13 +417,15 @@ export function App({ api, ensemble }: AppProps) {
         dispatch({ type: 'SET_PHASE', phase: 'main' });
         return;
       }
-      if (parsed.name === 'back') {
-        // Return to conductor chat (or exit to main if no conductor)
-        if (s.chatTarget && s.chatTarget !== s.conductorName && s.conductorName) {
-          dispatch({ type: 'ENTER_CHAT', target: s.conductorName });
-        } else if (s.chatTarget) {
+      if (parsed.name === 'back' || parsed.name === 'home' || parsed.name === 'maestro') {
+        // Return to maestro view (exit any player chat)
+        if (s.chatTarget) {
           dispatch({ type: 'EXIT_CHAT' });
-        } else if (s.activeEnsemble) {
+          dispatch({
+            type: 'COMMIT_STATIC',
+            item: { id: nextStaticId(), type: 'info', content: `\u2500\u2500 returned to maestro view \u2500\u2500`, timestamp: Date.now() },
+          });
+        } else if (!s.activeEnsemble) {
           dispatch({ type: 'NAVIGATE_HOME' });
         }
         return;
@@ -487,32 +486,43 @@ export function App({ api, ensemble }: AppProps) {
           },
         });
       }
-    } else if (s.chatTarget) {
-      // Bare text in chat mode → send to target
-      if (!s.activeEnsemble) {
-        dispatch({
-          type: 'COMMIT_STATIC',
-          item: { id: nextStaticId(), type: 'error', content: 'No active ensemble. Use /ensemble <name> first.', timestamp: Date.now() },
-        });
-        return;
-      }
-      const isConductorTarget = s.chatTarget === s.conductorName;
+    } else if (s.activeEnsemble) {
+      // Bare text → send in current context
+      // Chat mode: send directly to chatTarget
+      // Maestro view (no chatTarget): send as maestro command to conductor
+      const target = s.chatTarget;
       try {
-        if (isConductorTarget) {
-          await api.sendCommand(s.activeEnsemble!, trimmed, 'maestro');
+        if (target) {
+          // Player chat — send directly
+          const isConductorTarget = target === s.conductorName;
+          if (isConductorTarget) {
+            await api.sendCommand(s.activeEnsemble!, trimmed, 'maestro');
+          } else {
+            await api.sendMessage(s.activeEnsemble!, target, trimmed, 'maestro');
+          }
+          dispatch({ type: 'APPEND_SENT_MESSAGE', to: target, text: trimmed });
+          dispatch({
+            type: 'COMMIT_STATIC',
+            item: {
+              id: nextStaticId(),
+              type: 'message',
+              content: `you \u2192 ${target}: ${trimmed}`,
+              timestamp: Date.now(),
+            },
+          });
         } else {
-          await api.sendMessage(s.activeEnsemble!, s.chatTarget!, trimmed, 'maestro');
+          // Maestro view — send to conductor as maestro
+          await api.sendCommand(s.activeEnsemble!, trimmed, 'maestro');
+          dispatch({
+            type: 'COMMIT_STATIC',
+            item: {
+              id: nextStaticId(),
+              type: 'message',
+              content: `maestro: ${trimmed}`,
+              timestamp: Date.now(),
+            },
+          });
         }
-        dispatch({ type: 'APPEND_SENT_MESSAGE', to: s.chatTarget!, text: trimmed });
-        dispatch({
-          type: 'COMMIT_STATIC',
-          item: {
-            id: nextStaticId(),
-            type: 'message',
-            content: `\u2714 ${isConductorTarget ? '\u2605' : ''} ${s.chatTarget}: ${trimmed}`,
-            timestamp: Date.now(),
-          },
-        });
       } catch (err) {
         dispatch({
           type: 'COMMIT_STATIC',

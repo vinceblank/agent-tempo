@@ -101,7 +101,7 @@ async function handleCue(
   if (args.length === 1) {
     // Enter chat mode with this player
     dispatch({ type: 'ENTER_CHAT', target });
-    commitStatic(dispatch, 'info', `Entering chat mode with ${target}. Type messages directly, /back to exit.`);
+    commitStatic(dispatch, 'info', `\u2500\u2500 chatting with ${target} \u2500\u2500`);
   } else {
     // Quick cue — send message without entering chat mode
     const message = args.slice(1).join(' ');
@@ -926,10 +926,25 @@ export const COMMANDS: Record<string, CommandDef> = {
     usage: '/dashboard',
     handler: null, // Handled directly in App.tsx
   },
+  chat: {
+    description: 'Enter direct chat with a player',
+    usage: '/chat <player>',
+    handler: handleCue, // Same handler as /cue
+  },
   back: {
-    description: 'Return to conductor chat',
+    description: 'Return to maestro view',
     usage: '/back',
     handler: null, // Handled directly in App.tsx
+  },
+  home: {
+    description: 'Return to maestro view',
+    usage: '/home',
+    handler: null, // Handled directly in App.tsx (alias for /back)
+  },
+  maestro: {
+    description: 'Return to maestro view',
+    usage: '/maestro',
+    handler: null, // Handled directly in App.tsx (alias for /back)
   },
   quit: {
     description: 'Exit the TUI',
