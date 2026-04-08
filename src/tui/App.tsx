@@ -191,6 +191,37 @@ export function App({ api, ensemble }: AppProps) {
       return;
     }
 
+    // Disband confirmation mode
+    if (s.confirmingDisband) {
+      if (input === 'y' || input === 'Y') {
+        const ensemble = s.confirmingDisband;
+        dispatch({ type: 'CANCEL_DISBAND' });
+        (async () => {
+          try {
+            const { terminated } = await api.disbandEnsemble(ensemble);
+            dispatch({
+              type: 'COMMIT_STATIC',
+              item: { id: nextStaticId(), type: 'info', content: `\u2714 Disbanded ensemble "${ensemble}" — terminated ${terminated} workflow${terminated !== 1 ? 's' : ''}.`, timestamp: Date.now() },
+            });
+            // Navigate back to home view
+            dispatch({ type: 'NAVIGATE_HOME' });
+          } catch (err) {
+            dispatch({
+              type: 'COMMIT_STATIC',
+              item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to disband "${ensemble}": ${err}`, timestamp: Date.now() },
+            });
+          }
+        })();
+      } else if (input === 'n' || input === 'N' || key.escape) {
+        dispatch({ type: 'CANCEL_DISBAND' });
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: { id: nextStaticId(), type: 'info', content: 'Disband cancelled.', timestamp: Date.now() },
+        });
+      }
+      return;
+    }
+
     // Lineup confirmation mode
     if (s.confirmingLineup) {
       if (input === 'y' || input === 'Y') {
@@ -254,6 +285,9 @@ export function App({ api, ensemble }: AppProps) {
     if (state.confirmingStop) {
       return `Stop ${state.confirmingStop}? This will terminate their session. [y/N]`;
     }
+    if (state.confirmingDisband) {
+      return `Disband ensemble "${state.confirmingDisband}"? All sessions will be terminated. [y/N]`;
+    }
     if (state.confirmingLineup) {
       return `${state.confirmingLineup.summary} [y/N]`;
     }
@@ -270,7 +304,7 @@ export function App({ api, ensemble }: AppProps) {
       return '\u26A0 No conductor. /recruit-conductor to recruit one, or /cue <player> to message directly';
     }
     return '/cue /recruit /stop /broadcast /help /quit';
-  }, [state.phase, state.chatTarget, state.confirmingStop, state.activeEnsemble, state.conductorName]);
+  }, [state.phase, state.chatTarget, state.confirmingStop, state.confirmingDisband, state.activeEnsemble, state.conductorName]);
 
   // ── Completion data for prompt ──
   const commandNamesList = useMemo(() => getCommandNames(), []);
@@ -838,7 +872,6 @@ export function App({ api, ensemble }: AppProps) {
       return React.createElement(ErrorView, {
         version: packageVersion,
         checks: [
-          { label: 'Daemon running', passed: true },
           { label: `Cannot reach Temporal`, passed: false, detail: state.error },
         ],
         errorDetail: state.error,
@@ -1018,7 +1051,7 @@ export function App({ api, ensemble }: AppProps) {
     React.createElement(PromptArea, {
       hints: promptHints,
       onSubmit: handleSubmit,
-      disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingLineup,
+      disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup,
       commandNames: commandNamesList,
       playerNames: playerNamesList,
       initialHistory: cmdHistory,

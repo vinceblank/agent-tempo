@@ -105,6 +105,7 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
     sendCommand: fail,
     sendMessage: fail,
     terminatePlayer: fail,
+    disbandEnsemble: fail,
     isConnected: async () => false,
     hasGlobalMaestro: async () => false,
     getSchedules: async () => [],

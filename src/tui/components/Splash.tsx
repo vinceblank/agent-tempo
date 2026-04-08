@@ -1,4 +1,7 @@
 /**
+ * TODO: This component is currently orphaned — not imported by App.tsx.
+ * Remove or re-integrate if a splash screen phase is reintroduced.
+ *
  * Splash screen — minimal welcome screen with animated metronome.
  *
  * Shows: logo, title, one-line connection status, compact ensemble list,

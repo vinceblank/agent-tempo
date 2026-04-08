@@ -55,6 +55,8 @@ export interface TempoClient {
   getStages(ensemble: string): Promise<StageEntry[]>;
   /** Get worktrees from the conductor workflow. */
   getWorktrees(ensemble: string): Promise<WorktreeEntry[]>;
+  /** Disband an ensemble: terminate all sessions, scheduler, and maestro workflows. */
+  disbandEnsemble(ensemble: string): Promise<{ terminated: number }>;
   /** Check if the Temporal connection is alive. */
   isConnected(): Promise<boolean>;
   /** Check if the Global Maestro workflow is running. */
@@ -270,6 +272,36 @@ export function createTempoClient(client: Client): TempoClient {
         return;
       }
       throw new Error(`Player "${playerId}" not found in ensemble "${ensemble}"`);
+    },
+
+    async disbandEnsemble(ensemble: string): Promise<{ terminated: number }> {
+      let terminated = 0;
+
+      // Terminate all session workflows in the ensemble
+      const sessionQuery = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${ensemble}"`;
+      for await (const wf of client.workflow.list({ query: sessionQuery })) {
+        try {
+          const h = handle(wf.workflowId);
+          await h.terminate('disbanded via TUI');
+          terminated++;
+        } catch { /* already closed */ }
+      }
+
+      // Terminate scheduler workflow
+      try {
+        const h = handle(schedulerWorkflowId(ensemble));
+        await h.terminate('disbanded via TUI');
+        terminated++;
+      } catch { /* no scheduler or already closed */ }
+
+      // Terminate per-ensemble maestro workflow
+      try {
+        const h = handle(maestroWorkflowId(ensemble));
+        await h.terminate('disbanded via TUI');
+        terminated++;
+      } catch { /* no maestro or already closed */ }
+
+      return { terminated };
     },
 
     async isConnected(): Promise<boolean> {

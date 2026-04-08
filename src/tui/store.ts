@@ -27,6 +27,7 @@ export type TuiView = 'home' | 'ensemble' | 'player';
  * It determines which component renders in the live content area.
  * A phase can span multiple views (e.g., 'main' shows either home or ensemble view).
  */
+// TODO: 'splash', 'connecting', 'connected' are legacy phases — consider removing once App.tsx references are cleaned up
 export type TuiPhase = 'splash' | 'connecting' | 'connected' | 'main' | 'chat' | 'recruit' | 'schedule-create' | 'error';
 
 // ── Static items (committed scroll history) ──
@@ -183,6 +184,8 @@ export interface TuiState {
   hasNewBelow: boolean;
   /** Player name pending stop confirmation (null = not confirming). */
   confirmingStop?: string;
+  /** Ensemble name pending disband confirmation (null = not confirming). */
+  confirmingDisband?: string;
   /** Lineup confirmation state (pending load). */
   confirmingLineup?: { action: 'load'; path: string; summary: string };
   /** Recruit wizard state (active when phase === 'recruit'). */
@@ -271,7 +274,7 @@ export type TuiAction =
   | { type: 'SHOW_PALETTE' }
   | { type: 'HIDE_PALETTE' }
   | { type: 'PALETTE_UP' }
-  | { type: 'PALETTE_DOWN' }
+  | { type: 'PALETTE_DOWN'; max?: number }
   | { type: 'PALETTE_SET_INDEX'; index: number }
   // Picker overlay
   | { type: 'SHOW_PICKER'; pickerType: 'players' | 'ensembles' }
@@ -286,6 +289,9 @@ export type TuiAction =
   // Stop confirmation
   | { type: 'CONFIRM_STOP'; player: string }
   | { type: 'CANCEL_STOP' }
+  // Disband confirmation
+  | { type: 'CONFIRM_DISBAND'; ensemble: string }
+  | { type: 'CANCEL_DISBAND' }
   // Lineup confirmation
   | { type: 'CONFIRM_LINEUP'; action: 'load'; path: string; summary: string }
   | { type: 'CANCEL_LINEUP' }
@@ -502,8 +508,11 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     case 'PALETTE_UP':
       return { ...state, paletteIndex: Math.max(0, state.paletteIndex - 1) };
 
-    case 'PALETTE_DOWN':
-      return { ...state, paletteIndex: state.paletteIndex + 1 }; // Clamped in component
+    case 'PALETTE_DOWN': {
+      const next = state.paletteIndex + 1;
+      const clamped = action.max != null ? Math.min(next, action.max) : next;
+      return { ...state, paletteIndex: clamped };
+    }
 
     case 'PALETTE_SET_INDEX':
       return { ...state, paletteIndex: action.index };
@@ -544,6 +553,14 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'CANCEL_STOP':
       return { ...state, confirmingStop: undefined };
+
+    // ── Disband confirmation ──
+
+    case 'CONFIRM_DISBAND':
+      return { ...state, confirmingDisband: action.ensemble };
+
+    case 'CANCEL_DISBAND':
+      return { ...state, confirmingDisband: undefined };
 
     // ── Lineup confirmation ──
 

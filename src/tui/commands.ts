@@ -3,8 +3,10 @@
  * Parses user input into structured commands and provides handler
  * implementations for each command.
  */
+import { exec } from 'child_process';
 import type { TempoClient } from './client';
 import type { TuiAction, StaticItem } from './store';
+import type { Message, SentMessage } from '../types';
 import { statusIcons, supportsUnicode } from './utils/platform';
 
 // ── Types ──
@@ -150,42 +152,6 @@ async function handlePlayers(
   dispatch({ type: 'SHOW_PICKER', pickerType: 'players' });
 }
 
-/** /players — fallback text list (unused, kept for reference). */
-async function _handlePlayersText(
-  _args: string[],
-  dispatch: (action: TuiAction) => void,
-  api: TempoClient,
-): Promise<void> {
-  try {
-    const ensembles = await api.discoverEnsembles();
-    if (ensembles.length === 0) {
-      commitStatic(dispatch, 'info', 'No ensembles running.');
-      return;
-    }
-
-    const icons = statusIcons(supportsUnicode());
-    const lines: string[] = [];
-
-    for (const ens of ensembles) {
-      const players = await api.getPlayers(ens.name);
-      lines.push(`\n  ${ens.name} (${players.length} players):`);
-      for (const p of players) {
-        const icon = p.isConductor ? icons.conductor
-          : p.status === 'active' ? icons.active
-          : p.status === 'stale' ? icons.stale
-          : icons.pending;
-        const typeName = p.playerType || p.agentType || '';
-        const part = p.part ? ` \u2014 ${p.part}` : '';
-        lines.push(`    ${icon} ${p.playerId.padEnd(18)} ${typeName.padEnd(13)} [${p.status || '?'}]${part}`);
-      }
-    }
-
-    commitStatic(dispatch, 'command-output', lines.join('\n'));
-  } catch (err) {
-    commitStatic(dispatch, 'error', `Failed to fetch players: ${err}`);
-  }
-}
-
 /** /player <name> — show detailed player info. */
 async function handlePlayer(
   args: string[],
@@ -239,10 +205,10 @@ async function handlePlayer(
         lines.push(`  Recent messages (last ${recent.length}):`);
         for (const m of recent) {
           const time = formatTimestamp(m.timestamp);
-          const isSent = 'direction' in m && (m as any).direction === 'sent';
+          const isSent = isSentMessage(m);
           const dir = isSent
-            ? `${target} ${icons.arrow} ${'to' in m ? (m as any).to : '?'}`
-            : `${'from' in m ? (m as any).from : '?'} ${icons.arrow} ${target}`;
+            ? `${target} ${icons.arrow} ${m.to}`
+            : `${(m as Message).from} ${icons.arrow} ${target}`;
           const text = m.text.length > 50 ? m.text.slice(0, 47) + '...' : m.text;
           lines.push(`  ${time}  ${dir}: ${text.replace(/\n/g, ' ')}`);
         }
@@ -271,6 +237,23 @@ async function handleStop(
   const target = args[0];
   // Enter confirmation mode — App.tsx handles the y/n input
   dispatch({ type: 'CONFIRM_STOP', player: target });
+}
+
+/** /disband — tear down the current ensemble (with confirmation). */
+async function handleDisband(
+  _args: string[],
+  dispatch: (action: TuiAction) => void,
+  _api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  const ensemble = ctx.activeEnsemble;
+  if (!ensemble) {
+    commitStatic(dispatch, 'error', 'No active ensemble. Navigate to one first with /ensemble <name>.');
+    return;
+  }
+
+  // Enter confirmation mode — App.tsx handles the y/n input
+  dispatch({ type: 'CONFIRM_DISBAND', ensemble });
 }
 
 /** /broadcast <message> — send a message to all active players. */
@@ -680,7 +663,7 @@ async function handleRecruitConductor(
     commitStatic(dispatch, 'info', '\u2714 Conductor recruitment requested. It will appear shortly.');
   } catch (err) {
     // Fallback: shell out if no conductor to receive the command
-    const { exec } = require('child_process') as typeof import('child_process');
+
     exec(`claude-tempo conduct ${ensemble}`, { timeout: 30000 }, (execErr: any) => {
       if (execErr) {
         commitStatic(dispatch, 'error', `\u2717 Failed to recruit conductor: ${execErr.message || execErr}`);
@@ -815,6 +798,11 @@ async function handleEnsemble(
 
 // ── Utility ──
 
+/** Type guard: distinguish SentMessage (has `to` + `direction`) from Message (has `from`). */
+function isSentMessage(m: Message | (SentMessage & { direction: 'sent' })): m is SentMessage & { direction: 'sent' } {
+  return 'direction' in m && (m as SentMessage & { direction: 'sent' }).direction === 'sent';
+}
+
 function formatTimestamp(ts: string): string {
   try {
     const d = new Date(ts);
@@ -842,6 +830,11 @@ export const COMMANDS: Record<string, CommandDef> = {
     description: 'Stop a player session',
     usage: '/stop <player>',
     handler: handleStop,
+  },
+  disband: {
+    description: 'Tear down the current ensemble (all sessions + scheduler)',
+    usage: '/disband',
+    handler: handleDisband,
   },
   broadcast: {
     description: 'Send a message to all active players',

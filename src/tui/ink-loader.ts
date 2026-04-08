@@ -1,7 +1,7 @@
 /**
  * Dynamic loader for ink — bridges CJS to ESM.
  *
- * Ink 4 is ESM-only. Our project is CJS. This module dynamically imports ink
+ * Ink 6 is ESM-only. Our project is CJS. This module dynamically imports ink
  * at runtime via import(), which handles ESM from CJS contexts.
  *
  * React 19 is CJS and works with normal require().
@@ -33,7 +33,7 @@ export async function loadInk(): Promise<InkExports> {
   if (cached) return cached;
 
   // Use indirect import() to prevent TypeScript from converting it to require()
-  // when compiling to CommonJS. ink 4+ is ESM-only and needs a real import().
+  // when compiling to CommonJS. ink 6+ is ESM-only and needs a real import().
   const dynamicImport = new Function('specifier', 'return import(specifier)');
   const [ink, inkTextInput, inkSpinner] = await Promise.all([
     dynamicImport('ink'),
