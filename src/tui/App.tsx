@@ -353,12 +353,15 @@ export function App({ api, ensemble }: AppProps) {
   const [paletteFilter, setPaletteFilter] = useState('');
   const handleInputChange = useCallback((value: string) => {
     inputValueRef.current = value;
-    // Only update palette filter state when it actually changes — avoids unnecessary re-renders
     const trimmed = value.trimStart();
     if (trimmed.startsWith('/') && !trimmed.includes(' ')) {
+      // Command name filter
       setPaletteFilter(trimmed.slice(1).toLowerCase());
+    } else if (trimmed.startsWith('/') && trimmed.includes(' ')) {
+      // Parameter position — use the partial as filter to trigger re-render
+      const spaceIdx = trimmed.indexOf(' ');
+      setPaletteFilter(`param:${trimmed.slice(spaceIdx + 1).toLowerCase()}`);
     } else {
-      // Functional update: return same ref if already empty → React skips re-render
       setPaletteFilter(prev => prev === '' ? prev : '');
     }
   }, []);
@@ -376,28 +379,30 @@ export function App({ api, ensemble }: AppProps) {
   const filteredPaletteCommands = useMemo(() => {
     if (!state.paletteVisible) return [];
 
-    // Check if we're in parameter position (input has / + space)
-    const input = inputValueRef.current.trimStart();
-    if (input.startsWith('/') && input.includes(' ')) {
+    // Parameter position: paletteFilter starts with "param:"
+    if (paletteFilter.startsWith('param:')) {
+      const input = inputValueRef.current.trimStart();
       const spaceIdx = input.indexOf(' ');
+      if (spaceIdx < 0) return [];
       const cmd = input.slice(1, spaceIdx).toLowerCase();
-      const partial = input.slice(spaceIdx + 1).toLowerCase().trim();
+      const partial = paletteFilter.slice(6); // strip "param:"
 
       // Player name completion
       if (PLAYER_CMD_SET.has(cmd)) {
-        return playerNamesList
+        const results = playerNamesList
           .filter(n => {
             const lower = n.toLowerCase();
-            // Match prefix or any hyphen-separated segment
-            return (lower.startsWith(partial) || lower.split('-').some(seg => seg.startsWith(partial))) && lower !== partial;
+            if (lower === partial) return false;
+            return !partial || lower.startsWith(partial) || lower.split('-').some(seg => seg.startsWith(partial));
           })
           .map(n => ({ name: n, usage: '', description: 'player' }));
+        return results;
       }
 
       // Subcommand completion
       if (SUBCMD_MAP[cmd]) {
         return SUBCMD_MAP[cmd]
-          .filter(s => s.startsWith(partial) && s !== partial)
+          .filter(s => !partial || (s.startsWith(partial) && s !== partial))
           .map(s => ({ name: s, usage: '', description: `${cmd} subcommand` }));
       }
 
