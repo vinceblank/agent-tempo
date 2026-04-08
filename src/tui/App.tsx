@@ -1000,16 +1000,29 @@ export function App({ api, ensemble }: AppProps) {
         startIdx = i;
       }
 
-      // Overflow: commit older messages to Static scrollback
+      // Overflow: commit older messages to Static scrollback (match live area format)
       const overflow = formatted.slice(0, startIdx);
       for (const msg of overflow) {
         const key = `${msg.direction}:${msg.body.slice(0, 60)}`;
         if (!overflowCommittedRef.current.has(key)) {
           overflowCommittedRef.current.add(key);
+          // Blank separator
+          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: '', timestamp: Date.now() } });
+          const lines = msg.body.split('\n');
           if (msg.direction === 'out') {
-            dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'message', content: `\u276F ${msg.body.split('\n')[0]}`, timestamp: Date.now() } });
+            dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'message', content: `\u276F ${lines[0]}  ${msg.time}`, timestamp: Date.now() } });
+            for (const line of lines.slice(1, 4)) {
+              dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'command-output', content: `  ${line}`, timestamp: Date.now() } });
+            }
           } else {
-            dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'message', content: `\u2190 ${msg.sender}: ${msg.body.split('\n')[0]}  ${msg.time}`, timestamp: Date.now() } });
+            dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'message', content: `\u2190 ${msg.sender}: ${lines[0]}  ${msg.time}`, timestamp: Date.now() } });
+            const indent = '  ' + ' '.repeat(msg.sender.length + 2);
+            for (const line of lines.slice(1, 4)) {
+              dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'command-output', content: `${indent}${line}`, timestamp: Date.now() } });
+            }
+          }
+          if (lines.length > 4) {
+            dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `  \u2026 (${lines.length - 4} more lines)`, timestamp: Date.now() } });
           }
         }
       }
@@ -1034,6 +1047,7 @@ export function App({ api, ensemble }: AppProps) {
               React.createElement(React.Fragment, { key: `ms-${i}` },
                 React.createElement(Text, { color: THEME.accent, bold: true }, '  \u276F '),
                 React.createElement(Text, { color: THEME.text }, firstLine),
+                React.createElement(Text, { color: THEME.dim }, `  ${msg.time}`),
               ),
             );
             // Continuation lines indented
