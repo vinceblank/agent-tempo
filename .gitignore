@@ -16,3 +16,4 @@ pnpm-lock.yaml
 .claude/settings.json
 .claude/settings.local.json
 .claude/worktrees/
+.claude/rules/openwolf.md
