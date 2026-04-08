@@ -4,6 +4,7 @@ import {
   teardownTestEnv,
   withWorkerAndOutboxActivities,
   withWorkerAndRecruitActivities,
+  withWorkerAndRecruitCapture,
   startSession,
   playerMetadata,
   conductorMetadata,
@@ -392,6 +393,56 @@ describe('outbox', function () {
 
         await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
+        await recruitedHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        try { await recruitedHandle.result(); } catch { /* cleanup */ }
+      });
+    });
+
+    it('forwards claudeBin from outbox entry to spawnProcess', async function () {
+      this.timeout(30_000);
+      const spawnInputs: Array<Record<string, unknown>> = [];
+      await withWorkerAndRecruitCapture(spawnInputs, async () => {
+        const ensemble = `recruit-bin-${Date.now()}`;
+
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'recruiter-bin', ensemble }),
+          temporalConfig: {
+            temporalAddress: '',
+            temporalNamespace: 'default',
+            taskQueue: TASK_QUEUE,
+          },
+        });
+
+        await handle.executeUpdate(submitOutboxUpdate, {
+          args: [{
+            type: 'recruit',
+            targetName: 'bin-player',
+            workDir: '/tmp/test',
+            isConductor: false,
+            agent: 'claude',
+            claudeBin: '/custom/path/to/claude',
+          }],
+        });
+
+        // Wait for dispatch loop to process the recruit entry
+        await sleep(3000);
+
+        // Outbox entry should be delivered
+        const outboxEntries = await handle.query(outboxQuery);
+        const recruitEntry = outboxEntries.find((e) => e.type === 'recruit');
+        expect(recruitEntry).to.exist;
+        expect(recruitEntry!.status).to.equal('delivered');
+
+        // spawnProcess should have been called with claudeBin
+        expect(spawnInputs).to.have.lengthOf(1);
+        expect(spawnInputs[0].claudeBin).to.equal('/custom/path/to/claude');
+
+        // Cleanup
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.result();
+        const recruitedHandle = getClient().workflow.getHandle(
+          `claude-session-${ensemble}-bin-player`,
+        );
         await recruitedHandle.signal(updateMetadataSignal, { status: 'terminated' });
         try { await recruitedHandle.result(); } catch { /* cleanup */ }
       });

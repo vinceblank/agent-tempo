@@ -173,6 +173,7 @@ export function registerLoadLineupTool(
               agentDefinitionDescription: resolvedType?.description,
               nativeResolvable: resolvedType?.nativeResolvable,
               allowedTools: player.allowedTools,
+              claudeBin: config.claudeBin,
             } as OutboxEntryInput;
             await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
             recruited.push(playerName);

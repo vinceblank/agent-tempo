@@ -145,6 +145,8 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
   nativeResolvable?: boolean;
   /** Tool restrictions from the agent definition frontmatter. */
   allowedTools?: string[];
+  /** Custom claude binary path (from config.claudeBin). */
+  claudeBin?: string;
 }
 
 export interface ReportOutboxEntry extends OutboxEntryBase {
@@ -163,6 +165,8 @@ export interface EncoreOutboxEntry extends OutboxEntryBase {
   targetPlayerId: string;
   targetHostname?: string;
   contextMessageCount?: number;
+  /** Custom claude binary path (from config.claudeBin). */
+  claudeBin?: string;
 }
 
 export type OutboxEntry = CueOutboxEntry | RecruitOutboxEntry | ReportOutboxEntry | StopOutboxEntry | EncoreOutboxEntry;

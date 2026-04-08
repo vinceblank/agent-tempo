@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.21.1] - 2026-04-08
+
+### Fixed
+
+- Recruit and encore tools now use the configured `claudeBin` setting when spawning new player sessions. Previously, mid-session recruits ignored the custom binary path and fell back to the default `claude` command (#90)
+
 ## [0.21.0] - 2026-04-08
 
 ### Added

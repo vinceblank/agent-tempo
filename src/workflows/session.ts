@@ -530,6 +530,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               agentDefinition: entry.agentDefinition,
               agentDefinitionDescription: entry.agentDefinitionDescription,
               allowedTools: entry.allowedTools,
+              claudeBin: entry.claudeBin,
             });
             const targetHost = entry.targetHostname || input.metadata.hostname;
             const spawnFn = getSpawnProxy(targetHost);
@@ -547,6 +548,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               nativeResolvable: entry.nativeResolvable,
               claudeSessionId: recruitResult.claudeSessionId,
               allowedTools: entry.allowedTools,
+              claudeBin: entry.claudeBin,
             });
             break;
           }
@@ -574,6 +576,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
                 allowedTools: encoreResult.allowedTools,
                 claudeSessionId: encoreResult.claudeSessionId,
                 resume: true,
+                claudeBin: entry.claudeBin || encoreResult.claudeBin,
               });
             } catch (spawnErr) {
               // Spawn failed after status was reset to pending — revert to stale
