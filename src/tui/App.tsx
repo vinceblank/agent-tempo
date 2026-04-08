@@ -1017,10 +1017,12 @@ export function App({ api, ensemble }: AppProps) {
         }
       }
 
-      // Dedup by text content + direction (timestamps differ across sources)
+      console.error(`[tui:convo] sentMessages=${state.sentMessages.length} maestroDMs=${state.messages.filter(m => m.to === 'maestro').length} total=${allConvoMsgs.length}`);
+
+      // Dedup: same direction + same text + within same minute = duplicate
       const seen = new Set<string>();
       const sorted = allConvoMsgs
-        .filter(m => { const k = `${m.direction}:${m.text.slice(0, 60)}`; if (seen.has(k)) return false; seen.add(k); return true; })
+        .filter(m => { const k = `${m.direction}:${m.text.slice(0, 60)}:${m.timestamp.slice(0, 16)}`; if (seen.has(k)) return false; seen.add(k); return true; })
         .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
       // Format messages as lines, take the tail that fits the viewport
