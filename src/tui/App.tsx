@@ -611,11 +611,10 @@ export function App({ api, ensemble }: AppProps) {
         } else {
           // Fetch relay messages + maestro direct messages in parallel
           const ens = s.activeEnsemble!;
-          const inConductorChat = s.chatTarget === s.conductorName;
           const [players, messages, history, schedules, maestroMsgs] = await Promise.all([
             api.getPlayers(ens),
             api.getMessages(ens, 50),
-            inConductorChat ? api.getConductorHistory(ens) : Promise.resolve([]),
+            api.getConductorHistory(ens).catch(() => []),
             api.getSchedules(ens),
             api.getMaestroMessages(ens),
           ]);
@@ -1011,30 +1010,15 @@ export function App({ api, ensemble }: AppProps) {
         formatted.push({ sender: m.direction === 'out' ? `you \u2192 ${m.to}` : m.from, time, body: m.text, direction: m.direction });
       }
 
-      // Each message takes ~2 lines (sender+time, body truncated). Reserve 2 lines for header.
-      const maxVisible = Math.max(3, Math.floor((contentHeight - 2) / 2));
+      // Each message takes ~3 lines (sender+time, body). Full content area for messages.
+      const maxVisible = Math.max(2, Math.floor(contentHeight / 3));
       const visibleMsgs = formatted.slice(-maxVisible);
+
+      console.error(`[tui:convo] msgs=${state.messages.length} history=${state.conductorHistory.length} sent=${state.sentMessages.length} formatted=${formatted.length} visible=${visibleMsgs.length}`);
 
       const convoChildren: React.ReactNode[] = [];
 
-      // Header — ensemble name + player count
-      const playerCount = state.players.length;
-      const conductorInfo = state.conductorName ? ` \u2605 ${state.conductorName}` : '';
-      convoChildren.push(
-        React.createElement(Text, { key: 'ch', color: THEME.dim },
-          `  ${state.activeEnsemble} \u00B7 ${playerCount} player${playerCount !== 1 ? 's' : ''}${conductorInfo}`),
-      );
-      if (state.staticItems.length > 0) {
-        convoChildren.push('\n');
-        convoChildren.push(
-          React.createElement(Text, { key: 'si', color: THEME.dim },
-            `  \u2191 ${state.staticItems.length} messages above (scroll up)`),
-        );
-      }
-      convoChildren.push('\n');
-      convoChildren.push(React.createElement(Text, { key: 'csep', color: THEME.border }, '  ' + '\u2500'.repeat(50)));
-
-      // Messages
+      // Messages — no header, all context is in the status bar
       if (visibleMsgs.length === 0) {
         convoChildren.push('\n');
         convoChildren.push(React.createElement(Text, { key: 'empty', color: THEME.dim }, '  No messages yet. Type to send.'));
