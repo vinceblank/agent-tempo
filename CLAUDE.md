@@ -81,7 +81,7 @@ src/
 │   ├── App.tsx        # Root TUI component — chat-focused shell with slash commands
 │   ├── store.ts       # TUI state reducer (phase, players, messages, schedules, static history)
 │   ├── client.ts      # TempoClient interface and implementation — wraps Temporal queries via Maestro
-│   ├── commands.ts    # Slash command parser and registry (/cue, /players, /broadcast, etc.)
+│   ├── commands.ts    # Slash command parser and registry (/cue, /player, /broadcast, /status, etc.)
 │   ├── ink-loader.ts  # Dynamic ESM loader for Ink (avoids CJS/ESM conflicts)
 │   ├── ink-context.tsx # React context for injected Ink primitives
 │   ├── components/
@@ -92,6 +92,8 @@ src/
 │   │   ├── ChatView.tsx       # Per-player chat view (entered via /cue <player>)
 │   │   ├── ErrorView.tsx      # Error state view with diagnostic checks
 │   │   ├── StatusBar.tsx      # Persistent status bar (player counts, schedule count, connection health)
+│   │   ├── CommandPalette.tsx # Autocomplete dropdown for slash commands and parameters
+│   │   ├── Picker.tsx         # Full-screen interactive picker (players, ensembles)
 │   │   ├── ScheduleWizard.tsx # Step-by-step wizard for /schedule create
 │   │   └── RecruitWizard.tsx  # Step-by-step wizard for /recruit
 │   └── utils/

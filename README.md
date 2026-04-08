@@ -841,14 +841,20 @@ The TUI has a persistent layout:
 | `/cue <player> [message]` | Enter chat mode with a player, or send a quick one-off message |
 | `/broadcast <message>` | Send a message to all active players across all ensembles |
 | `/recruit [name]` | Launch the recruit wizard to spawn a new player session |
+| `/recruit-conductor` | Recruit a conductor for the current ensemble (one-shot, no wizard) |
 | `/stop <player>` | Terminate a player session |
+| `/disband` | Tear down the current ensemble (all sessions + scheduler) |
 | `/encore <player>` | Revive a stale player session |
 | `/recall [player]` | Show recent message history (optionally filtered to one player) |
 | `/search <term>` | Search message history across all ensembles |
-| `/players` | List all players with status, type, and current part |
+| `/status` | Show an overlay with all players and their current status |
+| `/player [name]` | Show detailed player info; no args opens the interactive picker |
 | `/schedule` | List active schedules across all ensembles |
 | `/schedule create` | Launch the interactive schedule creation wizard |
 | `/unschedule <name>` | Cancel a named schedule |
+| `/lineup load <file> \| save [file]` | Load or save an ensemble lineup |
+| `/ensemble [name]` | Switch to a named ensemble; no args opens the ensemble picker |
+| `/up <name>` | Create a new ensemble from within the TUI |
 | `/gates` | List quality gates and their criteria status |
 | `/stages` | List stages and per-player report status |
 | `/worktree [list]` | List active git worktrees |

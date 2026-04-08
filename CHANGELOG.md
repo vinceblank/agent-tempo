@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TempoClient API layer replacing core-api.ts with Maestro-first fallback (#58)
 - 10 new components: ChatView, CommandPalette, ErrorView, MainView, Picker, PromptArea, RecruitWizard, ScheduleWizard, StatusBar, TitleBar (#58)
 - Slash command system with parser, registry, tab completion, persistent history (#58)
+- `/status` command — dismissible overlay showing all players with status, type, and current part (#58)
 - Two-way conductor chat via Global Maestro relay (#58)
 - Interactive wizards for recruiting and scheduling (#58)
 - Message search, scrollback navigation, player detail view (#58)
