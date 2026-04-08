@@ -667,6 +667,14 @@ export function App({ api, ensemble }: AppProps) {
             lastSeenMaestroRef.current = maestroMsgs.received[maestroMsgs.received.length - 1].id;
           }
 
+          // Hydrate sent messages from maestro workflow history on first poll
+          if (!lastPollRef.current.lastMsgId && maestroMsgs.sent.length > 0) {
+            dispatch({
+              type: 'HYDRATE_SENT_MESSAGES',
+              messages: maestroMsgs.sent.map(m => ({ to: m.to, text: m.text, timestamp: m.timestamp })),
+            });
+          }
+
           // Skip dispatch if data hasn't changed (avoids unnecessary re-renders)
           const lastMsg = messages.length > 0 ? messages[messages.length - 1].id : '';
           const pollKey = {

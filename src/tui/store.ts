@@ -262,6 +262,7 @@ export type TuiAction =
   | { type: 'SET_INPUT'; value: string }
   | { type: 'SET_CONDUCTOR'; name?: string }
   | { type: 'APPEND_SENT_MESSAGE'; to: string; text: string }
+  | { type: 'HYDRATE_SENT_MESSAGES'; messages: Array<{ to: string; text: string; timestamp: string }> }
   | { type: 'ENTER_CHAT'; target: string }
   | { type: 'EXIT_CHAT' }
   // Command palette
@@ -503,6 +504,14 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         ...state,
         sentMessages: [...state.sentMessages, { to: action.to, text: action.text, timestamp: new Date().toISOString() }],
       };
+
+    case 'HYDRATE_SENT_MESSAGES': {
+      // Merge server-side sent messages, dedup by text+timestamp
+      const existing = new Set(state.sentMessages.map(m => `${m.text.slice(0, 60)}:${m.timestamp}`));
+      const newMsgs = action.messages.filter(m => !existing.has(`${m.text.slice(0, 60)}:${m.timestamp}`));
+      if (newMsgs.length === 0) return state;
+      return { ...state, sentMessages: [...state.sentMessages, ...newMsgs] };
+    }
 
     case 'ENTER_CHAT':
       return { ...state, phase: 'chat' as TuiPhase, chatTarget: action.target };
