@@ -525,8 +525,11 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     case 'PICKER_UP':
       return { ...state, pickerIndex: Math.max(0, state.pickerIndex - 1) };
 
-    case 'PICKER_DOWN':
-      return { ...state, pickerIndex: state.pickerIndex + 1 }; // Clamped by item count in App
+    case 'PICKER_DOWN': {
+      const maxIdx = (state.pickerType === 'ensembles' ? state.ensembles.length : state.players.length) - 1;
+      if (state.pickerIndex >= maxIdx) return state;
+      return { ...state, pickerIndex: state.pickerIndex + 1 };
+    }
 
     case 'SET_CONDUCTOR':
       return { ...state, conductorName: action.name };

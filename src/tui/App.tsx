@@ -97,6 +97,8 @@ export function App({ api, ensemble }: AppProps) {
   const lastPollRef = React.useRef({ playerCount: 0, lastMsgId: '', historyLen: 0, scheduleCount: 0, maestroMsgCount: 0 });
   // Track which messages have been committed to Static (overflow from live area)
   const overflowCommittedRef = React.useRef(new Set<string>());
+  // Overflow data computed during render, committed to Static via useEffect
+  const overflowRef = React.useRef<{ formatted: Array<{ sender: string; time: string; body: string; direction: 'in' | 'out' }>; startIdx: number } | null>(null);
   // Callback for picker selection — set before showing picker, called on Enter
   const pickerCallbackRef = React.useRef<((id: string) => void) | null>(null);
 
@@ -106,6 +108,36 @@ export function App({ api, ensemble }: AppProps) {
     lastSeenMaestroRef.current = undefined;
     lastPollRef.current = { playerCount: 0, lastMsgId: '', historyLen: 0, scheduleCount: 0, maestroMsgCount: 0 };
   }, [state.activeEnsemble]);
+  // Commit overflow messages to Static scrollback after render (not during render)
+  useEffect(() => {
+    const data = overflowRef.current;
+    if (!data) return;
+    const { formatted, startIdx } = data;
+    const overflow = formatted.slice(0, startIdx);
+    for (const msg of overflow) {
+      const key = `${msg.direction}:${msg.body.slice(0, 60)}`;
+      if (!overflowCommittedRef.current.has(key)) {
+        overflowCommittedRef.current.add(key);
+        // Blank separator
+        dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: '', timestamp: Date.now() } });
+        const lines = msg.body.split('\n');
+        // First line with structured fields for rich rendering
+        dispatch({ type: 'COMMIT_STATIC', item: {
+          id: nextStaticId(), type: 'message', content: lines[0], timestamp: Date.now(),
+          msgDirection: msg.direction, msgSender: msg.sender, msgTime: msg.time,
+        }});
+        // Continuation lines
+        const indent = msg.direction === 'out' ? '    ' : '    ' + ' '.repeat(msg.sender.length + 2);
+        for (const line of lines.slice(1, 4)) {
+          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'command-output', content: `${indent}${line}`, timestamp: Date.now() } });
+        }
+        if (lines.length > 4) {
+          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `${indent}\u2026 (${lines.length - 4} more lines)`, timestamp: Date.now() } });
+        }
+      }
+    }
+  });
+
   const handleHistoryUpdate = useCallback((entries: string[]) => {
     saveHistory(entries);
   }, []);
@@ -1072,30 +1104,9 @@ export function App({ api, ensemble }: AppProps) {
         startIdx = i;
       }
 
-      // Overflow: commit older messages to Static scrollback (match live area format)
-      const overflow = formatted.slice(0, startIdx);
-      for (const msg of overflow) {
-        const key = `${msg.direction}:${msg.body.slice(0, 60)}`;
-        if (!overflowCommittedRef.current.has(key)) {
-          overflowCommittedRef.current.add(key);
-          // Blank separator
-          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: '', timestamp: Date.now() } });
-          const lines = msg.body.split('\n');
-          // First line with structured fields for rich rendering
-          dispatch({ type: 'COMMIT_STATIC', item: {
-            id: nextStaticId(), type: 'message', content: lines[0], timestamp: Date.now(),
-            msgDirection: msg.direction, msgSender: msg.sender, msgTime: msg.time,
-          }});
-          // Continuation lines
-          const indent = msg.direction === 'out' ? '    ' : '    ' + ' '.repeat(msg.sender.length + 2);
-          for (const line of lines.slice(1, 4)) {
-            dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'command-output', content: `${indent}${line}`, timestamp: Date.now() } });
-          }
-          if (lines.length > 4) {
-            dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `${indent}\u2026 (${lines.length - 4} more lines)`, timestamp: Date.now() } });
-          }
-        }
-      }
+      // Overflow messages are committed to Static scrollback via useEffect (below)
+      // to avoid dispatching during render. Store startIdx for the effect.
+      overflowRef.current = { formatted, startIdx };
 
       const visibleMsgs = formatted.slice(startIdx);
 

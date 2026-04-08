@@ -257,31 +257,34 @@ async function handleDisband(
   dispatch({ type: 'CONFIRM_DISBAND', ensemble });
 }
 
-/** /broadcast <message> — send a message to all active players. */
+/** /broadcast <message> — send a message to all active players in the current ensemble. */
 async function handleBroadcast(
   args: string[],
   dispatch: (action: TuiAction) => void,
   api: TempoClient,
+  ctx: CommandContext,
 ): Promise<void> {
   if (args.length === 0) {
     commitStatic(dispatch, 'error', 'Usage: /broadcast <message>');
     return;
   }
 
+  if (!ctx.activeEnsemble) {
+    commitStatic(dispatch, 'error', 'No active ensemble. Select one with /ensemble first.');
+    return;
+  }
+
   const message = args.join(' ');
   try {
-    const ensembles = await api.discoverEnsembles();
+    const players = await api.getPlayers(ctx.activeEnsemble);
     let sent = 0;
-    for (const ens of ensembles) {
-      const players = await api.getPlayers(ens.name);
-      for (const p of players) {
-        if (p.status === 'active') {
-          try {
-            await api.sendMessage(ens.name, p.playerId, message, 'maestro');
-            sent++;
-          } catch {
-            // Skip individual failures
-          }
+    for (const p of players) {
+      if (p.status === 'active') {
+        try {
+          await api.sendMessage(ctx.activeEnsemble, p.playerId, message, 'maestro');
+          sent++;
+        } catch {
+          // Skip individual failures
         }
       }
     }
