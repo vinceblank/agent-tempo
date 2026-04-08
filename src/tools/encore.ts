@@ -67,6 +67,7 @@ export function registerEncoreTool(
           targetPlayerId: playerId,
           targetHostname: host,
           contextMessageCount: contextMessages,
+          claudeBin: config.claudeBin,
         } as OutboxEntryInput;
         const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 
