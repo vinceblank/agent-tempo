@@ -14,3 +14,5 @@ pnpm-lock.yaml
 
 .wolf/
 .claude/settings.json
+.claude/settings.local.json
+.claude/worktrees/
