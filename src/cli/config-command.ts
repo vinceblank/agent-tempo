@@ -150,6 +150,8 @@ export function configSet(key: string, value: string): void {
     'temporal-tls-key-path': 'temporalTlsKeyPath',
     defaultAgent: 'defaultAgent',
     'default-agent': 'defaultAgent',
+    claudeBin: 'claudeBin',
+    'claude-bin': 'claudeBin',
   };
 
   const configKey = keyMap[key];
@@ -183,6 +185,7 @@ export function configShow(): void {
     { key: 'temporalTlsCertPath', configKey: 'temporalTlsCertPath' },
     { key: 'temporalTlsKeyPath', configKey: 'temporalTlsKeyPath' },
     { key: 'defaultAgent', configKey: 'defaultAgent' },
+    { key: 'claudeBin', configKey: 'claudeBin' },
   ];
 
   out.log(`  Config file: ${out.dim(CONFIG_FILE_PATH)}`);

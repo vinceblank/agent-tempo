@@ -21,6 +21,7 @@ Settings are stored in `~/.claude-tempo/config.json`. You can also set values no
 claude-tempo config set temporalAddress my-ns.tmprl.cloud:7233
 claude-tempo config set temporalNamespace my-ns.abc123
 claude-tempo config set temporalApiKey tcl_...
+claude-tempo config set claude-bin /usr/local/bin/claude-nightly
 claude-tempo config show
 ```
 
@@ -48,6 +49,23 @@ Settings are resolved in this order (first match wins):
 | `CLAUDE_TEMPO_CONDUCTOR` | `false` | Enable conductor mode |
 | `CLAUDE_TEMPO_PLAYER_NAME` | *(random hex)* | Player name on startup |
 | `CLAUDE_TEMPO_DEFAULT_AGENT` | `claude` | Default agent type (`claude` or `copilot`) |
+| `CLAUDE_TEMPO_CLAUDE_BIN` | *(auto-detected)* | Path to a custom `claude` executable. Takes precedence over the config file setting and `which`/`where` auto-detection. Useful when multiple Claude versions are installed or the binary is not on `PATH`. |
+
+## Custom Claude Executable
+
+By default, claude-tempo auto-detects the `claude` binary using `which` (POSIX) or `where` (Windows). To use a different binary:
+
+```bash
+# Set via env var (takes highest precedence)
+export CLAUDE_TEMPO_CLAUDE_BIN=/usr/local/bin/claude-nightly
+
+# Or persist in config file
+claude-tempo config set claude-bin /usr/local/bin/claude-nightly
+```
+
+**Resolution order:** `CLAUDE_TEMPO_CLAUDE_BIN` env var → config file → `which`/`where` → bare `claude` fallback.
+
+Paths with spaces are handled correctly on both Windows and POSIX.
 
 ## Temporal Cloud
 
