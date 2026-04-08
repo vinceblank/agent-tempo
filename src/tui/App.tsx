@@ -1035,6 +1035,13 @@ export function App({ api, ensemble }: AppProps) {
 
   console.error(`[tui:debug] render staticItems=${state.staticItems.length}`);
 
+  // Splash phase — full screen, no chrome (title/status/prompt hidden)
+  if (state.phase === 'splash') {
+    return React.createElement(Box, { flexDirection: 'column', height: termRows - 1, overflow: 'hidden' },
+      renderLiveContent(),
+    );
+  }
+
   // Root layout: <Static> items above, then live area constrained to terminal height
   return React.createElement(React.Fragment, null,
     // Static items — rendered once to stdout, become native terminal scrollback

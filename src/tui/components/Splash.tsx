@@ -76,14 +76,29 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
     return () => clearInterval(timer);
   }, [connected]);
 
+  // ── Centering calculations ──
+  const cols = process.stdout.columns || 80;
+  const rows = process.stdout.rows || 24;
+  const contentWidth = 45; // approximate max content width
+  const hPad = ' '.repeat(Math.max(0, Math.floor((cols - contentWidth) / 2)));
+
+  // Estimate content height: metronome (3 lines) + 2 blank + title (3) + 2 blank + status (1)
+  // + ensembles (~5) + 2 blank + prompt (1) = ~19 lines
+  const contentHeight = 19;
+  const vPad = Math.max(0, Math.floor((rows - contentHeight - 3) / 2));
+
   // ── Build single Text element with all content as nested virtual-text ──
   const children: React.ReactNode[] = [];
+
+  // Vertical centering
+  for (let i = 0; i < vPad; i++) children.push('\n');
 
   // Metronome logo (braille characters as nested Text — 0 Yoga nodes)
   const frameIndex = PING_PONG[metronomeTick];
   const frame = brailleFrames[frameIndex];
   for (let li = 0; li < frame.length; li++) {
     if (li > 0) children.push('\n');
+    children.push(hPad);
     for (let si = 0; si < frame[li].length; si++) {
       const seg = frame[li][si];
       children.push(
@@ -94,18 +109,18 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
 
   // Title + tagline + version
   children.push('\n\n');
-  children.push(React.createElement(Text, { key: 'title', bold: true, color: THEME.accent }, '  claude-tempo'));
+  children.push(React.createElement(Text, { key: 'title', bold: true, color: THEME.accent }, `${hPad}claude-tempo`));
   children.push('\n');
-  children.push(React.createElement(Text, { key: 'tagline', color: THEME.dim }, '  Multi-session orchestration via Temporal'));
+  children.push(React.createElement(Text, { key: 'tagline', color: THEME.dim }, `${hPad}Multi-session orchestration via Temporal`));
   children.push('\n');
-  children.push(React.createElement(Text, { key: 'version', color: THEME.muted }, `  v${version}`));
+  children.push(React.createElement(Text, { key: 'version', color: THEME.muted }, `${hPad}v${version}`));
 
   // Connection status
   children.push('\n\n');
   if (connected) {
-    children.push(React.createElement(Text, { key: 'status', color: THEME.success }, '  \u2713 Connected'));
+    children.push(React.createElement(Text, { key: 'status', color: THEME.success }, `${hPad}\u2713 Connected`));
   } else {
-    children.push(React.createElement(Text, { key: 'status', color: THEME.warning }, `  ${SPINNER_FRAMES[spinnerTick]} ${status}`));
+    children.push(React.createElement(Text, { key: 'status', color: THEME.warning }, `${hPad}${SPINNER_FRAMES[spinnerTick]} ${status}`));
   }
 
   // Ensemble list (when connected)
@@ -120,7 +135,7 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
 
     if (startIdx > 0) {
       children.push('\n');
-      children.push(React.createElement(Text, { key: 'sup', color: THEME.dim }, `    \u2191 ${startIdx} more`));
+      children.push(React.createElement(Text, { key: 'sup', color: THEME.dim }, `${hPad}  \u2191 ${startIdx} more`));
     }
 
     for (let i = 0; i < visible.length; i++) {
@@ -135,27 +150,27 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
           key: `ens-${ens.name}`,
           color: isSelected ? THEME.accent : THEME.textMuted,
           bold: isSelected,
-        }, `    ${indicator}${icon} ${ens.name} (${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''})`),
+        }, `${hPad}  ${indicator}${icon} ${ens.name} (${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''})`),
       );
     }
 
     if (startIdx + MAX_ENSEMBLES_SHOWN < ensembles.length) {
       children.push('\n');
       children.push(React.createElement(Text, { key: 'sdn', color: THEME.dim },
-        `    \u2193 ${ensembles.length - startIdx - MAX_ENSEMBLES_SHOWN} more`));
+        `${hPad}  \u2193 ${ensembles.length - startIdx - MAX_ENSEMBLES_SHOWN} more`));
     }
   } else if (connected) {
     // No ensembles — getting started hints
     children.push('\n\n');
-    children.push(React.createElement(Text, { key: 'none', color: THEME.dim }, '  No ensembles running.'));
+    children.push(React.createElement(Text, { key: 'none', color: THEME.dim }, `${hPad}No ensembles running.`));
     children.push('\n\n');
-    children.push(React.createElement(Text, { key: 'h1', color: THEME.text }, '  Create an ensemble:'));
+    children.push(React.createElement(Text, { key: 'h1', color: THEME.text }, `${hPad}Create an ensemble:`));
     children.push('\n');
-    children.push(React.createElement(Text, { key: 'h2', color: THEME.accent }, '    claude-tempo up <name>'));
+    children.push(React.createElement(Text, { key: 'h2', color: THEME.accent }, `${hPad}  claude-tempo up <name>`));
     children.push('\n\n');
-    children.push(React.createElement(Text, { key: 'h3', color: THEME.text }, '  Or load a lineup:'));
+    children.push(React.createElement(Text, { key: 'h3', color: THEME.text }, `${hPad}Or load a lineup:`));
     children.push('\n');
-    children.push(React.createElement(Text, { key: 'h4', color: THEME.accent }, '    claude-tempo up --lineup <file.yml>'));
+    children.push(React.createElement(Text, { key: 'h4', color: THEME.accent }, `${hPad}  claude-tempo up --lineup <file.yml>`));
   }
 
   // Bottom prompt
@@ -163,13 +178,13 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
   if (connected) {
     children.push(React.createElement(Text, { key: 'prompt', bold: true, color: THEME.accent },
       ensembleCount === 0
-        ? '  Press Ctrl+C to exit'
+        ? `${hPad}Press Ctrl+C to exit`
         : hasMultiple
-          ? '  \u2191\u2193 to select, Enter to connect'
-          : '  Press Enter to continue',
+          ? `${hPad}\u2191\u2193 to select, Enter to connect`
+          : `${hPad}Press Enter to continue`,
     ));
   } else {
-    children.push(React.createElement(Text, { key: 'prompt', color: THEME.muted }, '  Press Ctrl+C to cancel'));
+    children.push(React.createElement(Text, { key: 'prompt', color: THEME.muted }, `${hPad}Press Ctrl+C to cancel`));
   }
 
   // Single Text element wrapping everything (1 Yoga node)
