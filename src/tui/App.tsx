@@ -695,6 +695,8 @@ export function App({ api, ensemble }: AppProps) {
             || pollKey.scheduleCount !== prev.scheduleCount
             || pollKey.maestroMsgCount !== prev.maestroMsgCount;
 
+          console.error(`[tui:poll] relay=${messages.length} dms=${maestroMsgs.received.length} sent=${maestroMsgs.sent.length} changed=${changed} prev=${JSON.stringify(prev)}`);
+
           if (changed) {
             // Merge maestro DMs into messages so conversation stream sees them
             const allMessages = [...messages];
