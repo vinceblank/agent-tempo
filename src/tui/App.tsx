@@ -625,11 +625,16 @@ export function App({ api, ensemble }: AppProps) {
             const newMsgs = prevId
               ? (() => { const idx = messages.findIndex(m => m.id === prevId); return idx >= 0 ? messages.slice(idx + 1) : messages; })()
               : messages; // First poll — hydrate all
-            for (const m of newMsgs) {
+            for (let mi = 0; mi < newMsgs.length; mi++) {
+              const m = newMsgs[mi];
               const time = new Date(m.timestamp);
               const hh = String(time.getHours()).padStart(2, '0');
               const mm = String(time.getMinutes()).padStart(2, '0');
               const lines = m.text.split('\n');
+              // Blank line separator between messages
+              if (mi > 0 || prevId) {
+                dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: '', timestamp: Date.now() } });
+              }
               // First line: ← player: message  HH:MM
               dispatch({
                 type: 'COMMIT_STATIC',
@@ -1021,7 +1026,7 @@ export function App({ api, ensemble }: AppProps) {
       const seen = new Set<string>();
       const sorted = allConvoMsgs
         .filter(m => { const k = `${m.direction}:${m.timestamp}:${m.text.slice(0, 40)}`; if (seen.has(k)) return false; seen.add(k); return true; })
-        .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
       // Format messages as lines, take the tail that fits the viewport
       const formatted: Array<{ sender: string; time: string; body: string; direction: 'in' | 'out' }> = [];
@@ -1031,8 +1036,8 @@ export function App({ api, ensemble }: AppProps) {
         formatted.push({ sender: m.direction === 'out' ? `you \u2192 ${m.to}` : m.from, time, body: m.text, direction: m.direction });
       }
 
-      // Each message is ~1-2 lines in compact format. Full content area for messages.
-      const maxVisible = Math.max(3, Math.floor(contentHeight / 2));
+      // Each message is ~2 lines (content + blank separator). Full content area.
+      const maxVisible = Math.max(2, Math.floor(contentHeight / 2));
       const visibleMsgs = formatted.slice(-maxVisible);
 
       console.error(`[tui:convo] msgs=${state.messages.length} history=${state.conductorHistory.length} sent=${state.sentMessages.length} formatted=${formatted.length} visible=${visibleMsgs.length}`);
@@ -1046,7 +1051,8 @@ export function App({ api, ensemble }: AppProps) {
       } else {
         for (let i = 0; i < visibleMsgs.length; i++) {
           const msg = visibleMsgs[i];
-          convoChildren.push('\n');
+          // Blank line between messages for visual separation
+          convoChildren.push(i === 0 ? '\n' : '\n\n');
           if (msg.direction === 'out') {
             // Outbound — Claude Code user input style: ❯ message
             const firstLine = msg.body.split('\n')[0];
