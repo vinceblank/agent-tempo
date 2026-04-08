@@ -973,9 +973,9 @@ export function App({ api, ensemble }: AppProps) {
         allConvoMsgs.push({ id: `sent-${m.timestamp}`, from: 'you', text: m.text, timestamp: m.timestamp, direction: 'out' });
       }
 
-      // Inbound: messages addressed to maestro + conductor reports
+      // Inbound: only messages addressed TO maestro (direct replies)
       for (const m of state.messages) {
-        if (m.to === 'maestro' || m.from !== 'maestro') {
+        if (m.to === 'maestro') {
           allConvoMsgs.push({ id: m.id, from: m.from, text: m.text, timestamp: m.timestamp, direction: 'in' });
         }
       }
