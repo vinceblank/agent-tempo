@@ -24,6 +24,7 @@ claude-tempo <command> [options]
 | `agent-types <sub>` | Manage player types (`list`, `show <name>`, `init`) |
 | `daemon <sub>` | Manage the worker daemon (`start`, `stop`, `status`, `logs`) |
 | `tui [--ensemble <name>]` | Launch the interactive TUI — chat-focused shell with slash commands for managing players and ensembles |
+| `upgrade [version]` | Graceful self-update — stops daemon, installs new version, restarts daemon |
 | `version` | Print the installed version |
 | `help` | Show usage info |
 
@@ -132,6 +133,15 @@ Stops Temporal, terminates all sessions, and removes MCP config:
 ```bash
 claude-tempo down              # full teardown
 claude-tempo down --keep-mcp   # stop Temporal and sessions, but preserve MCP config
+```
+
+### `claude-tempo upgrade`
+
+Graceful self-update — stops the daemon, installs the latest (or specified) version, then restarts the daemon:
+
+```bash
+claude-tempo upgrade            # install latest version
+claude-tempo upgrade 0.20.0     # install a specific version
 ```
 
 ## Related

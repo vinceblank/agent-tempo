@@ -20,7 +20,7 @@ src/
 ├── cli.ts             # CLI entry point (claude-tempo command)
 ├── daemon.ts          # Daemon entry point — runs Temporal workers as a detached background process
 ├── cli/
-│   ├── commands.ts    # CLI command implementations (up, start, conduct, status, stop, …)
+│   ├── commands.ts    # CLI command implementations (up, start, conduct, status, stop, upgrade, …)
 │   ├── config-command.ts # config subcommand (interactive + set/show)
 │   ├── daemon.ts      # Daemon management utilities (start, stop, status, logs, isDaemonRunning)
 │   ├── mcp.ts         # MCP server registration helpers (init, global vs project)
