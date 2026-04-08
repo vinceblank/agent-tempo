@@ -706,7 +706,23 @@ export function App({ api, ensemble }: AppProps) {
             || pollKey.maestroMsgCount !== prev.maestroMsgCount;
 
           if (changed) {
-            dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
+            // Merge maestro DMs into messages so conversation stream sees them
+            const allMessages = [...messages];
+            for (const dm of maestroMsgs.received) {
+              if (!allMessages.some(m => m.id === dm.id)) {
+                allMessages.push({
+                  id: dm.id,
+                  ensemble: ens,
+                  from: dm.from,
+                  to: 'maestro',
+                  text: dm.text,
+                  timestamp: dm.timestamp,
+                  direction: 'inbound',
+                } as any);
+              }
+            }
+            allMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+            dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages: allMessages, history, schedules });
             lastPollRef.current = pollKey;
 
             // Auto-detect conductor: track name but don't auto-enter chat
