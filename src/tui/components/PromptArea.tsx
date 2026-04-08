@@ -124,12 +124,7 @@ export const PromptArea = React.memo(function PromptArea({
     // Only toggle palette when visibility actually changes — avoids parent dispatch on every keystroke
     if (r.onPaletteToggle) {
       const trimmed = newValue.trimStart();
-      // Show palette for command names (/par) and for parameter position (/chat )
-      const shouldShow = trimmed.startsWith('/') && (
-        !trimmed.includes(' ') || // command name completion
-        trimmed.endsWith(' ') || // just entered parameter position
-        trimmed.split(' ').length === 2 // typing first parameter
-      );
+      const shouldShow = trimmed.startsWith('/') && !trimmed.includes(' ');
       if (shouldShow !== !!r.paletteVisible) {
         r.onPaletteToggle(shouldShow);
       }

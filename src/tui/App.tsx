@@ -97,6 +97,8 @@ export function App({ api, ensemble }: AppProps) {
   const lastPollRef = React.useRef({ playerCount: 0, lastMsgId: '', historyLen: 0, scheduleCount: 0, maestroMsgCount: 0 });
   // Track which messages have been committed to Static (overflow from live area)
   const overflowCommittedRef = React.useRef(new Set<string>());
+  // Callback for picker selection — set before showing picker, called on Enter
+  const pickerCallbackRef = React.useRef<((id: string) => void) | null>(null);
 
   // Reset stale refs when switching ensembles
   useEffect(() => {
@@ -125,25 +127,37 @@ export function App({ api, ensemble }: AppProps) {
       if (key.upArrow) { dispatch({ type: 'PICKER_UP' }); return; }
       if (key.downArrow) { dispatch({ type: 'PICKER_DOWN' }); return; }
       if (key.return) {
+        const cb = pickerCallbackRef.current;
         if (s.pickerType === 'players') {
           const player = s.players[s.pickerIndex];
           if (player) {
             dispatch({ type: 'HIDE_PICKER' });
-            dispatch({ type: 'ENTER_CHAT', target: player.playerId });
-            dispatch({
-              type: 'COMMIT_STATIC',
-              item: { id: nextStaticId(), type: 'info', content: `Entering chat with ${player.playerId}.`, timestamp: Date.now() },
-            });
+            if (cb) {
+              cb(player.playerId);
+              pickerCallbackRef.current = null;
+            } else {
+              // Default: enter chat
+              dispatch({ type: 'ENTER_CHAT', target: player.playerId });
+              dispatch({
+                type: 'COMMIT_STATIC',
+                item: { id: nextStaticId(), type: 'info', content: `\u2500\u2500 chatting with ${player.playerId} \u2500\u2500`, timestamp: Date.now() },
+              });
+            }
           }
         } else if (s.pickerType === 'ensembles') {
           const ens = s.ensembles[s.pickerIndex];
           if (ens) {
             dispatch({ type: 'HIDE_PICKER' });
-            dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: ens.name });
-            dispatch({
-              type: 'COMMIT_STATIC',
-              item: { id: nextStaticId(), type: 'info', content: `Switched to ensemble: ${ens.name}`, timestamp: Date.now() },
-            });
+            if (cb) {
+              cb(ens.name);
+              pickerCallbackRef.current = null;
+            } else {
+              dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: ens.name });
+              dispatch({
+                type: 'COMMIT_STATIC',
+                item: { id: nextStaticId(), type: 'info', content: `Switched to ensemble: ${ens.name}`, timestamp: Date.now() },
+              });
+            }
           }
         }
         return;
@@ -355,12 +369,7 @@ export function App({ api, ensemble }: AppProps) {
     inputValueRef.current = value;
     const trimmed = value.trimStart();
     if (trimmed.startsWith('/') && !trimmed.includes(' ')) {
-      // Command name filter
       setPaletteFilter(trimmed.slice(1).toLowerCase());
-    } else if (trimmed.startsWith('/') && trimmed.includes(' ')) {
-      // Parameter position — use the partial as filter to trigger re-render
-      const spaceIdx = trimmed.indexOf(' ');
-      setPaletteFilter(`param:${trimmed.slice(spaceIdx + 1).toLowerCase()}`);
     } else {
       setPaletteFilter(prev => prev === '' ? prev : '');
     }
@@ -378,41 +387,9 @@ export function App({ api, ensemble }: AppProps) {
 
   const filteredPaletteCommands = useMemo(() => {
     if (!state.paletteVisible) return [];
-
-    // Parameter position: paletteFilter starts with "param:"
-    if (paletteFilter.startsWith('param:')) {
-      const input = inputValueRef.current.trimStart();
-      const spaceIdx = input.indexOf(' ');
-      if (spaceIdx < 0) return [];
-      const cmd = input.slice(1, spaceIdx).toLowerCase();
-      const partial = paletteFilter.slice(6); // strip "param:"
-
-      // Player name completion
-      if (PLAYER_CMD_SET.has(cmd)) {
-        const results = playerNamesList
-          .filter(n => {
-            const lower = n.toLowerCase();
-            if (lower === partial) return false;
-            return !partial || lower.startsWith(partial) || lower.split('-').some(seg => seg.startsWith(partial));
-          })
-          .map(n => ({ name: n, usage: '', description: 'player' }));
-        return results;
-      }
-
-      // Subcommand completion
-      if (SUBCMD_MAP[cmd]) {
-        return SUBCMD_MAP[cmd]
-          .filter(s => !partial || (s.startsWith(partial) && s !== partial))
-          .map(s => ({ name: s, usage: '', description: `${cmd} subcommand` }));
-      }
-
-      return [];
-    }
-
-    // Command name completion
     if (!paletteFilter) return allPaletteCommands;
     return allPaletteCommands.filter(c => c.name.startsWith(paletteFilter));
-  }, [state.paletteVisible, paletteFilter, allPaletteCommands, playerNamesList]);
+  }, [state.paletteVisible, paletteFilter, allPaletteCommands]);
 
   // Clamp palette index
   const clampedPaletteIndex = Math.min(state.paletteIndex, Math.max(0, filteredPaletteCommands.length - 1));
@@ -434,18 +411,8 @@ export function App({ api, ensemble }: AppProps) {
   const handlePaletteSelect = useCallback(() => {
     if (filteredPaletteCommands.length > 0) {
       const selected = filteredPaletteCommands[clampedPaletteIndex];
-      const input = inputValueRef.current.trimStart();
-      // Check if we're in parameter position
-      if (input.startsWith('/') && input.includes(' ')) {
-        const spaceIdx = input.indexOf(' ');
-        const cmdPart = input.slice(0, spaceIdx + 1); // e.g. "/chat "
-        const newValue = `${cmdPart}${selected.name} `;
-        promptRef.current?.setValue(newValue);
-        inputValueRef.current = newValue;
-      } else {
-        promptRef.current?.setValue(`/${selected.name} `);
-        inputValueRef.current = `/${selected.name} `;
-      }
+      promptRef.current?.setValue(`/${selected.name} `);
+      inputValueRef.current = `/${selected.name} `;
       dispatch({ type: 'HIDE_PALETTE' });
     }
   }, [filteredPaletteCommands, clampedPaletteIndex]);
@@ -497,6 +464,43 @@ export function App({ api, ensemble }: AppProps) {
             timestamp: Date.now(),
           },
         });
+        return;
+      }
+
+      // Commands that open player picker when no args provided
+      const PICKER_COMMANDS: Record<string, (playerId: string) => void> = {
+        chat: (id) => {
+          dispatch({ type: 'ENTER_CHAT', target: id });
+          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `\u2500\u2500 chatting with ${id} \u2500\u2500`, timestamp: Date.now() } });
+        },
+        cue: (id) => {
+          dispatch({ type: 'ENTER_CHAT', target: id });
+          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `\u2500\u2500 chatting with ${id} \u2500\u2500`, timestamp: Date.now() } });
+        },
+        stop: (id) => {
+          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `Stopping ${id}...`, timestamp: Date.now() } });
+          // Delegate to command handler
+          const cmd = COMMANDS['stop'];
+          if (cmd?.handler) cmd.handler([id], dispatch, api, { activeEnsemble: stateRef.current.activeEnsemble || undefined, chatTarget: stateRef.current.chatTarget || null });
+        },
+        encore: (id) => {
+          const cmd = COMMANDS['encore'];
+          if (cmd?.handler) cmd.handler([id], dispatch, api, { activeEnsemble: stateRef.current.activeEnsemble || undefined, chatTarget: stateRef.current.chatTarget || null });
+        },
+        players: (id) => {
+          dispatch({ type: 'ENTER_CHAT', target: id });
+          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `\u2500\u2500 chatting with ${id} \u2500\u2500`, timestamp: Date.now() } });
+        },
+      };
+
+      if (parsed.name === 'ensembles' && parsed.args.length === 0) {
+        dispatch({ type: 'SHOW_PICKER', pickerType: 'ensembles' });
+        return;
+      }
+
+      if (PICKER_COMMANDS[parsed.name] && parsed.args.length === 0) {
+        pickerCallbackRef.current = PICKER_COMMANDS[parsed.name];
+        dispatch({ type: 'SHOW_PICKER', pickerType: 'players' });
         return;
       }
 
