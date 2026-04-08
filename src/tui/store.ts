@@ -205,6 +205,7 @@ export interface TuiState {
   /** Interactive picker overlay state. */
   pickerVisible: boolean;
   pickerType: 'players' | 'ensembles' | null;
+  pickerIntent: 'navigate' | null;
   pickerIndex: number;
 }
 
@@ -246,6 +247,7 @@ export function initialState(ensemble?: string): TuiState {
     paletteIndex: 0,
     pickerVisible: false,
     pickerType: null,
+    pickerIntent: null,
     pickerIndex: 0,
     confirmingStop: undefined,
     scheduleWizard: undefined,
@@ -294,7 +296,7 @@ export type TuiAction =
   | { type: 'HIDE_STATUS' }
   | { type: 'STATUS_SCROLL_UP' }
   | { type: 'STATUS_SCROLL_DOWN' }
-  | { type: 'SHOW_PICKER'; pickerType: 'players' | 'ensembles' }
+  | { type: 'SHOW_PICKER'; pickerType: 'players' | 'ensembles'; intent?: 'navigate' }
   | { type: 'HIDE_PICKER' }
   | { type: 'PICKER_UP' }
   | { type: 'PICKER_DOWN' }
@@ -532,10 +534,10 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       return { ...state, statusScrollOffset: state.statusScrollOffset + 1 };
 
     case 'SHOW_PICKER':
-      return { ...state, pickerVisible: true, pickerType: action.pickerType, pickerIndex: 0 };
+      return { ...state, pickerVisible: true, pickerType: action.pickerType, pickerIntent: action.intent || null, pickerIndex: 0 };
 
     case 'HIDE_PICKER':
-      return { ...state, pickerVisible: false, pickerType: null, pickerIndex: 0 };
+      return { ...state, pickerVisible: false, pickerType: null, pickerIntent: null, pickerIndex: 0 };
 
     case 'PICKER_UP':
       return { ...state, pickerIndex: Math.max(0, state.pickerIndex - 1) };

@@ -201,6 +201,9 @@ export function App({ api, ensemble }: AppProps) {
             if (cb) {
               cb(player.playerId);
               pickerCallbackRef.current = null;
+            } else if (s.pickerIntent === 'navigate') {
+              // Navigate to player detail view
+              dispatch({ type: 'NAVIGATE_PLAYER', playerId: player.playerId });
             } else {
               // Default: enter chat
               dispatch({ type: 'ENTER_CHAT', target: player.playerId });

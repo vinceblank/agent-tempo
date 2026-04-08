@@ -160,16 +160,15 @@ async function handlePlayer(
   ctx: CommandContext,
 ): Promise<void> {
   if (args.length === 0) {
-    // No args — show picker (same as /players)
-    dispatch({ type: 'SHOW_PICKER', pickerType: 'players' });
+    // No args — show picker with navigate intent (App.tsx dispatches NAVIGATE_PLAYER on selection)
+    dispatch({ type: 'SHOW_PICKER', pickerType: 'players', intent: 'navigate' });
     return;
   }
 
   const target = args[0];
-  const icons = statusIcons(supportsUnicode());
 
   try {
-    // Find the player across ensembles
+    // Verify the player exists
     const ensembles = ctx.activeEnsemble
       ? [{ name: ctx.activeEnsemble }]
       : await api.discoverEnsembles();
@@ -179,43 +178,8 @@ async function handlePlayer(
       const player = players.find(p => p.playerId === target);
       if (!player) continue;
 
-      // Get detailed metadata
-      const metadata = await api.getPlayerMetadata(ens.name, target);
-      const messages = await api.getPlayerMessages(ens.name, target);
-
-      const statusIcon = player.status === 'active' ? icons.active
-        : player.status === 'stale' ? icons.stale
-        : player.status === 'pending' ? icons.pending
-        : icons.terminated;
-
-      const lines: string[] = [];
-      lines.push(`\n  Player: ${target}`);
-      lines.push(`  Type: ${player.playerType || player.agentType || '(default)'}`);
-      lines.push(`  Status: ${statusIcon} ${player.status || 'unknown'}`);
-      if (player.part) lines.push(`  Part: ${player.part}`);
-      if (metadata?.gitBranch) lines.push(`  Branch: ${metadata.gitBranch}`);
-      if (metadata?.workDir) lines.push(`  Dir: ${metadata.workDir}`);
-      if (player.hostname) lines.push(`  Host: ${player.hostname}`);
-      if (player.isConductor) lines.push(`  Role: ${icons.conductor} Conductor`);
-      lines.push(`  Ensemble: ${ens.name}`);
-
-      // Recent messages (last 5)
-      const recent = messages.slice(-5);
-      if (recent.length > 0) {
-        lines.push('');
-        lines.push(`  Recent messages (last ${recent.length}):`);
-        for (const m of recent) {
-          const time = formatTimestamp(m.timestamp);
-          const isSent = isSentMessage(m);
-          const dir = isSent
-            ? `${target} ${icons.arrow} ${m.to}`
-            : `${(m as Message).from} ${icons.arrow} ${target}`;
-          const text = m.text.length > 50 ? m.text.slice(0, 47) + '...' : m.text;
-          lines.push(`  ${time}  ${dir}: ${text.replace(/\n/g, ' ')}`);
-        }
-      }
-
-      commitStatic(dispatch, 'command-output', lines.join('\n'));
+      // Navigate to the player detail view
+      dispatch({ type: 'NAVIGATE_PLAYER', playerId: target });
       return;
     }
 
