@@ -654,48 +654,22 @@ export function App({ api, ensemble }: AppProps) {
             } catch { /* best effort */ }
           }
         } else {
-          // Fetch relay messages + maestro direct messages in parallel
+          // Single source: maestro workflow messages + players + schedules
           const ens = s.activeEnsemble!;
-          const [players, messages, history, schedules, maestroMsgs] = await Promise.all([
+          const [players, maestroMsgs, schedules] = await Promise.all([
             api.getPlayers(ens),
-            api.getMessages(ens, 50),
-            api.getConductorHistory(ens).catch(() => []),
-            api.getSchedules(ens),
             api.getMaestroMessages(ens),
+            api.getSchedules(ens),
           ]);
 
-          // Messages flow into state via REFRESH_ENSEMBLE_DATA below.
-          // The live conversation stream handles display; overflow to Static
-          // happens in the render when messages exceed the viewport.
-          if (maestroMsgs.received.length > 0) {
-            lastSeenMaestroRef.current = maestroMsgs.received[maestroMsgs.received.length - 1].id;
-          }
+          // Build conversation from maestro workflow (single source of truth)
+          const conversation = [
+            ...maestroMsgs.received.map(m => ({ id: m.id, from: m.from, to: 'maestro', text: m.text, timestamp: m.timestamp, direction: 'in' as const })),
+            ...maestroMsgs.sent.map(m => ({ id: `sent-${m.timestamp}`, from: 'you', to: m.to, text: m.text, timestamp: m.timestamp, direction: 'out' as const })),
+          ].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-          // Hydrate sent messages from maestro workflow history on first poll
-          if (!lastPollRef.current.lastMsgId && maestroMsgs.sent.length > 0) {
-            dispatch({
-              type: 'HYDRATE_SENT_MESSAGES',
-              messages: maestroMsgs.sent.map(m => ({ to: m.to, text: m.text, timestamp: m.timestamp })),
-            });
-          }
-
-          // Always merge DMs and update state — no dedup gate
-          const allMessages = [...messages];
-          for (const dm of maestroMsgs.received) {
-            if (!allMessages.some(m => m.id === dm.id)) {
-              allMessages.push({
-                id: dm.id,
-                ensemble: ens,
-                from: dm.from,
-                to: 'maestro',
-                text: dm.text,
-                timestamp: dm.timestamp,
-                direction: 'inbound',
-              } as any);
-            }
-          }
-          allMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-          dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages: allMessages, history, schedules });
+          dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages: [], history: [], schedules });
+          dispatch({ type: 'SET_CONVERSATION', conversation });
 
           // Track conductor
           const currentS = stateRef.current;
@@ -704,11 +678,6 @@ export function App({ api, ensemble }: AppProps) {
             if (conductor) {
               dispatch({ type: 'SET_CONDUCTOR', name: conductor.playerId });
             }
-          }
-
-          // Update ref for maestro DM tracking
-          if (messages.length > 0) {
-            lastSeenMsgRef.current = messages[messages.length - 1].id;
           }
         }
       } catch (err) {
@@ -981,28 +950,20 @@ export function App({ api, ensemble }: AppProps) {
 
     // Main view — conversation stream (like Claude Code)
     if (state.activeEnsemble) {
-      // Two sources only:
-      // 1. sentMessages: outbound (local echo, instant)
-      // 2. Maestro DMs (merged into state.messages with to='maestro'): inbound replies
-      const allConvoMsgs: Array<{ id: string; from: string; text: string; timestamp: string; direction: 'in' | 'out' }> = [];
-
+      // Server conversation + local echo (optimistic sent not yet on server)
+      const allConvoMsgs = [...state.conversation];
       for (const m of state.sentMessages) {
-        allConvoMsgs.push({ id: `sent-${m.timestamp}`, from: 'you', text: m.text, timestamp: m.timestamp, direction: 'out' });
-      }
-
-      for (const m of state.messages) {
-        if (m.to === 'maestro') {
-          allConvoMsgs.push({ id: m.id, from: m.from, text: m.text, timestamp: m.timestamp, direction: 'in' });
+        const ts = new Date(m.timestamp).getTime();
+        const alreadyOnServer = state.conversation.some(c =>
+          c.direction === 'out' &&
+          Math.abs(new Date(c.timestamp).getTime() - ts) < 30000 &&
+          c.text.slice(0, 60) === m.text.slice(0, 60)
+        );
+        if (!alreadyOnServer) {
+          allConvoMsgs.push({ id: `local-${m.timestamp}`, from: 'you', to: m.to, text: m.text, timestamp: m.timestamp, direction: 'out' });
         }
       }
-
-      console.error(`[tui:convo] sentMessages=${state.sentMessages.length} maestroDMs=${state.messages.filter(m => m.to === 'maestro').length} total=${allConvoMsgs.length}`);
-
-      // Dedup: same direction + same text + within same minute = duplicate
-      const seen = new Set<string>();
-      const sorted = allConvoMsgs
-        .filter(m => { const k = `${m.direction}:${m.text.slice(0, 60)}:${m.timestamp.slice(0, 16)}`; if (seen.has(k)) return false; seen.add(k); return true; })
-        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      const sorted = allConvoMsgs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
       // Format messages as lines, take the tail that fits the viewport
       const formatted: Array<{ sender: string; time: string; body: string; direction: 'in' | 'out' }> = [];

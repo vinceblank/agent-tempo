@@ -148,6 +148,8 @@ export interface TuiState {
   conductorHistory: HistoryEntry[];
   /** Active schedules in the ensemble. */
   schedules: ScheduleEntry[];
+  /** Maestro conversation (single source of truth from workflow). */
+  conversation: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out' }>;
   /** Currently highlighted player index (ensemble view). */
   selectedPlayerIndex: number;
 
@@ -214,6 +216,7 @@ export function initialState(ensemble?: string): TuiState {
     messages: [],
     conductorHistory: [],
     schedules: [],
+    conversation: [],
     selectedPlayerIndex: 0,
 
     activePlayer: null,
@@ -251,6 +254,7 @@ export type TuiAction =
   // Data refresh
   | { type: 'REFRESH_ENSEMBLES'; ensembles: EnsembleSummary[] }
   | { type: 'REFRESH_ENSEMBLE_DATA'; players: MaestroPlayerInfo[]; messages: MaestroRelayMessage[]; history: HistoryEntry[]; schedules?: ScheduleEntry[] }
+  | { type: 'SET_CONVERSATION'; conversation: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out' }> }
   | { type: 'REFRESH_PLAYER_DATA'; metadata: any; messages: Array<Message | (SentMessage & { direction: 'sent' })> }
   // Selection
   | { type: 'SELECT_NEXT' }
@@ -335,6 +339,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         sentMessages: [],
         conductorHistory: [],
         schedules: [],
+        conversation: [],
         playerMetadata: null,
         playerMessages: [],
         selectedPlayerIndex: 0,
@@ -356,6 +361,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         sentMessages: [],
         conductorHistory: [],
         schedules: [],
+        conversation: [],
         playerMetadata: null,
         playerMessages: [],
         selectedPlayerIndex: 0,
@@ -396,6 +402,9 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         selectedPlayerIndex: Math.min(state.selectedPlayerIndex, Math.max(0, action.players.length - 1)),
       };
     }
+
+    case 'SET_CONVERSATION':
+      return { ...state, conversation: action.conversation };
 
     case 'REFRESH_PLAYER_DATA':
       return {
