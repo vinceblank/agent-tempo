@@ -228,22 +228,31 @@ export function createTempoClient(client: Client): TempoClient {
 
     async sendCommand(ensemble: string, text: string, source: string): Promise<string> {
       // Route commands through Maestro hub → conductor's commandSignal
+      let result: string;
       try {
         const h = handle(globalMaestroId);
-        return await h.executeUpdate('maestroGlobalSendCommand', {
+        result = await h.executeUpdate('maestroGlobalSendCommand', {
           args: [{ ensemble, text, source }],
         });
       } catch {
         const h = handle(maestroWorkflowId(ensemble));
-        return await h.executeUpdate('maestroSendCommand', {
+        result = await h.executeUpdate('maestroSendCommand', {
           args: [{ text, source }],
         });
       }
+      // Record on maestro workflow for history persistence
+      try {
+        const maestroId = sessionWorkflowId(ensemble, 'maestro');
+        const mh = handle(maestroId);
+        await mh.signal('recordSentMessage', { to: 'conductor', text });
+      } catch { /* best effort */ }
+      return result;
     },
 
     async sendMessage(ensemble: string, to: string, text: string, source: string): Promise<string> {
       // Direct signal with isMaestro flag — matches web Maestro pattern
       const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${ensemble}" AND ClaudeTempoPlayerId = "${to}"`;
+      let sent = false;
       for await (const wf of client.workflow.list({ query })) {
         const h = handle(wf.workflowId);
         await h.signal('receiveMessage', {
@@ -251,17 +260,27 @@ export function createTempoClient(client: Client): TempoClient {
           text,
           isMaestro: true,
         });
-        return `maestro-msg-${Date.now()}`;
+        sent = true;
+        break;
       }
-      // Fallback: try via Maestro hub if direct resolution fails
+      if (!sent) {
+        // Fallback: try via Maestro hub if direct resolution fails
+        try {
+          const h = handle(globalMaestroId);
+          await h.executeUpdate('maestroSendMessage', {
+            args: [{ ensemble, to, text, source }],
+          });
+        } catch {
+          throw new Error(`Player "${to}" not found in ensemble "${ensemble}"`);
+        }
+      }
+      // Record on maestro workflow for history persistence
       try {
-        const h = handle(globalMaestroId);
-        return await h.executeUpdate('maestroSendMessage', {
-          args: [{ ensemble, to, text, source }],
-        });
-      } catch {
-        throw new Error(`Player "${to}" not found in ensemble "${ensemble}"`);
-      }
+        const maestroId = sessionWorkflowId(ensemble, 'maestro');
+        const mh = handle(maestroId);
+        await mh.signal('recordSentMessage', { to, text });
+      } catch { /* best effort */ }
+      return `maestro-msg-${Date.now()}`;
     },
 
     async terminatePlayer(ensemble: string, playerId: string): Promise<void> {

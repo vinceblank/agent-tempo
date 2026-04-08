@@ -939,6 +939,28 @@ export function App({ api, ensemble }: AppProps) {
       });
     }
 
+    // Picker takes over full content area
+    if (state.pickerVisible) {
+      const items: PickerItem[] = state.pickerType === 'ensembles'
+        ? state.ensembles.map(e => ({
+            id: e.name,
+            label: e.name,
+            detail: `${e.playerCount} player${e.playerCount !== 1 ? 's' : ''}${e.hasConductor ? ' \u2605' : ''}`,
+          }))
+        : state.players.map(p => ({
+            id: p.playerId,
+            label: p.playerId,
+            detail: `${p.status || 'unknown'} \u00B7 ${p.gitBranch || '?'} \u00B7 @${p.playerType || p.agentType || 'claude'}`,
+            icon: p.isConductor ? '\u2605' : undefined,
+          }));
+      return React.createElement(Picker, {
+        title: state.pickerType === 'ensembles' ? 'Select Ensemble' : 'Select Player',
+        items,
+        selectedIndex: state.pickerIndex,
+        hint: '\u2191\u2193 navigate, Enter select, Esc dismiss',
+      });
+    }
+
     if (state.phase === 'recruit' && state.recruitState) {
       return React.createElement(RecruitWizard, {
         state: state.recruitState,
@@ -1160,15 +1182,6 @@ export function App({ api, ensemble }: AppProps) {
       React.createElement(Box, { flexDirection: 'column', height: contentHeight, overflow: 'hidden' },
         // Live content area
         renderLiveContent(),
-      // Picker overlay (1 Text node when visible)
-      state.pickerVisible
-        ? React.createElement(Picker, {
-            title: state.pickerType === 'players' ? 'Select Player' : 'Select Ensemble',
-            items: pickerItems,
-            selectedIndex: state.pickerIndex,
-            hint: '\u2191\u2193 navigate, Enter select, Esc dismiss',
-          })
-        : null,
     ),
     // ── Footer (fixed height, always visible) ──
     // Status bar (1 Text node)
@@ -1185,7 +1198,7 @@ export function App({ api, ensemble }: AppProps) {
     React.createElement(PromptArea, {
       hints: promptHints,
       onSubmit: handleSubmit,
-      disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup,
+      disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup || state.pickerVisible,
       commandNames: commandNamesList,
       playerNames: playerNamesList,
       initialHistory: cmdHistory,
