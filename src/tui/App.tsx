@@ -506,7 +506,7 @@ export function App({ api, ensemble }: AppProps) {
             item: {
               id: nextStaticId(),
               type: 'message',
-              content: `you \u2192 ${target}: ${trimmed}`,
+              content: `\u276F ${trimmed}`,
               timestamp: Date.now(),
             },
           });
@@ -518,7 +518,7 @@ export function App({ api, ensemble }: AppProps) {
             item: {
               id: nextStaticId(),
               type: 'message',
-              content: `maestro: ${trimmed}`,
+              content: `\u276F ${trimmed}`,
               timestamp: Date.now(),
             },
           });
@@ -629,23 +629,26 @@ export function App({ api, ensemble }: AppProps) {
               const time = new Date(m.timestamp);
               const hh = String(time.getHours()).padStart(2, '0');
               const mm = String(time.getMinutes()).padStart(2, '0');
+              const lines = m.text.split('\n');
+              // First line: ← player: message  HH:MM
               dispatch({
                 type: 'COMMIT_STATIC',
                 item: {
                   id: `msg-${m.id}`,
                   type: 'message',
-                  content: `${m.from} \u2192 ${m.to}  ${hh}:${mm}`,
+                  content: `\u2190 ${m.from}: ${lines[0]}  ${hh}:${mm}`,
                   timestamp: Date.now(),
                 },
               });
-              // Full message body
-              for (const line of m.text.split('\n')) {
+              // Continuation lines indented
+              const indent = '  ' + ' '.repeat(m.from.length + 2);
+              for (const line of lines.slice(1)) {
                 dispatch({
                   type: 'COMMIT_STATIC',
                   item: {
                     id: nextStaticId(),
                     type: 'command-output',
-                    content: line,
+                    content: `${indent}${line}`,
                     timestamp: Date.now(),
                   },
                 });
@@ -663,22 +666,24 @@ export function App({ api, ensemble }: AppProps) {
               const time = new Date(m.timestamp);
               const hh = String(time.getHours()).padStart(2, '0');
               const mm = String(time.getMinutes()).padStart(2, '0');
+              const lines = m.text.split('\n');
               dispatch({
                 type: 'COMMIT_STATIC',
                 item: {
                   id: `dm-${m.id}`,
                   type: 'message',
-                  content: `${m.from} \u2192 you  ${hh}:${mm}`,
+                  content: `\u2190 ${m.from}: ${lines[0]}  ${hh}:${mm}`,
                   timestamp: Date.now(),
                 },
               });
-              for (const line of m.text.split('\n')) {
+              const indent = '  ' + ' '.repeat(m.from.length + 2);
+              for (const line of lines.slice(1)) {
                 dispatch({
                   type: 'COMMIT_STATIC',
                   item: {
                     id: nextStaticId(),
                     type: 'command-output',
-                    content: line,
+                    content: `${indent}${line}`,
                     timestamp: Date.now(),
                   },
                 });
@@ -1026,8 +1031,8 @@ export function App({ api, ensemble }: AppProps) {
         formatted.push({ sender: m.direction === 'out' ? `you \u2192 ${m.to}` : m.from, time, body: m.text, direction: m.direction });
       }
 
-      // Each message takes ~3 lines (sender+time, body). Full content area for messages.
-      const maxVisible = Math.max(2, Math.floor(contentHeight / 3));
+      // Each message is ~1-2 lines in compact format. Full content area for messages.
+      const maxVisible = Math.max(3, Math.floor(contentHeight / 2));
       const visibleMsgs = formatted.slice(-maxVisible);
 
       console.error(`[tui:convo] msgs=${state.messages.length} history=${state.conductorHistory.length} sent=${state.sentMessages.length} formatted=${formatted.length} visible=${visibleMsgs.length}`);
@@ -1041,24 +1046,49 @@ export function App({ api, ensemble }: AppProps) {
       } else {
         for (let i = 0; i < visibleMsgs.length; i++) {
           const msg = visibleMsgs[i];
-          const senderColor = msg.direction === 'out' ? THEME.dim : THEME.accent;
-          const bodyColor = msg.direction === 'out' ? THEME.textMuted : THEME.text;
           convoChildren.push('\n');
-          convoChildren.push(
-            React.createElement(React.Fragment, { key: `ms-${i}` },
-              React.createElement(Text, { color: senderColor }, `  ${msg.sender}`),
-              React.createElement(Text, { color: THEME.dim }, `  ${msg.time}`),
-            ),
-          );
-          // Body — first 2 lines only for compact display
-          const bodyLines = msg.body.split('\n').slice(0, 2);
-          for (const line of bodyLines) {
-            convoChildren.push('\n');
-            convoChildren.push(React.createElement(Text, { key: `mb-${i}-${line.slice(0, 10)}`, color: bodyColor }, `  ${line.slice(0, 80)}`));
-          }
-          if (msg.body.split('\n').length > 2) {
-            convoChildren.push('\n');
-            convoChildren.push(React.createElement(Text, { key: `mt-${i}`, color: THEME.dim }, `  \u2026 (${msg.body.split('\n').length - 2} more lines)`));
+          if (msg.direction === 'out') {
+            // Outbound — Claude Code user input style: ❯ message
+            const firstLine = msg.body.split('\n')[0];
+            convoChildren.push(
+              React.createElement(React.Fragment, { key: `ms-${i}` },
+                React.createElement(Text, { color: THEME.accent, bold: true }, '  \u276F '),
+                React.createElement(Text, { color: THEME.text }, firstLine),
+              ),
+            );
+            // Continuation lines indented
+            const rest = msg.body.split('\n').slice(1, 4);
+            for (const line of rest) {
+              convoChildren.push('\n');
+              convoChildren.push(React.createElement(Text, { key: `mb-${i}-${line.slice(0, 8)}`, color: THEME.text }, `    ${line}`));
+            }
+            if (msg.body.split('\n').length > 4) {
+              convoChildren.push('\n');
+              convoChildren.push(React.createElement(Text, { key: `mt-${i}`, color: THEME.dim }, `    \u2026 (${msg.body.split('\n').length - 4} more lines)`));
+            }
+          } else {
+            // Inbound — Claude Code channel style: ← player: message  HH:MM
+            const lines = msg.body.split('\n');
+            const firstLine = lines[0];
+            convoChildren.push(
+              React.createElement(React.Fragment, { key: `ms-${i}` },
+                React.createElement(Text, { color: THEME.dim }, '  \u2190 '),
+                React.createElement(Text, { color: THEME.accent }, `${msg.sender}: `),
+                React.createElement(Text, { color: THEME.text }, firstLine),
+                React.createElement(Text, { color: THEME.dim }, `  ${msg.time}`),
+              ),
+            );
+            // Continuation lines aligned with message start
+            const rest = lines.slice(1, 4);
+            const indent = '    ' + ' '.repeat(msg.sender.length + 2);
+            for (const line of rest) {
+              convoChildren.push('\n');
+              convoChildren.push(React.createElement(Text, { key: `mb-${i}-${line.slice(0, 8)}`, color: THEME.text }, `${indent}${line}`));
+            }
+            if (lines.length > 4) {
+              convoChildren.push('\n');
+              convoChildren.push(React.createElement(Text, { key: `mt-${i}`, color: THEME.dim }, `${indent}\u2026 (${lines.length - 4} more lines)`));
+            }
           }
         }
       }
