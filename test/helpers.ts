@@ -408,7 +408,62 @@ export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): P
       return await fn();
     } finally {
       hostWorker.shutdown();
-      await hostWorkerPromise.catch(() => {});
+      await hostWorkerPromise.catch(() => { /* cleanup */ });
+    }
+  });
+}
+
+/**
+ * Like withWorkerAndRecruitActivities, but captures spawnProcess inputs
+ * so tests can verify arguments passed through the recruit pipeline.
+ */
+export async function withWorkerAndRecruitCapture<T>(
+  spawnInputs: Array<Record<string, unknown>>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const { createScheduleActivities } = await import('../src/activities/schedule-fire');
+  const { createOutboxActivities } = await import('../src/activities/outbox');
+
+  const scheduleActivities = createScheduleActivities(testEnv.client);
+  const outboxActivities = createOutboxActivities(testEnv.client, {
+    temporalAddress: '',
+    temporalNamespace: 'default',
+    taskQueue: TASK_QUEUE,
+    ensemble: 'test-ensemble',
+    defaultAgent: 'claude',
+  });
+
+  const capturingSpawn = async (input: Record<string, unknown>) => {
+    spawnInputs.push(input);
+    return { success: true };
+  };
+
+  const mainWorker = await Worker.create({
+    connection: testEnv.nativeConnection,
+    taskQueue: TASK_QUEUE,
+    workflowBundle,
+    activities: {
+      ...scheduleActivities,
+      ...outboxActivities,
+      spawnProcess: capturingSpawn,
+    },
+  });
+
+  const hostWorker = await Worker.create({
+    connection: testEnv.nativeConnection,
+    taskQueue: `claude-tempo-test-host`,
+    activities: {
+      spawnProcess: capturingSpawn,
+    },
+  });
+
+  return mainWorker.runUntil(async () => {
+    const hostWorkerPromise = hostWorker.run();
+    try {
+      return await fn();
+    } finally {
+      hostWorker.shutdown();
+      await hostWorkerPromise.catch(() => { /* cleanup */ });
     }
   });
 }

@@ -49,6 +49,8 @@ export interface StartRecruitedSessionInput {
   agentDefinition?: string;
   agentDefinitionDescription?: string;
   allowedTools?: string[];
+  /** Custom claude binary path (from config.claudeBin). */
+  claudeBin?: string;
 }
 
 export interface SpawnProcessInput {
@@ -69,6 +71,8 @@ export interface SpawnProcessInput {
   claudeSessionId?: string;
   /** Tool restrictions from the agent definition frontmatter. */
   allowedTools?: string[];
+  /** Custom claude binary path (from config.claudeBin). */
+  claudeBin?: string;
 }
 
 export interface PerformEncoreInput {
@@ -91,6 +95,8 @@ export interface EncoreResult {
   claudeSessionId?: string;
   temporalAddress: string;
   temporalNamespace: string;
+  /** Custom claude binary path (from config.claudeBin). */
+  claudeBin?: string;
 }
 
 // ── Activity result type ──
@@ -237,7 +243,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
-      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, claudeSessionId, allowedTools } = input;
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, claudeSessionId, allowedTools, claudeBin } = input;
       // Read secrets from the worker's config closure — never from workflow state
       const { temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = config;
       try {
@@ -298,7 +304,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           if (temporalApiKey) envVars[ENV.TEMPORAL_API_KEY] = temporalApiKey;
           if (temporalTlsCertPath) envVars[ENV.TEMPORAL_TLS_CERT_PATH] = temporalTlsCertPath;
           if (temporalTlsKeyPath) envVars[ENV.TEMPORAL_TLS_KEY_PATH] = temporalTlsKeyPath;
-          const { pid } = spawnInTerminal(spawnArgs, workDir, envVars);
+          const { pid } = spawnInTerminal(spawnArgs, workDir, envVars, { claudeBin });
           log(`Spawned claude process (pid ${pid}) in ${workDir} as "${targetName}" (resume=${!!resume})`);
         }
 
@@ -387,6 +393,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           claudeSessionId: (metadata.claudeSessionId as string) || undefined,
           temporalAddress: config.temporalAddress,
           temporalNamespace: config.temporalNamespace,
+          claudeBin: config.claudeBin,
         };
       } catch (err) {
         if (err instanceof ApplicationFailure) throw err;
