@@ -199,7 +199,7 @@ export interface TuiState {
 
 export function initialState(ensemble?: string): TuiState {
   return {
-    phase: 'main',
+    phase: ensemble ? 'main' : 'splash',
     view: ensemble ? 'ensemble' : 'home',
     splashStatus: 'Starting up...',
     splashChecks: [],

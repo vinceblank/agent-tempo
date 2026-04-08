@@ -28,6 +28,8 @@ function useTerminalRows(): number {
   }, []);
   return rows;
 }
+import { Splash } from './components/Splash';
+import type { EnsembleInfo } from './components/Splash';
 import { MainView } from './components/MainView';
 import { ChatView } from './components/ChatView';
 import type { ChatMessage } from './components/ChatView';
@@ -550,6 +552,9 @@ export function App({ api, ensemble }: AppProps) {
           return;
         }
 
+        // Mark splash as connected (updates splash UI)
+        dispatch({ type: 'SET_SPLASH_CONNECTED' });
+
         // Ensure maestro session (best effort)
         const ens = stateRef.current.activeEnsemble;
         if (ens) {
@@ -566,7 +571,7 @@ export function App({ api, ensemble }: AppProps) {
 
   // ── Polling loop ──
   useEffect(() => {
-    if (state.phase !== 'main' && state.phase !== 'chat' && state.phase !== 'connected') return;
+    if (state.phase !== 'splash' && state.phase !== 'main' && state.phase !== 'chat' && state.phase !== 'connected') return;
 
     const interval = setInterval(async () => {
       try {
@@ -575,9 +580,9 @@ export function App({ api, ensemble }: AppProps) {
           const ensembles = await api.discoverEnsembles();
           dispatch({ type: 'REFRESH_ENSEMBLES', ensembles });
 
-          // Auto-connect only when exactly 1 ensemble is running
-          // Multiple ensembles → show picker (handled by renderLiveContent)
-          if (ensembles.length === 1 && !s.activeEnsemble) {
+          // Auto-connect only when exactly 1 ensemble AND not in splash mode
+          // Splash handles ensemble selection via Enter key
+          if (ensembles.length === 1 && !s.activeEnsemble && s.phase !== 'splash') {
             const autoEns = ensembles[0].name;
             dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: autoEns });
             dispatch({
@@ -884,7 +889,30 @@ export function App({ api, ensemble }: AppProps) {
   const dividerWidth = Math.max(20, (process.stdout.columns || 80) - 4);
   const dividerLine = '\u2500'.repeat(dividerWidth);
 
+  // Splash → main transition handler
+  const handleSplashContinue = useCallback((selectedEnsemble?: string) => {
+    if (selectedEnsemble) {
+      dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: selectedEnsemble });
+      dispatch({
+        type: 'COMMIT_STATIC',
+        item: { id: nextStaticId(), type: 'info', content: `\u2714 Connected to ensemble: ${selectedEnsemble}`, timestamp: Date.now() },
+      });
+    }
+    dispatch({ type: 'SET_PHASE', phase: 'main' });
+  }, []);
+
   function renderLiveContent() {
+    // Splash screen — shown on startup when no ensemble is specified
+    if (state.phase === 'splash') {
+      return React.createElement(Splash, {
+        status: state.splashStatus,
+        version: packageVersion,
+        connected: state.splashConnected,
+        ensembles: state.ensembles as EnsembleInfo[],
+        onContinue: handleSplashContinue,
+      });
+    }
+
     if (state.phase === 'error') {
       return React.createElement(ErrorView, {
         version: packageVersion,
