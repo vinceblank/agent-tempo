@@ -76,6 +76,8 @@ Launching conductor in ensemble myband...
   Or ask the conductor to recruit players for you
 ```
 
+If a conductor is already running in the target ensemble, `up` detects it and prompts with options: join as a player, reconnect to the existing conductor, tear down and start fresh, or cancel. This prevents two sessions from silently sharing the same Temporal workflow.
+
 ### `claude-tempo server`
 
 Starts the Temporal dev server with automatic search attribute registration:

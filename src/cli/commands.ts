@@ -696,15 +696,94 @@ export async function up(opts: UpOpts) {
   // Resolve conductor agent from lineup or CLI flags
   const conductorAgent: AgentType = lineup?.conductor?.agent === 'copilot' ? 'copilot' : opts.agent;
 
-  // Step 5: Connect to Temporal and pre-create conductor workflow before spawning
+  // Step 5: Connect to Temporal and check for existing conductor
   console.log();
-  out.log(`Launching conductor in ensemble ${out.cyan(opts.ensemble)}${conductorAgent === 'copilot' ? out.dim(' (copilot)') : ''}...`);
 
   const connection = await createTemporalConnection(config);
   const client = new Client({ connection, namespace: config.temporalNamespace });
 
-  const sessionName = opts.name || lineup?.conductor?.name || (conductorAgent === 'copilot' ? `${opts.ensemble}-conductor` : 'conductor');
   const conductorWfId = conductorWorkflowId(opts.ensemble);
+
+  // Check if a conductor is already running
+  try {
+    const existingHandle = client.workflow.getHandle(conductorWfId);
+    const desc = await existingHandle.describe();
+    if (desc.status.name === 'RUNNING') {
+      if (!process.stdin.isTTY) {
+        out.error(`A conductor is already running for ensemble "${opts.ensemble}".`);
+        out.log(`  Use ${out.dim('--resume')} to reconnect, or ${out.dim('claude-tempo start')} to join as a player.`);
+        process.exit(1);
+      }
+
+      out.warn(`A conductor is already running for ensemble "${opts.ensemble}".`);
+      console.log();
+      out.log(`  1) Join as a new player session`);
+      out.log(`  2) Reconnect to the existing conductor (--resume)`);
+      out.log(`  3) Tear down and start fresh`);
+      out.log(`  4) Cancel`);
+      console.log();
+
+      const choice = await new Promise<string>((res) => {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        rl.question(`  ${out.cyan('?')} Choose an option [1-4]: `, (answer) => {
+          rl.close();
+          res(answer.trim());
+        });
+      });
+
+      switch (choice) {
+        case '1':
+          // Join as a player — delegate to start()
+          console.log();
+          out.log('Joining as a player session...');
+          await start({
+            ensemble: opts.ensemble,
+            conductor: false,
+            name: opts.name,
+            skipPreflight: true, // infrastructure already verified above
+            agent: opts.agent,
+            dir: process.cwd(),
+          });
+          return;
+
+        case '2':
+          // Reconnect to existing conductor
+          console.log();
+          out.log('Reconnecting to existing conductor...');
+          await start({
+            ensemble: opts.ensemble,
+            conductor: true,
+            resume: true,
+            name: opts.name,
+            skipPreflight: true,
+            agent: opts.agent,
+            dir: process.cwd(),
+          });
+          return;
+
+        case '3':
+          // Terminate existing workflows, then fall through to normal up flow
+          console.log();
+          try { await client.workflow.getHandle(conductorWfId).terminate('up: fresh start'); } catch { /* may not exist */ }
+          try { await client.workflow.getHandle(schedulerWorkflowId(opts.ensemble)).terminate('up: fresh start'); } catch { /* may not exist */ }
+          try { await client.workflow.getHandle(maestroWorkflowId(opts.ensemble)).terminate('up: fresh start'); } catch { /* may not exist */ }
+          out.success('Existing ensemble torn down');
+          // Fall through to normal up flow below
+          break;
+
+        case '4':
+        default:
+          out.log('Cancelled.');
+          process.exit(0);
+      }
+    }
+  } catch {
+    // No existing conductor — proceed normally
+  }
+
+  out.log(`Launching conductor in ensemble ${out.cyan(opts.ensemble)}${conductorAgent === 'copilot' ? out.dim(' (copilot)') : ''}...`);
+
+  const sessionName = opts.name || lineup?.conductor?.name || (conductorAgent === 'copilot' ? `${opts.ensemble}-conductor` : 'conductor');
 
   // Resolve conductor agent type from lineup
   const conductorType = lineup?.conductor?.agent && lineup.conductor.agent !== 'default' && lineup.conductor.agent !== 'copilot'
