@@ -145,7 +145,8 @@ Inside the TUI, type `/help` for slash commands. Inside Claude Code, use the `en
 | `claude-tempo start [ensemble]` | Open a player session |
 | `claude-tempo conduct [ensemble]` | Start a conductor session |
 | `claude-tempo status` | Show active sessions |
-| `claude-tempo down` | Stop everything |
+| `claude-tempo stop [ensemble]` | Stop sessions (recoverable via `encore`) |
+| `claude-tempo down` | Full teardown — sessions, daemon, and Temporal |
 
 **Lineups**
 | Command | Description |
