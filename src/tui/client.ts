@@ -398,7 +398,7 @@ export function createTempoClient(client: Client): TempoClient {
         workflowId,
         taskQueue: 'claude-tempo',
         args: [sessionInput],
-        workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+        workflowIdConflictPolicy: WorkflowIdConflictPolicy.TERMINATE_EXISTING,
         workflowExecutionTimeout: '24 hours',
         searchAttributes: {
           ClaudeTempoHostname: ['dashboard'],
