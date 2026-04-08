@@ -63,7 +63,7 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
   useEffect(() => {
     const timer = setInterval(() => {
       setMetronomeTick((t) => (t + 1) % PING_PONG.length);
-    }, 150);
+    }, 300);
     return () => clearInterval(timer);
   }, []);
 
@@ -76,15 +76,27 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
     return () => clearInterval(timer);
   }, [connected]);
 
+  // ── Metronome frame (needed for line count) ──
+  const frameIndex = PING_PONG[metronomeTick];
+  const frame = brailleFrames[frameIndex];
+
   // ── Centering calculations ──
   const cols = process.stdout.columns || 80;
   const rows = process.stdout.rows || 24;
   const contentWidth = 45; // approximate max content width
   const hPad = ' '.repeat(Math.max(0, Math.floor((cols - contentWidth) / 2)));
 
-  // Estimate content height: metronome (3 lines) + 2 blank + title (3) + 2 blank + status (1)
-  // + ensembles (~5) + 2 blank + prompt (1) = ~19 lines
-  const contentHeight = 19;
+  // Count actual content lines for accurate vertical centering
+  const metroLines = frame.length; // ~10 lines
+  const titleLines = 5; // 2 blank + title + tagline + version
+  const statusLines = 3; // 2 blank + status line
+  const ensembleLines = connected
+    ? (ensembles && ensembles.length > 0
+        ? 1 + Math.min(ensembles.length, MAX_ENSEMBLES_SHOWN) // gap + items
+        : 5) // no ensembles hints
+    : 0;
+  const promptLines = 3; // 2 blank + prompt
+  const contentHeight = metroLines + titleLines + statusLines + ensembleLines + promptLines;
   const vPad = Math.max(0, Math.floor((rows - contentHeight - 3) / 2));
 
   // ── Build single Text element with all content as nested virtual-text ──
@@ -94,8 +106,6 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
   for (let i = 0; i < vPad; i++) children.push('\n');
 
   // Metronome logo (braille characters as nested Text — 0 Yoga nodes)
-  const frameIndex = PING_PONG[metronomeTick];
-  const frame = brailleFrames[frameIndex];
   for (let li = 0; li < frame.length; li++) {
     if (li > 0) children.push('\n');
     children.push(hPad);
