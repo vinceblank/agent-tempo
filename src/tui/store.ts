@@ -194,6 +194,8 @@ export interface TuiState {
   recruitState?: RecruitState;
   /** Schedule creation wizard state (active when phase === 'schedule-create'). */
   scheduleWizard?: ScheduleWizardState;
+  /** Status overlay visible (shows player list). */
+  statusOverlay: boolean;
   /** Command palette state. */
   paletteVisible: boolean;
   paletteIndex: number;
@@ -234,6 +236,7 @@ export function initialState(ensemble?: string): TuiState {
     inputValue: '',
     chatTarget: undefined,
     sentMessages: [],
+    statusOverlay: false,
     paletteVisible: false,
     paletteIndex: 0,
     pickerVisible: false,
@@ -280,6 +283,8 @@ export type TuiAction =
   | { type: 'PALETTE_DOWN'; max?: number }
   | { type: 'PALETTE_SET_INDEX'; index: number }
   // Picker overlay
+  | { type: 'SHOW_STATUS' }
+  | { type: 'HIDE_STATUS' }
   | { type: 'SHOW_PICKER'; pickerType: 'players' | 'ensembles' }
   | { type: 'HIDE_PICKER' }
   | { type: 'PICKER_UP' }
@@ -496,6 +501,11 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       return { ...state, paletteIndex: action.index };
 
     // ── Picker overlay ──
+
+    case 'SHOW_STATUS':
+      return { ...state, statusOverlay: true };
+    case 'HIDE_STATUS':
+      return { ...state, statusOverlay: false };
 
     case 'SHOW_PICKER':
       return { ...state, pickerVisible: true, pickerType: action.pickerType, pickerIndex: 0 };

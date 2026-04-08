@@ -121,6 +121,12 @@ export function App({ api, ensemble }: AppProps) {
     // Scrollback navigation (Page Up/Down, Home/End)
     // Scroll keys removed — terminal native scrollback via <Static> handles this
 
+    // Status overlay — Escape dismisses
+    if (s.statusOverlay) {
+      if (key.escape) { dispatch({ type: 'HIDE_STATUS' }); return; }
+      return; // Consume all input while overlay is showing
+    }
+
     // Picker overlay navigation
     if (s.pickerVisible) {
       if (key.escape) { dispatch({ type: 'HIDE_PICKER' }); return; }
@@ -943,6 +949,31 @@ export function App({ api, ensemble }: AppProps) {
       });
     }
 
+    // Status overlay — full-screen player list
+    if (state.statusOverlay && state.activeEnsemble) {
+      const icons: Record<string, string> = { active: '\u25CF', blocked: '\u25CB', stale: '\u25CC', pending: '\u23F3' };
+      const children: React.ReactNode[] = [];
+      children.push(React.createElement(Text, { key: 'h', bold: true, color: THEME.accent },
+        `  Ensemble: ${state.activeEnsemble} (${state.players.length} player${state.players.length !== 1 ? 's' : ''})`));
+      children.push('\n');
+      for (let i = 0; i < state.players.length; i++) {
+        const p = state.players[i];
+        const icon = icons[p.status || 'unknown'] || '?';
+        const conductor = p.isConductor ? ' \u2605' : '';
+        children.push('\n');
+        children.push(React.createElement(React.Fragment, { key: p.playerId },
+          React.createElement(Text, { color: p.status === 'active' ? THEME.success : p.status === 'stale' ? THEME.dim : THEME.text }, `  ${icon} `),
+          React.createElement(Text, { bold: true, color: THEME.text }, p.playerId.padEnd(20)),
+          React.createElement(Text, { color: THEME.dim }, `${(p.status || '?').padEnd(9)} ${(p.gitBranch || '\u2014').padEnd(14)} ${(p.playerType || p.agentType || '\u2014').padEnd(18)}`),
+          React.createElement(Text, { color: THEME.textMuted }, (p.part || '').slice(0, 40)),
+          conductor ? React.createElement(Text, { color: THEME.warning }, conductor) : null,
+        ));
+      }
+      children.push('\n\n');
+      children.push(React.createElement(Text, { key: 'hint', color: THEME.dim }, '  Press Esc to dismiss'));
+      return React.createElement(Text, null, ...children);
+    }
+
     // Main view — conversation stream (like Claude Code)
     if (state.activeEnsemble) {
       // Server conversation + local echo (optimistic sent not yet on server)
@@ -1187,7 +1218,7 @@ export function App({ api, ensemble }: AppProps) {
     React.createElement(PromptArea, {
       hints: promptHints,
       onSubmit: handleSubmit,
-      disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup || state.pickerVisible,
+      disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay,
       commandNames: commandNamesList,
       playerNames: playerNamesList,
       initialHistory: cmdHistory,

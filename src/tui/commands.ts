@@ -446,31 +446,12 @@ async function handleUnschedule(
   commitStatic(dispatch, 'info', `Unschedule "${args[0]}" — not yet available from TUI. Use: claude-tempo unschedule ${args[0]}`);
 }
 
-/** /status — show ensemble players and status. */
+/** /status — show ensemble status overlay. */
 async function handleStatus(
   _args: string[],
   dispatch: (action: TuiAction) => void,
-  api: TempoClient,
-  ctx: CommandContext,
 ): Promise<void> {
-  if (!ctx.activeEnsemble) {
-    commitStatic(dispatch, 'error', 'Not connected to an ensemble.');
-    return;
-  }
-  const players = await api.getPlayers(ctx.activeEnsemble);
-  const icons: Record<string, string> = { active: '\u25CF', blocked: '\u25CB', stale: '\u25CC', pending: '\u23F3' };
-  const lines = [`Ensemble: ${ctx.activeEnsemble} (${players.length} player${players.length !== 1 ? 's' : ''})\n`];
-  for (const p of players) {
-    const icon = icons[p.status || 'unknown'] || '?';
-    const name = p.playerId.padEnd(20);
-    const status = (p.status || '?').padEnd(9);
-    const branch = (p.gitBranch || '\u2014').padEnd(14);
-    const type = (p.playerType || p.agentType || '\u2014').padEnd(20);
-    const part = p.part ? p.part.slice(0, 50) : '';
-    const conductor = p.isConductor ? ' \u2605' : '';
-    lines.push(`  ${icon} ${name} ${status} ${branch} ${type} ${part}${conductor}`);
-  }
-  commitStatic(dispatch, 'command-output', lines.join('\n'));
+  dispatch({ type: 'SHOW_STATUS' });
 }
 
 /** /gates — list quality gates. */
