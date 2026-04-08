@@ -9,13 +9,13 @@ claude-tempo <command> [options]
 | Command | Description |
 |---------|-------------|
 | `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor. Use `--lineup` to load a lineup. |
-| `down` | Stop Temporal, terminate sessions, remove MCP config. Use `--keep-mcp` to preserve MCP config. |
+| `down` | Full teardown — stop all sessions, daemon, and Temporal. Use `--keep-mcp` to preserve MCP config, `--keep-daemon` to leave the daemon running, `-y`/`--yes` to skip confirmation. |
 | `server` | Start the Temporal dev server and register search attributes |
 | `conduct [ensemble]` | Start a conductor session (one per ensemble). Use `--resume` or `--replace` if one exists. |
 | `start [ensemble]` | Start a player session |
 | `status [ensemble]` | Show active sessions and Temporal health |
 | `config` | Configure Temporal connection settings (interactive or `set`/`show`) |
-| `stop [ensemble]` | Stop sessions (`-n <name>` for one, `--all` for everything) |
+| `stop [ensemble]` | Stop sessions only — recoverable via `encore`. Use `-n <name>` for one, `--all` for all. |
 | `init` | Register claude-tempo MCP server globally (`--project` for per-directory) |
 | `preflight` | Run environment checks |
 | `broadcast <msg>` | Send a message to all active players. Use `--type` to filter by player type, `--include-stale` to include stale sessions. |
@@ -24,6 +24,7 @@ claude-tempo <command> [options]
 | `agent-types <sub>` | Manage player types (`list`, `show <name>`, `init`) |
 | `daemon <sub>` | Manage the worker daemon (`start`, `stop`, `status`, `logs`) |
 | `tui [--ensemble <name>]` | Launch the interactive TUI — chat-focused shell with slash commands for managing players and ensembles |
+| `upgrade [version]` | Graceful self-update — stops daemon, installs new version, restarts daemon |
 | `version` | Print the installed version |
 | `help` | Show usage info |
 
@@ -127,11 +128,22 @@ If the `claude` CLI is not available, falls back to creating `.mcp.json` in the 
 
 ### `claude-tempo down`
 
-Stops Temporal, terminates all sessions, and removes MCP config:
+Full teardown — stops all sessions, the daemon, and Temporal, then removes MCP config:
 
 ```bash
-claude-tempo down              # full teardown
-claude-tempo down --keep-mcp   # stop Temporal and sessions, but preserve MCP config
+claude-tempo down                  # full teardown
+claude-tempo down --keep-mcp       # preserve MCP config
+claude-tempo down --keep-daemon    # stop sessions and Temporal, but leave daemon running
+claude-tempo down -y               # skip confirmation prompt
+```
+
+### `claude-tempo upgrade`
+
+Graceful self-update — stops the daemon, installs the latest (or specified) version, then restarts the daemon:
+
+```bash
+claude-tempo upgrade            # install latest version
+claude-tempo upgrade 0.20.0     # install a specific version
 ```
 
 ## Related
