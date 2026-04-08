@@ -13,7 +13,7 @@ import { addScheduleSignal } from '../workflows/scheduler-signals';
 import { AgentType, ScheduleEntry, SessionInput, SessionMetadata } from '../types';
 import { runPreflight } from './preflight';
 import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
-import { loadLineup } from '../ensemble/loader';
+import { loadLineup, resolveLineupPath } from '../ensemble/loader';
 import { saveLineup, listLineups, readSavedLineup } from '../ensemble/saver';
 import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
 import { ENCORE_DEFAULT_CONTEXT_MESSAGES, PREVIEW_MAX_LENGTH, shouldIncludeInBroadcast, validateEnsembleName } from '../utils/validation';
@@ -680,39 +680,13 @@ export async function up(opts: UpOpts) {
   let lineup;
   const lineupArg = opts.lineup;
   if (lineupArg) {
-    // Resolve by name or file path
-    let lineupPath: string;
-    if (existsSync(resolve(lineupArg))) {
-      // Direct file path
-      lineupPath = resolve(lineupArg);
-    } else {
-      // Try saved lineups (~/.claude-tempo/ensembles/)
-      const ensemblesDir = join(CLAUDE_TEMPO_HOME, 'ensembles');
-      const savedYaml = join(ensemblesDir, `${lineupArg}.yaml`);
-      const savedYml = join(ensemblesDir, `${lineupArg}.yml`);
-      if (existsSync(savedYaml)) {
-        lineupPath = savedYaml;
-      } else if (existsSync(savedYml)) {
-        lineupPath = savedYml;
-      } else {
-        // Try shipped examples
-        const shippedPath = join(PACKAGE_ROOT, 'examples', 'ensembles', `${lineupArg}.yaml`);
-        const shippedYml = join(PACKAGE_ROOT, 'examples', 'ensembles', `${lineupArg}.yml`);
-        if (existsSync(shippedPath)) {
-          lineupPath = shippedPath;
-        } else if (existsSync(shippedYml)) {
-          lineupPath = shippedYml;
-        } else {
-          out.error(`Lineup "${lineupArg}" not found as file, saved lineup, or shipped example`);
-          const saved = listLineups();
-          if (saved.length) out.log(`  Saved: ${saved.map(b => b.name).join(', ')}`);
-          const shipped = readdirSync(join(PACKAGE_ROOT, 'examples', 'ensembles')).filter(f => f.endsWith('.yaml') || f.endsWith('.yml')).map(f => f.replace(/\.ya?ml$/, ''));
-          if (shipped.length) out.log(`  Shipped: ${shipped.join(', ')}`);
-          process.exit(1);
-        }
-      }
+    try {
+      const resolution = resolveLineupPath(lineupArg);
+      lineup = loadLineup(resolution.path);
+    } catch (err: any) {
+      out.error(err.message);
+      process.exit(1);
     }
-    lineup = loadLineup(lineupPath);
   }
   if (lineup) {
     out.check('Lineup loaded', true, lineup.name);

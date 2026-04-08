@@ -1,13 +1,11 @@
 import { z } from 'zod';
-import { existsSync } from 'fs';
-import { join } from 'path';
 import { Cron } from 'croner';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle, WorkflowIdConflictPolicy } from '@temporalio/client';
-import { Config, CLAUDE_TEMPO_HOME, schedulerWorkflowId } from '../config';
+import { Config, schedulerWorkflowId } from '../config';
 import { AgentType } from '../types';
 import { loadAndResolveLineup, resolveAgentType } from '../ensemble/agent-types';
-import { readSavedLineup } from '../ensemble/saver';
+import { resolveLineupPath } from '../ensemble/loader';
 import { resolveSession } from './resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
@@ -33,7 +31,7 @@ export function registerLoadLineupTool(
     'load_lineup',
     'Load an ensemble lineup — recruits players and creates schedules.',
     {
-      name: z.string().max(PLAYER_NAME_MAX).optional().describe('Name of a saved lineup (from ~/.claude-tempo/ensembles/)'),
+      name: z.string().max(PLAYER_NAME_MAX).optional().describe('Name of a lineup — resolves saved lineups, then shipped examples (e.g. "tempo-dev-team")'),
       path: z.string().max(PATH_MAX).optional().describe('Explicit file path to a lineup YAML file'),
     },
     async (args) => {
@@ -48,24 +46,13 @@ export function registerLoadLineupTool(
       }
 
       try {
-        // Resolve the file path
+        // Resolve the file path: saved → shipped examples → direct file path
         let filePath: string;
         if (lineupPath) {
           filePath = lineupPath;
         } else {
-          // Try to find saved lineup by name
-          const savedContent = readSavedLineup(lineupName!);
-          if (!savedContent) {
-            return fail(`No saved lineup found with name "${lineupName}". Check ~/.claude-tempo/ensembles/.`);
-          }
-          // readSavedLineup returns content, but we need a path.
-          // Construct the path directly.
-          const ensemblesDir = join(CLAUDE_TEMPO_HOME, 'ensembles');
-          // Try both extensions
-          filePath = join(ensemblesDir, `${lineupName}.yaml`);
-          if (!existsSync(filePath)) {
-            filePath = join(ensemblesDir, `${lineupName}.yml`);
-          }
+          const resolution = resolveLineupPath(lineupName!);
+          filePath = resolution.path;
         }
 
         // Validate the resolved path is within allowed roots

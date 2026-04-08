@@ -1,6 +1,52 @@
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync, readdirSync } from 'fs';
+import { join, resolve } from 'path';
 import { parse as parseYaml } from 'yaml';
 import { EnsembleLineup } from './schema';
+import { CLAUDE_TEMPO_HOME } from '../config';
+
+/** Package root — two levels up from dist/ at runtime */
+const PACKAGE_ROOT = resolve(__dirname, '..', '..');
+
+export interface LineupResolution {
+  path: string;
+  source: 'saved' | 'shipped' | 'file';
+}
+
+/**
+ * Resolve a lineup name or file path to an absolute file path.
+ * Resolution order: saved lineups → shipped examples → direct file path → error.
+ */
+export function resolveLineupPath(nameOrPath: string): LineupResolution {
+  // 1. Saved lineups (~/.claude-tempo/ensembles/)
+  const ensemblesDir = join(CLAUDE_TEMPO_HOME, 'ensembles');
+  const savedYaml = join(ensemblesDir, `${nameOrPath}.yaml`);
+  const savedYml = join(ensemblesDir, `${nameOrPath}.yml`);
+  if (existsSync(savedYaml)) return { path: savedYaml, source: 'saved' };
+  if (existsSync(savedYml)) return { path: savedYml, source: 'saved' };
+
+  // 2. Shipped examples (<package-root>/examples/ensembles/)
+  const shippedYaml = join(PACKAGE_ROOT, 'examples', 'ensembles', `${nameOrPath}.yaml`);
+  const shippedYml = join(PACKAGE_ROOT, 'examples', 'ensembles', `${nameOrPath}.yml`);
+  if (existsSync(shippedYaml)) return { path: shippedYaml, source: 'shipped' };
+  if (existsSync(shippedYml)) return { path: shippedYml, source: 'shipped' };
+
+  // 3. Direct file path
+  const resolved = resolve(nameOrPath);
+  if (existsSync(resolved)) return { path: resolved, source: 'file' };
+
+  // 4. Error with suggestions
+  const suggestions: string[] = [];
+  const saved = existsSync(ensemblesDir) ? readdirSync(ensemblesDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml')).map(f => f.replace(/\.ya?ml$/, '')) : [];
+  if (saved.length) suggestions.push(`Saved: ${saved.join(', ')}`);
+  const shippedDir = join(PACKAGE_ROOT, 'examples', 'ensembles');
+  if (existsSync(shippedDir)) {
+    const shipped = readdirSync(shippedDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml')).map(f => f.replace(/\.ya?ml$/, ''));
+    if (shipped.length) suggestions.push(`Shipped: ${shipped.join(', ')}`);
+  }
+
+  const msg = `Lineup "${nameOrPath}" not found as saved lineup, shipped example, or file path.`;
+  throw new Error(suggestions.length ? `${msg}\n  ${suggestions.join('\n  ')}` : msg);
+}
 
 /**
  * Load and validate an ensemble lineup from a YAML file.
