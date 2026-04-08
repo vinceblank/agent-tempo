@@ -11,3 +11,6 @@ logs/
 temporal-data.db
 
 pnpm-lock.yaml
+
+.wolf/
+.claude/settings.json
