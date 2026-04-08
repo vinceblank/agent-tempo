@@ -112,6 +112,7 @@ export function registerLoadLineupTool(
               await handle.signal('receiveMessage', {
                 from: 'lineup',
                 text: lineup.conductor.instructions,
+                responseRequested: false,
               });
               conductorActions.push('instructions delivered');
               log('Conductor instructions delivered');

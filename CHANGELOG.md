@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.20.0] - 2026-04-08
+
+### Added
+
+- `claude-tempo upgrade [version]` command for graceful self-update — stops daemon, installs new version, restarts daemon (#79, #82)
+
+### Changed
+
+- `down` command now always stops the daemon, requires confirmation when no ensemble is specified, and exits with code 1 in non-TTY environments (#78, #83)
+
+### Fixed
+
+- `load_lineup` MCP tool now resolves shipped example lineups by name, in addition to saved lineups and file paths (#80, #81)
+- Blocked detection no longer triggers on informational messages — broadcasts, schedule-fires, heartbeats, and system notifications now set `responseRequested: false`, preventing false positives (#75, #66)
+
 ## [0.19.0] - 2026-04-07
 
 ### Fixed
