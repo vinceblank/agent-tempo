@@ -113,10 +113,7 @@ export function App({ api, ensemble }: AppProps) {
     }
 
     // Scrollback navigation (Page Up/Down, Home/End)
-    if (key.pageUp) { dispatch({ type: 'SCROLL_UP', lines: 10 }); return; }
-    if (key.pageDown) { dispatch({ type: 'SCROLL_DOWN', lines: 10 }); return; }
-    if (key.home || (key.ctrl && input === 'a')) { dispatch({ type: 'SCROLL_HOME' }); return; }
-    if (key.end || (key.ctrl && input === 'e')) { dispatch({ type: 'SCROLL_END' }); return; }
+    // Scroll keys removed — terminal native scrollback via <Static> handles this
 
     // Picker overlay navigation
     if (s.pickerVisible) {
@@ -960,53 +957,8 @@ export function App({ api, ensemble }: AppProps) {
     );
   }
 
-  // ── Build scroll history as a single Text element (0 Box wrappers) ──
-  const scrollHistoryElement = (() => {
-    const items = state.staticItems;
-    const viewportHeight = Math.max(5, termRows - 10); // Reserve space for title/status/prompt
-    const endIdx = items.length - state.scrollOffset;
-    const startIdx = Math.max(0, endIdx - viewportHeight);
-    const visibleItems = items.slice(startIdx, endIdx);
-
-    const children: React.ReactNode[] = [];
-
-    // Scroll-up indicator
-    if (startIdx > 0) {
-      children.push(
-        React.createElement(Text, { key: 'scroll-up', color: THEME.dim },
-          `  \u2191 ${startIdx} more message${startIdx !== 1 ? 's' : ''} above`,
-        ),
-      );
-    }
-
-    // Visible items — each as nested Text (ink-virtual-text, 0 Yoga nodes)
-    for (const item of visibleItems) {
-      if (children.length > 0) children.push('\n');
-      children.push(
-        React.createElement(Text, { key: item.id, color: staticItemColor(item) }, `  ${item.content}`),
-      );
-    }
-
-    // Scroll indicators
-    if (state.hasNewBelow && state.scrollOffset > 0) {
-      children.push('\n');
-      children.push(
-        React.createElement(Text, { key: 'scroll-down', color: THEME.warning }, '  \u2193 new messages below \u2193'),
-      );
-    } else if (state.scrollOffset > 0) {
-      children.push('\n');
-      children.push(
-        React.createElement(Text, { key: 'scrolled', color: THEME.dim },
-          `  \u2500\u2500\u2500 scrolled (${state.scrollOffset} below) \u2500\u2500\u2500`,
-        ),
-      );
-    }
-
-    // Single Text element wrapping all scroll items (1 Yoga node total)
-    return children.length > 0
-      ? React.createElement(Text, { key: 'scroll-history' }, ...children)
-      : null;
-  })();
+  // ── Static items — rendered once to stdout, become native terminal scrollback ──
+  const { Static } = useInk();
 
   // Layout: header (2 lines) + content (variable) + footer (4 lines)
   // Content height is calculated to guarantee footer is always visible.
@@ -1014,18 +966,24 @@ export function App({ api, ensemble }: AppProps) {
   const FOOTER_LINES = 4; // StatusBar + bottom divider + PromptArea (hints + input)
   const contentHeight = Math.max(3, termRows - 1 - HEADER_LINES - FOOTER_LINES);
 
-  // Root Box: height constrained to termRows-1 to force Ink incremental rendering path
-  return React.createElement(Box, { flexDirection: 'column', height: termRows - 1, overflow: 'hidden' },
-    // Title bar (1 Text node)
-    React.createElement(TitleBar, { context: contextString }),
-    // Top divider (1 Text node, no Box wrapper)
-    React.createElement(Text, { color: THEME.border }, ` ${dividerLine} `),
-    // Content area — explicit height guarantees footer is visible
-    React.createElement(Box, { flexDirection: 'column', height: contentHeight, overflow: 'hidden' },
-      // Scrollback history (1 Text node with nested virtual-text)
-      scrollHistoryElement,
-      // Live content area
-      renderLiveContent(),
+  // Root layout: <Static> items above, then live area constrained to terminal height
+  return React.createElement(React.Fragment, null,
+    // Static items — rendered once to stdout, become native terminal scrollback
+    state.staticItems.length > 0
+      ? React.createElement(Static, { items: state.staticItems, children: (item: StaticItem) =>
+          React.createElement(Text, { key: item.id, color: staticItemColor(item) }, `  ${item.content}`),
+        })
+      : null,
+    // Live area — height constrained to termRows-1
+    React.createElement(Box, { flexDirection: 'column', height: termRows - 1, overflow: 'hidden' },
+      // Title bar (1 Text node)
+      React.createElement(TitleBar, { context: contextString }),
+      // Top divider (1 Text node, no Box wrapper)
+      React.createElement(Text, { color: THEME.border }, ` ${dividerLine} `),
+      // Content area — explicit height guarantees footer is visible
+      React.createElement(Box, { flexDirection: 'column', height: contentHeight, overflow: 'hidden' },
+        // Live content area
+        renderLiveContent(),
       // Picker overlay (1 Text node when visible)
       state.pickerVisible
         ? React.createElement(Picker, {
@@ -1071,5 +1029,6 @@ export function App({ api, ensemble }: AppProps) {
           selectedIndex: clampedPaletteIndex,
         })
       : null,
-  );
+    ), // closes live area Box
+  ); // closes Fragment
 }
