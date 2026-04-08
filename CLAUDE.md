@@ -92,10 +92,13 @@ src/
 │   │   ├── ChatView.tsx       # Per-player chat view (entered via /cue <player>)
 │   │   ├── ErrorView.tsx      # Error state view with diagnostic checks
 │   │   ├── StatusBar.tsx      # Persistent status bar (player counts, schedule count, connection health)
-│   │   ├── CommandPalette.tsx # Autocomplete dropdown for slash commands and parameters
-│   │   ├── Picker.tsx         # Full-screen interactive picker (players, ensembles)
-│   │   ├── ScheduleWizard.tsx # Step-by-step wizard for /schedule create
-│   │   └── RecruitWizard.tsx  # Step-by-step wizard for /recruit
+│   │   ├── CommandPalette.tsx    # Autocomplete dropdown for slash commands and parameters
+│   │   ├── Picker.tsx            # Full-screen interactive picker (players, ensembles)
+│   │   ├── PlayerDetailView.tsx  # Player metadata + scrollable message history (zero Yoga nodes)
+│   │   ├── StatusOverlay.tsx     # Dismissible overlay showing ensemble player cards (/status)
+│   │   ├── ConversationStream.tsx # Live message area merging server conversation + optimistic echo
+│   │   ├── ScheduleWizard.tsx    # Step-by-step wizard for /schedule create
+│   │   └── RecruitWizard.tsx     # Step-by-step wizard for /recruit
 │   └── utils/
 │       ├── format.ts          # Display formatting helpers
 │       ├── platform.ts        # Terminal size detection helpers
