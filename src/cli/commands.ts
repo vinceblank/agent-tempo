@@ -1002,9 +1002,12 @@ function parseDuration(s: string): number {
   }
 }
 
-/** Prompt the user for y/n confirmation. Returns true if confirmed. */
+/** Prompt the user for y/n confirmation. Exits with code 1 in non-TTY environments. */
 async function confirmPrompt(message: string): Promise<boolean> {
-  if (!process.stdin.isTTY) return false;
+  if (!process.stdin.isTTY) {
+    out.error('Non-interactive environment: use --yes / -y to confirm teardown.');
+    process.exit(1);
+  }
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise<boolean>((resolve) => {
     rl.question(`${message} [y/N] `, (answer) => {
@@ -1195,15 +1198,17 @@ export async function down(opts: DownOpts) {
   // Step 2: Kill bridge processes via PID files
   killBridgeProcesses();
 
-  // Step 2.5: Stop worker daemon — always unless --keep-daemon
+  // Step 2.5: Stop worker daemon — unless --keep-daemon or other ensembles still active
   if (opts.keepDaemon) {
     if (isDaemonRunning()) {
       out.log(`  ${out.dim('Worker daemon left running (--keep-daemon)')}`);
     }
-  } else {
+  } else if (opts.all || !hasRemainingWorkflows) {
     if (stopDaemon()) {
       out.success('Worker daemon stopped');
     }
+  } else if (isDaemonRunning()) {
+    out.log(`  ${out.dim('Worker daemon left running (other ensembles still active)')}`);
   }
 
   // Step 3: Stop Temporal server — only if --all flag or no other workflows remain
