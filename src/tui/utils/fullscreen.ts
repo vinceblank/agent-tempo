@@ -1,8 +1,9 @@
 /**
- * Fullscreen (alternate screen buffer) utilities for the TUI.
+ * Fullscreen utilities for the TUI.
  *
- * Uses ANSI escape sequences to switch to the alternate buffer and hide the cursor,
- * restoring the original buffer on exit.
+ * Clears the screen and hides the cursor on entry, shows cursor on exit.
+ * Stays on the primary screen buffer so <Static> items become native
+ * terminal scrollback that persists after exit.
  */
 
 /** Whether fullscreen mode is supported and enabled. */
@@ -21,25 +22,27 @@ export function fullscreenSupported(): boolean {
 }
 
 /**
- * Enter fullscreen mode — switches to the alternate screen buffer and hides the cursor.
+ * Enter fullscreen mode — clears the screen and hides the cursor.
+ * Stays on the primary buffer so Static items persist as scrollback.
  * No-op if fullscreen is not supported.
  * @returns true if fullscreen was entered, false if skipped.
  */
 export function enterFullscreen(): boolean {
   if (!fullscreenSupported()) return false;
 
-  // Switch to alternate screen buffer + hide cursor
-  process.stdout.write('\x1b[?1049h\x1b[?25l');
+  // Clear screen + cursor home + hide cursor (no alternate buffer)
+  process.stdout.write('\x1b[2J\x1b[H\x1b[?25l');
   return true;
 }
 
 /**
- * Exit fullscreen mode — shows the cursor and restores the original screen buffer.
+ * Exit fullscreen mode — shows the cursor.
+ * No buffer restore needed since we stay on the primary buffer.
  * Safe to call even if fullscreen was never entered.
  */
 export function exitFullscreen(): void {
-  // Show cursor + restore main screen buffer
-  process.stdout.write('\x1b[?25h\x1b[?1049l');
+  // Show cursor (no buffer restore — primary buffer preserved)
+  process.stdout.write('\x1b[?25h');
 }
 
 /**
