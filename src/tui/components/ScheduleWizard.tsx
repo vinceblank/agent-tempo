@@ -44,6 +44,7 @@ const TIMING_HINTS: Record<ScheduleType, string> = {
 export function ScheduleWizard({ state, onAnswer, onBack, onConfirm, onCancel, onDone }: ScheduleWizardProps) {
   const { Box, Text, useInput } = useInk();
   const [inputValue, setInputValue] = useState('');
+  const [showRequired, setShowRequired] = useState(false);
   const [typeIndex, setTypeIndex] = useState(
     SCHED_TYPE_OPTIONS.findIndex(o => o.value === state.answers.schedType),
   );
@@ -78,8 +79,8 @@ export function ScheduleWizard({ state, onAnswer, onBack, onConfirm, onCancel, o
       }
       if (key.return) {
         const selected = SCHED_TYPE_OPTIONS[typeIndex];
-        // Auto-generate a name from target + type
-        const name = `${state.answers.target}-${selected.value}`;
+        // Auto-generate a unique name from target + type + timestamp
+        const name = `${state.answers.target}-${selected.value}-${Date.now().toString(36)}`;
         onAnswer({ schedType: selected.value, name });
         setInputValue('');
         return;
@@ -92,6 +93,12 @@ export function ScheduleWizard({ state, onAnswer, onBack, onConfirm, onCancel, o
       if (key.return) {
         onConfirm();
       }
+      return;
+    }
+
+    // Empty enter — show validation hint
+    if (key.return && !inputValue.trim() && ['target', 'message', 'timing', 'timezone'].includes(state.step)) {
+      setShowRequired(true);
       return;
     }
 
@@ -125,6 +132,7 @@ export function ScheduleWizard({ state, onAnswer, onBack, onConfirm, onCancel, o
     // Regular character
     if (input && !key.ctrl && !key.meta && !key.tab) {
       setInputValue(v => v + input);
+      if (showRequired) setShowRequired(false);
     }
   }, [state.step, inputValue, typeIndex, onAnswer, onBack, onConfirm, onCancel, onDone, state.answers.target]));
 
@@ -234,6 +242,7 @@ export function ScheduleWizard({ state, onAnswer, onBack, onConfirm, onCancel, o
         React.createElement(Text, { color: THEME.accent }, '  > '),
         React.createElement(Text, { color: THEME.text }, inputValue),
         React.createElement(Text, { color: THEME.accent }, '\u2588'),
+        showRequired ? React.createElement(Text, { color: 'red' }, '  (required)') : null,
       ),
     );
     if (state.step !== 'target') {

@@ -93,6 +93,13 @@ export function App({ api, ensemble }: AppProps) {
 
   // ── Refs for poll dedup (skip dispatches when data hasn't changed) ──
   const lastPollRef = React.useRef({ playerCount: 0, lastMsgId: '', historyLen: 0, scheduleCount: 0, maestroMsgCount: 0 });
+
+  // Reset stale refs when switching ensembles
+  useEffect(() => {
+    lastSeenMsgRef.current = undefined;
+    lastSeenMaestroRef.current = undefined;
+    lastPollRef.current = { playerCount: 0, lastMsgId: '', historyLen: 0, scheduleCount: 0, maestroMsgCount: 0 };
+  }, [state.activeEnsemble]);
   const handleHistoryUpdate = useCallback((entries: string[]) => {
     saveHistory(entries);
   }, []);
@@ -558,10 +565,11 @@ export function App({ api, ensemble }: AppProps) {
         } else {
           // Fetch relay messages + maestro direct messages in parallel
           const ens = s.activeEnsemble!;
+          const inConductorChat = s.chatTarget === s.conductorName;
           const [players, messages, history, schedules, maestroMsgs] = await Promise.all([
             api.getPlayers(ens),
             api.getMessages(ens, 50),
-            api.getConductorHistory(ens),
+            inConductorChat ? api.getConductorHistory(ens) : Promise.resolve([]),
             api.getSchedules(ens),
             api.getMaestroMessages(ens),
           ]);
@@ -686,9 +694,9 @@ export function App({ api, ensemble }: AppProps) {
 
     try {
       const parts = [`/recruit ${a.name}`];
-      if (a.playerType) parts.push(`--type ${a.playerType}`);
+      if (a.playerType) parts.push(`--type "${a.playerType}"`);
       if (a.agent !== 'claude') parts.push(`--agent ${a.agent}`);
-      if (a.workDir) parts.push(`--dir ${a.workDir}`);
+      if (a.workDir) parts.push(`--dir "${a.workDir}"`);
       if (a.host !== 'localhost') parts.push(`--host ${a.host}`);
       if (a.initialMessage) parts.push(`-- ${a.initialMessage}`);
 
@@ -1024,7 +1032,7 @@ export function App({ api, ensemble }: AppProps) {
       inputRef: promptRef,
     }),
     // Command palette (1 Text node when visible)
-    state.paletteVisible && filteredPaletteCommands.length >= 0
+    state.paletteVisible && filteredPaletteCommands.length > 0
       ? React.createElement(CommandPalette, {
           commands: filteredPaletteCommands,
           selectedIndex: clampedPaletteIndex,
