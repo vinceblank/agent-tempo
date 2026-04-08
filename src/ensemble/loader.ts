@@ -4,8 +4,15 @@ import { parse as parseYaml } from 'yaml';
 import { EnsembleLineup } from './schema';
 import { CLAUDE_TEMPO_HOME } from '../config';
 
-/** Package root — two levels up from dist/ at runtime */
-const PACKAGE_ROOT = resolve(__dirname, '..', '..');
+/** Walk up from a directory to find the nearest package.json. */
+function findPackageRoot(dir: string): string {
+  if (existsSync(join(dir, 'package.json'))) return dir;
+  const parent = resolve(dir, '..');
+  return parent === dir ? dir : findPackageRoot(parent);
+}
+
+/** Package root — works from both dist/ (production) and dist-test/ (tests). */
+const PACKAGE_ROOT = findPackageRoot(resolve(__dirname));
 
 export interface LineupResolution {
   path: string;
