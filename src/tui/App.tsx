@@ -493,45 +493,37 @@ export function App({ api, ensemble }: AppProps) {
       const target = s.chatTarget;
       try {
         if (target) {
-          // Player chat — send directly
+          // Optimistic local echo — show immediately, send async
           const isConductorTarget = target === s.conductorName;
-          if (isConductorTarget) {
-            await api.sendCommand(s.activeEnsemble!, trimmed, 'maestro');
-          } else {
-            await api.sendMessage(s.activeEnsemble!, target, trimmed, 'maestro');
-          }
           dispatch({ type: 'APPEND_SENT_MESSAGE', to: target, text: trimmed });
           dispatch({
             type: 'COMMIT_STATIC',
-            item: {
-              id: nextStaticId(),
-              type: 'message',
-              content: `\u276F ${trimmed}`,
-              timestamp: Date.now(),
-            },
+            item: { id: nextStaticId(), type: 'message', content: `\u276F ${trimmed}`, timestamp: Date.now() },
           });
+          const sendPromise = isConductorTarget
+            ? api.sendCommand(s.activeEnsemble!, trimmed, 'maestro')
+            : api.sendMessage(s.activeEnsemble!, target, trimmed, 'maestro');
+          sendPromise.catch(err => dispatch({
+            type: 'COMMIT_STATIC',
+            item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to deliver: ${err}`, timestamp: Date.now() },
+          }));
         } else {
-          // Maestro view — send to conductor as maestro
-          await api.sendCommand(s.activeEnsemble!, trimmed, 'maestro');
+          // Maestro view — send to conductor as maestro (optimistic)
+          const conductorTarget = s.conductorName || 'conductor';
+          dispatch({ type: 'APPEND_SENT_MESSAGE', to: conductorTarget, text: trimmed });
           dispatch({
             type: 'COMMIT_STATIC',
-            item: {
-              id: nextStaticId(),
-              type: 'message',
-              content: `\u276F ${trimmed}`,
-              timestamp: Date.now(),
-            },
+            item: { id: nextStaticId(), type: 'message', content: `\u276F ${trimmed}`, timestamp: Date.now() },
           });
+          api.sendCommand(s.activeEnsemble!, trimmed, 'maestro').catch(err => dispatch({
+            type: 'COMMIT_STATIC',
+            item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to deliver: ${err}`, timestamp: Date.now() },
+          }));
         }
       } catch (err) {
         dispatch({
           type: 'COMMIT_STATIC',
-          item: {
-            id: nextStaticId(),
-            type: 'error',
-            content: `\u2717 Failed to deliver: ${err}`,
-            timestamp: Date.now(),
-          },
+          item: { id: nextStaticId(), type: 'error', content: `\u2717 Error: ${err}`, timestamp: Date.now() },
         });
       }
     } else {
