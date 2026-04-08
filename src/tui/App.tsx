@@ -966,30 +966,18 @@ export function App({ api, ensemble }: AppProps) {
 
     // Main view — conversation stream (like Claude Code)
     if (state.activeEnsemble) {
-      // Build merged conversation from relay messages + sent messages + conductor history
-      // Build conversation from clean, non-overlapping sources:
-      // - sentMessages: outbound (local echo, instant)
-      // - Maestro DMs (in state.messages with to='maestro'): inbound replies
-      // - Conductor history reports only (not commands — those duplicate sentMessages)
+      // Two sources only:
+      // 1. sentMessages: outbound (local echo, instant)
+      // 2. Maestro DMs (merged into state.messages with to='maestro'): inbound replies
       const allConvoMsgs: Array<{ id: string; from: string; text: string; timestamp: string; direction: 'in' | 'out' }> = [];
 
-      // Outbound: local echo (sentMessages)
       for (const m of state.sentMessages) {
         allConvoMsgs.push({ id: `sent-${m.timestamp}`, from: 'you', text: m.text, timestamp: m.timestamp, direction: 'out' });
       }
 
-      // Inbound: only messages addressed TO maestro (direct replies)
       for (const m of state.messages) {
         if (m.to === 'maestro') {
           allConvoMsgs.push({ id: m.id, from: m.from, text: m.text, timestamp: m.timestamp, direction: 'in' });
-        }
-      }
-
-      // Inbound: conductor history reports (skip commands — those are our sent messages)
-      for (const entry of state.conductorHistory) {
-        if (entry.type === 'report') {
-          const report = entry.data as { playerId: string; text: string; type: string; timestamp: string };
-          allConvoMsgs.push({ id: `cr-${entry.timestamp}`, from: report.playerId, text: `[${report.type}] ${report.text}`, timestamp: entry.timestamp || report.timestamp, direction: 'in' });
         }
       }
 
