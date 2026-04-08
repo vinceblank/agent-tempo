@@ -605,47 +605,8 @@ export function App({ api, ensemble }: AppProps) {
             api.getMaestroMessages(ens),
           ]);
 
-          // Detect new relay messages and commit them to Static
-          if (messages.length > 0 && lastSeenMsgRef.current) {
-            const lastIdx = messages.findIndex(m => m.id === lastSeenMsgRef.current);
-            const newMessages = lastIdx >= 0 ? messages.slice(lastIdx + 1) : [];
-            for (const m of newMessages) {
-              const time = new Date(m.timestamp);
-              const hh = String(time.getHours()).padStart(2, '0');
-              const mm = String(time.getMinutes()).padStart(2, '0');
-              const text = m.text.length > 60 ? m.text.slice(0, 57) + '...' : m.text;
-              dispatch({
-                type: 'COMMIT_STATIC',
-                item: {
-                  id: `msg-${m.id}`,
-                  type: 'message',
-                  content: `[${hh}:${mm}] ${m.from} \u2192 ${m.to}: ${text.replace(/\n/g, ' ')}`,
-                  timestamp: Date.now(),
-                },
-              });
-            }
-          }
-
-          // Detect new maestro direct messages
-          if (maestroMsgs.received.length > 0 && lastSeenMaestroRef.current) {
-            const lastIdx = maestroMsgs.received.findIndex(m => m.id === lastSeenMaestroRef.current);
-            const newDirect = lastIdx >= 0 ? maestroMsgs.received.slice(lastIdx + 1) : [];
-            for (const m of newDirect) {
-              const time = new Date(m.timestamp);
-              const hh = String(time.getHours()).padStart(2, '0');
-              const mm = String(time.getMinutes()).padStart(2, '0');
-              const text = m.text.length > 60 ? m.text.slice(0, 57) + '...' : m.text;
-              dispatch({
-                type: 'COMMIT_STATIC',
-                item: {
-                  id: `dm-${m.id}`,
-                  type: 'message',
-                  content: `[${hh}:${mm}] ${m.from} \u2192 you: ${text.replace(/\n/g, ' ')}`,
-                  timestamp: Date.now(),
-                },
-              });
-            }
-          }
+          // Relay/maestro message commits are handled by the memoizedChatData
+          // useEffect above — no need to duplicate here.
           if (maestroMsgs.received.length > 0) {
             lastSeenMaestroRef.current = maestroMsgs.received[maestroMsgs.received.length - 1].id;
           }
@@ -857,6 +818,57 @@ export function App({ api, ensemble }: AppProps) {
       isConductor: isConductorChat,
     };
   }, [state.chatTarget, state.conductorName, state.conductorHistory, state.messages, state.sentMessages]);
+
+  // Commit new chat messages to Static items as they arrive
+  const lastChatCommitCount = React.useRef(0);
+  useEffect(() => {
+    if (!memoizedChatData || memoizedChatData.messages.length === 0) {
+      lastChatCommitCount.current = 0;
+      return;
+    }
+    const msgs = memoizedChatData.messages;
+    const newStart = lastChatCommitCount.current;
+    if (newStart >= msgs.length) return;
+    const newMsgs = msgs.slice(newStart);
+    for (const msg of newMsgs) {
+      const isSelf = msg.direction === 'sent';
+      const senderLabel = isSelf ? 'you' : msg.from;
+      let time = '';
+      try {
+        const d = new Date(msg.timestamp);
+        time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      } catch { time = '??:??'; }
+      // Sender line
+      dispatch({
+        type: 'COMMIT_STATIC',
+        item: {
+          id: nextStaticId(),
+          type: 'message',
+          content: `${senderLabel}  ${time}`,
+          timestamp: Date.now(),
+        },
+      });
+      // Body lines
+      const lines = msg.text.split('\n');
+      for (const line of lines) {
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: {
+            id: nextStaticId(),
+            type: isSelf ? 'info' : 'command-output',
+            content: line,
+            timestamp: Date.now(),
+          },
+        });
+      }
+    }
+    lastChatCommitCount.current = msgs.length;
+  }, [memoizedChatData]);
+
+  // Reset chat commit counter when switching targets
+  useEffect(() => {
+    lastChatCommitCount.current = 0;
+  }, [state.chatTarget]);
 
   // ── Render ──
 

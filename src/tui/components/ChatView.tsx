@@ -1,7 +1,7 @@
 /**
- * ChatView — conversation with a specific player.
- * Renders as a SINGLE Text element (1 Yoga node) with newlines for rows.
- * All nested Text = ink-virtual-text (0 Yoga nodes).
+ * ChatView — header for a conversation with a specific player.
+ * Messages are rendered via <Static> in App.tsx, not here.
+ * This component only shows context (player name, part, branch, counts).
  */
 import React from 'react';
 import { useInk } from '../ink-context';
@@ -25,25 +25,13 @@ export interface ChatViewProps {
   messages: ChatMessage[];
 }
 
-/** Format ISO timestamp to HH:MM. */
-function formatTime(ts: string): string {
-  try {
-    const d = new Date(ts);
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  } catch {
-    return '??:??';
-  }
-}
-
 export function ChatView({
   targetPlayer,
   targetPart,
   targetBranch,
-  targetStatus,
   isConductor,
   receivedCount,
   sentCount,
-  messages,
 }: ChatViewProps) {
   const { Text } = useInk();
 
@@ -52,7 +40,6 @@ export function ChatView({
 
   const children: React.ReactNode[] = [];
 
-  // ── Header ──
   children.push(
     React.createElement(Text, { key: 'h1', bold: true, color: THEME.accent },
       `  ${icon}${label} ${targetPlayer}`,
@@ -72,50 +59,10 @@ export function ChatView({
   children.push(
     React.createElement(Text, { key: 'h4', color: THEME.border }, '  ' + '\u2500'.repeat(55)),
   );
+  children.push('\n');
+  children.push(
+    React.createElement(Text, { key: 'h5', color: THEME.dim }, '  Messages appear above \u2191 (scroll up in terminal)'),
+  );
 
-  // ── Messages ──
-  if (messages.length === 0) {
-    children.push('\n');
-    children.push(
-      React.createElement(Text, { key: 'empty', color: THEME.dim }, '  No messages yet. Type to send a cue.'),
-    );
-  } else {
-    // Limit to last 20 messages to keep React element count low (~100 vs 1000+)
-    const MAX_VISIBLE = 20;
-    const visibleMessages = messages.length > MAX_VISIBLE ? messages.slice(-MAX_VISIBLE) : messages;
-    if (messages.length > MAX_VISIBLE) {
-      children.push('\n');
-      children.push(
-        React.createElement(Text, { key: 'truncated', color: THEME.dim },
-          `  \u2191 ${messages.length - MAX_VISIBLE} earlier messages \u00B7 /recall for full history`,
-        ),
-      );
-    }
-    for (let i = 0; i < visibleMessages.length; i++) {
-      const msg = visibleMessages[i];
-      const isSelf = msg.direction === 'sent';
-      const senderLabel = isSelf ? 'you (self)' : msg.from;
-      const senderColor = isSelf ? THEME.dim : THEME.accent;
-      const bodyColor = isSelf ? THEME.textMuted : THEME.text;
-      const time = formatTime(msg.timestamp);
-
-      children.push('\n');
-      // Sender + timestamp
-      children.push(
-        React.createElement(React.Fragment, { key: `s-${i}` },
-          React.createElement(Text, { color: senderColor }, `  ${senderLabel}`),
-          React.createElement(Text, { color: THEME.dim }, `  ${time}`),
-        ),
-      );
-      // Message body
-      const lines = msg.text.split('\n');
-      for (let li = 0; li < lines.length; li++) {
-        children.push('\n');
-        children.push(React.createElement(Text, { key: `b-${i}-${li}`, color: bodyColor }, `  ${lines[li]}`));
-      }
-    }
-  }
-
-  // Single Text element
   return React.createElement(Text, null, ...children);
 }
