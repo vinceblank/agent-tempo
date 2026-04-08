@@ -27,8 +27,7 @@ export type TuiView = 'home' | 'ensemble' | 'player';
  * It determines which component renders in the live content area.
  * A phase can span multiple views (e.g., 'main' shows either home or ensemble view).
  */
-// TODO: 'splash', 'connecting', 'connected' are legacy phases — consider removing once App.tsx references are cleaned up
-export type TuiPhase = 'splash' | 'connecting' | 'connected' | 'main' | 'chat' | 'recruit' | 'schedule-create' | 'error';
+export type TuiPhase = 'splash' | 'main' | 'chat' | 'recruit' | 'schedule-create' | 'error';
 
 // ── Static items (committed scroll history) ──
 
@@ -164,6 +163,8 @@ export interface TuiState {
   playerMetadata: any;
   /** Player's message history (received + sent). */
   playerMessages: Array<Message | (SentMessage & { direction: 'sent' })>;
+  /** Scroll offset within the player detail view message list. */
+  playerScrollOffset: number;
 
   // ── Focus & input ──
   /** Which zone has keyboard focus. */
@@ -230,6 +231,7 @@ export function initialState(ensemble?: string): TuiState {
     activePlayer: null,
     playerMetadata: null,
     playerMessages: [],
+    playerScrollOffset: 0,
 
     focusZone: 'sidebar',
     inputText: '',
@@ -266,6 +268,8 @@ export type TuiAction =
   | { type: 'REFRESH_ENSEMBLE_DATA'; players: MaestroPlayerInfo[]; messages: MaestroRelayMessage[]; history: HistoryEntry[]; schedules?: ScheduleEntry[] }
   | { type: 'SET_CONVERSATION'; conversation: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out' }> }
   | { type: 'REFRESH_PLAYER_DATA'; metadata: any; messages: Array<Message | (SentMessage & { direction: 'sent' })> }
+  | { type: 'PLAYER_SCROLL_UP' }
+  | { type: 'PLAYER_SCROLL_DOWN' }
   // Selection
   | { type: 'SELECT_NEXT' }
   | { type: 'SELECT_PREV' }
@@ -390,6 +394,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         activePlayer: action.playerId,
         playerMetadata: null,
         playerMessages: [],
+        playerScrollOffset: 0,
         focusZone: 'timeline',
       };
 
@@ -426,6 +431,16 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         playerMetadata: action.metadata,
         playerMessages: action.messages,
       };
+
+    case 'PLAYER_SCROLL_UP':
+      if (state.playerScrollOffset <= 0) return state;
+      return { ...state, playerScrollOffset: state.playerScrollOffset - 1 };
+
+    case 'PLAYER_SCROLL_DOWN': {
+      const maxScroll = Math.max(0, state.playerMessages.length - 20);
+      if (state.playerScrollOffset >= maxScroll) return state;
+      return { ...state, playerScrollOffset: state.playerScrollOffset + 1 };
+    }
 
     // Legacy compat — maps to REFRESH_ENSEMBLE_DATA
     case 'REFRESH_ALL':
