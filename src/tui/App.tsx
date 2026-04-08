@@ -435,7 +435,7 @@ export function App({ api, ensemble }: AppProps) {
         exit();
         return;
       }
-      if (parsed.name === 'dashboard' || parsed.name === 'status') {
+      if (parsed.name === 'dashboard') {
         // Show dashboard view (exit chat mode temporarily)
         dispatch({ type: 'EXIT_CHAT' });
         dispatch({ type: 'SET_PHASE', phase: 'main' });
