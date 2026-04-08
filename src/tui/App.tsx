@@ -989,14 +989,14 @@ export function App({ api, ensemble }: AppProps) {
   const FOOTER_LINES = 4; // StatusBar + bottom divider + PromptArea (hints + input)
   const contentHeight = Math.max(3, termRows - 1 - HEADER_LINES - FOOTER_LINES);
 
+  console.error(`[tui:debug] render staticItems=${state.staticItems.length}`);
+
   // Root layout: <Static> items above, then live area constrained to terminal height
   return React.createElement(React.Fragment, null,
     // Static items — rendered once to stdout, become native terminal scrollback
-    state.staticItems.length > 0
-      ? React.createElement(Static, { items: state.staticItems, children: (item: StaticItem) =>
-          React.createElement(Text, { key: item.id, color: staticItemColor(item) }, `  ${item.content}`),
-        })
-      : null,
+    React.createElement(Static, { items: state.staticItems, children: (item: StaticItem) =>
+      React.createElement(Text, { key: item.id, color: staticItemColor(item) }, `  ${item.content}`),
+    }),
     // Live area — height constrained to termRows-1
     React.createElement(Box, { flexDirection: 'column', height: termRows - 1, overflow: 'hidden' },
       // Title bar (1 Text node)
