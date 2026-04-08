@@ -132,16 +132,61 @@ export const PromptArea = React.memo(function PromptArea({
     }
   }, [setValue]);
 
+  // Commands that take a player name as first parameter
+  const PLAYER_PARAM_COMMANDS = new Set(['chat', 'cue', 'stop', 'encore', 'worktree']);
+  // Commands with hardcoded subcommands
+  const SUBCOMMAND_MAP: Record<string, string[]> = {
+    worktree: ['create', 'remove', 'list'],
+    stage: ['create', 'list', 'cancel'],
+    schedule: ['create', 'list', 'cancel'],
+    lineup: ['load', 'save'],
+    ensemble: ['save', 'list', 'show'],
+  };
+
   const getCompletions = useCallback((input: string): string[] => {
     const r = ref.current;
     const trimmed = input.trimStart();
 
+    // Command name completion: /par → /players
     if (trimmed.startsWith('/') && !trimmed.includes(' ')) {
       const partial = trimmed.slice(1).toLowerCase();
       if (!partial) return r.commandNames.map(c => `/${c} `);
       return r.commandNames
         .filter(c => c.startsWith(partial) && c !== partial)
         .map(c => `/${c} `);
+    }
+
+    // Parameter completion: /chat te → /chat tempo-eng
+    if (trimmed.startsWith('/') && trimmed.includes(' ')) {
+      const spaceIdx = trimmed.indexOf(' ');
+      const cmd = trimmed.slice(1, spaceIdx).toLowerCase();
+      const afterCmd = trimmed.slice(spaceIdx + 1);
+      const parts = afterCmd.split(' ');
+      const partial = parts[parts.length - 1].toLowerCase();
+      const prefix = trimmed.slice(0, trimmed.length - parts[parts.length - 1].length);
+
+      // First param: player name for player commands
+      if (parts.length === 1 && PLAYER_PARAM_COMMANDS.has(cmd)) {
+        const names = r.playerNames || [];
+        const matches = names.filter(n => n.toLowerCase().startsWith(partial) && n.toLowerCase() !== partial);
+        if (matches.length > 0) return matches.map(n => `${prefix}${n} `);
+      }
+
+      // First param: subcommand for structured commands
+      if (parts.length === 1 && SUBCOMMAND_MAP[cmd]) {
+        const subs = SUBCOMMAND_MAP[cmd];
+        const matches = subs.filter(s => s.startsWith(partial) && s !== partial);
+        if (matches.length > 0) return matches.map(s => `${prefix}${s} `);
+      }
+
+      // Second param after subcommand: player name for worktree create/remove
+      if (parts.length === 2 && cmd === 'worktree' && (parts[0] === 'create' || parts[0] === 'remove')) {
+        const names = r.playerNames || [];
+        const matches = names.filter(n => n.toLowerCase().startsWith(partial) && n.toLowerCase() !== partial);
+        if (matches.length > 0) return matches.map(n => `${prefix}${n} `);
+      }
+
+      return [];
     }
 
     if (trimmed.startsWith('/') && trimmed.includes(' ')) {
