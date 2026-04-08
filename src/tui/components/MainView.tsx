@@ -20,6 +20,8 @@ export interface MainViewProps {
   players: MaestroPlayerInfo[];
   messages: MaestroRelayMessage[];
   schedules?: ScheduleInfo[];
+  /** Total number of static items in scrollback (for indicator). */
+  staticItemCount?: number;
 }
 
 /** Pad or truncate with ellipsis to exactly `len` chars. */
@@ -44,7 +46,7 @@ function truncate(text: string, max: number): string {
   return text.slice(0, max - 1) + '\u2026';
 }
 
-export function MainView({ ensemble, players, messages, schedules }: MainViewProps) {
+export function MainView({ ensemble, players, messages, schedules, staticItemCount }: MainViewProps) {
   const { Text } = useInk();
   const unicode = supportsUnicode();
   const icons = statusIcons(unicode);
@@ -94,19 +96,27 @@ export function MainView({ ensemble, players, messages, schedules }: MainViewPro
   children.push(React.createElement(Text, { key: 'ah', bold: true, color: THEME.accent }, '  Recent Activity'));
   children.push('\n');
 
-  const recentMessages = messages.slice(-8);
-  if (recentMessages.length === 0) {
+  const recentMessages = messages.slice(-3);
+  if (recentMessages.length === 0 && !staticItemCount) {
     children.push(React.createElement(Text, { key: 'na', color: THEME.dim }, '  No activity yet'));
   } else {
+    // Scrollback indicator
+    if (staticItemCount && staticItemCount > 0) {
+      children.push(
+        React.createElement(Text, { key: 'scrollback', color: THEME.dim },
+          `  \u2191 ${staticItemCount} messages in scrollback (scroll up in terminal)`),
+      );
+      children.push('\n');
+    }
+    // Latest 3 messages as preview
     for (let i = 0; i < recentMessages.length; i++) {
       const m = recentMessages[i];
       const time = formatTime(m.timestamp);
-      const msgText = truncate(m.text.replace(/\n/g, ' '), 50);
-      const color = m.text.includes('stale') ? THEME.warning : THEME.textMuted;
+      const msgText = truncate(m.text.replace(/\n/g, ' '), 60);
 
       if (i > 0) children.push('\n');
       children.push(
-        React.createElement(Text, { key: m.id || `msg-${i}`, color },
+        React.createElement(Text, { key: m.id || `msg-${i}`, color: THEME.dim },
           `  ${time}  ${m.from} ${icons.arrow} ${m.to}: ${msgText}`,
         ),
       );

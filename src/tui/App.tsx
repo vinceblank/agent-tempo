@@ -978,6 +978,7 @@ export function App({ api, ensemble }: AppProps) {
         players: state.players,
         messages: state.messages,
         schedules: state.schedules.map(s => ({ name: s.name, spec: s.type, target: s.target })),
+        staticItemCount: state.staticItems.length,
       });
     }
 
@@ -1032,8 +1033,6 @@ export function App({ api, ensemble }: AppProps) {
   const HEADER_LINES = 2; // TitleBar + top divider
   const FOOTER_LINES = 4; // StatusBar + bottom divider + PromptArea (hints + input)
   const contentHeight = Math.max(3, termRows - 1 - HEADER_LINES - FOOTER_LINES);
-
-  console.error(`[tui:debug] render staticItems=${state.staticItems.length}`);
 
   // Splash phase — full screen, no chrome (title/status/prompt hidden)
   if (state.phase === 'splash') {

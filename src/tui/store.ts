@@ -453,7 +453,6 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       const newItems = [...state.staticItems, action.item];
       // Trim to last 500 entries for memory management
       const trimmed = newItems.length > 500 ? newItems.slice(-500) : newItems;
-      console.error(`[tui:debug] COMMIT_STATIC total=${trimmed.length} latest="${action.item.content.slice(0, 60)}"`);
       return { ...state, staticItems: trimmed };
     }
 
