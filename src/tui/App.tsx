@@ -679,61 +679,40 @@ export function App({ api, ensemble }: AppProps) {
             });
           }
 
-          // Skip dispatch if data hasn't changed (avoids unnecessary re-renders)
-          const lastMsg = messages.length > 0 ? messages[messages.length - 1].id : '';
-          const pollKey = {
-            playerCount: players.length,
-            lastMsgId: lastMsg,
-            historyLen: history.length,
-            scheduleCount: schedules.length,
-            maestroMsgCount: maestroMsgs.received.length,
-          };
-          const prev = lastPollRef.current;
-          const changed = pollKey.playerCount !== prev.playerCount
-            || pollKey.lastMsgId !== prev.lastMsgId
-            || pollKey.historyLen !== prev.historyLen
-            || pollKey.scheduleCount !== prev.scheduleCount
-            || pollKey.maestroMsgCount !== prev.maestroMsgCount;
-
-          console.error(`[tui:poll] relay=${messages.length} dms=${maestroMsgs.received.length} sent=${maestroMsgs.sent.length} changed=${changed} prev=${JSON.stringify(prev)}`);
-
-          if (changed) {
-            // Merge maestro DMs into messages so conversation stream sees them
-            const allMessages = [...messages];
-            for (const dm of maestroMsgs.received) {
-              if (!allMessages.some(m => m.id === dm.id)) {
-                allMessages.push({
-                  id: dm.id,
-                  ensemble: ens,
-                  from: dm.from,
-                  to: 'maestro',
-                  text: dm.text,
-                  timestamp: dm.timestamp,
-                  direction: 'inbound',
-                } as any);
-              }
+          // Always merge DMs and update state — no dedup gate
+          const allMessages = [...messages];
+          for (const dm of maestroMsgs.received) {
+            if (!allMessages.some(m => m.id === dm.id)) {
+              allMessages.push({
+                id: dm.id,
+                ensemble: ens,
+                from: dm.from,
+                to: 'maestro',
+                text: dm.text,
+                timestamp: dm.timestamp,
+                direction: 'inbound',
+              } as any);
             }
-            allMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-            dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages: allMessages, history, schedules });
-            lastPollRef.current = pollKey;
+          }
+          allMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+          dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages: allMessages, history, schedules });
 
-            // Auto-detect conductor: track name but don't auto-enter chat
-            const currentS = stateRef.current;
-            if (!currentS.conductorName) {
-              const conductor = players.find(p => p.isConductor);
-              if (conductor) {
-                dispatch({ type: 'SET_CONDUCTOR', name: conductor.playerId });
-              }
+          // Track conductor
+          const currentS = stateRef.current;
+          if (!currentS.conductorName) {
+            const conductor = players.find(p => p.isConductor);
+            if (conductor) {
+              dispatch({ type: 'SET_CONDUCTOR', name: conductor.playerId });
             }
           }
 
-          // Update ref so next poll uses the latest ID
+          // Update ref for maestro DM tracking
           if (messages.length > 0) {
-            lastSeenMsgRef.current = lastMsg;
+            lastSeenMsgRef.current = messages[messages.length - 1].id;
           }
         }
-      } catch {
-        // Silently skip failed polls
+      } catch (err) {
+        console.error('[tui:poll] error:', err);
       }
     }, 3000);
 
