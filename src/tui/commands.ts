@@ -160,7 +160,8 @@ async function handlePlayer(
   ctx: CommandContext,
 ): Promise<void> {
   if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /player <name>');
+    // No args — show picker (same as /players)
+    dispatch({ type: 'SHOW_PICKER', pickerType: 'players' });
     return;
   }
 
@@ -772,7 +773,8 @@ async function handleEnsemble(
   api: TempoClient,
 ): Promise<void> {
   if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /ensemble <name>');
+    // No args — show ensemble picker
+    dispatch({ type: 'SHOW_PICKER', pickerType: 'ensembles' });
     return;
   }
 
@@ -867,9 +869,9 @@ export const COMMANDS: Record<string, CommandDef> = {
     handler: handlePlayer,
   },
   players: {
-    description: 'List players in the current ensemble',
+    description: 'List players (alias for /player)',
     usage: '/players',
-    handler: handlePlayers,
+    handler: handlePlayer, // Same as /player — no args shows picker
   },
   gates: {
     description: 'List quality gates and their status',
@@ -892,9 +894,9 @@ export const COMMANDS: Record<string, CommandDef> = {
     handler: handleLineup,
   },
   ensembles: {
-    description: 'List all discovered ensembles',
+    description: 'List ensembles (alias for /ensemble)',
     usage: '/ensembles',
-    handler: handleEnsembles,
+    handler: handleEnsemble, // Same as /ensemble — no args shows picker
   },
   ensemble: {
     description: 'Switch active ensemble context',

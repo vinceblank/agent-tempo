@@ -493,11 +493,6 @@ export function App({ api, ensemble }: AppProps) {
         },
       };
 
-      if (parsed.name === 'ensembles' && parsed.args.length === 0) {
-        dispatch({ type: 'SHOW_PICKER', pickerType: 'ensembles' });
-        return;
-      }
-
       if (PICKER_COMMANDS[parsed.name] && parsed.args.length === 0) {
         pickerCallbackRef.current = PICKER_COMMANDS[parsed.name];
         dispatch({ type: 'SHOW_PICKER', pickerType: 'players' });
