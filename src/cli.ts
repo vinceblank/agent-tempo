@@ -21,6 +21,8 @@ interface ParsedArgs {
   skipPreflight: boolean;
   background: boolean;
   keepMcp: boolean;
+  keepDaemon: boolean;
+  yes: boolean;
   all: boolean;
   project: boolean;
   replace: boolean;
@@ -40,6 +42,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     skipPreflight: false,
     background: false,
     keepMcp: false,
+    keepDaemon: false,
+    yes: false,
     all: false,
     project: false,
     replace: false,
@@ -72,6 +76,10 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.background = true;
     } else if (arg === '--keep-mcp') {
       result.keepMcp = true;
+    } else if (arg === '--keep-daemon') {
+      result.keepDaemon = true;
+    } else if (arg === '--yes' || arg === '-y') {
+      result.yes = true;
     } else if (arg === '--all') {
       result.all = true;
     } else if (arg === '--project') {
@@ -189,6 +197,8 @@ async function main() {
         ensemble: args.ensemble || args.positional[1] || process.env[ENV.ENSEMBLE],
         all: args.all,
         removeMcp: !args.keepMcp,
+        keepDaemon: args.keepDaemon,
+        yes: args.yes,
         dir: args.dir,
         ...overrides,
       });

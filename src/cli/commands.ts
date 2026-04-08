@@ -1,3 +1,4 @@
+import * as readline from 'readline';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, copyFileSync, statSync, openSync, readSync, closeSync } from 'fs';
 import { basename, join, resolve } from 'path';
 import { execFileSync, spawn as cpSpawn } from 'child_process';
@@ -1001,6 +1002,21 @@ function parseDuration(s: string): number {
   }
 }
 
+/** Prompt the user for y/n confirmation. Exits with code 1 in non-TTY environments. */
+async function confirmPrompt(message: string): Promise<boolean> {
+  if (!process.stdin.isTTY) {
+    out.error('Non-interactive environment: use --yes / -y to confirm teardown.');
+    process.exit(1);
+  }
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise<boolean>((resolve) => {
+    rl.question(`${message} [y/N] `, (answer) => {
+      rl.close();
+      resolve(answer.trim().toLowerCase() === 'y');
+    });
+  });
+}
+
 // --- Teardown: `down` command ---
 
 interface DownOpts extends CliOverrides {
@@ -1008,6 +1024,8 @@ interface DownOpts extends CliOverrides {
   ensemble?: string;
   all: boolean;
   removeMcp: boolean;
+  keepDaemon: boolean;
+  yes: boolean;
   dir: string;
 }
 
@@ -1040,13 +1058,40 @@ export async function down(opts: DownOpts) {
         process.exit(1);
       } else if (runningEnsembles.size === 1) {
         ensembleName = [...runningEnsembles][0];
-      } else {
-        out.error(`Multiple ensembles running. Please specify which one to tear down:`);
-        for (const name of [...runningEnsembles].sort()) {
-          out.log(`  - claude-tempo down ${name}`);
+        // Auto-detected ensemble requires confirmation unless --yes
+        if (!opts.yes) {
+          out.heading('claude-tempo teardown');
+          out.log(`  This will destroy ensemble ${out.bold(ensembleName)}: all sessions, daemon, and Temporal server.`);
+          const confirmed = await confirmPrompt('Proceed?');
+          if (!confirmed) {
+            out.log('Aborted.');
+            process.exit(0);
+          }
         }
-        out.log(`  - claude-tempo down --all`);
-        process.exit(1);
+      } else {
+        // Multiple ensembles: require confirmation or --yes for each
+        if (!opts.yes) {
+          out.heading('claude-tempo teardown');
+          out.log(`  Multiple ensembles running:`);
+          for (const name of [...runningEnsembles].sort()) {
+            out.log(`    - ${name}`);
+          }
+          out.log('');
+          out.log(`  This will destroy ${out.bold('all')} of them: sessions, daemon, and Temporal server.`);
+          const confirmed = await confirmPrompt('Proceed?');
+          if (!confirmed) {
+            out.log('Aborted. To tear down a specific ensemble:');
+            for (const name of [...runningEnsembles].sort()) {
+              out.log(`  - claude-tempo down ${name}`);
+            }
+            process.exit(0);
+          }
+          // Treat as --all since user confirmed tearing down everything
+          opts.all = true;
+        } else {
+          // --yes with multiple ensembles: treat as --all
+          opts.all = true;
+        }
       }
     } catch (err) {
       out.error(`Could not detect running ensembles: ${(err as Error).message}`);
@@ -1153,9 +1198,12 @@ export async function down(opts: DownOpts) {
   // Step 2: Kill bridge processes via PID files
   killBridgeProcesses();
 
-  // Step 2.5: Stop worker daemon — only if --all or no other workflows remain
-  // hasRemainingWorkflows is only meaningful when Temporal was reachable
-  if (opts.all || (temporalUp && !hasRemainingWorkflows)) {
+  // Step 2.5: Stop worker daemon — unless --keep-daemon or other ensembles still active
+  if (opts.keepDaemon) {
+    if (isDaemonRunning()) {
+      out.log(`  ${out.dim('Worker daemon left running (--keep-daemon)')}`);
+    }
+  } else if (opts.all || !hasRemainingWorkflows) {
     if (stopDaemon()) {
       out.success('Worker daemon stopped');
     }
@@ -1910,7 +1958,7 @@ ${out.bold('Usage:')}
 
 ${out.bold('Commands:')}
   ${out.cyan('up')}      [ensemble]    First-time setup: start Temporal, configure MCP, launch conductor
-  ${out.cyan('down')}                  Stop Temporal, terminate sessions, remove MCP config
+  ${out.cyan('down')}    [ensemble]    Tear down everything: sessions, daemon, Temporal server, MCP config
   ${out.cyan('server')}                Start the Temporal dev server and register search attributes
   ${out.cyan('conduct')} [ensemble]    Start a conductor session (resumes existing, --replace to restart)
   ${out.cyan('start')}   [ensemble]    Start a player session
@@ -1941,9 +1989,11 @@ ${out.bold('Other options:')}
   --background                Run Temporal in background (server only)
   --project                   Use per-project .mcp.json instead of global (init only)
   --keep-mcp                  Don't remove MCP config (down only)
+  --keep-daemon               Don't stop the worker daemon (down only)
+  -y, --yes                   Skip confirmation prompt (down only)
   --all                       Stop all sessions (stop only)
   --lineup <name|file>         Load ensemble lineup by name or file path (up only)
-  --ensemble <name>           Target a specific ensemble (stop only)
+  --ensemble <name>           Target a specific ensemble (stop/down)
   -d, --dir <path>            Target directory (default: cwd)
 
 ${out.bold('Config command:')}
