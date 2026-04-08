@@ -1004,20 +1004,18 @@ export function App({ api, ensemble }: AppProps) {
           // Blank separator
           dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: '', timestamp: Date.now() } });
           const lines = msg.body.split('\n');
-          if (msg.direction === 'out') {
-            dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'message', content: `\u276F ${lines[0]}  ${msg.time}`, timestamp: Date.now() } });
-            for (const line of lines.slice(1, 4)) {
-              dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'command-output', content: `  ${line}`, timestamp: Date.now() } });
-            }
-          } else {
-            dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'message', content: `\u2190 ${msg.sender}: ${lines[0]}  ${msg.time}`, timestamp: Date.now() } });
-            const indent = '  ' + ' '.repeat(msg.sender.length + 2);
-            for (const line of lines.slice(1, 4)) {
-              dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'command-output', content: `${indent}${line}`, timestamp: Date.now() } });
-            }
+          // First line with structured fields for rich rendering
+          dispatch({ type: 'COMMIT_STATIC', item: {
+            id: nextStaticId(), type: 'message', content: lines[0], timestamp: Date.now(),
+            msgDirection: msg.direction, msgSender: msg.sender, msgTime: msg.time,
+          }});
+          // Continuation lines
+          const indent = msg.direction === 'out' ? '    ' : '    ' + ' '.repeat(msg.sender.length + 2);
+          for (const line of lines.slice(1, 4)) {
+            dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'command-output', content: `${indent}${line}`, timestamp: Date.now() } });
           }
           if (lines.length > 4) {
-            dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `  \u2026 (${lines.length - 4} more lines)`, timestamp: Date.now() } });
+            dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `${indent}\u2026 (${lines.length - 4} more lines)`, timestamp: Date.now() } });
           }
         }
       }
@@ -1146,9 +1144,27 @@ export function App({ api, ensemble }: AppProps) {
   // Root layout: <Static> items above, then live area constrained to terminal height
   return React.createElement(React.Fragment, null,
     // Static items — rendered once to stdout, become native terminal scrollback
-    React.createElement(Static, { items: state.staticItems, children: (item: StaticItem) =>
-      React.createElement(Text, { key: item.id, color: staticItemColor(item) }, `  ${item.content}`),
-    }),
+    React.createElement(Static, { items: state.staticItems, children: (item: StaticItem) => {
+      // Rich rendering for messages — match live area colors
+      if (item.type === 'message' && item.msgDirection) {
+        if (item.msgDirection === 'out') {
+          return React.createElement(Text, { key: item.id },
+            React.createElement(Text, { color: THEME.accent, bold: true }, '  \u276F '),
+            React.createElement(Text, { color: THEME.text }, item.content),
+            React.createElement(Text, { color: THEME.dim }, `  ${item.msgTime || ''}`),
+          );
+        } else {
+          return React.createElement(Text, { key: item.id },
+            React.createElement(Text, { color: THEME.dim }, '  \u2190 '),
+            React.createElement(Text, { color: THEME.accent }, `${item.msgSender || ''}: `),
+            React.createElement(Text, { color: THEME.text }, item.content),
+            React.createElement(Text, { color: THEME.dim }, `  ${item.msgTime || ''}`),
+          );
+        }
+      }
+      // Fallback for non-message items
+      return React.createElement(Text, { key: item.id, color: staticItemColor(item) }, `  ${item.content}`);
+    }}),
     // Live area — height constrained to termRows-1
     React.createElement(Box, { flexDirection: 'column', height: termRows - 1, overflow: 'hidden' },
       // Content area — full height above footer

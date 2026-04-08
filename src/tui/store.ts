@@ -37,6 +37,10 @@ export interface StaticItem {
   type: 'splash-done' | 'command-output' | 'message' | 'error' | 'info';
   content: string;
   timestamp: number;
+  /** Message-specific fields for rich rendering in scrollback. */
+  msgDirection?: 'in' | 'out';
+  msgSender?: string;
+  msgTime?: string;
 }
 
 // ── Recruit wizard ──
