@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { start, status, init, server, up, down, stop, help, version, ensembleCommand, agentTypesCommand, broadcast, encore, daemon } from './cli/commands';
+import { start, status, init, server, up, down, stop, help, version, ensembleCommand, agentTypesCommand, broadcast, encore, daemon, upgrade } from './cli/commands';
 import { configCommand } from './cli/config-command';
 import { runPreflight } from './cli/preflight';
 import * as out from './cli/output';
@@ -286,6 +286,13 @@ async function main() {
       await runTui({ config, ensemble });
       break;
     }
+
+    case 'upgrade':
+      await upgrade({
+        version: args.positional[1], // e.g. "0.20.0" or "latest" or undefined
+        ...overrides,
+      });
+      break;
 
     case 'version':
       version();
