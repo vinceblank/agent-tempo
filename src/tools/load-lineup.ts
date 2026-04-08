@@ -49,14 +49,18 @@ export function registerLoadLineupTool(
         // Resolve the file path: saved → shipped examples → direct file path
         let filePath: string;
         if (lineupPath) {
-          filePath = lineupPath;
+          // User-provided path — validate against allowed roots
+          filePath = safeLineupPath(lineupPath, process.cwd());
         } else {
           const resolution = resolveLineupPath(lineupName!);
           filePath = resolution.path;
+          // Only validate user-facing paths (saved lineups, file paths).
+          // Shipped examples are package-controlled and may live outside
+          // allowed roots when globally installed.
+          if (resolution.source !== 'shipped') {
+            filePath = safeLineupPath(filePath, process.cwd());
+          }
         }
-
-        // Validate the resolved path is within allowed roots
-        filePath = safeLineupPath(filePath, process.cwd());
 
         const lineup = loadAndResolveLineup(filePath);
         const recruited: string[] = [];
