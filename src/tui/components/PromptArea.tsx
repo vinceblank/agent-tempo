@@ -18,7 +18,6 @@ import { THEME } from '../utils/theme';
 const MAX_HISTORY = 50;
 
 /** Commands that take a player name as their first argument. */
-const PLAYER_ARG_COMMANDS = new Set(['cue', 'stop', 'encore', 'recall']);
 
 export interface PromptAreaHandle {
   setValue: (v: string) => void;
@@ -125,7 +124,12 @@ export const PromptArea = React.memo(function PromptArea({
     // Only toggle palette when visibility actually changes — avoids parent dispatch on every keystroke
     if (r.onPaletteToggle) {
       const trimmed = newValue.trimStart();
-      const shouldShow = trimmed.startsWith('/') && !trimmed.includes(' ');
+      // Show palette for command names (/par) and for parameter position (/chat )
+      const shouldShow = trimmed.startsWith('/') && (
+        !trimmed.includes(' ') || // command name completion
+        trimmed.endsWith(' ') || // just entered parameter position
+        trimmed.split(' ').length === 2 // typing first parameter
+      );
       if (shouldShow !== !!r.paletteVisible) {
         r.onPaletteToggle(shouldShow);
       }
@@ -165,10 +169,14 @@ export const PromptArea = React.memo(function PromptArea({
       const partial = parts[parts.length - 1].toLowerCase();
       const prefix = trimmed.slice(0, trimmed.length - parts[parts.length - 1].length);
 
-      // First param: player name for player commands
+      // First param: player name for player commands (prefix + segment match)
       if (parts.length === 1 && PLAYER_PARAM_COMMANDS.has(cmd)) {
         const names = r.playerNames || [];
-        const matches = names.filter(n => n.toLowerCase().startsWith(partial) && n.toLowerCase() !== partial);
+        const matches = names.filter(n => {
+          const lower = n.toLowerCase();
+          if (lower === partial) return false;
+          return lower.startsWith(partial) || lower.split('-').some(seg => seg.startsWith(partial));
+        });
         if (matches.length > 0) return matches.map(n => `${prefix}${n} `);
       }
 
@@ -187,21 +195,6 @@ export const PromptArea = React.memo(function PromptArea({
       }
 
       return [];
-    }
-
-    if (trimmed.startsWith('/') && trimmed.includes(' ')) {
-      const spaceIdx = trimmed.indexOf(' ');
-      const cmdName = trimmed.slice(1, spaceIdx).toLowerCase();
-      if (PLAYER_ARG_COMMANDS.has(cmdName)) {
-        const afterCmd = trimmed.slice(spaceIdx + 1);
-        if (!afterCmd.includes(' ')) {
-          const partial = afterCmd.toLowerCase();
-          if (!partial) return r.playerNames.map(p => `/${cmdName} ${p} `);
-          return r.playerNames
-            .filter(p => p.toLowerCase().startsWith(partial) && p.toLowerCase() !== partial)
-            .map(p => `/${cmdName} ${p} `);
-        }
-      }
     }
 
     return [];

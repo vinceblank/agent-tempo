@@ -363,11 +363,51 @@ export function App({ api, ensemble }: AppProps) {
     }
   }, []);
 
+  // Player commands that take a player name as first arg
+  const PLAYER_CMD_SET = new Set(['chat', 'cue', 'stop', 'encore']);
+  const SUBCMD_MAP: Record<string, string[]> = {
+    worktree: ['create', 'remove', 'list'],
+    stage: ['create', 'list', 'cancel'],
+    schedule: ['create', 'list', 'cancel'],
+    lineup: ['load', 'save'],
+    ensemble: ['save', 'list', 'show'],
+  };
+
   const filteredPaletteCommands = useMemo(() => {
     if (!state.paletteVisible) return [];
+
+    // Check if we're in parameter position (input has / + space)
+    const input = inputValueRef.current.trimStart();
+    if (input.startsWith('/') && input.includes(' ')) {
+      const spaceIdx = input.indexOf(' ');
+      const cmd = input.slice(1, spaceIdx).toLowerCase();
+      const partial = input.slice(spaceIdx + 1).toLowerCase().trim();
+
+      // Player name completion
+      if (PLAYER_CMD_SET.has(cmd)) {
+        return playerNamesList
+          .filter(n => {
+            const lower = n.toLowerCase();
+            // Match prefix or any hyphen-separated segment
+            return (lower.startsWith(partial) || lower.split('-').some(seg => seg.startsWith(partial))) && lower !== partial;
+          })
+          .map(n => ({ name: n, usage: '', description: 'player' }));
+      }
+
+      // Subcommand completion
+      if (SUBCMD_MAP[cmd]) {
+        return SUBCMD_MAP[cmd]
+          .filter(s => s.startsWith(partial) && s !== partial)
+          .map(s => ({ name: s, usage: '', description: `${cmd} subcommand` }));
+      }
+
+      return [];
+    }
+
+    // Command name completion
     if (!paletteFilter) return allPaletteCommands;
     return allPaletteCommands.filter(c => c.name.startsWith(paletteFilter));
-  }, [state.paletteVisible, paletteFilter, allPaletteCommands]);
+  }, [state.paletteVisible, paletteFilter, allPaletteCommands, playerNamesList]);
 
   // Clamp palette index
   const clampedPaletteIndex = Math.min(state.paletteIndex, Math.max(0, filteredPaletteCommands.length - 1));
@@ -389,8 +429,18 @@ export function App({ api, ensemble }: AppProps) {
   const handlePaletteSelect = useCallback(() => {
     if (filteredPaletteCommands.length > 0) {
       const selected = filteredPaletteCommands[clampedPaletteIndex];
-      promptRef.current?.setValue(`/${selected.name} `);
-      inputValueRef.current = `/${selected.name} `;
+      const input = inputValueRef.current.trimStart();
+      // Check if we're in parameter position
+      if (input.startsWith('/') && input.includes(' ')) {
+        const spaceIdx = input.indexOf(' ');
+        const cmdPart = input.slice(0, spaceIdx + 1); // e.g. "/chat "
+        const newValue = `${cmdPart}${selected.name} `;
+        promptRef.current?.setValue(newValue);
+        inputValueRef.current = newValue;
+      } else {
+        promptRef.current?.setValue(`/${selected.name} `);
+        inputValueRef.current = `/${selected.name} `;
+      }
       dispatch({ type: 'HIDE_PALETTE' });
     }
   }, [filteredPaletteCommands, clampedPaletteIndex]);
