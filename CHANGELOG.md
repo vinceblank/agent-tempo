@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.20.1] - 2026-04-08
+
+### Fixed
+
+- `claude-tempo up` now detects an existing running conductor and prompts with options: join as player, reconnect, tear down and start fresh, or cancel. Prevents two sessions from silently sharing the same Temporal workflow (#85)
+
 ## [0.20.0] - 2026-04-08
 
 ### Added
