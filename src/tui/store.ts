@@ -196,6 +196,8 @@ export interface TuiState {
   scheduleWizard?: ScheduleWizardState;
   /** Status overlay visible (shows player list). */
   statusOverlay: boolean;
+  /** Scroll offset within the status overlay. */
+  statusScrollOffset: number;
   /** Command palette state. */
   paletteVisible: boolean;
   paletteIndex: number;
@@ -237,6 +239,7 @@ export function initialState(ensemble?: string): TuiState {
     chatTarget: undefined,
     sentMessages: [],
     statusOverlay: false,
+    statusScrollOffset: 0,
     paletteVisible: false,
     paletteIndex: 0,
     pickerVisible: false,
@@ -285,6 +288,8 @@ export type TuiAction =
   // Picker overlay
   | { type: 'SHOW_STATUS' }
   | { type: 'HIDE_STATUS' }
+  | { type: 'STATUS_SCROLL_UP' }
+  | { type: 'STATUS_SCROLL_DOWN' }
   | { type: 'SHOW_PICKER'; pickerType: 'players' | 'ensembles' }
   | { type: 'HIDE_PICKER' }
   | { type: 'PICKER_UP' }
@@ -503,9 +508,13 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     // ── Picker overlay ──
 
     case 'SHOW_STATUS':
-      return { ...state, statusOverlay: true };
+      return { ...state, statusOverlay: true, statusScrollOffset: 0 };
     case 'HIDE_STATUS':
-      return { ...state, statusOverlay: false };
+      return { ...state, statusOverlay: false, statusScrollOffset: 0 };
+    case 'STATUS_SCROLL_UP':
+      return { ...state, statusScrollOffset: Math.max(0, state.statusScrollOffset - 1) };
+    case 'STATUS_SCROLL_DOWN':
+      return { ...state, statusScrollOffset: state.statusScrollOffset + 1 };
 
     case 'SHOW_PICKER':
       return { ...state, pickerVisible: true, pickerType: action.pickerType, pickerIndex: 0 };

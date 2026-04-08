@@ -121,10 +121,12 @@ export function App({ api, ensemble }: AppProps) {
     // Scrollback navigation (Page Up/Down, Home/End)
     // Scroll keys removed — terminal native scrollback via <Static> handles this
 
-    // Status overlay — Escape dismisses
+    // Status overlay — Escape dismisses, ↑↓ scrolls
     if (s.statusOverlay) {
       if (key.escape) { dispatch({ type: 'HIDE_STATUS' }); return; }
-      return; // Consume all input while overlay is showing
+      if (key.upArrow) { dispatch({ type: 'STATUS_SCROLL_UP' }); return; }
+      if (key.downArrow) { dispatch({ type: 'STATUS_SCROLL_DOWN' }); return; }
+      return;
     }
 
     // Picker overlay navigation
@@ -949,38 +951,72 @@ export function App({ api, ensemble }: AppProps) {
       });
     }
 
-    // Status overlay — card layout player list
+    // Status overlay — card layout with scrolling
     if (state.statusOverlay && state.activeEnsemble) {
       const iconMap: Record<string, string> = { active: '\u25CF', blocked: '\u25CB', stale: '\u25CC', pending: '\u23F3' };
       const colorMap: Record<string, string> = { active: THEME.success, blocked: THEME.text, stale: THEME.dim, pending: THEME.warning };
+      const cols = process.stdout.columns || 80;
+      const indent = 4;
+      const maxWidth = Math.max(20, cols - indent);
+
+      // Wrap text with indentation preserved
+      const wrap = (text: string): string => {
+        if (text.length <= maxWidth) return text;
+        const prefix = ' '.repeat(indent);
+        const chunks: string[] = [];
+        let rem = text;
+        while (rem.length > maxWidth) {
+          let brk = rem.lastIndexOf(' ', maxWidth);
+          if (brk <= 0) brk = maxWidth;
+          chunks.push(rem.slice(0, brk));
+          rem = rem.slice(brk).trimStart();
+        }
+        if (rem) chunks.push(rem);
+        return chunks.join('\n' + prefix);
+      };
+
+      // Window players based on scroll offset
+      const maxVisible = Math.max(2, Math.floor((contentHeight - 3) / 4)); // ~4 lines per card
+      const scrollOffset = Math.min(state.statusScrollOffset, Math.max(0, state.players.length - maxVisible));
+      const visiblePlayers = state.players.slice(scrollOffset, scrollOffset + maxVisible);
+
       const children: React.ReactNode[] = [];
       children.push(React.createElement(Text, { key: 'h', bold: true, color: THEME.accent },
         `  Ensemble: ${state.activeEnsemble} (${state.players.length} player${state.players.length !== 1 ? 's' : ''})`));
-      for (const p of state.players) {
+
+      if (scrollOffset > 0) {
+        children.push('\n');
+        children.push(React.createElement(Text, { key: 'sup', color: THEME.dim }, `  \u2191 ${scrollOffset} more above`));
+      }
+
+      for (const p of visiblePlayers) {
         const icon = iconMap[p.status || 'unknown'] || '?';
         const iconColor = colorMap[p.status || 'unknown'] || THEME.text;
         const conductor = p.isConductor ? ' \u2605' : '';
-        // Line 1: icon + name (+ conductor star)
         children.push('\n\n');
         children.push(React.createElement(React.Fragment, { key: `${p.playerId}-1` },
           React.createElement(Text, { color: iconColor }, `  ${icon} `),
           React.createElement(Text, { bold: true, color: THEME.text }, p.playerId),
           conductor ? React.createElement(Text, { color: THEME.warning }, conductor) : null,
         ));
-        // Line 2: status · branch · type (dim)
         const details = [p.status || 'unknown'];
         if (p.gitBranch) details.push(p.gitBranch);
         if (p.playerType || p.agentType) details.push(p.playerType || p.agentType || '');
         children.push('\n');
-        children.push(React.createElement(Text, { key: `${p.playerId}-2`, color: THEME.dim }, `    ${details.join(' \u00B7 ')}`));
-        // Line 3: part (full width, no truncation)
+        children.push(React.createElement(Text, { key: `${p.playerId}-2`, color: THEME.dim }, `    ${wrap(details.join(' \u00B7 '))}`));
         if (p.part) {
           children.push('\n');
-          children.push(React.createElement(Text, { key: `${p.playerId}-3`, color: THEME.textMuted }, `    ${p.part}`));
+          children.push(React.createElement(Text, { key: `${p.playerId}-3`, color: THEME.textMuted }, `    ${wrap(p.part)}`));
         }
       }
+
+      if (scrollOffset + maxVisible < state.players.length) {
+        children.push('\n\n');
+        children.push(React.createElement(Text, { key: 'sdn', color: THEME.dim }, `  \u2193 ${state.players.length - scrollOffset - maxVisible} more below`));
+      }
+
       children.push('\n\n');
-      children.push(React.createElement(Text, { key: 'hint', color: THEME.dim }, '  Press Esc to dismiss'));
+      children.push(React.createElement(Text, { key: 'hint', color: THEME.dim }, '  \u2191\u2193 scroll, Esc to dismiss'));
       return React.createElement(Text, null, ...children);
     }
 
