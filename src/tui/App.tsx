@@ -949,25 +949,35 @@ export function App({ api, ensemble }: AppProps) {
       });
     }
 
-    // Status overlay — full-screen player list
+    // Status overlay — card layout player list
     if (state.statusOverlay && state.activeEnsemble) {
-      const icons: Record<string, string> = { active: '\u25CF', blocked: '\u25CB', stale: '\u25CC', pending: '\u23F3' };
+      const iconMap: Record<string, string> = { active: '\u25CF', blocked: '\u25CB', stale: '\u25CC', pending: '\u23F3' };
+      const colorMap: Record<string, string> = { active: THEME.success, blocked: THEME.text, stale: THEME.dim, pending: THEME.warning };
       const children: React.ReactNode[] = [];
       children.push(React.createElement(Text, { key: 'h', bold: true, color: THEME.accent },
         `  Ensemble: ${state.activeEnsemble} (${state.players.length} player${state.players.length !== 1 ? 's' : ''})`));
-      children.push('\n');
-      for (let i = 0; i < state.players.length; i++) {
-        const p = state.players[i];
-        const icon = icons[p.status || 'unknown'] || '?';
+      for (const p of state.players) {
+        const icon = iconMap[p.status || 'unknown'] || '?';
+        const iconColor = colorMap[p.status || 'unknown'] || THEME.text;
         const conductor = p.isConductor ? ' \u2605' : '';
-        children.push('\n');
-        children.push(React.createElement(React.Fragment, { key: p.playerId },
-          React.createElement(Text, { color: p.status === 'active' ? THEME.success : p.status === 'stale' ? THEME.dim : THEME.text }, `  ${icon} `),
-          React.createElement(Text, { bold: true, color: THEME.text }, p.playerId.padEnd(20)),
-          React.createElement(Text, { color: THEME.dim }, `${(p.status || '?').padEnd(9)} ${(p.gitBranch || '\u2014').padEnd(14)} ${(p.playerType || p.agentType || '\u2014').padEnd(18)}`),
-          React.createElement(Text, { color: THEME.textMuted }, (p.part || '').slice(0, 40)),
+        // Line 1: icon + name (+ conductor star)
+        children.push('\n\n');
+        children.push(React.createElement(React.Fragment, { key: `${p.playerId}-1` },
+          React.createElement(Text, { color: iconColor }, `  ${icon} `),
+          React.createElement(Text, { bold: true, color: THEME.text }, p.playerId),
           conductor ? React.createElement(Text, { color: THEME.warning }, conductor) : null,
         ));
+        // Line 2: status · branch · type (dim)
+        const details = [p.status || 'unknown'];
+        if (p.gitBranch) details.push(p.gitBranch);
+        if (p.playerType || p.agentType) details.push(p.playerType || p.agentType || '');
+        children.push('\n');
+        children.push(React.createElement(Text, { key: `${p.playerId}-2`, color: THEME.dim }, `    ${details.join(' \u00B7 ')}`));
+        // Line 3: part (full width, no truncation)
+        if (p.part) {
+          children.push('\n');
+          children.push(React.createElement(Text, { key: `${p.playerId}-3`, color: THEME.textMuted }, `    ${p.part}`));
+        }
       }
       children.push('\n\n');
       children.push(React.createElement(Text, { key: 'hint', color: THEME.dim }, '  Press Esc to dismiss'));
