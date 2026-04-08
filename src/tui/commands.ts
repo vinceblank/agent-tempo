@@ -868,11 +868,6 @@ export const COMMANDS: Record<string, CommandDef> = {
     usage: '/player <name>',
     handler: handlePlayer,
   },
-  players: {
-    description: 'List players (alias for /player)',
-    usage: '/players',
-    handler: handlePlayer, // Same as /player — no args shows picker
-  },
   gates: {
     description: 'List quality gates and their status',
     usage: '/gates',
@@ -893,22 +888,11 @@ export const COMMANDS: Record<string, CommandDef> = {
     usage: '/lineup load <file> | save [file]',
     handler: handleLineup,
   },
-  ensembles: {
-    description: 'List ensembles (alias for /ensemble)',
-    usage: '/ensembles',
-    handler: handleEnsemble, // Same as /ensemble — no args shows picker
-  },
   ensemble: {
     description: 'Switch active ensemble context',
     usage: '/ensemble <name>',
     handler: handleEnsemble,
   },
-  // Singular/plural aliases
-  gate: { description: 'List quality gates (alias for /gates)', usage: '/gate', handler: handleGates },
-  stage: { description: 'List stages (alias for /stages)', usage: '/stage', handler: handleStages },
-  schedules: { description: 'List schedules (alias for /schedule)', usage: '/schedules', handler: handleSchedule },
-  worktrees: { description: 'List worktrees (alias for /worktree)', usage: '/worktrees', handler: handleWorktree },
-  lineups: { description: 'List lineups (alias for /lineup)', usage: '/lineups', handler: handleLineup },
   search: {
     description: 'Search message history',
     usage: '/search <term>',
