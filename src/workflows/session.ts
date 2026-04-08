@@ -104,7 +104,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   const sentMessages: SentMessage[] = input.sentMessages ?? [];
   const outbox: OutboxEntry[] = input.outbox ?? [];
   let lastActivityTime = Date.now();
-  let lastOutboundTime = Date.now();
+  let lastOutboundTime = input.lastOutboundTime ?? Date.now();
+  let lastInboundRRTime = input.lastInboundRRTime ?? 0;
 
   // ── Outbox Update + Query Handlers ──
 
@@ -156,6 +157,10 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       isMaestro: msg.isMaestro,
     });
     lastActivityTime = Date.now();
+    // Track inbound messages that expect a response (default: true for backward compat)
+    if (patched('v0.20-response-requested-blocked') && msg.responseRequested !== false) {
+      lastInboundRRTime = Date.now();
+    }
   });
 
   setHandler(setPartSignal, (newPart) => {
@@ -613,14 +618,14 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         upsertSearchAttributes({ ClaudeTempoStatus: ['stale'] });
       }
 
-      // Detect blocked session: active session with messages delivered but no outbound
-      // activity for 5+ minutes. The session is alive but may be stuck or spinning.
+      // Detect blocked session: active session that received a response-requested
+      // message but has not produced any outbound activity for 5+ minutes.
+      // Only messages with responseRequested !== false count as triggers.
       const BLOCKED_WINDOW_MS = 5 * 60 * 1000;
-      const hasDeliveredMessages = messages.some((m) => m.delivered);
       if (
         input.metadata.status === 'active' &&
-        hasDeliveredMessages &&
-        now - lastOutboundTime > BLOCKED_WINDOW_MS
+        lastInboundRRTime > lastOutboundTime &&
+        now - lastInboundRRTime > BLOCKED_WINDOW_MS
       ) {
         input.metadata.status = 'blocked';
         upsertSearchAttributes({ ClaudeTempoStatus: ['blocked'] });
@@ -638,6 +643,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
           timestamp: new Date().toISOString(),
           delivered: false,
         });
+        // Heartbeat probes should not trigger blocked detection
+        // (lastInboundRRTime is not updated — responseRequested is implicitly false)
       }
     }
 
@@ -651,6 +658,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         messages: messages.filter((m) => !m.delivered),
         sentMessages: sentMessages.slice(-50),
         outbox: outbox.filter((e) => e.status === 'pending' || e.status === 'processing'),
+        lastInboundRRTime,
+        lastOutboundTime,
         ...(input.metadata.isConductor ? { commandHistory, reportHistory, qualityGates, worktrees, stages } : {}),
       });
     }

@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { SessionMetadata } from '../src/types';
+import { SessionMetadata, OutboxEntry } from '../src/types';
 import { shouldIncludeInBroadcast } from '../src/utils/validation';
 import {
   setupTestEnv,
@@ -12,7 +12,34 @@ import {
   getMetadataQuery,
   submitOutboxUpdate,
   setPartSignal,
+  receiveMessageSignal,
 } from './helpers';
+
+/**
+ * Helper: deliver all pending messages so the workflow can exit cleanly
+ * when disableStaleDetection is false (it waits for all messages delivered).
+ */
+async function deliverAll(handle: any): Promise<void> {
+  const msgs = await handle.query('pendingMessages');
+  const ids = (msgs as any[]).filter((m: any) => !m.delivered).map((m: any) => m.id);
+  if (ids.length > 0) await handle.signal('markDelivered', ids);
+}
+
+/**
+ * Pre-seeded pending outbox entry to wake the workflow condition loop.
+ * The outbox dispatch does NOT update lastOutboundTime — only the
+ * submitOutboxUpdate handler does. This preserves pre-set timestamps.
+ */
+function seedOutbox(): OutboxEntry[] {
+  return [{
+    id: 'seed-probe',
+    type: 'cue',
+    targetPlayerId: '_probe',
+    message: '_wake',
+    createdAt: new Date().toISOString(),
+    status: 'pending',
+  }];
+}
 
 describe('blocked session detection', function () {
   before(async function () {
@@ -30,19 +57,13 @@ describe('blocked session detection', function () {
         metadata: playerMetadata({ playerId: 'blocked-recovery' }),
       });
 
-      // Manually set status to blocked (simulating detection)
       await handle.signal(updateMetadataSignal, { status: 'blocked' });
 
       let meta: SessionMetadata = await handle.query(getMetadataQuery);
       expect(meta.status).to.equal('blocked');
 
-      // Submit an outbox entry — should auto-recover to active
       await handle.executeUpdate(submitOutboxUpdate, {
-        args: [{
-          type: 'cue' as const,
-          targetPlayerId: 'someone',
-          message: 'hello',
-        }],
+        args: [{ type: 'cue' as const, targetPlayerId: 'someone', message: 'hello' }],
       });
 
       meta = await handle.query(getMetadataQuery);
@@ -59,15 +80,10 @@ describe('blocked session detection', function () {
         metadata: playerMetadata({ playerId: 'stale-no-recover' }),
       });
 
-      // Set to stale — outbox should NOT change status
       await handle.signal(updateMetadataSignal, { status: 'stale' });
 
       await handle.executeUpdate(submitOutboxUpdate, {
-        args: [{
-          type: 'cue' as const,
-          targetPlayerId: 'someone',
-          message: 'hello',
-        }],
+        args: [{ type: 'cue' as const, targetPlayerId: 'someone', message: 'hello' }],
       });
 
       const meta: SessionMetadata = await handle.query(getMetadataQuery);
@@ -104,10 +120,160 @@ describe('blocked session detection', function () {
       await handle.signal(setPartSignal, 'working on something');
 
       const meta: SessionMetadata = await handle.query(getMetadataQuery);
-      // setPart updates lastOutboundTime but doesn't auto-recover — only outbox does
       expect(meta.status).to.equal('blocked');
 
       await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.result();
+    });
+  });
+
+  // ── responseRequested blocked detection ──
+  //
+  // Test environment uses createLocal() (no time-skipping). The workflow's
+  // main loop: condition(() => terminated || hasPendingOutbox(), '5 min').
+  //
+  // Strategy: seed a pending outbox entry via SessionInput so the condition
+  // fires on the first iteration. Outbox DISPATCH doesn't touch lastOutboundTime.
+  // Pre-set lastInboundRRTime and lastOutboundTime to simulate elapsed time.
+  // After asserting, deliver all messages and terminate so the workflow exits cleanly.
+
+  it('does NOT flag as blocked when lastOutboundTime > lastInboundRRTime', async function () {
+    this.timeout(30_000);
+    await withWorkerAndOutboxActivities(async () => {
+      const now = Date.now();
+      const handle = await startSession({
+        metadata: playerMetadata({ playerId: 'idle-no-block', status: 'active' }),
+        disableStaleDetection: false,
+        lastInboundRRTime: now - 10 * 60 * 1000,
+        lastOutboundTime: now - 8 * 60 * 1000,
+        outbox: seedOutbox(),
+      });
+
+      await new Promise(r => setTimeout(r, 2000));
+      const meta: SessionMetadata = await handle.query(getMetadataQuery);
+      expect(meta.status).to.not.equal('blocked');
+
+      await deliverAll(handle);
+      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await deliverAll(handle);
+      await handle.result();
+    });
+  });
+
+  it('does NOT flag as blocked when lastInboundRRTime is 0', async function () {
+    this.timeout(30_000);
+    await withWorkerAndOutboxActivities(async () => {
+      const handle = await startSession({
+        metadata: playerMetadata({ playerId: 'no-rr-safe', status: 'active' }),
+        disableStaleDetection: false,
+        lastInboundRRTime: 0,
+        lastOutboundTime: Date.now(),
+        outbox: seedOutbox(),
+      });
+
+      await new Promise(r => setTimeout(r, 2000));
+      const meta: SessionMetadata = await handle.query(getMetadataQuery);
+      expect(meta.status).to.not.equal('blocked');
+
+      await deliverAll(handle);
+      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await deliverAll(handle);
+      await handle.result();
+    });
+  });
+
+  it('flags as blocked when unanswered RR message exceeds window', async function () {
+    this.timeout(30_000);
+    await withWorkerAndOutboxActivities(async () => {
+      const now = Date.now();
+      const handle = await startSession({
+        metadata: playerMetadata({ playerId: 'true-blocked-rr', status: 'active' }),
+        disableStaleDetection: false,
+        lastInboundRRTime: now - 10 * 60 * 1000,
+        lastOutboundTime: now - 15 * 60 * 1000,
+        outbox: seedOutbox(),
+      });
+
+      await new Promise(r => setTimeout(r, 2000));
+      const meta: SessionMetadata = await handle.query(getMetadataQuery);
+      expect(meta.status).to.equal('blocked');
+
+      await deliverAll(handle);
+      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await deliverAll(handle);
+      await handle.result();
+    });
+  });
+
+  it('responseRequested:false messages do NOT trigger blocked', async function () {
+    this.timeout(30_000);
+    await withWorkerAndOutboxActivities(async () => {
+      const now = Date.now();
+      const handle = await startSession({
+        metadata: playerMetadata({ playerId: 'rr-false-ok', status: 'active' }),
+        disableStaleDetection: false,
+        lastInboundRRTime: 0,
+        lastOutboundTime: now - 30 * 60 * 1000,
+        outbox: seedOutbox(),
+      });
+
+      await handle.signal(receiveMessageSignal, { from: 'sys', text: 'info', responseRequested: false });
+      await deliverAll(handle);
+
+      await new Promise(r => setTimeout(r, 2000));
+      const meta: SessionMetadata = await handle.query(getMetadataQuery);
+      expect(meta.status).to.not.equal('blocked');
+
+      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await deliverAll(handle);
+      await handle.result();
+    });
+  });
+
+  it('outbox submission recovers blocked via lastOutboundTime update', async function () {
+    this.timeout(30_000);
+    await withWorkerAndOutboxActivities(async () => {
+      const now = Date.now();
+      const handle = await startSession({
+        metadata: playerMetadata({ playerId: 'rr-recover', status: 'blocked' }),
+        lastInboundRRTime: now - 10 * 60 * 1000,
+        lastOutboundTime: now - 15 * 60 * 1000,
+      });
+
+      let meta: SessionMetadata = await handle.query(getMetadataQuery);
+      expect(meta.status).to.equal('blocked');
+
+      await handle.executeUpdate(submitOutboxUpdate, {
+        args: [{ type: 'cue' as const, targetPlayerId: 'someone', message: 'alive' }],
+      });
+
+      meta = await handle.query(getMetadataQuery);
+      expect(meta.status).to.equal('active');
+
+      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.result();
+    });
+  });
+
+  it('SessionInput accepts lastInboundRRTime and lastOutboundTime for continueAsNew', async function () {
+    this.timeout(30_000);
+    await withWorkerAndOutboxActivities(async () => {
+      const now = Date.now();
+      const handle = await startSession({
+        metadata: playerMetadata({ playerId: 'carry-fields', status: 'active' }),
+        disableStaleDetection: false,
+        lastInboundRRTime: now - 3 * 60 * 1000,
+        lastOutboundTime: now - 1 * 60 * 1000,
+        outbox: seedOutbox(),
+      });
+
+      await new Promise(r => setTimeout(r, 2000));
+      const meta: SessionMetadata = await handle.query(getMetadataQuery);
+      expect(meta.status).to.not.equal('blocked');
+
+      await deliverAll(handle);
+      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await deliverAll(handle);
       await handle.result();
     });
   });

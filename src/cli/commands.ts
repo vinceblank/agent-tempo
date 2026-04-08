@@ -1652,6 +1652,7 @@ export async function broadcast(opts: BroadcastOpts) {
       await handle.signal('receiveMessage', {
         from: 'cli',
         text: opts.message,
+        responseRequested: false,
       });
       sent++;
       out.log(`  ${out.green('✓')} ${target.playerId}`);
@@ -1749,7 +1750,7 @@ export async function encore(opts: EncoreOpts) {
 
   // Reset status and inject context message
   await targetHandle.signal('updateMetadata', { status: 'pending' });
-  await targetHandle.signal('receiveMessage', { from: 'system', text: contextMessage });
+  await targetHandle.signal('receiveMessage', { from: 'system', text: contextMessage, responseRequested: false });
 
   out.log(`Reviving "${opts.name}" in ${targetMeta.workDir}...`);
 

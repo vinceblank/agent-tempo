@@ -198,6 +198,7 @@ async function main() {
       await conductorHandle.signal('receiveMessage', {
         from: playerId,
         text: `Player ${playerId} joined from ${workDir}`,
+        responseRequested: false,
       });
     } catch {
       // No conductor running — that's fine

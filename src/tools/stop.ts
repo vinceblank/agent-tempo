@@ -51,6 +51,7 @@ export function registerStopTool(
             await condHandle.signal('receiveMessage', {
               from: 'system',
               text: `Session "${playerId}" was force-terminated by ${getPlayerId()}.`,
+              responseRequested: false,
             });
           } catch {
             // Conductor may not exist — that's fine
