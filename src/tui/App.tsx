@@ -297,7 +297,7 @@ export function App({ api, ensemble }: AppProps) {
       return `Chatting with ${state.chatTarget}. /back to return.`;
     }
     if (state.activeEnsemble) {
-      return 'Type a message. /chat <player> for direct chat. /help for commands.';
+      return 'Type a message. /players to list. /chat <player> for direct chat.';
     }
     return '/help /quit';
   }, [state.phase, state.chatTarget, state.confirmingStop, state.confirmingDisband, state.activeEnsemble, state.conductorName]);
@@ -971,15 +971,99 @@ export function App({ api, ensemble }: AppProps) {
       });
     }
 
-    // Main view — show ensemble state
+    // Main view — conversation stream (like Claude Code)
     if (state.activeEnsemble) {
-      return React.createElement(MainView, {
-        ensemble: state.activeEnsemble,
-        players: state.players,
-        messages: state.messages,
-        schedules: state.schedules.map(s => ({ name: s.name, spec: s.type, target: s.target })),
-        staticItemCount: state.staticItems.length,
-      });
+      // Build merged conversation from relay messages + sent messages + conductor history
+      const allConvoMsgs: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out' }> = [];
+
+      // Relay messages
+      for (const m of state.messages) {
+        allConvoMsgs.push({ id: m.id, from: m.from, to: m.to, text: m.text, timestamp: m.timestamp, direction: 'in' });
+      }
+
+      // Conductor history
+      for (const entry of state.conductorHistory) {
+        if (entry.type === 'command') {
+          const cmd = entry.data as { text: string; source: string; timestamp: string };
+          allConvoMsgs.push({ id: `ch-${entry.timestamp}`, from: cmd.source || 'maestro', to: 'conductor', text: cmd.text, timestamp: entry.timestamp || cmd.timestamp, direction: 'out' });
+        } else {
+          const report = entry.data as { playerId: string; text: string; type: string; timestamp: string };
+          allConvoMsgs.push({ id: `cr-${entry.timestamp}`, from: report.playerId, to: 'maestro', text: `[${report.type}] ${report.text}`, timestamp: entry.timestamp || report.timestamp, direction: 'in' });
+        }
+      }
+
+      // Sent messages (local echo)
+      for (const m of state.sentMessages) {
+        allConvoMsgs.push({ id: `sent-${m.timestamp}`, from: 'you', to: m.to, text: m.text, timestamp: m.timestamp, direction: 'out' });
+      }
+
+      // Deduplicate + sort
+      const seen = new Set<string>();
+      const sorted = allConvoMsgs
+        .filter(m => { const k = `${m.direction}:${m.timestamp}:${m.text.slice(0, 40)}`; if (seen.has(k)) return false; seen.add(k); return true; })
+        .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+      // Format messages as lines, take the tail that fits the viewport
+      const formatted: Array<{ sender: string; time: string; body: string; direction: 'in' | 'out' }> = [];
+      for (const m of sorted) {
+        let time = '';
+        try { const d = new Date(m.timestamp); time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; } catch { time = '??:??'; }
+        formatted.push({ sender: m.direction === 'out' ? `you \u2192 ${m.to}` : m.from, time, body: m.text, direction: m.direction });
+      }
+
+      // Each message takes ~2 lines (sender+time, body truncated). Reserve 2 lines for header.
+      const maxVisible = Math.max(3, Math.floor((contentHeight - 2) / 2));
+      const visibleMsgs = formatted.slice(-maxVisible);
+
+      const convoChildren: React.ReactNode[] = [];
+
+      // Header — ensemble name + player count
+      const playerCount = state.players.length;
+      const conductorInfo = state.conductorName ? ` \u2605 ${state.conductorName}` : '';
+      convoChildren.push(
+        React.createElement(Text, { key: 'ch', color: THEME.dim },
+          `  ${state.activeEnsemble} \u00B7 ${playerCount} player${playerCount !== 1 ? 's' : ''}${conductorInfo}`),
+      );
+      if (state.staticItems.length > 0) {
+        convoChildren.push('\n');
+        convoChildren.push(
+          React.createElement(Text, { key: 'si', color: THEME.dim },
+            `  \u2191 ${state.staticItems.length} messages above (scroll up)`),
+        );
+      }
+      convoChildren.push('\n');
+      convoChildren.push(React.createElement(Text, { key: 'csep', color: THEME.border }, '  ' + '\u2500'.repeat(50)));
+
+      // Messages
+      if (visibleMsgs.length === 0) {
+        convoChildren.push('\n');
+        convoChildren.push(React.createElement(Text, { key: 'empty', color: THEME.dim }, '  No messages yet. Type to send.'));
+      } else {
+        for (let i = 0; i < visibleMsgs.length; i++) {
+          const msg = visibleMsgs[i];
+          const senderColor = msg.direction === 'out' ? THEME.dim : THEME.accent;
+          const bodyColor = msg.direction === 'out' ? THEME.textMuted : THEME.text;
+          convoChildren.push('\n');
+          convoChildren.push(
+            React.createElement(React.Fragment, { key: `ms-${i}` },
+              React.createElement(Text, { color: senderColor }, `  ${msg.sender}`),
+              React.createElement(Text, { color: THEME.dim }, `  ${msg.time}`),
+            ),
+          );
+          // Body — first 2 lines only for compact display
+          const bodyLines = msg.body.split('\n').slice(0, 2);
+          for (const line of bodyLines) {
+            convoChildren.push('\n');
+            convoChildren.push(React.createElement(Text, { key: `mb-${i}-${line.slice(0, 10)}`, color: bodyColor }, `  ${line.slice(0, 80)}`));
+          }
+          if (msg.body.split('\n').length > 2) {
+            convoChildren.push('\n');
+            convoChildren.push(React.createElement(Text, { key: `mt-${i}`, color: THEME.dim }, `  \u2026 (${msg.body.split('\n').length - 2} more lines)`));
+          }
+        }
+      }
+
+      return React.createElement(Text, null, ...convoChildren);
     }
 
     // No active ensemble — show ensemble list, connecting state, or help
