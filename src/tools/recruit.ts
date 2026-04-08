@@ -119,6 +119,7 @@ export function registerRecruitTool(
               await condHandle.signal('receiveMessage', {
                 from: 'system',
                 text: `Session "${name}" was force-terminated for re-recruit by ${getPlayerId()}.`,
+                responseRequested: false,
               });
             } catch {
               // Conductor may not exist — that's fine

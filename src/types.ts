@@ -53,6 +53,10 @@ export interface SessionInput {
   autoSummary?: string;
   /** Disable stale session detection (for passive mailbox workflows like maestro) */
   disableStaleDetection?: boolean;
+  /** Restored from continue-as-new: last inbound message with responseRequested=true */
+  lastInboundRRTime?: number;
+  /** Restored from continue-as-new: last outbound activity timestamp */
+  lastOutboundTime?: number;
   /** Restored from continue-as-new (conductor only) */
   qualityGates?: QualityGate[];
   /** Restored from continue-as-new (conductor only) */

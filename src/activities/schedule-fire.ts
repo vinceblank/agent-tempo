@@ -64,6 +64,7 @@ export function createScheduleActivities(client: Client): ScheduleActivities {
                 text,
                 isScheduled: true,
                 scheduleName,
+                responseRequested: false,
               });
               delivered++;
             } catch (err) {
@@ -103,6 +104,7 @@ export function createScheduleActivities(client: Client): ScheduleActivities {
           text,
           isScheduled: true,
           scheduleName,
+          responseRequested: false,
         });
 
         return { success: true };
@@ -137,6 +139,7 @@ async function notifyFailure(
         text: failureText,
         isScheduled: true,
         scheduleName,
+        responseRequested: false,
       });
       return;
     } catch {
@@ -152,6 +155,7 @@ async function notifyFailure(
       from: 'scheduler',
       text: failureText,
       isScheduled: true,
+      responseRequested: false,
       scheduleName,
     });
   } catch {
