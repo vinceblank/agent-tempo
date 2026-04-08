@@ -2059,7 +2059,7 @@ export async function upgrade(opts: UpgradeOpts) {
   const isWin = process.platform === 'win32';
 
   const updaterScript = `
-const { execSync, execFileSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 
 const PID = ${cliPid};
@@ -2141,6 +2141,10 @@ main().catch(err => {
 });
 `.trim();
 
+  // Clear previous upgrade log before spawning
+  const logPath = join(CLAUDE_TEMPO_HOME, 'upgrade.log');
+  try { writeFileSync(logPath, ''); } catch { /* ignore */ }
+
   // Spawn the updater as a detached child process
   out.log(`Spawning upgrade process for ${out.cyan(installSpec)}...`);
 
@@ -2151,15 +2155,11 @@ main().catch(err => {
   });
   child.unref();
 
-  const logPath = join(CLAUDE_TEMPO_HOME, 'upgrade.log');
-  // Clear previous upgrade log
-  try { writeFileSync(logPath, ''); } catch { /* ignore */ }
-
   console.log();
   out.success('Upgrade started in background');
   out.log(`  ${out.dim('Monitor progress: ')}`);
   if (isWin) {
-    out.log(`    ${out.dim('type ' + logPath)}`);
+    out.log(`    ${out.dim('powershell Get-Content -Wait "' + logPath + '"')}`);
   } else {
     out.log(`    ${out.dim('tail -f ' + logPath)}`);
   }
