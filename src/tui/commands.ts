@@ -903,6 +903,12 @@ export const COMMANDS: Record<string, CommandDef> = {
     usage: '/ensemble <name>',
     handler: handleEnsemble,
   },
+  // Singular/plural aliases
+  gate: { description: 'List quality gates (alias for /gates)', usage: '/gate', handler: handleGates },
+  stage: { description: 'List stages (alias for /stages)', usage: '/stage', handler: handleStages },
+  schedules: { description: 'List schedules (alias for /schedule)', usage: '/schedules', handler: handleSchedule },
+  worktrees: { description: 'List worktrees (alias for /worktree)', usage: '/worktrees', handler: handleWorktree },
+  lineups: { description: 'List lineups (alias for /lineup)', usage: '/lineups', handler: handleLineup },
   search: {
     description: 'Search message history',
     usage: '/search <term>',
