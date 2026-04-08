@@ -581,15 +581,14 @@ export function App({ api, ensemble }: AppProps) {
             dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: autoEns });
             dispatch({
               type: 'COMMIT_STATIC',
-              item: { id: `auto-${Date.now()}`, type: 'info', content: `\u2714 Auto-connected to ensemble: ${autoEns}`, timestamp: Date.now() },
+              item: { id: `auto-${Date.now()}`, type: 'info', content: `\u2714 Connected to ensemble: ${autoEns}`, timestamp: Date.now() },
             });
-            // Find conductor and enter chat
+            // Discover conductor but don't auto-enter chat — let user navigate
             try {
               const players = await api.getPlayers(autoEns);
               const conductor = players.find(p => p.isConductor);
               if (conductor) {
                 dispatch({ type: 'SET_CONDUCTOR', name: conductor.playerId });
-                dispatch({ type: 'ENTER_CHAT', target: conductor.playerId });
               }
             } catch { /* best effort */ }
           }
@@ -605,8 +604,72 @@ export function App({ api, ensemble }: AppProps) {
             api.getMaestroMessages(ens),
           ]);
 
-          // Relay/maestro message commits are handled by the memoizedChatData
-          // useEffect above — no need to duplicate here.
+          // Commit new relay messages to Static (full text, not truncated)
+          if (messages.length > 0) {
+            const prevId = lastSeenMsgRef.current;
+            const newMsgs = prevId
+              ? (() => { const idx = messages.findIndex(m => m.id === prevId); return idx >= 0 ? messages.slice(idx + 1) : messages; })()
+              : messages; // First poll — hydrate all
+            for (const m of newMsgs) {
+              const time = new Date(m.timestamp);
+              const hh = String(time.getHours()).padStart(2, '0');
+              const mm = String(time.getMinutes()).padStart(2, '0');
+              dispatch({
+                type: 'COMMIT_STATIC',
+                item: {
+                  id: `msg-${m.id}`,
+                  type: 'message',
+                  content: `${m.from} \u2192 ${m.to}  ${hh}:${mm}`,
+                  timestamp: Date.now(),
+                },
+              });
+              // Full message body
+              for (const line of m.text.split('\n')) {
+                dispatch({
+                  type: 'COMMIT_STATIC',
+                  item: {
+                    id: nextStaticId(),
+                    type: 'command-output',
+                    content: line,
+                    timestamp: Date.now(),
+                  },
+                });
+              }
+            }
+          }
+
+          // Commit new maestro direct messages
+          if (maestroMsgs.received.length > 0) {
+            const prevDmId = lastSeenMaestroRef.current;
+            const newDirect = prevDmId
+              ? (() => { const idx = maestroMsgs.received.findIndex(m => m.id === prevDmId); return idx >= 0 ? maestroMsgs.received.slice(idx + 1) : []; })()
+              : maestroMsgs.received; // First poll — hydrate all
+            for (const m of newDirect) {
+              const time = new Date(m.timestamp);
+              const hh = String(time.getHours()).padStart(2, '0');
+              const mm = String(time.getMinutes()).padStart(2, '0');
+              dispatch({
+                type: 'COMMIT_STATIC',
+                item: {
+                  id: `dm-${m.id}`,
+                  type: 'message',
+                  content: `${m.from} \u2192 you  ${hh}:${mm}`,
+                  timestamp: Date.now(),
+                },
+              });
+              for (const line of m.text.split('\n')) {
+                dispatch({
+                  type: 'COMMIT_STATIC',
+                  item: {
+                    id: nextStaticId(),
+                    type: 'command-output',
+                    content: line,
+                    timestamp: Date.now(),
+                  },
+                });
+              }
+            }
+          }
           if (maestroMsgs.received.length > 0) {
             lastSeenMaestroRef.current = maestroMsgs.received[maestroMsgs.received.length - 1].id;
           }
@@ -631,20 +694,12 @@ export function App({ api, ensemble }: AppProps) {
             dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages, history, schedules });
             lastPollRef.current = pollKey;
 
-            // Auto-detect conductor: if none was known but one appeared, set it + auto-enter chat
+            // Auto-detect conductor: track name but don't auto-enter chat
             const currentS = stateRef.current;
             if (!currentS.conductorName) {
               const conductor = players.find(p => p.isConductor);
               if (conductor) {
                 dispatch({ type: 'SET_CONDUCTOR', name: conductor.playerId });
-                // Auto-enter conductor chat if not already chatting with someone
-                if (!currentS.chatTarget && (currentS.phase === 'main' || currentS.phase === 'connected')) {
-                  dispatch({ type: 'ENTER_CHAT', target: conductor.playerId });
-                  dispatch({
-                    type: 'COMMIT_STATIC',
-                    item: { id: `conductor-${Date.now()}`, type: 'info', content: `\u2605 Conductor ${conductor.playerId} connected. Entering chat.`, timestamp: Date.now() },
-                  });
-                }
               }
             }
           }
@@ -819,56 +874,8 @@ export function App({ api, ensemble }: AppProps) {
     };
   }, [state.chatTarget, state.conductorName, state.conductorHistory, state.messages, state.sentMessages]);
 
-  // Commit new chat messages to Static items as they arrive
-  const lastChatCommitCount = React.useRef(0);
-  useEffect(() => {
-    if (!memoizedChatData || memoizedChatData.messages.length === 0) {
-      lastChatCommitCount.current = 0;
-      return;
-    }
-    const msgs = memoizedChatData.messages;
-    const newStart = lastChatCommitCount.current;
-    if (newStart >= msgs.length) return;
-    const newMsgs = msgs.slice(newStart);
-    for (const msg of newMsgs) {
-      const isSelf = msg.direction === 'sent';
-      const senderLabel = isSelf ? 'you' : msg.from;
-      let time = '';
-      try {
-        const d = new Date(msg.timestamp);
-        time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-      } catch { time = '??:??'; }
-      // Sender line
-      dispatch({
-        type: 'COMMIT_STATIC',
-        item: {
-          id: nextStaticId(),
-          type: 'message',
-          content: `${senderLabel}  ${time}`,
-          timestamp: Date.now(),
-        },
-      });
-      // Body lines
-      const lines = msg.text.split('\n');
-      for (const line of lines) {
-        dispatch({
-          type: 'COMMIT_STATIC',
-          item: {
-            id: nextStaticId(),
-            type: isSelf ? 'info' : 'command-output',
-            content: line,
-            timestamp: Date.now(),
-          },
-        });
-      }
-    }
-    lastChatCommitCount.current = msgs.length;
-  }, [memoizedChatData]);
-
-  // Reset chat commit counter when switching targets
-  useEffect(() => {
-    lastChatCommitCount.current = 0;
-  }, [state.chatTarget]);
+  // Note: relay messages are committed to staticItems directly in the poll loop.
+  // Conductor history messages are committed when entering conductor chat mode.
 
   // ── Render ──
 
@@ -935,7 +942,11 @@ export function App({ api, ensemble }: AppProps) {
       });
     }
 
-    // No active ensemble — show ensemble list or help (single Text, 1 Yoga node)
+    // No active ensemble — show ensemble list, connecting state, or help
+    // If we have an initial ensemble but no data yet, show connecting message
+    if (!state.activeEnsemble && state.ensembles.length === 0 && ensemble) {
+      return React.createElement(Text, { color: THEME.dim }, `  Connecting to ${ensemble}...`);
+    }
     if (state.ensembles.length > 0) {
       const ensLines: React.ReactNode[] = [
         React.createElement(Text, { key: 'eh', bold: true, color: THEME.text }, 'Ensembles:'),
