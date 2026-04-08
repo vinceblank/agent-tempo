@@ -416,7 +416,10 @@ export function createTempoClient(client: Client): TempoClient {
           isConductor: false,
           status: 'active',
           agentType: 'claude',
+          playerType: 'maestro',
+          playerTypeDescription: 'TUI dashboard — human operator interface',
         },
+        part: 'Dashboard interface (human operator)',
         disableStaleDetection: true,
       };
 
@@ -431,6 +434,7 @@ export function createTempoClient(client: Client): TempoClient {
             ClaudeTempoHostname: ['dashboard'],
             ClaudeTempoEnsemble: [ensemble],
             ClaudeTempoPlayerId: ['maestro'],
+            ClaudeTempoPlayerType: ['maestro'],
           },
         });
         console.error(`[tui:client] Maestro session started: ${wfHandle.workflowId}`);
