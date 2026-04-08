@@ -973,28 +973,48 @@ export function App({ api, ensemble }: AppProps) {
         formatted.push({ sender: m.from, time, body: m.text, direction: m.direction });
       }
 
-      // Each message is ~2 lines (content + blank separator). Full content area.
-      const maxVisible = Math.max(2, Math.floor(contentHeight / 2));
+      // Calculate actual lines per message accounting for terminal width + wrapping
+      const termCols = process.stdout.columns || 80;
+      function estimateLines(msg: typeof formatted[number]): number {
+        const lines = msg.body.split('\n');
+        const visLines = Math.min(lines.length, 4);
+        let total = 0;
+        for (let i = 0; i < visLines; i++) {
+          const prefixLen = i === 0
+            ? (msg.direction === 'out' ? 4 : 5 + msg.sender.length + 2 + 2 + msg.time.length)
+            : (msg.direction === 'out' ? 4 : 4 + msg.sender.length + 2);
+          total += Math.max(1, Math.ceil((prefixLen + lines[i].length) / termCols));
+        }
+        if (lines.length > 4) total += 1; // "… (N more lines)"
+        total += 1; // blank separator
+        return total;
+      }
 
-      // Overflow: commit messages above the viewport to Static scrollback
-      if (formatted.length > maxVisible) {
-        const overflow = formatted.slice(0, formatted.length - maxVisible);
-        for (const msg of overflow) {
-          const key = `${msg.direction}:${msg.body.slice(0, 60)}`;
-          if (!overflowCommittedRef.current.has(key)) {
-            overflowCommittedRef.current.add(key);
-            if (msg.direction === 'out') {
-              dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'message', content: `\u276F ${msg.body.split('\n')[0]}`, timestamp: Date.now() } });
-            } else {
-              dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'message', content: `\u2190 ${msg.sender}: ${msg.body.split('\n')[0]}  ${msg.time}`, timestamp: Date.now() } });
-            }
+      // Work backwards from newest — include as many as fit in viewport
+      let usedLines = 0;
+      let startIdx = formatted.length;
+      for (let i = formatted.length - 1; i >= 0; i--) {
+        const needed = estimateLines(formatted[i]);
+        if (usedLines + needed > contentHeight) break;
+        usedLines += needed;
+        startIdx = i;
+      }
+
+      // Overflow: commit older messages to Static scrollback
+      const overflow = formatted.slice(0, startIdx);
+      for (const msg of overflow) {
+        const key = `${msg.direction}:${msg.body.slice(0, 60)}`;
+        if (!overflowCommittedRef.current.has(key)) {
+          overflowCommittedRef.current.add(key);
+          if (msg.direction === 'out') {
+            dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'message', content: `\u276F ${msg.body.split('\n')[0]}`, timestamp: Date.now() } });
+          } else {
+            dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'message', content: `\u2190 ${msg.sender}: ${msg.body.split('\n')[0]}  ${msg.time}`, timestamp: Date.now() } });
           }
         }
       }
 
-      const visibleMsgs = formatted.slice(-maxVisible);
-
-      console.error(`[tui:convo] msgs=${state.messages.length} history=${state.conductorHistory.length} sent=${state.sentMessages.length} formatted=${formatted.length} visible=${visibleMsgs.length}`);
+      const visibleMsgs = formatted.slice(startIdx);
 
       const convoChildren: React.ReactNode[] = [];
 
