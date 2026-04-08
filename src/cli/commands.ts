@@ -132,6 +132,7 @@ export async function start(opts: StartOpts) {
   if (config.temporalApiKey) temporalEnvVars[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
   if (config.temporalTlsCertPath) temporalEnvVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
   if (config.temporalTlsKeyPath) temporalEnvVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
+  if (config.claudeBin) temporalEnvVars[ENV.CLAUDE_BIN] = config.claudeBin;
 
   if (opts.agent === 'copilot') {
     const { pid } = spawnCopilotBridge({
@@ -168,7 +169,7 @@ export async function start(opts: StartOpts) {
       [ENV.PLAYER_NAME]: sessionName || '',
     };
 
-    const { pid } = spawnInTerminal(claudeArgs, workDir, envVars);
+    const { pid } = spawnInTerminal(claudeArgs, workDir, envVars, { claudeBin: config.claudeBin });
     out.success(`Launched ${role} session${sessionName ? ` "${sessionName}"` : ''} (pid ${pid ?? 'unknown'})`);
   }
   out.log(`  Ensemble: ${opts.ensemble}`);
@@ -875,7 +876,7 @@ export async function up(opts: UpOpts) {
       conductorEnvVars[ENV.PLAYER_TYPE] = resolvedConductorType?.name || conductorTypeName || '';
     }
 
-    ({ pid } = spawnInTerminal(claudeArgs, process.cwd(), conductorEnvVars));
+    ({ pid } = spawnInTerminal(claudeArgs, process.cwd(), conductorEnvVars, { claudeBin: config.claudeBin }));
   }
 
   out.success(`Conductor launched (pid ${pid ?? 'unknown'})`);
@@ -987,7 +988,7 @@ export async function up(opts: UpOpts) {
             if (resolvedPlayerType) {
               playerEnvVars[ENV.PLAYER_TYPE] = resolvedPlayerType.name;
             }
-            spawnInTerminal(claudeArgs, playerWorkDir, playerEnvVars);
+            spawnInTerminal(claudeArgs, playerWorkDir, playerEnvVars, { claudeBin: config.claudeBin });
           }
           out.log(`  ${out.green('ok')} ${out.bold(player.name)} in ${playerWorkDir}`);
         } catch (err) {
@@ -1865,8 +1866,9 @@ export async function encore(opts: EncoreOpts) {
   if (config.temporalApiKey) envVars[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
   if (config.temporalTlsCertPath) envVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
   if (config.temporalTlsKeyPath) envVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
+  if (config.claudeBin) envVars[ENV.CLAUDE_BIN] = config.claudeBin;
 
-  const { pid } = spawnInTerminal(spawnArgs, targetMeta.workDir, envVars);
+  const { pid } = spawnInTerminal(spawnArgs, targetMeta.workDir, envVars, { claudeBin: config.claudeBin });
   out.success(`Encore! "${opts.name}" revived (pid ${pid})`);
 
   await connection.close();

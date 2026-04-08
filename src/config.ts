@@ -25,6 +25,7 @@ export const ENV = {
   TEMPORAL_TLS_KEY_PATH: 'TEMPORAL_TLS_KEY_PATH',
   DEFAULT_AGENT: 'CLAUDE_TEMPO_DEFAULT_AGENT',
   PLAYER_TYPE: 'CLAUDE_TEMPO_PLAYER_TYPE',
+  CLAUDE_BIN: 'CLAUDE_TEMPO_CLAUDE_BIN',
 } as const;
 
 export interface Config {
@@ -34,6 +35,7 @@ export interface Config {
   temporalTlsCertPath?: string;
   temporalTlsKeyPath?: string;
   defaultAgent: AgentType;
+  claudeBin?: string;
   taskQueue: string;
   ensemble: string;
 }
@@ -46,6 +48,7 @@ export interface PersistedConfig {
   temporalTlsCertPath?: string;
   temporalTlsKeyPath?: string;
   defaultAgent?: AgentType;
+  claudeBin?: string;
 }
 
 export const CLAUDE_TEMPO_HOME = join(homedir(), '.claude-tempo');
@@ -241,6 +244,7 @@ export function getConfig(overrides: CliOverrides = {}): Config {
     defaultAgent: validAgent(overrides.defaultAgent
       || process.env[ENV.DEFAULT_AGENT]
       || configFile.defaultAgent),
+    claudeBin: process.env[ENV.CLAUDE_BIN] || configFile.claudeBin || undefined,
     taskQueue: process.env[ENV.TASK_QUEUE] ?? 'claude-tempo',
     ensemble: process.env[ENV.ENSEMBLE] ?? 'default',
   };
@@ -290,6 +294,7 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
   const tlsCert = resolveWithSource('temporalTlsCertPath', overrides.temporalTlsCertPath, ENV.TEMPORAL_TLS_CERT_PATH, configFile.temporalTlsCertPath, temporalCli.temporalTlsCertPath);
   const tlsKey = resolveWithSource('temporalTlsKeyPath', overrides.temporalTlsKeyPath, ENV.TEMPORAL_TLS_KEY_PATH, configFile.temporalTlsKeyPath, temporalCli.temporalTlsKeyPath);
   const defaultAgent = resolveWithSource('defaultAgent', overrides.defaultAgent, ENV.DEFAULT_AGENT, configFile.defaultAgent, undefined, 'claude');
+  const claudeBin = resolveWithSource('claudeBin', undefined, ENV.CLAUDE_BIN, configFile.claudeBin, undefined);
 
   return {
     config: {
@@ -299,6 +304,7 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
       temporalTlsCertPath: tlsCert.value,
       temporalTlsKeyPath: tlsKey.value,
       defaultAgent: validAgent(defaultAgent.value),
+      claudeBin: claudeBin.value,
       taskQueue: process.env[ENV.TASK_QUEUE] ?? 'claude-tempo',
       ensemble: process.env[ENV.ENSEMBLE] ?? 'default',
     },
@@ -309,6 +315,7 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
       temporalTlsCertPath: tlsCert.source,
       temporalTlsKeyPath: tlsKey.source,
       defaultAgent: defaultAgent.source,
+      claudeBin: claudeBin.source,
     },
   };
 }

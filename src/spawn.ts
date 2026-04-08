@@ -129,8 +129,25 @@ export function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-/** Resolve the absolute path to the `claude` binary */
-export function resolveClaudePath(): string {
+/**
+ * Resolve the path to the `claude` binary.
+ *
+ * Resolution order:
+ *  1. `configBin` parameter (from Config.claudeBin — env var or config file)
+ *  2. `CLAUDE_TEMPO_CLAUDE_BIN` env var (checked directly for spawned processes that
+ *     may not have full config resolution, e.g., activities)
+ *  3. `which claude` / `where claude` lookup
+ *  4. Bare `claude` fallback
+ */
+export function resolveClaudePath(configBin?: string): string {
+  // Priority 1: explicit config value
+  if (configBin) return configBin;
+
+  // Priority 2: env var (may be set by parent process)
+  const envBin = process.env.CLAUDE_TEMPO_CLAUDE_BIN;
+  if (envBin) return envBin;
+
+  // Priority 3: which/where lookup
   const cmd = process.platform === 'win32' ? 'where' : 'which';
   try {
     return execFileSync(cmd, ['claude'], { encoding: 'utf8' }).trim().split('\n')[0];
@@ -203,8 +220,10 @@ export function buildClaudeCommand(
   const envInline = Object.entries(envVars)
     .map(([k, v]) => `${k}=${shellQuote(v)}`)
     .join(' ');
+  // Quote the binary path if it contains spaces (e.g., "C:\Program Files\...")
+  const quotedBin = claudeBin.includes(' ') ? shellQuote(claudeBin) : claudeBin;
   const args = claudeArgs.map(a => shellQuote(a)).join(' ');
-  return envInline ? `${envInline} ${claudeBin} ${args}` : `${claudeBin} ${args}`;
+  return envInline ? `${envInline} ${quotedBin} ${args}` : `${quotedBin} ${args}`;
 }
 
 /**
@@ -221,8 +240,9 @@ export function spawnInTerminal(
   claudeArgs: string[],
   workDir: string,
   envVars: Record<string, string>,
+  options?: { claudeBin?: string },
 ): { pid: number | undefined } {
-  const claudeBin = resolveClaudePath();
+  const claudeBin = resolveClaudePath(options?.claudeBin);
   const claudeInvocation = buildClaudeCommand(claudeBin, claudeArgs, envVars);
 
   if (process.platform === 'darwin') {
@@ -318,7 +338,9 @@ export function spawnInTerminal(
       const setCmds = Object.entries(envVars)
         .map(([k, v]) => `set "${k}=${cmdEscape(v)}"`)
         .join(' && ');
-      const claudeCmd = `${cmdEscape(claudeBin)} ${claudeArgs.map(a => `"${cmdEscape(a)}"`).join(' ')}`;
+      // Quote the binary path if it contains spaces (e.g., "C:\Program Files\...")
+      const quotedWinBin = claudeBin.includes(' ') ? `"${cmdEscape(claudeBin)}"` : cmdEscape(claudeBin);
+      const claudeCmd = `${quotedWinBin} ${claudeArgs.map(a => `"${cmdEscape(a)}"`).join(' ')}`;
       const innerCmd = setCmds
         ? `${setCmds} && ${claudeCmd}`
         : claudeCmd;
