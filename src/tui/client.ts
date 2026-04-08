@@ -394,20 +394,25 @@ export function createTempoClient(client: Client): TempoClient {
         disableStaleDetection: true,
       };
 
-      const wfHandle = await client.workflow.start('claudeSessionWorkflow', {
-        workflowId,
-        taskQueue: 'claude-tempo',
-        args: [sessionInput],
-        workflowIdConflictPolicy: WorkflowIdConflictPolicy.TERMINATE_EXISTING,
-        workflowExecutionTimeout: '24 hours',
-        searchAttributes: {
-          ClaudeTempoHostname: ['dashboard'],
-          ClaudeTempoEnsemble: [ensemble],
-          ClaudeTempoPlayerId: ['maestro'],
-        },
-      });
-
-      return wfHandle.workflowId;
+      try {
+        const wfHandle = await client.workflow.start('claudeSessionWorkflow', {
+          workflowId,
+          taskQueue: 'claude-tempo',
+          args: [sessionInput],
+          workflowIdConflictPolicy: WorkflowIdConflictPolicy.TERMINATE_EXISTING,
+          workflowExecutionTimeout: '24 hours',
+          searchAttributes: {
+            ClaudeTempoHostname: ['dashboard'],
+            ClaudeTempoEnsemble: [ensemble],
+            ClaudeTempoPlayerId: ['maestro'],
+          },
+        });
+        console.error(`[tui:client] Maestro session started: ${wfHandle.workflowId}`);
+        return wfHandle.workflowId;
+      } catch (err) {
+        console.error('[tui:client] Failed to start maestro session:', err);
+        throw err;
+      }
     },
 
     async sendAsMaestro(ensemble: string, targetPlayer: string, text: string): Promise<void> {

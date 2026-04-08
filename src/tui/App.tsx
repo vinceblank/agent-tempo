@@ -568,7 +568,7 @@ export function App({ api, ensemble }: AppProps) {
         // Ensure maestro session (best effort)
         const ens = stateRef.current.activeEnsemble;
         if (ens) {
-          try { await api.ensureMaestroSession(ens); } catch { /* non-fatal */ }
+          try { await api.ensureMaestroSession(ens); } catch (err) { console.error('[tui] Failed to create maestro session:', err); }
         }
       } catch (err) {
         if (!cancelled) {
