@@ -640,7 +640,7 @@ async function handleRecruitConductor(
 ): Promise<void> {
   const ensemble = ctx.activeEnsemble;
   if (!ensemble) {
-    commitStatic(dispatch, 'error', 'No active ensemble. Use /up <name> first.');
+    commitStatic(dispatch, 'error', 'No active ensemble. Use /ensemble to select or create one.');
     return;
   }
 
@@ -660,38 +660,6 @@ async function handleRecruitConductor(
       }
     });
   }
-}
-
-/** /up <name> — create a new ensemble from within the TUI. */
-async function handleUp(
-  args: string[],
-  dispatch: (action: TuiAction) => void,
-): Promise<void> {
-  if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /up <ensemble-name> [--lineup <name>]');
-    return;
-  }
-
-  const name = args[0];
-  const lineupIdx = args.indexOf('--lineup');
-  const lineup = lineupIdx >= 0 && args[lineupIdx + 1] ? args[lineupIdx + 1] : undefined;
-
-  commitStatic(dispatch, 'info', `\u2026 Starting ensemble "${name}"${lineup ? ` with lineup ${lineup}` : ''}...`);
-
-  // Shell out to claude-tempo up (runs in background, non-blocking)
-  const { exec } = require('child_process') as typeof import('child_process');
-  const cmd = lineup
-    ? `claude-tempo up ${name} --lineup ${lineup}`
-    : `claude-tempo up ${name}`;
-
-  exec(cmd, { timeout: 60000 }, (err: any, stdout: string, stderr: string) => {
-    if (err) {
-      const msg = stderr?.trim() || err.message || 'Unknown error';
-      commitStatic(dispatch, 'error', `\u2717 Failed to start ensemble: ${msg}`);
-    } else {
-      commitStatic(dispatch, 'info', `\u2714 Ensemble "${name}" started. Auto-connecting...`);
-    }
-  });
 }
 
 /** /lineup load|save — manage ensemble lineups. */
@@ -894,11 +862,6 @@ export const COMMANDS: Record<string, CommandDef> = {
     description: 'Recruit a conductor for the current ensemble',
     usage: '/recruit-conductor',
     handler: handleRecruitConductor,
-  },
-  up: {
-    description: 'Create a new ensemble',
-    usage: '/up <name> [--lineup <name>]',
-    handler: handleUp,
   },
   status: {
     description: 'Show ensemble players and status',

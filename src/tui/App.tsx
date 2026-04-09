@@ -220,13 +220,8 @@ export function App({ api, ensemble }: AppProps) {
           if (ensItem) {
             dispatch({ type: 'HIDE_PICKER' });
             if (ensItem.id === '__create__') {
-              // Pre-fill /up command — same as splash "Create new ensemble"
-              dispatch({
-                type: 'COMMIT_STATIC',
-                item: { id: nextStaticId(), type: 'info', content: 'Type /up <name> to create a new ensemble.', timestamp: Date.now() },
-              });
-              promptRef.current?.setValue('/up ');
-              inputValueRef.current = '/up ';
+              // Launch the create-ensemble wizard
+              dispatch({ type: 'ENTER_CREATE_ENSEMBLE' });
             } else if (cb) {
               cb(ensItem.id);
               pickerCallbackRef.current = null;
@@ -440,7 +435,7 @@ export function App({ api, ensemble }: AppProps) {
       items.push({
         id: '__create__',
         label: '+ Create new ensemble',
-        detail: '/up <name>',
+        detail: 'launch wizard',
         icon: '\u2795',
         color: THEME.accent,
       });
@@ -963,16 +958,9 @@ export function App({ api, ensemble }: AppProps) {
   const dividerWidth = Math.max(20, (process.stdout.columns || 80) - 4);
   const dividerLine = '\u2500'.repeat(dividerWidth);
 
-  // Splash → create ensemble handler: transition to main with /up pre-filled
+  // Splash → create ensemble handler: launch the create-ensemble wizard
   const handleSplashCreate = useCallback(() => {
-    dispatch({ type: 'SET_PHASE', phase: 'main' });
-    dispatch({
-      type: 'COMMIT_STATIC',
-      item: { id: nextStaticId(), type: 'info', content: 'Type /up <name> to create a new ensemble.', timestamp: Date.now() },
-    });
-    // Pre-fill the prompt with /up
-    promptRef.current?.setValue('/up ');
-    inputValueRef.current = '/up ';
+    dispatch({ type: 'ENTER_CREATE_ENSEMBLE' });
   }, []);
 
   // Splash → main transition handler
