@@ -38,7 +38,7 @@ export interface ConversationStreamProps {
   contentHeight: number;
   /** Ref to store overflow data for parent to commit to Static scrollback. */
   overflowRef: React.MutableRefObject<{
-    formatted: Array<{ sender: string; time: string; body: string; direction: 'in' | 'out' }>;
+    formatted: Array<{ sender: string; time: string; body: string; direction: 'in' | 'out'; thirdParty?: boolean; routeLabel?: string }>;
     startIdx: number;
   } | null>;
 }
@@ -218,20 +218,6 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
         }
       }
     }
-  }
-
-  // Bottom-align: count actual rendered lines, prepend padding to push
-  // content to the bottom of contentHeight. This absorbs any mismatch
-  // between estimateLines and actual rendered height.
-  let actualLines = 1; // first line (no leading \n counted)
-  for (const child of children) {
-    if (typeof child === 'string') {
-      actualLines += (child.match(/\n/g) || []).length;
-    }
-  }
-  const padding = Math.max(0, contentHeight - 1 - actualLines);
-  if (padding > 0) {
-    children.unshift('\n'.repeat(padding));
   }
 
   return React.createElement(Text, null, ...children);

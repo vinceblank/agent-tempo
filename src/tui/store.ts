@@ -43,6 +43,8 @@ export interface StaticItem {
   msgDirection?: 'in' | 'out';
   msgSender?: string;
   msgTime?: string;
+  msgThirdParty?: boolean;
+  msgRouteLabel?: string;
 }
 
 // ── Recruit wizard ──

@@ -106,7 +106,7 @@ export function App({ api, ensemble }: AppProps) {
   // Track which messages have been committed to Static (overflow from live area)
   const overflowCommittedRef = React.useRef(new Set<string>());
   // Overflow data computed during render, committed to Static via useEffect
-  const overflowRef = React.useRef<{ formatted: Array<{ sender: string; time: string; body: string; direction: 'in' | 'out' }>; startIdx: number } | null>(null);
+  const overflowRef = React.useRef<{ formatted: Array<{ sender: string; time: string; body: string; direction: 'in' | 'out'; thirdParty?: boolean; routeLabel?: string }>; startIdx: number } | null>(null);
   // Callback for picker selection — set before showing picker, called on Enter
   const pickerCallbackRef = React.useRef<((id: string) => void) | null>(null);
   // Picker items ref — synced from pickerItems memo so useInput reads sorted items
@@ -146,18 +146,19 @@ export function App({ api, ensemble }: AppProps) {
         // Blank separator
         dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: '', timestamp: Date.now() } });
         const lines = msg.body.split('\n');
+        const lineCap = msg.thirdParty ? 4 : lines.length; // uncapped for direct messages
         // First line with structured fields for rich rendering
         dispatch({ type: 'COMMIT_STATIC', item: {
           id: nextStaticId(), type: 'message', content: lines[0], timestamp: Date.now(),
           msgDirection: msg.direction, msgSender: msg.sender, msgTime: msg.time,
+          msgThirdParty: msg.thirdParty, msgRouteLabel: msg.routeLabel,
         }});
-        // Continuation lines
-        const indent = msg.direction === 'out' ? '    ' : '    ' + ' '.repeat(msg.sender.length + 2);
-        for (const line of lines.slice(1, 4)) {
-          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'command-output', content: `${indent}${line}`, timestamp: Date.now() } });
+        // Continuation lines (3-space indent to match live ConversationStream)
+        for (const line of lines.slice(1, lineCap)) {
+          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'command-output', content: `   ${line}`, timestamp: Date.now() } });
         }
-        if (lines.length > 4) {
-          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `${indent}\u2026 (${lines.length - 4} more lines)`, timestamp: Date.now() } });
+        if (lines.length > lineCap) {
+          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `   \u2026 (${lines.length - lineCap} more lines)`, timestamp: Date.now() } });
         }
       }
     }
@@ -1249,13 +1250,13 @@ export function App({ api, ensemble }: AppProps) {
   return React.createElement(React.Fragment, null,
     // Static items — rendered once to stdout, become native terminal scrollback
     React.createElement(Static, { items: state.staticItems, children: (item: StaticItem) => {
-      // Rich rendering for messages — header + indented body (matches live area)
+      // Rich rendering for messages — header + indented body (matches live ConversationStream)
       if (item.type === 'message' && item.msgDirection) {
         const cols = process.stdout.columns || 80;
         const bodyWidth = Math.max(20, cols - 4);
         const wrapped = wordWrap(item.content, bodyWidth);
         if (item.msgDirection === 'out') {
-          // Inline: ♩ first line, then indented continuation (no timestamp)
+          // Outbound: ♩ first line, then indented continuation (matches live)
           const firstLine = wrapped[0] || '';
           const pad = ' '.repeat(Math.max(0, cols - 2 - 3 - firstLine.length));
           const contLines = wrapped.slice(1).map(l => `   ${l}`.padEnd(cols - 2)).join('\n');
@@ -1270,13 +1271,19 @@ export function App({ api, ensemble }: AppProps) {
           }
           return React.createElement(Text, { key: item.id }, ...children);
         } else {
+          // Inbound: header + 3-space indent body
+          const isThirdParty = item.msgThirdParty;
+          const headerLabel = item.msgRouteLabel || item.msgSender || '';
+          const headerPrefix = isThirdParty ? '   ' : ' \u2190 ';
+          const headerColor = isThirdParty ? THEME.dim : THEME.accent;
+          const bodyColor = isThirdParty ? THEME.textMuted : THEME.text;
           const bodyLines = wrapped.map(l => `   ${l}`).join('\n');
           return React.createElement(Text, { key: item.id },
-            React.createElement(Text, { color: THEME.dim }, ' \u2190 '),
-            React.createElement(Text, { color: THEME.accent }, item.msgSender || ''),
+            React.createElement(Text, { color: THEME.dim }, headerPrefix),
+            React.createElement(Text, { color: headerColor }, headerLabel),
             React.createElement(Text, { color: THEME.dim }, `  ${item.msgTime || ''}`),
             '\n',
-            React.createElement(Text, { color: THEME.text }, bodyLines),
+            React.createElement(Text, { color: bodyColor }, bodyLines),
           );
         }
       }
