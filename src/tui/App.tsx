@@ -1207,10 +1207,10 @@ export function App({ api, ensemble }: AppProps) {
         if (item.msgDirection === 'out') {
           // Inline: ♩ first line  HH:MM, then indented continuation
           const firstLine = wrapped[0] || '';
-          const pad = ' '.repeat(Math.max(0, cols - 2 - 2 - firstLine.length - 2 - (item.msgTime || '').length));
+          const pad = ' '.repeat(Math.max(0, cols - 2 - 3 - firstLine.length - 2 - (item.msgTime || '').length));
           const contLines = wrapped.slice(1).map(l => `   ${l}`.padEnd(cols - 2)).join('\n');
           const children: React.ReactNode[] = [
-            React.createElement(Text, { backgroundColor: THEME.inputBg, color: THEME.accent, bold: true }, '\u2669 '),
+            React.createElement(Text, { backgroundColor: THEME.inputBg, color: THEME.accent, bold: true }, ' \u2669 '),
             React.createElement(Text, { backgroundColor: THEME.inputBg, color: THEME.text }, firstLine),
             React.createElement(Text, { backgroundColor: THEME.inputBg, color: THEME.dim }, `  ${item.msgTime || ''}${pad}`),
           ];

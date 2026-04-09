@@ -143,9 +143,9 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
           if (j === 0) {
             // First line: icon + text + timestamp
             const firstText = displayLines[0];
-            const pad = ' '.repeat(Math.max(0, termCols - 2 - 2 - firstText.length - 2 - msg.time.length));
+            const pad = ' '.repeat(Math.max(0, termCols - 2 - 3 - firstText.length - 2 - msg.time.length));
             children.push(React.createElement(React.Fragment, { key: `bl-${i}-0` },
-              React.createElement(Text, { backgroundColor: bg, color: THEME.accent, bold: true }, '\u2669 '),
+              React.createElement(Text, { backgroundColor: bg, color: THEME.accent, bold: true }, ' \u2669 '),
               React.createElement(Text, { backgroundColor: bg, color: THEME.text }, firstText),
               React.createElement(Text, { backgroundColor: bg, color: THEME.dim }, `  ${msg.time}${pad}`),
             ));
