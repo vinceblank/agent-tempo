@@ -829,8 +829,8 @@ The TUI has a persistent layout:
 - **TitleBar** (pinned top) — shows the current ensemble, player count, and connection state; in chat mode shows the target player and their status
 - **Scroll area** — command output and sent messages accumulate here as scrollback history; navigate with **Page Up / Page Down / Home / End**
 - **StatusBar** — persistent one-line summary of player counts by status, schedule count, and connection health
-- **Live view** — real-time ensemble state (players, recent messages, schedules); switches to a per-player chat view in `/cue` mode
-- **PromptArea** (pinned bottom) — type slash commands or, in chat mode, bare text to send to the target player; use **↑ / ↓** to navigate persistent command history (saved to `~/.claude-tempo/tui-history.json`)
+- **Live view** — aggregated ensemble chat feed (maestro + conductor traffic); bare text routes to the conductor, `@player message` routes directly to a named player
+- **PromptArea** (pinned bottom) — type slash commands, bare text (routes to conductor), or `@player <message>` (routes to a specific player); use **↑ / ↓** to navigate persistent command history (saved to `~/.claude-tempo/tui-history.json`)
 
 > Screenshot placeholder — will be added once the feature lands on `main`.
 
@@ -838,7 +838,6 @@ The TUI has a persistent layout:
 
 | Command | Description |
 |---|---|
-| `/cue <player> [message]` | Enter chat mode with a player, or send a quick one-off message |
 | `/broadcast <message>` | Send a message to all active players across all ensembles |
 | `/recruit [name]` | Launch the recruit wizard to spawn a new player session |
 | `/recruit-conductor` | Recruit a conductor for the current ensemble (one-shot, no wizard) |
@@ -861,7 +860,7 @@ The TUI has a persistent layout:
 | `/help` | Show all available commands with usage |
 | `/quit` | Exit the TUI |
 
-In chat mode (`/cue <player>` with no message), bare text is sent directly to the target player as a cue. Press `Ctrl+C` to exit at any time.
+In the ensemble view, bare text routes to the conductor; prefix with `@player` to message a specific player directly (e.g. `@frontend check your tests`). If no conductor is running, a prompt suggests using `@player` or `/recruit`. Press `Ctrl+C` to exit at any time.
 
 ## Maestro Dashboard
 
