@@ -23,7 +23,7 @@ import {
   DEFAULT_RECRUIT_ANSWERS,
   DEFAULT_SCHEDULE_ANSWERS,
 } from '../src/tui/store';
-import type { MaestroPlayerInfo } from '../src/types';
+import type { MaestroPlayerInfo, SessionMetadata } from '../src/types';
 
 function apply(state: TuiState, ...actions: TuiAction[]): TuiState {
   return actions.reduce((s, a) => tuiReducer(s, a), state);
@@ -142,7 +142,7 @@ describe('TUI reducer', function () {
 
     it('clears playerMetadata and playerMessages', function () {
       let s = initialState('test');
-      s = { ...s, playerMetadata: { some: 'data' }, playerMessages: [{ id: '1', from: 'a', text: 'x', timestamp: '', delivered: true }] };
+      s = { ...s, playerMetadata: { playerId: 'p1', ensemble: 'test', hostname: 'h', workDir: '/tmp', isConductor: false } as SessionMetadata, playerMessages: [{ id: '1', from: 'a', text: 'x', timestamp: '', delivered: true }] };
       s = tuiReducer(s, { type: 'NAVIGATE_PLAYER', playerId: 'p1' });
       expect(s.playerMetadata).to.be.null;
       expect(s.playerMessages).to.have.lengthOf(0);
@@ -403,7 +403,7 @@ describe('TUI reducer', function () {
 
   describe('REFRESH_PLAYER_DATA', function () {
     it('stores metadata and messages', function () {
-      const meta = { gitBranch: 'main', workDir: '/tmp' };
+      const meta: SessionMetadata = { playerId: 'p1', ensemble: 'test', hostname: 'h', workDir: '/tmp', isConductor: false, gitBranch: 'main' };
       const msgs = [
         { id: '1', from: 'a', text: 'hello', timestamp: '2026-01-01T00:00:00Z', delivered: true },
         { id: '2', from: 'b', text: 'world', timestamp: '2026-01-01T00:01:00Z', delivered: true },
@@ -417,8 +417,9 @@ describe('TUI reducer', function () {
 
     it('replaces previous data on refresh', function () {
       let s = initialState('test');
-      s = { ...s, playerMetadata: { old: true }, playerMessages: [{ id: '1', from: 'a', text: 'old', timestamp: '', delivered: true }] };
-      const newMeta = { gitBranch: 'feat' };
+      const oldMeta: SessionMetadata = { playerId: 'p1', ensemble: 'test', hostname: 'h', workDir: '/tmp', isConductor: false };
+      s = { ...s, playerMetadata: oldMeta, playerMessages: [{ id: '1', from: 'a', text: 'old', timestamp: '', delivered: true }] };
+      const newMeta: SessionMetadata = { playerId: 'p1', ensemble: 'test', hostname: 'h', workDir: '/tmp', isConductor: false, gitBranch: 'feat' };
       s = tuiReducer(s, { type: 'REFRESH_PLAYER_DATA', metadata: newMeta, messages: [] });
       expect(s.playerMetadata).to.deep.equal(newMeta);
       expect(s.playerMessages).to.have.lengthOf(0);
