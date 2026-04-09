@@ -334,6 +334,51 @@ export interface MaestroPendingCommand {
   ensemble?: string;
 }
 
+/** A single message in the aggregated ensemble chat feed. */
+export interface EnsembleChatMessage {
+  id: string;
+  from: string;
+  to: string;
+  /** Truncated to 500 chars max. Full text available via getPlayerMessages. */
+  text: string;
+  timestamp: string;
+  /**
+   * Message perspective:
+   * - 'maestro-out': maestro (you) sent to a player
+   * - 'maestro-in': a player sent to maestro (you)
+   * - 'conductor-out': conductor sent to a non-maestro player
+   * - 'conductor-in': a non-maestro player sent to conductor
+   */
+  role: 'maestro-out' | 'maestro-in' | 'conductor-out' | 'conductor-in';
+}
+
+/** Input for the maestroEnsembleChat query. */
+export interface EnsembleChatQuery {
+  /** Messages to skip from the tail (default 0). */
+  offset?: number;
+  /** Max messages to return (default 50, max 200). */
+  limit?: number;
+}
+
+/** Result from the maestroEnsembleChat query. */
+export interface EnsembleChatResult {
+  messages: EnsembleChatMessage[];
+  /** Total message count in cache. */
+  total: number;
+  /** True if messages exist beyond offset+limit. */
+  hasMore: boolean;
+  /** Whether a conductor was found during last refresh. */
+  hasConductor: boolean;
+}
+
+/** High-water marks for incremental chat fetch. */
+export interface ChatHighWater {
+  maestroRecv: number;
+  maestroSent: number;
+  conductorRecv: number;
+  conductorSent: number;
+}
+
 /** Input for the Maestro workflow. */
 export interface MaestroInput {
   ensemble: string;
@@ -345,4 +390,10 @@ export interface MaestroInput {
   pendingCommands?: MaestroPendingCommand[];
   /** Refresh interval in milliseconds (default 10000). Lowered in tests. */
   pollIntervalMs?: number;
+  /** Restored from continue-as-new (ring buffer, max 500). */
+  cachedChat?: EnsembleChatMessage[];
+  /** Metadata about last chat refresh. */
+  cachedChatMeta?: { hasConductor: boolean };
+  /** High-water marks for incremental chat fetch. */
+  chatHighWater?: ChatHighWater;
 }

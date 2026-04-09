@@ -4,6 +4,8 @@ import type {
   MaestroEvent,
   MaestroPendingCommand,
   MaestroRelayMessage,
+  EnsembleChatResult,
+  EnsembleChatQuery,
   Message,
   SentMessage,
 } from '../types';
@@ -16,6 +18,10 @@ export type {
   MaestroInput,
   MaestroRelayMessage,
   GlobalMaestroInput,
+  EnsembleChatMessage,
+  EnsembleChatResult,
+  EnsembleChatQuery,
+  ChatHighWater,
 } from '../types';
 
 // ── Per-Ensemble Maestro Signals (existing) ──
@@ -33,6 +39,12 @@ export const maestroEventsQuery = defineQuery<MaestroEvent[]>('maestroEvents');
 
 /** Get pending commands (queued but not yet relayed to conductor). */
 export const maestroPendingCommandsQuery = defineQuery<MaestroPendingCommand[]>('maestroPendingCommands');
+
+/** Paginated ensemble chat from cached state (maestro + conductor traffic). */
+export const maestroEnsembleChatQuery = defineQuery<
+  EnsembleChatResult,
+  [EnsembleChatQuery]
+>('maestroEnsembleChat');
 
 // ── Per-Ensemble Maestro Updates (existing) ──
 

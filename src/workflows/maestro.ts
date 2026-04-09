@@ -18,10 +18,13 @@ import {
   MaestroInput,
   MaestroRelayMessage,
   GlobalMaestroInput,
+  EnsembleChatMessage,
+  ChatHighWater,
   maestroShutdownSignal,
   maestroPlayersQuery,
   maestroEventsQuery,
   maestroPendingCommandsQuery,
+  maestroEnsembleChatQuery,
   maestroSendCommandUpdate,
   // Global Maestro signals/queries/updates
   maestroNotifyMessageSignal,
@@ -38,8 +41,8 @@ import {
 // Only proxy activities actually used in the workflow.
 // fetchConductorHistory is available in the activities but reserved for Phase 2 (TUI).
 
-const { refreshEnsembleState, relayCommandToConductor } =
-  proxyActivities<Pick<MaestroActivities, 'refreshEnsembleState' | 'relayCommandToConductor'>>({
+const { refreshEnsembleState, relayCommandToConductor, fetchEnsembleChat } =
+  proxyActivities<Pick<MaestroActivities, 'refreshEnsembleState' | 'relayCommandToConductor' | 'fetchEnsembleChat'>>({
     startToCloseTimeout: '30 seconds',
     retry: { maximumAttempts: 3 },
   });
@@ -60,6 +63,11 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
   let players: MaestroPlayerInfo[] = input.players ?? [];
   const events: MaestroEvent[] = input.events ?? [];
   const pendingCommands: MaestroPendingCommand[] = input.pendingCommands ?? [];
+  let cachedChat: EnsembleChatMessage[] = input.cachedChat ?? [];
+  let cachedChatMeta = input.cachedChatMeta ?? { hasConductor: false };
+  let chatHighWater: ChatHighWater = input.chatHighWater ?? {
+    maestroRecv: 0, maestroSent: 0, conductorRecv: 0, conductorSent: 0,
+  };
   let shutdownRequested = false;
   let commandQueued = false;
   let lastActiveSessionTime = Date.now();
@@ -75,6 +83,18 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
   setHandler(maestroPlayersQuery, () => players);
   setHandler(maestroEventsQuery, () => events);
   setHandler(maestroPendingCommandsQuery, () => pendingCommands);
+  setHandler(maestroEnsembleChatQuery, ({ offset = 0, limit = 50 } = {}) => {
+    const clampedLimit = Math.min(limit, 200);
+    const total = cachedChat.length;
+    const end = Math.max(0, total - offset);
+    const start = Math.max(0, end - clampedLimit);
+    return {
+      messages: cachedChat.slice(start, end),
+      total,
+      hasMore: start > 0,
+      hasConductor: cachedChatMeta.hasConductor,
+    };
+  });
 
   // ── Update Handler ──
 
@@ -170,6 +190,27 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
       // Activity failure after retries — skip this cycle, try again next loop
     }
 
+    // ── Refresh Ensemble Chat ──
+    if (patched('v0.19-ensemble-chat')) {
+      try {
+        const chatResult = await fetchEnsembleChat({
+          ensemble: input.ensemble,
+          knownCounts: chatHighWater,
+        });
+        if (chatResult.success) {
+          cachedChat.push(...chatResult.newMessages);
+          const MAX_CACHED_CHAT = 500;
+          while (cachedChat.length > MAX_CACHED_CHAT) {
+            cachedChat.shift();
+          }
+          chatHighWater = chatResult.currentCounts;
+          cachedChatMeta = { hasConductor: chatResult.hasConductor };
+        }
+      } catch {
+        // Chat refresh failed — keep stale cache, retry next cycle
+      }
+    }
+
     // ── Dispatch Pending Commands ──
     const pending = pendingCommands.filter((c) => c.status === 'pending');
     for (const cmd of pending) {
@@ -207,6 +248,9 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
         // Only carry pending commands; delivered/failed are historical
         pendingCommands: pendingCommands.filter((c) => c.status === 'pending'),
         pollIntervalMs: input.pollIntervalMs,
+        cachedChat,
+        cachedChatMeta,
+        chatHighWater,
       });
     }
   }

@@ -640,30 +640,31 @@ export function App({ api, ensemble }: AppProps) {
         });
       }
     } else if (s.activeEnsemble) {
-      // Bare text → send in current context
-      // Chat mode: send directly to chatTarget
-      // Maestro view (no chatTarget): send as maestro command to conductor
-      const target = s.chatTarget;
+      // Bare text → route via @player or to conductor
+      const atMatch = trimmed.match(/^@(\S+)\s+(.+)$/s);
       try {
-        if (target) {
-          // Optimistic local echo — appears in live conversation stream
-          const isConductorTarget = target === s.conductorName;
-          dispatch({ type: 'APPEND_SENT_MESSAGE', to: target, text: trimmed });
-          const sendPromise = isConductorTarget
-            ? api.sendCommand(s.activeEnsemble!, trimmed, 'maestro')
-            : api.sendMessage(s.activeEnsemble!, target, trimmed, 'maestro');
-          sendPromise.catch(err => dispatch({
+        if (atMatch) {
+          // @player message → send directly to that player
+          const [, targetPlayer, message] = atMatch;
+          dispatch({ type: 'APPEND_SENT_MESSAGE', to: targetPlayer, text: message });
+          api.sendAsMaestro(s.activeEnsemble!, targetPlayer, message).catch(err => dispatch({
             type: 'COMMIT_STATIC',
-            item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to deliver: ${err}`, timestamp: Date.now() },
+            item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to deliver to @${targetPlayer}: ${err}`, timestamp: Date.now() },
           }));
-        } else {
-          // Maestro view — send to conductor as maestro (optimistic)
+        } else if (s.conductorName || s.hasConductor) {
+          // No @prefix → send to conductor
           const conductorTarget = s.conductorName || 'conductor';
           dispatch({ type: 'APPEND_SENT_MESSAGE', to: conductorTarget, text: trimmed });
           api.sendCommand(s.activeEnsemble!, trimmed, 'maestro').catch(err => dispatch({
             type: 'COMMIT_STATIC',
             item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to deliver: ${err}`, timestamp: Date.now() },
           }));
+        } else {
+          // No conductor — show error
+          dispatch({
+            type: 'COMMIT_STATIC',
+            item: { id: nextStaticId(), type: 'error', content: 'No conductor. Use @player to message directly, or /recruit a conductor.', timestamp: Date.now() },
+          });
         }
       } catch (err) {
         dispatch({
@@ -754,22 +755,29 @@ export function App({ api, ensemble }: AppProps) {
             } catch { /* best effort */ }
           }
         } else {
-          // Single source: maestro workflow messages + players + schedules
+          // Single source: maestro workflow for players, schedules, and ensemble chat
           const ens = s.activeEnsemble!;
-          const [players, maestroMsgs, schedules] = await Promise.all([
+          const [players, schedules, chatResult] = await Promise.all([
             api.getPlayers(ens),
-            api.getMaestroMessages(ens),
             api.getSchedules(ens),
+            api.getEnsembleChat(ens, 0, 50),
           ]);
 
-          // Build conversation from maestro workflow (single source of truth)
-          const conversation = [
-            ...maestroMsgs.received.map(m => ({ id: m.id, from: m.from, to: 'maestro', text: m.text, timestamp: m.timestamp, direction: 'in' as const })),
-            ...maestroMsgs.sent.map(m => ({ id: `sent-${m.timestamp}`, from: 'you', to: m.to, text: m.text, timestamp: m.timestamp, direction: 'out' as const })),
-          ].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+          // Map ensemble chat to conversation format for ConversationStream
+          const conversation = chatResult.messages.map(m => ({
+            id: m.id,
+            from: m.from,
+            to: m.to,
+            text: m.text,
+            timestamp: m.timestamp,
+            direction: (m.role === 'maestro-out' ? 'out' : 'in') as 'in' | 'out',
+            role: m.role,
+            thirdParty: m.role === 'conductor-out' || m.role === 'conductor-in',
+          }));
 
           dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages: [], history: [], schedules });
           dispatch({ type: 'SET_CONVERSATION', conversation });
+          dispatch({ type: 'SET_ENSEMBLE_CHAT', chat: chatResult });
 
           // Track conductor
           const currentS = stateRef.current;

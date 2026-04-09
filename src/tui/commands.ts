@@ -746,11 +746,6 @@ export function formatTimestamp(ts: string): string {
 
 /** All supported slash commands. */
 export const COMMANDS: Record<string, CommandDef> = {
-  cue: {
-    description: 'Send a message to a player',
-    usage: '/cue <player> [message]',
-    handler: handleCue,
-  },
   recruit: {
     description: 'Spawn a new player session',
     usage: '/recruit <name> [--type <type>] [--dir <path>]',
@@ -846,11 +841,6 @@ export const COMMANDS: Record<string, CommandDef> = {
     usage: '/dashboard',
     handler: null, // Handled directly in App.tsx
   },
-  chat: {
-    description: 'Enter direct chat with a player',
-    usage: '/chat <player>',
-    handler: handleCue, // Same handler as /cue
-  },
   back: {
     description: 'Return to maestro view',
     usage: '/back',
@@ -898,7 +888,7 @@ export function formatHelpSummary(): string {
 }
 
 /** Commands that take a player name as their first parameter. */
-export const PLAYER_PARAM_COMMANDS = new Set(['chat', 'cue', 'stop', 'encore', 'worktree']);
+export const PLAYER_PARAM_COMMANDS = new Set(['stop', 'encore', 'worktree']);
 
 /** Commands with hardcoded subcommands (shown in autocomplete). */
 export const SUBCOMMAND_MAP: Record<string, string[]> = {

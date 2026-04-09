@@ -20,6 +20,10 @@ export interface ConversationMessage {
   text: string;
   timestamp: string;
   direction: 'in' | 'out';
+  /** Message role from ensemble chat feed. */
+  role?: 'maestro-out' | 'maestro-in' | 'conductor-out' | 'conductor-in';
+  /** True for conductor↔player traffic (rendered dimmed). */
+  thirdParty?: boolean;
 }
 
 export interface SentMessage {
@@ -44,6 +48,10 @@ interface FormattedMsg {
   time: string;
   body: string;
   direction: 'in' | 'out';
+  role?: string;
+  thirdParty?: boolean;
+  /** For conductor traffic: show routing (from → to). */
+  routeLabel?: string;
 }
 
 function formatTime(timestamp: string): string {
@@ -94,12 +102,22 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
   const sorted = allConvoMsgs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
   // Format messages
-  const formatted: FormattedMsg[] = sorted.map(m => ({
-    sender: m.from,
-    time: formatTime(m.timestamp),
-    body: m.text,
-    direction: m.direction,
-  }));
+  const formatted: FormattedMsg[] = sorted.map(m => {
+    const role = m.role;
+    const thirdParty = m.thirdParty;
+    let routeLabel: string | undefined;
+    if (role === 'conductor-out') routeLabel = `${m.from} \u2192 ${m.to}`;
+    else if (role === 'conductor-in') routeLabel = `${m.from} \u2192 ${m.to}`;
+    return {
+      sender: m.from,
+      time: formatTime(m.timestamp),
+      body: m.text,
+      direction: m.direction,
+      role,
+      thirdParty,
+      routeLabel,
+    };
+  });
 
   // Work backwards from newest — include as many as fit in viewport
   // estimateLines includes 1 line for the \n\n separator before each message,
@@ -173,14 +191,17 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
         }
       } else {
         // Inbound: header line + body lines
+        const headerLabel = msg.routeLabel || msg.sender;
+        const headerColor = msg.thirdParty ? THEME.dim : THEME.accent;
+        const bodyColor = msg.thirdParty ? THEME.textMuted : THEME.text;
         children.push(React.createElement(React.Fragment, { key: `hdr-${i}` },
           React.createElement(Text, { color: THEME.dim }, ' \u2190 '),
-          React.createElement(Text, { color: THEME.accent }, msg.sender),
+          React.createElement(Text, { color: headerColor }, headerLabel),
           React.createElement(Text, { color: THEME.dim }, `  ${msg.time}`),
         ));
         for (let j = 0; j < displayLines.length; j++) {
           children.push('\n');
-          children.push(React.createElement(Text, { key: `bl-${i}-${j}`, color: THEME.text }, `${INDENT}${displayLines[j]}`));
+          children.push(React.createElement(Text, { key: `bl-${i}-${j}`, color: bodyColor }, `${INDENT}${displayLines[j]}`));
         }
         if (wrappedLines.length > MAX_DISPLAY_LINES) {
           children.push('\n');

@@ -18,6 +18,7 @@ import type {
   QualityGate,
   StageEntry,
   WorktreeEntry,
+  EnsembleChatResult,
 } from '../types';
 
 // ── Public Types ──
@@ -58,6 +59,8 @@ export interface TempoClient {
   getStages(ensemble: string): Promise<StageEntry[]>;
   /** Get worktrees from the conductor workflow. */
   getWorktrees(ensemble: string): Promise<WorktreeEntry[]>;
+  /** Get aggregated ensemble chat (maestro + conductor traffic). */
+  getEnsembleChat(ensemble: string, offset?: number, limit?: number): Promise<EnsembleChatResult>;
   /** Disband an ensemble: terminate all sessions, scheduler, and maestro workflows. */
   disbandEnsemble(ensemble: string): Promise<{ terminated: number }>;
   /** Check if the Temporal connection is alive. */
@@ -351,6 +354,15 @@ export function createTempoClient(client: Client): TempoClient {
     async cancelSchedule(ensemble: string, name: string): Promise<void> {
       const h = handle(schedulerWorkflowId(ensemble));
       await h.signal('removeSchedule', name);
+    },
+
+    async getEnsembleChat(ensemble: string, offset?: number, limit?: number): Promise<EnsembleChatResult> {
+      try {
+        const h = handle(maestroWorkflowId(ensemble));
+        return await h.query('maestroEnsembleChat', { offset, limit });
+      } catch {
+        return { messages: [], total: 0, hasMore: false, hasConductor: false };
+      }
     },
 
     async getGates(ensemble: string): Promise<QualityGate[]> {

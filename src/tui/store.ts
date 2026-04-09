@@ -12,6 +12,8 @@ import type {
   SentMessage,
   SessionMetadata,
   ScheduleEntry,
+  EnsembleChatMessage,
+  EnsembleChatResult,
 } from '../types';
 import type { EnsembleSummary } from './client';
 
@@ -182,6 +184,10 @@ export interface TuiState {
   schedules: ScheduleEntry[];
   /** Maestro conversation (null = loading, [] = loaded but empty). */
   conversation: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out' }> | null;
+  /** Aggregated ensemble chat feed (from maestroEnsembleChat query). */
+  ensembleChat: EnsembleChatMessage[];
+  /** Whether the active ensemble has a conductor. */
+  hasConductor: boolean;
   /** Currently highlighted player index (ensemble view). */
   selectedPlayerIndex: number;
 
@@ -260,6 +266,8 @@ export function initialState(ensemble?: string): TuiState {
     conductorHistory: [],
     schedules: [],
     conversation: null,
+    ensembleChat: [],
+    hasConductor: false,
     selectedPlayerIndex: 0,
 
     activePlayer: null,
@@ -303,6 +311,7 @@ export type TuiAction =
   | { type: 'REFRESH_ENSEMBLES'; ensembles: EnsembleSummary[] }
   | { type: 'REFRESH_ENSEMBLE_DATA'; players: MaestroPlayerInfo[]; messages: MaestroRelayMessage[]; history: HistoryEntry[]; schedules?: ScheduleEntry[] }
   | { type: 'SET_CONVERSATION'; conversation: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out' }> }
+  | { type: 'SET_ENSEMBLE_CHAT'; chat: EnsembleChatResult }
   | { type: 'REFRESH_PLAYER_DATA'; metadata: SessionMetadata | null; messages: Array<Message | (SentMessage & { direction: 'sent' })> }
   | { type: 'PLAYER_SCROLL_UP' }
   | { type: 'PLAYER_SCROLL_DOWN' }
@@ -472,6 +481,13 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'SET_CONVERSATION':
       return { ...state, conversation: action.conversation };
+
+    case 'SET_ENSEMBLE_CHAT':
+      return {
+        ...state,
+        ensembleChat: action.chat.messages,
+        hasConductor: action.chat.hasConductor,
+      };
 
     case 'REFRESH_PLAYER_DATA':
       return {
