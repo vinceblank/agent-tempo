@@ -1185,7 +1185,7 @@ export function App({ api, ensemble }: AppProps) {
 
   // Layout: header (2 lines) + content (variable) + footer (4 lines)
   // Content height is calculated to guarantee footer is always visible.
-  const FOOTER_LINES = 6; // blank separator + StatusBar + divider + PromptArea (prompt line) + bottom divider + 1 clearance
+  const FOOTER_LINES = 5; // blank separator + StatusBar + divider + PromptArea (prompt line) + bottom divider
   const contentHeight = Math.max(3, termRows - 1 - FOOTER_LINES);
 
   // Splash phase — full screen, no chrome (title/status/prompt hidden)
