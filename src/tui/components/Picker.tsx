@@ -16,6 +16,8 @@ export interface PickerItem {
   color?: string;
   icon?: string;
   current?: boolean;
+  /** Group header — items with the same group are rendered under a shared header. */
+  group?: string;
 }
 
 export interface PickerProps {
@@ -58,7 +60,8 @@ export function Picker({ title, items, selectedIndex, hint }: PickerProps) {
     children.push('\n');
   }
 
-  // Items
+  // Items (with optional group headers)
+  let lastGroup: string | undefined;
   for (let i = 0; i < visible.length; i++) {
     const item = visible[i];
     const actualIdx = startIdx + i;
@@ -68,7 +71,15 @@ export function Picker({ title, items, selectedIndex, hint }: PickerProps) {
     const labelColor = isSelected ? THEME.accent : (item.color || THEME.text);
     const icon = item.icon ? `${item.icon} ` : '';
 
-    if (i > 0) children.push('\n');
+    // Group header
+    if (item.group && item.group !== lastGroup) {
+      if (i > 0 || lastGroup !== undefined) children.push('\n');
+      children.push('\n');
+      children.push(React.createElement(Text, { key: `grp-${item.group}`, color: THEME.dim }, `  \u2500\u2500 ${item.group} \u2500\u2500`));
+      lastGroup = item.group;
+    }
+
+    if (i > 0 || lastGroup !== undefined) children.push('\n');
     children.push(
       React.createElement(React.Fragment, { key: item.id },
         React.createElement(Text, { color: isSelected ? THEME.accent : THEME.dim }, indicator),

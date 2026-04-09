@@ -104,6 +104,8 @@ export function App({ api, ensemble }: AppProps) {
   const overflowRef = React.useRef<{ formatted: Array<{ sender: string; time: string; body: string; direction: 'in' | 'out' }>; startIdx: number } | null>(null);
   // Callback for picker selection — set before showing picker, called on Enter
   const pickerCallbackRef = React.useRef<((id: string) => void) | null>(null);
+  // Picker items ref — synced from pickerItems memo so useInput reads sorted items
+  const pickerItemsRef = React.useRef<PickerItem[]>([]);
 
   // Reset stale refs when switching ensembles + add separator
   const prevEnsembleRef = React.useRef(state.activeEnsemble);
@@ -133,7 +135,7 @@ export function App({ api, ensemble }: AppProps) {
     const { formatted, startIdx } = data;
     const overflow = formatted.slice(0, startIdx);
     for (const msg of overflow) {
-      const key = `${msg.direction}:${msg.body.slice(0, 60)}`;
+      const key = `${msg.direction}:${msg.time}:${msg.body.slice(0, 60)}`;
       if (!overflowCommittedRef.current.has(key)) {
         overflowCommittedRef.current.add(key);
         // Blank separator
@@ -195,36 +197,36 @@ export function App({ api, ensemble }: AppProps) {
       if (key.return) {
         const cb = pickerCallbackRef.current;
         if (s.pickerType === 'players') {
-          const player = s.players[s.pickerIndex];
-          if (player) {
+          const item = pickerItemsRef.current[s.pickerIndex];
+          if (item) {
             dispatch({ type: 'HIDE_PICKER' });
             if (cb) {
-              cb(player.playerId);
+              cb(item.id);
               pickerCallbackRef.current = null;
             } else if (s.pickerIntent === 'navigate') {
               // Navigate to player detail view
-              dispatch({ type: 'NAVIGATE_PLAYER', playerId: player.playerId });
+              dispatch({ type: 'NAVIGATE_PLAYER', playerId: item.id });
             } else {
               // Default: enter chat
-              dispatch({ type: 'ENTER_CHAT', target: player.playerId });
+              dispatch({ type: 'ENTER_CHAT', target: item.id });
               dispatch({
                 type: 'COMMIT_STATIC',
-                item: { id: nextStaticId(), type: 'info', content: `\u2500\u2500 chatting with ${player.playerId} \u2500\u2500`, timestamp: Date.now() },
+                item: { id: nextStaticId(), type: 'info', content: `\u2500\u2500 chatting with ${item.id} \u2500\u2500`, timestamp: Date.now() },
               });
             }
           }
         } else if (s.pickerType === 'ensembles') {
-          const ens = s.ensembles[s.pickerIndex];
-          if (ens) {
+          const ensItem = pickerItemsRef.current[s.pickerIndex];
+          if (ensItem) {
             dispatch({ type: 'HIDE_PICKER' });
             if (cb) {
-              cb(ens.name);
+              cb(ensItem.id);
               pickerCallbackRef.current = null;
             } else {
-              dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: ens.name });
+              dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: ensItem.id });
               dispatch({
                 type: 'COMMIT_STATIC',
-                item: { id: nextStaticId(), type: 'info', content: `Switched to ensemble: ${ens.name}`, timestamp: Date.now() },
+                item: { id: nextStaticId(), type: 'info', content: `Switched to ensemble: ${ensItem.id}`, timestamp: Date.now() },
               });
             }
           }
@@ -399,14 +401,22 @@ export function App({ api, ensemble }: AppProps) {
     if (!state.pickerVisible) return [];
 
     if (state.pickerType === 'players') {
-      return state.players.map(p => ({
+      // Sort by type for grouping, conductor first
+      const sorted = [...state.players].sort((a, b) => {
+        if (a.isConductor !== b.isConductor) return a.isConductor ? -1 : 1;
+        const typeA = a.playerType || a.agentType || '';
+        const typeB = b.playerType || b.agentType || '';
+        return typeA.localeCompare(typeB) || a.playerId.localeCompare(b.playerId);
+      });
+      return sorted.map(p => ({
         id: p.playerId,
         label: p.playerId,
-        detail: `${p.playerType || p.agentType || ''} [${p.status || '?'}]`,
+        detail: `[${p.status || '?'}]`,
         meta: p.part || undefined,
         icon: p.isConductor ? '\u2605' : p.status === 'active' ? '\u25CF' : p.status === 'stale' ? '\u25CB' : '\u25D4',
         color: p.status === 'active' ? THEME.success : p.status === 'stale' ? THEME.warning : THEME.dim,
         current: p.playerId === state.chatTarget,
+        group: p.playerType || p.agentType || 'unknown',
       }));
     }
 
@@ -422,6 +432,7 @@ export function App({ api, ensemble }: AppProps) {
 
     return [];
   }, [state.pickerVisible, state.pickerType, state.players, state.ensembles, state.chatTarget, state.activeEnsemble]);
+  pickerItemsRef.current = pickerItems;
 
   // ── Command palette ──
   const allPaletteCommands = useMemo(() =>
@@ -980,21 +991,9 @@ export function App({ api, ensemble }: AppProps) {
 
     // Picker takes over full content area
     if (state.pickerVisible) {
-      const items: PickerItem[] = state.pickerType === 'ensembles'
-        ? state.ensembles.map(e => ({
-            id: e.name,
-            label: e.name,
-            detail: `${e.playerCount} player${e.playerCount !== 1 ? 's' : ''}${e.hasConductor ? ' \u2605' : ''}`,
-          }))
-        : state.players.map(p => ({
-            id: p.playerId,
-            label: p.playerId,
-            detail: `${p.status || 'unknown'} \u00B7 ${p.gitBranch || '?'} \u00B7 @${p.playerType || p.agentType || 'claude'}`,
-            icon: p.isConductor ? '\u2605' : undefined,
-          }));
       return React.createElement(Picker, {
         title: state.pickerType === 'ensembles' ? 'Select Ensemble' : 'Select Player',
-        items,
+        items: pickerItems,
         selectedIndex: state.pickerIndex,
         hint: '\u2191\u2193 navigate, Enter select, Esc dismiss',
       });
