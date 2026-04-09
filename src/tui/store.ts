@@ -183,7 +183,7 @@ export interface TuiState {
   /** Active schedules in the ensemble. */
   schedules: ScheduleEntry[];
   /** Maestro conversation (null = loading, [] = loaded but empty). */
-  conversation: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out' }> | null;
+  conversation: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out'; role?: 'maestro-out' | 'maestro-in' | 'conductor-out' | 'conductor-in'; thirdParty?: boolean }> | null;
   /** Aggregated ensemble chat feed (from maestroEnsembleChat query). */
   ensembleChat: EnsembleChatMessage[];
   /** Whether the active ensemble has a conductor. */
@@ -310,7 +310,7 @@ export type TuiAction =
   // Data refresh
   | { type: 'REFRESH_ENSEMBLES'; ensembles: EnsembleSummary[] }
   | { type: 'REFRESH_ENSEMBLE_DATA'; players: MaestroPlayerInfo[]; messages: MaestroRelayMessage[]; history: HistoryEntry[]; schedules?: ScheduleEntry[] }
-  | { type: 'SET_CONVERSATION'; conversation: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out' }> }
+  | { type: 'SET_CONVERSATION'; conversation: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out'; role?: 'maestro-out' | 'maestro-in' | 'conductor-out' | 'conductor-in'; thirdParty?: boolean }> }
   | { type: 'SET_ENSEMBLE_CHAT'; chat: EnsembleChatResult }
   | { type: 'REFRESH_PLAYER_DATA'; metadata: SessionMetadata | null; messages: Array<Message | (SentMessage & { direction: 'sent' })> }
   | { type: 'PLAYER_SCROLL_UP' }

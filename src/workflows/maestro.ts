@@ -20,6 +20,7 @@ import {
   GlobalMaestroInput,
   EnsembleChatMessage,
   ChatHighWater,
+  ZERO_CHAT_HIGH_WATER,
   maestroShutdownSignal,
   maestroPlayersQuery,
   maestroEventsQuery,
@@ -47,7 +48,7 @@ const { refreshEnsembleState, relayCommandToConductor, fetchEnsembleChat } =
     retry: { maximumAttempts: 3 },
   });
 
-const DEFAULT_REFRESH_INTERVAL_MS = 10_000; // 10 seconds
+const DEFAULT_REFRESH_INTERVAL_MS = 5_000; // 5 seconds
 const MAX_EVENTS = 200;
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes with no running sessions
 
@@ -65,9 +66,7 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
   const pendingCommands: MaestroPendingCommand[] = input.pendingCommands ?? [];
   let cachedChat: EnsembleChatMessage[] = input.cachedChat ?? [];
   let cachedChatMeta = input.cachedChatMeta ?? { hasConductor: false };
-  let chatHighWater: ChatHighWater = input.chatHighWater ?? {
-    maestroRecv: 0, maestroSent: 0, conductorRecv: 0, conductorSent: 0,
-  };
+  let chatHighWater: ChatHighWater = input.chatHighWater ?? ZERO_CHAT_HIGH_WATER;
   let shutdownRequested = false;
   let commandQueued = false;
   let lastActiveSessionTime = Date.now();
@@ -172,10 +171,8 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
         }
       }
 
-      // Trim events ring buffer
-      while (events.length > MAX_EVENTS) {
-        events.shift();
-      }
+      const eventsExcess = events.length - MAX_EVENTS;
+      if (eventsExcess > 0) events.splice(0, eventsExcess);
 
       players = newPlayers;
 
@@ -200,9 +197,8 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
         if (chatResult.success) {
           cachedChat.push(...chatResult.newMessages);
           const MAX_CACHED_CHAT = 500;
-          while (cachedChat.length > MAX_CACHED_CHAT) {
-            cachedChat.shift();
-          }
+          const chatExcess = cachedChat.length - MAX_CACHED_CHAT;
+          if (chatExcess > 0) cachedChat.splice(0, chatExcess);
           chatHighWater = chatResult.currentCounts;
           cachedChatMeta = { hasConductor: chatResult.hasConductor };
         }
@@ -301,9 +297,8 @@ export async function claudeGlobalMaestroWorkflow(input: GlobalMaestroInput): Pr
 
   setHandler(maestroNotifyMessageSignal, (msg) => {
     recentMessages.push(msg);
-    while (recentMessages.length > GLOBAL_MAX_MESSAGES) {
-      recentMessages.shift();
-    }
+    const msgExcess = recentMessages.length - GLOBAL_MAX_MESSAGES;
+    if (msgExcess > 0) recentMessages.splice(0, msgExcess);
   });
 
   // ── Query Handlers ──
@@ -338,9 +333,8 @@ export async function claudeGlobalMaestroWorkflow(input: GlobalMaestroInput): Pr
       direction: 'outbound',
     };
     recentMessages.push(relayMsg);
-    while (recentMessages.length > GLOBAL_MAX_MESSAGES) {
-      recentMessages.shift();
-    }
+    const relayExcess = recentMessages.length - GLOBAL_MAX_MESSAGES;
+    if (relayExcess > 0) recentMessages.splice(0, relayExcess);
     return msgId;
   }, {
     validator: (req) => {
@@ -455,10 +449,8 @@ export async function claudeGlobalMaestroWorkflow(input: GlobalMaestroInput): Pr
       }
     }
 
-    // Trim events ring buffer
-    while (events.length > GLOBAL_MAX_EVENTS) {
-      events.shift();
-    }
+    const globalEventsExcess = events.length - GLOBAL_MAX_EVENTS;
+    if (globalEventsExcess > 0) events.splice(0, globalEventsExcess);
 
     // ── Dispatch Pending Commands ──
     const pending = pendingCommands.filter((c) => c.status === 'pending');

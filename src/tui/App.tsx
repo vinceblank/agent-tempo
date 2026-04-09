@@ -790,7 +790,7 @@ export function App({ api, ensemble }: AppProps) {
       } catch (err) {
         console.error('[tui:poll] error:', err);
       }
-    }, 3000);
+    }, 2000);
 
     return () => clearInterval(interval);
   }, [state.phase, state.activeEnsemble, api]);
