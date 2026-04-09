@@ -203,8 +203,8 @@ describe('getCommandNames', function () {
 describe('isValidCommand', function () {
 
   it('returns true for registered commands', function () {
-    expect(isValidCommand('cue')).to.be.true;
     expect(isValidCommand('broadcast')).to.be.true;
+    expect(isValidCommand('player')).to.be.true;
     expect(isValidCommand('help')).to.be.true;
   });
 
