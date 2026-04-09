@@ -110,14 +110,19 @@ export const DEFAULT_SCHEDULE_ANSWERS: ScheduleAnswers = {
   name: '',
 };
 
-export const DEFAULT_RECRUIT_ANSWERS: RecruitAnswers = {
-  name: '',
-  agent: 'claude',
-  playerType: '',
-  workDir: process.cwd(),
-  initialMessage: '',
-  host: 'localhost',
-};
+export function defaultRecruitAnswers(defaultAgent: 'claude' | 'copilot' = 'claude'): RecruitAnswers {
+  return {
+    name: '',
+    agent: defaultAgent,
+    playerType: '',
+    workDir: process.cwd(),
+    initialMessage: '',
+    host: 'localhost',
+  };
+}
+
+/** @deprecated Use defaultRecruitAnswers(agent) instead. Kept for test compatibility. */
+export const DEFAULT_RECRUIT_ANSWERS: RecruitAnswers = defaultRecruitAnswers();
 
 // ── Create Ensemble wizard ──
 
@@ -378,7 +383,7 @@ export type TuiAction =
   | { type: 'CONFIRM_LINEUP'; action: 'load'; path: string; summary: string }
   | { type: 'CANCEL_LINEUP' }
   // Recruit wizard
-  | { type: 'ENTER_RECRUIT'; answers?: Partial<RecruitAnswers> }
+  | { type: 'ENTER_RECRUIT'; answers?: Partial<RecruitAnswers>; defaultAgent?: 'claude' | 'copilot' }
   | { type: 'RECRUIT_NEXT_STEP'; answer: Partial<RecruitAnswers> }
   | { type: 'RECRUIT_PREV_STEP' }
   | { type: 'RECRUIT_SUBMIT' }
@@ -716,7 +721,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         phase: 'recruit' as TuiPhase,
         recruitState: {
           step: 'name',
-          answers: { ...DEFAULT_RECRUIT_ANSWERS, ...action.answers },
+          answers: { ...defaultRecruitAnswers(action.defaultAgent), ...action.answers },
           preRecruitPhase: state.phase,
           preRecruitChatTarget: state.chatTarget,
         },

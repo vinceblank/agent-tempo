@@ -24,6 +24,8 @@ export interface ParsedCommand {
 export interface CommandContext {
   /** Current active ensemble (null if viewing all ensembles). */
   activeEnsemble: string | null;
+  /** Default agent type from config (defaults to 'claude'). */
+  defaultAgent?: 'claude' | 'copilot';
 }
 
 /** Handler function signature for slash commands. */
@@ -251,6 +253,7 @@ async function handleRecruit(
   args: string[],
   dispatch: (action: TuiAction) => void,
   _api: TempoClient,
+  ctx: CommandContext,
 ): Promise<void> {
   // Parse optional inline args: /recruit name --type foo --dir /path
   const answers: Record<string, string> = {};
@@ -263,7 +266,7 @@ async function handleRecruit(
     if (args[i] === '--agent' && args[i + 1]) answers.agent = args[++i];
     if (args[i] === '--host' && args[i + 1]) answers.host = args[++i];
   }
-  dispatch({ type: 'ENTER_RECRUIT', answers });
+  dispatch({ type: 'ENTER_RECRUIT', answers, defaultAgent: ctx.defaultAgent });
 }
 
 /** /encore <player> — revive a stale player. */

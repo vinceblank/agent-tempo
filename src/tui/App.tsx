@@ -61,6 +61,8 @@ interface AppProps {
   api: TempoClient;
   /** If provided, start directly in ensemble view. */
   ensemble?: string;
+  /** Default agent type from config (defaults to 'claude'). */
+  defaultAgent?: 'claude' | 'copilot';
 }
 
 let staticIdCounter = 0;
@@ -80,7 +82,7 @@ function staticItemColor(item: StaticItem): string {
   }
 }
 
-export function App({ api, ensemble }: AppProps) {
+export function App({ api, ensemble, defaultAgent }: AppProps) {
   const { Box, Text, useApp, useInput } = useInk();
   const [state, dispatch] = useReducer(tuiReducer, initialState(ensemble));
   const { exit } = useApp();
@@ -595,11 +597,11 @@ export function App({ api, ensemble }: AppProps) {
         stop: (id) => {
           dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `Stopping ${id}...`, timestamp: Date.now() } });
           const cmd = COMMANDS['stop'];
-          if (cmd?.handler) cmd.handler([id], dispatch, api, { activeEnsemble: stateRef.current.activeEnsemble });
+          if (cmd?.handler) cmd.handler([id], dispatch, api, { activeEnsemble: stateRef.current.activeEnsemble, defaultAgent });
         },
         encore: (id) => {
           const cmd = COMMANDS['encore'];
-          if (cmd?.handler) cmd.handler([id], dispatch, api, { activeEnsemble: stateRef.current.activeEnsemble });
+          if (cmd?.handler) cmd.handler([id], dispatch, api, { activeEnsemble: stateRef.current.activeEnsemble, defaultAgent });
         },
         players: (id) => {
           dispatch({ type: 'NAVIGATE_PLAYER', playerId: id });
@@ -644,7 +646,7 @@ export function App({ api, ensemble }: AppProps) {
 
       // Execute handler
       try {
-        const ctx = { activeEnsemble: s.activeEnsemble };
+        const ctx = { activeEnsemble: s.activeEnsemble, defaultAgent };
         await cmd.handler(parsed.args, dispatch, api, ctx);
       } catch (err) {
         dispatch({

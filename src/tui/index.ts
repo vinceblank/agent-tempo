@@ -78,7 +78,7 @@ export async function run(opts: TuiOpts): Promise<void> {
 
     // Render the TUI
     const app = ink.render(
-      React.createElement(InkProvider, { ink, children: React.createElement(App, { api, ensemble: opts.ensemble }) }),
+      React.createElement(InkProvider, { ink, children: React.createElement(App, { api, ensemble: opts.ensemble, defaultAgent: opts.config.defaultAgent }) }),
     );
 
     await app.waitUntilExit();
