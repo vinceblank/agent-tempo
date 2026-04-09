@@ -219,7 +219,15 @@ export function App({ api, ensemble }: AppProps) {
           const ensItem = pickerItemsRef.current[s.pickerIndex];
           if (ensItem) {
             dispatch({ type: 'HIDE_PICKER' });
-            if (cb) {
+            if (ensItem.id === '__create__') {
+              // Pre-fill /up command — same as splash "Create new ensemble"
+              dispatch({
+                type: 'COMMIT_STATIC',
+                item: { id: nextStaticId(), type: 'info', content: 'Type /up <name> to create a new ensemble.', timestamp: Date.now() },
+              });
+              promptRef.current?.setValue('/up ');
+              inputValueRef.current = '/up ';
+            } else if (cb) {
               cb(ensItem.id);
               pickerCallbackRef.current = null;
             } else {
@@ -421,13 +429,22 @@ export function App({ api, ensemble }: AppProps) {
     }
 
     if (state.pickerType === 'ensembles') {
-      return (state.ensembles ?? []).map(ens => ({
+      const items: PickerItem[] = (state.ensembles ?? []).map(ens => ({
         id: ens.name,
         label: ens.name,
         detail: `${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''}`,
         meta: ens.hasConductor ? '\u2605 conductor' : undefined,
         current: ens.name === state.activeEnsemble,
       }));
+      // Add "Create new ensemble" option at the bottom
+      items.push({
+        id: '__create__',
+        label: '+ Create new ensemble',
+        detail: '/up <name>',
+        icon: '\u2795',
+        color: THEME.accent,
+      });
+      return items;
     }
 
     return [];
