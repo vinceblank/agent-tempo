@@ -120,7 +120,10 @@ export function ScheduleOverlay({ schedules, ensemble }: ScheduleOverlayProps) {
   }
 
   children.push('\n\n');
-  children.push(React.createElement(Text, { key: 'hint', color: THEME.dim }, '  Esc to dismiss'));
+  children.push(React.createElement(Text, { key: 'hint', color: THEME.dim },
+    '  /schedule create \u2014 new  \u00B7  /schedule delete <name> \u2014 remove'));
+  children.push('\n');
+  children.push(React.createElement(Text, { key: 'hint2', color: THEME.dim }, '  Esc to dismiss'));
 
   return React.createElement(Text, null, ...children);
 }

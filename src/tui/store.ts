@@ -249,6 +249,8 @@ export interface TuiState {
   pickerType: 'players' | 'ensembles' | null;
   pickerIntent: 'navigate' | null;
   pickerIndex: number;
+  /** Optional status filter for player picker (e.g. 'stale' for encore). */
+  pickerStatusFilter: string | null;
 }
 
 export function initialState(ensemble?: string): TuiState {
@@ -296,6 +298,7 @@ export function initialState(ensemble?: string): TuiState {
     pickerType: null,
     pickerIntent: null,
     pickerIndex: 0,
+    pickerStatusFilter: null,
     confirmingStop: undefined,
     scheduleWizard: undefined,
   };
@@ -348,7 +351,7 @@ export type TuiAction =
   | { type: 'HIDE_COMMAND_OVERLAY' }
   | { type: 'STATUS_SCROLL_UP' }
   | { type: 'STATUS_SCROLL_DOWN' }
-  | { type: 'SHOW_PICKER'; pickerType: 'players' | 'ensembles'; intent?: 'navigate' }
+  | { type: 'SHOW_PICKER'; pickerType: 'players' | 'ensembles'; intent?: 'navigate'; statusFilter?: string }
   | { type: 'HIDE_PICKER' }
   | { type: 'PICKER_UP' }
   | { type: 'PICKER_DOWN' }
@@ -616,10 +619,10 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       return { ...state, statusScrollOffset: state.statusScrollOffset + 1 };
 
     case 'SHOW_PICKER':
-      return { ...state, pickerVisible: true, pickerType: action.pickerType, pickerIntent: action.intent || null, pickerIndex: 0 };
+      return { ...state, pickerVisible: true, pickerType: action.pickerType, pickerIntent: action.intent || null, pickerIndex: 0, pickerStatusFilter: action.statusFilter || null };
 
     case 'HIDE_PICKER':
-      return { ...state, pickerVisible: false, pickerType: null, pickerIntent: null, pickerIndex: 0 };
+      return { ...state, pickerVisible: false, pickerType: null, pickerIntent: null, pickerIndex: 0, pickerStatusFilter: null };
 
     case 'PICKER_UP':
       return { ...state, pickerIndex: Math.max(0, state.pickerIndex - 1) };

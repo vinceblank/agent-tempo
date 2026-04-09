@@ -238,6 +238,7 @@ async function handleRecall(
         : 'No recent messages.');
     } else {
       const title = targetPlayer ? `Recall \u00B7 ${targetPlayer}` : 'Recall \u00B7 all';
+      lines.push('\n  \u2139 Showing Maestro event log. Main chat uses ensemble feed.');
       dispatch({ type: 'SHOW_COMMAND_OVERLAY', title, content: lines.join('\n') });
     }
   } catch (err) {
@@ -299,22 +300,60 @@ async function handleEncore(
   }
 }
 
-/** /schedule [create] — list schedules or enter creation wizard. */
+/** Delete a schedule by name — shared logic for /schedule delete and /unschedule. */
+async function deleteSchedule(
+  name: string,
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  if (!ctx.activeEnsemble) {
+    commitStatic(dispatch, 'error', 'No active ensemble. Select one with /ensemble first.');
+    return;
+  }
+  try {
+    await api.cancelSchedule(ctx.activeEnsemble, name);
+    commitStatic(dispatch, 'message', `\u2714 Schedule "${name}" deleted.`);
+  } catch (err) {
+    commitStatic(dispatch, 'error', `\u2717 Failed to delete schedule "${name}": ${err}`);
+  }
+}
+
+/** /schedule [create|delete <name>] — manage schedules. */
 async function handleSchedule(
   args: string[],
   dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+  ctx: CommandContext,
 ): Promise<void> {
-  // /schedule create → enter wizard
-  if (args.length > 0 && args[0].toLowerCase() === 'create') {
-    dispatch({ type: 'ENTER_SCHEDULE_WIZARD' });
+  if (args.length > 0) {
+    const sub = args[0].toLowerCase();
+
+    // /schedule create → enter wizard
+    if (sub === 'create') {
+      dispatch({ type: 'ENTER_SCHEDULE_WIZARD' });
+      return;
+    }
+
+    // /schedule delete <name>
+    if (sub === 'delete') {
+      if (args.length < 2) {
+        commitStatic(dispatch, 'error', 'Usage: /schedule delete <name>');
+        return;
+      }
+      await deleteSchedule(args[1], dispatch, api, ctx);
+      return;
+    }
+
+    commitStatic(dispatch, 'error', `Unknown subcommand: ${sub}. Usage: /schedule [create | delete <name>]`);
     return;
   }
 
-  // /schedule (no args) → show schedule overlay with already-polled data
+  // /schedule (no args) → show schedule overlay
   dispatch({ type: 'SHOW_SCHEDULE_OVERLAY' });
 }
 
-/** /unschedule <name> — cancel a named schedule. */
+/** /unschedule <name> — alias for /schedule delete. */
 async function handleUnschedule(
   args: string[],
   dispatch: (action: TuiAction) => void,
@@ -322,22 +361,10 @@ async function handleUnschedule(
   ctx: CommandContext,
 ): Promise<void> {
   if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /unschedule <name>');
+    commitStatic(dispatch, 'error', 'Usage: /unschedule <name> (hint: use /schedule delete <name>)');
     return;
   }
-
-  if (!ctx.activeEnsemble) {
-    commitStatic(dispatch, 'error', 'No active ensemble. Select one with /ensemble first.');
-    return;
-  }
-
-  const name = args[0];
-  try {
-    await api.cancelSchedule(ctx.activeEnsemble, name);
-    commitStatic(dispatch, 'message', `\u2714 Schedule "${name}" cancelled.`);
-  } catch (err) {
-    commitStatic(dispatch, 'error', `\u2717 Failed to cancel schedule "${name}": ${err}`);
-  }
+  await deleteSchedule(args[0], dispatch, api, ctx);
 }
 
 /** /status — show ensemble status overlay. */
@@ -727,14 +754,9 @@ export const COMMANDS: Record<string, CommandDef> = {
     handler: handleRecall,
   },
   schedule: {
-    description: 'List schedules or create a new one',
-    usage: '/schedule [create]',
+    description: 'Manage schedules — list, create, or delete',
+    usage: '/schedule [create | delete <name>]',
     handler: handleSchedule,
-  },
-  unschedule: {
-    description: 'Cancel a named schedule',
-    usage: '/unschedule <name>',
-    handler: handleUnschedule,
   },
   player: {
     description: 'Show detailed player info',
@@ -844,7 +866,7 @@ export const PLAYER_PARAM_COMMANDS = new Set(['stop', 'encore', 'worktree']);
 export const SUBCOMMAND_MAP: Record<string, string[]> = {
   worktree: ['create', 'remove', 'list'],
   stage: ['create', 'list', 'cancel'],
-  schedule: ['create', 'list', 'cancel'],
+  schedule: ['create', 'delete'],
   lineup: ['load', 'save'],
   ensemble: ['save', 'list', 'show'],
 };

@@ -421,8 +421,12 @@ export function App({ api, ensemble }: AppProps) {
     if (!state.pickerVisible) return [];
 
     if (state.pickerType === 'players') {
+      // Apply status filter if set (e.g. 'stale' for encore)
+      const filtered = state.pickerStatusFilter
+        ? state.players.filter(p => p.status === state.pickerStatusFilter)
+        : state.players;
       // Sort by type for grouping, conductor first
-      const sorted = [...state.players].sort((a, b) => {
+      const sorted = [...filtered].sort((a, b) => {
         if (a.isConductor !== b.isConductor) return a.isConductor ? -1 : 1;
         const typeA = a.playerType || a.agentType || '';
         const typeB = b.playerType || b.agentType || '';
@@ -460,7 +464,7 @@ export function App({ api, ensemble }: AppProps) {
     }
 
     return [];
-  }, [state.pickerVisible, state.pickerType, state.players, state.ensembles, state.chatTarget, state.activeEnsemble]);
+  }, [state.pickerVisible, state.pickerType, state.pickerStatusFilter, state.players, state.ensembles, state.chatTarget, state.activeEnsemble]);
   pickerItemsRef.current = pickerItems;
 
   // ── Command palette ──
@@ -568,15 +572,7 @@ export function App({ api, ensemble }: AppProps) {
         return;
       }
       if (parsed.name === 'help') {
-        dispatch({
-          type: 'COMMIT_STATIC',
-          item: {
-            id: nextStaticId(),
-            type: 'command-output',
-            content: formatHelpSummary(),
-            timestamp: Date.now(),
-          },
-        });
+        dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: 'Help', content: formatHelpSummary() });
         return;
       }
 
@@ -598,7 +594,9 @@ export function App({ api, ensemble }: AppProps) {
 
       if (PICKER_COMMANDS[parsed.name] && parsed.args.length === 0) {
         pickerCallbackRef.current = PICKER_COMMANDS[parsed.name];
-        dispatch({ type: 'SHOW_PICKER', pickerType: 'players' });
+        // Encore picker shows only stale players
+        const statusFilter = parsed.name === 'encore' ? 'stale' : undefined;
+        dispatch({ type: 'SHOW_PICKER', pickerType: 'players', statusFilter });
         return;
       }
 
@@ -1070,8 +1068,13 @@ export function App({ api, ensemble }: AppProps) {
 
     // Picker takes over full content area
     if (state.pickerVisible) {
+      const pickerTitle = state.pickerType === 'ensembles'
+        ? 'Select Ensemble'
+        : state.pickerStatusFilter === 'stale'
+          ? 'Select Stale Player to Encore'
+          : 'Select Player';
       return React.createElement(Picker, {
-        title: state.pickerType === 'ensembles' ? 'Select Ensemble' : 'Select Player',
+        title: pickerTitle,
         items: pickerItems,
         selectedIndex: state.pickerIndex,
         hint: '\u2191\u2193 navigate, Enter select, Esc dismiss',
