@@ -1202,20 +1202,22 @@ export function App({ api, ensemble }: AppProps) {
       // Rich rendering for messages — header + indented body (matches live area)
       if (item.type === 'message' && item.msgDirection) {
         const cols = process.stdout.columns || 80;
-        const bodyWidth = Math.max(20, cols - 6);
+        const bodyWidth = Math.max(20, cols - 4);
         const wrapped = wordWrap(item.content, bodyWidth);
-        const bodyLines = wrapped.map(l => `    ${l}`).join('\n');
         if (item.msgDirection === 'out') {
+          const hdrPad = ' '.repeat(Math.max(0, cols - 2 - 3 - 3 - 2 - (item.msgTime || '').length));
+          const bodyLines = wrapped.map(l => `   ${l}`.padEnd(cols - 2)).join('\n');
           return React.createElement(Text, { key: item.id },
-            React.createElement(Text, { color: THEME.accent, bold: true }, '  \u2669 '),
-            React.createElement(Text, { color: THEME.text, bold: true }, 'You'),
-            React.createElement(Text, { color: THEME.dim }, `  ${item.msgTime || ''}`),
+            React.createElement(Text, { backgroundColor: THEME.inputBg, color: THEME.accent, bold: true }, ' \u2669 '),
+            React.createElement(Text, { backgroundColor: THEME.inputBg, color: THEME.text, bold: true }, 'You'),
+            React.createElement(Text, { backgroundColor: THEME.inputBg, color: THEME.dim }, `  ${item.msgTime || ''}${hdrPad}`),
             '\n',
-            React.createElement(Text, { color: THEME.text }, bodyLines),
+            React.createElement(Text, { backgroundColor: THEME.inputBg, color: THEME.text }, bodyLines),
           );
         } else {
+          const bodyLines = wrapped.map(l => `   ${l}`).join('\n');
           return React.createElement(Text, { key: item.id },
-            React.createElement(Text, { color: THEME.dim }, '  \u2190 '),
+            React.createElement(Text, { color: THEME.dim }, ' \u2190 '),
             React.createElement(Text, { color: THEME.accent }, item.msgSender || ''),
             React.createElement(Text, { color: THEME.dim }, `  ${item.msgTime || ''}`),
             '\n',

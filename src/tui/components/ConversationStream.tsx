@@ -55,11 +55,11 @@ function formatTime(timestamp: string): string {
   }
 }
 
-const INDENT = '    '; // 4-space indent for message body
+const INDENT = '   '; // 3-space indent for message body (aligns with input area)
 const MAX_DISPLAY_LINES = 4; // Cap visible body lines
 
 function estimateLines(msg: FormattedMsg, termCols: number): number {
-  const bodyWidth = Math.max(20, termCols - 6); // 4 indent + 2 margin
+  const bodyWidth = Math.max(20, termCols - 4); // 3 indent + 1 margin
   const originalLines = msg.body.split('\n');
   const cappedLines = originalLines.slice(0, MAX_DISPLAY_LINES);
 
@@ -75,7 +75,7 @@ function estimateLines(msg: FormattedMsg, termCols: number): number {
 export function ConversationStream({ conversation, sentMessages, contentHeight, overflowRef }: ConversationStreamProps) {
   const { Text } = useInk();
   const termCols = process.stdout.columns || 80;
-  const bodyWidth = Math.max(20, termCols - 6);
+  const bodyWidth = Math.max(20, termCols - 4);
 
   // Merge server conversation with local echo (optimistic sent not yet on server)
   const allConvoMsgs: ConversationMessage[] = [...conversation];
@@ -118,22 +118,26 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
 
   if (visibleMsgs.length === 0) {
     children.push('\n');
-    children.push(React.createElement(Text, { key: 'empty', color: THEME.dim }, '  No messages yet. Type to send.'));
+    children.push(React.createElement(Text, { key: 'empty', color: THEME.dim }, ' No messages yet. Type to send.'));
   } else {
     for (let i = 0; i < visibleMsgs.length; i++) {
       const msg = visibleMsgs[i];
       children.push(i === 0 ? '\n' : '\n\n');
 
+      const isOut = msg.direction === 'out';
+      const bg = isOut ? THEME.inputBg : undefined;
+
       // Header line: direction icon + sender + timestamp
-      if (msg.direction === 'out') {
+      if (isOut) {
+        const hdrPad = ' '.repeat(Math.max(0, termCols - 2 - 3 - 3 - 2 - msg.time.length));
         children.push(React.createElement(React.Fragment, { key: `hdr-${i}` },
-          React.createElement(Text, { color: THEME.accent, bold: true }, '  \u2669 '),
-          React.createElement(Text, { color: THEME.text, bold: true }, 'You'),
-          React.createElement(Text, { color: THEME.dim }, `  ${msg.time}`),
+          React.createElement(Text, { backgroundColor: bg, color: THEME.accent, bold: true }, ' \u2669 '),
+          React.createElement(Text, { backgroundColor: bg, color: THEME.text, bold: true }, 'You'),
+          React.createElement(Text, { backgroundColor: bg, color: THEME.dim }, `  ${msg.time}${hdrPad}`),
         ));
       } else {
         children.push(React.createElement(React.Fragment, { key: `hdr-${i}` },
-          React.createElement(Text, { color: THEME.dim }, '  \u2190 '),
+          React.createElement(Text, { color: THEME.dim }, ' \u2190 '),
           React.createElement(Text, { color: THEME.accent }, msg.sender),
           React.createElement(Text, { color: THEME.dim }, `  ${msg.time}`),
         ));
@@ -147,12 +151,16 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
       }
       const displayLines = wrappedLines.slice(0, MAX_DISPLAY_LINES);
       for (let j = 0; j < displayLines.length; j++) {
+        const bodyLine = `${INDENT}${displayLines[j]}`;
         children.push('\n');
-        children.push(React.createElement(Text, { key: `bl-${i}-${j}`, color: THEME.text }, `${INDENT}${displayLines[j]}`));
+        children.push(React.createElement(Text, { key: `bl-${i}-${j}`, backgroundColor: bg, color: THEME.text },
+          isOut ? bodyLine.padEnd(termCols - 2) : bodyLine));
       }
       if (wrappedLines.length > MAX_DISPLAY_LINES) {
+        const moreLine = `${INDENT}\u2026 (${wrappedLines.length - MAX_DISPLAY_LINES} more lines)`;
         children.push('\n');
-        children.push(React.createElement(Text, { key: `mt-${i}`, color: THEME.dim }, `${INDENT}\u2026 (${wrappedLines.length - MAX_DISPLAY_LINES} more lines)`));
+        children.push(React.createElement(Text, { key: `mt-${i}`, backgroundColor: bg, color: THEME.dim },
+          isOut ? moreLine.padEnd(termCols - 2) : moreLine));
       }
     }
   }
