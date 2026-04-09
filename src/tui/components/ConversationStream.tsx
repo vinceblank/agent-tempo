@@ -220,5 +220,19 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
     }
   }
 
+  // Bottom-align: count actual rendered lines, prepend padding to push
+  // content to the bottom of contentHeight. This absorbs any mismatch
+  // between estimateLines and actual rendered height.
+  let actualLines = 1; // first line (no leading \n counted)
+  for (const child of children) {
+    if (typeof child === 'string') {
+      actualLines += (child.match(/\n/g) || []).length;
+    }
+  }
+  const padding = Math.max(0, contentHeight - actualLines);
+  if (padding > 0) {
+    children.unshift('\n'.repeat(padding));
+  }
+
   return React.createElement(Text, null, ...children);
 }
