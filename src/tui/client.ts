@@ -451,6 +451,27 @@ export function createTempoClient(client: Client): TempoClient {
           },
         });
         console.error(`[tui:client] Maestro session started: ${wfHandle.workflowId}`);
+
+        // Also ensure the per-ensemble Maestro hub workflow exists.
+        // Without this, getEnsembleChat returns empty when the hub wasn't
+        // previously created by a CLI command.
+        const maestroHubId = maestroWorkflowId(ensemble);
+        try {
+          await client.workflow.start('claudeMaestroWorkflow', {
+            workflowId: maestroHubId,
+            taskQueue: 'claude-tempo',
+            args: [{ ensemble }],
+            workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+            searchAttributes: {
+              ClaudeTempoEnsemble: [ensemble],
+            },
+          });
+          console.error(`[tui:client] Maestro hub ensured: ${maestroHubId}`);
+        } catch {
+          // Maestro hub is non-critical — log but don't fail
+          console.error(`[tui:client] Maestro hub start skipped (may already exist): ${maestroHubId}`);
+        }
+
         return wfHandle.workflowId;
       } catch (err) {
         console.error('[tui:client] Failed to start maestro session:', err);
