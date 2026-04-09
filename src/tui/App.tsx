@@ -39,6 +39,7 @@ import { TitleBar } from './components/TitleBar';
 import { PromptArea } from './components/PromptArea';
 import { StatusBar } from './components/StatusBar';
 import { ScheduleWizard } from './components/ScheduleWizard';
+import { CreateEnsembleWizard } from './components/CreateEnsembleWizard';
 import { CommandPalette } from './components/CommandPalette';
 import { StatusOverlay } from './components/StatusOverlay';
 import { ConversationStream } from './components/ConversationStream';
@@ -905,6 +906,45 @@ export function App({ api, ensemble }: AppProps) {
     dispatch({ type: 'EXIT_SCHEDULE_WIZARD' });
   }, []);
 
+  // ── Create ensemble wizard callbacks ──
+  const handleCreateEnsAnswer = useCallback((answer: any) => {
+    dispatch({ type: 'CREATE_ENSEMBLE_NEXT_STEP', answer });
+  }, []);
+  const handleCreateEnsBack = useCallback(() => {
+    dispatch({ type: 'CREATE_ENSEMBLE_PREV_STEP' });
+  }, []);
+  const handleCreateEnsConfirm = useCallback(async () => {
+    const wizState = stateRef.current.createEnsembleState;
+    if (!wizState) return;
+    dispatch({ type: 'CREATE_ENSEMBLE_SUBMIT' });
+    const { name, workDir, lineup } = wizState.answers;
+    try {
+      const { exec } = require('child_process') as typeof import('child_process');
+      const cmd = lineup
+        ? `claude-tempo up ${name} --lineup ${lineup}`
+        : `claude-tempo up ${name}`;
+      await new Promise<void>((resolve, reject) => {
+        exec(cmd, { cwd: workDir, timeout: 60000 }, (err: any, _stdout: string, stderr: string) => {
+          if (err) reject(new Error(stderr?.trim() || err.message || 'Unknown error'));
+          else resolve();
+        });
+      });
+      dispatch({
+        type: 'COMMIT_STATIC',
+        item: { id: nextStaticId(), type: 'info', content: `\u2714 Ensemble "${name}" created.`, timestamp: Date.now() },
+      });
+      dispatch({ type: 'CREATE_ENSEMBLE_DONE', ensemble: name });
+    } catch (err) {
+      dispatch({ type: 'CREATE_ENSEMBLE_DONE', error: err instanceof Error ? err.message : String(err) });
+    }
+  }, []);
+  const handleCreateEnsCancel = useCallback(() => {
+    dispatch({ type: 'EXIT_CREATE_ENSEMBLE' });
+  }, []);
+  const handleCreateEnsDone = useCallback(() => {
+    dispatch({ type: 'EXIT_CREATE_ENSEMBLE' });
+  }, []);
+
   // ── Memoize chat messages (must be before early return — Rules of Hooks) ──
   const memoizedChatData = useMemo(() => {
     if (!state.chatTarget) return null;
@@ -1028,6 +1068,17 @@ export function App({ api, ensemble }: AppProps) {
         onConfirm: handleScheduleConfirm,
         onCancel: handleScheduleCancel,
         onDone: handleScheduleDone,
+      });
+    }
+
+    if (state.phase === 'create-ensemble' && state.createEnsembleState) {
+      return React.createElement(CreateEnsembleWizard, {
+        state: state.createEnsembleState,
+        onAnswer: handleCreateEnsAnswer,
+        onBack: handleCreateEnsBack,
+        onConfirm: handleCreateEnsConfirm,
+        onCancel: handleCreateEnsCancel,
+        onDone: handleCreateEnsDone,
       });
     }
 

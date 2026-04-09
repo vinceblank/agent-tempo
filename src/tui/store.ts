@@ -28,7 +28,7 @@ export type TuiView = 'home' | 'ensemble' | 'player';
  * It determines which component renders in the live content area.
  * A phase can span multiple views (e.g., 'main' shows either home or ensemble view).
  */
-export type TuiPhase = 'splash' | 'main' | 'chat' | 'recruit' | 'schedule-create' | 'error';
+export type TuiPhase = 'splash' | 'main' | 'chat' | 'recruit' | 'schedule-create' | 'create-ensemble' | 'error';
 
 // ── Static items (committed scroll history) ──
 
@@ -115,6 +115,32 @@ export const DEFAULT_RECRUIT_ANSWERS: RecruitAnswers = {
   host: 'localhost',
 };
 
+// ── Create Ensemble wizard ──
+
+export type CreateEnsembleStep = 'name' | 'workDir' | 'lineup' | 'confirm' | 'done';
+
+export interface CreateEnsembleAnswers {
+  name: string;
+  workDir: string;
+  lineup: string;
+}
+
+export interface CreateEnsembleState {
+  step: CreateEnsembleStep;
+  answers: CreateEnsembleAnswers;
+  error?: string;
+  submitting?: boolean;
+  prePhase: TuiPhase;
+}
+
+export const CREATE_ENSEMBLE_STEPS: CreateEnsembleStep[] = ['name', 'workDir', 'lineup', 'confirm'];
+
+export const DEFAULT_CREATE_ENSEMBLE_ANSWERS: CreateEnsembleAnswers = {
+  name: '',
+  workDir: process.cwd(),
+  lineup: '',
+};
+
 export interface TuiState {
   phase: TuiPhase;
   /** Current view in the navigation hierarchy. */
@@ -198,6 +224,8 @@ export interface TuiState {
   recruitState?: RecruitState;
   /** Schedule creation wizard state (active when phase === 'schedule-create'). */
   scheduleWizard?: ScheduleWizardState;
+  /** Create ensemble wizard state (active when phase === 'create-ensemble'). */
+  createEnsembleState?: CreateEnsembleState;
   /** Status overlay visible (shows player list). */
   statusOverlay: boolean;
   /** Scroll offset within the status overlay. */
@@ -328,6 +356,13 @@ export type TuiAction =
   | { type: 'SCHEDULE_SUBMIT' }
   | { type: 'SCHEDULE_DONE'; error?: string }
   | { type: 'EXIT_SCHEDULE_WIZARD' }
+  // Create ensemble wizard
+  | { type: 'ENTER_CREATE_ENSEMBLE' }
+  | { type: 'CREATE_ENSEMBLE_NEXT_STEP'; answer: Partial<CreateEnsembleAnswers> }
+  | { type: 'CREATE_ENSEMBLE_PREV_STEP' }
+  | { type: 'CREATE_ENSEMBLE_SUBMIT' }
+  | { type: 'CREATE_ENSEMBLE_DONE'; error?: string; ensemble?: string }
+  | { type: 'EXIT_CREATE_ENSEMBLE' }
   // Legacy compat — used by current App.tsx during transition
   | { type: 'REFRESH_ALL'; players: MaestroPlayerInfo[]; messages: MaestroRelayMessage[]; history: HistoryEntry[] };
 
@@ -742,6 +777,86 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         phase: restoreP,
         chatTarget: restoreC,
         scheduleWizard: undefined,
+      };
+    }
+
+    // ── Create Ensemble wizard ──
+
+    case 'ENTER_CREATE_ENSEMBLE':
+      return {
+        ...state,
+        phase: 'create-ensemble' as TuiPhase,
+        createEnsembleState: {
+          step: 'name',
+          answers: { ...DEFAULT_CREATE_ENSEMBLE_ANSWERS },
+          prePhase: state.phase,
+        },
+      };
+
+    case 'CREATE_ENSEMBLE_NEXT_STEP': {
+      if (!state.createEnsembleState) return state;
+      const answers = { ...state.createEnsembleState.answers, ...action.answer };
+      const currentIdx = CREATE_ENSEMBLE_STEPS.indexOf(state.createEnsembleState.step);
+      const nextStep = CREATE_ENSEMBLE_STEPS[currentIdx + 1] ?? state.createEnsembleState.step;
+      return {
+        ...state,
+        createEnsembleState: { ...state.createEnsembleState, step: nextStep, answers },
+      };
+    }
+
+    case 'CREATE_ENSEMBLE_PREV_STEP': {
+      if (!state.createEnsembleState) return state;
+      const currentIdx = CREATE_ENSEMBLE_STEPS.indexOf(state.createEnsembleState.step);
+      if (currentIdx <= 0) return state;
+      const prevStep = CREATE_ENSEMBLE_STEPS[currentIdx - 1];
+      return {
+        ...state,
+        createEnsembleState: { ...state.createEnsembleState, step: prevStep },
+      };
+    }
+
+    case 'CREATE_ENSEMBLE_SUBMIT':
+      if (!state.createEnsembleState) return state;
+      return {
+        ...state,
+        createEnsembleState: { ...state.createEnsembleState, submitting: true },
+      };
+
+    case 'CREATE_ENSEMBLE_DONE':
+      if (!state.createEnsembleState) return state;
+      if (!action.error && action.ensemble) {
+        // Success — navigate to new ensemble
+        return {
+          ...state,
+          phase: 'main' as TuiPhase,
+          view: 'ensemble' as TuiView,
+          activeEnsemble: action.ensemble,
+          createEnsembleState: undefined,
+          players: [],
+          messages: [],
+          sentMessages: [],
+          conductorHistory: [],
+          schedules: [],
+          conversation: null,
+          selectedPlayerIndex: 0,
+        };
+      }
+      return {
+        ...state,
+        createEnsembleState: {
+          ...state.createEnsembleState,
+          step: 'done',
+          submitting: false,
+          error: action.error,
+        },
+      };
+
+    case 'EXIT_CREATE_ENSEMBLE': {
+      const restoreCE = state.createEnsembleState?.prePhase || 'main';
+      return {
+        ...state,
+        phase: restoreCE,
+        createEnsembleState: undefined,
       };
     }
 
