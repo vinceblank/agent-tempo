@@ -161,6 +161,15 @@ describe('COMMANDS registry', function () {
     expect(COMMANDS.quit.handler).to.be.null;
   });
 
+  it('/up is NOT registered (removed — use create-ensemble wizard)', function () {
+    expect(COMMANDS).to.not.have.property('up');
+  });
+
+  it('/ensemble IS registered', function () {
+    expect(COMMANDS).to.have.property('ensemble');
+    expect(COMMANDS.ensemble.handler).to.not.be.null;
+  });
+
 });
 
 // ─────────────────────────────────────────────

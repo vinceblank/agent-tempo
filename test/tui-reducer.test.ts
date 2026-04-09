@@ -22,6 +22,8 @@ import {
   SCHEDULE_STEPS,
   DEFAULT_RECRUIT_ANSWERS,
   DEFAULT_SCHEDULE_ANSWERS,
+  CREATE_ENSEMBLE_STEPS,
+  DEFAULT_CREATE_ENSEMBLE_ANSWERS,
 } from '../src/tui/store';
 import type { MaestroPlayerInfo, SessionMetadata } from '../src/types';
 
@@ -785,6 +787,114 @@ describe('TUI reducer', function () {
       expect(s.confirmingLineup).to.deep.equal({ action: 'load', path: '/tmp/lineup.yml', summary: '3 players' });
       s = tuiReducer(s, { type: 'CANCEL_LINEUP' });
       expect(s.confirmingLineup).to.be.undefined;
+    });
+  });
+
+  // ─────────────────────────────────────────────
+  // Create Ensemble wizard
+  // ─────────────────────────────────────────────
+
+  describe('Create Ensemble wizard', function () {
+    it('ENTER_CREATE_ENSEMBLE sets phase and initial step', function () {
+      const s = tuiReducer(initialState('test'), { type: 'ENTER_CREATE_ENSEMBLE' });
+      expect(s.phase).to.equal('create-ensemble');
+      expect(s.createEnsembleState).to.exist;
+      expect(s.createEnsembleState!.step).to.equal('name');
+      expect(s.createEnsembleState!.prePhase).to.equal('main');
+    });
+
+    it('progresses through steps: name → workDir → lineup → confirm', function () {
+      let s = tuiReducer(initialState('test'), { type: 'ENTER_CREATE_ENSEMBLE' });
+      expect(s.createEnsembleState!.step).to.equal('name');
+
+      s = tuiReducer(s, { type: 'CREATE_ENSEMBLE_NEXT_STEP', answer: { name: 'my-ensemble' } });
+      expect(s.createEnsembleState!.step).to.equal('workDir');
+      expect(s.createEnsembleState!.answers.name).to.equal('my-ensemble');
+
+      s = tuiReducer(s, { type: 'CREATE_ENSEMBLE_NEXT_STEP', answer: { workDir: '/tmp' } });
+      expect(s.createEnsembleState!.step).to.equal('lineup');
+
+      s = tuiReducer(s, { type: 'CREATE_ENSEMBLE_NEXT_STEP', answer: { lineup: 'dev-team' } });
+      expect(s.createEnsembleState!.step).to.equal('confirm');
+    });
+
+    it('CREATE_ENSEMBLE_PREV_STEP goes back one step', function () {
+      let s = tuiReducer(initialState('test'), { type: 'ENTER_CREATE_ENSEMBLE' });
+      s = tuiReducer(s, { type: 'CREATE_ENSEMBLE_NEXT_STEP', answer: { name: 'test' } });
+      expect(s.createEnsembleState!.step).to.equal('workDir');
+      s = tuiReducer(s, { type: 'CREATE_ENSEMBLE_PREV_STEP' });
+      expect(s.createEnsembleState!.step).to.equal('name');
+    });
+
+    it('CREATE_ENSEMBLE_PREV_STEP at first step returns same reference', function () {
+      const s = tuiReducer(initialState('test'), { type: 'ENTER_CREATE_ENSEMBLE' });
+      const result = tuiReducer(s, { type: 'CREATE_ENSEMBLE_PREV_STEP' });
+      expect(result).to.equal(s);
+    });
+
+    it('CREATE_ENSEMBLE_SUBMIT sets submitting flag', function () {
+      let s = tuiReducer(initialState('test'), { type: 'ENTER_CREATE_ENSEMBLE' });
+      s = tuiReducer(s, { type: 'CREATE_ENSEMBLE_SUBMIT' });
+      expect(s.createEnsembleState!.submitting).to.be.true;
+    });
+
+    it('CREATE_ENSEMBLE_DONE with ensemble navigates to it', function () {
+      let s = tuiReducer(initialState('test'), { type: 'ENTER_CREATE_ENSEMBLE' });
+      s = tuiReducer(s, { type: 'CREATE_ENSEMBLE_DONE', ensemble: 'new-ens' });
+      expect(s.phase).to.equal('main');
+      expect(s.view).to.equal('ensemble');
+      expect(s.activeEnsemble).to.equal('new-ens');
+      expect(s.createEnsembleState).to.be.undefined;
+    });
+
+    it('CREATE_ENSEMBLE_DONE with error shows error on done step', function () {
+      let s = tuiReducer(initialState('test'), { type: 'ENTER_CREATE_ENSEMBLE' });
+      s = tuiReducer(s, { type: 'CREATE_ENSEMBLE_DONE', error: 'Name taken' });
+      expect(s.createEnsembleState!.step).to.equal('done');
+      expect(s.createEnsembleState!.error).to.equal('Name taken');
+      expect(s.createEnsembleState!.submitting).to.be.false;
+    });
+
+    it('EXIT_CREATE_ENSEMBLE restores previous phase', function () {
+      let s = initialState('test');
+      s = { ...s, phase: 'chat' as any };
+      s = tuiReducer(s, { type: 'ENTER_CREATE_ENSEMBLE' });
+      expect(s.createEnsembleState!.prePhase).to.equal('chat');
+      s = tuiReducer(s, { type: 'EXIT_CREATE_ENSEMBLE' });
+      expect(s.phase).to.equal('chat');
+      expect(s.createEnsembleState).to.be.undefined;
+    });
+  });
+
+  // ─────────────────────────────────────────────
+  // Loading state
+  // ─────────────────────────────────────────────
+
+  describe('playersLoaded flag', function () {
+    it('starts as false in initial state', function () {
+      expect(initialState('test').playersLoaded).to.be.false;
+    });
+
+    it('set to true by REFRESH_ENSEMBLE_DATA', function () {
+      let s = initialState('test');
+      expect(s.playersLoaded).to.be.false;
+      s = tuiReducer(s, { type: 'REFRESH_ENSEMBLE_DATA', players: [makePlayer('a')], messages: [], history: [] });
+      expect(s.playersLoaded).to.be.true;
+    });
+
+    it('reset to false by NAVIGATE_ENSEMBLE', function () {
+      let s = initialState('test');
+      s = tuiReducer(s, { type: 'REFRESH_ENSEMBLE_DATA', players: [], messages: [], history: [] });
+      expect(s.playersLoaded).to.be.true;
+      s = tuiReducer(s, { type: 'NAVIGATE_ENSEMBLE', ensemble: 'new-ens' });
+      expect(s.playersLoaded).to.be.false;
+    });
+
+    it('reset to false by NAVIGATE_HOME', function () {
+      let s = initialState('test');
+      s = tuiReducer(s, { type: 'REFRESH_ENSEMBLE_DATA', players: [], messages: [], history: [] });
+      s = tuiReducer(s, { type: 'NAVIGATE_HOME' });
+      expect(s.playersLoaded).to.be.false;
     });
   });
 });
