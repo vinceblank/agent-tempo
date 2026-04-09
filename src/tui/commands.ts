@@ -349,8 +349,57 @@ async function handleSchedule(
     return;
   }
 
-  // /schedule (no args) → show schedule overlay
-  dispatch({ type: 'SHOW_SCHEDULE_OVERLAY' });
+  // /schedule (no args) → show interactive overlay
+  if (!ctx.activeEnsemble) {
+    commitStatic(dispatch, 'error', 'No active ensemble. Select one with /ensemble first.');
+    return;
+  }
+  try {
+    const schedules = await api.getSchedules(ctx.activeEnsemble);
+    if (schedules.length === 0) {
+      dispatch({
+        type: 'SHOW_OVERLAY',
+        overlay: {
+          type: 'schedules',
+          title: 'Schedules',
+          items: [{ id: '_empty', label: 'No active schedules' }],
+          hint: 'n=new  esc=close',
+        },
+      });
+      return;
+    }
+    const items = schedules.map(s => {
+      const timingParts: string[] = [];
+      if (s.type === 'interval' && s.interval) {
+        timingParts.push(`every ${formatMs(s.interval)}`);
+      }
+      if (s.cronExpression) {
+        timingParts.push(`cron: ${s.cronExpression}`);
+      }
+      if (s.nextFireAt) {
+        timingParts.push(`next: ${formatTimestamp(s.nextFireAt)}`);
+      }
+      if (s.firedCount > 0) {
+        timingParts.push(`fired ${s.firedCount}x`);
+      }
+      return {
+        id: s.name,
+        label: `${s.name} \u2192 ${s.target}`,
+        sublabel: timingParts.join('  \u00B7  ') || s.type,
+      };
+    });
+    dispatch({
+      type: 'SHOW_OVERLAY',
+      overlay: {
+        type: 'schedules',
+        title: 'Schedules',
+        items,
+        hint: 'n=new  d=delete  esc=close',
+      },
+    });
+  } catch (err) {
+    commitStatic(dispatch, 'error', `Failed to fetch schedules: ${err}`);
+  }
 }
 
 /** /unschedule <name> — alias for /schedule delete. */
@@ -396,30 +445,38 @@ async function handleGates(
     }
 
     const icons = statusIcons(supportsUnicode());
-    const lines: string[] = [];
+    const allItems: Array<{ id: string; label: string; sublabel?: string }> = [];
 
     for (const ensName of ensembleNames) {
       const gates = await api.getGates(ensName);
-      if (gates.length > 0) {
-        lines.push(`\n  ${ensName} — ${gates.length} gate${gates.length !== 1 ? 's' : ''}:`);
-        for (const g of gates) {
-          const icon = g.status === 'passed' ? icons.check
-            : g.status === 'failed' ? icons.cross
-            : '\u25CB'; // open circle
-          const statusColor = g.status === 'passed' ? 'passed' : g.status === 'failed' ? 'FAILED' : 'open';
-          lines.push(`    ${icon} ${g.task.padEnd(30)} [${statusColor}]`);
-          for (const c of g.criteria) {
-            const cIcon = c.status === 'passed' ? icons.check : c.status === 'failed' ? icons.cross : icons.pending;
-            lines.push(`      ${cIcon} ${c.text} [${c.status}]`);
-          }
-        }
+      for (const g of gates) {
+        const icon = g.status === 'passed' ? icons.check
+          : g.status === 'failed' ? icons.cross
+          : '\u25CB';
+        const criteriaSum = g.criteria.map(c => {
+          const cIcon = c.status === 'passed' ? icons.check : c.status === 'failed' ? icons.cross : icons.pending;
+          return `${cIcon} ${c.text}`;
+        }).join('  ');
+        allItems.push({
+          id: `${ensName}:${g.task}`,
+          label: `${icon} ${g.task}  [${g.status}]`,
+          sublabel: criteriaSum || '(no criteria)',
+        });
       }
     }
 
-    if (lines.length === 0) {
+    if (allItems.length === 0) {
       commitStatic(dispatch, 'info', 'No quality gates defined.');
     } else {
-      dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: 'Quality Gates', content: lines.join('\n') });
+      dispatch({
+        type: 'SHOW_OVERLAY',
+        overlay: {
+          type: 'gates',
+          title: 'Quality Gates',
+          items: allItems,
+          hint: 'esc=close',
+        },
+      });
     }
   } catch (err) {
     commitStatic(dispatch, 'error', `Failed to fetch gates: ${err}`);
@@ -447,33 +504,41 @@ async function handleStages(
     }
 
     const icons = statusIcons(supportsUnicode());
-    const lines: string[] = [];
+    const allItems: Array<{ id: string; label: string; sublabel?: string }> = [];
 
     for (const ensName of ensembleNames) {
       const stages = await api.getStages(ensName);
-      if (stages.length > 0) {
-        lines.push(`\n  ${ensName} — ${stages.length} stage${stages.length !== 1 ? 's' : ''}:`);
-        for (const s of stages) {
-          const icon = s.status === 'complete' ? icons.check
-            : s.status === 'failed' ? icons.cross
-            : s.status === 'cancelled' ? icons.terminated
-            : icons.active;
-          lines.push(`    ${icon} ${s.name.padEnd(25)} [${s.status}] (${s.failurePolicy})`);
-          for (const p of s.players) {
-            const pIcon = p.status === 'reported' ? icons.check
-              : p.status === 'blocked' ? icons.cross
-              : icons.pending;
-            const detail = p.reportText ? ` — ${p.reportText.slice(0, 40)}` : '';
-            lines.push(`      ${pIcon} ${p.playerId.padEnd(18)} [${p.status}]${detail}`);
-          }
-        }
+      for (const s of stages) {
+        const icon = s.status === 'complete' ? icons.check
+          : s.status === 'failed' ? icons.cross
+          : s.status === 'cancelled' ? icons.terminated
+          : icons.active;
+        const playerSum = s.players.map(p => {
+          const pIcon = p.status === 'reported' ? icons.check
+            : p.status === 'blocked' ? icons.cross
+            : icons.pending;
+          return `${pIcon} ${p.playerId}`;
+        }).join('  ');
+        allItems.push({
+          id: `${ensName}:${s.name}`,
+          label: `${icon} ${s.name}  [${s.status}]  (${s.failurePolicy})`,
+          sublabel: playerSum || '(no players)',
+        });
       }
     }
 
-    if (lines.length === 0) {
+    if (allItems.length === 0) {
       commitStatic(dispatch, 'info', 'No stages defined.');
     } else {
-      dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: 'Stages', content: lines.join('\n') });
+      dispatch({
+        type: 'SHOW_OVERLAY',
+        overlay: {
+          type: 'stages',
+          title: 'Stages',
+          items: allItems,
+          hint: 'esc=close',
+        },
+      });
     }
   } catch (err) {
     commitStatic(dispatch, 'error', `Failed to fetch stages: ${err}`);
@@ -546,24 +611,31 @@ async function handleWorktree(
       return;
     }
 
-    const lines: string[] = [];
+    const allItems: Array<{ id: string; label: string; sublabel?: string }> = [];
 
     for (const ens of ensembles) {
       const worktrees = await api.getWorktrees(ens.name);
-      if (worktrees.length > 0) {
-        lines.push(`\n  ${ens.name} — ${worktrees.length} worktree${worktrees.length !== 1 ? 's' : ''}:`);
-        for (const w of worktrees) {
-          const created = formatTimestamp(w.createdAt);
-          lines.push(`    ${w.player.padEnd(18)} ${w.branch.padEnd(25)} ${w.path}`);
-          lines.push(`      created: ${created} by ${w.createdBy}`);
-        }
+      for (const w of worktrees) {
+        allItems.push({
+          id: `${ens.name}:${w.player}`,
+          label: `${w.player} \u2192 ${w.branch}`,
+          sublabel: `${w.path}  (${w.createdBy})`,
+        });
       }
     }
 
-    if (lines.length === 0) {
+    if (allItems.length === 0) {
       commitStatic(dispatch, 'info', 'No active worktrees.');
     } else {
-      dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: 'Worktrees', content: lines.join('\n') });
+      dispatch({
+        type: 'SHOW_OVERLAY',
+        overlay: {
+          type: 'worktrees',
+          title: 'Worktrees',
+          items: allItems,
+          hint: 'esc=close',
+        },
+      });
     }
   } catch (err) {
     commitStatic(dispatch, 'error', `Failed to fetch worktrees: ${err}`);
@@ -763,6 +835,13 @@ export function formatTimestamp(ts: string): string {
   } catch {
     return '??:??';
   }
+}
+
+/** Format milliseconds as a human-readable duration (e.g. "30s", "5m", "1.5h"). */
+function formatMs(ms: number): string {
+  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3600000) return `${Math.round(ms / 60000)}m`;
+  return `${(ms / 3600000).toFixed(1)}h`;
 }
 
 // ── Registry ──

@@ -239,6 +239,14 @@ export interface TuiState {
   scheduleOverlay: boolean;
   /** Generic command overlay (title + pre-formatted content). Shown by data-display commands. */
   commandOverlay: { title: string; content: string } | null;
+  /** Interactive overlay (schedules, gates, stages, worktrees, or generic command). */
+  overlay: {
+    type: string;
+    title: string;
+    items: Array<{ id: string; label: string; sublabel?: string }>;
+    selectedIndex: number;
+    hint: string;
+  } | null;
   /** Scroll offset within the status overlay. */
   statusScrollOffset: number;
   /** Command palette state. */
@@ -291,6 +299,7 @@ export function initialState(ensemble?: string): TuiState {
     statusOverlay: false,
     scheduleOverlay: false,
     commandOverlay: null,
+    overlay: null,
     statusScrollOffset: 0,
     paletteVisible: false,
     paletteIndex: 0,
@@ -349,6 +358,9 @@ export type TuiAction =
   | { type: 'HIDE_SCHEDULE_OVERLAY' }
   | { type: 'SHOW_COMMAND_OVERLAY'; title: string; content: string }
   | { type: 'HIDE_COMMAND_OVERLAY' }
+  | { type: 'SHOW_OVERLAY'; overlay: { type: string; title: string; items: Array<{ id: string; label: string; sublabel?: string }>; hint: string } }
+  | { type: 'HIDE_OVERLAY' }
+  | { type: 'OVERLAY_SELECT'; direction: 'up' | 'down' }
   | { type: 'STATUS_SCROLL_UP' }
   | { type: 'STATUS_SCROLL_DOWN' }
   | { type: 'SHOW_PICKER'; pickerType: 'players' | 'ensembles'; intent?: 'navigate'; statusFilter?: string }
@@ -603,16 +615,32 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       return { ...state, statusOverlay: false, statusScrollOffset: 0 };
 
     case 'SHOW_SCHEDULE_OVERLAY':
-      return { ...state, scheduleOverlay: true };
+      return { ...state, scheduleOverlay: true, overlay: { type: 'schedules', title: 'Schedules', items: [], selectedIndex: 0, hint: 'esc \u2014 close' } };
     case 'HIDE_SCHEDULE_OVERLAY':
       if (!state.scheduleOverlay) return state;
-      return { ...state, scheduleOverlay: false };
+      return { ...state, scheduleOverlay: false, overlay: null };
 
     case 'SHOW_COMMAND_OVERLAY':
-      return { ...state, commandOverlay: { title: action.title, content: action.content } };
+      return { ...state, commandOverlay: { title: action.title, content: action.content }, overlay: { type: 'command', title: action.title, items: [{ id: '_', label: action.content }], selectedIndex: 0, hint: 'esc \u2014 close' } };
     case 'HIDE_COMMAND_OVERLAY':
       if (!state.commandOverlay) return state;
-      return { ...state, commandOverlay: null };
+      return { ...state, commandOverlay: null, overlay: null };
+
+    case 'SHOW_OVERLAY':
+      return { ...state, overlay: { ...action.overlay, selectedIndex: 0 } };
+    case 'HIDE_OVERLAY':
+      if (!state.overlay) return state;
+      // Also clear legacy overlay state for backward compat
+      return { ...state, overlay: null, scheduleOverlay: false, commandOverlay: null };
+    case 'OVERLAY_SELECT': {
+      if (!state.overlay || state.overlay.items.length === 0) return state;
+      const len = state.overlay.items.length;
+      const idx = action.direction === 'up'
+        ? (state.overlay.selectedIndex - 1 + len) % len
+        : (state.overlay.selectedIndex + 1) % len;
+      if (idx === state.overlay.selectedIndex) return state;
+      return { ...state, overlay: { ...state.overlay, selectedIndex: idx } };
+    }
     case 'STATUS_SCROLL_UP':
       return { ...state, statusScrollOffset: Math.max(0, state.statusScrollOffset - 1) };
     case 'STATUS_SCROLL_DOWN':

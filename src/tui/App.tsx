@@ -185,13 +185,27 @@ export function App({ api, ensemble }: AppProps) {
       return;
     }
 
-    // Schedule overlay — Escape dismisses
+    // Interactive overlay — Escape dismisses, ↑↓ selects, action keys per type
+    if (s.overlay) {
+      if (key.escape) { dispatch({ type: 'HIDE_OVERLAY' }); return; }
+      if (key.upArrow) { dispatch({ type: 'OVERLAY_SELECT', direction: 'up' }); return; }
+      if (key.downArrow) { dispatch({ type: 'OVERLAY_SELECT', direction: 'down' }); return; }
+      // Schedule overlay action keys
+      if (s.overlay.type === 'schedules') {
+        if (input === 'n' || input === 'N') {
+          dispatch({ type: 'HIDE_OVERLAY' });
+          dispatch({ type: 'ENTER_SCHEDULE_WIZARD' });
+          return;
+        }
+      }
+      return; // Swallow all other input while overlay is active
+    }
+
+    // Legacy overlay compat — Escape dismisses
     if (s.scheduleOverlay) {
       if (key.escape) { dispatch({ type: 'HIDE_SCHEDULE_OVERLAY' }); return; }
       return;
     }
-
-    // Command overlay — Escape dismisses
     if (s.commandOverlay) {
       if (key.escape) { dispatch({ type: 'HIDE_COMMAND_OVERLAY' }); return; }
       return;
@@ -1139,7 +1153,38 @@ export function App({ api, ensemble }: AppProps) {
       });
     }
 
-    // Schedule overlay — shows active schedules
+    // Interactive overlay — unified overlay with selection indicator
+    if (state.overlay && !state.scheduleOverlay && !state.commandOverlay) {
+      const ov = state.overlay;
+      const children: React.ReactNode[] = [];
+      children.push(React.createElement(Text, { key: 'ov-title', bold: true, color: THEME.accent }, `  ${ov.title}`));
+      if (ov.items.length === 0) {
+        children.push('\n\n');
+        children.push(React.createElement(Text, { key: 'ov-empty', color: THEME.dim }, '  No items.'));
+      } else {
+        for (let i = 0; i < ov.items.length; i++) {
+          const item = ov.items[i];
+          const selected = i === ov.selectedIndex;
+          const prefix = selected ? ' \u276F ' : '   ';
+          children.push('\n\n');
+          children.push(React.createElement(Text, { key: `ov-${i}`, color: selected ? THEME.text : THEME.dim, bold: selected },
+            `${prefix}${item.label}`));
+          if (item.sublabel) {
+            children.push('\n');
+            children.push(React.createElement(Text, { key: `ovs-${i}`, color: THEME.dim }, `    ${item.sublabel}`));
+          }
+        }
+      }
+      // Pad to fill contentHeight
+      const usedLines = 1 + ov.items.reduce((n, item) => n + 2 + (item.sublabel ? 1 : 0), 0) + 2;
+      const padLines = Math.max(0, contentHeight - usedLines);
+      if (padLines > 0) children.push('\n'.repeat(padLines));
+      children.push('\n');
+      children.push(React.createElement(Text, { key: 'ov-hint', color: THEME.dim }, `  ${ov.hint}`));
+      return React.createElement(Text, null, ...children);
+    }
+
+    // Schedule overlay — shows active schedules (legacy, uses ScheduleOverlay component)
     if (state.scheduleOverlay && state.activeEnsemble) {
       return React.createElement(ScheduleOverlay, {
         schedules: state.schedules,
@@ -1313,7 +1358,7 @@ export function App({ api, ensemble }: AppProps) {
     React.createElement(PromptArea, {
       hints: promptHints,
       onSubmit: handleSubmit,
-      disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay || state.scheduleOverlay || !!state.commandOverlay,
+      disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay || state.scheduleOverlay || !!state.commandOverlay || !!state.overlay,
       commandNames: commandNamesList,
       playerNames: playerNamesList,
       initialHistory: cmdHistory,
