@@ -946,6 +946,18 @@ export function App({ api, ensemble }: AppProps) {
   const dividerWidth = Math.max(20, (process.stdout.columns || 80) - 4);
   const dividerLine = '\u2500'.repeat(dividerWidth);
 
+  // Splash → create ensemble handler: transition to main with /up pre-filled
+  const handleSplashCreate = useCallback(() => {
+    dispatch({ type: 'SET_PHASE', phase: 'main' });
+    dispatch({
+      type: 'COMMIT_STATIC',
+      item: { id: nextStaticId(), type: 'info', content: 'Type /up <name> to create a new ensemble.', timestamp: Date.now() },
+    });
+    // Pre-fill the prompt with /up
+    promptRef.current?.setValue('/up ');
+    inputValueRef.current = '/up ';
+  }, []);
+
   // Splash → main transition handler
   const handleSplashContinue = useCallback((selectedEnsemble?: string) => {
     if (selectedEnsemble) {
@@ -967,6 +979,7 @@ export function App({ api, ensemble }: AppProps) {
         connected: state.splashConnected,
         ensembles: (state.ensembles ?? undefined) as EnsembleInfo[] | undefined,
         onContinue: handleSplashContinue,
+        onCreateEnsemble: handleSplashCreate,
       });
     }
 

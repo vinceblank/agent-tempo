@@ -27,9 +27,10 @@ export interface SplashProps {
   connected?: boolean;
   ensembles?: EnsembleInfo[];
   onContinue?: (selectedEnsemble?: string) => void;
+  onCreateEnsemble?: () => void;
 }
 
-export function Splash({ status, version, connected, ensembles, onContinue }: SplashProps) {
+export function Splash({ status, version, connected, ensembles, onContinue, onCreateEnsemble }: SplashProps) {
   const { Text, useInput } = useInk();
   const [metronomeTick, setMetronomeTick] = useState(0);
   const [spinnerTick, setSpinnerTick] = useState(0);
@@ -37,26 +38,31 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
   const brailleFrames = useMemo(() => metronomeBrailleFrames(), []);
 
   const ensembleCount = ensembles?.length ?? 0;
-  const hasMultiple = ensembleCount > 1;
+  // Total selectable items: ensembles + "create new" item (when loaded)
+  const totalItems = ensembles !== undefined ? ensembleCount + 1 : (ensembleCount || 1);
+  const hasNavigation = totalItems > 1;
+  const isCreateSelected = ensembles !== undefined && selectedIdx === ensembleCount;
 
-  // Handle keys: ↑↓ to select ensemble, Enter to continue
-  const inputRef = React.useRef({ connected, onContinue, ensembles, selectedIdx, hasMultiple });
-  inputRef.current = { connected, onContinue, ensembles, selectedIdx, hasMultiple };
+  // Handle keys: ↑↓ to select, Enter to continue/create
+  const inputRef = React.useRef({ connected, onContinue, onCreateEnsemble, ensembles, selectedIdx, isCreateSelected, totalItems });
+  inputRef.current = { connected, onContinue, onCreateEnsemble, ensembles, selectedIdx, isCreateSelected, totalItems };
 
   useInput(React.useCallback((_input: string, key: any) => {
     const r = inputRef.current;
-    if (!r.connected || !r.onContinue) return;
+    if (!r.connected) return;
 
     if (key.return) {
-      const selected = r.ensembles?.[r.selectedIdx]?.name;
-      r.onContinue(selected);
+      if (r.isCreateSelected) {
+        r.onCreateEnsemble?.();
+      } else {
+        const selected = r.ensembles?.[r.selectedIdx]?.name;
+        r.onContinue?.(selected);
+      }
       return;
     }
 
-    if (r.hasMultiple) {
-      if (key.upArrow) { setSelectedIdx(i => Math.max(0, i - 1)); return; }
-      if (key.downArrow) { setSelectedIdx(i => Math.min((r.ensembles?.length ?? 1) - 1, i + 1)); return; }
-    }
+    if (key.upArrow) { setSelectedIdx(i => Math.max(0, i - 1)); return; }
+    if (key.downArrow) { setSelectedIdx(i => Math.min(r.totalItems - 1, i + 1)); return; }
   }, []));
 
   // Metronome animation — cleanup stops timer on unmount/transition
@@ -94,11 +100,9 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
   const metroLines = frame.length; // ~10 lines
   const titleLines = 5; // 2 blank + title + tagline + version
   const statusLines = 3; // 2 blank + status line
-  const ensembleLines = connected
-    ? (ensembles && ensembles.length > 0
-        ? 1 + Math.min(ensembles.length, MAX_ENSEMBLES_SHOWN) // gap + items
-        : 5) // no ensembles hints
-    : 0;
+  const ensembleLines = connected && ensembles !== undefined
+    ? 1 + Math.min(ensembleCount, MAX_ENSEMBLES_SHOWN) + 1 + (ensembleCount === 0 ? 1 : 0) // gap + items + create + optional "none"
+    : (connected ? 3 : 0); // loading or not connected
   const promptLines = 3; // 2 blank + prompt
   const contentHeight = metroLines + titleLines + statusLines + ensembleLines + promptLines;
   const vPad = Math.max(0, Math.floor((rows - contentHeight - 3) / 2));
@@ -139,57 +143,59 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
     children.push(React.createElement(Text, { key: 'status', color: THEME.warning }, center(`${SPINNER_FRAMES[spinnerTick]} ${status}`)));
   }
 
-  // Ensemble list (when connected)
-  if (connected && ensembles && ensembles.length > 0) {
+  // Ensemble list + create option (when connected)
+  if (connected && ensembles !== undefined) {
     children.push('\n');
 
-    let startIdx = 0;
-    if (ensembles.length > MAX_ENSEMBLES_SHOWN) {
-      startIdx = Math.max(0, Math.min(selectedIdx - Math.floor(MAX_ENSEMBLES_SHOWN / 2), ensembles.length - MAX_ENSEMBLES_SHOWN));
-    }
-    const visible = ensembles.slice(startIdx, startIdx + MAX_ENSEMBLES_SHOWN);
+    if (ensembles.length > 0) {
+      let startIdx = 0;
+      if (ensembles.length > MAX_ENSEMBLES_SHOWN) {
+        startIdx = Math.max(0, Math.min(selectedIdx - Math.floor(MAX_ENSEMBLES_SHOWN / 2), ensembles.length - MAX_ENSEMBLES_SHOWN));
+      }
+      const visible = ensembles.slice(startIdx, startIdx + MAX_ENSEMBLES_SHOWN);
 
-    if (startIdx > 0) {
+      if (startIdx > 0) {
+        children.push('\n');
+        children.push(React.createElement(Text, { key: 'sup', color: THEME.dim }, center(`\u2191 ${startIdx} more`)));
+      }
+
+      for (let i = 0; i < visible.length; i++) {
+        const ens = visible[i];
+        const actualIdx = startIdx + i;
+        const isSelected = actualIdx === selectedIdx;
+        const icon = ens.hasConductor ? '\u2605' : '\u2022';
+        const indicator = isSelected ? '\u25B8 ' : '  ';
+        children.push('\n');
+        children.push(
+          React.createElement(Text, {
+            key: `ens-${ens.name}`,
+            color: isSelected ? THEME.accent : THEME.textMuted,
+            bold: isSelected,
+          }, center(`${indicator}${icon} ${ens.name} (${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''})`)),
+        );
+      }
+
+      if (startIdx + MAX_ENSEMBLES_SHOWN < ensembles.length) {
+        children.push('\n');
+        children.push(React.createElement(Text, { key: 'sdn', color: THEME.dim },
+          center(`\u2193 ${ensembles.length - startIdx - MAX_ENSEMBLES_SHOWN} more`)));
+      }
+    } else {
+      // Loaded but empty
       children.push('\n');
-      children.push(React.createElement(Text, { key: 'sup', color: THEME.dim }, center(`\u2191 ${startIdx} more`)));
+      children.push(React.createElement(Text, { key: 'none', color: THEME.dim }, center('No ensembles running.')));
     }
 
-    for (let i = 0; i < visible.length; i++) {
-      const ens = visible[i];
-      const actualIdx = startIdx + i;
-      const isSelected = actualIdx === selectedIdx;
-      const icon = ens.hasConductor ? '\u2605' : '\u2022';
-      const indicator = hasMultiple ? (isSelected ? '\u25B8 ' : '  ') : '  ';
-      children.push('\n');
-      children.push(
-        React.createElement(Text, {
-          key: `ens-${ens.name}`,
-          color: isSelected ? THEME.accent : THEME.textMuted,
-          bold: isSelected,
-        }, center(`${indicator}${icon} ${ens.name} (${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''})`)),
-      );
-    }
-
-    if (startIdx + MAX_ENSEMBLES_SHOWN < ensembles.length) {
-      children.push('\n');
-      children.push(React.createElement(Text, { key: 'sdn', color: THEME.dim },
-        center(`\u2193 ${ensembles.length - startIdx - MAX_ENSEMBLES_SHOWN} more`)));
-    }
-    // Always show create hint below ensemble list
-    children.push('\n\n');
-    children.push(React.createElement(Text, { key: 'create', color: THEME.dim }, center('/up <name> to create new ensemble')));
-  } else if (connected && ensembles !== undefined && ensembles.length === 0) {
-    // Loaded but empty — getting started hints
-    children.push('\n\n');
-    children.push(React.createElement(Text, { key: 'none', color: THEME.dim }, center('No ensembles running.')));
-    children.push('\n\n');
-    children.push(React.createElement(Text, { key: 'h1', color: THEME.text }, center('Create an ensemble:')));
+    // "+ Create new ensemble" — always selectable
     children.push('\n');
-    children.push(React.createElement(Text, { key: 'h2', color: THEME.accent }, center('claude-tempo up <name>')));
-    children.push('\n\n');
-    children.push(React.createElement(Text, { key: 'h3', color: THEME.text }, center('Or load a lineup:')));
-    children.push('\n');
-    children.push(React.createElement(Text, { key: 'h4', color: THEME.accent }, center('claude-tempo up --lineup <file.yml>')));
+    const createIndicator = isCreateSelected ? '\u25B8 ' : '  ';
+    children.push(
+      React.createElement(Text, {
+        key: 'create',
+        color: isCreateSelected ? THEME.accent : THEME.dim,
+        bold: isCreateSelected,
+      }, center(`${createIndicator}+ Create new ensemble`)),
+    );
   } else if (connected) {
     // Connected but ensembles not yet loaded
     children.push('\n\n');
@@ -200,10 +206,10 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
   children.push('\n\n');
   if (connected) {
     children.push(React.createElement(Text, { key: 'prompt', bold: true, color: THEME.accent },
-      ensembleCount === 0
+      ensembles === undefined
         ? center('Press Ctrl+C to exit')
-        : hasMultiple
-          ? center('\u2191\u2193 to select, Enter to connect')
+        : hasNavigation
+          ? center('\u2191\u2193 to select, Enter to continue')
           : center('Press Enter to continue'),
     ));
   } else {
