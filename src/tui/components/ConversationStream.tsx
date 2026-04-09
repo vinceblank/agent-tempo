@@ -59,15 +59,16 @@ const INDENT = '   '; // 3-space indent for message body (aligns with input area
 const MAX_DISPLAY_LINES = 4; // Cap visible body lines
 
 function estimateLines(msg: FormattedMsg, termCols: number): number {
-  const bodyWidth = Math.max(20, termCols - 4); // 3 indent + 1 margin
+  const bodyWidth = Math.max(20, termCols - 4);
   const originalLines = msg.body.split('\n');
   const cappedLines = originalLines.slice(0, MAX_DISPLAY_LINES);
 
-  let total = 1; // header line (← player  HH:MM)
+  // Inbound: header line + body lines. Outbound: inline (no separate header).
+  let total = msg.direction === 'out' ? 0 : 1;
   for (const line of cappedLines) {
     total += Math.max(1, Math.ceil(line.length / bodyWidth));
   }
-  if (originalLines.length > MAX_DISPLAY_LINES) total += 1; // "… (N more lines)"
+  if (originalLines.length > MAX_DISPLAY_LINES) total += 1;
   total += 1; // blank separator
   return total;
 }
@@ -127,40 +128,56 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
       const isOut = msg.direction === 'out';
       const bg = isOut ? THEME.inputBg : undefined;
 
-      // Header line: direction icon + sender + timestamp
-      if (isOut) {
-        const hdrPad = ' '.repeat(Math.max(0, termCols - 2 - 3 - 3 - 2 - msg.time.length));
-        children.push(React.createElement(React.Fragment, { key: `hdr-${i}` },
-          React.createElement(Text, { backgroundColor: bg, color: THEME.accent, bold: true }, ' \u2669 '),
-          React.createElement(Text, { backgroundColor: bg, color: THEME.text, bold: true }, 'You'),
-          React.createElement(Text, { backgroundColor: bg, color: THEME.dim }, `  ${msg.time}${hdrPad}`),
-        ));
-      } else {
-        children.push(React.createElement(React.Fragment, { key: `hdr-${i}` },
-          React.createElement(Text, { color: THEME.dim }, ' \u2190 '),
-          React.createElement(Text, { color: THEME.accent }, msg.sender),
-          React.createElement(Text, { color: THEME.dim }, `  ${msg.time}`),
-        ));
-      }
-
-      // Body lines: word-wrapped, indented, capped at MAX_DISPLAY_LINES
+      // Word-wrap body
       const originalLines = msg.body.split('\n');
       const wrappedLines: string[] = [];
       for (const line of originalLines) {
         wrappedLines.push(...wordWrap(line, bodyWidth));
       }
       const displayLines = wrappedLines.slice(0, MAX_DISPLAY_LINES);
-      for (let j = 0; j < displayLines.length; j++) {
-        const bodyLine = `${INDENT}${displayLines[j]}`;
-        children.push('\n');
-        children.push(React.createElement(Text, { key: `bl-${i}-${j}`, backgroundColor: bg, color: THEME.text },
-          isOut ? bodyLine.padEnd(termCols - 2) : bodyLine));
-      }
-      if (wrappedLines.length > MAX_DISPLAY_LINES) {
-        const moreLine = `${INDENT}\u2026 (${wrappedLines.length - MAX_DISPLAY_LINES} more lines)`;
-        children.push('\n');
-        children.push(React.createElement(Text, { key: `mt-${i}`, backgroundColor: bg, color: THEME.dim },
-          isOut ? moreLine.padEnd(termCols - 2) : moreLine));
+
+      if (isOut) {
+        // Outbound: inline — ♩ first line  HH:MM, then wrapped continuation lines
+        for (let j = 0; j < displayLines.length; j++) {
+          children.push('\n');
+          if (j === 0) {
+            // First line: icon + text + timestamp
+            const firstText = displayLines[0];
+            const pad = ' '.repeat(Math.max(0, termCols - 2 - 2 - firstText.length - 2 - msg.time.length));
+            children.push(React.createElement(React.Fragment, { key: `bl-${i}-0` },
+              React.createElement(Text, { backgroundColor: bg, color: THEME.accent, bold: true }, '\u2669 '),
+              React.createElement(Text, { backgroundColor: bg, color: THEME.text }, firstText),
+              React.createElement(Text, { backgroundColor: bg, color: THEME.dim }, `  ${msg.time}${pad}`),
+            ));
+          } else {
+            // Continuation: indented to align with text after ♩
+            const contLine = `${INDENT}${displayLines[j]}`;
+            children.push(React.createElement(Text, { key: `bl-${i}-${j}`, backgroundColor: bg, color: THEME.text },
+              contLine.padEnd(termCols - 2)));
+          }
+        }
+        if (wrappedLines.length > MAX_DISPLAY_LINES) {
+          const moreLine = `${INDENT}\u2026 (${wrappedLines.length - MAX_DISPLAY_LINES} more lines)`;
+          children.push('\n');
+          children.push(React.createElement(Text, { key: `mt-${i}`, backgroundColor: bg, color: THEME.dim },
+            moreLine.padEnd(termCols - 2)));
+        }
+      } else {
+        // Inbound: header line + body lines
+        children.push(React.createElement(React.Fragment, { key: `hdr-${i}` },
+          React.createElement(Text, { color: THEME.dim }, ' \u2190 '),
+          React.createElement(Text, { color: THEME.accent }, msg.sender),
+          React.createElement(Text, { color: THEME.dim }, `  ${msg.time}`),
+        ));
+        for (let j = 0; j < displayLines.length; j++) {
+          children.push('\n');
+          children.push(React.createElement(Text, { key: `bl-${i}-${j}`, color: THEME.text }, `${INDENT}${displayLines[j]}`));
+        }
+        if (wrappedLines.length > MAX_DISPLAY_LINES) {
+          children.push('\n');
+          children.push(React.createElement(Text, { key: `mt-${i}`, color: THEME.dim },
+            `${INDENT}\u2026 (${wrappedLines.length - MAX_DISPLAY_LINES} more lines)`));
+        }
       }
     }
   }

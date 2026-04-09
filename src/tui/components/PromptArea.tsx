@@ -306,7 +306,7 @@ export const PromptArea = React.memo(function PromptArea({
       : null,
     // Prompt line with inline placeholder hint (like Claude Code)
     React.createElement(Text, null,
-      React.createElement(Text, { bold: true, color: THEME.accent }, '\u276F '),
+      React.createElement(Text, { bold: true, color: THEME.accent }, '$ '),
       disabled
         ? React.createElement(Text, { color: THEME.muted }, '...')
         : value
