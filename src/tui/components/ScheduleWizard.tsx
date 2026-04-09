@@ -2,6 +2,9 @@
  * ScheduleWizard — step-by-step wizard for creating a scheduled message.
  * Steps: target → message → schedule type → timing → timezone (cron only) → confirm.
  * Escape cancels. Backspace on empty input goes back a step.
+ *
+ * Minimal-Box pattern: single <Text> root for all static content (0 Yoga nodes).
+ * Uses manual key handling — no TextInput component, so zero Box elements needed.
  */
 import React, { useState, useCallback } from 'react';
 import { useInk } from '../ink-context';
@@ -42,7 +45,7 @@ const TIMING_HINTS: Record<ScheduleType, string> = {
 };
 
 export function ScheduleWizard({ state, onAnswer, onBack, onConfirm, onCancel, onDone }: ScheduleWizardProps) {
-  const { Box, Text, useInput } = useInk();
+  const { Text, useInput } = useInk();
   const [inputValue, setInputValue] = useState('');
   const [showRequired, setShowRequired] = useState(false);
   const [typeIndex, setTypeIndex] = useState(
@@ -79,7 +82,6 @@ export function ScheduleWizard({ state, onAnswer, onBack, onConfirm, onCancel, o
       }
       if (key.return) {
         const selected = SCHED_TYPE_OPTIONS[typeIndex];
-        // Auto-generate a unique name from target + type + timestamp
         const name = `${state.answers.target}-${selected.value}-${Date.now().toString(36)}`;
         onAnswer({ schedType: selected.value, name });
         setInputValue('');
@@ -143,16 +145,17 @@ export function ScheduleWizard({ state, onAnswer, onBack, onConfirm, onCancel, o
     i <= currentStepIdx ? '\u25CF' : '\u25CB',
   ).join(' ');
 
-  // ── Render by step ──
+  // ── Build content ──
 
-  const elements: React.ReactNode[] = [
-    React.createElement(Box, { key: 'hdr', marginBottom: 1 },
-      React.createElement(Text, { bold: true, color: THEME.accent }, 'Create Schedule'),
-      React.createElement(Text, { color: THEME.dim }, `  ${progressDots}`),
-    ),
-  ];
+  const children: React.ReactNode[] = [];
 
-  // Show completed answers as breadcrumbs
+  // Header
+  children.push(React.createElement(React.Fragment, { key: 'hdr' },
+    React.createElement(Text, { bold: true, color: THEME.accent }, '  Create Schedule'),
+    React.createElement(Text, { color: THEME.dim }, `  ${progressDots}`),
+  ));
+
+  // Completed answers as breadcrumbs
   const completedSteps: Array<[string, string]> = [];
   if (state.answers.target && state.step !== 'target') {
     completedSteps.push(['Target', state.answers.target]);
@@ -169,88 +172,93 @@ export function ScheduleWizard({ state, onAnswer, onBack, onConfirm, onCancel, o
   }
 
   for (const [label, value] of completedSteps) {
-    elements.push(
-      React.createElement(Text, { key: `bc-${label}`, color: THEME.dim },
-        `  \u2713 ${label}: ${value}`,
-      ),
-    );
+    children.push('\n');
+    children.push(React.createElement(Text, { key: `bc-${label}`, color: THEME.dim }, `  \u2713 ${label}: ${value}`));
   }
 
   // Current step content
   if (state.step === 'schedType') {
-    elements.push(
-      React.createElement(Box, { key: 'prompt', marginTop: 1 },
-        React.createElement(Text, { color: THEME.text }, `  ${STEP_LABELS[state.step]}:`),
-      ),
-    );
+    children.push('\n\n');
+    children.push(React.createElement(Text, { key: 'prompt', color: THEME.text }, `  ${STEP_LABELS[state.step]}:`));
     for (let i = 0; i < SCHED_TYPE_OPTIONS.length; i++) {
       const opt = SCHED_TYPE_OPTIONS[i];
       const selected = i === typeIndex;
-      elements.push(
-        React.createElement(Text, {
-          key: `opt-${i}`,
-          color: selected ? THEME.accent : THEME.textMuted,
-          bold: selected,
-        },
-          `  ${selected ? '\u25B6' : ' '} ${opt.label}  ${selected ? `(${opt.hint})` : ''}`,
-        ),
-      );
+      children.push('\n');
+      children.push(React.createElement(Text, {
+        key: `opt-${i}`,
+        color: selected ? THEME.accent : THEME.textMuted,
+        bold: selected,
+      }, `  ${selected ? '\u25B6' : ' '} ${opt.label}  ${selected ? `(${opt.hint})` : ''}`));
     }
-    elements.push(
-      React.createElement(Text, { key: 'nav', color: THEME.dim }, '\n  \u2191\u2193 select, Enter to confirm'),
-    );
+    children.push('\n\n');
+    children.push(React.createElement(Text, { key: 'nav', color: THEME.dim }, '  \u2191\u2193 select, Enter to confirm'));
+
   } else if (state.step === 'confirm') {
-    elements.push(
-      React.createElement(Box, { key: 'summary', flexDirection: 'column', marginTop: 1, borderStyle: 'single', borderColor: THEME.dim, paddingX: 1 },
-        React.createElement(Text, { bold: true, color: THEME.text }, 'Schedule Summary'),
-        React.createElement(Text, { color: THEME.textMuted }, `  Name: ${state.answers.name}`),
-        React.createElement(Text, { color: THEME.textMuted }, `  Target: ${state.answers.target}`),
-        React.createElement(Text, { color: THEME.textMuted }, `  Message: ${state.answers.message}`),
-        React.createElement(Text, { color: THEME.textMuted }, `  Type: ${state.answers.schedType}`),
-        React.createElement(Text, { color: THEME.textMuted }, `  Timing: ${state.answers.timing}`),
-        state.answers.timezone
-          ? React.createElement(Text, { color: THEME.textMuted }, `  Timezone: ${state.answers.timezone}`)
-          : null,
-      ),
-      React.createElement(Text, { key: 'confirm-hint', color: THEME.dim }, '\n  Enter to create, Esc to cancel, Backspace to go back'),
-    );
+    // Summary with text-based border
+    const boxWidth = 50;
+    const hLine = '\u2500'.repeat(boxWidth);
+    children.push('\n\n');
+    children.push(React.createElement(Text, { key: 'bt', color: THEME.dim }, `  \u250C${hLine}\u2510`));
+    children.push('\n');
+    children.push(React.createElement(Text, { key: 'bh', bold: true, color: THEME.text }, '  \u2502 Schedule Summary'));
+    children.push(React.createElement(Text, { key: 'bh2', color: THEME.dim }, ' '.repeat(boxWidth - 17) + '\u2502'));
+
+    const summaryLines = [
+      `Name: ${state.answers.name}`,
+      `Target: ${state.answers.target}`,
+      `Message: ${state.answers.message}`,
+      `Type: ${state.answers.schedType}`,
+      `Timing: ${state.answers.timing}`,
+    ];
+    if (state.answers.timezone) {
+      summaryLines.push(`Timezone: ${state.answers.timezone}`);
+    }
+    for (let i = 0; i < summaryLines.length; i++) {
+      const line = summaryLines[i];
+      const pad = ' '.repeat(Math.max(0, boxWidth - line.length - 2));
+      children.push('\n');
+      children.push(React.createElement(Text, { key: `sl-${i}`, color: THEME.textMuted }, `  \u2502 ${line}`));
+      children.push(React.createElement(Text, { key: `sp-${i}`, color: THEME.dim }, `${pad}\u2502`));
+    }
+    children.push('\n');
+    children.push(React.createElement(Text, { key: 'bb', color: THEME.dim }, `  \u2514${hLine}\u2518`));
+    children.push('\n\n');
+    children.push(React.createElement(Text, { key: 'confirm-hint', color: THEME.dim }, '  Enter to create, Esc to cancel, Backspace to go back'));
+
     if (state.submitting) {
-      elements.push(
-        React.createElement(Text, { key: 'submitting', color: THEME.warning }, '\n  Creating schedule...'),
-      );
+      children.push('\n');
+      children.push(React.createElement(Text, { key: 'submitting', color: THEME.warning }, '  Creating schedule...'));
     }
+
   } else if (state.step === 'done') {
+    children.push('\n');
     if (state.error) {
-      elements.push(
-        React.createElement(Text, { key: 'err', color: THEME.error }, `\n  \u2717 ${state.error}`),
-        React.createElement(Text, { key: 'err-hint', color: THEME.dim }, '  Press Enter to dismiss.'),
-      );
+      children.push(React.createElement(Text, { key: 'err', color: THEME.error }, `\n  \u2717 ${state.error}`));
+      children.push('\n');
+      children.push(React.createElement(Text, { key: 'err-hint', color: THEME.dim }, '  Press Enter to dismiss.'));
     } else {
-      elements.push(
-        React.createElement(Text, { key: 'ok', color: THEME.success }, `\n  \u2713 Schedule "${state.answers.name}" created!`),
-        React.createElement(Text, { key: 'ok-hint', color: THEME.dim }, '  Press Enter to return.'),
-      );
+      children.push(React.createElement(Text, { key: 'ok', color: THEME.success }, `\n  \u2713 Schedule "${state.answers.name}" created!`));
+      children.push('\n');
+      children.push(React.createElement(Text, { key: 'ok-hint', color: THEME.dim }, '  Press Enter to return.'));
     }
+
   } else {
     // Text input steps
     const hint = state.step === 'timing' ? TIMING_HINTS[state.answers.schedType] : `${STEP_LABELS[state.step]}:`;
-    elements.push(
-      React.createElement(Box, { key: 'prompt', marginTop: 1 },
-        React.createElement(Text, { color: THEME.text }, `  ${hint}`),
-      ),
-      React.createElement(Box, { key: 'input' },
-        React.createElement(Text, { color: THEME.accent }, '  > '),
-        React.createElement(Text, { color: THEME.text }, inputValue),
-        React.createElement(Text, { color: THEME.accent }, '\u2588'),
-        showRequired ? React.createElement(Text, { color: 'red' }, '  (required)') : null,
-      ),
-    );
+    children.push('\n\n');
+    children.push(React.createElement(Text, { key: 'prompt', color: THEME.text }, `  ${hint}`));
+    children.push('\n');
+    children.push(React.createElement(React.Fragment, { key: 'input' },
+      React.createElement(Text, { color: THEME.accent }, '  > '),
+      React.createElement(Text, { color: THEME.text }, inputValue),
+      React.createElement(Text, { color: THEME.accent }, '\u2588'),
+      showRequired ? React.createElement(Text, { color: 'red' }, '  (required)') : null,
+    ));
     if (state.step !== 'target') {
-      elements.push(
-        React.createElement(Text, { key: 'back-hint', color: THEME.dim }, '  Backspace on empty to go back, Esc to cancel'),
-      );
+      children.push('\n');
+      children.push(React.createElement(Text, { key: 'back-hint', color: THEME.dim }, '  Backspace on empty to go back, Esc to cancel'));
     }
   }
 
-  return React.createElement(Box, { flexDirection: 'column', paddingX: 1 }, ...elements);
+  return React.createElement(Text, null, ...children);
 }
