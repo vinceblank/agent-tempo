@@ -146,6 +146,8 @@ export interface TuiState {
   activeEnsemble: string | null;
   /** Players in the active ensemble. */
   players: MaestroPlayerInfo[];
+  /** True after the first successful player poll. Reset on ensemble switch. */
+  playersLoaded: boolean;
   /** Messages in the active ensemble (relay messages). */
   messages: MaestroRelayMessage[];
   /** Conductor history in the active ensemble. */
@@ -224,6 +226,7 @@ export function initialState(ensemble?: string): TuiState {
 
     activeEnsemble: ensemble || null,
     players: [],
+    playersLoaded: false,
     messages: [],
     conductorHistory: [],
     schedules: [],
@@ -356,6 +359,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         conductorName: undefined,
         chatTarget: undefined,
         players: [],
+        playersLoaded: false,
         messages: [],
         sentMessages: [],
         conductorHistory: [],
@@ -378,6 +382,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         conductorName: undefined,
         chatTarget: undefined,
         players: [],
+        playersLoaded: false,
         messages: [],
         sentMessages: [],
         conductorHistory: [],
@@ -416,6 +421,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       return {
         ...state,
         players: action.players,
+        playersLoaded: true,
         messages: action.messages,
         conductorHistory: action.history,
         schedules: action.schedules ?? state.schedules,
@@ -450,6 +456,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       return {
         ...state,
         players: action.players,
+        playersLoaded: true,
         messages: action.messages,
         conductorHistory: action.history,
         selectedPlayerIndex: Math.min(state.selectedPlayerIndex, Math.max(0, action.players.length - 1)),

@@ -1174,6 +1174,7 @@ export function App({ api, ensemble }: AppProps) {
     React.createElement(StatusBar, {
       ensemble: state.activeEnsemble,
       players: state.players,
+      playersLoaded: state.playersLoaded,
       scheduleCount: state.schedules.length,
       connected: true,
       conductorName: state.conductorName,
