@@ -102,11 +102,13 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
   }));
 
   // Work backwards from newest — include as many as fit in viewport
+  // Reserve 1 line for breathing room between last message and footer
+  const fitHeight = Math.max(1, contentHeight - 1);
   let usedLines = 0;
   let startIdx = formatted.length;
   for (let i = formatted.length - 1; i >= 0; i--) {
     const needed = estimateLines(formatted[i], termCols);
-    if (usedLines + needed > contentHeight) break;
+    if (usedLines + needed > fitHeight) break;
     usedLines += needed;
     startIdx = i;
   }
