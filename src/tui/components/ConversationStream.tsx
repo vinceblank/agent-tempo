@@ -146,9 +146,9 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
         wrappedLines.push(...wordWrap(line, bodyWidth));
       }
       const displayLines = wrappedLines.slice(0, MAX_DISPLAY_LINES);
-      for (const line of displayLines) {
+      for (let j = 0; j < displayLines.length; j++) {
         children.push('\n');
-        children.push(React.createElement(Text, { key: `bl-${i}-${wrappedLines.indexOf(line)}`, color: THEME.text }, `${INDENT}${line}`));
+        children.push(React.createElement(Text, { key: `bl-${i}-${j}`, color: THEME.text }, `${INDENT}${displayLines[j]}`));
       }
       if (wrappedLines.length > MAX_DISPLAY_LINES) {
         children.push('\n');
