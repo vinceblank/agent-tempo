@@ -84,64 +84,6 @@ function commitStatic(
 
 // ── Handlers ──
 
-/** /cue <player> [message] — enter chat mode or send a quick cue. */
-async function handleCue(
-  args: string[],
-  dispatch: (action: TuiAction) => void,
-  api: TempoClient,
-  ctx: CommandContext,
-): Promise<void> {
-  if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /cue <player> [message]');
-    return;
-  }
-
-  const target = args[0];
-
-  if (args.length === 1) {
-    // Enter chat mode with this player
-    dispatch({ type: 'ENTER_CHAT', target });
-    commitStatic(dispatch, 'info', `\u2500\u2500 chatting with ${target} \u2500\u2500`);
-  } else {
-    // Quick cue — send message without entering chat mode
-    const message = args.slice(1).join(' ');
-
-    // Resolve ensemble — use active or discover
-    let ensemble = ctx.activeEnsemble || '';
-    if (!ensemble) {
-      try {
-        const ensembles = await api.discoverEnsembles();
-        if (ensembles.length === 1) {
-          ensemble = ensembles[0].name;
-        } else if (ensembles.length > 1) {
-          // Try to find which ensemble the target is in
-          for (const ens of ensembles) {
-            const players = await api.getPlayers(ens.name);
-            if (players.some(p => p.playerId === target)) {
-              ensemble = ens.name;
-              break;
-            }
-          }
-        }
-      } catch {
-        // Fall through — ensemble may still be empty
-      }
-    }
-
-    if (!ensemble) {
-      commitStatic(dispatch, 'error', `Player "${target}" not found in any ensemble.`);
-      return;
-    }
-
-    try {
-      await api.sendMessage(ensemble, target, message, 'maestro');
-      commitStatic(dispatch, 'message', `\u2714 Delivered to ${target}: ${message}`);
-    } catch (err) {
-      commitStatic(dispatch, 'error', `\u2717 Failed to deliver to ${target}: ${err}`);
-    }
-  }
-}
-
 /** /players — show interactive player picker. */
 async function handlePlayers(
   _args: string[],
@@ -336,7 +278,7 @@ async function handleEncore(
 
   const target = args[0];
   try {
-    // Find the stale player's ensemble and send encore via conductor
+    // Find the stale player and encore directly via the maestro session's outbox
     const ensembles = await api.discoverEnsembles();
     for (const ens of ensembles) {
       const players = await api.getPlayers(ens.name);
@@ -346,9 +288,8 @@ async function handleEncore(
           commitStatic(dispatch, 'error', `Player "${target}" is ${player.status}, not stale. Encore only works on stale sessions.`);
           return;
         }
-        // Send encore command via conductor
-        await api.sendCommand(ens.name, `/encore ${target}`, 'maestro');
-        commitStatic(dispatch, 'info', `\u21BB Encore requested for ${target}. The conductor will revive the session.`);
+        await api.encorePlayer(ens.name, target);
+        commitStatic(dispatch, 'info', `\u21BB Encore submitted for ${target}. The session will be revived with context restored.`);
         return;
       }
     }
@@ -412,21 +353,28 @@ async function handleGates(
   _args: string[],
   dispatch: (action: TuiAction) => void,
   api: TempoClient,
+  ctx: CommandContext,
 ): Promise<void> {
   try {
-    const ensembles = await api.discoverEnsembles();
-    if (ensembles.length === 0) {
-      commitStatic(dispatch, 'info', 'No ensembles running.');
-      return;
+    let ensembleNames: string[];
+    if (ctx.activeEnsemble) {
+      ensembleNames = [ctx.activeEnsemble];
+    } else {
+      const ensembles = await api.discoverEnsembles();
+      if (ensembles.length === 0) {
+        commitStatic(dispatch, 'info', 'No ensembles running.');
+        return;
+      }
+      ensembleNames = ensembles.map(e => e.name);
     }
 
     const icons = statusIcons(supportsUnicode());
     const lines: string[] = [];
 
-    for (const ens of ensembles) {
-      const gates = await api.getGates(ens.name);
+    for (const ensName of ensembleNames) {
+      const gates = await api.getGates(ensName);
       if (gates.length > 0) {
-        lines.push(`\n  ${ens.name} — ${gates.length} gate${gates.length !== 1 ? 's' : ''}:`);
+        lines.push(`\n  ${ensName} — ${gates.length} gate${gates.length !== 1 ? 's' : ''}:`);
         for (const g of gates) {
           const icon = g.status === 'passed' ? icons.check
             : g.status === 'failed' ? icons.cross
@@ -456,21 +404,28 @@ async function handleStages(
   _args: string[],
   dispatch: (action: TuiAction) => void,
   api: TempoClient,
+  ctx: CommandContext,
 ): Promise<void> {
   try {
-    const ensembles = await api.discoverEnsembles();
-    if (ensembles.length === 0) {
-      commitStatic(dispatch, 'info', 'No ensembles running.');
-      return;
+    let ensembleNames: string[];
+    if (ctx.activeEnsemble) {
+      ensembleNames = [ctx.activeEnsemble];
+    } else {
+      const ensembles = await api.discoverEnsembles();
+      if (ensembles.length === 0) {
+        commitStatic(dispatch, 'info', 'No ensembles running.');
+        return;
+      }
+      ensembleNames = ensembles.map(e => e.name);
     }
 
     const icons = statusIcons(supportsUnicode());
     const lines: string[] = [];
 
-    for (const ens of ensembles) {
-      const stages = await api.getStages(ens.name);
+    for (const ensName of ensembleNames) {
+      const stages = await api.getStages(ensName);
       if (stages.length > 0) {
-        lines.push(`\n  ${ens.name} — ${stages.length} stage${stages.length !== 1 ? 's' : ''}:`);
+        lines.push(`\n  ${ensName} — ${stages.length} stage${stages.length !== 1 ? 's' : ''}:`);
         for (const s of stages) {
           const icon = s.status === 'complete' ? icons.check
             : s.status === 'failed' ? icons.cross
@@ -620,20 +575,14 @@ async function handleRecruitConductor(
 
   commitStatic(dispatch, 'info', '\u2026 Recruiting conductor (tempo-conductor)...');
 
-  try {
-    await api.sendCommand(ensemble, '/recruit conductor --type tempo-conductor --conductor', 'maestro');
-    commitStatic(dispatch, 'info', '\u2714 Conductor recruitment requested. It will appear shortly.');
-  } catch (err) {
-    // Fallback: shell out if no conductor to receive the command
-
-    exec(`claude-tempo conduct ${ensemble}`, { timeout: 30000 }, (execErr: any) => {
-      if (execErr) {
-        commitStatic(dispatch, 'error', `\u2717 Failed to recruit conductor: ${execErr.message || execErr}`);
-      } else {
-        commitStatic(dispatch, 'info', '\u2714 Conductor started. Auto-connecting...');
-      }
-    });
-  }
+  // Spawn the conductor directly via CLI — no conductor exists yet to receive commands
+  exec(`claude-tempo conduct ${ensemble}`, { timeout: 30000 }, (execErr: any) => {
+    if (execErr) {
+      commitStatic(dispatch, 'error', `\u2717 Failed to recruit conductor: ${execErr.message || execErr}`);
+    } else {
+      commitStatic(dispatch, 'info', '\u2714 Conductor started. Auto-connecting...');
+    }
+  });
 }
 
 /** /lineup load|save — manage ensemble lineups. */
@@ -792,6 +741,11 @@ export const COMMANDS: Record<string, CommandDef> = {
     usage: '/player <name>',
     handler: handlePlayer,
   },
+  players: {
+    description: 'List active players',
+    usage: '/players',
+    handler: null, // Handled directly in App.tsx
+  },
   gates: {
     description: 'List quality gates and their status',
     usage: '/gates',
@@ -836,11 +790,6 @@ export const COMMANDS: Record<string, CommandDef> = {
     description: 'Show ensemble players and status',
     usage: '/status',
     handler: handleStatus,
-  },
-  dashboard: {
-    description: 'Show player/schedule dashboard',
-    usage: '/dashboard',
-    handler: null, // Handled directly in App.tsx
   },
   back: {
     description: 'Return to maestro view',

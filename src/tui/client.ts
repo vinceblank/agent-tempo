@@ -19,7 +19,9 @@ import type {
   StageEntry,
   WorktreeEntry,
   EnsembleChatResult,
+  OutboxEntryInput,
 } from '../types';
+import { submitOutboxUpdate } from '../workflows/signals';
 
 // ── Public Types ──
 
@@ -61,6 +63,8 @@ export interface TempoClient {
   getWorktrees(ensemble: string): Promise<WorktreeEntry[]>;
   /** Get aggregated ensemble chat (maestro + conductor traffic). */
   getEnsembleChat(ensemble: string, offset?: number, limit?: number): Promise<EnsembleChatResult>;
+  /** Encore (revive) a stale player directly via the maestro session's outbox. */
+  encorePlayer(ensemble: string, playerId: string): Promise<void>;
   /** Disband an ensemble: terminate all sessions, scheduler, and maestro workflows. */
   disbandEnsemble(ensemble: string): Promise<{ terminated: number }>;
   /** Check if the Temporal connection is alive. */
@@ -297,6 +301,19 @@ export function createTempoClient(client: Client): TempoClient {
         return;
       }
       throw new Error(`Player "${playerId}" not found in ensemble "${ensemble}"`);
+    },
+
+    async encorePlayer(ensemble: string, playerId: string): Promise<void> {
+      // Submit an encore outbox entry through the TUI's maestro session workflow.
+      // This works without a conductor — the maestro session's outbox dispatches the encore activity directly.
+      const maestroId = sessionWorkflowId(ensemble, 'maestro');
+      const h = handle(maestroId);
+
+      const entry: OutboxEntryInput = {
+        type: 'encore',
+        targetPlayerId: playerId,
+      };
+      await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
     },
 
     async disbandEnsemble(ensemble: string): Promise<{ terminated: number }> {

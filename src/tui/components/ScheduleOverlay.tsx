@@ -23,10 +23,33 @@ function formatTime(ts: string): string {
   }
 }
 
+function formatDateTime(ts: string): string {
+  try {
+    const d = new Date(ts);
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${month}-${day} ${formatTime(ts)}`;
+  } catch {
+    return '??';
+  }
+}
+
+function formatInterval(ms: number): string {
+  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3600000) return `${Math.round(ms / 60000)}m`;
+  return `${(ms / 3600000).toFixed(1)}h`;
+}
+
 const typeIcons: Record<string, string> = {
   once: '\u23F1',     // stopwatch
   interval: '\u21BB', // clockwise arrows
   cron: '\u23F0',     // alarm clock
+};
+
+const typeLabels: Record<string, string> = {
+  once: 'one-shot',
+  interval: 'recurring',
+  cron: 'cron',
 };
 
 export function ScheduleOverlay({ schedules, ensemble }: ScheduleOverlayProps) {
@@ -49,21 +72,49 @@ export function ScheduleOverlay({ schedules, ensemble }: ScheduleOverlayProps) {
     for (let i = 0; i < schedules.length; i++) {
       const s = schedules[i];
       const icon = typeIcons[s.type] || '\u21BB';
-      const fired = s.firedCount > 0 ? ` (fired ${s.firedCount}x)` : '';
-      const nextFire = s.nextFireAt ? formatTime(s.nextFireAt) : '?';
+      const label = typeLabels[s.type] || s.type;
 
       children.push('\n\n');
+      // Name + type
       children.push(React.createElement(React.Fragment, { key: `s-${i}` },
         React.createElement(Text, { color: THEME.text }, `  ${icon} `),
         React.createElement(Text, { bold: true, color: THEME.text }, s.name),
+        React.createElement(Text, { color: THEME.dim }, `  [${label}]`),
       ));
+
+      // Target + message
+      const msgPreview = s.message.length > 60 ? s.message.slice(0, 57) + '\u2026' : s.message;
       children.push('\n');
-      children.push(React.createElement(Text, { key: `sd-${i}`, color: THEME.dim },
-        `    ${s.type} \u2192 ${s.target}  next: ${nextFire}${fired}`));
+      children.push(React.createElement(Text, { key: `st-${i}`, color: THEME.dim },
+        `    \u2192 ${s.target}: `));
+      children.push(React.createElement(Text, { key: `sm-${i}`, color: THEME.textMuted || THEME.dim },
+        msgPreview));
+
+      // Timing details
+      const timingParts: string[] = [];
+      if (s.type === 'interval' && s.interval) {
+        timingParts.push(`every ${formatInterval(s.interval)}`);
+      }
       if (s.cronExpression) {
+        timingParts.push(`cron: ${s.cronExpression}`);
+        if (s.timezone) timingParts.push(`tz: ${s.timezone}`);
+      }
+      if (s.nextFireAt) {
+        timingParts.push(`next: ${formatDateTime(s.nextFireAt)}`);
+      }
+      if (s.firedCount > 0) {
+        timingParts.push(`fired ${s.firedCount}x`);
+      }
+      if (s.remainingCount !== undefined) {
+        timingParts.push(`${s.remainingCount} remaining`);
+      }
+      if (s.until) {
+        timingParts.push(`until ${formatDateTime(s.until)}`);
+      }
+      if (timingParts.length > 0) {
         children.push('\n');
-        children.push(React.createElement(Text, { key: `sc-${i}`, color: THEME.dim },
-          `    cron: ${s.cronExpression}`));
+        children.push(React.createElement(Text, { key: `sd-${i}`, color: THEME.dim },
+          `    ${timingParts.join('  \u00B7  ')}`));
       }
     }
   }
