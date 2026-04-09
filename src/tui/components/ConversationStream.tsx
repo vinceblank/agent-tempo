@@ -133,14 +133,14 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
   let startIdx = formatted.length;
   for (let i = formatted.length - 1; i >= 0; i--) {
     const needed = estimateLines(formatted[i], termCols);
-    if (usedLines + needed > contentHeight) break;
+    if (usedLines + needed > contentHeight - 1) break;
     usedLines += needed;
     startIdx = i;
   }
   // First visible message uses \n not \n\n — check if we can fit one more
   if (startIdx > 0) {
     const extra = estimateLines(formatted[startIdx - 1], termCols);
-    if (usedLines + extra - 1 <= contentHeight) {
+    if (usedLines + extra - 1 <= contentHeight - 1) {
       usedLines += extra - 1;
       startIdx--;
     }
@@ -229,7 +229,7 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
       actualLines += (child.match(/\n/g) || []).length;
     }
   }
-  const padding = Math.max(0, contentHeight - actualLines);
+  const padding = Math.max(0, contentHeight - 1 - actualLines);
   if (padding > 0) {
     children.unshift('\n'.repeat(padding));
   }
