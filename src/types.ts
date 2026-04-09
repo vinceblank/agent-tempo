@@ -379,6 +379,11 @@ export interface ChatHighWater {
   conductorSent: number;
 }
 
+/** Zero-value for ChatHighWater — use as default when no prior fetch. */
+export const ZERO_CHAT_HIGH_WATER: ChatHighWater = {
+  maestroRecv: 0, maestroSent: 0, conductorRecv: 0, conductorSent: 0,
+};
+
 /** Input for the Maestro workflow. */
 export interface MaestroInput {
   ensemble: string;

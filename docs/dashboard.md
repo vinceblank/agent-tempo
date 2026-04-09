@@ -18,32 +18,39 @@ claude-tempo tui --ensemble my-ensemble
 
 The TUI has a persistent layout:
 
-- **TitleBar** (pinned top) — shows the current ensemble, player count, and connection state; in chat mode shows the target player and their status
-- **Scroll area** — command output and sent messages accumulate here as scrollback history
-- **Live view** — real-time ensemble state (players, recent messages, schedules); switches to a per-player chat view in `/cue` mode
-- **PromptArea** (pinned bottom) — type slash commands or, in chat mode, bare text to send to the target player
+- **TitleBar** (pinned top) — shows the current ensemble, player count, and connection state
+- **Scroll area** — command output and sent messages accumulate as native scrollback history
+- **Ensemble chat** — aggregated live feed of all maestro + conductor traffic; prefix messages with `@player` to address specific players
+- **PromptArea** (pinned bottom) — type slash commands or bare text; bare text routes to the conductor (or a specific player with `@player` prefix)
+- **StatusBar** (pinned bottom) — player count, schedule count, and connection health
+- **CommandPalette** — autocomplete dropdown appears when typing `/`, with parameter hints for commands that accept player names or subcommands
 
 ### Slash Commands
 
 | Command | Description |
 |---|---|
-| `/cue <player> [message]` | Enter chat mode with a player, or send a quick one-off message |
-| `/broadcast <message>` | Send a message to all active players across all ensembles |
-| `/recruit <name> [--type <type>] [--dir <path>]` | Spawn a new player session |
-| `/stop <player>` | Terminate a player session |
+| `/broadcast <message>` | Send a message to all active players in the current ensemble |
+| `/recruit [name] [--type <type>] [--dir <path>]` | Spawn a new player (launches wizard if args omitted) |
+| `/recruit-conductor` | Recruit a conductor for the current ensemble |
+| `/stop <player>` | Stop a player session (with confirmation) |
 | `/encore <player>` | Revive a stale player session |
+| `/disband` | Tear down the current ensemble — all sessions, scheduler, and Maestro |
+| `/player [name]` | Show detailed player info; no args opens interactive picker |
+| `/ensemble [name]` | Switch active ensemble context; no args opens picker |
+| `/status` | Show dismissible overlay with all players, status, type, and part |
 | `/recall [player]` | Show recent message history (optionally filtered to one player) |
-| `/players` | List all players with status, type, and current part |
-| `/schedule` | List active schedules across all ensembles |
+| `/search <term>` | Search message history across the ensemble |
+| `/schedule [create]` | List active schedules; `create` launches the schedule wizard |
 | `/unschedule <name>` | Cancel a named schedule |
+| `/lineup load <file> \| save [file]` | Load or save an ensemble lineup |
 | `/gates` | List quality gates and their criteria status |
 | `/stages` | List stages and per-player report status |
 | `/worktree [list]` | List active git worktrees |
-| `/back` | Exit chat mode or navigate back to the ensemble list |
+| `/back` \| `/home` \| `/maestro` | Return to the main ensemble view |
 | `/help` | Show all available commands with usage |
-| `/quit` | Exit the TUI |
+| `/quit` \| `/exit` | Exit the TUI |
 
-In chat mode (`/cue <player>` with no message), bare text is sent directly to the target player as a cue. Press `Ctrl+C` to exit at any time.
+Bare text (no `/` prefix) routes to the conductor by default. Prefix with `@player` to address a specific player: `@alice can you review the PR?`. Use `/player <name>` to open a scrollable message history for any player. Press `Ctrl+C` to exit at any time.
 
 ## Maestro Web Dashboard
 
@@ -61,7 +68,7 @@ The Maestro workflow starts automatically with the conductor and requires no add
 
 Two Maestro workflow variants exist:
 
-- **Per-ensemble** (`claude-maestro-{ensemble}`) — monitors a single ensemble, maintains a player snapshot and ring-buffer event log (max 200 entries), and queues commands for relay to the conductor via `maestroSendCommand`
+- **Per-ensemble** (`claude-maestro-{ensemble}`) — monitors a single ensemble, maintains a player snapshot, ring-buffer event log (max 200 entries), and an aggregated ensemble chat cache (max 500 entries, refreshed every ~10s via `fetchEnsembleChat`). The chat cache merges maestro + conductor traffic and is served via the `maestroEnsembleChat` query. Also queues commands for relay to the conductor via `maestroSendCommand`
 - **Global** (`claude-maestro-global`) — spans all ensembles, aggregates players by ensemble, maintains a cross-ensemble message ring buffer (max 500 entries), and exposes on-demand player/conductor history via `maestroFetchPlayerMessages` and `maestroFetchConductorHistory` updates
 
 Both are implemented in `src/workflows/maestro.ts`. Signal/query/update names are documented in [WIRE-PROTOCOL.md](WIRE-PROTOCOL.md).

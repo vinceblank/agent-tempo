@@ -1,7 +1,7 @@
 import { Client } from '@temporalio/client';
 import { ApplicationFailure } from '@temporalio/activity';
 import { conductorWorkflowId, sessionWorkflowId } from '../config';
-import { HistoryEntry, MaestroPlayerInfo, Message, SentMessage, EnsembleChatMessage, ChatHighWater } from '../types';
+import { HistoryEntry, MaestroPlayerInfo, Message, SentMessage, EnsembleChatMessage, ChatHighWater, ZERO_CHAT_HIGH_WATER } from '../types';
 import { scanEnsembleSessions, resolveSession } from './resolve';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:maestro]', ...args);
@@ -211,16 +211,13 @@ export function createMaestroActivities(client: Client): MaestroActivities {
 
     async fetchEnsembleChat(input: FetchEnsembleChatInput): Promise<FetchEnsembleChatResult> {
       const { ensemble, knownCounts } = input;
-      const hw: ChatHighWater = knownCounts ?? { maestroRecv: 0, maestroSent: 0, conductorRecv: 0, conductorSent: 0 };
+      const hw: ChatHighWater = knownCounts ?? ZERO_CHAT_HIGH_WATER;
       const TRUNC = 500;
       const truncate = (t: string) => t.length > TRUNC ? t.slice(0, TRUNC - 1) + '...' : t;
 
       try {
-        // Find maestro session
-        const maestroId = sessionWorkflowId(ensemble, 'maestro');
-        const maestroHandle = client.workflow.getHandle(maestroId);
+        const maestroHandle = client.workflow.getHandle(sessionWorkflowId(ensemble, 'maestro'));
 
-        // Find conductor
         let conductorHandle: ReturnType<typeof client.workflow.getHandle> | null = null;
         let conductorId = '';
         const sessions = await scanEnsembleSessions(client, ensemble);
@@ -230,12 +227,11 @@ export function createMaestroActivities(client: Client): MaestroActivities {
           conductorId = conductorSession.playerId;
         }
 
-        // Fetch in parallel
         const [maestroRecvRes, maestroSentRes, condRecvRes, condSentRes] = await Promise.allSettled([
-          maestroHandle.query('allMessages').catch(() => []) as Promise<Message[]>,
-          maestroHandle.query('allSentMessages').catch(() => []) as Promise<SentMessage[]>,
-          conductorHandle ? conductorHandle.query('allMessages').catch(() => []) as Promise<Message[]> : Promise.resolve([] as Message[]),
-          conductorHandle ? conductorHandle.query('allSentMessages').catch(() => []) as Promise<SentMessage[]> : Promise.resolve([] as SentMessage[]),
+          maestroHandle.query('allMessages') as Promise<Message[]>,
+          maestroHandle.query('allSentMessages') as Promise<SentMessage[]>,
+          conductorHandle ? conductorHandle.query('allMessages') as Promise<Message[]> : Promise.resolve([] as Message[]),
+          conductorHandle ? conductorHandle.query('allSentMessages') as Promise<SentMessage[]> : Promise.resolve([] as SentMessage[]),
         ]);
 
         const maestroRecv: Message[] = maestroRecvRes.status === 'fulfilled' ? maestroRecvRes.value : [];
@@ -243,16 +239,9 @@ export function createMaestroActivities(client: Client): MaestroActivities {
         const condRecv: Message[] = condRecvRes.status === 'fulfilled' ? condRecvRes.value : [];
         const condSent: SentMessage[] = condSentRes.status === 'fulfilled' ? condSentRes.value : [];
 
-        // Delta: only new messages beyond high-water marks
-        const newMaestroRecv = maestroRecv.slice(hw.maestroRecv);
-        const newMaestroSent = maestroSent.slice(hw.maestroSent);
-        const newCondRecv = condRecv.slice(hw.conductorRecv);
-        const newCondSent = condSent.slice(hw.conductorSent);
-
         const newMessages: EnsembleChatMessage[] = [];
 
-        // Maestro received -> maestro-in
-        for (const m of newMaestroRecv) {
+        for (const m of maestroRecv.slice(hw.maestroRecv)) {
           newMessages.push({
             id: m.id,
             from: m.from,
@@ -263,8 +252,7 @@ export function createMaestroActivities(client: Client): MaestroActivities {
           });
         }
 
-        // Maestro sent -> maestro-out
-        for (const m of newMaestroSent) {
+        for (const m of maestroSent.slice(hw.maestroSent)) {
           newMessages.push({
             id: m.id,
             from: 'maestro',
@@ -275,8 +263,7 @@ export function createMaestroActivities(client: Client): MaestroActivities {
           });
         }
 
-        // Conductor received from non-maestro -> conductor-in
-        for (const m of newCondRecv) {
+        for (const m of condRecv.slice(hw.conductorRecv)) {
           if (m.from === 'maestro' || m.isMaestro) continue; // Skip maestro<->conductor (already covered)
           newMessages.push({
             id: `cond-${m.id}`,
@@ -288,8 +275,7 @@ export function createMaestroActivities(client: Client): MaestroActivities {
           });
         }
 
-        // Conductor sent to non-maestro -> conductor-out
-        for (const m of newCondSent) {
+        for (const m of condSent.slice(hw.conductorSent)) {
           if (m.to === 'maestro') continue; // Skip conductor->maestro (already covered)
           newMessages.push({
             id: `cond-${m.id}`,
@@ -301,7 +287,6 @@ export function createMaestroActivities(client: Client): MaestroActivities {
           });
         }
 
-        // Sort by timestamp
         newMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
         return {

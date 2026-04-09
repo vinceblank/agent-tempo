@@ -145,21 +145,19 @@ export function App({ api, ensemble }: AppProps) {
         overflowCommittedRef.current.add(key);
         // Blank separator
         dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: '', timestamp: Date.now() } });
+        // Cap third-party messages to 4 lines; direct messages uncapped
         const lines = msg.body.split('\n');
-        const lineCap = msg.thirdParty ? 4 : lines.length; // uncapped for direct messages
-        // First line with structured fields for rich rendering
+        const lineCap = msg.thirdParty ? 4 : lines.length;
+        let body = lines.slice(0, lineCap).join('\n');
+        if (lines.length > lineCap) {
+          body += `\n\u2026 (${lines.length - lineCap} more lines)`;
+        }
+        // Commit entire body as a single message item — static renderer word-wraps correctly
         dispatch({ type: 'COMMIT_STATIC', item: {
-          id: nextStaticId(), type: 'message', content: lines[0], timestamp: Date.now(),
+          id: nextStaticId(), type: 'message', content: body, timestamp: Date.now(),
           msgDirection: msg.direction, msgSender: msg.sender, msgTime: msg.time,
           msgThirdParty: msg.thirdParty, msgRouteLabel: msg.routeLabel,
         }});
-        // Continuation lines (3-space indent to match live ConversationStream)
-        for (const line of lines.slice(1, lineCap)) {
-          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'command-output', content: `   ${line}`, timestamp: Date.now() } });
-        }
-        if (lines.length > lineCap) {
-          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `   \u2026 (${lines.length - lineCap} more lines)`, timestamp: Date.now() } });
-        }
       }
     }
   });
@@ -201,7 +199,12 @@ export function App({ api, ensemble }: AppProps) {
 
     // Player detail view — Escape goes back, ↑↓ scrolls messages
     if (s.view === 'player') {
-      if (key.escape) { dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: s.activeEnsemble! }); return; }
+      if (key.escape) {
+        dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: s.activeEnsemble! });
+        // Reset chat cache so next poll immediately re-dispatches conversation
+        lastChatRef.current = { total: 0, lastTs: '' };
+        return;
+      }
       if (key.upArrow) { dispatch({ type: 'PLAYER_SCROLL_UP' }); return; }
       if (key.downArrow) { dispatch({ type: 'PLAYER_SCROLL_DOWN' }); return; }
       return;
@@ -655,7 +658,7 @@ export function App({ api, ensemble }: AppProps) {
         if (atMatch) {
           // @player message → send directly to that player
           const [, targetPlayer, message] = atMatch;
-          dispatch({ type: 'APPEND_SENT_MESSAGE', to: targetPlayer, text: message });
+          dispatch({ type: 'APPEND_SENT_MESSAGE', to: targetPlayer, text: `@${targetPlayer} ${message}` });
           api.sendAsMaestro(s.activeEnsemble!, targetPlayer, message).catch(err => dispatch({
             type: 'COMMIT_STATIC',
             item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to deliver to @${targetPlayer}: ${err}`, timestamp: Date.now() },

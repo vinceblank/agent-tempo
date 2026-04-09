@@ -75,15 +75,17 @@ function estimateLines(msg: FormattedMsg, termCols: number): number {
   const bodyWidth = Math.max(20, termCols - 4);
   const originalLines = msg.body.split('\n');
   const cap = maxLines(msg);
-  const cappedLines = originalLines.slice(0, cap);
 
-  // Inbound: header line + body lines. Outbound: inline (no separate header).
-  let total = msg.direction === 'out' ? 0 : 1;
-  for (const line of cappedLines) {
-    total += Math.max(1, Math.ceil(line.length / bodyWidth));
+  // Wrap ALL lines, then cap — matches rendering logic exactly
+  let wrappedCount = 0;
+  for (const line of originalLines) {
+    wrappedCount += wordWrap(line, bodyWidth).length;
   }
-  if (originalLines.length > cap) total += 1;
-  total += 1; // blank separator
+
+  let total = msg.direction === 'out' ? 0 : 1; // header line for inbound
+  total += Math.min(wrappedCount, cap);          // body (capped by WRAPPED count)
+  if (wrappedCount > cap) total += 1;            // overflow indicator "… (N more lines)"
+  total += 1;                                     // separator (\n or \n\n)
   return total;
 }
 
@@ -126,9 +128,6 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
   });
 
   // Work backwards from newest — include as many as fit in viewport
-  // estimateLines includes 1 line for the \n\n separator before each message,
-  // but the first visible message only gets \n (1 line less). After the main
-  // loop, try to fit one more message using that saved line.
   let usedLines = 0;
   let startIdx = formatted.length;
   for (let i = formatted.length - 1; i >= 0; i--) {
@@ -137,15 +136,6 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
     usedLines += needed;
     startIdx = i;
   }
-  // First visible message uses \n not \n\n — check if we can fit one more
-  if (startIdx > 0) {
-    const extra = estimateLines(formatted[startIdx - 1], termCols);
-    if (usedLines + extra - 1 <= contentHeight - 1) {
-      usedLines += extra - 1;
-      startIdx--;
-    }
-  }
-
   // Store overflow data for parent to commit to Static scrollback
   overflowRef.current = { formatted, startIdx };
 
@@ -219,6 +209,15 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
       }
     }
   }
+
+  // Explicit padding: fill remaining space so content = exactly contentHeight lines
+  // usedLines = exact terminal lines for messages (from fitting loop)
+  // 1 line reserved for footer margin
+  const paddingLines = Math.max(0, contentHeight - usedLines - 1);
+  if (paddingLines > 0) {
+    children.push('\n'.repeat(paddingLines));
+  }
+  children.push('\n'); // exactly 1-line footer margin
 
   return React.createElement(Text, null, ...children);
 }

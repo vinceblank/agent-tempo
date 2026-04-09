@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Ensemble chat feed — aggregated maestro + conductor traffic visible in the main TUI view. Backed by the new `maestroEnsembleChat` per-ensemble Maestro query (paginated, max 500 cached entries, refreshed every ~10s via `fetchEnsembleChat` activity). Prefix bare text with `@player` to address a specific player directly from the main view (#58)
+
+---
+
 ## [0.21.1] - 2026-04-08
 
 ### Fixed

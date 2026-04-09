@@ -266,6 +266,33 @@ Types referenced above are defined in `src/types.ts` and re-exported from `src/w
 | `playerType` | `string?` | Named agent type (e.g. `tempo-soloist`), if set. |
 | `status` | `string?` | Session lifecycle status (`pending`, `active`, `stale`, `blocked`, `terminated`). |
 
+### `EnsembleChatMessage`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Generated UUID for this chat entry. |
+| `from` | `string` | Sending player ID (e.g. `'maestro'`, `'conductor'`, or a player name). |
+| `to` | `string` | Recipient player ID. |
+| `text` | `string` | Message content, truncated to 500 chars. Full text available via `maestroFetchPlayerMessages`. |
+| `timestamp` | `string` | ISO timestamp of the original message. |
+| `role` | `'maestro-out' \| 'maestro-in' \| 'conductor-out' \| 'conductor-in'` | Message perspective: `maestro-out` = maestro sent to a player; `maestro-in` = player sent to maestro; `conductor-out` = conductor sent to a non-maestro player; `conductor-in` = non-maestro player sent to conductor. Conductor↔maestro messages are deduplicated and excluded. |
+
+### `EnsembleChatQuery`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `offset` | `number?` | Messages to skip from the tail (default 0). |
+| `limit` | `number?` | Max messages to return (default 50, max 200). |
+
+### `EnsembleChatResult`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `messages` | `EnsembleChatMessage[]` | The requested page of messages, newest at the end. |
+| `total` | `number` | Total message count in the cache (up to 500). |
+| `hasMore` | `boolean` | True if messages exist beyond `offset + limit`. |
+| `hasConductor` | `boolean` | Whether a conductor was found during the last refresh cycle. |
+
 ### `MaestroRelayMessage`
 
 | Field | Type | Description |

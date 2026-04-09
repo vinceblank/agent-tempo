@@ -23,6 +23,7 @@ export type {
   EnsembleChatQuery,
   ChatHighWater,
 } from '../types';
+export { ZERO_CHAT_HIGH_WATER } from '../types';
 
 // ── Per-Ensemble Maestro Signals (existing) ──
 
