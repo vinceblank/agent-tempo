@@ -10,6 +10,7 @@ import type {
   HistoryEntry,
   Message,
   SentMessage,
+  SessionMetadata,
   ScheduleEntry,
 } from '../types';
 import type { EnsembleSummary } from './client';
@@ -160,7 +161,7 @@ export interface TuiState {
   /** The player currently being inspected (null = not viewing a player). */
   activePlayer: string | null;
   /** Player's workflow metadata. */
-  playerMetadata: any;
+  playerMetadata: SessionMetadata | null;
   /** Player's message history (received + sent). */
   playerMessages: Array<Message | (SentMessage & { direction: 'sent' })>;
   /** Scroll offset within the player detail view message list. */
@@ -269,7 +270,7 @@ export type TuiAction =
   | { type: 'REFRESH_ENSEMBLES'; ensembles: EnsembleSummary[] }
   | { type: 'REFRESH_ENSEMBLE_DATA'; players: MaestroPlayerInfo[]; messages: MaestroRelayMessage[]; history: HistoryEntry[]; schedules?: ScheduleEntry[] }
   | { type: 'SET_CONVERSATION'; conversation: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out' }> }
-  | { type: 'REFRESH_PLAYER_DATA'; metadata: any; messages: Array<Message | (SentMessage & { direction: 'sent' })> }
+  | { type: 'REFRESH_PLAYER_DATA'; metadata: SessionMetadata | null; messages: Array<Message | (SentMessage & { direction: 'sent' })> }
   | { type: 'PLAYER_SCROLL_UP' }
   | { type: 'PLAYER_SCROLL_DOWN' }
   // Selection

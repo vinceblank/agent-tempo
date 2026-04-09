@@ -13,6 +13,7 @@ import type {
   HistoryEntry,
   Message,
   SentMessage,
+  SessionMetadata,
   ScheduleEntry,
   QualityGate,
   StageEntry,
@@ -40,7 +41,7 @@ export interface TempoClient {
   /** Get a player's message history (received + sent). */
   getPlayerMessages(ensemble: string, playerId: string): Promise<Array<Message | (SentMessage & { direction: 'sent' })>>;
   /** Get a player's workflow metadata. */
-  getPlayerMetadata(ensemble: string, playerId: string): Promise<any>;
+  getPlayerMetadata(ensemble: string, playerId: string): Promise<SessionMetadata | null>;
   /** Send a command to an ensemble's conductor via Maestro. Returns command ID. */
   sendCommand(ensemble: string, text: string, source: string): Promise<string>;
   /** Send a message to a specific player in an ensemble. Returns message ID. */
@@ -214,7 +215,7 @@ export function createTempoClient(client: Client): TempoClient {
       }
     },
 
-    async getPlayerMetadata(ensemble: string, playerId: string): Promise<any> {
+    async getPlayerMetadata(ensemble: string, playerId: string): Promise<SessionMetadata | null> {
       try {
         // Query the player's workflow directly for metadata
         const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${ensemble}" AND ClaudeTempoPlayerId = "${playerId}"`;

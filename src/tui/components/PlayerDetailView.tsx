@@ -5,7 +5,7 @@
 import React from 'react';
 import { useInk } from '../ink-context';
 import { THEME } from '../utils/theme';
-import type { MaestroPlayerInfo, Message, SentMessage } from '../../types';
+import type { MaestroPlayerInfo, SessionMetadata, Message, SentMessage } from '../../types';
 
 const MAX_VISIBLE = 20;
 
@@ -13,7 +13,7 @@ export interface PlayerDetailViewProps {
   playerId: string;
   ensemble: string;
   player: MaestroPlayerInfo | null;
-  metadata: any;
+  metadata: SessionMetadata | null;
   messages: Array<Message | (SentMessage & { direction: 'sent' })>;
   scrollOffset: number;
 }
