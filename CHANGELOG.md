@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `PlayerDetailView` — per-player panel with scrollable message history (#58)
 - `ConversationStream` — live message area merging server conversation with optimistic sent-message echo (#58)
 - `Picker` — interactive full-screen picker with player type grouping (groups items under shared headers) (#58)
+- `CreateEnsembleWizard` — guided step-by-step flow for creating new ensembles (name → workDir → lineup → confirm), accessible from the splash screen and `/ensemble` (#58)
+- Loading states for splash screen (connection checklist) and status bar (#58)
 - Two-way conductor chat via Global Maestro relay (#58)
 - Interactive wizards for recruiting and scheduling (#58)
 - Message search, scrollback navigation, ensemble switching (#58)
@@ -45,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- TUI input area restyled to match Claude Code: `❯` prompt, inline hints, second divider line (#58)
+- TUI message display: header line (player name + timestamp) above word-wrapped indented body (#58)
+- `/up` command removed from TUI slash commands — ensemble creation is now handled by `CreateEnsembleWizard` via `/ensemble` (#58)
 - `down` command now always stops the daemon, requires confirmation when no ensemble is specified, and exits with code 1 in non-TTY environments (#78, #83)
 
 ### Fixed

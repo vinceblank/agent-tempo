@@ -87,7 +87,7 @@ src/
 │   ├── components/
 │   │   ├── Splash.tsx         # Splash/connecting screen component
 │   │   ├── TitleBar.tsx       # Pinned title bar showing ensemble/player context
-│   │   ├── PromptArea.tsx     # Pinned input area with hint text
+│   │   ├── PromptArea.tsx     # Pinned input area with ❯ prompt, inline hints, and divider
 │   │   ├── MainView.tsx       # Main ensemble view (players, messages, schedules)
 │   │   ├── ChatView.tsx       # Per-player chat view (entered via /cue <player>)
 │   │   ├── ErrorView.tsx      # Connection failure screen with troubleshooting checks (zero Yoga nodes)
@@ -96,9 +96,10 @@ src/
 │   │   ├── Picker.tsx            # Full-screen interactive picker (players, ensembles)
 │   │   ├── PlayerDetailView.tsx  # Player metadata + scrollable message history (zero Yoga nodes)
 │   │   ├── StatusOverlay.tsx     # Dismissible overlay showing ensemble player cards (/status)
-│   │   ├── ConversationStream.tsx # Live message area merging server conversation + optimistic echo
-│   │   ├── ScheduleWizard.tsx    # Step-by-step wizard for /schedule create
-│   │   └── RecruitWizard.tsx     # Step-by-step wizard for /recruit
+│   │   ├── ConversationStream.tsx    # Live message area merging server conversation + optimistic echo
+│   │   ├── CreateEnsembleWizard.tsx  # Step-by-step wizard for creating new ensembles (name → workDir → lineup → confirm)
+│   │   ├── ScheduleWizard.tsx        # Step-by-step wizard for /schedule create
+│   │   └── RecruitWizard.tsx         # Step-by-step wizard for /recruit
 │   └── utils/
 │       ├── format.ts          # Display formatting helpers
 │       ├── platform.ts        # Terminal size detection helpers

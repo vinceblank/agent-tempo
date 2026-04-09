@@ -853,8 +853,7 @@ The TUI has a persistent layout:
 | `/schedule create` | Launch the interactive schedule creation wizard |
 | `/unschedule <name>` | Cancel a named schedule |
 | `/lineup load <file> \| save [file]` | Load or save an ensemble lineup |
-| `/ensemble [name]` | Switch to a named ensemble; no args opens the ensemble picker |
-| `/up <name>` | Create a new ensemble from within the TUI |
+| `/ensemble [name]` | Switch to a named ensemble; no args opens the ensemble picker with an option to create a new one |
 | `/gates` | List quality gates and their criteria status |
 | `/stages` | List stages and per-player report status |
 | `/worktree [list]` | List active git worktrees |
