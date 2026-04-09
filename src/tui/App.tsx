@@ -473,8 +473,8 @@ export function App({ api, ensemble }: AppProps) {
   const handleInputChange = useCallback((value: string) => {
     inputValueRef.current = value;
     const trimmed = value.trimStart();
-    if (trimmed.startsWith('/') && !trimmed.includes(' ')) {
-      setPaletteFilter(trimmed.slice(1).toLowerCase());
+    if ((trimmed.startsWith('/') || trimmed.startsWith('@')) && !trimmed.includes(' ')) {
+      setPaletteFilter(trimmed.toLowerCase());
     } else {
       setPaletteFilter(prev => prev === '' ? prev : '');
     }
@@ -482,11 +482,23 @@ export function App({ api, ensemble }: AppProps) {
 
   // Player commands and subcommand map imported from commands.ts
 
+  const paletteIsPlayerMode = paletteFilter.startsWith('@');
+
   const filteredPaletteCommands = useMemo(() => {
     if (!state.paletteVisible) return [];
-    if (!paletteFilter) return allPaletteCommands;
-    return allPaletteCommands.filter(c => c.name.startsWith(paletteFilter));
-  }, [state.paletteVisible, paletteFilter, allPaletteCommands]);
+    if (paletteIsPlayerMode) {
+      const partial = paletteFilter.slice(1); // strip @
+      return playerNamesList
+        .filter(n => {
+          const lower = n.toLowerCase();
+          return !partial || lower.startsWith(partial) || lower.split('-').some(seg => seg.startsWith(partial));
+        })
+        .map(n => ({ name: n, usage: `@${n}`, description: '' }));
+    }
+    const cmdFilter = paletteFilter.startsWith('/') ? paletteFilter.slice(1) : paletteFilter;
+    if (!cmdFilter) return allPaletteCommands;
+    return allPaletteCommands.filter(c => c.name.startsWith(cmdFilter));
+  }, [state.paletteVisible, paletteFilter, paletteIsPlayerMode, allPaletteCommands, playerNamesList]);
 
   // Clamp palette index
   const clampedPaletteIndex = Math.min(state.paletteIndex, Math.max(0, filteredPaletteCommands.length - 1));
@@ -508,11 +520,13 @@ export function App({ api, ensemble }: AppProps) {
   const handlePaletteSelect = useCallback(() => {
     if (filteredPaletteCommands.length > 0) {
       const selected = filteredPaletteCommands[clampedPaletteIndex];
-      promptRef.current?.setValue(`/${selected.name} `);
-      inputValueRef.current = `/${selected.name} `;
+      const prefix = paletteIsPlayerMode ? '@' : '/';
+      const value = `${prefix}${selected.name} `;
+      promptRef.current?.setValue(value);
+      inputValueRef.current = value;
       dispatch({ type: 'HIDE_PALETTE' });
     }
-  }, [filteredPaletteCommands, clampedPaletteIndex]);
+  }, [filteredPaletteCommands, clampedPaletteIndex, paletteIsPlayerMode]);
 
   // ── Command submission handler ──
   const handleSubmit = useCallback(async (input: string) => {
@@ -1312,6 +1326,7 @@ export function App({ api, ensemble }: AppProps) {
       ? React.createElement(CommandPalette, {
           commands: filteredPaletteCommands,
           selectedIndex: clampedPaletteIndex,
+          prefix: paletteIsPlayerMode ? '@' : '/',
         })
       : null,
     ), // closes live area Box

@@ -125,7 +125,7 @@ export const PromptArea = React.memo(function PromptArea({
     // Only toggle palette when visibility actually changes — avoids parent dispatch on every keystroke
     if (r.onPaletteToggle) {
       const trimmed = newValue.trimStart();
-      const shouldShow = trimmed.startsWith('/') && !trimmed.includes(' ');
+      const shouldShow = (trimmed.startsWith('/') || trimmed.startsWith('@')) && !trimmed.includes(' ');
       if (shouldShow !== !!r.paletteVisible) {
         r.onPaletteToggle(shouldShow);
       }

@@ -17,9 +17,11 @@ export interface PaletteCommand {
 export interface CommandPaletteProps {
   commands: PaletteCommand[];
   selectedIndex: number;
+  /** Prefix character for display (default: "/"). Use "@" for player palette. */
+  prefix?: string;
 }
 
-export function CommandPalette({ commands, selectedIndex }: CommandPaletteProps) {
+export function CommandPalette({ commands, selectedIndex, prefix = '/' }: CommandPaletteProps) {
   const { Text } = useInk();
 
   if (commands.length === 0) {
@@ -76,7 +78,7 @@ export function CommandPalette({ commands, selectedIndex }: CommandPaletteProps)
     children.push(
       React.createElement(React.Fragment, { key: cmd.name },
         React.createElement(Text, { color: isSelected ? THEME.accent : THEME.dim }, `  ${indicator}`),
-        React.createElement(Text, { color: isSelected ? THEME.accent : THEME.success, bold: isSelected }, `/${cmd.name}`),
+        React.createElement(Text, { color: isSelected ? THEME.accent : THEME.success, bold: isSelected }, `${prefix}${cmd.name}`),
         React.createElement(Text, { color: THEME.muted }, `  ${cmd.description}`),
       ),
     );
