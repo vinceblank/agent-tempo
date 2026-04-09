@@ -136,8 +136,8 @@ export interface TuiState {
   };
 
   // ── Home view ──
-  /** Known ensembles. */
-  ensembles: EnsembleSummary[];
+  /** Known ensembles (null = not yet loaded, [] = loaded but empty). */
+  ensembles: EnsembleSummary[] | null;
   /** Currently highlighted ensemble index (home view). */
   selectedEnsembleIndex: number;
 
@@ -152,8 +152,8 @@ export interface TuiState {
   conductorHistory: HistoryEntry[];
   /** Active schedules in the ensemble. */
   schedules: ScheduleEntry[];
-  /** Maestro conversation (single source of truth from workflow). */
-  conversation: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out' }>;
+  /** Maestro conversation (null = loading, [] = loaded but empty). */
+  conversation: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out' }> | null;
   /** Currently highlighted player index (ensemble view). */
   selectedPlayerIndex: number;
 
@@ -219,7 +219,7 @@ export function initialState(ensemble?: string): TuiState {
     splashConnected: false,
     splashSummary: undefined,
 
-    ensembles: [],
+    ensembles: null,
     selectedEnsembleIndex: 0,
 
     activeEnsemble: ensemble || null,
@@ -227,7 +227,7 @@ export function initialState(ensemble?: string): TuiState {
     messages: [],
     conductorHistory: [],
     schedules: [],
-    conversation: [],
+    conversation: null,
     selectedPlayerIndex: 0,
 
     activePlayer: null,
@@ -360,7 +360,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         sentMessages: [],
         conductorHistory: [],
         schedules: [],
-        conversation: [],
+        conversation: null,
         playerMetadata: null,
         playerMessages: [],
         selectedPlayerIndex: 0,
@@ -382,7 +382,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         sentMessages: [],
         conductorHistory: [],
         schedules: [],
-        conversation: [],
+        conversation: null,
         playerMetadata: null,
         playerMessages: [],
         selectedPlayerIndex: 0,
@@ -459,7 +459,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'SELECT_NEXT': {
       if (state.view === 'home') {
-        const max = Math.max(0, state.ensembles.length - 1);
+        const max = Math.max(0, (state.ensembles?.length ?? 0) - 1);
         return { ...state, selectedEnsembleIndex: Math.min(state.selectedEnsembleIndex + 1, max) };
       }
       if (state.view === 'ensemble' && state.focusZone === 'sidebar') {
@@ -544,7 +544,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       return { ...state, pickerIndex: Math.max(0, state.pickerIndex - 1) };
 
     case 'PICKER_DOWN': {
-      const maxIdx = (state.pickerType === 'ensembles' ? state.ensembles.length : state.players.length) - 1;
+      const maxIdx = (state.pickerType === 'ensembles' ? (state.ensembles?.length ?? 0) : state.players.length) - 1;
       if (state.pickerIndex >= maxIdx) return state;
       return { ...state, pickerIndex: state.pickerIndex + 1 };
     }

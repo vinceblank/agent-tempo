@@ -61,6 +61,17 @@ describe('TUI reducer', function () {
       expect(s.view).to.equal('ensemble');
       expect(s.activeEnsemble).to.equal('my-ensemble');
     });
+
+    it('starts with null ensembles and conversation (loading state)', function () {
+      const s = initialState();
+      expect(s.ensembles).to.be.null;
+      expect(s.conversation).to.be.null;
+    });
+
+    it('REFRESH_ENSEMBLES transitions from null to array', function () {
+      const s = tuiReducer(initialState(), { type: 'REFRESH_ENSEMBLES', ensembles: [] });
+      expect(s.ensembles).to.deep.equal([]);
+    });
   });
 
   describe('NAVIGATE_HOME', function () {
@@ -77,7 +88,7 @@ describe('TUI reducer', function () {
       s = tuiReducer(s, { type: 'NAVIGATE_HOME' });
       expect(s.players).to.have.lengthOf(0);
       expect(s.sentMessages).to.have.lengthOf(0);
-      expect(s.conversation).to.have.lengthOf(0);
+      expect(s.conversation).to.be.null;
       expect(s.schedules).to.have.lengthOf(0);
     });
 
@@ -115,7 +126,7 @@ describe('TUI reducer', function () {
       expect(s.messages).to.have.lengthOf(0);
       expect(s.sentMessages).to.have.lengthOf(0);
       expect(s.conductorHistory).to.have.lengthOf(0);
-      expect(s.conversation).to.have.lengthOf(0);
+      expect(s.conversation).to.be.null;
     });
 
     it('resets selectedPlayerIndex to 0', function () {

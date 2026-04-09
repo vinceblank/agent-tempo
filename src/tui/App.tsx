@@ -362,8 +362,8 @@ export function App({ api, ensemble }: AppProps) {
       const conductorInfo = state.conductorName ? '' : ' \u00b7 No conductor';
       return `${state.activeEnsemble} \u00b7 ${count} player${count !== 1 ? 's' : ''}${conductorInfo} \u00b7 Connected`;
     }
-    const count = state.ensembles.length;
-    return `${count} ensemble${count !== 1 ? 's' : ''} \u00b7 Connected`;
+    const count = state.ensembles?.length ?? 0;
+    return count > 0 ? `${count} ensemble${count !== 1 ? 's' : ''} \u00b7 Connected` : 'Discovering ensembles...';
   }, [state.phase, state.chatTarget, state.activeEnsemble, state.players, state.ensembles]);
 
   // ── Hint text for prompt area ──
@@ -421,7 +421,7 @@ export function App({ api, ensemble }: AppProps) {
     }
 
     if (state.pickerType === 'ensembles') {
-      return state.ensembles.map(ens => ({
+      return (state.ensembles ?? []).map(ens => ({
         id: ens.name,
         label: ens.name,
         detail: `${ens.playerCount} player${ens.playerCount !== 1 ? 's' : ''}`,
@@ -965,7 +965,7 @@ export function App({ api, ensemble }: AppProps) {
         status: state.splashStatus,
         version: packageVersion,
         connected: state.splashConnected,
-        ensembles: state.ensembles as EnsembleInfo[],
+        ensembles: (state.ensembles ?? undefined) as EnsembleInfo[] | undefined,
         onContinue: handleSplashContinue,
       });
     }
@@ -1053,6 +1053,10 @@ export function App({ api, ensemble }: AppProps) {
 
     // Main view — conversation stream (like Claude Code)
     if (state.activeEnsemble) {
+      // Show loading state until first poll completes
+      if (state.conversation === null) {
+        return React.createElement(Text, { color: THEME.dim }, '\n  \u27F3 Loading messages...');
+      }
       return React.createElement(ConversationStream, {
         conversation: state.conversation,
         sentMessages: state.sentMessages,
@@ -1061,14 +1065,17 @@ export function App({ api, ensemble }: AppProps) {
       });
     }
 
-    // No active ensemble — show ensemble list, connecting state, or help
-    // If we have an initial ensemble but no data yet, show connecting message
-    if (!state.activeEnsemble && state.ensembles.length === 0 && ensemble) {
-      return React.createElement(Text, { color: THEME.dim }, `  Connecting to ${ensemble}...`);
+    // No active ensemble — show ensemble list, loading state, or help
+    // Still loading ensembles
+    if (state.ensembles === null) {
+      if (ensemble) {
+        return React.createElement(Text, { color: THEME.dim }, `\n  \u27F3 Connecting to ${ensemble}...`);
+      }
+      return React.createElement(Text, { color: THEME.dim }, '\n  \u27F3 Discovering ensembles...');
     }
     if (state.ensembles.length > 0) {
       const ensLines: React.ReactNode[] = [
-        React.createElement(Text, { key: 'eh', bold: true, color: THEME.text }, `${state.ensembles.length} ensembles running:`),
+        React.createElement(Text, { key: 'eh', bold: true, color: THEME.text }, `${state.ensembles.length} ensemble${state.ensembles.length !== 1 ? 's' : ''} running:`),
       ];
       for (const ens of state.ensembles) {
         ensLines.push('\n');
@@ -1078,15 +1085,14 @@ export function App({ api, ensemble }: AppProps) {
           ),
         );
       }
-      ensLines.push('\n');
-      ensLines.push('\n');
+      ensLines.push('\n\n');
       ensLines.push(
-        React.createElement(Text, { key: 'hint', color: THEME.dim }, '  Type /ensemble <name> to connect'),
+        React.createElement(Text, { key: 'hint', color: THEME.dim }, '  Type /ensemble <name> to connect, or /up <name> to create new'),
       );
       return React.createElement(Text, null, ...ensLines);
     }
 
-    // Onboarding view — no ensembles running (single Text, 1 Yoga node)
+    // No ensembles running (single Text, 1 Yoga node)
     return React.createElement(Text, null,
       '\n',
       React.createElement(Text, { bold: true, color: THEME.accent }, '  Getting Started'), '\n',

@@ -175,8 +175,11 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
       children.push(React.createElement(Text, { key: 'sdn', color: THEME.dim },
         center(`\u2193 ${ensembles.length - startIdx - MAX_ENSEMBLES_SHOWN} more`)));
     }
-  } else if (connected) {
-    // No ensembles — getting started hints
+    // Always show create hint below ensemble list
+    children.push('\n\n');
+    children.push(React.createElement(Text, { key: 'create', color: THEME.dim }, center('/up <name> to create new ensemble')));
+  } else if (connected && ensembles !== undefined && ensembles.length === 0) {
+    // Loaded but empty — getting started hints
     children.push('\n\n');
     children.push(React.createElement(Text, { key: 'none', color: THEME.dim }, center('No ensembles running.')));
     children.push('\n\n');
@@ -187,6 +190,10 @@ export function Splash({ status, version, connected, ensembles, onContinue }: Sp
     children.push(React.createElement(Text, { key: 'h3', color: THEME.text }, center('Or load a lineup:')));
     children.push('\n');
     children.push(React.createElement(Text, { key: 'h4', color: THEME.accent }, center('claude-tempo up --lineup <file.yml>')));
+  } else if (connected) {
+    // Connected but ensembles not yet loaded
+    children.push('\n\n');
+    children.push(React.createElement(Text, { key: 'loading', color: THEME.dim }, center('\u27F3 Discovering ensembles...')));
   }
 
   // Bottom prompt
