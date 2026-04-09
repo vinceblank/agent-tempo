@@ -27,7 +27,7 @@ export function StatusBar({ ensemble, players, playersLoaded, scheduleCount, con
   const ensembleLabel = ensemble || 'no ensemble';
 
   const children: React.ReactNode[] = [
-    '  ',
+    ' ',
     React.createElement(Text, { key: 'ens', color: ensemble ? THEME.accent : THEME.dim }, ensembleLabel),
     React.createElement(Text, { key: 's1', color: THEME.dim }, ' \u00B7 '),
   ];
