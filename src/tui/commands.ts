@@ -788,11 +788,11 @@ async function handleEnsemble(
 // ── Utility ──
 
 /** Type guard: distinguish SentMessage (has `to` + `direction`) from Message (has `from`). */
-function isSentMessage(m: Message | (SentMessage & { direction: 'sent' })): m is SentMessage & { direction: 'sent' } {
+export function isSentMessage(m: Message | (SentMessage & { direction: 'sent' })): m is SentMessage & { direction: 'sent' } {
   return 'direction' in m && (m as SentMessage & { direction: 'sent' }).direction === 'sent';
 }
 
-function formatTimestamp(ts: string): string {
+export function formatTimestamp(ts: string): string {
   try {
     const d = new Date(ts);
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
