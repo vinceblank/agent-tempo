@@ -102,13 +102,11 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
   }));
 
   // Work backwards from newest — include as many as fit in viewport
-  // Reserve 2 lines as safety buffer to prevent clipping at the boundary
-  const availableHeight = Math.max(1, contentHeight - 2);
   let usedLines = 0;
   let startIdx = formatted.length;
   for (let i = formatted.length - 1; i >= 0; i--) {
     const needed = estimateLines(formatted[i], termCols);
-    if (usedLines + needed > availableHeight) break;
+    if (usedLines + needed > contentHeight) break;
     usedLines += needed;
     startIdx = i;
   }
