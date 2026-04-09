@@ -586,7 +586,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       return { ...state, pickerIndex: Math.max(0, state.pickerIndex - 1) };
 
     case 'PICKER_DOWN': {
-      const maxIdx = (state.pickerType === 'ensembles' ? (state.ensembles?.length ?? 0) : state.players.length) - 1;
+      const maxIdx = (state.pickerType === 'ensembles' ? (state.ensembles?.length ?? 0) : state.players.length - 1);
       if (state.pickerIndex >= maxIdx) return state;
       return { ...state, pickerIndex: state.pickerIndex + 1 };
     }

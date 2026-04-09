@@ -267,11 +267,12 @@ describe('TUI reducer', function () {
       expect(result).to.equal(s);
     });
 
-    it('clamps based on ensembles when pickerType is ensembles', function () {
+    it('clamps based on ensembles when pickerType is ensembles (includes __create__ item)', function () {
       let s = initialState();
       s = { ...s, pickerVisible: true, pickerType: 'ensembles', ensembles: [{ name: 'a', playerCount: 1, hasConductor: false }], pickerIndex: 0 };
       const result = tuiReducer(s, { type: 'PICKER_DOWN' });
-      expect(result).to.equal(s); // Only 1 item, can't go down
+      // 1 ensemble + 1 __create__ sentinel = 2 items, so index 0 can go to 1
+      expect(result.pickerIndex).to.equal(1);
     });
   });
 
