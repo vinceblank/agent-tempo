@@ -102,6 +102,9 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
   }));
 
   // Work backwards from newest — include as many as fit in viewport
+  // estimateLines includes 1 line for the \n\n separator before each message,
+  // but the first visible message only gets \n (1 line less). After the main
+  // loop, try to fit one more message using that saved line.
   let usedLines = 0;
   let startIdx = formatted.length;
   for (let i = formatted.length - 1; i >= 0; i--) {
@@ -109,6 +112,14 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
     if (usedLines + needed > contentHeight) break;
     usedLines += needed;
     startIdx = i;
+  }
+  // First visible message uses \n not \n\n — check if we can fit one more
+  if (startIdx > 0) {
+    const extra = estimateLines(formatted[startIdx - 1], termCols);
+    if (usedLines + extra - 1 <= contentHeight) {
+      usedLines += extra - 1;
+      startIdx--;
+    }
   }
 
   // Store overflow data for parent to commit to Static scrollback
