@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Ensemble chat feed — aggregated maestro + conductor traffic visible in the main TUI view. Backed by the new `maestroEnsembleChat` per-ensemble Maestro query (paginated, max 500 cached entries, refreshed every ~10s via `fetchEnsembleChat` activity). Prefix bare text with `@player` to address a specific player directly from the main view (#58)
 
+### Fixed
+
+- TUI message layout: messages are top-aligned with a reserved 1-line gap above the footer, preventing content from bleeding into the prompt area. Static and live message areas now use matching formatting (#58)
+- `/schedule` command consolidates schedule deletion — `/schedule delete <name>` replaces the previously documented `/unschedule` alias, which was never registered (#58)
+
 ---
 
 ## [0.21.1] - 2026-04-08

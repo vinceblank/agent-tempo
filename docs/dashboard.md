@@ -40,15 +40,14 @@ The TUI has a persistent layout:
 | `/status` | Show dismissible overlay with all players, status, type, and part |
 | `/recall [player]` | Show recent message history (optionally filtered to one player) |
 | `/search <term>` | Search message history across the ensemble |
-| `/schedule [create]` | List active schedules; `create` launches the schedule wizard |
-| `/unschedule <name>` | Cancel a named schedule |
+| `/schedule [create \| delete <name>]` | List active schedules (interactive overlay); `create` launches the schedule wizard; `delete <name>` cancels a named schedule |
 | `/lineup load <file> \| save [file]` | Load or save an ensemble lineup |
 | `/gates` | List quality gates and their criteria status |
 | `/stages` | List stages and per-player report status |
-| `/worktree [list]` | List active git worktrees |
-| `/back` \| `/home` \| `/maestro` | Return to the main ensemble view |
+| `/worktree [list \| create <player> \| remove <player>]` | List active git worktrees; `create`/`remove` delegate to the conductor |
+| `/back` | Return to the main ensemble view |
 | `/help` | Show all available commands with usage |
-| `/quit` \| `/exit` | Exit the TUI |
+| `/quit` | Exit the TUI |
 
 Bare text (no `/` prefix) routes to the conductor by default. Prefix with `@player` to address a specific player: `@alice can you review the PR?`. Use `/player <name>` to open a scrollable message history for any player. Press `Ctrl+C` to exit at any time.
 

@@ -138,8 +138,8 @@ describe('COMMANDS registry', function () {
   });
 
   const expectedCommands = [
-    'broadcast', 'player', 'status', 'help', 'quit',
-    'recruit', 'stop', 'encore', 'recall', 'schedule', 'unschedule',
+    'broadcast', 'player', 'players', 'status', 'help', 'quit',
+    'recruit', 'stop', 'encore', 'recall', 'schedule',
     'gates', 'stages', 'worktree', 'lineup', 'ensemble', 'back',
   ];
 
@@ -148,10 +148,6 @@ describe('COMMANDS registry', function () {
       expect(COMMANDS).to.have.property(cmd);
     });
   }
-
-  it('/unschedule has a non-null handler (sprint fix)', function () {
-    expect(COMMANDS.unschedule.handler).to.not.be.null;
-  });
 
   it('/help handler is null (handled directly in App.tsx)', function () {
     expect(COMMANDS.help.handler).to.be.null;
