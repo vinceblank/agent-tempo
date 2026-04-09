@@ -138,7 +138,7 @@ describe('COMMANDS registry', function () {
   });
 
   const expectedCommands = [
-    'cue', 'broadcast', 'player', 'status', 'help', 'quit',
+    'broadcast', 'player', 'status', 'help', 'quit',
     'recruit', 'stop', 'encore', 'recall', 'schedule', 'unschedule',
     'gates', 'stages', 'worktree', 'lineup', 'ensemble', 'back',
   ];
@@ -163,6 +163,14 @@ describe('COMMANDS registry', function () {
 
   it('/up is NOT registered (removed — use create-ensemble wizard)', function () {
     expect(COMMANDS).to.not.have.property('up');
+  });
+
+  it('/chat is NOT registered (replaced by @player routing)', function () {
+    expect(COMMANDS).to.not.have.property('chat');
+  });
+
+  it('/cue is NOT registered (replaced by @player routing)', function () {
+    expect(COMMANDS).to.not.have.property('cue');
   });
 
   it('/ensemble IS registered', function () {

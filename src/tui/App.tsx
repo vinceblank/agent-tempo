@@ -216,12 +216,8 @@ export function App({ api, ensemble }: AppProps) {
               // Navigate to player detail view
               dispatch({ type: 'NAVIGATE_PLAYER', playerId: item.id });
             } else {
-              // Default: enter chat
-              dispatch({ type: 'ENTER_CHAT', target: item.id });
-              dispatch({
-                type: 'COMMIT_STATIC',
-                item: { id: nextStaticId(), type: 'info', content: `\u2500\u2500 chatting with ${item.id} \u2500\u2500`, timestamp: Date.now() },
-              });
+              // Default: navigate to player detail view
+              dispatch({ type: 'NAVIGATE_PLAYER', playerId: item.id });
             }
           }
         } else if (s.pickerType === 'ensembles') {
@@ -396,7 +392,7 @@ export function App({ api, ensemble }: AppProps) {
       return `Chatting with ${state.chatTarget}. /back to return.`;
     }
     if (state.activeEnsemble) {
-      return 'Type a message. /players to list. /chat <player> for direct chat.';
+      return 'Type a message, or @player to message directly. /players to list.';
     }
     return '/help /quit';
   }, [state.phase, state.chatTarget, state.confirmingStop, state.confirmingDisband, state.activeEnsemble, state.conductorName]);
@@ -566,17 +562,8 @@ export function App({ api, ensemble }: AppProps) {
 
       // Commands that open player picker when no args provided
       const PICKER_COMMANDS: Record<string, (playerId: string) => void> = {
-        chat: (id) => {
-          dispatch({ type: 'ENTER_CHAT', target: id });
-          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `\u2500\u2500 chatting with ${id} \u2500\u2500`, timestamp: Date.now() } });
-        },
-        cue: (id) => {
-          dispatch({ type: 'ENTER_CHAT', target: id });
-          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `\u2500\u2500 chatting with ${id} \u2500\u2500`, timestamp: Date.now() } });
-        },
         stop: (id) => {
           dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `Stopping ${id}...`, timestamp: Date.now() } });
-          // Delegate to command handler
           const cmd = COMMANDS['stop'];
           if (cmd?.handler) cmd.handler([id], dispatch, api, { activeEnsemble: stateRef.current.activeEnsemble });
         },
@@ -585,8 +572,7 @@ export function App({ api, ensemble }: AppProps) {
           if (cmd?.handler) cmd.handler([id], dispatch, api, { activeEnsemble: stateRef.current.activeEnsemble });
         },
         players: (id) => {
-          dispatch({ type: 'ENTER_CHAT', target: id });
-          dispatch({ type: 'COMMIT_STATIC', item: { id: nextStaticId(), type: 'info', content: `\u2500\u2500 chatting with ${id} \u2500\u2500`, timestamp: Date.now() } });
+          dispatch({ type: 'NAVIGATE_PLAYER', playerId: id });
         },
       };
 

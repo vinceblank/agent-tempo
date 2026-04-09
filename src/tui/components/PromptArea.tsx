@@ -147,7 +147,7 @@ export const PromptArea = React.memo(function PromptArea({
         .map(c => `/${c} `);
     }
 
-    // Parameter completion: /chat te → /chat tempo-eng
+    // Parameter completion: /stop te → /stop tempo-eng
     if (trimmed.startsWith('/') && trimmed.includes(' ')) {
       const spaceIdx = trimmed.indexOf(' ');
       const cmd = trimmed.slice(1, spaceIdx).toLowerCase();
