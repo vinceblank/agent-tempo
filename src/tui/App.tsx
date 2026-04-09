@@ -1293,7 +1293,7 @@ export function App({ api, ensemble }: AppProps) {
     // Live area — height constrained to termRows-1
     React.createElement(Box, { flexDirection: 'column', height: termRows - 1, overflow: 'hidden' },
       // Content area — full height above footer
-      React.createElement(Box, { flexDirection: 'column', height: contentHeight, overflow: 'hidden', justifyContent: 'flex-end' },
+      React.createElement(Box, { flexDirection: 'column', height: contentHeight, overflow: 'hidden' },
         // Live content area
         renderLiveContent(),
     ),
