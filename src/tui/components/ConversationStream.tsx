@@ -141,7 +141,7 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
       if (isOut) {
         // Outbound: inline — ♩ first line  HH:MM, then wrapped continuation lines
         for (let j = 0; j < displayLines.length; j++) {
-          children.push('\n');
+          if (j > 0) children.push('\n');
           if (j === 0) {
             // First line: icon + text + timestamp
             const firstText = displayLines[0];
