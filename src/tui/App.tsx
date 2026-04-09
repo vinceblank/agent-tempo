@@ -550,11 +550,11 @@ export function App({ api, ensemble }: AppProps) {
 
     if (parsed) {
       // Slash command
-      if (parsed.name === 'quit' || parsed.name === 'exit') {
+      if (parsed.name === 'quit') {
         exit();
         return;
       }
-      if (parsed.name === 'back' || parsed.name === 'home' || parsed.name === 'maestro') {
+      if (parsed.name === 'back') {
         // Return to maestro view (exit any player chat)
         if (s.chatTarget) {
           dispatch({ type: 'EXIT_CHAT' });

@@ -485,11 +485,57 @@ async function handleWorktree(
   args: string[],
   dispatch: (action: TuiAction) => void,
   api: TempoClient,
+  ctx: CommandContext,
 ): Promise<void> {
   const subcommand = args[0] || 'list';
 
+  // /worktree create <player> [--branch <name>] — delegate to conductor
+  if (subcommand === 'create') {
+    if (args.length < 2) {
+      commitStatic(dispatch, 'error', 'Usage: /worktree create <player> [--branch <name>]');
+      return;
+    }
+    const ensemble = ctx.activeEnsemble;
+    if (!ensemble) {
+      commitStatic(dispatch, 'error', 'No active ensemble. Use /ensemble to select one.');
+      return;
+    }
+    const ensembles = await api.discoverEnsembles();
+    const ens = ensembles.find(e => e.name === ensemble);
+    if (!ens?.hasConductor) {
+      commitStatic(dispatch, 'error', 'No conductor in this ensemble. Worktree create requires a conductor.');
+      return;
+    }
+    const cmdParts = args.slice(0); // ['create', '<player>', ...flags]
+    await api.sendCommand(ensemble, `/worktree ${cmdParts.join(' ')}`, 'maestro');
+    commitStatic(dispatch, 'info', `\u2192 Worktree create request sent to conductor for ${args[1]}.`);
+    return;
+  }
+
+  // /worktree remove <player> — delegate to conductor
+  if (subcommand === 'remove') {
+    if (args.length < 2) {
+      commitStatic(dispatch, 'error', 'Usage: /worktree remove <player>');
+      return;
+    }
+    const ensemble = ctx.activeEnsemble;
+    if (!ensemble) {
+      commitStatic(dispatch, 'error', 'No active ensemble. Use /ensemble to select one.');
+      return;
+    }
+    const ensembles = await api.discoverEnsembles();
+    const ens = ensembles.find(e => e.name === ensemble);
+    if (!ens?.hasConductor) {
+      commitStatic(dispatch, 'error', 'No conductor in this ensemble. Worktree remove requires a conductor.');
+      return;
+    }
+    await api.sendCommand(ensemble, `/worktree remove ${args[1]}`, 'maestro');
+    commitStatic(dispatch, 'info', `\u2192 Worktree remove request sent to conductor for ${args[1]}.`);
+    return;
+  }
+
   if (subcommand !== 'list') {
-    commitStatic(dispatch, 'info', `Worktree ${subcommand} — not yet available from TUI. Use: claude-tempo worktree ${args.join(' ')}`);
+    commitStatic(dispatch, 'error', `Unknown subcommand: ${subcommand}. Usage: /worktree [list | create <player> | remove <player>]`);
     return;
   }
 
@@ -780,7 +826,7 @@ export const COMMANDS: Record<string, CommandDef> = {
   },
   worktree: {
     description: 'Manage git worktrees for player isolation',
-    usage: '/worktree [list]',
+    usage: '/worktree [list | create <player> | remove <player>]',
     handler: handleWorktree,
   },
   lineup: {
@@ -818,24 +864,9 @@ export const COMMANDS: Record<string, CommandDef> = {
     usage: '/back',
     handler: null, // Handled directly in App.tsx
   },
-  home: {
-    description: 'Return to maestro view',
-    usage: '/home',
-    handler: null, // Handled directly in App.tsx (alias for /back)
-  },
-  maestro: {
-    description: 'Return to maestro view',
-    usage: '/maestro',
-    handler: null, // Handled directly in App.tsx (alias for /back)
-  },
   quit: {
     description: 'Exit the TUI',
     usage: '/quit',
-    handler: null, // Handled directly in App.tsx
-  },
-  exit: {
-    description: 'Exit the TUI (alias for /quit)',
-    usage: '/exit',
     handler: null, // Handled directly in App.tsx
   },
 };

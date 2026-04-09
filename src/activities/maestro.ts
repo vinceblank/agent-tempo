@@ -246,7 +246,7 @@ export function createMaestroActivities(client: Client): MaestroActivities {
             id: m.id,
             from: m.from,
             to: 'maestro',
-            text: truncate(m.text),
+            text: m.text,
             timestamp: m.timestamp,
             role: 'maestro-in',
           });
@@ -257,7 +257,7 @@ export function createMaestroActivities(client: Client): MaestroActivities {
             id: m.id,
             from: 'maestro',
             to: m.to,
-            text: truncate(m.text),
+            text: m.text,
             timestamp: m.timestamp,
             role: 'maestro-out',
           });
