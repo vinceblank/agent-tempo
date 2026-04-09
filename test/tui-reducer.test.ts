@@ -398,6 +398,105 @@ describe('TUI reducer', function () {
   });
 
   // ─────────────────────────────────────────────
+  // Data refresh actions
+  // ─────────────────────────────────────────────
+
+  describe('REFRESH_PLAYER_DATA', function () {
+    it('stores metadata and messages', function () {
+      const meta = { gitBranch: 'main', workDir: '/tmp' };
+      const msgs = [
+        { id: '1', from: 'a', text: 'hello', timestamp: '2026-01-01T00:00:00Z', delivered: true },
+        { id: '2', from: 'b', text: 'world', timestamp: '2026-01-01T00:01:00Z', delivered: true },
+      ];
+      let s = initialState('test');
+      s = apply(s, { type: 'NAVIGATE_PLAYER', playerId: 'p1' });
+      s = tuiReducer(s, { type: 'REFRESH_PLAYER_DATA', metadata: meta, messages: msgs });
+      expect(s.playerMetadata).to.deep.equal(meta);
+      expect(s.playerMessages).to.have.lengthOf(2);
+    });
+
+    it('replaces previous data on refresh', function () {
+      let s = initialState('test');
+      s = { ...s, playerMetadata: { old: true }, playerMessages: [{ id: '1', from: 'a', text: 'old', timestamp: '', delivered: true }] };
+      const newMeta = { gitBranch: 'feat' };
+      s = tuiReducer(s, { type: 'REFRESH_PLAYER_DATA', metadata: newMeta, messages: [] });
+      expect(s.playerMetadata).to.deep.equal(newMeta);
+      expect(s.playerMessages).to.have.lengthOf(0);
+    });
+
+    it('accepts null metadata', function () {
+      const s = tuiReducer(initialState('test'), { type: 'REFRESH_PLAYER_DATA', metadata: null, messages: [] });
+      expect(s.playerMetadata).to.be.null;
+    });
+  });
+
+  describe('REFRESH_ENSEMBLE_DATA', function () {
+    it('stores players and schedules', function () {
+      const players = [makePlayer('a'), makePlayer('b')];
+      const s = tuiReducer(initialState('test'), {
+        type: 'REFRESH_ENSEMBLE_DATA',
+        players,
+        messages: [],
+        history: [],
+        schedules: [{ name: 'sched1', message: 'hi', target: 'a', createdBy: 'b', nextFireAt: '', firedCount: 0, type: 'interval' as const }],
+      });
+      expect(s.players).to.have.lengthOf(2);
+      expect(s.schedules).to.have.lengthOf(1);
+    });
+
+    it('clamps selectedPlayerIndex to new player count', function () {
+      let s = initialState('test');
+      s = { ...s, selectedPlayerIndex: 5 };
+      s = tuiReducer(s, {
+        type: 'REFRESH_ENSEMBLE_DATA',
+        players: [makePlayer('a'), makePlayer('b')],
+        messages: [],
+        history: [],
+      });
+      expect(s.selectedPlayerIndex).to.equal(1); // clamped to length - 1
+    });
+
+    it('preserves schedules when not provided', function () {
+      let s = initialState('test');
+      s = { ...s, schedules: [{ name: 'x', message: '', target: '', createdBy: '', nextFireAt: '', firedCount: 0, type: 'once' as const }] };
+      s = tuiReducer(s, { type: 'REFRESH_ENSEMBLE_DATA', players: [], messages: [], history: [] });
+      expect(s.schedules).to.have.lengthOf(1);
+    });
+  });
+
+  describe('SET_CONVERSATION', function () {
+    it('replaces conversation array', function () {
+      const convo = [
+        { id: '1', from: 'a', to: 'b', text: 'hi', timestamp: '2026-01-01T00:00:00Z', direction: 'in' as const },
+      ];
+      const s = tuiReducer(initialState('test'), { type: 'SET_CONVERSATION', conversation: convo });
+      expect(s.conversation).to.deep.equal(convo);
+    });
+  });
+
+  // ─────────────────────────────────────────────
+  // Picker intent defaults
+  // ─────────────────────────────────────────────
+
+  describe('SHOW_PICKER intent', function () {
+    it('defaults pickerIntent to null when no intent provided', function () {
+      const s = tuiReducer(initialState('test'), { type: 'SHOW_PICKER', pickerType: 'players' });
+      expect(s.pickerIntent).to.be.null;
+    });
+
+    it('stores navigate intent', function () {
+      const s = tuiReducer(initialState('test'), { type: 'SHOW_PICKER', pickerType: 'players', intent: 'navigate' });
+      expect(s.pickerIntent).to.equal('navigate');
+    });
+
+    it('HIDE_PICKER clears intent', function () {
+      let s = tuiReducer(initialState('test'), { type: 'SHOW_PICKER', pickerType: 'players', intent: 'navigate' });
+      s = tuiReducer(s, { type: 'HIDE_PICKER' });
+      expect(s.pickerIntent).to.be.null;
+    });
+  });
+
+  // ─────────────────────────────────────────────
   // Reducer identity (no-op returns same reference)
   // ─────────────────────────────────────────────
 
