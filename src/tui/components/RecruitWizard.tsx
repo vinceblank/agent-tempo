@@ -1,7 +1,8 @@
 /**
  * RecruitWizard — step-by-step wizard for spawning a new player session.
- * Each completed step commits to <Static>; current step renders in live area.
- * Escape cancels and returns to main view.
+ *
+ * Minimal-Box pattern: single <Text> root for all static content (0 Yoga nodes),
+ * with ONE <Box> wrapper for Ink's TextInput when a text-input step is active.
  */
 import React, { useState, useCallback } from 'react';
 import { useInk } from '../ink-context';
@@ -29,6 +30,8 @@ const STEP_LABELS: Record<RecruitStep, string> = {
   done: 'Done',
 };
 
+const TEXT_INPUT_STEPS = new Set<RecruitStep>(['name', 'type', 'workDir', 'message', 'host']);
+
 export function RecruitWizard({ state, onAnswer, onBack, onConfirm, onCancel, onDone }: RecruitWizardProps) {
   const { Box, Text, TextInput, useInput } = useInk();
   const [inputValue, setInputValue] = useState('');
@@ -42,12 +45,10 @@ export function RecruitWizard({ state, onAnswer, onBack, onConfirm, onCancel, on
       onCancel();
       return;
     }
-    // Backspace on empty input goes back a step (except on first step)
     if (key.backspace && state.step !== 'name' && state.step !== 'done' && !inputValue) {
       onBack();
       return;
     }
-    // Agent selection step: arrow keys to toggle
     if (state.step === 'agent') {
       if (key.leftArrow || key.rightArrow) {
         setAgentIndex(i => i === 0 ? 1 : 0);
@@ -57,17 +58,11 @@ export function RecruitWizard({ state, onAnswer, onBack, onConfirm, onCancel, on
         setInputValue('');
       }
     }
-    // Confirm step: Enter to confirm, Backspace to go back
     if (state.step === 'confirm') {
-      if (key.return) {
-        onConfirm();
-      }
+      if (key.return) onConfirm();
     }
-    // Done step
     if (state.step === 'done') {
-      if (key.return) {
-        onDone();
-      }
+      if (key.return) onDone();
     }
   }, [state.step, agentIndex, inputValue, onAnswer, onBack, onCancel, onConfirm, onDone]));
 
@@ -76,7 +71,7 @@ export function RecruitWizard({ state, onAnswer, onBack, onConfirm, onCancel, on
     const trimmed = value.trim();
     switch (state.step) {
       case 'name':
-        if (!trimmed) return; // Required
+        if (!trimmed) return;
         onAnswer({ name: trimmed });
         break;
       case 'type':
@@ -95,91 +90,112 @@ export function RecruitWizard({ state, onAnswer, onBack, onConfirm, onCancel, on
     setInputValue('');
   }, [state.step, state.answers.workDir, onAnswer]);
 
-  // ── Completed steps summary ──
-  const completedSteps: React.ReactNode[] = [];
+  // ── Build all content as nested Text children ──
+  const children: React.ReactNode[] = [];
+
+  // Header
+  children.push(
+    React.createElement(React.Fragment, { key: 'hdr' },
+      React.createElement(Text, { bold: true, color: THEME.accent }, ' Recruit New Player'),
+      React.createElement(Text, { color: THEME.dim }, '  (Esc to cancel, Backspace to go back)'),
+    ),
+  );
+
+  // Completed steps
   const steps: RecruitStep[] = ['name', 'agent', 'type', 'workDir', 'message', 'host'];
   for (const s of steps) {
     if (s === state.step) break;
     const value = getAnswerDisplay(s, state.answers);
-    completedSteps.push(
-      React.createElement(Box, { key: s, paddingX: 1 },
-        React.createElement(Text, { color: THEME.success }, '\u2714 '),
+    children.push('\n');
+    children.push(
+      React.createElement(React.Fragment, { key: `done-${s}` },
+        React.createElement(Text, { color: THEME.success }, ' \u2714 '),
         React.createElement(Text, { color: THEME.dim }, `${STEP_LABELS[s]}: `),
         React.createElement(Text, { color: THEME.text }, value),
       ),
     );
   }
 
-  // ── Current step ──
-  let currentStepElement: React.ReactNode;
-
+  // Current step content
   if (state.step === 'agent') {
-    // Agent selection with radio buttons
-    const options = agents.map((a, i) => {
-      const selected = i === agentIndex;
-      const icon = selected ? '\u25CF' : '\u25CB'; // ● or ○
-      return React.createElement(Text, {
-        key: a,
-        color: selected ? THEME.accent : THEME.dim,
-        bold: selected,
-      }, `  ${icon} ${a}  `);
-    });
-
-    currentStepElement = React.createElement(Box, { flexDirection: 'column', paddingX: 1 },
-      React.createElement(Box, null,
-        React.createElement(Text, { color: THEME.accent }, '? '),
+    children.push('\n\n');
+    children.push(
+      React.createElement(React.Fragment, { key: 'agent-q' },
+        React.createElement(Text, { color: THEME.accent }, ' ? '),
         React.createElement(Text, { bold: true, color: THEME.text }, `${STEP_LABELS.agent}:`),
       ),
-      React.createElement(Box, { marginLeft: 2 }, ...options),
-      React.createElement(Text, { color: THEME.dim, dimColor: true }, '  \u2190\u2192 to select, Enter to confirm'),
     );
-  } else if (state.step === 'confirm') {
-    // Confirmation summary
-    const a = state.answers;
-    currentStepElement = React.createElement(Box, { flexDirection: 'column', paddingX: 1, marginTop: 1 },
-      React.createElement(Text, { bold: true, color: THEME.accent }, '  Recruit Summary:'),
-      React.createElement(Text, { color: THEME.text }, `    Name:      ${a.name}`),
-      React.createElement(Text, { color: THEME.text }, `    Agent:     ${a.agent}`),
-      React.createElement(Text, { color: THEME.text }, `    Type:      ${a.playerType || '(default)'}`),
-      React.createElement(Text, { color: THEME.text }, `    Directory: ${a.workDir}`),
-      React.createElement(Text, { color: THEME.text }, `    Message:   ${a.initialMessage || '(none)'}`),
-      React.createElement(Text, { color: THEME.text }, `    Host:      ${a.host}`),
-      React.createElement(Box, { marginTop: 1 },
-        React.createElement(Text, { color: THEME.dim }, '  Press Enter to recruit, Esc to cancel'),
-      ),
-    );
-  } else if (state.step === 'done') {
-    if (state.error) {
-      currentStepElement = React.createElement(Box, { flexDirection: 'column', paddingX: 1, marginTop: 1 },
-        React.createElement(Text, { color: THEME.error, bold: true }, `  \u2717 Recruit failed: ${state.error}`),
-        React.createElement(Text, { color: THEME.dim }, '  Press Enter to return'),
-      );
-    } else {
-      currentStepElement = React.createElement(Box, { flexDirection: 'column', paddingX: 1, marginTop: 1 },
-        React.createElement(Text, { color: THEME.success }, `  \u2714 Workflow created`),
-        React.createElement(Text, { color: THEME.success }, `  \u2714 Initial message queued`),
-        React.createElement(Text, { color: THEME.success }, `  \u2714 Process spawned`),
-        React.createElement(Box, { marginTop: 1 },
-          React.createElement(Text, { color: THEME.dim }, '  Press Enter to return'),
+    children.push('\n');
+    for (let i = 0; i < agents.length; i++) {
+      const selected = i === agentIndex;
+      const icon = selected ? '\u25CF' : '\u25CB';
+      children.push(
+        React.createElement(Text, { key: `ag-${agents[i]}`, color: selected ? THEME.accent : THEME.dim, bold: selected },
+          `    ${icon} ${agents[i]}  `,
         ),
       );
     }
+    children.push('\n');
+    children.push(React.createElement(Text, { key: 'ag-hint', color: THEME.dim }, '   \u2190\u2192 to select, Enter to confirm'));
+  } else if (state.step === 'confirm') {
+    const a = state.answers;
+    children.push('\n\n');
+    children.push(React.createElement(Text, { key: 'sum-h', bold: true, color: THEME.accent }, '   Recruit Summary:'));
+    children.push('\n');
+    children.push(React.createElement(Text, { key: 'sum-n', color: THEME.text }, `     Name:      ${a.name}`));
+    children.push('\n');
+    children.push(React.createElement(Text, { key: 'sum-a', color: THEME.text }, `     Agent:     ${a.agent}`));
+    children.push('\n');
+    children.push(React.createElement(Text, { key: 'sum-t', color: THEME.text }, `     Type:      ${a.playerType || '(default)'}`));
+    children.push('\n');
+    children.push(React.createElement(Text, { key: 'sum-d', color: THEME.text }, `     Directory: ${a.workDir}`));
+    children.push('\n');
+    children.push(React.createElement(Text, { key: 'sum-m', color: THEME.text }, `     Message:   ${a.initialMessage || '(none)'}`));
+    children.push('\n');
+    children.push(React.createElement(Text, { key: 'sum-h2', color: THEME.text }, `     Host:      ${a.host}`));
+    children.push('\n\n');
+    children.push(React.createElement(Text, { key: 'sum-hint', color: THEME.dim }, '   Press Enter to recruit, Esc to cancel'));
+  } else if (state.step === 'done') {
+    children.push('\n\n');
+    if (state.error) {
+      children.push(React.createElement(Text, { key: 'err', color: THEME.error, bold: true }, `   \u2717 Recruit failed: ${state.error}`));
+      children.push('\n');
+      children.push(React.createElement(Text, { key: 'err-h', color: THEME.dim }, '   Press Enter to return'));
+    } else {
+      children.push(React.createElement(Text, { key: 'ok1', color: THEME.success }, '   \u2714 Workflow created'));
+      children.push('\n');
+      children.push(React.createElement(Text, { key: 'ok2', color: THEME.success }, '   \u2714 Initial message queued'));
+      children.push('\n');
+      children.push(React.createElement(Text, { key: 'ok3', color: THEME.success }, '   \u2714 Process spawned'));
+      children.push('\n\n');
+      children.push(React.createElement(Text, { key: 'ok-h', color: THEME.dim }, '   Press Enter to return'));
+    }
   } else if (state.submitting) {
-    currentStepElement = React.createElement(Box, { paddingX: 1 },
-      React.createElement(Text, { color: THEME.warning }, `  Recruiting ${state.answers.name}...`),
-    );
-  } else {
-    // Text input step
+    children.push('\n\n');
+    children.push(React.createElement(Text, { key: 'sub', color: THEME.warning }, `   Recruiting ${state.answers.name}...`));
+  } else if (TEXT_INPUT_STEPS.has(state.step)) {
+    // Text input step — prompt line as Text, input in minimal Box
     const defaultHint = getDefaultHint(state.step, state.answers);
-    currentStepElement = React.createElement(Box, { flexDirection: 'column', paddingX: 1 },
-      React.createElement(Box, null,
-        React.createElement(Text, { color: THEME.accent }, '? '),
+    children.push('\n\n');
+    children.push(
+      React.createElement(React.Fragment, { key: 'inp-q' },
+        React.createElement(Text, { color: THEME.accent }, ' ? '),
         React.createElement(Text, { bold: true, color: THEME.text }, `${STEP_LABELS[state.step]}:`),
         defaultHint
           ? React.createElement(Text, { color: THEME.dim }, ` (${defaultHint})`)
           : null,
       ),
-      React.createElement(Box, { marginLeft: 2 },
+    );
+    // TextInput needs a Box — this is the only Box in the component
+    // It renders AFTER the Text block below
+  }
+
+  // For text-input steps: render Text block + Box(TextInput) in a Fragment
+  // For all other steps: single Text element (0 Yoga Box nodes)
+  if (TEXT_INPUT_STEPS.has(state.step) && !state.submitting) {
+    return React.createElement(React.Fragment, null,
+      React.createElement(Text, null, ...children),
+      React.createElement(Box, { marginLeft: 3 },
         React.createElement(Text, { color: THEME.accent }, '> '),
         React.createElement(TextInput, {
           value: inputValue,
@@ -190,17 +206,7 @@ export function RecruitWizard({ state, onAnswer, onBack, onConfirm, onCancel, on
     );
   }
 
-  return React.createElement(Box, { flexDirection: 'column' },
-    // Header
-    React.createElement(Box, { paddingX: 1, marginBottom: 1 },
-      React.createElement(Text, { bold: true, color: THEME.accent }, 'Recruit New Player'),
-      React.createElement(Text, { color: THEME.dim }, '  (Esc to cancel, Backspace to go back)'),
-    ),
-    // Completed steps
-    ...completedSteps,
-    // Current step
-    currentStepElement,
-  );
+  return React.createElement(Text, null, ...children);
 }
 
 function getAnswerDisplay(step: RecruitStep, answers: RecruitAnswers): string {
