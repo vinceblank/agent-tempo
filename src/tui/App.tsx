@@ -42,6 +42,7 @@ import { ScheduleWizard } from './components/ScheduleWizard';
 import { CreateEnsembleWizard } from './components/CreateEnsembleWizard';
 import { CommandPalette } from './components/CommandPalette';
 import { StatusOverlay } from './components/StatusOverlay';
+import { ScheduleOverlay } from './components/ScheduleOverlay';
 import { ConversationStream } from './components/ConversationStream';
 import { PlayerDetailView } from './components/PlayerDetailView';
 import { Picker } from './components/Picker';
@@ -180,6 +181,12 @@ export function App({ api, ensemble }: AppProps) {
       if (key.escape) { dispatch({ type: 'HIDE_STATUS' }); return; }
       if (key.upArrow) { dispatch({ type: 'STATUS_SCROLL_UP' }); return; }
       if (key.downArrow) { dispatch({ type: 'STATUS_SCROLL_DOWN' }); return; }
+      return;
+    }
+
+    // Schedule overlay — Escape dismisses
+    if (s.scheduleOverlay) {
+      if (key.escape) { dispatch({ type: 'HIDE_SCHEDULE_OVERLAY' }); return; }
       return;
     }
 
@@ -1108,6 +1115,14 @@ export function App({ api, ensemble }: AppProps) {
       });
     }
 
+    // Schedule overlay — shows active schedules
+    if (state.scheduleOverlay && state.activeEnsemble) {
+      return React.createElement(ScheduleOverlay, {
+        schedules: state.schedules,
+        ensemble: state.activeEnsemble,
+      });
+    }
+
     // Player detail view — shows player metadata + message history
     if (state.view === 'player' && state.activePlayer && state.activeEnsemble) {
       const player = state.players.find(p => p.playerId === state.activePlayer) || null;
@@ -1209,14 +1224,14 @@ export function App({ api, ensemble }: AppProps) {
         const bodyWidth = Math.max(20, cols - 4);
         const wrapped = wordWrap(item.content, bodyWidth);
         if (item.msgDirection === 'out') {
-          // Inline: ♩ first line  HH:MM, then indented continuation
+          // Inline: ♩ first line, then indented continuation (no timestamp)
           const firstLine = wrapped[0] || '';
-          const pad = ' '.repeat(Math.max(0, cols - 2 - 3 - firstLine.length - 2 - (item.msgTime || '').length));
+          const pad = ' '.repeat(Math.max(0, cols - 2 - 3 - firstLine.length));
           const contLines = wrapped.slice(1).map(l => `   ${l}`.padEnd(cols - 2)).join('\n');
           const children: React.ReactNode[] = [
             React.createElement(Text, { backgroundColor: THEME.inputBg, color: THEME.accent, bold: true }, ' \u2669 '),
             React.createElement(Text, { backgroundColor: THEME.inputBg, color: THEME.text }, firstLine),
-            React.createElement(Text, { backgroundColor: THEME.inputBg, color: THEME.dim }, `  ${item.msgTime || ''}${pad}`),
+            React.createElement(Text, { backgroundColor: THEME.inputBg, color: THEME.dim }, pad),
           ];
           if (contLines) {
             children.push('\n');
@@ -1260,7 +1275,7 @@ export function App({ api, ensemble }: AppProps) {
     React.createElement(PromptArea, {
       hints: promptHints,
       onSubmit: handleSubmit,
-      disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay,
+      disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay || state.scheduleOverlay,
       commandNames: commandNamesList,
       playerNames: playerNamesList,
       initialHistory: cmdHistory,

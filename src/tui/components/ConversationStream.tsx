@@ -137,20 +137,18 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
       const displayLines = wrappedLines.slice(0, MAX_DISPLAY_LINES);
 
       if (isOut) {
-        // Outbound: inline — ♩ first line  HH:MM, then wrapped continuation lines
+        // Outbound: inline — ♩ first line, then wrapped continuation lines (no timestamp)
         for (let j = 0; j < displayLines.length; j++) {
           if (j > 0) children.push('\n');
           if (j === 0) {
-            // First line: icon + text + timestamp
             const firstText = displayLines[0];
-            const pad = ' '.repeat(Math.max(0, termCols - 2 - 3 - firstText.length - 2 - msg.time.length));
+            const pad = ' '.repeat(Math.max(0, termCols - 2 - 3 - firstText.length));
             children.push(React.createElement(React.Fragment, { key: `bl-${i}-0` },
               React.createElement(Text, { backgroundColor: bg, color: THEME.accent, bold: true }, ' \u2669 '),
               React.createElement(Text, { backgroundColor: bg, color: THEME.text }, firstText),
-              React.createElement(Text, { backgroundColor: bg, color: THEME.dim }, `  ${msg.time}${pad}`),
+              React.createElement(Text, { backgroundColor: bg, color: THEME.dim }, pad),
             ));
           } else {
-            // Continuation: indented to align with text after ♩
             const contLine = `${INDENT}${displayLines[j]}`;
             children.push(React.createElement(Text, { key: `bl-${i}-${j}`, backgroundColor: bg, color: THEME.text },
               contLine.padEnd(termCols - 2)));

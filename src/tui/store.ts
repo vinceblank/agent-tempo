@@ -228,6 +228,7 @@ export interface TuiState {
   createEnsembleState?: CreateEnsembleState;
   /** Status overlay visible (shows player list). */
   statusOverlay: boolean;
+  scheduleOverlay: boolean;
   /** Scroll offset within the status overlay. */
   statusScrollOffset: number;
   /** Command palette state. */
@@ -274,6 +275,7 @@ export function initialState(ensemble?: string): TuiState {
     chatTarget: undefined,
     sentMessages: [],
     statusOverlay: false,
+    scheduleOverlay: false,
     statusScrollOffset: 0,
     paletteVisible: false,
     paletteIndex: 0,
@@ -326,6 +328,8 @@ export type TuiAction =
   // Picker overlay
   | { type: 'SHOW_STATUS' }
   | { type: 'HIDE_STATUS' }
+  | { type: 'SHOW_SCHEDULE_OVERLAY' }
+  | { type: 'HIDE_SCHEDULE_OVERLAY' }
   | { type: 'STATUS_SCROLL_UP' }
   | { type: 'STATUS_SCROLL_DOWN' }
   | { type: 'SHOW_PICKER'; pickerType: 'players' | 'ensembles'; intent?: 'navigate' }
@@ -571,6 +575,12 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       return { ...state, statusOverlay: true, statusScrollOffset: 0 };
     case 'HIDE_STATUS':
       return { ...state, statusOverlay: false, statusScrollOffset: 0 };
+
+    case 'SHOW_SCHEDULE_OVERLAY':
+      return { ...state, scheduleOverlay: true };
+    case 'HIDE_SCHEDULE_OVERLAY':
+      if (!state.scheduleOverlay) return state;
+      return { ...state, scheduleOverlay: false };
     case 'STATUS_SCROLL_UP':
       return { ...state, statusScrollOffset: Math.max(0, state.statusScrollOffset - 1) };
     case 'STATUS_SCROLL_DOWN':

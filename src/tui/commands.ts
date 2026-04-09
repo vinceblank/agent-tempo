@@ -361,7 +361,6 @@ async function handleEncore(
 async function handleSchedule(
   args: string[],
   dispatch: (action: TuiAction) => void,
-  api: TempoClient,
 ): Promise<void> {
   // /schedule create → enter wizard
   if (args.length > 0 && args[0].toLowerCase() === 'create') {
@@ -369,34 +368,8 @@ async function handleSchedule(
     return;
   }
 
-  try {
-    const ensembles = await api.discoverEnsembles();
-    if (ensembles.length === 0) {
-      commitStatic(dispatch, 'info', 'No ensembles running.');
-      return;
-    }
-
-    const lines: string[] = [];
-    for (const ens of ensembles) {
-      const schedules = await api.getSchedules(ens.name);
-      if (schedules.length > 0) {
-        lines.push(`\n  ${ens.name} — ${schedules.length} schedule${schedules.length !== 1 ? 's' : ''}:`);
-        for (const s of schedules) {
-          const nextFire = formatTimestamp(s.nextFireAt);
-          const fired = s.firedCount > 0 ? ` (fired ${s.firedCount}x)` : '';
-          lines.push(`    \u21BB ${s.name.padEnd(20)} ${s.type.padEnd(8)} \u2192 ${s.target}  next: ${nextFire}${fired}`);
-        }
-      }
-    }
-
-    if (lines.length === 0) {
-      commitStatic(dispatch, 'info', 'No active schedules.');
-    } else {
-      commitStatic(dispatch, 'command-output', lines.join('\n'));
-    }
-  } catch (err) {
-    commitStatic(dispatch, 'error', `Failed to fetch schedules: ${err}`);
-  }
+  // /schedule (no args) → show schedule overlay with already-polled data
+  dispatch({ type: 'SHOW_SCHEDULE_OVERLAY' });
 }
 
 /** /unschedule <name> — cancel a named schedule. */
