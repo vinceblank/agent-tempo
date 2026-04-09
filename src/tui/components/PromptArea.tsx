@@ -184,6 +184,19 @@ export const PromptArea = React.memo(function PromptArea({
       return [];
     }
 
+    // @player completion: @tem → @tempo-eng
+    if (trimmed.startsWith('@') && !trimmed.includes(' ')) {
+      const partial = trimmed.slice(1).toLowerCase();
+      if (!partial) return r.playerNames.map(n => `@${n} `);
+      return r.playerNames
+        .filter(n => {
+          const lower = n.toLowerCase();
+          if (lower === partial) return false;
+          return lower.startsWith(partial) || lower.split('-').some(seg => seg.startsWith(partial));
+        })
+        .map(n => `@${n} `);
+    }
+
     return [];
   }, []);
 
