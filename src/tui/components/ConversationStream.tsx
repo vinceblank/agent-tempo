@@ -64,19 +64,25 @@ function formatTime(timestamp: string): string {
 }
 
 const INDENT = '   '; // 3-space indent for message body (aligns with input area)
-const MAX_DISPLAY_LINES = 4; // Cap visible body lines
+const MAX_DISPLAY_LINES_THIRD_PARTY = 4; // Cap visible body lines for third-party (conductor) traffic
+
+/** Direct messages (maestro-in/out) show in full; third-party traffic is capped. */
+function maxLines(msg: FormattedMsg): number {
+  return msg.thirdParty ? MAX_DISPLAY_LINES_THIRD_PARTY : Infinity;
+}
 
 function estimateLines(msg: FormattedMsg, termCols: number): number {
   const bodyWidth = Math.max(20, termCols - 4);
   const originalLines = msg.body.split('\n');
-  const cappedLines = originalLines.slice(0, MAX_DISPLAY_LINES);
+  const cap = maxLines(msg);
+  const cappedLines = originalLines.slice(0, cap);
 
   // Inbound: header line + body lines. Outbound: inline (no separate header).
   let total = msg.direction === 'out' ? 0 : 1;
   for (const line of cappedLines) {
     total += Math.max(1, Math.ceil(line.length / bodyWidth));
   }
-  if (originalLines.length > MAX_DISPLAY_LINES) total += 1;
+  if (originalLines.length > cap) total += 1;
   total += 1; // blank separator
   return total;
 }
@@ -163,7 +169,8 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
       for (const line of originalLines) {
         wrappedLines.push(...wordWrap(line, bodyWidth));
       }
-      const displayLines = wrappedLines.slice(0, MAX_DISPLAY_LINES);
+      const cap = maxLines(msg);
+      const displayLines = wrappedLines.slice(0, cap);
 
       if (isOut) {
         // Outbound: inline — ♩ first line, then wrapped continuation lines (no timestamp)
@@ -183,8 +190,8 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
               contLine.padEnd(termCols - 2)));
           }
         }
-        if (wrappedLines.length > MAX_DISPLAY_LINES) {
-          const moreLine = `${INDENT}\u2026 (${wrappedLines.length - MAX_DISPLAY_LINES} more lines)`;
+        if (wrappedLines.length > cap) {
+          const moreLine = `${INDENT}\u2026 (${wrappedLines.length - cap} more lines)`;
           children.push('\n');
           children.push(React.createElement(Text, { key: `mt-${i}`, backgroundColor: bg, color: THEME.dim },
             moreLine.padEnd(termCols - 2)));
@@ -194,8 +201,9 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
         const headerLabel = msg.routeLabel || msg.sender;
         const headerColor = msg.thirdParty ? THEME.dim : THEME.accent;
         const bodyColor = msg.thirdParty ? THEME.textMuted : THEME.text;
+        const headerPrefix = msg.thirdParty ? '   ' : ' \u2190 ';
         children.push(React.createElement(React.Fragment, { key: `hdr-${i}` },
-          React.createElement(Text, { color: THEME.dim }, ' \u2190 '),
+          React.createElement(Text, { color: THEME.dim }, headerPrefix),
           React.createElement(Text, { color: headerColor }, headerLabel),
           React.createElement(Text, { color: THEME.dim }, `  ${msg.time}`),
         ));
@@ -203,10 +211,10 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
           children.push('\n');
           children.push(React.createElement(Text, { key: `bl-${i}-${j}`, color: bodyColor }, `${INDENT}${displayLines[j]}`));
         }
-        if (wrappedLines.length > MAX_DISPLAY_LINES) {
+        if (wrappedLines.length > cap) {
           children.push('\n');
           children.push(React.createElement(Text, { key: `mt-${i}`, color: THEME.dim },
-            `${INDENT}\u2026 (${wrappedLines.length - MAX_DISPLAY_LINES} more lines)`));
+            `${INDENT}\u2026 (${wrappedLines.length - cap} more lines)`));
         }
       }
     }
