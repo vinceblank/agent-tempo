@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `/unschedule` command wired — cancels a named schedule via the durable scheduler workflow (#58)
 - `PlayerDetailView` — per-player panel with scrollable message history (#58)
 - `ConversationStream` — live message area merging server conversation with optimistic sent-message echo (#58)
+- `Picker` — interactive full-screen picker with player type grouping (groups items under shared headers) (#58)
 - Two-way conductor chat via Global Maestro relay (#58)
 - Interactive wizards for recruiting and scheduling (#58)
 - Message search, scrollback navigation, ensemble switching (#58)
@@ -51,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `load_lineup` MCP tool now resolves shipped example lineups by name, in addition to saved lineups and file paths (#80, #81)
 - Blocked detection no longer triggers on informational messages — broadcasts, schedule-fires, heartbeats, and system notifications now set `responseRequested: false`, preventing false positives (#75, #66)
 - TUI input lag eliminated — animation timers removed, Yoga nodes flattened, stale ref fix (#58)
+- `ErrorView` refactored to zero Yoga nodes — single `<Text>` root with nested virtual-text children, matching the `StatusOverlay`/`ConversationStream` pattern (#58)
 - Live message lists capped at ~20 entries to prevent render slowdown (#58)
 - Ensemble switching: maestro session identity stabilised, `/back` navigation and context-based messaging corrected (#58, #89)
 

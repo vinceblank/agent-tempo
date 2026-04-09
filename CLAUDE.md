@@ -90,7 +90,7 @@ src/
 │   │   ├── PromptArea.tsx     # Pinned input area with hint text
 │   │   ├── MainView.tsx       # Main ensemble view (players, messages, schedules)
 │   │   ├── ChatView.tsx       # Per-player chat view (entered via /cue <player>)
-│   │   ├── ErrorView.tsx      # Error state view with diagnostic checks
+│   │   ├── ErrorView.tsx      # Connection failure screen with troubleshooting checks (zero Yoga nodes)
 │   │   ├── StatusBar.tsx      # Persistent status bar (player counts, schedule count, connection health)
 │   │   ├── CommandPalette.tsx    # Autocomplete dropdown for slash commands and parameters
 │   │   ├── Picker.tsx            # Full-screen interactive picker (players, ensembles)
