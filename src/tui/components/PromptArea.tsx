@@ -310,8 +310,14 @@ export const PromptArea = React.memo(function PromptArea({
       disabled
         ? React.createElement(Text, { color: THEME.muted }, '...')
         : value
-          ? React.createElement(Text, { color: THEME.text }, value)
-          : React.createElement(Text, { color: THEME.dim }, hints),
+          ? React.createElement(React.Fragment, null,
+              React.createElement(Text, { color: THEME.text }, value),
+              React.createElement(Text, { color: THEME.accent }, '\u2588'),
+            )
+          : React.createElement(React.Fragment, null,
+              React.createElement(Text, { color: THEME.accent }, '\u2588'),
+              React.createElement(Text, { color: THEME.dim }, hints),
+            ),
     ),
   );
 });
