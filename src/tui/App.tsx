@@ -1185,7 +1185,7 @@ export function App({ api, ensemble }: AppProps) {
 
   // Layout: header (2 lines) + content (variable) + footer (4 lines)
   // Content height is calculated to guarantee footer is always visible.
-  const FOOTER_LINES = 5; // blank separator + StatusBar + divider + PromptArea (prompt line) + bottom divider
+  const FOOTER_LINES = 4; // StatusBar + divider + PromptArea (prompt line) + bottom divider
   const contentHeight = Math.max(3, termRows - 1 - FOOTER_LINES);
 
   // Splash phase — full screen, no chrome (title/status/prompt hidden)
@@ -1241,8 +1241,6 @@ export function App({ api, ensemble }: AppProps) {
         renderLiveContent(),
     ),
     // ── Footer (fixed height, always visible) ──
-    // Blank line separator between content and footer
-    React.createElement(Text, null, ' '),
     // Status bar (1 Text node)
     React.createElement(StatusBar, {
       ensemble: state.activeEnsemble,
