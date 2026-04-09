@@ -1183,9 +1183,13 @@ export function App({ api, ensemble }: AppProps) {
   // ── Static items — rendered once to stdout, become native terminal scrollback ──
   const { Static } = useInk();
 
-  // Layout: header (2 lines) + content (variable) + footer (4 lines)
+  // Layout: header (2 lines) + content (variable) + footer (dynamic)
   // Content height is calculated to guarantee footer is always visible.
-  const FOOTER_LINES = 4; // StatusBar + divider + PromptArea (prompt line) + bottom divider
+  // When command palette is visible, footer grows to accommodate palette items.
+  const paletteLines = (state.paletteVisible && filteredPaletteCommands.length > 0)
+    ? Math.min(filteredPaletteCommands.length, 6) + (filteredPaletteCommands.length > 6 ? 2 : 0) // items + scroll indicators
+    : 0;
+  const FOOTER_LINES = 4 + paletteLines; // StatusBar + divider + PromptArea + bottom divider + palette
   const contentHeight = Math.max(3, termRows - 1 - FOOTER_LINES);
 
   // Splash phase — full screen, no chrome (title/status/prompt hidden)
