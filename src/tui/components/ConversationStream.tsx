@@ -2,7 +2,8 @@
  * ConversationStream — live message area showing ensemble conversation.
  *
  * Merges server conversation with local echo (optimistic sent messages),
- * formats messages, and renders the most recent that fit in the viewport.
+ * formats messages with header/body layout and word-wrap, and renders
+ * the most recent that fit in the viewport.
  *
  * Performance: Single <Text> root with nested virtual-text children.
  * Zero Yoga <Box> nodes.
@@ -10,6 +11,7 @@
 import React from 'react';
 import { useInk } from '../ink-context';
 import { THEME } from '../utils/theme';
+import { wordWrap } from '../utils/format';
 
 export interface ConversationMessage {
   id: string;
@@ -53,17 +55,19 @@ function formatTime(timestamp: string): string {
   }
 }
 
+const INDENT = '    '; // 4-space indent for message body
+const MAX_DISPLAY_LINES = 4; // Cap visible body lines
+
 function estimateLines(msg: FormattedMsg, termCols: number): number {
-  const lines = msg.body.split('\n');
-  const visLines = Math.min(lines.length, 4);
-  let total = 0;
-  for (let i = 0; i < visLines; i++) {
-    const prefixLen = i === 0
-      ? (msg.direction === 'out' ? 4 : 5 + msg.sender.length + 2 + 2 + msg.time.length)
-      : (msg.direction === 'out' ? 4 : 4 + msg.sender.length + 2);
-    total += Math.max(1, Math.ceil((prefixLen + lines[i].length) / termCols));
+  const bodyWidth = Math.max(20, termCols - 6); // 4 indent + 2 margin
+  const originalLines = msg.body.split('\n');
+  const cappedLines = originalLines.slice(0, MAX_DISPLAY_LINES);
+
+  let total = 1; // header line (← player  HH:MM)
+  for (const line of cappedLines) {
+    total += Math.max(1, Math.ceil(line.length / bodyWidth));
   }
-  if (lines.length > 4) total += 1; // "… (N more lines)"
+  if (originalLines.length > MAX_DISPLAY_LINES) total += 1; // "… (N more lines)"
   total += 1; // blank separator
   return total;
 }
@@ -71,6 +75,7 @@ function estimateLines(msg: FormattedMsg, termCols: number): number {
 export function ConversationStream({ conversation, sentMessages, contentHeight, overflowRef }: ConversationStreamProps) {
   const { Text } = useInk();
   const termCols = process.stdout.columns || 80;
+  const bodyWidth = Math.max(20, termCols - 6);
 
   // Merge server conversation with local echo (optimistic sent not yet on server)
   const allConvoMsgs: ConversationMessage[] = [...conversation];
@@ -118,47 +123,36 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
     for (let i = 0; i < visibleMsgs.length; i++) {
       const msg = visibleMsgs[i];
       children.push(i === 0 ? '\n' : '\n\n');
+
+      // Header line: direction icon + sender + timestamp
       if (msg.direction === 'out') {
-        // Outbound — Claude Code user input style: ❯ message
-        const firstLine = msg.body.split('\n')[0];
-        children.push(
-          React.createElement(React.Fragment, { key: `ms-${i}` },
-            React.createElement(Text, { color: THEME.accent, bold: true }, '  \u276F '),
-            React.createElement(Text, { color: THEME.text }, firstLine),
-            React.createElement(Text, { color: THEME.dim }, `  ${msg.time}`),
-          ),
-        );
-        const rest = msg.body.split('\n').slice(1, 4);
-        for (const line of rest) {
-          children.push('\n');
-          children.push(React.createElement(Text, { key: `mb-${i}-${line.slice(0, 8)}`, color: THEME.text }, `    ${line}`));
-        }
-        if (msg.body.split('\n').length > 4) {
-          children.push('\n');
-          children.push(React.createElement(Text, { key: `mt-${i}`, color: THEME.dim }, `    \u2026 (${msg.body.split('\n').length - 4} more lines)`));
-        }
+        children.push(React.createElement(React.Fragment, { key: `hdr-${i}` },
+          React.createElement(Text, { color: THEME.accent, bold: true }, '  \u276F '),
+          React.createElement(Text, { color: THEME.text, bold: true }, 'You'),
+          React.createElement(Text, { color: THEME.dim }, `  ${msg.time}`),
+        ));
       } else {
-        // Inbound — Claude Code channel style: ← player: message  HH:MM
-        const lines = msg.body.split('\n');
-        const firstLine = lines[0];
-        children.push(
-          React.createElement(React.Fragment, { key: `ms-${i}` },
-            React.createElement(Text, { color: THEME.dim }, '  \u2190 '),
-            React.createElement(Text, { color: THEME.accent }, `${msg.sender}: `),
-            React.createElement(Text, { color: THEME.text }, firstLine),
-            React.createElement(Text, { color: THEME.dim }, `  ${msg.time}`),
-          ),
-        );
-        const rest = lines.slice(1, 4);
-        const indent = '    ' + ' '.repeat(msg.sender.length + 2);
-        for (const line of rest) {
-          children.push('\n');
-          children.push(React.createElement(Text, { key: `mb-${i}-${line.slice(0, 8)}`, color: THEME.text }, `${indent}${line}`));
-        }
-        if (lines.length > 4) {
-          children.push('\n');
-          children.push(React.createElement(Text, { key: `mt-${i}`, color: THEME.dim }, `${indent}\u2026 (${lines.length - 4} more lines)`));
-        }
+        children.push(React.createElement(React.Fragment, { key: `hdr-${i}` },
+          React.createElement(Text, { color: THEME.dim }, '  \u2190 '),
+          React.createElement(Text, { color: THEME.accent }, msg.sender),
+          React.createElement(Text, { color: THEME.dim }, `  ${msg.time}`),
+        ));
+      }
+
+      // Body lines: word-wrapped, indented, capped at MAX_DISPLAY_LINES
+      const originalLines = msg.body.split('\n');
+      const wrappedLines: string[] = [];
+      for (const line of originalLines) {
+        wrappedLines.push(...wordWrap(line, bodyWidth));
+      }
+      const displayLines = wrappedLines.slice(0, MAX_DISPLAY_LINES);
+      for (const line of displayLines) {
+        children.push('\n');
+        children.push(React.createElement(Text, { key: `bl-${i}-${wrappedLines.indexOf(line)}`, color: THEME.text }, `${INDENT}${line}`));
+      }
+      if (wrappedLines.length > MAX_DISPLAY_LINES) {
+        children.push('\n');
+        children.push(React.createElement(Text, { key: `mt-${i}`, color: THEME.dim }, `${INDENT}\u2026 (${wrappedLines.length - MAX_DISPLAY_LINES} more lines)`));
       }
     }
   }

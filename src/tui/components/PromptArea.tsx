@@ -299,22 +299,19 @@ export const PromptArea = React.memo(function PromptArea({
   }, [doChange, getCompletions, setValue])); // Stable — reads ref.current
 
   // ── Render (minimal nodes: 1 Box + 2-3 Text, nested Text = 0 Yoga nodes) ──
-  const cursorChar = '\u2588'; // █
 
   return React.createElement(Box, { flexDirection: 'column', paddingX: 1 },
-    React.createElement(Text, { color: THEME.dim }, hints),
     completionHint
       ? React.createElement(Text, { color: THEME.muted }, `  ${completionHint}`)
       : null,
-    // Prompt line: nested <Text> inside <Text> creates ink-virtual-text (0 Yoga nodes)
+    // Prompt line with inline placeholder hint (like Claude Code)
     React.createElement(Text, null,
-      React.createElement(Text, { bold: true, color: THEME.accent }, '> '),
+      React.createElement(Text, { bold: true, color: THEME.accent }, '\u276F '),
       disabled
         ? React.createElement(Text, { color: THEME.muted }, '...')
-        : React.createElement(React.Fragment, null,
-            React.createElement(Text, { color: THEME.text }, value),
-            React.createElement(Text, { color: THEME.accent }, cursorChar),
-          ),
+        : value
+          ? React.createElement(Text, { color: THEME.text }, value)
+          : React.createElement(Text, { color: THEME.dim }, hints),
     ),
   );
 });

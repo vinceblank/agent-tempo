@@ -48,6 +48,7 @@ import { Picker } from './components/Picker';
 import type { PickerItem } from './components/Picker';
 import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames, PLAYER_PARAM_COMMANDS, SUBCOMMAND_MAP } from './commands';
 import { THEME } from './utils/theme';
+import { wordWrap } from './utils/format';
 import { loadHistory, saveHistory } from './utils/history';
 import type { TempoClient } from './client';
 
@@ -1156,7 +1157,7 @@ export function App({ api, ensemble }: AppProps) {
       }
       ensLines.push('\n\n');
       ensLines.push(
-        React.createElement(Text, { key: 'hint', color: THEME.dim }, '  Type /ensemble <name> to connect, or /up <name> to create new'),
+        React.createElement(Text, { key: 'hint', color: THEME.dim }, '  Type /ensemble <name> to connect, or /ensemble to browse'),
       );
       return React.createElement(Text, null, ...ensLines);
     }
@@ -1169,7 +1170,7 @@ export function App({ api, ensemble }: AppProps) {
       React.createElement(Text, { color: THEME.text }, '  No ensembles are running.'), '\n',
       '\n',
       React.createElement(Text, { color: THEME.text }, '  Create an ensemble:'), '\n',
-      React.createElement(Text, { color: THEME.accent }, '    /up <name>'), '\n',
+      React.createElement(Text, { color: THEME.accent }, '    /ensemble → + Create new ensemble'), '\n',
       '\n',
       React.createElement(Text, { color: THEME.text }, '  Or load a lineup:'), '\n',
       React.createElement(Text, { color: THEME.accent }, '    /lineup load <file.yml>'), '\n',
@@ -1184,7 +1185,7 @@ export function App({ api, ensemble }: AppProps) {
 
   // Layout: header (2 lines) + content (variable) + footer (4 lines)
   // Content height is calculated to guarantee footer is always visible.
-  const FOOTER_LINES = 4; // StatusBar + bottom divider + PromptArea (hints + input)
+  const FOOTER_LINES = 4; // StatusBar + divider + PromptArea (prompt line) + bottom divider
   const contentHeight = Math.max(3, termRows - 1 - FOOTER_LINES);
 
   // Splash phase — full screen, no chrome (title/status/prompt hidden)
@@ -1198,20 +1199,27 @@ export function App({ api, ensemble }: AppProps) {
   return React.createElement(React.Fragment, null,
     // Static items — rendered once to stdout, become native terminal scrollback
     React.createElement(Static, { items: state.staticItems, children: (item: StaticItem) => {
-      // Rich rendering for messages — match live area colors
+      // Rich rendering for messages — header + indented body (matches live area)
       if (item.type === 'message' && item.msgDirection) {
+        const cols = process.stdout.columns || 80;
+        const bodyWidth = Math.max(20, cols - 6);
+        const wrapped = wordWrap(item.content, bodyWidth);
+        const bodyLines = wrapped.map(l => `    ${l}`).join('\n');
         if (item.msgDirection === 'out') {
           return React.createElement(Text, { key: item.id },
             React.createElement(Text, { color: THEME.accent, bold: true }, '  \u276F '),
-            React.createElement(Text, { color: THEME.text }, item.content),
+            React.createElement(Text, { color: THEME.text, bold: true }, 'You'),
             React.createElement(Text, { color: THEME.dim }, `  ${item.msgTime || ''}`),
+            '\n',
+            React.createElement(Text, { color: THEME.text }, bodyLines),
           );
         } else {
           return React.createElement(Text, { key: item.id },
             React.createElement(Text, { color: THEME.dim }, '  \u2190 '),
-            React.createElement(Text, { color: THEME.accent }, `${item.msgSender || ''}: `),
-            React.createElement(Text, { color: THEME.text }, item.content),
+            React.createElement(Text, { color: THEME.accent }, item.msgSender || ''),
             React.createElement(Text, { color: THEME.dim }, `  ${item.msgTime || ''}`),
+            '\n',
+            React.createElement(Text, { color: THEME.text }, bodyLines),
           );
         }
       }
@@ -1254,6 +1262,8 @@ export function App({ api, ensemble }: AppProps) {
       onPaletteSelect: handlePaletteSelect,
       inputRef: promptRef,
     }),
+    // Bottom divider (1 Text node)
+    React.createElement(Text, { color: THEME.border }, ` ${dividerLine} `),
     // Command palette (1 Text node when visible)
     state.paletteVisible && filteredPaletteCommands.length > 0
       ? React.createElement(CommandPalette, {
