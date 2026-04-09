@@ -21,6 +21,7 @@ import {
   RECRUIT_STEPS,
   SCHEDULE_STEPS,
   DEFAULT_RECRUIT_ANSWERS,
+  defaultRecruitAnswers,
   DEFAULT_SCHEDULE_ANSWERS,
   CREATE_ENSEMBLE_STEPS,
   DEFAULT_CREATE_ENSEMBLE_ANSWERS,
@@ -632,6 +633,46 @@ describe('TUI reducer', function () {
       expect(s.recruitState).to.be.undefined;
     });
   });
+
+  // ─────────────────────────────────────────────
+  // Copilot bridge / recruit defaults
+  // ─────────────────────────────────────────────
+
+  describe('Copilot bridge recruit defaults', function () {
+    it('ENTER_RECRUIT with defaultAgent copilot sets agent to copilot', function () {
+      const s = tuiReducer(initialState('test'), { type: 'ENTER_RECRUIT', defaultAgent: 'copilot' });
+      expect(s.recruitState).to.exist;
+      expect(s.recruitState!.answers.agent).to.equal('copilot');
+    });
+
+    it('defaultRecruitAnswers(copilot) returns copilot agent', function () {
+      const answers = defaultRecruitAnswers('copilot');
+      expect(answers.agent).to.equal('copilot');
+      // Other fields should still have defaults
+      expect(answers.name).to.equal('');
+      expect(answers.workDir).to.be.a('string'); // defaults to cwd
+    });
+
+    it('explicit agent override beats defaultAgent', function () {
+      const s = tuiReducer(initialState('test'), {
+        type: 'ENTER_RECRUIT',
+        answers: { agent: 'claude' },
+        defaultAgent: 'copilot',
+      });
+      expect(s.recruitState).to.exist;
+      expect(s.recruitState!.answers.agent).to.equal('claude');
+    });
+  });
+
+  // ─────────────────────────────────────────────
+  // @player dedup (ConversationStream merge logic)
+  // ─────────────────────────────────────────────
+  // NOTE: The @player sent message dedup logic lives inside ConversationStream's
+  // render function (allConvoMsgs merge with sentMessages). It matches on:
+  //   direction === 'out' && |timestamp diff| < 30s && text prefix match (60 chars)
+  // This prevents duplicate display when the server echoes back a sent message.
+  // Testing requires component rendering (Ink + React) — not feasible in pure reducer tests.
+  // Covered by manual TUI testing.
 
   // ─────────────────────────────────────────────
   // Schedule wizard
