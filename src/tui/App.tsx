@@ -101,6 +101,7 @@ export function App({ api, ensemble }: AppProps) {
 
   // ── Refs for poll dedup (skip dispatches when data hasn't changed) ──
   const lastPollRef = React.useRef({ playerCount: 0, lastMsgId: '', historyLen: 0, scheduleCount: 0, maestroMsgCount: 0 });
+  const lastChatRef = React.useRef({ total: 0, lastTs: '' });
   // Track which messages have been committed to Static (overflow from live area)
   const overflowCommittedRef = React.useRef(new Set<string>());
   // Overflow data computed during render, committed to Static via useEffect
@@ -762,8 +763,15 @@ export function App({ api, ensemble }: AppProps) {
           }));
 
           dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages: [], history: [], schedules });
-          dispatch({ type: 'SET_CONVERSATION', conversation });
-          dispatch({ type: 'SET_ENSEMBLE_CHAT', chat: chatResult });
+
+          // Skip redundant conversation dispatches when data hasn't changed
+          const lastChatMsg = chatResult.messages[chatResult.messages.length - 1];
+          const newLastTs = lastChatMsg?.timestamp ?? '';
+          if (chatResult.total !== lastChatRef.current.total || newLastTs !== lastChatRef.current.lastTs) {
+            dispatch({ type: 'SET_CONVERSATION', conversation });
+            dispatch({ type: 'SET_ENSEMBLE_CHAT', chat: chatResult });
+            lastChatRef.current = { total: chatResult.total, lastTs: newLastTs };
+          }
 
           // Track conductor
           const currentS = stateRef.current;
