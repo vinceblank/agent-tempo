@@ -43,6 +43,7 @@ import { CreateEnsembleWizard } from './components/CreateEnsembleWizard';
 import { CommandPalette } from './components/CommandPalette';
 import { StatusOverlay } from './components/StatusOverlay';
 import { ScheduleOverlay } from './components/ScheduleOverlay';
+import { CommandOverlay } from './components/CommandOverlay';
 import { ConversationStream } from './components/ConversationStream';
 import { PlayerDetailView } from './components/PlayerDetailView';
 import { Picker } from './components/Picker';
@@ -188,6 +189,12 @@ export function App({ api, ensemble }: AppProps) {
     // Schedule overlay — Escape dismisses
     if (s.scheduleOverlay) {
       if (key.escape) { dispatch({ type: 'HIDE_SCHEDULE_OVERLAY' }); return; }
+      return;
+    }
+
+    // Command overlay — Escape dismisses
+    if (s.commandOverlay) {
+      if (key.escape) { dispatch({ type: 'HIDE_COMMAND_OVERLAY' }); return; }
       return;
     }
 
@@ -1125,6 +1132,14 @@ export function App({ api, ensemble }: AppProps) {
       });
     }
 
+    // Command overlay — generic data display (gates, stages, worktrees, recall, search)
+    if (state.commandOverlay) {
+      return React.createElement(CommandOverlay, {
+        title: state.commandOverlay.title,
+        content: state.commandOverlay.content,
+      });
+    }
+
     // Player detail view — shows player metadata + message history
     if (state.view === 'player' && state.activePlayer && state.activeEnsemble) {
       const player = state.players.find(p => p.playerId === state.activePlayer) || null;
@@ -1277,7 +1292,7 @@ export function App({ api, ensemble }: AppProps) {
     React.createElement(PromptArea, {
       hints: promptHints,
       onSubmit: handleSubmit,
-      disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay || state.scheduleOverlay,
+      disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay || state.scheduleOverlay || !!state.commandOverlay,
       commandNames: commandNamesList,
       playerNames: playerNamesList,
       initialHistory: cmdHistory,

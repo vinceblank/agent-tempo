@@ -235,6 +235,8 @@ export interface TuiState {
   /** Status overlay visible (shows player list). */
   statusOverlay: boolean;
   scheduleOverlay: boolean;
+  /** Generic command overlay (title + pre-formatted content). Shown by data-display commands. */
+  commandOverlay: { title: string; content: string } | null;
   /** Scroll offset within the status overlay. */
   statusScrollOffset: number;
   /** Command palette state. */
@@ -284,6 +286,7 @@ export function initialState(ensemble?: string): TuiState {
     sentMessages: [],
     statusOverlay: false,
     scheduleOverlay: false,
+    commandOverlay: null,
     statusScrollOffset: 0,
     paletteVisible: false,
     paletteIndex: 0,
@@ -339,6 +342,8 @@ export type TuiAction =
   | { type: 'HIDE_STATUS' }
   | { type: 'SHOW_SCHEDULE_OVERLAY' }
   | { type: 'HIDE_SCHEDULE_OVERLAY' }
+  | { type: 'SHOW_COMMAND_OVERLAY'; title: string; content: string }
+  | { type: 'HIDE_COMMAND_OVERLAY' }
   | { type: 'STATUS_SCROLL_UP' }
   | { type: 'STATUS_SCROLL_DOWN' }
   | { type: 'SHOW_PICKER'; pickerType: 'players' | 'ensembles'; intent?: 'navigate' }
@@ -597,6 +602,12 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     case 'HIDE_SCHEDULE_OVERLAY':
       if (!state.scheduleOverlay) return state;
       return { ...state, scheduleOverlay: false };
+
+    case 'SHOW_COMMAND_OVERLAY':
+      return { ...state, commandOverlay: { title: action.title, content: action.content } };
+    case 'HIDE_COMMAND_OVERLAY':
+      if (!state.commandOverlay) return state;
+      return { ...state, commandOverlay: null };
     case 'STATUS_SCROLL_UP':
       return { ...state, statusScrollOffset: Math.max(0, state.statusScrollOffset - 1) };
     case 'STATUS_SCROLL_DOWN':

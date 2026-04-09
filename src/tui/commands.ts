@@ -295,7 +295,8 @@ async function handleRecall(
         ? `No messages found for "${targetPlayer}".`
         : 'No recent messages.');
     } else {
-      commitStatic(dispatch, 'command-output', lines.join('\n'));
+      const title = targetPlayer ? `Recall \u00B7 ${targetPlayer}` : 'Recall \u00B7 all';
+      dispatch({ type: 'SHOW_COMMAND_OVERLAY', title, content: lines.join('\n') });
     }
   } catch (err) {
     commitStatic(dispatch, 'error', `Failed to recall messages: ${err}`);
@@ -443,7 +444,7 @@ async function handleGates(
     if (lines.length === 0) {
       commitStatic(dispatch, 'info', 'No quality gates defined.');
     } else {
-      commitStatic(dispatch, 'command-output', lines.join('\n'));
+      dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: 'Quality Gates', content: lines.join('\n') });
     }
   } catch (err) {
     commitStatic(dispatch, 'error', `Failed to fetch gates: ${err}`);
@@ -490,7 +491,7 @@ async function handleStages(
     if (lines.length === 0) {
       commitStatic(dispatch, 'info', 'No stages defined.');
     } else {
-      commitStatic(dispatch, 'command-output', lines.join('\n'));
+      dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: 'Stages', content: lines.join('\n') });
     }
   } catch (err) {
     commitStatic(dispatch, 'error', `Failed to fetch stages: ${err}`);
@@ -534,7 +535,7 @@ async function handleWorktree(
     if (lines.length === 0) {
       commitStatic(dispatch, 'info', 'No active worktrees.');
     } else {
-      commitStatic(dispatch, 'command-output', lines.join('\n'));
+      dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: 'Worktrees', content: lines.join('\n') });
     }
   } catch (err) {
     commitStatic(dispatch, 'error', `Failed to fetch worktrees: ${err}`);
@@ -598,7 +599,7 @@ async function handleSearch(
       lines.push(`\n  ... and ${allResults.length - 20} more. Narrow your search for fewer results.`);
     }
 
-    commitStatic(dispatch, 'command-output', lines.join('\n'));
+    dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: `Search \u00B7 "${term}"`, content: lines.join('\n') });
   } catch (err) {
     commitStatic(dispatch, 'error', `Search failed: ${err}`);
   }
