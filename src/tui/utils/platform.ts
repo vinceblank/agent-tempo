@@ -233,6 +233,14 @@ class BrailleCanvas {
  * Thin hairline triangle outline with thin pendulum arm and small pivot dot.
  */
 export function metronomeBrailleFrames(): BrailleLine[][] {
+  // ASCII fallback for terminals without Unicode support
+  if (!supportsUnicode()) {
+    const asciiFrame: BrailleLine[] = [
+      [{ char: '  claude-tempo', color: 'cyan' }],
+    ];
+    return [asciiFrame, asciiFrame, asciiFrame];
+  }
+
   const COLS = 30;
   const ROWS = 12;
 

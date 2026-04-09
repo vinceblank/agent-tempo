@@ -14,6 +14,7 @@
 import React, { useState, useCallback, useRef, useImperativeHandle } from 'react';
 import { useInk } from '../ink-context';
 import { THEME } from '../utils/theme';
+import { PLAYER_PARAM_COMMANDS, SUBCOMMAND_MAP } from '../commands';
 
 const MAX_HISTORY = 50;
 
@@ -131,16 +132,7 @@ export const PromptArea = React.memo(function PromptArea({
     }
   }, [setValue]);
 
-  // Commands that take a player name as first parameter
-  const PLAYER_PARAM_COMMANDS = new Set(['chat', 'cue', 'stop', 'encore', 'worktree']);
-  // Commands with hardcoded subcommands
-  const SUBCOMMAND_MAP: Record<string, string[]> = {
-    worktree: ['create', 'remove', 'list'],
-    stage: ['create', 'list', 'cancel'],
-    schedule: ['create', 'list', 'cancel'],
-    lineup: ['load', 'save'],
-    ensemble: ['save', 'list', 'show'],
-  };
+  // PLAYER_PARAM_COMMANDS and SUBCOMMAND_MAP imported from commands.ts
 
   const getCompletions = useCallback((input: string): string[] => {
     const r = ref.current;

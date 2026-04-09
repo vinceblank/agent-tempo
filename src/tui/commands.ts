@@ -960,3 +960,15 @@ export function formatHelpSummary(): string {
   });
   return ['Available commands:', '', ...lines, '', 'Type /help <command> for details.'].join('\n');
 }
+
+/** Commands that take a player name as their first parameter. */
+export const PLAYER_PARAM_COMMANDS = new Set(['chat', 'cue', 'stop', 'encore', 'worktree']);
+
+/** Commands with hardcoded subcommands (shown in autocomplete). */
+export const SUBCOMMAND_MAP: Record<string, string[]> = {
+  worktree: ['create', 'remove', 'list'],
+  stage: ['create', 'list', 'cancel'],
+  schedule: ['create', 'list', 'cancel'],
+  lineup: ['load', 'save'],
+  ensemble: ['save', 'list', 'show'],
+};

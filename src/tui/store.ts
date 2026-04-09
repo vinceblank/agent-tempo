@@ -551,11 +551,11 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     case 'SET_CONDUCTOR':
       return { ...state, conductorName: action.name };
 
-    case 'APPEND_SENT_MESSAGE':
-      return {
-        ...state,
-        sentMessages: [...state.sentMessages, { to: action.to, text: action.text, timestamp: new Date().toISOString() }],
-      };
+    case 'APPEND_SENT_MESSAGE': {
+      const newSent = [...state.sentMessages, { to: action.to, text: action.text, timestamp: new Date().toISOString() }];
+      const trimmedSent = newSent.length > 200 ? newSent.slice(-200) : newSent;
+      return { ...state, sentMessages: trimmedSent };
+    }
 
     case 'HYDRATE_SENT_MESSAGES': {
       // Merge server-side sent messages, dedup by text+timestamp

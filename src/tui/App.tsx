@@ -45,7 +45,7 @@ import { ConversationStream } from './components/ConversationStream';
 import { PlayerDetailView } from './components/PlayerDetailView';
 import { Picker } from './components/Picker';
 import type { PickerItem } from './components/Picker';
-import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames } from './commands';
+import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames, PLAYER_PARAM_COMMANDS, SUBCOMMAND_MAP } from './commands';
 import { THEME } from './utils/theme';
 import { loadHistory, saveHistory } from './utils/history';
 import type { TempoClient } from './client';
@@ -455,15 +455,7 @@ export function App({ api, ensemble }: AppProps) {
     }
   }, []);
 
-  // Player commands that take a player name as first arg
-  const PLAYER_CMD_SET = new Set(['chat', 'cue', 'stop', 'encore']);
-  const SUBCMD_MAP: Record<string, string[]> = {
-    worktree: ['create', 'remove', 'list'],
-    stage: ['create', 'list', 'cancel'],
-    schedule: ['create', 'list', 'cancel'],
-    lineup: ['load', 'save'],
-    ensemble: ['save', 'list', 'show'],
-  };
+  // Player commands and subcommand map imported from commands.ts
 
   const filteredPaletteCommands = useMemo(() => {
     if (!state.paletteVisible) return [];
