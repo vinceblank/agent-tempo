@@ -127,7 +127,7 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
       // Header line: direction icon + sender + timestamp
       if (msg.direction === 'out') {
         children.push(React.createElement(React.Fragment, { key: `hdr-${i}` },
-          React.createElement(Text, { color: THEME.accent, bold: true }, '  \u276F '),
+          React.createElement(Text, { color: THEME.accent, bold: true }, '  \u2669 '),
           React.createElement(Text, { color: THEME.text, bold: true }, 'You'),
           React.createElement(Text, { color: THEME.dim }, `  ${msg.time}`),
         ));

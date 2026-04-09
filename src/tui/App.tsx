@@ -1207,7 +1207,7 @@ export function App({ api, ensemble }: AppProps) {
         const bodyLines = wrapped.map(l => `    ${l}`).join('\n');
         if (item.msgDirection === 'out') {
           return React.createElement(Text, { key: item.id },
-            React.createElement(Text, { color: THEME.accent, bold: true }, '  \u276F '),
+            React.createElement(Text, { color: THEME.accent, bold: true }, '  \u2669 '),
             React.createElement(Text, { color: THEME.text, bold: true }, 'You'),
             React.createElement(Text, { color: THEME.dim }, `  ${item.msgTime || ''}`),
             '\n',
