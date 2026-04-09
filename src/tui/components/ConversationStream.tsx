@@ -220,18 +220,5 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
     }
   }
 
-  // Capped top-padding: absorb small estimation errors (1-2 lines) without
-  // creating a large visible gap between static scrollback and the live area.
-  let actualLines = 1;
-  for (const child of children) {
-    if (typeof child === 'string') {
-      actualLines += (child.match(/\n/g) || []).length;
-    }
-  }
-  const padding = Math.min(3, Math.max(0, contentHeight - 1 - actualLines));
-  if (padding > 0) {
-    children.unshift('\n'.repeat(padding));
-  }
-
   return React.createElement(Text, null, ...children);
 }
