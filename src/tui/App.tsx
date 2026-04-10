@@ -622,6 +622,9 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         players: (id) => {
           dispatch({ type: 'NAVIGATE_PLAYER', playerId: id });
         },
+        player: (id) => {
+          dispatch({ type: 'NAVIGATE_PLAYER', playerId: id });
+        },
       };
 
       if (PICKER_COMMANDS[parsed.name] && parsed.args.length === 0) {
@@ -630,6 +633,11 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         const statusFilter = parsed.name === 'encore' ? 'stale' : undefined;
         dispatch({ type: 'SHOW_PICKER', pickerType: 'players', statusFilter });
         return;
+      }
+
+      // Alias: /player → /players
+      if (parsed.name === 'player') {
+        parsed.name = 'players';
       }
 
       if (!isValidCommand(parsed.name)) {

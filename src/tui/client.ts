@@ -6,7 +6,7 @@
  * with fallback to per-ensemble Maestro and direct workflow list.
  */
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
-import { maestroWorkflowId, schedulerWorkflowId, sessionWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID } from '../config';
+import { maestroWorkflowId, schedulerWorkflowId, sessionWorkflowId, conductorWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID } from '../config';
 import type {
   MaestroPlayerInfo,
   MaestroRelayMessage,
@@ -389,14 +389,10 @@ export function createTempoClient(client: Client): TempoClient {
     },
 
     async getGates(ensemble: string): Promise<QualityGate[]> {
-      // Gates are stored on the conductor's workflow — find it first
+      // Gates are stored on the conductor's workflow
       try {
-        const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND ClaudeTempoIsConductor = true`;
-        for await (const wf of client.workflow.list({ query })) {
-          const h = handle(wf.workflowId);
-          return await h.query('qualityGates');
-        }
-        return [];
+        const h = handle(conductorWorkflowId(ensemble));
+        return await h.query('qualityGates');
       } catch {
         return [];
       }
@@ -404,12 +400,8 @@ export function createTempoClient(client: Client): TempoClient {
 
     async getStages(ensemble: string): Promise<StageEntry[]> {
       try {
-        const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND ClaudeTempoIsConductor = true`;
-        for await (const wf of client.workflow.list({ query })) {
-          const h = handle(wf.workflowId);
-          return await h.query('stages');
-        }
-        return [];
+        const h = handle(conductorWorkflowId(ensemble));
+        return await h.query('stages');
       } catch {
         return [];
       }
@@ -417,12 +409,8 @@ export function createTempoClient(client: Client): TempoClient {
 
     async getWorktrees(ensemble: string): Promise<WorktreeEntry[]> {
       try {
-        const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND ClaudeTempoIsConductor = true`;
-        for await (const wf of client.workflow.list({ query })) {
-          const h = handle(wf.workflowId);
-          return await h.query('worktrees');
-        }
-        return [];
+        const h = handle(conductorWorkflowId(ensemble));
+        return await h.query('worktrees');
       } catch {
         return [];
       }

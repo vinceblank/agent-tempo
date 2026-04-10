@@ -82,13 +82,16 @@ export function ScheduleOverlay({ schedules, ensemble }: ScheduleOverlayProps) {
         React.createElement(Text, { color: THEME.dim }, `  [${label}]`),
       ));
 
-      // Target + message
-      const msgPreview = s.message.length > 60 ? s.message.slice(0, 57) + '\u2026' : s.message;
+      // Target
       children.push('\n');
       children.push(React.createElement(Text, { key: `st-${i}`, color: THEME.dim },
-        `    \u2192 ${s.target}: `));
-      children.push(React.createElement(Text, { key: `sm-${i}`, color: THEME.textMuted || THEME.dim },
-        msgPreview));
+        `    \u2192 ${s.target}`));
+      // Message content
+      const msgPreview = s.message.length > 80 ? s.message.slice(0, 77) + '\u2026' : s.message;
+      children.push('\n');
+      children.push(React.createElement(Text, { key: `sm-${i}`, color: THEME.dim }, '    Message: '));
+      children.push(React.createElement(Text, { key: `smv-${i}`, color: THEME.textMuted || THEME.dim },
+        `"${msgPreview}"`));
 
       // Timing details
       const timingParts: string[] = [];

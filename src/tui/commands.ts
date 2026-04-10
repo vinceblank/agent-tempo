@@ -886,15 +886,10 @@ export const COMMANDS: Record<string, CommandDef> = {
     usage: '/schedule [create | delete <name>]',
     handler: handleSchedule,
   },
-  player: {
-    description: 'Show detailed player info',
-    usage: '/player <name>',
-    handler: handlePlayer,
-  },
   players: {
-    description: 'List active players',
-    usage: '/players',
-    handler: null, // Handled directly in App.tsx
+    description: 'List active players or show player detail',
+    usage: '/players [name]',
+    handler: handlePlayer,
   },
   gates: {
     description: 'List quality gates and their status',

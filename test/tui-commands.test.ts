@@ -138,7 +138,7 @@ describe('COMMANDS registry', function () {
   });
 
   const expectedCommands = [
-    'broadcast', 'player', 'players', 'status', 'help', 'quit',
+    'broadcast', 'players', 'status', 'help', 'quit',
     'recruit', 'stop', 'encore', 'recall', 'schedule',
     'gates', 'stages', 'worktree', 'lineup', 'ensemble', 'back',
   ];
@@ -200,7 +200,7 @@ describe('isValidCommand', function () {
 
   it('returns true for registered commands', function () {
     expect(isValidCommand('broadcast')).to.be.true;
-    expect(isValidCommand('player')).to.be.true;
+    expect(isValidCommand('players')).to.be.true;
     expect(isValidCommand('help')).to.be.true;
   });
 
