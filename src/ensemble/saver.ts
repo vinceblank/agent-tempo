@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { Client } from '@temporalio/client';
 import { stringify as yamlStringify } from 'yaml';
 import { CLAUDE_TEMPO_HOME, schedulerWorkflowId } from '../config';
@@ -134,6 +134,44 @@ export function readSavedLineup(name: string): string | null {
     if (existsSync(path)) return readFileSync(path, 'utf8');
   }
   return null;
+}
+
+/**
+ * Find the package root by walking up from a directory.
+ */
+function findPackageRoot(dir: string): string {
+  if (existsSync(join(dir, 'package.json'))) return dir;
+  const parent = resolve(dir, '..');
+  return parent === dir ? dir : findPackageRoot(parent);
+}
+
+/**
+ * List all available lineups — saved (~/.claude-tempo/ensembles/) + shipped (examples/ensembles/).
+ */
+export function listAllLineups(): Array<{ name: string; source: 'saved' | 'shipped' }> {
+  const results: Array<{ name: string; source: 'saved' | 'shipped' }> = [];
+
+  // Saved lineups
+  for (const l of listLineups()) {
+    results.push({ name: l.name, source: 'saved' });
+  }
+
+  // Shipped examples
+  const pkgRoot = findPackageRoot(resolve(__dirname));
+  const shippedDir = join(pkgRoot, 'examples', 'ensembles');
+  if (existsSync(shippedDir)) {
+    for (const f of readdirSync(shippedDir)) {
+      if (f.endsWith('.yaml') || f.endsWith('.yml')) {
+        const name = f.replace(/\.ya?ml$/, '');
+        // Skip if already in saved (saved takes precedence)
+        if (!results.some(r => r.name === name)) {
+          results.push({ name, source: 'shipped' });
+        }
+      }
+    }
+  }
+
+  return results;
 }
 
 function formatDurationMs(ms: number): string {

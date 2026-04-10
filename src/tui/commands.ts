@@ -8,6 +8,7 @@ import type { TempoClient } from './client';
 import type { TuiAction, StaticItem } from './store';
 import type { Message, SentMessage } from '../types';
 import { statusIcons, supportsUnicode } from './utils/platform';
+import { listAllLineups } from '../ensemble/saver';
 
 // ── Types ──
 
@@ -759,7 +760,30 @@ async function handleLineup(
 
   if (subcommand === 'load') {
     if (args.length < 2) {
-      commitStatic(dispatch, 'error', 'Usage: /lineup load <file.yml>');
+      // No file arg — show available lineups
+      try {
+        const lineups = listAllLineups();
+        if (lineups.length === 0) {
+          commitStatic(dispatch, 'info', 'No lineups available. Create one with /lineup save.');
+          return;
+        }
+        const items = lineups.map(l => ({
+          id: l.name,
+          label: l.name,
+          sublabel: l.source === 'saved' ? 'saved' : 'shipped example',
+        }));
+        dispatch({
+          type: 'SHOW_OVERLAY',
+          overlay: {
+            type: 'lineups',
+            title: 'Available Lineups',
+            items,
+            hint: 'Usage: /lineup load <name>  \u00B7  esc=close',
+          },
+        });
+      } catch {
+        commitStatic(dispatch, 'error', 'Usage: /lineup load <name>');
+      }
       return;
     }
     const filePath = args[1];

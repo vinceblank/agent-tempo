@@ -6,10 +6,11 @@
  * Minimal-Box pattern: single <Text> root for static content,
  * one <Box> for Ink's TextInput on text-input steps.
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { useInk } from '../ink-context';
 import { THEME } from '../utils/theme';
 import type { CreateEnsembleState, CreateEnsembleAnswers, CreateEnsembleStep } from '../store';
+import { listAllLineups } from '../../ensemble/saver';
 
 export interface CreateEnsembleWizardProps {
   state: CreateEnsembleState;
@@ -28,21 +29,55 @@ const STEP_LABELS: Record<CreateEnsembleStep, string> = {
   done: 'Done',
 };
 
-const TEXT_INPUT_STEPS = new Set<CreateEnsembleStep>(['name', 'workDir', 'lineup']);
+const TEXT_INPUT_STEPS = new Set<CreateEnsembleStep>(['name', 'workDir']);
 
 export function CreateEnsembleWizard({ state, onAnswer, onBack, onConfirm, onCancel, onDone }: CreateEnsembleWizardProps) {
   const { Box, Text, TextInput, useInput } = useInk();
   const [inputValue, setInputValue] = useState('');
+  const [lineupIdx, setLineupIdx] = useState(0);
+  const [lineupCustom, setLineupCustom] = useState(false);
+
+  // Build lineup options: (none) + saved/shipped + custom path
+  const lineupOptions = useMemo(() => {
+    const options: Array<{ label: string; value: string; source?: string }> = [
+      { label: '(none) \u2014 start with no lineup', value: '' },
+    ];
+    try {
+      for (const l of listAllLineups()) {
+        options.push({ label: `${l.name} (${l.source})`, value: l.name, source: l.source });
+      }
+    } catch { /* ignore */ }
+    options.push({ label: '[custom path...]', value: '__custom__' });
+    return options;
+  }, []);
 
   useInput(useCallback((_input: string, key: any) => {
     if (key.escape) { onCancel(); return; }
     if (key.backspace && state.step !== 'name' && state.step !== 'done' && !inputValue) {
+      if (state.step === 'lineup' && lineupCustom) {
+        setLineupCustom(false);
+        return;
+      }
       onBack();
       return;
     }
     if (state.step === 'confirm' && key.return) onConfirm();
     if (state.step === 'done' && key.return) onDone();
-  }, [state.step, inputValue, onBack, onCancel, onConfirm, onDone]));
+    // Lineup list navigation
+    if (state.step === 'lineup' && !lineupCustom) {
+      if (key.upArrow) { setLineupIdx(i => (i - 1 + lineupOptions.length) % lineupOptions.length); return; }
+      if (key.downArrow) { setLineupIdx(i => (i + 1) % lineupOptions.length); return; }
+      if (key.return) {
+        const selected = lineupOptions[lineupIdx];
+        if (selected.value === '__custom__') {
+          setLineupCustom(true);
+        } else {
+          onAnswer({ lineup: selected.value });
+        }
+        return;
+      }
+    }
+  }, [state.step, inputValue, lineupCustom, lineupIdx, lineupOptions, onBack, onCancel, onConfirm, onDone, onAnswer]));
 
   const handleTextSubmit = useCallback((value: string) => {
     const trimmed = value.trim();
@@ -55,7 +90,9 @@ export function CreateEnsembleWizard({ state, onAnswer, onBack, onConfirm, onCan
         onAnswer({ workDir: trimmed || state.answers.workDir });
         break;
       case 'lineup':
+        // Custom path mode
         onAnswer({ lineup: trimmed });
+        setLineupCustom(false);
         break;
     }
     setInputValue('');
@@ -109,6 +146,23 @@ export function CreateEnsembleWizard({ state, onAnswer, onBack, onConfirm, onCan
   } else if (state.submitting) {
     children.push('\n\n');
     children.push(React.createElement(Text, { key: 'sub', color: THEME.warning }, `   \u2026 Creating ensemble "${state.answers.name}"...`));
+  } else if (state.step === 'lineup') {
+    children.push('\n\n');
+    children.push(
+      React.createElement(React.Fragment, { key: 'inp-q' },
+        React.createElement(Text, { color: THEME.accent }, ' ? '),
+        React.createElement(Text, { bold: true, color: THEME.text }, 'Select a lineup:'),
+      ),
+    );
+    if (!lineupCustom) {
+      for (let i = 0; i < lineupOptions.length; i++) {
+        const opt = lineupOptions[i];
+        const selected = i === lineupIdx;
+        children.push('\n');
+        children.push(React.createElement(Text, { key: `lo-${i}`, color: selected ? THEME.text : THEME.dim, bold: selected },
+          `   ${selected ? '\u276F' : ' '} ${opt.label}`));
+      }
+    }
   } else if (TEXT_INPUT_STEPS.has(state.step)) {
     const defaultHint = getDefaultHint(state.step, state.answers);
     children.push('\n\n');
@@ -119,6 +173,21 @@ export function CreateEnsembleWizard({ state, onAnswer, onBack, onConfirm, onCan
         defaultHint
           ? React.createElement(Text, { color: THEME.dim }, ` (${defaultHint})`)
           : null,
+      ),
+    );
+  }
+
+  // Lineup custom path mode: show text input
+  if (state.step === 'lineup' && lineupCustom && !state.submitting) {
+    return React.createElement(React.Fragment, null,
+      React.createElement(Text, null, ...children),
+      React.createElement(Box, { marginLeft: 3 },
+        React.createElement(Text, { color: THEME.accent }, '> '),
+        React.createElement(TextInput, {
+          value: inputValue,
+          onChange: setInputValue,
+          onSubmit: handleTextSubmit,
+        }),
       ),
     );
   }

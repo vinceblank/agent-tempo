@@ -1386,7 +1386,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     React.createElement(PromptArea, {
       hints: promptHints,
       onSubmit: handleSubmit,
-      disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay || !!state.overlay,
+      disabled: (state.phase !== 'main' && state.phase !== 'chat') || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay || !!state.overlay,
       commandNames: commandNamesList,
       playerNames: playerNamesList,
       initialHistory: cmdHistory,
