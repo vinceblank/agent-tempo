@@ -12,8 +12,26 @@
 import React, { useReducer, useEffect, useCallback, useMemo, useState } from 'react';
 import { useInk } from './ink-context';
 import { tuiReducer, initialState } from './store';
-import type { StaticItem } from './store';
+import type { StaticItem, RecruitAnswers, ScheduleAnswers, CreateEnsembleAnswers } from './store';
 import type { PromptAreaHandle } from './components/PromptArea';
+
+/** Ink Key interface — mirrors the key object passed to useInput callbacks. */
+interface Key {
+  upArrow: boolean;
+  downArrow: boolean;
+  leftArrow: boolean;
+  rightArrow: boolean;
+  return: boolean;
+  escape: boolean;
+  ctrl: boolean;
+  shift: boolean;
+  tab: boolean;
+  backspace: boolean;
+  delete: boolean;
+  meta: boolean;
+  pageDown: boolean;
+  pageUp: boolean;
+}
 
 /**
  * Track terminal rows so the root Box height stays < stdout.rows.
@@ -42,8 +60,6 @@ import { ScheduleWizard } from './components/ScheduleWizard';
 import { CreateEnsembleWizard } from './components/CreateEnsembleWizard';
 import { CommandPalette } from './components/CommandPalette';
 import { StatusOverlay } from './components/StatusOverlay';
-import { ScheduleOverlay } from './components/ScheduleOverlay';
-import { CommandOverlay } from './components/CommandOverlay';
 import { ConversationStream } from './components/ConversationStream';
 import { PlayerDetailView } from './components/PlayerDetailView';
 import { Picker } from './components/Picker';
@@ -169,7 +185,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   }, []);
 
   // ── Global keybindings (uses stateRef to avoid recreating on every poll) ──
-  useInput(useCallback((input: string, key: any) => {
+  useInput(useCallback((input: string, key: Key) => {
     const s = stateRef.current;
     if (key.ctrl && input === 'c') {
       exit();
@@ -201,16 +217,6 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         }
       }
       return; // Swallow all other input while overlay is active
-    }
-
-    // Legacy overlay compat — Escape dismisses
-    if (s.scheduleOverlay) {
-      if (key.escape) { dispatch({ type: 'HIDE_SCHEDULE_OVERLAY' }); return; }
-      return;
-    }
-    if (s.commandOverlay) {
-      if (key.escape) { dispatch({ type: 'HIDE_COMMAND_OVERLAY' }); return; }
-      return;
     }
 
     // Player detail view — Escape goes back, ↑↓ scrolls messages
@@ -588,7 +594,17 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         return;
       }
       if (parsed.name === 'help') {
-        dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: 'Help', content: formatHelpSummary() });
+        if (parsed.args.length > 0) {
+          const cmdName = parsed.args[0].replace(/^\//, '');
+          const cmd = COMMANDS[cmdName];
+          if (cmd) {
+            dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: `Help \u00B7 /${cmdName}`, content: `\n  ${cmd.description}\n\n  Usage: ${cmd.usage}` });
+          } else {
+            dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: 'Help', content: `\n  Unknown command: "${cmdName}"` });
+          }
+        } else {
+          dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: 'Help', content: formatHelpSummary() });
+        }
         return;
       }
 
@@ -837,7 +853,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   }, [state.phase, state.activeEnsemble, api]);
 
   // ── Recruit wizard callbacks (must be before early return — Rules of Hooks) ──
-  const handleRecruitAnswer = useCallback((answer: any) => {
+  const handleRecruitAnswer = useCallback((answer: Partial<RecruitAnswers>) => {
     dispatch({ type: 'RECRUIT_NEXT_STEP', answer });
   }, []);
 
@@ -895,7 +911,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   }, []);
 
   // ── Schedule wizard callbacks ──
-  const handleScheduleAnswer = useCallback((answer: any) => {
+  const handleScheduleAnswer = useCallback((answer: Partial<ScheduleAnswers>) => {
     dispatch({ type: 'SCHEDULE_NEXT_STEP', answer });
   }, []);
 
@@ -950,7 +966,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   }, []);
 
   // ── Create ensemble wizard callbacks ──
-  const handleCreateEnsAnswer = useCallback((answer: any) => {
+  const handleCreateEnsAnswer = useCallback((answer: Partial<CreateEnsembleAnswers>) => {
     dispatch({ type: 'CREATE_ENSEMBLE_NEXT_STEP', answer });
   }, []);
   const handleCreateEnsBack = useCallback(() => {
@@ -967,7 +983,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         ? ['up', name, '--lineup', lineup]
         : ['up', name];
       await new Promise<void>((resolve, reject) => {
-        execFile('claude-tempo', args, { cwd: workDir, timeout: 60000 }, (err: any, _stdout: string, stderr: string) => {
+        execFile('claude-tempo', args, { cwd: workDir, timeout: 60000 }, (err: Error | null, _stdout: string, stderr: string) => {
           if (err) reject(new Error(stderr?.trim() || err.message || 'Unknown error'));
           else resolve();
         });
@@ -1059,6 +1075,13 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   }, []);
 
   function renderLiveContent() {
+    // Terminal size warning (non-blocking)
+    const termCols = process.stdout.columns || 80;
+    if (termCols < 60 || termRows < 15) {
+      return React.createElement(Text, { color: THEME.warning },
+        `\n  \u26A0 Terminal too small (${termCols}\u00D7${termRows}). Resize to at least 60\u00D715 for best experience.`);
+    }
+
     // Splash screen — shown on startup when no ensemble is specified
     if (state.phase === 'splash') {
       return React.createElement(Splash, {
@@ -1078,7 +1101,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           { label: `Cannot reach Temporal`, passed: false, detail: state.error },
         ],
         errorDetail: state.error,
-        onQuit: () => exit(),
+        onQuit: () => { process.exitCode = 1; exit(); },
       });
     }
 
@@ -1155,8 +1178,8 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       });
     }
 
-    // Interactive overlay — unified overlay with selection indicator
-    if (state.overlay && !state.scheduleOverlay && !state.commandOverlay) {
+    // Unified overlay — all overlay types rendered here
+    if (state.overlay) {
       const ov = state.overlay;
       const children: React.ReactNode[] = [];
       children.push(React.createElement(Text, { key: 'ov-title', bold: true, color: THEME.accent }, `  ${ov.title}`));
@@ -1184,22 +1207,6 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       children.push('\n');
       children.push(React.createElement(Text, { key: 'ov-hint', color: THEME.dim }, `  ${ov.hint}`));
       return React.createElement(Text, null, ...children);
-    }
-
-    // Schedule overlay — shows active schedules (legacy, uses ScheduleOverlay component)
-    if (state.scheduleOverlay && state.activeEnsemble) {
-      return React.createElement(ScheduleOverlay, {
-        schedules: state.schedules,
-        ensemble: state.activeEnsemble,
-      });
-    }
-
-    // Command overlay — generic data display (gates, stages, worktrees, recall, search)
-    if (state.commandOverlay) {
-      return React.createElement(CommandOverlay, {
-        title: state.commandOverlay.title,
-        content: state.commandOverlay.content,
-      });
     }
 
     // Player detail view — shows player metadata + message history
@@ -1360,7 +1367,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     React.createElement(PromptArea, {
       hints: promptHints,
       onSubmit: handleSubmit,
-      disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay || state.scheduleOverlay || !!state.commandOverlay || !!state.overlay,
+      disabled: state.phase === 'error' || state.phase === 'recruit' || state.phase === 'schedule-create' || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay || !!state.overlay,
       commandNames: commandNamesList,
       playerNames: playerNamesList,
       initialHistory: cmdHistory,

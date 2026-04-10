@@ -46,7 +46,7 @@ The TUI has a persistent layout:
 | `/stages` | List stages and per-player report status |
 | `/worktree [list \| create <player> \| remove <player>]` | List active git worktrees; `create`/`remove` delegate to the conductor |
 | `/back` | Return to the main ensemble view |
-| `/help` | Show all available commands with usage |
+| `/help [command]` | Show all commands; pass a command name for detailed usage (e.g. `/help recruit`) |
 | `/quit` | Exit the TUI |
 
 Bare text (no `/` prefix) routes to the conductor by default. Prefix with `@player` to address a specific player: `@alice can you review the PR?`. Use `/player <name>` to open a scrollable message history for any player. Press `Ctrl+C` to exit at any time.

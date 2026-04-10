@@ -1,9 +1,10 @@
 /**
  * TUI color theme constants.
  * Used by all TUI components for consistent styling.
+ * Respects NO_COLOR (https://no-color.org/) — all colors become undefined.
  */
 
-export const THEME = {
+const COLORS = {
   bg: '#0A0E12',
   bgTitle: '#141820',
   border: '#2A3140',
@@ -17,3 +18,9 @@ export const THEME = {
   error: '#EF5350',
   inputBg: '#1A1F28',
 };
+
+const MONO: Record<string, undefined> = Object.fromEntries(
+  Object.keys(COLORS).map(k => [k, undefined])
+) as any;
+
+export const THEME: typeof COLORS = process.env.NO_COLOR ? MONO as any : COLORS;

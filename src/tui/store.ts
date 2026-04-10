@@ -208,17 +208,9 @@ export interface TuiState {
   /** Scroll offset within the player detail view message list. */
   playerScrollOffset: number;
 
-  // ── Focus & input ──
-  /** Which zone has keyboard focus. */
-  focusZone: 'sidebar' | 'timeline' | 'input';
-  /** Current text in the input bar. */
-  inputText: string;
-
   // ── Chat shell ──
   /** Committed scroll-up history items. */
   staticItems: StaticItem[];
-  /** Current prompt input value. */
-  inputValue: string;
   /** Player name when in chat mode (bare text sends message to this target). */
   chatTarget?: string;
   /** Name of the conductor in the active ensemble. */
@@ -241,9 +233,7 @@ export interface TuiState {
   createEnsembleState?: CreateEnsembleState;
   /** Status overlay visible (shows player list). */
   statusOverlay: boolean;
-  scheduleOverlay: boolean;
   /** Generic command overlay (title + pre-formatted content). Shown by data-display commands. */
-  commandOverlay: { title: string; content: string } | null;
   /** Interactive overlay (schedules, gates, stages, worktrees, or generic command). */
   overlay: {
     type: string;
@@ -294,16 +284,10 @@ export function initialState(ensemble?: string): TuiState {
     playerMessages: [],
     playerScrollOffset: 0,
 
-    focusZone: 'sidebar',
-    inputText: '',
-
     staticItems: [],
-    inputValue: '',
     chatTarget: undefined,
     sentMessages: [],
     statusOverlay: false,
-    scheduleOverlay: false,
-    commandOverlay: null,
     overlay: null,
     statusScrollOffset: 0,
     paletteVisible: false,
@@ -337,14 +321,8 @@ export type TuiAction =
   | { type: 'REFRESH_PLAYER_DATA'; metadata: SessionMetadata | null; messages: Array<Message | (SentMessage & { direction: 'sent' })> }
   | { type: 'PLAYER_SCROLL_UP' }
   | { type: 'PLAYER_SCROLL_DOWN' }
-  // Selection
-  | { type: 'SELECT_NEXT' }
-  | { type: 'SELECT_PREV' }
-  | { type: 'CYCLE_FOCUS' }
-  | { type: 'SET_INPUT_TEXT'; text: string }
   // Chat shell actions
   | { type: 'COMMIT_STATIC'; item: StaticItem }
-  | { type: 'SET_INPUT'; value: string }
   | { type: 'SET_CONDUCTOR'; name?: string }
   | { type: 'APPEND_SENT_MESSAGE'; to: string; text: string }
   | { type: 'HYDRATE_SENT_MESSAGES'; messages: Array<{ to: string; text: string; timestamp: string }> }
@@ -359,10 +337,7 @@ export type TuiAction =
   // Picker overlay
   | { type: 'SHOW_STATUS' }
   | { type: 'HIDE_STATUS' }
-  | { type: 'SHOW_SCHEDULE_OVERLAY' }
-  | { type: 'HIDE_SCHEDULE_OVERLAY' }
   | { type: 'SHOW_COMMAND_OVERLAY'; title: string; content: string }
-  | { type: 'HIDE_COMMAND_OVERLAY' }
   | { type: 'SHOW_OVERLAY'; overlay: { type: string; title: string; items: Array<{ id: string; label: string; sublabel?: string }>; hint: string } }
   | { type: 'HIDE_OVERLAY' }
   | { type: 'OVERLAY_SELECT'; direction: 'up' | 'down' }
@@ -402,9 +377,7 @@ export type TuiAction =
   | { type: 'CREATE_ENSEMBLE_PREV_STEP' }
   | { type: 'CREATE_ENSEMBLE_SUBMIT' }
   | { type: 'CREATE_ENSEMBLE_DONE'; error?: string; ensemble?: string }
-  | { type: 'EXIT_CREATE_ENSEMBLE' }
-  // Legacy compat — used by current App.tsx during transition
-  | { type: 'REFRESH_ALL'; players: MaestroPlayerInfo[]; messages: MaestroRelayMessage[]; history: HistoryEntry[] };
+  | { type: 'EXIT_CREATE_ENSEMBLE' };
 
 // ── Reducer ──
 
@@ -443,8 +416,6 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         playerMetadata: null,
         playerMessages: [],
         selectedPlayerIndex: 0,
-        focusZone: 'sidebar',
-        inputText: '',
       };
 
     case 'NAVIGATE_ENSEMBLE':
@@ -466,8 +437,6 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         playerMetadata: null,
         playerMessages: [],
         selectedPlayerIndex: 0,
-        focusZone: 'sidebar',
-        inputText: '',
       };
 
     case 'NAVIGATE_PLAYER':
@@ -478,7 +447,6 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         playerMetadata: null,
         playerMessages: [],
         playerScrollOffset: 0,
-        focusZone: 'timeline',
       };
 
     // ── Data refresh ──
@@ -533,50 +501,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       return { ...state, playerScrollOffset: state.playerScrollOffset + 1 };
     }
 
-    // Legacy compat — maps to REFRESH_ENSEMBLE_DATA
-    case 'REFRESH_ALL':
-      return {
-        ...state,
-        players: action.players,
-        playersLoaded: true,
-        messages: action.messages,
-        conductorHistory: action.history,
-        selectedPlayerIndex: Math.min(state.selectedPlayerIndex, Math.max(0, action.players.length - 1)),
-      };
-
     // ── Selection & Focus ──
-
-    case 'SELECT_NEXT': {
-      if (state.view === 'home') {
-        const max = Math.max(0, (state.ensembles?.length ?? 0) - 1);
-        return { ...state, selectedEnsembleIndex: Math.min(state.selectedEnsembleIndex + 1, max) };
-      }
-      if (state.view === 'ensemble' && state.focusZone === 'sidebar') {
-        const max = Math.max(0, state.players.length - 1);
-        return { ...state, selectedPlayerIndex: Math.min(state.selectedPlayerIndex + 1, max) };
-      }
-      return state;
-    }
-
-    case 'SELECT_PREV': {
-      if (state.view === 'home') {
-        return { ...state, selectedEnsembleIndex: Math.max(0, state.selectedEnsembleIndex - 1) };
-      }
-      if (state.view === 'ensemble' && state.focusZone === 'sidebar') {
-        return { ...state, selectedPlayerIndex: Math.max(0, state.selectedPlayerIndex - 1) };
-      }
-      return state;
-    }
-
-    case 'CYCLE_FOCUS': {
-      const zones: TuiState['focusZone'][] = ['sidebar', 'timeline', 'input'];
-      const currentIdx = zones.indexOf(state.focusZone);
-      const nextIdx = (currentIdx + 1) % zones.length;
-      return { ...state, focusZone: zones[nextIdx] };
-    }
-
-    case 'SET_INPUT_TEXT':
-      return { ...state, inputText: action.text };
 
     // ── Chat shell ──
 
@@ -586,9 +511,6 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       const trimmed = newItems.length > 500 ? newItems.slice(-500) : newItems;
       return { ...state, staticItems: trimmed };
     }
-
-    case 'SET_INPUT':
-      return { ...state, inputValue: action.value };
 
     // ── Command palette ──
 
@@ -619,24 +541,14 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     case 'HIDE_STATUS':
       return { ...state, statusOverlay: false, statusScrollOffset: 0 };
 
-    case 'SHOW_SCHEDULE_OVERLAY':
-      return { ...state, scheduleOverlay: true, overlay: { type: 'schedules', title: 'Schedules', items: [], selectedIndex: 0, hint: 'esc \u2014 close' } };
-    case 'HIDE_SCHEDULE_OVERLAY':
-      if (!state.scheduleOverlay) return state;
-      return { ...state, scheduleOverlay: false, overlay: null };
-
     case 'SHOW_COMMAND_OVERLAY':
-      return { ...state, commandOverlay: { title: action.title, content: action.content }, overlay: { type: 'command', title: action.title, items: [{ id: '_', label: action.content }], selectedIndex: 0, hint: 'esc \u2014 close' } };
-    case 'HIDE_COMMAND_OVERLAY':
-      if (!state.commandOverlay) return state;
-      return { ...state, commandOverlay: null, overlay: null };
+      return { ...state, overlay: { type: 'command', title: action.title, items: [{ id: '_', label: action.content }], selectedIndex: 0, hint: 'esc \u2014 close' } };
 
     case 'SHOW_OVERLAY':
       return { ...state, overlay: { ...action.overlay, selectedIndex: 0 } };
     case 'HIDE_OVERLAY':
       if (!state.overlay) return state;
-      // Also clear legacy overlay state for backward compat
-      return { ...state, overlay: null, scheduleOverlay: false, commandOverlay: null };
+      return { ...state, overlay: null };
     case 'OVERLAY_SELECT': {
       if (!state.overlay || state.overlay.items.length === 0) return state;
       const len = state.overlay.items.length;

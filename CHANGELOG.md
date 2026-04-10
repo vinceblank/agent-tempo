@@ -10,11 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Ensemble chat feed — aggregated maestro + conductor traffic visible in the main TUI view. Backed by the new `maestroEnsembleChat` per-ensemble Maestro query (paginated, max 500 cached entries, refreshed every ~10s via `fetchEnsembleChat` activity). Prefix bare text with `@player` to address a specific player directly from the main view (#58)
+- `/help <command>` — per-command help overlay: `/help recruit` (or `/help /recruit`) shows the usage and description for a specific slash command (#58)
+- `NO_COLOR` support — set `NO_COLOR=1` to disable all color output in both the TUI and CLI, following the https://no-color.org/ convention (#58)
+- Minimum terminal size check — TUI exits with code 1 at launch if the terminal is below 80×24, with an explanatory message; soft in-app warning renders at 60×15 (#58)
+- 36 new TUI tests (591 total) covering command handling, overlay dispatch, ensemble chat, and layout edge cases (#58)
 
 ### Fixed
 
 - TUI message layout: messages are top-aligned with a reserved 1-line gap above the footer, preventing content from bleeding into the prompt area. Static and live message areas now use matching formatting (#58)
 - `/schedule` command consolidates schedule deletion — `/schedule delete <name>` replaces the previously documented `/unschedule` alias, which was never registered (#58)
+- `exec()` replaced with `execFile()` in TUI ensemble creation to prevent shell injection (#58)
+- TUI exits with code 1 on Temporal connection error (previously exited cleanly, masking failures) (#58)
 
 ---
 

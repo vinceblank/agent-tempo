@@ -162,10 +162,6 @@ describe('TUI reducer', function () {
       expect(s.playerMessages).to.have.lengthOf(0);
     });
 
-    it('sets focusZone to timeline', function () {
-      const s = apply(initialState('test'), { type: 'NAVIGATE_PLAYER', playerId: 'p1' });
-      expect(s.focusZone).to.equal('timeline');
-    });
   });
 
   // ─────────────────────────────────────────────
@@ -517,13 +513,6 @@ describe('TUI reducer', function () {
   // ─────────────────────────────────────────────
 
   describe('reducer identity', function () {
-    it('SELECT_NEXT in timeline zone returns same reference', function () {
-      let s = initialState('test');
-      s = { ...s, view: 'ensemble' as const, focusZone: 'timeline' };
-      const result = tuiReducer(s, { type: 'SELECT_NEXT' });
-      expect(result).to.equal(s);
-    });
-
     it('HYDRATE_SENT_MESSAGES with no new messages returns same reference', function () {
       let s = initialState('test');
       s = { ...s, sentMessages: [{ to: 'a', text: 'hello', timestamp: '2024-01-01T00:00:00Z' }] };
@@ -978,16 +967,6 @@ describe('TUI reducer', function () {
       let s = tuiReducer(initialState('test'), { type: 'SHOW_OVERLAY', overlay: sampleOverlay });
       s = tuiReducer(s, { type: 'HIDE_OVERLAY' });
       expect(s.overlay).to.be.null;
-    });
-
-    it('HIDE_OVERLAY also clears legacy scheduleOverlay and commandOverlay', function () {
-      let s = initialState('test');
-      s = tuiReducer(s, { type: 'SHOW_SCHEDULE_OVERLAY' });
-      expect(s.scheduleOverlay).to.be.true;
-      s = tuiReducer(s, { type: 'HIDE_OVERLAY' });
-      expect(s.overlay).to.be.null;
-      expect(s.scheduleOverlay).to.be.false;
-      expect(s.commandOverlay).to.be.null;
     });
 
     it('OVERLAY_SELECT up wraps from 0 to last item', function () {
