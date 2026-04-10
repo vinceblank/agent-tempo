@@ -216,6 +216,17 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           return;
         }
       }
+      // Gates/stages — Enter shows detail for selected item
+      if ((s.overlay.type === 'gates' || s.overlay.type === 'stages') && key.return) {
+        const selected = s.overlay.items[s.overlay.selectedIndex];
+        if (selected) {
+          const detail = selected.sublabel
+            ? `\n  ${selected.label}\n\n  ${selected.sublabel.split('  ').join('\n  ')}`
+            : `\n  ${selected.label}\n\n  No details available.`;
+          dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: selected.label.slice(0, 40), content: detail });
+        }
+        return;
+      }
       return; // Swallow all other input while overlay is active
     }
 

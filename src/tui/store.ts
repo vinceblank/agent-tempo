@@ -60,6 +60,16 @@ export interface RecruitAnswers {
   host: string;
 }
 
+/**
+ * Wizard Pattern:
+ * - Each wizard has a phase (e.g., 'recruit', 'schedule-create', 'create-ensemble')
+ * - State: step name, answers accumulator, error, submitting flag, pre-wizard phase/chatTarget
+ * - Actions: ENTER_*, *_NEXT_STEP, *_PREV_STEP, *_SUBMIT, *_DONE, EXIT_*
+ * - Components: zero-Yoga-node Text renders, manual key handling in App.tsx useInput
+ * - Pre-wizard state (phase, chatTarget) is saved on enter and restored on exit
+ * - Future: normalize to generic WizardState<TStep, TAnswers> (see #96)
+ */
+
 export interface RecruitState {
   step: RecruitStep;
   answers: RecruitAnswers;

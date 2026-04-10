@@ -477,7 +477,7 @@ async function handleGates(
           type: 'gates',
           title: 'Quality Gates',
           items: allItems,
-          hint: 'esc=close',
+          hint: '\u21B5=detail  esc=close',
         },
       });
     }
@@ -539,7 +539,7 @@ async function handleStages(
           type: 'stages',
           title: 'Stages',
           items: allItems,
-          hint: 'esc=close',
+          hint: '\u21B5=detail  esc=close',
         },
       });
     }
@@ -667,19 +667,29 @@ async function handleSearch(
       : await api.discoverEnsembles();
 
     const allResults: Array<{ ensemble: string; from: string; to: string; text: string; timestamp: string }> = [];
+    const seen = new Set<string>();
 
     for (const ens of ensembles) {
-      const messages = await api.getMessages(ens.name, 100);
-      for (const m of messages) {
+      // Fetch from both Maestro event log (100) and ensemble chat cache (500)
+      const [messages, chatResult] = await Promise.all([
+        api.getMessages(ens.name, 100),
+        api.getEnsembleChat(ens.name, 0, 500).catch(() => ({ messages: [] as any[] })),
+      ]);
+
+      // Merge both sources, dedup by from+to+timestamp prefix
+      const combined = [
+        ...messages.map(m => ({ from: m.from, to: m.to, text: m.text, timestamp: m.timestamp })),
+        ...chatResult.messages.map((m: any) => ({ from: m.from, to: m.to, text: m.text, timestamp: m.timestamp })),
+      ];
+
+      for (const m of combined) {
+        const dedupKey = `${m.from}:${m.to}:${m.text.slice(0, 60)}:${m.timestamp.slice(0, 19)}`;
+        if (seen.has(dedupKey)) continue;
+        seen.add(dedupKey);
+
         const haystack = `${m.from} ${m.to} ${m.text}`.toLowerCase();
         if (haystack.includes(termLower)) {
-          allResults.push({
-            ensemble: ens.name,
-            from: m.from,
-            to: m.to,
-            text: m.text,
-            timestamp: m.timestamp,
-          });
+          allResults.push({ ensemble: ens.name, ...m });
         }
       }
     }
@@ -691,15 +701,15 @@ async function handleSearch(
 
     const lines: string[] = [`\n  ${allResults.length} result${allResults.length !== 1 ? 's' : ''} for "${term}":\n`];
 
-    for (const r of allResults.slice(-20)) {
+    for (const r of allResults.slice(-50)) {
       const time = formatTimestamp(r.timestamp);
       const text = r.text.replace(/\n/g, ' ');
       const truncated = text.length > 70 ? text.slice(0, 67) + '...' : text;
       lines.push(`  ${time}  ${r.from} \u2192 ${r.to}: ${truncated}`);
     }
 
-    if (allResults.length > 20) {
-      lines.push(`\n  ... and ${allResults.length - 20} more. Narrow your search for fewer results.`);
+    if (allResults.length > 50) {
+      lines.push(`\n  ... and ${allResults.length - 50} more. Narrow your search for fewer results.`);
     }
 
     dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: `Search \u00B7 "${term}"`, content: lines.join('\n') });
