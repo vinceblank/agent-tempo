@@ -833,9 +833,11 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages: [], history: [], schedules });
 
           // Skip redundant conversation dispatches when data hasn't changed
+          // Always dispatch on first poll (conversation === null) to exit "Loading messages..."
           const lastChatMsg = chatResult.messages[chatResult.messages.length - 1];
           const newLastTs = lastChatMsg?.timestamp ?? '';
-          if (chatResult.total !== lastChatRef.current.total || newLastTs !== lastChatRef.current.lastTs) {
+          const isFirstLoad = stateRef.current.conversation === null;
+          if (isFirstLoad || chatResult.total !== lastChatRef.current.total || newLastTs !== lastChatRef.current.lastTs) {
             dispatch({ type: 'SET_CONVERSATION', conversation });
             dispatch({ type: 'SET_ENSEMBLE_CHAT', chat: chatResult });
             lastChatRef.current = { total: chatResult.total, lastTs: newLastTs };
