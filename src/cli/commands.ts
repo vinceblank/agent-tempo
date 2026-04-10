@@ -1006,8 +1006,23 @@ export async function up(opts: UpOpts) {
         try {
           const entry = lineupScheduleToEntry(sched);
           const schedulerWfId = schedulerWorkflowId(opts.ensemble);
-          const handle = client.workflow.getHandle(schedulerWfId);
-          await handle.signal(addScheduleSignal, entry);
+
+          // Try to signal existing scheduler; if not running, start it with this schedule as seed
+          try {
+            const handle = client.workflow.getHandle(schedulerWfId);
+            await handle.describe();
+            await handle.signal(addScheduleSignal, entry);
+          } catch {
+            await client.workflow.start('claudeSchedulerWorkflow', {
+              workflowId: schedulerWfId,
+              taskQueue: config.taskQueue,
+              args: [{ ensemble: opts.ensemble, entries: [entry] }],
+              workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+              searchAttributes: {
+                ClaudeTempoEnsemble: [opts.ensemble],
+              },
+            });
+          }
           out.check(sched.name, true, `→ ${sched.target}`);
         } catch (err) {
           out.warn(`Could not create schedule "${sched.name}": ${err}`);
