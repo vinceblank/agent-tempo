@@ -98,10 +98,12 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
   const allConvoMsgs: ConversationMessage[] = [...conversation];
   for (const m of sentMessages) {
     const ts = new Date(m.timestamp).getTime();
+    // Strip @player prefix from sent text for comparison (server doesn't have it)
+    const sentBody = m.text.replace(/^@\S+\s+/, '');
     const alreadyOnServer = conversation.some(c =>
       c.direction === 'out' &&
       Math.abs(new Date(c.timestamp).getTime() - ts) < 30000 &&
-      c.text.slice(0, 60) === m.text.slice(0, 60)
+      c.text.slice(0, 60) === sentBody.slice(0, 60)
     );
     if (!alreadyOnServer) {
       allConvoMsgs.push({ id: `local-${m.timestamp}`, from: 'you', to: m.to, text: m.text, timestamp: m.timestamp, direction: 'out' });

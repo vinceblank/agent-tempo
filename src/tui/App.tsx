@@ -701,7 +701,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         if (atMatch) {
           // @player message → send directly to that player
           const [, targetPlayer, message] = atMatch;
-          dispatch({ type: 'APPEND_SENT_MESSAGE', to: targetPlayer, text: message });
+          dispatch({ type: 'APPEND_SENT_MESSAGE', to: targetPlayer, text: `@${targetPlayer} ${message}` });
           api.sendAsMaestro(s.activeEnsemble!, targetPlayer, message).catch(err => dispatch({
             type: 'COMMIT_STATIC',
             item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to deliver to @${targetPlayer}: ${err}`, timestamp: Date.now() },
