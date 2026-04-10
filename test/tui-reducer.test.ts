@@ -939,4 +939,193 @@ describe('TUI reducer', function () {
       expect(s.playersLoaded).to.be.false;
     });
   });
+
+  // ─────────────────────────────────────────────
+  // Overlay actions
+  // ─────────────────────────────────────────────
+
+  describe('Overlay actions', function () {
+    const sampleOverlay = {
+      type: 'schedules',
+      title: 'Schedules',
+      items: [
+        { id: 's1', label: 'Daily report' },
+        { id: 's2', label: 'Weekly sync', sublabel: 'cron: 0 9 * * 1' },
+        { id: 's3', label: 'Hourly ping' },
+      ],
+      hint: 'n=new  d=delete  esc=close',
+    };
+
+    it('SHOW_OVERLAY sets overlay with selectedIndex=0', function () {
+      const s = tuiReducer(initialState('test'), { type: 'SHOW_OVERLAY', overlay: sampleOverlay });
+      expect(s.overlay).to.not.be.null;
+      expect(s.overlay!.type).to.equal('schedules');
+      expect(s.overlay!.title).to.equal('Schedules');
+      expect(s.overlay!.items).to.have.length(3);
+      expect(s.overlay!.selectedIndex).to.equal(0);
+      expect(s.overlay!.hint).to.equal('n=new  d=delete  esc=close');
+    });
+
+    it('SHOW_OVERLAY resets selectedIndex to 0', function () {
+      let s = tuiReducer(initialState('test'), { type: 'SHOW_OVERLAY', overlay: sampleOverlay });
+      s = tuiReducer(s, { type: 'OVERLAY_SELECT', direction: 'down' });
+      expect(s.overlay!.selectedIndex).to.equal(1);
+      s = tuiReducer(s, { type: 'SHOW_OVERLAY', overlay: sampleOverlay });
+      expect(s.overlay!.selectedIndex).to.equal(0);
+    });
+
+    it('HIDE_OVERLAY clears overlay to null', function () {
+      let s = tuiReducer(initialState('test'), { type: 'SHOW_OVERLAY', overlay: sampleOverlay });
+      s = tuiReducer(s, { type: 'HIDE_OVERLAY' });
+      expect(s.overlay).to.be.null;
+    });
+
+    it('HIDE_OVERLAY also clears legacy scheduleOverlay and commandOverlay', function () {
+      let s = initialState('test');
+      s = tuiReducer(s, { type: 'SHOW_SCHEDULE_OVERLAY' });
+      expect(s.scheduleOverlay).to.be.true;
+      s = tuiReducer(s, { type: 'HIDE_OVERLAY' });
+      expect(s.overlay).to.be.null;
+      expect(s.scheduleOverlay).to.be.false;
+      expect(s.commandOverlay).to.be.null;
+    });
+
+    it('OVERLAY_SELECT up wraps from 0 to last item', function () {
+      let s = tuiReducer(initialState('test'), { type: 'SHOW_OVERLAY', overlay: sampleOverlay });
+      expect(s.overlay!.selectedIndex).to.equal(0);
+      s = tuiReducer(s, { type: 'OVERLAY_SELECT', direction: 'up' });
+      expect(s.overlay!.selectedIndex).to.equal(2); // wraps to last
+    });
+
+    it('OVERLAY_SELECT down wraps from last to 0', function () {
+      let s = tuiReducer(initialState('test'), { type: 'SHOW_OVERLAY', overlay: sampleOverlay });
+      s = tuiReducer(s, { type: 'OVERLAY_SELECT', direction: 'down' });
+      s = tuiReducer(s, { type: 'OVERLAY_SELECT', direction: 'down' });
+      expect(s.overlay!.selectedIndex).to.equal(2);
+      s = tuiReducer(s, { type: 'OVERLAY_SELECT', direction: 'down' });
+      expect(s.overlay!.selectedIndex).to.equal(0); // wraps to first
+    });
+
+    it('OVERLAY_SELECT identity when single item', function () {
+      const singleItem = { ...sampleOverlay, items: [{ id: 'only', label: 'Only one' }] };
+      let s = tuiReducer(initialState('test'), { type: 'SHOW_OVERLAY', overlay: singleItem });
+      const before = s;
+      s = tuiReducer(s, { type: 'OVERLAY_SELECT', direction: 'down' });
+      expect(s).to.equal(before); // same reference — no change
+    });
+
+    it('SHOW_COMMAND_OVERLAY maps to overlay with single-item array', function () {
+      const s = tuiReducer(initialState('test'), { type: 'SHOW_COMMAND_OVERLAY', title: 'Help', content: 'Commands...' });
+      expect(s.overlay).to.not.be.null;
+      expect(s.overlay!.type).to.equal('command');
+      expect(s.overlay!.title).to.equal('Help');
+      expect(s.overlay!.items).to.have.length(1);
+      expect(s.overlay!.items[0].id).to.equal('_');
+      expect(s.overlay!.items[0].label).to.equal('Commands...');
+      expect(s.overlay!.hint).to.include('esc');
+    });
+  });
+
+  // ─────────────────────────────────────────────
+  // APPEND_SENT_MESSAGE
+  // ─────────────────────────────────────────────
+
+  describe('APPEND_SENT_MESSAGE', function () {
+    it('appends with correct to/text and ISO timestamp', function () {
+      const s = tuiReducer(initialState('test'), { type: 'APPEND_SENT_MESSAGE', to: 'player1', text: 'hello' });
+      expect(s.sentMessages).to.have.length(1);
+      expect(s.sentMessages[0].to).to.equal('player1');
+      expect(s.sentMessages[0].text).to.equal('hello');
+      // Timestamp should be a valid ISO string
+      expect(new Date(s.sentMessages[0].timestamp).toISOString()).to.equal(s.sentMessages[0].timestamp);
+    });
+
+    it('caps at 200 messages (oldest removed)', function () {
+      let s = initialState('test');
+      for (let i = 0; i < 210; i++) {
+        s = tuiReducer(s, { type: 'APPEND_SENT_MESSAGE', to: 'p', text: `msg-${i}` });
+      }
+      expect(s.sentMessages).to.have.length(200);
+      expect(s.sentMessages[0].text).to.equal('msg-10'); // first 10 trimmed
+      expect(s.sentMessages[199].text).to.equal('msg-209');
+    });
+
+    it('creates new reference', function () {
+      const s0 = initialState('test');
+      const s1 = tuiReducer(s0, { type: 'APPEND_SENT_MESSAGE', to: 'p', text: 'hi' });
+      expect(s1).to.not.equal(s0);
+      expect(s1.sentMessages).to.not.equal(s0.sentMessages);
+    });
+  });
+
+  // ─────────────────────────────────────────────
+  // HYDRATE_SENT_MESSAGES
+  // ─────────────────────────────────────────────
+
+  describe('HYDRATE_SENT_MESSAGES', function () {
+    it('merges new messages without duplicating existing', function () {
+      let s = tuiReducer(initialState('test'), { type: 'APPEND_SENT_MESSAGE', to: 'p', text: 'existing' });
+      const ts = s.sentMessages[0].timestamp;
+      s = tuiReducer(s, {
+        type: 'HYDRATE_SENT_MESSAGES',
+        messages: [
+          { to: 'p', text: 'existing', timestamp: ts },  // duplicate
+          { to: 'p', text: 'new-msg', timestamp: new Date().toISOString() },
+        ],
+      });
+      expect(s.sentMessages).to.have.length(2);
+      expect(s.sentMessages[1].text).to.equal('new-msg');
+    });
+
+    it('empty hydration returns same reference', function () {
+      const s0 = tuiReducer(initialState('test'), { type: 'APPEND_SENT_MESSAGE', to: 'p', text: 'hi' });
+      const ts = s0.sentMessages[0].timestamp;
+      const s1 = tuiReducer(s0, {
+        type: 'HYDRATE_SENT_MESSAGES',
+        messages: [{ to: 'p', text: 'hi', timestamp: ts }], // all dupes
+      });
+      expect(s1).to.equal(s0); // same reference — no change
+    });
+  });
+
+  // ─────────────────────────────────────────────
+  // RECRUIT_SUBMIT / RECRUIT_DONE / EXIT_RECRUIT
+  // ─────────────────────────────────────────────
+
+  describe('RECRUIT_SUBMIT / RECRUIT_DONE / EXIT_RECRUIT', function () {
+    it('RECRUIT_SUBMIT sets submitting=true', function () {
+      let s = tuiReducer(initialState('test'), { type: 'ENTER_RECRUIT' });
+      s = tuiReducer(s, { type: 'RECRUIT_SUBMIT' });
+      expect(s.recruitState!.submitting).to.be.true;
+    });
+
+    it('RECRUIT_DONE sets step=done, clears submitting, stores error', function () {
+      let s = tuiReducer(initialState('test'), { type: 'ENTER_RECRUIT' });
+      s = tuiReducer(s, { type: 'RECRUIT_SUBMIT' });
+      s = tuiReducer(s, { type: 'RECRUIT_DONE', error: 'Name taken' });
+      expect(s.recruitState!.step).to.equal('done');
+      expect(s.recruitState!.submitting).to.be.false;
+      expect(s.recruitState!.error).to.equal('Name taken');
+    });
+
+    it('RECRUIT_DONE with no error has error undefined', function () {
+      let s = tuiReducer(initialState('test'), { type: 'ENTER_RECRUIT' });
+      s = tuiReducer(s, { type: 'RECRUIT_SUBMIT' });
+      s = tuiReducer(s, { type: 'RECRUIT_DONE' });
+      expect(s.recruitState!.step).to.equal('done');
+      expect(s.recruitState!.error).to.be.undefined;
+    });
+
+    it('EXIT_RECRUIT restores preRecruitPhase and preRecruitChatTarget', function () {
+      let s = initialState('test');
+      s = { ...s, phase: 'chat' as any, chatTarget: 'soloist' };
+      s = tuiReducer(s, { type: 'ENTER_RECRUIT' });
+      expect(s.recruitState!.preRecruitPhase).to.equal('chat');
+      expect(s.recruitState!.preRecruitChatTarget).to.equal('soloist');
+      s = tuiReducer(s, { type: 'EXIT_RECRUIT' });
+      expect(s.phase).to.equal('chat');
+      expect(s.chatTarget).to.equal('soloist');
+      expect(s.recruitState).to.be.undefined;
+    });
+  });
 });

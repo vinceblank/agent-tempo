@@ -962,12 +962,12 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     dispatch({ type: 'CREATE_ENSEMBLE_SUBMIT' });
     const { name, workDir, lineup } = wizState.answers;
     try {
-      const { exec } = require('child_process') as typeof import('child_process');
-      const cmd = lineup
-        ? `claude-tempo up ${name} --lineup ${lineup}`
-        : `claude-tempo up ${name}`;
+      const { execFile } = require('child_process') as typeof import('child_process');
+      const args = lineup
+        ? ['up', name, '--lineup', lineup]
+        : ['up', name];
       await new Promise<void>((resolve, reject) => {
-        exec(cmd, { cwd: workDir, timeout: 60000 }, (err: any, _stdout: string, stderr: string) => {
+        execFile('claude-tempo', args, { cwd: workDir, timeout: 60000 }, (err: any, _stdout: string, stderr: string) => {
           if (err) reject(new Error(stderr?.trim() || err.message || 'Unknown error'));
           else resolve();
         });

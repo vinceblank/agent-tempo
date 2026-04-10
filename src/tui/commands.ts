@@ -3,7 +3,7 @@
  * Parses user input into structured commands and provides handler
  * implementations for each command.
  */
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import type { TempoClient } from './client';
 import type { TuiAction, StaticItem } from './store';
 import type { Message, SentMessage } from '../types';
@@ -724,7 +724,7 @@ async function handleRecruitConductor(
   commitStatic(dispatch, 'info', '\u2026 Recruiting conductor (tempo-conductor)...');
 
   // Spawn the conductor directly via CLI — no conductor exists yet to receive commands
-  exec(`claude-tempo conduct ${ensemble}`, { timeout: 30000 }, (execErr: any) => {
+  execFile('claude-tempo', ['conduct', ensemble], { timeout: 30000 }, (execErr: any) => {
     if (execErr) {
       commitStatic(dispatch, 'error', `\u2717 Failed to recruit conductor: ${execErr.message || execErr}`);
     } else {
