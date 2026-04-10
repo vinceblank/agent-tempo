@@ -303,8 +303,10 @@ export function spawnInTerminal(
       .join('\n');
     const lines = [
       '#!/bin/bash',
-      profileSource,
+      // Env vars BEFORE profile sourcing — profiles that call `exec` (e.g. oh-my-zsh)
+      // would otherwise lose the exports and the claude command (#98)
       envExports,
+      profileSource,
       `cd ${shellQuote(workDir)}`,
       `${shellQuote(claudeBin)} ${claudeArgs.map(a => shellQuote(a)).join(' ')}`,
     ];
