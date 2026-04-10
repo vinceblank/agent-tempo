@@ -441,10 +441,23 @@ const SEARCH_ATTRIBUTES = [
   { name: 'ClaudeTempoPlayerType', type: 'Keyword' },
 ];
 
-function isTemporalReachable(config: { temporalAddress: string; temporalApiKey?: string; temporalTlsCertPath?: string; temporalTlsKeyPath?: string }): Promise<boolean> {
-  return createTemporalConnection(config as any)
-    .then(conn => { conn.close(); return true; })
-    .catch(() => false);
+async function isTemporalReachable(config: { temporalAddress: string; temporalNamespace?: string; temporalApiKey?: string; temporalTlsCertPath?: string; temporalTlsKeyPath?: string }): Promise<boolean> {
+  try {
+    const conn = await createTemporalConnection(config as any);
+    try {
+      // Verify namespace is ready — a gRPC connection alone doesn't guarantee the server can serve requests
+      const client = new Client({ connection: conn, namespace: config.temporalNamespace || 'default' });
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _ of client.workflow.list({ query: 'WorkflowId = "__readiness_probe__"' })) {
+        break;
+      }
+    } finally {
+      await conn.close();
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function temporalCliExists(): boolean {
