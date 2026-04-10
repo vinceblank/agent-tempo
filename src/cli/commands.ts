@@ -896,7 +896,7 @@ export async function up(opts: UpOpts) {
       out.log(`Recruiting ${lineup.players.length} player${lineup.players.length !== 1 ? 's' : ''} from lineup...`);
 
       for (const player of lineup.players) {
-        const playerAgent: AgentType = player.agent === 'copilot' ? 'copilot' : 'claude';
+        const playerAgent: AgentType = player.agent === 'copilot' ? 'copilot' : (player.agent === 'claude' ? 'claude' : opts.agent);
         const playerWorkDir = player.workDir || process.cwd();
         const playerTypeName = player.type;
         const resolvedPlayerType = playerTypeName ? resolveAgentType(playerTypeName) : null;
