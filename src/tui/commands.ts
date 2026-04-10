@@ -735,7 +735,8 @@ async function handleRecruitConductor(
   commitStatic(dispatch, 'info', '\u2026 Recruiting conductor (tempo-conductor)...');
 
   // Spawn the conductor directly via CLI — no conductor exists yet to receive commands
-  execFile('claude-tempo', ['conduct', ensemble], { timeout: 30000 }, (execErr: any) => {
+  // shell: true resolves .cmd wrappers on Windows
+  execFile('claude-tempo', ['conduct', ensemble], { timeout: 30000, shell: true }, (execErr: any) => {
     if (execErr) {
       commitStatic(dispatch, 'error', `\u2717 Failed to recruit conductor: ${execErr.message || execErr}`);
     } else {

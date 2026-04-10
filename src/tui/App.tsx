@@ -1002,7 +1002,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         ? ['up', name, '--lineup', lineup]
         : ['up', name];
       await new Promise<void>((resolve, reject) => {
-        execFile('claude-tempo', args, { cwd: workDir, timeout: 60000 }, (err: Error | null, _stdout: string, stderr: string) => {
+        execFile('claude-tempo', args, { cwd: workDir, timeout: 60000, shell: true }, (err: Error | null, _stdout: string, stderr: string) => {
           if (err) reject(new Error(stderr?.trim() || err.message || 'Unknown error'));
           else resolve();
         });
