@@ -104,7 +104,7 @@ export function createTempoClient(client: Client): TempoClient {
       try {
         const h = handle(globalMaestroId);
         const byEnsemble: Record<string, MaestroPlayerInfo[]> = await h.query('maestroPlayersByEnsemble');
-        return Object.entries(byEnsemble).map(([name, players]) => {
+        const results = Object.entries(byEnsemble).map(([name, players]) => {
           const conductor = players.find(p => p.isConductor);
           return {
             name,
@@ -113,6 +113,9 @@ export function createTempoClient(client: Client): TempoClient {
             conductorStatus: conductor?.status,
           };
         });
+        // Only trust Maestro if it has discovered ensembles; fall through to
+        // Strategy 2 when empty — the Maestro may not have refreshed yet.
+        if (results.length > 0) return results;
       } catch {
         // Global Maestro not available — fall through
       }
