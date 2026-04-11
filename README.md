@@ -862,18 +862,6 @@ The TUI has a persistent layout:
 
 In the ensemble view, bare text routes to the conductor; prefix with `@player` to message a specific player directly (e.g. `@frontend check your tests`). If no conductor is running, a prompt suggests using `@player` or `/recruit`. Press `Ctrl+C` to exit at any time.
 
-## Maestro Dashboard
-
-The **Maestro** workflow runs alongside the conductor, monitoring ensemble state in real time — tracking player joins/leaves, status changes, and part updates. It also accepts commands from external sources for relay to the conductor.
-
-The [Maestro dashboard](https://github.com/vinceblank/maestro) is a web UI that connects to this workflow and provides a live view of your ensemble:
-
-- Player list with status, part, host, and git branch
-- Event log of recent ensemble activity
-- Command input to interact with the conductor
-
-The Maestro workflow starts automatically with the conductor and requires no additional setup. Connect the dashboard to your Temporal server's address and namespace to get started.
-
 ## Worker Daemon
 
 The **worker daemon** is a standalone background process that runs Temporal workers — it replaces the per-session workers from earlier versions. Sessions are now pure MCP clients.

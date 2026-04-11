@@ -155,7 +155,7 @@ Signal sent **to** a `claudeGlobalMaestroWorkflow` instance (`claude-maestro-glo
 
 | Signal Name | Payload | Description |
 |-------------|---------|-------------|
-| `maestroNotifyMessage` | `MaestroRelayMessage` | Push-notify the global Maestro of a relayed message. Used for Phase 2 push-based dashboard updates. |
+| `maestroNotifyMessage` | `MaestroRelayMessage` | Push-notify the global Maestro of a relayed message. Used for push-based message notifications. |
 
 ---
 

@@ -1,10 +1,6 @@
-# TUI Dashboard and Maestro Web Dashboard
+# Terminal UI
 
-## TUI Dashboard
-
-The built-in terminal UI provides a chat-focused shell for managing your ensemble without leaving the terminal.
-
-### Launching
+## Launching
 
 ```bash
 # Multi-ensemble mode — lists all running ensembles
@@ -14,7 +10,7 @@ claude-tempo tui
 claude-tempo tui --ensemble my-ensemble
 ```
 
-### Interface
+## Interface
 
 The TUI has a persistent layout:
 
@@ -25,7 +21,30 @@ The TUI has a persistent layout:
 - **StatusBar** (pinned bottom) — player count, schedule count, and connection health
 - **CommandPalette** — autocomplete dropdown appears when typing `/`, with parameter hints for commands that accept player names or subcommands
 
-### Slash Commands
+## Messaging
+
+Bare text in the ensemble view routes to the conductor by default. Prefix with `@player` to address a specific player directly:
+
+```
+@alice can you review the PR?
+@frontend check your tests
+```
+
+The command palette provides autocomplete for player names — press Tab or continue typing after `@` to narrow the list. If no conductor is running, bare text shows a prompt to use `@player` or `/recruit`.
+
+Use `/player <name>` to open a scrollable message history for any player.
+
+## Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Submit message / confirm selection |
+| `↑` / `↓` | Navigate overlay items; scroll command history |
+| `Tab` | Autocomplete slash commands and `@player` names |
+| `Esc` | Dismiss overlays and pickers; go back to previous view |
+| `Ctrl+C` | Exit the TUI |
+
+## Slash Commands
 
 | Command | Description |
 |---|---|
@@ -49,28 +68,16 @@ The TUI has a persistent layout:
 | `/help [command]` | Show all commands; pass a command name for detailed usage (e.g. `/help recruit`) |
 | `/quit` | Exit the TUI |
 
-Bare text (no `/` prefix) routes to the conductor by default. Prefix with `@player` to address a specific player: `@alice can you review the PR?`. Use `/player <name>` to open a scrollable message history for any player. Press `Ctrl+C` to exit at any time.
+Interactive overlays (`/schedule`, `/gates`, `/stages`, `/worktree`) support arrow-key navigation and action keys shown in the overlay hint bar (e.g. `n=new  d=delete  esc=close`).
 
-## Maestro Web Dashboard
+## How the TUI Gets Data
 
-The **Maestro** workflow runs alongside the conductor, monitoring ensemble state in real time — tracking player joins/leaves, status changes, and part updates. It also accepts commands from external sources for relay to the conductor.
+The TUI queries two background Temporal workflows for its data — no separate server process is needed:
 
-The [Maestro dashboard](https://github.com/vinceblank/maestro) is a web UI that connects to this workflow and provides a live view of your ensemble:
+- **Per-ensemble Maestro** (`claude-maestro-{ensemble}`) — the primary data source. Maintains a player snapshot (refreshed periodically), a ring-buffer event log (max 200 entries), and an aggregated ensemble chat cache (max 500 entries, refreshed every ~10s via `fetchEnsembleChat`). The TUI polls the `maestroEnsembleChat` query to populate the conversation stream.
+- **Global Maestro** (`claude-maestro-global`) — spans all ensembles. Used by the TUI home screen to discover running ensembles and aggregate players across them. Exposes on-demand player/conductor message history via `maestroFetchPlayerMessages` and `maestroFetchConductorHistory` updates.
 
-- Player list with status, part, host, and git branch
-- Event log of recent ensemble activity
-- Command input to interact with the conductor
-
-The Maestro workflow starts automatically with the conductor and requires no additional setup. Connect the dashboard to your Temporal server's address and namespace to get started.
-
-### How Maestro Works
-
-Two Maestro workflow variants exist:
-
-- **Per-ensemble** (`claude-maestro-{ensemble}`) — monitors a single ensemble, maintains a player snapshot, ring-buffer event log (max 200 entries), and an aggregated ensemble chat cache (max 500 entries, refreshed every ~10s via `fetchEnsembleChat`). The chat cache merges maestro + conductor traffic and is served via the `maestroEnsembleChat` query. Also queues commands for relay to the conductor via `maestroSendCommand`
-- **Global** (`claude-maestro-global`) — spans all ensembles, aggregates players by ensemble, maintains a cross-ensemble message ring buffer (max 500 entries), and exposes on-demand player/conductor history via `maestroFetchPlayerMessages` and `maestroFetchConductorHistory` updates
-
-Both are implemented in `src/workflows/maestro.ts`. Signal/query/update names are documented in [WIRE-PROTOCOL.md](WIRE-PROTOCOL.md).
+The TUI's API layer (`src/tui/client.ts`) wraps these queries behind a `TempoClient` interface, with graceful fallback from Global → per-ensemble Maestro → direct workflow list queries. Both workflows start automatically with the conductor and require no additional setup. Signal/query/update names are documented in [WIRE-PROTOCOL.md](WIRE-PROTOCOL.md).
 
 ## Related
 
