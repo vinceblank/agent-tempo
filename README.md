@@ -86,6 +86,21 @@ Stops the daemon, installs the latest version, and restarts automatically. To up
 claude-tempo upgrade 0.22.0
 ```
 
+## Stopping & Tear Down
+
+```bash
+# Stop all sessions in an ensemble
+claude-tempo stop my-ensemble --all
+
+# Tear down an ensemble (stops all sessions + scheduler)
+claude-tempo down my-ensemble
+
+# Stop the background daemon
+claude-tempo daemon stop
+```
+
+📖 [Full CLI reference → docs/cli.md](docs/cli.md)
+
 ---
 
 ## Core Concepts
