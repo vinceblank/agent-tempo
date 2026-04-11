@@ -7,20 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [0.22.0] - 2026-04-11
+
 ### Added
 
-- Ensemble chat feed — aggregated maestro + conductor traffic visible in the main TUI view. Backed by the new `maestroEnsembleChat` per-ensemble Maestro query (paginated, max 500 cached entries, refreshed every ~10s via `fetchEnsembleChat` activity). Prefix bare text with `@player` to address a specific player directly from the main view (#58)
-- `/help <command>` — per-command help overlay: `/help recruit` (or `/help /recruit`) shows the usage and description for a specific slash command (#58)
-- `NO_COLOR` support — set `NO_COLOR=1` to disable all color output in both the TUI and CLI, following the https://no-color.org/ convention (#58)
-- Minimum terminal size check — TUI exits with code 1 at launch if the terminal is below 80×24, with an explanatory message; soft in-app warning renders at 60×15 (#58)
-- 36 new TUI tests (591 total) covering command handling, overlay dispatch, ensemble chat, and layout edge cases (#58)
+- **Ensemble chat feed** — aggregated maestro + conductor traffic as the default TUI view. Backed by the new `maestroEnsembleChat` per-ensemble Maestro query with delta-based caching (max 500 entries, refreshed every ~10s via `fetchEnsembleChat` activity). New wire protocol types: `EnsembleChatMessage`, `EnsembleChatQuery`, `EnsembleChatResult`, `ChatHighWater` (#58)
+- **`@player` messaging** — type `@player message` in the ensemble view to address a player directly, with inline autocomplete palette (#58)
+- **Copilot bridge in TUI** — `defaultAgent` config threaded through TUI; recruit wizard defaults to the configured agent type (claude/copilot) (#58)
+- **Interactive overlays** — `/schedule`, `/gates`, `/stages`, `/worktree` overlays now support arrow-key navigation and action keys (n=new, d=delete, esc=close) (#58)
+- **`/worktree create/remove`** — new subcommands route worktree provisioning requests to the conductor (#58)
+- **`/encore` player picker** — filters the interactive picker to stale players only (#58)
+- **`/help <command>`** — pass a command name to `/help` for a per-command usage overlay; e.g. `/help recruit` or `/help /recruit` (#58)
+- **`NO_COLOR` support** — set `NO_COLOR=1` to disable all color output in the TUI and CLI, following https://no-color.org/ (#58)
+- **Minimum terminal size check** — TUI exits with code 1 at launch if the terminal is below 80×24; soft in-app warning renders when resized below 60×15 (#58)
+- 555 passing tests (#58)
+
+### Changed
+
+- Viewport height estimation uses `wordWrap()` — same function for both estimate and render, eliminating layout drift between static scrollback and live area (#58)
+- Poll cycle deduplication skips redundant state dispatches when nothing has changed (#58)
 
 ### Fixed
 
-- TUI message layout: messages are top-aligned with a reserved 1-line gap above the footer, preventing content from bleeding into the prompt area. Static and live message areas now use matching formatting (#58)
-- `/schedule` command consolidates schedule deletion — `/schedule delete <name>` replaces the previously documented `/unschedule` alias, which was never registered (#58)
+- `/gates` and `/stages` now scoped to the active ensemble (were incorrectly querying all ensembles) (#58)
+- `/encore` works without a conductor via direct API — no longer requires a conductor command relay (#58)
+- `/recruit-conductor` uses `claude-tempo conduct` directly, bypassing the broken conductor-command relay path (#58)
+- Direct (maestro/conductor) messages shown in full; third-party messages truncated at 500 chars. Previously all messages were truncated (#58)
+- `@player` message dedup: sent text now matches server-returned text, eliminating duplicate echoes (#58)
+- TUI message layout: top-aligned with a reserved 1-line gap above the footer; static and live areas use matching word-wrap and indentation (#58)
+- `/schedule delete <name>` is the canonical schedule cancellation path — the previously documented `/unschedule` alias was never registered (#58)
 - `exec()` replaced with `execFile()` in TUI ensemble creation to prevent shell injection (#58)
 - TUI exits with code 1 on Temporal connection error (previously exited cleanly, masking failures) (#58)
+
+### Removed
+
+- Dead `/cue` slash command handler (use bare text or `@player` prefix instead)
+- Redundant command aliases: `/home`, `/maestro`, `/exit`, `/dashboard`, `/unschedule`
 
 ---
 
