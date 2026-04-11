@@ -384,7 +384,6 @@ async function main() {
 
       processing = true;
       const ids = messages.map((m) => m.id);
-      await handle.signal('markDelivered', ids);
 
       // Format messages into a single prompt, appending ack instruction for Maestro messages
       const prompt = messages
@@ -407,6 +406,9 @@ async function main() {
 
       log(`sendAndWait completed in ${elapsed}ms`);
       log(`Response: ${JSON.stringify(result)?.substring(0, 500)}`);
+
+      // Mark delivered only after successful send — failed messages stay in pending queue for retry
+      await handle.signal('markDelivered', ids);
 
       // Success — reset failure tracking
       consecutiveFailures = 0;
