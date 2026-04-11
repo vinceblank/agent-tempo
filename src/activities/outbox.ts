@@ -261,6 +261,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             temporalTlsKeyPath,
             isConductor,
             workDir,
+            sessionId,
           });
           log(`Spawned copilot-bridge (pid ${pid}) in ${workDir} as "${targetName}"`);
         } else {

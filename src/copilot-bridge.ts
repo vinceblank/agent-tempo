@@ -16,6 +16,7 @@
  *   CLAUDE_TEMPO_PLAYER_NAME  — player ID for workflow registration (set by spawner for deterministic workflow IDs)
  *   COPILOT_BRIDGE_NAME       — player name for set_name (optional)
  *   COPILOT_BRIDGE_MODEL      — model to use (optional)
+ *   COPILOT_BRIDGE_SESSION_ID — deterministic session ID for resumable sessions (optional)
  *   GITHUB_TOKEN              — GitHub auth token (optional, uses logged-in user by default)
  */
 
@@ -86,6 +87,7 @@ async function main() {
   const config = getConfig();
   const playerName = process.env[ENV.BRIDGE_NAME];
   const model = process.env[ENV.BRIDGE_MODEL];
+  const copilotSessionId = process.env[ENV.BRIDGE_SESSION_ID] || `tempo-${config.ensemble}-${playerName || 'unknown'}-${Date.now()}`;
   const workDir = process.cwd();
 
   log(`Starting Copilot bridge in ${workDir} (ensemble: ${config.ensemble})`);
@@ -142,6 +144,7 @@ async function main() {
   });
 
   const sessionConfig: Parameters<typeof copilotClient.createSession>[0] = {
+    sessionId: copilotSessionId,
     // approveAll is intentional: Copilot bridge sessions run headless with no
     // interactive terminal, so there is no way to prompt for permission approval.
     // All tool calls are auto-approved by design — the bridge operator accepts
@@ -275,6 +278,11 @@ async function main() {
 
   log(`Workflow ready: ${expectedWorkflowId}`);
 
+  // Store sessionId in workflow metadata for future encore/resume
+  try {
+    await handle.signal('updateMetadata', { sessionId: copilotSessionId });
+  } catch { /* workflow may not be ready yet */ }
+
   // If a name was requested, send the set_name instruction
   if (playerName) {
     log(`Sending set_name instruction for "${playerName}"...`);
@@ -335,17 +343,30 @@ async function main() {
       log(`ERROR: Exceeded max session recreations (${MAX_SESSION_RECREATIONS}). Giving up.`);
       return false;
     }
-    log(`Attempting session recreation (${sessionRecreations}/${MAX_SESSION_RECREATIONS})...`);
+    log(`Attempting session recovery (${sessionRecreations}/${MAX_SESSION_RECREATIONS})...`);
     try {
       await session.disconnect().catch(() => {});
-      session = await createSessionWithTimeout(copilotClient, sessionConfig);
-      attachEventLogger(session);
-      sessionAlive = true;
-      consecutiveFailures = 0;
-      log(`Session recreated successfully: ${session.sessionId}`);
-      return true;
+
+      // Try resumeSession first to preserve conversation history
+      try {
+        const { sessionId: _discard, ...resumeConfig } = sessionConfig as any;
+        session = await copilotClient.resumeSession(copilotSessionId, resumeConfig);
+        attachEventLogger(session);
+        sessionAlive = true;
+        consecutiveFailures = 0;
+        log(`Session resumed successfully: ${session.sessionId}`);
+        return true;
+      } catch (resumeErr: any) {
+        log(`resumeSession failed (${resumeErr?.message}), falling back to createSession`);
+        session = await createSessionWithTimeout(copilotClient, sessionConfig);
+        attachEventLogger(session);
+        sessionAlive = true;
+        consecutiveFailures = 0;
+        log(`Session recreated (fresh) successfully: ${session.sessionId}`);
+        return true;
+      }
     } catch (err: any) {
-      log(`Session recreation failed: ${err?.message}`);
+      log(`Session recovery failed: ${err?.message}`);
       return false;
     }
   }

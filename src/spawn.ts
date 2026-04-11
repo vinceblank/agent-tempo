@@ -415,6 +415,8 @@ export interface CopilotBridgeOpts {
   workDir: string;
   /** Directory for log and PID files. Defaults to `logs/` inside workDir. */
   logDir?: string;
+  /** Copilot SDK session ID for resumable sessions. */
+  sessionId?: string;
 }
 
 export interface CopilotBridgeResult {
@@ -468,6 +470,7 @@ export function spawnCopilotBridge(opts: CopilotBridgeOpts): CopilotBridgeResult
         ...(opts.temporalApiKey ? { [ENV.TEMPORAL_API_KEY]: opts.temporalApiKey } : {}),
         ...(opts.temporalTlsCertPath ? { [ENV.TEMPORAL_TLS_CERT_PATH]: opts.temporalTlsCertPath } : {}),
         ...(opts.temporalTlsKeyPath ? { [ENV.TEMPORAL_TLS_KEY_PATH]: opts.temporalTlsKeyPath } : {}),
+        ...(opts.sessionId ? { [ENV.BRIDGE_SESSION_ID]: opts.sessionId } : {}),
       },
     });
     child.unref();
