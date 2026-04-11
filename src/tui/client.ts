@@ -237,7 +237,7 @@ export function createTempoClient(client: Client): TempoClient {
         const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND ClaudeTempoPlayerId = "${sanitizeQueryValue(playerId)}"`;
         for await (const wf of client.workflow.list({ query })) {
           const h = handle(wf.workflowId);
-          return await h.query('metadata');
+          return await h.query('getMetadata');
         }
         return null;
       } catch {
