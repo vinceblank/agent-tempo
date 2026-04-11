@@ -16,23 +16,27 @@
 
 Multiple Claude Code sessions discover each other, exchange messages in real time, and coordinate work — across machines, not just localhost.
 
-Each Claude Code session registers as a **player** in Temporal. Players discover each other with `ensemble`, exchange messages with `cue`, and coordinate work across machines. An optional **conductor** orchestrates the group and connects to external interfaces like Discord, Telegram, or a dashboard.
+Each session registers as a **player** in Temporal. Players discover each other with `ensemble`, send messages with `cue`, and coordinate via a **conductor** that connects to external interfaces like Discord, Telegram, or the built-in TUI.
+
+📖 **[Full documentation](docs/README.md)**
 
 ## Why claude-tempo?
 
-- **Crash-safe durability** — Sessions are Temporal workflows. Crashes, restarts, and network blips don't lose messages or drop coordination state. Dead sessions are detected automatically and the conductor is notified.
+- **Crash-safe durability** — Sessions are Temporal workflows. Crashes, restarts, and network blips don't lose messages or drop coordination state.
 - **Instant signaling** — Temporal signals deliver messages with no polling. Players receive cues the moment they're sent, regardless of which machine they're on.
-- **Built-in scheduling** — Set up one-shot or recurring message schedules without any external infrastructure. Fan-out to all players at once for periodic status checks.
-- **Extensible agent types** — Define reusable player roles as `.md` files. Ship lineups that assemble entire teams in one command. Mix Claude Code and Copilot CLI sessions in the same ensemble.
+- **Built-in scheduling** — One-shot and recurring message schedules without any external infrastructure.
+- **Extensible agent types** — Define reusable player roles as `.md` files. Ship lineups that assemble entire teams in one command.
 
 ## Features
 
 | | |
 |---|---|
-| 🔁 **Ensemble Lineups** | YAML configs that define a full team — players, instructions, schedules — and recruit them all in one command |
-| ⏰ **Scheduling** | One-shot and recurring message schedules with fan-out, bounds, and failure notifications |
-| 🎭 **Player Types** | Reusable agent definitions (composer, soloist, critic, etc.) with shipped examples and three-tier lookup |
+| 🔁 **Ensemble Lineups** | YAML configs that define a full team and recruit them all in one command |
+| ⏰ **Scheduling** | One-shot and recurring message schedules with fan-out and failure notifications |
+| 🎭 **Player Types** | Reusable agent definitions with 8 shipped types and three-tier lookup |
+| 🖥️ **Terminal UI** | Chat-focused TUI with slash commands, overlays, and interactive wizards |
 | 🌐 **Cross-machine** | Any session that can reach your Temporal server can join the ensemble |
+| 🤖 **Copilot bridge** | Mix Claude Code and GitHub Copilot CLI sessions in the same ensemble |
 
 ## Installation
 
@@ -40,13 +44,9 @@ Each Claude Code session registers as a **player** in Temporal. Players discover
 npm install -g claude-tempo
 ```
 
-### Prerequisites
+**Prerequisites**: [Node.js](https://nodejs.org/) 18+, [Temporal CLI](https://docs.temporal.io/cli), [Claude Code](https://claude.ai/code)
 
-- [Node.js](https://nodejs.org/) 18+
-- [Temporal CLI](https://docs.temporal.io/cli) (for local dev server)
-- [Claude Code](https://claude.ai/code)
-
-## Quick start
+## Quick Start
 
 One command handles everything:
 
@@ -55,44 +55,23 @@ cd your-project
 claude-tempo up
 ```
 
-This will:
-
-1. Check that Temporal CLI is installed
-2. Start the Temporal dev server (data persists in `~/.claude-tempo/`)
-3. Register required search attributes
-4. Register the claude-tempo MCP server (globally by default)
-5. Start the worker daemon in the background
-6. Launch a conductor session in a new terminal window
-
-Then add players:
+This starts Temporal, registers the MCP server, launches the daemon, and opens a conductor session. Then add players:
 
 ```bash
 claude-tempo start          # open a player session
 claude-tempo status         # see who's active
 ```
 
-Or ask the conductor to `recruit` players for you from inside Claude Code.
+Or ask the conductor to `recruit` players from inside Claude Code.
 
 ### Manual setup
 
-For more control, run each step individually:
-
 ```bash
-# Start Temporal dev server (keep running)
-claude-tempo server
-
-# Register claude-tempo MCP server (globally by default)
-cd your-project
-claude-tempo init
-
-# Verify everything is ready
-claude-tempo preflight
-
-# Start a conductor
-claude-tempo conduct
-
-# Add players
-claude-tempo start
+claude-tempo server         # start Temporal dev server
+claude-tempo init           # register MCP server globally
+claude-tempo preflight      # verify environment
+claude-tempo conduct        # start a conductor
+claude-tempo start          # start a player
 ```
 
 ## Upgrading
@@ -109,137 +88,57 @@ claude-tempo upgrade 0.22.0
 
 ---
 
-## Core concepts
+## Core Concepts
 
 - **Player** — A Claude Code session registered as a Temporal workflow
-- **Conductor** — An optional orchestration hub connected to external interfaces (one per ensemble)
-- **Ensemble** — A named group of players that can see and message each other, isolated from other ensembles
+- **Conductor** — An optional orchestration hub (one per ensemble); receives `report` calls and connects to external interfaces
+- **Ensemble** — A named group of players isolated from other ensembles; defaults to `default`
 - **Cue** — A message sent to a player by name via Temporal signal
+- **Lineup** — A YAML file that defines a full team and recruits them in one step
+- **Player Type** — A reusable agent definition (`.md` with YAML frontmatter) that gives a player a named role
 
-Players in one ensemble cannot see or message players in another. By default, sessions join the `default` ensemble:
+Players in one ensemble cannot see or message players in another:
 
 ```bash
-claude-tempo conduct frontend     # conduct the "frontend" ensemble
-claude-tempo start backend        # join the "backend" ensemble
-claude-tempo conduct              # conduct the "default" ensemble
+claude-tempo conduct frontend   # conduct the "frontend" ensemble
+claude-tempo start backend      # join the "backend" ensemble
 ```
 
-## MCP tools
+## MCP Tools
 
-These tools are available inside Claude Code sessions connected to claude-tempo:
+Tools available inside Claude Code sessions connected to claude-tempo:
 
 | Tool | Description |
 |------|-------------|
-| `ensemble` | Discover active sessions. Scope: `machine`, `repo`, or `all`. |
-| `cue` | Send a message to a player by name. Delivered instantly via Temporal signal. |
-| `set_name` | Set a human-readable name for this session. |
-| `set_part` | Describe what you're working on. Visible to others via `ensemble`. |
-| `listen` | Manually check for pending messages. |
-| `recruit` | Spawn a new Claude Code session in a directory. Can recruit a conductor with `conductor: true`. |
-| `report` | Send updates to the conductor. No-op if no conductor exists. |
-| `stop` | Stop a player session by name. |
-| `schedule` | Create a one-shot or recurring schedule to cue a player. |
-| `unschedule` | Cancel a named schedule. |
-| `schedules` | List all active schedules. |
-| `who_am_i` | Get your identity, role, player type, and session details. |
-| `agent_types` | List available player types with name, description, and source. |
-| `save_lineup` | Save the current ensemble as a YAML lineup (conductor only). |
-| `load_lineup` | Load a lineup to recruit players and create schedules. |
-| `broadcast` | Send a message to all active players. Optional `type` filter limits to a specific player type. |
-| `encore` | Revive a stale player session — restarts the process and reconnects to the existing workflow with context restored. |
-| `recall` | Read your own message history. Shows received messages by default; pass `includeSent: true` for the full timeline. |
-| `worktree` | Manage git worktrees for player isolation. Actions: `create`, `remove`, `list`. Conductor only. |
-| `quality_gate` | Define or replace a quality gate for a task — a named checklist of criteria that must pass. Conductor only. |
-| `evaluate_gate` | Mark one or more criteria on a quality gate as passed or failed. Conductor only. |
-| `gates` | List quality gates and their status. Filter by task name or status (`open`, `passed`, `failed`). Conductor only. |
-| `stage` | Define a stage — tracks a set of players doing parallel work and auto-notifies when all report. Conductor only. |
-| `stages` | List stages and their status. Conductor only. |
-| `cancel_stage` | Cancel an active stage by name. Conductor only. |
+| `ensemble` | Discover active sessions |
+| `cue` | Send a message to a player by name |
+| `recruit` | Spawn a new Claude Code session |
+| `report` | Send updates to the conductor |
+| `broadcast` | Send a message to all active players |
+| `recall` | Read your own message history |
+| `who_am_i` | Get your identity, role, and player type |
 
-## Scheduling
+📖 [Full tools reference → docs/tools.md](docs/tools.md) (includes `schedule`, `stage`, `quality_gate`, `worktree`, and all others)
 
-Players can set up schedules to send messages on timers — useful for periodic checks, reminders, and recurring coordination.
+## CLI
 
-Three tools are available:
-- **`schedule`** — Create a named schedule (one-shot or recurring)
-- **`unschedule`** — Remove a schedule by name
-- **`schedules`** — List all active schedules
+```bash
+claude-tempo up [ensemble]      # first-time setup
+claude-tempo conduct [ensemble] # start a conductor
+claude-tempo start [ensemble]   # start a player
+claude-tempo status [ensemble]  # list active sessions
+claude-tempo tui                # open the terminal UI
+claude-tempo daemon <sub>       # manage the worker daemon
+claude-tempo upgrade            # update to latest
+```
 
-### Examples
+Run `claude-tempo --help` or `claude-tempo <command> --help` for all flags.
 
-Tell your session things like:
-
-- *"Schedule a check every hour called 'deploy-watch' — cue ops to check deployment status"*
-- *"Remind me in 30 minutes to review PR #42"*
-- *"Every 5 minutes for the next hour, ping frontend to check their progress"*
-- *"Set up a daily standup at 9am New York time, weekdays only"*
-- *"Cancel the deploy-watch schedule"*
-- *"Show me all active schedules"*
-
-Schedules support four timing modes — all accept optional bounds (`count` max fires, `until` end time):
-
-| Mode | Parameter | Example |
-|------|-----------|---------|
-| One-shot delay | `delay` | `"10m"`, `"2h"`, `"1d"` |
-| Fixed time | `at` | `"2026-04-03T20:00:00Z"` |
-| Recurring interval | `every` | `"5m"`, `"1h"` |
-| Cron expression | `cron` + optional `timezone` | `"0 9 * * 1-5"` (weekdays 9am) |
-
-The `timezone` parameter accepts any IANA timezone (e.g. `"America/New_York"`, `"Europe/London"`). Defaults to UTC when omitted.
-
-### How it works
-
-- Scheduled messages arrive with a `[scheduled: name]` prefix so recipients can distinguish them from direct cues
-- The `from` field is set to the schedule creator, so replies go to the right person
-- If the target player is gone when a schedule fires, the creator is notified so they can re-recruit if needed. Falls back to notifying the conductor if the creator is also unavailable
-- Messages include `isScheduled` metadata for dashboard integrations
-- `claude-tempo status` shows active schedules alongside sessions
-- A single durable scheduler workflow per ensemble manages all schedules using Temporal timers
-
-## Quality Gates
-
-Conductors can define named checklists of criteria to verify task completion. Three conductor-only tools are available: `quality_gate` (create or replace a gate), `evaluate_gate` (mark criteria as passed or failed), and `gates` (list all gates with optional filters).
-
-### Examples
-
-Tell your conductor things like:
-
-- *"Set a quality gate 'pr-ready' with criteria: tests pass, no lint errors, code reviewed"*
-- *"Mark criteria 0 and 1 on 'pr-ready' as passed"*
-- *"Show me all open quality gates"*
-- *"Check whether 'deploy-staging' has passed"*
-
-### How it works
-
-- Gate status is derived from criteria: all passed → `passed`; any failed → `failed`; otherwise `open`
-- Gates survive `continueAsNew` for the conductor workflow's lifetime
-
-## Pipeline Stages
-
-Conductors can track fan-out/fan-in of parallel work using stages. Define a stage with a set of players, cue them to work, and the conductor is automatically notified when all players have reported — without polling.
-
-Three conductor-only tools: `stage` (create a stage), `stages` (list all stages), `cancel_stage` (cancel an active stage).
-
-### Examples
-
-Tell your conductor things like:
-
-- *"Create a stage called 'review' with players: critic-1, critic-2, critic-3"*
-- *"Show me the status of all pipeline stages"*
-- *"Cancel the 'deploy' stage"*
-
-### How it works
-
-- When a tracked player sends a `report`, their status updates automatically (`waiting` → `reported` or `blocked`)
-- When all players have reported, the conductor is notified that the stage is complete
-- Two failure policies: `halt` (default — fail the stage on first blocker) and `continue` (keep the stage active until all players report)
-- Stages survive `continueAsNew` for the conductor workflow's lifetime
+📖 [Full CLI reference → docs/cli.md](docs/cli.md)
 
 ## Ensemble Lineups
 
-Define reusable ensemble configurations as YAML files. A lineup specifies which players to recruit, what instructions to give them, what schedules to create, and optionally which custom agent files to use.
-
-### Example lineup
+Define reusable team configurations as YAML files and load them in one command:
 
 ```yaml
 name: my-project
@@ -247,75 +146,31 @@ conductor:
   instructions: "Coordinate the frontend and backend teams"
 players:
   - name: frontend
+    type: tempo-soloist
     workDir: /repos/my-app
-    instructions: "Build the React dashboard in src/components"
+    instructions: "Build the React dashboard"
   - name: backend
+    type: tempo-soloist
     workDir: /repos/my-api
-    instructions: "Implement the REST endpoints in src/routes"
-  - name: ops
-    workDir: /repos/infra
-    agent: agents/ops-agent.md
-    instructions: "Monitor deployments and run health checks"
+    instructions: "Implement the REST endpoints"
 schedules:
   - name: status-check
-    message: "Report your current progress and any blockers"
+    message: "Report your current progress"
     target: all
     every: 30m
-  - name: deploy-reminder
-    message: "Check if the staging deploy succeeded"
-    target: ops
-    delay: 10m
 ```
 
-### Three ways to use lineups
-
-1. **From the CLI** — load a lineup when starting an ensemble:
-
-   ```bash
-   claude-tempo up --lineup my-lineup.yaml
-   ```
-
-2. **From inside a session** — use the `load_lineup` tool:
-
-   *"Load the lineup from ~/.claude-tempo/ensembles/my-project.yaml"*
-
-3. **Save the current state** — snapshot a running ensemble as a lineup (conductor only):
-
-   *"Save this ensemble as a lineup called my-project"*
-
-### Natural language examples
-
-Tell your session things like:
-
-- *"Load the my-project lineup"*
-- *"Save this ensemble as a lineup"*
-- *"Load the lineup from /repos/configs/team.yaml"*
-
-### Fan-out schedules
-
-Use `target: "all"` in a schedule to deliver a message to every active player (excluding the conductor). This is useful for periodic status checks or broadcast announcements:
-
-- *"Schedule a message every 30 minutes to all players asking for a progress update"*
-
-### Custom agents
-
-The `agent` field on a player can be a path to a `.md` file that will be used as the session's system prompt via `--system-prompt`. This lets you create specialized agents with domain-specific instructions:
-
-```yaml
-players:
-  - name: security-reviewer
-    workDir: /repos/my-app
-    agent: agents/security-review.md
-    instructions: "Review the latest PR for security issues"
+```bash
+claude-tempo up --lineup my-project.yaml   # load from CLI
 ```
+
+Or from inside a session: *"Load the my-project lineup"*
+
+📖 [Lineups, player types, and shipped examples → docs/ensembles.md](docs/ensembles.md)
 
 ## Player Types
 
-Player types are reusable agent definitions in Claude Code's standard subagent format — `.md` files with YAML frontmatter specifying name, description, optional model, and optional tool restrictions. They let you define specialized roles once and reuse them across lineups.
-
-### How player types work
-
-Reference a type by name in a lineup's `type` field:
+Player types are reusable agent definitions — `.md` files with YAML frontmatter. Reference them by name in lineups:
 
 ```yaml
 players:
@@ -325,523 +180,66 @@ players:
     type: tempo-soloist
 ```
 
-When a player is recruited with a type, the agent definition is resolved and passed to the session. Players know their type via the `who_am_i` tool.
-
-### Tool restrictions (`allowedTools`)
-
-Agent type frontmatter may include an `allowedTools` array to restrict which tools the spawned session can use. When present, it is passed to the Claude Code session via `--allowedTools` and overrides any lineup-level setting.
-
-```yaml
----
-name: tempo-reviewer
-description: Read-only code reviewer
-allowedTools:
-  - Read
-  - Glob
-  - Grep
----
-```
-
-This is useful for security-sensitive roles (read-only reviewers, auditors) or to prevent specific players from making changes outside their scope. Sessions launched without a type, or with a type that omits `allowedTools`, receive no tool restrictions.
-
-### Three-tier lookup
-
-Player types are resolved in order (first match wins):
-
-1. **Project** — `.claude/agents/` in the project directory
-2. **User** — `~/.claude/agents/` in the user's home directory
-3. **Shipped** — `examples/agents/` bundled with claude-tempo
-
-Project and user types are resolved natively by Claude Code via `--agent <name>`. Shipped types fall back to `--system-prompt <path>`.
-
-### Shipped player types
-
-| Type | Description |
-|------|-------------|
-| `tempo-conductor` | Orchestrates the ensemble — breaks down tasks, delegates to players, tracks progress |
-| `tempo-composer` | Software architect — designs system structure, defines interfaces, makes technology decisions |
-| `tempo-soloist` | Senior engineer — implements features, fixes bugs, writes tests, delivers working code |
-| `tempo-tuner` | QA engineer — designs test strategies, finds bugs, validates edge cases |
-| `tempo-critic` | Code reviewer — evaluates changes for correctness, security, performance, maintainability |
-| `tempo-roadie` | DevOps engineer — manages CI/CD, deployments, infrastructure, environment configuration |
-| `tempo-improv` | Researcher and explorer — investigates unknowns, runs spikes, evaluates options |
-| `tempo-liner` | Documentation specialist — owns README, CHANGELOG, CLAUDE.md, and PR descriptions |
-
-### Shipped lineups
-
-| Lineup | Description |
-|--------|-------------|
-| `tempo-big-band` | Full-lifecycle ensemble with all 8 player types — design, implement, test, review, and ship |
-| `tempo-dev-team` | Feature development — conductor, composer, two soloists, and a tuner |
-| `tempo-review-squad` | Three critics with different focus areas for thorough parallel code review |
-| `tempo-jam-session` | Exploratory ensemble for spikes, research, and problems where the path is unclear |
-
-### Discovery
-
-Use the `agent_types` MCP tool inside a session or the CLI:
+Eight types ship out of the box: `tempo-conductor`, `tempo-composer`, `tempo-soloist`, `tempo-tuner`, `tempo-critic`, `tempo-roadie`, `tempo-improv`, `tempo-liner`. Four lineup presets are included: `tempo-big-band`, `tempo-dev-team`, `tempo-review-squad`, `tempo-jam-session`.
 
 ```bash
-claude-tempo agent-types list          # show available types
-claude-tempo agent-types show <name>   # print full definition
-claude-tempo agent-types init          # copy shipped examples to ~/.claude/agents/
+claude-tempo agent-types list   # discover available types
+claude-tempo agent-types init   # copy shipped types to ~/.claude/agents/
 ```
 
-## Conductors
-
-A **conductor** is an optional special player that acts as an orchestration hub. Use one when you want:
-
-- A single session coordinating work across multiple players
-- External access to the ensemble via Discord, Telegram, or any Temporal client
-- A central point for players to `report` progress, blockers, and questions
-
-Without a conductor, players work fine peer-to-peer — they discover each other via `ensemble` and communicate via `cue`.
-
-```bash
-claude-tempo conduct                # default ensemble
-claude-tempo conduct my-project     # named ensemble
-```
-
-### External access
-
-The conductor's Temporal workflow exposes a signal/query API:
-
-```typescript
-import { Client } from '@temporalio/client';
-
-const client = new Client();
-const conductor = client.workflow.getHandle('claude-session-default-conductor');
-
-// Send a command
-await conductor.signal('command', {
-  text: 'recruit /repos/api and run tests',
-  source: 'cli',
-});
-
-// Check history
-const history = await conductor.query('history');
-```
-
-Connect external channel plugins (e.g., Discord):
-
-```bash
-CLAUDE_TEMPO_CONDUCTOR=true claude \
-  --channels plugin:discord@claude-plugins-official \
-  --dangerously-skip-permissions --dangerously-load-development-channels server:claude-tempo
-```
-
-## Players
-
-### Starting players
-
-```bash
-# Terminal 1 — conductor
-claude-tempo conduct my-project
-
-# Terminal 2 — frontend
-claude-tempo start my-project -n frontend
-
-# Terminal 3 — backend
-claude-tempo start my-project -n backend
-```
-
-Or let the conductor `recruit` players — this spawns new terminal windows automatically.
-
-Inside a session, try:
-- "Show me the ensemble" — discovers other sessions
-- "Set your name to 'frontend'" — human-readable name
-- "Cue frontend: what are you working on?" — sends a message
-
-### Session naming
-
-Sessions start with a random 8-character hex ID. Set a name at launch with `-n` or use `set_name` inside a session.
-
-- Names are stored in workflow metadata and discoverable via metadata queries. Search attributes are also set for Temporal UI visibility.
-- Other players use names to send messages via `cue`
-- `recruit` automatically tells new sessions to set their name
-- Names must be unique within an ensemble
-- Names must contain only letters, numbers, hyphens, and underscores
-- The name "conductor" is reserved for conductor sessions
-
-### Session status lifecycle
-
-Each session has a status that tracks its connection state:
-
-| Status | Meaning |
-|--------|---------|
-| `pending` | Workflow created by `recruit`, but the Claude Code process hasn't connected yet |
-| `active` | Session is running and responsive |
-| `stale` | Messages have gone undelivered for 3+ minutes — the session is likely disconnected |
-| `blocked` | Messages are being delivered but the session has produced no outbound activity for 5+ minutes — it may be stuck or spinning |
-
-Status transitions:
-- **`pending` → `active`** — when the spawned session connects and sends its `updateMetadata` signal
-- **`active` → `stale`** — when undelivered messages exceed the stale threshold (3 minutes)
-- **`active` → `blocked`** — when delivered messages produce no outbound response for 5+ minutes; auto-recovers to `active` on next outbound activity
-- Any status → **terminated** — on graceful shutdown or `stop`
-
-`claude-tempo status` shows `(pending)` and `(stale)` indicators next to player names. The `ClaudeTempoStatus` search attribute is also set, so you can filter sessions by status in the Temporal UI (e.g., `ClaudeTempoStatus = "stale"`).
-
-### Terminal support
-
-`recruit` and the CLI detect your terminal automatically:
-
-| Terminal | macOS | Linux | Windows |
-|----------|-------|-------|---------|
-| Ghostty | ✓ | — | — |
-| iTerm2 | ✓ | — | — |
-| Terminal.app | ✓ | — | — |
-| gnome-terminal | — | ✓ | — |
-| konsole / xterm | — | ✓ | — |
-| Windows Terminal | — | — | ✓ (tabs) |
-| cmd.exe / PowerShell | — | — | ✓ |
-
-macOS terminals preserve the full shell environment (fish, zsh, bash) including node version managers (fnm, nvm).
-
-Windows Terminal is detected automatically via the `WT_SESSION` environment variable. When running inside Windows Terminal, recruited sessions open as new tabs (with the player name as the tab title) instead of separate cmd.exe windows.
-
-## CLI reference
-
-```
-claude-tempo <command> [options]
-```
-
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor. Use `--lineup` to load a lineup. |
-| `down` | Stop Temporal, terminate sessions, remove MCP config. Use `--keep-mcp` to preserve MCP config. |
-| `server` | Start the Temporal dev server and register search attributes |
-| `conduct [ensemble]` | Start a conductor session (one per ensemble). Use `--resume` or `--replace` if one exists. |
-| `start [ensemble]` | Start a player session |
-| `status [ensemble]` | Show active sessions and Temporal health |
-| `config` | Configure Temporal connection settings (interactive or `set`/`show`) |
-| `stop [ensemble]` | Stop sessions (`-n <name>` for one, `--all` for everything) |
-| `init` | Register claude-tempo MCP server globally (`--project` for per-directory) |
-| `preflight` | Run environment checks |
-| `broadcast <msg>` | Send a message to all active players. Use `--type` to filter by player type, `--include-stale` to include stale sessions. |
-| `encore <name>` | Revive a stale player session by name. Use `--host` to target a remote machine. |
-| `ensemble <sub>` | Manage saved lineups (`save`, `list`, `show`) |
-| `agent-types <sub>` | Manage player types (`list`, `show <name>`, `init`) |
-| `daemon <sub>` | Manage the worker daemon (`start`, `stop`, `status`, `logs`) |
-| `tui [--ensemble <name>]` | Launch the interactive TUI — chat-focused shell with slash commands for managing players and ensembles |
-| `version` | Print the installed version |
-| `help` | Show usage info |
-
-### Global options
-
-```
---temporal-address <addr>     Temporal server address (default: localhost:7233)
---temporal-namespace <ns>     Temporal namespace (default: default)
---temporal-api-key <key>      Temporal Cloud API key
---temporal-tls-cert <path>    mTLS client certificate path
---temporal-tls-key <path>     mTLS client key path
--n, --name <name>             Set the player name (start/conduct/up)
---agent <claude|copilot>      Agent backend to use (default: claude)
---skip-preflight              Skip preflight checks (start/conduct)
--d, --dir <path>              Target directory (default: cwd)
---background                  Run Temporal in background (server only)
---keep-mcp                    Preserve MCP config when tearing down (down only)
---lineup <name|file>          Load an ensemble lineup by name or file path (up only)
---resume                      Resume an existing conductor session (conduct only)
---replace                     Stop existing conductor and start fresh (conduct only)
--v, --version                 Print version and exit
-```
-
-### `claude-tempo up`
-
-The recommended way to get started:
-
-```
-$ claude-tempo up myband
-
-claude-tempo setup
-  ✓ temporal CLI installed
-  … Starting Temporal dev server...
-  ✓ Temporal started (pid 12345, data in ~/.claude-tempo/)
-  ✓ Registered search attributes
-  ✓ .mcp.json created
-
-Launching conductor in ensemble myband...
-
-✓ You're all set!
-  Conductor launched (pid 12346)
-  Ensemble: myband
-
-  What next?
-  claude-tempo start myband    Add a player session
-  claude-tempo status myband   See who's active
-  Or ask the conductor to recruit players for you
-```
-
-### `claude-tempo server`
-
-Starts the Temporal dev server with automatic search attribute registration:
-
-```bash
-claude-tempo server                 # foreground (Ctrl+C to stop)
-claude-tempo server --background    # daemonize
-```
-
-Data persists in `~/.claude-tempo/temporal-data.db`. If Temporal is already running, registers attributes and exits.
-
-### `claude-tempo status`
-
-Shows all active sessions:
-
-```
-Ensemble: myband
-  3 active sessions
-
-  conductor (conductor)
-    Orchestrating the team
-    /Users/me/projects/app  main  my-machine.local
-
-  alice
-    Building the REST endpoints
-    /Users/me/projects/app  feat/api  my-machine.local
-
-  bob (pending)
-    Working on the dashboard
-    /Users/me/projects/app  feat/ui  my-machine.local
-
-  1 active schedule
-  deploy-watch → ops | every 1h | next: 3:00:00 PM
-```
-
-### `claude-tempo preflight`
-
-Verifies your environment: Node.js >= 18, Temporal reachable, `claude` on PATH, `claude-tempo-server` on PATH, `.mcp.json` configured.
-
-### `claude-tempo init`
-
-Registers the claude-tempo MCP server globally so it's available in every Claude Code session:
-
-```bash
-claude-tempo init             # global install (recommended)
-claude-tempo init --project   # per-directory .mcp.json instead
-```
-
-If the `claude` CLI is not available, falls back to creating `.mcp.json` in the current directory.
-
-### `claude-tempo down`
-
-Stops Temporal, terminates all sessions, and removes MCP config:
-
-```bash
-claude-tempo down              # full teardown
-claude-tempo down --keep-mcp   # stop Temporal and sessions, but preserve MCP config
-```
+📖 [Player types deep dive → docs/ensembles.md](docs/ensembles.md)
 
 ## Configuration
 
-Run `claude-tempo config` to save Temporal connection settings so you don't need flags or env vars every time:
-
-```
-$ claude-tempo config
-
-? Temporal address (localhost:7233): my-ns.tmprl.cloud:7233
-? Temporal namespace (default): my-ns.abc123
-? Auth method: (None / API key / mTLS)
-? API key: ****
-Saved to ~/.claude-tempo/config.json
-✓ Connected successfully
-```
-
-Settings are stored in `~/.claude-tempo/config.json`. You can also set values non-interactively:
-
 ```bash
-claude-tempo config set temporalAddress my-ns.tmprl.cloud:7233
-claude-tempo config set temporalNamespace my-ns.abc123
-claude-tempo config set temporalApiKey tcl_...
-claude-tempo config show
+claude-tempo config   # interactive setup (Temporal address, namespace, API key)
 ```
 
-### Resolution order
+Settings persist in `~/.claude-tempo/config.json`. Resolution order: CLI flags → env vars → config file → Temporal CLI config → defaults.
 
-Settings are resolved in this order (first match wins):
-
-1. CLI flags (`--temporal-address`, `--temporal-namespace`, etc.)
-2. Environment variables (`TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, etc.)
-3. claude-tempo config file (`~/.claude-tempo/config.json`)
-4. Temporal CLI config (`~/.config/temporalio/temporal.yaml`) — if you've already configured the Temporal CLI, claude-tempo reads it automatically
-5. Defaults (`localhost:7233`, `default` namespace)
-
-### Temporal Cloud
-
-For Temporal Cloud, run `claude-tempo config` and provide your cloud address, namespace, and API key. Or set them as environment variables in CI:
-
-```bash
-export TEMPORAL_ADDRESS=my-ns.abc123.tmprl.cloud:7233
-export TEMPORAL_NAMESPACE=my-ns.abc123
-export TEMPORAL_API_KEY=tcl_...
-```
-
-## Environment variables
+Key environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal server address |
 | `TEMPORAL_NAMESPACE` | `default` | Temporal namespace |
 | `TEMPORAL_API_KEY` | *(none)* | Temporal Cloud API key |
-| `TEMPORAL_TLS_CERT_PATH` | *(none)* | mTLS client certificate path |
-| `TEMPORAL_TLS_KEY_PATH` | *(none)* | mTLS client key path |
-| `CLAUDE_TEMPO_TASK_QUEUE` | `claude-tempo` | Task queue name |
 | `CLAUDE_TEMPO_ENSEMBLE` | `default` | Ensemble name |
-| `CLAUDE_TEMPO_CONDUCTOR` | `false` | Enable conductor mode |
-| `CLAUDE_TEMPO_PLAYER_NAME` | *(random hex)* | Player name on startup |
-| `CLAUDE_TEMPO_DEFAULT_AGENT` | `claude` | Default agent type (`claude` or `copilot`) |
 
-## Stale session cleanup
+📖 [Full configuration reference → docs/configuration.md](docs/configuration.md)
 
-When a session crashes or closes without graceful shutdown, Temporal detects it automatically:
-
-- If a message to a dead session remains undelivered for **3 minutes**, the workflow self-completes
-- Before exiting, it notifies the conductor with the undelivered message so work can be reassigned
-- Idle sessions with no pending messages are probed after 1 hour of inactivity via a heartbeat ping; if the ping goes undelivered, the session self-completes
-
-No manual cleanup needed — `cue` a dead player and the system handles the rest.
-
-## Copilot CLI integration (experimental)
-
-> **Warning:** Copilot bridge support is experimental and subject to breaking changes.
-
-GitHub Copilot CLI sessions can join an ensemble via the Copilot bridge. Bridge sessions are headless — they require a conductor or another player to receive work via `cue`.
-
-<details>
-<summary>Setup and usage</summary>
-
-### Prerequisites
-
-- [GitHub Copilot CLI](https://docs.github.com/en/copilot/github-copilot-in-the-cli) installed and authenticated
-- An active GitHub Copilot subscription
-- Node.js 20+
-- Install the Copilot SDK: `npm install @github/copilot-sdk`
-
-### Starting Copilot sessions
-
-Use `--agent copilot` with any session-launching command:
+## Terminal UI
 
 ```bash
-claude-tempo start myband --agent copilot -n copilot-1      # start a player
-claude-tempo conduct myband --agent copilot                  # start a conductor
-claude-tempo up myband --agent copilot                       # full setup
+claude-tempo tui                          # multi-ensemble home screen
+claude-tempo tui --ensemble my-ensemble   # direct ensemble mode
 ```
 
-Or recruit from within any active session:
+The TUI provides a chat-focused shell for managing your ensemble:
 
-> "Recruit a copilot session named 'copilot-dev' in /repos/my-project with agent copilot"
+- **Ensemble chat feed** — live aggregated view of conductor + player traffic; type bare text to message the conductor, `@player message` to message directly
+- **Slash commands** — `/recruit`, `/status`, `/schedule`, `/gates`, `/stages`, `/worktree`, and more; type `/help` for the full list
+- **Interactive overlays and wizards** — step-by-step flows for recruiting players, creating schedules, and managing ensembles
 
-### Setting a default agent
+📖 [TUI reference → docs/dashboard.md](docs/dashboard.md)
 
-To avoid passing `--agent copilot` every time:
+## Copilot Integration
+
+> **Experimental** — subject to breaking changes.
+
+GitHub Copilot CLI sessions can join an ensemble using `--agent copilot`:
 
 ```bash
-claude-tempo config set default-agent copilot
+claude-tempo start myband --agent copilot -n copilot-1
 ```
 
-Or via environment variable:
-
-```bash
-export CLAUDE_TEMPO_DEFAULT_AGENT=copilot
-```
-
-Resolution order: `--agent` flag → `CLAUDE_TEMPO_DEFAULT_AGENT` env → config file → `claude`.
-
-### Model override
-
-Set `COPILOT_BRIDGE_MODEL` to use a specific model for Copilot sessions:
-
-```bash
-COPILOT_BRIDGE_MODEL=gpt-4o claude-tempo start myband --agent copilot
-```
-
-### Limitations
-
-- Headless only — bridge sessions respond to cues, no interactive terminal
-- ~2-second polling latency (vs instant for Claude Code sessions)
-- `@github/copilot-sdk` adds ~243MB to node_modules
-- Node 20+ required (rest of claude-tempo works on Node 18+)
-
-</details>
-
-## TUI Dashboard
-
-The built-in terminal UI provides a chat-focused shell for managing your ensemble without leaving the terminal.
-
-### Launching
-
-```bash
-# Default — bare command launches TUI in multi-ensemble mode
-claude-tempo
-
-# Explicit TUI launch
-claude-tempo tui
-
-# Direct ensemble mode — connects straight to a named ensemble
-claude-tempo tui --ensemble my-ensemble
-```
-
-### Interface
-
-The TUI has a persistent layout:
-
-- **TitleBar** (pinned top) — shows the current ensemble, player count, and connection state; in chat mode shows the target player and their status
-- **Scroll area** — command output and sent messages accumulate here as scrollback history; navigate with **Page Up / Page Down / Home / End**
-- **StatusBar** — persistent one-line summary of player counts by status, schedule count, and connection health
-- **Live view** — aggregated ensemble chat feed (maestro + conductor traffic); bare text routes to the conductor, `@player message` routes directly to a named player
-- **PromptArea** (pinned bottom) — type slash commands, bare text (routes to conductor), or `@player <message>` (routes to a specific player); use **↑ / ↓** to navigate persistent command history (saved to `~/.claude-tempo/tui-history.json`)
-
-> Screenshot placeholder — will be added once the feature lands on `main`.
-
-### Slash commands
-
-| Command | Description |
-|---|---|
-| `/broadcast <message>` | Send a message to all active players across all ensembles |
-| `/recruit [name]` | Launch the recruit wizard to spawn a new player session |
-| `/recruit-conductor` | Recruit a conductor for the current ensemble (one-shot, no wizard) |
-| `/stop <player>` | Terminate a player session |
-| `/disband` | Tear down the current ensemble (all sessions + scheduler) |
-| `/encore <player>` | Revive a stale player session |
-| `/recall [player]` | Show recent message history (optionally filtered to one player) |
-| `/search <term>` | Search message history across all ensembles |
-| `/status` | Show an overlay with all players and their current status |
-| `/player [name]` | Show detailed player info; no args opens the interactive picker |
-| `/schedule` | List active schedules across all ensembles |
-| `/schedule create` | Launch the interactive schedule creation wizard |
-| `/unschedule <name>` | Cancel a named schedule |
-| `/lineup load <file> \| save [file]` | Load or save an ensemble lineup |
-| `/ensemble [name]` | Switch to a named ensemble; no args opens the ensemble picker with an option to create a new one |
-| `/gates` | List quality gates and their criteria status |
-| `/stages` | List stages and per-player report status |
-| `/worktree [list]` | List active git worktrees |
-| `/back` | Exit chat mode or navigate back to the ensemble list |
-| `/help` | Show all available commands with usage |
-| `/quit` | Exit the TUI |
-
-In the ensemble view, bare text routes to the conductor; prefix with `@player` to message a specific player directly (e.g. `@frontend check your tests`). If no conductor is running, a prompt suggests using `@player` or `/recruit`. Press `Ctrl+C` to exit at any time.
+📖 [Copilot bridge setup and limitations → docs/copilot.md](docs/copilot.md)
 
 ## Worker Daemon
 
-The **worker daemon** is a standalone background process that runs Temporal workers — it replaces the per-session workers from earlier versions. Sessions are now pure MCP clients.
+The daemon runs Temporal workers as a background process — it starts automatically on first use. Manage it explicitly with `claude-tempo daemon start|stop|status|logs`.
 
-The daemon auto-starts the first time any claude-tempo command needs it. You can also manage it explicitly:
-
-```bash
-claude-tempo daemon start    # start the daemon (no-op if already running)
-claude-tempo daemon stop     # stop the daemon
-claude-tempo daemon status   # show running state and PID
-claude-tempo daemon logs     # tail daemon logs
-```
-
-### How it works
-
-- On first use, any claude-tempo command calls `startDaemon()` and waits up to 10 seconds for it to confirm startup (by writing `~/.claude-tempo/daemon.pid`)
-- The daemon runs detached — it survives terminal closes and session restarts
-- All Temporal worker duties (workflow execution, activity dispatch) run in the daemon
-- Logs are written to `~/.claude-tempo/daemon.log`
-- On Linux/macOS, the daemon is stopped via `SIGTERM`; on Windows, the process is killed directly
+📖 [Daemon reference → docs/daemon.md](docs/daemon.md)
 
 ## Development
 
@@ -849,20 +247,20 @@ claude-tempo daemon logs     # tail daemon logs
 git clone https://github.com/vinceblank/claude-tempo.git
 cd claude-tempo && npm install
 
-npm run build        # compile TypeScript + pre-bundle workflows
-npm test             # run tests
-npm link             # link CLI for local testing
+npm run build   # compile TypeScript + pre-bundle workflows
+npm test        # run tests
+npm link        # link CLI for local testing
 ```
 
 > **Important**: Run `npm run build` after changing workflow code (`src/workflows/`). The build pre-bundles workflows into `workflow-bundle.js` so all workers use identical code.
 
 ## Contributing
 
-See [CLAUDE.md](CLAUDE.md) for project structure, key concepts, and development setup. Pull requests are welcome — please run `npm test` before submitting.
+See [CLAUDE.md](CLAUDE.md) for project structure, conventions, and development setup. Pull requests welcome — run `npm test` before submitting.
 
-## Known limitations
+## Known Limitations
 
-- **`recruit` requires manual acknowledgment** — Recruited sessions use `--dangerously-load-development-channels`. Claude Code shows a confirmation prompt that must be manually acknowledged in the spawned terminal. This will be resolved once claude-tempo is published as an approved channel plugin. Copilot bridge sessions do not have this limitation.
+- **`recruit` requires manual acknowledgment** — Recruited sessions show a Claude Code confirmation prompt that must be acknowledged in the spawned terminal. This will be resolved once claude-tempo is a published approved channel plugin. Copilot bridge sessions are not affected.
 
 ## License
 
