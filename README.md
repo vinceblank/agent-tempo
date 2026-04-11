@@ -97,55 +97,15 @@ claude-tempo start
 
 ## Upgrading
 
-### Upgrading to 0.19.0
+```bash
+claude-tempo upgrade
+```
 
-v0.19.0 introduces the **worker daemon** — a single background process that runs all Temporal workers instead of each session running its own. Old sessions running in-process workers will compete on the same task queue as the daemon, causing errors. A clean restart is required.
+Stops the daemon, installs the latest version, and restarts automatically. To upgrade to a specific version:
 
-1. **Stop everything:**
-
-   ```bash
-   claude-tempo down --all
-   ```
-
-2. **Install the new version:**
-
-   ```bash
-   npm install -g claude-tempo@latest
-   ```
-
-3. **Fix MCP registration (if you previously used `npx`):**
-
-   If you registered with `npx` (e.g. via `claude-tempo init` before v0.19.0):
-
-   ```bash
-   # Remove old registration
-   claude mcp remove claude-tempo -s user
-
-   # Re-register with the direct binary
-   claude mcp add claude-tempo -s user -- claude-tempo-server
-   ```
-
-   If you have a project-level `.mcp.json` with `"command": "npx"`, either delete it or change the entry:
-
-   ```json
-   { "command": "claude-tempo-server", "args": [] }
-   ```
-
-4. **Start fresh:**
-
-   ```bash
-   claude-tempo up <ensemble>
-   ```
-
-   The daemon starts automatically — no manual daemon management needed.
-
-### Troubleshooting
-
-| Symptom | Fix |
-|---------|-----|
-| `workflow execution not found` errors | Restart the daemon: `claude-tempo daemon stop && claude-tempo daemon start` |
-| Sessions not responding to messages | Run `claude-tempo daemon status` — ensure the daemon is running |
-| `.mcp.json` keeps being recreated with `npx` | Delete `.mcp.json` and use user-level registration: `claude-tempo init` |
+```bash
+claude-tempo upgrade 0.22.0
+```
 
 ---
 
