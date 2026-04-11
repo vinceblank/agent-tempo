@@ -342,6 +342,19 @@ async function main() {
 
   /** Attempt to recreate the Copilot session after repeated failures. */
   async function recreateSession(): Promise<boolean> {
+    // Check if the workflow is still alive before attempting reconnection —
+    // prevents terminated sessions from entering a rapid rejoin loop
+    try {
+      const desc = await handle.describe();
+      if (desc.status.name !== 'RUNNING') {
+        log(`Workflow is ${desc.status.name} — not reconnecting (session was terminated)`);
+        return false;
+      }
+    } catch {
+      log('Workflow not found — not reconnecting');
+      return false;
+    }
+
     sessionRecreations++;
     if (sessionRecreations > MAX_SESSION_RECREATIONS) {
       log(`ERROR: Exceeded max session recreations (${MAX_SESSION_RECREATIONS}). Giving up.`);

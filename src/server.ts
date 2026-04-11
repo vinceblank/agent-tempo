@@ -133,10 +133,10 @@ async function main() {
     },
   };
 
-  const handle = await client.workflow.start('claudeSessionWorkflow', {
+  const startOpts = {
     workflowId,
     taskQueue: config.taskQueue,
-    args: [sessionInput],
+    args: [sessionInput] as [SessionInput],
     workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
     // No execution timeout — workflows live until terminated status or stale detection.
     searchAttributes: {
@@ -145,7 +145,21 @@ async function main() {
       ClaudeTempoEnsemble: [config.ensemble],
       ClaudeTempoPlayerId: [playerId],
     },
-  });
+  };
+
+  let handle = await client.workflow.start('claudeSessionWorkflow', startOpts);
+
+  // Check if the workflow is actually alive — USE_EXISTING returns handles
+  // to completed/terminated workflows, causing signals to be silently ignored
+  const desc = await handle.describe();
+  if (desc.status.name !== 'RUNNING') {
+    log(`Workflow ${workflowId} is ${desc.status.name} — force-starting a fresh instance`);
+    handle = await client.workflow.start('claudeSessionWorkflow', {
+      ...startOpts,
+      workflowIdConflictPolicy: WorkflowIdConflictPolicy.TERMINATE_EXISTING,
+    });
+  }
+
   log(`Workflow ${workflowId} started (or reconnected)`);
 
   // Watch for workflow completion — exit the process when the workflow ends

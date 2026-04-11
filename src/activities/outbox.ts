@@ -220,10 +220,10 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           } : {}),
         };
 
-        await client.workflow.start('claudeSessionWorkflow', {
+        const startOpts = {
           workflowId,
           taskQueue,
-          args: [sessionInput],
+          args: [sessionInput] as [SessionInput],
           workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
           searchAttributes: {
             ...(gitRoot ? { ClaudeTempoGitRoot: [gitRoot] } : {}),
@@ -231,7 +231,20 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             ClaudeTempoEnsemble: [ensemble],
             ClaudeTempoPlayerId: [targetName],
           },
-        });
+        };
+
+        let handle = await client.workflow.start('claudeSessionWorkflow', startOpts);
+
+        // Check if the workflow is actually alive — USE_EXISTING returns handles
+        // to completed/terminated workflows, causing signals to be silently ignored
+        const desc = await handle.describe();
+        if (desc.status.name !== 'RUNNING') {
+          log(`Workflow ${workflowId} is ${desc.status.name} — force-starting a fresh instance`);
+          handle = await client.workflow.start('claudeSessionWorkflow', {
+            ...startOpts,
+            workflowIdConflictPolicy: WorkflowIdConflictPolicy.TERMINATE_EXISTING,
+          });
+        }
 
         log(`Pre-created workflow ${workflowId} for recruit "${targetName}" (sessionId=${sessionId})`);
         return { success: true, sessionId };
