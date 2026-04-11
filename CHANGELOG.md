@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.22.1] - 2026-04-11
+
+### Fixed
+
+- TUI `getPlayerMetadata` query name mismatch — was calling `metadata` instead of `getMetadata`, causing "Query not found" errors
+
+---
+
 ## [0.22.0] - 2026-04-11
 
 ### Added
