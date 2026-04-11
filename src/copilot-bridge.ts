@@ -60,6 +60,8 @@ const MAX_CONSECUTIVE_FAILURES = 3;
 const MAX_SESSION_RECREATIONS = 2;
 /** Check workflow status every N polls (~30s at 2s interval). */
 const WORKFLOW_STATUS_CHECK_INTERVAL = 15;
+/** Proactively recreate the Copilot session after this idle period (ms). Default 60 min. */
+const SESSION_MAX_IDLE_MS = 60 * 60 * 1000;
 
 /** Wrap createSession with a timeout so auth/network hangs don't block forever. */
 async function createSessionWithTimeout(
@@ -312,6 +314,7 @@ async function main() {
   let pollCount = 0;
   let consecutiveFailures = 0;
   let sessionRecreations = 0;
+  let lastActivityTime = Date.now();
   // interval declared here, assigned after poll is defined
   let interval: ReturnType<typeof setInterval> | undefined;
 
@@ -354,6 +357,7 @@ async function main() {
         attachEventLogger(session);
         sessionAlive = true;
         consecutiveFailures = 0;
+        lastActivityTime = Date.now();
         log(`Session resumed successfully: ${session.sessionId}`);
         return true;
       } catch (resumeErr: any) {
@@ -362,6 +366,7 @@ async function main() {
         attachEventLogger(session);
         sessionAlive = true;
         consecutiveFailures = 0;
+        lastActivityTime = Date.now();
         log(`Session recreated (fresh) successfully: ${session.sessionId}`);
         return true;
       }
@@ -399,6 +404,18 @@ async function main() {
       }
     }
 
+    // Proactive stale-session detection — recreate before the SDK server GCs the session
+    const idleMs = Date.now() - lastActivityTime;
+    if (idleMs > SESSION_MAX_IDLE_MS && !processing) {
+      log(`Session idle for ${(idleMs / 1000 / 60).toFixed(0)}min — proactively recreating`);
+      const recovered = await recreateSession();
+      if (recovered) {
+        sessionRecreations = 0; // proactive recreation is lifecycle, not failure — reset budget
+      } else {
+        log('ERROR: Proactive session recreation failed. Continuing with existing session.');
+      }
+    }
+
     try {
       const messages: Message[] = await handle.query('pendingMessages');
       if (messages.length === 0) return;
@@ -433,6 +450,7 @@ async function main() {
 
       // Success — reset failure tracking
       consecutiveFailures = 0;
+      lastActivityTime = Date.now();
       sessionAlive = true;
       processing = false;
     } catch (err: any) {
