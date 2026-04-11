@@ -89,11 +89,11 @@ claude-tempo upgrade 0.22.0
 ## Stopping & Tear Down
 
 ```bash
-# Stop all sessions in an ensemble
-claude-tempo stop my-ensemble --all
+# Stop a specific player session
+claude-tempo stop my-ensemble player-name
 
-# Tear down an ensemble (stops all sessions + scheduler)
-claude-tempo down my-ensemble
+# Tear down everything (all sessions, schedulers, and Maestro workflows)
+claude-tempo down --all
 
 # Stop the background daemon
 claude-tempo daemon stop
