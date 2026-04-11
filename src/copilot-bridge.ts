@@ -16,6 +16,7 @@
  *   CLAUDE_TEMPO_PLAYER_NAME  — player ID for workflow registration (set by spawner for deterministic workflow IDs)
  *   COPILOT_BRIDGE_NAME       — player name for set_name (optional)
  *   COPILOT_BRIDGE_MODEL      — model to use (optional)
+ *   COPILOT_BRIDGE_SESSION_ID — deterministic session ID for resumable sessions (optional)
  *   GITHUB_TOKEN              — GitHub auth token (optional, uses logged-in user by default)
  */
 
@@ -59,6 +60,8 @@ const MAX_CONSECUTIVE_FAILURES = 3;
 const MAX_SESSION_RECREATIONS = 2;
 /** Check workflow status every N polls (~30s at 2s interval). */
 const WORKFLOW_STATUS_CHECK_INTERVAL = 15;
+/** Proactively recreate the Copilot session after this idle period (ms). Default 60 min. */
+const SESSION_MAX_IDLE_MS = 60 * 60 * 1000;
 
 /** Wrap createSession with a timeout so auth/network hangs don't block forever. */
 async function createSessionWithTimeout(
@@ -86,6 +89,7 @@ async function main() {
   const config = getConfig();
   const playerName = process.env[ENV.BRIDGE_NAME];
   const model = process.env[ENV.BRIDGE_MODEL];
+  const copilotSessionId = process.env[ENV.BRIDGE_SESSION_ID] || `tempo-${config.ensemble}-${playerName || 'unknown'}-${Date.now()}-${process.pid}`;
   const workDir = process.cwd();
 
   log(`Starting Copilot bridge in ${workDir} (ensemble: ${config.ensemble})`);
@@ -142,6 +146,7 @@ async function main() {
   });
 
   const sessionConfig: Parameters<typeof copilotClient.createSession>[0] = {
+    sessionId: copilotSessionId,
     // approveAll is intentional: Copilot bridge sessions run headless with no
     // interactive terminal, so there is no way to prompt for permission approval.
     // All tool calls are auto-approved by design — the bridge operator accepts
@@ -275,6 +280,11 @@ async function main() {
 
   log(`Workflow ready: ${expectedWorkflowId}`);
 
+  // Store sessionId in workflow metadata for future encore/resume
+  try {
+    await handle.signal('updateMetadata', { sessionId: copilotSessionId });
+  } catch { /* workflow may not be ready yet */ }
+
   // If a name was requested, send the set_name instruction
   if (playerName) {
     log(`Sending set_name instruction for "${playerName}"...`);
@@ -304,6 +314,8 @@ async function main() {
   let pollCount = 0;
   let consecutiveFailures = 0;
   let sessionRecreations = 0;
+  let proactiveRecreations = 0;
+  let lastActivityTime = Date.now();
   // interval declared here, assigned after poll is defined
   let interval: ReturnType<typeof setInterval> | undefined;
 
@@ -335,17 +347,32 @@ async function main() {
       log(`ERROR: Exceeded max session recreations (${MAX_SESSION_RECREATIONS}). Giving up.`);
       return false;
     }
-    log(`Attempting session recreation (${sessionRecreations}/${MAX_SESSION_RECREATIONS})...`);
+    log(`Attempting session recovery (${sessionRecreations}/${MAX_SESSION_RECREATIONS})...`);
     try {
       await session.disconnect().catch(() => {});
-      session = await createSessionWithTimeout(copilotClient, sessionConfig);
-      attachEventLogger(session);
-      sessionAlive = true;
-      consecutiveFailures = 0;
-      log(`Session recreated successfully: ${session.sessionId}`);
-      return true;
+
+      // Try resumeSession first to preserve conversation history
+      try {
+        const { sessionId: _discard, ...resumeConfig } = sessionConfig as any;
+        session = await copilotClient.resumeSession(copilotSessionId, resumeConfig);
+        attachEventLogger(session);
+        sessionAlive = true;
+        consecutiveFailures = 0;
+        lastActivityTime = Date.now();
+        log(`Session resumed successfully: ${session.sessionId}`);
+        return true;
+      } catch (resumeErr: any) {
+        log(`resumeSession failed (${resumeErr?.message}), falling back to createSession`);
+        session = await createSessionWithTimeout(copilotClient, sessionConfig);
+        attachEventLogger(session);
+        sessionAlive = true;
+        consecutiveFailures = 0;
+        lastActivityTime = Date.now();
+        log(`Session recreated (fresh) successfully: ${session.sessionId}`);
+        return true;
+      }
     } catch (err: any) {
-      log(`Session recreation failed: ${err?.message}`);
+      log(`Session recovery failed: ${err?.message}`);
       return false;
     }
   }
@@ -378,13 +405,36 @@ async function main() {
       }
     }
 
+    // Proactive stale-session detection — recreate before the SDK server GCs the session
+    const idleMs = Date.now() - lastActivityTime;
+    if (idleMs > SESSION_MAX_IDLE_MS && !processing) {
+      try {
+        processing = true; // guard against overlapping polls during async recreation
+        log(`Session idle for ${(idleMs / 1000 / 60).toFixed(0)}min — proactively recreating`);
+        proactiveRecreations++;
+        const recovered = await recreateSession();
+        if (recovered) {
+          // Proactive recreation is lifecycle management, not failure recovery — restore failure budget
+          // but don't reset to 0: use proactiveRecreations to cap total lifecycle recreations
+          sessionRecreations = Math.max(0, sessionRecreations - 1);
+        } else {
+          // Session is almost certainly dead server-side — force immediate recovery on next message
+          // Use MAX - 1 so the next poll error increments to the threshold and triggers recovery
+          consecutiveFailures = MAX_CONSECUTIVE_FAILURES - 1;
+          sessionAlive = false;
+          log('ERROR: Proactive session recreation failed — will force recovery on next message');
+        }
+      } finally {
+        processing = false;
+      }
+    }
+
     try {
       const messages: Message[] = await handle.query('pendingMessages');
       if (messages.length === 0) return;
 
       processing = true;
       const ids = messages.map((m) => m.id);
-      await handle.signal('markDelivered', ids);
 
       // Format messages into a single prompt, appending ack instruction for Maestro messages
       const prompt = messages
@@ -408,8 +458,12 @@ async function main() {
       log(`sendAndWait completed in ${elapsed}ms`);
       log(`Response: ${JSON.stringify(result)?.substring(0, 500)}`);
 
+      // Mark delivered only after successful send — failed messages stay in pending queue for retry
+      await handle.signal('markDelivered', ids);
+
       // Success — reset failure tracking
       consecutiveFailures = 0;
+      lastActivityTime = Date.now();
       sessionAlive = true;
       processing = false;
     } catch (err: any) {

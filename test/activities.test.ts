@@ -415,7 +415,7 @@ describe('performEncore', function () {
         isConductor: false,
         agentType: 'claude',
         status: 'stale',
-        claudeSessionId: 'uuid-123',
+        sessionId: 'uuid-123',
       },
       part: 'was refactoring code',
       messages: [
@@ -436,7 +436,7 @@ describe('performEncore', function () {
     expect(result.hostname).to.equal('host1');
     expect(result.isConductor).to.be.false;
     expect(result.agent).to.equal('claude');
-    expect(result.claudeSessionId).to.equal('uuid-123');
+    expect(result.sessionId).to.equal('uuid-123');
     expect(result.temporalAddress).to.equal('localhost:7233');
     expect(result.temporalNamespace).to.equal('default');
 

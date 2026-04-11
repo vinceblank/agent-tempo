@@ -45,6 +45,29 @@ export function formatStatus(status?: string): string {
   }
 }
 
+/**
+ * Word-wrap text to fit within maxWidth, breaking at word boundaries.
+ * Each original newline starts a new line. Returns at least one line.
+ */
+export function wordWrap(text: string, maxWidth: number): string[] {
+  if (maxWidth < 1) return [text];
+  const result: string[] = [];
+  for (const raw of text.split('\n')) {
+    const words = raw.split(' ');
+    let current = '';
+    for (const word of words) {
+      if (current && current.length + 1 + word.length > maxWidth) {
+        result.push(current);
+        current = word;
+      } else {
+        current = current ? current + ' ' + word : word;
+      }
+    }
+    result.push(current);
+  }
+  return result.length > 0 ? result : [''];
+}
+
 /** Format an event type for display. */
 export function formatEventType(type: string): string {
   switch (type) {

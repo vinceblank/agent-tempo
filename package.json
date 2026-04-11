@@ -1,6 +1,6 @@
 {
   "name": "claude-tempo",
-  "version": "0.21.1",
+  "version": "0.22.0-beta.2",
   "description": "MCP server for multi-session Claude Code coordination via Temporal",
   "keywords": [
     "mcp",
@@ -68,10 +68,15 @@
     "@temporalio/worker": "~1.15.0",
     "@temporalio/workflow": "~1.15.0",
     "croner": "^10.0.1",
+    "ink": "^6.8.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.2.4",
     "yaml": "^2.8.3",
     "zod": "~3.25.76"
   },
   "devDependencies": {
+    "@temporalio/common": "^1.15.0",
     "@temporalio/testing": "~1.15.0",
     "@types/chai": "^4.3.20",
     "@types/mocha": "^10.0.10",

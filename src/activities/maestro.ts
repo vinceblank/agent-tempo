@@ -1,7 +1,7 @@
 import { Client } from '@temporalio/client';
 import { ApplicationFailure } from '@temporalio/activity';
-import { conductorWorkflowId } from '../config';
-import { HistoryEntry, MaestroPlayerInfo, Message, SentMessage } from '../types';
+import { conductorWorkflowId, sessionWorkflowId } from '../config';
+import { HistoryEntry, MaestroPlayerInfo, Message, SentMessage, EnsembleChatMessage, ChatHighWater, ZERO_CHAT_HIGH_WATER } from '../types';
 import { scanEnsembleSessions, resolveSession } from './resolve';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:maestro]', ...args);
@@ -53,6 +53,22 @@ export interface FetchPlayerMessagesResult {
   error?: string;
 }
 
+export interface FetchEnsembleChatInput {
+  ensemble: string;
+  /** Known message counts to enable delta returns. */
+  knownCounts?: ChatHighWater;
+}
+
+export interface FetchEnsembleChatResult {
+  success: boolean;
+  /** Only NEW messages since the known counts. */
+  newMessages: EnsembleChatMessage[];
+  /** Updated counts for next call. */
+  currentCounts: ChatHighWater;
+  hasConductor: boolean;
+  error?: string;
+}
+
 /** Activity interface — used by proxyActivities in the Maestro workflow. */
 export interface MaestroActivities {
   refreshEnsembleState(ensemble: string): Promise<MaestroPlayerInfo[]>;
@@ -61,6 +77,7 @@ export interface MaestroActivities {
   discoverEnsembles(): Promise<string[]>;
   deliverMaestroMessage(input: DeliverMaestroMessageInput): Promise<DeliverMaestroMessageResult>;
   fetchPlayerMessages(input: FetchPlayerMessagesInput): Promise<FetchPlayerMessagesResult>;
+  fetchEnsembleChat(input: FetchEnsembleChatInput): Promise<FetchEnsembleChatResult>;
 }
 
 /**
@@ -189,6 +206,110 @@ export function createMaestroActivities(client: Client): MaestroActivities {
         const msg = err instanceof Error ? err.message : String(err);
         log('fetchPlayerMessages failed (soft):', msg);
         return { success: false, messages: [], error: msg };
+      }
+    },
+
+    async fetchEnsembleChat(input: FetchEnsembleChatInput): Promise<FetchEnsembleChatResult> {
+      const { ensemble, knownCounts } = input;
+      const hw: ChatHighWater = knownCounts ?? ZERO_CHAT_HIGH_WATER;
+      const TRUNC = 500;
+      const truncate = (t: string) => t.length > TRUNC ? t.slice(0, TRUNC - 1) + '...' : t;
+
+      try {
+        const maestroHandle = client.workflow.getHandle(sessionWorkflowId(ensemble, 'maestro'));
+
+        let conductorHandle: ReturnType<typeof client.workflow.getHandle> | null = null;
+        let conductorId = '';
+        const sessions = await scanEnsembleSessions(client, ensemble);
+        const conductorSession = sessions.find(s => s.isConductor);
+        if (conductorSession) {
+          conductorHandle = client.workflow.getHandle(conductorSession.workflowId);
+          conductorId = conductorSession.playerId;
+        }
+
+        const [maestroRecvRes, maestroSentRes, condRecvRes, condSentRes] = await Promise.allSettled([
+          maestroHandle.query('allMessages') as Promise<Message[]>,
+          maestroHandle.query('allSentMessages') as Promise<SentMessage[]>,
+          conductorHandle ? conductorHandle.query('allMessages') as Promise<Message[]> : Promise.resolve([] as Message[]),
+          conductorHandle ? conductorHandle.query('allSentMessages') as Promise<SentMessage[]> : Promise.resolve([] as SentMessage[]),
+        ]);
+
+        const maestroRecv: Message[] = maestroRecvRes.status === 'fulfilled' ? maestroRecvRes.value : [];
+        const maestroSent: SentMessage[] = maestroSentRes.status === 'fulfilled' ? maestroSentRes.value : [];
+        const condRecv: Message[] = condRecvRes.status === 'fulfilled' ? condRecvRes.value : [];
+        const condSent: SentMessage[] = condSentRes.status === 'fulfilled' ? condSentRes.value : [];
+
+        const newMessages: EnsembleChatMessage[] = [];
+
+        for (const m of maestroRecv.slice(hw.maestroRecv)) {
+          newMessages.push({
+            id: m.id,
+            from: m.from,
+            to: 'maestro',
+            text: m.text,
+            timestamp: m.timestamp,
+            role: 'maestro-in',
+          });
+        }
+
+        for (const m of maestroSent.slice(hw.maestroSent)) {
+          newMessages.push({
+            id: m.id,
+            from: 'maestro',
+            to: m.to,
+            text: m.text,
+            timestamp: m.timestamp,
+            role: 'maestro-out',
+          });
+        }
+
+        for (const m of condRecv.slice(hw.conductorRecv)) {
+          if (m.from === 'maestro' || m.isMaestro) continue; // Skip maestro<->conductor (already covered)
+          newMessages.push({
+            id: `cond-${m.id}`,
+            from: m.from,
+            to: conductorId,
+            text: truncate(m.text),
+            timestamp: m.timestamp,
+            role: 'conductor-in',
+          });
+        }
+
+        for (const m of condSent.slice(hw.conductorSent)) {
+          if (m.to === 'maestro') continue; // Skip conductor->maestro (already covered)
+          newMessages.push({
+            id: `cond-${m.id}`,
+            from: conductorId,
+            to: m.to,
+            text: truncate(m.text),
+            timestamp: m.timestamp,
+            role: 'conductor-out',
+          });
+        }
+
+        newMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+        return {
+          success: true,
+          newMessages,
+          currentCounts: {
+            maestroRecv: maestroRecv.length,
+            maestroSent: maestroSent.length,
+            conductorRecv: condRecv.length,
+            conductorSent: condSent.length,
+          },
+          hasConductor: !!conductorHandle,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log('fetchEnsembleChat failed:', msg);
+        return {
+          success: false,
+          newMessages: [],
+          currentCounts: hw,
+          hasConductor: false,
+          error: msg,
+        };
       }
     },
   };

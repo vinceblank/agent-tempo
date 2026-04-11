@@ -441,10 +441,23 @@ const SEARCH_ATTRIBUTES = [
   { name: 'ClaudeTempoPlayerType', type: 'Keyword' },
 ];
 
-function isTemporalReachable(config: { temporalAddress: string; temporalApiKey?: string; temporalTlsCertPath?: string; temporalTlsKeyPath?: string }): Promise<boolean> {
-  return createTemporalConnection(config as any)
-    .then(conn => { conn.close(); return true; })
-    .catch(() => false);
+async function isTemporalReachable(config: { temporalAddress: string; temporalNamespace?: string; temporalApiKey?: string; temporalTlsCertPath?: string; temporalTlsKeyPath?: string }): Promise<boolean> {
+  try {
+    const conn = await createTemporalConnection(config as any);
+    try {
+      // Verify namespace is ready — a gRPC connection alone doesn't guarantee the server can serve requests
+      const client = new Client({ connection: conn, namespace: config.temporalNamespace || 'default' });
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _ of client.workflow.list({ query: 'WorkflowId = "__readiness_probe__"' })) {
+        break;
+      }
+    } finally {
+      await conn.close();
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function temporalCliExists(): boolean {
@@ -807,7 +820,7 @@ export async function up(opts: UpOpts) {
       isConductor: true,
       agentType: conductorAgent,
       status: 'pending',
-      claudeSessionId: conductorSessionId,
+      sessionId: conductorSessionId,
       ...(resolvedConductorType ? { playerType: resolvedConductorType.name, playerTypeDescription: resolvedConductorType.description || '' } : {}),
     },
     autoSummary: `Conductor session`,
@@ -896,7 +909,7 @@ export async function up(opts: UpOpts) {
       out.log(`Recruiting ${lineup.players.length} player${lineup.players.length !== 1 ? 's' : ''} from lineup...`);
 
       for (const player of lineup.players) {
-        const playerAgent: AgentType = player.agent === 'copilot' ? 'copilot' : 'claude';
+        const playerAgent: AgentType = player.agent === 'copilot' ? 'copilot' : (player.agent === 'claude' ? 'claude' : opts.agent);
         const playerWorkDir = player.workDir || process.cwd();
         const playerTypeName = player.type;
         const resolvedPlayerType = playerTypeName ? resolveAgentType(playerTypeName) : null;
@@ -917,7 +930,7 @@ export async function up(opts: UpOpts) {
             isConductor: false,
             agentType: playerAgent,
             status: 'pending',
-            claudeSessionId: playerSessionId,
+            sessionId: playerSessionId,
             recruitedBy: sessionName,
             ...(resolvedPlayerType ? { playerType: resolvedPlayerType.name, playerTypeDescription: resolvedPlayerType.description || '' } : {}),
           },
@@ -1006,8 +1019,23 @@ export async function up(opts: UpOpts) {
         try {
           const entry = lineupScheduleToEntry(sched);
           const schedulerWfId = schedulerWorkflowId(opts.ensemble);
-          const handle = client.workflow.getHandle(schedulerWfId);
-          await handle.signal(addScheduleSignal, entry);
+
+          // Try to signal existing scheduler; if not running, start it with this schedule as seed
+          try {
+            const handle = client.workflow.getHandle(schedulerWfId);
+            await handle.describe();
+            await handle.signal(addScheduleSignal, entry);
+          } catch {
+            await client.workflow.start('claudeSchedulerWorkflow', {
+              workflowId: schedulerWfId,
+              taskQueue: config.taskQueue,
+              args: [{ ensemble: opts.ensemble, entries: [entry] }],
+              workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+              searchAttributes: {
+                ClaudeTempoEnsemble: [opts.ensemble],
+              },
+            });
+          }
           out.check(sched.name, true, `→ ${sched.target}`);
         } catch (err) {
           out.warn(`Could not create schedule "${sched.name}": ${err}`);

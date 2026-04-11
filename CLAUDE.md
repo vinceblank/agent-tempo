@@ -40,7 +40,7 @@ src/
 │   └── signals.ts     # Session signal/query type definitions
 ├── activities/
 │   ├── outbox.ts      # Outbox delivery activities (cue, report, stop, recruit, encore)
-│   ├── maestro.ts     # Maestro activities (refreshEnsembleState, relayCommandToConductor, fetchConductorHistory)
+│   ├── maestro.ts     # Maestro activities (refreshEnsembleState, relayCommandToConductor, fetchConductorHistory, fetchEnsembleChat)
 │   ├── resolve.ts     # Session resolver shared by outbox + schedule-fire activities
 │   └── schedule-fire.ts # Schedule fire activity
 ├── ensemble/
@@ -78,16 +78,34 @@ src/
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
 ├── tui/
 │   ├── index.ts       # TUI entry point — connects to Temporal and renders the Ink app
-│   ├── App.tsx        # Root TUI component — routes between splash, dashboard, and error states
-│   ├── store.ts       # TUI state reducer (phase, players, events, conductor history)
-│   ├── core-api.ts    # TUI API layer — wraps Temporal queries via the Maestro workflow
+│   ├── App.tsx        # Root TUI component — chat-focused shell with slash commands
+│   ├── store.ts       # TUI state reducer (phase, players, messages, schedules, static history)
+│   ├── client.ts      # TempoClient interface and implementation — wraps Temporal queries via Maestro
+│   ├── commands.ts    # Slash command parser and registry (/player, /broadcast, /status, etc.)
 │   ├── ink-loader.ts  # Dynamic ESM loader for Ink (avoids CJS/ESM conflicts)
 │   ├── ink-context.tsx # React context for injected Ink primitives
 │   ├── components/
-│   │   └── Splash.tsx # Splash/connecting screen component
+│   │   ├── Splash.tsx         # Splash/connecting screen component
+│   │   ├── TitleBar.tsx       # Pinned title bar showing ensemble/player context
+│   │   ├── PromptArea.tsx     # Pinned input area with ❯ prompt, inline hints, and divider
+│   │   ├── MainView.tsx       # Main ensemble view (players, messages, schedules)
+│   │   ├── ChatView.tsx       # Per-player chat view (entered via /cue <player>)
+│   │   ├── ErrorView.tsx      # Connection failure screen with troubleshooting checks (zero Yoga nodes)
+│   │   ├── StatusBar.tsx      # Persistent status bar (player counts, schedule count, connection health)
+│   │   ├── CommandPalette.tsx    # Autocomplete dropdown for slash commands and parameters
+│   │   ├── Picker.tsx            # Full-screen interactive picker (players, ensembles)
+│   │   ├── PlayerDetailView.tsx  # Player metadata + scrollable message history (zero Yoga nodes)
+│   │   ├── StatusOverlay.tsx     # Dismissible overlay showing ensemble player cards (/status)
+│   │   ├── ConversationStream.tsx    # Live message area merging server conversation + optimistic echo
+│   │   ├── CreateEnsembleWizard.tsx  # Step-by-step wizard for creating new ensembles (name → workDir → lineup → confirm)
+│   │   ├── ScheduleWizard.tsx        # Step-by-step wizard for /schedule create
+│   │   └── RecruitWizard.tsx         # Step-by-step wizard for /recruit
 │   └── utils/
-│       ├── format.ts  # Display formatting helpers
-│       └── platform.ts # Terminal size detection helpers
+│       ├── format.ts          # Display formatting helpers
+│       ├── platform.ts        # Terminal size detection helpers
+│       ├── theme.ts           # THEME constants (colors, borders, icons)
+│       ├── fullscreen.ts      # Fullscreen/alternate-screen helpers
+│       └── history.ts         # Persistent command history (~/.claude-tempo/tui-history.json)
 ├── utils/
 │   ├── validation.ts  # Shared validation constants (name/message/path limits, encore defaults) and helpers
 │   ├── worktree.ts    # Git worktree create/remove helpers (cross-platform)
@@ -150,9 +168,33 @@ npm test
 - **Quality Gate**: A named checklist of criteria a conductor tracks to verify a task is complete. Created via `quality_gate` (conductor only), evaluated via `evaluate_gate`, and listed via `gates`. Each criterion has a `pending` → `passed` | `failed` status; the gate's aggregate status is derived automatically (all passed → `passed`, any failed → `failed`, else `open`). Gates are stored in the conductor workflow and survive `continueAsNew`.
 - **Worktree**: A git worktree provisioned by the conductor for a player, giving them an isolated checkout on a separate branch. Managed via the `worktree` tool (conductor only): `create` provisions the worktree and notifies the player, `remove` cleans up after the task, `list` shows all active worktrees. Worktree assignments are stored in the conductor workflow (`WorktreeEntry` records: player, path, branch, gitRoot, createdAt, createdBy).
 - **Stage**: A fan-out/fan-in tracking primitive for the conductor. Created via `stage` (conductor only), listing via `stages`, cancelled via `cancel_stage`. Each stage tracks a set of players; when a tracked player sends a `report`, their stage status updates automatically (`waiting` → `reported` or `blocked`). When all players have reported, the conductor is notified that the stage is complete. If `failurePolicy` is `'halt'` (default), a blocker from any player fails the entire stage. Stages are stored in the conductor workflow and survive `continueAsNew`.
-- **Maestro**: Two Maestro workflow variants exist. The **per-ensemble** `claudeMaestroWorkflow` (ID: `claude-maestro-{ensemble}`) monitors a single ensemble — maintains a player snapshot and ring-buffer event log (max 200 entries), and queues commands for relay to the conductor via `maestroSendCommand`. The **global** `claudeGlobalMaestroWorkflow` (ID: `claude-maestro-global`) spans all ensembles — aggregates players by ensemble, maintains a cross-ensemble message ring buffer (max 500 entries), and exposes on-demand player/conductor history via `maestroFetchPlayerMessages` and `maestroFetchConductorHistory` updates. The Maestro dashboard ([vinceblank/maestro](https://github.com/vinceblank/maestro)) can connect to either. Both are implemented in `src/workflows/maestro.ts` with activities in `src/activities/maestro.ts`.
+- **Maestro**: Two Maestro workflow variants exist. The **per-ensemble** `claudeMaestroWorkflow` (ID: `claude-maestro-{ensemble}`) monitors a single ensemble — maintains a player snapshot, ring-buffer event log (max 200 entries), an aggregated ensemble chat cache (max 500 entries, refreshed every ~10s via `fetchEnsembleChat` activity), and queues commands for relay to the conductor via `maestroSendCommand`. The ensemble chat cache merges maestro + conductor traffic and is served via the `maestroEnsembleChat` query. The **global** `claudeGlobalMaestroWorkflow` (ID: `claude-maestro-global`) spans all ensembles — aggregates players by ensemble, maintains a cross-ensemble message ring buffer (max 500 entries), and exposes on-demand player/conductor history via `maestroFetchPlayerMessages` and `maestroFetchConductorHistory` updates. The Maestro dashboard ([vinceblank/maestro](https://github.com/vinceblank/maestro)) can connect to either. Both are implemented in `src/workflows/maestro.ts` with activities in `src/activities/maestro.ts`.
+- **TempoClient**: The TUI's API layer (`src/tui/client.ts`) — a TypeScript interface and implementation that wraps Temporal queries to the Maestro and conductor workflows. Provides `discoverEnsembles`, `getPlayers`, `getMessages`, `getConductorHistory`, `sendMessage`, `sendCommand`, `getEnsembleChat`, `getGates`, `getStages`, `getWorktrees`, and `terminatePlayer`. Uses Global Maestro as the primary source with graceful fallback to per-ensemble Maestro and direct workflow list queries.
 - **Wire protocol**: All Temporal signal, query, update, and workflow names are documented in [`docs/WIRE-PROTOCOL.md`](docs/WIRE-PROTOCOL.md). These names are stable as of v0.10 — renaming or removing any is a breaking change requiring a major version bump.
 - **Daemon**: A standalone background process (`src/daemon.ts`) that runs all Temporal workers. Auto-started by any claude-tempo command if not already running. PID stored at `~/.claude-tempo/daemon.pid`; logs at `~/.claude-tempo/daemon.log`. Sessions are now pure MCP clients — they no longer run in-process workers. Managed via `claude-tempo daemon start|stop|status|logs`.
+
+## TUI Key Behaviors
+
+- **Routing**: Bare text in the TUI routes to the conductor via `sendCommand`. Prefix with `@player` to message a specific player directly (e.g. `@alice can you review this?`). When no conductor is present, bare text shows an error; use `@player` to message directly.
+- **Schedule management**: `/schedule` is the single entry point — no standalone `/unschedule`. Subcommands: `/schedule` (show overlay), `/schedule create` (wizard), `/schedule delete <name>` (cancel).
+- **Interactive overlays**: `/status`, `/schedule`, `/gates`, `/stages`, `/worktree` display dismissible overlays (via `SHOW_OVERLAY`/`StatusOverlay`). `/player`, `/ensemble` open full-screen interactive pickers (`Picker`).
+- **Aliases removed**: `/home`, `/maestro`, `/dashboard`, `/exit`, and `/unschedule` are **not** registered commands. Using them produces a "command not found" error. Use `/back`, `/quit`, and `/schedule delete` respectively.
+- **`/help <command>`**: `/help` alone shows all commands; `/help recruit` (or `/help /recruit`) shows the usage and description for a specific command in an overlay.
+- **NO_COLOR**: Set `NO_COLOR=1` to disable all color output — respected in both the TUI theme (`src/tui/utils/theme.ts`) and CLI output helpers (`src/cli/output.ts`). Follows the https://no-color.org/ convention.
+- **Terminal size requirement**: The TUI requires a minimum terminal size of **80×24**. If the terminal is smaller at launch, the process exits with code 1 with an explanatory message. A soft in-app warning appears at 60×15 during resize.
+
+## TUI Performance (Ink/React)
+
+Hard-won lessons from debugging input lag in the TUI (#58). Apply these whenever touching `src/tui/`.
+
+- **Fullscreen bypass is permanent**: When `lastOutputHeight >= stdout.rows`, Ink permanently switches to `clearTerminal + full-rewrite` on every frame — this never resets. Every component/phase must render within `height: termRows - 1` to stay in the fast `throttledLog` path (in-place line updates).
+- **Animation timers poison rendering**: `setInterval`-based animations (spinners, metronomes) trigger re-renders every 80–150ms. Each re-render runs the full Yoga layout + output pipeline for all nodes. Never use animation timers in components that coexist with input areas — rapid re-renders cause input lag.
+- **Yoga node count: keep under ~20**: Every `<Box>` creates a Yoga layout node; every keystroke recalculates all of them. 100+ nodes = laggy input. Prefer nested `<Text>` over `<Box><Text>` — nested Text creates `ink-virtual-text` with zero Yoga nodes. Pre-format content as strings with `\n` and render as a single `<Text>`.
+- **Uncontrolled input pattern**: Input components must not dispatch to parent state on every keystroke. Use local `useState` + `useImperativeHandle` ref for parent communication. Guard all callbacks (e.g. `onPaletteToggle`) to only fire when values actually change — otherwise you get silent parent re-renders on every keypress.
+- **Reducer state identity matters**: `return { ...state, field: sameValue }` creates a new object reference and triggers a re-render even when nothing changed. Always check before spreading: `if (!state.paletteVisible && state.paletteIndex === 0) return state;`
+- **Stale refs between renders**: When using the ref pattern for stable `useInput` callbacks, values read from `ref.current` are only updated on React render. For values that change between renders (e.g. input value), update `ref.current.value` synchronously inside the setter — not just on render. Otherwise rapid keystrokes (e.g. holding backspace) read stale values and drop inputs.
+- **Debugging approach**: When diagnosing Ink lag, create minimal test apps (`.mjs`) adding one factor at a time (fullscreen, Temporal, InkProvider, real components) to isolate the cause. If the minimal app is fast but the real app is slow, the component tree is the culprit — not the infrastructure.
+- **Cap live message counts**: ChatView and similar message lists must limit visible messages (~20). Rendering hundreds of messages in the live Yoga tree creates 1000+ React elements that slow reconciliation and output generation. Show a "↑ N earlier messages" indicator when truncated. Future: adopt Ink's `<Static>` pattern (render-once, exit Yoga tree) like Claude Code does for scroll history.
 
 ## Dashboard
 

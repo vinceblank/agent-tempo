@@ -192,7 +192,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     if (update.playerType != null) input.metadata.playerType = update.playerType;
     if (update.playerTypeDescription != null) input.metadata.playerTypeDescription = update.playerTypeDescription;
     if (update.worktreePath != null) input.metadata.worktreePath = update.worktreePath;
-    if (update.claudeSessionId != null) input.metadata.claudeSessionId = update.claudeSessionId;
+    if (update.sessionId != null || (update as any).claudeSessionId != null) {
+      input.metadata.sessionId = update.sessionId ?? (update as any).claudeSessionId;
+    }
     if (update.status != null) {
       input.metadata.status = update.status as SessionStatus;
       // Re-enable stale detection only when explicitly requested (server.ts sets this)
@@ -546,7 +548,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               agentDefinition: entry.agentDefinition,
               agentDefinitionPath: entry.agentDefinitionPath,
               nativeResolvable: entry.nativeResolvable,
-              claudeSessionId: recruitResult.claudeSessionId,
+              sessionId: recruitResult.sessionId,
               allowedTools: entry.allowedTools,
               claudeBin: entry.claudeBin,
             });
@@ -574,7 +576,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
                 agentDefinitionPath: encoreResult.agentDefinitionPath,
                 nativeResolvable: encoreResult.nativeResolvable,
                 allowedTools: encoreResult.allowedTools,
-                claudeSessionId: encoreResult.claudeSessionId,
+                sessionId: encoreResult.sessionId,
                 resume: true,
                 claudeBin: entry.claudeBin || encoreResult.claudeBin,
               });

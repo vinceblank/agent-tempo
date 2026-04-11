@@ -67,8 +67,8 @@ export interface SpawnProcessInput {
   nativeResolvable?: boolean;
   /** When true, use --resume instead of -n (reconnect to existing session). */
   resume?: boolean;
-  /** Claude Code session UUID for --session-id (new sessions) or --resume (encore). */
-  claudeSessionId?: string;
+  /** Session UUID — used for Copilot SDK sessionId and Claude Code --resume/--session-id. */
+  sessionId?: string;
   /** Tool restrictions from the agent definition frontmatter. */
   allowedTools?: string[];
   /** Custom claude binary path (from config.claudeBin). */
@@ -91,8 +91,8 @@ export interface EncoreResult {
   agentDefinitionPath?: string;
   nativeResolvable?: boolean;
   allowedTools?: string[];
-  /** Claude Code session UUID for deterministic --resume. */
-  claudeSessionId?: string;
+  /** Session UUID — used for Copilot SDK sessionId and Claude Code --resume/--session-id. */
+  sessionId?: string;
   temporalAddress: string;
   temporalNamespace: string;
   /** Custom claude binary path (from config.claudeBin). */
@@ -107,8 +107,8 @@ export interface OutboxActivityResult {
 }
 
 export interface RecruitResult extends OutboxActivityResult {
-  /** Claude Code session UUID assigned at recruit time. */
-  claudeSessionId?: string;
+  /** Session UUID assigned at recruit time. */
+  sessionId?: string;
 }
 
 // ── Activity interface ──
@@ -188,8 +188,8 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
 
         const { gitRoot, gitBranch } = getGitInfo(workDir);
 
-        // Generate a UUID for the Claude Code session — used for deterministic --resume on encore
-        const claudeSessionId = crypto.randomUUID();
+        // Generate a UUID for the session — used for deterministic --resume on encore
+        const sessionId = crypto.randomUUID();
 
         const sessionInput: SessionInput = {
           metadata: {
@@ -202,7 +202,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             isConductor,
             agentType: agent,
             status: 'pending',
-            claudeSessionId,
+            sessionId,
             ...(agentDefinition ? { playerType: agentDefinition } : {}),
             ...(agentDefinitionDescription ? { playerTypeDescription: agentDefinitionDescription } : {}),
             recruitedBy: fromPlayerId,
@@ -233,8 +233,8 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           },
         });
 
-        log(`Pre-created workflow ${workflowId} for recruit "${targetName}" (sessionId=${claudeSessionId})`);
-        return { success: true, claudeSessionId };
+        log(`Pre-created workflow ${workflowId} for recruit "${targetName}" (sessionId=${sessionId})`);
+        return { success: true, sessionId };
       } catch (err) {
         throw ApplicationFailure.nonRetryable(
           `Failed to start recruited session "${targetName}": ${err instanceof Error ? err.message : String(err)}`,
@@ -243,7 +243,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
-      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, claudeSessionId, allowedTools, claudeBin } = input;
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin } = input;
       // Read secrets from the worker's config closure — never from workflow state
       const { temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = config;
       try {
@@ -261,6 +261,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             temporalTlsKeyPath,
             isConductor,
             workDir,
+            sessionId,
           });
           log(`Spawned copilot-bridge (pid ${pid}) in ${workDir} as "${targetName}"`);
         } else {
@@ -278,8 +279,8 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           // For encore: use UUID for deterministic --resume (no interactive picker).
           // For new sessions: use --session-id to track the UUID for future encores.
           const nameArgs = resume
-            ? ['--resume', claudeSessionId || targetName]
-            : ['-n', targetName, ...(claudeSessionId ? ['--session-id', claudeSessionId] : [])];
+            ? ['--resume', sessionId || targetName]
+            : ['-n', targetName, ...(sessionId ? ['--session-id', sessionId] : [])];
 
           // Build --allowedTools flag from agent definition frontmatter
           const allowedToolsFlags = allowedTools && allowedTools.length > 0
@@ -390,7 +391,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           agentDefinitionPath,
           nativeResolvable,
           allowedTools,
-          claudeSessionId: (metadata.claudeSessionId as string) || undefined,
+          sessionId: (metadata.sessionId as string) || undefined,
           temporalAddress: config.temporalAddress,
           temporalNamespace: config.temporalNamespace,
           claudeBin: config.claudeBin,

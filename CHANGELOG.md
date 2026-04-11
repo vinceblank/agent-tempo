@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Ensemble chat feed — aggregated maestro + conductor traffic visible in the main TUI view. Backed by the new `maestroEnsembleChat` per-ensemble Maestro query (paginated, max 500 cached entries, refreshed every ~10s via `fetchEnsembleChat` activity). Prefix bare text with `@player` to address a specific player directly from the main view (#58)
+- `/help <command>` — per-command help overlay: `/help recruit` (or `/help /recruit`) shows the usage and description for a specific slash command (#58)
+- `NO_COLOR` support — set `NO_COLOR=1` to disable all color output in both the TUI and CLI, following the https://no-color.org/ convention (#58)
+- Minimum terminal size check — TUI exits with code 1 at launch if the terminal is below 80×24, with an explanatory message; soft in-app warning renders at 60×15 (#58)
+- 36 new TUI tests (591 total) covering command handling, overlay dispatch, ensemble chat, and layout edge cases (#58)
+
+### Fixed
+
+- TUI message layout: messages are top-aligned with a reserved 1-line gap above the footer, preventing content from bleeding into the prompt area. Static and live message areas now use matching formatting (#58)
+- `/schedule` command consolidates schedule deletion — `/schedule delete <name>` replaces the previously documented `/unschedule` alias, which was never registered (#58)
+- `exec()` replaced with `execFile()` in TUI ensemble creation to prevent shell injection (#58)
+- TUI exits with code 1 on Temporal connection error (previously exited cleanly, masking failures) (#58)
+
+---
+
 ## [0.21.1] - 2026-04-08
 
 ### Fixed
@@ -28,15 +47,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - `claude-tempo upgrade [version]` command for graceful self-update — stops daemon, installs new version, restarts daemon (#79, #82)
+- Complete TUI rewrite — multi-ensemble home screen, view router, adaptive polling (#58)
+- TempoClient API layer replacing core-api.ts with Maestro-first fallback (#58)
+- 13 new components: ChatView, CommandPalette, ConversationStream, ErrorView, MainView, Picker, PlayerDetailView, PromptArea, RecruitWizard, ScheduleWizard, Splash, StatusBar, StatusOverlay, TitleBar (#58)
+- Slash command system with parser, registry, tab completion, persistent history (#58)
+- `/status` command — dismissible overlay (`StatusOverlay`) showing all players with status, type, and current part (#58)
+- `/unschedule` command wired — cancels a named schedule via the durable scheduler workflow (#58)
+- `PlayerDetailView` — per-player panel with scrollable message history (#58)
+- `ConversationStream` — live message area merging server conversation with optimistic sent-message echo (#58)
+- `Picker` — interactive full-screen picker with player type grouping (groups items under shared headers) (#58)
+- `CreateEnsembleWizard` — guided step-by-step flow for creating new ensembles (name → workDir → lineup → confirm), accessible from the splash screen and `/ensemble` (#58)
+- Loading states for splash screen (connection checklist) and status bar (#58)
+- Two-way conductor chat via Global Maestro relay (#58)
+- Interactive wizards for recruiting and scheduling (#58)
+- Message search, scrollback navigation, ensemble switching (#58)
+- Splash screen with connection checklist and ensemble picker (#58)
+- `claude-tempo tui` as default CLI command (#58)
 
 ### Changed
 
+- TUI input area restyled to match Claude Code: `❯` prompt, inline hints, second divider line (#58)
+- TUI message display: header line (player name + timestamp) above word-wrapped indented body (#58)
+- `/up` command removed from TUI slash commands — ensemble creation is now handled by `CreateEnsembleWizard` via `/ensemble` (#58)
 - `down` command now always stops the daemon, requires confirmation when no ensemble is specified, and exits with code 1 in non-TTY environments (#78, #83)
 
 ### Fixed
 
 - `load_lineup` MCP tool now resolves shipped example lineups by name, in addition to saved lineups and file paths (#80, #81)
 - Blocked detection no longer triggers on informational messages — broadcasts, schedule-fires, heartbeats, and system notifications now set `responseRequested: false`, preventing false positives (#75, #66)
+- TUI input lag eliminated — animation timers removed, Yoga nodes flattened, stale ref fix (#58)
+- `ErrorView` refactored to zero Yoga nodes — single `<Text>` root with nested virtual-text children, matching the `StatusOverlay`/`ConversationStream` pattern (#58)
+- Live message lists capped at ~20 entries to prevent render slowdown (#58)
+- Ensemble switching: maestro session identity stabilised, `/back` navigation and context-based messaging corrected (#58, #89)
 
 ## [0.19.0] - 2026-04-07
 
