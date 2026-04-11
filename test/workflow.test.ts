@@ -937,38 +937,38 @@ describe('claudeSessionWorkflow', function () {
     });
   });
 
-  describe('claudeSessionId metadata', function () {
-    it('stores claudeSessionId via updateMetadata signal', async function () {
+  describe('sessionId metadata', function () {
+    it('stores sessionId via updateMetadata signal', async function () {
       await withWorker(async () => {
         const handle = await startSession({
           metadata: playerMetadata({ playerId: 'uuid-test' }),
         });
 
         const testUuid = '550e8400-e29b-41d4-a716-446655440000';
-        await handle.signal(updateMetadataSignal, { claudeSessionId: testUuid });
+        await handle.signal(updateMetadataSignal, { sessionId: testUuid });
 
         const metadata = await handle.query(getMetadataQuery);
-        expect(metadata.claudeSessionId).to.equal(testUuid);
+        expect(metadata.sessionId).to.equal(testUuid);
 
         await handle.signal(updateMetadataSignal, { status: 'terminated' });
         await handle.result();
       });
     });
 
-    it('preserves claudeSessionId from initial metadata', async function () {
+    it('preserves sessionId from initial metadata', async function () {
       await withWorker(async () => {
         const testUuid = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
         const handle = await startSession({
-          metadata: playerMetadata({ playerId: 'uuid-init', claudeSessionId: testUuid }),
+          metadata: playerMetadata({ playerId: 'uuid-init', sessionId: testUuid }),
         });
 
         const metadata = await handle.query(getMetadataQuery);
-        expect(metadata.claudeSessionId).to.equal(testUuid);
+        expect(metadata.sessionId).to.equal(testUuid);
 
-        // Other metadata updates should not clear claudeSessionId
+        // Other metadata updates should not clear sessionId
         await handle.signal(updateMetadataSignal, { hostname: 'new-host' });
         const updated = await handle.query(getMetadataQuery);
-        expect(updated.claudeSessionId).to.equal(testUuid);
+        expect(updated.sessionId).to.equal(testUuid);
         expect(updated.hostname).to.equal('new-host');
 
         await handle.signal(updateMetadataSignal, { status: 'terminated' });

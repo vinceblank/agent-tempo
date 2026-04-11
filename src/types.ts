@@ -23,8 +23,8 @@ export interface SessionMetadata {
   recruitedBy?: string;
   /** Worktree path if this session was spawned in an isolated worktree. */
   worktreePath?: string;
-  /** Claude Code session UUID — used for deterministic --resume on encore. */
-  claudeSessionId?: string;
+  /** Session UUID — used for Copilot SDK sessionId and Claude Code --resume/--session-id. */
+  sessionId?: string;
 }
 
 export interface AgentTypeInfo {
