@@ -96,6 +96,8 @@ src/
 │   │   ├── Picker.tsx            # Full-screen interactive picker (players, ensembles)
 │   │   ├── PlayerDetailView.tsx  # Player metadata + scrollable message history (zero Yoga nodes)
 │   │   ├── StatusOverlay.tsx     # Dismissible overlay showing ensemble player cards (/status)
+│   │   ├── CommandOverlay.tsx    # Generic dismissible overlay for data-display commands (/gates, /stages, /recall, /search)
+│   │   ├── ScheduleOverlay.tsx   # Dismissible overlay showing active schedules with timing details (/schedule)
 │   │   ├── ConversationStream.tsx    # Live message area merging server conversation + optimistic echo
 │   │   ├── CreateEnsembleWizard.tsx  # Step-by-step wizard for creating new ensembles (name → workDir → lineup → confirm)
 │   │   ├── ScheduleWizard.tsx        # Step-by-step wizard for /schedule create

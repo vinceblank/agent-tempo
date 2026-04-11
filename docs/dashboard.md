@@ -32,7 +32,7 @@ Bare text in the ensemble view routes to the conductor by default. Prefix with `
 
 The command palette provides autocomplete for player names — press Tab or continue typing after `@` to narrow the list. If no conductor is running, bare text shows a prompt to use `@player` or `/recruit`.
 
-Use `/player <name>` to open a scrollable message history for any player.
+Use `/players <name>` to open a scrollable message history for any player.
 
 ## Keyboard Shortcuts
 
@@ -54,7 +54,7 @@ Use `/player <name>` to open a scrollable message history for any player.
 | `/stop <player>` | Stop a player session (with confirmation) |
 | `/encore <player>` | Revive a stale player session |
 | `/disband` | Tear down the current ensemble — all sessions, scheduler, and Maestro |
-| `/player [name]` | Show detailed player info; no args opens interactive picker |
+| `/players [name]` | Show detailed player info; no args opens interactive picker |
 | `/ensemble [name]` | Switch active ensemble context; no args opens picker |
 | `/status` | Show dismissible overlay with all players, status, type, and part |
 | `/recall [player]` | Show recent message history (optionally filtered to one player) |
