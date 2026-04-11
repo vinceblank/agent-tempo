@@ -451,15 +451,17 @@ async function main() {
         log('WARNING: session appears dead, sendAndWait may hang');
       }
 
+      // Mark delivered before sendAndWait to prevent false stale detection —
+      // sendAndWait blocks up to 5 min during tool execution, but STALE_MESSAGE_MS
+      // is only 3 min, so undelivered messages would trigger false stale marking.
+      await handle.signal('markDelivered', ids);
+
       const t0 = Date.now();
       const result = await session.sendAndWait({ prompt }, 300_000); // 5 min timeout
       const elapsed = Date.now() - t0;
 
       log(`sendAndWait completed in ${elapsed}ms`);
       log(`Response: ${JSON.stringify(result)?.substring(0, 500)}`);
-
-      // Mark delivered only after successful send — failed messages stay in pending queue for retry
-      await handle.signal('markDelivered', ids);
 
       // Success — reset failure tracking
       consecutiveFailures = 0;
