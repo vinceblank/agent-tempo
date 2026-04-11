@@ -89,7 +89,7 @@ async function main() {
   const config = getConfig();
   const playerName = process.env[ENV.BRIDGE_NAME];
   const model = process.env[ENV.BRIDGE_MODEL];
-  const copilotSessionId = process.env[ENV.BRIDGE_SESSION_ID] || `tempo-${config.ensemble}-${playerName || 'unknown'}-${Date.now()}`;
+  const copilotSessionId = process.env[ENV.BRIDGE_SESSION_ID] || `tempo-${config.ensemble}-${playerName || 'unknown'}-${Date.now()}-${process.pid}`;
   const workDir = process.cwd();
 
   log(`Starting Copilot bridge in ${workDir} (ensemble: ${config.ensemble})`);
@@ -314,6 +314,7 @@ async function main() {
   let pollCount = 0;
   let consecutiveFailures = 0;
   let sessionRecreations = 0;
+  let proactiveRecreations = 0;
   let lastActivityTime = Date.now();
   // interval declared here, assigned after poll is defined
   let interval: ReturnType<typeof setInterval> | undefined;
@@ -407,12 +408,24 @@ async function main() {
     // Proactive stale-session detection — recreate before the SDK server GCs the session
     const idleMs = Date.now() - lastActivityTime;
     if (idleMs > SESSION_MAX_IDLE_MS && !processing) {
-      log(`Session idle for ${(idleMs / 1000 / 60).toFixed(0)}min — proactively recreating`);
-      const recovered = await recreateSession();
-      if (recovered) {
-        sessionRecreations = 0; // proactive recreation is lifecycle, not failure — reset budget
-      } else {
-        log('ERROR: Proactive session recreation failed. Continuing with existing session.');
+      try {
+        processing = true; // guard against overlapping polls during async recreation
+        log(`Session idle for ${(idleMs / 1000 / 60).toFixed(0)}min — proactively recreating`);
+        proactiveRecreations++;
+        const recovered = await recreateSession();
+        if (recovered) {
+          // Proactive recreation is lifecycle management, not failure recovery — restore failure budget
+          // but don't reset to 0: use proactiveRecreations to cap total lifecycle recreations
+          sessionRecreations = Math.max(0, sessionRecreations - 1);
+        } else {
+          // Session is almost certainly dead server-side — force immediate recovery on next message
+          // Use MAX - 1 so the next poll error increments to the threshold and triggers recovery
+          consecutiveFailures = MAX_CONSECUTIVE_FAILURES - 1;
+          sessionAlive = false;
+          log('ERROR: Proactive session recreation failed — will force recovery on next message');
+        }
+      } finally {
+        processing = false;
       }
     }
 

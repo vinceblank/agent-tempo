@@ -192,7 +192,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     if (update.playerType != null) input.metadata.playerType = update.playerType;
     if (update.playerTypeDescription != null) input.metadata.playerTypeDescription = update.playerTypeDescription;
     if (update.worktreePath != null) input.metadata.worktreePath = update.worktreePath;
-    if (update.sessionId != null) input.metadata.sessionId = update.sessionId;
+    if (update.sessionId != null || (update as any).claudeSessionId != null) {
+      input.metadata.sessionId = update.sessionId ?? (update as any).claudeSessionId;
+    }
     if (update.status != null) {
       input.metadata.status = update.status as SessionStatus;
       // Re-enable stale detection only when explicitly requested (server.ts sets this)
