@@ -18,9 +18,25 @@ import type { WorkflowHandle } from '@temporalio/client';
 import { BaseAttachment } from '../base';
 import type { AdapterDescriptor } from '../../types';
 import { Message } from '../../types';
-import { claudeCodeDescriptor } from './index';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:poller]', ...args);
+
+/**
+ * Descriptor for the claude-code adapter. Kept colocated with the class so
+ * `adapter.ts` has no import dependency on `index.ts` (breaks the circular
+ * module-graph cycle flagged in QA review of PR-B). `index.ts` re-exports
+ * this constant alongside the class.
+ *
+ * Design reference: docs/design/session-lifecycle-rebuild-v2.md §4.2–4.3.
+ */
+export const claudeCodeDescriptor: AdapterDescriptor = {
+  adapterId: 'claude-code',
+  adapterClass: 'interactive',
+  blocksOnLLMTurn: false,
+  // Interactive class — 60s cadence per design §4.3. PR-C wires this into the
+  // heartbeat loop on BaseAttachment.
+  heartbeatMs: 60_000,
+};
 
 const POLL_BASE_MS = 2000;
 const POLL_BACKOFF_FACTOR = 1.5;

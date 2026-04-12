@@ -42,7 +42,26 @@ import { createTemporalConnection } from '../../connection';
 import { Message } from '../../types';
 import type { AdapterDescriptor } from '../../types';
 import { SdkAttachment } from '../sdk/base';
-import { copilotDescriptor } from './index';
+
+/**
+ * Descriptor for the copilot adapter. Kept colocated with the class so
+ * `adapter.ts` has no import dependency on `index.ts` (breaks the circular
+ * module-graph cycle flagged in QA review of PR-B). `index.ts` re-exports
+ * this constant alongside the class.
+ *
+ * Design reference: docs/design/session-lifecycle-rebuild-v2.md §4.2–4.3.
+ */
+export const copilotDescriptor: AdapterDescriptor = {
+  adapterId: 'copilot',
+  adapterClass: 'sdk',
+  // Copilot's sendAndWait blocks on the LLM turn — processingStart/End pairing
+  // is required (handled today inline in the bridge; PR-C centralizes it in
+  // SdkAttachment.deliver()).
+  blocksOnLLMTurn: true,
+  // SDK class — 30s cadence per design §4.3. PR-C wires this into the
+  // heartbeat loop on BaseAttachment.
+  heartbeatMs: 30_000,
+};
 
 // Optional dependency — must be installed separately: npm install @github/copilot-sdk
 let CopilotClient: any;

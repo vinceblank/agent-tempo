@@ -1,24 +1,15 @@
 /**
- * copilot adapter — descriptor registration.
+ * copilot adapter — barrel export.
  *
- * Imported by `src/adapters/index.ts` at module load; registered with the
- * singleton {@link AdapterRegistry} there. Direct consumers should fetch from
- * the registry, not import this descriptor directly.
+ * Re-exports the descriptor and class from `./adapter`. `src/adapters/index.ts`
+ * imports the descriptor here at module load and registers it with the
+ * singleton {@link AdapterRegistry}. Direct consumers should fetch from the
+ * registry, not import the descriptor directly.
+ *
+ * The descriptor constant itself lives colocated with the class in `./adapter`
+ * so this file has no inward-pointing imports — breaks the module-graph cycle
+ * flagged in PR-B QA review.
  *
  * Design reference: docs/design/session-lifecycle-rebuild-v2.md §4.2.
  */
-import type { AdapterDescriptor } from '../../types';
-
-export const copilotDescriptor: AdapterDescriptor = {
-  adapterId: 'copilot',
-  adapterClass: 'sdk',
-  // Copilot's sendAndWait blocks on the LLM turn — processingStart/End pairing
-  // is required (handled today inline in the bridge; PR-C centralizes it in
-  // SdkAttachment.deliver()).
-  blocksOnLLMTurn: true,
-  // SDK class — 30s cadence per design §4.3. PR-C wires this into the
-  // heartbeat loop on BaseAttachment.
-  heartbeatMs: 30_000,
-};
-
-export { CopilotSdkAttachment } from './adapter';
+export { CopilotSdkAttachment, copilotDescriptor } from './adapter';
