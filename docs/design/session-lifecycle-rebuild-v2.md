@@ -791,6 +791,18 @@ setHandler(processingStartUpdate, ({ expectedAttachmentId, messageId }) => {
       'AttachmentMismatch'
     );
   }
+  // §16.7 decision: log-and-accept unknown messageIds. Emit a history event
+  // so operators have an audit trail of adapter bookkeeping bugs without
+  // breaking delivery. Accept continues so at-least-once holds even when
+  // the adapter got confused.
+  if (!messages.some(m => m.id === messageId)) {
+    emitHistoryEvent('unknownMessageId', {
+      surface: 'processingStart',
+      messageId,
+      attachmentId: currentAttachment.attachmentId,
+      at: nowIso(),
+    });
+  }
   const wasEmpty = inFlightMessages.size === 0;
   inFlightMessages.add(messageId);           // Set.add is idempotent; dedup on retry
   if (wasEmpty) {
@@ -811,6 +823,18 @@ setHandler(processingEndUpdate, ({ expectedAttachmentId, messageId }) => {
       `Attachment ${expectedAttachmentId} does not match current ${currentAttachment?.attachmentId ?? 'none'}`,
       'AttachmentMismatch'
     );
+  }
+  // §16.7 decision: log-and-accept unknown messageIds here too. A
+  // processingEnd for a messageId never in the inbox (or already removed
+  // by processingDeadline timeout) is almost always an adapter bookkeeping
+  // desync — emit history event, still let Set.delete be a no-op.
+  if (!messages.some(m => m.id === messageId) && !inFlightMessages.has(messageId)) {
+    emitHistoryEvent('unknownMessageId', {
+      surface: 'processingEnd',
+      messageId,
+      attachmentId: currentAttachment.attachmentId,
+      at: nowIso(),
+    });
   }
   inFlightMessages.delete(messageId);        // Set.delete is idempotent; no-op on already-removed
   if (inFlightMessages.size === 0) {
@@ -1152,14 +1176,20 @@ This is enforced in `BaseAttachment`. Concrete adapters inherit the behavior and
 ```typescript
 // Main loop (pseudocode)
 while (!destroyRequested) {
+  const now0 = workflow.now().getTime();
   const deadlines = [
-    /* existing: processingDeadline, drainingDeadline, staleDeadline when applicable, ... */
     currentAttachment
       ? new Date(currentAttachment.expiresAt).getTime()
       : Number.MAX_SAFE_INTEGER,
+    (phase === 'processing' && processingSince)
+      ? new Date(processingSince).getTime() + PROCESSING_DEADLINE_MS
+      : Number.MAX_SAFE_INTEGER,
+    (phase === 'draining' && drainingSince)
+      ? new Date(drainingSince).getTime() + DRAINING_DEADLINE_MS
+      : Number.MAX_SAFE_INTEGER,
   ];
   const nextDeadline = Math.min(...deadlines);
-  const wait = Math.max(0, nextDeadline - workflow.now().getTime());
+  const wait = Math.max(0, nextDeadline - now0);
 
   await Promise.race([
     condition(() => destroyRequested || /* other wake conditions */),
@@ -1167,11 +1197,13 @@ while (!destroyRequested) {
   ]);
 
   const now = workflow.now();
+
+  // (a) Lease expiry — transitions any phase (except gone) to detached.
   if (currentAttachment && new Date(currentAttachment.expiresAt).getTime() <= now.getTime()) {
-    // Lease expired. Transition to detached.
     const reaped = currentAttachment;
     currentAttachment = null;
     inFlightMessages.clear();
+    processingSince = null;
     setPhase('detached');
     upsertSearchAttributes({
       ClaudeTempoAttachedHost: [''],
@@ -1179,12 +1211,60 @@ while (!destroyRequested) {
       ClaudeTempoAttachmentId: [''],
     });
     emitHistoryEvent('lease-expired', { attachmentId: reaped.attachmentId, at: now.toISOString() });
+    continue;
   }
-  /* process other deadline-driven transitions: processingDeadline, drainingDeadline, etc. */
+
+  // (b) processingDeadline fire — force exit from 'processing' so stale
+  //     detection can re-engage. Clear the in-flight set (orphan messageIds
+  //     logged for audit); phase goes back to 'attached'.
+  if (phase === 'processing'
+      && processingSince
+      && new Date(processingSince).getTime() + PROCESSING_DEADLINE_MS <= now.getTime()) {
+    const abandoned = Array.from(inFlightMessages);
+    inFlightMessages.clear();
+    processingSince = null;
+    setPhase('attached');
+    upsertSearchAttributes({ ClaudeTempoAttachmentState: ['attached'] });
+    emitHistoryEvent('processingTimeout', {
+      attachmentId: currentAttachment?.attachmentId,
+      deadlineMs: PROCESSING_DEADLINE_MS,
+      abandonedMessageIds: abandoned,
+      at: now.toISOString(),
+    });
+    workflow.log.warn(
+      `processingDeadline exceeded for attachment ${currentAttachment?.attachmentId}; ` +
+      `abandoned ${abandoned.length} in-flight messageId(s): ${abandoned.join(', ')}`
+    );
+    continue;
+  }
+
+  // (c) drainingDeadline fire — draining exhausted its grace window; force
+  //     the phase to 'detached' even though adapterExited never arrived.
+  if (phase === 'draining'
+      && drainingSince
+      && new Date(drainingSince).getTime() + DRAINING_DEADLINE_MS <= now.getTime()) {
+    const stuck = currentAttachment;
+    currentAttachment = null;
+    inFlightMessages.clear();
+    processingSince = null;
+    drainingSince = null;
+    setPhase('detached');
+    upsertSearchAttributes({
+      ClaudeTempoAttachedHost: [''],
+      ClaudeTempoAttachmentState: ['detached'],
+      ClaudeTempoAttachmentId: [''],
+    });
+    emitHistoryEvent('drainingTimedOut', {
+      attachmentId: stuck?.attachmentId,
+      deadlineMs: DRAINING_DEADLINE_MS,
+      at: now.toISOString(),
+    });
+    continue;
+  }
 }
 ```
 
-Uses `workflow.now()` throughout.
+Uses `workflow.now()` throughout. `emitHistoryEvent` and `workflow.log.warn` are deterministic because they're write-only sinks (Temporal history is replay-safe).
 
 ### 9.6 Cross-host `restart` and `migrate`
 
@@ -1650,6 +1730,7 @@ Cross-checked against Temporal's official docs, the MCP spec, and the project's 
 - Lease extension at CAN boundary (§2.3) prevents false expiry during sub-second transitions.
 - `patched('v0.25-attachment-lifecycle')` marker on the new state-machine code path. No old/new co-existence requirement, but `patched` makes the rolling deploy across the worker fleet safe.
 - `allHandlersFinished()` pattern preserved for hand-off; the new updates are fast (in-memory state mutations) so no meaningful wait time is added.
+- **Task-queue inheritance.** CAN continuations inherit the parent's task queue (the shared `claude-tempo` queue for session workflows); the new execution lands on the same worker fleet. No per-CAN queue routing is needed, and there is no cross-queue migration hazard at CAN boundaries. The only rolling-deploy concern is worker-binary drift, which the `patched(...)` marker above addresses.
 
 ### 17.4 Signals vs updates vs queries
 
@@ -1728,6 +1809,12 @@ Scans `dist/` for all signal/query/update handler names; diffs against `docs/WIR
 ## Appendix A — Changeset by phase
 
 Per-file changes grouped by rollout phase. Phases are implementation order, not release gates (everything ships together in v0.25.0-beta.1).
+
+### Implementation-time notes (for the implementing engineer)
+
+- **Temporal retention vs. `RejectDuplicate` (§17.2, QA follow-up).** `WorkflowIdReusePolicy.RejectDuplicate` only rejects when the prior execution with the same `workflowId` is still within Temporal's retention window (default ~30 days on the dev server; namespace-configurable on self-hosted / Cloud). Once the prior execution falls out of retention, a fresh `workflow.start` with `RejectDuplicate` succeeds silently. The rebuild does not depend on `RejectDuplicate` for correctness — adapters never call `workflow.start` post-rebuild — but the belt-and-suspenders language in §17.2 should be read with this caveat. Document in `docs/WIRE-PROTOCOL.md`'s reuse-policy note during Phase 1.
+- **Workflow history pressure from `emitHistoryEvent`.** New event types (`lease-expired`, `processingTimeout`, `drainingTimedOut`, `unknownMessageId`, `destroyed`) add a handful of events per long-lived session. Well within Temporal's per-workflow history size budget, but confirm after a 1-week soak in staging.
+- **`messages` array scan cost in §7.2 unknown-messageId check.** `messages.some(m => m.id === messageId)` is O(n). If inbox grows large (>10k entries) before `continueAsNew` trims it, switch to a `Set<string>` index maintained alongside `messages[]`. Not a concern at expected traffic.
 
 ### Phase 1 — Workflow state machine + wire protocol
 
