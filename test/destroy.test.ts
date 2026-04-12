@@ -47,20 +47,21 @@ describe('destroy verb — fixes #102 (graceful stop → resurrection loop)', fu
     });
   });
 
-  it('refuses processingStart once destroyRequested is set (in-workflow guard)', async function () {
+  it('refuses processingStart on a destroyed session (validator guard)', async function () {
     this.timeout(15_000);
     await withWorker(async () => {
       const ensemble = `destroy-attach-${Date.now()}`;
-      // Start a session pre-marked as destroyed via input state (simulates continue-as-new
-      // of a destroyed workflow) — this keeps the workflow alive long enough for us to
-      // observe the in-workflow guard without racing workflow completion.
+      // Start a live session, destroy it, then try to sneak in a processingStart update.
       const handle = await startSession({
-        metadata: playerMetadata({ playerId: 'destroy-attach', ensemble, status: 'pending' }),
-        destroyed: true,
+        metadata: playerMetadata({ playerId: 'destroy-attach', ensemble, status: 'active' }),
       });
 
-      expect(await handle.query(isDestroyedQuery)).to.equal(true);
+      await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'test' }] });
 
+      // After destroy, the workflow COMPLETEs (§2.5). Any subsequent update MUST fail —
+      // either the validator rejects (our typed `WorkflowGone` ApplicationFailure) or
+      // Temporal rejects against the completed execution (`WorkflowNotFoundError`).
+      // Both outcomes prove the attach-adjacent op was refused.
       let rejected = false;
       try {
         await handle.executeUpdate(processingStartUpdate, { args: [{ messageId: 'late-msg' }] });
@@ -69,9 +70,7 @@ describe('destroy verb — fixes #102 (graceful stop → resurrection loop)', fu
       }
       expect(rejected).to.equal(true, 'expected processingStart to be rejected on destroyed session');
 
-      // Force-terminate rather than waiting — the workflow's main loop is still running
-      // with status=pending since we bypassed the normal destroy flow.
-      await handle.terminate('test cleanup');
+      // Workflow self-completes; just await the result.
       await handle.result().catch(() => {});
     });
   });

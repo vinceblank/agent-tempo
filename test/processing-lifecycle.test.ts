@@ -168,10 +168,10 @@ describe('processing lifecycle — fixes #99 (long tool calls misclassified as s
       const meta2: SessionMetadata = await handle.query(getMetadataQuery);
       expect(meta2.status).to.equal('stale');
 
-      // Cleanup: deliver all pending messages then destroy.
+      // Cleanup: deliver pending messages, then destroy. v0.25 destroy (§2.5) is
+      // "abandon and COMPLETE" — no drain-wait — so no signals after destroy.
       await deliverAll(handle);
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
-      await deliverAll(handle);
       await handle.result().catch(() => {});
     });
   });

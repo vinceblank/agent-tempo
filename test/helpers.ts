@@ -115,6 +115,10 @@ export async function setupTestEnv(): Promise<void> {
         '--search-attribute', 'ClaudeTempoStatus=Keyword',
         '--search-attribute', 'ClaudeTempoPlayerType=Keyword',
         '--search-attribute', 'ClaudeTempoIsConductor=Bool',
+        // v0.25 attachment lifecycle search attrs (§9, §11.2)
+        '--search-attribute', 'ClaudeTempoAttachedHost=Keyword',
+        '--search-attribute', 'ClaudeTempoAttachmentState=Keyword',
+        '--search-attribute', 'ClaudeTempoAttachmentId=Keyword',
       ],
     },
   });
