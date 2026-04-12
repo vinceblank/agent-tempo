@@ -31,6 +31,7 @@ Signals sent **to** a `claudeSessionWorkflow` instance.
 | `markDelivered` | `string[]` | Marks one or more messages (by ID) as delivered. Resets stale-detection timer; any delivery proves the session is alive. |
 | `setName` | `string` | Updates the player's human-readable ID (`ClaudeTempoPlayerId` search attribute). Called by the `set_name` MCP tool. |
 | `updateMetadata` | `{ hostname?, gitBranch?, gitRoot?, status?, terminatedBy?, enableStaleDetection?, playerType?, playerTypeDescription?, worktreePath?, sessionId? }` | Updates session metadata fields and syncs search attributes. Setting `status: 'terminated'` triggers graceful shutdown; `enableStaleDetection: true` re-arms stale detection after reconnect; `worktreePath` records the git worktree path when the session uses worktree isolation; `sessionId` stores the session UUID — used for Copilot SDK session resumption and Claude Code deterministic `--resume` on encore. |
+| `releaseHeld` | *(none)* | Releases a held session: injects the stored initial message and unlocks the outbox. Sent by the conductor (or operator) after a session has been paused at startup via the hold/pause mechanism. |
 
 ---
 
@@ -45,6 +46,7 @@ Queries on a `claudeSessionWorkflow` instance (synchronous, read-only).
 | `pendingMessages` | `Message[]` | Returns only messages that have not yet been marked as delivered. Used by the MCP server poller. |
 | `allMessages` | `Message[]` | Returns the complete inbox, including delivered messages, up to the current `continueAsNew` window. |
 | `allSentMessages` | `SentMessage[]` | Returns the session's sent-message history (last 50 entries carried across `continueAsNew`). |
+| `outboxLocked` | `boolean` | Returns `true` if the session's outbox is currently locked (held at startup, awaiting `releaseHeld`). Returns `false` once the session is running normally. |
 
 ---
 
