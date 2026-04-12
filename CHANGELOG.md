@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [0.24.0] - 2026-04-12
+
 ### Added
 
 - **Ensemble startup hold** — `load_lineup(hold: true)` spawns all players with locked outboxes and a standby message; `release` (MCP tool + CLI) unlocks and delivers the real task, enabling controlled team pre-warming before a job begins (#91)
@@ -18,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **New session queries**: `outboxLocked` (boolean — held at startup), `paused` (boolean — currently paused) (#91)
 - **New scheduler signal**: `setSchedulerPaused` (pause/resume fire delivery; skipped fires are not replayed) (#91)
 - **New Maestro signal/query**: `maestroSetPaused` (ensemble-wide pause ground truth), `maestroPaused` (query current pause state) (#91)
+
+### Fixed
+
+- Hardcoded hold standby instruction now fires for any conductor when `hold=true`, regardless of whether the lineup has a `conductor:` section (#91)
 
 ---
 
