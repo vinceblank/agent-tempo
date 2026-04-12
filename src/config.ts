@@ -27,7 +27,26 @@ export const ENV = {
   DEFAULT_AGENT: 'CLAUDE_TEMPO_DEFAULT_AGENT',
   PLAYER_TYPE: 'CLAUDE_TEMPO_PLAYER_TYPE',
   CLAUDE_BIN: 'CLAUDE_TEMPO_CLAUDE_BIN',
+  /**
+   * v0.25 attachment lifecycle feature flag. Default is ON — adapters use the
+   * new `claimAttachment` / `heartbeat` / `processingStart` wire surface directly.
+   * Set `CLAUDE_TEMPO_LIFECYCLE_V2=0` (or `false`) to force adapters back onto
+   * the PR-A legacy shim path (`updateMetadata({ status })`, etc.) as an
+   * emergency rollback. Removed in v0.25.1 post-GA cleanup.
+   */
+  LIFECYCLE_V2: 'CLAUDE_TEMPO_LIFECYCLE_V2',
 } as const;
+
+/**
+ * Read the v0.25 lifecycle feature flag. Default ON; explicit `0` / `false` / `off` disables.
+ * Accepts a few truthy/falsy spellings so operators don't have to memorize the exact token.
+ */
+export function lifecycleV2Enabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env[ENV.LIFECYCLE_V2];
+  if (raw === undefined || raw === '') return true; // default ON
+  const v = raw.trim().toLowerCase();
+  return !(v === '0' || v === 'false' || v === 'off' || v === 'no');
+}
 
 export interface Config {
   temporalAddress: string;
