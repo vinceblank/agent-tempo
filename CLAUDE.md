@@ -132,7 +132,17 @@ src/
 npm install
 
 # Start Temporal dev server (separate terminal)
-temporal server start-dev
+temporal server start-dev \
+  --search-attribute ClaudeTempoEnsemble=Keyword \
+  --search-attribute ClaudeTempoPlayerId=Keyword \
+  --search-attribute ClaudeTempoHostname=Keyword \
+  --search-attribute ClaudeTempoStatus=Keyword \
+  --search-attribute ClaudeTempoGitRoot=Keyword \
+  --search-attribute ClaudeTempoPlayerType=Keyword \
+  --search-attribute ClaudeTempoIsConductor=Bool \
+  --search-attribute ClaudeTempoAttachedHost=Keyword \
+  --search-attribute ClaudeTempoAttachmentState=Keyword \
+  --search-attribute ClaudeTempoAttachmentId=Keyword
 
 # Start the daemon (runs Temporal workers in background)
 claude-tempo daemon start
