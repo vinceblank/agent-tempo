@@ -70,7 +70,7 @@ describe('multi-session integration', function () {
           metadata: playerMetadata({ playerId: 'out-scope', ensemble: 'ens-B' }),
         });
 
-        const members = await listEnsemble(getClient(), 'ens-A');
+        const members = await waitForEnsembleMembers(getClient(), 'ens-A', 1);
         expect(members).to.have.lengthOf(1);
         expect(members[0].playerId).to.equal('in-scope');
 
