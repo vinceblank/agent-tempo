@@ -9,6 +9,7 @@ import {
   uuid4,
   proxyActivities,
   patched,
+  log as workflowLog,
 } from '@temporalio/workflow';
 
 import type { OutboxActivities } from '../activities/outbox';
@@ -758,9 +759,10 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       // Safety timer: if a messageId stays in-flight past PROCESSING_STUCK_MS, eject it
       // so a runaway wedge doesn't keep the session pinned alive forever.
       if (processingSince !== null && now - processingSince > PROCESSING_STUCK_MS) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[claude-tempo:workflow] processing stuck for ${Math.round((now - processingSince) / 1000)}s — ` +
+        // workflow.log.* is replay-safe (SDK dedupes by event time); console.warn would
+        // fire on every replay and pollute logs.
+        workflowLog.warn(
+          `processing stuck for ${Math.round((now - processingSince) / 1000)}s — ` +
           `ejecting ${inFlightMessages.size} in-flight message(s): ${[...inFlightMessages].join(', ')}`,
         );
         inFlightMessages.clear();

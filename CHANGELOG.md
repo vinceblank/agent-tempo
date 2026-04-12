@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.24.1] - Unreleased
+
+### Fixed
+
+- **#99** — long tool calls no longer trigger false-stale: new `processingStart` / `processingEnd` Temporal updates (with required `messageId` for idempotency) suppress stale detection while an adapter is mid-`sendAndWait`; 15-minute safety timer ejects wedged entries
+- **#102** — graceful stop no longer resurrects sessions: new `destroy` update + `isDestroyed` query, with runId pinning in the Copilot bridge so a destroyed-then-recreated workflow cannot silently attach to the new run
+
+---
+
 ## [0.24.0] - 2026-04-12
 
 ### Added
