@@ -26,7 +26,18 @@ src/
 │   ├── mcp.ts         # MCP server registration helpers (init, global vs project)
 │   ├── output.ts      # Shared CLI output formatting helpers
 │   └── preflight.ts   # Environment preflight checks
-├── copilot-bridge.ts  # Copilot SDK bridge for Copilot CLI players
+├── adapters/
+│   ├── index.ts       # Adapter registry bootstrap + barrel exports
+│   ├── base.ts        # BaseAttachment + SdkAttachment base classes (lifecycle skeleton)
+│   ├── README.md      # Adapter authoring guide
+│   ├── claude-code/
+│   │   ├── adapter.ts # InteractiveAttachment — Claude Code CLI adapter (lifted from channel.ts)
+│   │   └── index.ts   # Adapter descriptor + registration
+│   ├── copilot/
+│   │   ├── adapter.ts # CopilotSdkAttachment — Copilot bridge adapter (lifted from copilot-bridge.ts)
+│   │   └── index.ts   # Adapter descriptor + registration
+│   └── sdk/
+│       └── base.ts    # Placeholder base for future SDK adapters
 ├── client/
 │   ├── interface.ts   # TempoClient TypeScript interface and related types
 │   └── index.ts       # TempoClient factory implementation and barrel re-exports
@@ -120,7 +131,6 @@ src/
 │   ├── safe-path.ts   # Path safety utilities
 │   └── duration.ts    # Duration parsing helpers
 ├── types.ts           # Shared type definitions
-├── channel.ts         # Claude channel notification helper
 ├── git-info.ts        # Git repository detection helper
 └── config.ts          # Env var handling
 ```
@@ -174,6 +184,7 @@ npm test
 - **Recruit**: Spawning a new Claude Code session as a player. The workflow is pre-created with the initial message before the process spawns, ensuring reliable delivery.
 - **set_name**: Players start with a random hex ID; `set_name` updates the `ClaudeTempoPlayerId` search attribute to a human-readable name
 - **Session status**: Each session has a status (`pending` → `active` → `stale` | `blocked`) tracked via `ClaudeTempoStatus` search attribute. Pre-created workflows start as `pending`, transition to `active` when the process connects, and become `stale` if messages go undelivered for 3+ minutes. Sessions become `blocked` when they are alive (delivering messages) but have produced no response to a `responseRequested: true` message for 5+ minutes — they may be stuck or spinning. Informational messages (broadcasts, schedule-fires, heartbeats, system notifications) set `responseRequested: false` and do not trigger blocked detection. Blocked status auto-recovers to `active` on next outbound.
+- **Adapter**: The runtime binding between a player's Temporal workflow and its agent process. Two shipped classes: `InteractiveAttachment` (Claude Code CLI — push-based MCP notification delivery, lives in `src/adapters/claude-code/`) and `CopilotSdkAttachment` (Copilot bridge — blocking `sendAndWait` delivery, lives in `src/adapters/copilot/`). Adapters are registered with the `AdapterRegistry` (`src/adapters/index.ts`) and resolved at spawn time via `SessionMetadata.adapterId`. The base class skeleton (`src/adapters/base.ts`) will grow the full `claimAttachment` / heartbeat / `forceDetach` lease lifecycle in later rebuild phases.
 - **Outbox**: Outbound requests (cue, report, stop, recruit, encore) go through the session's own workflow outbox instead of directly signaling other workflows. The workflow's dispatch loop processes entries via activities, decoupling tools from cross-workflow signaling.
 - **Encore**: Revives a `stale` player session by restarting the Claude process and reconnecting to the existing Temporal workflow, with recent message context restored. Cannot encore `active`, `pending`, or `terminated` sessions — use `cue`, wait, or `recruit` respectively.
 - **Broadcast**: Fan-out variant of `cue` — sends a message to all active players in the ensemble in a single call. Optionally filtered by player type. Skips the sender, pending sessions, and (by default) stale sessions.
