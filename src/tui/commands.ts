@@ -859,6 +859,90 @@ async function handleEnsemble(
   }
 }
 
+/** /go — release all held players in the current ensemble. */
+async function handleGo(
+  _args: string[],
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  const ensemble = ctx.activeEnsemble;
+  if (!ensemble) {
+    commitStatic(dispatch, 'error', 'No active ensemble. Use /ensemble to select one.');
+    return;
+  }
+
+  const ensembles = await api.discoverEnsembles();
+  const ens = ensembles.find(e => e.name === ensemble);
+  if (!ens?.hasConductor) {
+    commitStatic(dispatch, 'error', 'No conductor in this ensemble. /go requires a conductor.');
+    return;
+  }
+
+  try {
+    await api.sendCommand(ensemble, '/release', 'maestro');
+    commitStatic(dispatch, 'info', '\u2714 Release command sent to conductor.');
+  } catch (err) {
+    commitStatic(dispatch, 'error', `\u2717 Release failed: ${err}`);
+  }
+}
+
+/** /pause — pause the current ensemble. */
+async function handlePause(
+  _args: string[],
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  const ensemble = ctx.activeEnsemble;
+  if (!ensemble) {
+    commitStatic(dispatch, 'error', 'No active ensemble. Use /ensemble to select one.');
+    return;
+  }
+
+  const ensembles = await api.discoverEnsembles();
+  const ens = ensembles.find(e => e.name === ensemble);
+  if (!ens?.hasConductor) {
+    commitStatic(dispatch, 'error', 'No conductor in this ensemble. /pause requires a conductor.');
+    return;
+  }
+
+  try {
+    await api.sendCommand(ensemble, '/pause', 'maestro');
+    commitStatic(dispatch, 'info', '\u23F8 Pause command sent to conductor.');
+  } catch (err) {
+    commitStatic(dispatch, 'error', `\u2717 Pause failed: ${err}`);
+  }
+}
+
+/** /resume — resume a paused ensemble. */
+async function handleResume(
+  _args: string[],
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  const ensemble = ctx.activeEnsemble;
+  if (!ensemble) {
+    commitStatic(dispatch, 'error', 'No active ensemble. Use /ensemble to select one.');
+    return;
+  }
+
+  const ensembles = await api.discoverEnsembles();
+  const ens = ensembles.find(e => e.name === ensemble);
+  if (!ens?.hasConductor) {
+    commitStatic(dispatch, 'error', 'No conductor in this ensemble. /resume requires a conductor.');
+    return;
+  }
+
+  try {
+    await api.sendCommand(ensemble, '/resume', 'maestro');
+    commitStatic(dispatch, 'info', '\u25B6 Resume command sent to conductor.');
+  } catch (err) {
+    commitStatic(dispatch, 'error', `\u2717 Resume failed: ${err}`);
+  }
+}
+
 // ── Utility ──
 
 /** Type guard: distinguish SentMessage (has `to` + `direction`) from Message (has `from`). */
@@ -970,6 +1054,21 @@ export const COMMANDS: Record<string, CommandDef> = {
     description: 'Show ensemble players and status',
     usage: '/status',
     handler: handleStatus,
+  },
+  go: {
+    description: 'Release all held players (unlock outbox)',
+    usage: '/go',
+    handler: handleGo,
+  },
+  pause: {
+    description: 'Pause the ensemble (sessions, scheduler)',
+    usage: '/pause',
+    handler: handlePause,
+  },
+  resume: {
+    description: 'Resume a paused ensemble',
+    usage: '/resume',
+    handler: handleResume,
   },
   back: {
     description: 'Return to maestro view',
