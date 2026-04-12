@@ -32,6 +32,7 @@ interface ParsedArgs {
   type?: string;
   includeStale: boolean;
   host?: string;
+  terminate: boolean;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -49,6 +50,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     replace: false,
     resume: false,
     includeStale: false,
+    terminate: false,
   };
 
   let i = 0;
@@ -96,6 +98,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.includeStale = true;
     } else if (arg === '--host' && i + 1 < argv.length) {
       result.host = argv[++i];
+    } else if (arg === '--terminate') {
+      result.terminate = true;
     } else if (arg === '--agent' && i + 1 < argv.length) {
       const val = argv[++i];
       if (val !== 'claude' && val !== 'copilot') {
@@ -188,6 +192,7 @@ async function main() {
         name: args.name,
         ensemble: args.positional[1],
         all: args.all || undefined,
+        hardTerminate: args.terminate,
         ...overrides,
       });
       break;

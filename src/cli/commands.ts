@@ -9,7 +9,7 @@ import { spawnInTerminal, spawnCopilotBridge, resolveClaudePath } from '../spawn
 import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
 import { getGitInfo } from '../git-info';
 import { createTemporalConnection } from '../connection';
-import { playerReportSignal, updateMetadataSignal, releaseHeldSignal, outboxLockedQuery, setPausedSignal } from '../workflows/signals';
+import { playerReportSignal, updateMetadataSignal, releaseHeldSignal, outboxLockedQuery, setPausedSignal, destroyUpdate } from '../workflows/signals';
 import { addScheduleSignal, setSchedulerPausedSignal } from '../workflows/scheduler-signals';
 import { maestroSetPausedSignal } from '../workflows/maestro-signals';
 import { AgentType, ScheduleEntry, SessionInput, SessionMetadata } from '../types';
@@ -1413,6 +1413,8 @@ interface StopOpts extends CliOverrides {
   ensemble?: string;
   /** Stop every session across all ensembles. */
   all?: boolean;
+  /** Use hard terminate instead of destroy (escape hatch — destroy is preferred). */
+  hardTerminate?: boolean;
 }
 
 export async function stop(opts: StopOpts) {
@@ -1442,7 +1444,7 @@ export async function stop(opts: StopOpts) {
 
   if (opts.name) {
     // Stop a specific player by name (optionally scoped to ensemble)
-    await stopByName(client, opts.name, config, opts.ensemble);
+    await stopByName(client, opts.name, config, opts.ensemble, opts.hardTerminate);
   } else {
     // Stop multiple sessions (--ensemble or --all)
     const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
@@ -1462,7 +1464,18 @@ export async function stop(opts: StopOpts) {
           }
         }
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        if (opts.hardTerminate) {
+          await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        } else {
+          // Prefer destroy — sets the isDestroyed flag so adapter recovery (bridge
+          // recreateSession) sees "no" and exits cleanly instead of zombie-rejoining.
+          // Falls back to terminate if the workflow is older and doesn't support destroy.
+          try {
+            await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'stop via CLI' }] });
+          } catch {
+            await handle.signal(updateMetadataSignal, { status: 'terminated' });
+          }
+        }
         stopped++;
         out.log(`  ${out.dim('stopped')} ${wf.workflowId}`);
       } catch {
@@ -1487,7 +1500,7 @@ export async function stop(opts: StopOpts) {
   await connection.close();
 }
 
-async function stopByName(client: Client, name: string, config: Config, ensemble?: string) {
+async function stopByName(client: Client, name: string, config: Config, ensemble?: string, hardTerminate = false) {
   // Find the workflow by player name using metadata queries (not search attributes).
   const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
   let found = false;
@@ -1526,9 +1539,19 @@ async function stopByName(client: Client, name: string, config: Config, ensemble
       }
     }
 
-    // Send termination status update (graceful)
+    // Send destroy (preferred) or hard terminate (escape hatch).
+    // Destroy sets isDestroyed so adapter recovery (e.g. copilot-bridge's
+    // recreateSession) stops instead of rejoining as a zombie (#102).
     try {
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      if (hardTerminate) {
+        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      } else {
+        try {
+          await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'stop via CLI' }] });
+        } catch {
+          await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        }
+      }
       out.success(`Stopped "${name}"`);
     } catch {
       out.warn(`Could not signal "${name}" — it may have already exited`);
