@@ -1788,13 +1788,9 @@ From https://modelcontextprotocol.io/specification/2025-06-18/basic/transports:
 
 ### 17.9 Wire protocol stability + CI diff
 
-Every addition and every rename in §11 lands in `docs/WIRE-PROTOCOL.md` in the same commit. Proposed CI check (new):
+Every addition and every rename in §11 lands in `docs/WIRE-PROTOCOL.md` in the same commit. CI check lives at `test/wire-protocol.test.ts` (shipped in PR-G).
 
-```
-scripts/check-wire-protocol.ts
-```
-
-Scans `dist/` for all signal/query/update handler names; diffs against `docs/WIRE-PROTOCOL.md`; fails CI if any name in code is absent from docs, or if any doc entry is absent from code. Non-breaking additions require `wire-protocol:additive` commit tag; renames/removals require `wire-protocol:breaking`.
+Uses a ts-morph AST walker to scan `src/workflows/*.ts` for `defineSignal` / `defineQuery` / `defineUpdate` string literals and diffs the extracted names against `docs/WIRE-PROTOCOL.md`; fails CI if any name in code is absent from docs, or vice versa. Non-breaking additions require `wire-protocol:additive` commit tag; renames/removals require `wire-protocol:breaking`. (Source-scan chosen over `dist/` scan: no build step required, and surfaces declared-but-unwired handlers that dead-code elimination would otherwise hide.)
 
 ### 17.10 Known hazards acknowledged
 
