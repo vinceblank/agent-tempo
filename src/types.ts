@@ -3,7 +3,121 @@
 
 export type AgentType = 'claude' | 'copilot';
 
+/**
+ * @deprecated Legacy status enum. v0.25 replaces this with {@link AttachmentPhase}.
+ * The PR-A compat shim translates legacy `updateMetadata({ status })` signal calls
+ * into attachment-phase transitions. PR-D deletes the remaining callers.
+ */
 export type SessionStatus = 'active' | 'stale' | 'pending' | 'terminated' | 'blocked';
+
+// ── v0.25 Attachment Lifecycle Types ──
+// Source of truth: docs/design/session-lifecycle-rebuild-v2.md §§2.2–2.6, §8, §11.1
+
+/**
+ * The seven phases of a session workflow's lifecycle.
+ *
+ * - `booting` — workflow exists, no adapter has claimed it yet
+ * - `attached` — an adapter holds a valid attachment and is idle-ready
+ * - `processing` — attached AND at least one message is in-flight in the adapter
+ * - `awaiting` — attached, idle, outbox empty (presentation refinement of `attached`)
+ * - `draining` — attachment requested detach; flushing outbox + awaiting `adapterExited`
+ * - `detached` — workflow RUNNING, no attachment; outbox dispatch paused (stop/destroy bypass)
+ * - `gone` — terminal; workflow COMPLETES after `destroy`
+ */
+export type AttachmentPhase =
+  | 'booting'
+  | 'attached'
+  | 'processing'
+  | 'awaiting'
+  | 'draining'
+  | 'detached'
+  | 'gone';
+
+/** Classes of adapter with different lifecycle requirements. */
+export type AdapterClass = 'interactive' | 'sdk';
+
+/**
+ * Descriptor registered by an adapter — declares class, identity, and required guarantees.
+ * Used by the workflow to size timers (heartbeat cadence) and by the adapter registry
+ * to route `recruit` to the right adapter implementation.
+ */
+export interface AdapterDescriptor {
+  /** Adapter identifier, e.g. `'claude-code'`, `'copilot'`. */
+  adapterId: string;
+  adapterClass: AdapterClass;
+  /** True iff the adapter blocks on an LLM turn (SDK adapters). Drives `processingStart`/`End` expectations. */
+  blocksOnLLMTurn: boolean;
+  /** Heartbeat cadence in milliseconds. Interactive: 60_000; SDK: 30_000. */
+  heartbeatMs: number;
+}
+
+/** Reason an attachment detached or was detached. Used for audit and UX messaging. */
+export type DetachReason =
+  | 'requested'
+  | 'restart'
+  | 'heartbeat-timeout'
+  | 'destroy'
+  | 'spawn-failed'
+  | 'force'
+  | 'idle';
+
+/**
+ * Workflow-emitted directive to the attached adapter. Delivered via {@link AttachmentInfo}
+ * polling (no reverse-RPC surface in Temporal).
+ */
+export type AdapterDirective = 'detach-now' | 'heartbeat' | 'continue';
+
+/**
+ * A live or expired lease. Exactly one (or none) lives on the workflow at any time.
+ * Lease-expiry enforcement happens in the main loop's deadline race (§9.5.a).
+ */
+export interface Attachment {
+  attachmentId: string;
+  hostname: string;
+  adapterId: string;
+  adapterClass: AdapterClass;
+  /** ISO timestamp from `workflow.now()` at claim. */
+  claimedAt: string;
+  /** ISO timestamp of last heartbeat (signal or claimAttachment renewal). */
+  lastHeartbeatAt: string;
+  /** ISO timestamp; after this the main loop reaps the attachment → `detached`. */
+  expiresAt: string;
+  /** Workflow runId captured at claim time — adapters must pin subsequent `getHandle` to this. */
+  runId: string;
+}
+
+/** Opaque token returned from `claimAttachment`; adapter carries it on every subsequent call. */
+export interface AttachmentToken {
+  attachmentId: string;
+  runId: string;
+  /** ISO timestamp; adapter may use this to schedule early renewal before expiry. */
+  expiresAt: string;
+  leaseMs: number;
+}
+
+/**
+ * Snapshot returned by the `attachmentInfo` query.
+ * Adapters, tools, and the TUI poll this to drive UX.
+ */
+export interface AttachmentInfo {
+  phase: AttachmentPhase;
+  currentAttachment?: Attachment;
+  preferredHost?: string;
+  inFlightCount: number;
+  /** ISO timestamp when the in-flight set became non-empty. */
+  processingSince?: string;
+}
+
+/**
+ * Returned by the `orphanSummary` query — shape matches what the daemon needs to render
+ * a detached-orphan card and decide whether to auto-restore per `restorePolicy`.
+ */
+export interface OrphanSummary {
+  detachedSince?: string;
+  reason?: DetachReason;
+  preferredHost?: string;
+  lastAdapter?: { hostname: string; adapterId: string };
+}
 
 export interface SessionMetadata {
   playerId: string;
@@ -71,10 +185,20 @@ export interface SessionInput {
   paused?: boolean;
   /** Restored from continue-as-new: message IDs currently being processed (blocks stale detection). */
   inFlightMessageIds?: string[];
-  /** Restored from continue-as-new: timestamp when in-flight set became non-empty. */
-  processingSince?: number;
+  /** Restored from continue-as-new: timestamp when in-flight set became non-empty.
+   *  v0.24 wrote a numeric Date.now() value; v0.25 writes ISO strings via `workflow.now()`. */
+  processingSince?: number | string;
   /** Restored from continue-as-new: workflow has been destroyed (terminal). */
   destroyed?: boolean;
+  // ── v0.25 Attachment State (carried across continueAsNew) ──
+  /** Current lease, if any. Expiry checked against `workflow.now()` in the main-loop deadline race. */
+  currentAttachment?: Attachment;
+  /** Host last seen as preferred for spawn; daemon `reconcileOnBoot` uses this. */
+  preferredHost?: string;
+  /** Current phase — authoritative after v0.25 replaces the legacy `status` field. */
+  phase?: AttachmentPhase;
+  /** ISO timestamp of when the current `draining` phase started. Carried for drainingDeadline race. */
+  drainingSince?: string;
   /** Temporal config passed through for outbox activities (non-secret fields only). */
   temporalConfig?: {
     temporalAddress: string;

@@ -441,6 +441,11 @@ const SEARCH_ATTRIBUTES = [
   { name: 'ClaudeTempoStatus', type: 'Keyword' },
   { name: 'ClaudeTempoPlayerType', type: 'Keyword' },
   { name: 'ClaudeTempoIsConductor', type: 'Bool' },
+  // v0.25 attachment lifecycle search attrs (design §9, §11.2).
+  // Ops note: registration documented in docs/ops/v0.25-search-attribute-registration.md.
+  { name: 'ClaudeTempoAttachedHost', type: 'Keyword' },
+  { name: 'ClaudeTempoAttachmentState', type: 'Keyword' },
+  { name: 'ClaudeTempoAttachmentId', type: 'Keyword' },
 ];
 
 async function isTemporalReachable(config: { temporalAddress: string; temporalNamespace?: string; temporalApiKey?: string; temporalTlsCertPath?: string; temporalTlsKeyPath?: string }): Promise<boolean> {
