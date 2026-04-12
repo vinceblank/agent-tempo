@@ -203,6 +203,7 @@ The following custom Temporal search attributes are written by `claudeSessionWor
 | `ClaudeTempoStatus` | `Keyword` | Session lifecycle state: `pending` → `active` → `stale` \| `blocked` \| `terminated`. `blocked` means the session is alive (delivering messages) but has produced no outbound activity for 5+ minutes — it may be stuck or spinning. Auto-recovers to `active` on next outbound. |
 | `ClaudeTempoGitRoot` | `Keyword` | Absolute path to the git repository root on the session's host. |
 | `ClaudeTempoPlayerType` | `Keyword` | Agent type name (e.g. `tempo-soloist`), set from the player's agent definition. |
+| `ClaudeTempoIsConductor` | `Bool` | `true` for conductor workflows, absent or `false` for regular players. Set via `upsertSearchAttributes` in `claudeSessionWorkflow` at startup and after `continueAsNew`. Enables efficient conductor discovery without scanning all session workflows. |
 
 ---
 

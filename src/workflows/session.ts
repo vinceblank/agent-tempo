@@ -101,6 +101,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     ...(input.metadata.gitRoot ? { ClaudeTempoGitRoot: [input.metadata.gitRoot] } : {}),
     ...(input.metadata.playerType ? { ClaudeTempoPlayerType: [input.metadata.playerType] } : {}),
     ClaudeTempoStatus: [input.metadata.status || 'active'],
+    ClaudeTempoIsConductor: [input.metadata.isConductor === true],
   });
 
   // State (carried across continue-as-new)
@@ -229,6 +230,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       ...(input.metadata.gitRoot ? { ClaudeTempoGitRoot: [input.metadata.gitRoot] } : {}),
       ...(input.metadata.playerType ? { ClaudeTempoPlayerType: [input.metadata.playerType] } : {}),
       ClaudeTempoStatus: [input.metadata.status || 'active'],
+      ClaudeTempoIsConductor: [input.metadata.isConductor === true],
     });
     lastActivityTime = Date.now();
   });

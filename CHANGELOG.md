@@ -21,6 +21,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.23.0] - 2026-04-12
+
+### Added
+
+- **`ClaudeTempoIsConductor` search attribute** (Bool) — registered in schema, set at workflow startup and `continueAsNew`, with workflow ID fallback for indexing delay. Enables direct conductor lookup without scanning all sessions (#68)
+
+### Changed
+
+- **`TempoClient` extracted to `src/client/`** — interface and factory moved from `src/tui/client.ts` to `src/client/interface.ts` and `src/client/index.ts` for multi-interface reuse. `src/tui/client.ts` is now a thin re-export shim for backward compatibility (#68)
+- **WIRE-PROTOCOL.md** — updated to document `ClaudeTempoIsConductor` search attribute and conductor lookup semantics (#68)
+
+---
+
 ## [0.22.1] - 2026-04-11
 
 ### Fixed

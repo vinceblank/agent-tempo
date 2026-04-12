@@ -27,6 +27,9 @@ src/
 │   ├── output.ts      # Shared CLI output formatting helpers
 │   └── preflight.ts   # Environment preflight checks
 ├── copilot-bridge.ts  # Copilot SDK bridge for Copilot CLI players
+├── client/
+│   ├── interface.ts   # TempoClient TypeScript interface and related types
+│   └── index.ts       # TempoClient factory implementation and barrel re-exports
 ├── worker.ts          # Temporal worker setup (used by daemon only)
 ├── connection.ts      # Temporal connection factory (shared by server + CLI)
 ├── spawn.ts           # Cross-platform process spawning helpers
@@ -83,7 +86,7 @@ src/
 │   ├── index.ts       # TUI entry point — connects to Temporal and renders the Ink app
 │   ├── App.tsx        # Root TUI component — chat-focused shell with slash commands
 │   ├── store.ts       # TUI state reducer (phase, players, messages, schedules, static history)
-│   ├── client.ts      # TempoClient interface and implementation — wraps Temporal queries via Maestro
+│   ├── client.ts      # Thin re-export shim — re-exports createTempoClient from src/client/ for backward compatibility
 │   ├── commands.ts    # Slash command parser and registry (/player, /broadcast, /status, etc.)
 │   ├── ink-loader.ts  # Dynamic ESM loader for Ink (avoids CJS/ESM conflicts)
 │   ├── ink-context.tsx # React context for injected Ink primitives
@@ -177,7 +180,7 @@ npm test
 - **Pause / Resume**: Ensemble-wide mid-session flow control. `pause_ensemble` locks all session outboxes and signals the scheduler to skip fires; `resume_ensemble` reverses both. `stop` outbox entries bypass the pause lock and are always dispatched. Pause state is owned by the per-ensemble Maestro (`maestroSetPaused` signal) and synced to sessions and the scheduler.
 - **Outbox lock**: A workflow-level flag on each session that gates outbox dispatch independently of pause. Used by the hold mechanism (`outboxLocked` query, `releaseHeld` signal) and the pause mechanism (`setPaused` signal, `paused` query). The two flags are independent — a session can be held (locked) but not paused, or paused but not locked.
 - **Maestro**: Two Maestro workflow variants exist. The **per-ensemble** `claudeMaestroWorkflow` (ID: `claude-maestro-{ensemble}`) monitors a single ensemble — maintains a player snapshot, ring-buffer event log (max 200 entries), an aggregated ensemble chat cache (max 500 entries, refreshed every ~10s via `fetchEnsembleChat` activity), and queues commands for relay to the conductor via `maestroSendCommand`. The ensemble chat cache merges maestro + conductor traffic and is served via the `maestroEnsembleChat` query. The **global** `claudeGlobalMaestroWorkflow` (ID: `claude-maestro-global`) spans all ensembles — aggregates players by ensemble, maintains a cross-ensemble message ring buffer (max 500 entries), and exposes on-demand player/conductor history via `maestroFetchPlayerMessages` and `maestroFetchConductorHistory` updates. Both are implemented in `src/workflows/maestro.ts` with activities in `src/activities/maestro.ts`.
-- **TempoClient**: The TUI's API layer (`src/tui/client.ts`) — a TypeScript interface and implementation that wraps Temporal queries to the Maestro and conductor workflows. Provides `discoverEnsembles`, `getPlayers`, `getMessages`, `getConductorHistory`, `sendMessage`, `sendCommand`, `getEnsembleChat`, `getGates`, `getStages`, `getWorktrees`, and `terminatePlayer`. Uses Global Maestro as the primary source with graceful fallback to per-ensemble Maestro and direct workflow list queries.
+- **TempoClient**: The API layer for querying ensemble state (`src/client/`). The interface and types live in `interface.ts`; the factory implementation lives in `index.ts`. Provides `discoverEnsembles`, `getPlayers`, `getMessages`, `getConductorHistory`, `sendMessage`, `sendCommand`, `getEnsembleChat`, `getGates`, `getStages`, `getWorktrees`, and `terminatePlayer`. Uses Global Maestro as the primary source with graceful fallback to per-ensemble Maestro and direct workflow list queries. `src/tui/client.ts` is a thin re-export shim for backward compatibility — new consumers should import from `src/client/` directly.
 - **Wire protocol**: All Temporal signal, query, update, and workflow names are documented in [`docs/WIRE-PROTOCOL.md`](docs/WIRE-PROTOCOL.md). These names are stable as of v0.10 — renaming or removing any is a breaking change requiring a major version bump. **Process**: when adding signals, queries, or updates to any workflow file (`signals.ts`, `scheduler-signals.ts`, `maestro-signals.ts`), update `docs/WIRE-PROTOCOL.md` in the same commit.
 - **Daemon**: A standalone background process (`src/daemon.ts`) that runs all Temporal workers. Auto-started by any claude-tempo command if not already running. PID stored at `~/.claude-tempo/daemon.pid`; logs at `~/.claude-tempo/daemon.log`. Sessions are now pure MCP clients — they no longer run in-process workers. Managed via `claude-tempo daemon start|stop|status|logs`.
 
