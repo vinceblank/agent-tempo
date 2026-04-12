@@ -14,6 +14,7 @@ import {
   updateScheduleTargetSignal,
   getSchedulesQuery,
   getScheduleQuery,
+  setSchedulerPausedSignal,
 } from './scheduler-signals';
 
 import type { ScheduleEntry } from '../types';
@@ -28,11 +29,15 @@ export interface SchedulerInput {
   ensemble: string;
   /** Restored from continue-as-new. */
   entries?: ScheduleEntry[];
+  /** Restored from continue-as-new: paused state. */
+  paused?: boolean;
 }
 
 export async function claudeSchedulerWorkflow(input: SchedulerInput): Promise<void> {
   let entries: ScheduleEntry[] = input.entries ?? [];
   let dirty = false; // flag to wake the loop when signals arrive
+  let schedulerPaused = input.paused ?? false;
+  let skippedWhilePaused = 0;
 
   // ── Signal Handlers ──
 
@@ -62,6 +67,11 @@ export async function claudeSchedulerWorkflow(input: SchedulerInput): Promise<vo
       }
     }
     dirty = true;
+  });
+
+  setHandler(setSchedulerPausedSignal, (value: boolean) => {
+    schedulerPaused = value;
+    dirty = true; // wake the loop to handle the state change
   });
 
   // ── Query Handlers ──
@@ -101,17 +111,22 @@ export async function claudeSchedulerWorkflow(input: SchedulerInput): Promise<vo
     const due = entries.filter((e) => new Date(e.nextFireAt).getTime() <= fireTime);
 
     for (const entry of due) {
-      try {
-        await fireSchedule({
-          ensemble: input.ensemble,
-          scheduleName: entry.name,
-          message: entry.message,
-          target: entry.target,
-          createdBy: entry.createdBy,
-        });
-      } catch (err) {
-        // Activity retries exhausted — log but don't crash the workflow
-        // The entry will be rescheduled or removed below
+      // When paused, skip firing but still reschedule/remove below
+      if (!schedulerPaused) {
+        try {
+          await fireSchedule({
+            ensemble: input.ensemble,
+            scheduleName: entry.name,
+            message: entry.message,
+            target: entry.target,
+            createdBy: entry.createdBy,
+          });
+        } catch (err) {
+          // Activity retries exhausted — log but don't crash the workflow
+          // The entry will be rescheduled or removed below
+        }
+      } else {
+        skippedWhilePaused += 1;
       }
 
       entry.firedCount += 1;
@@ -149,6 +164,7 @@ export async function claudeSchedulerWorkflow(input: SchedulerInput): Promise<vo
       await continueAsNew<typeof claudeSchedulerWorkflow>({
         ensemble: input.ensemble,
         entries,
+        paused: schedulerPaused,
       });
     }
   }

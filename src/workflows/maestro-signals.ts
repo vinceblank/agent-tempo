@@ -30,6 +30,9 @@ export { ZERO_CHAT_HIGH_WATER } from '../types';
 /** Gracefully shut down the Maestro workflow. */
 export const maestroShutdownSignal = defineSignal('maestroShutdown');
 
+/** Set the ensemble-wide paused state. */
+export const maestroSetPausedSignal = defineSignal<[boolean]>('maestroSetPaused');
+
 // ── Per-Ensemble Maestro Queries (existing) ──
 
 /** Get the current snapshot of all players in the ensemble. */
@@ -37,6 +40,9 @@ export const maestroPlayersQuery = defineQuery<MaestroPlayerInfo[]>('maestroPlay
 
 /** Get the event log (ring buffer, max 200 entries). */
 export const maestroEventsQuery = defineQuery<MaestroEvent[]>('maestroEvents');
+
+/** Query whether the ensemble is paused. */
+export const maestroPausedQuery = defineQuery<boolean>('maestroPaused');
 
 /** Get pending commands (queued but not yet relayed to conductor). */
 export const maestroPendingCommandsQuery = defineQuery<MaestroPendingCommand[]>('maestroPendingCommands');

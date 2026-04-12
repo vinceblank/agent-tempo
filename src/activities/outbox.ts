@@ -51,6 +51,13 @@ export interface StartRecruitedSessionInput {
   allowedTools?: string[];
   /** Custom claude binary path (from config.claudeBin). */
   claudeBin?: string;
+  /** When true, spawn process but lock outbox and defer initial message until release (warm hold). */
+  held?: boolean;
+}
+
+export interface ReleasePlayerInput {
+  ensemble: string;
+  targetPlayerId: string;
 }
 
 export interface SpawnProcessInput {
@@ -120,6 +127,7 @@ export interface OutboxActivities {
   startRecruitedSession(input: StartRecruitedSessionInput): Promise<RecruitResult>;
   spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult>;
   performEncore(input: PerformEncoreInput): Promise<EncoreResult>;
+  releasePlayer(input: ReleasePlayerInput): Promise<OutboxActivityResult>;
 }
 
 /**
@@ -180,7 +188,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async startRecruitedSession(input: StartRecruitedSessionInput): Promise<RecruitResult> {
-      const { ensemble, targetName, workDir, isConductor, initialMessage, fromPlayerId, agent, systemPrompt, taskQueue, agentDefinition, agentDefinitionDescription } = input;
+      const { ensemble, targetName, workDir, isConductor, initialMessage, fromPlayerId, agent, systemPrompt, taskQueue, agentDefinition, agentDefinitionDescription, held } = input;
       try {
         const workflowId = isConductor
           ? conductorWorkflowId(ensemble)
@@ -190,6 +198,12 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
 
         // Generate a UUID for the session — used for deterministic --resume on encore
         const sessionId = crypto.randomUUID();
+
+        // Warm hold: process will spawn and go active, but outbox is locked and
+        // the initial message is deferred. A standby message is sent instead.
+        const standbyMessage = held
+          ? 'You are on standby. Your ensemble is loading — other players are still connecting. Wait for your task assignment. Do not start work or send messages yet.'
+          : undefined;
 
         const sessionInput: SessionInput = {
           metadata: {
@@ -209,15 +223,23 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           },
           autoSummary: `Session in ${path.basename(workDir)}`,
           disableStaleDetection: true,
-          ...(initialMessage ? {
-            messages: [{
-              id: crypto.randomUUID(),
-              from: fromPlayerId,
-              text: initialMessage,
-              timestamp: new Date().toISOString(),
-              delivered: false,
-            }],
-          } : {}),
+          // When held: store the initial message for delivery on release, inject standby message instead
+          ...(held ? { outboxLocked: true, heldMessage: initialMessage } : {}),
+          messages: held
+            ? [{
+                id: crypto.randomUUID(),
+                from: 'system',
+                text: standbyMessage!,
+                timestamp: new Date().toISOString(),
+                delivered: false,
+              }]
+            : (initialMessage ? [{
+                id: crypto.randomUUID(),
+                from: fromPlayerId,
+                text: initialMessage,
+                timestamp: new Date().toISOString(),
+                delivered: false,
+              }] : undefined),
         };
 
         await client.workflow.start('claudeSessionWorkflow', {
@@ -233,7 +255,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           },
         });
 
-        log(`Pre-created workflow ${workflowId} for recruit "${targetName}" (sessionId=${sessionId})`);
+        log(`Pre-created workflow ${workflowId} for recruit "${targetName}" (sessionId=${sessionId}, held=${!!held})`);
         return { success: true, sessionId };
       } catch (err) {
         throw ApplicationFailure.nonRetryable(
@@ -400,6 +422,35 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         if (err instanceof ApplicationFailure) throw err;
         throw ApplicationFailure.nonRetryable(
           `Encore failed for "${targetPlayerId}": ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+
+    async releasePlayer(input: ReleasePlayerInput): Promise<OutboxActivityResult> {
+      const { ensemble, targetPlayerId } = input;
+      try {
+        const handle = await resolveSession(client, ensemble, targetPlayerId);
+        if (!handle) {
+          throw ApplicationFailure.nonRetryable(`No session found for "${targetPlayerId}"`);
+        }
+
+        // Check if the session is actually held (outbox locked)
+        const isLocked = await handle.query('outboxLocked') as boolean;
+        if (!isLocked) {
+          throw ApplicationFailure.nonRetryable(
+            `Cannot release "${targetPlayerId}" — session is not held (outbox not locked).`,
+          );
+        }
+
+        // Signal the session to release — unlocks outbox and delivers held message
+        await handle.signal('releaseHeld');
+
+        log(`Released held session "${targetPlayerId}"`);
+        return { success: true };
+      } catch (err) {
+        if (err instanceof ApplicationFailure) throw err;
+        throw ApplicationFailure.nonRetryable(
+          `Release failed for "${targetPlayerId}": ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     },

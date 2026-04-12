@@ -63,6 +63,12 @@ export interface SessionInput {
   worktrees?: WorktreeEntry[];
   /** Restored from continue-as-new (conductor only) */
   stages?: StageEntry[];
+  /** When true, outbox dispatch is paused until releaseHeld signal is received (warm hold). */
+  outboxLocked?: boolean;
+  /** Stored initial message to deliver when the hold is released. */
+  heldMessage?: string;
+  /** When true, outbox dispatch is paused ensemble-wide (pause/resume). */
+  paused?: boolean;
   /** Temporal config passed through for outbox activities (non-secret fields only). */
   temporalConfig?: {
     temporalAddress: string;
@@ -147,6 +153,13 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
   allowedTools?: string[];
   /** Custom claude binary path (from config.claudeBin). */
   claudeBin?: string;
+  /** When true, spawn process but lock outbox and defer initial message until release (warm hold). */
+  held?: boolean;
+}
+
+export interface ReleaseOutboxEntry extends OutboxEntryBase {
+  type: 'release';
+  targetPlayerId: string;
 }
 
 export interface ReportOutboxEntry extends OutboxEntryBase {
@@ -169,7 +182,7 @@ export interface EncoreOutboxEntry extends OutboxEntryBase {
   claudeBin?: string;
 }
 
-export type OutboxEntry = CueOutboxEntry | RecruitOutboxEntry | ReportOutboxEntry | StopOutboxEntry | EncoreOutboxEntry;
+export type OutboxEntry = CueOutboxEntry | RecruitOutboxEntry | ReportOutboxEntry | StopOutboxEntry | EncoreOutboxEntry | ReleaseOutboxEntry;
 
 /** Distributive Omit that works correctly on union types. */
 type DistributiveOmit<T, K extends keyof any> = T extends any ? Omit<T, K> : never;
@@ -401,4 +414,6 @@ export interface MaestroInput {
   cachedChatMeta?: { hasConductor: boolean };
   /** High-water marks for incremental chat fetch. */
   chatHighWater?: ChatHighWater;
+  /** Restored from continue-as-new: ensemble-wide paused state. */
+  paused?: boolean;
 }

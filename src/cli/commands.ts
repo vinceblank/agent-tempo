@@ -9,8 +9,9 @@ import { spawnInTerminal, spawnCopilotBridge, resolveClaudePath } from '../spawn
 import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
 import { getGitInfo } from '../git-info';
 import { createTemporalConnection } from '../connection';
-import { playerReportSignal, updateMetadataSignal } from '../workflows/signals';
-import { addScheduleSignal } from '../workflows/scheduler-signals';
+import { playerReportSignal, updateMetadataSignal, releaseHeldSignal, outboxLockedQuery, setPausedSignal } from '../workflows/signals';
+import { addScheduleSignal, setSchedulerPausedSignal } from '../workflows/scheduler-signals';
+import { maestroSetPausedSignal } from '../workflows/maestro-signals';
 import { AgentType, ScheduleEntry, SessionInput, SessionMetadata } from '../types';
 import { runPreflight } from './preflight';
 import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
@@ -2057,6 +2058,141 @@ export async function daemon(opts: DaemonOpts) {
   }
 }
 
+// ── Hold / Pause / Resume ──
+
+interface ReleaseOpts extends CliOverrides {
+  ensemble: string;
+}
+
+/** Release all held sessions in an ensemble (unlock outbox, deliver initial messages). */
+export async function release(opts: ReleaseOpts) {
+  const config = getConfig(opts);
+
+  let connection: Connection;
+  try {
+    connection = await Promise.race([
+      createTemporalConnection(config),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+    ]);
+  } catch {
+    out.error(`Cannot connect to Temporal at ${config.temporalAddress}`);
+    process.exit(1);
+    return;
+  }
+
+  const client = new Client({ connection, namespace: config.temporalNamespace });
+
+  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${opts.ensemble.replace(/["\\\n\r]/g, '')}"`;
+  let released = 0;
+
+  for await (const wf of client.workflow.list({ query })) {
+    try {
+      const handle = client.workflow.getHandle(wf.workflowId);
+      const locked = await handle.query(outboxLockedQuery);
+      if (locked) {
+        await handle.signal(releaseHeldSignal);
+        released++;
+        const sa = wf.searchAttributes || {};
+        const playerId = Array.isArray(sa.ClaudeTempoPlayerId) ? String(sa.ClaudeTempoPlayerId[0]) : wf.workflowId;
+        out.log(`  ${out.dim('released')} ${playerId}`);
+      }
+    } catch {
+      // Skip failed queries (terminated workflows, etc.)
+    }
+  }
+
+  if (released > 0) {
+    out.success(`Released ${released} player${released !== 1 ? 's' : ''}`);
+  } else {
+    out.log('No held players found.');
+  }
+
+  await connection.close();
+}
+
+interface PauseResumeOpts extends CliOverrides {
+  ensemble: string;
+}
+
+/** Pause an entire ensemble — sessions, scheduler, and maestro. */
+export async function pause(opts: PauseResumeOpts) {
+  const config = getConfig(opts);
+
+  let connection: Connection;
+  try {
+    connection = await Promise.race([
+      createTemporalConnection(config),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+    ]);
+  } catch {
+    out.error(`Cannot connect to Temporal at ${config.temporalAddress}`);
+    process.exit(1);
+    return;
+  }
+
+  const client = new Client({ connection, namespace: config.temporalNamespace });
+  await setPausedState(client, opts.ensemble, true);
+  out.success(`Ensemble "${opts.ensemble}" paused`);
+  await connection.close();
+}
+
+/** Resume an entire ensemble — sessions, scheduler, and maestro. */
+export async function resume(opts: PauseResumeOpts) {
+  const config = getConfig(opts);
+
+  let connection: Connection;
+  try {
+    connection = await Promise.race([
+      createTemporalConnection(config),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+    ]);
+  } catch {
+    out.error(`Cannot connect to Temporal at ${config.temporalAddress}`);
+    process.exit(1);
+    return;
+  }
+
+  const client = new Client({ connection, namespace: config.temporalNamespace });
+  await setPausedState(client, opts.ensemble, false);
+  out.success(`Ensemble "${opts.ensemble}" resumed`);
+  await connection.close();
+}
+
+/** Shared logic: set paused state across all ensemble components. */
+async function setPausedState(client: Client, ensemble: string, paused: boolean) {
+  // 1. Signal maestro hub
+  try {
+    const mh = client.workflow.getHandle(maestroWorkflowId(ensemble));
+    await mh.signal(maestroSetPausedSignal, paused);
+  } catch {
+    // Maestro may not be running — non-critical
+  }
+
+  // 2. Signal all active sessions
+  const sanitized = ensemble.replace(/["\\\n\r]/g, '');
+  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${sanitized}"`;
+  let count = 0;
+  for await (const wf of client.workflow.list({ query })) {
+    try {
+      const handle = client.workflow.getHandle(wf.workflowId);
+      await handle.signal(setPausedSignal, paused);
+      count++;
+    } catch {
+      // Skip failed signals
+    }
+  }
+  out.log(`  ${out.dim(paused ? 'paused' : 'resumed')} ${count} session${count !== 1 ? 's' : ''}`);
+
+  // 3. Signal scheduler
+  try {
+    const sh = client.workflow.getHandle(schedulerWorkflowId(ensemble));
+    await sh.signal(setSchedulerPausedSignal, paused);
+    out.log(`  ${out.dim(paused ? 'paused' : 'resumed')} scheduler`);
+  } catch {
+    // Scheduler may not be running — non-critical
+  }
+}
+
 export function help() {
   console.log(`
 ${out.bold('claude-tempo')} — Multi-session Claude Code coordination via Temporal
@@ -2078,6 +2214,9 @@ ${out.bold('Commands:')}
   ${out.cyan('ensemble')} <sub>       Manage saved ensemble lineups (save/list/show)
   ${out.cyan('broadcast')} <message>   Send a message to all active players
   ${out.cyan('encore')}   <name>      Revive a stale player session (reconnect with context)
+  ${out.cyan('release')} [ensemble]   Release all held players (unlock outbox, deliver messages)
+  ${out.cyan('pause')}   [ensemble]   Pause an ensemble (sessions, scheduler, maestro)
+  ${out.cyan('resume')}  [ensemble]   Resume a paused ensemble
   ${out.cyan('agent-types')} <sub>    Manage player type definitions (list/show/init)
   ${out.cyan('daemon')}    <sub>       Manage the worker daemon (start/stop/status/logs)
   ${out.cyan('upgrade')}  [version]    Upgrade claude-tempo to latest (or specific version)

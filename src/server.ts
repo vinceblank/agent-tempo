@@ -5,7 +5,7 @@ import * as path from 'path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
-import { getConfig, conductorWorkflowId, ENV } from './config';
+import { getConfig, conductorWorkflowId, maestroWorkflowId, ENV } from './config';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { version: PKG_VERSION } = require('../package.json');
 import { createTemporalConnection } from './connection';
@@ -30,6 +30,9 @@ import { registerWhoAmITool } from './tools/who-am-i';
 import { registerBroadcastTool } from './tools/broadcast';
 import { registerRecallTool } from './tools/recall';
 import { registerEncoreTool } from './tools/encore';
+import { registerReleaseTool } from './tools/release';
+import { registerPauseEnsembleTool } from './tools/pause-ensemble';
+import { registerResumeEnsembleTool } from './tools/resume-ensemble';
 import { registerQualityGateTool } from './tools/quality-gate';
 import { registerEvaluateGateTool } from './tools/evaluate-gate';
 import { registerGatesTool } from './tools/gates';
@@ -205,6 +208,18 @@ async function main() {
     }
   }
 
+  // If ensemble is paused, inherit the paused state
+  try {
+    const maestroHandle = client.workflow.getHandle(maestroWorkflowId(config.ensemble));
+    const isPaused = await maestroHandle.query('maestroPaused') as boolean;
+    if (isPaused) {
+      await handle.signal('setPaused', true);
+      log('Ensemble is paused — session started in paused state');
+    }
+  } catch {
+    // Maestro may not be running — that's fine
+  }
+
   // Create MCP server
   const hasRequestedName = isConductor || Boolean(requestedName && requestedName !== 'conductor');
   const playerTypeLine = playerType
@@ -257,6 +272,9 @@ async function main() {
   registerBroadcastTool(mcpServer, client, config, getPlayerId, handle);
   registerRecallTool(mcpServer, handle, getPlayerId);
   registerEncoreTool(mcpServer, client, config, getPlayerId, handle);
+  registerReleaseTool(mcpServer, client, config, getPlayerId, handle);
+  registerPauseEnsembleTool(mcpServer, client, config, getPlayerId);
+  registerResumeEnsembleTool(mcpServer, client, config, getPlayerId);
 
   // Conductor-only tools
   if (isConductor) {

@@ -29,6 +29,7 @@ export type {
   ReportOutboxEntry,
   StopOutboxEntry,
   EncoreOutboxEntry,
+  ReleaseOutboxEntry,
   QualityGate,
   QualityGateCriterion,
   WorktreeEntry,
@@ -52,6 +53,17 @@ export const getMetadataQuery = defineQuery<SessionMetadata>('getMetadata');
 export const pendingMessagesQuery = defineQuery<Message[]>('pendingMessages');
 export const allMessagesQuery = defineQuery<Message[]>('allMessages');
 export const allSentMessagesQuery = defineQuery<SentMessage[]>('allSentMessages');
+
+// ── Hold / Release ──
+
+/** Release a held session — unlocks the outbox and delivers the stored initial message. */
+export const releaseHeldSignal = defineSignal('releaseHeld');
+/** Query whether the session's outbox is locked (warm hold). */
+export const outboxLockedQuery = defineQuery<boolean>('outboxLocked');
+/** Set the paused state for the session (ensemble-wide pause/resume). */
+export const setPausedSignal = defineSignal<[boolean]>('setPaused');
+/** Query whether the session is paused. */
+export const pausedQuery = defineQuery<boolean>('paused');
 
 // ── Conductor Signals ──
 

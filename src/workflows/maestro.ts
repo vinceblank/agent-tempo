@@ -27,6 +27,8 @@ import {
   maestroPendingCommandsQuery,
   maestroEnsembleChatQuery,
   maestroSendCommandUpdate,
+  maestroSetPausedSignal,
+  maestroPausedQuery,
   // Global Maestro signals/queries/updates
   maestroNotifyMessageSignal,
   maestroEnsemblesQuery,
@@ -70,6 +72,7 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
   let shutdownRequested = false;
   let commandQueued = false;
   let lastActiveSessionTime = Date.now();
+  let ensemblePaused = input.paused ?? false;
 
   // ── Signal Handlers ──
 
@@ -77,11 +80,16 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
     shutdownRequested = true;
   });
 
+  setHandler(maestroSetPausedSignal, (value: boolean) => {
+    ensemblePaused = value;
+  });
+
   // ── Query Handlers ──
 
   setHandler(maestroPlayersQuery, () => players);
   setHandler(maestroEventsQuery, () => events);
   setHandler(maestroPendingCommandsQuery, () => pendingCommands);
+  setHandler(maestroPausedQuery, () => ensemblePaused);
   setHandler(maestroEnsembleChatQuery, ({ offset = 0, limit = 50 } = {}) => {
     const clampedLimit = Math.min(limit, 200);
     const total = cachedChat.length;
@@ -247,6 +255,7 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
         cachedChat,
         cachedChatMeta,
         chatHighWater,
+        paused: ensemblePaused,
       });
     }
   }

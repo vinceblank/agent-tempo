@@ -20,6 +20,9 @@ claude-tempo <command> [options]
 | `preflight` | Run environment checks |
 | `broadcast <msg>` | Send a message to all active players. Use `--type` to filter by player type, `--include-stale` to include stale sessions. |
 | `encore <name>` | Revive a stale player session by name. Use `--host` to target a remote machine. |
+| `release [ensemble]` | Release all held players — unlocks outboxes and delivers deferred task messages. Use `-n <name>` to release one player. |
+| `pause [ensemble]` | Pause the ensemble — locks all session outbox dispatch and pauses the scheduler. |
+| `resume [ensemble]` | Resume a paused ensemble — unlocks outbox dispatch and restarts the scheduler. |
 | `ensemble <sub>` | Manage saved lineups (`save`, `list`, `show`) |
 | `agent-types <sub>` | Manage player types (`list`, `show <name>`, `init`) |
 | `daemon <sub>` | Manage the worker daemon (`start`, `stop`, `status`, `logs`) |

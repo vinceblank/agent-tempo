@@ -509,6 +509,7 @@ export async function withWorkerAndMaestroActivities<T>(
       terminateSession: async () => {},
       startRecruitedSession: async () => ({ sessionId: 'test' }),
       performEncore: async () => ({ hostname: 'test-host', workDir: '/tmp', isConductor: false, agent: 'claude', temporalAddress: '', temporalNamespace: 'default' }),
+      releasePlayer: async () => ({ success: true }),
       spawnProcess: async () => ({ success: true }),
     },
   });
@@ -562,6 +563,7 @@ export async function withWorkerAndGlobalMaestroActivities<T>(
       terminateSession: async () => {},
       startRecruitedSession: async () => ({ sessionId: 'test' }),
       performEncore: async () => ({ hostname: 'test-host', workDir: '/tmp', isConductor: false, agent: 'claude', temporalAddress: '', temporalNamespace: 'default' }),
+      releasePlayer: async () => ({ success: true }),
       spawnProcess: async () => ({ success: true }),
     },
   });

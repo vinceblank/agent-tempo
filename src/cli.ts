@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { start, status, init, server, up, down, stop, help, version, ensembleCommand, agentTypesCommand, broadcast, encore, daemon, upgrade } from './cli/commands';
+import { start, status, init, server, up, down, stop, help, version, ensembleCommand, agentTypesCommand, broadcast, encore, daemon, upgrade, release, pause, resume } from './cli/commands';
 import { configCommand } from './cli/config-command';
 import { runPreflight } from './cli/preflight';
 import * as out from './cli/output';
@@ -244,6 +244,27 @@ async function main() {
       });
       break;
     }
+
+    case 'release':
+      await release({
+        ensemble: args.ensemble || ensemble,
+        ...overrides,
+      });
+      break;
+
+    case 'pause':
+      await pause({
+        ensemble: args.ensemble || ensemble,
+        ...overrides,
+      });
+      break;
+
+    case 'resume':
+      await resume({
+        ensemble: args.ensemble || ensemble,
+        ...overrides,
+      });
+      break;
 
     case 'ensemble':
       await ensembleCommand({
