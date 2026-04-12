@@ -11,6 +11,7 @@ import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { ENV } from '../config';
 import { resolveSession } from './resolve';
 import { resolveAgentType } from '../ensemble/agent-types';
+import { registry } from '../adapters';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:outbox]', ...args);
 
@@ -215,6 +216,10 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             gitBranch,
             isConductor,
             agentType: agent,
+            // PR-B (v0.25 step 2/7): populate adapterId on fresh recruits so the
+            // session workflow and dispatch path can resolve the adapter descriptor
+            // from the registry without falling back to the legacy agentType field.
+            adapterId: registry.resolveFromAgentType(agent),
             status: 'pending',
             sessionId,
             ...(agentDefinition ? { playerType: agentDefinition } : {}),
