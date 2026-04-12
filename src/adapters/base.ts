@@ -65,8 +65,9 @@ export abstract class BaseAttachment {
   abstract readonly descriptor: AdapterDescriptor;
 
   protected readonly lifecycleV2: boolean;
-  protected readonly client?: Client;
-  protected readonly host?: string;
+  /** Populated at construction for InteractiveAttachment; lazily via `configureV2()` for subprocess adapters (Copilot bridge). */
+  protected client?: Client;
+  protected host?: string;
 
   /** V2 state — populated by `startV2Lifecycle()`, null on legacy path. */
   protected token: AttachmentToken | null = null;
@@ -88,6 +89,18 @@ export abstract class BaseAttachment {
     this.lifecycleV2 = options.lifecycleV2 ?? lifecycleV2Enabled();
     this.client = options.client;
     this.host = options.host;
+  }
+
+  /**
+   * Lazily populate the V2-path dependencies (Temporal client, host). Used by
+   * adapters whose subprocess constructs the client inside `run()` rather
+   * than receiving it from the outer process (Copilot bridge). Safe to call
+   * more than once — each call replaces the stored references. Must be
+   * called BEFORE `startV2Lifecycle()`.
+   */
+  protected configureV2(client: Client, host: string): void {
+    this.client = client;
+    this.host = host;
   }
 
   /** Subscribe to `attachmentInfo.phase` changes observed by the watcher. */
