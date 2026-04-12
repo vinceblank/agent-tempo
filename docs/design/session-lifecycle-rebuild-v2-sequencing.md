@@ -37,7 +37,7 @@
 
 ## 2. PR ladder (recommended order)
 
-Seven PRs. **PR-A → PR-D are strictly serial** (each depends on the prior). **PR-E and PR-G can interleave** with the later serial PRs. **PR-F is best landed as a follow-up beta** (`beta.2`).
+Seven PRs. **PR-A → PR-D are strictly serial** (each depends on the prior). **PR-E and PR-G can interleave** with the later serial PRs. **PR-F lands last** (its dependencies require PR-E merged first). All seven merge to `main` before the single beta tag is cut — see §5.
 
 ### PR-A — Workflow state machine + wire protocol
 
@@ -114,7 +114,7 @@ Seven PRs. **PR-A → PR-D are strictly serial** (each depends on the prior). **
 - `src/adapters/claude-code/adapter.ts` — `InteractiveAttachment` uses the new context; no processing signals (class is `'interactive'`, `blocksOnLLMTurn=false`); `descriptor` set.
 - `src/adapters/copilot/adapter.ts` — `CopilotSdkAttachment` uses `invokeSdk` + `onSuperseded` pattern; `session.cancel()` is the cancellation mechanism per §9.3.
 - `src/server.ts` — remove `handle.result()` exit-on-complete watcher (§5.2); subprocess lifecycle now tied to `attachmentInfo.phase`.
-- `src/workflows/session.ts` — **remove the call sites of** the MVP compat shim from PR-A. Old signal/update shapes (`updateMetadata({ status })`) are no longer invoked from the runtime path; only the new wire protocol remains. **The shim definition itself stays quarantined** as dead code behind a clearly-labeled comment block until the beta.3 cleanup PR deletes it (see §7 rollback and §5 beta.3 scope). This preserves the PR-C revert-path through beta.1 and beta.2.
+- `src/workflows/session.ts` — **remove the call sites of** the MVP compat shim from PR-A. Old signal/update shapes (`updateMetadata({ status })`) are no longer invoked from the runtime path; only the new wire protocol remains. **The shim definition itself stays quarantined** as dead code behind a clearly-labeled comment block until the post-GA cleanup release deletes it (see §7 rollback and §5.2). This preserves the PR-C revert-path through the full beta soak.
 - `src/types.ts` — `SessionMetadata.status` field removed.
 
 **Depends on:** PR-A and PR-B landed.
@@ -131,7 +131,7 @@ Seven PRs. **PR-A → PR-D are strictly serial** (each depends on the prior). **
 
 **Risk:** HIGH — see §4 (Riskiest PR).
 
-**Feature-flagged?** Optional: `CLAUDE_TEMPO_LIFECYCLE_V2=1` could gate the shim removal for one night of canary testing before full rollout. Recommend: ship the flag, default to on in beta.1, remove the flag entirely in beta.3 or GA.
+**Feature-flagged?** Yes: `CLAUDE_TEMPO_LIFECYCLE_V2=1` default-on ships with PR-C as emergency rollback infra. It stays in-tree through the full beta soak; removed in the post-GA cleanup release (§5.2) along with the quarantined shim.
 
 ---
 
@@ -279,69 +279,46 @@ Total: ~6600 LOC added, ~1900 removed across 58 files. Spread across 7 PRs, noth
 4. **Lease-revoked polling interval tuning.** The 5-heartbeat-interval poll default is a guess; if adapter processes are killed before the poll catches them, there's a brief window of ambiguity. Observability needed (not blocker; see §7 Rollback).
 
 **Mitigations:**
-- Ship PR-C **behind `CLAUDE_TEMPO_LIFECYCLE_V2=1` for the first 48h** after merge. Default to on, but let operators flip it off if a storm of `AttachmentMismatch` errors surfaces. Remove the flag in beta.3.
+- PR-C ships with `CLAUDE_TEMPO_LIFECYCLE_V2=1` **default-on as emergency rollback** through the beta soak. Operators can flip it off if a storm of `AttachmentMismatch` errors surfaces. The flag (and the shim it gates) are removed in the post-GA cleanup release — not during the beta window. The 2-week beta soak is the canary.
 - Lean heavily on the conformance suite — PR-C's acceptance gate requires suite cases 1–9 green.
 - Issue-99 and Issue-102 regression tests serve as the hard stop: if either flakes, PR-C does not merge.
 - Keep the `v0.24.1` patch available on npm with a clear rollback path in release notes.
 
 ---
 
-## 5. Beta tag sequencing
+## 5. Release model — single beta
 
-The conductor asked for 1–2 spots where an intermediate beta tag de-risks shipping one giant `beta.1`. My recommendation is **three betas, none of them giant:**
+Superseded the original three-beta plan per user-approved decision (see §10 item 5). All seven PRs land on `main` sequentially with no intermediate `npm publish`; one beta tag is cut once PR-G merges; GA follows after a 2-week soak. The `beta.2` / `beta.3` namespace is reserved **only for respin tags** if soak surfaces issues requiring a fix — not planned beat markers.
 
-### `v0.25.0-beta.1` — Single-host lifecycle rebuild
+### 5.1 `v0.25.0-beta.1` — Full rebuild
 
-Contents: **PR-A + PR-B + PR-C + PR-D + PR-G** (partial — the pieces of PR-G that cover these PRs).
+Contents: **all seven PRs** (PR-A → PR-G) merged sequentially to `main`. Tag cut from the post-PR-G commit on main.
 
-Delivers:
-- 7-phase state machine
+Delivers the complete v2 design:
+- 7-phase state machine + attachment lifecycle
 - Adapter directory + registry
-- Full lifecycle wiring (claim, heartbeat, lease, processing tracking, WorkflowNotFound spec, split-brain cancellation)
-- New verbs: `restart`, `detach`, `destroy`, `restore` (single-host only), `attachment-info`
-- Conformance suite passes for `claude-code` and `copilot` adapters
-- Issue-99 and Issue-102 regression tests green
+- Full lifecycle wiring (claim, heartbeat, lease, processing tracking, `WorkflowNotFound` spec, split-brain cancellation)
+- New verbs: `restart`, `detach`, `destroy`, `restore`, `migrate`, `attachment-info`
+- Daemon reconcile-on-boot + restore policy + OS integration
+- Multi-host coordination with `--yes-steal` safety
+- Conformance suite, regression tests for #99 and #102, wire-protocol CI check
 
-Explicitly **not** in beta.1:
-- Multi-host coordination
-- Daemon `reconcileOnBoot`
-- `migrate` tool
-- Cross-host `--yes-steal`
+Rationale: the user-stated goal is "test and iterate on the full approach" — shipping the ladder as one coherent beta lets the 2-week soak exercise every surface in combination rather than leaving users on an intermediate half-feature (e.g. PR-C adapter lifecycle without PR-D verbs to drive it).
 
-Rationale: beta.1 is the architectural cleanup users can adopt on single-machine setups without any multi-host exposure. Large blast radius but every piece is coherent — shipping fewer pieces would leave an awkward intermediate (PR-C without PR-D would be a workflow with no user-facing verbs to drive it).
+**Soak:** 2 weeks. If clean, cut `v0.25.0` GA. If a blocking issue surfaces, cut `beta.2` carrying only the fix.
 
-**Beta.1 target length:** 1500–2000 LOC net changes.
+**Beta.1 blast radius:** ~6600 LOC added, ~1900 removed across 58 files (per §3). Compat shim and `CLAUDE_TEMPO_LIFECYCLE_V2` flag remain in-tree as emergency rollback infrastructure.
 
-### `v0.25.0-beta.2` — Daemon + multi-host
-
-Contents: **PR-E + PR-F + PR-G (remaining test parts)**.
-
-Delivers:
-- Daemon reconcile-on-boot + restore policy
-- OS integration (install/uninstall)
-- Cross-host restart with `--yes-steal=<host>` safety
-- `migrate` tool
-- Cleanup loop
-- `tests/multi-host/` integration harness
-
-Rationale: these land together because they share conceptual surface (multi-host coordination) and integration testing (2-machine scenarios). Shipping them separately means either a beta with a daemon that doesn't do the new thing yet, or multi-host restart without the daemon to recover orphans — both are half-features.
-
-**Beta.2 target length:** 1100 LOC net changes.
-
-### `v0.25.0-beta.3` — Flag removal + polish + GA prep
+### 5.2 Post-GA cleanup — `v0.25.1`
 
 Contents:
 - Remove `CLAUDE_TEMPO_LIFECYCLE_V2` feature flag and all conditional branches.
-- **`git rm` the PR-A compat shim definition** (quarantined as dead code in PR-C per §7 rollback plan).
-- Docs polish and any tightenings from beta.1 / beta.2 user reports.
+- `git rm` the PR-A compat shim definition (quarantined as dead code in PR-C per §7 rollback plan).
+- Docs polish and any tightenings from beta / GA user reports.
 
-Rationale: GA-ready. No new features; stability and cleanup only. Retiring the shim and the flag in the same beta means rollback infrastructure disappears atomically — there's no interim state where the shim still exists but can't be re-engaged by flag flip.
+Rationale: shim + flag stayed in-tree through the beta soak so operators had a 48h-triage rollback lever. Once GA ships and stabilizes, that safety net retires. **Version chosen: `v0.25.1` (patch).** Semver reasoning — no user-visible behavior change at GA (flag was emergency-only rollback infra; operators should not be relying on it at GA), no new functionality; internal cleanup = patch. Bumping to `v0.26.0` would falsely signal a behavioral delta.
 
-**Beta.3 target length:** <500 LOC.
-
-### `v0.25.0` — GA
-
-Promotion of beta.3 after a ~2-week soak.
+**Cleanup target length:** <500 LOC.
 
 ---
 
@@ -349,13 +326,13 @@ Promotion of beta.3 after a ~2-week soak.
 
 After **PR-A lands**, the following can run in parallel streams:
 
-- **Stream 1 (critical path):** PR-B → PR-C → PR-D (serial within the stream; blocks beta.1).
+- **Stream 1 (critical path):** PR-B → PR-C → PR-D (serial within the stream; blocks the beta tag cut).
 - **Stream 2 (tests):** PR-G test-harness pieces — `conformance.spec.ts` skeleton, wire-protocol CI check, regression test scaffolding. Ship incrementally; enable assertions as each critical-path PR lands.
-- **Stream 3 (docs):** `docs/adapters.md` draft + `CLAUDE.md` update + `docs/UPGRADING.md`. Owned by `tempo-liner`; can run the entire beta.1 window.
+- **Stream 3 (docs):** `docs/adapters.md` draft + `CLAUDE.md` update + `docs/UPGRADING.md`. Owned by `tempo-docs`; can run the entire ladder window.
 
 After **PR-C lands**, additionally:
 
-- **Stream 4 (daemon / multi-host):** PR-E and PR-F can start design-in-code in parallel with PR-D landing. Won't merge until beta.2 window.
+- **Stream 4 (daemon / multi-host):** PR-E and PR-F can start design-in-code in parallel with PR-D landing. Both merge to `main` before PR-G finalizes; all seven land before the single beta tag.
 
 Practical team allocation (2 engineers):
 - Engineer 1 owns the critical path: PR-B, PR-C, PR-D (sequential).
@@ -368,9 +345,9 @@ One engineer can do the whole ladder if time is abundant — just slower.
 ## 7. Rollback and recovery
 
 **Per-PR rollback:**
-- **PR-A:** revert the PR + re-publish workers. Sessions in flight on new workers see old SDKs calling the new wire surface → `ApplicationFailure(UnknownHandler)`. Mitigated by keeping v0.24.1 workers available until beta.1 soak passes.
+- **PR-A:** revert the PR + re-publish workers. Sessions in flight on new workers see old SDKs calling the new wire surface → `ApplicationFailure(UnknownHandler)`. Mitigated by keeping `v0.24.1` workers available through the beta soak and until GA stabilizes.
 - **PR-B:** straight revert; no runtime impact (structural refactor).
-- **PR-C:** revert PR-C + keep PR-A + PR-B. The compat shim from PR-A re-engages; MVP adapters resume working. **Critical: PR-A's shim definition must stay under version control until beta.3 ships.** Don't `git rm` it in PR-C; PR-C only removes the call sites and quarantines the definition behind a clearly-labeled dead-code comment. Deletion happens in beta.3's cleanup PR (see §5) — tied to the same release that removes the `CLAUDE_TEMPO_LIFECYCLE_V2` flag, so rollback infrastructure disappears atomically. This gives the rebuild two intermediate revert-checkpoints (end of beta.1, end of beta.2) before the safety net is retired at GA prep.
+- **PR-C:** revert PR-C + keep PR-A + PR-B. The compat shim from PR-A re-engages; MVP adapters resume working. **Critical: the shim + `CLAUDE_TEMPO_LIFECYCLE_V2` flag stay in the codebase through the full beta soak as emergency rollback infrastructure.** PR-C removes only the call sites; the shim definition is quarantined behind a clearly-labeled dead-code comment. Both are removed together in the post-GA cleanup release (§5.2) so the rollback infrastructure disappears atomically — there's no interim state where the shim exists but can't be re-engaged via flag flip.
 - **PR-D:** revert tool additions; users lose the new verbs but lifecycle still works via direct MCP queries. Tolerable.
 - **PR-E:** revert; orphan sessions require manual `restart`. Tolerable.
 - **PR-F:** revert; cross-host restart goes away; single-host restart still works. Tolerable.
@@ -411,7 +388,7 @@ When handing a PR to `tempo-eng`, include:
 3. **Blast radius** — file count + LOC estimate.
 4. **Dependency** — which PRs must have merged first.
 5. **Design section references** — which §§ of `session-lifecycle-rebuild-v2.md` (@88b0d3f) apply.
-6. **Beta it belongs to** — beta.1 / beta.2 / beta.3.
+6. **Release target** — `v0.25.0-beta.1` for all seven PRs in this ladder; `v0.25.1` for the post-GA shim/flag cleanup.
 7. **Risk flag** — low / medium / medium-high / high. Default low unless otherwise noted.
 
 Example for PR-C (the riskiest):
@@ -429,7 +406,7 @@ Gate:
   - tests/adapters/conformance.spec.ts cases 1-9 green for both descriptors
   - Manual: kill -9 adapter; workflow → detached within 90s; no completion
 Blast radius: ~6 files, ~800 LOC added, ~300 removed
-Flag: CLAUDE_TEMPO_LIFECYCLE_V2=1 default on; remove in beta.3
+Flag: CLAUDE_TEMPO_LIFECYCLE_V2=1 default on through beta; removed in v0.25.1 cleanup
 ```
 
 ---
@@ -437,7 +414,7 @@ Flag: CLAUDE_TEMPO_LIFECYCLE_V2=1 default on; remove in beta.3
 ## 9. Out of scope (for this memo)
 
 - Test-harness design details (docker-compose specifics for PR-F).
-- GA release criteria beyond "beta.3 soak 2 weeks."
+- GA release criteria beyond "single beta, 2-week soak."
 - Metrics/telemetry wiring (design §17.10 explicitly out of scope).
 - HTTP gateway (#67), JSON-RPC headless mode (#18) — both untouched by this sequencing.
 - Agent-type additions beyond claude-code and copilot (the HeadlessClaude worked example in design §4.6 is illustrative only).
@@ -447,12 +424,13 @@ Flag: CLAUDE_TEMPO_LIFECYCLE_V2=1 default on; remove in beta.3
 
 ## 10. Decisions locked
 
-The four pre-kickoff open questions were answered by `tempo-conductor` in the cue dated **2026-04-12T15:25:19Z** (lock confirmation for memo HEAD `6f0dedd`). Recorded here so the implementing engineer has a single source of truth:
+Decisions recorded here so the implementing engineer has a single source of truth. Items 1–4 locked by `tempo-conductor` in the cue dated **2026-04-12T15:25:19Z** (memo HEAD `6f0dedd`); item 5 supersedes part of item 3 and locks the release model at **2026-04-12T15:32:49Z**.
 
 1. **Search-attribute registration.** Owner: `tempo-devops` drafts `tctl` commands + runbook; user executes. Timing: the ops PR (runbook + registration script) lands **~3 days ahead of PR-A opening for review**. Conductor to cue `tempo-devops` separately.
 2. **Feature flag naming.** Locked as `CLAUDE_TEMPO_LIFECYCLE_V2=1`. Chosen to match the patched marker naming (`v0.25-attachment-lifecycle`) and because it captures the full rebuild scope better than the narrower `ATTACHMENT_V2`. Memo text is already consistent with this.
-3. **Beta soak window.** Locked as **1 week for beta.1, 1 week for beta.2, 2 weeks for beta.3 → GA**. Two-week soak only on the GA gate; tight feedback loop on the intermediate betas justified by small user base. Total timeline: **~4 weeks** from PR-A kickoff to GA assuming no respins. Section §5 target lengths and order are unchanged; only the soak windows are locked.
+3. **Beta soak window.** ~~Originally locked as 1 week for beta.1, 1 week for beta.2, 2 weeks for beta.3 → GA.~~ **Superseded by item 5.**
 4. **PR-G split.** Stream 2 (tests) is **co-owned**: `tempo-lead` writes test files (throughput precedent from the Phase-1 TUI tests); `tempo-qa` designs the conformance suite + gates + reviews. **Docs Stream 3** (`docs/adapters.md`, `CLAUDE.md`, `docs/UPGRADING.md`) is owned by `tempo-docs` in parallel. `tempo-eng` stays on the critical-path Stream 1.
+5. **Release model — single beta** (user-approved via `tempo-conductor` cue 2026-04-12T15:32:49Z). All seven PRs merge sequentially to `main` with no intermediate `npm publish`. Once PR-G lands, cut `v0.25.0-beta.1` — the one and only planned beta. Soak 2 weeks (user framing: "test and iterate on the full approach"). Cut `v0.25.0` GA. `beta.2`, `beta.3` exist only as respin tags if soak surfaces blockers. Compat shim + `CLAUDE_TEMPO_LIFECYCLE_V2` flag stay through beta as emergency rollback; removed in **post-GA cleanup `v0.25.1`** (patch: internal cleanup, no user-visible behavior change). Full release model in §5.
 
 > If any of these decisions need to reopen during the ladder, cue the architect — don't quietly deviate.
 
