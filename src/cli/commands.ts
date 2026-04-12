@@ -439,6 +439,7 @@ const SEARCH_ATTRIBUTES = [
   { name: 'ClaudeTempoPlayerId', type: 'Keyword' },
   { name: 'ClaudeTempoStatus', type: 'Keyword' },
   { name: 'ClaudeTempoPlayerType', type: 'Keyword' },
+  { name: 'ClaudeTempoIsConductor', type: 'Bool' },
 ];
 
 async function isTemporalReachable(config: { temporalAddress: string; temporalNamespace?: string; temporalApiKey?: string; temporalTlsCertPath?: string; temporalTlsKeyPath?: string }): Promise<boolean> {

@@ -79,8 +79,13 @@ export function createTempoClient(client: Client): TempoClient {
           const entry = ensembleMap.get(name) || { count: 0, hasConductor: false };
           entry.count++;
 
-          // Conductor is identified by workflow ID convention, not search attributes
-          if (wf.workflowId.endsWith('-conductor')) {
+          // Preferred: ClaudeTempoIsConductor search attribute (canonical, queryable).
+          // Fallback: workflow ID convention — covers the brief window after a
+          // conductor spawn before the search attribute is indexed.
+          const saFlag = wf.searchAttributes?.ClaudeTempoIsConductor;
+          const isConductorFromSA = Array.isArray(saFlag) && saFlag[0] === true;
+          const isConductorFromId = wf.workflowId?.endsWith('-conductor') ?? false;
+          if (isConductorFromSA || isConductorFromId) {
             entry.hasConductor = true;
             const statusArr = wf.searchAttributes?.ClaudeTempoStatus;
             entry.conductorStatus = Array.isArray(statusArr) ? String(statusArr[0]) : undefined;
@@ -125,13 +130,18 @@ export function createTempoClient(client: Client): TempoClient {
         for await (const wf of client.workflow.list({ query })) {
           const sa = wf.searchAttributes || {};
           const playerId = Array.isArray(sa.ClaudeTempoPlayerId) ? String(sa.ClaudeTempoPlayerId[0]) : wf.workflowId;
+          // Preferred: ClaudeTempoIsConductor search attribute (canonical, queryable).
+          // Fallback: workflow ID convention — covers the brief window after a
+          // conductor spawn before the search attribute is indexed.
+          const isConductorFromSA = Array.isArray(sa.ClaudeTempoIsConductor) && sa.ClaudeTempoIsConductor[0] === true;
+          const isConductorFromId = wf.workflowId?.endsWith('-conductor') ?? false;
           players.push({
             playerId,
             ensemble,
             part: '',
             hostname: Array.isArray(sa.ClaudeTempoHostname) ? String(sa.ClaudeTempoHostname[0]) : '',
             workDir: '',
-            isConductor: wf.workflowId.endsWith('-conductor'),
+            isConductor: isConductorFromSA || isConductorFromId,
             agentType: 'claude',
             status: Array.isArray(sa.ClaudeTempoStatus) ? String(sa.ClaudeTempoStatus[0]) : undefined,
           });
