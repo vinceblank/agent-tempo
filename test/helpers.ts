@@ -33,6 +33,11 @@ import {
   setWorktreeSignal,
   removeWorktreeSignal,
   worktreesQuery,
+  processingStartUpdate,
+  processingEndUpdate,
+  inFlightMessagesQuery,
+  destroyUpdate,
+  isDestroyedQuery,
 } from '../src/workflows/signals';
 
 // Re-export signals/queries for convenience in test files
@@ -59,6 +64,11 @@ export {
   setWorktreeSignal,
   removeWorktreeSignal,
   worktreesQuery,
+  processingStartUpdate,
+  processingEndUpdate,
+  inFlightMessagesQuery,
+  destroyUpdate,
+  isDestroyedQuery,
 };
 
 let testEnv: TestWorkflowEnvironment;

@@ -252,14 +252,16 @@ async function main() {
   // We know the exact workflow ID because we pass CLAUDE_TEMPO_PLAYER_NAME to the
   // MCP server — no need for a time-window heuristic that could misidentify workflows.
   log(`Waiting for workflow ${expectedWorkflowId} to register...`);
-  const handle = client.workflow.getHandle(expectedWorkflowId);
+  let handle = client.workflow.getHandle(expectedWorkflowId);
 
   let workflowReady = false;
+  let pinnedRunId: string | undefined;
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
       const desc = await handle.describe();
       if (desc.status.name === 'RUNNING') {
         workflowReady = true;
+        pinnedRunId = desc.runId;
         break;
       }
     } catch {
@@ -278,7 +280,13 @@ async function main() {
     process.exit(1);
   }
 
-  log(`Workflow ready: ${expectedWorkflowId}`);
+  // Pin all subsequent interactions to the runId we observed — prevents the
+  // zombie-resurrection hazard from #102. If this run completes (e.g. destroy),
+  // a later USE_EXISTING start would spawn a new run with the same workflow ID;
+  // an unpinned handle would silently attach to the new run, but a pinned handle
+  // returns WorkflowNotFound and lets the bridge exit cleanly.
+  handle = client.workflow.getHandle(expectedWorkflowId, pinnedRunId);
+  log(`Workflow ready: ${expectedWorkflowId} (pinned runId ${pinnedRunId})`);
 
   // Store sessionId in workflow metadata for future encore/resume
   try {
@@ -342,6 +350,27 @@ async function main() {
 
   /** Attempt to recreate the Copilot session after repeated failures. */
   async function recreateSession(): Promise<boolean> {
+    // Fixes #102: before recreating, check whether the pinned-runId workflow has
+    // been destroyed. If so, the user explicitly stopped this session — do NOT
+    // bring it back as a zombie. This also covers WorkflowNotFound (the pinned
+    // run has completed/terminated) since the query throws cleanly.
+    try {
+      const isDestroyed: boolean = await handle.query('isDestroyed');
+      if (isDestroyed) {
+        log('Workflow is destroyed — not reconnecting (session was intentionally stopped)');
+        return false;
+      }
+    } catch (err: any) {
+      const errName = err?.name || '';
+      const errMsg = err?.message || '';
+      if (errName.includes('WorkflowNotFound') || errMsg.includes('NOT_FOUND')) {
+        log('Workflow not found (likely terminated) — not reconnecting');
+        return false;
+      }
+      // Query failed for another reason — log and continue with recreation.
+      log(`isDestroyed query failed (${errMsg}), continuing with recreation`);
+    }
+
     sessionRecreations++;
     if (sessionRecreations > MAX_SESSION_RECREATIONS) {
       log(`ERROR: Exceeded max session recreations (${MAX_SESSION_RECREATIONS}). Giving up.`);
@@ -397,6 +426,17 @@ async function main() {
           await cleanup(false); // workflow already gone, don't signal
           process.exit(0);
         }
+        // Also check the in-workflow destroy flag — the workflow may still be RUNNING
+        // (draining) but has been destroyed. Exit cleanly without attempting signals
+        // that would be rejected.
+        try {
+          const isDestroyed: boolean = await handle.query('isDestroyed');
+          if (isDestroyed) {
+            log('Workflow destroyed — exiting cleanly');
+            await cleanup(false);
+            process.exit(0);
+          }
+        } catch { /* isDestroyed query unavailable pre-upgrade — safe to ignore */ }
       } catch (err: any) {
         // If we can't describe (e.g., workflow not found), it was likely terminated
         log(`Workflow describe failed: ${err?.message} — treating as terminated`);
@@ -451,8 +491,23 @@ async function main() {
         log('WARNING: session appears dead, sendAndWait may hang');
       }
 
+      // Fixes #99: mark these messages as in-flight before the blocking LLM call so
+      // the workflow's stale detection doesn't misclassify a long tool call as dead.
+      // Fire-and-logged — don't block sendAndWait on the update roundtrip.
+      const processingMarkerId = ids[0]; // representative for the batch
+      handle.executeUpdate('processingStart', { args: [{ messageId: processingMarkerId }] })
+        .catch((err: any) => log(`processingStart update failed (non-fatal): ${err?.message}`));
+
       const t0 = Date.now();
-      const result = await session.sendAndWait({ prompt }, 300_000); // 5 min timeout
+      let result: any;
+      try {
+        result = await session.sendAndWait({ prompt }, 300_000); // 5 min timeout
+      } finally {
+        // Always release the in-flight marker — a thrown error from sendAndWait
+        // must not leave the workflow pinned as "processing".
+        handle.executeUpdate('processingEnd', { args: [{ messageId: processingMarkerId }] })
+          .catch((err: any) => log(`processingEnd update failed (non-fatal): ${err?.message}`));
+      }
       const elapsed = Date.now() - t0;
 
       log(`sendAndWait completed in ${elapsed}ms`);

@@ -49,6 +49,8 @@ Queries on a `claudeSessionWorkflow` instance (synchronous, read-only).
 | `allSentMessages` | `SentMessage[]` | Returns the session's sent-message history (last 50 entries carried across `continueAsNew`). |
 | `outboxLocked` | `boolean` | Returns `true` if the session's outbox is currently locked (held at startup, awaiting `releaseHeld`). Returns `false` once the session is running normally. |
 | `paused` | `boolean` | Returns `true` if the session's outbox dispatch is currently paused via `setPaused`. |
+| `inFlightMessages` | `string[]` | Returns the IDs of messages currently being processed by a blocking adapter (see `processingStart`/`processingEnd` updates). While this set is non-empty, stale detection is suppressed. Used by Copilot-bridge-style adapters that call a long-running LLM API and cannot mark the message delivered until it returns. |
+| `isDestroyed` | `boolean` | Returns `true` if the session has been permanently destroyed via the `destroy` update. Adapters should check this before attempting reconnection — a destroyed session must not be resurrected. |
 
 ---
 
@@ -60,6 +62,9 @@ Workflow updates on a `claudeSessionWorkflow` instance (transactional, returns a
 |-------------|-------|--------|-------------|
 | `submitOutbox` | `OutboxEntryInput` | `string` (entry ID) | Appends an outbox entry (cue, report, stop, recruit, or encore) to the session's outbox queue and returns its generated UUID. The workflow's dispatch loop processes entries asynchronously via activities. This is the sole write path for all outbound operations. **Encore entries** (`type: 'encore'`) re-engage a player in a new session context; fields: `targetPlayerId: string`, `targetHostname?: string`, `contextMessageCount?: number`. |
 | `checkAndSetStatus` | `{ expectedStatus: string; newStatus: string }` | `boolean` | Atomically transitions the session's status from `expectedStatus` to `newStatus`. Returns `true` on success, `false` if the current status did not match `expectedStatus`. Used internally to guard state transitions (e.g., prevent double-encore, validate active/stale preconditions). |
+| `processingStart` | `{ messageId: string }` | *(void)* | Marks `messageId` as being actively processed by a blocking adapter (e.g. Copilot-bridge's `sendAndWait`). While any messageId is in-flight, stale detection is suppressed — fixes #99 where long LLM tool calls were misclassified as stale. `messageId` is required for idempotency under at-least-once update retries. The validator rejects the update if the session has been destroyed. A 15-minute safety timer in the workflow ejects wedged entries so a session cannot be pinned alive forever. |
+| `processingEnd` | `{ messageId: string }` | *(void)* | Marks `messageId` as done. Once the in-flight set is empty, stale detection resumes on the next main-loop iteration. Callers should run this in a `try/finally` around the blocking call so that a thrown error still releases the marker. |
+| `destroy` | `{ reason?: string }` | *(void)* | Permanently destroys the session. Sets `isDestroyed = true`, transitions status to `terminated`, pushes a system message recording the reason, and lets the main loop exit. The workflow drains its outbox with a 10-second cap (vs. the 2-minute cap for regular terminate) because a destroyed session typically has no remaining adapter to deliver messages. Fixes #102 — adapters (e.g. Copilot bridge's `recreateSession()`) must query `isDestroyed` before attempting reconnect; a destroyed workflow must not be resurrected as a zombie. |
 
 ---
 

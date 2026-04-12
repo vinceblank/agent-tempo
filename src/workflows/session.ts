@@ -9,6 +9,7 @@ import {
   uuid4,
   proxyActivities,
   patched,
+  log as workflowLog,
 } from '@temporalio/workflow';
 
 import type { OutboxActivities } from '../activities/outbox';
@@ -56,6 +57,11 @@ import {
   outboxLockedQuery,
   setPausedSignal,
   pausedQuery,
+  processingStartUpdate,
+  processingEndUpdate,
+  inFlightMessagesQuery,
+  destroyUpdate,
+  isDestroyedQuery,
 } from './signals';
 
 // ── Outbox Activity Proxies ──
@@ -117,6 +123,19 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   let outboxLocked = input.outboxLocked ?? false;
   let heldMessage: string | undefined = input.heldMessage;
   let paused = input.paused ?? false;
+
+  // ── Processing Lifecycle State (fixes #99) ──
+  // Tracks messages currently being processed by a blocking adapter (e.g. copilot-bridge
+  // LLM tool call). While non-empty, stale detection is suppressed.
+  const inFlightMessages = new Set<string>(input.inFlightMessageIds ?? []);
+  let processingSince: number | null = input.processingSince ?? (inFlightMessages.size > 0 ? Date.now() : null);
+  /** Safety cap: if a messageId stays in-flight longer than this, eject it with a warning. */
+  const PROCESSING_STUCK_MS = 15 * 60 * 1000; // 15 minutes
+
+  // ── Destroy State (fixes #102) ──
+  // Once true, the workflow refuses all attach-adjacent operations and terminates cleanly.
+  let destroyed = input.destroyed ?? false;
+  let destroyRequested = destroyed;
 
   // ── Outbox Update + Query Handlers ──
 
@@ -287,6 +306,62 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   });
 
   setHandler(pausedQuery, () => paused);
+
+  // ── Processing Lifecycle Handlers (fixes #99) ──
+
+  setHandler(processingStartUpdate, ({ messageId }) => {
+    const wasEmpty = inFlightMessages.size === 0;
+    inFlightMessages.add(messageId);
+    if (wasEmpty) {
+      processingSince = Date.now();
+    }
+    lastActivityTime = Date.now();
+  }, {
+    validator: ({ messageId }) => {
+      if (!messageId || typeof messageId !== 'string') {
+        throw new Error('processingStart requires a non-empty messageId');
+      }
+      if (destroyed || destroyRequested) {
+        throw new Error('Cannot start processing on destroyed session');
+      }
+    },
+  });
+
+  setHandler(processingEndUpdate, ({ messageId }) => {
+    inFlightMessages.delete(messageId);
+    if (inFlightMessages.size === 0) {
+      processingSince = null;
+    }
+    lastActivityTime = Date.now();
+  }, {
+    validator: ({ messageId }) => {
+      if (!messageId || typeof messageId !== 'string') {
+        throw new Error('processingEnd requires a non-empty messageId');
+      }
+    },
+  });
+
+  setHandler(inFlightMessagesQuery, () => [...inFlightMessages]);
+
+  // ── Destroy Handlers (fixes #102) ──
+
+  setHandler(destroyUpdate, ({ reason }) => {
+    destroyRequested = true;
+    // Graceful destroy: mark as terminated so the main loop drains & exits.
+    // The status change triggers the same path as updateMetadataSignal with status=terminated.
+    input.metadata.status = 'terminated';
+    upsertSearchAttributes({ ClaudeTempoStatus: ['terminated'] });
+    messages.push({
+      id: uuid4(),
+      from: 'system',
+      text: `Session destroyed${reason ? `: ${reason}` : ''}.`,
+      timestamp: new Date().toISOString(),
+      delivered: false,
+    });
+    lastActivityTime = Date.now();
+  });
+
+  setHandler(isDestroyedQuery, () => destroyed || destroyRequested);
 
   // ── Conductor State ──
 
@@ -678,11 +753,28 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     // Mark as stale so the workflow stays alive and can be reconnected later.
     if (!input.disableStaleDetection) {
       const now = Date.now();
+
+      // Fixes #99: suppress stale detection while the adapter reports an in-flight
+      // blocking operation (e.g. copilot-bridge sendAndWait on a long tool call).
+      // Safety timer: if a messageId stays in-flight past PROCESSING_STUCK_MS, eject it
+      // so a runaway wedge doesn't keep the session pinned alive forever.
+      if (processingSince !== null && now - processingSince > PROCESSING_STUCK_MS) {
+        // workflow.log.* is replay-safe (SDK dedupes by event time); console.warn would
+        // fire on every replay and pollute logs.
+        workflowLog.warn(
+          `processing stuck for ${Math.round((now - processingSince) / 1000)}s — ` +
+          `ejecting ${inFlightMessages.size} in-flight message(s): ${[...inFlightMessages].join(', ')}`,
+        );
+        inFlightMessages.clear();
+        processingSince = null;
+      }
+      const processingInFlight = inFlightMessages.size > 0;
+
       const staleMessages = messages.filter(
         (m) => !m.delivered && now - new Date(m.timestamp).getTime() > STALE_MESSAGE_MS,
       );
       const stuckPending = input.metadata.status === 'pending' && now - lastActivityTime > STALE_MESSAGE_MS;
-      if ((staleMessages.length > 0 || stuckPending) && input.metadata.status !== 'stale') {
+      if (!processingInFlight && (staleMessages.length > 0 || stuckPending) && input.metadata.status !== 'stale') {
         input.metadata.status = 'stale';
         upsertSearchAttributes({ ClaudeTempoStatus: ['stale'] });
       }
@@ -732,6 +824,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         outboxLocked,
         heldMessage,
         paused,
+        inFlightMessageIds: [...inFlightMessages],
+        processingSince: processingSince ?? undefined,
+        destroyed: destroyed || destroyRequested,
         ...(input.metadata.isConductor ? { commandHistory, reportHistory, qualityGates, worktrees, stages } : {}),
       });
     }
@@ -740,10 +835,18 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // Graceful shutdown — wait for in-flight handlers
   await condition(allHandlersFinished);
 
+  // Finalize destroy: mark destroyed so isDestroyedQuery returns true before workflow completes.
+  if (destroyRequested) {
+    destroyed = true;
+  }
+
   // If terminated, wait for the termination message to be delivered.
   // Skip in test mode (disableStaleDetection) since there's no message poller.
+  // Skip when destroyed: the adapter is expected to see isDestroyed and exit; no poller will deliver.
+  // Drain window for destroy: cap at 10 seconds (outbox + pending message delivery).
   if (input.metadata.status === 'terminated' && !input.disableStaleDetection) {
     const allDelivered = () => messages.every((m) => m.delivered);
-    await condition(allDelivered, '2 minutes');
+    const drainTimeout = destroyRequested ? '10 seconds' : '2 minutes';
+    await condition(allDelivered, drainTimeout);
   }
 }
