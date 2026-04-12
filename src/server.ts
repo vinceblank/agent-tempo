@@ -40,7 +40,7 @@ import { registerWorktreeTool } from './tools/worktree';
 import { registerStageTool } from './tools/stage';
 import { registerStagesTool } from './tools/stages';
 import { registerCancelStageTool } from './tools/cancel-stage';
-import { startMessagePoller } from './channel';
+import { InteractiveAttachment } from './adapters/claude-code';
 import { resolveAgentType } from './ensemble/agent-types';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo]', ...args);
@@ -293,9 +293,12 @@ async function main() {
   // Skip when running under the Copilot bridge: the bridge has its own poller that
   // injects messages via sendAndWait. If both pollers run, this one wins the race and
   // sends messages via notifications/claude/channel — which Copilot doesn't understand.
+  //
+  // PR-B (v0.25 rebuild step 2/7): the poller is now owned by InteractiveAttachment
+  // in src/adapters/claude-code/. Behavior is identical — PR-C rewires the body.
   const stopPoller = isBridgeMode
     ? () => {} // no-op — bridge handles message delivery
-    : startMessagePoller(handle, async (messages) => {
+    : new InteractiveAttachment().start(handle, async (messages) => {
     for (const msg of messages) {
       log(`Message from ${msg.from}: ${msg.text}`);
       const content = msg.isMaestro ? msg.text + MAESTRO_ACK : msg.text;
