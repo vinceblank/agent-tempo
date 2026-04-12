@@ -511,9 +511,17 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     inFlightMessages.delete(messageId);
     if (inFlightMessages.size === 0) {
       processingSince = null;
-      // Phase: back to `attached` (or `awaiting` if the outbox is empty; that refinement
-      // happens in the main loop based on outbox state).
-      if (phase === 'processing') setPhase('attached');
+      // Phase refinement (§2.2, §2.4; fixes #117): when in-flight drops to 0, move
+      // back out of `processing`. If the outbox has nothing left to dispatch, land
+      // directly in `awaiting` (idle refinement of attached). Otherwise `attached`,
+      // and the main-loop outbox-dispatch drain will refine to `awaiting` once the
+      // outbox clears.
+      if (phase === 'processing') {
+        const outboxIdle = !outbox.some(
+          (e) => e.status === 'pending' || e.status === 'processing',
+        );
+        setPhase(outboxIdle ? 'awaiting' : 'attached');
+      }
     }
     lastActivityTime = workflowNow().getTime();
     return { inFlightCount: inFlightMessages.size };
@@ -1241,6 +1249,20 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         entry.status = 'failed';
         entry.error = String(err);
       }
+    }
+
+    // ── §2.2 phase refinement: attached → awaiting when idle ──
+    // Issue #117: after outbox drain completes, if the attachment is still held,
+    // no messages are in flight, and no outbox entries are pending/processing,
+    // the session is in its idle steady state. Transition to `awaiting` so
+    // external observers (ClaudeTempoAttachmentState search attribute, TUI,
+    // monitoring) see the correct phase. `processingStart` (line 502) already
+    // guards for `awaiting`, so the next inbound message lifts us to `processing`.
+    if (phase === 'attached' && inFlightMessages.size === 0) {
+      const outboxIdle = !outbox.some(
+        (e) => e.status === 'pending' || e.status === 'processing',
+      );
+      if (outboxIdle) setPhase('awaiting');
     }
 
     // ── Legacy stale / blocked detection (shim, removed in PR-C) ──
