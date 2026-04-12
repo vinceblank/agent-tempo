@@ -114,7 +114,7 @@ Seven PRs. **PR-A → PR-D are strictly serial** (each depends on the prior). **
 - `src/adapters/claude-code/adapter.ts` — `InteractiveAttachment` uses the new context; no processing signals (class is `'interactive'`, `blocksOnLLMTurn=false`); `descriptor` set.
 - `src/adapters/copilot/adapter.ts` — `CopilotSdkAttachment` uses `invokeSdk` + `onSuperseded` pattern; `session.cancel()` is the cancellation mechanism per §9.3.
 - `src/server.ts` — remove `handle.result()` exit-on-complete watcher (§5.2); subprocess lifecycle now tied to `attachmentInfo.phase`.
-- `src/workflows/session.ts` — **remove** the MVP compat shim from PR-A. Old signal/update shapes (`updateMetadata({ status })`) are gone; only the new wire protocol remains.
+- `src/workflows/session.ts` — **remove the call sites of** the MVP compat shim from PR-A. Old signal/update shapes (`updateMetadata({ status })`) are no longer invoked from the runtime path; only the new wire protocol remains. **The shim definition itself stays quarantined** as dead code behind a clearly-labeled comment block until the beta.3 cleanup PR deletes it (see §7 rollback and §5 beta.3 scope). This preserves the PR-C revert-path through beta.1 and beta.2.
 - `src/types.ts` — `SessionMetadata.status` field removed.
 
 **Depends on:** PR-A and PR-B landed.
@@ -330,9 +330,12 @@ Rationale: these land together because they share conceptual surface (multi-host
 
 ### `v0.25.0-beta.3` — Flag removal + polish + GA prep
 
-Contents: feature-flag removal (remove `CLAUDE_TEMPO_LIFECYCLE_V2`), docs polish, any tightenings from beta.1/beta.2 user reports.
+Contents:
+- Remove `CLAUDE_TEMPO_LIFECYCLE_V2` feature flag and all conditional branches.
+- **`git rm` the PR-A compat shim definition** (quarantined as dead code in PR-C per §7 rollback plan).
+- Docs polish and any tightenings from beta.1 / beta.2 user reports.
 
-Rationale: GA-ready. No new features; stability and cleanup only.
+Rationale: GA-ready. No new features; stability and cleanup only. Retiring the shim and the flag in the same beta means rollback infrastructure disappears atomically — there's no interim state where the shim still exists but can't be re-engaged by flag flip.
 
 **Beta.3 target length:** <500 LOC.
 
@@ -367,7 +370,7 @@ One engineer can do the whole ladder if time is abundant — just slower.
 **Per-PR rollback:**
 - **PR-A:** revert the PR + re-publish workers. Sessions in flight on new workers see old SDKs calling the new wire surface → `ApplicationFailure(UnknownHandler)`. Mitigated by keeping v0.24.1 workers available until beta.1 soak passes.
 - **PR-B:** straight revert; no runtime impact (structural refactor).
-- **PR-C:** revert PR-C + keep PR-A + PR-B. The compat shim from PR-A re-engages; MVP adapters resume working. **Critical: PR-A's shim must stay under version control until PR-C has soaked 2 weeks.** Don't delete it in PR-C; quarantine it behind a dead-code comment.
+- **PR-C:** revert PR-C + keep PR-A + PR-B. The compat shim from PR-A re-engages; MVP adapters resume working. **Critical: PR-A's shim definition must stay under version control until beta.3 ships.** Don't `git rm` it in PR-C; PR-C only removes the call sites and quarantines the definition behind a clearly-labeled dead-code comment. Deletion happens in beta.3's cleanup PR (see §5) — tied to the same release that removes the `CLAUDE_TEMPO_LIFECYCLE_V2` flag, so rollback infrastructure disappears atomically. This gives the rebuild two intermediate revert-checkpoints (end of beta.1, end of beta.2) before the safety net is retired at GA prep.
 - **PR-D:** revert tool additions; users lose the new verbs but lifecycle still works via direct MCP queries. Tolerable.
 - **PR-E:** revert; orphan sessions require manual `restart`. Tolerable.
 - **PR-F:** revert; cross-host restart goes away; single-host restart still works. Tolerable.
