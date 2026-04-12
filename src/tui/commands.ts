@@ -1101,6 +1101,36 @@ export function formatHelpSummary(): string {
   return ['Available commands:', '', ...lines, '', 'Type /help <command> for details.'].join('\n');
 }
 
+/**
+ * Filter palette command entries by a typed prefix.
+ * Prefix may optionally include a leading '/' — it's stripped before matching.
+ * An empty prefix returns all commands in order.
+ *
+ * Pure function — safe to call from React render paths and unit tests.
+ */
+export function filterPaletteCommands<T extends { name: string }>(
+  commands: readonly T[],
+  filter: string,
+): T[] {
+  const prefix = filter.startsWith('/') ? filter.slice(1) : filter;
+  if (!prefix) return [...commands];
+  const lower = prefix.toLowerCase();
+  return commands.filter((c) => c.name.toLowerCase().startsWith(lower));
+}
+
+/**
+ * Resolve the target of a `/help <name>` invocation. Accepts either
+ * `recruit` or `/recruit` — both resolve to the same command def.
+ * Returns null if the command is unknown.
+ */
+export function resolveHelpTarget(raw: string): { name: string; def: CommandDef } | null {
+  const name = raw.replace(/^\//, '').trim().toLowerCase();
+  if (!name) return null;
+  const def = COMMANDS[name];
+  if (!def) return null;
+  return { name, def };
+}
+
 /** Commands that take a player name as their first parameter. */
 export const PLAYER_PARAM_COMMANDS = new Set(['stop', 'encore', 'worktree']);
 
