@@ -229,13 +229,14 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     lastActivityTime = workflowNow().getTime();
   }
 
-  /** Build the token returned from `claimAttachment`. */
-  function attachmentTokenFrom(a: Attachment): AttachmentToken {
+  /** Build the token returned from `claimAttachment`. `leaseMs` is the value the caller
+   *  supplied (or the default if they didn't), so the adapter knows when to heartbeat. */
+  function attachmentTokenFrom(a: Attachment, leaseMs: number): AttachmentToken {
     return {
       attachmentId: a.attachmentId,
       runId: a.runId,
       expiresAt: a.expiresAt,
-      leaseMs: LEASE_MS,
+      leaseMs,
     };
   }
 
@@ -621,7 +622,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       currentAttachment.lastHeartbeatAt = now.toISOString();
       currentAttachment.expiresAt = new Date(nowMs + leaseMs).toISOString();
       lastActivityTime = nowMs;
-      return attachmentTokenFrom(currentAttachment);
+      return attachmentTokenFrom(currentAttachment, leaseMs);
     }
 
     // Conflict: active lease held by someone else.
@@ -656,7 +657,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       ClaudeTempoAttachmentId: [newAttachment.attachmentId],
     });
     lastActivityTime = nowMs;
-    return attachmentTokenFrom(newAttachment);
+    return attachmentTokenFrom(newAttachment, leaseMs);
   }, {
     validator: ({ leaseMs }) => {
       if (!Number.isInteger(leaseMs) || leaseMs < 1_000 || leaseMs > 600_000) {
