@@ -4,7 +4,7 @@
  * implementations for each command.
  */
 import { execFile } from 'child_process';
-import type { TempoClient } from './client';
+import type { TempoClient } from '../client';
 import type { TuiAction, StaticItem } from './store';
 import type { Message, SentMessage } from '../types';
 import { statusIcons, supportsUnicode } from './utils/platform';

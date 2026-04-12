@@ -68,7 +68,7 @@ import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNa
 import { THEME } from './utils/theme';
 import { wordWrap } from './utils/format';
 import { loadHistory, saveHistory } from './utils/history';
-import type { TempoClient } from './client';
+import type { TempoClient } from '../client';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const packageVersion: string = require('../../package.json').version;

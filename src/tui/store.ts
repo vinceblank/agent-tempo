@@ -15,7 +15,7 @@ import type {
   EnsembleChatMessage,
   EnsembleChatResult,
 } from '../types';
-import type { EnsembleSummary } from './client';
+import type { EnsembleSummary } from '../client';
 
 // ── State ──
 

@@ -104,6 +104,7 @@ export async function setupTestEnv(): Promise<void> {
         '--search-attribute', 'ClaudeTempoGitRoot=Keyword',
         '--search-attribute', 'ClaudeTempoStatus=Keyword',
         '--search-attribute', 'ClaudeTempoPlayerType=Keyword',
+        '--search-attribute', 'ClaudeTempoIsConductor=Bool',
       ],
     },
   });

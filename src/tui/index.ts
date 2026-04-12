@@ -6,7 +6,7 @@ import React from 'react';
 import { Client } from '@temporalio/client';
 import { createTemporalConnection } from '../connection';
 import { Config, getConfig } from '../config';
-import { createTempoClient } from './client';
+import { createTempoClient } from '../client';
 import { loadInk } from './ink-loader';
 import { InkProvider } from './ink-context';
 import { App } from './App';
