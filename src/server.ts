@@ -40,7 +40,7 @@ import { registerWorktreeTool } from './tools/worktree';
 import { registerStageTool } from './tools/stage';
 import { registerStagesTool } from './tools/stages';
 import { registerCancelStageTool } from './tools/cancel-stage';
-import { startMessagePoller } from './channel';
+import { registry, InteractiveAttachment } from './adapters';
 import { resolveAgentType } from './ensemble/agent-types';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo]', ...args);
@@ -117,6 +117,13 @@ async function main() {
     : `claude-session-${config.ensemble}-${playerId}`;
 
   const isBridgeMode = process.env[ENV.BRIDGE_MODE] === '1';
+  // PR-B (v0.25 step 2/7): resolve the adapter descriptor through the registry.
+  // `isBridgeMode` is the legacy signal — set by the Copilot bridge when it spawns
+  // this MCP server as a child. PR-C will replace this with the attachment wire
+  // protocol. Until then, the registry lookup is purely informational on the
+  // server-side and the real dispatch is still driven by isBridgeMode.
+  const adapterId = isBridgeMode ? 'copilot' : 'claude-code';
+  const adapterDescriptor = registry.get(adapterId);
   const sessionInput: SessionInput = {
     metadata: {
       playerId,
@@ -127,6 +134,7 @@ async function main() {
       gitBranch,
       isConductor,
       agentType: isBridgeMode ? 'copilot' : 'claude',
+      adapterId,
     },
     autoSummary: `Session in ${path.basename(workDir)}`,
     temporalConfig: {
@@ -290,12 +298,18 @@ async function main() {
   const MAESTRO_ACK = '\n\n[IMPORTANT: This message is from a human (Maestro). Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
 
   // Start message poller — push messages into Claude Code via channel notifications.
-  // Skip when running under the Copilot bridge: the bridge has its own poller that
-  // injects messages via sendAndWait. If both pollers run, this one wins the race and
-  // sends messages via notifications/claude/channel — which Copilot doesn't understand.
-  const stopPoller = isBridgeMode
-    ? () => {} // no-op — bridge handles message delivery
-    : startMessagePoller(handle, async (messages) => {
+  // SDK-class adapters (e.g. Copilot bridge) run their own delivery loop in the
+  // bridge subprocess; this MCP server is just the tool surface for that bridge,
+  // and must NOT also poll (would race on markDelivered, and SDK adapters don't
+  // understand notifications/claude/channel).
+  //
+  // PR-B (v0.25 rebuild step 2/7): dispatch by adapterClass from the registry
+  // instead of hardcoding the isBridgeMode check. Behavior is identical for the
+  // current two adapters — PR-C rewires the body to use the attachment wire
+  // protocol.
+  const stopPoller = adapterDescriptor.adapterClass === 'sdk'
+    ? () => {} // no-op — SDK adapters handle delivery in their own subprocess
+    : new InteractiveAttachment().start(handle, async (messages) => {
     for (const msg of messages) {
       log(`Message from ${msg.from}: ${msg.text}`);
       const content = msg.isMaestro ? msg.text + MAESTRO_ACK : msg.text;

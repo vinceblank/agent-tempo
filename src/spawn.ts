@@ -426,15 +426,18 @@ export interface CopilotBridgeResult {
 }
 
 /**
- * Resolve the path to the compiled copilot-bridge.js.
+ * Resolve the path to the compiled copilot bridge adapter entry point.
  * In dev (ts-node), returns a ts-node command; in production, returns the dist path.
+ *
+ * PR-B (v0.25 rebuild step 2/7): the bridge moved from `src/copilot-bridge.ts`
+ * to `src/adapters/copilot/adapter.ts`. Behavior unchanged.
  */
 function resolveBridgePath(): { cmd: string; args: string[] } {
   const isDev = __filename.endsWith('.ts');
   if (isDev) {
-    return { cmd: 'npx', args: ['ts-node', resolve(__dirname, 'copilot-bridge.ts')] };
+    return { cmd: 'npx', args: ['ts-node', resolve(__dirname, 'adapters', 'copilot', 'adapter.ts')] };
   }
-  return { cmd: 'node', args: [resolve(__dirname, 'copilot-bridge.js')] };
+  return { cmd: 'node', args: [resolve(__dirname, 'adapters', 'copilot', 'adapter.js')] };
 }
 
 /**
