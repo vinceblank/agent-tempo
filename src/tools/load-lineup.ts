@@ -33,10 +33,12 @@ export function registerLoadLineupTool(
     {
       name: z.string().max(PLAYER_NAME_MAX).optional().describe('Name of a lineup — resolves saved lineups, then shipped examples (e.g. "tempo-dev-team")'),
       path: z.string().max(PATH_MAX).optional().describe('Explicit file path to a lineup YAML file'),
+      hold: z.boolean().optional().describe('When true, create player workflows but do not spawn processes. Players stay in "held" status until explicitly released.'),
     },
     async (args) => {
       const lineupName = (args as any).name as string | undefined;
       const lineupPath = (args as any).path as string | undefined;
+      const hold = (args as any).hold === true;
 
       if (!lineupName && !lineupPath) {
         return fail('Provide either `name` (saved lineup) or `path` (file path). Exactly one is required.');
@@ -120,6 +122,20 @@ export function registerLoadLineupTool(
               failed.push(`conductor instructions: ${err}`);
             }
           }
+
+          // When hold mode: tell conductor to wait for user direction
+          if (hold) {
+            try {
+              await handle.signal('receiveMessage', {
+                from: 'system',
+                text: 'Ensemble is loading in hold mode — players are connecting but on standby. Wait for instructions from the user or maestro before directing the ensemble. When ready, use the `release` tool to deliver task assignments to all held players.',
+                responseRequested: false,
+              });
+              conductorActions.push('hold mode standby');
+            } catch (err) {
+              failed.push(`conductor hold message: ${err}`);
+            }
+          }
         }
 
         // Recruit players via outbox — no polling needed
@@ -174,6 +190,7 @@ export function registerLoadLineupTool(
               nativeResolvable: resolvedType?.nativeResolvable,
               allowedTools: player.allowedTools,
               claudeBin: config.claudeBin,
+              ...(hold ? { held: true } : {}),
             } as OutboxEntryInput;
             await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
             recruited.push(playerName);
@@ -281,7 +298,11 @@ export function registerLoadLineupTool(
           lines.push(`Conductor: ${conductorActions.join(', ')}`);
         }
         if (recruited.length > 0) {
-          lines.push(`Recruited: ${recruited.join(', ')}`);
+          if (hold) {
+            lines.push(`Held: ${recruited.join(', ')} — ${recruited.length} player(s) held. Use \`release\` to start them.`);
+          } else {
+            lines.push(`Recruited: ${recruited.join(', ')}`);
+          }
         }
         if (schedulesCreated.length > 0) {
           lines.push(`Schedules created: ${schedulesCreated.join(', ')}`);

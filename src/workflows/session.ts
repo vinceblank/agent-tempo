@@ -52,11 +52,15 @@ import {
   cancelStageSignal,
   stagesQuery,
   StageEntry,
+  releaseHeldSignal,
+  outboxLockedQuery,
+  setPausedSignal,
+  pausedQuery,
 } from './signals';
 
 // ── Outbox Activity Proxies ──
 
-const { deliverCue, deliverReport, terminateSession, startRecruitedSession, performEncore } =
+const { deliverCue, deliverReport, terminateSession, startRecruitedSession, performEncore, releasePlayer } =
   proxyActivities<OutboxActivities>({
     startToCloseTimeout: '30 seconds',
     retry: { maximumAttempts: 3 },
@@ -85,6 +89,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   patched('v0.14-worktrees');
   patched('v0.15-blocked-detection');
   patched('v0.18-stages');
+  patched('v0.23-hold-release');
 
   // Ensure search attributes are always current — critical when reconnecting
   // via WorkflowIdConflictPolicy.USE_EXISTING, which skips the attributes
@@ -107,6 +112,11 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   let lastOutboundTime = input.lastOutboundTime ?? Date.now();
   let lastInboundRRTime = input.lastInboundRRTime ?? 0;
 
+  // ── Warm Hold + Pause State ──
+  let outboxLocked = input.outboxLocked ?? false;
+  let heldMessage: string | undefined = input.heldMessage;
+  let paused = input.paused ?? false;
+
   // ── Outbox Update + Query Handlers ──
 
   setHandler(submitOutboxUpdate, (entryInput: OutboxEntryInput) => {
@@ -127,6 +137,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[stop requested]', timestamp: entry.createdAt });
     } else if (entry.type === 'encore') {
       sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[encore requested]', timestamp: entry.createdAt });
+    } else if (entry.type === 'release') {
+      sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[release requested]', timestamp: entry.createdAt });
     }
 
     lastActivityTime = Date.now();
@@ -246,6 +258,33 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   setHandler(pendingMessagesQuery, () => messages.filter((m) => !m.delivered));
   setHandler(allMessagesQuery, () => messages);
   setHandler(allSentMessagesQuery, () => sentMessages);
+
+  // ── Hold / Release Handlers ──
+
+  setHandler(releaseHeldSignal, () => {
+    if (heldMessage) {
+      // Deliver the stored initial message now that the hold is released
+      messages.push({
+        id: uuid4(),
+        from: input.metadata.recruitedBy || 'system',
+        text: heldMessage,
+        timestamp: new Date().toISOString(),
+        delivered: false,
+      });
+      heldMessage = undefined;
+    }
+    outboxLocked = false;
+  });
+
+  setHandler(outboxLockedQuery, () => outboxLocked);
+
+  // ── Pause / Resume Handlers ──
+
+  setHandler(setPausedSignal, (value: boolean) => {
+    paused = value;
+  });
+
+  setHandler(pausedQuery, () => paused);
 
   // ── Conductor State ──
 
@@ -484,13 +523,24 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // ── Main Loop ──
 
   const hasPendingOutbox = () => outbox.some((e) => e.status === 'pending');
+  /** Stop entries bypass pause — they must always be dispatched. */
+  const hasPendingStop = () => outbox.some((e) => e.status === 'pending' && e.type === 'stop');
+  const canDispatch = () => !outboxLocked && !paused && hasPendingOutbox();
 
   while (input.metadata.status !== 'terminated') {
-    await condition(() => input.metadata.status === 'terminated' || hasPendingOutbox(), '5 minutes');
+    await condition(
+      () => input.metadata.status === 'terminated' || canDispatch() || hasPendingStop(),
+      '5 minutes',
+    );
 
     // ── Outbox Dispatch ──
     while (hasPendingOutbox() && input.metadata.status as string !== 'terminated') {
-      const entry = outbox.find((e) => e.status === 'pending')!;
+      // When paused or locked, only dispatch stop entries (bypass)
+      const nextEntry = (canDispatch())
+        ? outbox.find((e) => e.status === 'pending')!
+        : outbox.find((e) => e.status === 'pending' && e.type === 'stop') ?? null;
+      if (!nextEntry) break;
+      const entry = nextEntry;
       entry.status = 'processing';
       try {
         switch (entry.type) {
@@ -533,7 +583,10 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               agentDefinitionDescription: entry.agentDefinitionDescription,
               allowedTools: entry.allowedTools,
               claudeBin: entry.claudeBin,
+              held: entry.held,
             });
+            // Warm hold: process always spawns. When held, the workflow's outbox
+            // is locked and the initial message is deferred until release.
             const targetHost = entry.targetHostname || input.metadata.hostname;
             const spawnFn = getSpawnProxy(targetHost);
             await spawnFn({
@@ -597,6 +650,15 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               }
               throw spawnErr;
             }
+            break;
+          }
+          case 'release': {
+            // Warm hold release — signal the target to unlock outbox and deliver held message.
+            // No spawning needed — the process is already running.
+            await releasePlayer({
+              ensemble: input.metadata.ensemble,
+              targetPlayerId: entry.targetPlayerId,
+            });
             break;
           }
         }
@@ -665,6 +727,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         outbox: outbox.filter((e) => e.status === 'pending' || e.status === 'processing'),
         lastInboundRRTime,
         lastOutboundTime,
+        outboxLocked,
+        heldMessage,
+        paused,
         ...(input.metadata.isConductor ? { commandHistory, reportHistory, qualityGates, worktrees, stages } : {}),
       });
     }
