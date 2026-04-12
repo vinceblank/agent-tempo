@@ -29,6 +29,9 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `stage` | Define a stage — tracks a set of players doing parallel work and auto-notifies when all report. Conductor only. |
 | `stages` | List stages and their status. Conductor only. |
 | `cancel_stage` | Cancel an active stage by name. Conductor only. |
+| `release` | Release held player sessions — unlocks their outboxes and delivers deferred task messages. Omit `player` to release all held sessions. |
+| `pause_ensemble` | Pause all sessions in the ensemble: locks outbox dispatch and pauses the scheduler. `stop` commands still go through. |
+| `resume_ensemble` | Resume a paused ensemble — unlocks outbox dispatch and resumes the scheduler. Buffered outbox entries are dispatched. |
 
 ## Related
 

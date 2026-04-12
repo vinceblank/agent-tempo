@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Ensemble startup hold** — `load_lineup(hold: true)` spawns all players with locked outboxes and a standby message; `release` (MCP tool + CLI) unlocks and delivers the real task, enabling controlled team pre-warming before a job begins (#91)
+- **Pause / resume ensemble** — `pause_ensemble` / `resume_ensemble` MCP tools and `claude-tempo pause` / `resume` CLI commands lock all session outbox dispatch and pause the scheduler mid-session; `stop` entries bypass the lock; the ensemble Maestro owns pause ground truth (#91)
+- **New MCP tools**: `release`, `pause_ensemble`, `resume_ensemble` (#91)
+- **New CLI commands**: `claude-tempo release`, `claude-tempo pause`, `claude-tempo resume` (#91)
+- **New TUI slash commands**: `/go` (release all held players), `/pause`, `/resume` (#91)
+- **New session signals**: `releaseHeld` (unlock held outbox + deliver deferred message), `setPaused` (pause/resume outbox dispatch) (#91)
+- **New session queries**: `outboxLocked` (boolean — held at startup), `paused` (boolean — currently paused) (#91)
+- **New scheduler signal**: `setSchedulerPaused` (pause/resume fire delivery; skipped fires are not replayed) (#91)
+- **New Maestro signal/query**: `maestroSetPaused` (ensemble-wide pause ground truth), `maestroPaused` (query current pause state) (#91)
+
 ---
 
 ## [0.22.1] - 2026-04-11

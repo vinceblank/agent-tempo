@@ -36,6 +36,7 @@ Each session registers as a **player** in Temporal. Players discover each other 
 | 🎭 **Player Types** | Reusable agent definitions with 8 shipped types and three-tier lookup |
 | 🖥️ **Terminal UI** | Chat-focused TUI with slash commands, overlays, and interactive wizards |
 | 🌐 **Cross-machine** | Any session that can reach your Temporal server can join the ensemble |
+| ⏸️ **Hold / Pause / Resume** | Pre-warm a full team before delivering tasks; pause and resume mid-session |
 | 🤖 **Copilot bridge** | Mix Claude Code and GitHub Copilot CLI sessions in the same ensemble |
 
 ## Installation
@@ -142,6 +143,9 @@ claude-tempo up [ensemble]      # first-time setup
 claude-tempo conduct [ensemble] # start a conductor
 claude-tempo start [ensemble]   # start a player
 claude-tempo status [ensemble]  # list active sessions
+claude-tempo release [ensemble] # release held players (unlock + deliver tasks)
+claude-tempo pause [ensemble]   # pause all sessions and the scheduler
+claude-tempo resume [ensemble]  # resume a paused ensemble
 claude-tempo tui                # open the terminal UI
 claude-tempo daemon <sub>       # manage the worker daemon
 claude-tempo upgrade            # update to latest
@@ -233,7 +237,7 @@ claude-tempo tui --ensemble my-ensemble   # direct ensemble mode
 The TUI provides a chat-focused shell for managing your ensemble:
 
 - **Ensemble chat feed** — live aggregated view of conductor + player traffic; type bare text to message the conductor, `@player message` to message directly
-- **Slash commands** — `/recruit`, `/status`, `/schedule`, `/gates`, `/stages`, `/worktree`, and more; type `/help` for the full list
+- **Slash commands** — `/recruit`, `/status`, `/schedule`, `/gates`, `/stages`, `/worktree`, `/go` (release held), `/pause`, `/resume`, and more; type `/help` for the full list
 - **Interactive overlays and wizards** — step-by-step flows for recruiting players, creating schedules, and managing ensembles
 
 📖 [TUI reference → docs/dashboard.md](docs/dashboard.md)
