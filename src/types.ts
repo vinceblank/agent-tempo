@@ -128,6 +128,13 @@ export interface SessionMetadata {
   gitBranch?: string;
   isConductor: boolean;
   agentType?: AgentType;
+  /**
+   * Adapter identifier resolved from the registry (`src/adapters/`). Populated on
+   * fresh recruits in PR-B (v0.25 step 2/7); pre-PR-B sessions leave this
+   * undefined and the dispatcher falls back to {@link agentType} → adapterId
+   * mapping via `AdapterRegistry.resolveFromAgentType`.
+   */
+  adapterId?: string;
   status?: SessionStatus;
   /** Agent definition name (e.g., "tempo-soloist"). */
   playerType?: string;
