@@ -375,7 +375,27 @@ One engineer can do the whole ladder if time is abundant — just slower.
 
 **Emergency flag:** `CLAUDE_TEMPO_LIFECYCLE_V2=0` (after PR-C ships with the flag) forces adapters into legacy shim mode. Users can set this and keep using the rebuild's workflow with old adapter behavior — buys 48h of triage time.
 
-**Temporal-side rollback hazard:** new search attributes (`ClaudeTempoAttachedHost`, `ClaudeTempoAttachmentState`, `ClaudeTempoAttachmentId`) must be registered **before** PR-A workers start. If the team rolls back the Temporal namespace config (removes the attributes), PR-A workers will fail `upsertSearchAttributes` calls and break. Recommend: register in a separate ops PR ~1 week before PR-A merge, keep registered across all rollback scenarios.
+**Temporal-side rollback hazard:** new search attributes (`ClaudeTempoAttachedHost`, `ClaudeTempoAttachmentState`, `ClaudeTempoAttachmentId`) must be registered **before** PR-A workers start. If the team rolls back the Temporal namespace config (removes the attributes), PR-A workers will fail `upsertSearchAttributes` calls and break. Recommend: register in a separate ops PR ~3 days before PR-A opens for review, keep registered across all rollback scenarios.
+
+### 7.1 Upgrade guidance for automation users
+
+PR-D **deletes** `src/tools/stop.ts` and `src/tools/encore.ts` from the MCP tool surface. They are replaced with CLI hint-shims that print a one-line message and **exit with code 1** — they do not fall back to the old behavior and do not consume the arguments in a compatible way. Operators or automation that shell out to `claude-tempo stop <player>` or `claude-tempo encore <player>` will see:
+
+```
+$ claude-tempo stop alice
+stop: this verb is gone in v0.25. Use `claude-tempo detach alice` (graceful) or `claude-tempo destroy alice` (abandon). See docs/UPGRADING.md.
+$ echo $?
+1
+```
+
+Implications:
+
+- **MCP clients** calling `stop` or `encore` as tool names will get "tool not found" errors from the server. Update scripts to use `detach` / `destroy` / `restart` per design §8.
+- **Shell automation** treating `claude-tempo stop` as idempotent (e.g., pre-job cleanup in a CI runner) will start failing the whole job on the non-zero exit. Either update the command, or wrap with `|| true` **only** if the stop was cosmetic.
+- **TUI users** see the same hint inside the palette; no automation impact.
+- **`docs/UPGRADING.md`** (landed in PR-G) is the authoritative migration reference; keep it in sync with this block if the verb semantics drift during implementation.
+
+This is called out here (and not only in the design doc §15) because automation surface is often where rebuilds silently break — a green build is not sufficient signal. The hint-shims turn silent failures into loud ones, on purpose.
 
 ---
 
@@ -422,14 +442,16 @@ Flag: CLAUDE_TEMPO_LIFECYCLE_V2=1 default on; remove in beta.3
 
 ---
 
-## 10. Open questions for the conductor
+## 10. Decisions locked
 
-Before PR-A kicks off, I'd want an answer on these — quick decisions, not blockers:
+The four pre-kickoff open questions were answered by `tempo-conductor` in the cue dated **2026-04-12T15:25:19Z** (lock confirmation for memo HEAD `6f0dedd`). Recorded here so the implementing engineer has a single source of truth:
 
-1. **Search-attribute registration timing.** Recommend an ops PR one week ahead of PR-A to register `ClaudeTempoAttachedHost`, `ClaudeTempoAttachmentState`, `ClaudeTempoAttachmentId` in the team's Temporal namespace. Who owns it (`tempo-roadie`?) — confirm.
-2. **Feature flag naming.** I've used `CLAUDE_TEMPO_LIFECYCLE_V2=1` throughout. Preferred alternative: `CLAUDE_TEMPO_ATTACHMENT_V2`. Either works.
-3. **Beta soak window.** I've assumed ~1 week per beta. If the team wants a 2-week soak per beta, the total timeline stretches from ~3 weeks to ~6 weeks.
-4. **PR-G split.** Is `tempo-tuner` comfortable owning the test-harness work in parallel streams, or does `tempo-eng` own everything? (Affects Stream 2's velocity.)
+1. **Search-attribute registration.** Owner: `tempo-devops` drafts `tctl` commands + runbook; user executes. Timing: the ops PR (runbook + registration script) lands **~3 days ahead of PR-A opening for review**. Conductor to cue `tempo-devops` separately.
+2. **Feature flag naming.** Locked as `CLAUDE_TEMPO_LIFECYCLE_V2=1`. Chosen to match the patched marker naming (`v0.25-attachment-lifecycle`) and because it captures the full rebuild scope better than the narrower `ATTACHMENT_V2`. Memo text is already consistent with this.
+3. **Beta soak window.** Locked as **1 week for beta.1, 1 week for beta.2, 2 weeks for beta.3 → GA**. Two-week soak only on the GA gate; tight feedback loop on the intermediate betas justified by small user base. Total timeline: **~4 weeks** from PR-A kickoff to GA assuming no respins. Section §5 target lengths and order are unchanged; only the soak windows are locked.
+4. **PR-G split.** Stream 2 (tests) is **co-owned**: `tempo-lead` writes test files (throughput precedent from the Phase-1 TUI tests); `tempo-qa` designs the conformance suite + gates + reviews. **Docs Stream 3** (`docs/adapters.md`, `CLAUDE.md`, `docs/UPGRADING.md`) is owned by `tempo-docs` in parallel. `tempo-eng` stays on the critical-path Stream 1.
+
+> If any of these decisions need to reopen during the ladder, cue the architect — don't quietly deviate.
 
 ---
 
