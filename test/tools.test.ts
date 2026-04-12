@@ -623,6 +623,54 @@ describe('load_lineup conductor section', function () {
     // No signals should have been sent for conductor section
     expect(signals).to.have.length(0);
   });
+
+  it('sends hold standby to conductor even when lineup has no conductor section', async function () {
+    // Lineup with only a players section — no `conductor:` block
+    const lineupPath = join(tmpDir, 'test-hold-no-conductor-section.yaml');
+    writeFileSync(lineupPath, [
+      'name: test-hold-no-cond',
+      'players:',
+      '  - name: alice',
+      '    workDir: /tmp/test',
+    ].join('\n'));
+
+    const signals: Array<{ name: string; args: any }> = [];
+    const conductorHandle = {
+      workflowId: `claude-session-${testConfig.ensemble}-conductor`,
+      executeUpdate: async () => 'fake-entry-id',
+      signal: async (name: string, ...args: any[]) => { signals.push({ name, args: args[0] }); },
+      describe: async () => ({ status: { name: 'RUNNING' } }),
+    } as unknown as WorkflowHandle;
+
+    const clientForConductor = {
+      workflow: {
+        getHandle: () => conductorHandle,
+        start: async () => ({ runId: 'fake' }),
+        list: async function* () { /* no workflows */ },
+      },
+    } as unknown as Client;
+
+    const call = extractHandler((server) =>
+      registerLoadLineupTool(
+        server, clientForConductor, testConfig, getPlayerId, 'claude',
+        conductorHandle,
+        () => {},
+        true, // isConductor
+      ),
+    );
+
+    const result = await call({ path: lineupPath, hold: true });
+    expect(result.isError).to.be.undefined;
+    expect(result.content[0].text).to.include('hold mode standby');
+
+    // Verify the hold standby message was sent via receiveMessage
+    const msgSignal = signals.find((s) => s.name === 'receiveMessage');
+    expect(msgSignal).to.exist;
+    expect(msgSignal!.args.from).to.equal('system');
+    expect(msgSignal!.args.text).to.include('hold mode');
+    expect(msgSignal!.args.text).to.include('release');
+    expect(msgSignal!.args.responseRequested).to.equal(false);
+  });
 });
 
 // ─────────────────────────────────────────────

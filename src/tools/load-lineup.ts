@@ -122,19 +122,21 @@ export function registerLoadLineupTool(
               failed.push(`conductor instructions: ${err}`);
             }
           }
+        }
 
-          // When hold mode: tell conductor to wait for user direction
-          if (hold) {
-            try {
-              await handle.signal('receiveMessage', {
-                from: 'system',
-                text: 'Ensemble is loading in hold mode — players are connecting but on standby. Wait for instructions from the user or maestro before directing the ensemble. When ready, use the `release` tool to deliver task assignments to all held players.',
-                responseRequested: false,
-              });
-              conductorActions.push('hold mode standby');
-            } catch (err) {
-              failed.push(`conductor hold message: ${err}`);
-            }
+        // When hold mode: tell conductor to wait for user direction.
+        // This runs regardless of whether the lineup has a `conductor:` section —
+        // what matters is that the caller IS the conductor and hold is active.
+        if (hold && isConductor && handle) {
+          try {
+            await handle.signal('receiveMessage', {
+              from: 'system',
+              text: 'Ensemble is loading in hold mode — players are connecting but on standby. Wait for instructions from the user or maestro before directing the ensemble. When ready, use the `release` tool to deliver task assignments to all held players.',
+              responseRequested: false,
+            });
+            conductorActions.push('hold mode standby');
+          } catch (err) {
+            failed.push(`conductor hold message: ${err}`);
           }
         }
 
