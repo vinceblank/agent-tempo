@@ -307,9 +307,13 @@ async function main() {
   // instead of hardcoding the isBridgeMode check. Behavior is identical for the
   // current two adapters — PR-C rewires the body to use the attachment wire
   // protocol.
+  // PR-C commit 2: pass client + host so the adapter can claim the attachment
+  // (V2 path). Constructor reads `CLAUDE_TEMPO_LIFECYCLE_V2` once and commits to
+  // either the V2 lifecycle or the legacy compat-shim path for the lifetime of
+  // the attachment — see `InteractiveAttachment` jsdoc.
   const stopPoller = adapterDescriptor.adapterClass === 'sdk'
     ? () => {} // no-op — SDK adapters handle delivery in their own subprocess
-    : new InteractiveAttachment().start(handle, async (messages) => {
+    : new InteractiveAttachment({ client, host: os.hostname() }).start(handle, async (messages) => {
     for (const msg of messages) {
       log(`Message from ${msg.from}: ${msg.text}`);
       const content = msg.isMaestro ? msg.text + MAESTRO_ACK : msg.text;
