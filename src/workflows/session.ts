@@ -219,7 +219,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // for the `stop` tool + CLI stop paths; `adapterExited` for adapter graceful exit;
   // dropped entirely on MCP server SIGINT (user closing their terminal now detaches
   // rather than destroying the session). See docs/design/session-lifecycle-rebuild-v2.md
-  // §2.5, §11.1. TODO(v0.25.1): delete the handler branch once tests migrate.
+  // §2.5, §11.1. TODO(v0.25.1): remove this shim branch — tracked in #132
 
   // ── Helpers ──
 
@@ -362,7 +362,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       // `terminated` branch onto the §2.5 destroy path so ~30 legacy test fixtures
       // using `updateMetadata({ status: 'terminated' })` as cleanup keep working.
       // Prod callers have been migrated to the V2 verbs (`destroyUpdate`,
-      // `adapterExited`). TODO(v0.25.1): delete this branch when tests migrate.
+      // `adapterExited`). TODO(v0.25.1): remove this shim branch — tracked in #132
       if (legacyStatus === 'terminated') {
         // Redirect onto §2.5 destroy semantics: abandon in-flight outbox, phase=gone,
         // workflow COMPLETES. No 2-min drain wait (v0.24 behaviour) — the shim is now
