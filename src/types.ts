@@ -51,15 +51,27 @@ export interface AdapterDescriptor {
   heartbeatMs: number;
 }
 
-/** Reason an attachment detached or was detached. Used for audit and UX messaging. */
+/**
+ * Reason an attachment detached or was detached. Used for audit and UX messaging.
+ *
+ * Canonical values per design §3.1 (`docs/design/session-lifecycle-rebuild-v2.md`):
+ *   `user-stop` | `restart` | `heartbeat-timeout` | `superseded` | `agent-exited` | `spawn-failed` | `destroy`
+ *
+ * `force` is a PR-A implementation extension used by the main loop's `drainingDeadline`
+ * fire path (§9.5.c) when the adapter never sent `adapterExited` after `requestDetach`.
+ * Kept alongside the spec values so the workflow has a non-empty reason to record even
+ * when the graceful drain path never acked. Safe to merge into `heartbeat-timeout` in a
+ * future cleanup if the semantics converge.
+ */
 export type DetachReason =
-  | 'requested'
+  | 'user-stop'
   | 'restart'
   | 'heartbeat-timeout'
-  | 'destroy'
+  | 'superseded'
+  | 'agent-exited'
   | 'spawn-failed'
-  | 'force'
-  | 'idle';
+  | 'destroy'
+  | 'force';
 
 /**
  * Workflow-emitted directive to the attached adapter. Delivered via {@link AttachmentInfo}

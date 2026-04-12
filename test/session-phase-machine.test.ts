@@ -215,7 +215,7 @@ describe('session phase machine (v0.25 PR-A)', function () {
         args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
       });
 
-      await handle.signal(requestDetachSignal, { reason: 'requested', deadlineMs: 5_000 });
+      await handle.signal(requestDetachSignal, { reason: 'user-stop', deadlineMs: 5_000 });
       // Poll attachmentInfo briefly — phase should hit 'draining'.
       let info: AttachmentInfo = await handle.query(attachmentInfoQuery);
       // The requestDetach signal may not have been processed yet at first query; loop with tiny wait.
@@ -225,7 +225,7 @@ describe('session phase machine (v0.25 PR-A)', function () {
       }
       expect(info.phase).to.equal('draining');
 
-      await handle.signal(adapterExitedSignal, { attachmentId: token.attachmentId, reason: 'requested' });
+      await handle.signal(adapterExitedSignal, { attachmentId: token.attachmentId, reason: 'agent-exited' });
       for (let i = 0; i < 10 && info.phase !== 'detached'; i++) {
         await new Promise((r) => setTimeout(r, 100));
         info = await handle.query(attachmentInfoQuery);
@@ -343,11 +343,11 @@ describe('session phase machine (v0.25 PR-A)', function () {
         args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
       });
       await handle.executeUpdate(setPreferredHostUpdate, { args: [{ host: 'host-preferred' }] });
-      await handle.executeUpdate(forceDetachUpdate, { args: [{ reason: 'requested', gracePeriodMs: 0 }] });
+      await handle.executeUpdate(forceDetachUpdate, { args: [{ reason: 'user-stop', gracePeriodMs: 0 }] });
 
       const summary: OrphanSummary = await handle.query(orphanSummaryQuery);
       expect(summary.preferredHost).to.equal('host-preferred');
-      expect(summary.reason).to.equal('requested');
+      expect(summary.reason).to.equal('user-stop');
       expect(summary.detachedSince).to.be.a('string');
       expect(summary.lastAdapter?.hostname).to.equal('host-A');
       expect(summary.lastAdapter?.adapterId).to.equal('claude-code');
