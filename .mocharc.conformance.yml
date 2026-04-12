@@ -1,0 +1,13 @@
+# Mocha config for the conformance-only test run (`npm run test:conformance`).
+#
+# Targets the three PR-G surfaces: per-adapter conformance (`test/conformance/`),
+# workflow invariants (`test/workflows/`), and the wire-protocol drift check
+# (`test/wire-protocol.test.ts`). Separate from `.mocharc.yml` so CI can run
+# the conformance slice non-blocking initially and flip to blocking once all
+# §4.5 stubs are filled (per sequencing memo §3 PR-G).
+spec:
+  - dist-test/test/conformance/**/*.test.js
+  - dist-test/test/workflows/**/*.test.js
+  - dist-test/test/wire-protocol.test.js
+timeout: 30000
+exit: true
