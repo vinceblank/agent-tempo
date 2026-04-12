@@ -348,3 +348,18 @@ Types referenced above are defined in `src/types.ts` and re-exported from `src/w
 | `createdAt` | `string` | ISO timestamp when the command was queued. |
 | `status` | `'pending' \| 'delivered' \| 'failed'` | Relay status. |
 | `error` | `string?` | Error message if `status` is `'failed'`. |
+
+### `DetachReason`
+
+String union used in `requestDetach`, `adapterExited`, and `forceDetach` to record why an attachment ended.
+
+| Value | Description |
+|-------|-------------|
+| `'user-stop'` | User-initiated graceful stop (`claude-tempo stop`). |
+| `'restart'` | Adapter is being replaced by a new attachment (e.g. `restart` operation). |
+| `'heartbeat-timeout'` | Adapter missed 3+ consecutive heartbeats; workflow forced detach. |
+| `'superseded'` | Another adapter claimed the attachment (multi-host migration). |
+| `'agent-exited'` | Adapter's underlying agent subprocess died (e.g. Ctrl+C on terminal). |
+| `'spawn-failed'` | Spawn activity for a new attachment failed; workflow self-heals to `detached`. |
+| `'destroy'` | Session permanently destroyed via the `destroy` update. |
+| `'force'` | Main loop fired `drainingDeadline` — adapter sent `requestDetach` but never sent `adapterExited` within the grace period. Implementation extension; may merge with `'heartbeat-timeout'` in a future cleanup. |
