@@ -79,6 +79,26 @@ export const historyQuery = defineQuery<HistoryEntry[]>('history');
 /** Atomically transition status from expectedStatus to newStatus. Returns true on success, false if current status didn't match. */
 export const checkAndSetStatusUpdate = defineUpdate<boolean, [{ expectedStatus: string; newStatus: string }]>('checkAndSetStatus');
 
+// ── Processing Lifecycle (fixes #99) ──
+// Suppress stale detection while the adapter is in a blocking operation (e.g. LLM tool call).
+// `messageId` is required for idempotency — at-least-once update retries otherwise corrupt the set.
+
+/** Signal that the adapter has started processing an inbound message (blocking LLM/tool call). */
+export const processingStartUpdate = defineUpdate<void, [{ messageId: string }]>('processingStart');
+/** Signal that the adapter has finished processing an inbound message. */
+export const processingEndUpdate = defineUpdate<void, [{ messageId: string }]>('processingEnd');
+/** Query currently in-flight message IDs. */
+export const inFlightMessagesQuery = defineQuery<string[]>('inFlightMessages');
+
+// ── Destroy Verb (fixes #102) ──
+// Permanent, terminal teardown. Once destroyed, the workflow refuses all attach-adjacent ops
+// and adapters (bridge) must exit cleanly instead of reconnecting.
+
+/** Destroy the session: drain outbox briefly then terminate. No re-attachment possible. */
+export const destroyUpdate = defineUpdate<void, [{ reason?: string }]>('destroy');
+/** Query whether the session has been destroyed. */
+export const isDestroyedQuery = defineQuery<boolean>('isDestroyed');
+
 // ── Outbox Update + Query ──
 
 export const submitOutboxUpdate = defineUpdate<string, [OutboxEntryInput]>('submitOutbox');

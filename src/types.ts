@@ -69,6 +69,12 @@ export interface SessionInput {
   heldMessage?: string;
   /** When true, outbox dispatch is paused ensemble-wide (pause/resume). */
   paused?: boolean;
+  /** Restored from continue-as-new: message IDs currently being processed (blocks stale detection). */
+  inFlightMessageIds?: string[];
+  /** Restored from continue-as-new: timestamp when in-flight set became non-empty. */
+  processingSince?: number;
+  /** Restored from continue-as-new: workflow has been destroyed (terminal). */
+  destroyed?: boolean;
   /** Temporal config passed through for outbox activities (non-secret fields only). */
   temporalConfig?: {
     temporalAddress: string;
