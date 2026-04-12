@@ -58,7 +58,7 @@ Seven PRs. **PR-A → PR-D are strictly serial** (each depends on the prior). **
 **Acceptance gate:**
 - `npm run build` green.
 - Existing test suite green with shim in place.
-- New unit tests for the phase machine (`tests/workflows/session.spec.ts`): seven phases reachable, invariants §2.2, CAN lease-extension covered.
+- New unit tests for the phase machine (`test/session-phase-machine.test.ts`): seven phases reachable, invariants §2.2, CAN lease-extension covered.
 - `docs/WIRE-PROTOCOL.md` diff matches design §11.
 - Manual: start a session, cue it, destroy it. Verify `ClaudeTempoAttachmentState` search attribute tracks phases.
 
@@ -123,9 +123,9 @@ Seven PRs. **PR-A → PR-D are strictly serial** (each depends on the prior). **
 
 **Acceptance gate:**
 - `npm run build` green.
-- `tests/regression/issue-99.spec.ts` green — 6-minute stub `invokeSdk` with pending message; verify phase `attached → processing → attached`; **no** `stale`/`detached` intermediate.
-- `tests/regression/issue-102.spec.ts` green — verify destroy path does not race a fresh run; verify `WorkflowNotFound` adapter exit.
-- `tests/adapters/conformance.spec.ts` — cases 1–9 for both `claude-code` and `copilot` descriptors (stubbed if the suite isn't shipped yet — shipped in PR-G).
+- `test/regression-issue-99.test.ts` green — 6-minute stub `invokeSdk` with pending message; verify phase `attached → processing → attached`; **no** `stale`/`detached` intermediate.
+- `test/regression-issue-102.test.ts` green — verify destroy path does not race a fresh run; verify `WorkflowNotFound` adapter exit.
+- `test/adapter-conformance.test.ts` — cases 1–9 for both `claude-code` and `copilot` descriptors (stubbed if the suite isn't shipped yet — shipped in PR-G).
 - Manual: start a long-running Copilot session with a 10-min prompt; observe phase `processing` in search attributes; confirm no stale fires.
 - Manual: `kill -9` the adapter; verify workflow phase transitions to `detached` within 90s (lease timeout); verify no workflow completion.
 
@@ -185,7 +185,7 @@ Seven PRs. **PR-A → PR-D are strictly serial** (each depends on the prior). **
 **Blast radius:** ~8 files changed (3 modified, 5 new). **Migration PR: No** (daemon is boot-triggered; no workflow state changes).
 
 **Acceptance gate:**
-- `tests/rebuild/reboot.spec.ts` green — start workflow, kill daemon + adapter, restart daemon, assert `reconcileOnBoot` finds orphan, assert `restorePolicy=auto` restores it.
+- `test/rebuild-reboot.test.ts` green — start workflow, kill daemon + adapter, restart daemon, assert `reconcileOnBoot` finds orphan, assert `restorePolicy=auto` restores it.
 - Unit tests for `cleanupLoop` retention math.
 - Manual: 3 hosts scenario — start on A, stop A's daemon, host A offline; host B runs `claude-tempo restore --from-host=A`; observe successful restart on B.
 - OS-integration smoke tests (if the team has macOS + Linux + Windows dev boxes): `claude-tempo daemon install` creates a persistent service.
@@ -206,14 +206,14 @@ Seven PRs. **PR-A → PR-D are strictly serial** (each depends on the prior). **
 - `src/workflows/session.ts` — `setPreferredHost` update handler (trivial; field on state).
 - `src/daemon.ts` — `reconcileOnBoot` filters by preferred-host if set; cross-host restore flows.
 - `src/cli/commands.ts` — `migrate` command wiring; confirmation prompts for cross-host.
-- Integration test infrastructure: `tests/multi-host/` with a docker-compose harness spinning up two daemon containers against a shared Temporal dev server.
+- Integration test infrastructure: `test/multi-host-*.test.ts` plus a supporting `test/fixtures/multi-host/` docker-compose harness spinning up two daemon containers against a shared Temporal dev server.
 
 **Depends on:** PR-A, PR-C, PR-D, PR-E landed. **This is the multi-host capstone.**
 
 **Blast radius:** ~6 files changed (4 modified, 2 new — the test harness). **Migration PR: No.**
 
 **Acceptance gate:**
-- New integration test: `tests/multi-host/cross-host-restart.spec.ts` — 2-daemon scenario; restart a session from host A to host B; verify spawn runs on B's task queue; verify session chat continuity.
+- New integration test: `test/multi-host-cross-host-restart.test.ts` — 2-daemon scenario; restart a session from host A to host B; verify spawn runs on B's task queue; verify session chat continuity.
 - `--yes-steal` rejection paths tested (missing flag → error; wrong hostname → error).
 - Manual 2-machine smoke test (physical or cloud VMs).
 
@@ -228,10 +228,10 @@ Seven PRs. **PR-A → PR-D are strictly serial** (each depends on the prior). **
 **Title:** `test(adapters,wire): conformance suite + issue regressions + wire-protocol CI check (step 7/7)`
 
 **What lands:**
-- `tests/adapters/conformance.spec.ts` — the §4.5 suite, parameterized over registered adapter descriptors. Nine cases.
-- `tests/regression/issue-99.spec.ts` — if not already landed in PR-C, lands here.
-- `tests/regression/issue-102.spec.ts` — if not already landed in PR-C, lands here.
-- `tests/rebuild/reboot.spec.ts` — if not already landed in PR-E, lands here.
+- `test/adapter-conformance.test.ts` — the §4.5 suite, parameterized over registered adapter descriptors. Nine cases.
+- `test/regression-issue-99.test.ts` — if not already landed in PR-C, lands here.
+- `test/regression-issue-102.test.ts` — if not already landed in PR-C, lands here.
+- `test/rebuild-reboot.test.ts` — if not already landed in PR-E, lands here.
 - `scripts/check-wire-protocol.ts` — §17.9 CI check; scans `dist/` for handler names, diffs against `docs/WIRE-PROTOCOL.md`; fails CI on drift.
 - `.github/workflows/ci.yml` — add the wire-protocol check step.
 - `docs/adapters.md` — extract design §4 into its own doc for adapter authors.
@@ -327,7 +327,7 @@ Rationale: shim + flag stayed in-tree through the beta soak so operators had a 4
 After **PR-A lands**, the following can run in parallel streams:
 
 - **Stream 1 (critical path):** PR-B → PR-C → PR-D (serial within the stream; blocks the beta tag cut).
-- **Stream 2 (tests):** PR-G test-harness pieces — `conformance.spec.ts` skeleton, wire-protocol CI check, regression test scaffolding. Ship incrementally; enable assertions as each critical-path PR lands.
+- **Stream 2 (tests):** PR-G test-harness pieces — `test/adapter-conformance.test.ts` skeleton, wire-protocol CI check, regression test scaffolding. Ship incrementally; enable assertions as each critical-path PR lands.
 - **Stream 3 (docs):** `docs/adapters.md` draft + `CLAUDE.md` update + `docs/UPGRADING.md`. Owned by `tempo-docs`; can run the entire ladder window.
 
 After **PR-C lands**, additionally:
@@ -401,9 +401,9 @@ Depends on: PR-A, PR-B merged to main
 Scope: design §3.2, §4.3, §5, §6, §9.3, §9.4 in @88b0d3f
 Gate:
   - npm run build green
-  - tests/regression/issue-99.spec.ts green (6-min stub invokeSdk, no stale fires)
-  - tests/regression/issue-102.spec.ts green (destroy path, WorkflowNotFound adapter exit)
-  - tests/adapters/conformance.spec.ts cases 1-9 green for both descriptors
+  - test/regression-issue-99.test.ts green (6-min stub invokeSdk, no stale fires)
+  - test/regression-issue-102.test.ts green (destroy path, WorkflowNotFound adapter exit)
+  - test/adapter-conformance.test.ts cases 1-9 green for both descriptors
   - Manual: kill -9 adapter; workflow → detached within 90s; no completion
 Blast radius: ~6 files, ~800 LOC added, ~300 removed
 Flag: CLAUDE_TEMPO_LIFECYCLE_V2=1 default on through beta; removed in v0.25.1 cleanup
