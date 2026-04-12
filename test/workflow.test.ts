@@ -916,22 +916,11 @@ describe('claudeSessionWorkflow', function () {
         expect(meta.status).to.equal('active');
         expect(meta.playerId).to.equal('stale-enable-test');
 
-        // Terminate — because stale detection is now active, the workflow will wait
-        // for the injected termination message to be delivered before exiting.
-        // Simulate the MCP poller delivering it so the workflow can shut down cleanly.
+        // Terminate — PR-C commit 4 retired the v0.24 drain-wait semantic. The
+        // `updateMetadata({ status: 'terminated' })` shim now routes onto §2.5 destroy
+        // (abandon in-flight, COMPLETE immediately). The post-terminate delivery poll
+        // that the original test ran is no longer needed.
         await handle.signal(updateMetadataSignal, { status: 'terminated', terminatedBy: 'test' });
-
-        // Poll for the termination message and mark it delivered
-        for (let i = 0; i < 20; i++) {
-          await new Promise<void>((r) => setTimeout(r, 200));
-          const msgs = await handle.query(allMessagesQuery);
-          const termMsg = msgs.find((m) => m.text.includes('terminated') && !m.delivered);
-          if (termMsg) {
-            await handle.signal(markDeliveredSignal, [termMsg.id]);
-            break;
-          }
-        }
-
         await handle.result();
       });
     });

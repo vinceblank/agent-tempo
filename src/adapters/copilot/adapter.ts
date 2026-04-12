@@ -479,29 +479,26 @@ export class CopilotSdkAttachment extends SdkAttachment {
     let interval: ReturnType<typeof setInterval> | undefined;
 
     // Shared cleanup — disconnects session, removes PID file, stops client.
-    // `signalTermination` controls whether we also signal the workflow to terminate
-    // (skip if the workflow is already gone).
+    // `_signalTermination` is retained for call-site compatibility but no longer
+    // drives any workflow signal (PR-C commit 4 retired the legacy status signal).
     let shuttingDown = false;
-    const cleanup = async (signalTermination: boolean) => {
+    const cleanup = async (_signalTermination: boolean) => {
       if (shuttingDown) return;
       shuttingDown = true;
       polling = false;
       clearInterval(interval);
-      // V2: graceful detach — fires `adapterExited` so the workflow collapses
+      // V2 graceful detach — fires `adapterExited` so the workflow collapses
       // draining → detached immediately per §11.1. No-op if V2 was off or if
-      // startV2Lifecycle never ran successfully. Legacy status-signal below
-      // still runs (preserves stop-semantics for callers querying
-      // metadata.status). Commit 4 retires the status signal call site.
+      // startV2Lifecycle never ran successfully.
+      //
+      // PR-C commit 4 retired the former `updateMetadata({ status: 'terminated' })`
+      // follow-up signal: closing the Copilot bridge subprocess is a graceful
+      // detach, not a session destroy. The workflow stays in `detached` waiting
+      // for the next claim (e.g. encore). Explicit operator termination goes
+      // through the `stop` tool / CLI, both of which use `destroyUpdate` directly.
       if (this.lifecycleV2) {
         await this.stopV2Lifecycle('user-stop', /* graceful */ true).catch((err) =>
           log(`stopV2Lifecycle suppressed error: ${(err as Error)?.message ?? err}`));
-      }
-      if (signalTermination) {
-        try {
-          await handle.signal('updateMetadata', { status: 'terminated', terminatedBy: 'system' });
-        } catch {
-          // workflow may already be gone
-        }
       }
       try { await session.disconnect(); } catch { /* already disconnected */ }
       this.activeSession = undefined;
