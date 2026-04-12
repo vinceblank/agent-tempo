@@ -54,7 +54,7 @@
     "build": "tsc && node -e \"const{bundleWorkflowCode}=require('@temporalio/worker');const path=require('path');const fs=require('fs');bundleWorkflowCode({workflowsPath:path.resolve('dist/workflows/index.js')}).then(b=>{fs.writeFileSync('workflow-bundle.js',b.code);console.log('Workflow bundle created')})\"",
     "prepublishOnly": "npm run build && npm test",
     "dev": "ts-node src/server.ts",
-    "copilot-bridge": "ts-node src/copilot-bridge.ts",
+    "copilot-bridge": "ts-node src/adapters/copilot/adapter.ts",
     "pretest": "tsc -p test/tsconfig.json",
     "test:tui": "vitest run",
     "test": "mocha && vitest run"
