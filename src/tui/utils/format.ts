@@ -68,6 +68,20 @@ export function wordWrap(text: string, maxWidth: number): string[] {
   return result.length > 0 ? result : [''];
 }
 
+/**
+ * Format the "↑ N earlier message(s)" indicator shown above a truncated
+ * message list. Returns null when no indicator should render.
+ *
+ * - count <= 0          → null (no indicator)
+ * - count === 1         → "↑ 1 earlier message" (singular)
+ * - count >= 2          → "↑ N earlier messages" (plural)
+ */
+export function formatEarlierIndicator(count: number): string | null {
+  if (!Number.isFinite(count) || count <= 0) return null;
+  const label = count === 1 ? 'earlier message' : 'earlier messages';
+  return `\u2191 ${count} ${label}`;
+}
+
 /** Format an event type for display. */
 export function formatEventType(type: string): string {
   switch (type) {

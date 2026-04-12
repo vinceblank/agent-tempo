@@ -56,7 +56,8 @@
     "dev": "ts-node src/server.ts",
     "copilot-bridge": "ts-node src/copilot-bridge.ts",
     "pretest": "tsc -p test/tsconfig.json",
-    "test": "mocha"
+    "test:tui": "vitest run",
+    "test": "mocha && vitest run"
   },
   "optionalDependencies": {
     "@github/copilot-sdk": "^0.2.0"
@@ -86,7 +87,8 @@
     "mocha": "^11.7.5",
     "ts-node": "^10.9.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.9"
   },
   "typesVersions": {
     "*": {
