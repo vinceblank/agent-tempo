@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { start, status, init, server, up, down, stop, help, version, ensembleCommand, agentTypesCommand, broadcast, daemon, upgrade, release, pause, resume, restart, detach, destroy, migrate, attachmentInfo } from './cli/commands';
+import { start, status, init, server, up, down, stop, help, version, ensembleCommand, agentTypesCommand, broadcast, daemon, upgrade, release, pause, resume, restart, detach, destroy, migrate, attachmentInfo, restore } from './cli/commands';
 import { configCommand } from './cli/config-command';
 import { runPreflight } from './cli/preflight';
 import * as out from './cli/output';
@@ -39,6 +39,9 @@ interface ParsedArgs {
   contextMessages?: number;
   deadlineMs?: number;
   reason?: string;
+  // PR-E restore flags
+  fromHost?: string;
+  dryRun?: boolean;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -120,6 +123,10 @@ function parseArgs(argv: string[]): ParsedArgs {
       if (Number.isFinite(n) && n >= 0) result.deadlineMs = n;
     } else if (arg === '--reason' && i + 1 < argv.length) {
       result.reason = argv[++i];
+    } else if (arg === '--from-host' && i + 1 < argv.length) {
+      result.fromHost = argv[++i];
+    } else if (arg === '--dry-run') {
+      result.dryRun = true;
     } else if (arg === '--agent' && i + 1 < argv.length) {
       const val = argv[++i];
       if (val !== 'claude' && val !== 'copilot') {
@@ -342,6 +349,20 @@ async function main() {
       await attachmentInfo({
         name,
         ensemble: args.ensemble || ensemble,
+        ...overrides,
+      });
+      break;
+    }
+
+    case 'restore': {
+      // Positional <name> optional — omitted means "interactive picker".
+      const name = args.positional[1] || args.name;
+      await restore({
+        ensemble: args.ensemble || ensemble,
+        ...(name ? { name } : {}),
+        ...(args.all ? { all: true } : {}),
+        ...(args.fromHost ? { fromHost: args.fromHost } : {}),
+        ...(args.dryRun ? { dryRun: true } : {}),
         ...overrides,
       });
       break;
