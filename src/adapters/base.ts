@@ -143,15 +143,24 @@ export abstract class BaseAttachment {
   }
 
   /**
-   * V2 lifecycle entry point. Claims the attachment, pins the handle by runId, and starts
-   * the heartbeat + phase watcher loops.
+   * V2 lifecycle entry point. Claims (or renews) the attachment, pins the handle by runId,
+   * and starts the heartbeat + phase watcher loops.
    *
    * @param workflowId  Target session workflow id.
+   * @param expectedAttachmentId
+   *   PR-D renewal path. When present, the adapter was spawned by `restart` / `migrate` /
+   *   `encore` — the workflow has already created an `Attachment` with this id and is
+   *   expecting the new adapter to take over. Passing it through to `claimAttachment`
+   *   selects the renewal branch in §9.2 (refresh lease in place, idempotent on retry)
+   *   instead of the fresh-claim branch. Fresh spawn (first recruit) omits this arg.
    * @returns Pinned `WorkflowHandle` — subclass delivery loop MUST use this for every
    *          subsequent query/signal (never resolve by id alone).
    * @throws  Re-throws `claimAttachment` rejections (`AttachmentConflict`, `WorkflowGone`).
    */
-  protected async startV2Lifecycle(workflowId: string): Promise<WorkflowHandle> {
+  protected async startV2Lifecycle(
+    workflowId: string,
+    expectedAttachmentId?: string,
+  ): Promise<WorkflowHandle> {
     if (!this.lifecycleV2) {
       throw new Error('startV2Lifecycle called with lifecycleV2=false — guard at subclass boundary');
     }
@@ -169,11 +178,15 @@ export abstract class BaseAttachment {
         adapterId: this.descriptor.adapterId,
         adapterClass: this.descriptor.adapterClass as AdapterClass,
         leaseMs: 3 * this.descriptor.heartbeatMs,
+        ...(expectedAttachmentId ? { expectedAttachmentId } : {}),
       }],
     });
 
     this.pinnedHandle = this.client.workflow.getHandle(workflowId, this.token.runId);
-    log(`attached to ${workflowId} (attachmentId=${this.token.attachmentId}, runId=${this.token.runId})`);
+    log(
+      `${expectedAttachmentId ? 'renewed' : 'attached to'} ${workflowId} ` +
+      `(attachmentId=${this.token.attachmentId}, runId=${this.token.runId})`,
+    );
 
     this.scheduleHeartbeat();
     this.schedulePhaseWatcher();

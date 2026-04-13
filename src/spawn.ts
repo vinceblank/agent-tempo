@@ -417,6 +417,14 @@ export interface CopilotBridgeOpts {
   logDir?: string;
   /** Copilot SDK session ID for resumable sessions. */
   sessionId?: string;
+  /**
+   * PR-D attachment-lease handoff. When present, the workflow has already
+   * called `claimAttachment`; the bridge adapter reads these from env and
+   * renews (rather than fresh-claims) the lease on boot. See design §8.2.
+   */
+  attachmentId?: string;
+  attachmentRunId?: string;
+  adapterId?: string;
 }
 
 export interface CopilotBridgeResult {
@@ -474,6 +482,10 @@ export function spawnCopilotBridge(opts: CopilotBridgeOpts): CopilotBridgeResult
         ...(opts.temporalTlsCertPath ? { [ENV.TEMPORAL_TLS_CERT_PATH]: opts.temporalTlsCertPath } : {}),
         ...(opts.temporalTlsKeyPath ? { [ENV.TEMPORAL_TLS_KEY_PATH]: opts.temporalTlsKeyPath } : {}),
         ...(opts.sessionId ? { [ENV.BRIDGE_SESSION_ID]: opts.sessionId } : {}),
+        // PR-D attachment handoff — renew rather than fresh-claim in startV2Lifecycle.
+        ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
+        ...(opts.attachmentRunId ? { [ENV.ATTACHMENT_RUN_ID]: opts.attachmentRunId } : {}),
+        ...(opts.adapterId ? { [ENV.ADAPTER_ID]: opts.adapterId } : {}),
       },
     });
     child.unref();

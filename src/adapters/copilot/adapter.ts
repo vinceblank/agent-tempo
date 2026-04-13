@@ -428,8 +428,13 @@ export class CopilotSdkAttachment extends SdkAttachment {
         cleanup(false).catch((err) => log('terminal cleanup error:', err?.message ?? err));
       });
       try {
-        handle = await this.startV2Lifecycle(expectedWorkflowId);
-        log(`V2 attachment claimed (attachmentId=${this.token?.attachmentId})`);
+        // PR-D: read pre-claimed attachmentId (set by the spawn activity when
+        // the workflow called `claimAttachment` before enqueueing this spawn).
+        // Forwarding it selects §9.2's renewal branch so the adapter takes
+        // over an existing lease atomically; absent on first-recruit spawn.
+        const expectedAttachmentId = process.env[ENV.ATTACHMENT_ID] || undefined;
+        handle = await this.startV2Lifecycle(expectedWorkflowId, expectedAttachmentId);
+        log(`V2 attachment claimed (attachmentId=${this.token?.attachmentId}${expectedAttachmentId ? ', renewed' : ''})`);
       } catch (err: any) {
         log(`ERROR: V2 claimAttachment failed: ${err?.message ?? err}`);
         try { await session.disconnect(); } catch { /* best effort */ }

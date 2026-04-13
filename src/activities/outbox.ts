@@ -5,13 +5,22 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { Config, conductorWorkflowId, sessionWorkflowId } from '../config';
 import { ENCORE_DEFAULT_CONTEXT_MESSAGES, PREVIEW_MAX_LENGTH } from '../utils/validation';
-import { AgentType, SessionInput } from '../types';
+import { AgentType, AdapterClass, AttachmentInfo, SessionInput, SessionMetadata, Message } from '../types';
 import { getGitInfo } from '../git-info';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { ENV } from '../config';
 import { resolveSession } from './resolve';
-import { resolveAgentType } from '../ensemble/agent-types';
 import { registry } from '../adapters';
+import {
+  attachmentInfoQuery,
+  forceDetachUpdate,
+  claimAttachmentUpdate,
+  enqueueSpawnUpdate,
+  getMetadataQuery,
+  getPartQuery,
+  allMessagesQuery,
+  receiveMessageSignal,
+} from '../workflows/signals';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:outbox]', ...args);
 
@@ -81,6 +90,17 @@ export interface SpawnProcessInput {
   allowedTools?: string[];
   /** Custom claude binary path (from config.claudeBin). */
   claudeBin?: string;
+  /**
+   * PR-D attachment-lease handoff. When present, the workflow has already
+   * called `claimAttachment` and the child process should boot and invoke
+   * `startV2Lifecycle(workflowId, attachmentId)` to renew (rather than fresh-claim)
+   * the lease using the pre-assigned id. See design §8.2 step 5.
+   */
+  attachmentId?: string;
+  /** Pinned runId returned by `claimAttachment`; passed to the adapter for handle pinning. */
+  attachmentRunId?: string;
+  /** Resolved adapter descriptor id (e.g. 'claude-code', 'copilot'); mirrors SessionMetadata.adapterId. */
+  adapterId?: string;
 }
 
 export interface PerformEncoreInput {
@@ -91,20 +111,12 @@ export interface PerformEncoreInput {
 }
 
 export interface EncoreResult {
-  workDir: string;
-  hostname: string;
-  isConductor: boolean;
-  agent: AgentType;
-  agentDefinition?: string;
-  agentDefinitionPath?: string;
-  nativeResolvable?: boolean;
-  allowedTools?: string[];
-  /** Session UUID — used for Copilot SDK sessionId and Claude Code --resume/--session-id. */
-  sessionId?: string;
-  temporalAddress: string;
-  temporalNamespace: string;
-  /** Custom claude binary path (from config.claudeBin). */
-  claudeBin?: string;
+  /** Successful encore — attachment claimed on target and spawn enqueued there. */
+  success: true;
+  /** Attachment token issued by the target for the new adapter. */
+  attachmentId: string;
+  /** Target workflow's outbox spawn-entry id — for logging / tests. */
+  spawnEntryId: string;
 }
 
 // ── Activity result type ──
@@ -274,7 +286,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
-      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin } = input;
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId } = input;
       // Read secrets from the worker's config closure — never from workflow state
       const { temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = config;
       try {
@@ -293,8 +305,11 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             isConductor,
             workDir,
             sessionId,
+            attachmentId,
+            attachmentRunId,
+            adapterId,
           });
-          log(`Spawned copilot-bridge (pid ${pid}) in ${workDir} as "${targetName}"`);
+          log(`Spawned copilot-bridge (pid ${pid}) in ${workDir} as "${targetName}"${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else {
           // Resolve agent flags: --agent (native) > --system-prompt (shipped/legacy)
           let agentFlags: string[] = [];
@@ -336,8 +351,12 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           if (temporalApiKey) envVars[ENV.TEMPORAL_API_KEY] = temporalApiKey;
           if (temporalTlsCertPath) envVars[ENV.TEMPORAL_TLS_CERT_PATH] = temporalTlsCertPath;
           if (temporalTlsKeyPath) envVars[ENV.TEMPORAL_TLS_KEY_PATH] = temporalTlsKeyPath;
+          // PR-D: forward pre-claimed attachment so the adapter renews rather than fresh-claims.
+          if (attachmentId) envVars[ENV.ATTACHMENT_ID] = attachmentId;
+          if (attachmentRunId) envVars[ENV.ATTACHMENT_RUN_ID] = attachmentRunId;
+          if (adapterId) envVars[ENV.ADAPTER_ID] = adapterId;
           const { pid } = spawnInTerminal(spawnArgs, workDir, envVars, { claudeBin });
-          log(`Spawned claude process (pid ${pid}) in ${workDir} as "${targetName}" (resume=${!!resume})`);
+          log(`Spawned claude process (pid ${pid}) in ${workDir} as "${targetName}" (resume=${!!resume}${attachmentId ? `, attachmentId=${attachmentId}` : ''})`);
         }
 
         return { success: true };
@@ -348,6 +367,22 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
       }
     },
 
+    /**
+     * PR-D: encore is the restart algorithm (§8.2) with a context-replay preamble.
+     *
+     * 1. Resolve the target session handle.
+     * 2. Query attachmentInfo — bail if `phase === 'gone'` (destroyed; use recruit instead).
+     * 3. If a previous attachment lingers (any non-`detached` phase), forceDetach it with
+     *    `gracePeriodMs: 0`. Encore targets are typically `stale`, so nothing to drain.
+     * 4. Query metadata + part + messages (for the context message).
+     * 5. Claim a fresh attachment on the target's preferred/last host.
+     * 6. Inject the context message via `receiveMessage`.
+     * 7. Enqueue a spawn on the target's own outbox — the target's dispatch loop fires
+     *    `spawnProcess` on its per-host task queue and §8.4 rollback handles spawn failures.
+     *
+     * Critically, the caller (`case 'encore':` in the source workflow) doesn't run the
+     * spawn anymore — it just awaits this activity. The target owns the spawn + rollback.
+     */
     async performEncore(input: PerformEncoreInput): Promise<EncoreResult> {
       const { ensemble, targetPlayerId, fromPlayerId, contextMessageCount = ENCORE_DEFAULT_CONTEXT_MESSAGES } = input;
       try {
@@ -356,28 +391,52 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           throw ApplicationFailure.nonRetryable(`No session found for "${targetPlayerId}"`);
         }
 
-        // Atomically transition status from 'stale' to 'pending' — prevents double-spawn races
-        const transitioned = await handle.executeUpdate('checkAndSetStatus', {
-          args: [{ expectedStatus: 'stale', newStatus: 'pending' }],
-        });
-        if (!transitioned) {
-          // Read current status for a useful error message
-          const metadata = await handle.query('getMetadata') as Record<string, any>;
-          const status = metadata.status as string;
+        // Step 2 — inspect phase. `gone` means the workflow was destroyed; encore won't
+        // revive it (recruit would create a new workflow ID, which is out of scope here).
+        const info = await handle.query(attachmentInfoQuery) as AttachmentInfo;
+        if (info.phase === 'gone') {
           throw ApplicationFailure.nonRetryable(
-            `Cannot encore "${targetPlayerId}" — status is "${status}" (must be "stale"). Another encore may already be in progress.`,
+            `Cannot encore "${targetPlayerId}" — session is destroyed. Use recruit to start a fresh session.`,
           );
         }
 
-        // Query context (status is now locked to 'pending', safe from races)
-        const metadata = await handle.query('getMetadata') as Record<string, any>;
-        const part = await handle.query('getPart') as string;
-        const allMessages = await handle.query('allMessages') as Array<{ from: string; text: string; timestamp: string }>;
+        // Step 3 — reap any lingering attachment so `claimAttachment` below takes the
+        // fresh-claim branch in §9.2 (not the conflict branch). Idempotent on `detached`.
+        if (info.phase !== 'detached') {
+          await handle.executeUpdate(forceDetachUpdate, {
+            args: [{
+              reason: 'restart',
+              ...(info.currentAttachment ? { expectedAttachmentId: info.currentAttachment.attachmentId } : {}),
+              gracePeriodMs: 0,
+            }],
+          });
+        }
 
-        // Build context message from recent messages
+        // Step 4 — gather target metadata for the context message and spawn routing.
+        const metadata = await handle.query(getMetadataQuery) as SessionMetadata;
+        const part = await handle.query(getPartQuery) as string;
+        const allMessages = await handle.query(allMessagesQuery) as Message[];
+
+        const agentTypeRaw = (metadata.agentType as string) || 'claude';
+        const agentType: AgentType = agentTypeRaw === 'copilot' ? 'copilot' : 'claude';
+        const adapterId = metadata.adapterId || (agentType === 'copilot' ? 'copilot' : 'claude-code');
+        const adapterClass: AdapterClass = agentType === 'copilot' ? 'sdk' : 'interactive';
+
+        // Step 5 — claim a fresh attachment on the target's preferred host (or last-known).
+        const targetHost = info.preferredHost ?? metadata.hostname;
+        const token = await handle.executeUpdate(claimAttachmentUpdate, {
+          args: [{
+            host: targetHost,
+            adapterId,
+            adapterClass,
+            leaseMs: 90_000,
+          }],
+        });
+
+        // Step 6 — build and inject the context message.
         const recentMessages = allMessages.slice(-contextMessageCount);
         const msgSummary = recentMessages.length > 0
-          ? recentMessages.map(m => `[${m.from}] ${m.text.slice(0, PREVIEW_MAX_LENGTH)}`).join('\n')
+          ? recentMessages.map((m) => `[${m.from}] ${m.text.slice(0, PREVIEW_MAX_LENGTH)}`).join('\n')
           : '(no recent messages)';
 
         const contextMessage = [
@@ -389,43 +448,32 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           'Resume where you left off. Use `ensemble` to see who is active.',
         ].filter(Boolean).join('\n');
 
-        // Inject context message (status already set to pending atomically above)
-        await handle.signal('receiveMessage', { from: fromPlayerId, text: contextMessage, responseRequested: false });
+        await handle.signal(receiveMessageSignal, {
+          from: fromPlayerId,
+          text: contextMessage,
+          responseRequested: false,
+        });
 
-        log(`Encore prepared for "${targetPlayerId}" — status reset to pending, context injected`);
+        // Step 7 — enqueue the spawn on the target's own outbox. The target's `case 'spawn':`
+        // dispatches the spawnProcess activity on the per-host task queue; its §8.4 catch
+        // handles spawn failure by force-detaching the just-claimed attachment.
+        const { spawnEntryId } = await handle.executeUpdate(enqueueSpawnUpdate, {
+          args: [{
+            host: targetHost,
+            attachmentId: token.attachmentId,
+            runId: token.runId,
+            resume: true,
+            ...(metadata.sessionId ? { sessionId: metadata.sessionId } : {}),
+            adapterId,
+          }],
+        });
 
-        // Return spawn parameters from the target's metadata
-        const agentType = (metadata.agentType as string) || 'claude';
-        const playerType = metadata.playerType as string | undefined;
-        let agentDefinitionPath: string | undefined;
-        let nativeResolvable: boolean | undefined;
-        let allowedTools: string[] | undefined;
-        if (playerType) {
-          try {
-            const info = resolveAgentType(playerType);
-            if (info) {
-              agentDefinitionPath = info.path;
-              nativeResolvable = info.nativeResolvable;
-              allowedTools = info.allowedTools;
-            }
-          } catch {
-            // Agent type resolution failure is non-fatal
-          }
-        }
+        log(`Encore prepared for "${targetPlayerId}" — attachmentId=${token.attachmentId}, spawnEntryId=${spawnEntryId}`);
 
         return {
-          workDir: metadata.workDir as string,
-          hostname: metadata.hostname as string,
-          isConductor: metadata.isConductor as boolean,
-          agent: agentType === 'copilot' ? 'copilot' : 'claude',
-          agentDefinition: playerType,
-          agentDefinitionPath,
-          nativeResolvable,
-          allowedTools,
-          sessionId: (metadata.sessionId as string) || undefined,
-          temporalAddress: config.temporalAddress,
-          temporalNamespace: config.temporalNamespace,
-          claudeBin: config.claudeBin,
+          success: true,
+          attachmentId: token.attachmentId,
+          spawnEntryId,
         };
       } catch (err) {
         if (err instanceof ApplicationFailure) throw err;

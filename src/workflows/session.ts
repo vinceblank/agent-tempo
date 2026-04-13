@@ -5,7 +5,6 @@ import {
   workflowInfo,
   allHandlersFinished,
   upsertSearchAttributes,
-  getExternalWorkflowHandle,
   uuid4,
   proxyActivities,
   patched,
@@ -51,7 +50,6 @@ import {
   commandSignal,
   playerReportSignal,
   historyQuery,
-  checkAndSetStatusUpdate,
   submitOutboxUpdate,
   outboxQuery,
   setQualityGateSignal,
@@ -409,18 +407,6 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       ClaudeTempoIsConductor: [input.metadata.isConductor === true],
     });
     lastActivityTime = workflowNow().getTime();
-  });
-
-  // Atomic status transition — shimmed in v0.25 for the `performEncore` activity which
-  // still uses the legacy status CAS pattern. Removed when `encore` tool is deleted in PR-D.
-  // Supported transitions (all others return false):
-  //   stale → pending : ensure workflow is detached (no attachment); reset legacy status
-  setHandler(checkAndSetStatusUpdate, ({ expectedStatus, newStatus }) => {
-    if (input.metadata.status !== expectedStatus) return false;
-    input.metadata.status = newStatus as SessionStatus;
-    upsertSearchAttributes({ ClaudeTempoStatus: [newStatus] });
-    lastActivityTime = workflowNow().getTime();
-    return true;
   });
 
   setHandler(recordSentMessageSignal, (msg) => {
@@ -1208,48 +1194,19 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
             break;
           }
           case 'encore': {
-            const encoreResult = await performEncore({
+            // PR-D: performEncore now runs the restart algorithm (§8.2) on the
+            // target — forceDetach + claim + enqueueSpawn. The target's own
+            // `case 'spawn':` dispatches spawnProcess on its per-host task
+            // queue, and the §8.4 rollback fires on that side if spawn fails.
+            // The source workflow only awaits the activity result here; no
+            // cross-workflow spawn is needed and no CAS-based status revert
+            // on failure (the target's dispatch handles rollback natively).
+            await performEncore({
               ensemble: input.metadata.ensemble,
               targetPlayerId: entry.targetPlayerId,
               fromPlayerId: input.metadata.playerId,
               contextMessageCount: entry.contextMessageCount,
             });
-            const encoreHost = entry.targetHostname || encoreResult.hostname;
-            const encoreSpawnFn = getSpawnProxy(encoreHost);
-            try {
-              await encoreSpawnFn({
-                targetName: entry.targetPlayerId,
-                workDir: encoreResult.workDir,
-                isConductor: encoreResult.isConductor,
-                agent: encoreResult.agent,
-                ensemble: input.metadata.ensemble,
-                temporalAddress: encoreResult.temporalAddress,
-                temporalNamespace: encoreResult.temporalNamespace,
-                agentDefinition: encoreResult.agentDefinition,
-                agentDefinitionPath: encoreResult.agentDefinitionPath,
-                nativeResolvable: encoreResult.nativeResolvable,
-                allowedTools: encoreResult.allowedTools,
-                sessionId: encoreResult.sessionId,
-                resume: true,
-                claudeBin: entry.claudeBin || encoreResult.claudeBin,
-              });
-            } catch (spawnErr) {
-              // Spawn failed after status was reset to pending — revert to stale
-              // so the target isn't stuck in pending with no running process
-              try {
-                // Workflow ID format is hardcoded here because workflow code cannot
-                // import config helpers (they depend on Node APIs unavailable in the
-                // Temporal sandbox). Mirrors sessionWorkflowId/conductorWorkflowId.
-                const targetWfId = encoreResult.isConductor
-                  ? `claude-session-${input.metadata.ensemble}-conductor`
-                  : `claude-session-${input.metadata.ensemble}-${entry.targetPlayerId}`;
-                const targetHandle = getExternalWorkflowHandle(targetWfId);
-                await targetHandle.signal('updateMetadata', { status: 'stale' });
-              } catch {
-                // Best-effort revert — target workflow may have terminated
-              }
-              throw spawnErr;
-            }
             break;
           }
           case 'release': {
@@ -1262,16 +1219,11 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
             break;
           }
           case 'spawn': {
-            // PR-C commit 6 (#118): `SpawnOutboxEntry` dispatch. Today we delegate
-            // to the per-host spawn proxy with the base recruit-shape payload —
-            // the 5 attachment-specific fields (attachmentId/attachmentRunId/
-            // resumeAttachment/sessionId/adapterId) are carried on the entry so
-            // PR-D can wire them end-to-end through `spawnProcess` without a
-            // schema churn. Today they're unused at the activity layer, which
-            // matches the pre-PR-C-commit-6 behaviour exactly (the old `type:
-            // 'recruit'` double-cast stored the same fields and they were also
-            // never read). This preserves existing behaviour while removing
-            // the cast and planting the type foundation.
+            // PR-D: forward the pre-claimed attachment token + pinned runId +
+            // resolved adapterId to the spawn activity. The child process picks
+            // these up from env in `BaseAttachment.startV2Lifecycle(workflowId,
+            // expectedAttachmentId)` and renews the lease rather than claiming
+            // fresh. Design §8.2 step 5.
             const spawnTc = input.temporalConfig;
             const spawnHost = entry.targetHostname;
             const spawnFn = getSpawnProxy(spawnHost);
@@ -1285,6 +1237,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               temporalNamespace: spawnTc?.temporalNamespace || 'default',
               sessionId: entry.sessionId,
               resume: entry.resumeAttachment,
+              attachmentId: entry.attachmentId,
+              attachmentRunId: entry.attachmentRunId,
+              adapterId: entry.adapterId,
             });
             break;
           }
@@ -1294,6 +1249,37 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       } catch (err) {
         entry.status = 'failed';
         entry.error = String(err);
+
+        // PR-D §8.4: spawn-entry failure rollback. When `restart` / `migrate` /
+        // `encore` creates an attachment + enqueues a spawn, a subsequent spawn
+        // activity failure leaves the session `attached` with no adapter — the
+        // worst steady state. Force-detach the just-created attachment so the
+        // session lands in `detached` and `restart` can be retried. Guard with
+        // `expectedAttachmentId` (TOCTOU: another claim may have superseded).
+        if (
+          entry.type === 'spawn' &&
+          entry.attachmentId &&
+          currentAttachment?.attachmentId === entry.attachmentId
+        ) {
+          lastAdapterMeta = {
+            hostname: currentAttachment.hostname,
+            adapterId: currentAttachment.adapterId,
+          };
+          lastDetachReason = 'spawn-failed';
+          currentAttachment = null;
+          inFlightMessages.clear();
+          processingSince = null;
+          drainingSince = null;
+          detachedSince = workflowNow().toISOString();
+          setPhase('detached');
+          upsertSearchAttributes({
+            ClaudeTempoAttachedHost: [''],
+            ClaudeTempoAttachmentId: [''],
+          });
+          workflowLog.warn(
+            `spawn failed for "${entry.targetName}"; rolled back attachment ${entry.attachmentId} → detached`,
+          );
+        }
       }
     }
 
