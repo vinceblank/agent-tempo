@@ -275,7 +275,7 @@ npm link        # link CLI for local testing
 
 ## Contributing
 
-See [CLAUDE.md](CLAUDE.md) for project structure, conventions, and development setup. Pull requests welcome — run `npm test` before submitting.
+See [CLAUDE.md](CLAUDE.md) for project structure, conventions, and development setup. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the three-layer session model (workflow / adapter / process). Pull requests welcome — run `npm test` before submitting.
 
 ## Known Limitations
 
