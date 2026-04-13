@@ -15,11 +15,14 @@ claude-tempo <command> [options]
 | `start [ensemble]` | Start a player session |
 | `status [ensemble]` | Show active sessions and Temporal health |
 | `config` | Configure Temporal connection settings (interactive or `set`/`show`) |
-| `stop [ensemble]` | Stop sessions only — recoverable via `encore`. Use `-n <name>` for one, `--all` for all. |
+| `stop [ensemble]` | Stop sessions only — recoverable via `restart`. Use `-n <name>` for one, `--all` for all. |
 | `init` | Register claude-tempo MCP server globally (`--project` for per-directory) |
 | `preflight` | Run environment checks |
 | `broadcast <msg>` | Send a message to all active players. Use `--type` to filter by player type, `--include-stale` to include stale sessions. |
-| `encore <name>` | Revive a stale player session by name. Use `--host` to target a remote machine. |
+| `restart <name>` | Restart a player session — detaches current adapter and re-spawns. Works from any non-`gone` attachment phase. Use `--host` to target a remote machine. |
+| `detach <name>` | Gracefully detach the adapter for a session — triggers draining and clean handoff. Use when migrating a session to another host. |
+| `destroy <name>` | Terminate a session's workflow — ordered shutdown via outbox drain. Use for permanent removal. |
+| `migrate <name>` | Move a session to a different host — sugar for `setPreferredHost` + `restart` on the target machine. Use `--to <hostname>`. |
 | `release [ensemble]` | Release all held players — unlocks outboxes and delivers deferred task messages. Use `-n <name>` to release one player. |
 | `pause [ensemble]` | Pause the ensemble — locks all session outbox dispatch and pauses the scheduler. |
 | `resume [ensemble]` | Resume a paused ensemble — unlocks outbox dispatch and restarts the scheduler. |
@@ -150,6 +153,47 @@ Graceful self-update — stops the daemon, installs the latest (or specified) ve
 claude-tempo upgrade            # install latest version
 claude-tempo upgrade 0.20.0     # install a specific version
 ```
+
+### `claude-tempo restart`
+
+Detaches the current adapter and re-spawns a fresh process — functionally replaces the retired `encore` command. Works from any non-`gone` attachment phase (including `attached`, `awaiting`, `processing`, and `detached`):
+
+```bash
+claude-tempo restart alice             # restart on same host
+claude-tempo restart alice --host bob-mac   # restart on remote host
+```
+
+The existing Temporal workflow is preserved — message history and metadata carry over.
+
+### `claude-tempo detach`
+
+Signals the adapter to drain and detach gracefully:
+
+```bash
+claude-tempo detach alice
+```
+
+Triggers the `requestDetach` signal → adapter enters `draining` → `detached`. Use before a planned `migrate` or host maintenance.
+
+### `claude-tempo destroy`
+
+Terminates a session's workflow via ordered shutdown (outbox drain):
+
+```bash
+claude-tempo destroy alice
+```
+
+Prefer `destroy` over `stop` for permanent removal — it respects the v0.25 outbox and attachment lifecycle rather than force-terminating.
+
+### `claude-tempo migrate`
+
+Moves a session to a different host — sets the preferred host then triggers `restart` on the target machine's task queue:
+
+```bash
+claude-tempo migrate alice --to build-server
+```
+
+Requires the target host to have an active claude-tempo daemon. See [PR-F multi-host docs](https://github.com/vinceblank/claude-tempo) for cross-host setup.
 
 ## Related
 
