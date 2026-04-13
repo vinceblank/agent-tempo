@@ -494,6 +494,56 @@ Before coding, surface these:
 
 ---
 
+## 8. Conductor answers to §7 open questions
+
+All six questions from §7 are resolved. Do not ask again — these are
+locked decisions.
+
+**1. `isAdapterProcessAlive` — stub as `() => false` for PR-E.**
+No adapter PID file convention exists. Implement `isAdapterProcessAlive`
+as a stub that always returns `false` (conservative: always attempt
+restore). Justification: false negatives are cheap — an extra restart
+attempt is caught by `AttachmentConflict` and the daemon backs off
+silently. False positives (skipping a session that needs restore) are
+the worse failure. Real process-alive detection is a post-beta
+refinement.
+
+**2. `cleanupIntervalHours` — hardcode 6 hours.**
+Do not add a config field for the cleanup loop interval. Keeps the
+config surface minimal. If operators need tunability post-GA, add in a
+follow-up PR.
+
+**3. `reconcileOnBoot` factor — extract shared function.**
+Extract the orphan-query logic into a shared function, e.g.
+`queryOrphanedSessions(tempoClient, filter)` in `src/daemon.ts` or a
+new `src/reconcile/orphans.ts`. Both `reconcileOnBoot()` and the CLI
+`restore` command call it. Rationale: the same query with the same
+ordering invariants must produce identical candidate sets — duplication
+is a drift risk.
+
+**4. `daemon install` minimum platform — ship all three.**
+Windows (Task Scheduler), Linux (systemd `--user`), and macOS (launchd)
+all ship in PR-E. Windows and Linux are tier-1 tested. macOS launchd
+ships as best-effort untested — add a `# NOTE: macOS integration is
+untested; feedback welcome` comment in the plist file and in the CLI
+install output. Do not defer any platform.
+
+**5. `autoRestoreEnsembles` glob — simple prefix match, no new dep.**
+Implement as: exact match if no trailing `*`; prefix match if pattern
+ends with `*` (strip `*`, check `ensemble.startsWith(prefix)`). Do not
+add `micromatch` or any other glob library. YAGNI — real-world glob
+requirements can be addressed in a follow-up with an explicit dep
+addition.
+
+**6. PR-F dependency — wait for PR-E to merge to `main`.**
+Do not start PR-F until PR-E is squash-merged. Reasons: single active
+engineer; stacked branches add context-switch overhead; worktree
+provisioning is per-branch; the P5 WIP-loss incident showed sequential
+is safer for this ensemble size. PR-E (~600 LOC) merges fast; the wait
+is minimal.
+
+---
+
 ## Quick-reference links
 
 - Design doc (full spec): [`docs/design/session-lifecycle-rebuild-v2.md`](../design/session-lifecycle-rebuild-v2.md) §10, §13.4
