@@ -32,7 +32,6 @@ interface ParsedArgs {
   type?: string;
   includeStale: boolean;
   host?: string;
-  terminate: boolean;
   // PR-D verb flags
   fresh: boolean;
   force: boolean;
@@ -61,7 +60,6 @@ function parseArgs(argv: string[]): ParsedArgs {
     replace: false,
     resume: false,
     includeStale: false,
-    terminate: false,
     fresh: false,
     force: false,
   };
@@ -118,8 +116,6 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (arg.startsWith('--yes-steal=')) {
       // Equals form (preferred per brief): `--yes-steal=<hostname>`.
       result.yesSteal = arg.slice('--yes-steal='.length);
-    } else if (arg === '--terminate') {
-      result.terminate = true;
     } else if (arg === '--fresh') {
       result.fresh = true;
     } else if (arg === '--force') {
@@ -228,7 +224,6 @@ async function main() {
         name: args.name,
         ensemble: args.positional[1],
         all: args.all || undefined,
-        hardTerminate: args.terminate,
         ...overrides,
       });
       break;

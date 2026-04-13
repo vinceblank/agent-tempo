@@ -10,6 +10,8 @@ import {
   conductorMetadata,
   withWorker,
   updateMetadataSignal,
+
+  destroyUpdate,
 } from './helpers';
 import {
   setStageSignal,
@@ -53,7 +55,7 @@ describe('pipeline stages', function () {
       expect(stages[0].players[0].playerId).to.equal('alice');
       expect(stages[0].players[0].status).to.equal('waiting');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -99,7 +101,7 @@ describe('pipeline stages', function () {
       expect(completion!.text).to.include('testing');
       expect(completion!.from).to.equal('_stage');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -137,7 +139,7 @@ describe('pipeline stages', function () {
       expect(failure!.text).to.include('alice');
       expect(failure!.text).to.include('Build broken');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -180,7 +182,7 @@ describe('pipeline stages', function () {
       expect(failure).to.exist;
       expect(failure!.text).to.include('alice');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -218,7 +220,7 @@ describe('pipeline stages', function () {
       const stages2: StageEntry[] = await handle.query(stagesQuery);
       expect(stages2[0].status).to.equal('complete');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -246,7 +248,7 @@ describe('pipeline stages', function () {
       const cancel = messages.find((m: any) => m.text.includes('[stage cancelled]'));
       expect(cancel).to.exist;
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -275,7 +277,7 @@ describe('pipeline stages', function () {
       expect(stages[0].players).to.have.lengthOf(3);
       expect(stages[0].failurePolicy).to.equal('continue');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });

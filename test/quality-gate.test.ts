@@ -8,6 +8,8 @@ import {
   conductorMetadata,
   playerMetadata,
   updateMetadataSignal,
+
+  destroyUpdate,
   setQualityGateSignal,
   evaluateGateCriteriaSignal,
   qualityGatesQuery,
@@ -44,7 +46,7 @@ describe('quality gates', function () {
       expect(gates[0].criteria[0].status).to.equal('pending');
       expect(gates[0].createdBy).to.equal('conductor');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -78,7 +80,7 @@ describe('quality gates', function () {
       expect(gates[0].criteria[0].notes).to.equal('Green build');
       expect(gates[0].criteria[1].status).to.equal('passed');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -111,7 +113,7 @@ describe('quality gates', function () {
       expect(gates[0].criteria[1].status).to.equal('failed');
       expect(gates[0].criteria[2].status).to.equal('pending');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -138,7 +140,7 @@ describe('quality gates', function () {
       const gates: QualityGate[] = await handle.query(qualityGatesQuery);
       expect(gates[0].status).to.equal('open');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -169,7 +171,7 @@ describe('quality gates', function () {
       expect(gates[0].criteria[0].text).to.equal('New criterion 1');
       expect(gates[0].status).to.equal('open');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -190,7 +192,7 @@ describe('quality gates', function () {
       const gates: QualityGate[] = await handle.query(qualityGatesQuery);
       expect(gates).to.have.length(0);
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -221,7 +223,7 @@ describe('quality gates', function () {
       expect(gates[0].status).to.equal('passed');
       expect(gates[0].criteria).to.have.length(1);
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -247,7 +249,7 @@ describe('quality gates', function () {
       expect(gates).to.have.length(2);
       expect(gates.map((g) => g.task)).to.include.members(['gate-a', 'gate-b']);
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -266,7 +268,7 @@ describe('quality gates', function () {
         expect(err.message).to.include('qualityGates');
       }
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });

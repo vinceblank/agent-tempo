@@ -1,18 +1,14 @@
 /**
  * claude-code adapter — interactive class.
  *
- * Lifted verbatim from `src/channel.ts` in PR-B (v0.25 rebuild step 2/7). PR-C
- * commit 2 extends it with the V2 attachment lifecycle: when
- * `CLAUDE_TEMPO_LIFECYCLE_V2` is enabled the adapter claims the attachment,
- * drives the base-class heartbeat + phase-watcher loops, and runs the delivery
- * poll against a runId-pinned handle. When the flag is off, the adapter falls
- * back to the PR-A compat shim path (identical poll/markDelivered loop as
- * pre-rebuild) — the PR-A shim in `src/workflows/session.ts` translates
- * legacy signals onto the attachment phase machine.
+ * Owns the V2 attachment lifecycle for Claude Code CLI sessions: claims the
+ * attachment, drives the base-class heartbeat + phase-watcher loops, and runs
+ * the delivery poll against a runId-pinned handle. PR-H (#132) removed the
+ * `CLAUDE_TEMPO_LIFECYCLE_V2=0` escape hatch that previously gated V1 vs V2.
  *
- * For interactive adapters, delivery itself is unchanged between V1 and V2
- * (per design §5.3): push via MCP notification, ack via `markDelivered`. No
- * `processingStart`/`End` pairs — those are for SDK adapters (commit 3).
+ * Delivery itself (per design §5.3): push via MCP notification, ack via
+ * `markDelivered`. No `processingStart`/`End` pairs — those are for SDK
+ * adapters (`CopilotSdkAttachment`).
  *
  * **This file runs in the Node.js adapter process, NOT the Temporal workflow
  * sandbox.** `setTimeout` / `setInterval` are appropriate here; the pre-bundled
@@ -112,20 +108,14 @@ function startMessagePoller(
  * `markDelivered` is signaled to the workflow. Delivery does not block on an
  * LLM turn (`blocksOnLLMTurn: false`).
  *
- * ### Flag-gated lifecycle
+ * V2 attachment lifecycle: the adapter calls `claimAttachment` via
+ * `startV2Lifecycle()`, pins the runId, and runs the delivery poll on the
+ * pinned handle. Base class drives heartbeat + phase watcher in parallel.
+ * On lease revocation, `WorkflowNotFound`, or phase `gone`, the adapter
+ * stops cleanly without attempting to re-claim.
  *
- * - **V2 path** (`CLAUDE_TEMPO_LIFECYCLE_V2` on, default): the adapter calls
- *   `claimAttachment` via `startV2Lifecycle()`, pins the runId, and runs the
- *   delivery poll on the pinned handle. Base class drives heartbeat + phase
- *   watcher in parallel. On lease revocation, `WorkflowNotFound`, or phase
- *   `gone`, the adapter stops cleanly without attempting to re-claim.
- * - **Legacy path** (flag off): the delivery poll runs against the unpinned
- *   handle passed from `server.ts`, same as PR-A. No claim, no heartbeat —
- *   the workflow's PR-A compat shim translates `updateMetadata({ status })` +
- *   `markDelivered` onto the phase machine.
- *
- * The branch is captured at construction via `this.lifecycleV2`; `start()`
- * picks one path for the lifetime of the attachment.
+ * PR-H (#132): the legacy unpinned-poll fallback (gated on
+ * `CLAUDE_TEMPO_LIFECYCLE_V2=0`) has been removed. V2 is the only path.
  */
 export class InteractiveAttachment extends BaseAttachment {
   readonly descriptor: AdapterDescriptor = claudeCodeDescriptor;
@@ -138,19 +128,15 @@ export class InteractiveAttachment extends BaseAttachment {
    * Start polling for pending messages and delivering each batch via `onMessages`.
    * Returns a `stop()` function the caller invokes on shutdown.
    *
-   * The `handle` argument is used only in the legacy path. In V2 mode the
-   * adapter claims its own runId-pinned handle via the base class and ignores
-   * the passed handle for delivery — it's kept in the signature so callers
-   * don't need a flag-aware branch.
+   * The `handle` argument is forwarded for its `workflowId` only — V2 mode
+   * claims its own runId-pinned handle via the base class for all subsequent
+   * queries/signals.
    */
   start(
     handle: WorkflowHandle,
     onMessages: (messages: Message[]) => Promise<void> | void,
   ): () => void {
-    if (this.lifecycleV2) {
-      return this.startV2(handle.workflowId, onMessages);
-    }
-    return startMessagePoller(handle, onMessages);
+    return this.startV2(handle.workflowId, onMessages);
   }
 
   /**

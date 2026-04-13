@@ -29,14 +29,6 @@ export const ENV = {
   PLAYER_TYPE: 'CLAUDE_TEMPO_PLAYER_TYPE',
   CLAUDE_BIN: 'CLAUDE_TEMPO_CLAUDE_BIN',
   /**
-   * v0.25 attachment lifecycle feature flag. Default is ON — adapters use the
-   * new `claimAttachment` / `heartbeat` / `processingStart` wire surface directly.
-   * Set `CLAUDE_TEMPO_LIFECYCLE_V2=0` (or `false`) to force adapters back onto
-   * the PR-A legacy shim path (`updateMetadata({ status })`, etc.) as an
-   * emergency rollback. Removed in v0.25.1 post-GA cleanup.
-   */
-  LIFECYCLE_V2: 'CLAUDE_TEMPO_LIFECYCLE_V2',
-  /**
    * v0.25 PR-D attachment resume plumbing. When `restart` / `migrate`
    * enqueues a spawn outbox entry, the workflow passes the pre-claimed
    * `attachmentId` + pinned `runId` + resolved `adapterId` through the spawn
@@ -50,16 +42,9 @@ export const ENV = {
   ADAPTER_ID: 'CLAUDE_TEMPO_ADAPTER_ID',
 } as const;
 
-/**
- * Read the v0.25 lifecycle feature flag. Default ON; explicit `0` / `false` / `off` disables.
- * Accepts a few truthy/falsy spellings so operators don't have to memorize the exact token.
- */
-export function lifecycleV2Enabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = env[ENV.LIFECYCLE_V2];
-  if (raw === undefined || raw === '') return true; // default ON
-  const v = raw.trim().toLowerCase();
-  return !(v === '0' || v === 'false' || v === 'off' || v === 'no');
-}
+// PR-H (#132): `lifecycleV2Enabled()` removed. The V2 attachment-lease path
+// is unconditional in v0.25.0-beta.1; the rollback flag was an emergency
+// safety net during the lifecycle rebuild and is no longer needed.
 
 export interface Config {
   temporalAddress: string;

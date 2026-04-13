@@ -101,7 +101,6 @@ describe('SdkAttachment V2 lifecycle (PR-C commit 3)', function () {
       const adapter = new TestSdkAttachment({
         client: getClient(),
         host: 'test-host',
-        lifecycleV2: true,
       });
       const pinned = await adapter.testAttach(handle.workflowId);
 
@@ -157,7 +156,6 @@ describe('SdkAttachment V2 lifecycle (PR-C commit 3)', function () {
       const adapter = new TestSdkAttachment({
         client: getClient(),
         host: 'test-host',
-        lifecycleV2: true,
       });
       const pinned = await adapter.testAttach(handle.workflowId);
 
@@ -207,7 +205,6 @@ describe('SdkAttachment V2 lifecycle (PR-C commit 3)', function () {
       const adapter = new TestSdkAttachment({
         client: getClient(),
         host: 'test-host',
-        lifecycleV2: true,
       });
       const pinned = await adapter.testAttach(handle.workflowId);
 
@@ -249,7 +246,6 @@ describe('SdkAttachment V2 lifecycle (PR-C commit 3)', function () {
       const adapter = new TestSdkAttachment({
         client: getClient(),
         host: 'test-host',
-        lifecycleV2: true,
       });
       const pinned = await adapter.testAttach(handle.workflowId);
 

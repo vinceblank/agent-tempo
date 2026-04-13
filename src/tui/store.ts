@@ -229,8 +229,10 @@ export interface TuiState {
   sentMessages: Array<{ to: string; text: string; timestamp: string }>;
   /** ID of the last message seen (for detecting new arrivals in polling). */
   lastSeenMessageId?: string;
-  /** Player name pending stop confirmation (null = not confirming). */
+  /** Player name pending destroy confirmation (PR-H renamed `/stop` → `/destroy`; field name kept for diff hygiene). */
   confirmingStop?: string;
+  /** Optional `reason` carried from the `/destroy <player> [reason]` invocation. */
+  confirmingStopReason?: string;
   /** Ensemble name pending disband confirmation (null = not confirming). */
   confirmingDisband?: string;
   /** Lineup confirmation state (pending load). */
@@ -308,6 +310,7 @@ export function initialState(ensemble?: string): TuiState {
     pickerIndex: 0,
     pickerStatusFilter: null,
     confirmingStop: undefined,
+    confirmingStopReason: undefined,
     scheduleWizard: undefined,
   };
 }
@@ -359,7 +362,7 @@ export type TuiAction =
   | { type: 'PICKER_DOWN' }
   // Scrollback
   // Stop confirmation
-  | { type: 'CONFIRM_STOP'; player: string }
+  | { type: 'CONFIRM_STOP'; player: string; reason?: string }
   | { type: 'CANCEL_STOP' }
   // Disband confirmation
   | { type: 'CONFIRM_DISBAND'; ensemble: string }
@@ -611,13 +614,17 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     case 'EXIT_CHAT':
       return { ...state, phase: 'main' as TuiPhase, chatTarget: undefined };
 
-    // ── Stop confirmation ──
+    // ── Destroy confirmation (PR-H: was `/stop`; renamed to `/destroy`) ──
 
     case 'CONFIRM_STOP':
-      return { ...state, confirmingStop: action.player };
+      return {
+        ...state,
+        confirmingStop: action.player,
+        ...(action.reason !== undefined ? { confirmingStopReason: action.reason } : { confirmingStopReason: undefined }),
+      };
 
     case 'CANCEL_STOP':
-      return { ...state, confirmingStop: undefined };
+      return { ...state, confirmingStop: undefined, confirmingStopReason: undefined };
 
     // ── Disband confirmation ──
 

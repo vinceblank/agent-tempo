@@ -7,6 +7,8 @@ import {
   playerMetadata,
   getMetadataQuery,
   updateMetadataSignal,
+
+  destroyUpdate,
   getClient,
   TASK_QUEUE,
 } from './helpers';
@@ -42,7 +44,7 @@ describe('runId pinning — prevents zombie-resurrection via unpinned handles', 
       const runId1 = h1.firstExecutionRunId!;
 
       // Complete run 1
-      await h1.signal(updateMetadataSignal, { status: 'terminated' });
+      await h1.executeUpdate(destroyUpdate, { args: [{}] });
       await h1.result();
 
       // Start run 2 with USE_EXISTING (completed run allows this) — fresh runId
@@ -62,7 +64,7 @@ describe('runId pinning — prevents zombie-resurrection via unpinned handles', 
       expect(descUnpinned.runId).to.equal(runId2, 'unpinned handle tracks current run');
 
       // Cleanup
-      await h2.signal(updateMetadataSignal, { status: 'terminated' });
+      await h2.executeUpdate(destroyUpdate, { args: [{}] });
       await h2.result();
     });
   });
@@ -86,7 +88,7 @@ describe('runId pinning — prevents zombie-resurrection via unpinned handles', 
         args: [input],
       });
       const runId1 = h1.firstExecutionRunId!;
-      await h1.signal(updateMetadataSignal, { status: 'terminated' });
+      await h1.executeUpdate(destroyUpdate, { args: [{}] });
       await h1.result();
 
       // The runId1-pinned handle can still query the historical run (queries against
@@ -116,7 +118,7 @@ describe('runId pinning — prevents zombie-resurrection via unpinned handles', 
       // silently mutating a resurrected workflow.
       let threw = false;
       try {
-        await pinned1.signal(updateMetadataSignal, { status: 'terminated' });
+        await pinned1.executeUpdate(destroyUpdate, { args: [{}] });
       } catch (err) {
         threw = true;
         // Could be WorkflowNotFoundError or a workflow-execution-already-completed error;
@@ -126,7 +128,7 @@ describe('runId pinning — prevents zombie-resurrection via unpinned handles', 
       expect(threw).to.equal(true, 'signal against pinned-closed run must fail, not attach to current');
 
       // Cleanup run 2
-      await h2.signal(updateMetadataSignal, { status: 'terminated' });
+      await h2.executeUpdate(destroyUpdate, { args: [{}] });
       await h2.result();
     });
   });

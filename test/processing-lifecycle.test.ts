@@ -60,7 +60,7 @@ describe('processing lifecycle — fixes #99 (long tool calls misclassified as s
       await handle.executeUpdate(processingEndUpdate, { args: [{ messageId: 'msg-1' }] });
       expect(await handle.query(inFlightMessagesQuery)).to.be.empty;
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -80,7 +80,7 @@ describe('processing lifecycle — fixes #99 (long tool calls misclassified as s
       await handle.executeUpdate(processingEndUpdate, { args: [{ messageId: 'msg-a' }] }); // idempotent
       expect(await handle.query(inFlightMessagesQuery)).to.be.empty;
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -100,7 +100,7 @@ describe('processing lifecycle — fixes #99 (long tool calls misclassified as s
       }
       expect(rejected).to.equal(true, 'expected validator rejection for empty messageId');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -121,7 +121,7 @@ describe('processing lifecycle — fixes #99 (long tool calls misclassified as s
       await handle.executeUpdate(processingEndUpdate, { args: [{ messageId: 'b' }] });
       expect(await handle.query(inFlightMessagesQuery)).to.have.members(['a', 'c']);
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });

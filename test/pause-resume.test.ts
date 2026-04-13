@@ -9,6 +9,8 @@ import {
   submitOutboxUpdate,
   outboxQuery,
   updateMetadataSignal,
+
+  destroyUpdate,
   getClient,
   TASK_QUEUE,
 } from './helpers';
@@ -58,7 +60,7 @@ describe('pause and resume', function () {
         expect(entry!.status).to.equal('pending');
 
         // Cleanup
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -98,7 +100,7 @@ describe('pause and resume', function () {
         expect(entry!.status).to.not.equal('pending');
 
         // Cleanup
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -134,7 +136,7 @@ describe('pause and resume', function () {
         expect(stopEntry!.status).to.equal('delivered');
 
         // Cleanup
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
         try { await targetHandle.result(); } catch { /* cleanup */ }
       });
@@ -161,7 +163,7 @@ describe('pause and resume', function () {
         expect(await handle.query(outboxLockedQuery)).to.be.true;
 
         // Cleanup
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -247,7 +249,7 @@ describe('pause and resume', function () {
         expect(fireMsg).to.not.exist;
 
         // Cleanup
-        await targetHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await targetHandle.executeUpdate(destroyUpdate, { args: [{}] });
         try { await targetHandle.result(); } catch { /* cleanup */ }
         // Scheduler self-terminates when entries are exhausted
       });

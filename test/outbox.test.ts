@@ -15,6 +15,8 @@ import {
   submitOutboxUpdate,
   outboxQuery,
   updateMetadataSignal,
+
+  destroyUpdate,
   getClient,
   TASK_QUEUE,
 } from './helpers';
@@ -56,7 +58,7 @@ describe('outbox', function () {
         expect(entry!.type).to.equal('cue');
 
         // Terminate to clean up
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -78,7 +80,7 @@ describe('outbox', function () {
         expect(match!.to).to.equal('target-player');
         expect(match!.text).to.equal('test msg');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -115,8 +117,8 @@ describe('outbox', function () {
         expect(delivered!.deliveredAt).to.be.a('string');
 
         // Clean up
-        await alice.signal(updateMetadataSignal, { status: 'terminated' });
-        await bob.signal(updateMetadataSignal, { status: 'terminated' });
+        await alice.executeUpdate(destroyUpdate, { args: [{}] });
+        await bob.executeUpdate(destroyUpdate, { args: [{}] });
         await alice.result();
         await bob.result();
       });
@@ -150,8 +152,8 @@ describe('outbox', function () {
         const playerOutbox = await player.query(outboxQuery);
         expect(playerOutbox[0].status).to.equal('delivered');
 
-        await player.signal(updateMetadataSignal, { status: 'terminated' });
-        await conductor.signal(updateMetadataSignal, { status: 'terminated' });
+        await player.executeUpdate(destroyUpdate, { args: [{}] });
+        await conductor.executeUpdate(destroyUpdate, { args: [{}] });
         await player.result();
         await conductor.result();
       });
@@ -183,7 +185,7 @@ describe('outbox', function () {
         const aliceOutbox = await alice.query(outboxQuery);
         expect(aliceOutbox[0].status).to.equal('delivered');
 
-        await alice.signal(updateMetadataSignal, { status: 'terminated' });
+        await alice.executeUpdate(destroyUpdate, { args: [{}] });
         // Bob is already terminated, just wait for completion
         await alice.result();
         await bob.result();
@@ -211,8 +213,8 @@ describe('outbox', function () {
         expect(entry, 'detach entry exists').to.exist;
         expect(entry!.status).to.equal('delivered');
 
-        await alice.signal(updateMetadataSignal, { status: 'terminated' });
-        await bob.signal(updateMetadataSignal, { status: 'terminated' });
+        await alice.executeUpdate(destroyUpdate, { args: [{}] });
+        await bob.executeUpdate(destroyUpdate, { args: [{}] });
         await alice.result();
         await bob.result();
       });
@@ -241,7 +243,7 @@ describe('outbox', function () {
         const bobDestroyed = await bob.query('isDestroyed') as boolean;
         expect(bobDestroyed).to.be.true;
 
-        await alice.signal(updateMetadataSignal, { status: 'terminated' });
+        await alice.executeUpdate(destroyUpdate, { args: [{}] });
         await alice.result();
         await bob.result();
       });
@@ -271,8 +273,8 @@ describe('outbox', function () {
         expect(entry, 'restart entry exists').to.exist;
         expect(entry!.status).to.equal('delivered');
 
-        await alice.signal(updateMetadataSignal, { status: 'terminated' });
-        await bob.signal(updateMetadataSignal, { status: 'terminated' });
+        await alice.executeUpdate(destroyUpdate, { args: [{}] });
+        await bob.executeUpdate(destroyUpdate, { args: [{}] });
         await alice.result();
         await bob.result();
       });
@@ -308,7 +310,7 @@ describe('outbox', function () {
         expect(entry!.error).to.be.a('string');
         expect(entry!.error!.length).to.be.greaterThan(0);
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -346,7 +348,7 @@ describe('outbox', function () {
         const ids = entries.map((e) => e.id);
         expect(new Set(ids).size).to.equal(3);
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -413,9 +415,9 @@ describe('outbox', function () {
         expect(meta.isConductor).to.equal(false);
 
         // Cleanup
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
-        await recruitedHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await recruitedHandle.executeUpdate(destroyUpdate, { args: [{}] });
         try { await recruitedHandle.result(); } catch { /* cleanup */ }
       });
     });
@@ -458,9 +460,9 @@ describe('outbox', function () {
         const pending = await recruitedHandle.query(pendingMessagesQuery);
         expect(pending).to.have.lengthOf(0);
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
-        await recruitedHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await recruitedHandle.executeUpdate(destroyUpdate, { args: [{}] });
         try { await recruitedHandle.result(); } catch { /* cleanup */ }
       });
     });
@@ -505,12 +507,12 @@ describe('outbox', function () {
         expect(spawnInputs[0].claudeBin).to.equal('/custom/path/to/claude');
 
         // Cleanup
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
         const recruitedHandle = getClient().workflow.getHandle(
           `claude-session-${ensemble}-bin-player`,
         );
-        await recruitedHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await recruitedHandle.executeUpdate(destroyUpdate, { args: [{}] });
         try { await recruitedHandle.result(); } catch { /* cleanup */ }
       });
     });
@@ -553,8 +555,8 @@ describe('outbox', function () {
         );
         expect(notification).to.exist;
 
-        await stopper.signal(updateMetadataSignal, { status: 'terminated' });
-        await conductor.signal(updateMetadataSignal, { status: 'terminated' });
+        await stopper.executeUpdate(destroyUpdate, { args: [{}] });
+        await conductor.executeUpdate(destroyUpdate, { args: [{}] });
         await stopper.result();
         await conductor.result();
         // target already terminated — just await completion
@@ -596,7 +598,7 @@ describe('outbox', function () {
         expect(entry!.error).to.be.a('string');
         expect(entry!.error!.length).to.be.greaterThan(0);
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -649,10 +651,10 @@ describe('outbox', function () {
         }
 
         // Clean up
-        await sender.signal(updateMetadataSignal, { status: 'terminated' });
-        await alice.signal(updateMetadataSignal, { status: 'terminated' });
-        await bob.signal(updateMetadataSignal, { status: 'terminated' });
-        await carol.signal(updateMetadataSignal, { status: 'terminated' });
+        await sender.executeUpdate(destroyUpdate, { args: [{}] });
+        await alice.executeUpdate(destroyUpdate, { args: [{}] });
+        await bob.executeUpdate(destroyUpdate, { args: [{}] });
+        await carol.executeUpdate(destroyUpdate, { args: [{}] });
         await sender.result();
         await alice.result();
         await bob.result();

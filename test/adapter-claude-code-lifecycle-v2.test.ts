@@ -1,13 +1,12 @@
 /**
- * Claude Code adapter — V2 lifecycle path tests (PR-C commit 2).
+ * Claude Code adapter — V2 lifecycle path tests (PR-C commit 2; PR-H #132).
  *
- * Exercises the `CLAUDE_TEMPO_LIFECYCLE_V2` branch in `InteractiveAttachment`:
+ * PR-H (#132) removed the `CLAUDE_TEMPO_LIFECYCLE_V2=0` legacy branch. These
+ * tests now exercise only the V2 path:
  *
- *  - V2 **off**: adapter runs the legacy poll/markDelivered loop only; workflow
- *    never observes a `claimAttachment` call, so phase stays `booting`.
- *  - V2 **on**: adapter calls `claimAttachment`, phase transitions to `attached`,
+ *  - **Claim**: adapter calls `claimAttachment`, phase transitions to `attached`,
  *    and the delivery poll still works (on the runId-pinned handle).
- *  - V2 **on, AttachmentConflict**: a prior claim from a different host holds the
+ *  - **AttachmentConflict**: a prior claim from a different host holds the
  *    lease; the adapter's `start()` surfaces the conflict and the poller never
  *    runs.
  *
@@ -86,50 +85,7 @@ describe('claude-code adapter — V2 lifecycle (PR-C commit 2)', function () {
     await teardownTestEnv();
   });
 
-  it('V2 off: adapter delivers via legacy path without claiming an attachment', async function () {
-    this.timeout(15_000);
-    await withWorker(async () => {
-      const handle = await startSession({
-        metadata: playerMetadata({ playerId: `legacy-${Date.now()}` }),
-      });
-
-      // Sanity: phase starts as `booting` before anyone claims.
-      const initial: AttachmentInfo = await handle.query(attachmentInfoQuery);
-      expect(initial.phase).to.equal('booting');
-      expect(initial.currentAttachment).to.be.undefined;
-
-      const received: Message[][] = [];
-      const adapter = new InteractiveAttachment({
-        client: getClient(),
-        host: 'test-host',
-        lifecycleV2: false,
-      });
-      const stop = adapter.start(handle, async (msgs) => {
-        received.push(msgs);
-      });
-
-      try {
-        await handle.signal(receiveMessageSignal, { from: 'tester', text: 'hello legacy' });
-        await waitForDelivered(handle, 1);
-
-        const info: AttachmentInfo = await handle.query(attachmentInfoQuery);
-        // Legacy path does not call claimAttachment — phase stays `booting`,
-        // no currentAttachment populated.
-        expect(info.phase).to.equal('booting', 'legacy path must not trigger claim');
-        expect(info.currentAttachment).to.be.undefined;
-
-        // Delivery callback ran with the message payload.
-        const flat = received.flat();
-        expect(flat.map((m) => m.text)).to.include('hello legacy');
-      } finally {
-        stop();
-        await handle.executeUpdate(destroyUpdate, { args: [{}] });
-        await handle.result().catch(() => {});
-      }
-    });
-  });
-
-  it('V2 on: adapter claims attachment and delivery still works on the pinned handle', async function () {
+  it('adapter claims attachment and delivery still works on the pinned handle', async function () {
     this.timeout(15_000);
     await withWorker(async () => {
       const handle = await startSession({
@@ -140,7 +96,6 @@ describe('claude-code adapter — V2 lifecycle (PR-C commit 2)', function () {
       const adapter = new InteractiveAttachment({
         client: getClient(),
         host: 'test-host',
-        lifecycleV2: true,
       });
       const stop = adapter.start(handle, async (msgs) => {
         received.push(msgs);
@@ -193,7 +148,6 @@ describe('claude-code adapter — V2 lifecycle (PR-C commit 2)', function () {
       const adapter = new InteractiveAttachment({
         client: getClient(),
         host: 'test-host',
-        lifecycleV2: true,
       });
       const stop = adapter.start(handle, async (msgs) => {
         received.push(msgs);

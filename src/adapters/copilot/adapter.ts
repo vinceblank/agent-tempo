@@ -188,17 +188,14 @@ export class CopilotSdkAttachment extends SdkAttachment {
    *
    * Kept as a single async method (instead of being broken up into lifecycle
    * hooks) to preserve the exact behavior of the pre-PR-B `main()` function.
-   * PR-C commit 3 adds a V2-path branch: when `CLAUDE_TEMPO_LIFECYCLE_V2` is
-   * enabled (default), the bridge claims the attachment via
-   * `startV2Lifecycle`, drives `deliver()` through `SdkAttachment` (synchronous
-   * processingStart/End per §7.1, `expectedAttachmentId` carried on both),
-   * and installs `onSuperseded` to disconnect the Copilot session on lease
-   * revocation. When the flag is off, the bridge runs the same loop as PR-A /
-   * PR-B: inline fire-and-forget processingStart/End signals and no claim.
+   * The bridge claims the attachment via `startV2Lifecycle`, drives
+   * `deliver()` through `SdkAttachment` (synchronous processingStart/End
+   * per §7.1, `expectedAttachmentId` carried on both), and installs
+   * `onSuperseded` to disconnect the Copilot session on lease revocation.
    *
-   * The flag is captured once at construction via `this.lifecycleV2`
-   * (BaseAttachment) — no mid-run toggling per the conductor's behavior-
-   * boundary guardrail.
+   * PR-H (#132): the legacy fire-and-forget processingStart/End path
+   * gated on `CLAUDE_TEMPO_LIFECYCLE_V2=0` has been removed. V2 is the
+   * only path.
    */
   async run(): Promise<void> {
     const config = getConfig();
@@ -416,33 +413,31 @@ export class CopilotSdkAttachment extends SdkAttachment {
     // and delivery use a consistent handle. `onTerminal` (WorkflowNotFound,
     // phase=gone, lease revoked) triggers clean shutdown below.
     //
-    // If the flag is off we skip the claim — the PR-A compat shim in the
-    // workflow continues to translate `updateMetadata({ status })` onto the
-    // phase machine, preserving pre-rebuild behavior.
-    if (this.lifecycleV2) {
-      // Wire terminal handler BEFORE claiming so a race between claim + lease
-      // loss can't drop the event.
-      this.onTerminal((reason) => {
-        log(`V2 terminal (${reason}) — triggering cleanup`);
-        // Fire-and-forget: `cleanup` is idempotent and `signalTermination=false`
-        // because the workflow is either gone, destroyed, or about to reap us.
-        cleanup(false).catch((err) => log('terminal cleanup error:', err?.message ?? err));
-      });
-      try {
-        // PR-D: read pre-claimed attachmentId (set by the spawn activity when
-        // the workflow called `claimAttachment` before enqueueing this spawn).
-        // Forwarding it selects §9.2's renewal branch so the adapter takes
-        // over an existing lease atomically; absent on first-recruit spawn.
-        const expectedAttachmentId = process.env[ENV.ATTACHMENT_ID] || undefined;
-        handle = await this.startV2Lifecycle(expectedWorkflowId, expectedAttachmentId);
-        log(`V2 attachment claimed (attachmentId=${this.token?.attachmentId}${expectedAttachmentId ? ', renewed' : ''})`);
-      } catch (err: any) {
-        log(`ERROR: V2 claimAttachment failed: ${err?.message ?? err}`);
-        try { await session.disconnect(); } catch { /* best effort */ }
-        try { fs.unlinkSync(pidFile); } catch { /* may not exist */ }
-        await copilotClient.stop();
-        process.exit(1);
-      }
+    // PR-H (#132): unconditional — the V1 fallback gated on
+    // `CLAUDE_TEMPO_LIFECYCLE_V2=0` has been removed.
+
+    // Wire terminal handler BEFORE claiming so a race between claim + lease
+    // loss can't drop the event.
+    this.onTerminal((reason) => {
+      log(`V2 terminal (${reason}) — triggering cleanup`);
+      // Fire-and-forget: `cleanup` is idempotent and `signalTermination=false`
+      // because the workflow is either gone, destroyed, or about to reap us.
+      cleanup(false).catch((err) => log('terminal cleanup error:', err?.message ?? err));
+    });
+    try {
+      // PR-D: read pre-claimed attachmentId (set by the spawn activity when
+      // the workflow called `claimAttachment` before enqueueing this spawn).
+      // Forwarding it selects §9.2's renewal branch so the adapter takes
+      // over an existing lease atomically; absent on first-recruit spawn.
+      const expectedAttachmentId = process.env[ENV.ATTACHMENT_ID] || undefined;
+      handle = await this.startV2Lifecycle(expectedWorkflowId, expectedAttachmentId);
+      log(`V2 attachment claimed (attachmentId=${this.token?.attachmentId}${expectedAttachmentId ? ', renewed' : ''})`);
+    } catch (err: any) {
+      log(`ERROR: V2 claimAttachment failed: ${err?.message ?? err}`);
+      try { await session.disconnect(); } catch { /* best effort */ }
+      try { fs.unlinkSync(pidFile); } catch { /* may not exist */ }
+      await copilotClient.stop();
+      process.exit(1);
     }
 
     // Store sessionId in workflow metadata for future restart/resume.
@@ -504,10 +499,8 @@ export class CopilotSdkAttachment extends SdkAttachment {
       // detach, not a session destroy. The workflow stays in `detached` waiting
       // for the next claim (e.g. `restart`). Explicit operator termination goes
       // through the `destroy` tool / CLI, which uses `destroyUpdate` directly.
-      if (this.lifecycleV2) {
-        await this.stopV2Lifecycle('user-stop', /* graceful */ true).catch((err) =>
-          log(`stopV2Lifecycle suppressed error: ${(err as Error)?.message ?? err}`));
-      }
+      await this.stopV2Lifecycle('user-stop', /* graceful */ true).catch((err) =>
+        log(`stopV2Lifecycle suppressed error: ${(err as Error)?.message ?? err}`));
       try { await session.disconnect(); } catch { /* already disconnected */ }
       this.activeSession = undefined;
       try { fs.unlinkSync(pidFile); } catch { /* already gone */ }
@@ -663,44 +656,27 @@ export class CopilotSdkAttachment extends SdkAttachment {
         // stale detection doesn't misclassify a long tool call as dead. The V2
         // path goes through `SdkAttachment.deliver()` which makes these updates
         // synchronous (§7.1) and carries `expectedAttachmentId` so a revoked
-        // lease is observable. Legacy path keeps the pre-rebuild fire-and-forget
-        // behavior for deterministic rollback.
-        const processingMarkerId = ids[0]; // representative for the batch
-
-        let result: any;
-        let elapsed: number;
-        if (this.lifecycleV2 && this.token) {
-          // V2: SdkAttachment.deliver wraps processingStart → sendAndWait → processingEnd
-          // → markDelivered(ids). Invokes onSuperseded on lease revocation mid-turn.
-          const delivered = await this.deliver(
-            handle,
-            messages[0], // representative message
-            prompt,
-            300_000,
-            async (p, t) => session.sendAndWait({ prompt: p }, t),
-            ids, // ack all pending messages in one markDelivered signal
-          );
-          result = delivered.sdkResult;
-          elapsed = delivered.elapsedMs;
-        } else {
-          // Legacy path — unchanged from PR-A/PR-B behavior.
-          handle.executeUpdate('processingStart', { args: [{ messageId: processingMarkerId }] })
-            .catch((err: any) => log(`processingStart update failed (non-fatal): ${err?.message}`));
-
-          const t0 = Date.now();
-          try {
-            result = await session.sendAndWait({ prompt }, 300_000); // 5 min timeout
-          } finally {
-            // Always release the in-flight marker — a thrown error from sendAndWait
-            // must not leave the workflow pinned as "processing".
-            handle.executeUpdate('processingEnd', { args: [{ messageId: processingMarkerId }] })
-              .catch((err: any) => log(`processingEnd update failed (non-fatal): ${err?.message}`));
-          }
-          elapsed = Date.now() - t0;
-
-          // Mark delivered only after successful send — failed messages stay in pending queue for retry
-          await handle.signal('markDelivered', ids);
+        // lease is observable. PR-H (#132): the `CLAUDE_TEMPO_LIFECYCLE_V2=0`
+        // legacy fire-and-forget fallback has been removed.
+        if (!this.token) {
+          // Should be unreachable: `startV2Lifecycle` populates token before
+          // `run()` reaches the delivery loop. Fail loudly rather than
+          // silently fall back.
+          throw new Error('Copilot bridge invariant: attachment token missing in delivery loop');
         }
+
+        // SdkAttachment.deliver wraps processingStart → sendAndWait → processingEnd
+        // → markDelivered(ids). Invokes onSuperseded on lease revocation mid-turn.
+        const delivered = await this.deliver(
+          handle,
+          messages[0], // representative message
+          prompt,
+          300_000,
+          async (p, t) => session.sendAndWait({ prompt: p }, t),
+          ids, // ack all pending messages in one markDelivered signal
+        );
+        const result = delivered.sdkResult;
+        const elapsed = delivered.elapsedMs;
 
         log(`sendAndWait completed in ${elapsed}ms`);
         log(`Response: ${JSON.stringify(result)?.substring(0, 500)}`);

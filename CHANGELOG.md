@@ -21,9 +21,6 @@ Design reference: `docs/design/session-lifecycle-rebuild-v2.md`.
 
 ### Added
 
-- **`CLAUDE_TEMPO_LIFECYCLE_V2` feature flag** — default **ON**. Gates the V2
-  attachment-lease path; `false` keeps the legacy compat shim for rollback
-  insurance. Read once per adapter instance at construction
 - **V2 wire primitives** — `claimAttachmentUpdate` (transactional claim/renew
   with lease tracking), `heartbeatSignal` (extends `expiresAt` by the
   attachment's negotiated `leaseMs`), `forceDetachUpdate` (revoke with TOCTOU
@@ -180,26 +177,28 @@ Design reference: `docs/design/session-lifecycle-rebuild-v2.md`.
 - **`encore` TUI slash command** (`/encore`) — removed; use `/restart`
 - **`EncoreOutboxEntry`** — outbox entry type and dispatch case deleted
   alongside the `encore` activity
-
-### Deprecated
-
-- **`updateMetadata({ status: 'terminated' })`** — handler branch is
-  quarantined as a test-compat shim that routes onto §2.5 destroy semantics.
-  Prod callers have been migrated to `destroyUpdate`. Removal scheduled for
-  v0.25.1 cleanup (#132)
+- **`CLAUDE_TEMPO_LIFECYCLE_V2` feature flag (#132)** — removed. V2
+  attachment-lease is now the only path; `lifecycleV2Enabled()` helper,
+  `BaseAttachmentOptions.lifecycleV2` field, and all `if (this.lifecycleV2)`
+  branches in the Claude Code / Copilot / SDK adapters have been deleted
+- **`updateMetadata({ status: 'terminated' })` compat shim (#132)** — the
+  v0.25.1-deferred handler branch in `session.ts` is gone. Status-only
+  metadata updates stay supported for presentation fields; phase transitions
+  now exclusively go through the V2 wire surface (`destroyUpdate`,
+  `adapterExitedSignal`, `forceDetachUpdate`, `claimAttachmentUpdate`).
+  Test fixtures (~165 call sites across 13 files) migrated to
+  `executeUpdate(destroyUpdate, { args: [{}] })`
+- **`stop` MCP tool (#132)** — the v0.25.1-deferred deprecation hint tool is
+  gone. Callers use `detach` / `destroy` / `restart` directly
+- **`claude-tempo stop --terminate` CLI flag (#132)** — the `hardTerminate`
+  escape hatch is gone. Bulk `stop` always routes through `destroyUpdate`
+- **TUI `/stop` slash command (#132)** — renamed to `/destroy`, routed
+  through `TempoClient.destroy()` (V2 destroy semantics, confirmed prompt)
 - **Workflow `LEASE_MS` constant** — removed in favour of per-attachment
   `leaseMs`
 
 ### Operator notes
 
-- **Rollback via `CLAUDE_TEMPO_LIFECYCLE_V2=0`** — safe during an incident.
-  In-flight V2 sessions continue to deliver messages correctly; the legacy
-  shim translates `updateMetadata({ status })` onto the phase machine for
-  adapters that still speak the old protocol. One cosmetic caveat: a session
-  that had a V2 attachment claimed before the flag flip may show a stale
-  `ClaudeTempoAttachmentState` search attribute for up to one heartbeat window
-  (~90s) — until the next lease-expiry reap refreshes it to `detached`. No
-  message loss, no workflow state drift — reports only.
 - **Wire protocol is reset as of v0.25.0-beta.1.** Previous versions are not
   compatible. Stop all sessions, `npm i -g @vinceblank/claude-tempo@beta`,
   restart ensembles. No migration path for in-flight v0.24.x sessions.
