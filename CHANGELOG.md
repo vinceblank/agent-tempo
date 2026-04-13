@@ -43,9 +43,10 @@ Design reference: `docs/design/session-lifecycle-rebuild-v2.md`.
 - **`Attachment.leaseMs` (#119a)** — attachment carries its negotiated lease
   duration; heartbeat renewals honour it rather than a workflow-side default
 - **`SpawnOutboxEntry` discriminated union (#118)** — typed member of
-  `OutboxEntry` with the attachment-specific fields for restart/resume flows.
-  Replaces the prior double-cast `type: 'recruit'` workaround. PR-D will wire
-  the 5 fields end-to-end through the spawn activity
+  `OutboxEntry` with the 5 attachment-specific fields (`attachmentId`,
+  `attachmentRunId`, `resumeAttachment`, `sessionId?`, `adapterId`) wired
+  end-to-end through the spawn activity. Replaces the prior double-cast
+  `type: 'recruit'` workaround
 - **V2 attachment search attributes** — `ClaudeTempoAttachedHost`,
   `ClaudeTempoAttachmentId`, `ClaudeTempoAttachmentState`
 - **Adapter class registry** — `AdapterRegistry` keyed by `adapterId`; shipped
@@ -65,6 +66,19 @@ Design reference: `docs/design/session-lifecycle-rebuild-v2.md`.
   phase-agnostic §9.5.a lease-expiry reap (covers
   `attached`/`awaiting`/`processing` → `detached` with
   `reason: 'heartbeat-timeout'`)
+- **`restart` tool** — revives any non-`gone` session: graceful
+  `requestDetach` (or `forceDetach` with `force: true`), fresh
+  `claimAttachment` on the target host, optional context replay, then
+  `enqueueSpawn`. Works from any non-`gone` phase. Replaces `encore`
+  (which was limited to `stale` sessions)
+- **`detach` tool** — gracefully reaps the adapter (`requestDetach` signal
+  → `draining → detached`); workflow survives and can be `restart`ed
+- **`destroy` tool** — terminally ends the workflow (§2.5 semantics: phase →
+  `gone`, outbox abandoned, COMPLETE immediately). Irreversible
+- **`migrate` tool** — sugar for `restart --host=<h>`; sets `preferredHost`
+  and routes the spawn to `claude-tempo-{host}` task queue
+- **`attachment-info` tool** — diagnostic query for current attachment phase,
+  holder, and in-flight count (`attachmentInfo` query wrapper)
 
 ### Changed
 
@@ -78,7 +92,7 @@ Design reference: `docs/design/session-lifecycle-rebuild-v2.md`.
   abandon in-flight, COMPLETE immediately). Legacy terminate fallback retired
 - **MCP server SIGINT/SIGTERM** — closing the terminal no longer destroys the
   workflow. Graceful detach via adapter's `adapterExited` only; the session
-  stays in `detached` awaiting the next claim (e.g. encore)
+  stays in `detached` awaiting the next claim (e.g. `restart`)
 - **Copilot adapter cleanup** — drops duplicate `updateMetadata({ status:
   'terminated' })` signal. `stopV2Lifecycle(graceful=true)` already fires
   `adapterExited` for the workflow-side detach collapse
@@ -96,6 +110,16 @@ Design reference: `docs/design/session-lifecycle-rebuild-v2.md`.
 - **#120** — main-loop comment at `session.ts:1047` correctly describes the
   `updateMetadata({ status: 'terminated' })` shim as routing to
   `destroyRequested`. Resolved by commit 4 (`34dc888`) without a separate fix
+
+### Removed
+
+- **`encore` MCP tool** — retired; use `restart` instead (works on any
+  non-`gone` phase, not just `stale`)
+- **`encore` CLI command** (`claude-tempo encore`) — removed; use
+  `claude-tempo restart`
+- **`encore` TUI slash command** (`/encore`) — removed; use `/restart`
+- **`EncoreOutboxEntry`** — outbox entry type and dispatch case deleted
+  alongside the `encore` activity
 
 ### Deprecated
 
@@ -116,6 +140,9 @@ Design reference: `docs/design/session-lifecycle-rebuild-v2.md`.
   `ClaudeTempoAttachmentState` search attribute for up to one heartbeat window
   (~90s) — until the next lease-expiry reap refreshes it to `detached`. No
   message loss, no workflow state drift — reports only.
+- **Wire protocol is reset as of v0.25.0-beta.1.** Previous versions are not
+  compatible. Stop all sessions, `npm i -g @vinceblank/claude-tempo@beta`,
+  restart ensembles. No migration path for in-flight v0.24.x sessions.
 
 ---
 
