@@ -106,6 +106,17 @@ Design reference: `docs/design/session-lifecycle-rebuild-v2.md`.
 - **Workflow `LEASE_MS` constant** — removed in favour of per-attachment
   `leaseMs`
 
+### Operator notes
+
+- **Rollback via `CLAUDE_TEMPO_LIFECYCLE_V2=0`** — safe during an incident.
+  In-flight V2 sessions continue to deliver messages correctly; the legacy
+  shim translates `updateMetadata({ status })` onto the phase machine for
+  adapters that still speak the old protocol. One cosmetic caveat: a session
+  that had a V2 attachment claimed before the flag flip may show a stale
+  `ClaudeTempoAttachmentState` search attribute for up to one heartbeat window
+  (~90s) — until the next lease-expiry reap refreshes it to `detached`. No
+  message loss, no workflow state drift — reports only.
+
 ---
 
 ## [0.24.1] - Unreleased

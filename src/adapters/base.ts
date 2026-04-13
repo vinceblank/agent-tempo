@@ -94,11 +94,20 @@ export abstract class BaseAttachment {
   /**
    * Lazily populate the V2-path dependencies (Temporal client, host). Used by
    * adapters whose subprocess constructs the client inside `run()` rather
-   * than receiving it from the outer process (Copilot bridge). Safe to call
-   * more than once — each call replaces the stored references. Must be
-   * called BEFORE `startV2Lifecycle()`.
+   * than receiving it from the outer process (Copilot bridge). Must be called
+   * BEFORE `startV2Lifecycle()`.
+   *
+   * C3 (PR-C dual-QA follow-up): rejects late reconfiguration — once a claim
+   * token has been issued, swapping the client out silently would leave the
+   * pinned handle pointing at the previous connection. Future adapters that
+   * mis-order the calls fail loudly instead of drifting.
    */
   protected configureV2(client: Client, host: string): void {
+    if (this.token) {
+      throw new Error(
+        'configureV2() called after startV2Lifecycle; configuration must happen before claim',
+      );
+    }
     this.client = client;
     this.host = host;
   }
@@ -220,7 +229,11 @@ export abstract class BaseAttachment {
       this.heartbeatBackoff = 0;
     } catch (err) {
       if (this.isWorkflowGone(err)) {
-        this.fireTerminal('agent-exited');
+        // C1 (PR-C dual-QA follow-up): WorkflowNotFound means the session workflow
+        // has COMPLETEd — that's the `destroy` terminal, not `agent-exited` (which
+        // means our local process died). Matches the phase-watcher `phase === 'gone'
+        // → fireTerminal('destroy')` branch below.
+        this.fireTerminal('destroy');
         return;
       }
       this.heartbeatBackoff = Math.min(
@@ -272,7 +285,10 @@ export abstract class BaseAttachment {
       }
     } catch (err) {
       if (this.isWorkflowGone(err)) {
-        this.fireTerminal('agent-exited');
+        // C1 (PR-C dual-QA follow-up): WorkflowNotFound on the phase-watcher query
+        // has the same meaning as on the heartbeat signal — the workflow is gone,
+        // so the terminal reason is `destroy`.
+        this.fireTerminal('destroy');
         return;
       }
       this.phaseBackoff = Math.min(

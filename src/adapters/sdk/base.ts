@@ -26,7 +26,7 @@
  */
 import type { WorkflowHandle } from '@temporalio/client';
 import { BaseAttachment, type BaseAttachmentOptions } from '../base';
-import { processingStartUpdate, processingEndUpdate } from '../../workflows/signals';
+import { processingStartUpdate, processingEndUpdate, markDeliveredSignal } from '../../workflows/signals';
 import type { Message, DetachReason } from '../../types';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:sdk-adapter]', ...args);
@@ -157,9 +157,12 @@ export abstract class SdkAttachment extends BaseAttachment {
 
     // (4) Ack delivery only after the SDK turn completed cleanly. If invokeSdk
     // threw, we never reach here and messages stay pending for retry.
+    // C4 (PR-C dual-QA follow-up): use the typed signal constant so the
+    // ts-morph wire-protocol drift detector can see the reference — a string
+    // literal would be invisible to the static scan.
     const toAck = ackIds ?? [msg.id];
     try {
-      await pinned.signal('markDelivered', toAck);
+      await pinned.signal(markDeliveredSignal, toAck);
     } catch (err) {
       log(`markDelivered suppressed error: ${(err as Error)?.message ?? err}`);
     }
