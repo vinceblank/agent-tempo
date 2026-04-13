@@ -51,8 +51,12 @@ Use `/players <name>` to open a scrollable message history for any player.
 | `/broadcast <message>` | Send a message to all active players in the current ensemble |
 | `/recruit [name] [--type <type>] [--dir <path>]` | Spawn a new player (launches wizard if args omitted) |
 | `/recruit-conductor` | Recruit a conductor for the current ensemble |
-| `/stop <player>` | Stop a player session (with confirmation) |
-| `/encore <player>` | Revive a stale player session |
+| `/stop <player>` | Hard-terminate a workflow — bypasses v0.25 outbox drain. Prefer `/destroy` for ordered shutdown. |
+| `/restart <player>` | Restart a player — detaches current adapter and re-spawns. Works from any non-`gone` phase. |
+| `/detach <player>` | Gracefully detach a player's adapter — triggers draining and clean handoff. |
+| `/destroy <player>` | Terminate a session via ordered shutdown (outbox drain). Use for permanent removal. |
+| `/migrate <player> --to <hostname>` | Move a session to a different host. Requires target host to have an active daemon. |
+| `/attachment-info <player>` | Show the current attachment phase, lease expiry, and in-flight count for a player. |
 | `/disband` | Tear down the current ensemble — all sessions, scheduler, and Maestro |
 | `/players [name]` | Show detailed player info; no args opens interactive picker |
 | `/ensemble [name]` | Switch active ensemble context; no args opens picker |
@@ -69,6 +73,14 @@ Use `/players <name>` to open a scrollable message history for any player.
 | `/quit` | Exit the TUI |
 
 Interactive overlays (`/schedule`, `/gates`, `/stages`, `/worktree`) support arrow-key navigation and action keys shown in the overlay hint bar (e.g. `n=new  d=delete  esc=close`).
+
+## v0.25 Changes
+
+> **Breaking change in v0.25.0-beta.1**: The wire protocol changed. If upgrading from v0.24.x, run `claude-tempo down` and `claude-tempo up` to reinitialize before launching the TUI.
+
+- **`/encore` removed** — use `/restart` instead. Restart works from any non-`gone` attachment phase.
+- **`/stop` semantics changed** — now hard-terminates the workflow directly (bypasses outbox drain). Prefer `/destroy` for ordered shutdown.
+- **New lifecycle commands**: `/restart`, `/detach`, `/destroy`, `/migrate`, `/attachment-info` expose the v0.25 attachment state machine.
 
 ## How the TUI Gets Data
 
