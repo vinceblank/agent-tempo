@@ -79,6 +79,42 @@ Design reference: `docs/design/session-lifecycle-rebuild-v2.md`.
   and routes the spawn to `claude-tempo-{host}` task queue
 - **`attachment-info` tool** — diagnostic query for current attachment phase,
   holder, and in-flight count (`attachmentInfo` query wrapper)
+- **Daemon reconcile-on-boot** (PR-E §10.1) — `reconcileOnBoot()` in
+  `src/daemon.ts` scans for sessions whose workflow is Running but whose
+  adapter process is gone (attached-to-local with dead PID, or detached
+  with local `ClaudeTempoHostname`). Candidate set fetched via a single
+  visibility query; per-candidate `attachmentInfo` + `orphanSummary`
+  resolved before the policy decision. Shared `queryOrphanedSessions`
+  helper in `src/reconcile/orphans.ts` is reused by the CLI `restore`
+  command. `isAdapterProcessAlive` stubbed as `() => false` in
+  v0.25.0-beta.1 — conservative always-restore, with silent backoff on
+  `AttachmentConflict` per §10.6
+- **`restorePolicy` decision tree** (PR-E §10.2) — new `DaemonConfig` in
+  `~/.claude-tempo/config.json` with `restorePolicy`
+  (`"auto"`/`"prompt"`/`"never"`, default `"prompt"`),
+  `autoRestoreMaxAgeHours` (default 24), `autoRestoreEnsembles`
+  (simple-prefix allowlist, empty = all), and `cleanupPolicy`
+  (`detachedMaxAgeDays` 7, `destroyedMaxAgeDays` 30). `"never"` is the
+  effective off-switch — there is no feature flag. Zod-validated with
+  per-field defaults so partial configs merge cleanly
+- **Daemon cleanup loop** (PR-E §13.4) — `cleanupLoop()` runs every 6
+  hours (hardcoded; no config field). Two passes: detached orphans
+  exceeding `detachedMaxAgeDays` are `destroy`ed with an audit reason;
+  completed workflows exceeding `destroyedMaxAgeDays` are `terminate`d
+  to reinforce the namespace retention policy. Retention math lives in
+  exported `selectStaleDetachedOrphans()` for unit testing
+- **`claude-tempo restore` CLI** (PR-E §10.3) — new top-level command:
+  interactive picker (no args), specific `<name>`, `--all`,
+  `--from-host=<h>`, `--dry-run`. Thin wrapper over
+  `queryOrphanedSessions` + `TempoClient.restart`. `AttachmentConflict`
+  on concurrent restore logged + counted as "skipped"
+- **`claude-tempo daemon install` / `uninstall`** (PR-E §10.5) — OS
+  service registration. Linux (`systemd --user` unit copied to
+  `~/.config/systemd/user/`), macOS (launchd agent copied to
+  `~/Library/LaunchAgents/`, best-effort untested with NOTE banner),
+  Windows (Task Scheduler via `packaging/windows/install-task.ps1`,
+  current-user task at logon). **User-level only** — never requires
+  `sudo` or Administrator
 
 ### Changed
 

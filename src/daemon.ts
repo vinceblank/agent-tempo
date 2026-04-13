@@ -407,8 +407,14 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((err) => {
-  log('Fatal error:', err);
-  try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
-  process.exit(1);
-});
+// Only run `main()` when this file is invoked directly (e.g. via
+// `node dist/daemon.js` or `npx ts-node src/daemon.ts`). Tests that
+// import `reconcileOnBoot` / `cleanupLoop` / `selectStaleDetachedOrphans`
+// must not trigger the worker-bootstrap path as a module side-effect.
+if (require.main === module) {
+  main().catch((err) => {
+    log('Fatal error:', err);
+    try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+    process.exit(1);
+  });
+}
