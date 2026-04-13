@@ -86,7 +86,7 @@ describe('parseCommand', () => {
 describe('command registry', () => {
   it('isValidCommand returns true for registered commands', () => {
     expect(isValidCommand('status')).toBe(true);
-    expect(isValidCommand('stop')).toBe(true);
+    expect(isValidCommand('destroy')).toBe(true);
     expect(isValidCommand('recruit')).toBe(true);
     expect(isValidCommand('help')).toBe(true);
   });

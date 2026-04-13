@@ -13,6 +13,8 @@ import {
   markDeliveredSignal,
   recordSentMessageSignal,
   updateMetadataSignal,
+
+  destroyUpdate,
   getPartQuery,
   getMetadataQuery,
   pendingMessagesQuery,
@@ -47,7 +49,7 @@ describe('claudeSessionWorkflow', function () {
         expect(result.hostname).to.equal('test-host');
         expect(result.isConductor).to.equal(false);
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -61,7 +63,7 @@ describe('claudeSessionWorkflow', function () {
         const part = await handle.query(getPartQuery);
         expect(part).to.equal('Working on feature X');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -71,7 +73,7 @@ describe('claudeSessionWorkflow', function () {
         const handle = await startSession({
           metadata: playerMetadata({ playerId: 'shutdown-1' }),
         });
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         // Should complete without error
         await handle.result();
       });
@@ -91,7 +93,7 @@ describe('claudeSessionWorkflow', function () {
         const meta = await handle.query(getMetadataQuery);
         expect(meta.playerId).to.equal('alice');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -110,7 +112,7 @@ describe('claudeSessionWorkflow', function () {
         const part = await handle.query(getPartQuery);
         expect(part).to.equal('Refactoring auth module');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -133,7 +135,7 @@ describe('claudeSessionWorkflow', function () {
         expect(pending[0].text).to.equal('Hello from bob');
         expect(pending[0].delivered).to.equal(false);
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -157,7 +159,7 @@ describe('claudeSessionWorkflow', function () {
         expect(all).to.have.lengthOf(1);
         expect(all[0].delivered).to.equal(true);
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -178,7 +180,7 @@ describe('claudeSessionWorkflow', function () {
         expect(all[1].from).to.equal('bob');
         expect(all[2].from).to.equal('charlie');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -196,7 +198,7 @@ describe('claudeSessionWorkflow', function () {
         expect(sent[0].to).to.equal('bob');
         expect(sent[0].text).to.equal('Hi bob');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -215,7 +217,7 @@ describe('claudeSessionWorkflow', function () {
         expect(meta.isConductor).to.equal(true);
         expect(meta.playerId).to.equal('cond-1');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -236,7 +238,7 @@ describe('claudeSessionWorkflow', function () {
         expect(history[0].type).to.equal('command');
         expect((history[0].data as any).text).to.equal('Deploy to staging');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -258,7 +260,7 @@ describe('claudeSessionWorkflow', function () {
         expect(history[0].type).to.equal('report');
         expect((history[0].data as any).playerId).to.equal('alice');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -279,7 +281,7 @@ describe('claudeSessionWorkflow', function () {
         expect(pending[0].from).to.equal('maestro');
         expect(pending[0].text).to.equal('Run tests');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -301,7 +303,7 @@ describe('claudeSessionWorkflow', function () {
         expect(pending[0].from).to.equal('bob');
         expect(pending[0].text).to.include('blocker');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -323,7 +325,7 @@ describe('claudeSessionWorkflow', function () {
         const pending = await handle.query(pendingMessagesQuery);
         expect(pending).to.have.lengthOf(0);
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -358,7 +360,7 @@ describe('claudeSessionWorkflow', function () {
         expect(all).to.have.lengthOf(1);
         expect(all[0].id).to.equal('pre-msg-1');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -391,7 +393,7 @@ describe('claudeSessionWorkflow', function () {
         expect(afterDelivery).to.have.lengthOf(1);
         expect(afterDelivery[0].from).to.equal('alice');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -409,7 +411,7 @@ describe('claudeSessionWorkflow', function () {
         const meta = await handle.query(getMetadataQuery);
         expect(meta.status).to.equal('pending');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -426,7 +428,7 @@ describe('claudeSessionWorkflow', function () {
         // status is undefined in metadata but search attribute defaults to 'active'
         expect(meta.status).to.satisfy((s: string | undefined) => s === undefined || s === 'active');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -447,7 +449,7 @@ describe('claudeSessionWorkflow', function () {
         meta = await handle.query(getMetadataQuery);
         expect(meta.status).to.equal('active');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -466,7 +468,7 @@ describe('claudeSessionWorkflow', function () {
         const meta = await handle.query(getMetadataQuery);
         expect(meta.hostname).to.equal('new-host');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -486,7 +488,7 @@ describe('claudeSessionWorkflow', function () {
         expect(meta.gitBranch).to.equal('feature/new');
         expect(meta.gitRoot).to.equal('/repos/project');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -508,7 +510,7 @@ describe('claudeSessionWorkflow', function () {
         expect(meta.status).to.equal('active');
         expect(meta.gitBranch).to.equal('main');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -529,7 +531,7 @@ describe('claudeSessionWorkflow', function () {
         expect(meta.ensemble).to.equal('test-ensemble');
         expect(meta.isConductor).to.equal(false);
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -552,7 +554,7 @@ describe('claudeSessionWorkflow', function () {
         expect(meta.playerType).to.equal('tempo-soloist');
         expect(meta.playerTypeDescription).to.equal('Senior engineer — implements features and fixes bugs');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -569,7 +571,7 @@ describe('claudeSessionWorkflow', function () {
         const meta = await handle.query(getMetadataQuery);
         expect(meta.recruitedBy).to.equal('conductor');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -594,7 +596,7 @@ describe('claudeSessionWorkflow', function () {
         expect(meta.playerType).to.equal('tempo-critic');
         expect(meta.playerTypeDescription).to.equal('Code reviewer');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -617,7 +619,7 @@ describe('claudeSessionWorkflow', function () {
         expect(meta.ensemble).to.equal('test-ensemble');
         expect(meta.isConductor).to.equal(false);
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -667,7 +669,7 @@ describe('claudeSessionWorkflow', function () {
         const value = await pollSearchAttr(handle, 'ClaudeTempoPlayerType', ['tempo-soloist']);
         expect(value).to.deep.equal(['tempo-soloist']);
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -691,58 +693,16 @@ describe('claudeSessionWorkflow', function () {
         const value = await pollSearchAttr(handle, 'ClaudeTempoPlayerType', ['tempo-critic']);
         expect(value).to.deep.equal(['tempo-critic']);
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
   });
 
-  // ── Termination message (P2) ──
-
-  describe('termination message', function () {
-    it('injects a system message into allMessages when status is set to terminated', async function () {
-      await withWorker(async () => {
-        const handle = await startSession({
-          metadata: playerMetadata({ playerId: 'term-msg-test' }),
-        });
-
-        // Trigger termination
-        await handle.signal(updateMetadataSignal, {
-          status: 'terminated',
-          terminatedBy: 'conductor',
-        });
-
-        // The termination message is pushed by the signal handler before the
-        // workflow exits. Query it before awaiting result.
-        const messages = await handle.query(allMessagesQuery);
-        const termMsg = messages.find(
-          (m) => m.text.includes('terminated') && m.text.includes('conductor'),
-        );
-        expect(termMsg).to.exist;
-        expect(termMsg!.from).to.equal('conductor');
-        expect(termMsg!.delivered).to.equal(false);
-
-        await handle.result();
-      });
-    });
-
-    it('uses "system" as the sender when terminatedBy is not specified', async function () {
-      await withWorker(async () => {
-        const handle = await startSession({
-          metadata: playerMetadata({ playerId: 'term-msg-system' }),
-        });
-
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
-
-        const messages = await handle.query(allMessagesQuery);
-        const termMsg = messages.find((m) => m.text.includes('terminated'));
-        expect(termMsg).to.exist;
-        expect(termMsg!.from).to.equal('system');
-
-        await handle.result();
-      });
-    });
-  });
+  // ── Termination message (PR-H #132) ──
+  //
+  // v0.25.1 `updateMetadata({ status: 'terminated' })` compat shim is gone.
+  // Destroy-audit-message semantics are covered by destroy.test.ts.
 
   // ── isMaestro flag (P2) ──
 
@@ -772,7 +732,7 @@ describe('claudeSessionWorkflow', function () {
         const peerMsg = messages.find((m) => m.from === 'alice');
         expect(peerMsg!.isMaestro).to.be.undefined;
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -795,7 +755,7 @@ describe('claudeSessionWorkflow', function () {
         const msgs = await handle.query(allMessagesQuery);
         expect(msgs).to.be.an('array').with.lengthOf(0);
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -819,7 +779,7 @@ describe('claudeSessionWorkflow', function () {
         // timestamp must be a valid ISO string — recall's "since" filter depends on it
         expect(Date.parse(m.timestamp)).to.not.be.NaN;
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -842,7 +802,7 @@ describe('claudeSessionWorkflow', function () {
         // Timestamps are non-decreasing — recall's sort relies on valid timestamps
         expect(Date.parse(msgs[2].timestamp)).to.be.at.least(Date.parse(msgs[0].timestamp));
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -865,7 +825,7 @@ describe('claudeSessionWorkflow', function () {
         expect(all.find((m) => m.text === 'message 1')!.delivered).to.equal(true);
         expect(all.find((m) => m.text === 'message 2')!.delivered).to.equal(false);
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -888,7 +848,7 @@ describe('claudeSessionWorkflow', function () {
         expect(s).to.have.property('timestamp').that.is.a('string');
         expect(Date.parse(s.timestamp)).to.not.be.NaN;
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -920,7 +880,7 @@ describe('claudeSessionWorkflow', function () {
         // `updateMetadata({ status: 'terminated' })` shim now routes onto §2.5 destroy
         // (abandon in-flight, COMPLETE immediately). The post-terminate delivery poll
         // that the original test ran is no longer needed.
-        await handle.signal(updateMetadataSignal, { status: 'terminated', terminatedBy: 'test' });
+        await handle.executeUpdate(destroyUpdate, { args: [{ terminatedBy: 'test' }] });
         await handle.result();
       });
     });
@@ -939,7 +899,7 @@ describe('claudeSessionWorkflow', function () {
         const metadata = await handle.query(getMetadataQuery);
         expect(metadata.sessionId).to.equal(testUuid);
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
@@ -960,7 +920,7 @@ describe('claudeSessionWorkflow', function () {
         expect(updated.sessionId).to.equal(testUuid);
         expect(updated.hostname).to.equal('new-host');
 
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });

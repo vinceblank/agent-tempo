@@ -211,16 +211,12 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   let destroyRequested = destroyed;
   /** IDs of outbox entries abandoned by the last `destroy` — written to history event. */
   let destroyAbandonedIds: string[] = [];
-  // ── Quarantined (v0.25.1 cleanup): `legacyTerminateRequested` flag removed ──
-  // PR-C commit 4 retired the main-loop check + 2-min drain-wait branch that used
-  // to key off this flag. The `updateMetadata({ status: 'terminated' })` branch in
-  // the signal handler below is repurposed as a test-compat shim that routes onto
-  // the §2.5 destroy path (sets `destroyRequested`) so the ~30 legacy test fixtures
-  // keep working. Prod call sites have been migrated to the V2 verbs: `destroyUpdate`
-  // for the `stop` tool + CLI stop paths; `adapterExited` for adapter graceful exit;
-  // dropped entirely on MCP server SIGINT (user closing their terminal now detaches
-  // rather than destroying the session). See docs/design/session-lifecycle-rebuild-v2.md
-  // §2.5, §11.1. TODO(v0.25.1): remove this shim branch — tracked in #132
+  // PR-H (#132): the v0.25.1 `updateMetadata({ status: 'terminated' })` shim
+  // path is gone. `destroyRequested` is set only by the `destroyUpdate` handler
+  // below. Operator-initiated termination flows through the `destroy` verb +
+  // its outbox path; adapter graceful exit fires `adapterExited`; MCP-server
+  // SIGINT detaches without destroying. See
+  // docs/design/session-lifecycle-rebuild-v2.md §2.5, §11.1.
 
   // ── Helpers ──
 
@@ -357,49 +353,16 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       input.metadata.sessionId = update.sessionId ?? (update as any).claudeSessionId;
     }
     if (update.status != null) {
+      // PR-H (#132): the v0.25.1 `updateMetadata({ status: 'terminated' })`
+      // compat shim has been removed. Status is now a presentation-only
+      // legacy field — phase transitions go through the V2 wire surface
+      // (`destroyUpdate`, `adapterExitedSignal`, `forceDetachUpdate`,
+      // `claimAttachmentUpdate`). Setters here just keep the legacy
+      // `ClaudeTempoStatus` search attribute consistent for tools still
+      // reading it; no phase-machine side effects.
       const legacyStatus = update.status as SessionStatus;
       input.metadata.status = legacyStatus;
-      // Re-enable stale detection only when explicitly requested (server.ts sets this)
       if (update.enableStaleDetection) input.disableStaleDetection = false;
-      // ── Quarantined (v0.25.1 cleanup): legacy-status test-compat shim ──
-      // PR-C commit 4 retired the auto-claim branch for `active`/`pending` (V2
-      // adapters now call `claimAttachment` directly) and redirected the
-      // `terminated` branch onto the §2.5 destroy path so ~30 legacy test fixtures
-      // using `updateMetadata({ status: 'terminated' })` as cleanup keep working.
-      // Prod callers have been migrated to the V2 verbs (`destroyUpdate`,
-      // `adapterExited`). TODO(v0.25.1): remove this shim branch — tracked in #132
-      if (legacyStatus === 'terminated') {
-        // Redirect onto §2.5 destroy semantics: abandon in-flight outbox, phase=gone,
-        // workflow COMPLETES. No 2-min drain wait (v0.24 behaviour) — the shim is now
-        // a straight alias for the `destroy` update.
-        if (phase !== 'gone') {
-          destroyRequested = true;
-          destroyAbandonedIds = outbox
-            .filter((e) => e.status === 'pending' || e.status === 'processing')
-            .map((e) => e.id);
-          if (currentAttachment) {
-            lastAdapterMeta = { hostname: currentAttachment.hostname, adapterId: currentAttachment.adapterId };
-            lastDetachReason = 'destroy';
-            currentAttachment = null;
-          }
-          upsertSearchAttributes({
-            ClaudeTempoStatus: ['terminated'],
-            ClaudeTempoAttachedHost: [''],
-            ClaudeTempoAttachmentId: [''],
-          });
-          setPhase('gone');
-          messages.push({
-            id: uuid4(),
-            from: update.terminatedBy || 'system',
-            text: 'Your session is being terminated by ' + (update.terminatedBy || 'system') + '.',
-            timestamp: workflowNow().toISOString(),
-            delivered: false,
-          });
-        }
-      }
-      // legacyStatus === 'active' | 'pending' | 'stale' | 'blocked' → legacy status
-      // search attr only; phase machine treats these as presentation refinements of
-      // `attached` / `detached`. V2 adapters claim via `claimAttachmentUpdate`.
     }
     upsertSearchAttributes({
       ClaudeTempoEnsemble: [input.metadata.ensemble],
@@ -486,9 +449,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         );
       }
       // Canonical phase check — `phase === 'gone'` is set atomically by the
-      // destroy handler (and by the test-compat shim) before `destroyRequested`
-      // flips, so this covers all terminal-state cases consistently with the
-      // rest of the post-PR-C codebase. Replaces the pre-PR-C-commit-4
+      // `destroyUpdate` handler before `destroyRequested` flips, so this covers
+      // all terminal-state cases consistently. Replaces the pre-PR-C-commit-4
       // `destroyed || destroyRequested` compound check (#119b).
       if (phase === 'gone') {
         throw ApplicationFailure.nonRetryable(
@@ -1041,9 +1003,10 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // then run the legacy stale/blocked heuristics (shim until PR-C), then check continueAsNew.
   //
   // The only exit from this loop is `destroyRequested === true` — the workflow never
-  // COMPLETEs implicitly per design §2.2 invariant 2. Legacy callers that send
-  // `updateMetadata({ status: 'terminated' })` are shimmed into `destroyRequested`
-  // by the handler above (test-compat shim; PR-C commit 4).
+  // COMPLETEs implicitly per design §2.2 invariant 2. `destroyRequested` is set
+  // exclusively by the `destroyUpdate` handler (PR-H removed the
+  // `updateMetadata({ status: 'terminated' })` compat shim that previously also
+  // routed onto this flag).
 
   const hasPendingOutbox = () => outbox.some((e) => e.status === 'pending');
   /** Stop entries bypass pause — they must always be dispatched. */

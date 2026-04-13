@@ -12,6 +12,8 @@ import {
   submitOutboxUpdate,
   outboxQuery,
   updateMetadataSignal,
+
+  destroyUpdate,
   allSentMessagesQuery,
   getClient,
   TASK_QUEUE,
@@ -96,9 +98,9 @@ describe('hold and release (warm hold)', function () {
         expect(pending[0].text).to.not.equal('Do this task');
 
         // Cleanup
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
-        await recruitedHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await recruitedHandle.executeUpdate(destroyUpdate, { args: [{}] });
         try { await recruitedHandle.result(); } catch { /* cleanup */ }
       });
     });
@@ -145,9 +147,9 @@ describe('hold and release (warm hold)', function () {
         expect(pending[0].text).to.equal('Start working');
 
         // Cleanup
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
-        await recruitedHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await recruitedHandle.executeUpdate(destroyUpdate, { args: [{}] });
         try { await recruitedHandle.result(); } catch { /* cleanup */ }
       });
     });
@@ -214,9 +216,9 @@ describe('hold and release (warm hold)', function () {
         expect(taskMsg).to.exist;
 
         // Cleanup
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
-        await recruitedHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await recruitedHandle.executeUpdate(destroyUpdate, { args: [{}] });
         try { await recruitedHandle.result(); } catch { /* cleanup */ }
       });
     });
@@ -263,12 +265,12 @@ describe('hold and release (warm hold)', function () {
         expect(match!.text).to.equal('[release requested]');
 
         // Cleanup
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
         const recruitedHandle = getClient().workflow.getHandle(
           `claude-session-${ensemble}-release-sent-target`,
         );
-        await recruitedHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await recruitedHandle.executeUpdate(destroyUpdate, { args: [{}] });
         try { await recruitedHandle.result(); } catch { /* cleanup */ }
       });
     });
@@ -311,9 +313,9 @@ describe('hold and release (warm hold)', function () {
         expect(releaseEntry!.error).to.be.a('string').with.length.greaterThan(0);
 
         // Cleanup
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
-        await activeHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await activeHandle.executeUpdate(destroyUpdate, { args: [{}] });
         try { await activeHandle.result(); } catch { /* cleanup */ }
       });
     });
@@ -373,7 +375,7 @@ describe('hold and release (warm hold)', function () {
         expect(await heldHandle.query(outboxLockedQuery)).to.be.false;
 
         // Cleanup
-        await heldHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await heldHandle.executeUpdate(destroyUpdate, { args: [{}] });
         await heldHandle.result();
       });
     });
@@ -449,10 +451,10 @@ describe('hold and release (warm hold)', function () {
         expect(msgsB.some((m) => m.text === 'Task B')).to.be.false;
 
         // Cleanup
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
-        await handleA.signal(updateMetadataSignal, { status: 'terminated' });
-        await handleB.signal(updateMetadataSignal, { status: 'terminated' });
+        await handleA.executeUpdate(destroyUpdate, { args: [{}] });
+        await handleB.executeUpdate(destroyUpdate, { args: [{}] });
         try { await handleA.result(); } catch { /* cleanup */ }
         try { await handleB.result(); } catch { /* cleanup */ }
       });

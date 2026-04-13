@@ -15,6 +15,8 @@ import {
   playerMetadata,
   conductorMetadata,
   updateMetadataSignal,
+
+  destroyUpdate,
   allMessagesQuery,
   waitForEnsembleMembers,
 } from './helpers';
@@ -234,7 +236,7 @@ players:
         expect(content).to.include(ENSEMBLE);
 
         // Cleanup
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
         try { await handle.result(); } catch { /* shutdown */ }
       });
     });
@@ -321,7 +323,7 @@ players:
         await schedulerHandle.cancel();
         try { await schedulerHandle.result(); } catch { /* cancelled */ }
         for (const h of [conductorHandle, player1Handle, player2Handle]) {
-          await h.signal(updateMetadataSignal, { status: 'terminated' });
+          await h.executeUpdate(destroyUpdate, { args: [{}] });
           try { await h.result(); } catch { /* shutdown */ }
         }
       });

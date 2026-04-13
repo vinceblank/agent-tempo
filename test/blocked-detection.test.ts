@@ -9,6 +9,8 @@ import {
   startSession,
   playerMetadata,
   updateMetadataSignal,
+
+  destroyUpdate,
   getMetadataQuery,
   submitOutboxUpdate,
   setPartSignal,
@@ -69,7 +71,7 @@ describe('blocked session detection', function () {
       meta = await handle.query(getMetadataQuery);
       expect(meta.status).to.equal('active');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -89,7 +91,7 @@ describe('blocked session detection', function () {
       const meta: SessionMetadata = await handle.query(getMetadataQuery);
       expect(meta.status).to.equal('stale');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -105,7 +107,7 @@ describe('blocked session detection', function () {
       const meta: SessionMetadata = await handle.query(getMetadataQuery);
       expect(meta.status).to.equal('blocked');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -122,7 +124,7 @@ describe('blocked session detection', function () {
       const meta: SessionMetadata = await handle.query(getMetadataQuery);
       expect(meta.status).to.equal('blocked');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -156,7 +158,7 @@ describe('blocked session detection', function () {
       await deliverAll(handle);
       // PR-C commit 4: terminate shim routes to §2.5 destroy semantics (abandon in-flight,
       // complete immediately). Second deliverAll removed — workflow is already gone.
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -179,7 +181,7 @@ describe('blocked session detection', function () {
       await deliverAll(handle);
       // PR-C commit 4: terminate shim routes to §2.5 destroy semantics (abandon in-flight,
       // complete immediately). Second deliverAll removed — workflow is already gone.
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -203,7 +205,7 @@ describe('blocked session detection', function () {
       await deliverAll(handle);
       // PR-C commit 4: terminate shim routes to §2.5 destroy semantics (abandon in-flight,
       // complete immediately). Second deliverAll removed — workflow is already gone.
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -227,7 +229,7 @@ describe('blocked session detection', function () {
       const meta: SessionMetadata = await handle.query(getMetadataQuery);
       expect(meta.status).to.not.equal('blocked');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       // PR-C commit 4: terminate → §2.5 destroy; second deliverAll removed.
       await handle.result();
     });
@@ -253,7 +255,7 @@ describe('blocked session detection', function () {
       meta = await handle.query(getMetadataQuery);
       expect(meta.status).to.equal('active');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -277,7 +279,7 @@ describe('blocked session detection', function () {
       await deliverAll(handle);
       // PR-C commit 4: terminate shim routes to §2.5 destroy semantics (abandon in-flight,
       // complete immediately). Second deliverAll removed — workflow is already gone.
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });

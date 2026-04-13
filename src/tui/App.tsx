@@ -290,20 +290,23 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       return;
     }
 
-    // Stop confirmation mode
+    // Destroy confirmation mode (PR-H: was `/stop`; now `/destroy` and routed
+    // through TempoClient.destroy() — the V2 outbox path — instead of the
+    // legacy raw-Temporal `terminatePlayer` shim.
     if (s.confirmingStop) {
       if (input === 'y' || input === 'Y') {
         const target = s.confirmingStop;
+        const reason = s.confirmingStopReason;
         dispatch({ type: 'CANCEL_STOP' });
         (async () => {
           try {
             const ensembles = await api.discoverEnsembles();
             for (const ens of ensembles) {
               try {
-                await api.terminatePlayer(ens.name, target);
+                await api.destroy(ens.name, target, reason);
                 dispatch({
                   type: 'COMMIT_STATIC',
-                  item: { id: nextStaticId(), type: 'info', content: `\u2714 Stopped player: ${target}`, timestamp: Date.now() },
+                  item: { id: nextStaticId(), type: 'info', content: `\u2716 Destroyed ${target}${reason ? ` (${reason})` : ''}.`, timestamp: Date.now() },
                 });
                 return;
               } catch {
@@ -317,7 +320,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           } catch (err) {
             dispatch({
               type: 'COMMIT_STATIC',
-              item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to stop ${target}: ${err}`, timestamp: Date.now() },
+              item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to destroy ${target}: ${err}`, timestamp: Date.now() },
             });
           }
         })();
@@ -325,7 +328,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         dispatch({ type: 'CANCEL_STOP' });
         dispatch({
           type: 'COMMIT_STATIC',
-          item: { id: nextStaticId(), type: 'info', content: 'Stop cancelled.', timestamp: Date.now() },
+          item: { id: nextStaticId(), type: 'info', content: 'Destroy cancelled.', timestamp: Date.now() },
         });
       }
       return;
@@ -423,7 +426,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   // ── Hint text for prompt area ──
   const promptHints = useMemo(() => {
     if (state.confirmingStop) {
-      return `Stop ${state.confirmingStop}? This will terminate their session. [y/N]`;
+      return `Destroy ${state.confirmingStop}? This will terminally end their session workflow. [y/N]`;
     }
     if (state.confirmingDisband) {
       return `Disband ensemble "${state.confirmingDisband}"? All sessions will be terminated. [y/N]`;

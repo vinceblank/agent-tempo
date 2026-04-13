@@ -1420,8 +1420,6 @@ interface StopOpts extends CliOverrides {
   ensemble?: string;
   /** Stop every session across all ensembles. */
   all?: boolean;
-  /** Use hard terminate instead of destroy (escape hatch — destroy is preferred). */
-  hardTerminate?: boolean;
 }
 
 export async function stop(opts: StopOpts) {
@@ -1451,7 +1449,7 @@ export async function stop(opts: StopOpts) {
 
   if (opts.name) {
     // Stop a specific player by name (optionally scoped to ensemble)
-    await stopByName(client, opts.name, config, opts.ensemble, opts.hardTerminate);
+    await stopByName(client, opts.name, config, opts.ensemble);
   } else {
     // Stop multiple sessions (--ensemble or --all)
     const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
@@ -1471,18 +1469,12 @@ export async function stop(opts: StopOpts) {
           }
         }
 
-        if (opts.hardTerminate) {
-          // Escape hatch: raw terminate signal for stuck workflows. Post-PR-C the
-          // workflow handler redirects this onto §2.5 destroy semantics via the
-          // test-compat shim (see session.ts `legacyStatus === 'terminated'`).
-          await handle.signal(updateMetadataSignal, { status: 'terminated' });
-        } else {
-          // PR-C commit 4: V2 `destroy` update — sets isDestroyed so adapter recovery
-          // (bridge recreateSession) sees "no" and exits cleanly instead of zombie-
-          // rejoining (#102). Legacy terminate fallback retired — every workflow
-          // running at v0.25+ supports `destroy` (landed in PR-A).
-          await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'stop via CLI' }] });
-        }
+        // V2 `destroy` update — sets isDestroyed so adapter recovery (bridge
+        // recreateSession) sees "no" and exits cleanly instead of zombie-
+        // rejoining (#102). PR-H (#132) removed the `hardTerminate` escape
+        // hatch and the underlying `updateMetadata({status:'terminated'})`
+        // shim it relied on; every v0.25+ workflow supports `destroy` natively.
+        await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'stop via CLI' }] });
         stopped++;
         out.log(`  ${out.dim('stopped')} ${wf.workflowId}`);
       } catch {
@@ -1507,7 +1499,7 @@ export async function stop(opts: StopOpts) {
   await connection.close();
 }
 
-async function stopByName(client: Client, name: string, config: Config, ensemble?: string, hardTerminate = false) {
+async function stopByName(client: Client, name: string, config: Config, ensemble?: string) {
   // Find the workflow by player name using metadata queries (not search attributes).
   const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
   let found = false;
@@ -1546,18 +1538,12 @@ async function stopByName(client: Client, name: string, config: Config, ensemble
       }
     }
 
-    // Send destroy (preferred) or hard terminate (escape hatch).
-    // Destroy sets isDestroyed so adapter recovery (e.g. copilot-bridge's
-    // recreateSession) stops instead of rejoining as a zombie (#102). PR-C commit 4
-    // dropped the legacy terminate fallback — every v0.25+ workflow supports destroy.
+    // V2 `destroy` update — sets isDestroyed so adapter recovery (e.g.
+    // copilot-bridge's recreateSession) stops instead of rejoining as a
+    // zombie (#102). PR-H (#132) removed the `hardTerminate` escape hatch
+    // and the underlying `updateMetadata({status:'terminated'})` shim.
     try {
-      if (hardTerminate) {
-        // Escape hatch: raw terminate signal for stuck workflows. The workflow
-        // handler redirects this onto §2.5 destroy semantics via the test-compat shim.
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
-      } else {
-        await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'stop via CLI' }] });
-      }
+      await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'stop via CLI' }] });
       out.success(`Stopped "${name}"`);
     } catch {
       out.warn(`Could not signal "${name}" — it may have already exited`);

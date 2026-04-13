@@ -18,7 +18,6 @@ import { registerSetPartTool } from './tools/set-part';
 import { registerListenTool } from './tools/listen';
 import { registerRecruitTool } from './tools/recruit';
 import { registerReportTool } from './tools/report';
-import { registerStopTool } from './tools/stop';
 import { registerSetNameTool } from './tools/set-name';
 import { registerScheduleTool } from './tools/schedule';
 import { registerUnscheduleTool } from './tools/unschedule';
@@ -273,7 +272,6 @@ async function main() {
   registerListenTool(mcpServer, handle);
   registerRecruitTool(mcpServer, client, config, getPlayerId, handle, isBridgeMode ? 'copilot' : 'claude');
   registerReportTool(mcpServer, handle);
-  registerStopTool(mcpServer, client, config, getPlayerId, handle);
   registerScheduleTool(mcpServer, client, config, getPlayerId);
   registerUnscheduleTool(mcpServer, client, config);
   registerSchedulesTool(mcpServer, client, config);
@@ -314,14 +312,11 @@ async function main() {
   // and must NOT also poll (would race on markDelivered, and SDK adapters don't
   // understand notifications/claude/channel).
   //
-  // PR-B (v0.25 rebuild step 2/7): dispatch by adapterClass from the registry
-  // instead of hardcoding the isBridgeMode check. Behavior is identical for the
-  // current two adapters — PR-C rewires the body to use the attachment wire
-  // protocol.
-  // PR-C commit 2: pass client + host so the adapter can claim the attachment
-  // (V2 path). Constructor reads `CLAUDE_TEMPO_LIFECYCLE_V2` once and commits to
-  // either the V2 lifecycle or the legacy compat-shim path for the lifetime of
-  // the attachment — see `InteractiveAttachment` jsdoc.
+  // Dispatch by adapterClass from the registry (PR-B). Pass client + host so
+  // the adapter can claim the attachment — `InteractiveAttachment` runs the
+  // V2 attachment-lease lifecycle for the attachment's lifetime. PR-H (#132)
+  // removed the `CLAUDE_TEMPO_LIFECYCLE_V2=0` legacy-shim branch; V2 is the
+  // only path.
   const stopPoller = adapterDescriptor.adapterClass === 'sdk'
     ? () => {} // no-op — SDK adapters handle delivery in their own subprocess
     : new InteractiveAttachment({ client, host: os.hostname() }).start(handle, async (messages) => {

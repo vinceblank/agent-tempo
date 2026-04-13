@@ -134,19 +134,33 @@ async function handlePlayer(
   }
 }
 
-/** /stop <player> — request stop confirmation. */
-async function handleStop(
+/**
+ * /destroy <player> [reason] — request terminal-destroy confirmation.
+ *
+ * PR-H (#132): consolidates the legacy `/stop` slash command (which routed
+ * through `terminatePlayer` — raw Temporal terminate) and the no-confirm
+ * `/destroy` shipped in PR-D into one flow. The slash command always
+ * prompts y/N first; the yes-confirm handler in App.tsx routes through
+ * `TempoClient.destroy()` (V2 `destroyUpdate` via the outbox path) so the
+ * adapter's `isDestroyed` query sees the terminal state cleanly.
+ *
+ * The optional `reason` is concatenated from args[1..] and stashed on the
+ * action for the confirmation handler to forward to `destroy(reason)`.
+ */
+async function handleDestroy(
   args: string[],
   dispatch: (action: TuiAction) => void,
 ): Promise<void> {
   if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /stop <player>');
+    commitStatic(dispatch, 'error', 'Usage: /destroy <player> [reason]');
     return;
   }
 
   const target = args[0];
-  // Enter confirmation mode — App.tsx handles the y/n input
-  dispatch({ type: 'CONFIRM_STOP', player: target });
+  const reason = args.slice(1).join(' ') || undefined;
+  // Enter confirmation mode — App.tsx handles the y/n input + the
+  // TempoClient.destroy() call in the yes branch.
+  dispatch({ type: 'CONFIRM_STOP', player: target, ...(reason !== undefined ? { reason } : {}) });
 }
 
 /** /disband — tear down the current ensemble (with confirmation). */
@@ -321,30 +335,10 @@ async function handleDetach(
   }
 }
 
-/** /destroy <player> [reason] — terminally end the workflow. */
-async function handleDestroy(
-  args: string[],
-  dispatch: (action: TuiAction) => void,
-  api: TempoClient,
-  ctx: CommandContext,
-): Promise<void> {
-  if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /destroy <player> [reason]');
-    return;
-  }
-  const ensemble = requireEnsemble(dispatch, ctx);
-  if (!ensemble) return;
-
-  const target = args[0];
-  const reason = args.slice(1).join(' ') || undefined;
-
-  try {
-    await api.destroy(ensemble, target, reason);
-    commitStatic(dispatch, 'info', `\u2716 ${target} destroyed${reason ? ` (${reason})` : ''}.`);
-  } catch (err) {
-    commitStatic(dispatch, 'error', `Destroy failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
+// PR-H (#132): the no-confirmation `handleDestroy` shipped in PR-D was
+// consolidated into the confirmed-prompt flow at handleDestroy near line
+// 138 (formerly the `/stop` handler). One `/destroy` slash command, one
+// y/N confirmation, one TempoClient.destroy() call.
 
 /** /migrate <player> <host> [--fresh] [--force] — restart on a different host. */
 async function handleMigrate(
@@ -1108,11 +1102,8 @@ export const COMMANDS: Record<string, CommandDef> = {
     usage: '/recruit <name> [--type <type>] [--dir <path>]',
     handler: handleRecruit,
   },
-  stop: {
-    description: 'Stop a player session',
-    usage: '/stop <player>',
-    handler: handleStop,
-  },
+  // PR-H (#132): `/stop` removed. Use `/destroy` (terminal, prompts y/N)
+  // or `/detach` (graceful reap; future addition).
   disband: {
     description: 'Tear down the current ensemble (all sessions + scheduler)',
     usage: '/disband',
@@ -1134,8 +1125,8 @@ export const COMMANDS: Record<string, CommandDef> = {
     handler: handleDetach,
   },
   destroy: {
-    description: 'Terminally end a session workflow',
-    usage: '/destroy <player> [reason...]',
+    description: 'Terminally end a session workflow (prompts y/N first)',
+    usage: '/destroy <player> [reason]',
     handler: handleDestroy,
   },
   migrate: {
@@ -1285,7 +1276,8 @@ export function resolveHelpTarget(raw: string): { name: string; def: CommandDef 
 }
 
 /** Commands that take a player name as their first parameter. */
-export const PLAYER_PARAM_COMMANDS = new Set(['stop', 'worktree', 'restart', 'detach', 'destroy', 'attachment-info']);
+// PR-H (#132): `stop` removed from this set; `/destroy` covers the slot.
+export const PLAYER_PARAM_COMMANDS = new Set(['worktree', 'restart', 'detach', 'destroy', 'attachment-info']);
 
 /** Commands with hardcoded subcommands (shown in autocomplete). */
 export const SUBCOMMAND_MAP: Record<string, string[]> = {

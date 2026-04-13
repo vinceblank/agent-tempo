@@ -10,6 +10,8 @@ import {
   conductorMetadata,
   playerMetadata,
   updateMetadataSignal,
+
+  destroyUpdate,
   setWorktreeSignal,
   removeWorktreeSignal,
   worktreesQuery,
@@ -126,7 +128,7 @@ describe('worktree workflow state', function () {
       expect(worktrees[0].gitRoot).to.equal('/repos/project');
       expect(worktrees[0].createdBy).to.equal('conductor');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -154,7 +156,7 @@ describe('worktree workflow state', function () {
       worktrees = await handle.query(worktreesQuery);
       expect(worktrees).to.have.length(0);
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -189,7 +191,7 @@ describe('worktree workflow state', function () {
       expect(worktrees[0].path).to.equal('/tmp/wt/dev-new');
       expect(worktrees[0].branch).to.equal('ens/dev-v2');
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -207,7 +209,7 @@ describe('worktree workflow state', function () {
         expect(err.message).to.include('worktrees');
       }
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -239,7 +241,7 @@ describe('worktree workflow state', function () {
       expect(worktrees).to.have.length(2);
       expect(worktrees.map((w) => w.player)).to.include.members(['alice', 'bob']);
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });
@@ -256,7 +258,7 @@ describe('worktree workflow state', function () {
       const worktrees: WorktreeEntry[] = await handle.query(worktreesQuery);
       expect(worktrees).to.have.length(0);
 
-      await handle.signal(updateMetadataSignal, { status: 'terminated' });
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
     });
   });

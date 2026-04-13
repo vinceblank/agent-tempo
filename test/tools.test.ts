@@ -24,7 +24,6 @@ import type { Config } from '../src/config';
 import type { SessionMetadata, SessionStatus } from '../src/types';
 import { registerRecruitTool } from '../src/tools/recruit';
 import { registerScheduleTool } from '../src/tools/schedule';
-import { registerStopTool } from '../src/tools/stop';
 import { registerLoadLineupTool } from '../src/tools/load-lineup';
 import { registerBroadcastTool } from '../src/tools/broadcast';
 import { registerRecallTool } from '../src/tools/recall';
@@ -311,23 +310,9 @@ describe('schedule tool validation', function () {
 });
 
 // ─────────────────────────────────────────────
-// stop tool
+// stop tool — removed in PR-H (#132). The v0.25.1 deprecation shim is gone;
+// callers now use detach/destroy/restart directly.
 // ─────────────────────────────────────────────
-
-describe('stop tool (deprecation shim, PR-D)', function () {
-  it('always returns isError with hints to detach/destroy/restart', async function () {
-    const call = extractHandler((server) =>
-      registerStopTool(server, makeTestClient(), testConfig, getPlayerId, fakeHandle),
-    );
-    const result = await call({ playerId: 'anyone' });
-    expect(result.isError).to.be.true;
-    const text = result.content[0].text;
-    expect(text).to.include('deprecated');
-    expect(text).to.include('detach');
-    expect(text).to.include('destroy');
-    expect(text).to.include('restart');
-  });
-});
 
 describe('recruit tool force-terminate existing', function () {
   it('force-terminates existing session before recruiting', async function () {

@@ -1,16 +1,14 @@
 /**
  * Base adapter infrastructure.
  *
- * Skeleton landed in PR-B (v0.25 rebuild step 2/7). PR-C commit 2 extends this with
- * the V2 attachment lifecycle machinery — `claimAttachment`, heartbeat loop,
+ * Owns the V2 attachment lifecycle — `claimAttachment`, heartbeat loop,
  * `attachmentInfo` phase watcher, `WorkflowNotFound` terminal handling, and
- * graceful-detach orchestration. The machinery is gated behind
- * `CLAUDE_TEMPO_LIFECYCLE_V2`; when the flag is off, adapters fall back to the
- * PR-A compat shim path (`updateMetadata({ status })`, legacy `startMessagePoller`)
- * and none of the V2 code runs.
+ * graceful-detach orchestration. PR-H (#132) removed the
+ * `CLAUDE_TEMPO_LIFECYCLE_V2=0` escape hatch and its PR-A compat shim path;
+ * V2 is now the only path.
  *
  * The `SdkAttachment` intermediate class (processing-signal pairing, split-brain
- * cancellation per §9.3) lands in commit 3 alongside the Copilot adapter migration.
+ * cancellation per §9.3) lives in `src/adapters/sdk/base.ts`.
  *
  * Design reference: docs/design/session-lifecycle-rebuild-v2.md §§3.2, 4.3, 9.1–9.5.
  */
@@ -29,8 +27,6 @@ import type {
   AttachmentPhase,
   DetachReason,
 } from '../types';
-import { lifecycleV2Enabled } from '../config';
-
 const log = (...args: unknown[]) => console.error('[claude-tempo:adapter]', ...args);
 
 /** Backoff tuning for the heartbeat + phase-watcher loops on transient errors. */
@@ -39,32 +35,29 @@ const LOOP_BACKOFF_MAX_MS = 30_000;
 
 /** Options shared by every adapter extending `BaseAttachment`. */
 export interface BaseAttachmentOptions {
-  /** Temporal client — required for V2 path (claim + pin runId). Optional while legacy path is used. */
+  /** Temporal client — required for V2 attachment claim + runId pinning. */
   client?: Client;
   /** Hostname to announce in `claimAttachment`. Defaults to `os.hostname()` when omitted. */
   host?: string;
-  /** Override the `CLAUDE_TEMPO_LIFECYCLE_V2` flag read. Primarily for tests. */
-  lifecycleV2?: boolean;
 }
 
 /**
  * Abstract base class for session adapters.
  *
- * Today concrete adapters (`InteractiveAttachment`, `CopilotSdkAttachment`) still own
- * their own top-level delivery loop. The V2 path this class now owns claims the
- * attachment, heartbeats on `descriptor.heartbeatMs`, and watches the workflow's
- * phase. Subclasses opt in to that machinery by calling `startV2Lifecycle()` before
- * their delivery loop and `stopV2Lifecycle()` on teardown.
+ * Concrete adapters (`InteractiveAttachment`, `CopilotSdkAttachment`) own
+ * their own top-level delivery loop. The base class owns the V2 attachment
+ * lifecycle: claim, heartbeat at `descriptor.heartbeatMs`, phase-watcher
+ * loop, `WorkflowGone` classifier, graceful `adapterExited` on teardown.
+ * Subclasses must call `startV2Lifecycle()` before their delivery loop and
+ * `stopV2Lifecycle()` on shutdown.
  *
- * **Flag-at-the-boundary invariant.** `lifecycleV2` is read once at construction and
- * never re-evaluated. Subclasses branch on `this.lifecycleV2` at the top of `start()`
- * and commit to a single path for the lifetime of the attachment. Mixed V1/V2 state
- * (e.g. V2 heartbeat alongside a legacy poll-only subclass path) is a defect.
+ * PR-H (#132): the `CLAUDE_TEMPO_LIFECYCLE_V2` flag and the legacy V1 poll-
+ * only path it gated have been removed. The V2 attachment-lease path is
+ * now the only path.
  */
 export abstract class BaseAttachment {
   abstract readonly descriptor: AdapterDescriptor;
 
-  protected readonly lifecycleV2: boolean;
   /** Populated at construction for InteractiveAttachment; lazily via `configureV2()` for subprocess adapters (Copilot bridge). */
   protected client?: Client;
   protected host?: string;
@@ -86,7 +79,6 @@ export abstract class BaseAttachment {
   private readonly terminalListeners: Array<(reason: DetachReason) => void> = [];
 
   constructor(options: BaseAttachmentOptions = {}) {
-    this.lifecycleV2 = options.lifecycleV2 ?? lifecycleV2Enabled();
     this.client = options.client;
     this.host = options.host;
   }
@@ -161,9 +153,6 @@ export abstract class BaseAttachment {
     workflowId: string,
     expectedAttachmentId?: string,
   ): Promise<WorkflowHandle> {
-    if (!this.lifecycleV2) {
-      throw new Error('startV2Lifecycle called with lifecycleV2=false — guard at subclass boundary');
-    }
     if (!this.client) {
       throw new Error('BaseAttachment V2 path requires a Temporal client — pass via constructor options');
     }

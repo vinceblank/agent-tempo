@@ -10,6 +10,8 @@ import {
   startSession,
   playerMetadata,
   updateMetadataSignal,
+
+  destroyUpdate,
   allMessagesQuery,
   withWorkerAndActivities,
 } from './helpers';
@@ -297,7 +299,7 @@ describe('claudeSchedulerWorkflow', function () {
         expect(schedules).to.have.lengthOf(0);
 
         // Cleanup
-        await targetHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await targetHandle.executeUpdate(destroyUpdate, { args: [{}] });
         await targetHandle.result();
         // Scheduler should self-terminate since empty
         await schedulerHandle.cancel();
@@ -341,7 +343,7 @@ describe('claudeSchedulerWorkflow', function () {
         expect(remaining).to.have.lengthOf(0);
 
         // Cleanup
-        await targetHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await targetHandle.executeUpdate(destroyUpdate, { args: [{}] });
         await targetHandle.result();
         await schedulerHandle.cancel();
         try { await schedulerHandle.result(); } catch { /* cancelled */ }
@@ -377,7 +379,7 @@ describe('claudeSchedulerWorkflow', function () {
         expect(scheduled[0].text).to.include('[scheduled: meta-test]');
         expect(scheduled[0].from).to.equal('meta-creator');
 
-        await targetHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await targetHandle.executeUpdate(destroyUpdate, { args: [{}] });
         await targetHandle.result();
         await schedulerHandle.cancel();
         try { await schedulerHandle.result(); } catch { /* cancelled */ }
@@ -419,7 +421,7 @@ describe('claudeSchedulerWorkflow', function () {
         const remaining = schedules.filter((s: any) => s.name === 'cron-test');
         expect(remaining).to.have.lengthOf(0);
 
-        await targetHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await targetHandle.executeUpdate(destroyUpdate, { args: [{}] });
         await targetHandle.result();
         await schedulerHandle.cancel();
         try { await schedulerHandle.result(); } catch { /* cancelled */ }
@@ -483,7 +485,7 @@ describe('claudeSchedulerWorkflow', function () {
         const scheduled = messages.filter((m: any) => m.text.includes('[scheduled: cron-until-test]'));
         expect(scheduled.length).to.be.greaterThanOrEqual(1);
 
-        await targetHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await targetHandle.executeUpdate(destroyUpdate, { args: [{}] });
         await targetHandle.result();
         await schedulerHandle.cancel();
         try { await schedulerHandle.result(); } catch { /* cancelled */ }
@@ -524,7 +526,7 @@ describe('claudeSchedulerWorkflow', function () {
         const remaining = schedules.filter((s: any) => s.name === 'at-every-test');
         expect(remaining).to.have.lengthOf(0);
 
-        await targetHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await targetHandle.executeUpdate(destroyUpdate, { args: [{}] });
         await targetHandle.result();
         await schedulerHandle.cancel();
         try { await schedulerHandle.result(); } catch { /* cancelled */ }
@@ -574,7 +576,7 @@ describe('claudeSchedulerWorkflow', function () {
         expect(remaining).to.have.lengthOf(0);
 
         // Cleanup
-        await targetHandle.signal(updateMetadataSignal, { status: 'terminated' });
+        await targetHandle.executeUpdate(destroyUpdate, { args: [{}] });
         await targetHandle.result();
         await schedulerHandle.cancel();
         try { await schedulerHandle.result(); } catch { /* cancelled */ }
