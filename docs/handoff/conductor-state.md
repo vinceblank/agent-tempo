@@ -1,7 +1,7 @@
 # Conductor State Handoff
 
 > **Audience:** Incoming conductor resuming orchestration of the claude-tempo v0.25 session-lifecycle rebuild.
-> **Last updated:** 2026-04-13 by tempo-docs
+> **Last updated:** 2026-04-13 by tempo-docs (PR-E/F scope filled from engineer brief)
 > **Status:** PR-A, PR-B, PR-C, PR-G merged. PR-D/E/F remaining. Beta release pending PR-F.
 
 ---
@@ -29,11 +29,9 @@ See [CLAUDE.md](../../CLAUDE.md) for full project context and [docs/WIRE-PROTOCO
 
 | PR | Label | Scope |
 |----|-------|-------|
-| **PR-D** | encore retirement + SpawnOutboxEntry wiring | See [`docs/handoff/pr-d-engineer-brief.md`](pr-d-engineer-brief.md) for full spec. |
-| **PR-E** | _(pending engineer brief)_ | See [`docs/handoff/pr-d-engineer-brief.md`](pr-d-engineer-brief.md) — tempo-eng brief covers E/F scope. |
-| **PR-F** | _(pending engineer brief)_ | Same as above. PR-F is the last ladder step before beta tag. |
-
-> **Note:** PR-E and PR-F scope will be filled here once tempo-eng delivers the full brief. Do not infer scope — read the brief.
+| **PR-D** | encore retirement + SpawnOutboxEntry wiring | `performEncore` migrated to `forceDetach` + fresh `claimAttachment` pair (retiring `checkAndSetStatusUpdate`). `SpawnOutboxEntry` 5 attachment fields (`attachmentId`, `attachmentRunId`, `resumeAttachment`, `sessionId?`, `adapterId`) forwarded through workflow dispatcher → `spawnProcess` activity → `BaseAttachment.startV2Lifecycle`. Also owns `restart` verb wiring (§8.1). `migrate` verb scope TBD — ask conductor before designing. Wire-protocol removal: `checkAndSetStatusUpdate` deleted, `docs/WIRE-PROTOCOL.md` updated same commit. |
+| **PR-E** | Daemon restore / reconcile-on-boot | `claude-tempo daemon` gains a reconcile-on-boot pass: queries `ClaudeTempoAttachmentState=detached` for orphaned sessions, reads `orphanSummary` query, applies `restorePolicy` decision tree (design §10.2). Sessions in `detached` with `preferredHost` matching local host auto-restored via fresh `spawnProcess` → `claimAttachment`. New CLI `restore` command (§10.3) for manual operator intervention. Depends on PR-D's `restart` verb. |
+| **PR-F** | _(scope unknown — ask conductor before planning)_ | Engineer brief does not cover PR-F. Best guess: polish + stabilization, or v0.25.0 GA cut (flag removal + shim cleanup). Confirm scope with conductor. |
 
 ---
 
