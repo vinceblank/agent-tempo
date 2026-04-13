@@ -9,7 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.25.0-beta.1] - Unreleased
+## [0.25.0-beta.1] - 2026-04-13
+
+> **Beta release.** This is the consolidated v0.25 session-lifecycle-rebuild beta.
+> All v0.25 PRs (A/B/C/D/E/F/G/H) are included. Please validate before GA.
+>
+> **Install:** `npm i -g claude-tempo@beta`
+> **Rollback:** `npm i -g claude-tempo@latest` (returns to v0.24.x)
+> **Report issues:** https://github.com/vinceblank/claude-tempo/issues
+>
+> **Known limitations:**
+> - Windows test environment: `npm test` shows 22 failures due to `TestWorkflowEnvironment.createLocal` EACCES on ephemeral-server startup. Tracked in [#150](https://github.com/vinceblank/claude-tempo/issues/150). Does NOT affect runtime correctness — CI (Ubuntu) passes clean.
+> - Multi-host integration tests are skipped by default (`INTEGRATION_MULTI_HOST=1` to opt in with a running docker-compose harness).
+> - `CLAUDE_TEMPO_LIFECYCLE_V2` environment variable no longer exists — V2 is the only code path. If you set it, it's ignored.
+>
+> **2-week soak target:** GA as `v0.25.0` after validation.
 
 The v0.25 session-lifecycle rebuild. Complete adapter attachment-lease model,
 7-phase session state machine, explicit wire primitives for claim / heartbeat
@@ -200,17 +214,8 @@ Design reference: `docs/design/session-lifecycle-rebuild-v2.md`.
 ### Operator notes
 
 - **Wire protocol is reset as of v0.25.0-beta.1.** Previous versions are not
-  compatible. Stop all sessions, `npm i -g @vinceblank/claude-tempo@beta`,
+  compatible. Stop all sessions, `npm i -g claude-tempo@beta`,
   restart ensembles. No migration path for in-flight v0.24.x sessions.
-
----
-
-## [0.24.1] - Unreleased
-
-### Fixed
-
-- **#99** — long tool calls no longer trigger false-stale: new `processingStart` / `processingEnd` Temporal updates (with required `messageId` for idempotency) suppress stale detection while an adapter is mid-`sendAndWait`; 15-minute safety timer ejects wedged entries
-- **#102** — graceful stop no longer resurrects sessions: new `destroy` update + `isDestroyed` query, with runId pinning in the Copilot bridge so a destroyed-then-recreated workflow cannot silently attach to the new run
 
 ---
 
