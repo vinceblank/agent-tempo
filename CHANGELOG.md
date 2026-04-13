@@ -115,6 +115,30 @@ Design reference: `docs/design/session-lifecycle-rebuild-v2.md`.
   Windows (Task Scheduler via `packaging/windows/install-task.ps1`,
   current-user task at logon). **User-level only** — never requires
   `sudo` or Administrator
+- **Cross-host `restart` / `migrate`** (PR-F design §16, §16.5 Option B)
+  — the `restart` MCP tool accepts an optional `host` parameter that
+  routes the downstream `spawnProcess` activity to the per-host
+  `claude-tempo-{host}` task queue. The `migrate` tool is sugar over
+  `restart --host=<h>`. Both verbs surface a `confirmStealFromHost`
+  arg and a CLI `--yes-steal=<hostname>` flag; cross-host force-restart
+  requires the flag to match the current attachment's hostname exactly
+  (client-side guard; no interactive prompts per §8 answer 5).
+  `claude-tempo migrate <name> --to <hostname>` is the operator-friendly
+  surface with copy-paste-friendly re-run errors
+- **Daemon `reconcileOnBoot` cross-host filter** (PR-F §8 answer 2) —
+  orphans whose `preferredHost` differs from the local hostname are
+  logged + skipped rather than auto-restored. The remote host's daemon
+  is the authoritative restorer for its own sessions. Proactive
+  cross-daemon notification of orphans is a v0.26 follow-up (tracked
+  as a separate issue). Log line format includes both hostnames for
+  observability: `skipping restore for {workflowId}: preferredHost={X}, localHost={Y}`
+- **TUI cross-host indicator** (PR-F §8 answer 3) — `ChatView` and
+  `PlayerDetailView` surface the attached host when a session is on a
+  remote machine: status line gains a `{host} · ` prefix in amber
+  (`THEME.accent`) for remote sessions; local sessions omit the host
+  entirely to reduce noise for the common case. Zero new Yoga nodes —
+  the host segment is composed inline in the existing `<Text>` tree as
+  a nested virtual text node per CLAUDE.md TUI Performance rules
 
 ### Changed
 
