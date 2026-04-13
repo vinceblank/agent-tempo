@@ -75,6 +75,9 @@ describe('attachment lease (v0.25 PR-A)', function () {
         // The extension in §2.3 sets this to now + HEARTBEAT_INTERVAL_MS (30s by default);
         // pick a safely-in-the-future value.
         expiresAt: new Date(now + 30_000).toISOString(),
+        // #119a: leaseMs is the caller-negotiated renewal window — each heartbeat
+        // extends expiresAt by this amount. 60s matches a typical interactive-adapter lease.
+        leaseMs: 60_000,
         runId: 'pre-can-run',
       };
 

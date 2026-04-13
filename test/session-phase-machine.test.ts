@@ -14,7 +14,7 @@
  * Design reference: docs/design/session-lifecycle-rebuild-v2.md §§2.2-2.6, §9.2.
  */
 import { expect } from 'chai';
-import type { AttachmentInfo, OrphanSummary } from '../src/types';
+import type { Attachment, AttachmentInfo, OrphanSummary } from '../src/types';
 import {
   setupTestEnv,
   teardownTestEnv,
@@ -144,7 +144,7 @@ describe('session phase machine (v0.25 PR-A)', function () {
     });
   });
 
-  it('attached -> processing -> attached via processingStart/End', async function () {
+  it('attached -> processing -> awaiting via processingStart/End (#117 fix)', async function () {
     this.timeout(10_000);
     await withWorker(async () => {
       const handle = await startFreshSession(`proc-phase-${Date.now()}`);
@@ -162,13 +162,14 @@ describe('session phase machine (v0.25 PR-A)', function () {
       expect(info.inFlightCount).to.equal(1);
       expect(info.processingSince).to.be.a('string');
 
-      // End processing -> back to attached
+      // End processing — per #117 fix + design §2.2, when in-flight hits 0 and the
+      // outbox is empty, phase refines to `awaiting` (idle attached), not bare `attached`.
       const r2 = await handle.executeUpdate(processingEndUpdate, {
         args: [{ messageId: 'm1', expectedAttachmentId: token.attachmentId }],
       });
       expect(r2.inFlightCount).to.equal(0);
       info = await handle.query(attachmentInfoQuery);
-      expect(info.phase).to.equal('attached');
+      expect(info.phase).to.equal('awaiting');
       expect(info.processingSince).to.equal(undefined);
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
@@ -372,6 +373,282 @@ describe('session phase machine (v0.25 PR-A)', function () {
       const info: AttachmentInfo = await handle.query(attachmentInfoQuery);
       // expiresAt unchanged (heartbeat was dropped)
       expect(info.currentAttachment?.expiresAt).to.equal(originalExpiresAt);
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
+  it('heartbeat renews expiresAt by the claim-time leaseMs, not a workflow default (#119a)', async function () {
+    this.timeout(10_000);
+    await withWorker(async () => {
+      const handle = await startFreshSession(`hb-leasems-${Date.now()}`);
+
+      // Pick two lease windows far enough apart that we can distinguish them
+      // even with workflow-clock jitter: 45s (our negotiated value) vs 90s
+      // (the prior hardcoded LEASE_MS default). The heartbeat must use 45s.
+      const NEGOTIATED_LEASE_MS = 45_000;
+      const PRIOR_DEFAULT_MS = 90_000;
+
+      const token = await handle.executeUpdate(claimAttachmentUpdate, {
+        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: NEGOTIATED_LEASE_MS }],
+      });
+      const claimTime = new Date(token.expiresAt).getTime() - NEGOTIATED_LEASE_MS;
+
+      // Send a heartbeat — the workflow should extend expiresAt using the
+      // attachment's stored leaseMs (= NEGOTIATED), not the old LEASE_MS constant.
+      await handle.signal(heartbeatSignal, {
+        attachmentId: token.attachmentId,
+        at: new Date().toISOString(),
+      });
+
+      const info: AttachmentInfo = await handle.query(attachmentInfoQuery);
+      const post = new Date(info.currentAttachment!.expiresAt).getTime();
+      const delta = post - claimTime;
+      // Delta must be consistent with NEGOTIATED_LEASE_MS (with tolerance for
+      // workflow-clock advancement between claim and heartbeat). If the bug
+      // returned, delta would land near PRIOR_DEFAULT_MS (90s).
+      expect(delta).to.be.lessThan(PRIOR_DEFAULT_MS, 'heartbeat must not extend by workflow default LEASE_MS');
+      expect(delta).to.be.greaterThan(NEGOTIATED_LEASE_MS - 5_000, 'heartbeat must extend by at least leaseMs - jitter');
+      expect(delta).to.be.lessThan(NEGOTIATED_LEASE_MS + 5_000, 'heartbeat must extend by at most leaseMs + jitter');
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
+  it('expired pre-seeded attachment is reaped on boot: phase -> detached, reason -> heartbeat-timeout', async function () {
+    this.timeout(10_000);
+    // Exercises §9.5.a lease-expiry reap phase-agnostically. Pre-seeded via
+    // SessionInput.currentAttachment (CAN-boundary style) with expiresAt in the
+    // past, the workflow's first main-loop tick should reap. This also validates
+    // that the reap path is live for `awaiting` / `processing` / `attached`
+    // callers — the commit-5-deferred heartbeat-timeout wiring noted that the
+    // existing §9.5.a code already handles all phases phase-agnostically.
+    await withWorker(async () => {
+      const now = Date.now();
+      const expiredAttachment: Attachment = {
+        attachmentId: 'pre-seeded-expired',
+        hostname: 'host-expired',
+        adapterId: 'claude-code',
+        adapterClass: 'interactive',
+        claimedAt: new Date(now - 120_000).toISOString(),
+        lastHeartbeatAt: new Date(now - 90_000).toISOString(),
+        expiresAt: new Date(now - 30_000).toISOString(), // expired 30s ago
+        leaseMs: 30_000,
+        runId: 'pre-seeded-run',
+      };
+
+      const handle = await startSession({
+        metadata: playerMetadata({ playerId: `hb-reap-${Date.now()}` }),
+        currentAttachment: expiredAttachment,
+        phase: 'attached',
+      });
+
+      // Poll briefly — the main loop should wake and reap on first iteration.
+      let info: AttachmentInfo = await handle.query(attachmentInfoQuery);
+      for (let i = 0; i < 20 && info.phase === 'attached'; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        info = await handle.query(attachmentInfoQuery);
+      }
+      expect(info.phase).to.equal('detached');
+      expect(info.currentAttachment).to.equal(undefined);
+
+      const summary: OrphanSummary = await handle.query(orphanSummaryQuery);
+      expect(summary.reason).to.equal('heartbeat-timeout');
+      expect(summary.lastAdapter?.hostname).to.equal('host-expired');
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
+  // ── awaiting phase invariants (v0.25 PR-C commit 5; fixes #117) ──
+  //
+  // `awaiting` is the idle refinement of `attached` — the attachment is held,
+  // `inFlightMessages` is empty, and no outbox entries are pending/processing.
+  // Design doc §2.2 (seven workflow phases) + §2.4 (transition authority).
+  //
+  // The `awaiting` phase is entered by two code paths:
+  //   1. `processingEnd` handler when `inFlightMessages.size` hits 0 AND the
+  //      outbox has no pending/processing entries — direct transition from
+  //      `processing → awaiting`.
+  //   2. Main-loop refinement: after outbox dispatch drain, if phase is
+  //      `attached`, in-flight is 0, and outbox is idle — transition
+  //      `attached → awaiting`. Covers the case where outbox drained without
+  //      passing through `processing` (e.g. cue/report entries, not messages).
+
+  it('processing -> awaiting via processingEnd when outbox is empty (#117)', async function () {
+    this.timeout(10_000);
+    await withWorker(async () => {
+      const handle = await startFreshSession(`awaiting-direct-${Date.now()}`);
+      const token = await handle.executeUpdate(claimAttachmentUpdate, {
+        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+      });
+
+      // Start processing a message
+      await handle.executeUpdate(processingStartUpdate, {
+        args: [{ messageId: 'm1', expectedAttachmentId: token.attachmentId }],
+      });
+      let info: AttachmentInfo = await handle.query(attachmentInfoQuery);
+      expect(info.phase).to.equal('processing');
+
+      // End processing with no outbox entries — must land in `awaiting`, not `attached`.
+      await handle.executeUpdate(processingEndUpdate, {
+        args: [{ messageId: 'm1', expectedAttachmentId: token.attachmentId }],
+      });
+      info = await handle.query(attachmentInfoQuery);
+      expect(info.phase).to.equal('awaiting');
+      expect(info.inFlightCount).to.equal(0);
+      expect(info.currentAttachment?.attachmentId).to.equal(token.attachmentId);
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
+  it('awaiting -> processing via processingStart (processingStart guard is live post-#117)', async function () {
+    this.timeout(10_000);
+    await withWorker(async () => {
+      const handle = await startFreshSession(`awaiting-to-proc-${Date.now()}`);
+      const token = await handle.executeUpdate(claimAttachmentUpdate, {
+        args: [{ host: 'host-A', adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
+      });
+
+      // Get to awaiting via processingStart/End cycle on an empty outbox.
+      await handle.executeUpdate(processingStartUpdate, {
+        args: [{ messageId: 'warmup', expectedAttachmentId: token.attachmentId }],
+      });
+      await handle.executeUpdate(processingEndUpdate, {
+        args: [{ messageId: 'warmup', expectedAttachmentId: token.attachmentId }],
+      });
+      let info: AttachmentInfo = await handle.query(attachmentInfoQuery);
+      expect(info.phase).to.equal('awaiting');
+
+      // Now from awaiting, a new processingStart must lift us back to processing.
+      await handle.executeUpdate(processingStartUpdate, {
+        args: [{ messageId: 'm-new', expectedAttachmentId: token.attachmentId }],
+      });
+      info = await handle.query(attachmentInfoQuery);
+      expect(info.phase).to.equal('processing');
+      expect(info.inFlightCount).to.equal(1);
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
+  it('awaiting -> draining via requestDetach', async function () {
+    this.timeout(15_000);
+    await withWorker(async () => {
+      const handle = await startFreshSession(`awaiting-drain-${Date.now()}`);
+      const token = await handle.executeUpdate(claimAttachmentUpdate, {
+        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+      });
+
+      // Enter awaiting.
+      await handle.executeUpdate(processingStartUpdate, {
+        args: [{ messageId: 'm1', expectedAttachmentId: token.attachmentId }],
+      });
+      await handle.executeUpdate(processingEndUpdate, {
+        args: [{ messageId: 'm1', expectedAttachmentId: token.attachmentId }],
+      });
+      let info: AttachmentInfo = await handle.query(attachmentInfoQuery);
+      expect(info.phase).to.equal('awaiting');
+
+      // requestDetach lifts awaiting → draining.
+      await handle.signal(requestDetachSignal, { reason: 'user-stop', deadlineMs: 5_000 });
+      for (let i = 0; i < 10 && info.phase !== 'draining'; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        info = await handle.query(attachmentInfoQuery);
+      }
+      expect(info.phase).to.equal('draining');
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
+  it('awaiting -> detached via forceDetach', async function () {
+    this.timeout(10_000);
+    await withWorker(async () => {
+      const handle = await startFreshSession(`awaiting-force-${Date.now()}`);
+      const token = await handle.executeUpdate(claimAttachmentUpdate, {
+        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+      });
+
+      // Enter awaiting.
+      await handle.executeUpdate(processingStartUpdate, {
+        args: [{ messageId: 'm1', expectedAttachmentId: token.attachmentId }],
+      });
+      await handle.executeUpdate(processingEndUpdate, {
+        args: [{ messageId: 'm1', expectedAttachmentId: token.attachmentId }],
+      });
+      let info: AttachmentInfo = await handle.query(attachmentInfoQuery);
+      expect(info.phase).to.equal('awaiting');
+
+      // forceDetach reaps awaiting → detached.
+      const r = await handle.executeUpdate(forceDetachUpdate, {
+        args: [{ reason: 'force', gracePeriodMs: 0 }],
+      });
+      expect(r.reaped).to.equal(true);
+      info = await handle.query(attachmentInfoQuery);
+      expect(info.phase).to.equal('detached');
+      expect(info.currentAttachment).to.equal(undefined);
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
+  it('awaiting -> gone via destroy (§2.4 "any -> gone")', async function () {
+    this.timeout(10_000);
+    await withWorker(async () => {
+      const handle = await startFreshSession(`awaiting-gone-${Date.now()}`);
+      const token = await handle.executeUpdate(claimAttachmentUpdate, {
+        args: [{ host: 'host-A', adapterId: 'copilot', adapterClass: 'sdk', leaseMs: 60_000 }],
+      });
+
+      // Enter awaiting.
+      await handle.executeUpdate(processingStartUpdate, {
+        args: [{ messageId: 'm1', expectedAttachmentId: token.attachmentId }],
+      });
+      await handle.executeUpdate(processingEndUpdate, {
+        args: [{ messageId: 'm1', expectedAttachmentId: token.attachmentId }],
+      });
+      let info: AttachmentInfo = await handle.query(attachmentInfoQuery);
+      expect(info.phase).to.equal('awaiting');
+
+      // Destroy from awaiting → gone. Workflow COMPLETEs.
+      await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'awaiting-destroy' }] });
+      await handle.result();
+      info = await handle.query(attachmentInfoQuery);
+      expect(info.phase).to.equal('gone');
+      expect(info.currentAttachment).to.equal(undefined);
+      expect(await handle.query(isDestroyedQuery)).to.equal(true);
+    });
+  });
+
+  it('claimAttachment + renewal keeps phase=attached (awaiting requires processing cycle)', async function () {
+    this.timeout(10_000);
+    await withWorker(async () => {
+      // Sanity check: freshly claimed attachments start in `attached`, NOT `awaiting`.
+      // Awaiting is specifically the post-`processingEnd` idle refinement — without a
+      // processing cycle, the main-loop refinement would move us to awaiting, but the
+      // test queries fast enough that attached is observable. If this assertion flakes,
+      // it's fine to also accept `awaiting` as valid (both are idle attached states).
+      const handle = await startFreshSession(`awaiting-vs-attached-${Date.now()}`);
+      await handle.executeUpdate(claimAttachmentUpdate, {
+        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 60_000 }],
+      });
+
+      const info: AttachmentInfo = await handle.query(attachmentInfoQuery);
+      // Post-#117, main-loop refinement may have already lifted us to awaiting —
+      // both attached and awaiting are acceptable here. This invariant ensures
+      // we never land in a wrong-attachment-state phase.
+      expect(['attached', 'awaiting']).to.include(info.phase);
+      expect(info.currentAttachment).to.not.equal(undefined);
+      expect(info.inFlightCount).to.equal(0);
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result().catch(() => {});

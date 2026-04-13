@@ -36,6 +36,8 @@ export type {
   StopOutboxEntry,
   EncoreOutboxEntry,
   ReleaseOutboxEntry,
+  SpawnOutboxEntry,
+  AgentType,
   QualityGate,
   QualityGateCriterion,
   WorktreeEntry,

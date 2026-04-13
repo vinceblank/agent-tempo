@@ -94,6 +94,12 @@ export interface Attachment {
   lastHeartbeatAt: string;
   /** ISO timestamp; after this the main loop reaps the attachment → `detached`. */
   expiresAt: string;
+  /**
+   * Lease duration negotiated at claim time (milliseconds). Heartbeats renew
+   * `expiresAt` by this amount — honours the caller's requested lease rather than a
+   * workflow-side hardcoded default. Added in PR-C commit 6 (#119a).
+   */
+  leaseMs: number;
   /** Workflow runId captured at claim time — adapters must pin subsequent `getHandle` to this. */
   runId: string;
 }
@@ -331,7 +337,49 @@ export interface EncoreOutboxEntry extends OutboxEntryBase {
   claudeBin?: string;
 }
 
-export type OutboxEntry = CueOutboxEntry | RecruitOutboxEntry | ReportOutboxEntry | StopOutboxEntry | EncoreOutboxEntry | ReleaseOutboxEntry;
+/**
+ * Spawn outbox entry — enqueued by the `enqueueSpawn` update so a host activity
+ * launches (or relaunches) an adapter process that will then claim the carried
+ * attachment. Distinguished from `RecruitOutboxEntry` because the target
+ * workflow already exists and an attachment has been pre-claimed; the dispatch
+ * side therefore skips workflow creation and drives the restart/resume path.
+ *
+ * PR-C commit 6 (#118): planted the discriminated union member. PR-D wires
+ * full end-to-end consumption of the 5 attachment-specific fields through the
+ * `startRecruitedSession` + `spawnProcess` activities.
+ */
+export interface SpawnOutboxEntry extends OutboxEntryBase {
+  type: 'spawn';
+  /** The name of the player this spawn lands on (matches workflow metadata.playerId). */
+  targetName: string;
+  /** Working directory for the spawned adapter process. */
+  workDir: string;
+  /** True if the spawn is for the ensemble conductor session. */
+  isConductor: boolean;
+  /** Agent kind to spawn (claude | copilot | future SDK variants). */
+  agent: AgentType;
+  /** Host task queue the spawn activity should dispatch against. */
+  targetHostname: string;
+  /** Attachment pre-claimed for this spawn — adapter consumes it on boot. */
+  attachmentId: string;
+  /** RunId pinned during the pre-claim — adapter `getHandle`s against this. */
+  attachmentRunId: string;
+  /** Adapter class descriptor id (`'claude-code'`, `'copilot'`, …). */
+  adapterId: string;
+  /** True if the spawn should `claude --resume` into the prior `sessionId`. */
+  resumeAttachment: boolean;
+  /** Claude session id used for `--resume` and continuity. Optional — fresh spawns omit it. */
+  sessionId?: string;
+}
+
+export type OutboxEntry =
+  | CueOutboxEntry
+  | RecruitOutboxEntry
+  | ReportOutboxEntry
+  | StopOutboxEntry
+  | EncoreOutboxEntry
+  | ReleaseOutboxEntry
+  | SpawnOutboxEntry;
 
 /** Distributive Omit that works correctly on union types. */
 type DistributiveOmit<T, K extends keyof any> = T extends any ? Omit<T, K> : never;

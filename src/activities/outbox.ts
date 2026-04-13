@@ -169,8 +169,12 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
       if (!handle) {
         throw ApplicationFailure.nonRetryable(`No active session found for "${targetPlayerId}"`);
       }
-      // Signal target to mark as terminated
-      await handle.signal('updateMetadata', { status: 'terminated', terminatedBy });
+      // PR-C commit 4: use the V2 `destroy` update — explicit operator termination
+      // per §2.5 (abandon in-flight, phase=gone, COMPLETE). The former
+      // `updateMetadata({ status: 'terminated' })` signal path was retired.
+      await handle.executeUpdate('destroy', {
+        args: [{ reason: 'stop via tool', terminatedBy }],
+      });
 
       // Notify conductor about the termination (best effort)
       try {

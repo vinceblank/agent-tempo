@@ -9,6 +9,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.25.0-beta.1] - Unreleased
+
+The v0.25 session-lifecycle rebuild. Complete adapter attachment-lease model,
+7-phase session state machine, explicit wire primitives for claim / heartbeat
+/ detach / destroy. Replaces the v0.24 `updateMetadata({ status })` shim with
+a dedicated attachment surface that cleanly separates adapter lifecycle (the
+attached process) from session lifecycle (the Temporal workflow).
+
+Design reference: `docs/design/session-lifecycle-rebuild-v2.md`.
+
+### Added
+
+- **`CLAUDE_TEMPO_LIFECYCLE_V2` feature flag** — default **ON**. Gates the V2
+  attachment-lease path; `false` keeps the legacy compat shim for rollback
+  insurance. Read once per adapter instance at construction
+- **V2 wire primitives** — `claimAttachmentUpdate` (transactional claim/renew
+  with lease tracking), `heartbeatSignal` (extends `expiresAt` by the
+  attachment's negotiated `leaseMs`), `forceDetachUpdate` (revoke with TOCTOU
+  guard), `requestDetachSignal` (graceful drain request), `adapterExitedSignal`
+  (collapse `draining → detached`), `attachmentInfoQuery` (phase + attachment
+  snapshot), `orphanSummaryQuery` (daemon restore metadata),
+  `enqueueSpawnUpdate` (spawn outbox entry with pre-claimed attachment),
+  `setPreferredHostUpdate` (reconcile-on-boot targeting)
+- **7-phase session state machine** — `booting` / `attached` / `processing` /
+  `awaiting` / `draining` / `detached` / `gone`. Phase is exposed as the
+  `ClaudeTempoAttachmentState` search attribute and via `attachmentInfo`.
+  Transitions documented in `docs/design/session-lifecycle-rebuild-v2.md` §2.4
+- **Awaiting phase wiring (#117)** — `setPhase('awaiting')` now fires when
+  `processingEnd` lands in-flight at 0 with an idle outbox, and again as a
+  main-loop refinement after outbox-dispatch drain. Previously the phase was
+  declared in the enum but never actually entered
+- **`Attachment.leaseMs` (#119a)** — attachment carries its negotiated lease
+  duration; heartbeat renewals honour it rather than a workflow-side default
+- **`SpawnOutboxEntry` discriminated union (#118)** — typed member of
+  `OutboxEntry` with the attachment-specific fields for restart/resume flows.
+  Replaces the prior double-cast `type: 'recruit'` workaround. PR-D will wire
+  the 5 fields end-to-end through the spawn activity
+- **V2 attachment search attributes** — `ClaudeTempoAttachedHost`,
+  `ClaudeTempoAttachmentId`, `ClaudeTempoAttachmentState`
+- **Adapter class registry** — `AdapterRegistry` keyed by `adapterId`; shipped
+  `InteractiveAttachment` (Claude Code CLI, 60s heartbeat) and
+  `CopilotSdkAttachment` (Copilot bridge, 30s heartbeat, `sendAndWait`
+  pairing via `processingStart`/`End`). Registry descriptors drive dispatch
+  without hardcoded `isBridgeMode` branches
+- **`SdkAttachment` base class** — synchronous `processingStart`/`End` pairing
+  with `expectedAttachmentId`, batch-ack via optional `ackIds`,
+  `onSuperseded` hook, `sdkInFlight` guard for split-brain safety (§9.3)
+- **CAN-boundary lease extension (§2.3)** — before `continueAsNew`, extends
+  `currentAttachment.expiresAt` by one heartbeat interval so a healthy
+  attachment isn't reaped during the CAN transition
+- **Attachment-phase + heartbeat-timeout test coverage** — new cases in
+  `test/session-phase-machine.test.ts` assert the 5 awaiting transitions
+  (§2.4), the `#119a` leaseMs-honouring heartbeat renewal, and the
+  phase-agnostic §9.5.a lease-expiry reap (covers
+  `attached`/`awaiting`/`processing` → `detached` with
+  `reason: 'heartbeat-timeout'`)
+
+### Changed
+
+- **`processingStart` / `processingEnd`** — now Temporal updates (not signals),
+  require `messageId` for idempotency, suppress stale detection while
+  in-flight (§9.5.b safety timer ejects wedged entries after 15 min)
+- **`processingStart` validator** — uses canonical `phase === 'gone'` (#119b;
+  was compound `destroyed || destroyRequested` pre-PR-C-commit-4)
+- **`stop` tool + CLI stop paths** — migrated from
+  `updateMetadata({ status: 'terminated' })` to `destroyUpdate` (§2.5 semantics:
+  abandon in-flight, COMPLETE immediately). Legacy terminate fallback retired
+- **MCP server SIGINT/SIGTERM** — closing the terminal no longer destroys the
+  workflow. Graceful detach via adapter's `adapterExited` only; the session
+  stays in `detached` awaiting the next claim (e.g. encore)
+- **Copilot adapter cleanup** — drops duplicate `updateMetadata({ status:
+  'terminated' })` signal. `stopV2Lifecycle(graceful=true)` already fires
+  `adapterExited` for the workflow-side detach collapse
+
+### Fixed
+
+- **#117** — awaiting phase was defined in `AttachmentPhase` enum and guarded
+  by `processingStart` but never entered. Sessions cycled `attached ↔
+  processing` instead of the spec'd `attached ↔ awaiting ↔ processing`
+- **#118** — spawn outbox entry double `as unknown as OutboxEntry` cast
+  removed via the new discriminated-union member
+- **#119a** — heartbeat renewal now extends `expiresAt` by the caller-negotiated
+  `leaseMs` stored on the attachment at claim time, not a hardcoded 90s default
+- **#119b** — `processingStart` validator uses canonical `phase === 'gone'`
+- **#120** — main-loop comment at `session.ts:1047` correctly describes the
+  `updateMetadata({ status: 'terminated' })` shim as routing to
+  `destroyRequested`. Resolved by commit 4 (`34dc888`) without a separate fix
+
+### Deprecated
+
+- **`updateMetadata({ status: 'terminated' })`** — handler branch is
+  quarantined as a test-compat shim that routes onto §2.5 destroy semantics.
+  Prod callers have been migrated to `destroyUpdate`. Removal scheduled for
+  v0.25.1 cleanup (#132)
+- **Workflow `LEASE_MS` constant** — removed in favour of per-attachment
+  `leaseMs`
+
+### Operator notes
+
+- **Rollback via `CLAUDE_TEMPO_LIFECYCLE_V2=0`** — safe during an incident.
+  In-flight V2 sessions continue to deliver messages correctly; the legacy
+  shim translates `updateMetadata({ status })` onto the phase machine for
+  adapters that still speak the old protocol. One cosmetic caveat: a session
+  that had a V2 attachment claimed before the flag flip may show a stale
+  `ClaudeTempoAttachmentState` search attribute for up to one heartbeat window
+  (~90s) — until the next lease-expiry reap refreshes it to `detached`. No
+  message loss, no workflow state drift — reports only.
+
+---
+
 ## [0.24.1] - Unreleased
 
 ### Fixed

@@ -90,8 +90,10 @@ import type {
   AttachmentToken,
   AttachmentInfo,
   AdapterClass,
+  AgentType,
   DetachReason,
   OrphanSummary,
+  SpawnOutboxEntry,
 } from '../types';
 
 // ── Outbox Activity Proxies ──
@@ -118,8 +120,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   const HEARTBEAT_PROBE_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
   // ── v0.25 Attachment Lifecycle Timers (design §2.3, §9.5) ──
-  /** Attachment lease duration. Renewed on each heartbeat signal. */
-  const LEASE_MS = 90_000;
+  // PR-C commit 6 (#119a): each attachment carries its own `leaseMs` (negotiated at
+  // claim time). No workflow-side default constant — heartbeats extend `expiresAt`
+  // by `currentAttachment.leaseMs`.
   /** Default heartbeat cadence (interactive). SDK adapters use 30s; descriptor-driven in PR-C. */
   const HEARTBEAT_INTERVAL_MS = 30_000;
   /** Max grace period for `draining → detached` transition after requestDetach. */
@@ -210,14 +213,16 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   let destroyRequested = destroyed;
   /** IDs of outbox entries abandoned by the last `destroy` — written to history event. */
   let destroyAbandonedIds: string[] = [];
-  /**
-   * ── Legacy Terminate State (shim; removed in PR-C) ──
-   * v0.24 adapters request termination via `updateMetadata({ status: 'terminated' })`
-   * and expect drain-wait semantics: workflow waits up to 2 min for delivery of pending
-   * messages before completing. The shim keeps that graceful behavior so MVP adapter code
-   * and tests keep working without the §2.5 destroy changes reverberating.
-   */
-  let legacyTerminateRequested = false;
+  // ── Quarantined (v0.25.1 cleanup): `legacyTerminateRequested` flag removed ──
+  // PR-C commit 4 retired the main-loop check + 2-min drain-wait branch that used
+  // to key off this flag. The `updateMetadata({ status: 'terminated' })` branch in
+  // the signal handler below is repurposed as a test-compat shim that routes onto
+  // the §2.5 destroy path (sets `destroyRequested`) so the ~30 legacy test fixtures
+  // keep working. Prod call sites have been migrated to the V2 verbs: `destroyUpdate`
+  // for the `stop` tool + CLI stop paths; `adapterExited` for adapter graceful exit;
+  // dropped entirely on MCP server SIGINT (user closing their terminal now detaches
+  // rather than destroying the session). See docs/design/session-lifecycle-rebuild-v2.md
+  // §2.5, §11.1. TODO(v0.25.1): remove this shim branch — tracked in #132
 
   // ── Helpers ──
 
@@ -354,66 +359,45 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       input.metadata.status = legacyStatus;
       // Re-enable stale detection only when explicitly requested (server.ts sets this)
       if (update.enableStaleDetection) input.disableStaleDetection = false;
-      // ── v0.25 legacy-status shim ──
-      // Translate the old single-status signal onto the attachment phase machine so
-      // adapters that haven't migrated to the new wire protocol keep working through
-      // PR-B/C. Removed in PR-C when src/channel.ts and src/copilot-bridge.ts are
-      // rewritten against the attachment surface directly.
+      // ── Quarantined (v0.25.1 cleanup): legacy-status test-compat shim ──
+      // PR-C commit 4 retired the auto-claim branch for `active`/`pending` (V2
+      // adapters now call `claimAttachment` directly) and redirected the
+      // `terminated` branch onto the §2.5 destroy path so ~30 legacy test fixtures
+      // using `updateMetadata({ status: 'terminated' })` as cleanup keep working.
+      // Prod callers have been migrated to the V2 verbs (`destroyUpdate`,
+      // `adapterExited`). TODO(v0.25.1): remove this shim branch — tracked in #132
       if (legacyStatus === 'terminated') {
-        // Old adapters route clean shutdown through here. v0.25 semantics for the NEW
-        // `destroy` update are "abandon in-flight and COMPLETE" (§2.5) — but legacy callers
-        // expect drain-wait semantics. The shim preserves the graceful-drain path so MVP
-        // adapters (and their tests) keep working. Direct `destroy` callers get §2.5 timing.
-        legacyTerminateRequested = true;
-        if (currentAttachment) {
-          lastAdapterMeta = { hostname: currentAttachment.hostname, adapterId: currentAttachment.adapterId };
-          lastDetachReason = 'destroy';
-          currentAttachment = null;
-        }
-        // Phase transitions to 'detached' so attachmentInfo reflects the legacy-terminated state;
-        // the main-loop exit + drain-wait happens from the `legacyTerminateRequested` branch.
-        upsertSearchAttributes({
-          ClaudeTempoAttachedHost: [''],
-          ClaudeTempoAttachmentId: [''],
-        });
-        setPhase('detached');
-        detachedSince = workflowNow().toISOString();
-        messages.push({
-          id: uuid4(),
-          from: update.terminatedBy || 'system',
-          text: 'Your session is being terminated by ' + (update.terminatedBy || 'system') + '.',
-          timestamp: workflowNow().toISOString(),
-          delivered: false,
-        });
-      } else if (legacyStatus === 'active' || legacyStatus === 'pending') {
-        // v0.24 MCP server signals `status: 'active'` post-connect. In the shim era,
-        // synthesize a claim so the phase machine reflects liveness without requiring
-        // the legacy adapter to speak the new wire protocol.
-        if (!currentAttachment && phase !== 'gone') {
-          const now = workflowNow();
-          const newAttachment: Attachment = {
-            attachmentId: uuid4(),
-            hostname: input.metadata.hostname,
-            adapterId: input.metadata.agentType ?? 'claude',
-            adapterClass: input.metadata.agentType === 'copilot' ? 'sdk' : 'interactive',
-            claimedAt: now.toISOString(),
-            lastHeartbeatAt: now.toISOString(),
-            expiresAt: new Date(now.getTime() + LEASE_MS).toISOString(),
-            runId: workflowInfo().runId,
-          };
-          currentAttachment = newAttachment;
-          lastAdapterMeta = { hostname: newAttachment.hostname, adapterId: newAttachment.adapterId };
-          preferredHost = newAttachment.hostname;
-          setPhase('attached');
+        // Redirect onto §2.5 destroy semantics: abandon in-flight outbox, phase=gone,
+        // workflow COMPLETES. No 2-min drain wait (v0.24 behaviour) — the shim is now
+        // a straight alias for the `destroy` update.
+        if (phase !== 'gone') {
+          destroyRequested = true;
+          destroyAbandonedIds = outbox
+            .filter((e) => e.status === 'pending' || e.status === 'processing')
+            .map((e) => e.id);
+          if (currentAttachment) {
+            lastAdapterMeta = { hostname: currentAttachment.hostname, adapterId: currentAttachment.adapterId };
+            lastDetachReason = 'destroy';
+            currentAttachment = null;
+          }
           upsertSearchAttributes({
-            ClaudeTempoAttachedHost: [newAttachment.hostname],
-            ClaudeTempoAttachmentId: [newAttachment.attachmentId],
+            ClaudeTempoStatus: ['terminated'],
+            ClaudeTempoAttachedHost: [''],
+            ClaudeTempoAttachmentId: [''],
           });
-          detachedSince = null;
+          setPhase('gone');
+          messages.push({
+            id: uuid4(),
+            from: update.terminatedBy || 'system',
+            text: 'Your session is being terminated by ' + (update.terminatedBy || 'system') + '.',
+            timestamp: workflowNow().toISOString(),
+            delivered: false,
+          });
         }
       }
-      // legacyStatus === 'stale' or 'blocked' → handled by legacy status search attr only;
-      // the phase machine treats these as presentation refinements of `detached` / `attached`.
+      // legacyStatus === 'active' | 'pending' | 'stale' | 'blocked' → legacy status
+      // search attr only; phase machine treats these as presentation refinements of
+      // `attached` / `detached`. V2 adapters claim via `claimAttachmentUpdate`.
     }
     upsertSearchAttributes({
       ClaudeTempoEnsemble: [input.metadata.ensemble],
@@ -511,7 +495,12 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
           'InvalidMessageId',
         );
       }
-      if (destroyed || destroyRequested) {
+      // Canonical phase check — `phase === 'gone'` is set atomically by the
+      // destroy handler (and by the test-compat shim) before `destroyRequested`
+      // flips, so this covers all terminal-state cases consistently with the
+      // rest of the post-PR-C codebase. Replaces the pre-PR-C-commit-4
+      // `destroyed || destroyRequested` compound check (#119b).
+      if (phase === 'gone') {
         throw ApplicationFailure.nonRetryable(
           'Cannot start processing on destroyed session',
           'WorkflowGone',
@@ -530,9 +519,17 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     inFlightMessages.delete(messageId);
     if (inFlightMessages.size === 0) {
       processingSince = null;
-      // Phase: back to `attached` (or `awaiting` if the outbox is empty; that refinement
-      // happens in the main loop based on outbox state).
-      if (phase === 'processing') setPhase('attached');
+      // Phase refinement (§2.2, §2.4; fixes #117): when in-flight drops to 0, move
+      // back out of `processing`. If the outbox has nothing left to dispatch, land
+      // directly in `awaiting` (idle refinement of attached). Otherwise `attached`,
+      // and the main-loop outbox-dispatch drain will refine to `awaiting` once the
+      // outbox clears.
+      if (phase === 'processing') {
+        const outboxIdle = !outbox.some(
+          (e) => e.status === 'pending' || e.status === 'processing',
+        );
+        setPhase(outboxIdle ? 'awaiting' : 'attached');
+      }
     }
     lastActivityTime = workflowNow().getTime();
     return { inFlightCount: inFlightMessages.size };
@@ -621,6 +618,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     ) {
       currentAttachment.lastHeartbeatAt = now.toISOString();
       currentAttachment.expiresAt = new Date(nowMs + leaseMs).toISOString();
+      // Honour the caller's renewal-time leaseMs so subsequent heartbeats extend
+      // the lease by the current negotiated value (not the claim-time value).
+      currentAttachment.leaseMs = leaseMs;
       lastActivityTime = nowMs;
       return attachmentTokenFrom(currentAttachment, leaseMs);
     }
@@ -642,6 +642,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       claimedAt: now.toISOString(),
       lastHeartbeatAt: now.toISOString(),
       expiresAt: new Date(nowMs + leaseMs).toISOString(),
+      leaseMs,
       runId: workflowInfo().runId,
     };
     currentAttachment = newAttachment;
@@ -701,20 +702,24 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     return { reaped: true, previousAttachmentId: previousId };
   });
 
-  /** Enqueue a spawn outbox entry carrying the claim token. */
+  /**
+   * Enqueue a spawn outbox entry carrying the claim token. PR-C commit 6 (#118)
+   * replaced the double-cast `type: 'recruit'` workaround with a dedicated
+   * `SpawnOutboxEntry` discriminated-union variant. The dispatch branch
+   * (`case 'spawn':` below) routes through `startRecruitedSession` today and
+   * will be extended by PR-D to forward `attachmentId`/`runId`/`resume`/
+   * `sessionId`/`adapterId` into the activity signature so the adapter boots
+   * into the pre-claimed attachment.
+   */
   setHandler(enqueueSpawnUpdate, ({ host, attachmentId, runId, resume, sessionId, adapterId }) => {
     const spawnEntryId = uuid4();
-    // We ride on the existing outbox as a typed 'recruit' entry with resume semantics.
-    // PR-D's `restart` will use a dedicated `spawn` entry type; for PR-A we thread through
-    // the existing recruit dispatch.
-    const entry = {
+    const entry: SpawnOutboxEntry = {
       id: spawnEntryId,
-      type: 'recruit' as const,
+      type: 'spawn',
       targetName: input.metadata.playerId,
       workDir: input.metadata.workDir,
       isConductor: input.metadata.isConductor,
-      agent: (input.metadata.agentType ?? 'claude') as 'claude' | 'copilot',
-      initialMessage: undefined,
+      agent: (input.metadata.agentType ?? 'claude') as AgentType,
       targetHostname: host,
       attachmentId,
       attachmentRunId: runId,
@@ -722,8 +727,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       sessionId,
       adapterId,
       createdAt: workflowNow().toISOString(),
-      status: 'pending' as const,
-    } as unknown as OutboxEntry;
+      status: 'pending',
+    };
     outbox.push(entry);
     lastActivityTime = workflowNow().getTime();
     lastOutboundTime = workflowNow().getTime();
@@ -744,7 +749,10 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     if (!currentAttachment || currentAttachment.attachmentId !== attachmentId) return;
     const now = workflowNow();
     currentAttachment.lastHeartbeatAt = now.toISOString();
-    currentAttachment.expiresAt = new Date(now.getTime() + LEASE_MS).toISOString();
+    // #119a: extend by the caller-negotiated `leaseMs` stored on the attachment at
+    // claim time, not a workflow-side default. Adapters with non-default lease windows
+    // (e.g. test harnesses running accelerated clocks) get the lease duration they asked for.
+    currentAttachment.expiresAt = new Date(now.getTime() + currentAttachment.leaseMs).toISOString();
     lastActivityTime = now.getTime();
   });
 
@@ -1044,25 +1052,26 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   //
   // The only exit from this loop is `destroyRequested === true` — the workflow never
   // COMPLETEs implicitly per design §2.2 invariant 2. Legacy callers that send
-  // `updateMetadata({ status: 'terminated' })` are shimmed into `destroyRequested`.
+  // `updateMetadata({ status: 'terminated' })` are shimmed into `destroyRequested`
+  // by the handler above (test-compat shim; PR-C commit 4).
 
   const hasPendingOutbox = () => outbox.some((e) => e.status === 'pending');
   /** Stop entries bypass pause — they must always be dispatched. */
   const hasPendingStop = () => outbox.some((e) => e.status === 'pending' && e.type === 'stop');
   const canDispatch = () => !outboxLocked && !paused && hasPendingOutbox();
 
-  while (!destroyRequested && !legacyTerminateRequested) {
+  while (!destroyRequested) {
     // Deadline race: wake on outbox, phase change, destroy, or the nearest time deadline.
     const deadlineMs = nextDeadlineMs();
     const conditionPromise = condition(
-      () => destroyRequested || legacyTerminateRequested || canDispatch() || hasPendingStop() || phase === 'gone',
+      () => destroyRequested || canDispatch() || hasPendingStop() || phase === 'gone',
       // Legacy shim: when no time-based deadline applies, still wake every 5 min so the
       // legacy stale/blocked heuristics below run. Replaced with a no-op in PR-C.
       deadlineMs === Number.POSITIVE_INFINITY ? '5 minutes' : Math.min(deadlineMs, 5 * 60 * 1000),
     );
     await conditionPromise;
 
-    if (destroyRequested || legacyTerminateRequested) break;
+    if (destroyRequested) break;
 
     // ── §9.5.a: Lease expiry — reap attachment and transition to `detached`. ──
     if (currentAttachment && new Date(currentAttachment.expiresAt).getTime() <= workflowNow().getTime()) {
@@ -1125,7 +1134,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
 
 
     // ── Outbox Dispatch ──
-    while (hasPendingOutbox() && !destroyRequested && !legacyTerminateRequested) {
+    while (hasPendingOutbox() && !destroyRequested) {
       // When paused or locked, only dispatch stop entries (bypass)
       const nextEntry = (canDispatch())
         ? outbox.find((e) => e.status === 'pending')!
@@ -1252,6 +1261,33 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
             });
             break;
           }
+          case 'spawn': {
+            // PR-C commit 6 (#118): `SpawnOutboxEntry` dispatch. Today we delegate
+            // to the per-host spawn proxy with the base recruit-shape payload —
+            // the 5 attachment-specific fields (attachmentId/attachmentRunId/
+            // resumeAttachment/sessionId/adapterId) are carried on the entry so
+            // PR-D can wire them end-to-end through `spawnProcess` without a
+            // schema churn. Today they're unused at the activity layer, which
+            // matches the pre-PR-C-commit-6 behaviour exactly (the old `type:
+            // 'recruit'` double-cast stored the same fields and they were also
+            // never read). This preserves existing behaviour while removing
+            // the cast and planting the type foundation.
+            const spawnTc = input.temporalConfig;
+            const spawnHost = entry.targetHostname;
+            const spawnFn = getSpawnProxy(spawnHost);
+            await spawnFn({
+              targetName: entry.targetName,
+              workDir: entry.workDir,
+              isConductor: entry.isConductor,
+              agent: entry.agent,
+              ensemble: input.metadata.ensemble,
+              temporalAddress: spawnTc?.temporalAddress || 'localhost:7233',
+              temporalNamespace: spawnTc?.temporalNamespace || 'default',
+              sessionId: entry.sessionId,
+              resume: entry.resumeAttachment,
+            });
+            break;
+          }
         }
         entry.status = 'delivered';
         entry.deliveredAt = workflowNow().toISOString();
@@ -1259,6 +1295,20 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         entry.status = 'failed';
         entry.error = String(err);
       }
+    }
+
+    // ── §2.2 phase refinement: attached → awaiting when idle ──
+    // Issue #117: after outbox drain completes, if the attachment is still held,
+    // no messages are in flight, and no outbox entries are pending/processing,
+    // the session is in its idle steady state. Transition to `awaiting` so
+    // external observers (ClaudeTempoAttachmentState search attribute, TUI,
+    // monitoring) see the correct phase. `processingStart` (line 502) already
+    // guards for `awaiting`, so the next inbound message lifts us to `processing`.
+    if (phase === 'attached' && inFlightMessages.size === 0) {
+      const outboxIdle = !outbox.some(
+        (e) => e.status === 'pending' || e.status === 'processing',
+      );
+      if (outboxIdle) setPhase('awaiting');
     }
 
     // ── Legacy stale / blocked detection (shim, removed in PR-C) ──
@@ -1356,20 +1406,13 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     }
   }
 
-  // ── Exit paths ──
-  // Two terminal states:
-  //   1. `destroyRequested` (from the `destroy` update) — §2.5 semantics: abandon in-flight,
-  //      COMPLETE immediately.
-  //   2. `legacyTerminateRequested` (from `updateMetadata({ status: 'terminated' })`) —
-  //      shim preserves v0.24 graceful drain-wait so MVP adapters keep working.
+  // ── Exit path ──
+  // Single terminal state: `destroyRequested` (from the `destroy` update OR from the
+  // quarantined `updateMetadata({ status: 'terminated' })` test-compat shim — both
+  // route through §2.5 abandon-in-flight semantics). PR-C commit 4 retired the
+  // v0.24 legacy 2-min drain-wait branch; callers expecting drain semantics should
+  // request it before destroy (e.g. via `requestDetach` + wait for phase=detached).
   await condition(allHandlersFinished);
-
-  if (legacyTerminateRequested && !destroyRequested && !input.disableStaleDetection) {
-    // Legacy graceful drain — up to 2 minutes for the adapter to mark pending messages
-    // delivered. The shim's backward-compat contract.
-    const allDelivered = () => messages.every((m) => m.delivered);
-    await condition(allDelivered, '2 minutes');
-  }
 
   // Finalize `destroyed = true` so `isDestroyed` queries against the completed run return true.
   destroyed = true;

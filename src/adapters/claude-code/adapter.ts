@@ -1,21 +1,28 @@
 /**
  * claude-code adapter — interactive class.
  *
- * Content lifted verbatim from `src/channel.ts` into a class wrapper as part of
- * PR-B (v0.25 rebuild step 2/7). Zero behavior change: the same poll/notify/
- * markDelivered loop runs as before, and the PR-A compat shim in
- * `src/workflows/session.ts` translates `markDelivered` + `updateMetadata({ status })`
- * onto the attachment phase machine.
+ * Lifted verbatim from `src/channel.ts` in PR-B (v0.25 rebuild step 2/7). PR-C
+ * commit 2 extends it with the V2 attachment lifecycle: when
+ * `CLAUDE_TEMPO_LIFECYCLE_V2` is enabled the adapter claims the attachment,
+ * drives the base-class heartbeat + phase-watcher loops, and runs the delivery
+ * poll against a runId-pinned handle. When the flag is off, the adapter falls
+ * back to the PR-A compat shim path (identical poll/markDelivered loop as
+ * pre-rebuild) — the PR-A shim in `src/workflows/session.ts` translates
+ * legacy signals onto the attachment phase machine.
  *
- * PR-C rewrites this adapter to use the v0.25 attachment wire protocol directly —
- * `claimAttachment`, `heartbeat`, per-message `deliver()`. Until then, the poller
- * below is the delivery implementation.
+ * For interactive adapters, delivery itself is unchanged between V1 and V2
+ * (per design §5.3): push via MCP notification, ack via `markDelivered`. No
+ * `processingStart`/`End` pairs — those are for SDK adapters (commit 3).
  *
- * Design reference: docs/design/session-lifecycle-rebuild-v2.md §5 (Class 1 —
- * Interactive) and §4.3 (base-class lifecycle guarantees, added in PR-C).
+ * **This file runs in the Node.js adapter process, NOT the Temporal workflow
+ * sandbox.** `setTimeout` / `setInterval` are appropriate here; the pre-bundled
+ * workflow code lives in `src/workflows/`.
+ *
+ * Design reference: docs/design/session-lifecycle-rebuild-v2.md §5 (interactive),
+ * §§3.2, 4.3 (base lifecycle), §9.4 (WorkflowNotFound).
  */
-import type { WorkflowHandle } from '@temporalio/client';
-import { BaseAttachment } from '../base';
+import type { Client, WorkflowHandle } from '@temporalio/client';
+import { BaseAttachment, type BaseAttachmentOptions } from '../base';
 import type { AdapterDescriptor } from '../../types';
 import { Message } from '../../types';
 
@@ -33,8 +40,8 @@ export const claudeCodeDescriptor: AdapterDescriptor = {
   adapterId: 'claude-code',
   adapterClass: 'interactive',
   blocksOnLLMTurn: false,
-  // Interactive class — 60s cadence per design §4.3. PR-C wires this into the
-  // heartbeat loop on BaseAttachment.
+  // Interactive class — 60s cadence per design §4.3. The base class drives the
+  // heartbeat loop at this interval when the V2 lifecycle path is active.
   heartbeatMs: 60_000,
 };
 
@@ -46,7 +53,8 @@ const POLL_MAX_MS = 30000;
  * Poll a session workflow for pending messages and deliver them via `onMessages`.
  *
  * Verbatim lift from the old `src/channel.ts`. Module-private; callers go through
- * {@link InteractiveAttachment.start}.
+ * {@link InteractiveAttachment.start}. Used by both the V2 path (on a runId-pinned
+ * handle) and the legacy compat path (on the unpinned handle from server.ts).
  */
 function startMessagePoller(
   handle: WorkflowHandle,
@@ -102,22 +110,102 @@ function startMessagePoller(
  * query, notified to the MCP server via `notifications/claude/channel`, then
  * `markDelivered` is signaled to the workflow. Delivery does not block on an
  * LLM turn (`blocksOnLLMTurn: false`).
+ *
+ * ### Flag-gated lifecycle
+ *
+ * - **V2 path** (`CLAUDE_TEMPO_LIFECYCLE_V2` on, default): the adapter calls
+ *   `claimAttachment` via `startV2Lifecycle()`, pins the runId, and runs the
+ *   delivery poll on the pinned handle. Base class drives heartbeat + phase
+ *   watcher in parallel. On lease revocation, `WorkflowNotFound`, or phase
+ *   `gone`, the adapter stops cleanly without attempting to re-claim.
+ * - **Legacy path** (flag off): the delivery poll runs against the unpinned
+ *   handle passed from `server.ts`, same as PR-A. No claim, no heartbeat —
+ *   the workflow's PR-A compat shim translates `updateMetadata({ status })` +
+ *   `markDelivered` onto the phase machine.
+ *
+ * The branch is captured at construction via `this.lifecycleV2`; `start()`
+ * picks one path for the lifetime of the attachment.
  */
 export class InteractiveAttachment extends BaseAttachment {
   readonly descriptor: AdapterDescriptor = claudeCodeDescriptor;
 
+  constructor(options: BaseAttachmentOptions = {}) {
+    super(options);
+  }
+
   /**
-   * Start polling `handle` for pending messages and delivering each batch via
-   * `onMessages`. Returns a `stop()` function the caller invokes on shutdown.
+   * Start polling for pending messages and delivering each batch via `onMessages`.
+   * Returns a `stop()` function the caller invokes on shutdown.
    *
-   * The polling loop is the legacy implementation — identical to the pre-PR-B
-   * `startMessagePoller` from `src/channel.ts`. PR-C replaces the body of this
-   * method with a `claimAttachment` + heartbeat + per-message `deliver()` loop.
+   * The `handle` argument is used only in the legacy path. In V2 mode the
+   * adapter claims its own runId-pinned handle via the base class and ignores
+   * the passed handle for delivery — it's kept in the signature so callers
+   * don't need a flag-aware branch.
    */
   start(
     handle: WorkflowHandle,
     onMessages: (messages: Message[]) => Promise<void> | void,
   ): () => void {
+    if (this.lifecycleV2) {
+      return this.startV2(handle.workflowId, onMessages);
+    }
     return startMessagePoller(handle, onMessages);
+  }
+
+  /**
+   * V2 path: claim the attachment, pin the handle, then run the same
+   * poll/deliver/markDelivered loop against the pinned handle. The base class
+   * simultaneously drives heartbeats and the `attachmentInfo` watcher.
+   *
+   * Returns a stop function that tears down the delivery poll AND the base
+   * class lifecycle. Safe to call multiple times.
+   *
+   * **Error handling:** a `claimAttachment` rejection (`AttachmentConflict`,
+   * `WorkflowGone`) propagates up — the caller in `server.ts` treats it like
+   * any other startup failure. Runtime errors on the pinned handle
+   * (`WorkflowNotFound`, lease revocation) are caught by the base class
+   * heartbeat + watcher loops, which fire the `onTerminal` hook; this method
+   * subscribes to that hook to tear down the poll cleanly.
+   */
+  private startV2(
+    workflowId: string,
+    onMessages: (messages: Message[]) => Promise<void> | void,
+  ): () => void {
+    let stopPoller: (() => void) | null = null;
+    let stopped = false;
+
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      if (stopPoller) { stopPoller(); stopPoller = null; }
+      // Fire-and-forget — V2 graceful exit signals adapterExited to the workflow.
+      void this.stopV2Lifecycle('user-stop', /* graceful */ true);
+    };
+
+    // Terminal events from the base class: WorkflowNotFound, phase `gone`, or
+    // lease revoked. Tear down the delivery poll without calling stopV2Lifecycle
+    // again (base class already fired it via `stopped` flag).
+    this.onTerminal((reason) => {
+      log(`terminal (${reason}) — stopping delivery poll`);
+      stopped = true;
+      if (stopPoller) { stopPoller(); stopPoller = null; }
+    });
+
+    // Kick off claim + heartbeat + watcher. If this throws (conflict/gone),
+    // the caller's startup bails — we haven't started the poll yet.
+    this.startV2Lifecycle(workflowId)
+      .then((pinned) => {
+        if (stopped) return; // caller bailed between await and here
+        stopPoller = startMessagePoller(pinned, onMessages);
+      })
+      .catch((err) => {
+        log(`startV2Lifecycle failed: ${(err as Error)?.message ?? err}`);
+        // Surface via stop — caller's shutdown path sees the error in logs
+        // and proceeds with graceful shutdown. We don't re-throw here because
+        // start() is synchronous by contract.
+        stopped = true;
+      });
+
+    return stop;
   }
 }

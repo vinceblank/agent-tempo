@@ -307,9 +307,13 @@ async function main() {
   // instead of hardcoding the isBridgeMode check. Behavior is identical for the
   // current two adapters — PR-C rewires the body to use the attachment wire
   // protocol.
+  // PR-C commit 2: pass client + host so the adapter can claim the attachment
+  // (V2 path). Constructor reads `CLAUDE_TEMPO_LIFECYCLE_V2` once and commits to
+  // either the V2 lifecycle or the legacy compat-shim path for the lifetime of
+  // the attachment — see `InteractiveAttachment` jsdoc.
   const stopPoller = adapterDescriptor.adapterClass === 'sdk'
     ? () => {} // no-op — SDK adapters handle delivery in their own subprocess
-    : new InteractiveAttachment().start(handle, async (messages) => {
+    : new InteractiveAttachment({ client, host: os.hostname() }).start(handle, async (messages) => {
     for (const msg of messages) {
       log(`Message from ${msg.from}: ${msg.text}`);
       const content = msg.isMaestro ? msg.text + MAESTRO_ACK : msg.text;
@@ -349,20 +353,17 @@ async function main() {
     }, 20_000);
     hardExit.unref();
 
-    // 1. Stop the message poller first
+    // 1. Stop the message poller — V2 adapter fires `adapterExited` (graceful=true)
+    //    from inside `stopV2Lifecycle`, collapsing the workflow `draining → detached`
+    //    per §11.1. Closing our terminal should NOT destroy the workflow — the user
+    //    can re-attach later via `encore`. PR-C commit 4 retired the former
+    //    `updateMetadata({ status: 'terminated' })` signal here (it destroyed the
+    //    session on every SIGINT, defeating the phase split). Operator-initiated
+    //    destruction goes through the `stop` tool / CLI, both of which now use
+    //    `destroyUpdate` directly.
     stopPoller();
 
-    // 2. Signal workflow termination (5s timeout)
-    try {
-      await Promise.race([
-        handle.signal('updateMetadata', { status: 'terminated', terminatedBy: 'system' }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('signal timeout')), 5_000)),
-      ]);
-    } catch {
-      // workflow may already be gone or signal timed out
-    }
-
-    // 3. Close Temporal connection (daemon is left running — it serves all sessions)
+    // 2. Close Temporal connection (daemon is left running — it serves all sessions)
     try {
       connection.close();
     } catch {

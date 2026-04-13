@@ -94,7 +94,8 @@ export async function start(opts: StartOpts) {
         if (opts.replace) {
           out.log(`Stopping existing conductor for ensemble "${opts.ensemble}"...`);
           try {
-            await handle.signal(updateMetadataSignal, { status: 'terminated' });
+            // PR-C commit 4: V2 `destroy` update — explicit operator termination.
+            await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'conductor replace via CLI' }] });
             // Wait briefly for graceful shutdown
             for (let i = 0; i < 10; i++) {
               await new Promise(r => setTimeout(r, 500));
@@ -102,7 +103,7 @@ export async function start(opts: StartOpts) {
               if (check.status.name !== 'RUNNING') break;
             }
           } catch {
-            // Force cancel if signal fails
+            // Force cancel if destroy fails (workflow may be stuck/corrupt)
             try { await handle.cancel(); } catch { /* already gone */ }
           }
           out.success('Existing conductor stopped');
@@ -1470,16 +1471,16 @@ export async function stop(opts: StopOpts) {
         }
 
         if (opts.hardTerminate) {
+          // Escape hatch: raw terminate signal for stuck workflows. Post-PR-C the
+          // workflow handler redirects this onto §2.5 destroy semantics via the
+          // test-compat shim (see session.ts `legacyStatus === 'terminated'`).
           await handle.signal(updateMetadataSignal, { status: 'terminated' });
         } else {
-          // Prefer destroy — sets the isDestroyed flag so adapter recovery (bridge
-          // recreateSession) sees "no" and exits cleanly instead of zombie-rejoining.
-          // Falls back to terminate if the workflow is older and doesn't support destroy.
-          try {
-            await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'stop via CLI' }] });
-          } catch {
-            await handle.signal(updateMetadataSignal, { status: 'terminated' });
-          }
+          // PR-C commit 4: V2 `destroy` update — sets isDestroyed so adapter recovery
+          // (bridge recreateSession) sees "no" and exits cleanly instead of zombie-
+          // rejoining (#102). Legacy terminate fallback retired — every workflow
+          // running at v0.25+ supports `destroy` (landed in PR-A).
+          await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'stop via CLI' }] });
         }
         stopped++;
         out.log(`  ${out.dim('stopped')} ${wf.workflowId}`);
@@ -1546,16 +1547,15 @@ async function stopByName(client: Client, name: string, config: Config, ensemble
 
     // Send destroy (preferred) or hard terminate (escape hatch).
     // Destroy sets isDestroyed so adapter recovery (e.g. copilot-bridge's
-    // recreateSession) stops instead of rejoining as a zombie (#102).
+    // recreateSession) stops instead of rejoining as a zombie (#102). PR-C commit 4
+    // dropped the legacy terminate fallback — every v0.25+ workflow supports destroy.
     try {
       if (hardTerminate) {
+        // Escape hatch: raw terminate signal for stuck workflows. The workflow
+        // handler redirects this onto §2.5 destroy semantics via the test-compat shim.
         await handle.signal(updateMetadataSignal, { status: 'terminated' });
       } else {
-        try {
-          await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'stop via CLI' }] });
-        } catch {
-          await handle.signal(updateMetadataSignal, { status: 'terminated' });
-        }
+        await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'stop via CLI' }] });
       }
       out.success(`Stopped "${name}"`);
     } catch {

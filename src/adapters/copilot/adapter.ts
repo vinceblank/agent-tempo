@@ -142,12 +142,62 @@ export class CopilotSdkAttachment extends SdkAttachment {
   readonly descriptor: AdapterDescriptor = copilotDescriptor;
 
   /**
+   * The currently-active Copilot SDK session, stashed here so the
+   * `onSuperseded` hook can disconnect it on lease revocation. Populated in
+   * `run()` after `copilotClient.createSession(...)` and refreshed on each
+   * successful `recreateSession()`. `undefined` before the session is created
+   * and after shutdown.
+   */
+  private activeSession?: { disconnect(): Promise<void> | void };
+
+  /**
+   * Split-brain cancellation hook (§9.3). Called by `SdkAttachment` when the
+   * base-class phase watcher detects that our `attachmentId` no longer matches
+   * the current attachment on the workflow — i.e., another claimant stole the
+   * lease. We tear down the active Copilot session: it's the only
+   * cancellation primitive the SDK exposes, and the adapter is about to exit
+   * anyway.
+   *
+   * Residual ghost-reply window: if `sendAndWait` is already producing a reply
+   * over the network, disconnect may race the response. The reply is dropped
+   * (processingEnd will throw `AttachmentMismatch`, markDelivered never fires)
+   * so delivery semantics stay at-most-once. One LLM turn is wasted; this is
+   * documented in the adapter README per §9.3's guidance.
+   */
+  protected onSuperseded(): void {
+    log('lease revoked — disconnecting Copilot session');
+    const s = this.activeSession;
+    this.activeSession = undefined;
+    if (!s) return;
+    // Fire-and-forget. disconnect() can be sync or async depending on SDK version;
+    // we don't await because the phase-watcher listener is synchronous.
+    try {
+      const maybePromise = s.disconnect();
+      if (maybePromise && typeof (maybePromise as Promise<void>).catch === 'function') {
+        (maybePromise as Promise<void>).catch((err) =>
+          log('session.disconnect during onSuperseded threw:', err?.message ?? err));
+      }
+    } catch (err: any) {
+      log('session.disconnect during onSuperseded threw:', err?.message ?? err);
+    }
+  }
+
+  /**
    * Entry point for the bridge subprocess.
    *
    * Kept as a single async method (instead of being broken up into lifecycle
    * hooks) to preserve the exact behavior of the pre-PR-B `main()` function.
-   * PR-C restructures this into `attach → deliver loop → detach` using the
-   * v0.25 attachment wire protocol.
+   * PR-C commit 3 adds a V2-path branch: when `CLAUDE_TEMPO_LIFECYCLE_V2` is
+   * enabled (default), the bridge claims the attachment via
+   * `startV2Lifecycle`, drives `deliver()` through `SdkAttachment` (synchronous
+   * processingStart/End per §7.1, `expectedAttachmentId` carried on both),
+   * and installs `onSuperseded` to disconnect the Copilot session on lease
+   * revocation. When the flag is off, the bridge runs the same loop as PR-A /
+   * PR-B: inline fire-and-forget processingStart/End signals and no claim.
+   *
+   * The flag is captured once at construction via `this.lifecycleV2`
+   * (BaseAttachment) — no mid-run toggling per the conductor's behavior-
+   * boundary guardrail.
    */
   async run(): Promise<void> {
     const config = getConfig();
@@ -164,6 +214,11 @@ export class CopilotSdkAttachment extends SdkAttachment {
       connection,
       namespace: config.temporalNamespace,
     });
+
+    // Hand the client + host to BaseAttachment so startV2Lifecycle (below) can
+    // issue claimAttachment + heartbeat against it. No-op on legacy path.
+    const os = require('os') as typeof import('os');
+    this.configureV2(client, os.hostname());
 
     // Determine the expected workflow ID. The MCP server uses the pattern
     // `claude-session-{ensemble}-{playerId}`, where playerId comes from
@@ -247,6 +302,8 @@ export class CopilotSdkAttachment extends SdkAttachment {
     log('Creating Copilot session...');
     let session = await createSessionWithTimeout(copilotClient, sessionConfig);
     log(`Copilot session created: ${session.sessionId}`);
+    // Stash for onSuperseded (V2 path). Refreshed on each successful recreate.
+    this.activeSession = session;
 
     // Track session health — resets to true on any successful interaction
     let sessionAlive = true;
@@ -352,6 +409,36 @@ export class CopilotSdkAttachment extends SdkAttachment {
     handle = client.workflow.getHandle(expectedWorkflowId, pinnedRunId);
     log(`Workflow ready: ${expectedWorkflowId} (pinned runId ${pinnedRunId})`);
 
+    // V2 path: claim the attachment + start the base-class heartbeat & phase
+    // watcher loops. `startV2Lifecycle` returns its own pinned handle (same
+    // runId we already have); we prefer it going forward so the heartbeat
+    // and delivery use a consistent handle. `onTerminal` (WorkflowNotFound,
+    // phase=gone, lease revoked) triggers clean shutdown below.
+    //
+    // If the flag is off we skip the claim — the PR-A compat shim in the
+    // workflow continues to translate `updateMetadata({ status })` onto the
+    // phase machine, preserving pre-rebuild behavior.
+    if (this.lifecycleV2) {
+      // Wire terminal handler BEFORE claiming so a race between claim + lease
+      // loss can't drop the event.
+      this.onTerminal((reason) => {
+        log(`V2 terminal (${reason}) — triggering cleanup`);
+        // Fire-and-forget: `cleanup` is idempotent and `signalTermination=false`
+        // because the workflow is either gone, destroyed, or about to reap us.
+        cleanup(false).catch((err) => log('terminal cleanup error:', err?.message ?? err));
+      });
+      try {
+        handle = await this.startV2Lifecycle(expectedWorkflowId);
+        log(`V2 attachment claimed (attachmentId=${this.token?.attachmentId})`);
+      } catch (err: any) {
+        log(`ERROR: V2 claimAttachment failed: ${err?.message ?? err}`);
+        try { await session.disconnect(); } catch { /* best effort */ }
+        try { fs.unlinkSync(pidFile); } catch { /* may not exist */ }
+        await copilotClient.stop();
+        process.exit(1);
+      }
+    }
+
     // Store sessionId in workflow metadata for future encore/resume
     try {
       await handle.signal('updateMetadata', { sessionId: copilotSessionId });
@@ -392,22 +479,29 @@ export class CopilotSdkAttachment extends SdkAttachment {
     let interval: ReturnType<typeof setInterval> | undefined;
 
     // Shared cleanup — disconnects session, removes PID file, stops client.
-    // `signalTermination` controls whether we also signal the workflow to terminate
-    // (skip if the workflow is already gone).
+    // `_signalTermination` is retained for call-site compatibility but no longer
+    // drives any workflow signal (PR-C commit 4 retired the legacy status signal).
     let shuttingDown = false;
-    const cleanup = async (signalTermination: boolean) => {
+    const cleanup = async (_signalTermination: boolean) => {
       if (shuttingDown) return;
       shuttingDown = true;
       polling = false;
       clearInterval(interval);
-      if (signalTermination) {
-        try {
-          await handle.signal('updateMetadata', { status: 'terminated', terminatedBy: 'system' });
-        } catch {
-          // workflow may already be gone
-        }
+      // V2 graceful detach — fires `adapterExited` so the workflow collapses
+      // draining → detached immediately per §11.1. No-op if V2 was off or if
+      // startV2Lifecycle never ran successfully.
+      //
+      // PR-C commit 4 retired the former `updateMetadata({ status: 'terminated' })`
+      // follow-up signal: closing the Copilot bridge subprocess is a graceful
+      // detach, not a session destroy. The workflow stays in `detached` waiting
+      // for the next claim (e.g. encore). Explicit operator termination goes
+      // through the `stop` tool / CLI, both of which use `destroyUpdate` directly.
+      if (this.lifecycleV2) {
+        await this.stopV2Lifecycle('user-stop', /* graceful */ true).catch((err) =>
+          log(`stopV2Lifecycle suppressed error: ${(err as Error)?.message ?? err}`));
       }
       try { await session.disconnect(); } catch { /* already disconnected */ }
+      this.activeSession = undefined;
       try { fs.unlinkSync(pidFile); } catch { /* already gone */ }
       await copilotClient.stop();
     };
@@ -449,6 +543,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
           const { sessionId: _discard, ...resumeConfig } = sessionConfig as any;
           session = await copilotClient.resumeSession(copilotSessionId, resumeConfig);
           attachEventLogger(session);
+          this.activeSession = session; // refresh V2 onSuperseded target
           sessionAlive = true;
           consecutiveFailures = 0;
           lastActivityTime = Date.now();
@@ -458,6 +553,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
           log(`resumeSession failed (${resumeErr?.message}), falling back to createSession`);
           session = await createSessionWithTimeout(copilotClient, sessionConfig);
           attachEventLogger(session);
+          this.activeSession = session; // refresh V2 onSuperseded target
           sessionAlive = true;
           consecutiveFailures = 0;
           lastActivityTime = Date.now();
@@ -555,30 +651,51 @@ export class CopilotSdkAttachment extends SdkAttachment {
           log('WARNING: session appears dead, sendAndWait may hang');
         }
 
-        // Fixes #99: mark these messages as in-flight before the blocking LLM call so
-        // the workflow's stale detection doesn't misclassify a long tool call as dead.
-        // Fire-and-logged — don't block sendAndWait on the update roundtrip.
+        // Fixes #99: mark in-flight before the blocking LLM call so the workflow's
+        // stale detection doesn't misclassify a long tool call as dead. The V2
+        // path goes through `SdkAttachment.deliver()` which makes these updates
+        // synchronous (§7.1) and carries `expectedAttachmentId` so a revoked
+        // lease is observable. Legacy path keeps the pre-rebuild fire-and-forget
+        // behavior for deterministic rollback.
         const processingMarkerId = ids[0]; // representative for the batch
-        handle.executeUpdate('processingStart', { args: [{ messageId: processingMarkerId }] })
-          .catch((err: any) => log(`processingStart update failed (non-fatal): ${err?.message}`));
 
-        const t0 = Date.now();
         let result: any;
-        try {
-          result = await session.sendAndWait({ prompt }, 300_000); // 5 min timeout
-        } finally {
-          // Always release the in-flight marker — a thrown error from sendAndWait
-          // must not leave the workflow pinned as "processing".
-          handle.executeUpdate('processingEnd', { args: [{ messageId: processingMarkerId }] })
-            .catch((err: any) => log(`processingEnd update failed (non-fatal): ${err?.message}`));
+        let elapsed: number;
+        if (this.lifecycleV2 && this.token) {
+          // V2: SdkAttachment.deliver wraps processingStart → sendAndWait → processingEnd
+          // → markDelivered(ids). Invokes onSuperseded on lease revocation mid-turn.
+          const delivered = await this.deliver(
+            handle,
+            messages[0], // representative message
+            prompt,
+            300_000,
+            async (p, t) => session.sendAndWait({ prompt: p }, t),
+            ids, // ack all pending messages in one markDelivered signal
+          );
+          result = delivered.sdkResult;
+          elapsed = delivered.elapsedMs;
+        } else {
+          // Legacy path — unchanged from PR-A/PR-B behavior.
+          handle.executeUpdate('processingStart', { args: [{ messageId: processingMarkerId }] })
+            .catch((err: any) => log(`processingStart update failed (non-fatal): ${err?.message}`));
+
+          const t0 = Date.now();
+          try {
+            result = await session.sendAndWait({ prompt }, 300_000); // 5 min timeout
+          } finally {
+            // Always release the in-flight marker — a thrown error from sendAndWait
+            // must not leave the workflow pinned as "processing".
+            handle.executeUpdate('processingEnd', { args: [{ messageId: processingMarkerId }] })
+              .catch((err: any) => log(`processingEnd update failed (non-fatal): ${err?.message}`));
+          }
+          elapsed = Date.now() - t0;
+
+          // Mark delivered only after successful send — failed messages stay in pending queue for retry
+          await handle.signal('markDelivered', ids);
         }
-        const elapsed = Date.now() - t0;
 
         log(`sendAndWait completed in ${elapsed}ms`);
         log(`Response: ${JSON.stringify(result)?.substring(0, 500)}`);
-
-        // Mark delivered only after successful send — failed messages stay in pending queue for retry
-        await handle.signal('markDelivered', ids);
 
         // Success — reset failure tracking
         consecutiveFailures = 0;

@@ -51,6 +51,7 @@ function mockHandle(opts: {
   updateFn?: (name: string, opts: { args: unknown[] }) => unknown;
 } = {}) {
   const signals: Array<{ name: string; args: unknown }> = [];
+  const updates: Array<{ name: string; args: unknown }> = [];
 
   const defaultMetadata: SessionMetadata = {
     playerId: 'player-1',
@@ -66,6 +67,7 @@ function mockHandle(opts: {
   return {
     workflowId: `claude-session-test-ensemble-${defaultMetadata.playerId}`,
     signals,
+    updates,
     async signal(name: string, args: unknown) {
       if (opts.signalFn) opts.signalFn(name, args);
       signals.push({ name, args });
@@ -82,12 +84,15 @@ function mockHandle(opts: {
       return { status: { name: 'RUNNING' }, workflowId: `claude-session-test-ensemble-${defaultMetadata.playerId}` };
     },
     async executeUpdate(name: string, updateOpts: { args: unknown[] }) {
+      updates.push({ name, args: updateOpts.args[0] });
       if (opts.updateFn) return opts.updateFn(name, updateOpts);
       // Default: checkAndSetStatus succeeds if status matches
       if (name === 'checkAndSetStatus') {
         const [{ expectedStatus }] = updateOpts.args as [{ expectedStatus: string; newStatus: string }];
         return defaultMetadata.status === expectedStatus;
       }
+      // Default: destroy returns void (matches V2 destroyUpdate signature)
+      if (name === 'destroy') return undefined;
       return undefined;
     },
   };
@@ -343,7 +348,7 @@ describe('deliverReport', function () {
 // ── terminateSession ──
 
 describe('terminateSession', function () {
-  it('signals target with terminated status and notifies conductor', async function () {
+  it('sends destroy update to target and notifies conductor', async function () {
     const targetHandle = mockHandle({ metadata: { playerId: 'bob', ensemble: 'e1' } });
     const conductorId = conductorWorkflowId('e1');
     const conductorHandle = mockHandle({ metadata: { playerId: 'conductor', ensemble: 'e1' } });
@@ -359,10 +364,10 @@ describe('terminateSession', function () {
     });
 
     expect(result.success).to.be.true;
-    // Target should receive updateMetadata signal
-    expect(targetHandle.signals).to.have.length(1);
-    expect(targetHandle.signals[0].name).to.equal('updateMetadata');
-    expect(targetHandle.signals[0].args).to.deep.include({ status: 'terminated', terminatedBy: 'alice' });
+    // PR-C commit 4: target receives V2 destroy update (was legacy updateMetadata signal).
+    expect(targetHandle.updates).to.have.length(1);
+    expect(targetHandle.updates[0].name).to.equal('destroy');
+    expect(targetHandle.updates[0].args).to.deep.include({ terminatedBy: 'alice' });
     // Conductor should be notified
     expect(conductorHandle.signals).to.have.length(1);
     expect(conductorHandle.signals[0].name).to.equal('receiveMessage');
@@ -398,7 +403,7 @@ describe('terminateSession', function () {
     });
 
     expect(result.success).to.be.true;
-    expect(targetHandle.signals[0].name).to.equal('updateMetadata');
+    expect(targetHandle.updates[0].name).to.equal('destroy');
   });
 });
 
