@@ -90,8 +90,10 @@ import type {
   AttachmentToken,
   AttachmentInfo,
   AdapterClass,
+  AgentType,
   DetachReason,
   OrphanSummary,
+  SpawnOutboxEntry,
 } from '../types';
 
 // ── Outbox Activity Proxies ──
@@ -118,8 +120,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   const HEARTBEAT_PROBE_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
   // ── v0.25 Attachment Lifecycle Timers (design §2.3, §9.5) ──
-  /** Attachment lease duration. Renewed on each heartbeat signal. */
-  const LEASE_MS = 90_000;
+  // PR-C commit 6 (#119a): each attachment carries its own `leaseMs` (negotiated at
+  // claim time). No workflow-side default constant — heartbeats extend `expiresAt`
+  // by `currentAttachment.leaseMs`.
   /** Default heartbeat cadence (interactive). SDK adapters use 30s; descriptor-driven in PR-C. */
   const HEARTBEAT_INTERVAL_MS = 30_000;
   /** Max grace period for `draining → detached` transition after requestDetach. */
@@ -492,7 +495,12 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
           'InvalidMessageId',
         );
       }
-      if (destroyed || destroyRequested) {
+      // Canonical phase check — `phase === 'gone'` is set atomically by the
+      // destroy handler (and by the test-compat shim) before `destroyRequested`
+      // flips, so this covers all terminal-state cases consistently with the
+      // rest of the post-PR-C codebase. Replaces the pre-PR-C-commit-4
+      // `destroyed || destroyRequested` compound check (#119b).
+      if (phase === 'gone') {
         throw ApplicationFailure.nonRetryable(
           'Cannot start processing on destroyed session',
           'WorkflowGone',
@@ -610,6 +618,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     ) {
       currentAttachment.lastHeartbeatAt = now.toISOString();
       currentAttachment.expiresAt = new Date(nowMs + leaseMs).toISOString();
+      // Honour the caller's renewal-time leaseMs so subsequent heartbeats extend
+      // the lease by the current negotiated value (not the claim-time value).
+      currentAttachment.leaseMs = leaseMs;
       lastActivityTime = nowMs;
       return attachmentTokenFrom(currentAttachment, leaseMs);
     }
@@ -631,6 +642,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       claimedAt: now.toISOString(),
       lastHeartbeatAt: now.toISOString(),
       expiresAt: new Date(nowMs + leaseMs).toISOString(),
+      leaseMs,
       runId: workflowInfo().runId,
     };
     currentAttachment = newAttachment;
@@ -690,20 +702,24 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     return { reaped: true, previousAttachmentId: previousId };
   });
 
-  /** Enqueue a spawn outbox entry carrying the claim token. */
+  /**
+   * Enqueue a spawn outbox entry carrying the claim token. PR-C commit 6 (#118)
+   * replaced the double-cast `type: 'recruit'` workaround with a dedicated
+   * `SpawnOutboxEntry` discriminated-union variant. The dispatch branch
+   * (`case 'spawn':` below) routes through `startRecruitedSession` today and
+   * will be extended by PR-D to forward `attachmentId`/`runId`/`resume`/
+   * `sessionId`/`adapterId` into the activity signature so the adapter boots
+   * into the pre-claimed attachment.
+   */
   setHandler(enqueueSpawnUpdate, ({ host, attachmentId, runId, resume, sessionId, adapterId }) => {
     const spawnEntryId = uuid4();
-    // We ride on the existing outbox as a typed 'recruit' entry with resume semantics.
-    // PR-D's `restart` will use a dedicated `spawn` entry type; for PR-A we thread through
-    // the existing recruit dispatch.
-    const entry = {
+    const entry: SpawnOutboxEntry = {
       id: spawnEntryId,
-      type: 'recruit' as const,
+      type: 'spawn',
       targetName: input.metadata.playerId,
       workDir: input.metadata.workDir,
       isConductor: input.metadata.isConductor,
-      agent: (input.metadata.agentType ?? 'claude') as 'claude' | 'copilot',
-      initialMessage: undefined,
+      agent: (input.metadata.agentType ?? 'claude') as AgentType,
       targetHostname: host,
       attachmentId,
       attachmentRunId: runId,
@@ -711,8 +727,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       sessionId,
       adapterId,
       createdAt: workflowNow().toISOString(),
-      status: 'pending' as const,
-    } as unknown as OutboxEntry;
+      status: 'pending',
+    };
     outbox.push(entry);
     lastActivityTime = workflowNow().getTime();
     lastOutboundTime = workflowNow().getTime();
@@ -733,7 +749,10 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     if (!currentAttachment || currentAttachment.attachmentId !== attachmentId) return;
     const now = workflowNow();
     currentAttachment.lastHeartbeatAt = now.toISOString();
-    currentAttachment.expiresAt = new Date(now.getTime() + LEASE_MS).toISOString();
+    // #119a: extend by the caller-negotiated `leaseMs` stored on the attachment at
+    // claim time, not a workflow-side default. Adapters with non-default lease windows
+    // (e.g. test harnesses running accelerated clocks) get the lease duration they asked for.
+    currentAttachment.expiresAt = new Date(now.getTime() + currentAttachment.leaseMs).toISOString();
     lastActivityTime = now.getTime();
   });
 
@@ -1239,6 +1258,33 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
             await releasePlayer({
               ensemble: input.metadata.ensemble,
               targetPlayerId: entry.targetPlayerId,
+            });
+            break;
+          }
+          case 'spawn': {
+            // PR-C commit 6 (#118): `SpawnOutboxEntry` dispatch. Today we delegate
+            // to the per-host spawn proxy with the base recruit-shape payload —
+            // the 5 attachment-specific fields (attachmentId/attachmentRunId/
+            // resumeAttachment/sessionId/adapterId) are carried on the entry so
+            // PR-D can wire them end-to-end through `spawnProcess` without a
+            // schema churn. Today they're unused at the activity layer, which
+            // matches the pre-PR-C-commit-6 behaviour exactly (the old `type:
+            // 'recruit'` double-cast stored the same fields and they were also
+            // never read). This preserves existing behaviour while removing
+            // the cast and planting the type foundation.
+            const spawnTc = input.temporalConfig;
+            const spawnHost = entry.targetHostname;
+            const spawnFn = getSpawnProxy(spawnHost);
+            await spawnFn({
+              targetName: entry.targetName,
+              workDir: entry.workDir,
+              isConductor: entry.isConductor,
+              agent: entry.agent,
+              ensemble: input.metadata.ensemble,
+              temporalAddress: spawnTc?.temporalAddress || 'localhost:7233',
+              temporalNamespace: spawnTc?.temporalNamespace || 'default',
+              sessionId: entry.sessionId,
+              resume: entry.resumeAttachment,
             });
             break;
           }

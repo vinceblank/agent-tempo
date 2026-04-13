@@ -14,7 +14,7 @@
  * Design reference: docs/design/session-lifecycle-rebuild-v2.md §§2.2-2.6, §9.2.
  */
 import { expect } from 'chai';
-import type { AttachmentInfo, OrphanSummary } from '../src/types';
+import type { Attachment, AttachmentInfo, OrphanSummary } from '../src/types';
 import {
   setupTestEnv,
   teardownTestEnv,
@@ -373,6 +373,90 @@ describe('session phase machine (v0.25 PR-A)', function () {
       const info: AttachmentInfo = await handle.query(attachmentInfoQuery);
       // expiresAt unchanged (heartbeat was dropped)
       expect(info.currentAttachment?.expiresAt).to.equal(originalExpiresAt);
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
+  it('heartbeat renews expiresAt by the claim-time leaseMs, not a workflow default (#119a)', async function () {
+    this.timeout(10_000);
+    await withWorker(async () => {
+      const handle = await startFreshSession(`hb-leasems-${Date.now()}`);
+
+      // Pick two lease windows far enough apart that we can distinguish them
+      // even with workflow-clock jitter: 45s (our negotiated value) vs 90s
+      // (the prior hardcoded LEASE_MS default). The heartbeat must use 45s.
+      const NEGOTIATED_LEASE_MS = 45_000;
+      const PRIOR_DEFAULT_MS = 90_000;
+
+      const token = await handle.executeUpdate(claimAttachmentUpdate, {
+        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: NEGOTIATED_LEASE_MS }],
+      });
+      const claimTime = new Date(token.expiresAt).getTime() - NEGOTIATED_LEASE_MS;
+
+      // Send a heartbeat — the workflow should extend expiresAt using the
+      // attachment's stored leaseMs (= NEGOTIATED), not the old LEASE_MS constant.
+      await handle.signal(heartbeatSignal, {
+        attachmentId: token.attachmentId,
+        at: new Date().toISOString(),
+      });
+
+      const info: AttachmentInfo = await handle.query(attachmentInfoQuery);
+      const post = new Date(info.currentAttachment!.expiresAt).getTime();
+      const delta = post - claimTime;
+      // Delta must be consistent with NEGOTIATED_LEASE_MS (with tolerance for
+      // workflow-clock advancement between claim and heartbeat). If the bug
+      // returned, delta would land near PRIOR_DEFAULT_MS (90s).
+      expect(delta).to.be.lessThan(PRIOR_DEFAULT_MS, 'heartbeat must not extend by workflow default LEASE_MS');
+      expect(delta).to.be.greaterThan(NEGOTIATED_LEASE_MS - 5_000, 'heartbeat must extend by at least leaseMs - jitter');
+      expect(delta).to.be.lessThan(NEGOTIATED_LEASE_MS + 5_000, 'heartbeat must extend by at most leaseMs + jitter');
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
+  it('expired pre-seeded attachment is reaped on boot: phase -> detached, reason -> heartbeat-timeout', async function () {
+    this.timeout(10_000);
+    // Exercises §9.5.a lease-expiry reap phase-agnostically. Pre-seeded via
+    // SessionInput.currentAttachment (CAN-boundary style) with expiresAt in the
+    // past, the workflow's first main-loop tick should reap. This also validates
+    // that the reap path is live for `awaiting` / `processing` / `attached`
+    // callers — the commit-5-deferred heartbeat-timeout wiring noted that the
+    // existing §9.5.a code already handles all phases phase-agnostically.
+    await withWorker(async () => {
+      const now = Date.now();
+      const expiredAttachment: Attachment = {
+        attachmentId: 'pre-seeded-expired',
+        hostname: 'host-expired',
+        adapterId: 'claude-code',
+        adapterClass: 'interactive',
+        claimedAt: new Date(now - 120_000).toISOString(),
+        lastHeartbeatAt: new Date(now - 90_000).toISOString(),
+        expiresAt: new Date(now - 30_000).toISOString(), // expired 30s ago
+        leaseMs: 30_000,
+        runId: 'pre-seeded-run',
+      };
+
+      const handle = await startSession({
+        metadata: playerMetadata({ playerId: `hb-reap-${Date.now()}` }),
+        currentAttachment: expiredAttachment,
+        phase: 'attached',
+      });
+
+      // Poll briefly — the main loop should wake and reap on first iteration.
+      let info: AttachmentInfo = await handle.query(attachmentInfoQuery);
+      for (let i = 0; i < 20 && info.phase === 'attached'; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        info = await handle.query(attachmentInfoQuery);
+      }
+      expect(info.phase).to.equal('detached');
+      expect(info.currentAttachment).to.equal(undefined);
+
+      const summary: OrphanSummary = await handle.query(orphanSummaryQuery);
+      expect(summary.reason).to.equal('heartbeat-timeout');
+      expect(summary.lastAdapter?.hostname).to.equal('host-expired');
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result().catch(() => {});
