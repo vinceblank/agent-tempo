@@ -4,23 +4,12 @@ import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { Config, conductorWorkflowId, sessionWorkflowId } from '../config';
-import { ENCORE_DEFAULT_CONTEXT_MESSAGES, PREVIEW_MAX_LENGTH } from '../utils/validation';
-import { AgentType, AdapterClass, AttachmentInfo, SessionInput, SessionMetadata, Message } from '../types';
+import { AgentType, SessionInput } from '../types';
 import { getGitInfo } from '../git-info';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { ENV } from '../config';
 import { resolveSession } from './resolve';
 import { registry } from '../adapters';
-import {
-  attachmentInfoQuery,
-  forceDetachUpdate,
-  claimAttachmentUpdate,
-  enqueueSpawnUpdate,
-  getMetadataQuery,
-  getPartQuery,
-  allMessagesQuery,
-  receiveMessageSignal,
-} from '../workflows/signals';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:outbox]', ...args);
 
@@ -103,22 +92,6 @@ export interface SpawnProcessInput {
   adapterId?: string;
 }
 
-export interface PerformEncoreInput {
-  ensemble: string;
-  targetPlayerId: string;
-  fromPlayerId: string;
-  contextMessageCount?: number;
-}
-
-export interface EncoreResult {
-  /** Successful encore — attachment claimed on target and spawn enqueued there. */
-  success: true;
-  /** Attachment token issued by the target for the new adapter. */
-  attachmentId: string;
-  /** Target workflow's outbox spawn-entry id — for logging / tests. */
-  spawnEntryId: string;
-}
-
 // ── Activity result type ──
 
 export interface OutboxActivityResult {
@@ -139,7 +112,6 @@ export interface OutboxActivities {
   terminateSession(input: TerminateSessionInput): Promise<OutboxActivityResult>;
   startRecruitedSession(input: StartRecruitedSessionInput): Promise<RecruitResult>;
   spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult>;
-  performEncore(input: PerformEncoreInput): Promise<EncoreResult>;
   releasePlayer(input: ReleasePlayerInput): Promise<OutboxActivityResult>;
 }
 
@@ -363,122 +335,6 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
       } catch (err) {
         throw ApplicationFailure.nonRetryable(
           `Failed to spawn process for "${targetName}": ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    },
-
-    /**
-     * PR-D: encore is the restart algorithm (§8.2) with a context-replay preamble.
-     *
-     * 1. Resolve the target session handle.
-     * 2. Query attachmentInfo — bail if `phase === 'gone'` (destroyed; use recruit instead).
-     * 3. If a previous attachment lingers (any non-`detached` phase), forceDetach it with
-     *    `gracePeriodMs: 0`. Encore targets are typically `stale`, so nothing to drain.
-     * 4. Query metadata + part + messages (for the context message).
-     * 5. Claim a fresh attachment on the target's preferred/last host.
-     * 6. Inject the context message via `receiveMessage`.
-     * 7. Enqueue a spawn on the target's own outbox — the target's dispatch loop fires
-     *    `spawnProcess` on its per-host task queue and §8.4 rollback handles spawn failures.
-     *
-     * Critically, the caller (`case 'encore':` in the source workflow) doesn't run the
-     * spawn anymore — it just awaits this activity. The target owns the spawn + rollback.
-     */
-    async performEncore(input: PerformEncoreInput): Promise<EncoreResult> {
-      const { ensemble, targetPlayerId, fromPlayerId, contextMessageCount = ENCORE_DEFAULT_CONTEXT_MESSAGES } = input;
-      try {
-        const handle = await resolveSession(client, ensemble, targetPlayerId);
-        if (!handle) {
-          throw ApplicationFailure.nonRetryable(`No session found for "${targetPlayerId}"`);
-        }
-
-        // Step 2 — inspect phase. `gone` means the workflow was destroyed; encore won't
-        // revive it (recruit would create a new workflow ID, which is out of scope here).
-        const info = await handle.query(attachmentInfoQuery) as AttachmentInfo;
-        if (info.phase === 'gone') {
-          throw ApplicationFailure.nonRetryable(
-            `Cannot encore "${targetPlayerId}" — session is destroyed. Use recruit to start a fresh session.`,
-          );
-        }
-
-        // Step 3 — reap any lingering attachment so `claimAttachment` below takes the
-        // fresh-claim branch in §9.2 (not the conflict branch). Idempotent on `detached`.
-        if (info.phase !== 'detached') {
-          await handle.executeUpdate(forceDetachUpdate, {
-            args: [{
-              reason: 'restart',
-              ...(info.currentAttachment ? { expectedAttachmentId: info.currentAttachment.attachmentId } : {}),
-              gracePeriodMs: 0,
-            }],
-          });
-        }
-
-        // Step 4 — gather target metadata for the context message and spawn routing.
-        const metadata = await handle.query(getMetadataQuery) as SessionMetadata;
-        const part = await handle.query(getPartQuery) as string;
-        const allMessages = await handle.query(allMessagesQuery) as Message[];
-
-        const agentTypeRaw = (metadata.agentType as string) || 'claude';
-        const agentType: AgentType = agentTypeRaw === 'copilot' ? 'copilot' : 'claude';
-        const adapterId = metadata.adapterId || (agentType === 'copilot' ? 'copilot' : 'claude-code');
-        const adapterClass: AdapterClass = agentType === 'copilot' ? 'sdk' : 'interactive';
-
-        // Step 5 — claim a fresh attachment on the target's preferred host (or last-known).
-        const targetHost = info.preferredHost ?? metadata.hostname;
-        const token = await handle.executeUpdate(claimAttachmentUpdate, {
-          args: [{
-            host: targetHost,
-            adapterId,
-            adapterClass,
-            leaseMs: 90_000,
-          }],
-        });
-
-        // Step 6 — build and inject the context message.
-        const recentMessages = allMessages.slice(-contextMessageCount);
-        const msgSummary = recentMessages.length > 0
-          ? recentMessages.map((m) => `[${m.from}] ${m.text.slice(0, PREVIEW_MAX_LENGTH)}`).join('\n')
-          : '(no recent messages)';
-
-        const contextMessage = [
-          `🎵 **Encore** — you've been revived by ${fromPlayerId}.`,
-          part ? `Your last status: ${part}` : '',
-          `Recent messages (last ${recentMessages.length}):`,
-          msgSummary,
-          '',
-          'Resume where you left off. Use `ensemble` to see who is active.',
-        ].filter(Boolean).join('\n');
-
-        await handle.signal(receiveMessageSignal, {
-          from: fromPlayerId,
-          text: contextMessage,
-          responseRequested: false,
-        });
-
-        // Step 7 — enqueue the spawn on the target's own outbox. The target's `case 'spawn':`
-        // dispatches the spawnProcess activity on the per-host task queue; its §8.4 catch
-        // handles spawn failure by force-detaching the just-claimed attachment.
-        const { spawnEntryId } = await handle.executeUpdate(enqueueSpawnUpdate, {
-          args: [{
-            host: targetHost,
-            attachmentId: token.attachmentId,
-            runId: token.runId,
-            resume: true,
-            ...(metadata.sessionId ? { sessionId: metadata.sessionId } : {}),
-            adapterId,
-          }],
-        });
-
-        log(`Encore prepared for "${targetPlayerId}" — attachmentId=${token.attachmentId}, spawnEntryId=${spawnEntryId}`);
-
-        return {
-          success: true,
-          attachmentId: token.attachmentId,
-          spawnEntryId,
-        };
-      } catch (err) {
-        if (err instanceof ApplicationFailure) throw err;
-        throw ApplicationFailure.nonRetryable(
-          `Encore failed for "${targetPlayerId}": ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     },

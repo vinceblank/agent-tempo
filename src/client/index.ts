@@ -268,19 +268,6 @@ export function createTempoClient(client: Client): TempoClient {
       throw new Error(`Player "${playerId}" not found in ensemble "${ensemble}"`);
     },
 
-    async encorePlayer(ensemble: string, playerId: string): Promise<void> {
-      // Submit an encore outbox entry through the TUI's maestro session workflow.
-      // This works without a conductor — the maestro session's outbox dispatches the encore activity directly.
-      const maestroId = sessionWorkflowId(ensemble, 'maestro');
-      const h = handle(maestroId);
-
-      const entry: OutboxEntryInput = {
-        type: 'encore',
-        targetPlayerId: playerId,
-      };
-      await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
-    },
-
     async disbandEnsemble(ensemble: string): Promise<{ terminated: number }> {
       let terminated = 0;
 

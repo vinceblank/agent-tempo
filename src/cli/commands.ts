@@ -18,7 +18,7 @@ import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured }
 import { loadLineup, resolveLineupPath } from '../ensemble/loader';
 import { saveLineup, listLineups, readSavedLineup } from '../ensemble/saver';
 import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
-import { ENCORE_DEFAULT_CONTEXT_MESSAGES, PREVIEW_MAX_LENGTH, shouldIncludeInBroadcast, validateEnsembleName } from '../utils/validation';
+import { shouldIncludeInBroadcast, validateEnsembleName } from '../utils/validation';
 import { isDaemonRunning, startDaemon, stopDaemon, getDaemonStatus, DAEMON_LOG_PATH } from './daemon';
 import * as out from './output';
 
@@ -1803,135 +1803,6 @@ export async function broadcast(opts: BroadcastOpts) {
   await connection.close();
 }
 
-// --- Encore command ---
-
-interface EncoreOpts extends CliOverrides {
-  name: string;
-  ensemble?: string;
-  host?: string;
-}
-
-export async function encore(opts: EncoreOpts) {
-  if (opts.host) {
-    out.error('Cross-machine encore is not supported via the CLI. Use the MCP `encore` tool with --host instead (it routes through the outbox and per-host task queues).');
-    process.exit(1);
-    return;
-  }
-
-  const config = getConfig(opts);
-  let connection: Connection;
-  try {
-    connection = await Promise.race([
-      createTemporalConnection(config),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
-    ]);
-  } catch {
-    out.error(`Cannot connect to Temporal at ${config.temporalAddress}`);
-    process.exit(1);
-    return;
-  }
-
-  const client = new Client({ connection, namespace: config.temporalNamespace });
-  const ensemble = opts.ensemble || config.ensemble;
-
-  // Resolve the target session
-  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
-  let targetHandle: import('@temporalio/client').WorkflowHandle | null = null;
-  let targetMeta: SessionMetadata | null = null;
-
-  for await (const wf of client.workflow.list({ query })) {
-    try {
-      const handle = client.workflow.getHandle(wf.workflowId);
-      const metadata: SessionMetadata = await handle.query('getMetadata');
-      if (metadata.ensemble === ensemble && metadata.playerId === opts.name) {
-        targetHandle = handle;
-        targetMeta = metadata;
-        break;
-      }
-    } catch {
-      // skip
-    }
-  }
-
-  if (!targetHandle || !targetMeta) {
-    out.error(`No session found with name "${opts.name}" in ensemble "${ensemble}".`);
-    await connection.close();
-    process.exit(1);
-    return;
-  }
-
-  const status = targetMeta.status || 'active';
-  if (status !== 'stale') {
-    out.error(`Session "${opts.name}" is ${status}, not stale. Encore only works on stale sessions.`);
-    await connection.close();
-    process.exit(1);
-    return;
-  }
-
-  // Query context
-  const part = await targetHandle.query('getPart') as string;
-  const allMessages = await targetHandle.query('allMessages') as Array<{ from: string; text: string; timestamp: string }>;
-  const recentMessages = allMessages.slice(-ENCORE_DEFAULT_CONTEXT_MESSAGES);
-
-  const msgSummary = recentMessages.length > 0
-    ? recentMessages.map(m => `[${m.from}] ${m.text.slice(0, PREVIEW_MAX_LENGTH)}`).join('\n')
-    : '(no recent messages)';
-
-  const contextMessage = [
-    `🎵 **Encore** — you've been revived via CLI.`,
-    part ? `Your last status: ${part}` : '',
-    `Recent messages (last ${recentMessages.length}):`,
-    msgSummary,
-    '',
-    'Resume where you left off. Use `ensemble` to see who is active.',
-  ].filter(Boolean).join('\n');
-
-  // Reset status and inject context message
-  await targetHandle.signal('updateMetadata', { status: 'pending' });
-  await targetHandle.signal('receiveMessage', { from: 'system', text: contextMessage, responseRequested: false });
-
-  out.log(`Reviving "${opts.name}" in ${targetMeta.workDir}...`);
-
-  // Resolve agent flags
-  let agentFlags: string[] = [];
-  if (targetMeta.playerType) {
-    try {
-      const info = resolveAgentType(targetMeta.playerType);
-      if (info?.nativeResolvable) {
-        agentFlags = ['--agent', targetMeta.playerType];
-      } else if (info?.path) {
-        agentFlags = ['--system-prompt', info.path];
-      }
-    } catch {
-      // non-fatal
-    }
-  }
-
-  const spawnArgs = [
-    '--dangerously-skip-permissions',
-    '--dangerously-load-development-channels', 'server:claude-tempo',
-    '--resume', opts.name,
-    ...agentFlags,
-  ];
-  const envVars: Record<string, string> = {
-    [ENV.ENSEMBLE]: ensemble,
-    [ENV.CONDUCTOR]: targetMeta.isConductor ? 'true' : '',
-    [ENV.PLAYER_NAME]: opts.name,
-    [ENV.TEMPORAL_ADDRESS]: config.temporalAddress,
-    [ENV.TEMPORAL_NAMESPACE]: config.temporalNamespace,
-  };
-  if (targetMeta.playerType) envVars[ENV.PLAYER_TYPE] = targetMeta.playerType;
-  if (config.temporalApiKey) envVars[ENV.TEMPORAL_API_KEY] = config.temporalApiKey;
-  if (config.temporalTlsCertPath) envVars[ENV.TEMPORAL_TLS_CERT_PATH] = config.temporalTlsCertPath;
-  if (config.temporalTlsKeyPath) envVars[ENV.TEMPORAL_TLS_KEY_PATH] = config.temporalTlsKeyPath;
-  if (config.claudeBin) envVars[ENV.CLAUDE_BIN] = config.claudeBin;
-
-  const { pid } = spawnInTerminal(spawnArgs, targetMeta.workDir, envVars, { claudeBin: config.claudeBin });
-  out.success(`Encore! "${opts.name}" revived (pid ${pid})`);
-
-  await connection.close();
-}
-
 // --- Ensemble lineup commands ---
 
 interface EnsembleCommandOpts extends CliOverrides {
@@ -2241,7 +2112,6 @@ ${out.bold('Commands:')}
   ${out.cyan('status')}  [ensemble]    Show active sessions and Temporal health
   ${out.cyan('ensemble')} <sub>       Manage saved ensemble lineups (save/list/show)
   ${out.cyan('broadcast')} <message>   Send a message to all active players
-  ${out.cyan('encore')}   <name>      Revive a stale player session (reconnect with context)
   ${out.cyan('release')} [ensemble]   Release all held players (unlock outbox, deliver messages)
   ${out.cyan('pause')}   [ensemble]   Pause an ensemble (sessions, scheduler, maestro)
   ${out.cyan('resume')}  [ensemble]   Resume a paused ensemble

@@ -96,7 +96,7 @@ import type {
 
 // ── Outbox Activity Proxies ──
 
-const { deliverCue, deliverReport, terminateSession, startRecruitedSession, performEncore, releasePlayer } =
+const { deliverCue, deliverReport, terminateSession, startRecruitedSession, releasePlayer } =
   proxyActivities<OutboxActivities>({
     startToCloseTimeout: '30 seconds',
     retry: { maximumAttempts: 3 },
@@ -278,8 +278,6 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       sentMessages.push({ id: entry.id, to: 'conductor', text: `[${entry.reportType}] ${entry.text}`, timestamp: entry.createdAt });
     } else if (entry.type === 'stop') {
       sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[stop requested]', timestamp: entry.createdAt });
-    } else if (entry.type === 'encore') {
-      sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[encore requested]', timestamp: entry.createdAt });
     } else if (entry.type === 'release') {
       sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[release requested]', timestamp: entry.createdAt });
     }
@@ -1190,22 +1188,6 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               sessionId: recruitResult.sessionId,
               allowedTools: entry.allowedTools,
               claudeBin: entry.claudeBin,
-            });
-            break;
-          }
-          case 'encore': {
-            // PR-D: performEncore now runs the restart algorithm (§8.2) on the
-            // target — forceDetach + claim + enqueueSpawn. The target's own
-            // `case 'spawn':` dispatches spawnProcess on its per-host task
-            // queue, and the §8.4 rollback fires on that side if spawn fails.
-            // The source workflow only awaits the activity result here; no
-            // cross-workflow spawn is needed and no CAS-based status revert
-            // on failure (the target's dispatch handles rollback natively).
-            await performEncore({
-              ensemble: input.metadata.ensemble,
-              targetPlayerId: entry.targetPlayerId,
-              fromPlayerId: input.metadata.playerId,
-              contextMessageCount: entry.contextMessageCount,
             });
             break;
           }

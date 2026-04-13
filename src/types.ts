@@ -328,15 +328,6 @@ export interface StopOutboxEntry extends OutboxEntryBase {
   targetPlayerId: string;
 }
 
-export interface EncoreOutboxEntry extends OutboxEntryBase {
-  type: 'encore';
-  targetPlayerId: string;
-  targetHostname?: string;
-  contextMessageCount?: number;
-  /** Custom claude binary path (from config.claudeBin). */
-  claudeBin?: string;
-}
-
 /**
  * Spawn outbox entry — enqueued by the `enqueueSpawn` update so a host activity
  * launches (or relaunches) an adapter process that will then claim the carried
@@ -377,7 +368,6 @@ export type OutboxEntry =
   | RecruitOutboxEntry
   | ReportOutboxEntry
   | StopOutboxEntry
-  | EncoreOutboxEntry
   | ReleaseOutboxEntry
   | SpawnOutboxEntry;
 

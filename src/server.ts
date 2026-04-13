@@ -29,7 +29,6 @@ import { registerAgentTypesTool } from './tools/agent-types';
 import { registerWhoAmITool } from './tools/who-am-i';
 import { registerBroadcastTool } from './tools/broadcast';
 import { registerRecallTool } from './tools/recall';
-import { registerEncoreTool } from './tools/encore';
 import { registerReleaseTool } from './tools/release';
 import { registerPauseEnsembleTool } from './tools/pause-ensemble';
 import { registerResumeEnsembleTool } from './tools/resume-ensemble';
@@ -40,6 +39,11 @@ import { registerWorktreeTool } from './tools/worktree';
 import { registerStageTool } from './tools/stage';
 import { registerStagesTool } from './tools/stages';
 import { registerCancelStageTool } from './tools/cancel-stage';
+import { registerRestartTool } from './tools/restart';
+import { registerDetachTool } from './tools/detach';
+import { registerDestroyTool } from './tools/destroy';
+import { registerMigrateTool } from './tools/migrate';
+import { registerAttachmentInfoTool } from './tools/attachment-info';
 import { registry, InteractiveAttachment } from './adapters';
 import { resolveAgentType } from './ensemble/agent-types';
 
@@ -279,10 +283,15 @@ async function main() {
   registerWhoAmITool(mcpServer, handle, getPlayerId);
   registerBroadcastTool(mcpServer, client, config, getPlayerId, handle);
   registerRecallTool(mcpServer, handle, getPlayerId);
-  registerEncoreTool(mcpServer, client, config, getPlayerId, handle);
   registerReleaseTool(mcpServer, client, config, getPlayerId, handle);
   registerPauseEnsembleTool(mcpServer, client, config, getPlayerId);
   registerResumeEnsembleTool(mcpServer, client, config, getPlayerId);
+  // PR-D new verbs — thin wrappers over PR-A/B/C attachment-lifecycle primitives.
+  registerRestartTool(mcpServer, client, config, getPlayerId);
+  registerDetachTool(mcpServer, client, config, getPlayerId);
+  registerDestroyTool(mcpServer, client, config, getPlayerId);
+  registerMigrateTool(mcpServer, client, config, getPlayerId);
+  registerAttachmentInfoTool(mcpServer, client, config);
 
   // Conductor-only tools
   if (isConductor) {

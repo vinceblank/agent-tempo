@@ -34,7 +34,6 @@ export type {
   RecruitOutboxEntry,
   ReportOutboxEntry,
   StopOutboxEntry,
-  EncoreOutboxEntry,
   ReleaseOutboxEntry,
   SpawnOutboxEntry,
   AgentType,

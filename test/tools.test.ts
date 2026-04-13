@@ -28,7 +28,11 @@ import { registerStopTool } from '../src/tools/stop';
 import { registerLoadLineupTool } from '../src/tools/load-lineup';
 import { registerBroadcastTool } from '../src/tools/broadcast';
 import { registerRecallTool } from '../src/tools/recall';
-import { registerEncoreTool } from '../src/tools/encore';
+import { registerRestartTool } from '../src/tools/restart';
+import { registerDetachTool } from '../src/tools/detach';
+import { registerDestroyTool } from '../src/tools/destroy';
+import { registerMigrateTool } from '../src/tools/migrate';
+import { registerAttachmentInfoTool } from '../src/tools/attachment-info';
 
 // ─────────────────────────────────────────────
 // Harness
@@ -310,119 +314,18 @@ describe('schedule tool validation', function () {
 // stop tool
 // ─────────────────────────────────────────────
 
-describe('stop tool validation', function () {
-  let call: ToolHandler;
-
-  before(function () {
-    call = extractHandler((server) =>
-      registerStopTool(server, makeTestClient(), testConfig, getPlayerId, fakeHandle),
-    );
-  });
-
-  it('rejects stopping your own session', async function () {
-    // getPlayerId() returns TEST_PLAYER_ID; stopping the same name is forbidden.
-    const result = await call({ playerId: TEST_PLAYER_ID });
-    expect(result.isError).to.be.true;
-    expect(result.content[0].text).to.equal('Cannot stop your own session.');
-  });
-
-  it('proceeds past self-check for a different player name', async function () {
-    // 'other-player' !== TEST_PLAYER_ID, so we pass the self-check.
-    // resolveSession returns null (fake client has empty list) → returns "not found" error.
-    const result = await call({ playerId: 'other-player' });
-    // The error is "not found", NOT "cannot stop your own session"
-    expect(result.content[0].text).to.not.equal('Cannot stop your own session.');
-    expect(result.content[0].text).to.include('No active session found');
-  });
-});
-
-describe('stop tool force-terminate', function () {
-  it('force-terminates a session directly via Temporal API', async function () {
-    let terminatedWith: string | undefined;
-    // Create a client where resolveSession finds an existing session
-    const clientWithSession = {
-      workflow: {
-        getHandle: (_id: string) => ({
-          describe: async () => { throw new Error('workflow not found'); },
-          signal: async () => {},
-          terminate: async (reason: string) => { terminatedWith = reason; },
-        }),
-        start: async () => ({ runId: 'fake-run-id' }),
-        list: async function* () {
-          yield { workflowId: 'wf-target' };
-        },
-      },
-    } as unknown as Client;
-    // Patch getHandle to return a handle with query support for resolveSession
-    (clientWithSession.workflow as any).getHandle = (_id: string) => ({
-      query: async (name: string) => {
-        if (name === 'getMetadata') return { ensemble: 'test-ensemble', playerId: 'target-player' } as any;
-        return '';
-      },
-      signal: async () => {},
-      terminate: async (reason: string) => { terminatedWith = reason; },
-    });
-
-    const call = extractHandler((server) =>
-      registerStopTool(server, clientWithSession, testConfig, getPlayerId, fakeHandle),
-    );
-
-    const result = await call({ playerId: 'target-player', force: true });
-    expect(result.isError).to.be.undefined;
-    expect(result.content[0].text).to.include('force-terminated');
-    expect(terminatedWith).to.include('Force terminated');
-  });
-
-  it('force-terminate still rejects self-stop', async function () {
+describe('stop tool (deprecation shim, PR-D)', function () {
+  it('always returns isError with hints to detach/destroy/restart', async function () {
     const call = extractHandler((server) =>
       registerStopTool(server, makeTestClient(), testConfig, getPlayerId, fakeHandle),
     );
-    const result = await call({ playerId: TEST_PLAYER_ID, force: true });
+    const result = await call({ playerId: 'anyone' });
     expect(result.isError).to.be.true;
-    expect(result.content[0].text).to.equal('Cannot stop your own session.');
-  });
-
-  it('force-terminate returns error when session not found', async function () {
-    const call = extractHandler((server) =>
-      registerStopTool(server, makeTestClient(), testConfig, getPlayerId, fakeHandle),
-    );
-    const result = await call({ playerId: 'nonexistent', force: true });
-    expect(result.isError).to.be.true;
-    expect(result.content[0].text).to.include('No active session found');
-  });
-
-  it('graceful stop (default) uses outbox, not direct terminate', async function () {
-    let outboxCalled = false;
-    const fakeOutboxHandle = {
-      executeUpdate: async () => { outboxCalled = true; return 'fake-entry-id'; },
-    } as unknown as WorkflowHandle;
-
-    // Client with a findable session
-    const clientWithSession = {
-      workflow: {
-        getHandle: (_id: string) => ({
-          query: async (name: string) => {
-            if (name === 'getMetadata') return { ensemble: 'test-ensemble', playerId: 'target-player' } as any;
-            return '';
-          },
-          signal: async () => {},
-          terminate: async () => { throw new Error('Should not be called'); },
-        }),
-        start: async () => ({ runId: 'fake-run-id' }),
-        list: async function* () {
-          yield { workflowId: 'wf-target' };
-        },
-      },
-    } as unknown as Client;
-
-    const call = extractHandler((server) =>
-      registerStopTool(server, clientWithSession, testConfig, getPlayerId, fakeOutboxHandle),
-    );
-
-    const result = await call({ playerId: 'target-player' });
-    expect(result.isError).to.be.undefined;
-    expect(result.content[0].text).to.include('gracefully');
-    expect(outboxCalled).to.be.true;
+    const text = result.content[0].text;
+    expect(text).to.include('deprecated');
+    expect(text).to.include('detach');
+    expect(text).to.include('destroy');
+    expect(text).to.include('restart');
   });
 });
 
@@ -1056,111 +959,272 @@ describe('recall tool validation', function () {
 // encore tool
 // ─────────────────────────────────────────────
 
+// (encore tool deleted in PR-D — restart replaces it.)
+
+// ─────────────────────────────────────────────
+// PR-D verb tools — happy paths over PR-A primitives
+// ─────────────────────────────────────────────
+
 /**
- * Build a fake client that returns a single session with the given status.
- * Used for encore tool tests that need to exercise the status-check guards.
+ * Build a test client whose single session supports the full V2 attachment
+ * lifecycle surface (attachmentInfo query, requestDetach signal, forceDetach +
+ * claimAttachment + destroy + enqueueSpawn updates, getMetadata/getPart/allMessages
+ * queries, receiveMessage signal). Records signals + updates for assertions.
  */
-function makeEncoreClient(targetPlayerId: string, status: string): Client {
-  return makeClientWithPlayers([{ playerId: targetPlayerId, status }]);
+function makeV2Client(opts: {
+  playerId: string;
+  phase?: 'booting' | 'attached' | 'processing' | 'awaiting' | 'draining' | 'detached' | 'gone';
+  currentAttachmentId?: string;
+  hostname?: string;
+  agentType?: 'claude' | 'copilot';
+} = { playerId: 'target' }) {
+  const playerId = opts.playerId;
+  const phase = opts.phase ?? 'detached';
+  const hostname = opts.hostname ?? 'test-host';
+  const agentType = opts.agentType ?? 'claude';
+
+  const attachmentInfo = {
+    phase,
+    inFlightCount: 0,
+    ...(opts.currentAttachmentId
+      ? {
+          currentAttachment: {
+            attachmentId: opts.currentAttachmentId,
+            hostname,
+            adapterId: agentType === 'copilot' ? 'copilot' : 'claude-code',
+            adapterClass: agentType === 'copilot' ? 'sdk' : 'interactive',
+            claimedAt: '2026-01-01T00:00:00Z',
+            lastHeartbeatAt: '2026-01-01T00:00:00Z',
+            expiresAt: new Date(Date.now() + 90_000).toISOString(),
+            leaseMs: 90_000,
+            runId: 'old-run',
+          },
+        }
+      : {}),
+  };
+
+  const signals: Array<{ name: string; args: unknown }> = [];
+  const updates: Array<{ name: string; args: unknown }> = [];
+
+  const asName = (nameOrDef: unknown): string =>
+    typeof nameOrDef === 'string' ? nameOrDef : (nameOrDef as { name: string }).name;
+
+  const handle = {
+    workflowId: `claude-session-test-ensemble-${playerId}`,
+    signals,
+    updates,
+    async signal(nameOrDef: unknown, args: unknown) {
+      signals.push({ name: asName(nameOrDef), args });
+    },
+    async query(nameOrDef: unknown) {
+      const name = asName(nameOrDef);
+      if (name === 'getMetadata') {
+        return {
+          playerId,
+          ensemble: 'test-ensemble',
+          hostname,
+          workDir: '/work',
+          isConductor: false,
+          agentType,
+          status: 'active',
+          adapterId: agentType === 'copilot' ? 'copilot' : 'claude-code',
+          sessionId: 'sess-uuid',
+        };
+      }
+      if (name === 'getPart') return 'working on stuff';
+      if (name === 'allMessages') return [];
+      if (name === 'attachmentInfo') return attachmentInfo;
+      return undefined;
+    },
+    async executeUpdate(nameOrDef: unknown, updateOpts: { args: unknown[] }) {
+      const name = asName(nameOrDef);
+      updates.push({ name, args: updateOpts.args[0] });
+      if (name === 'destroy') return undefined;
+      if (name === 'forceDetach') return { reaped: true, previousAttachmentId: opts.currentAttachmentId };
+      if (name === 'claimAttachment') {
+        return {
+          attachmentId: 'new-attach-abc12345',
+          runId: 'new-run-xyz98765',
+          expiresAt: new Date(Date.now() + 90_000).toISOString(),
+          leaseMs: 90_000,
+        };
+      }
+      if (name === 'enqueueSpawn') return { spawnEntryId: 'spawn-entry-111' };
+      return undefined;
+    },
+  };
+
+  const client = {
+    workflow: {
+      getHandle: (_id: string) => handle,
+      list: async function* () { yield { workflowId: handle.workflowId }; },
+    },
+  } as unknown as Client;
+
+  return { client, handle };
 }
 
-describe('encore tool validation', function () {
-  it('rejects encoring your own session', async function () {
-    // TEST_PLAYER_ID encoring itself
+describe('attachment_info tool', function () {
+  it('formats phase + attachment details for an attached session', async function () {
+    const { client } = makeV2Client({
+      playerId: 'alice',
+      phase: 'attached',
+      currentAttachmentId: 'attach-abc',
+      hostname: 'host-1',
+    });
     const call = extractHandler((server) =>
-      registerEncoreTool(server, makeTestClient(), testConfig, getPlayerId, fakeHandle),
+      registerAttachmentInfoTool(server, client, testConfig),
+    );
+    const result = await call({ playerId: 'alice' });
+    expect(result.isError).to.not.equal(true);
+    expect(result.content[0].text).to.include('alice');
+    expect(result.content[0].text).to.include('attached');
+    expect(result.content[0].text).to.include('host-1');
+  });
+});
+
+describe('detach tool', function () {
+  it('signals requestDetach on an attached session', async function () {
+    const { client, handle } = makeV2Client({
+      playerId: 'bob',
+      phase: 'attached',
+      currentAttachmentId: 'attach-bob',
+    });
+    const call = extractHandler((server) =>
+      registerDetachTool(server, client, testConfig, getPlayerId),
+    );
+    const result = await call({ playerId: 'bob' });
+    expect(result.isError).to.not.equal(true);
+    const detach = handle.signals.find((s) => s.name === 'requestDetach');
+    expect(detach, 'requestDetach signal sent').to.exist;
+    expect((detach!.args as any).reason).to.equal('user-stop');
+  });
+
+  it('rejects self-detach', async function () {
+    const { client } = makeV2Client({ playerId: TEST_PLAYER_ID });
+    const call = extractHandler((server) =>
+      registerDetachTool(server, client, testConfig, getPlayerId),
     );
     const result = await call({ playerId: TEST_PLAYER_ID });
     expect(result.isError).to.be.true;
-    expect(result.content[0].text).to.equal('Cannot encore your own session.');
+    expect(result.content[0].text).to.include('own session');
   });
 
-  it('returns error when target session is not found', async function () {
-    // Empty client — resolveSession returns null
+  it('reports already-detached as success (idempotent)', async function () {
+    const { client } = makeV2Client({ playerId: 'carol', phase: 'detached' });
     const call = extractHandler((server) =>
-      registerEncoreTool(server, makeTestClient(), testConfig, getPlayerId, fakeHandle),
+      registerDetachTool(server, client, testConfig, getPlayerId),
     );
-    const result = await call({ playerId: 'ghost-player' });
-    expect(result.isError).to.be.true;
-    expect(result.content[0].text).to.include('No session found');
-    expect(result.content[0].text).to.include('ghost-player');
+    const result = await call({ playerId: 'carol' });
+    expect(result.isError).to.not.equal(true);
+    expect(result.content[0].text).to.include('already detached');
+  });
+});
+
+describe('destroy tool', function () {
+  it('calls destroyUpdate with reason + terminatedBy', async function () {
+    const { client, handle } = makeV2Client({ playerId: 'dave' });
+    const call = extractHandler((server) =>
+      registerDestroyTool(server, client, testConfig, getPlayerId),
+    );
+    const result = await call({ playerId: 'dave', reason: 'debug cleanup' });
+    expect(result.isError).to.not.equal(true);
+    const destroy = handle.updates.find((u) => u.name === 'destroy');
+    expect(destroy, 'destroy update called').to.exist;
+    expect((destroy!.args as any).reason).to.equal('debug cleanup');
+    expect((destroy!.args as any).terminatedBy).to.equal(TEST_PLAYER_ID);
   });
 
-  it('rejects encore on an active session — suggests cue instead', async function () {
+  it('rejects self-destroy', async function () {
+    const { client } = makeV2Client({ playerId: TEST_PLAYER_ID });
     const call = extractHandler((server) =>
-      registerEncoreTool(
-        server,
-        makeEncoreClient('active-player', 'active'),
-        testConfig,
-        getPlayerId,
-        fakeHandle,
-      ),
+      registerDestroyTool(server, client, testConfig, getPlayerId),
     );
-    const result = await call({ playerId: 'active-player' });
+    const result = await call({ playerId: TEST_PLAYER_ID });
     expect(result.isError).to.be.true;
-    expect(result.content[0].text).to.include('already active');
-    expect(result.content[0].text).to.include('cue');
+    expect(result.content[0].text).to.include('own session');
+  });
+});
+
+describe('restart tool', function () {
+  it('runs §8.2 algorithm on a detached session — claim + context + enqueueSpawn', async function () {
+    const { client, handle } = makeV2Client({ playerId: 'eve', phase: 'detached' });
+    const call = extractHandler((server) =>
+      registerRestartTool(server, client, testConfig, getPlayerId),
+    );
+    const result = await call({ playerId: 'eve' });
+    expect(result.isError).to.not.equal(true);
+    // Detached — skip reap, go straight to claim + enqueue.
+    expect(handle.updates.find((u) => u.name === 'forceDetach')).to.be.undefined;
+    expect(handle.updates.find((u) => u.name === 'claimAttachment'), 'claim').to.exist;
+    expect(handle.updates.find((u) => u.name === 'enqueueSpawn'), 'enqueueSpawn').to.exist;
+    // Context replay on by default.
+    expect(handle.signals.find((s) => s.name === 'receiveMessage'), 'context replay').to.exist;
   });
 
-  it('rejects encore on a pending session — suggests waiting', async function () {
+  it('refuses live attachment without force; signals requestDetach first', async function () {
+    const { client, handle } = makeV2Client({
+      playerId: 'frank',
+      phase: 'attached',
+      currentAttachmentId: 'live-attach',
+    });
     const call = extractHandler((server) =>
-      registerEncoreTool(
-        server,
-        makeEncoreClient('pending-player', 'pending'),
-        testConfig,
-        getPlayerId,
-        fakeHandle,
-      ),
+      registerRestartTool(server, client, testConfig, getPlayerId),
     );
-    const result = await call({ playerId: 'pending-player' });
+    const result = await call({ playerId: 'frank' });
     expect(result.isError).to.be.true;
-    expect(result.content[0].text).to.include('pending');
-    expect(result.content[0].text).to.include('starting up');
+    expect(result.content[0].text).to.include('force=true');
+    // Graceful detach WAS signaled; force path wasn't taken.
+    expect(handle.signals.find((s) => s.name === 'requestDetach'), 'graceful first').to.exist;
+    expect(handle.updates.find((u) => u.name === 'forceDetach')).to.be.undefined;
   });
 
-  it('rejects encore on a terminated session — suggests recruit instead', async function () {
+  it('rejects destroyed (phase=gone) with recruit hint', async function () {
+    const { client } = makeV2Client({ playerId: 'ghost', phase: 'gone' });
     const call = extractHandler((server) =>
-      registerEncoreTool(
-        server,
-        makeEncoreClient('dead-player', 'terminated'),
-        testConfig,
-        getPlayerId,
-        fakeHandle,
-      ),
+      registerRestartTool(server, client, testConfig, getPlayerId),
     );
-    const result = await call({ playerId: 'dead-player' });
+    const result = await call({ playerId: 'ghost' });
     expect(result.isError).to.be.true;
-    expect(result.content[0].text).to.include('terminated');
+    expect(result.content[0].text).to.include('destroyed');
     expect(result.content[0].text).to.include('recruit');
   });
 
-  it('submits encore outbox entry for a stale session', async function () {
+  it('honors fresh=true — no context replay', async function () {
+    const { client, handle } = makeV2Client({ playerId: 'hannah' });
     const call = extractHandler((server) =>
-      registerEncoreTool(
-        server,
-        makeEncoreClient('stale-player', 'stale'),
-        testConfig,
-        getPlayerId,
-        fakeHandle,
-      ),
+      registerRestartTool(server, client, testConfig, getPlayerId),
     );
-    const result = await call({ playerId: 'stale-player' });
+    const result = await call({ playerId: 'hannah', fresh: true });
     expect(result.isError).to.not.equal(true);
-    expect(result.content[0].text).to.include('stale-player');
-    expect(result.content[0].text).to.include('outbox:');
+    expect(handle.signals.find((s) => s.name === 'receiveMessage')).to.be.undefined;
+    const spawn = handle.updates.find((u) => u.name === 'enqueueSpawn');
+    expect((spawn!.args as any).resume).to.be.false;
+  });
+});
+
+describe('migrate tool', function () {
+  it('passes host through to restart algorithm', async function () {
+    const { client, handle } = makeV2Client({ playerId: 'ian' });
+    const call = extractHandler((server) =>
+      registerMigrateTool(server, client, testConfig, getPlayerId),
+    );
+    const result = await call({ playerId: 'ian', host: 'other-host' });
+    expect(result.isError).to.not.equal(true);
+    expect(result.content[0].text).to.include('other-host');
+    const spawn = handle.updates.find((u) => u.name === 'enqueueSpawn');
+    expect((spawn!.args as any).host).to.equal('other-host');
+    const claim = handle.updates.find((u) => u.name === 'claimAttachment');
+    expect((claim!.args as any).host).to.equal('other-host');
   });
 
-  it('accepts optional contextMessages parameter without error', async function () {
+  it('rejects empty host', async function () {
+    const { client } = makeV2Client({ playerId: 'jen' });
     const call = extractHandler((server) =>
-      registerEncoreTool(
-        server,
-        makeEncoreClient('stale-player', 'stale'),
-        testConfig,
-        getPlayerId,
-        fakeHandle,
-      ),
+      registerMigrateTool(server, client, testConfig, getPlayerId),
     );
-    const result = await call({ playerId: 'stale-player', contextMessages: 20 });
-    expect(result.isError).to.not.equal(true);
+    const result = await call({ playerId: 'jen', host: '   ' });
+    expect(result.isError).to.be.true;
+    expect(result.content[0].text).to.include('host');
   });
 });

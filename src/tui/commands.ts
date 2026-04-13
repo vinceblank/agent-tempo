@@ -270,40 +270,6 @@ async function handleRecruit(
   dispatch({ type: 'ENTER_RECRUIT', answers, defaultAgent: ctx.defaultAgent });
 }
 
-/** /encore <player> — revive a stale player. */
-async function handleEncore(
-  args: string[],
-  dispatch: (action: TuiAction) => void,
-  api: TempoClient,
-): Promise<void> {
-  if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /encore <player>');
-    return;
-  }
-
-  const target = args[0];
-  try {
-    // Find the stale player and encore directly via the maestro session's outbox
-    const ensembles = await api.discoverEnsembles();
-    for (const ens of ensembles) {
-      const players = await api.getPlayers(ens.name);
-      const player = players.find(p => p.playerId === target);
-      if (player) {
-        if (player.status !== 'stale') {
-          commitStatic(dispatch, 'error', `Player "${target}" is ${player.status}, not stale. Encore only works on stale sessions.`);
-          return;
-        }
-        await api.encorePlayer(ens.name, target);
-        commitStatic(dispatch, 'info', `\u21BB Encore submitted for ${target}. The session will be revived with context restored.`);
-        return;
-      }
-    }
-    commitStatic(dispatch, 'error', `Player "${target}" not found in any ensemble.`);
-  } catch (err) {
-    commitStatic(dispatch, 'error', `Encore failed for ${target}: ${err}`);
-  }
-}
-
 /** Delete a schedule by name — shared logic for /schedule delete and /unschedule. */
 async function deleteSchedule(
   name: string,
@@ -990,11 +956,6 @@ export const COMMANDS: Record<string, CommandDef> = {
     usage: '/broadcast <message>',
     handler: handleBroadcast,
   },
-  encore: {
-    description: 'Revive a stale player session',
-    usage: '/encore <player>',
-    handler: handleEncore,
-  },
   recall: {
     description: "Read a player's message history",
     usage: '/recall [player] [--limit N]',
@@ -1132,7 +1093,7 @@ export function resolveHelpTarget(raw: string): { name: string; def: CommandDef 
 }
 
 /** Commands that take a player name as their first parameter. */
-export const PLAYER_PARAM_COMMANDS = new Set(['stop', 'encore', 'worktree']);
+export const PLAYER_PARAM_COMMANDS = new Set(['stop', 'worktree']);
 
 /** Commands with hardcoded subcommands (shown in autocomplete). */
 export const SUBCOMMAND_MAP: Record<string, string[]> = {

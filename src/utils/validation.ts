@@ -55,9 +55,6 @@ export const WORKTREE_INSTALL_TIMEOUT = 60000;
 /** Window for blocked session detection (5 minutes). */
 export const BLOCKED_WINDOW_MS = 5 * 60 * 1000;
 
-/** Default number of recent messages to include as context in an encore. */
-export const ENCORE_DEFAULT_CONTEXT_MESSAGES = 10;
-
 /** Maximum length for message preview truncation. */
 export const PREVIEW_MAX_LENGTH = 200;
 

@@ -58,8 +58,6 @@ export interface TempoClient {
   getWorktrees(ensemble: string): Promise<WorktreeEntry[]>;
   /** Get aggregated ensemble chat (maestro + conductor traffic). */
   getEnsembleChat(ensemble: string, offset?: number, limit?: number): Promise<EnsembleChatResult>;
-  /** Encore (revive) a stale player directly via the maestro session's outbox. */
-  encorePlayer(ensemble: string, playerId: string): Promise<void>;
   /** Disband an ensemble: terminate all sessions, scheduler, and maestro workflows. */
   disbandEnsemble(ensemble: string): Promise<{ terminated: number }>;
   /** Check if the Temporal connection is alive. */

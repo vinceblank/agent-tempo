@@ -42,6 +42,7 @@ import { createTemporalConnection } from '../../connection';
 import { Message } from '../../types';
 import type { AdapterDescriptor } from '../../types';
 import { SdkAttachment } from '../sdk/base';
+import { updateMetadataSignal } from '../../workflows/signals';
 
 /**
  * Descriptor for the copilot adapter. Kept colocated with the class so
@@ -444,9 +445,11 @@ export class CopilotSdkAttachment extends SdkAttachment {
       }
     }
 
-    // Store sessionId in workflow metadata for future encore/resume
+    // Store sessionId in workflow metadata for future restart/resume.
+    // PR-D: migrated from string-literal `'updateMetadata'` to the typed
+    // constant so the ts-morph wire-protocol drift detector sees this call.
     try {
-      await handle.signal('updateMetadata', { sessionId: copilotSessionId });
+      await handle.signal(updateMetadataSignal, { sessionId: copilotSessionId });
     } catch { /* workflow may not be ready yet */ }
 
     // If a name was requested, send the set_name instruction

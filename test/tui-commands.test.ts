@@ -139,7 +139,7 @@ describe('COMMANDS registry', function () {
 
   const expectedCommands = [
     'broadcast', 'players', 'status', 'help', 'quit',
-    'recruit', 'stop', 'encore', 'recall', 'schedule',
+    'recruit', 'stop', 'recall', 'schedule',
     'gates', 'stages', 'worktree', 'lineup', 'ensemble', 'back',
   ];
 

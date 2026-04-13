@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { start, status, init, server, up, down, stop, help, version, ensembleCommand, agentTypesCommand, broadcast, encore, daemon, upgrade, release, pause, resume } from './cli/commands';
+import { start, status, init, server, up, down, stop, help, version, ensembleCommand, agentTypesCommand, broadcast, daemon, upgrade, release, pause, resume } from './cli/commands';
 import { configCommand } from './cli/config-command';
 import { runPreflight } from './cli/preflight';
 import * as out from './cli/output';
@@ -230,21 +230,6 @@ async function main() {
         ensemble: args.ensemble || ensemble,
         type: args.type,
         includeStale: args.includeStale,
-        ...overrides,
-      });
-      break;
-    }
-
-    case 'encore': {
-      const encoreName = args.positional[1] || args.name;
-      if (!encoreName) {
-        out.error('Usage: claude-tempo encore <name> [--ensemble <name>] [--host <hostname>]');
-        process.exit(1);
-      }
-      await encore({
-        name: encoreName,
-        ensemble: args.ensemble || ensemble,
-        host: args.host,
         ...overrides,
       });
       break;

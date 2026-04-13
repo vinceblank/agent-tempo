@@ -454,7 +454,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     if (!state.pickerVisible) return [];
 
     if (state.pickerType === 'players') {
-      // Apply status filter if set (e.g. 'stale' for encore)
+      // Apply status filter if set.
       const filtered = state.pickerStatusFilter
         ? state.players.filter(p => p.status === state.pickerStatusFilter)
         : state.players;
@@ -626,10 +626,6 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           const cmd = COMMANDS['stop'];
           if (cmd?.handler) cmd.handler([id], dispatch, api, { activeEnsemble: stateRef.current.activeEnsemble, defaultAgent });
         },
-        encore: (id) => {
-          const cmd = COMMANDS['encore'];
-          if (cmd?.handler) cmd.handler([id], dispatch, api, { activeEnsemble: stateRef.current.activeEnsemble, defaultAgent });
-        },
         players: (id) => {
           dispatch({ type: 'NAVIGATE_PLAYER', playerId: id });
         },
@@ -640,9 +636,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
 
       if (PICKER_COMMANDS[parsed.name] && parsed.args.length === 0) {
         pickerCallbackRef.current = PICKER_COMMANDS[parsed.name];
-        // Encore picker shows only stale players
-        const statusFilter = parsed.name === 'encore' ? 'stale' : undefined;
-        dispatch({ type: 'SHOW_PICKER', pickerType: 'players', statusFilter });
+        dispatch({ type: 'SHOW_PICKER', pickerType: 'players' });
         return;
       }
 
@@ -1130,9 +1124,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     if (state.pickerVisible) {
       const pickerTitle = state.pickerType === 'ensembles'
         ? 'Select Ensemble'
-        : state.pickerStatusFilter === 'stale'
-          ? 'Select Stale Player to Encore'
-          : 'Select Player';
+        : 'Select Player';
       return React.createElement(Picker, {
         title: pickerTitle,
         items: pickerItems,
