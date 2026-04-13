@@ -57,6 +57,8 @@ src/
 │   ├── maestro.ts     # Maestro activities (refreshEnsembleState, relayCommandToConductor, fetchConductorHistory, fetchEnsembleChat)
 │   ├── resolve.ts     # Session resolver shared by outbox + schedule-fire activities
 │   └── schedule-fire.ts # Schedule fire activity
+├── reconcile/
+│   └── orphans.ts     # Shared orphan-query helper (queryOrphanedSessions) — used by daemon reconcile-on-boot and CLI restore
 ├── ensemble/
 │   ├── schema.ts      # Lineup type definitions
 │   ├── loader.ts      # Load and validate YAML lineups

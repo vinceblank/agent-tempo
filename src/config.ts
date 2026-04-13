@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { z } from 'zod';
 import { AgentType } from './types';
 import { validateEnsembleName } from './utils/validation';
 
@@ -85,6 +86,99 @@ export interface PersistedConfig {
 
 export const CLAUDE_TEMPO_HOME = join(homedir(), '.claude-tempo');
 export const CONFIG_FILE_PATH = join(CLAUDE_TEMPO_HOME, 'config.json');
+
+// ── Daemon config (PR-E design §10.2) ──
+
+/**
+ * Daemon-level configuration persisted in `~/.claude-tempo/config.json`
+ * alongside the existing `PersistedConfig` fields.
+ *
+ * `restorePolicy` is the effective off-switch for daemon reconcile-on-boot
+ * auto-restore — there is no feature flag. `"never"` disables all automatic
+ * restoration and leaves the CLI `restore` command as the sole revive path.
+ */
+export const CleanupPolicySchema = z.object({
+  detachedMaxAgeDays: z.number().int().positive().default(7),
+  destroyedMaxAgeDays: z.number().int().positive().default(30),
+}).default({ detachedMaxAgeDays: 7, destroyedMaxAgeDays: 30 });
+
+export const DaemonConfigSchema = z.object({
+  restorePolicy: z.enum(['auto', 'prompt', 'never']).default('prompt'),
+  autoRestoreMaxAgeHours: z.number().positive().default(24),
+  /**
+   * Ensemble allowlist for `auto` restore. Empty array means "all ensembles
+   * allowed". Each entry is a simple prefix match: trailing `*` is stripped
+   * and the remaining string is compared with `String.startsWith()`. Entries
+   * without trailing `*` are exact matches. See {@link matchEnsembleGlob}.
+   */
+  autoRestoreEnsembles: z.array(z.string()).default([]),
+  cleanupPolicy: CleanupPolicySchema,
+}).default({
+  restorePolicy: 'prompt',
+  autoRestoreMaxAgeHours: 24,
+  autoRestoreEnsembles: [],
+  cleanupPolicy: { detachedMaxAgeDays: 7, destroyedMaxAgeDays: 30 },
+});
+
+/** Inferred config type matching {@link DaemonConfigSchema}. */
+export type DaemonConfig = z.infer<typeof DaemonConfigSchema>;
+
+/**
+ * Load `~/.claude-tempo/config.json` and extract the daemon-level fields.
+ * Returns fully-defaulted `DaemonConfig` if the file is missing, unreadable,
+ * or contains no daemon fields. Partial configs (user sets one field only)
+ * merge with defaults via Zod's `.default()` per-field behaviour.
+ *
+ * Invalid JSON logs a warning and falls back to defaults rather than
+ * crashing — the daemon must boot even if the user has a mangled config.
+ */
+export function loadDaemonConfig(): DaemonConfig {
+  try {
+    if (!existsSync(CONFIG_FILE_PATH)) {
+      return DaemonConfigSchema.parse({});
+    }
+    const raw = JSON.parse(readFileSync(CONFIG_FILE_PATH, 'utf8'));
+    // The file may contain unrelated `PersistedConfig` fields — pick only
+    // the daemon-relevant ones. Unknown fields are ignored by Zod's default
+    // `.object()` schema (strip mode), which is what we want.
+    const result = DaemonConfigSchema.safeParse(raw);
+    if (result.success) return result.data;
+    console.error('[claude-tempo] Invalid daemon config; using defaults.', result.error.format());
+    return DaemonConfigSchema.parse({});
+  } catch (err) {
+    console.error(
+      '[claude-tempo] Could not read daemon config; using defaults:',
+      err instanceof Error ? err.message : String(err),
+    );
+    return DaemonConfigSchema.parse({});
+  }
+}
+
+/**
+ * Simple-prefix ensemble match — PR-E §8 answer 5. No glob library dep.
+ *
+ *  - Pattern ends with `*` → strip the `*`, match by `ensemble.startsWith(prefix)`.
+ *  - Pattern without trailing `*` → exact equality.
+ *  - Empty pattern list → allow all (caller decides; this helper returns `false`).
+ */
+export function matchEnsembleGlob(ensemble: string, pattern: string): boolean {
+  if (pattern.endsWith('*')) {
+    const prefix = pattern.slice(0, -1);
+    return ensemble.startsWith(prefix);
+  }
+  return ensemble === pattern;
+}
+
+/**
+ * Check an ensemble name against a list of patterns.
+ * Empty list → allow all (returns `true`).
+ * Any matching pattern → allow (returns `true`).
+ * No matches → deny (returns `false`).
+ */
+export function isEnsembleAllowed(ensemble: string, allowlist: string[]): boolean {
+  if (allowlist.length === 0) return true;
+  return allowlist.some((p) => matchEnsembleGlob(ensemble, p));
+}
 
 /** Load ~/.claude-tempo/config.json if it exists. */
 export function loadConfigFile(): PersistedConfig {
