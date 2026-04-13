@@ -520,7 +520,91 @@ Before coding, surface these:
 
 ## 8. Conductor answers to §7 open questions
 
-_To be filled in by the conductor before engineering begins._
+All five questions from §7 are resolved. Do not ask again — these are
+locked decisions.
+
+**1. `setPreferredHost` — keep in-memory only. Do NOT register a new search attribute.**
+
+No `ClaudeTempoPreferredHost` SA. SA registration is a coordination
+change (every dev namespace, CI matrix, `server` command, README setup
+snippet). The daemon already queries orphans one-by-one via `orphanSummary`
+(PR-E pattern), so filtering by `preferredHost` is cheap. Add
+`preferredHost?: string` to the `orphanSummary` query return shape if not
+already present — query shape additions are backward compatible (not a
+wire-protocol break).
+
+`setPreferredHost` handler: update `state.preferredHost` in-memory only.
+No `upsertSearchAttributes` call.
+
+**2. `reconcileOnBoot` cross-host skip — log-and-skip only.**
+
+Proactive cross-daemon notification is a v0.26 feature per design §16.
+PR-F's remit is local filtering, not cross-host coordination. After
+landing PR-F, file a v0.26 tracking issue titled "cross-host orphan
+handoff signal" with a pointer back to this brief §3 Site 3. Log line
+must include both hostnames for observability:
+
+```
+skipping restore for {workflowId}: preferredHost={X}, localHost={Y}
+```
+
+**3. TUI display format — Option 3: inline with the status line (alongside repo/branch).**
+
+Zero new Yoga nodes. Pre-format as a string in one `<Text>` node.
+
+- **Local session** — omit host entirely (reduces noise).
+- **Remote session** — prepend `{hostname} · ` to the existing
+  `{repo} · {branch}` line, styled with `THEME.accent` (amber).
+
+```
+build-server · /repos/app · feat/api   ← remote
+/repos/app · feat/api                   ← local (no host prefix)
+```
+
+Applies to both `ChatView.tsx` and `PlayerDetailView.tsx`. In
+`PlayerDetailView`, if a labeled metadata section already exists, add a
+`Host: <hostname>` line with the same conditional (omit if local) — still
+zero new Yoga nodes if injected into an existing pre-formatted text block.
+
+Option 1 (`@build-server` suffix on player name) rejected: clutters the
+primary name label. Option 2 (`📍` new line) rejected: adds a line and
+potentially a Yoga node; violates P5 gotcha.
+
+**4. docker-compose harness — build from local source.**
+
+```dockerfile
+COPY . /app
+RUN npm ci && npm run build
+```
+
+Rationale: the integration test validates this PR's code. Pulling a
+published image would test v0.24. Local build is the only correct choice
+for CI and for manual branch validation. BuildKit cache mounts
+(`RUN --mount=type=cache,target=/root/.npm npm ci`) are optional polish —
+skip if they add complexity.
+
+The harness `README.md` should document both CI-integrated and manual run
+modes, but both use `COPY . /app` — no published-image path.
+
+**5. `migrate` CLI — hard error, no interactive prompt.**
+
+`--yes-steal` is a deliberate-consent guard (§16.5 Option B). Interactive
+prompts let users mash `y` without thinking and break scripting/CI.
+
+Error format (copy-paste friendly — includes the exact re-run command):
+
+```
+Error: session "alice" is attached to host "build-server".
+To confirm moving it, re-run with --yes-steal:
+
+  claude-tempo migrate alice --to host-a --yes-steal=build-server
+
+This safety flag prevents accidental cross-host session takeover.
+```
+
+Same format when `--yes-steal` is provided but mismatched: show the
+correct hostname in the re-run command. Matches MCP tool behavior (PR-D).
+No interactive prompts anywhere in the migrate surface.
 
 ---
 
@@ -531,7 +615,7 @@ _To be filled in by the conductor before engineering begins._
 - Wire protocol: [`docs/WIRE-PROTOCOL.md`](../WIRE-PROTOCOL.md)
 - CHANGELOG: [`CHANGELOG.md`](../../CHANGELOG.md) `[0.25.0-beta.1]`
 - PR-D: #136 (encore retirement, verb surface, SpawnOutboxEntry wiring)
-- PR-E: pending merge (daemon reconcile-on-boot, restore CLI, OS integration)
+- PR-E: merged (daemon reconcile-on-boot, restore CLI, OS integration)
 - Architecture reference: [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) — three-layer session model + ensemble coordination
 - Tracked issues: #132 (v0.25.1 shim cleanup, deferred) · #129 (CLAUDE.md lazy-load, post-PR-F) · #130 (subagent guidance, post-PR-F)
 
