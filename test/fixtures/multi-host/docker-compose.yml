@@ -1,0 +1,67 @@
+# claude-tempo multi-host integration harness (PR-F).
+#
+# Two daemon containers (`host-a`, `host-b`) share a single Temporal dev
+# server. Used by `test/multi-host-cross-host-restart.test.ts` to exercise
+# cross-host restart end-to-end.
+#
+# Usage (manual):
+#   docker-compose -f test/fixtures/multi-host/docker-compose.yml up -d
+#   npx mocha dist-test/test/multi-host-cross-host-restart.test.js
+#   docker-compose -f test/fixtures/multi-host/docker-compose.yml down
+#
+# The default `npm test` run does NOT invoke this harness — the integration
+# test gates on an `INTEGRATION_MULTI_HOST=1` env var. See the README in
+# this directory.
+
+services:
+  temporal:
+    image: temporalio/temporal:1.24
+    command:
+      - server
+      - start-dev
+      - --ip=0.0.0.0
+      - --namespace=default
+      - --search-attribute=ClaudeTempoEnsemble=Keyword
+      - --search-attribute=ClaudeTempoPlayerId=Keyword
+      - --search-attribute=ClaudeTempoHostname=Keyword
+      - --search-attribute=ClaudeTempoStatus=Keyword
+      - --search-attribute=ClaudeTempoGitRoot=Keyword
+      - --search-attribute=ClaudeTempoPlayerType=Keyword
+      - --search-attribute=ClaudeTempoIsConductor=Bool
+      - --search-attribute=ClaudeTempoAttachedHost=Keyword
+      - --search-attribute=ClaudeTempoAttachmentState=Keyword
+      - --search-attribute=ClaudeTempoAttachmentId=Keyword
+    ports:
+      - "7233:7233"
+      - "8233:8233"   # temporal UI
+    healthcheck:
+      test: ["CMD", "tctl", "--ad", "localhost:7233", "cluster", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  daemon-a:
+    build:
+      context: ../../..
+      dockerfile: test/fixtures/multi-host/daemon-a/Dockerfile
+    hostname: host-a
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      CLAUDE_TEMPO_ENSEMBLE: multi-host-test
+    depends_on:
+      temporal:
+        condition: service_healthy
+
+  daemon-b:
+    build:
+      context: ../../..
+      dockerfile: test/fixtures/multi-host/daemon-b/Dockerfile
+    hostname: host-b
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      CLAUDE_TEMPO_ENSEMBLE: multi-host-test
+    depends_on:
+      temporal:
+        condition: service_healthy

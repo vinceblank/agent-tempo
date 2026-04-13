@@ -1816,6 +1816,8 @@ interface RestartCliOpts extends VerbOpts {
   fresh?: boolean;
   force?: boolean;
   contextMessages?: number;
+  /** PR-F: required when force-restarting a session attached to a different host. */
+  yesSteal?: string;
 }
 
 interface DetachCliOpts extends VerbOpts {
@@ -1852,6 +1854,16 @@ export async function restart(opts: RestartCliOpts) {
   const ensemble = opts.ensemble || config.ensemble;
   try {
     const tempo = createTempoClient(client);
+
+    // PR-F §16.5 guard — cross-host force-restart requires --yes-steal match.
+    await enforceCliYesSteal(tempo, ensemble, opts.name, {
+      ...(opts.force !== undefined ? { force: opts.force } : {}),
+      ...(opts.yesSteal !== undefined ? { yesSteal: opts.yesSteal } : {}),
+      verbName: 'restart',
+      targetHostFlag: '--host',
+      ...(opts.host !== undefined ? { targetHostValue: opts.host } : {}),
+    });
+
     const result = await tempo.restart(ensemble, opts.name, {
       ...(opts.host !== undefined ? { host: opts.host } : {}),
       ...(opts.fresh !== undefined ? { fresh: opts.fresh } : {}),
@@ -1865,6 +1877,9 @@ export async function restart(opts: RestartCliOpts) {
       `${opts.fresh ? ' (fresh)' : ''}${opts.force ? ' (force)' : ''}.`,
     );
     out.log(`  ${out.dim(`outbox entry: ${result.entryId}`)}`);
+    if (opts.host) {
+      out.log(`  ${out.dim(`Verify a claude-tempo daemon is running on "${opts.host}" — tasks will queue until one picks them up.`)}`);
+    }
   } catch (err: any) {
     out.error(err?.message || String(err));
     process.exit(1);
@@ -1903,15 +1918,86 @@ export async function destroy(opts: DestroyCliOpts) {
   }
 }
 
+/**
+ * CLI-side `--yes-steal` guard (§16.5 Option B, brief §8 answer 5).
+ *
+ * Detects cross-host force-restart at the CLI layer and emits a
+ * copy-paste-friendly error including the exact re-run command. Returns the
+ * confirmed hostname on success; exits the process (code 1) on rejection —
+ * intentionally synchronous UX per "hard error, no interactive prompt".
+ *
+ * Shared by `migrate` and `restart` CLI commands so both surfaces have
+ * identical error text.
+ */
+async function enforceCliYesSteal(
+  tempo: ReturnType<typeof createTempoClient>,
+  ensemble: string,
+  playerName: string,
+  opts: {
+    force?: boolean;
+    yesSteal?: string;
+    /** For the "re-run" suggestion — the CLI verb name (`migrate` or `restart`). */
+    verbName: string;
+    /** For the "re-run" suggestion — flag that carries the target host. */
+    targetHostFlag: string;
+    /** Resolved target host value (e.g. opts.host for migrate). */
+    targetHostValue?: string;
+  },
+  localHostname: string = hostname(),
+): Promise<void> {
+  if (!opts.force) return;
+
+  let info;
+  try {
+    info = await tempo.attachmentInfo(ensemble, playerName);
+  } catch {
+    // Target may not exist or be destroyed — let the downstream call surface
+    // its own error. Not our job to synthesize cross-host errors here.
+    return;
+  }
+
+  const currentHost = info.currentAttachment?.hostname;
+  if (!currentHost || currentHost === localHostname) return;
+
+  const targetFlag = opts.targetHostValue
+    ? `${opts.targetHostFlag} ${opts.targetHostValue}`
+    : opts.targetHostFlag;
+  const reRun = `claude-tempo ${opts.verbName} ${playerName} ${targetFlag} --yes-steal=${currentHost} --force`;
+
+  if (!opts.yesSteal) {
+    out.error(`session "${playerName}" is attached to host "${currentHost}".`);
+    out.log('  To confirm moving it, re-run with --yes-steal:');
+    out.log(`\n    ${reRun}\n`);
+    out.log('  This safety flag prevents accidental cross-host session takeover.');
+    process.exit(1);
+  }
+  if (opts.yesSteal !== currentHost) {
+    out.error(`--yes-steal mismatch: session "${playerName}" is on "${currentHost}", not "${opts.yesSteal}".`);
+    out.log('  Re-run with the correct hostname:');
+    out.log(`\n    ${reRun}\n`);
+    process.exit(1);
+  }
+}
+
 export async function migrate(opts: MigrateCliOpts) {
   if (!opts.host) {
-    out.error('Usage: claude-tempo migrate <name> --host <hostname>');
+    out.error('Usage: claude-tempo migrate <name> --to <hostname> [--force --yes-steal=<current-host>]');
     process.exit(1);
   }
   const { config, connection, client } = await verbClient(opts);
   const ensemble = opts.ensemble || config.ensemble;
   try {
     const tempo = createTempoClient(client);
+
+    // PR-F §16.5 guard — cross-host force-migrate requires --yes-steal match.
+    await enforceCliYesSteal(tempo, ensemble, opts.name, {
+      ...(opts.force !== undefined ? { force: opts.force } : {}),
+      ...(opts.yesSteal !== undefined ? { yesSteal: opts.yesSteal } : {}),
+      verbName: 'migrate',
+      targetHostFlag: '--to',
+      targetHostValue: opts.host,
+    });
+
     const result = await tempo.migrate(ensemble, opts.name, opts.host, {
       ...(opts.fresh !== undefined ? { fresh: opts.fresh } : {}),
       ...(opts.force !== undefined ? { force: opts.force } : {}),
@@ -1920,6 +2006,7 @@ export async function migrate(opts: MigrateCliOpts) {
     });
     out.success(`Migrate queued for "${result.playerId}" → ${result.host ?? opts.host}.`);
     out.log(`  ${out.dim(`outbox entry: ${result.entryId}`)}`);
+    out.log(`  ${out.dim(`Verify a claude-tempo daemon is running on "${opts.host}" — tasks will queue until one picks them up.`)}`);
   } catch (err: any) {
     out.error(err?.message || String(err));
     process.exit(1);

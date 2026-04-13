@@ -2,6 +2,14 @@
  * ChatView — header for a conversation with a specific player.
  * Messages are rendered via <Static> in App.tsx, not here.
  * This component only shows context (player name, part, branch, counts).
+ *
+ * PR-F cross-host indicator (design §16, brief §8 answer 3 — Option 3):
+ *   - Local session (targetHost === localHost) → omit host entirely (no noise).
+ *   - Remote session → prepend `{host} · ` to the existing status line in
+ *     `THEME.accent` (amber).
+ * Zero new Yoga nodes: the host prefix goes into the same `<Text>` children
+ * tree as an additional string + nested accent-colored `<Text>` (which is a
+ * virtual text node, not a Box).
  */
 import React from 'react';
 import { useInk } from '../ink-context';
@@ -19,6 +27,10 @@ export interface ChatViewProps {
   targetPart?: string;
   targetBranch?: string;
   targetStatus?: string;
+  /** The session's home hostname (PR-A metadata). Compare vs `localHost` to decide cross-host rendering. */
+  targetHost?: string;
+  /** The local TUI process's hostname. */
+  localHost?: string;
   isConductor?: boolean;
   receivedCount: number;
   sentCount: number;
@@ -29,6 +41,8 @@ export function ChatView({
   targetPlayer,
   targetPart,
   targetBranch,
+  targetHost,
+  localHost,
   isConductor,
   receivedCount,
   sentCount,
@@ -37,6 +51,9 @@ export function ChatView({
 
   const icon = isConductor ? '\u2605 ' : '';
   const label = isConductor ? 'Conductor' : 'Conversation with';
+
+  // §8 answer 3 — remote host only; local omits entirely.
+  const showRemoteHost = Boolean(targetHost && localHost && targetHost !== localHost);
 
   const children: React.ReactNode[] = [];
 
@@ -50,10 +67,23 @@ export function ChatView({
     children.push(React.createElement(Text, { key: 'h2', color: THEME.dim }, `  Part: ${targetPart}`));
   }
   children.push('\n');
+
+  // Status line — prepend amber {host} · for remote sessions only.
+  // Zero new Yoga nodes: composed inline as nested <Text> within h3.
+  const h3Children: React.ReactNode[] = [];
+  h3Children.push('  ');
+  if (showRemoteHost) {
+    h3Children.push(
+      React.createElement(Text, { key: 'host', color: THEME.accent }, targetHost!),
+    );
+    h3Children.push(' \u00B7 ');
+  }
+  if (targetBranch) {
+    h3Children.push(`Branch: ${targetBranch} \u00B7 `);
+  }
+  h3Children.push(`${receivedCount} received, ${sentCount} sent`);
   children.push(
-    React.createElement(Text, { key: 'h3', color: THEME.dim },
-      `  ${targetBranch ? `Branch: ${targetBranch} \u00B7 ` : ''}${receivedCount} received, ${sentCount} sent`,
-    ),
+    React.createElement(Text, { key: 'h3', color: THEME.dim }, ...h3Children),
   );
   children.push('\n');
   children.push(

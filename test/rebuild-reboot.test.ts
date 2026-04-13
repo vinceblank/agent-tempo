@@ -139,6 +139,42 @@ describe('reconcileOnBoot', function () {
   });
 
   it('restorePolicy "auto" — calls restart on fresh orphan within age window', async function () {
+    // Orphan preferredHost matches local: the PR-F cross-host filter is a
+    // pass-through, and the normal age-window + ensemble-allowlist +
+    // restart enqueue path runs. If preferredHost were elsewhere, the
+    // new filter would skip (covered by the cross-host-filter case below).
+    const client = makeFakeClient([
+      fixture({
+        ensemble: 'e1',
+        playerId: 'alice',
+        detachedSince: new Date(NOW - 60_000).toISOString(),
+        preferredHost: HOSTNAME,
+      }),
+    ]);
+    await reconcileOnBoot(client, defaults({ restorePolicy: 'auto' }), HOSTNAME);
+    expect(stub.calls).to.have.length(1);
+    expect(stub.calls[0].ensemble).to.equal('e1');
+    expect(stub.calls[0].playerId).to.equal('alice');
+    expect(stub.calls[0].opts.host).to.equal(HOSTNAME);
+    expect(stub.calls[0].opts.invokerPlayerId).to.equal('daemon');
+  });
+
+  it('restorePolicy "auto" — PR-F cross-host filter skips orphan preferring a remote host', async function () {
+    const client = makeFakeClient([
+      fixture({
+        ensemble: 'e1',
+        playerId: 'alice',
+        detachedSince: new Date(NOW - 60_000).toISOString(),
+        preferredHost: 'host-2', // ← different from HOSTNAME
+      }),
+    ]);
+    await reconcileOnBoot(client, defaults({ restorePolicy: 'auto' }), HOSTNAME);
+    // Filter fires before any policy logic — restart is never called on
+    // this daemon. The remote host's daemon is the authoritative restorer.
+    expect(stub.calls).to.have.length(0);
+  });
+
+  it('restorePolicy "prompt" — PR-F cross-host filter also applies (no log, no action)', async function () {
     const client = makeFakeClient([
       fixture({
         ensemble: 'e1',
@@ -147,12 +183,8 @@ describe('reconcileOnBoot', function () {
         preferredHost: 'host-2',
       }),
     ]);
-    await reconcileOnBoot(client, defaults({ restorePolicy: 'auto' }), HOSTNAME);
-    expect(stub.calls).to.have.length(1);
-    expect(stub.calls[0].ensemble).to.equal('e1');
-    expect(stub.calls[0].playerId).to.equal('alice');
-    expect(stub.calls[0].opts.host).to.equal('host-2');
-    expect(stub.calls[0].opts.invokerPlayerId).to.equal('daemon');
+    await reconcileOnBoot(client, defaults({ restorePolicy: 'prompt' }), HOSTNAME);
+    expect(stub.calls).to.have.length(0);
   });
 
   it('restorePolicy "auto" — skips orphan older than autoRestoreMaxAgeHours', async function () {
