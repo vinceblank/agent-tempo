@@ -1,0 +1,32 @@
+# claude-tempo daemon — systemd --user unit
+#
+# Installed to ~/.config/systemd/user/claude-tempo.service by
+# `claude-tempo daemon install`. Enable with:
+#
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now claude-tempo
+#
+# User-level only (no sudo). The daemon process claims
+# ~/.claude-tempo/daemon.pid; systemd restarts on crash.
+#
+# Environment variables (Temporal connection overrides) can be added via
+# EnvironmentFile or Environment= lines here — by default the daemon reads
+# ~/.claude-tempo/config.json or falls back to temporal CLI config.
+
+[Unit]
+Description=claude-tempo daemon (Temporal workers + reconcile loop)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env claude-tempo daemon start --foreground
+ExecStop=/usr/bin/env claude-tempo daemon stop
+Restart=on-failure
+RestartSec=10s
+# Prevent runaway restart loops from a broken config file.
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Install]
+WantedBy=default.target

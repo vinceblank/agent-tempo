@@ -2258,14 +2258,146 @@ export async function daemon(opts: DaemonOpts) {
       break;
     }
 
+    case 'install':
+      await daemonInstall();
+      break;
+
+    case 'uninstall':
+      await daemonUninstall();
+      break;
+
     default:
-      out.error('Usage: claude-tempo daemon <start|stop|status|logs>');
-      out.log(`\n  ${out.dim('claude-tempo daemon start')}    Start the worker daemon`);
-      out.log(`  ${out.dim('claude-tempo daemon stop')}     Stop the worker daemon`);
-      out.log(`  ${out.dim('claude-tempo daemon status')}   Check daemon status`);
-      out.log(`  ${out.dim('claude-tempo daemon logs')}     Tail daemon log output`);
+      out.error('Usage: claude-tempo daemon <start|stop|status|logs|install|uninstall>');
+      out.log(`\n  ${out.dim('claude-tempo daemon start')}       Start the worker daemon`);
+      out.log(`  ${out.dim('claude-tempo daemon stop')}        Stop the worker daemon`);
+      out.log(`  ${out.dim('claude-tempo daemon status')}      Check daemon status`);
+      out.log(`  ${out.dim('claude-tempo daemon logs')}        Tail daemon log output`);
+      out.log(`  ${out.dim('claude-tempo daemon install')}     Install as OS service (user-level, no sudo)`);
+      out.log(`  ${out.dim('claude-tempo daemon uninstall')}   Remove the OS service registration`);
       process.exit(1);
   }
+}
+
+// ── PR-E daemon install/uninstall (design §10.5) ──
+
+/**
+ * Return the absolute path to a packaging file inside the installed
+ * claude-tempo npm package (`PACKAGE_ROOT/packaging/...`). Resolves under
+ * both the source tree (`src/../packaging`) and the dist tree
+ * (`dist/../packaging`) since `PACKAGE_ROOT = __dirname/../..`.
+ */
+function packagingFile(...segments: string[]): string {
+  return join(PACKAGE_ROOT, 'packaging', ...segments);
+}
+
+async function daemonInstall(): Promise<void> {
+  const platform = process.platform;
+  if (platform === 'linux') {
+    const src = packagingFile('systemd', 'claude-tempo.service');
+    const dstDir = join(homedir(), '.config', 'systemd', 'user');
+    const dst = join(dstDir, 'claude-tempo.service');
+    mkdirSync(dstDir, { recursive: true });
+    copyFileSync(src, dst);
+    out.success(`Installed systemd --user unit: ${dst}`);
+    // Try to enable + start. User may still need `systemctl --user daemon-reload`.
+    try {
+      execFileSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'ignore' });
+      execFileSync('systemctl', ['--user', 'enable', '--now', 'claude-tempo'], { stdio: 'ignore' });
+      out.log('  Enabled + started: systemctl --user enable --now claude-tempo');
+    } catch {
+      out.warn('  systemctl invocation failed — run manually:');
+      out.log(`    ${out.dim('systemctl --user daemon-reload')}`);
+      out.log(`    ${out.dim('systemctl --user enable --now claude-tempo')}`);
+    }
+    return;
+  }
+
+  if (platform === 'darwin') {
+    const src = packagingFile('launchd', 'com.claude.tempo.plist');
+    const dstDir = join(homedir(), 'Library', 'LaunchAgents');
+    const dst = join(dstDir, 'com.claude.tempo.plist');
+    mkdirSync(dstDir, { recursive: true });
+    copyFileSync(src, dst);
+    out.success(`Installed launchd agent: ${dst}`);
+    out.warn('  NOTE: macOS launchd integration is untested in v0.25.0-beta.1 — feedback welcome.');
+    try {
+      execFileSync('launchctl', ['load', dst], { stdio: 'ignore' });
+      out.log('  Loaded: launchctl load ' + dst);
+    } catch {
+      out.warn('  launchctl invocation failed — run manually:');
+      out.log(`    ${out.dim(`launchctl load ${dst}`)}`);
+    }
+    return;
+  }
+
+  if (platform === 'win32') {
+    const script = packagingFile('windows', 'install-task.ps1');
+    try {
+      execFileSync(
+        'powershell',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script],
+        { stdio: 'inherit' },
+      );
+    } catch (err: any) {
+      out.error(`Failed to register scheduled task: ${err?.message ?? err}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  out.error(`Unsupported platform: ${platform}`);
+  out.log('  Supported: linux (systemd --user), darwin (launchd), win32 (Task Scheduler).');
+  process.exit(1);
+}
+
+async function daemonUninstall(): Promise<void> {
+  const platform = process.platform;
+  if (platform === 'linux') {
+    const dst = join(homedir(), '.config', 'systemd', 'user', 'claude-tempo.service');
+    try { execFileSync('systemctl', ['--user', 'disable', '--now', 'claude-tempo'], { stdio: 'ignore' }); } catch { /* may not be running */ }
+    try {
+      if (existsSync(dst)) {
+        unlinkSync(dst);
+        out.success(`Removed ${dst}`);
+      } else {
+        out.log('No systemd unit file found.');
+      }
+    } catch (err: any) {
+      out.error(`Failed to remove systemd unit: ${err?.message ?? err}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (platform === 'darwin') {
+    const dst = join(homedir(), 'Library', 'LaunchAgents', 'com.claude.tempo.plist');
+    try { execFileSync('launchctl', ['unload', dst], { stdio: 'ignore' }); } catch { /* may not be loaded */ }
+    if (existsSync(dst)) {
+      unlinkSync(dst);
+      out.success(`Removed ${dst}`);
+    } else {
+      out.log('No launchd plist found.');
+    }
+    return;
+  }
+
+  if (platform === 'win32') {
+    const script = packagingFile('windows', 'install-task.ps1');
+    try {
+      execFileSync(
+        'powershell',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Uninstall'],
+        { stdio: 'inherit' },
+      );
+    } catch (err: any) {
+      out.error(`Failed to unregister scheduled task: ${err?.message ?? err}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  out.error(`Unsupported platform: ${platform}`);
+  process.exit(1);
 }
 
 // ── Hold / Pause / Resume ──

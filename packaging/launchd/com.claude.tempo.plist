@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  claude-tempo daemon — launchd user agent.
+
+  NOTE: macOS launchd integration ships best-effort untested in v0.25.0-beta.1
+  (PR-E §8 answer 4). Feedback welcome at https://github.com/vinceblank/claude-tempo/issues.
+
+  Installed to ~/Library/LaunchAgents/com.claude.tempo.plist by
+  `claude-tempo daemon install`. Load with:
+
+    launchctl load ~/Library/LaunchAgents/com.claude.tempo.plist
+
+  User-level only (no sudo). `RunAtLoad` + `KeepAlive` bounce the daemon
+  if it crashes; `ThrottleInterval` guards against restart loops.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.claude.tempo</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>claude-tempo</string>
+    <string>daemon</string>
+    <string>start</string>
+    <string>--foreground</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/claude-tempo-daemon.stdout.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/claude-tempo-daemon.stderr.log</string>
+</dict>
+</plist>

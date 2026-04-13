@@ -116,6 +116,7 @@
     "workflow-bundle.js",
     "assets",
     "examples",
+    "packaging",
     "CLAUDE.md",
     "README.md"
   ],
