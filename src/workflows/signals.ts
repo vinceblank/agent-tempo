@@ -34,7 +34,6 @@ export type {
   RecruitOutboxEntry,
   ReportOutboxEntry,
   StopOutboxEntry,
-  EncoreOutboxEntry,
   ReleaseOutboxEntry,
   SpawnOutboxEntry,
   AgentType,
@@ -90,11 +89,6 @@ export const playerReportSignal = defineSignal<[{ playerId: string; text: string
 // ── Conductor Queries ──
 
 export const historyQuery = defineQuery<HistoryEntry[]>('history');
-
-// ── Atomic Status Transition ──
-
-/** Atomically transition status from expectedStatus to newStatus. Returns true on success, false if current status didn't match. */
-export const checkAndSetStatusUpdate = defineUpdate<boolean, [{ expectedStatus: string; newStatus: string }]>('checkAndSetStatus');
 
 // ── Processing Lifecycle (fixes #99; phase machine hook in v0.25) ──
 // Suppress stale detection while the adapter is in a blocking operation (e.g. LLM tool call).

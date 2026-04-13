@@ -25,6 +25,7 @@ import type { Client, WorkflowHandle } from '@temporalio/client';
 import { BaseAttachment, type BaseAttachmentOptions } from '../base';
 import type { AdapterDescriptor } from '../../types';
 import { Message } from '../../types';
+import { ENV } from '../../config';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:poller]', ...args);
 
@@ -191,9 +192,16 @@ export class InteractiveAttachment extends BaseAttachment {
       if (stopPoller) { stopPoller(); stopPoller = null; }
     });
 
+    // PR-D: when spawned by `restart` or `migrate`, the workflow has
+    // pre-claimed an attachment and passed its id through env. Forward to
+    // `startV2Lifecycle` so the update takes the §9.2 renewal path and the
+    // adapter takes over the existing lease atomically. Absent on first-recruit
+    // spawn (fresh-claim path).
+    const expectedAttachmentId = process.env[ENV.ATTACHMENT_ID] || undefined;
+
     // Kick off claim + heartbeat + watcher. If this throws (conflict/gone),
     // the caller's startup bails — we haven't started the poll yet.
-    this.startV2Lifecycle(workflowId)
+    this.startV2Lifecycle(workflowId, expectedAttachmentId)
       .then((pinned) => {
         if (stopped) return; // caller bailed between await and here
         stopPoller = startMessagePoller(pinned, onMessages);

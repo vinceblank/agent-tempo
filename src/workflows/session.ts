@@ -5,7 +5,6 @@ import {
   workflowInfo,
   allHandlersFinished,
   upsertSearchAttributes,
-  getExternalWorkflowHandle,
   uuid4,
   proxyActivities,
   patched,
@@ -51,7 +50,6 @@ import {
   commandSignal,
   playerReportSignal,
   historyQuery,
-  checkAndSetStatusUpdate,
   submitOutboxUpdate,
   outboxQuery,
   setQualityGateSignal,
@@ -98,7 +96,7 @@ import type {
 
 // ── Outbox Activity Proxies ──
 
-const { deliverCue, deliverReport, terminateSession, startRecruitedSession, performEncore, releasePlayer } =
+const { deliverCue, deliverReport, terminateSession, startRecruitedSession, releasePlayer, deliverDetach, deliverDestroy, deliverRestart } =
   proxyActivities<OutboxActivities>({
     startToCloseTimeout: '30 seconds',
     retry: { maximumAttempts: 3 },
@@ -280,8 +278,12 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       sentMessages.push({ id: entry.id, to: 'conductor', text: `[${entry.reportType}] ${entry.text}`, timestamp: entry.createdAt });
     } else if (entry.type === 'stop') {
       sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[stop requested]', timestamp: entry.createdAt });
-    } else if (entry.type === 'encore') {
-      sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[encore requested]', timestamp: entry.createdAt });
+    } else if (entry.type === 'detach') {
+      sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[detach requested]', timestamp: entry.createdAt });
+    } else if (entry.type === 'destroy') {
+      sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[destroy requested]', timestamp: entry.createdAt });
+    } else if (entry.type === 'restart') {
+      sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[restart requested]', timestamp: entry.createdAt });
     } else if (entry.type === 'release') {
       sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[release requested]', timestamp: entry.createdAt });
     }
@@ -409,18 +411,6 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       ClaudeTempoIsConductor: [input.metadata.isConductor === true],
     });
     lastActivityTime = workflowNow().getTime();
-  });
-
-  // Atomic status transition — shimmed in v0.25 for the `performEncore` activity which
-  // still uses the legacy status CAS pattern. Removed when `encore` tool is deleted in PR-D.
-  // Supported transitions (all others return false):
-  //   stale → pending : ensure workflow is detached (no attachment); reset legacy status
-  setHandler(checkAndSetStatusUpdate, ({ expectedStatus, newStatus }) => {
-    if (input.metadata.status !== expectedStatus) return false;
-    input.metadata.status = newStatus as SessionStatus;
-    upsertSearchAttributes({ ClaudeTempoStatus: [newStatus] });
-    lastActivityTime = workflowNow().getTime();
-    return true;
   });
 
   setHandler(recordSentMessageSignal, (msg) => {
@@ -1207,51 +1197,6 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
             });
             break;
           }
-          case 'encore': {
-            const encoreResult = await performEncore({
-              ensemble: input.metadata.ensemble,
-              targetPlayerId: entry.targetPlayerId,
-              fromPlayerId: input.metadata.playerId,
-              contextMessageCount: entry.contextMessageCount,
-            });
-            const encoreHost = entry.targetHostname || encoreResult.hostname;
-            const encoreSpawnFn = getSpawnProxy(encoreHost);
-            try {
-              await encoreSpawnFn({
-                targetName: entry.targetPlayerId,
-                workDir: encoreResult.workDir,
-                isConductor: encoreResult.isConductor,
-                agent: encoreResult.agent,
-                ensemble: input.metadata.ensemble,
-                temporalAddress: encoreResult.temporalAddress,
-                temporalNamespace: encoreResult.temporalNamespace,
-                agentDefinition: encoreResult.agentDefinition,
-                agentDefinitionPath: encoreResult.agentDefinitionPath,
-                nativeResolvable: encoreResult.nativeResolvable,
-                allowedTools: encoreResult.allowedTools,
-                sessionId: encoreResult.sessionId,
-                resume: true,
-                claudeBin: entry.claudeBin || encoreResult.claudeBin,
-              });
-            } catch (spawnErr) {
-              // Spawn failed after status was reset to pending — revert to stale
-              // so the target isn't stuck in pending with no running process
-              try {
-                // Workflow ID format is hardcoded here because workflow code cannot
-                // import config helpers (they depend on Node APIs unavailable in the
-                // Temporal sandbox). Mirrors sessionWorkflowId/conductorWorkflowId.
-                const targetWfId = encoreResult.isConductor
-                  ? `claude-session-${input.metadata.ensemble}-conductor`
-                  : `claude-session-${input.metadata.ensemble}-${entry.targetPlayerId}`;
-                const targetHandle = getExternalWorkflowHandle(targetWfId);
-                await targetHandle.signal('updateMetadata', { status: 'stale' });
-              } catch {
-                // Best-effort revert — target workflow may have terminated
-              }
-              throw spawnErr;
-            }
-            break;
-          }
           case 'release': {
             // Warm hold release — signal the target to unlock outbox and deliver held message.
             // No spawning needed — the process is already running.
@@ -1261,17 +1206,49 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
             });
             break;
           }
+          case 'detach': {
+            // PR-D: route the `detach` verb through the outbox (QA B1). The
+            // activity resolves the target and signals `requestDetachSignal`.
+            await deliverDetach({
+              ensemble: input.metadata.ensemble,
+              targetPlayerId: entry.targetPlayerId,
+              ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+              ...(entry.deadlineMs !== undefined ? { deadlineMs: entry.deadlineMs } : {}),
+            });
+            break;
+          }
+          case 'destroy': {
+            // PR-D: route the `destroy` verb through the outbox (QA B2).
+            await deliverDestroy({
+              ensemble: input.metadata.ensemble,
+              targetPlayerId: entry.targetPlayerId,
+              terminatedBy: input.metadata.playerId,
+              ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+              ...(entry.notifyConductor !== undefined ? { notifyConductor: entry.notifyConductor } : {}),
+            });
+            break;
+          }
+          case 'restart': {
+            // PR-D: route the `restart`/`migrate` verbs through the outbox
+            // (QA B3). The activity owns the §8.2 algorithm: graceful detach
+            // → optional force → claim → context replay → enqueueSpawn.
+            await deliverRestart({
+              ensemble: input.metadata.ensemble,
+              targetPlayerId: entry.targetPlayerId,
+              invokerPlayerId: entry.invokerPlayerId ?? input.metadata.playerId,
+              ...(entry.force !== undefined ? { force: entry.force } : {}),
+              ...(entry.host !== undefined ? { host: entry.host } : {}),
+              ...(entry.fresh !== undefined ? { fresh: entry.fresh } : {}),
+              ...(entry.contextMessages !== undefined ? { contextMessages: entry.contextMessages } : {}),
+            });
+            break;
+          }
           case 'spawn': {
-            // PR-C commit 6 (#118): `SpawnOutboxEntry` dispatch. Today we delegate
-            // to the per-host spawn proxy with the base recruit-shape payload —
-            // the 5 attachment-specific fields (attachmentId/attachmentRunId/
-            // resumeAttachment/sessionId/adapterId) are carried on the entry so
-            // PR-D can wire them end-to-end through `spawnProcess` without a
-            // schema churn. Today they're unused at the activity layer, which
-            // matches the pre-PR-C-commit-6 behaviour exactly (the old `type:
-            // 'recruit'` double-cast stored the same fields and they were also
-            // never read). This preserves existing behaviour while removing
-            // the cast and planting the type foundation.
+            // PR-D: forward the pre-claimed attachment token + pinned runId +
+            // resolved adapterId to the spawn activity. The child process picks
+            // these up from env in `BaseAttachment.startV2Lifecycle(workflowId,
+            // expectedAttachmentId)` and renews the lease rather than claiming
+            // fresh. Design §8.2 step 5.
             const spawnTc = input.temporalConfig;
             const spawnHost = entry.targetHostname;
             const spawnFn = getSpawnProxy(spawnHost);
@@ -1285,6 +1262,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               temporalNamespace: spawnTc?.temporalNamespace || 'default',
               sessionId: entry.sessionId,
               resume: entry.resumeAttachment,
+              attachmentId: entry.attachmentId,
+              attachmentRunId: entry.attachmentRunId,
+              adapterId: entry.adapterId,
             });
             break;
           }
@@ -1294,6 +1274,37 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       } catch (err) {
         entry.status = 'failed';
         entry.error = String(err);
+
+        // PR-D §8.4: spawn-entry failure rollback. When `restart` or `migrate`
+        // creates an attachment + enqueues a spawn, a subsequent spawn
+        // activity failure leaves the session `attached` with no adapter — the
+        // worst steady state. Force-detach the just-created attachment so the
+        // session lands in `detached` and `restart` can be retried. Guard with
+        // `expectedAttachmentId` (TOCTOU: another claim may have superseded).
+        if (
+          entry.type === 'spawn' &&
+          entry.attachmentId &&
+          currentAttachment?.attachmentId === entry.attachmentId
+        ) {
+          lastAdapterMeta = {
+            hostname: currentAttachment.hostname,
+            adapterId: currentAttachment.adapterId,
+          };
+          lastDetachReason = 'spawn-failed';
+          currentAttachment = null;
+          inFlightMessages.clear();
+          processingSince = null;
+          drainingSince = null;
+          detachedSince = workflowNow().toISOString();
+          setPhase('detached');
+          upsertSearchAttributes({
+            ClaudeTempoAttachedHost: [''],
+            ClaudeTempoAttachmentId: [''],
+          });
+          workflowLog.warn(
+            `spawn failed for "${entry.targetName}"; rolled back attachment ${entry.attachmentId} → detached`,
+          );
+        }
       }
     }
 

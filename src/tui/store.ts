@@ -262,7 +262,7 @@ export interface TuiState {
   pickerType: 'players' | 'ensembles' | null;
   pickerIntent: 'navigate' | null;
   pickerIndex: number;
-  /** Optional status filter for player picker (e.g. 'stale' for encore). */
+  /** Optional status filter for player picker. */
   pickerStatusFilter: string | null;
 }
 

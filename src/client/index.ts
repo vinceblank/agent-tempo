@@ -20,7 +20,11 @@ import type {
   EnsembleChatResult,
   OutboxEntryInput,
 } from '../types';
-import { submitOutboxUpdate } from '../workflows/signals';
+import {
+  submitOutboxUpdate,
+  attachmentInfoQuery,
+} from '../workflows/signals';
+import { resolveSession } from '../activities/resolve';
 import type { TempoClient, EnsembleSummary } from './interface';
 
 // Re-export public types for consumers
@@ -268,17 +272,67 @@ export function createTempoClient(client: Client): TempoClient {
       throw new Error(`Player "${playerId}" not found in ensemble "${ensemble}"`);
     },
 
-    async encorePlayer(ensemble: string, playerId: string): Promise<void> {
-      // Submit an encore outbox entry through the TUI's maestro session workflow.
-      // This works without a conductor — the maestro session's outbox dispatches the encore activity directly.
+    // ── PR-D verbs — enqueue on the TUI-owned maestro session's outbox.
+    //   The dispatch loop runs `deliverDetach` / `deliverDestroy` /
+    //   `deliverRestart` activities against the target (QA B1/B2/B3).
+
+    async restart(ensemble, playerId, opts = {}) {
+      const invokerPlayerId = opts.invokerPlayerId ?? 'cli';
       const maestroId = sessionWorkflowId(ensemble, 'maestro');
       const h = handle(maestroId);
-
       const entry: OutboxEntryInput = {
-        type: 'encore',
+        type: 'restart',
         targetPlayerId: playerId,
+        invokerPlayerId,
+        ...(opts.host !== undefined ? { host: opts.host } : {}),
+        ...(opts.fresh !== undefined ? { fresh: opts.fresh } : {}),
+        ...(opts.force !== undefined ? { force: opts.force } : {}),
+        ...(opts.contextMessages !== undefined ? { contextMessages: opts.contextMessages } : {}),
+      };
+      const entryId = await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
+      return {
+        playerId,
+        ...(opts.host !== undefined ? { host: opts.host } : {}),
+        entryId,
+      };
+    },
+
+    async detach(ensemble, playerId, deadlineMs = 5_000) {
+      const maestroId = sessionWorkflowId(ensemble, 'maestro');
+      const h = handle(maestroId);
+      const entry: OutboxEntryInput = {
+        type: 'detach',
+        targetPlayerId: playerId,
+        reason: 'user-stop',
+        deadlineMs,
       };
       await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
+    },
+
+    async destroy(ensemble, playerId, reason) {
+      const maestroId = sessionWorkflowId(ensemble, 'maestro');
+      const h = handle(maestroId);
+      const entry: OutboxEntryInput = {
+        type: 'destroy',
+        targetPlayerId: playerId,
+        ...(reason !== undefined ? { reason } : {}),
+        notifyConductor: true,
+      };
+      await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
+    },
+
+    async migrate(ensemble, playerId, host, opts = {}) {
+      if (!host || !host.trim()) {
+        throw new Error('`host` is required for migrate. Use `restart` to revive on the current host.');
+      }
+      return this.restart(ensemble, playerId, { ...opts, host });
+    },
+
+    async attachmentInfo(ensemble, playerId) {
+      // Read-only query — resolve + query directly (no outbox needed).
+      const target = await resolveSession(client, ensemble, playerId);
+      if (!target) throw new Error(`No session found with name "${playerId}" in ensemble "${ensemble}".`);
+      return target.query(attachmentInfoQuery);
     },
 
     async disbandEnsemble(ensemble: string): Promise<{ terminated: number }> {

@@ -42,6 +42,7 @@ import { createTemporalConnection } from '../../connection';
 import { Message } from '../../types';
 import type { AdapterDescriptor } from '../../types';
 import { SdkAttachment } from '../sdk/base';
+import { updateMetadataSignal } from '../../workflows/signals';
 
 /**
  * Descriptor for the copilot adapter. Kept colocated with the class so
@@ -428,8 +429,13 @@ export class CopilotSdkAttachment extends SdkAttachment {
         cleanup(false).catch((err) => log('terminal cleanup error:', err?.message ?? err));
       });
       try {
-        handle = await this.startV2Lifecycle(expectedWorkflowId);
-        log(`V2 attachment claimed (attachmentId=${this.token?.attachmentId})`);
+        // PR-D: read pre-claimed attachmentId (set by the spawn activity when
+        // the workflow called `claimAttachment` before enqueueing this spawn).
+        // Forwarding it selects §9.2's renewal branch so the adapter takes
+        // over an existing lease atomically; absent on first-recruit spawn.
+        const expectedAttachmentId = process.env[ENV.ATTACHMENT_ID] || undefined;
+        handle = await this.startV2Lifecycle(expectedWorkflowId, expectedAttachmentId);
+        log(`V2 attachment claimed (attachmentId=${this.token?.attachmentId}${expectedAttachmentId ? ', renewed' : ''})`);
       } catch (err: any) {
         log(`ERROR: V2 claimAttachment failed: ${err?.message ?? err}`);
         try { await session.disconnect(); } catch { /* best effort */ }
@@ -439,9 +445,11 @@ export class CopilotSdkAttachment extends SdkAttachment {
       }
     }
 
-    // Store sessionId in workflow metadata for future encore/resume
+    // Store sessionId in workflow metadata for future restart/resume.
+    // PR-D: migrated from string-literal `'updateMetadata'` to the typed
+    // constant so the ts-morph wire-protocol drift detector sees this call.
     try {
-      await handle.signal('updateMetadata', { sessionId: copilotSessionId });
+      await handle.signal(updateMetadataSignal, { sessionId: copilotSessionId });
     } catch { /* workflow may not be ready yet */ }
 
     // If a name was requested, send the set_name instruction
@@ -494,8 +502,8 @@ export class CopilotSdkAttachment extends SdkAttachment {
       // PR-C commit 4 retired the former `updateMetadata({ status: 'terminated' })`
       // follow-up signal: closing the Copilot bridge subprocess is a graceful
       // detach, not a session destroy. The workflow stays in `detached` waiting
-      // for the next claim (e.g. encore). Explicit operator termination goes
-      // through the `stop` tool / CLI, both of which use `destroyUpdate` directly.
+      // for the next claim (e.g. `restart`). Explicit operator termination goes
+      // through the `destroy` tool / CLI, which uses `destroyUpdate` directly.
       if (this.lifecycleV2) {
         await this.stopV2Lifecycle('user-stop', /* graceful */ true).catch((err) =>
           log(`stopV2Lifecycle suppressed error: ${(err as Error)?.message ?? err}`));

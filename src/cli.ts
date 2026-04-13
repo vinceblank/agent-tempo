@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { start, status, init, server, up, down, stop, help, version, ensembleCommand, agentTypesCommand, broadcast, encore, daemon, upgrade, release, pause, resume } from './cli/commands';
+import { start, status, init, server, up, down, stop, help, version, ensembleCommand, agentTypesCommand, broadcast, daemon, upgrade, release, pause, resume, restart, detach, destroy, migrate, attachmentInfo } from './cli/commands';
 import { configCommand } from './cli/config-command';
 import { runPreflight } from './cli/preflight';
 import * as out from './cli/output';
@@ -33,6 +33,12 @@ interface ParsedArgs {
   includeStale: boolean;
   host?: string;
   terminate: boolean;
+  // PR-D verb flags
+  fresh: boolean;
+  force: boolean;
+  contextMessages?: number;
+  deadlineMs?: number;
+  reason?: string;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -51,6 +57,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     resume: false,
     includeStale: false,
     terminate: false,
+    fresh: false,
+    force: false,
   };
 
   let i = 0;
@@ -100,6 +108,18 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.host = argv[++i];
     } else if (arg === '--terminate') {
       result.terminate = true;
+    } else if (arg === '--fresh') {
+      result.fresh = true;
+    } else if (arg === '--force') {
+      result.force = true;
+    } else if (arg === '--context-messages' && i + 1 < argv.length) {
+      const n = Number(argv[++i]);
+      if (Number.isFinite(n) && n >= 0) result.contextMessages = n;
+    } else if (arg === '--deadline' && i + 1 < argv.length) {
+      const n = Number(argv[++i]);
+      if (Number.isFinite(n) && n >= 0) result.deadlineMs = n;
+    } else if (arg === '--reason' && i + 1 < argv.length) {
+      result.reason = argv[++i];
     } else if (arg === '--agent' && i + 1 < argv.length) {
       const val = argv[++i];
       if (val !== 'claude' && val !== 'copilot') {
@@ -235,27 +255,97 @@ async function main() {
       break;
     }
 
-    case 'encore': {
-      const encoreName = args.positional[1] || args.name;
-      if (!encoreName) {
-        out.error('Usage: claude-tempo encore <name> [--ensemble <name>] [--host <hostname>]');
-        process.exit(1);
-      }
-      await encore({
-        name: encoreName,
-        ensemble: args.ensemble || ensemble,
-        host: args.host,
-        ...overrides,
-      });
-      break;
-    }
-
     case 'release':
       await release({
         ensemble: args.ensemble || ensemble,
         ...overrides,
       });
       break;
+
+    case 'restart': {
+      const name = args.positional[1] || args.name;
+      if (!name) {
+        out.error('Usage: claude-tempo restart <name> [--host <hostname>] [--fresh] [--force] [--context-messages <N>]');
+        process.exit(1);
+      }
+      await restart({
+        name,
+        ensemble: args.ensemble || ensemble,
+        ...(args.host !== undefined ? { host: args.host } : {}),
+        fresh: args.fresh,
+        force: args.force,
+        ...(args.contextMessages !== undefined ? { contextMessages: args.contextMessages } : {}),
+        ...overrides,
+      });
+      break;
+    }
+
+    case 'detach': {
+      const name = args.positional[1] || args.name;
+      if (!name) {
+        out.error('Usage: claude-tempo detach <name> [--deadline <ms>]');
+        process.exit(1);
+      }
+      await detach({
+        name,
+        ensemble: args.ensemble || ensemble,
+        ...(args.deadlineMs !== undefined ? { deadlineMs: args.deadlineMs } : {}),
+        ...overrides,
+      });
+      break;
+    }
+
+    case 'destroy': {
+      const name = args.positional[1] || args.name;
+      if (!name) {
+        out.error('Usage: claude-tempo destroy <name> [--reason "<text>"]');
+        process.exit(1);
+      }
+      await destroy({
+        name,
+        ensemble: args.ensemble || ensemble,
+        ...(args.reason !== undefined ? { reason: args.reason } : {}),
+        ...overrides,
+      });
+      break;
+    }
+
+    case 'migrate': {
+      const name = args.positional[1] || args.name;
+      if (!name) {
+        out.error('Usage: claude-tempo migrate <name> --host <hostname> [--fresh] [--force]');
+        process.exit(1);
+      }
+      if (!args.host) {
+        out.error('`--host` is required for migrate. Use `restart` to revive on the current host.');
+        process.exit(1);
+      }
+      await migrate({
+        name,
+        ensemble: args.ensemble || ensemble,
+        host: args.host,
+        fresh: args.fresh,
+        force: args.force,
+        ...(args.contextMessages !== undefined ? { contextMessages: args.contextMessages } : {}),
+        ...overrides,
+      });
+      break;
+    }
+
+    case 'attachment-info':
+    case 'attachment': {
+      const name = args.positional[1] || args.name;
+      if (!name) {
+        out.error('Usage: claude-tempo attachment-info <name>');
+        process.exit(1);
+      }
+      await attachmentInfo({
+        name,
+        ensemble: args.ensemble || ensemble,
+        ...overrides,
+      });
+      break;
+    }
 
     case 'pause':
       await pause({

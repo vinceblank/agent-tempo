@@ -46,6 +46,13 @@ function mockHandle(opts: {
   part?: string;
   messages?: Array<{ from: string; text: string; timestamp: string }>;
   history?: unknown[];
+  /** Override the default `attachmentInfo` query result. Defaults to `{ phase: 'detached', inFlightCount: 0 }`. */
+  attachmentInfo?: {
+    phase: 'booting' | 'attached' | 'processing' | 'awaiting' | 'draining' | 'detached' | 'gone';
+    currentAttachment?: { attachmentId: string; hostname: string; adapterId: string };
+    preferredHost?: string;
+    inFlightCount?: number;
+  };
   signalFn?: (name: string, args: unknown) => void;
   queryFn?: (name: string) => unknown;
   updateFn?: (name: string, opts: { args: unknown[] }) => unknown;
@@ -64,35 +71,55 @@ function mockHandle(opts: {
     ...opts.metadata,
   };
 
+  // Normalize: callers may pass either a string or a typed constant from
+  // `src/workflows/signals.ts` (signals are plain objects with a `.name`).
+  const asName = (nameOrDef: unknown): string =>
+    typeof nameOrDef === 'string' ? nameOrDef : (nameOrDef as { name: string }).name;
+
+  // Default attachment phase — overridden by opts.attachmentInfo.
+  const attachmentInfo = opts.attachmentInfo ?? { phase: 'detached', inFlightCount: 0 };
+
   return {
     workflowId: `claude-session-test-ensemble-${defaultMetadata.playerId}`,
     signals,
     updates,
-    async signal(name: string, args: unknown) {
+    async signal(nameOrDef: unknown, args: unknown) {
+      const name = asName(nameOrDef);
       if (opts.signalFn) opts.signalFn(name, args);
       signals.push({ name, args });
     },
-    async query(name: string) {
+    async query(nameOrDef: unknown) {
+      const name = asName(nameOrDef);
       if (opts.queryFn) return opts.queryFn(name);
       if (name === 'getMetadata') return defaultMetadata;
       if (name === 'getPart') return opts.part ?? 'working on stuff';
       if (name === 'allMessages') return opts.messages ?? [];
       if (name === 'history') return opts.history ?? [];
+      if (name === 'attachmentInfo') return attachmentInfo;
       return undefined;
     },
     async describe() {
       return { status: { name: 'RUNNING' }, workflowId: `claude-session-test-ensemble-${defaultMetadata.playerId}` };
     },
-    async executeUpdate(name: string, updateOpts: { args: unknown[] }) {
+    async executeUpdate(nameOrDef: unknown, updateOpts: { args: unknown[] }) {
+      const name = asName(nameOrDef);
       updates.push({ name, args: updateOpts.args[0] });
       if (opts.updateFn) return opts.updateFn(name, updateOpts);
-      // Default: checkAndSetStatus succeeds if status matches
-      if (name === 'checkAndSetStatus') {
-        const [{ expectedStatus }] = updateOpts.args as [{ expectedStatus: string; newStatus: string }];
-        return defaultMetadata.status === expectedStatus;
-      }
       // Default: destroy returns void (matches V2 destroyUpdate signature)
       if (name === 'destroy') return undefined;
+      // Default: forceDetach returns { reaped: false } (idempotent on detached)
+      if (name === 'forceDetach') return { reaped: false };
+      // Default: claimAttachment returns a synthetic token
+      if (name === 'claimAttachment') {
+        return {
+          attachmentId: `attach-${Math.random().toString(36).slice(2, 10)}`,
+          runId: `run-${Math.random().toString(36).slice(2, 10)}`,
+          expiresAt: new Date(Date.now() + 90_000).toISOString(),
+          leaseMs: 90_000,
+        };
+      }
+      // Default: enqueueSpawn returns a synthetic entry id
+      if (name === 'enqueueSpawn') return { spawnEntryId: `spawn-${Math.random().toString(36).slice(2, 10)}` };
       return undefined;
     },
   };
@@ -407,132 +434,9 @@ describe('terminateSession', function () {
   });
 });
 
-// ── performEncore ──
-
-describe('performEncore', function () {
-  it('transitions stale → pending, injects context, and returns spawn params', async function () {
-    const targetHandle = mockHandle({
-      metadata: {
-        playerId: 'bob',
-        ensemble: 'e1',
-        hostname: 'host1',
-        workDir: '/work/dir',
-        isConductor: false,
-        agentType: 'claude',
-        status: 'stale',
-        sessionId: 'uuid-123',
-      },
-      part: 'was refactoring code',
-      messages: [
-        { from: 'alice', text: 'check the tests', timestamp: '2026-01-01T00:00:00Z' },
-        { from: 'bob', text: 'on it', timestamp: '2026-01-01T00:01:00Z' },
-      ],
-    });
-    const client = mockClient([targetHandle]);
-    const activities = createOutboxActivities(client as any, mockConfig());
-
-    const result = await activities.performEncore({
-      ensemble: 'e1',
-      targetPlayerId: 'bob',
-      fromPlayerId: 'alice',
-    });
-
-    expect(result.workDir).to.equal('/work/dir');
-    expect(result.hostname).to.equal('host1');
-    expect(result.isConductor).to.be.false;
-    expect(result.agent).to.equal('claude');
-    expect(result.sessionId).to.equal('uuid-123');
-    expect(result.temporalAddress).to.equal('localhost:7233');
-    expect(result.temporalNamespace).to.equal('default');
-
-    // Should have received a context message via signal
-    const contextSignal = targetHandle.signals.find(s => s.name === 'receiveMessage');
-    expect(contextSignal).to.exist;
-    const text = (contextSignal!.args as any).text as string;
-    expect(text).to.include('Encore');
-    expect(text).to.include('alice');
-    expect(text).to.include('was refactoring code');
-  });
-
-  it('rejects encore on active session', async function () {
-    const targetHandle = mockHandle({
-      metadata: { playerId: 'bob', ensemble: 'e1', status: 'active' },
-    });
-    const client = mockClient([targetHandle]);
-    const activities = createOutboxActivities(client as any, mockConfig());
-
-    try {
-      await activities.performEncore({
-        ensemble: 'e1',
-        targetPlayerId: 'bob',
-        fromPlayerId: 'alice',
-      });
-      expect.fail('should have thrown');
-    } catch (err) {
-      expect(err).to.be.instanceOf(ApplicationFailure);
-      expect((err as ApplicationFailure).message).to.include('active');
-      expect((err as ApplicationFailure).message).to.include('must be "stale"');
-    }
-  });
-
-  it('rejects encore on pending session', async function () {
-    const targetHandle = mockHandle({
-      metadata: { playerId: 'bob', ensemble: 'e1', status: 'pending' },
-    });
-    const client = mockClient([targetHandle]);
-    const activities = createOutboxActivities(client as any, mockConfig());
-
-    try {
-      await activities.performEncore({
-        ensemble: 'e1',
-        targetPlayerId: 'bob',
-        fromPlayerId: 'alice',
-      });
-      expect.fail('should have thrown');
-    } catch (err) {
-      expect(err).to.be.instanceOf(ApplicationFailure);
-      expect((err as ApplicationFailure).message).to.include('pending');
-    }
-  });
-
-  it('throws nonRetryable when target not found', async function () {
-    const client = mockClient([]);
-    const activities = createOutboxActivities(client as any, mockConfig());
-
-    try {
-      await activities.performEncore({
-        ensemble: 'e1',
-        targetPlayerId: 'ghost',
-        fromPlayerId: 'alice',
-      });
-      expect.fail('should have thrown');
-    } catch (err) {
-      expect(err).to.be.instanceOf(ApplicationFailure);
-      expect((err as ApplicationFailure).message).to.include('ghost');
-    }
-  });
-
-  it('handles empty message history gracefully', async function () {
-    const targetHandle = mockHandle({
-      metadata: { playerId: 'bob', ensemble: 'e1', status: 'stale', workDir: '/work', hostname: 'h1' },
-      messages: [],
-    });
-    const client = mockClient([targetHandle]);
-    const activities = createOutboxActivities(client as any, mockConfig());
-
-    const result = await activities.performEncore({
-      ensemble: 'e1',
-      targetPlayerId: 'bob',
-      fromPlayerId: 'alice',
-    });
-
-    expect(result.workDir).to.equal('/work');
-    const contextSignal = targetHandle.signals.find(s => s.name === 'receiveMessage');
-    expect(contextSignal).to.exist;
-    const text = (contextSignal!.args as any).text as string;
-    expect(text).to.include('no recent messages');
-  });
-});
+// (performEncore removed in PR-D — the restart MCP tool's happy-path tests
+//  in test/tools.test.ts cover the §8.2 algorithm directly. `restart` operates
+//  on any non-`gone` phase; encore's `stale`-only variant was retired.)
 
 // ── computeNextCronFire ──
 

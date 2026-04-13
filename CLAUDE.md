@@ -53,7 +53,7 @@ src/
 │   ├── scheduler-signals.ts # Scheduler signal/query type definitions
 │   └── signals.ts     # Session signal/query type definitions
 ├── activities/
-│   ├── outbox.ts      # Outbox delivery activities (cue, report, stop, recruit, encore)
+│   ├── outbox.ts      # Outbox delivery activities (cue, report, stop, recruit, release, spawn)
 │   ├── maestro.ts     # Maestro activities (refreshEnsembleState, relayCommandToConductor, fetchConductorHistory, fetchEnsembleChat)
 │   ├── resolve.ts     # Session resolver shared by outbox + schedule-fire activities
 │   └── schedule-fire.ts # Schedule fire activity
@@ -75,7 +75,11 @@ src/
 │   ├── report.ts      # Report to conductor (via outbox)
 │   ├── stop.ts        # Stop a session (via outbox)
 │   ├── broadcast.ts   # Send message to all active players (via outbox fan-out)
-│   ├── encore.ts      # Revive a stale session (via outbox)
+│   ├── restart.ts     # Revive any non-gone session (forceDetach + claim + context replay + enqueueSpawn per §8.2)
+│   ├── detach.ts      # Gracefully reap an adapter (workflow survives)
+│   ├── destroy.ts     # Terminally end a session workflow
+│   ├── migrate.ts     # Restart to a different host (sugar for restart --host)
+│   ├── attachment-info.ts # Query the V2 attachment phase + current attachment holder
 │   ├── recall.ts      # Read own message history (received + sent)
 │   ├── load-lineup.ts # Load an ensemble lineup, recruit players
 │   ├── save-lineup.ts # Save current ensemble state as a lineup
@@ -126,7 +130,7 @@ src/
 │       ├── fullscreen.ts      # Fullscreen/alternate-screen helpers
 │       └── history.ts         # Persistent command history (~/.claude-tempo/tui-history.json)
 ├── utils/
-│   ├── validation.ts  # Shared validation constants (name/message/path limits, encore defaults) and helpers
+│   ├── validation.ts  # Shared validation constants (name/message/path limits, preview lengths) and helpers
 │   ├── worktree.ts    # Git worktree create/remove helpers (cross-platform)
 │   ├── safe-path.ts   # Path safety utilities
 │   └── duration.ts    # Duration parsing helpers
@@ -189,8 +193,10 @@ npm test
 - **Adapter**: The runtime binding between a player's Temporal workflow and its agent process. Two shipped classes: `InteractiveAttachment` (Claude Code CLI — push-based MCP notification delivery, 60s heartbeat, lives in `src/adapters/claude-code/`) and `CopilotSdkAttachment` (Copilot bridge — blocking `sendAndWait` delivery, 30s heartbeat, lives in `src/adapters/copilot/`). Adapters are registered with the `AdapterRegistry` (`src/adapters/index.ts`) and resolved at spawn time via `SessionMetadata.adapterId`. The base class (`src/adapters/base.ts`) now owns the full V2 attachment lifecycle: `claimAttachment` + runId pinning, heartbeat loop, `attachmentInfo` phase watcher, `WorkflowGone` classifier, graceful `adapterExited` on teardown.
 - **Attachment phases**: The session workflow tracks the adapter's state via a 7-phase machine (`booting` → `attached` → `processing` | `awaiting` → `draining` → `detached`; any non-terminal → `gone` via `destroy`). Phase is exposed as the `ClaudeTempoAttachmentState` search attribute and via the `attachmentInfo` query. `awaiting` is the idle refinement of `attached` — attachment held, no in-flight work. Transitions are driven by V2 wire primitives: `claimAttachment` update (claim/renew), `heartbeat` signal (extends lease by attachment's `leaseMs`), `processingStart`/`processingEnd` updates (in-flight set), `requestDetach` signal, `adapterExited` signal (collapses draining → detached), `forceDetach` update, `destroy` update. See `docs/design/session-lifecycle-rebuild-v2.md` §2.2, §2.4.
 - **Lifecycle V2 flag**: `CLAUDE_TEMPO_LIFECYCLE_V2` env var — default **ON** since v0.25. Gates the attachment-lease model: V2 adapters claim via `claimAttachmentUpdate` + pin the runId + heartbeat to own the lease; V1 legacy shim path translates `updateMetadata({ status })` onto the phase machine for backward compat. Default-ON posture; explicit `CLAUDE_TEMPO_LIFECYCLE_V2=false` only for rollback insurance. Read once per adapter instance at construction via `src/config.ts`'s `lifecycleV2Enabled()`.
-- **Outbox**: Outbound requests (cue, report, stop, recruit, encore) go through the session's own workflow outbox instead of directly signaling other workflows. The workflow's dispatch loop processes entries via activities, decoupling tools from cross-workflow signaling.
-- **Encore**: Revives a `stale` player session by restarting the Claude process and reconnecting to the existing Temporal workflow, with recent message context restored. Cannot encore `active`, `pending`, or `terminated` sessions — use `cue`, wait, or `recruit` respectively.
+- **Outbox**: Outbound requests (cue, report, stop, recruit, release, spawn) go through the session's own workflow outbox instead of directly signaling other workflows. The workflow's dispatch loop processes entries via activities, decoupling tools from cross-workflow signaling.
+- **Restart**: Revives a session by running the §8.2 algorithm — graceful `requestDetach` (or `forceDetach` with `force: true`), fresh `claimAttachment` on the target host, optional context replay via `receiveMessage`, then `enqueueSpawn` on the target's own outbox. Works on any non-`gone` phase (attached, awaiting, processing, draining, detached). Replaces the pre-v0.25 `encore` verb (which was `stale`-only).
+- **Detach** / **Destroy**: Split of the old `stop` verb per design §8.1. `detach` gracefully reaps the adapter; the workflow survives in `detached` phase and can be `restart`ed later. `destroy` terminally ends the workflow (phase → `gone`), abandoning any in-flight outbox entries. Neither is reversible for the adapter — use `restart` to bring a detached session back.
+- **Migrate**: Sugar for `restart --host=<h>` per design §9.6. Identical semantics to restart; separate verb for UX clarity when moving sessions across hosts.
 - **Broadcast**: Fan-out variant of `cue` — sends a message to all active players in the ensemble in a single call. Optionally filtered by player type. Skips the sender, pending sessions, and (by default) stale sessions.
 - **Recall**: Queries a session's own message history from the Temporal workflow. Shows received messages by default; pass `includeSent: true` to also see sent messages. Supports `limit`, `since`, and `from` filters.
 - **Per-host task queues**: Each host runs a `claude-tempo-{hostname}` activity worker for local-only operations (e.g., `spawnProcess`). This enables cross-machine recruiting — the `recruit` tool accepts an optional `host` parameter to route the spawn to a remote machine's task queue.

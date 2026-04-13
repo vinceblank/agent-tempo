@@ -55,11 +55,14 @@ export const WORKTREE_INSTALL_TIMEOUT = 60000;
 /** Window for blocked session detection (5 minutes). */
 export const BLOCKED_WINDOW_MS = 5 * 60 * 1000;
 
-/** Default number of recent messages to include as context in an encore. */
-export const ENCORE_DEFAULT_CONTEXT_MESSAGES = 10;
-
 /** Maximum length for message preview truncation. */
 export const PREVIEW_MAX_LENGTH = 200;
+
+/** Maximum `contextMessages` arg for restart / migrate tools (QA B4). */
+export const RESTART_CONTEXT_MESSAGES_MAX = 50;
+
+/** Maximum `deadlineMs` arg for detach tool. */
+export const MAX_DETACH_DEADLINE_MS = 120_000;
 
 /**
  * Whether a session should be included in a broadcast based on its status.

@@ -83,27 +83,6 @@ describe('outbox', function () {
       });
     });
 
-    it('records encore in sentMessages', async function () {
-      this.timeout(30_000);
-      await withWorkerAndOutboxActivities(async () => {
-        const handle = await startSession({
-          metadata: playerMetadata({ playerId: 'outbox-encore-sent' }),
-        });
-
-        const entryId = await handle.executeUpdate(submitOutboxUpdate, {
-          args: [{ type: 'encore', targetPlayerId: 'stale-target', contextMessageCount: 5 }],
-        });
-
-        const sent = await handle.query(allSentMessagesQuery);
-        const match = sent.find((s) => s.id === entryId);
-        expect(match).to.exist;
-        expect(match!.to).to.equal('stale-target');
-        expect(match!.text).to.equal('[encore requested]');
-
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
-        await handle.result();
-      });
-    });
   });
 
   // ── Outbox cue delivery ──
@@ -206,6 +185,94 @@ describe('outbox', function () {
 
         await alice.signal(updateMetadataSignal, { status: 'terminated' });
         // Bob is already terminated, just wait for completion
+        await alice.result();
+        await bob.result();
+      });
+    });
+  });
+
+  // ── PR-D verb delivery (QA B1/B2/B3) ──
+
+  describe('detach delivery (PR-D)', function () {
+    it('dispatches deliverDetach and marks entry delivered', async function () {
+      this.timeout(30_000);
+      await withWorkerAndOutboxActivities(async () => {
+        const alice = await startSession({ metadata: playerMetadata({ playerId: 'alice-detach' }) });
+        const bob = await startSession({ metadata: playerMetadata({ playerId: 'bob-detach' }) });
+
+        await alice.executeUpdate(submitOutboxUpdate, {
+          args: [{ type: 'detach', targetPlayerId: 'bob-detach', deadlineMs: 1000 }],
+        });
+
+        await sleep(2000);
+
+        const aliceOutbox = await alice.query(outboxQuery);
+        const entry = aliceOutbox.find((e) => e.type === 'detach');
+        expect(entry, 'detach entry exists').to.exist;
+        expect(entry!.status).to.equal('delivered');
+
+        await alice.signal(updateMetadataSignal, { status: 'terminated' });
+        await bob.signal(updateMetadataSignal, { status: 'terminated' });
+        await alice.result();
+        await bob.result();
+      });
+    });
+  });
+
+  describe('destroy delivery (PR-D)', function () {
+    it('dispatches deliverDestroy and terminates the target', async function () {
+      this.timeout(30_000);
+      await withWorkerAndOutboxActivities(async () => {
+        const alice = await startSession({ metadata: playerMetadata({ playerId: 'alice-destroy' }) });
+        const bob = await startSession({ metadata: playerMetadata({ playerId: 'bob-destroy' }) });
+
+        await alice.executeUpdate(submitOutboxUpdate, {
+          args: [{ type: 'destroy', targetPlayerId: 'bob-destroy', reason: 'test', notifyConductor: false }],
+        });
+
+        await sleep(2000);
+
+        const aliceOutbox = await alice.query(outboxQuery);
+        const entry = aliceOutbox.find((e) => e.type === 'destroy');
+        expect(entry, 'destroy entry exists').to.exist;
+        expect(entry!.status).to.equal('delivered');
+
+        // Bob should be destroyed — `isDestroyed` query returns true.
+        const bobDestroyed = await bob.query('isDestroyed') as boolean;
+        expect(bobDestroyed).to.be.true;
+
+        await alice.signal(updateMetadataSignal, { status: 'terminated' });
+        await alice.result();
+        await bob.result();
+      });
+    });
+  });
+
+  describe('restart delivery (PR-D)', function () {
+    it('dispatches deliverRestart and marks entry delivered', async function () {
+      this.timeout(30_000);
+      await withWorkerAndRecruitActivities(async () => {
+        const alice = await startSession({ metadata: playerMetadata({ playerId: 'alice-restart' }) });
+        const bob = await startSession({ metadata: playerMetadata({ playerId: 'bob-restart' }) });
+
+        await alice.executeUpdate(submitOutboxUpdate, {
+          args: [{
+            type: 'restart',
+            targetPlayerId: 'bob-restart',
+            invokerPlayerId: 'alice-restart',
+            fresh: true,
+          }],
+        });
+
+        await sleep(3000);
+
+        const aliceOutbox = await alice.query(outboxQuery);
+        const entry = aliceOutbox.find((e) => e.type === 'restart');
+        expect(entry, 'restart entry exists').to.exist;
+        expect(entry!.status).to.equal('delivered');
+
+        await alice.signal(updateMetadataSignal, { status: 'terminated' });
+        await bob.signal(updateMetadataSignal, { status: 'terminated' });
         await alice.result();
         await bob.result();
       });
@@ -594,150 +661,4 @@ describe('outbox', function () {
     });
   });
 
-  // ── encore dispatch ──
-  //
-  // Encore uses a real performEncore activity (part of createOutboxActivities).
-  // The activity calls resolveSession against the live test environment, resets
-  // the target's status to 'pending', and injects a context message.
-  // spawnProcess is stubbed so no real terminal is launched.
-
-  describe('encore dispatch', function () {
-    it('resets target status to pending and injects a context message', async function () {
-      this.timeout(30_000);
-      await withWorkerAndRecruitActivities(async () => {
-        const ensemble = 'test-ensemble';
-
-        // Start the session that will submit the encore (the "conductor" initiating revive)
-        const conductor = await startSession({
-          metadata: playerMetadata({ playerId: 'encore-sender' }),
-          temporalConfig: {
-            temporalAddress: '',
-            temporalNamespace: 'default',
-            taskQueue: TASK_QUEUE,
-          },
-        });
-
-        // Start the stale target session
-        const target = await startSession({
-          metadata: playerMetadata({ playerId: 'encore-target', ensemble }),
-          disableStaleDetection: true,
-        });
-
-        // Force target to stale state
-        await target.signal(updateMetadataSignal, { status: 'stale' });
-
-        // Verify it's stale before encore
-        const metaBefore = await target.query(getMetadataQuery);
-        expect(metaBefore.status).to.equal('stale');
-
-        // Submit encore outbox entry from the conductor session
-        await conductor.executeUpdate(submitOutboxUpdate, {
-          args: [{
-            type: 'encore',
-            targetPlayerId: 'encore-target',
-            contextMessageCount: 5,
-          }],
-        });
-
-        // Wait for the outbox dispatch loop to process
-        await sleep(3000);
-
-        // Verify outbox entry was delivered
-        const conductorOutbox = await conductor.query(outboxQuery);
-        const encoreEntry = conductorOutbox.find((e) => e.type === 'encore');
-        expect(encoreEntry).to.exist;
-        expect(encoreEntry!.status).to.equal('delivered');
-
-        // Verify target status was reset to pending
-        const metaAfter = await target.query(getMetadataQuery);
-        expect(metaAfter.status).to.equal('pending');
-
-        // Verify context message was injected into target's inbox
-        const targetMessages = await target.query(pendingMessagesQuery);
-        const encoreMsg = targetMessages.find((m) => m.text.includes('Encore'));
-        expect(encoreMsg).to.exist;
-        expect(encoreMsg!.from).to.equal('encore-sender');
-
-        // Clean up
-        await conductor.signal(updateMetadataSignal, { status: 'terminated' });
-        await target.signal(updateMetadataSignal, { status: 'terminated' });
-        await conductor.result();
-        await target.result();
-      });
-    });
-
-    it('fails gracefully when target session does not exist', async function () {
-      this.timeout(20_000);
-      await withWorkerAndOutboxActivities(async () => {
-        const handle = await startSession({
-          metadata: playerMetadata({ playerId: 'encore-fail-sender' }),
-          temporalConfig: {
-            temporalAddress: '',
-            temporalNamespace: 'default',
-            taskQueue: TASK_QUEUE,
-          },
-        });
-
-        await handle.executeUpdate(submitOutboxUpdate, {
-          args: [{
-            type: 'encore',
-            targetPlayerId: 'nonexistent-player',
-          }],
-        });
-
-        await sleep(3000);
-
-        const entries = await handle.query(outboxQuery);
-        const encoreEntry = entries.find((e) => e.type === 'encore');
-        expect(encoreEntry).to.exist;
-        expect(encoreEntry!.status).to.equal('failed');
-        // Temporal wraps ApplicationFailure in ActivityFailure; verify a non-empty error was recorded
-        expect(encoreEntry!.error).to.be.a('string').with.length.greaterThan(0);
-
-        await handle.signal(updateMetadataSignal, { status: 'terminated' });
-        await handle.result();
-      });
-    });
-
-    it('fails gracefully when target is not stale (active session)', async function () {
-      this.timeout(20_000);
-      await withWorkerAndOutboxActivities(async () => {
-        const sender = await startSession({
-          metadata: playerMetadata({ playerId: 'encore-active-sender' }),
-          temporalConfig: {
-            temporalAddress: '',
-            temporalNamespace: 'default',
-            taskQueue: TASK_QUEUE,
-          },
-        });
-
-        // Target is explicitly active (default state)
-        const target = await startSession({
-          metadata: playerMetadata({ playerId: 'encore-active-target' }),
-          disableStaleDetection: true,
-        });
-
-        await sender.executeUpdate(submitOutboxUpdate, {
-          args: [{
-            type: 'encore',
-            targetPlayerId: 'encore-active-target',
-          }],
-        });
-
-        await sleep(3000);
-
-        const entries = await sender.query(outboxQuery);
-        const encoreEntry = entries.find((e) => e.type === 'encore');
-        expect(encoreEntry).to.exist;
-        expect(encoreEntry!.status).to.equal('failed');
-        // Temporal wraps ApplicationFailure in ActivityFailure; verify a non-empty error was recorded
-        expect(encoreEntry!.error).to.be.a('string').with.length.greaterThan(0);
-
-        await sender.signal(updateMetadataSignal, { status: 'terminated' });
-        await target.signal(updateMetadataSignal, { status: 'terminated' });
-        await sender.result();
-        await target.result();
-      });
-    });
-  });
 });

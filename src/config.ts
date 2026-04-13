@@ -35,6 +35,18 @@ export const ENV = {
    * emergency rollback. Removed in v0.25.1 post-GA cleanup.
    */
   LIFECYCLE_V2: 'CLAUDE_TEMPO_LIFECYCLE_V2',
+  /**
+   * v0.25 PR-D attachment resume plumbing. When `restart` / `migrate`
+   * enqueues a spawn outbox entry, the workflow passes the pre-claimed
+   * `attachmentId` + pinned `runId` + resolved `adapterId` through the spawn
+   * activity into the child process env. The child's adapter reads these in
+   * `startV2Lifecycle` to renew (rather than freshly claim) the existing lease,
+   * so there is no race window between the workflow's claim and the adapter
+   * boot. Absent on first-recruit spawn (fresh claim path).
+   */
+  ATTACHMENT_ID: 'CLAUDE_TEMPO_ATTACHMENT_ID',
+  ATTACHMENT_RUN_ID: 'CLAUDE_TEMPO_ATTACHMENT_RUN_ID',
+  ADAPTER_ID: 'CLAUDE_TEMPO_ADAPTER_ID',
 } as const;
 
 /**

@@ -29,7 +29,6 @@ import { registerAgentTypesTool } from './tools/agent-types';
 import { registerWhoAmITool } from './tools/who-am-i';
 import { registerBroadcastTool } from './tools/broadcast';
 import { registerRecallTool } from './tools/recall';
-import { registerEncoreTool } from './tools/encore';
 import { registerReleaseTool } from './tools/release';
 import { registerPauseEnsembleTool } from './tools/pause-ensemble';
 import { registerResumeEnsembleTool } from './tools/resume-ensemble';
@@ -40,6 +39,11 @@ import { registerWorktreeTool } from './tools/worktree';
 import { registerStageTool } from './tools/stage';
 import { registerStagesTool } from './tools/stages';
 import { registerCancelStageTool } from './tools/cancel-stage';
+import { registerRestartTool } from './tools/restart';
+import { registerDetachTool } from './tools/detach';
+import { registerDestroyTool } from './tools/destroy';
+import { registerMigrateTool } from './tools/migrate';
+import { registerAttachmentInfoTool } from './tools/attachment-info';
 import { registry, InteractiveAttachment } from './adapters';
 import { resolveAgentType } from './ensemble/agent-types';
 
@@ -279,10 +283,17 @@ async function main() {
   registerWhoAmITool(mcpServer, handle, getPlayerId);
   registerBroadcastTool(mcpServer, client, config, getPlayerId, handle);
   registerRecallTool(mcpServer, handle, getPlayerId);
-  registerEncoreTool(mcpServer, client, config, getPlayerId, handle);
   registerReleaseTool(mcpServer, client, config, getPlayerId, handle);
   registerPauseEnsembleTool(mcpServer, client, config, getPlayerId);
   registerResumeEnsembleTool(mcpServer, client, config, getPlayerId);
+  // PR-D new verbs — enqueue outbox entries on the caller's workflow; the
+  // session dispatch loop runs the `deliverDetach` / `deliverDestroy` /
+  // `deliverRestart` activities against the target.
+  registerRestartTool(mcpServer, client, config, getPlayerId, handle);
+  registerDetachTool(mcpServer, client, config, getPlayerId, handle);
+  registerDestroyTool(mcpServer, client, config, getPlayerId, handle);
+  registerMigrateTool(mcpServer, client, config, getPlayerId, handle);
+  registerAttachmentInfoTool(mcpServer, client, config);
 
   // Conductor-only tools
   if (isConductor) {
@@ -356,10 +367,10 @@ async function main() {
     // 1. Stop the message poller — V2 adapter fires `adapterExited` (graceful=true)
     //    from inside `stopV2Lifecycle`, collapsing the workflow `draining → detached`
     //    per §11.1. Closing our terminal should NOT destroy the workflow — the user
-    //    can re-attach later via `encore`. PR-C commit 4 retired the former
+    //    can re-attach later via `restart`. PR-C commit 4 retired the former
     //    `updateMetadata({ status: 'terminated' })` signal here (it destroyed the
     //    session on every SIGINT, defeating the phase split). Operator-initiated
-    //    destruction goes through the `stop` tool / CLI, both of which now use
+    //    destruction now goes through the `destroy` tool / CLI, which uses
     //    `destroyUpdate` directly.
     stopPoller();
 

@@ -328,13 +328,52 @@ export interface StopOutboxEntry extends OutboxEntryBase {
   targetPlayerId: string;
 }
 
-export interface EncoreOutboxEntry extends OutboxEntryBase {
-  type: 'encore';
+/**
+ * Detach outbox entry (PR-D) — enqueued by the `detach` tool / TempoClient /
+ * CLI to gracefully reap the target's adapter. The dispatch `deliverDetach`
+ * activity signals `requestDetachSignal` on the target's workflow.
+ */
+export interface DetachOutboxEntry extends OutboxEntryBase {
+  type: 'detach';
   targetPlayerId: string;
-  targetHostname?: string;
-  contextMessageCount?: number;
-  /** Custom claude binary path (from config.claudeBin). */
-  claudeBin?: string;
+  reason?: DetachReason;
+  deadlineMs?: number;
+}
+
+/**
+ * Destroy outbox entry (PR-D) — enqueued by the `destroy` tool / TempoClient /
+ * CLI to terminally end the target's workflow. Dispatch `deliverDestroy`
+ * activity executes `destroyUpdate` on the target and optionally posts a
+ * system receiveMessage on the ensemble conductor.
+ */
+export interface DestroyOutboxEntry extends OutboxEntryBase {
+  type: 'destroy';
+  targetPlayerId: string;
+  reason?: string;
+  /** When true (default), post a system message on the ensemble conductor. */
+  notifyConductor?: boolean;
+}
+
+/**
+ * Restart outbox entry (PR-D) — enqueued by the `restart` / `migrate` tools,
+ * the TempoClient, and the CLI. Dispatch `deliverRestart` activity owns the
+ * §8.2 algorithm on the target (graceful detach → optional force → claim →
+ * optional context replay → enqueueSpawn). Durable across the per-attempt
+ * retry window of the activity itself.
+ */
+export interface RestartOutboxEntry extends OutboxEntryBase {
+  type: 'restart';
+  targetPlayerId: string;
+  /** When true, force-steal a live attachment via forceDetach. */
+  force?: boolean;
+  /** Target host for the new attachment; defaults to preferredHost/last-hostname. */
+  host?: string;
+  /** Skip context replay (equivalent to --fresh). */
+  fresh?: boolean;
+  /** Number of recent messages to include in context (when !fresh). */
+  contextMessages?: number;
+  /** Identifier of the invoker for audit messages (default: 'cli'). */
+  invokerPlayerId?: string;
 }
 
 /**
@@ -377,9 +416,11 @@ export type OutboxEntry =
   | RecruitOutboxEntry
   | ReportOutboxEntry
   | StopOutboxEntry
-  | EncoreOutboxEntry
   | ReleaseOutboxEntry
-  | SpawnOutboxEntry;
+  | SpawnOutboxEntry
+  | DetachOutboxEntry
+  | DestroyOutboxEntry
+  | RestartOutboxEntry;
 
 /** Distributive Omit that works correctly on union types. */
 type DistributiveOmit<T, K extends keyof any> = T extends any ? Omit<T, K> : never;
