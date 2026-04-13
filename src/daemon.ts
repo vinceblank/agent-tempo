@@ -115,6 +115,29 @@ export async function reconcileOnBoot(
 
   log(`reconcile: found ${orphans.length} orphan${orphans.length === 1 ? '' : 's'}`);
 
+  // PR-F cross-host filter (design §16 + brief §8 answer 2). A session whose
+  // `preferredHost` points to a different machine should not be restored by
+  // this daemon — the remote host's daemon is the authoritative restorer.
+  // Log-and-skip only: proactive cross-daemon signaling is a v0.26 feature
+  // (tracked as a follow-up; see brief §6 "reconcileOnBoot cross-host signal
+  // path is out of scope").
+  const originalOrphans = orphans;
+  orphans = originalOrphans.filter((o) => {
+    if (o.summary.preferredHost && o.summary.preferredHost !== hostname) {
+      log(`skipping restore for ${o.workflowId}: preferredHost=${o.summary.preferredHost}, localHost=${hostname}`);
+      return false;
+    }
+    return true;
+  });
+  const crossHostSkipped = originalOrphans.length - orphans.length;
+  if (crossHostSkipped > 0) {
+    log(`reconcile: skipped ${crossHostSkipped} orphan${crossHostSkipped === 1 ? '' : 's'} preferring remote hosts`);
+  }
+  if (orphans.length === 0) {
+    // All candidates filtered out — nothing to do on this host.
+    return;
+  }
+
   if (daemonConfig.restorePolicy === 'prompt') {
     for (const o of orphans) {
       log(
