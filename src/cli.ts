@@ -42,6 +42,8 @@ interface ParsedArgs {
   // PR-E restore flags
   fromHost?: string;
   dryRun?: boolean;
+  // PR-F cross-host flags
+  yesSteal?: string;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -107,8 +109,15 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.type = argv[++i];
     } else if (arg === '--include-stale') {
       result.includeStale = true;
-    } else if (arg === '--host' && i + 1 < argv.length) {
+    } else if ((arg === '--host' || arg === '--to') && i + 1 < argv.length) {
+      // `--to` is the migrate-UX alias for `--host` (brief §3 Site 4).
       result.host = argv[++i];
+    } else if (arg === '--yes-steal' && i + 1 < argv.length) {
+      // Space-separated form: `--yes-steal <hostname>`.
+      result.yesSteal = argv[++i];
+    } else if (arg.startsWith('--yes-steal=')) {
+      // Equals form (preferred per brief): `--yes-steal=<hostname>`.
+      result.yesSteal = arg.slice('--yes-steal='.length);
     } else if (arg === '--terminate') {
       result.terminate = true;
     } else if (arg === '--fresh') {
@@ -272,7 +281,7 @@ async function main() {
     case 'restart': {
       const name = args.positional[1] || args.name;
       if (!name) {
-        out.error('Usage: claude-tempo restart <name> [--host <hostname>] [--fresh] [--force] [--context-messages <N>]');
+        out.error('Usage: claude-tempo restart <name> [--host <hostname>] [--fresh] [--force] [--yes-steal=<current-host>] [--context-messages <N>]');
         process.exit(1);
       }
       await restart({
@@ -282,6 +291,7 @@ async function main() {
         fresh: args.fresh,
         force: args.force,
         ...(args.contextMessages !== undefined ? { contextMessages: args.contextMessages } : {}),
+        ...(args.yesSteal !== undefined ? { yesSteal: args.yesSteal } : {}),
         ...overrides,
       });
       break;
@@ -320,11 +330,11 @@ async function main() {
     case 'migrate': {
       const name = args.positional[1] || args.name;
       if (!name) {
-        out.error('Usage: claude-tempo migrate <name> --host <hostname> [--fresh] [--force]');
+        out.error('Usage: claude-tempo migrate <name> --to <hostname> [--force --yes-steal=<current-host>] [--fresh]');
         process.exit(1);
       }
       if (!args.host) {
-        out.error('`--host` is required for migrate. Use `restart` to revive on the current host.');
+        out.error('`--to <hostname>` is required for migrate. Use `restart` to revive on the current host.');
         process.exit(1);
       }
       await migrate({
@@ -334,6 +344,7 @@ async function main() {
         fresh: args.fresh,
         force: args.force,
         ...(args.contextMessages !== undefined ? { contextMessages: args.contextMessages } : {}),
+        ...(args.yesSteal !== undefined ? { yesSteal: args.yesSteal } : {}),
         ...overrides,
       });
       break;
