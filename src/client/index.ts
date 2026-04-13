@@ -20,7 +20,14 @@ import type {
   EnsembleChatResult,
   OutboxEntryInput,
 } from '../types';
-import { submitOutboxUpdate } from '../workflows/signals';
+import {
+  submitOutboxUpdate,
+  attachmentInfoQuery,
+  requestDetachSignal,
+  destroyUpdate,
+} from '../workflows/signals';
+import { resolveSession } from '../activities/resolve';
+import { performRestart } from '../tools/restart';
 import type { TempoClient, EnsembleSummary } from './interface';
 
 // Re-export public types for consumers
@@ -266,6 +273,60 @@ export function createTempoClient(client: Client): TempoClient {
         return;
       }
       throw new Error(`Player "${playerId}" not found in ensemble "${ensemble}"`);
+    },
+
+    // ── PR-D verbs — thin wrappers around attachment-lifecycle primitives ──
+
+    async restart(ensemble, playerId, opts = {}) {
+      const invokerPlayerId = opts.invokerPlayerId ?? 'cli';
+      // performRestart only uses `config.ensemble`; pass a minimal shape.
+      const result = await performRestart(client, { ensemble } as any, invokerPlayerId, {
+        playerId,
+        ...(opts.host !== undefined ? { host: opts.host } : {}),
+        ...(opts.fresh !== undefined ? { fresh: opts.fresh } : {}),
+        ...(opts.force !== undefined ? { force: opts.force } : {}),
+        ...(opts.contextMessages !== undefined ? { contextMessages: opts.contextMessages } : {}),
+      });
+      return {
+        playerId: result.playerId,
+        host: result.host,
+        attachmentId: result.attachmentId,
+        spawnEntryId: result.spawnEntryId,
+        phaseBefore: result.phaseBefore,
+        contextReplayed: result.contextReplayed,
+      };
+    },
+
+    async detach(ensemble, playerId, deadlineMs = 5_000) {
+      const target = await resolveSession(client, ensemble, playerId);
+      if (!target) throw new Error(`No session found with name "${playerId}" in ensemble "${ensemble}".`);
+      const info = await target.query(attachmentInfoQuery);
+      if (info.phase === 'detached') return; // idempotent
+      if (info.phase === 'gone') {
+        throw new Error(`"${playerId}" is destroyed; detach does not apply.`);
+      }
+      await target.signal(requestDetachSignal, { reason: 'user-stop', deadlineMs });
+    },
+
+    async destroy(ensemble, playerId, reason) {
+      const target = await resolveSession(client, ensemble, playerId);
+      if (!target) throw new Error(`No session found with name "${playerId}" in ensemble "${ensemble}".`);
+      await target.executeUpdate(destroyUpdate, {
+        args: [{ reason: reason ?? 'destroyed via client', terminatedBy: 'cli' }],
+      });
+    },
+
+    async migrate(ensemble, playerId, host, opts = {}) {
+      if (!host || !host.trim()) {
+        throw new Error('`host` is required for migrate. Use `restart` to revive on the current host.');
+      }
+      return this.restart(ensemble, playerId, { ...opts, host });
+    },
+
+    async attachmentInfo(ensemble, playerId) {
+      const target = await resolveSession(client, ensemble, playerId);
+      if (!target) throw new Error(`No session found with name "${playerId}" in ensemble "${ensemble}".`);
+      return target.query(attachmentInfoQuery);
     },
 
     async disbandEnsemble(ensemble: string): Promise<{ terminated: number }> {

@@ -20,6 +20,7 @@ import { saveLineup, listLineups, readSavedLineup } from '../ensemble/saver';
 import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
 import { shouldIncludeInBroadcast, validateEnsembleName } from '../utils/validation';
 import { isDaemonRunning, startDaemon, stopDaemon, getDaemonStatus, DAEMON_LOG_PATH } from './daemon';
+import { createTempoClient } from '../client';
 import * as out from './output';
 
 /** Package root is two levels up from dist/cli/ */
@@ -1803,6 +1804,151 @@ export async function broadcast(opts: BroadcastOpts) {
   await connection.close();
 }
 
+// --- PR-D verb commands (restart / detach / destroy / migrate / attachment-info) ---
+
+interface VerbOpts extends CliOverrides {
+  name: string;
+  ensemble?: string;
+}
+
+interface RestartCliOpts extends VerbOpts {
+  host?: string;
+  fresh?: boolean;
+  force?: boolean;
+  contextMessages?: number;
+}
+
+interface DetachCliOpts extends VerbOpts {
+  deadlineMs?: number;
+}
+
+interface DestroyCliOpts extends VerbOpts {
+  reason?: string;
+}
+
+interface MigrateCliOpts extends RestartCliOpts {
+  host: string;
+}
+
+/** Shared connection + client helper for verb commands. */
+async function verbClient(opts: CliOverrides): Promise<{ config: Config; connection: Connection; client: Client }> {
+  const config = getConfig(opts);
+  let connection: Connection;
+  try {
+    connection = await Promise.race([
+      createTemporalConnection(config),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+    ]);
+  } catch {
+    out.error(`Cannot connect to Temporal at ${config.temporalAddress}`);
+    process.exit(1);
+  }
+  const client = new Client({ connection, namespace: config.temporalNamespace });
+  return { config, connection, client };
+}
+
+export async function restart(opts: RestartCliOpts) {
+  const { config, connection, client } = await verbClient(opts);
+  const ensemble = opts.ensemble || config.ensemble;
+  try {
+    const tempo = createTempoClient(client);
+    const result = await tempo.restart(ensemble, opts.name, {
+      ...(opts.host !== undefined ? { host: opts.host } : {}),
+      ...(opts.fresh !== undefined ? { fresh: opts.fresh } : {}),
+      ...(opts.force !== undefined ? { force: opts.force } : {}),
+      ...(opts.contextMessages !== undefined ? { contextMessages: opts.contextMessages } : {}),
+      invokerPlayerId: 'cli',
+    });
+    out.success(`Restarting "${result.playerId}" on ${result.host}`);
+    out.log(`  ${out.dim(`phase was: ${result.phaseBefore}${result.contextReplayed ? '; context replayed' : '; fresh'}`)}`);
+    out.log(`  ${out.dim(`attachmentId=${result.attachmentId}, spawnEntryId=${result.spawnEntryId}`)}`);
+  } catch (err: any) {
+    out.error(err?.message || String(err));
+    process.exit(1);
+  } finally {
+    await connection.close();
+  }
+}
+
+export async function detach(opts: DetachCliOpts) {
+  const { config, connection, client } = await verbClient(opts);
+  const ensemble = opts.ensemble || config.ensemble;
+  try {
+    const tempo = createTempoClient(client);
+    await tempo.detach(ensemble, opts.name, opts.deadlineMs);
+    out.success(`Detach signaled for "${opts.name}" (draining up to ${opts.deadlineMs ?? 5000}ms).`);
+  } catch (err: any) {
+    out.error(err?.message || String(err));
+    process.exit(1);
+  } finally {
+    await connection.close();
+  }
+}
+
+export async function destroy(opts: DestroyCliOpts) {
+  const { config, connection, client } = await verbClient(opts);
+  const ensemble = opts.ensemble || config.ensemble;
+  try {
+    const tempo = createTempoClient(client);
+    await tempo.destroy(ensemble, opts.name, opts.reason);
+    out.success(`"${opts.name}" destroyed${opts.reason ? ` (reason: ${opts.reason})` : ''}.`);
+  } catch (err: any) {
+    out.error(err?.message || String(err));
+    process.exit(1);
+  } finally {
+    await connection.close();
+  }
+}
+
+export async function migrate(opts: MigrateCliOpts) {
+  if (!opts.host) {
+    out.error('Usage: claude-tempo migrate <name> --host <hostname>');
+    process.exit(1);
+  }
+  const { config, connection, client } = await verbClient(opts);
+  const ensemble = opts.ensemble || config.ensemble;
+  try {
+    const tempo = createTempoClient(client);
+    const result = await tempo.migrate(ensemble, opts.name, opts.host, {
+      ...(opts.fresh !== undefined ? { fresh: opts.fresh } : {}),
+      ...(opts.force !== undefined ? { force: opts.force } : {}),
+      ...(opts.contextMessages !== undefined ? { contextMessages: opts.contextMessages } : {}),
+      invokerPlayerId: 'cli',
+    });
+    out.success(`Migrating "${result.playerId}" to ${result.host}`);
+    out.log(`  ${out.dim(`phase was: ${result.phaseBefore}${result.contextReplayed ? '; context replayed' : '; fresh'}`)}`);
+    out.log(`  ${out.dim(`attachmentId=${result.attachmentId}, spawnEntryId=${result.spawnEntryId}`)}`);
+  } catch (err: any) {
+    out.error(err?.message || String(err));
+    process.exit(1);
+  } finally {
+    await connection.close();
+  }
+}
+
+export async function attachmentInfo(opts: VerbOpts) {
+  const { config, connection, client } = await verbClient(opts);
+  const ensemble = opts.ensemble || config.ensemble;
+  try {
+    const tempo = createTempoClient(client);
+    const info = await tempo.attachmentInfo(ensemble, opts.name);
+    out.log(`${out.bold(opts.name)} — phase: ${out.cyan(info.phase)}`);
+    out.log(`  in-flight: ${info.inFlightCount}`);
+    if (info.currentAttachment) {
+      out.log(`  attached on: ${info.currentAttachment.hostname} (adapter: ${info.currentAttachment.adapterId}/${info.currentAttachment.adapterClass})`);
+      out.log(`  attachmentId: ${info.currentAttachment.attachmentId}`);
+      out.log(`  lease expires: ${info.currentAttachment.expiresAt}`);
+    }
+    if (info.preferredHost) out.log(`  preferred host: ${info.preferredHost}`);
+    if (info.processingSince) out.log(`  processing since: ${info.processingSince}`);
+  } catch (err: any) {
+    out.error(err?.message || String(err));
+    process.exit(1);
+  } finally {
+    await connection.close();
+  }
+}
+
 // --- Ensemble lineup commands ---
 
 interface EnsembleCommandOpts extends CliOverrides {
@@ -2112,6 +2258,11 @@ ${out.bold('Commands:')}
   ${out.cyan('status')}  [ensemble]    Show active sessions and Temporal health
   ${out.cyan('ensemble')} <sub>       Manage saved ensemble lineups (save/list/show)
   ${out.cyan('broadcast')} <message>   Send a message to all active players
+  ${out.cyan('restart')} <name>        Restart a session (reap + claim + context replay + spawn)
+  ${out.cyan('detach')} <name>         Gracefully reap a session's adapter (workflow survives)
+  ${out.cyan('destroy')} <name>        Terminally end a session workflow
+  ${out.cyan('migrate')} <name> --host Move a session to a different host
+  ${out.cyan('attachment-info')} <name> Inspect the V2 attachment phase + current holder
   ${out.cyan('release')} [ensemble]   Release all held players (unlock outbox, deliver messages)
   ${out.cyan('pause')}   [ensemble]   Pause an ensemble (sessions, scheduler, maestro)
   ${out.cyan('resume')}  [ensemble]   Resume a paused ensemble

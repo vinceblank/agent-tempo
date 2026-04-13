@@ -249,6 +249,173 @@ async function handleRecall(
   }
 }
 
+// ── PR-D verbs — thin handlers calling TempoClient methods ──
+
+function requireEnsemble(
+  dispatch: (action: TuiAction) => void,
+  ctx: CommandContext,
+): string | null {
+  if (!ctx.activeEnsemble) {
+    commitStatic(dispatch, 'error', 'No active ensemble. Use /ensemble <name> first.');
+    return null;
+  }
+  return ctx.activeEnsemble;
+}
+
+/** /restart <player> [--fresh] [--force] — revive a player session per §8.2. */
+async function handleRestart(
+  args: string[],
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  if (args.length === 0) {
+    commitStatic(dispatch, 'error', 'Usage: /restart <player> [--fresh] [--force]');
+    return;
+  }
+  const ensemble = requireEnsemble(dispatch, ctx);
+  if (!ensemble) return;
+
+  const target = args[0];
+  const fresh = args.includes('--fresh');
+  const force = args.includes('--force');
+
+  try {
+    const result = await api.restart(ensemble, target, {
+      fresh,
+      force,
+      invokerPlayerId: 'tui',
+    });
+    commitStatic(
+      dispatch,
+      'info',
+      `\u21BB Restart requested for ${result.playerId} on ${result.host} — phase was ${result.phaseBefore}${result.contextReplayed ? '; context replayed' : '; fresh'}.`,
+    );
+  } catch (err) {
+    commitStatic(dispatch, 'error', `Restart failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** /detach <player> [deadlineMs] — gracefully reap the adapter; workflow survives. */
+async function handleDetach(
+  args: string[],
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  if (args.length === 0) {
+    commitStatic(dispatch, 'error', 'Usage: /detach <player> [deadlineMs]');
+    return;
+  }
+  const ensemble = requireEnsemble(dispatch, ctx);
+  if (!ensemble) return;
+
+  const target = args[0];
+  const deadlineMs = args[1] ? Number(args[1]) : undefined;
+
+  try {
+    await api.detach(ensemble, target, deadlineMs);
+    commitStatic(dispatch, 'info', `\u2198 Detach signaled for ${target} (draining up to ${deadlineMs ?? 5000}ms).`);
+  } catch (err) {
+    commitStatic(dispatch, 'error', `Detach failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** /destroy <player> [reason] — terminally end the workflow. */
+async function handleDestroy(
+  args: string[],
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  if (args.length === 0) {
+    commitStatic(dispatch, 'error', 'Usage: /destroy <player> [reason]');
+    return;
+  }
+  const ensemble = requireEnsemble(dispatch, ctx);
+  if (!ensemble) return;
+
+  const target = args[0];
+  const reason = args.slice(1).join(' ') || undefined;
+
+  try {
+    await api.destroy(ensemble, target, reason);
+    commitStatic(dispatch, 'info', `\u2716 ${target} destroyed${reason ? ` (${reason})` : ''}.`);
+  } catch (err) {
+    commitStatic(dispatch, 'error', `Destroy failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** /migrate <player> <host> [--fresh] [--force] — restart on a different host. */
+async function handleMigrate(
+  args: string[],
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  if (args.length < 2) {
+    commitStatic(dispatch, 'error', 'Usage: /migrate <player> <host> [--fresh] [--force]');
+    return;
+  }
+  const ensemble = requireEnsemble(dispatch, ctx);
+  if (!ensemble) return;
+
+  const target = args[0];
+  const host = args[1];
+  const fresh = args.includes('--fresh');
+  const force = args.includes('--force');
+
+  try {
+    const result = await api.migrate(ensemble, target, host, {
+      fresh,
+      force,
+      invokerPlayerId: 'tui',
+    });
+    commitStatic(
+      dispatch,
+      'info',
+      `\u27A4 Migrating ${result.playerId} to ${result.host} (phase was ${result.phaseBefore}${result.contextReplayed ? '; context replayed' : '; fresh'}).`,
+    );
+  } catch (err) {
+    commitStatic(dispatch, 'error', `Migrate failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** /attachment-info <player> — inspect the V2 attachment phase + current holder. */
+async function handleAttachmentInfo(
+  args: string[],
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  if (args.length === 0) {
+    commitStatic(dispatch, 'error', 'Usage: /attachment-info <player>');
+    return;
+  }
+  const ensemble = requireEnsemble(dispatch, ctx);
+  if (!ensemble) return;
+
+  const target = args[0];
+
+  try {
+    const info = await api.attachmentInfo(ensemble, target);
+    const lines: string[] = [
+      `${target} — phase: ${info.phase}`,
+      `  in-flight: ${info.inFlightCount}`,
+    ];
+    if (info.currentAttachment) {
+      lines.push(`  attached on: ${info.currentAttachment.hostname} (${info.currentAttachment.adapterId}/${info.currentAttachment.adapterClass})`);
+      lines.push(`  attachmentId: ${info.currentAttachment.attachmentId}`);
+      lines.push(`  lease expires: ${info.currentAttachment.expiresAt}`);
+    }
+    if (info.preferredHost) lines.push(`  preferred host: ${info.preferredHost}`);
+    if (info.processingSince) lines.push(`  processing since: ${info.processingSince}`);
+    dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: `Attachment \u00B7 ${target}`, content: lines.join('\n') });
+  } catch (err) {
+    commitStatic(dispatch, 'error', `attachment_info failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 /** /recruit [name] — launch the recruit wizard. Pre-fills name if given. */
 async function handleRecruit(
   args: string[],
@@ -956,6 +1123,31 @@ export const COMMANDS: Record<string, CommandDef> = {
     usage: '/broadcast <message>',
     handler: handleBroadcast,
   },
+  restart: {
+    description: 'Restart a session (reap + claim + context replay + spawn)',
+    usage: '/restart <player> [--fresh] [--force]',
+    handler: handleRestart,
+  },
+  detach: {
+    description: 'Gracefully reap a session\'s adapter (workflow survives)',
+    usage: '/detach <player> [deadlineMs]',
+    handler: handleDetach,
+  },
+  destroy: {
+    description: 'Terminally end a session workflow',
+    usage: '/destroy <player> [reason...]',
+    handler: handleDestroy,
+  },
+  migrate: {
+    description: 'Restart a session on a different host',
+    usage: '/migrate <player> <host> [--fresh] [--force]',
+    handler: handleMigrate,
+  },
+  'attachment-info': {
+    description: 'Inspect the V2 attachment state of a session',
+    usage: '/attachment-info <player>',
+    handler: handleAttachmentInfo,
+  },
   recall: {
     description: "Read a player's message history",
     usage: '/recall [player] [--limit N]',
@@ -1093,7 +1285,7 @@ export function resolveHelpTarget(raw: string): { name: string; def: CommandDef 
 }
 
 /** Commands that take a player name as their first parameter. */
-export const PLAYER_PARAM_COMMANDS = new Set(['stop', 'worktree']);
+export const PLAYER_PARAM_COMMANDS = new Set(['stop', 'worktree', 'restart', 'detach', 'destroy', 'attachment-info']);
 
 /** Commands with hardcoded subcommands (shown in autocomplete). */
 export const SUBCOMMAND_MAP: Record<string, string[]> = {

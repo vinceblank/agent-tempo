@@ -141,6 +141,8 @@ describe('COMMANDS registry', function () {
     'broadcast', 'players', 'status', 'help', 'quit',
     'recruit', 'stop', 'recall', 'schedule',
     'gates', 'stages', 'worktree', 'lineup', 'ensemble', 'back',
+    // PR-D verbs
+    'restart', 'detach', 'destroy', 'migrate', 'attachment-info',
   ];
 
   for (const cmd of expectedCommands) {

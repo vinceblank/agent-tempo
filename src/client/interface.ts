@@ -16,7 +16,32 @@ import type {
   StageEntry,
   WorktreeEntry,
   EnsembleChatResult,
+  AttachmentInfo,
 } from '../types';
+
+// ── PR-D verb options ──
+
+export interface RestartClientOpts {
+  /** Target host (defaults to session's preferredHost or last-known hostname). */
+  host?: string;
+  /** Skip context replay. */
+  fresh?: boolean;
+  /** Steal a live attachment via forceDetach. */
+  force?: boolean;
+  /** Number of recent messages to include in context replay. */
+  contextMessages?: number;
+  /** Identifier of the invoker for audit messages (default: 'cli'). */
+  invokerPlayerId?: string;
+}
+
+export interface RestartClientResult {
+  playerId: string;
+  host: string;
+  attachmentId: string;
+  spawnEntryId: string;
+  phaseBefore: string;
+  contextReplayed: boolean;
+}
 
 // ── Public Types ──
 
@@ -46,6 +71,16 @@ export interface TempoClient {
   sendMessage(ensemble: string, to: string, text: string, source: string): Promise<string>;
   /** Terminate a player's workflow. */
   terminatePlayer(ensemble: string, playerId: string): Promise<void>;
+  /** PR-D: Restart a player — §8.2 algorithm. Works on any non-`gone` phase. */
+  restart(ensemble: string, playerId: string, opts?: RestartClientOpts): Promise<RestartClientResult>;
+  /** PR-D: Gracefully detach a player's adapter. Workflow survives in `detached`. */
+  detach(ensemble: string, playerId: string, deadlineMs?: number): Promise<void>;
+  /** PR-D: Terminally destroy a player's workflow. */
+  destroy(ensemble: string, playerId: string, reason?: string): Promise<void>;
+  /** PR-D: Migrate a player to a different host — sugar for restart({host}). */
+  migrate(ensemble: string, playerId: string, host: string, opts?: Omit<RestartClientOpts, 'host'>): Promise<RestartClientResult>;
+  /** PR-D: Query a player's V2 attachment lifecycle state. */
+  attachmentInfo(ensemble: string, playerId: string): Promise<AttachmentInfo>;
   /** Get active schedules for an ensemble. */
   getSchedules(ensemble: string): Promise<ScheduleEntry[]>;
   /** Cancel a named schedule in an ensemble. */
