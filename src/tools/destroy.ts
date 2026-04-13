@@ -1,26 +1,29 @@
 /**
  * `destroy` — terminal end of a session workflow.
  *
- * Thin wrapper over the `destroyUpdate` primitive (PR-A, design §8.5). Sets
- * phase to `gone`, revokes the current attachment, abandons any in-flight
- * outbox entries (per §2.5), and COMPLETEs the workflow. Cannot be undone.
+ * QA B2: enqueues a `DestroyOutboxEntry` on the caller's workflow outbox
+ * rather than executing `destroyUpdate` directly from tool code. The session
+ * workflow's dispatch loop runs the `deliverDestroy` activity on the target,
+ * which calls `destroyUpdate` + (optionally) posts a system message on the
+ * ensemble conductor via `receiveMessageSignal` (typed constant, no literals).
  *
  * For graceful shutdown without destroying the workflow, use `detach` instead.
  */
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from '@temporalio/client';
-import { Config, conductorWorkflowId } from '../config';
-import { resolveSession } from './resolve';
-import { destroyUpdate } from '../workflows/signals';
+import { Client, WorkflowHandle } from '@temporalio/client';
+import { Config } from '../config';
+import type { OutboxEntryInput } from '../types';
+import { submitOutboxUpdate } from '../workflows/signals';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { PLAYER_NAME_MAX, validatePlayerName } from '../utils/validation';
 
 export function registerDestroyTool(
   server: McpServer,
-  client: Client,
-  config: Config,
+  _client: Client,
+  _config: Config,
   getPlayerId: () => string,
+  handle: WorkflowHandle,
 ) {
   defineTool(
     server,
@@ -41,31 +44,14 @@ export function registerDestroyTool(
       }
 
       try {
-        const resolved = await resolveSession(client, config.ensemble, playerId);
-        if (!resolved) return fail(`No session found with name "${playerId}".`);
-
-        const terminatedBy = getPlayerId();
-        await resolved.executeUpdate(destroyUpdate, {
-          args: [{
-            reason: reason ?? 'destroyed via destroy tool',
-            terminatedBy,
-          }],
-        });
-
-        // Best-effort conductor notification — mirrors terminateSession activity.
-        try {
-          const condId = conductorWorkflowId(config.ensemble);
-          const condHandle = client.workflow.getHandle(condId);
-          await condHandle.signal('receiveMessage', {
-            from: 'system',
-            text: `Session "${playerId}" was destroyed by ${terminatedBy}${reason ? ` (reason: ${reason})` : ''}.`,
-            responseRequested: false,
-          });
-        } catch {
-          // Conductor may not exist — non-fatal.
-        }
-
-        return ok(`**${playerId}** destroyed${reason ? ` (reason: ${reason})` : ''}.`);
+        const entry: OutboxEntryInput = {
+          type: 'destroy',
+          targetPlayerId: playerId,
+          ...(reason !== undefined ? { reason } : {}),
+          notifyConductor: true,
+        };
+        const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
+        return ok(`Destroy queued for **${playerId}**${reason ? ` (reason: ${reason})` : ''}. (outbox: ${entryId})`);
       } catch (err) {
         return fail(`Failed to destroy: ${formatError(err)}`);
       }

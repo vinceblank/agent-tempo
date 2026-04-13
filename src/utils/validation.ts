@@ -58,6 +58,12 @@ export const BLOCKED_WINDOW_MS = 5 * 60 * 1000;
 /** Maximum length for message preview truncation. */
 export const PREVIEW_MAX_LENGTH = 200;
 
+/** Maximum `contextMessages` arg for restart / migrate tools (QA B4). */
+export const RESTART_CONTEXT_MESSAGES_MAX = 50;
+
+/** Maximum `deadlineMs` arg for detach tool. */
+export const MAX_DETACH_DEADLINE_MS = 120_000;
+
 /**
  * Whether a session should be included in a broadcast based on its status.
  * Always excludes pending, terminated, and blocked. Excludes stale unless includeStale is true.

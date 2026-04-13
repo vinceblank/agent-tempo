@@ -35,12 +35,12 @@ export interface RestartClientOpts {
 }
 
 export interface RestartClientResult {
+  /** Player the restart was queued for. */
   playerId: string;
-  host: string;
-  attachmentId: string;
-  spawnEntryId: string;
-  phaseBefore: string;
-  contextReplayed: boolean;
+  /** Target host — `undefined` when the caller didn't specify and the activity uses `preferredHost`. */
+  host?: string;
+  /** Outbox entry id; callers can poll `submitOutbox` history or `outboxQuery` for status. */
+  entryId: string;
 }
 
 // ── Public Types ──

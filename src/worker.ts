@@ -71,6 +71,10 @@ export async function createWorkers(config: Config): Promise<DualWorkers> {
       deliverReport: outboxActivities.deliverReport,
       terminateSession: outboxActivities.terminateSession,
       startRecruitedSession: outboxActivities.startRecruitedSession,
+      releasePlayer: outboxActivities.releasePlayer,
+      deliverDetach: outboxActivities.deliverDetach,
+      deliverDestroy: outboxActivities.deliverDestroy,
+      deliverRestart: outboxActivities.deliverRestart,
     },
   });
 

@@ -96,7 +96,7 @@ import type {
 
 // ── Outbox Activity Proxies ──
 
-const { deliverCue, deliverReport, terminateSession, startRecruitedSession, releasePlayer } =
+const { deliverCue, deliverReport, terminateSession, startRecruitedSession, releasePlayer, deliverDetach, deliverDestroy, deliverRestart } =
   proxyActivities<OutboxActivities>({
     startToCloseTimeout: '30 seconds',
     retry: { maximumAttempts: 3 },
@@ -278,6 +278,12 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       sentMessages.push({ id: entry.id, to: 'conductor', text: `[${entry.reportType}] ${entry.text}`, timestamp: entry.createdAt });
     } else if (entry.type === 'stop') {
       sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[stop requested]', timestamp: entry.createdAt });
+    } else if (entry.type === 'detach') {
+      sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[detach requested]', timestamp: entry.createdAt });
+    } else if (entry.type === 'destroy') {
+      sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[destroy requested]', timestamp: entry.createdAt });
+    } else if (entry.type === 'restart') {
+      sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[restart requested]', timestamp: entry.createdAt });
     } else if (entry.type === 'release') {
       sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[release requested]', timestamp: entry.createdAt });
     }
@@ -1197,6 +1203,43 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
             await releasePlayer({
               ensemble: input.metadata.ensemble,
               targetPlayerId: entry.targetPlayerId,
+            });
+            break;
+          }
+          case 'detach': {
+            // PR-D: route the `detach` verb through the outbox (QA B1). The
+            // activity resolves the target and signals `requestDetachSignal`.
+            await deliverDetach({
+              ensemble: input.metadata.ensemble,
+              targetPlayerId: entry.targetPlayerId,
+              ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+              ...(entry.deadlineMs !== undefined ? { deadlineMs: entry.deadlineMs } : {}),
+            });
+            break;
+          }
+          case 'destroy': {
+            // PR-D: route the `destroy` verb through the outbox (QA B2).
+            await deliverDestroy({
+              ensemble: input.metadata.ensemble,
+              targetPlayerId: entry.targetPlayerId,
+              terminatedBy: input.metadata.playerId,
+              ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+              ...(entry.notifyConductor !== undefined ? { notifyConductor: entry.notifyConductor } : {}),
+            });
+            break;
+          }
+          case 'restart': {
+            // PR-D: route the `restart`/`migrate` verbs through the outbox
+            // (QA B3). The activity owns the §8.2 algorithm: graceful detach
+            // → optional force → claim → context replay → enqueueSpawn.
+            await deliverRestart({
+              ensemble: input.metadata.ensemble,
+              targetPlayerId: entry.targetPlayerId,
+              invokerPlayerId: entry.invokerPlayerId ?? input.metadata.playerId,
+              ...(entry.force !== undefined ? { force: entry.force } : {}),
+              ...(entry.host !== undefined ? { host: entry.host } : {}),
+              ...(entry.fresh !== undefined ? { fresh: entry.fresh } : {}),
+              ...(entry.contextMessages !== undefined ? { contextMessages: entry.contextMessages } : {}),
             });
             break;
           }

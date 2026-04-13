@@ -1083,148 +1083,146 @@ describe('attachment_info tool', function () {
   });
 });
 
-describe('detach tool', function () {
-  it('signals requestDetach on an attached session', async function () {
-    const { client, handle } = makeV2Client({
-      playerId: 'bob',
-      phase: 'attached',
-      currentAttachmentId: 'attach-bob',
-    });
+/**
+ * Build a fake caller-workflow handle that records `submitOutbox` entries.
+ * PR-D verb tools (detach/destroy/restart/migrate) now enqueue instead of
+ * calling directly — tests assert the entry shape on this capture.
+ */
+function makeCaptureHandle(): { handle: WorkflowHandle; entries: Array<{ name: string; args: unknown }> } {
+  const entries: Array<{ name: string; args: unknown }> = [];
+  const asName = (nameOrDef: unknown): string =>
+    typeof nameOrDef === 'string' ? nameOrDef : (nameOrDef as { name: string }).name;
+  const handle = {
+    executeUpdate: async (nameOrDef: unknown, opts: { args: unknown[] }) => {
+      entries.push({ name: asName(nameOrDef), args: opts.args[0] });
+      return `entry-${entries.length}`;
+    },
+  } as unknown as WorkflowHandle;
+  return { handle, entries };
+}
+
+describe('detach tool (outbox-queued, QA B1)', function () {
+  it('enqueues DetachOutboxEntry with reason + deadlineMs', async function () {
+    const { client } = makeV2Client({ playerId: 'bob' });
+    const { handle, entries } = makeCaptureHandle();
     const call = extractHandler((server) =>
-      registerDetachTool(server, client, testConfig, getPlayerId),
+      registerDetachTool(server, client, testConfig, getPlayerId, handle),
     );
-    const result = await call({ playerId: 'bob' });
+    const result = await call({ playerId: 'bob', deadlineMs: 3000 });
     expect(result.isError).to.not.equal(true);
-    const detach = handle.signals.find((s) => s.name === 'requestDetach');
-    expect(detach, 'requestDetach signal sent').to.exist;
-    expect((detach!.args as any).reason).to.equal('user-stop');
+    expect(entries).to.have.length(1);
+    expect(entries[0].name).to.equal('submitOutbox');
+    const entry = entries[0].args as any;
+    expect(entry.type).to.equal('detach');
+    expect(entry.targetPlayerId).to.equal('bob');
+    expect(entry.reason).to.equal('user-stop');
+    expect(entry.deadlineMs).to.equal(3000);
   });
 
-  it('rejects self-detach', async function () {
+  it('rejects self-detach before enqueueing', async function () {
     const { client } = makeV2Client({ playerId: TEST_PLAYER_ID });
+    const { handle, entries } = makeCaptureHandle();
     const call = extractHandler((server) =>
-      registerDetachTool(server, client, testConfig, getPlayerId),
+      registerDetachTool(server, client, testConfig, getPlayerId, handle),
     );
     const result = await call({ playerId: TEST_PLAYER_ID });
     expect(result.isError).to.be.true;
     expect(result.content[0].text).to.include('own session');
-  });
-
-  it('reports already-detached as success (idempotent)', async function () {
-    const { client } = makeV2Client({ playerId: 'carol', phase: 'detached' });
-    const call = extractHandler((server) =>
-      registerDetachTool(server, client, testConfig, getPlayerId),
-    );
-    const result = await call({ playerId: 'carol' });
-    expect(result.isError).to.not.equal(true);
-    expect(result.content[0].text).to.include('already detached');
+    expect(entries).to.have.length(0);
   });
 });
 
-describe('destroy tool', function () {
-  it('calls destroyUpdate with reason + terminatedBy', async function () {
-    const { client, handle } = makeV2Client({ playerId: 'dave' });
+describe('destroy tool (outbox-queued, QA B2)', function () {
+  it('enqueues DestroyOutboxEntry with reason + notifyConductor', async function () {
+    const { client } = makeV2Client({ playerId: 'dave' });
+    const { handle, entries } = makeCaptureHandle();
     const call = extractHandler((server) =>
-      registerDestroyTool(server, client, testConfig, getPlayerId),
+      registerDestroyTool(server, client, testConfig, getPlayerId, handle),
     );
     const result = await call({ playerId: 'dave', reason: 'debug cleanup' });
     expect(result.isError).to.not.equal(true);
-    const destroy = handle.updates.find((u) => u.name === 'destroy');
-    expect(destroy, 'destroy update called').to.exist;
-    expect((destroy!.args as any).reason).to.equal('debug cleanup');
-    expect((destroy!.args as any).terminatedBy).to.equal(TEST_PLAYER_ID);
+    expect(entries).to.have.length(1);
+    const entry = entries[0].args as any;
+    expect(entry.type).to.equal('destroy');
+    expect(entry.targetPlayerId).to.equal('dave');
+    expect(entry.reason).to.equal('debug cleanup');
+    expect(entry.notifyConductor).to.be.true;
   });
 
-  it('rejects self-destroy', async function () {
+  it('rejects self-destroy before enqueueing', async function () {
     const { client } = makeV2Client({ playerId: TEST_PLAYER_ID });
+    const { handle, entries } = makeCaptureHandle();
     const call = extractHandler((server) =>
-      registerDestroyTool(server, client, testConfig, getPlayerId),
+      registerDestroyTool(server, client, testConfig, getPlayerId, handle),
     );
     const result = await call({ playerId: TEST_PLAYER_ID });
     expect(result.isError).to.be.true;
-    expect(result.content[0].text).to.include('own session');
+    expect(entries).to.have.length(0);
   });
 });
 
-describe('restart tool', function () {
-  it('runs §8.2 algorithm on a detached session — claim + context + enqueueSpawn', async function () {
-    const { client, handle } = makeV2Client({ playerId: 'eve', phase: 'detached' });
+describe('restart tool (outbox-queued, QA B3)', function () {
+  it('enqueues RestartOutboxEntry with invokerPlayerId + defaults', async function () {
+    const { client } = makeV2Client({ playerId: 'eve' });
+    const { handle, entries } = makeCaptureHandle();
     const call = extractHandler((server) =>
-      registerRestartTool(server, client, testConfig, getPlayerId),
+      registerRestartTool(server, client, testConfig, getPlayerId, handle),
     );
     const result = await call({ playerId: 'eve' });
     expect(result.isError).to.not.equal(true);
-    // Detached — skip reap, go straight to claim + enqueue.
-    expect(handle.updates.find((u) => u.name === 'forceDetach')).to.be.undefined;
-    expect(handle.updates.find((u) => u.name === 'claimAttachment'), 'claim').to.exist;
-    expect(handle.updates.find((u) => u.name === 'enqueueSpawn'), 'enqueueSpawn').to.exist;
-    // Context replay on by default.
-    expect(handle.signals.find((s) => s.name === 'receiveMessage'), 'context replay').to.exist;
+    const entry = entries[0].args as any;
+    expect(entry.type).to.equal('restart');
+    expect(entry.targetPlayerId).to.equal('eve');
+    expect(entry.invokerPlayerId).to.equal(TEST_PLAYER_ID);
+    expect(entry.host).to.be.undefined;
+    expect(entry.fresh).to.be.undefined;
+    expect(entry.force).to.be.undefined;
   });
 
-  it('refuses live attachment without force; signals requestDetach first', async function () {
-    const { client, handle } = makeV2Client({
-      playerId: 'frank',
-      phase: 'attached',
-      currentAttachmentId: 'live-attach',
-    });
+  it('forwards force + fresh + host + contextMessages to the entry', async function () {
+    const { client } = makeV2Client({ playerId: 'frank' });
+    const { handle, entries } = makeCaptureHandle();
     const call = extractHandler((server) =>
-      registerRestartTool(server, client, testConfig, getPlayerId),
+      registerRestartTool(server, client, testConfig, getPlayerId, handle),
     );
-    const result = await call({ playerId: 'frank' });
-    expect(result.isError).to.be.true;
-    expect(result.content[0].text).to.include('force=true');
-    // Graceful detach WAS signaled; force path wasn't taken.
-    expect(handle.signals.find((s) => s.name === 'requestDetach'), 'graceful first').to.exist;
-    expect(handle.updates.find((u) => u.name === 'forceDetach')).to.be.undefined;
+    await call({ playerId: 'frank', fresh: true, force: true, host: 'h1', contextMessages: 20 });
+    const entry = entries[0].args as any;
+    expect(entry.fresh).to.be.true;
+    expect(entry.force).to.be.true;
+    expect(entry.host).to.equal('h1');
+    expect(entry.contextMessages).to.equal(20);
   });
 
-  it('rejects destroyed (phase=gone) with recruit hint', async function () {
-    const { client } = makeV2Client({ playerId: 'ghost', phase: 'gone' });
-    const call = extractHandler((server) =>
-      registerRestartTool(server, client, testConfig, getPlayerId),
-    );
-    const result = await call({ playerId: 'ghost' });
-    expect(result.isError).to.be.true;
-    expect(result.content[0].text).to.include('destroyed');
-    expect(result.content[0].text).to.include('recruit');
-  });
-
-  it('honors fresh=true — no context replay', async function () {
-    const { client, handle } = makeV2Client({ playerId: 'hannah' });
-    const call = extractHandler((server) =>
-      registerRestartTool(server, client, testConfig, getPlayerId),
-    );
-    const result = await call({ playerId: 'hannah', fresh: true });
-    expect(result.isError).to.not.equal(true);
-    expect(handle.signals.find((s) => s.name === 'receiveMessage')).to.be.undefined;
-    const spawn = handle.updates.find((u) => u.name === 'enqueueSpawn');
-    expect((spawn!.args as any).resume).to.be.false;
-  });
+  // (contextMessages max-range enforcement is a Zod schema concern handled at
+  //  MCP-level validation; the extractHandler harness bypasses the schema so
+  //  unit-testing that bound would be testing the wrong layer. See
+  //  RESTART_CONTEXT_MESSAGES_MAX in src/utils/validation.ts.)
 });
 
-describe('migrate tool', function () {
-  it('passes host through to restart algorithm', async function () {
-    const { client, handle } = makeV2Client({ playerId: 'ian' });
+describe('migrate tool (outbox-queued, QA B3)', function () {
+  it('enqueues RestartOutboxEntry with required host', async function () {
+    const { client } = makeV2Client({ playerId: 'ian' });
+    const { handle, entries } = makeCaptureHandle();
     const call = extractHandler((server) =>
-      registerMigrateTool(server, client, testConfig, getPlayerId),
+      registerMigrateTool(server, client, testConfig, getPlayerId, handle),
     );
     const result = await call({ playerId: 'ian', host: 'other-host' });
     expect(result.isError).to.not.equal(true);
-    expect(result.content[0].text).to.include('other-host');
-    const spawn = handle.updates.find((u) => u.name === 'enqueueSpawn');
-    expect((spawn!.args as any).host).to.equal('other-host');
-    const claim = handle.updates.find((u) => u.name === 'claimAttachment');
-    expect((claim!.args as any).host).to.equal('other-host');
+    const entry = entries[0].args as any;
+    expect(entry.type).to.equal('restart');
+    expect(entry.host).to.equal('other-host');
+    expect(entry.targetPlayerId).to.equal('ian');
   });
 
-  it('rejects empty host', async function () {
+  it('rejects empty host before enqueueing', async function () {
     const { client } = makeV2Client({ playerId: 'jen' });
+    const { handle, entries } = makeCaptureHandle();
     const call = extractHandler((server) =>
-      registerMigrateTool(server, client, testConfig, getPlayerId),
+      registerMigrateTool(server, client, testConfig, getPlayerId, handle),
     );
     const result = await call({ playerId: 'jen', host: '   ' });
     expect(result.isError).to.be.true;
     expect(result.content[0].text).to.include('host');
+    expect(entries).to.have.length(0);
   });
 });

@@ -286,11 +286,13 @@ async function main() {
   registerReleaseTool(mcpServer, client, config, getPlayerId, handle);
   registerPauseEnsembleTool(mcpServer, client, config, getPlayerId);
   registerResumeEnsembleTool(mcpServer, client, config, getPlayerId);
-  // PR-D new verbs — thin wrappers over PR-A/B/C attachment-lifecycle primitives.
-  registerRestartTool(mcpServer, client, config, getPlayerId);
-  registerDetachTool(mcpServer, client, config, getPlayerId);
-  registerDestroyTool(mcpServer, client, config, getPlayerId);
-  registerMigrateTool(mcpServer, client, config, getPlayerId);
+  // PR-D new verbs — enqueue outbox entries on the caller's workflow; the
+  // session dispatch loop runs the `deliverDetach` / `deliverDestroy` /
+  // `deliverRestart` activities against the target.
+  registerRestartTool(mcpServer, client, config, getPlayerId, handle);
+  registerDetachTool(mcpServer, client, config, getPlayerId, handle);
+  registerDestroyTool(mcpServer, client, config, getPlayerId, handle);
+  registerMigrateTool(mcpServer, client, config, getPlayerId, handle);
   registerAttachmentInfoTool(mcpServer, client, config);
 
   // Conductor-only tools

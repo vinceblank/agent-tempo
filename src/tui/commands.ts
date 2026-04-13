@@ -289,7 +289,7 @@ async function handleRestart(
     commitStatic(
       dispatch,
       'info',
-      `\u21BB Restart requested for ${result.playerId} on ${result.host} — phase was ${result.phaseBefore}${result.contextReplayed ? '; context replayed' : '; fresh'}.`,
+      `\u21BB Restart queued for ${result.playerId}${result.host ? ` on ${result.host}` : ''} (outbox ${result.entryId}).`,
     );
   } catch (err) {
     commitStatic(dispatch, 'error', `Restart failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);
@@ -374,7 +374,7 @@ async function handleMigrate(
     commitStatic(
       dispatch,
       'info',
-      `\u27A4 Migrating ${result.playerId} to ${result.host} (phase was ${result.phaseBefore}${result.contextReplayed ? '; context replayed' : '; fresh'}).`,
+      `\u27A4 Migrate queued for ${result.playerId} \u2192 ${result.host ?? host} (outbox ${result.entryId}).`,
     );
   } catch (err) {
     commitStatic(dispatch, 'error', `Migrate failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);

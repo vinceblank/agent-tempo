@@ -191,6 +191,94 @@ describe('outbox', function () {
     });
   });
 
+  // ── PR-D verb delivery (QA B1/B2/B3) ──
+
+  describe('detach delivery (PR-D)', function () {
+    it('dispatches deliverDetach and marks entry delivered', async function () {
+      this.timeout(30_000);
+      await withWorkerAndOutboxActivities(async () => {
+        const alice = await startSession({ metadata: playerMetadata({ playerId: 'alice-detach' }) });
+        const bob = await startSession({ metadata: playerMetadata({ playerId: 'bob-detach' }) });
+
+        await alice.executeUpdate(submitOutboxUpdate, {
+          args: [{ type: 'detach', targetPlayerId: 'bob-detach', deadlineMs: 1000 }],
+        });
+
+        await sleep(2000);
+
+        const aliceOutbox = await alice.query(outboxQuery);
+        const entry = aliceOutbox.find((e) => e.type === 'detach');
+        expect(entry, 'detach entry exists').to.exist;
+        expect(entry!.status).to.equal('delivered');
+
+        await alice.signal(updateMetadataSignal, { status: 'terminated' });
+        await bob.signal(updateMetadataSignal, { status: 'terminated' });
+        await alice.result();
+        await bob.result();
+      });
+    });
+  });
+
+  describe('destroy delivery (PR-D)', function () {
+    it('dispatches deliverDestroy and terminates the target', async function () {
+      this.timeout(30_000);
+      await withWorkerAndOutboxActivities(async () => {
+        const alice = await startSession({ metadata: playerMetadata({ playerId: 'alice-destroy' }) });
+        const bob = await startSession({ metadata: playerMetadata({ playerId: 'bob-destroy' }) });
+
+        await alice.executeUpdate(submitOutboxUpdate, {
+          args: [{ type: 'destroy', targetPlayerId: 'bob-destroy', reason: 'test', notifyConductor: false }],
+        });
+
+        await sleep(2000);
+
+        const aliceOutbox = await alice.query(outboxQuery);
+        const entry = aliceOutbox.find((e) => e.type === 'destroy');
+        expect(entry, 'destroy entry exists').to.exist;
+        expect(entry!.status).to.equal('delivered');
+
+        // Bob should be destroyed — `isDestroyed` query returns true.
+        const bobDestroyed = await bob.query('isDestroyed') as boolean;
+        expect(bobDestroyed).to.be.true;
+
+        await alice.signal(updateMetadataSignal, { status: 'terminated' });
+        await alice.result();
+        await bob.result();
+      });
+    });
+  });
+
+  describe('restart delivery (PR-D)', function () {
+    it('dispatches deliverRestart and marks entry delivered', async function () {
+      this.timeout(30_000);
+      await withWorkerAndRecruitActivities(async () => {
+        const alice = await startSession({ metadata: playerMetadata({ playerId: 'alice-restart' }) });
+        const bob = await startSession({ metadata: playerMetadata({ playerId: 'bob-restart' }) });
+
+        await alice.executeUpdate(submitOutboxUpdate, {
+          args: [{
+            type: 'restart',
+            targetPlayerId: 'bob-restart',
+            invokerPlayerId: 'alice-restart',
+            fresh: true,
+          }],
+        });
+
+        await sleep(3000);
+
+        const aliceOutbox = await alice.query(outboxQuery);
+        const entry = aliceOutbox.find((e) => e.type === 'restart');
+        expect(entry, 'restart entry exists').to.exist;
+        expect(entry!.status).to.equal('delivered');
+
+        await alice.signal(updateMetadataSignal, { status: 'terminated' });
+        await bob.signal(updateMetadataSignal, { status: 'terminated' });
+        await alice.result();
+        await bob.result();
+      });
+    });
+  });
+
   // ── Failure handling ──
 
   describe('failure handling', function () {

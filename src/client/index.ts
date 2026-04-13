@@ -23,11 +23,8 @@ import type {
 import {
   submitOutboxUpdate,
   attachmentInfoQuery,
-  requestDetachSignal,
-  destroyUpdate,
 } from '../workflows/signals';
 import { resolveSession } from '../activities/resolve';
-import { performRestart } from '../tools/restart';
 import type { TempoClient, EnsembleSummary } from './interface';
 
 // Re-export public types for consumers
@@ -275,45 +272,53 @@ export function createTempoClient(client: Client): TempoClient {
       throw new Error(`Player "${playerId}" not found in ensemble "${ensemble}"`);
     },
 
-    // ── PR-D verbs — thin wrappers around attachment-lifecycle primitives ──
+    // ── PR-D verbs — enqueue on the TUI-owned maestro session's outbox.
+    //   The dispatch loop runs `deliverDetach` / `deliverDestroy` /
+    //   `deliverRestart` activities against the target (QA B1/B2/B3).
 
     async restart(ensemble, playerId, opts = {}) {
       const invokerPlayerId = opts.invokerPlayerId ?? 'cli';
-      // performRestart only uses `config.ensemble`; pass a minimal shape.
-      const result = await performRestart(client, { ensemble } as any, invokerPlayerId, {
-        playerId,
+      const maestroId = sessionWorkflowId(ensemble, 'maestro');
+      const h = handle(maestroId);
+      const entry: OutboxEntryInput = {
+        type: 'restart',
+        targetPlayerId: playerId,
+        invokerPlayerId,
         ...(opts.host !== undefined ? { host: opts.host } : {}),
         ...(opts.fresh !== undefined ? { fresh: opts.fresh } : {}),
         ...(opts.force !== undefined ? { force: opts.force } : {}),
         ...(opts.contextMessages !== undefined ? { contextMessages: opts.contextMessages } : {}),
-      });
+      };
+      const entryId = await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
       return {
-        playerId: result.playerId,
-        host: result.host,
-        attachmentId: result.attachmentId,
-        spawnEntryId: result.spawnEntryId,
-        phaseBefore: result.phaseBefore,
-        contextReplayed: result.contextReplayed,
+        playerId,
+        ...(opts.host !== undefined ? { host: opts.host } : {}),
+        entryId,
       };
     },
 
     async detach(ensemble, playerId, deadlineMs = 5_000) {
-      const target = await resolveSession(client, ensemble, playerId);
-      if (!target) throw new Error(`No session found with name "${playerId}" in ensemble "${ensemble}".`);
-      const info = await target.query(attachmentInfoQuery);
-      if (info.phase === 'detached') return; // idempotent
-      if (info.phase === 'gone') {
-        throw new Error(`"${playerId}" is destroyed; detach does not apply.`);
-      }
-      await target.signal(requestDetachSignal, { reason: 'user-stop', deadlineMs });
+      const maestroId = sessionWorkflowId(ensemble, 'maestro');
+      const h = handle(maestroId);
+      const entry: OutboxEntryInput = {
+        type: 'detach',
+        targetPlayerId: playerId,
+        reason: 'user-stop',
+        deadlineMs,
+      };
+      await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
     },
 
     async destroy(ensemble, playerId, reason) {
-      const target = await resolveSession(client, ensemble, playerId);
-      if (!target) throw new Error(`No session found with name "${playerId}" in ensemble "${ensemble}".`);
-      await target.executeUpdate(destroyUpdate, {
-        args: [{ reason: reason ?? 'destroyed via client', terminatedBy: 'cli' }],
-      });
+      const maestroId = sessionWorkflowId(ensemble, 'maestro');
+      const h = handle(maestroId);
+      const entry: OutboxEntryInput = {
+        type: 'destroy',
+        targetPlayerId: playerId,
+        ...(reason !== undefined ? { reason } : {}),
+        notifyConductor: true,
+      };
+      await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
     },
 
     async migrate(ensemble, playerId, host, opts = {}) {
@@ -324,6 +329,7 @@ export function createTempoClient(client: Client): TempoClient {
     },
 
     async attachmentInfo(ensemble, playerId) {
+      // Read-only query — resolve + query directly (no outbox needed).
       const target = await resolveSession(client, ensemble, playerId);
       if (!target) throw new Error(`No session found with name "${playerId}" in ensemble "${ensemble}".`);
       return target.query(attachmentInfoQuery);

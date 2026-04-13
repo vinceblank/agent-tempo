@@ -3,7 +3,8 @@
  *
  * Identical semantics to `restart` with the `host` argument required. Separate
  * verb for UX clarity: "migrate to host X" vs "restart this session". Both
- * names are supported so operators can write whichever phrasing matches intent.
+ * names route through the same `RestartOutboxEntry` outbox path so the §8.2
+ * algorithm is implemented once in `deliverRestart` (QA B3).
  *
  * Multi-host routing (host → task-queue selection, `--yes-steal` flag per §16.5
  * Option B) lands in PR-F. This PR-D implementation passes `host` through to
@@ -12,17 +13,19 @@
  */
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from '@temporalio/client';
+import { Client, WorkflowHandle } from '@temporalio/client';
 import { Config } from '../config';
-import { performRestart, RestartArgs } from './restart';
+import type { OutboxEntryInput } from '../types';
+import { submitOutboxUpdate } from '../workflows/signals';
 import { defineTool, ok, fail, formatError } from './helpers';
-import { PLAYER_NAME_MAX, validatePlayerName } from '../utils/validation';
+import { PLAYER_NAME_MAX, RESTART_CONTEXT_MESSAGES_MAX, validatePlayerName } from '../utils/validation';
 
 export function registerMigrateTool(
   server: McpServer,
-  client: Client,
-  config: Config,
+  _client: Client,
+  _config: Config,
   getPlayerId: () => string,
+  handle: WorkflowHandle,
 ) {
   defineTool(
     server,
@@ -33,10 +36,16 @@ export function registerMigrateTool(
       host: z.string().min(1).describe('Target hostname — required'),
       fresh: z.boolean().optional().describe('Skip context replay (default false)'),
       force: z.boolean().optional().describe('Steal a live attachment via forceDetach (default false)'),
-      contextMessages: z.number().min(0).max(50).optional().describe('Number of recent messages to include in context (default 10)'),
+      contextMessages: z.number().min(0).max(RESTART_CONTEXT_MESSAGES_MAX).optional().describe('Number of recent messages to include in context (default 10)'),
     },
     async (args) => {
-      const input = args as RestartArgs & { host: string };
+      const input = args as {
+        playerId: string;
+        host: string;
+        fresh?: boolean;
+        force?: boolean;
+        contextMessages?: number;
+      };
 
       const nameError = validatePlayerName(input.playerId);
       if (nameError) return fail(nameError);
@@ -46,12 +55,17 @@ export function registerMigrateTool(
       }
 
       try {
-        const result = await performRestart(client, config, getPlayerId(), input);
-        return ok(
-          `**${result.playerId}** migrating to ${result.host}` +
-          ` (phase was: ${result.phaseBefore}${result.contextReplayed ? '; context replayed' : '; fresh'}).` +
-          ` attachmentId: \`${result.attachmentId.slice(0, 8)}…\`, spawnEntryId: \`${result.spawnEntryId.slice(0, 8)}…\`.`,
-        );
+        const entry: OutboxEntryInput = {
+          type: 'restart',
+          targetPlayerId: input.playerId,
+          invokerPlayerId: getPlayerId(),
+          host: input.host,
+          ...(input.fresh !== undefined ? { fresh: input.fresh } : {}),
+          ...(input.force !== undefined ? { force: input.force } : {}),
+          ...(input.contextMessages !== undefined ? { contextMessages: input.contextMessages } : {}),
+        };
+        const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
+        return ok(`Migrate queued for **${input.playerId}** → ${input.host}. (outbox: ${entryId})`);
       } catch (err) {
         return fail(`Failed to migrate: ${formatError(err)}`);
       }

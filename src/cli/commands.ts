@@ -1859,9 +1859,12 @@ export async function restart(opts: RestartCliOpts) {
       ...(opts.contextMessages !== undefined ? { contextMessages: opts.contextMessages } : {}),
       invokerPlayerId: 'cli',
     });
-    out.success(`Restarting "${result.playerId}" on ${result.host}`);
-    out.log(`  ${out.dim(`phase was: ${result.phaseBefore}${result.contextReplayed ? '; context replayed' : '; fresh'}`)}`);
-    out.log(`  ${out.dim(`attachmentId=${result.attachmentId}, spawnEntryId=${result.spawnEntryId}`)}`);
+    out.success(
+      `Restart queued for "${result.playerId}"` +
+      `${result.host ? ` on ${result.host}` : ''}` +
+      `${opts.fresh ? ' (fresh)' : ''}${opts.force ? ' (force)' : ''}.`,
+    );
+    out.log(`  ${out.dim(`outbox entry: ${result.entryId}`)}`);
   } catch (err: any) {
     out.error(err?.message || String(err));
     process.exit(1);
@@ -1915,9 +1918,8 @@ export async function migrate(opts: MigrateCliOpts) {
       ...(opts.contextMessages !== undefined ? { contextMessages: opts.contextMessages } : {}),
       invokerPlayerId: 'cli',
     });
-    out.success(`Migrating "${result.playerId}" to ${result.host}`);
-    out.log(`  ${out.dim(`phase was: ${result.phaseBefore}${result.contextReplayed ? '; context replayed' : '; fresh'}`)}`);
-    out.log(`  ${out.dim(`attachmentId=${result.attachmentId}, spawnEntryId=${result.spawnEntryId}`)}`);
+    out.success(`Migrate queued for "${result.playerId}" → ${result.host ?? opts.host}.`);
+    out.log(`  ${out.dim(`outbox entry: ${result.entryId}`)}`);
   } catch (err: any) {
     out.error(err?.message || String(err));
     process.exit(1);

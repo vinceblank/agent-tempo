@@ -4,12 +4,25 @@ import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { Config, conductorWorkflowId, sessionWorkflowId } from '../config';
-import { AgentType, SessionInput } from '../types';
+import { AgentType, SessionInput, AdapterClass, AttachmentInfo, SessionMetadata, Message, DetachReason } from '../types';
+import { PREVIEW_MAX_LENGTH } from '../utils/validation';
 import { getGitInfo } from '../git-info';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { ENV } from '../config';
 import { resolveSession } from './resolve';
 import { registry } from '../adapters';
+import {
+  attachmentInfoQuery,
+  requestDetachSignal,
+  forceDetachUpdate,
+  claimAttachmentUpdate,
+  enqueueSpawnUpdate,
+  destroyUpdate,
+  getMetadataQuery,
+  getPartQuery,
+  allMessagesQuery,
+  receiveMessageSignal,
+} from '../workflows/signals';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:outbox]', ...args);
 
@@ -57,6 +70,31 @@ export interface StartRecruitedSessionInput {
 export interface ReleasePlayerInput {
   ensemble: string;
   targetPlayerId: string;
+}
+
+export interface DeliverDetachInput {
+  ensemble: string;
+  targetPlayerId: string;
+  reason?: DetachReason;
+  deadlineMs?: number;
+}
+
+export interface DeliverDestroyInput {
+  ensemble: string;
+  targetPlayerId: string;
+  reason?: string;
+  terminatedBy: string;
+  notifyConductor?: boolean;
+}
+
+export interface DeliverRestartInput {
+  ensemble: string;
+  targetPlayerId: string;
+  invokerPlayerId: string;
+  force?: boolean;
+  host?: string;
+  fresh?: boolean;
+  contextMessages?: number;
 }
 
 export interface SpawnProcessInput {
@@ -113,6 +151,9 @@ export interface OutboxActivities {
   startRecruitedSession(input: StartRecruitedSessionInput): Promise<RecruitResult>;
   spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult>;
   releasePlayer(input: ReleasePlayerInput): Promise<OutboxActivityResult>;
+  deliverDetach(input: DeliverDetachInput): Promise<OutboxActivityResult>;
+  deliverDestroy(input: DeliverDestroyInput): Promise<OutboxActivityResult>;
+  deliverRestart(input: DeliverRestartInput): Promise<OutboxActivityResult>;
 }
 
 /**
@@ -364,6 +405,203 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         if (err instanceof ApplicationFailure) throw err;
         throw ApplicationFailure.nonRetryable(
           `Release failed for "${targetPlayerId}": ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+
+    /**
+     * PR-D `deliverDetach` — resolve target session and signal `requestDetach`.
+     * Thin wrapper so the `detach` tool can enqueue through the outbox instead
+     * of firing a signal directly from tool code (QA B1).
+     */
+    async deliverDetach(input: DeliverDetachInput): Promise<OutboxActivityResult> {
+      const { ensemble, targetPlayerId, reason = 'user-stop', deadlineMs = 5_000 } = input;
+      try {
+        const handle = await resolveSession(client, ensemble, targetPlayerId);
+        if (!handle) {
+          throw ApplicationFailure.nonRetryable(`No session found for "${targetPlayerId}"`);
+        }
+        const info = await handle.query(attachmentInfoQuery) as AttachmentInfo;
+        if (info.phase === 'detached') {
+          log(`Detach skipped for "${targetPlayerId}" — already detached`);
+          return { success: true };
+        }
+        if (info.phase === 'gone') {
+          throw ApplicationFailure.nonRetryable(
+            `Cannot detach "${targetPlayerId}" — session is destroyed`,
+          );
+        }
+        await handle.signal(requestDetachSignal, { reason, deadlineMs });
+        log(`Detach signaled for "${targetPlayerId}" (deadline=${deadlineMs}ms)`);
+        return { success: true };
+      } catch (err) {
+        if (err instanceof ApplicationFailure) throw err;
+        throw ApplicationFailure.nonRetryable(
+          `Detach failed for "${targetPlayerId}": ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+
+    /**
+     * PR-D `deliverDestroy` — execute `destroyUpdate` on the target and
+     * optionally notify the ensemble conductor via `receiveMessageSignal`
+     * (typed constant, not a string literal per QA B2).
+     */
+    async deliverDestroy(input: DeliverDestroyInput): Promise<OutboxActivityResult> {
+      const { ensemble, targetPlayerId, reason, terminatedBy, notifyConductor = true } = input;
+      try {
+        const handle = await resolveSession(client, ensemble, targetPlayerId);
+        if (!handle) {
+          throw ApplicationFailure.nonRetryable(`No session found for "${targetPlayerId}"`);
+        }
+        await handle.executeUpdate(destroyUpdate, {
+          args: [{
+            reason: reason ?? 'destroyed via destroy tool',
+            terminatedBy,
+          }],
+        });
+        log(`Destroyed "${targetPlayerId}"${reason ? ` (reason: ${reason})` : ''}`);
+
+        if (notifyConductor) {
+          try {
+            const condId = conductorWorkflowId(ensemble);
+            const condHandle = client.workflow.getHandle(condId);
+            await condHandle.signal(receiveMessageSignal, {
+              from: 'system',
+              text: `Session "${targetPlayerId}" was destroyed by ${terminatedBy}${reason ? ` (reason: ${reason})` : ''}.`,
+              responseRequested: false,
+            });
+          } catch {
+            // Conductor may not exist — non-fatal.
+          }
+        }
+        return { success: true };
+      } catch (err) {
+        if (err instanceof ApplicationFailure) throw err;
+        throw ApplicationFailure.nonRetryable(
+          `Destroy failed for "${targetPlayerId}": ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+
+    /**
+     * PR-D `deliverRestart` — owns the §8.2 restart algorithm on the target.
+     * Graceful `requestDetach` → re-query phase → `forceDetach` (if --force
+     * OR already was the TOCTOU case) → `claimAttachment` → optional context
+     * replay via `receiveMessage` → `enqueueSpawn` on the target's outbox.
+     *
+     * Mid-algorithm failures surface as ApplicationFailures and retry per the
+     * activity's policy. QA B3 — replaces the pre-PR-D tool-side
+     * `performRestart` helper so no multi-step cross-workflow mutation happens
+     * outside the outbox pattern.
+     */
+    async deliverRestart(input: DeliverRestartInput): Promise<OutboxActivityResult> {
+      const { ensemble, targetPlayerId, invokerPlayerId, force = false, host, fresh = false, contextMessages = 10 } = input;
+      try {
+        const handle = await resolveSession(client, ensemble, targetPlayerId);
+        if (!handle) {
+          throw ApplicationFailure.nonRetryable(`No workflow for "${targetPlayerId}". Use recruit to start a fresh session.`);
+        }
+
+        // Step 1 — inspect phase. `gone` means the workflow COMPLETEd.
+        const info = await handle.query(attachmentInfoQuery) as AttachmentInfo;
+        if (info.phase === 'gone') {
+          throw ApplicationFailure.nonRetryable(
+            `"${targetPlayerId}" was destroyed. Use recruit to start a fresh session.`,
+          );
+        }
+
+        // Step 2 — reap current attachment.
+        if (info.phase !== 'detached' && info.phase !== 'booting') {
+          if (info.phase === 'attached' || info.phase === 'awaiting' || info.phase === 'processing') {
+            try {
+              await handle.signal(requestDetachSignal, {
+                reason: 'restart',
+                deadlineMs: 5_000,
+              });
+            } catch {
+              // Best-effort; force path handles it below.
+            }
+          }
+          const info2 = await handle.query(attachmentInfoQuery) as AttachmentInfo;
+          if (info2.phase !== 'detached' && info2.phase !== 'booting') {
+            if (!force) {
+              const holder = info2.currentAttachment?.hostname ?? 'unknown host';
+              throw ApplicationFailure.nonRetryable(
+                `"${targetPlayerId}" has a live attachment on ${holder} (phase: ${info2.phase}). ` +
+                `Use force=true to steal the lease.`,
+              );
+            }
+            await handle.executeUpdate(forceDetachUpdate, {
+              args: [{
+                reason: 'restart',
+                ...(info2.currentAttachment ? { expectedAttachmentId: info2.currentAttachment.attachmentId } : {}),
+                gracePeriodMs: 0,
+              }],
+            });
+          }
+        }
+
+        // Step 3 — metadata + adapter routing.
+        const metadata = await handle.query(getMetadataQuery) as SessionMetadata;
+        const agentType = (metadata.agentType as string) === 'copilot' ? 'copilot' : 'claude';
+        const adapterId = metadata.adapterId || (agentType === 'copilot' ? 'copilot' : 'claude-code');
+        const adapterClass: AdapterClass = agentType === 'copilot' ? 'sdk' : 'interactive';
+        const targetHost = host ?? info.preferredHost ?? metadata.hostname;
+
+        // Step 4 — claim fresh attachment.
+        const token = await handle.executeUpdate(claimAttachmentUpdate, {
+          args: [{
+            host: targetHost,
+            adapterId,
+            adapterClass,
+            leaseMs: 90_000,
+          }],
+        });
+
+        // Step 5 — optional context replay.
+        if (!fresh) {
+          const [part, allMessages] = await Promise.all([
+            handle.query(getPartQuery) as Promise<string>,
+            handle.query(allMessagesQuery) as Promise<Message[]>,
+          ]);
+          const recent = allMessages.slice(-contextMessages);
+          const summary = recent.length > 0
+            ? recent.map((m) => `[${m.from}] ${m.text.slice(0, PREVIEW_MAX_LENGTH)}`).join('\n')
+            : '(no recent messages)';
+          const contextMessage = [
+            `🎵 **Restart** — you've been revived by ${invokerPlayerId}.`,
+            part ? `Your last status: ${part}` : '',
+            `Recent messages (last ${recent.length}):`,
+            summary,
+            '',
+            'Resume where you left off. Use `ensemble` to see who is active.',
+          ].filter(Boolean).join('\n');
+          await handle.signal(receiveMessageSignal, {
+            from: invokerPlayerId,
+            text: contextMessage,
+            responseRequested: false,
+          });
+        }
+
+        // Step 6 — enqueue the spawn on the target.
+        const { spawnEntryId } = await handle.executeUpdate(enqueueSpawnUpdate, {
+          args: [{
+            host: targetHost,
+            attachmentId: token.attachmentId,
+            runId: token.runId,
+            resume: !fresh,
+            ...(metadata.sessionId ? { sessionId: metadata.sessionId } : {}),
+            adapterId,
+          }],
+        });
+
+        log(`Restart prepared for "${targetPlayerId}" — attachmentId=${token.attachmentId}, spawnEntryId=${spawnEntryId}, host=${targetHost}`);
+        return { success: true };
+      } catch (err) {
+        if (err instanceof ApplicationFailure) throw err;
+        throw ApplicationFailure.nonRetryable(
+          `Restart failed for "${targetPlayerId}": ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     },
