@@ -10,6 +10,7 @@
  * - PromptArea (pinned)
  */
 import React, { useReducer, useEffect, useCallback, useMemo, useState } from 'react';
+import { hostname as osHostname } from 'os';
 import { useInk } from './ink-context';
 import { tuiReducer, initialState } from './store';
 import type { StaticItem, RecruitAnswers, ScheduleAnswers, CreateEnsembleAnswers } from './store';
@@ -1174,6 +1175,8 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         targetPart: targetPlayer?.part,
         targetBranch: targetPlayer?.gitBranch,
         targetStatus: targetPlayer?.status,
+        targetHost: targetPlayer?.hostname,
+        localHost: osHostname(),
         isConductor: memoizedChatData.isConductor,
         receivedCount: memoizedChatData.received,
         sentCount: memoizedChatData.sent,
@@ -1232,6 +1235,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         metadata: state.playerMetadata,
         messages: state.playerMessages,
         scrollOffset: state.playerScrollOffset,
+        localHost: osHostname(),
       });
     }
 

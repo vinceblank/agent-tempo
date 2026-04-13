@@ -1,6 +1,13 @@
 /**
  * PlayerDetailView — shows player metadata + scrollable message history.
  * Single <Text> pattern, zero Yoga nodes — all content pre-formatted as strings.
+ *
+ * PR-F cross-host indicator (design §16, brief §8 answer 3 — Option 3):
+ *   - Local session (`player.hostname === localHost`) → omit "Host:" field
+ *     from the metadata line (reduces noise; local is the common case).
+ *   - Remote session → show `Host: {hostname}` in `THEME.accent` (amber).
+ * Zero new Yoga nodes: the host segment goes into the same `<Text>` children
+ * tree as an additional nested `<Text>` (virtual text node, not a Box).
  */
 import React from 'react';
 import { useInk } from '../ink-context';
@@ -16,6 +23,8 @@ export interface PlayerDetailViewProps {
   metadata: SessionMetadata | null;
   messages: Array<Message | (SentMessage & { direction: 'sent' })>;
   scrollOffset: number;
+  /** Local TUI process hostname. When equal to the player's hostname, the Host field is omitted. */
+  localHost?: string;
 }
 
 function isSent(m: Message | (SentMessage & { direction: 'sent' })): m is SentMessage & { direction: 'sent' } {
@@ -37,6 +46,7 @@ export function PlayerDetailView({
   metadata,
   messages,
   scrollOffset,
+  localHost,
 }: PlayerDetailViewProps) {
   const { Text } = useInk();
 
@@ -46,13 +56,25 @@ export function PlayerDetailView({
   const icon = player?.isConductor ? '\u2605 ' : '  ';
   children.push(React.createElement(Text, { key: 'name', bold: true, color: THEME.accent }, `${icon}${playerId}`));
 
-  // Metadata line 1: Type · Status · Host
+  // Metadata line 1: Type · Status [· Host when remote]
   const type = player?.playerType || player?.agentType || '(default)';
   const status = player?.status || 'unknown';
   const statusDot = status === 'active' ? '\u25CF' : status === 'stale' ? '\u25CB' : '\u25A0';
-  const host = player?.hostname || metadata?.hostname || '?';
+  const host = player?.hostname || metadata?.hostname || '';
+  const showRemoteHost = Boolean(host && localHost && host !== localHost);
   children.push('\n');
-  children.push(React.createElement(Text, { key: 'meta1', color: THEME.dim }, `  Type: ${type} \u00B7 Status: ${statusDot} ${status} \u00B7 Host: ${host}`));
+  if (showRemoteHost) {
+    // Remote — Host segment rendered in amber, same Text tree (zero Yoga nodes).
+    children.push(React.createElement(Text, { key: 'meta1', color: THEME.dim },
+      `  Type: ${type} \u00B7 Status: ${statusDot} ${status} \u00B7 Host: `,
+      React.createElement(Text, { color: THEME.accent }, host),
+    ));
+  } else {
+    // Local (or unknown) — omit Host entirely.
+    children.push(React.createElement(Text, { key: 'meta1', color: THEME.dim },
+      `  Type: ${type} \u00B7 Status: ${statusDot} ${status}`,
+    ));
+  }
 
   // Metadata line 2: Branch · Dir
   const branch = player?.gitBranch || metadata?.gitBranch || '';
