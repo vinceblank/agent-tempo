@@ -176,6 +176,8 @@ npm test
 
 ## Key Concepts
 
+> **Architecture overview**: See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the three-layer workflow/adapter/process model and ensemble coordination layer.
+
 - **Player**: A Claude Code session registered as a Temporal workflow
 - **Conductor**: A special player that acts as orchestration hub, connected to external interfaces (one per ensemble)
 - **Ensemble**: The set of all active players, namespaced by `CLAUDE_TEMPO_ENSEMBLE`
