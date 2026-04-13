@@ -1,7 +1,7 @@
 # Conductor State Handoff
 
 > **Audience:** Incoming conductor resuming orchestration of the claude-tempo v0.25 session-lifecycle rebuild.
-> **Last updated:** 2026-04-13 by tempo-docs (PR-E/F scope filled from engineer brief)
+> **Last updated:** 2026-04-13 by tempo-docs (PR-F scope corrected from sequencing memo §2)
 > **Status:** PR-A, PR-B, PR-C, PR-G merged. PR-D/E/F remaining. Beta release pending PR-F.
 
 ---
@@ -31,7 +31,8 @@ See [CLAUDE.md](../../CLAUDE.md) for full project context and [docs/WIRE-PROTOCO
 |----|-------|-------|
 | **PR-D** | encore retirement + SpawnOutboxEntry wiring | `performEncore` migrated to `forceDetach` + fresh `claimAttachment` pair (retiring `checkAndSetStatusUpdate`). `SpawnOutboxEntry` 5 attachment fields (`attachmentId`, `attachmentRunId`, `resumeAttachment`, `sessionId?`, `adapterId`) forwarded through workflow dispatcher → `spawnProcess` activity → `BaseAttachment.startV2Lifecycle`. Also owns `restart` verb wiring (§8.1). `migrate` verb scope TBD — ask conductor before designing. Wire-protocol removal: `checkAndSetStatusUpdate` deleted, `docs/WIRE-PROTOCOL.md` updated same commit. |
 | **PR-E** | Daemon restore / reconcile-on-boot | `claude-tempo daemon` gains a reconcile-on-boot pass: queries `ClaudeTempoAttachmentState=detached` for orphaned sessions, reads `orphanSummary` query, applies `restorePolicy` decision tree (design §10.2). Sessions in `detached` with `preferredHost` matching local host auto-restored via fresh `spawnProcess` → `claimAttachment`. New CLI `restore` command (§10.3) for manual operator intervention. Depends on PR-D's `restart` verb. |
-| **PR-F** | _(scope unknown — ask conductor before planning)_ | Engineer brief does not cover PR-F. Best guess: polish + stabilization, or v0.25.0 GA cut (flag removal + shim cleanup). Confirm scope with conductor. |
+| **PR-F** | Multi-host coordination + cross-host restart | **Capstone.** Depends on PR-D + PR-E. From sequencing memo §2: `host` param routing to `claude-tempo-{host}` task queue (restart verb), `--yes-steal=<hostname>` flag per design §16.5 Option B, `setPreferredHost` update handler in `session.ts`, `reconcileOnBoot` filtered by preferred-host in `daemon.ts`, `migrate` CLI command wiring, multi-host integration tests via docker-compose harness (two daemon containers, shared Temporal dev server). ~500 LOC, ~6 files. |
+| _(note)_ | Shim + flag cleanup | `CLAUDE_TEMPO_LIFECYCLE_V2` flag + compat shim removal (#132) is **post-GA in v0.25.1** per sequencing §5.2 — NOT absorbed into PR-D/E/F. |
 
 ---
 
