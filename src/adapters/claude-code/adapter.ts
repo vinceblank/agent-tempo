@@ -192,7 +192,7 @@ export class InteractiveAttachment extends BaseAttachment {
       if (stopPoller) { stopPoller(); stopPoller = null; }
     });
 
-    // PR-D: when spawned by `restart` / `migrate` / `encore`, the workflow has
+    // PR-D: when spawned by `restart` or `migrate`, the workflow has
     // pre-claimed an attachment and passed its id through env. Forward to
     // `startV2Lifecycle` so the update takes the §9.2 renewal path and the
     // adapter takes over the existing lease atomically. Absent on first-recruit

@@ -148,8 +148,8 @@ export abstract class BaseAttachment {
    *
    * @param workflowId  Target session workflow id.
    * @param expectedAttachmentId
-   *   PR-D renewal path. When present, the adapter was spawned by `restart` / `migrate` /
-   *   `encore` — the workflow has already created an `Attachment` with this id and is
+   *   PR-D renewal path. When present, the adapter was spawned by `restart` or `migrate`
+   *   — the workflow has already created an `Attachment` with this id and is
    *   expecting the new adapter to take over. Passing it through to `claimAttachment`
    *   selects the renewal branch in §9.2 (refresh lease in place, idempotent on retry)
    *   instead of the fresh-claim branch. Fresh spawn (first recruit) omits this arg.

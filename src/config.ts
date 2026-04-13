@@ -36,7 +36,7 @@ export const ENV = {
    */
   LIFECYCLE_V2: 'CLAUDE_TEMPO_LIFECYCLE_V2',
   /**
-   * v0.25 PR-D attachment resume plumbing. When `restart` / `migrate` / `encore`
+   * v0.25 PR-D attachment resume plumbing. When `restart` / `migrate`
    * enqueues a spawn outbox entry, the workflow passes the pre-claimed
    * `attachmentId` + pinned `runId` + resolved `adapterId` through the spawn
    * activity into the child process env. The child's adapter reads these in

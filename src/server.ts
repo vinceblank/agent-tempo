@@ -365,10 +365,10 @@ async function main() {
     // 1. Stop the message poller — V2 adapter fires `adapterExited` (graceful=true)
     //    from inside `stopV2Lifecycle`, collapsing the workflow `draining → detached`
     //    per §11.1. Closing our terminal should NOT destroy the workflow — the user
-    //    can re-attach later via `encore`. PR-C commit 4 retired the former
+    //    can re-attach later via `restart`. PR-C commit 4 retired the former
     //    `updateMetadata({ status: 'terminated' })` signal here (it destroyed the
     //    session on every SIGINT, defeating the phase split). Operator-initiated
-    //    destruction goes through the `stop` tool / CLI, both of which now use
+    //    destruction now goes through the `destroy` tool / CLI, which uses
     //    `destroyUpdate` directly.
     stopPoller();
 

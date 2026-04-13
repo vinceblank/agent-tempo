@@ -1232,8 +1232,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         entry.status = 'failed';
         entry.error = String(err);
 
-        // PR-D §8.4: spawn-entry failure rollback. When `restart` / `migrate` /
-        // `encore` creates an attachment + enqueues a spawn, a subsequent spawn
+        // PR-D §8.4: spawn-entry failure rollback. When `restart` or `migrate`
+        // creates an attachment + enqueues a spawn, a subsequent spawn
         // activity failure leaves the session `attached` with no adapter — the
         // worst steady state. Force-detach the just-created attachment so the
         // session lands in `detached` and `restart` can be retried. Guard with
