@@ -205,6 +205,129 @@ project using claude-tempo externally. Leave as-is in user-local; no porting act
 
 ---
 
+## Pair 7 (Continued): PO / Conductor — Deep Re-audit
+
+> **Context**: The v1 audit classified nearly all user-local content as LOCAL-ONLY due to
+> project-specific file paths, label names, and workflow details. This re-audit applies the
+> **concept/implementation lens**: even when the *implementation* is project-specific, the
+> *concept* may be generic enough to port as principle-level guidance.
+
+### Re-confirmed PORT candidates (C1–C4)
+
+These four from the v1 summary table remain correct:
+
+| ID | Content | Direction | Verdict |
+|----|---------|-----------|---------|
+| C1 | Worktree Coordination section (full "When to use / How to coordinate" block) | shipped → backport | CONFIRM PORT |
+| C2 | Worktree Discipline Rules (provision before assigning, no unsanctioned branch switches, PR scope check) | shipped → backport | CONFIRM PORT |
+| C3 | Comprehensive responsibilities framing (RICE prioritization, "Track what each player knows", "Correlate blockers across players") | shipped → backport | CONFIRM PORT |
+| C4 | Generic nightly triage structure (pre-flight → review → close completed → identify implementable → kick off) | user-local → port | CONFIRM PORT |
+
+### New PORT candidates from user-local (concept/implementation lens)
+
+| ID | What | User-local wording | Generalized draft for shipped |
+|----|----|---|---|
+| C5 | Change Classification section | "Know what kind of change you're coordinating: New MCP tool / New CLI command / Workflow change / New signal or query / Activity change" | "Know the category of change you're coordinating — different categories have different review, rebuild, and testing requirements. Document the category when assigning." |
+| C6 | Wire Protocol Stability Rule | "Flag breaking changes early: Changes to signal/query names … are wire protocol breaking changes requiring a major version bump. Additions are fine; renames/removals are not." | "Flag breaking changes early. In projects with a stable wire protocol or API surface, additions are safe, but renames and removals are breaking changes requiring a major version bump. When coordinating signal or interface changes, confirm impact before assigning." |
+| C7 | Context-pressure response playbook | "Stop the player's session. Recruit a fresh session with the same name, type, and working directory. Pass the player's structured summary as the initial message so the new session picks up where the old one left off." | *(Already in shipped — this is a CONFIRM identical. No delta.)* |
+
+**Note on C5 and C6**: The shipped `tempo-conductor.md` has no equivalent of either. Both concepts
+generalize cleanly: any coordinator in any codebase needs to know what kind of change they're
+handling. The specific file paths in the user-local implementation stay LOCAL-ONLY; the principle
+and structure are worth porting.
+
+### Critical Conflict: Idle Player Policy
+
+The two files take **opposite positions** on idle session management:
+
+| File | Wording | Policy |
+|------|---------|--------|
+| `my-tempo-po.md` (user-local) | "Do NOT stop idle players during active work — recruiting replacements requires human approval, which blocks progress if the human is away. Idle players are available for future tasks at zero marginal cost." | **Keep idle sessions alive** |
+| `tempo-conductor.md` (shipped) | "`stop`: Remove players when their work is complete and they're no longer needed. Don't leave idle sessions running." | **Stop idle sessions promptly** |
+
+**This is a semantic contradiction** — not a phrasing difference. Before any porting of conductor
+content, the user must decide which policy applies and update both files to agree.
+
+Arguments for "keep idle" (user-local): recruiting requires human approval → idle sessions act
+as a warm spare pool; zero recurring cost once running.
+
+Arguments for "stop idle" (shipped): idle sessions consume resources and context; explicit
+stop + fresh recruit gives a cleaner slate; most use cases don't require human approval for
+re-recruiting known player types.
+
+**Action required**: User decides which policy is correct before porting C1–C4.
+
+---
+
+## Spot-check Notes (Other 6 Pairs)
+
+> Quick re-examination of the v1 LOCAL-ONLY classifications using the concept/implementation
+> lens. Goal: catch anything the first pass dismissed too quickly.
+
+### Pair 1: Engineer → Soloist
+
+v1 classified the Cross-Platform & Agent Type Awareness section as LOCAL-ONLY. Re-evaluation:
+
+- **Specific content** (Windows Terminal UWP alias, macOS Ghostty AppleScript, Linux terminal
+  fallback chain): project-specific — correctly LOCAL-ONLY.
+- **Concept**: "When writing spawn or process code, platform behaviors diverge in ways that aren't
+  obvious. Test on all target platforms. Use dedicated quoting helpers (`shellQuote`, `cmdEscape`)
+  rather than rolling your own." This is portable.
+
+**New PORT candidate (E4, UNCERTAIN)**: Add a brief cross-platform awareness note to Soloist
+Working Style: "If your task involves process spawning or file paths, be explicit about platform
+assumptions — platform behaviors diverge silently." Low confidence — may be too implementation-
+specific for a generic shipped file. Flagged for user decision.
+
+v1 E1–E3 confirmed correct.
+
+### Pair 2: QA → Tuner
+
+v1 classified the Cross-Platform & Agent Type Review Points section as LOCAL-ONLY. Re-evaluation:
+
+- The section is a claude-tempo-specific review checklist (Windows Terminal, copilot bridge,
+  agent type branching). These are not portable.
+- **Concept** ("platform-specific code deserves explicit review") is generic but too thin to be
+  a standalone section — adequately covered by the existing "Hold the bar" principle.
+
+**v1 classification confirmed**. Q1–Q5 confirmed correct.
+
+### Pair 3: Researcher → Improv
+
+v1 confirmed with R1–R3. Re-examination finds no additional PORT candidates. The Research Domains
+table and Current Architecture sections remain clearly LOCAL-ONLY.
+
+**v1 classification confirmed.**
+
+### Pair 4: Docs → Liner
+
+v1 confirmed with D1–D7. The Feature Documentation Checklist and Cross-Reference Verification
+patterns reference specific file paths throughout — correctly LOCAL-ONLY.
+
+One addition on closer read:
+
+**New PORT candidate (D8, MEDIUM)**: "CHANGELOG entries should be user-facing — not internal
+refactoring details unless they affect behavior." User-local has this in the CHANGELOG Format
+section; the shipped `tempo-liner.md` lacks it. Generic advice for any project.
+
+v1 D1–D7 confirmed correct.
+
+### Pair 5: Architect → Composer
+
+v1 confirmed with A1–A4. The Architectural Boundaries table and Key Design Patterns (outbox,
+dual workers, wire protocol) are correctly LOCAL-ONLY.
+
+**v1 classification confirmed.**
+
+### Pair 6: DevOps → Roadie
+
+v1 confirmed with V1–V4. The CI pipeline YAML specifics, release step-by-step, and Temporal SA
+names are correctly LOCAL-ONLY.
+
+**v1 classification confirmed.**
+
+---
+
 ## Summary: PORT Decision Gate
 
 The following items are **proposed for porting to shipped files**. User sign-off required before
@@ -236,6 +359,16 @@ implementation. A follow-up PR would handle all approved ports.
 | A4 | tempo-composer.md | "Don't over-architect" + `/simplify` principle | Consistent with shipped philosophy |
 | V2 | tempo-roadie.md | "Never tag before version bump commit" | Very project-pattern-specific; may feel too prescriptive for a generic shipped file |
 | C4 | tempo-conductor.md | Generic nightly triage structure (without claude-tempo specifics) | Adds workflow value; needs careful editing to strip project-specific parts |
+| C5 | tempo-conductor.md | Change Classification concept ("know the category of change you're coordinating") | User-local framing lists specific file paths — generalize to principle only |
+| C6 | tempo-conductor.md | Wire Protocol Stability Rule ("additions safe; renames/removals are breaking changes") | Needs path references stripped; principle is generic |
+| D8 | tempo-liner.md | "CHANGELOG entries should be user-facing, not internal refactoring details" | One-liner addition to CHANGELOG section |
+
+### Uncertain — flag for user decision before porting
+
+| ID | Shipped file | Content | Why uncertain |
+|----|-------------|---------|---------------|
+| E4 | tempo-soloist.md | Cross-platform awareness note in Working Style | May be too implementation-specific; borderline portable |
+| C1–C6 (all conductor items) | tempo-conductor.md | All conductor PORT candidates | **BLOCKED** pending resolution of idle player policy conflict — do not port any conductor content until user decides which stop policy is correct |
 
 ### User-local improvements NOT ported (already covered by shipped)
 
@@ -255,6 +388,10 @@ user-local should ideally be updated (but that's outside this audit's scope):
 If user approves the PORT items above: a single PR titled
 `docs(agents): port improvements from user-local to shipped agent types` covering the approved
 subset. Estimated 6–8 files touched, ~100–200 lines added across shipped files.
+
+**Pre-requisite**: Resolve the idle player policy conflict (see "Critical Conflict" in Pair 7
+re-audit) before porting any conductor items. All other PORT items (E1, R1, A4, V2, D8, etc.)
+are independent and can proceed without that decision.
 
 ---
 
