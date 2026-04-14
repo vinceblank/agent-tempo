@@ -129,6 +129,6 @@
     "protobufjs"
   ],
   "overrides": {
-    "rxjs": ">=7.8.2"
+    "rxjs": "^7.8.1"
   }
 }
