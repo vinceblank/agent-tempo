@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.25.0-beta.2] - 2026-04-14
+
+> **Beta release.** Docs-only update on top of `0.25.0-beta.1`.
+>
+> **Install:** `npm i -g claude-tempo@beta`
+> **Rollback:** `npm i -g claude-tempo@0.25.0-beta.1`
+
+### Docs
+
+- **Agent examples modernized for v0.25** — `detach`, `destroy`, `restart`, and `migrate`
+  replace the retired `stop` verb across all shipped agent types. Adds a new
+  "Session Lifecycle" section to relevant agents. Generic agents ported with
+  11 improvements (PR #154)
+- **Subagent offload guidance** — read-heavy agent types (`tempo-critic`,
+  `tempo-improv`, `tempo-composer`, `tempo-tuner`) now document the
+  `Task`/`Explore` dispatch pattern for multi-file archaeology (PR #152)
+- **CLAUDE.md restructured** — trimmed from 261 to 127 lines; detail split into
+  four new companion docs (`docs/architecture.md`, `docs/tui.md`,
+  `docs/configuration.md`, `docs/development.md`). Replaces `docs/dashboard.md`
+  with `docs/tui.md` (PR #155)
+- **docs/README.md index** — updated to include all four new companion docs (PR #156)
+
+---
+
 ## [0.25.0-beta.1] - 2026-04-13
 
 > **Beta release.** This is the consolidated v0.25 session-lifecycle-rebuild beta.
