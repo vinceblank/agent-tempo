@@ -224,6 +224,10 @@ export interface SessionInput {
   phase?: AttachmentPhase;
   /** ISO timestamp of when the current `draining` phase started. Carried for drainingDeadline race. */
   drainingSince?: string;
+  /** Caller-supplied grace window for the current `draining` phase, in ms. When absent the
+   *  workflow falls back to `DEFAULT_DRAINING_DEADLINE_MS`. Carried across continueAsNew so a
+   *  detach request with a non-default deadline isn't silently reset to 5s mid-drain. */
+  drainingDeadlineMs?: number;
   /** Temporal config passed through for outbox activities (non-secret fields only). */
   temporalConfig?: {
     temporalAddress: string;
