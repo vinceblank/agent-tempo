@@ -62,5 +62,5 @@ during resize.
 
 ## Related
 
-- [dashboard.md](dashboard.md) — TUI feature reference
+- [tui.md](tui.md) — TUI feature reference
 - `src/tui/` — source code

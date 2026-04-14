@@ -66,7 +66,7 @@ src/
 ├── tui/
 │   ├── App.tsx / store.ts / commands.ts   # TUI root, state, slash commands
 │   ├── client.ts                          # Backward-compat shim → src/client/
-│   ├── components/    # Ink components — see docs/dashboard.md for inventory
+│   ├── components/    # Ink components — see docs/tui.md for inventory
 │   └── utils/         # format, platform, theme, fullscreen, history
 ├── utils/
 │   ├── validation.ts / worktree.ts / safe-path.ts / duration.ts
