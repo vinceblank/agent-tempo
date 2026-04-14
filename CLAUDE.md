@@ -29,15 +29,8 @@ src/
 ├── adapters/
 │   ├── index.ts       # Adapter registry bootstrap + barrel exports
 │   ├── base.ts        # BaseAttachment + SdkAttachment base classes (lifecycle skeleton)
-│   ├── README.md      # Adapter authoring guide
-│   ├── claude-code/
-│   │   ├── adapter.ts # InteractiveAttachment — Claude Code CLI adapter (lifted from channel.ts)
-│   │   └── index.ts   # Adapter descriptor + registration
-│   ├── copilot/
-│   │   ├── adapter.ts # CopilotSdkAttachment — Copilot bridge adapter (lifted from copilot-bridge.ts)
-│   │   └── index.ts   # Adapter descriptor + registration
-│   └── sdk/
-│       └── base.ts    # Placeholder base for future SDK adapters
+│   ├── claude-code/   # InteractiveAttachment — Claude Code CLI adapter
+│   └── copilot/       # CopilotSdkAttachment — Copilot bridge adapter
 ├── client/
 │   ├── interface.ts   # TempoClient TypeScript interface and related types
 │   └── index.ts       # TempoClient factory implementation and barrel re-exports
@@ -45,139 +38,59 @@ src/
 ├── connection.ts      # Temporal connection factory (shared by server + CLI)
 ├── spawn.ts           # Cross-platform process spawning helpers
 ├── workflows/
-│   ├── index.ts       # Workflow exports (re-exports for worker bundle)
 │   ├── session.ts     # claude-session workflow
 │   ├── scheduler.ts   # durable scheduler workflow (one per ensemble)
-│   ├── maestro.ts     # Maestro workflows — per-ensemble hub (one per ensemble) and global hub (one instance spanning all ensembles)
-│   ├── maestro-signals.ts # Maestro signal/query/update type definitions
-│   ├── scheduler-signals.ts # Scheduler signal/query type definitions
-│   └── signals.ts     # Session signal/query type definitions
+│   ├── maestro.ts     # Maestro workflows — per-ensemble hub and global hub
+│   ├── maestro-signals.ts / scheduler-signals.ts / signals.ts   # Signal/query/update type defs
+│   └── index.ts       # Workflow re-exports for worker bundle
 ├── activities/
-│   ├── outbox.ts      # Outbox delivery activities (cue, report, stop, recruit, release, spawn)
-│   ├── maestro.ts     # Maestro activities (refreshEnsembleState, relayCommandToConductor, fetchConductorHistory, fetchEnsembleChat)
+│   ├── outbox.ts      # Outbox delivery activities (cue, report, recruit, release, spawn)
+│   ├── maestro.ts     # Maestro activities
 │   ├── resolve.ts     # Session resolver shared by outbox + schedule-fire activities
-│   └── schedule-fire.ts # Schedule fire activity
+│   └── schedule-fire.ts
 ├── reconcile/
-│   └── orphans.ts     # Shared orphan-query helper (queryOrphanedSessions) — used by daemon reconcile-on-boot and CLI restore
+│   └── orphans.ts     # Shared orphan-query helper (daemon reconcile-on-boot + CLI restore)
 ├── ensemble/
-│   ├── schema.ts      # Lineup type definitions
-│   ├── loader.ts      # Load and validate YAML lineups
-│   ├── saver.ts       # Save live ensemble state to YAML
+│   ├── schema.ts / loader.ts / saver.ts   # Lineup type definitions, load, save
 │   └── agent-types.ts # Agent type discovery, resolution, and lineup resolution
-├── tools/
-│   ├── ensemble.ts    # Discover active sessions
-│   ├── cue.ts         # Send message to peer (via outbox)
-│   ├── set-name.ts    # Set session name
-│   ├── set-part.ts    # Update own summary
-│   ├── who-am-i.ts    # Query own identity, role, and session details
-│   ├── agent-types.ts # Discover available player types (agent definitions)
-│   ├── resolve.ts     # Search-attribute session lookup
-│   ├── listen.ts      # Manual message check
-│   ├── recruit.ts     # Spawn new session (via outbox), supports `type` param
-│   ├── report.ts      # Report to conductor (via outbox)
-│   ├── broadcast.ts   # Send message to all active players (via outbox fan-out)
-│   ├── restart.ts     # Revive any non-gone session (forceDetach + claim + context replay + enqueueSpawn per §8.2)
-│   ├── detach.ts      # Gracefully reap an adapter (workflow survives)
-│   ├── destroy.ts     # Terminally end a session workflow
-│   ├── migrate.ts     # Restart to a different host (sugar for restart --host)
-│   ├── attachment-info.ts # Query the V2 attachment phase + current attachment holder
-│   ├── recall.ts      # Read own message history (received + sent)
-│   ├── load-lineup.ts # Load an ensemble lineup, recruit players
-│   ├── save-lineup.ts # Save current ensemble state as a lineup
-│   ├── schedule.ts    # Create one-shot or recurring schedules
-│   ├── unschedule.ts  # Cancel a named schedule
-│   ├── schedules.ts   # List active schedules
-│   ├── quality-gate.ts # Define quality gates for tasks (conductor only)
-│   ├── evaluate-gate.ts # Mark gate criteria as passed/failed (conductor only)
-│   ├── gates.ts       # List quality gates and their status (conductor only)
-│   ├── worktree.ts    # Manage git worktrees for player isolation (conductor only)
-│   ├── stage.ts       # Define a stage — fan-out/fan-in tracking for parallel tasks (conductor only)
-│   ├── stages.ts      # List stages and their status (conductor only)
-│   ├── cancel-stage.ts # Cancel an active stage (conductor only)
-│   ├── release.ts     # Release held players (unlock outbox + deliver deferred messages)
-│   ├── pause-ensemble.ts # Pause all sessions and the scheduler ensemble-wide
-│   ├── resume-ensemble.ts # Resume a paused ensemble
+├── tools/             # One file per MCP tool — see docs/tools.md for full reference
+│   ├── ensemble.ts / cue.ts / recruit.ts / report.ts / broadcast.ts / recall.ts / listen.ts
+│   ├── restart.ts / detach.ts / destroy.ts / migrate.ts / attachment-info.ts
+│   ├── schedule.ts / unschedule.ts / schedules.ts
+│   ├── quality-gate.ts / evaluate-gate.ts / gates.ts
+│   ├── worktree.ts / stage.ts / stages.ts / cancel-stage.ts
+│   ├── load-lineup.ts / save-lineup.ts / agent-types.ts / resolve.ts
+│   ├── set-name.ts / set-part.ts / who-am-i.ts / release.ts
+│   ├── pause-ensemble.ts / resume-ensemble.ts
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
 ├── tui/
-│   ├── index.ts       # TUI entry point — connects to Temporal and renders the Ink app
-│   ├── App.tsx        # Root TUI component — chat-focused shell with slash commands
-│   ├── store.ts       # TUI state reducer (phase, players, messages, schedules, static history)
-│   ├── client.ts      # Thin re-export shim — re-exports createTempoClient from src/client/ for backward compatibility
-│   ├── commands.ts    # Slash command parser and registry (/player, /broadcast, /status, etc.)
-│   ├── ink-loader.ts  # Dynamic ESM loader for Ink (avoids CJS/ESM conflicts)
-│   ├── ink-context.tsx # React context for injected Ink primitives
-│   ├── components/
-│   │   ├── Splash.tsx         # Splash/connecting screen component
-│   │   ├── TitleBar.tsx       # Pinned title bar showing ensemble/player context
-│   │   ├── PromptArea.tsx     # Pinned input area with ❯ prompt, inline hints, and divider
-│   │   ├── MainView.tsx       # Main ensemble view (players, messages, schedules)
-│   │   ├── ChatView.tsx       # Per-player chat view (entered via /cue <player>)
-│   │   ├── ErrorView.tsx      # Connection failure screen with troubleshooting checks (zero Yoga nodes)
-│   │   ├── StatusBar.tsx      # Persistent status bar (player counts, schedule count, connection health)
-│   │   ├── CommandPalette.tsx    # Autocomplete dropdown for slash commands and parameters
-│   │   ├── Picker.tsx            # Full-screen interactive picker (players, ensembles)
-│   │   ├── PlayerDetailView.tsx  # Player metadata + scrollable message history (zero Yoga nodes)
-│   │   ├── StatusOverlay.tsx     # Dismissible overlay showing ensemble player cards (/status)
-│   │   ├── CommandOverlay.tsx    # Generic dismissible overlay for data-display commands (/gates, /stages, /recall, /search)
-│   │   ├── ScheduleOverlay.tsx   # Dismissible overlay showing active schedules with timing details (/schedule)
-│   │   ├── ConversationStream.tsx    # Live message area merging server conversation + optimistic echo
-│   │   ├── CreateEnsembleWizard.tsx  # Step-by-step wizard for creating new ensembles (name → workDir → lineup → confirm)
-│   │   ├── ScheduleWizard.tsx        # Step-by-step wizard for /schedule create
-│   │   └── RecruitWizard.tsx         # Step-by-step wizard for /recruit
-│   └── utils/
-│       ├── format.ts          # Display formatting helpers
-│       ├── platform.ts        # Terminal size detection helpers
-│       ├── theme.ts           # THEME constants (colors, borders, icons)
-│       ├── fullscreen.ts      # Fullscreen/alternate-screen helpers
-│       └── history.ts         # Persistent command history (~/.claude-tempo/tui-history.json)
+│   ├── App.tsx / store.ts / commands.ts   # TUI root, state, slash commands
+│   ├── client.ts                          # Backward-compat shim → src/client/
+│   ├── components/    # Ink components — see docs/tui.md for inventory
+│   └── utils/         # format, platform, theme, fullscreen, history
 ├── utils/
-│   ├── validation.ts  # Shared validation constants (name/message/path limits, preview lengths) and helpers
-│   ├── worktree.ts    # Git worktree create/remove helpers (cross-platform)
-│   ├── safe-path.ts   # Path safety utilities
-│   └── duration.ts    # Duration parsing helpers
+│   ├── validation.ts / worktree.ts / safe-path.ts / duration.ts
 ├── types.ts           # Shared type definitions
 ├── git-info.ts        # Git repository detection helper
 └── config.ts          # Env var handling
 ```
 
+See [docs/tui-performance.md](docs/tui-performance.md) for Ink/React performance notes when
+touching `src/tui/`.
+
 ## Development
 
 ```bash
-# Install dependencies
 npm install
-
-# Start Temporal dev server (separate terminal)
-temporal server start-dev \
-  --search-attribute ClaudeTempoEnsemble=Keyword \
-  --search-attribute ClaudeTempoPlayerId=Keyword \
-  --search-attribute ClaudeTempoHostname=Keyword \
-  --search-attribute ClaudeTempoStatus=Keyword \
-  --search-attribute ClaudeTempoGitRoot=Keyword \
-  --search-attribute ClaudeTempoPlayerType=Keyword \
-  --search-attribute ClaudeTempoIsConductor=Bool \
-  --search-attribute ClaudeTempoAttachedHost=Keyword \
-  --search-attribute ClaudeTempoAttachmentState=Keyword \
-  --search-attribute ClaudeTempoAttachmentId=Keyword
-
-# Start the daemon (runs Temporal workers in background)
-claude-tempo daemon start
-
-# Run in development
-npx ts-node src/server.ts
-
-# Build (compiles TS and pre-bundles workflow code)
-npm run build
-
-# Test
+npm run build    # compiles TS + pre-bundles workflow code into workflow-bundle.js
 npm test
 ```
 
-> **Important**: Always run `npm run build` after changing workflow code (`src/workflows/`).
-> The build pre-bundles workflows into `workflow-bundle.js` so all workers use identical code.
+> **Always run `npm run build` after changing workflow code (`src/workflows/`).** The build
+> pre-bundles workflows into `workflow-bundle.js` so all workers use identical code.
 
-> **Daemon workers**: Temporal workers are no longer run in-process by sessions. The daemon
-> (`src/daemon.ts`) runs as a detached background process and owns all worker duties. Sessions are
-> pure MCP clients. The daemon is auto-started by any claude-tempo command if not already running.
+See [docs/development.md](docs/development.md) for full setup (Temporal dev server command,
+daemon worker notes, `npx ts-node` dev runner).
 
 ## Key Concepts
 
@@ -188,56 +101,14 @@ npm test
 - **Ensemble**: The set of all active players, namespaced by `CLAUDE_TEMPO_ENSEMBLE`
 - **Cue**: A message sent to a player by name via Temporal signal
 - **Part**: A player's description of what it's working on
-- **Recruit**: Spawning a new Claude Code session as a player. The workflow is pre-created with the initial message before the process spawns, ensuring reliable delivery.
-- **set_name**: Players start with a random hex ID; `set_name` updates the `ClaudeTempoPlayerId` search attribute to a human-readable name
-- **Session status**: Each session has a status (`pending` → `active` → `stale` | `blocked`) tracked via `ClaudeTempoStatus` search attribute. Pre-created workflows start as `pending`, transition to `active` when the process connects, and become `stale` if messages go undelivered for 3+ minutes. Sessions become `blocked` when they are alive (delivering messages) but have produced no response to a `responseRequested: true` message for 5+ minutes — they may be stuck or spinning. Informational messages (broadcasts, schedule-fires, heartbeats, system notifications) set `responseRequested: false` and do not trigger blocked detection. Blocked status auto-recovers to `active` on next outbound.
-- **Adapter**: The runtime binding between a player's Temporal workflow and its agent process. Two shipped classes: `InteractiveAttachment` (Claude Code CLI — push-based MCP notification delivery, 60s heartbeat, lives in `src/adapters/claude-code/`) and `CopilotSdkAttachment` (Copilot bridge — blocking `sendAndWait` delivery, 30s heartbeat, lives in `src/adapters/copilot/`). Adapters are registered with the `AdapterRegistry` (`src/adapters/index.ts`) and resolved at spawn time via `SessionMetadata.adapterId`. The base class (`src/adapters/base.ts`) now owns the full V2 attachment lifecycle: `claimAttachment` + runId pinning, heartbeat loop, `attachmentInfo` phase watcher, `WorkflowGone` classifier, graceful `adapterExited` on teardown.
-- **Attachment phases**: The session workflow tracks the adapter's state via a 7-phase machine (`booting` → `attached` → `processing` | `awaiting` → `draining` → `detached`; any non-terminal → `gone` via `destroy`). Phase is exposed as the `ClaudeTempoAttachmentState` search attribute and via the `attachmentInfo` query. `awaiting` is the idle refinement of `attached` — attachment held, no in-flight work. Transitions are driven by V2 wire primitives: `claimAttachment` update (claim/renew), `heartbeat` signal (extends lease by attachment's `leaseMs`), `processingStart`/`processingEnd` updates (in-flight set), `requestDetach` signal, `adapterExited` signal (collapses draining → detached), `forceDetach` update, `destroy` update. See `docs/design/session-lifecycle-rebuild-v2.md` §2.2, §2.4.
-- **Outbox**: Outbound requests (cue, report, recruit, release, spawn, restart, detach, destroy) go through the session's own workflow outbox instead of directly signaling other workflows. The workflow's dispatch loop processes entries via activities, decoupling tools from cross-workflow signaling.
-- **Restart**: Revives a session by running the §8.2 algorithm — graceful `requestDetach` (or `forceDetach` with `force: true`), fresh `claimAttachment` on the target host, optional context replay via `receiveMessage`, then `enqueueSpawn` on the target's own outbox. Works on any non-`gone` phase (attached, awaiting, processing, draining, detached). Replaces the pre-v0.25 `encore` verb (which was `stale`-only).
-- **Detach** / **Destroy**: Split of the old `stop` verb per design §8.1. `detach` gracefully reaps the adapter; the workflow survives in `detached` phase and can be `restart`ed later. `destroy` terminally ends the workflow (phase → `gone`), abandoning any in-flight outbox entries. Neither is reversible for the adapter — use `restart` to bring a detached session back.
-- **Migrate**: Sugar for `restart --host=<h>` per design §9.6. Identical semantics to restart; separate verb for UX clarity when moving sessions across hosts.
-- **Broadcast**: Fan-out variant of `cue` — sends a message to all active players in the ensemble in a single call. Optionally filtered by player type. Skips the sender, pending sessions, and (by default) stale sessions.
-- **Recall**: Queries a session's own message history from the Temporal workflow. Shows received messages by default; pass `includeSent: true` to also see sent messages. Supports `limit`, `since`, and `from` filters.
-- **Per-host task queues**: Each host runs a `claude-tempo-{hostname}` activity worker for local-only operations (e.g., `spawnProcess`). This enables cross-machine recruiting — the `recruit` tool accepts an optional `host` parameter to route the spawn to a remote machine's task queue.
-- **Player types**: Reusable agent definitions in Claude Code's standard subagent format (`.md` files with YAML frontmatter). Ensemble lineups can reference types by name via a `type` field on players. Three-tier lookup: project `.claude/agents/` → user `~/.claude/agents/` → shipped `examples/agents/`. Players know their type via workflow metadata and the `who_am_i` tool. Agent type frontmatter may include an `allowedTools` array to restrict which MCP/CLI tools the spawned session can use (e.g., `allowedTools: [Read, Glob, Grep]`). When present, the type's `allowedTools` overrides any lineup-level setting and is passed to the Claude Code session via `--allowedTools`.
-- **Agent type discovery**: The `agent_types` MCP tool and `claude-tempo agent-types` CLI command let conductors discover available player types. Shipped examples (tempo-conductor, tempo-composer, tempo-soloist, tempo-tuner, tempo-critic, tempo-roadie, tempo-improv, tempo-liner) work out of the box. Ensemble lineups: tempo-big-band (full lifecycle), tempo-dev-team (feature work), tempo-review-squad (parallel review), tempo-jam-session (exploration).
-- **Schedule**: A one-shot or recurring message delivery configured via the `schedule` tool. Backed by a durable `claudeSchedulerWorkflow` — survives restarts. Supports delay (`delay`), fixed time (`at`), recurring interval (`every`), and cron expressions (`cron`) with optional IANA timezone (`timezone`). Cron schedules use `croner` for expression parsing and next-fire computation. Managed via `schedule`, `unschedule`, and `schedules` tools.
-- **Lineup**: A YAML file defining an ensemble configuration — which players to recruit, their types, working directories, and optional startup messages. Load via `load_lineup` to bootstrap a full ensemble in one step; `load_lineup` resolves the lineup by name using a three-tier lookup: saved lineups → shipped examples → file path. Save via `save_lineup` to snapshot a running ensemble's state for later reuse.
-- **Quality Gate**: A named checklist of criteria a conductor tracks to verify a task is complete. Created via `quality_gate` (conductor only), evaluated via `evaluate_gate`, and listed via `gates`. Each criterion has a `pending` → `passed` | `failed` status; the gate's aggregate status is derived automatically (all passed → `passed`, any failed → `failed`, else `open`). Gates are stored in the conductor workflow and survive `continueAsNew`.
-- **Worktree**: A git worktree provisioned by the conductor for a player, giving them an isolated checkout on a separate branch. Managed via the `worktree` tool (conductor only): `create` provisions the worktree and notifies the player, `remove` cleans up after the task, `list` shows all active worktrees. Worktree assignments are stored in the conductor workflow (`WorktreeEntry` records: player, path, branch, gitRoot, createdAt, createdBy).
-- **Stage**: A fan-out/fan-in tracking primitive for the conductor. Created via `stage` (conductor only), listing via `stages`, cancelled via `cancel_stage`. Each stage tracks a set of players; when a tracked player sends a `report`, their stage status updates automatically (`waiting` → `reported` or `blocked`). When all players have reported, the conductor is notified that the stage is complete. If `failurePolicy` is `'halt'` (default), a blocker from any player fails the entire stage. Stages are stored in the conductor workflow and survive `continueAsNew`.
-- **Hold / Release**: Controlled ensemble startup mechanism. `load_lineup(hold: true)` spawns all players with locked outboxes and a standby message ("waiting for release") instead of their real task. When ready, the conductor calls `release` (MCP tool or `claude-tempo release` CLI) to unlock outboxes and deliver the actual task messages. Use case: pre-warm a full team before kicking off a long job.
-- **Pause / Resume**: Ensemble-wide mid-session flow control. `pause_ensemble` locks all session outboxes and signals the scheduler to skip fires; `resume_ensemble` reverses both. `stop` outbox entries bypass the pause lock and are always dispatched. Pause state is owned by the per-ensemble Maestro (`maestroSetPaused` signal) and synced to sessions and the scheduler.
-- **Outbox lock**: A workflow-level flag on each session that gates outbox dispatch independently of pause. Used by the hold mechanism (`outboxLocked` query, `releaseHeld` signal) and the pause mechanism (`setPaused` signal, `paused` query). The two flags are independent — a session can be held (locked) but not paused, or paused but not locked.
-- **Maestro**: Two Maestro workflow variants exist. The **per-ensemble** `claudeMaestroWorkflow` (ID: `claude-maestro-{ensemble}`) monitors a single ensemble — maintains a player snapshot, ring-buffer event log (max 200 entries), an aggregated ensemble chat cache (max 500 entries, refreshed every ~10s via `fetchEnsembleChat` activity), and queues commands for relay to the conductor via `maestroSendCommand`. The ensemble chat cache merges maestro + conductor traffic and is served via the `maestroEnsembleChat` query. The **global** `claudeGlobalMaestroWorkflow` (ID: `claude-maestro-global`) spans all ensembles — aggregates players by ensemble, maintains a cross-ensemble message ring buffer (max 500 entries), and exposes on-demand player/conductor history via `maestroFetchPlayerMessages` and `maestroFetchConductorHistory` updates. Both are implemented in `src/workflows/maestro.ts` with activities in `src/activities/maestro.ts`.
-- **TempoClient**: The API layer for querying ensemble state (`src/client/`). The interface and types live in `interface.ts`; the factory implementation lives in `index.ts`. Provides `discoverEnsembles`, `getPlayers`, `getMessages`, `getConductorHistory`, `sendMessage`, `sendCommand`, `getEnsembleChat`, `getGates`, `getStages`, `getWorktrees`, and `terminatePlayer`. Uses Global Maestro as the primary source with graceful fallback to per-ensemble Maestro and direct workflow list queries. `src/tui/client.ts` is a thin re-export shim for backward compatibility — new consumers should import from `src/client/` directly.
-- **Wire protocol**: All Temporal signal, query, update, and workflow names are documented in [`docs/WIRE-PROTOCOL.md`](docs/WIRE-PROTOCOL.md). These names are stable as of v0.10 — renaming or removing any is a breaking change requiring a major version bump. **Process**: when adding signals, queries, or updates to any workflow file (`signals.ts`, `scheduler-signals.ts`, `maestro-signals.ts`), update `docs/WIRE-PROTOCOL.md` in the same commit.
-- **Daemon**: A standalone background process (`src/daemon.ts`) that runs all Temporal workers. Auto-started by any claude-tempo command if not already running. PID stored at `~/.claude-tempo/daemon.pid`; logs at `~/.claude-tempo/daemon.log`. Sessions are now pure MCP clients — they no longer run in-process workers. Managed via `claude-tempo daemon start|stop|status|logs`.
+- **Outbox**: Outbound requests (cue, report, recruit, restart, detach, destroy, …) go through the session's workflow outbox instead of directly signaling other workflows. The dispatch loop processes entries via activities, decoupling tools from cross-workflow signaling.
+- **Session status**: `pending → active → stale | blocked` (tracked via `ClaudeTempoStatus` search attribute). See [docs/concepts.md](docs/concepts.md) for full status mechanics.
+- **Per-host task queues**: `host` param on `recruit`/`restart`/`migrate` routes to `claude-tempo-{hostname}` task queue. See [docs/concepts.md](docs/concepts.md) for cross-machine recruiting details.
+- **Wire protocol**: All signal/query/update names are documented in [`docs/WIRE-PROTOCOL.md`](docs/WIRE-PROTOCOL.md) and are stable — renaming or removing any is a breaking change. **Process**: update `docs/WIRE-PROTOCOL.md` in the same commit as any new signal, query, or update.
+- **Daemon**: Standalone background process (`src/daemon.ts`) that runs all Temporal workers. Auto-started by any `claude-tempo` command. PID at `~/.claude-tempo/daemon.pid`; logs at `~/.claude-tempo/daemon.log`.
+- **Player types**: Reusable agent definitions in Claude Code's subagent format (`.md` files with YAML frontmatter). Three-tier lookup: project `.claude/agents/` → user `~/.claude/agents/` → shipped `examples/agents/`. Discover via `agent_types` tool or `claude-tempo agent-types` CLI. Shipped types: tempo-conductor, tempo-composer, tempo-soloist, tempo-tuner, tempo-critic, tempo-roadie, tempo-improv, tempo-liner.
 
-## TUI Key Behaviors
-
-- **Routing**: Bare text in the TUI routes to the conductor via `sendCommand`. Prefix with `@player` to message a specific player directly (e.g. `@alice can you review this?`). When no conductor is present, bare text shows an error; use `@player` to message directly.
-- **Schedule management**: `/schedule` is the single entry point — no standalone `/unschedule`. Subcommands: `/schedule` (show overlay), `/schedule create` (wizard), `/schedule delete <name>` (cancel).
-- **Interactive overlays**: `/status`, `/schedule`, `/gates`, `/stages`, `/worktree` display dismissible overlays (via `SHOW_OVERLAY`/`StatusOverlay`). `/player`, `/ensemble` open full-screen interactive pickers (`Picker`).
-- **Aliases removed**: `/home`, `/maestro`, `/dashboard`, `/exit`, and `/unschedule` are **not** registered commands. Using them produces a "command not found" error. Use `/back`, `/quit`, and `/schedule delete` respectively.
-- **`/help <command>`**: `/help` alone shows all commands; `/help recruit` (or `/help /recruit`) shows the usage and description for a specific command in an overlay.
-- **NO_COLOR**: Set `NO_COLOR=1` to disable all color output — respected in both the TUI theme (`src/tui/utils/theme.ts`) and CLI output helpers (`src/cli/output.ts`). Follows the https://no-color.org/ convention.
-- **Terminal size requirement**: The TUI requires a minimum terminal size of **80×24**. If the terminal is smaller at launch, the process exits with code 1 with an explanatory message. A soft in-app warning appears at 60×15 during resize.
-
-## TUI Performance (Ink/React)
-
-Hard-won lessons from debugging input lag in the TUI (#58). Apply these whenever touching `src/tui/`.
-
-- **Fullscreen bypass is permanent**: When `lastOutputHeight >= stdout.rows`, Ink permanently switches to `clearTerminal + full-rewrite` on every frame — this never resets. Every component/phase must render within `height: termRows - 1` to stay in the fast `throttledLog` path (in-place line updates).
-- **Animation timers poison rendering**: `setInterval`-based animations (spinners, metronomes) trigger re-renders every 80–150ms. Each re-render runs the full Yoga layout + output pipeline for all nodes. Never use animation timers in components that coexist with input areas — rapid re-renders cause input lag.
-- **Yoga node count: keep under ~20**: Every `<Box>` creates a Yoga layout node; every keystroke recalculates all of them. 100+ nodes = laggy input. Prefer nested `<Text>` over `<Box><Text>` — nested Text creates `ink-virtual-text` with zero Yoga nodes. Pre-format content as strings with `\n` and render as a single `<Text>`.
-- **Uncontrolled input pattern**: Input components must not dispatch to parent state on every keystroke. Use local `useState` + `useImperativeHandle` ref for parent communication. Guard all callbacks (e.g. `onPaletteToggle`) to only fire when values actually change — otherwise you get silent parent re-renders on every keypress.
-- **Reducer state identity matters**: `return { ...state, field: sameValue }` creates a new object reference and triggers a re-render even when nothing changed. Always check before spreading: `if (!state.paletteVisible && state.paletteIndex === 0) return state;`
-- **Stale refs between renders**: When using the ref pattern for stable `useInput` callbacks, values read from `ref.current` are only updated on React render. For values that change between renders (e.g. input value), update `ref.current.value` synchronously inside the setter — not just on render. Otherwise rapid keystrokes (e.g. holding backspace) read stale values and drop inputs.
-- **Debugging approach**: When diagnosing Ink lag, create minimal test apps (`.mjs`) adding one factor at a time (fullscreen, Temporal, InkProvider, real components) to isolate the cause. If the minimal app is fast but the real app is slow, the component tree is the culprit — not the infrastructure.
-- **Cap live message counts**: ChatView and similar message lists must limit visible messages (~20). Rendering hundreds of messages in the live Yoga tree creates 1000+ React elements that slow reconciliation and output generation. Show a "↑ N earlier messages" indicator when truncated. Future: adopt Ink's `<Static>` pattern (render-once, exit Yoga tree) like Claude Code does for scroll history.
-
+See [docs/concepts.md](docs/concepts.md) for the full glossary (Adapter, Attachment phases, Restart, Detach/Destroy, Migrate, Broadcast, Recall, Schedule, Lineup, Quality Gate, Worktree, Stage, Hold/Release, Pause/Resume, Maestro, TempoClient, and more).
 
 ## Commit Convention
 
@@ -250,11 +121,7 @@ Examples:
 
 ## Release Process
 
-**Correct order — never deviate:**
+> **Release rule**: Bump `package.json` + CHANGELOG before tagging. Never tag a commit that
+> doesn't match the version. Tagging prematurely publishes the old version to npm.
 
-1. Merge the feature PR into `main` (squash merge)
-2. Bump `version` in `package.json` and add a `## [x.y.z]` entry in `CHANGELOG.md` on `main`
-3. Commit: `chore: bump version to vX.Y.Z`
-4. Tag the bump commit: `git tag vX.Y.Z && git push origin vX.Y.Z`
-
-The release workflow triggers on `v*` tag pushes and publishes to npm. **Never tag before the version bump commit exists on main, and never tag a commit that doesn't match the version in `package.json`.** Tagging prematurely (e.g., before a feature PR merges) publishes the old version to npm and forces a patch bump to recover.
+See [docs/release-process.md](docs/release-process.md) for the full 4-step sequence.

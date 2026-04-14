@@ -3,7 +3,7 @@
 > **Scope:** Describes the target state after the v0.25 rebuild (PR-A through PR-F merged).
 > **Design doc-of-record:** `docs/design/session-lifecycle-rebuild-v2.md` — full phase machine, transition invariants, and restart algorithm.
 > **Wire protocol:** `docs/WIRE-PROTOCOL.md` — exact signal/query/update names and stability guarantees.
-> **Quick definitions:** `CLAUDE.md` Key Concepts.
+> **Quick definitions:** [`docs/concepts.md`](concepts.md) — full glossary.
 
 ---
 
@@ -155,6 +155,8 @@ Arrows point upward (Maestros aggregate from below); there are no downward contr
 
 **The API surface for external UIs.** `TempoClient` (`src/client/`) talks to Maestros as the primary data source. `getPlayers`, `getMessages`, `getConductorHistory`, `getEnsembleChat` all read from Maestro caches (ring buffer + periodic refresh via `fetchEnsembleChat` activity), not from individual session queries. External UIs read one pre-aggregated cache instead of fanning out across N workflows.
 
+**`src/tui/client.ts` is a thin re-export shim** that re-exports `createTempoClient` from `src/client/` for backward compatibility with the TUI. New consumers should import from `src/client/` directly, not from the shim.
+
 **Simpler lifecycles.** Ring buffer + `continueAsNew` periodically. No claim/heartbeat/detach/destroy. No V2 lifecycle concerns. Maestros and the Scheduler are structurally unchanged by the v0.25 revamp.
 
 ### Two orthogonal axes
@@ -201,5 +203,5 @@ Layer 1 is topology-agnostic. A `claudeSessionWorkflow` has no awareness of whic
 | Restart algorithm | `docs/design/session-lifecycle-rebuild-v2.md` §8.2 |
 | Orphan restore policy and decision tree | `docs/design/session-lifecycle-rebuild-v2.md` §10.2 |
 | Exact signal/query/update names and types | `docs/WIRE-PROTOCOL.md` |
-| Key concept definitions (player, ensemble, adapter, etc.) | `CLAUDE.md` Key Concepts |
+| Key concept definitions (player, ensemble, adapter, etc.) | [`docs/concepts.md`](concepts.md) |
 | Adapter authoring guide | `src/adapters/README.md` |

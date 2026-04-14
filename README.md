@@ -240,7 +240,7 @@ The TUI provides a chat-focused shell for managing your ensemble:
 - **Slash commands** — `/recruit`, `/status`, `/schedule`, `/gates`, `/stages`, `/worktree`, `/go` (release held), `/pause`, `/resume`, and more; type `/help` for the full list
 - **Interactive overlays and wizards** — step-by-step flows for recruiting players, creating schedules, and managing ensembles
 
-📖 [TUI reference → docs/dashboard.md](docs/dashboard.md)
+📖 [TUI reference → docs/tui.md](docs/tui.md)
 
 ## Copilot Integration
 

@@ -91,7 +91,18 @@ The TUI queries two background Temporal workflows for its data — no separate s
 
 The TUI's API layer (`src/tui/client.ts`) wraps these queries behind a `TempoClient` interface, with graceful fallback from Global → per-ensemble Maestro → direct workflow list queries. Both workflows start automatically with the conductor and require no additional setup. Signal/query/update names are documented in [WIRE-PROTOCOL.md](WIRE-PROTOCOL.md).
 
+## Behaviors and Edge Cases
+
+- **Routing**: Bare text routes to the conductor via `sendCommand`. Prefix with `@player` to message a specific player directly (e.g. `@alice can you review this?`). When no conductor is present, bare text shows an error; use `@player` to message directly.
+- **Schedule management**: `/schedule` is the single entry point — no standalone `/unschedule`. Subcommands: `/schedule` (show overlay), `/schedule create` (wizard), `/schedule delete <name>` (cancel).
+- **Interactive overlays**: `/status`, `/schedule`, `/gates`, `/stages`, `/worktree` display dismissible overlays. `/player`, `/ensemble` open full-screen interactive pickers.
+- **Removed aliases**: `/home`, `/maestro`, `/dashboard`, `/exit`, and `/unschedule` are **not** registered commands. Using them produces a "command not found" error. Use `/back`, `/quit`, and `/schedule delete` respectively.
+- **`/help <command>`**: `/help` alone shows all commands; `/help recruit` (or `/help /recruit`) shows the usage and description for a specific command in an overlay.
+- **NO_COLOR**: Set `NO_COLOR=1` to disable all color output — respected in both the TUI theme (`src/tui/utils/theme.ts`) and CLI output helpers (`src/cli/output.ts`). Follows the https://no-color.org/ convention.
+- **Terminal size requirement**: The TUI requires a minimum terminal size of **80×24**. If the terminal is smaller at launch, the process exits with code 1. A soft in-app warning appears at 60×15 during resize.
+
 ## Related
 
 - [cli.md](cli.md) — `claude-tempo tui` command reference
 - [WIRE-PROTOCOL.md](WIRE-PROTOCOL.md) — stable Temporal signal/query names for Maestro
+- [tui-performance.md](tui-performance.md) — Ink/React performance lessons for contributors
