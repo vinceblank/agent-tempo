@@ -23,6 +23,7 @@ function workflowNow(): Date {
 }
 
 import type { OutboxActivities } from '../activities/outbox';
+import type { HardTerminateResult } from '../activities/hard-terminate';
 
 import {
   SessionInput,
@@ -110,6 +111,21 @@ function getSpawnProxy(hostname: string) {
   }).spawnProcess;
 }
 
+/**
+ * Host-routed proxy for the #159 Gap 2 hard-terminate activity. Runs on the target's
+ * `claude-tempo-{hostname}` task queue so the kill happens where the child process
+ * actually lives. Short timeout + low retry — this is a best-effort cleanup and the
+ * workflow must not wedge if the host worker is down.
+ */
+function getHardTerminateProxy(hostname: string) {
+  return proxyActivities<Pick<OutboxActivities, 'hardTerminateAttachment'>>({
+    taskQueue: `claude-tempo-${hostname}`,
+    startToCloseTimeout: '10 seconds',
+    scheduleToCloseTimeout: '20 seconds',
+    retry: { maximumAttempts: 1 },
+  }).hardTerminateAttachment;
+}
+
 export async function claudeSessionWorkflow(input: SessionInput): Promise<void> {
   // ── Legacy timers (shim era only; removed in PR-C when all adapters cut over) ──
   // Stale-by-undelivered is now gated on no in-flight messages AND the legacy status
@@ -123,8 +139,12 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // by `currentAttachment.leaseMs`.
   /** Default heartbeat cadence (interactive). SDK adapters use 30s; descriptor-driven in PR-C. */
   const HEARTBEAT_INTERVAL_MS = 30_000;
-  /** Max grace period for `draining → detached` transition after requestDetach. */
-  const DRAINING_DEADLINE_MS = 5_000;
+  /**
+   * Default grace period for `draining → detached` transition after requestDetach. Used when a
+   * `requestDetach` signal omits `deadlineMs`. Per-signal overrides are honored via the
+   * `drainingDeadlineMs` state variable below (fix for #159 Gap 1a).
+   */
+  const DEFAULT_DRAINING_DEADLINE_MS = 5_000;
   /** Max duration a messageId can stay in-flight before the safety timer ejects it. */
   const PROCESSING_DEADLINE_MS = 15 * 60 * 1000;
 
@@ -182,6 +202,23 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   let preferredHost: string | undefined = input.preferredHost ?? currentAttachment?.hostname ?? input.metadata.hostname;
   /** ISO timestamp of when the current `draining` phase started. */
   let drainingSince: string | null = input.drainingSince ?? null;
+  /**
+   * Grace window (ms) for the current `draining` phase, if a `requestDetach` signal supplied one.
+   * Fix for #159 Gap 1a: the pre-fix handler discarded `deadlineMs` and always used the 5s default,
+   * so callers requesting a longer/shorter window were silently ignored. Reset to `null` whenever
+   * `drainingSince` clears so it can't leak into the next detach cycle.
+   */
+  let drainingDeadlineMs: number | null = input.drainingDeadlineMs ?? null;
+  /**
+   * Monotonic counter bumped by signal/update handlers that *shorten* `nextDeadlineMs()` output
+   * (e.g. `requestDetach` creates a new, sooner draining deadline; `forceDetach` nullifies the
+   * current attachment expiry). The main-loop `condition(...)` includes `wakeEpoch` in its
+   * predicate so state changes outside the existing wake conditions still punch through the
+   * already-scheduled timeout — fix for #159 Gap 1b. Signal handlers that *extend* deadlines
+   * (e.g. heartbeat) don't need to bump since the pre-existing, earlier deadline firing and
+   * being re-checked is harmless.
+   */
+  let wakeEpoch = 0;
   /** Reason recorded when the last attachment detached (for orphanSummary query). */
   let lastDetachReason: DetachReason | undefined;
   /** Metadata about the last-known adapter (for orphanSummary query). */
@@ -250,7 +287,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       candidates.push(new Date(processingSince).getTime() + PROCESSING_DEADLINE_MS);
     }
     if (phase === 'draining' && drainingSince) {
-      candidates.push(new Date(drainingSince).getTime() + DRAINING_DEADLINE_MS);
+      const window = drainingDeadlineMs ?? DEFAULT_DRAINING_DEADLINE_MS;
+      candidates.push(new Date(drainingSince).getTime() + window);
     }
     if (candidates.length === 0) return Number.POSITIVE_INFINITY;
     return Math.max(0, Math.min(...candidates) - nowMs);
@@ -603,6 +641,10 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     // Fresh claim abandons any residual in-flight messageIds from the previous adapter.
     inFlightMessages.clear();
     processingSince = null;
+    // A fresh claim always supersedes an in-flight drain; clear its window so a later
+    // `requestDetach` starts from the default and doesn't inherit a stale value.
+    drainingSince = null;
+    drainingDeadlineMs = null;
     detachedSince = null;
     setPhase('attached');
     upsertSearchAttributes({
@@ -626,8 +668,15 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
    * `forceDetach` — revoke the current attachment. `expectedAttachmentId` guards against TOCTOU.
    * `gracePeriodMs` is reserved for future use (§8.3); v0.25 PR-A ignores it and detaches
    * immediately — PR-D's `restart` flow passes `gracePeriodMs: 0`.
+   *
+   * #159 Gap 2: this handler is the canonical "kill then flip" point. Before we null out
+   * the attachment and transition to `detached`, we invoke `hardTerminateAttachment` on the
+   * reaped host's per-host task queue so the child process tree is actually torn down at
+   * the OS level. If the activity throws, the update itself throws and the caller
+   * (`deliverRestart`, operator tooling) retries — we DON'T silently flip state while the
+   * orphan is still alive, because that produces exactly the bug reported in #159.
    */
-  setHandler(forceDetachUpdate, ({ reason, expectedAttachmentId }) => {
+  setHandler(forceDetachUpdate, async ({ reason, expectedAttachmentId }) => {
     if (phase === 'gone') {
       throw ApplicationFailure.nonRetryable('Workflow is terminated', 'WorkflowGone');
     }
@@ -638,19 +687,54 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       // TOCTOU — the expected attachment is already gone; don't reap a fresh one.
       return { reaped: false };
     }
-    const previousId = currentAttachment.attachmentId;
-    lastAdapterMeta = { hostname: currentAttachment.hostname, adapterId: currentAttachment.adapterId };
+    const reaped = currentAttachment;
+    const previousId = reaped.attachmentId;
+
+    // Kill OS process tree on the host where the adapter is actually running. In
+    // production `reaped.hostname === input.metadata.hostname` — both are the machine
+    // that spawned the child — but `metadata.hostname` is the more stable routing key
+    // (attachments can come and go during cross-host restart flows, and test harnesses
+    // sometimes set the two fields independently). Failure aborts the update so the
+    // workflow state stays in sync with what actually happened on the host.
+    const killHost = input.metadata.hostname;
+    try {
+      const killResult: HardTerminateResult = await getHardTerminateProxy(killHost)({
+        ensemble: input.metadata.ensemble,
+        playerName: input.metadata.playerId,
+        agent: (input.metadata.agentType ?? 'claude') as AgentType,
+        workDir: input.metadata.workDir,
+      });
+      workflowLog.info(
+        `forceDetach hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
+        `killedPids=[${killResult.killedPids.join(',')}]`,
+      );
+    } catch (err) {
+      // Turn into an ApplicationFailure so the caller sees a clean retry signal rather
+      // than a raw activity timeout / cancelation.
+      throw ApplicationFailure.nonRetryable(
+        `forceDetach hard-terminate failed on ${killHost}: ` +
+        `${err instanceof Error ? err.message : String(err)}. ` +
+        `Refusing to flip phase to detached while the OS process may still be live.`,
+        'HardTerminateFailed',
+      );
+    }
+
+    lastAdapterMeta = { hostname: reaped.hostname, adapterId: reaped.adapterId };
     lastDetachReason = reason;
     currentAttachment = null;
     inFlightMessages.clear();
     processingSince = null;
     drainingSince = null;
+    drainingDeadlineMs = null;
     detachedSince = workflowNow().toISOString();
     setPhase('detached');
     upsertSearchAttributes({
       ClaudeTempoAttachedHost: [''],
       ClaudeTempoAttachmentId: [''],
     });
+    // #159 Gap 1b: wake the main loop — `phase === 'detached'` isn't in the predicate
+    // and the condition would otherwise sleep on the now-stale lease-expiry deadline.
+    wakeEpoch++;
     return { reaped: true, previousAttachmentId: previousId };
   });
 
@@ -711,14 +795,30 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   /**
    * `requestDetach` signal — adapter-initiated graceful detach. Transitions to `draining`;
    * main loop reaps to `detached` when outbox is drained OR `drainingDeadline` elapses.
+   *
+   * Fix for #159 Gap 1a: previously this handler destructured only `reason` and threw away
+   * `deadlineMs`, so the workflow always used `DEFAULT_DRAINING_DEADLINE_MS` regardless of
+   * what the caller requested. We now store the caller's window in `drainingDeadlineMs` so
+   * `nextDeadlineMs()` and the §9.5.c reap block honor it.
+   *
+   * Fix for #159 Gap 1b: bumping `wakeEpoch` causes the main-loop `condition(...)` predicate
+   * to flip, waking it from its pre-existing (longer) timer so it re-computes `nextDeadlineMs()`
+   * with the fresh, sooner drainingDeadline. Without this, the signal lands while the loop is
+   * asleep on a lease-expiry timer and the phase stays in `draining` until that far-away
+   * timer fires — exactly the smoke-test repro in #159.
    */
-  setHandler(requestDetachSignal, ({ reason }) => {
+  setHandler(requestDetachSignal, ({ reason, deadlineMs }) => {
     if (!currentAttachment || phase === 'gone') return;
     if (phase === 'draining' || phase === 'detached') return; // idempotent
     drainingSince = workflowNow().toISOString();
+    drainingDeadlineMs =
+      typeof deadlineMs === 'number' && Number.isFinite(deadlineMs) && deadlineMs >= 0
+        ? deadlineMs
+        : DEFAULT_DRAINING_DEADLINE_MS;
     lastDetachReason = reason;
     setPhase('draining');
     lastActivityTime = workflowNow().getTime();
+    wakeEpoch++;
   });
 
   /**
@@ -733,6 +833,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     inFlightMessages.clear();
     processingSince = null;
     drainingSince = null;
+    drainingDeadlineMs = null;
     detachedSince = workflowNow().toISOString();
     setPhase('detached');
     upsertSearchAttributes({
@@ -740,6 +841,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       ClaudeTempoAttachmentId: [''],
     });
     lastActivityTime = workflowNow().getTime();
+    // Wake main loop; the pre-existing condition timer was sized for the old lease
+    // window which no longer applies.
+    wakeEpoch++;
   });
 
   /** `attachmentInfo` query — current phase + attachment state snapshot. */
@@ -1015,9 +1119,21 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
 
   while (!destroyRequested) {
     // Deadline race: wake on outbox, phase change, destroy, or the nearest time deadline.
+    //
+    // #159 Gap 1b: `wakeEpoch` is captured here and included in the predicate so any handler
+    // that mutates the deadline landscape (e.g. `requestDetach` setting a draining window)
+    // can force re-entry to this loop *before* the pre-scheduled timeout fires. Without
+    // this, a detach signal landing while the loop is asleep on a far-away lease-expiry
+    // timer would leave the workflow in `draining` until that old timer fired.
+    const epochAtWait = wakeEpoch;
     const deadlineMs = nextDeadlineMs();
     const conditionPromise = condition(
-      () => destroyRequested || canDispatch() || hasPendingStop() || phase === 'gone',
+      () =>
+        destroyRequested ||
+        canDispatch() ||
+        hasPendingStop() ||
+        phase === 'gone' ||
+        wakeEpoch !== epochAtWait,
       // Legacy shim: when no time-based deadline applies, still wake every 5 min so the
       // legacy stale/blocked heuristics below run. Replaced with a no-op in PR-C.
       deadlineMs === Number.POSITIVE_INFINITY ? '5 minutes' : Math.min(deadlineMs, 5 * 60 * 1000),
@@ -1035,6 +1151,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       inFlightMessages.clear();
       processingSince = null;
       drainingSince = null;
+      drainingDeadlineMs = null;
       detachedSince = workflowNow().toISOString();
       setPhase('detached');
       upsertSearchAttributes({
@@ -1060,17 +1177,55 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     }
 
     // ── §9.5.c: drainingDeadline — force exit from `draining` to `detached`. ──
+    // #159 Gap 1a: use the caller-supplied `drainingDeadlineMs` when present; fall back to
+    // `DEFAULT_DRAINING_DEADLINE_MS` otherwise. `nextDeadlineMs()` uses the same value, so
+    // the condition wake timing and the reap threshold stay in sync.
+    //
+    // #159 Gap 2: before flipping to `detached`, kill the OS child process on the host
+    // where the adapter was running. If we skipped this step the workflow would happily
+    // report `phase=detached` while an orphaned `claude.exe` kept holding the session
+    // lock — and the next `recruit`/`restart` would collide with its own past self.
+    // Best-effort: errors from the activity are logged but don't block the state flip
+    // (the alternative is a workflow wedged in `draining` forever when the host worker
+    // is down, which is worse than a lingering process that operators can clean up).
     if (
       phase === 'draining' &&
       drainingSince !== null &&
-      workflowNow().getTime() - new Date(drainingSince).getTime() > DRAINING_DEADLINE_MS
+      workflowNow().getTime() - new Date(drainingSince).getTime() >
+        (drainingDeadlineMs ?? DEFAULT_DRAINING_DEADLINE_MS)
     ) {
+      const window = drainingDeadlineMs ?? DEFAULT_DRAINING_DEADLINE_MS;
       const reaped = currentAttachment;
+      if (reaped) {
+        // Same routing consideration as in `forceDetachUpdate`: use `metadata.hostname`
+        // as the stable key. Best-effort only — a failure here (e.g. host worker down)
+        // would otherwise wedge the workflow in `draining` forever, which is worse than
+        // a lingering OS process that operators can clean up by hand.
+        const killHost = input.metadata.hostname;
+        try {
+          const killResult = await getHardTerminateProxy(killHost)({
+            ensemble: input.metadata.ensemble,
+            playerName: input.metadata.playerId,
+            agent: (input.metadata.agentType ?? 'claude') as AgentType,
+            workDir: input.metadata.workDir,
+          });
+          workflowLog.info(
+            `drainingDeadline hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
+            `killedPids=[${killResult.killedPids.join(',')}]`,
+          );
+        } catch (err) {
+          workflowLog.warn(
+            `drainingDeadline hard-terminate failed for ${killHost} ` +
+            `(continuing with state flip): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
       lastDetachReason = lastDetachReason ?? 'force';
       currentAttachment = null;
       inFlightMessages.clear();
       processingSince = null;
       drainingSince = null;
+      drainingDeadlineMs = null;
       detachedSince = workflowNow().toISOString();
       setPhase('detached');
       upsertSearchAttributes({
@@ -1079,7 +1234,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       });
       if (reaped) {
         workflowLog.info(
-          `drainingDeadline exceeded (${Math.round(DRAINING_DEADLINE_MS / 1000)}s); ` +
+          `drainingDeadline exceeded (${Math.round(window / 1000)}s); ` +
           `reaping attachment ${reaped.attachmentId}`,
         );
       }
@@ -1258,6 +1413,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
           inFlightMessages.clear();
           processingSince = null;
           drainingSince = null;
+          drainingDeadlineMs = null;
           detachedSince = workflowNow().toISOString();
           setPhase('detached');
           upsertSearchAttributes({
@@ -1375,6 +1531,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         ...(preferredHost ? { preferredHost } : {}),
         phase,
         ...(drainingSince ? { drainingSince } : {}),
+        ...(drainingDeadlineMs !== null ? { drainingDeadlineMs } : {}),
         ...(input.metadata.isConductor ? { commandHistory, reportHistory, qualityGates, worktrees, stages } : {}),
       });
     }

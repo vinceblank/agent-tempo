@@ -88,6 +88,9 @@ export async function createWorkers(config: Config): Promise<DualWorkers> {
     shutdownForceTime: SHUTDOWN_FORCE_TIME,
     activities: {
       spawnProcess: outboxActivities.spawnProcess,
+      // #159 Gap 2: host-local OS-process kill. Must live on the per-host queue so it runs
+      // on the machine where the claude.exe / bridge process actually lives.
+      hardTerminateAttachment: outboxActivities.hardTerminateAttachment,
     },
   });
 

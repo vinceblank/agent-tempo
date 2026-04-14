@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **#159 — detach/restart no longer leaves orphaned `claude.exe` on Windows.**
+  Two coupled fixes make the session-lifecycle verbs reliable on Windows
+  (and tighten them on macOS/Linux):
+  - `requestDetach` signal handler now honors the caller-supplied `deadlineMs`
+    (previously silently discarded in favor of the 5s default), and the main
+    loop's deadline race wakes up via a `wakeEpoch` sentinel when a signal
+    shortens the next deadline — previously the workflow stayed in `draining`
+    far past its grace window because the pre-scheduled timer was sized for
+    the next lease expiry.
+  - New `hardTerminateAttachment` activity runs on the per-host task queue
+    and actually kills the child process tree at the OS level —
+    `taskkill /T /F` on Windows (the `/T` flag walks MCP subprocess children),
+    process-group SIGTERM → SIGKILL on Unix. Wired into both
+    `forceDetachUpdate` (strict "kill first, then flip state") and the
+    drainingDeadline reap (best-effort). Command-line matching via
+    `-n <playerName>` with a strict regex guard against shell injection.
+
 ---
 
 ## [0.25.0-beta.2] - 2026-04-14

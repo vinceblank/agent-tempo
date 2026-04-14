@@ -126,7 +126,7 @@ describe('reconcileOnBoot', function () {
     const client = makeFakeClient([
       fixture({ ensemble: 'e1', playerId: 'alice', detachedSince: new Date(NOW - 1000).toISOString() }),
     ]);
-    await reconcileOnBoot(client, defaults({ restorePolicy: 'never' }), HOSTNAME);
+    await reconcileOnBoot(client, defaults({ restorePolicy: 'never' }), HOSTNAME, NOW);
     expect(stub.calls).to.have.length(0);
   });
 
@@ -134,7 +134,7 @@ describe('reconcileOnBoot', function () {
     const client = makeFakeClient([
       fixture({ ensemble: 'e1', playerId: 'alice', detachedSince: new Date(NOW - 1000).toISOString() }),
     ]);
-    await reconcileOnBoot(client, defaults({ restorePolicy: 'prompt' }), HOSTNAME);
+    await reconcileOnBoot(client, defaults({ restorePolicy: 'prompt' }), HOSTNAME, NOW);
     expect(stub.calls).to.have.length(0);
   });
 
@@ -151,7 +151,7 @@ describe('reconcileOnBoot', function () {
         preferredHost: HOSTNAME,
       }),
     ]);
-    await reconcileOnBoot(client, defaults({ restorePolicy: 'auto' }), HOSTNAME);
+    await reconcileOnBoot(client, defaults({ restorePolicy: 'auto' }), HOSTNAME, NOW);
     expect(stub.calls).to.have.length(1);
     expect(stub.calls[0].ensemble).to.equal('e1');
     expect(stub.calls[0].playerId).to.equal('alice');
@@ -168,7 +168,7 @@ describe('reconcileOnBoot', function () {
         preferredHost: 'host-2', // ← different from HOSTNAME
       }),
     ]);
-    await reconcileOnBoot(client, defaults({ restorePolicy: 'auto' }), HOSTNAME);
+    await reconcileOnBoot(client, defaults({ restorePolicy: 'auto' }), HOSTNAME, NOW);
     // Filter fires before any policy logic — restart is never called on
     // this daemon. The remote host's daemon is the authoritative restorer.
     expect(stub.calls).to.have.length(0);
@@ -183,7 +183,7 @@ describe('reconcileOnBoot', function () {
         preferredHost: 'host-2',
       }),
     ]);
-    await reconcileOnBoot(client, defaults({ restorePolicy: 'prompt' }), HOSTNAME);
+    await reconcileOnBoot(client, defaults({ restorePolicy: 'prompt' }), HOSTNAME, NOW);
     expect(stub.calls).to.have.length(0);
   });
 
@@ -191,7 +191,7 @@ describe('reconcileOnBoot', function () {
     const client = makeFakeClient([
       fixture({ ensemble: 'e1', playerId: 'stale', detachedSince: '2020-01-01T00:00:00Z' }),
     ]);
-    await reconcileOnBoot(client, defaults({ restorePolicy: 'auto', autoRestoreMaxAgeHours: 24 }), HOSTNAME);
+    await reconcileOnBoot(client, defaults({ restorePolicy: 'auto', autoRestoreMaxAgeHours: 24 }), HOSTNAME, NOW);
     expect(stub.calls).to.have.length(0);
   });
 
@@ -204,6 +204,7 @@ describe('reconcileOnBoot', function () {
       client,
       defaults({ restorePolicy: 'auto', autoRestoreEnsembles: ['my-*'] }),
       HOSTNAME,
+      NOW,
     );
     expect(stub.calls).to.have.length(1);
     expect(stub.calls[0].ensemble).to.equal('my-team');
@@ -213,7 +214,7 @@ describe('reconcileOnBoot', function () {
     const client = makeFakeClient([
       fixture({ ensemble: 'e1', playerId: 'alice', detachedSince: new Date(NOW - 60_000).toISOString() }),
     ]);
-    await reconcileOnBoot(client, defaults({ restorePolicy: 'auto' }), HOSTNAME);
+    await reconcileOnBoot(client, defaults({ restorePolicy: 'auto' }), HOSTNAME, NOW);
     expect(stub.calls).to.have.length(1);
     expect(stub.calls[0].opts.host).to.equal(HOSTNAME);
   });
@@ -224,13 +225,13 @@ describe('reconcileOnBoot', function () {
       fixture({ ensemble: 'e1', playerId: 'alice', detachedSince: new Date(NOW - 60_000).toISOString() }),
     ]);
     // Must not throw.
-    await reconcileOnBoot(client, defaults({ restorePolicy: 'auto' }), HOSTNAME);
+    await reconcileOnBoot(client, defaults({ restorePolicy: 'auto' }), HOSTNAME, NOW);
     expect(stub.calls).to.have.length(1);
   });
 
   it('restorePolicy "auto" — no orphans → no-op', async function () {
     const client = makeFakeClient([]);
-    await reconcileOnBoot(client, defaults({ restorePolicy: 'auto' }), HOSTNAME);
+    await reconcileOnBoot(client, defaults({ restorePolicy: 'auto' }), HOSTNAME, NOW);
     expect(stub.calls).to.have.length(0);
   });
 });

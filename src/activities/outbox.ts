@@ -11,6 +11,7 @@ import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { ENV } from '../config';
 import { resolveSession } from './resolve';
 import { registry } from '../adapters';
+import { hardTerminateAttachment, type HardTerminateInput, type HardTerminateResult } from './hard-terminate';
 import {
   attachmentInfoQuery,
   requestDetachSignal,
@@ -154,6 +155,12 @@ export interface OutboxActivities {
   deliverDetach(input: DeliverDetachInput): Promise<OutboxActivityResult>;
   deliverDestroy(input: DeliverDestroyInput): Promise<OutboxActivityResult>;
   deliverRestart(input: DeliverRestartInput): Promise<OutboxActivityResult>;
+  /**
+   * OS-level child-process-tree kill for the target session. Runs on the per-host
+   * task queue (`claude-tempo-{hostname}`) so the kill happens where the process
+   * actually lives. See `src/activities/hard-terminate.ts` and issue #159 Gap 2.
+   */
+  hardTerminateAttachment(input: HardTerminateInput): Promise<HardTerminateResult>;
 }
 
 /**
@@ -532,6 +539,11 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
                 `Use force=true to steal the lease.`,
               );
             }
+            // #159 Gap 2: OS-level kill is owned by the `forceDetachUpdate` handler itself
+            // — it invokes `hardTerminateAttachment` on the reaped host's per-host queue
+            // *before* flipping workflow state. That keeps the "kill first, then state"
+            // ordering inside the durable workflow layer where it belongs; deliverRestart
+            // just awaits the update and surfaces retryable errors to the caller.
             await handle.executeUpdate(forceDetachUpdate, {
               args: [{
                 reason: 'restart',
@@ -604,6 +616,16 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           `Restart failed for "${targetPlayerId}": ${err instanceof Error ? err.message : String(err)}`,
         );
       }
+    },
+
+    /**
+     * #159 Gap 2 — OS-level process-tree kill. Registered on the per-host task queue so
+     * it runs on the machine that actually hosts the child process. Never throws: the
+     * returned `HardTerminateResult` tells the caller what happened (strategy, PIDs,
+     * notes), which the workflow can log without blocking the state flip.
+     */
+    async hardTerminateAttachment(input: HardTerminateInput): Promise<HardTerminateResult> {
+      return hardTerminateAttachment(input);
     },
   };
 }

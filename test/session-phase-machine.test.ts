@@ -25,6 +25,7 @@ import {
   processingStartUpdate,
   processingEndUpdate,
   isDestroyedQuery,
+  skipTime,
 } from './helpers';
 import {
   claimAttachmentUpdate,
@@ -233,6 +234,99 @@ describe('session phase machine (v0.25 PR-A)', function () {
       }
       expect(info.phase).to.equal('detached');
       expect(info.currentAttachment).to.equal(undefined);
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
+  it('attached -> detached via drainingDeadline timeout (no adapterExited) — #159 Gap 1', async function () {
+    // Regression test for issue #159: when `requestDetach` fires and the adapter never
+    // acknowledges, the workflow MUST auto-promote draining -> detached after the caller-
+    // supplied deadline. Pre-fix: the signal handler ignored `deadlineMs` and the main
+    // loop was sleeping on a far-away lease-expiry timer, so the workflow stayed in
+    // `draining` for 30+ seconds past the requested grace window.
+    this.timeout(30_000);
+    await withWorker(async () => {
+      const handle = await startFreshSession(`drain-deadline-${Date.now()}`);
+      await handle.executeUpdate(claimAttachmentUpdate, {
+        // Long lease — without the Gap 1b wake-epoch fix, the main loop would sleep on
+        // the ~10 min lease timer and miss the 2s drain deadline entirely.
+        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 600_000 }],
+      });
+
+      // Request graceful detach with a short custom deadline. The pre-fix code threw
+      // this value away and used a hardcoded 5s, so this assertion also exercises the
+      // Gap 1a fix (honoring `deadlineMs` from the signal).
+      await handle.signal(requestDetachSignal, { reason: 'user-stop', deadlineMs: 2_000 });
+
+      // Confirm the transition to draining was applied.
+      let info: AttachmentInfo = await handle.query(attachmentInfoQuery);
+      for (let i = 0; i < 10 && info.phase !== 'draining'; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        info = await handle.query(attachmentInfoQuery);
+      }
+      expect(info.phase).to.equal('draining');
+
+      // Before the deadline elapses we should still be in `draining` — the timer
+      // hasn't fired yet. skipTime uses the test server's time-skipping clock so this
+      // doesn't actually sleep.
+      await skipTime(1_000);
+      info = await handle.query(attachmentInfoQuery);
+      expect(info.phase, 'phase should still be draining before deadline').to.equal('draining');
+
+      // Push past the deadline. The main loop must wake on its deadline-race timer,
+      // notice the drain elapsed, and promote the phase.
+      await skipTime(2_000);
+      // Poll briefly — the promotion runs on the workflow task after skipTime advances
+      // the clock, so it may not be reflected in the very first query.
+      for (let i = 0; i < 20 && info.phase !== 'detached'; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        info = await handle.query(attachmentInfoQuery);
+      }
+      expect(info.phase, 'drainingDeadline should have promoted phase to detached').to.equal('detached');
+      expect(info.currentAttachment).to.equal(undefined);
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
+  it('requestDetach with omitted deadlineMs falls back to the default 5s window', async function () {
+    // Coverage for the "default is preserved" branch of #159 Gap 1a. Some callers (older
+    // wire protocol consumers, test harnesses) still signal without `deadlineMs`; the
+    // workflow should behave exactly as before those callers for that path.
+    this.timeout(20_000);
+    await withWorker(async () => {
+      const handle = await startFreshSession(`drain-default-${Date.now()}`);
+      await handle.executeUpdate(claimAttachmentUpdate, {
+        args: [{ host: 'host-A', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 600_000 }],
+      });
+
+      // Intentionally cast to bypass the typed signature so we can simulate a legacy
+      // caller that omits `deadlineMs`. The handler treats non-finite/missing values
+      // as "use default".
+      await handle.signal(requestDetachSignal, { reason: 'user-stop' } as any);
+
+      let info: AttachmentInfo = await handle.query(attachmentInfoQuery);
+      for (let i = 0; i < 10 && info.phase !== 'draining'; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        info = await handle.query(attachmentInfoQuery);
+      }
+      expect(info.phase).to.equal('draining');
+
+      // Default window is 5s — still draining at 3s.
+      await skipTime(3_000);
+      info = await handle.query(attachmentInfoQuery);
+      expect(info.phase).to.equal('draining');
+
+      // Past 5s (total 6s) — auto-promoted.
+      await skipTime(3_000);
+      for (let i = 0; i < 20 && info.phase !== 'detached'; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        info = await handle.query(attachmentInfoQuery);
+      }
+      expect(info.phase).to.equal('detached');
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result().catch(() => {});
