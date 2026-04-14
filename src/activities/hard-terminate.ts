@@ -185,7 +185,9 @@ async function killProcessTree(pid: number): Promise<boolean> {
     const stderr = (result.stderr || '').toString();
     if (/not found|not running|no tasks/i.test(stderr)) return false;
     log(`taskkill /T /F /PID ${pid} → status ${result.status}, stderr: ${stderr.trim()}`);
-    return result.status === 0;
+    // status is known to be non-zero here (line 184 handled the 0 case) and not a recognized
+    // "already gone" signature — report kill failure to the caller.
+    return false;
   }
 
   // Unix: SIGTERM → brief poll → SIGKILL → brief poll. Process-group signal first
