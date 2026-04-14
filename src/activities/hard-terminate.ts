@@ -75,7 +75,7 @@ export async function hardTerminateAttachment(input: HardTerminateInput): Promis
         if (Number.isFinite(pid) && pid > 0) {
           const expected = process.platform === 'win32' ? 'node.exe' : 'node';
           if (processMatchesExpected(pid, expected)) {
-            const killed = killProcessTree(pid);
+            const killed = await killProcessTree(pid);
             if (killed) {
               killedPids.push(pid);
               notes.push(`Killed copilot bridge PID ${pid}`);
@@ -110,7 +110,7 @@ export async function hardTerminateAttachment(input: HardTerminateInput): Promis
   }
   for (const pid of pids) {
     try {
-      if (killProcessTree(pid)) killedPids.push(pid);
+      if (await killProcessTree(pid)) killedPids.push(pid);
     } catch (err) {
       notes.push(`kill(${pid}) failed: ${errMsg(err)}`);
     }
@@ -163,13 +163,20 @@ function processMatchesExpected(pid: number, expected: string): boolean {
 
 /**
  * Kill the process whose PID is `pid` AND all of its descendants. Returns `true` when the
- * kill command executed without error; `false` when the process was already gone by the time
- * we acted (not a fatal condition — we still want the workflow to proceed).
+ * process is dead or was never running by the time this returns; `false` when the kill
+ * command ran but the process stubbornly refused to exit within the grace window.
+ *
+ * On Windows `taskkill /T /F` is synchronous and walks PPID → children; callers can rely on
+ * the return value. On Unix we SIGTERM the process group first (since spawns use
+ * `detached: true`), poll for exit for 500ms, then SIGKILL, poll again — so by the time
+ * this function returns the process really is gone, not "scheduled to die soon". That
+ * matters for the `forceDetachUpdate` strict-ordering path: a fresh `recruit` immediately
+ * after must see the session ID unlocked.
  */
-function killProcessTree(pid: number): boolean {
+async function killProcessTree(pid: number): Promise<boolean> {
   if (process.platform === 'win32') {
-    // /T walks PPID → children; /F forces immediate termination. 128 = not found, 1 = denied,
-    // 255 = already gone. Treat "not found" and "already gone" as success for idempotence.
+    // /T walks PPID → children; /F forces immediate termination. 128 = not found,
+    // 255 = already gone. Treat those as success for idempotence.
     const result = spawnSync('taskkill', ['/T', '/F', '/PID', String(pid)], {
       stdio: ['ignore', 'ignore', 'pipe'],
       encoding: 'utf8',
@@ -180,16 +187,27 @@ function killProcessTree(pid: number): boolean {
     log(`taskkill /T /F /PID ${pid} → status ${result.status}, stderr: ${stderr.trim()}`);
     return result.status === 0;
   }
-  // Unix: SIGTERM → grace → SIGKILL. We attempt the process-group signal first (negative pid)
-  // in case the child was spawned with `detached: true`; fall back to the bare pid. Catch
-  // ESRCH (already gone) and EPERM (permission) silently — both are "nothing more to do".
-  try { process.kill(-pid, 'SIGTERM'); } catch { /* fall back */ }
-  try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
-  setTimeout(() => {
-    try { process.kill(-pid, 'SIGKILL'); } catch { /* done */ }
-    try { process.kill(pid, 'SIGKILL'); } catch { /* done */ }
-  }, 500);
-  return true;
+
+  // Unix: SIGTERM → brief poll → SIGKILL → brief poll. Process-group signal first
+  // (negative pid) because spawnInTerminal uses `detached: true`; fall back to the bare pid.
+  // Catch ESRCH (already gone) and EPERM (permission) silently — both mean "nothing more to do".
+  const killPair = (sig: NodeJS.Signals) => {
+    try { process.kill(-pid, sig); } catch { /* process-group not applicable */ }
+    try { process.kill(pid, sig); } catch { /* already gone */ }
+  };
+  const pollUntilDead = async (maxMs: number): Promise<boolean> => {
+    const deadline = Date.now() + maxMs;
+    while (Date.now() < deadline) {
+      try { process.kill(pid, 0); } catch { return true; }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    try { process.kill(pid, 0); return false; } catch { return true; }
+  };
+
+  killPair('SIGTERM');
+  if (await pollUntilDead(500)) return true;
+  killPair('SIGKILL');
+  return pollUntilDead(500);
 }
 
 /**
