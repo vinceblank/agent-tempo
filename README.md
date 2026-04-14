@@ -45,7 +45,7 @@ Each session registers as a **player** in Temporal. Players discover each other 
 npm install -g claude-tempo
 ```
 
-**Prerequisites**: [Node.js](https://nodejs.org/) 18+, [Temporal CLI](https://docs.temporal.io/cli), [Claude Code](https://claude.ai/code)
+**Prerequisites**: [Node.js](https://nodejs.org/) 20 LTS, 22 LTS, or 24 LTS (18+ minimum), [Temporal CLI](https://docs.temporal.io/cli), [Claude Code](https://claude.ai/code)
 
 ## Quick Start
 
