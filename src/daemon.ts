@@ -92,6 +92,11 @@ export async function reconcileOnBoot(
   client: Client,
   daemonConfig: DaemonConfig,
   hostname: string = os.hostname(),
+  // Injectable clock — default to wall-clock at call time. Exposed so tests can pass a
+  // pinned reference time alongside fixtures that use ISO strings derived from that time
+  // (otherwise the 24h age filter below vs. a hardcoded test NOW drifts out of sync as
+  // calendar days roll over; matches the pattern used by the cleanup path below).
+  now: number = Date.now(),
 ): Promise<void> {
   if (daemonConfig.restorePolicy === 'never') {
     log(`reconcile: restorePolicy="never" — skipping orphan scan`);
@@ -152,7 +157,6 @@ export async function reconcileOnBoot(
 
   // restorePolicy === 'auto'
   const ageWindowMs = daemonConfig.autoRestoreMaxAgeHours * 60 * 60 * 1000;
-  const now = Date.now();
   const tempo = createTempoClient(client);
 
   for (const o of orphans) {
