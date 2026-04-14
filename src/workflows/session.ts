@@ -23,6 +23,7 @@ function workflowNow(): Date {
 }
 
 import type { OutboxActivities } from '../activities/outbox';
+import type { HardTerminateResult } from '../activities/hard-terminate';
 
 import {
   SessionInput,
@@ -108,6 +109,21 @@ function getSpawnProxy(hostname: string) {
     startToCloseTimeout: '2 minutes',
     retry: { maximumAttempts: 2 },
   }).spawnProcess;
+}
+
+/**
+ * Host-routed proxy for the #159 Gap 2 hard-terminate activity. Runs on the target's
+ * `claude-tempo-{hostname}` task queue so the kill happens where the child process
+ * actually lives. Short timeout + low retry — this is a best-effort cleanup and the
+ * workflow must not wedge if the host worker is down.
+ */
+function getHardTerminateProxy(hostname: string) {
+  return proxyActivities<Pick<OutboxActivities, 'hardTerminateAttachment'>>({
+    taskQueue: `claude-tempo-${hostname}`,
+    startToCloseTimeout: '10 seconds',
+    scheduleToCloseTimeout: '20 seconds',
+    retry: { maximumAttempts: 1 },
+  }).hardTerminateAttachment;
 }
 
 export async function claudeSessionWorkflow(input: SessionInput): Promise<void> {
@@ -652,8 +668,15 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
    * `forceDetach` — revoke the current attachment. `expectedAttachmentId` guards against TOCTOU.
    * `gracePeriodMs` is reserved for future use (§8.3); v0.25 PR-A ignores it and detaches
    * immediately — PR-D's `restart` flow passes `gracePeriodMs: 0`.
+   *
+   * #159 Gap 2: this handler is the canonical "kill then flip" point. Before we null out
+   * the attachment and transition to `detached`, we invoke `hardTerminateAttachment` on the
+   * reaped host's per-host task queue so the child process tree is actually torn down at
+   * the OS level. If the activity throws, the update itself throws and the caller
+   * (`deliverRestart`, operator tooling) retries — we DON'T silently flip state while the
+   * orphan is still alive, because that produces exactly the bug reported in #159.
    */
-  setHandler(forceDetachUpdate, ({ reason, expectedAttachmentId }) => {
+  setHandler(forceDetachUpdate, async ({ reason, expectedAttachmentId }) => {
     if (phase === 'gone') {
       throw ApplicationFailure.nonRetryable('Workflow is terminated', 'WorkflowGone');
     }
@@ -664,8 +687,39 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       // TOCTOU — the expected attachment is already gone; don't reap a fresh one.
       return { reaped: false };
     }
-    const previousId = currentAttachment.attachmentId;
-    lastAdapterMeta = { hostname: currentAttachment.hostname, adapterId: currentAttachment.adapterId };
+    const reaped = currentAttachment;
+    const previousId = reaped.attachmentId;
+
+    // Kill OS process tree on the host where the adapter is actually running. In
+    // production `reaped.hostname === input.metadata.hostname` — both are the machine
+    // that spawned the child — but `metadata.hostname` is the more stable routing key
+    // (attachments can come and go during cross-host restart flows, and test harnesses
+    // sometimes set the two fields independently). Failure aborts the update so the
+    // workflow state stays in sync with what actually happened on the host.
+    const killHost = input.metadata.hostname;
+    try {
+      const killResult: HardTerminateResult = await getHardTerminateProxy(killHost)({
+        ensemble: input.metadata.ensemble,
+        playerName: input.metadata.playerId,
+        agent: (input.metadata.agentType ?? 'claude') as AgentType,
+        workDir: input.metadata.workDir,
+      });
+      workflowLog.info(
+        `forceDetach hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
+        `killedPids=[${killResult.killedPids.join(',')}]`,
+      );
+    } catch (err) {
+      // Turn into an ApplicationFailure so the caller sees a clean retry signal rather
+      // than a raw activity timeout / cancelation.
+      throw ApplicationFailure.nonRetryable(
+        `forceDetach hard-terminate failed on ${killHost}: ` +
+        `${err instanceof Error ? err.message : String(err)}. ` +
+        `Refusing to flip phase to detached while the OS process may still be live.`,
+        'HardTerminateFailed',
+      );
+    }
+
+    lastAdapterMeta = { hostname: reaped.hostname, adapterId: reaped.adapterId };
     lastDetachReason = reason;
     currentAttachment = null;
     inFlightMessages.clear();
@@ -1126,6 +1180,14 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     // #159 Gap 1a: use the caller-supplied `drainingDeadlineMs` when present; fall back to
     // `DEFAULT_DRAINING_DEADLINE_MS` otherwise. `nextDeadlineMs()` uses the same value, so
     // the condition wake timing and the reap threshold stay in sync.
+    //
+    // #159 Gap 2: before flipping to `detached`, kill the OS child process on the host
+    // where the adapter was running. If we skipped this step the workflow would happily
+    // report `phase=detached` while an orphaned `claude.exe` kept holding the session
+    // lock — and the next `recruit`/`restart` would collide with its own past self.
+    // Best-effort: errors from the activity are logged but don't block the state flip
+    // (the alternative is a workflow wedged in `draining` forever when the host worker
+    // is down, which is worse than a lingering process that operators can clean up).
     if (
       phase === 'draining' &&
       drainingSince !== null &&
@@ -1134,6 +1196,30 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     ) {
       const window = drainingDeadlineMs ?? DEFAULT_DRAINING_DEADLINE_MS;
       const reaped = currentAttachment;
+      if (reaped) {
+        // Same routing consideration as in `forceDetachUpdate`: use `metadata.hostname`
+        // as the stable key. Best-effort only — a failure here (e.g. host worker down)
+        // would otherwise wedge the workflow in `draining` forever, which is worse than
+        // a lingering OS process that operators can clean up by hand.
+        const killHost = input.metadata.hostname;
+        try {
+          const killResult = await getHardTerminateProxy(killHost)({
+            ensemble: input.metadata.ensemble,
+            playerName: input.metadata.playerId,
+            agent: (input.metadata.agentType ?? 'claude') as AgentType,
+            workDir: input.metadata.workDir,
+          });
+          workflowLog.info(
+            `drainingDeadline hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
+            `killedPids=[${killResult.killedPids.join(',')}]`,
+          );
+        } catch (err) {
+          workflowLog.warn(
+            `drainingDeadline hard-terminate failed for ${killHost} ` +
+            `(continuing with state flip): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
       lastDetachReason = lastDetachReason ?? 'force';
       currentAttachment = null;
       inFlightMessages.clear();

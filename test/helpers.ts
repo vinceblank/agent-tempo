@@ -151,6 +151,13 @@ export async function skipTime(durationMs: number): Promise<void> {
 /**
  * Create and start a Worker that runs for the duration of `fn`.
  * The worker is shut down when `fn` resolves or rejects.
+ *
+ * Also spins up a tiny per-host worker on `claude-tempo-test-host` that stubs
+ * `hardTerminateAttachment` — the #159 Gap 2 fix made `forceDetachUpdate` proxy
+ * that activity on the reaped host's queue, so any phase-machine test that
+ * exercises `forceDetachUpdate` or the `drainingDeadline` path needs the
+ * activity to resolve somewhere. The stub reports a no-op kill which is the
+ * correct answer for tests that don't spawn real processes.
  */
 export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
   const worker = await Worker.create({
@@ -158,7 +165,26 @@ export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
     taskQueue: TASK_QUEUE,
     workflowBundle,
   });
-  return worker.runUntil(fn);
+  const hostWorker = await Worker.create({
+    connection: testEnv.nativeConnection,
+    taskQueue: HOST_TASK_QUEUE,
+    activities: {
+      hardTerminateAttachment: async () => ({
+        killedPids: [],
+        strategy: 'none' as const,
+        notes: ['test stub — no real process to kill'],
+      }),
+    },
+  });
+  return worker.runUntil(async () => {
+    const hostWorkerPromise = hostWorker.run();
+    try {
+      return await fn();
+    } finally {
+      hostWorker.shutdown();
+      await hostWorkerPromise.catch(() => { /* cleanup */ });
+    }
+  });
 }
 
 /**
@@ -174,7 +200,28 @@ export async function withWorkerAndActivities<T>(fn: () => Promise<T>): Promise<
     workflowBundle,
     activities: scheduleActivities,
   });
-  return worker.runUntil(fn);
+  // Per-host worker with a hardTerminateAttachment stub — required by the #159 Gap 2
+  // change that made `forceDetachUpdate` proxy that activity on the reaped host's queue.
+  const hostWorker = await Worker.create({
+    connection: testEnv.nativeConnection,
+    taskQueue: HOST_TASK_QUEUE,
+    activities: {
+      hardTerminateAttachment: async () => ({
+        killedPids: [],
+        strategy: 'none' as const,
+        notes: ['test stub'],
+      }),
+    },
+  });
+  return worker.runUntil(async () => {
+    const hostWorkerPromise = hostWorker.run();
+    try {
+      return await fn();
+    } finally {
+      hostWorker.shutdown();
+      await hostWorkerPromise.catch(() => { /* cleanup */ });
+    }
+  });
 }
 
 /** Default metadata for a player session. Override fields as needed. */
@@ -367,9 +414,37 @@ export async function withWorkerAndOutboxActivities<T>(fn: () => Promise<T>): Pr
       ...outboxActivities,
       // Stub spawnProcess to avoid launching real terminals
       spawnProcess: async () => ({ success: true }),
+      // Stub hardTerminate as a no-op so forceDetachUpdate can resolve without actually
+      // probing the live process table in a unit-test scenario.
+      hardTerminateAttachment: async () => ({
+        killedPids: [],
+        strategy: 'none' as const,
+        notes: ['test stub'],
+      }),
     },
   });
-  return worker.runUntil(fn);
+  // Per-host worker — same stub so activities routed via the per-host queue also resolve.
+  const hostWorker = await Worker.create({
+    connection: testEnv.nativeConnection,
+    taskQueue: HOST_TASK_QUEUE,
+    activities: {
+      spawnProcess: async () => ({ success: true }),
+      hardTerminateAttachment: async () => ({
+        killedPids: [],
+        strategy: 'none' as const,
+        notes: ['test stub'],
+      }),
+    },
+  });
+  return worker.runUntil(async () => {
+    const hostWorkerPromise = hostWorker.run();
+    try {
+      return await fn();
+    } finally {
+      hostWorker.shutdown();
+      await hostWorkerPromise.catch(() => { /* cleanup */ });
+    }
+  });
 }
 
 /**
@@ -414,6 +489,12 @@ export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): P
     taskQueue: `claude-tempo-test-host`,
     activities: {
       spawnProcess: async () => ({ success: true }),
+      // #159 Gap 2: stub hardTerminate alongside spawnProcess on the per-host queue.
+      hardTerminateAttachment: async () => ({
+        killedPids: [],
+        strategy: 'none' as const,
+        notes: ['test stub'],
+      }),
     },
   });
 
@@ -469,6 +550,11 @@ export async function withWorkerAndRecruitCapture<T>(
     taskQueue: `claude-tempo-test-host`,
     activities: {
       spawnProcess: capturingSpawn,
+      hardTerminateAttachment: async () => ({
+        killedPids: [],
+        strategy: 'none' as const,
+        notes: ['test stub'],
+      }),
     },
   });
 
