@@ -133,8 +133,88 @@ describe('destroy verb — fixes #102 (graceful stop → resurrection loop)', fu
   });
 });
 
-// #164 tests (hardTerminate call-count verification with claimAttachment) are deferred
-// to the test-gap follow-up PR. The withCustomHardTerminate helper creates a second
-// Temporal test environment on HOST_TASK_QUEUE whose cleanup races with subsequent test
-// files, causing cascading "multiple workers with overlapping task types" failures (#150).
-// The production code (#164 fix) was verified via live smoke test on Windows.
+// #164: destroy with a live attachment. Uses withWorker (shared host worker stub) to
+// avoid the dual-worker cascade that withCustomHardTerminate causes (#150). We verify
+// the behavioral contract (workflow completes, isDestroyed=true) rather than call-count.
+// hardTerminate invocation was verified via live smoke test on Windows.
+
+import {
+  claimAttachmentUpdate,
+  forceDetachUpdate,
+} from '../src/workflows/signals';
+
+describe('destroy verb — fixes #164 (destroy with live attachment)', function () {
+  before(async function () {
+    this.timeout(60_000);
+    await setupTestEnv();
+  });
+
+  after(async function () {
+    await teardownTestEnv();
+  });
+
+  it('destroys a session with a live attachment — workflow completes, isDestroyed=true', async function () {
+    this.timeout(15_000);
+    await withWorker(async () => {
+      const ensemble = `destroy-164-claimed-${Date.now()}`;
+      const handle = await startSession({
+        metadata: playerMetadata({
+          playerId: 'claimed-delta',
+          ensemble,
+          hostname: 'test-host',
+          workDir: '/tmp/claimed-delta',
+          agentType: 'claude',
+        }),
+      });
+
+      // Create a live attachment — the #164 bug is specifically about this path.
+      await handle.executeUpdate(claimAttachmentUpdate, {
+        args: [{ host: 'test-host', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
+      });
+
+      // Destroy while attached — must not hang or throw.
+      await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'repro #164' }] });
+      await handle.result();
+
+      expect(await handle.query(isDestroyedQuery)).to.equal(true);
+      const meta = await handle.query(getMetadataQuery);
+      expect(meta.status).to.equal('terminated');
+    });
+  });
+
+  it('concurrent forceDetach + destroy — workflow reaches gone without errors', async function () {
+    this.timeout(15_000);
+    await withWorker(async () => {
+      const ensemble = `destroy-164-race-${Date.now()}`;
+      const handle = await startSession({
+        metadata: playerMetadata({
+          playerId: 'race-epsilon',
+          ensemble,
+          hostname: 'test-host',
+          agentType: 'claude',
+        }),
+      });
+
+      // Create a live attachment.
+      const token = await handle.executeUpdate(claimAttachmentUpdate, {
+        args: [{ host: 'test-host', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
+      });
+
+      // Fire forceDetach and destroy concurrently.
+      const results = await Promise.allSettled([
+        handle.executeUpdate(forceDetachUpdate, {
+          args: [{ reason: 'race test', expectedAttachmentId: token.attachmentId }],
+        }),
+        handle.executeUpdate(destroyUpdate, { args: [{ reason: 'race test' }] }),
+      ]);
+
+      // At least one must succeed. Both succeeding is also fine.
+      const anyFulfilled = results.some((r) => r.status === 'fulfilled');
+      expect(anyFulfilled, 'at least one of forceDetach/destroy must succeed').to.equal(true);
+
+      // Workflow must complete (destroy wins).
+      await handle.result();
+      expect(await handle.query(isDestroyedQuery)).to.equal(true);
+    });
+  });
+});
