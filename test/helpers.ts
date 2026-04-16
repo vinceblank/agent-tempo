@@ -73,13 +73,6 @@ export {
 
 let testEnv: TestWorkflowEnvironment;
 let workflowBundle: { code: string };
-/** Global host-queue worker that stubs hardTerminateAttachment for any workflow
- *  teardown that fires the async destroyUpdate (#164). Without this, workflows
- *  with live attachments that get destroyed during test cleanup hang waiting for
- *  the activity on HOST_TASK_QUEUE, crashing the test server. Started by
- *  setupTestEnv, stopped by teardownTestEnv. */
-let globalHostWorker: import('@temporalio/worker').Worker | null = null;
-let globalHostWorkerPromise: Promise<void> | null = null;
 
 export const TASK_QUEUE = 'test-claude-tempo';
 
@@ -131,24 +124,6 @@ export async function setupTestEnv(): Promise<void> {
   });
   const bundlePath = findWorkflowBundle();
   workflowBundle = { code: fs.readFileSync(bundlePath, 'utf-8') };
-
-  // Start a global host-queue worker that stubs hardTerminateAttachment.
-  // The #164 fix made destroyUpdate async — it fires hardTerminate on
-  // HOST_TASK_QUEUE when the workflow has a live attachment. Without a
-  // worker serving that queue, any workflow teardown that triggers destroy
-  // hangs until activity timeout, crashing the test server.
-  globalHostWorker = await Worker.create({
-    connection: testEnv.nativeConnection,
-    taskQueue: HOST_TASK_QUEUE,
-    activities: {
-      hardTerminateAttachment: async () => ({
-        killedPids: [],
-        strategy: 'none' as const,
-        notes: ['global test stub'],
-      }),
-    },
-  });
-  globalHostWorkerPromise = globalHostWorker.run().catch(() => { /* shutdown */ });
 }
 
 /**
@@ -156,17 +131,6 @@ export async function setupTestEnv(): Promise<void> {
  * after() hook.
  */
 export async function teardownTestEnv(): Promise<void> {
-  if (globalHostWorker) {
-    globalHostWorker.shutdown();
-    await globalHostWorkerPromise?.catch(() => {});
-    globalHostWorker = null;
-    globalHostWorkerPromise = null;
-    // The Temporal native worker deregisters asynchronously after the JS
-    // promise resolves. Without a settle window, testEnv.teardown() tries
-    // to close the connection while the native worker still holds a ref,
-    // causing "Cannot close connection while Workers hold a reference".
-    await new Promise((r) => setTimeout(r, 500));
-  }
   await testEnv?.teardown();
 }
 
@@ -188,8 +152,9 @@ export async function skipTime(durationMs: number): Promise<void> {
  * Create and start a Worker that runs for the duration of `fn`.
  * The worker is shut down when `fn` resolves or rejects.
  *
- * The host-queue worker for `hardTerminateAttachment` is provided globally
- * by `setupTestEnv` — no per-test host worker is needed here.
+ * Also spins up a tiny per-host worker on `claude-tempo-test-host` that stubs
+ * `hardTerminateAttachment` — needed by `forceDetachUpdate` and the fire-and-forget
+ * `destroyUpdate` (#164) which schedule the activity on the per-host queue.
  */
 export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
   const worker = await Worker.create({
@@ -197,7 +162,26 @@ export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
     taskQueue: TASK_QUEUE,
     workflowBundle,
   });
-  return worker.runUntil(fn);
+  const hostWorker = await Worker.create({
+    connection: testEnv.nativeConnection,
+    taskQueue: HOST_TASK_QUEUE,
+    activities: {
+      hardTerminateAttachment: async () => ({
+        killedPids: [],
+        strategy: 'none' as const,
+        notes: ['test stub — no real process to kill'],
+      }),
+    },
+  });
+  return worker.runUntil(async () => {
+    const hostWorkerPromise = hostWorker.run();
+    try {
+      return await fn();
+    } finally {
+      hostWorker.shutdown();
+      await hostWorkerPromise.catch(() => { /* cleanup */ });
+    }
+  });
 }
 
 /**

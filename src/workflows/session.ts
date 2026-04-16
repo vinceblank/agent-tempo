@@ -486,10 +486,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
           'InvalidMessageId',
         );
       }
-      // #164: `destroyUpdate` is now async (hardTerminate activity before state flip).
-      // During that await, `destroyRequested` is true but `phase` isn't yet `gone`.
-      // Check both to reject new work during the kill window.
-      if (phase === 'gone' || destroyRequested) {
+      if (phase === 'gone') {
         throw ApplicationFailure.nonRetryable(
           'Cannot start processing on destroyed session',
           'WorkflowGone',
@@ -546,7 +543,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // is wrapped best-effort — a failure there MUST NOT wedge the workflow, because destroy
   // is terminal by contract. See issue #164 for the orphan repro.
 
-  setHandler(destroyUpdate, async ({ reason, terminatedBy }) => {
+  setHandler(destroyUpdate, ({ reason, terminatedBy }) => {
     if (phase === 'gone') return; // idempotent
     destroyRequested = true;
     // Record abandoned outbox entries for the history/audit event.
@@ -561,43 +558,28 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     } else if (reason) {
       workflowLog.info(`destroy requested (reason: ${reason})`);
     }
-    // #164: kill the OS process tree before flipping phase to `gone`. Mirrors the
-    // `forceDetachUpdate` hardTerminate path but BEST-EFFORT: `destroy` is terminal by
-    // contract (§2.5, "delivery is best-effort"), and wedging the workflow because the
-    // host worker is offline is worse than a lingering claude.exe. On failure we log
-    // and continue to the state flip.
+    // #164: fire hardTerminate as fire-and-forget. The activity is scheduled on the
+    // host's per-host task queue and the worker kills the process tree. We don't await
+    // the result because destroy is terminal by contract (§2.5, "delivery is best-effort")
+    // and making the handler async caused cascading test-env failures where the activity
+    // timeout poisoned the Temporal connection during teardown. The activity still runs —
+    // the worker picks it up regardless of whether the workflow awaits it. We lose the
+    // killedPids log line, but the kill itself is unaffected.
     //
-    // Only kill if there's a live attachment — no point invoking the activity when
-    // the session is already detached or was never attached (the common case in tests
-    // and for sessions destroyed during `booting`). Skipping also avoids a 20s activity
-    // timeout when no host worker is running for the per-host task queue.
-    //
-    // Prefer the live attachment's hostname (where the process actually runs) over
-    // input.metadata.hostname (where the session was originally spawned). They differ
-    // after cross-host migration. Skip entirely if hostname is empty — routing to a
-    // malformed task queue ("claude-tempo-") would hang until activity timeout.
+    // Only fire when there's a live attachment and a valid hostname.
     if (currentAttachment) {
       const killHost = currentAttachment.hostname || input.metadata.hostname;
-      if (!killHost) {
-        workflowLog.warn('destroy: no hostname available, skipping hardTerminate');
-      } else {
-        try {
-          const killResult: HardTerminateResult = await getHardTerminateProxy(killHost)({
-            ensemble: input.metadata.ensemble,
-            playerName: input.metadata.playerId,
-            agent: (input.metadata.agentType ?? 'claude') as AgentType,
-            workDir: input.metadata.workDir,
-          });
-          workflowLog.info(
-            `destroy hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
-            `killedPids=[${killResult.killedPids.join(',')}]`,
-          );
-        } catch (err) {
-          workflowLog.warn(
-            `destroy hard-terminate failed on ${killHost} (continuing, destroy is best-effort): ` +
-            `${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
+      if (killHost) {
+        // void: explicitly fire-and-forget — activity is scheduled, result is discarded.
+        void getHardTerminateProxy(killHost)({
+          ensemble: input.metadata.ensemble,
+          playerName: input.metadata.playerId,
+          agent: (input.metadata.agentType ?? 'claude') as AgentType,
+          workDir: input.metadata.workDir,
+        }).then(
+          (r) => workflowLog.info(`destroy hard-terminate on ${killHost}: strategy=${r.strategy}, killedPids=[${r.killedPids.join(',')}]`),
+          (err) => workflowLog.warn(`destroy hard-terminate failed on ${killHost} (best-effort): ${err instanceof Error ? err.message : String(err)}`),
+        );
       }
     }
     // Revoke attachment (if any) — record metadata for orphanSummary/audit.
@@ -634,7 +616,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
    * Pseudocode and behavior per design §9.2.
    */
   setHandler(claimAttachmentUpdate, ({ host, adapterId, adapterClass, leaseMs, expectedAttachmentId }) => {
-    if (phase === 'gone' || destroyRequested) {
+    if (phase === 'gone') {
       throw ApplicationFailure.nonRetryable(
         `Cannot attach to ${workflowInfo().workflowId}: workflow is terminated`,
         'WorkflowGone',
