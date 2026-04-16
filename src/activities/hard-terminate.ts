@@ -354,12 +354,12 @@ function findProcessesByCommandLine(binaryName: string, playerName: string): num
     }
   }
 
-  // Unix: pgrep -f returns PIDs whose full cmdline matches the pattern. Widen the
-  // `-n`-to-name separator to `[\s"']+` for parity with the Windows branch — some
-  // shells re-quote argv in the cmdline visible via /proc.
+  // Unix: pgrep -f returns PIDs whose full cmdline matches the pattern.
+  // pgrep uses POSIX ERE — `\s` is NOT a metacharacter (it matches literal 's').
+  // Use `[[:space:]"']` for the whitespace/quote class instead.
   try {
     const escapedNameU = playerName.replace(/[.-]/g, (c) => `\\${c}`);
-    const pattern = `${binaryName}.*-n[\\s"']+${escapedNameU}(\\b|[\\s"']|$)`;
+    const pattern = `${binaryName}.*-n[[:space:]"']+${escapedNameU}([[:space:]"']|$)`;
     const out = execFileSync('pgrep', ['-f', pattern], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
