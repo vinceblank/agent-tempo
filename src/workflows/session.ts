@@ -486,10 +486,6 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
           'InvalidMessageId',
         );
       }
-      // Canonical phase check — `phase === 'gone'` is set atomically by the
-      // `destroyUpdate` handler before `destroyRequested` flips, so this covers
-      // all terminal-state cases consistently. Replaces the pre-PR-C-commit-4
-      // `destroyed || destroyRequested` compound check (#119b).
       if (phase === 'gone') {
         throw ApplicationFailure.nonRetryable(
           'Cannot start processing on destroyed session',
@@ -540,6 +536,12 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // Terminal: set phase = gone, revoke attachment, emit audit event with abandoned outbox
   // IDs, return from main loop → workflow COMPLETES. Per §2.5: abandon in-flight outbox
   // (no drain wait) — destroy is an explicit operator action; delivery is best-effort.
+  //
+  // #164: the handler is `async` because it also fires `hardTerminateAttachment` on the
+  // host's per-host task queue before the state flip, to prevent an orphaned claude.exe
+  // when destroy is invoked while an attachment is live. Unlike `forceDetachUpdate` this
+  // is wrapped best-effort — a failure there MUST NOT wedge the workflow, because destroy
+  // is terminal by contract. See issue #164 for the orphan repro.
 
   setHandler(destroyUpdate, ({ reason, terminatedBy }) => {
     if (phase === 'gone') return; // idempotent
@@ -555,6 +557,30 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       );
     } else if (reason) {
       workflowLog.info(`destroy requested (reason: ${reason})`);
+    }
+    // #164: fire hardTerminate as fire-and-forget. The activity is scheduled on the
+    // host's per-host task queue and the worker kills the process tree. We don't await
+    // the result because destroy is terminal by contract (§2.5, "delivery is best-effort")
+    // and making the handler async caused cascading test-env failures where the activity
+    // timeout poisoned the Temporal connection during teardown. The activity still runs —
+    // the worker picks it up regardless of whether the workflow awaits it. We lose the
+    // killedPids log line, but the kill itself is unaffected.
+    //
+    // Only fire when there's a live attachment and a valid hostname.
+    if (currentAttachment) {
+      const killHost = currentAttachment.hostname || input.metadata.hostname;
+      if (killHost) {
+        // void: explicitly fire-and-forget — activity is scheduled, result is discarded.
+        void getHardTerminateProxy(killHost)({
+          ensemble: input.metadata.ensemble,
+          playerName: input.metadata.playerId,
+          agent: (input.metadata.agentType ?? 'claude') as AgentType,
+          workDir: input.metadata.workDir,
+        }).then(
+          (r) => workflowLog.info(`destroy hard-terminate on ${killHost}: strategy=${r.strategy}, killedPids=[${r.killedPids.join(',')}]`),
+          (err) => workflowLog.warn(`destroy hard-terminate failed on ${killHost} (best-effort): ${err instanceof Error ? err.message : String(err)}`),
+        );
+      }
     }
     // Revoke attachment (if any) — record metadata for orphanSummary/audit.
     if (currentAttachment) {

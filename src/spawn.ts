@@ -96,11 +96,15 @@ export function ensureWindowsTerminalProfile(): boolean {
     ) as Record<string, unknown> | undefined;
 
     if (existing) {
-      // Update icon path if it changed (e.g. package moved)
-      if (existing.icon !== iconPath) {
-        existing.icon = iconPath;
+      // Update icon + closeOnExit if they changed (e.g. package moved, or pre-#165 profile)
+      let dirty = false;
+      if (existing.icon !== iconPath) { existing.icon = iconPath; dirty = true; }
+      // Force-killed sessions exit with code 1; "always" ensures WT closes the tab
+      // instead of showing "process exited" with a stale prompt.
+      if (existing.closeOnExit !== 'always') { existing.closeOnExit = 'always'; dirty = true; }
+      if (dirty) {
         writeFileSync(settingsPath, JSON.stringify(settings, null, 4) + '\n');
-        log('Updated claude-tempo profile icon in Windows Terminal');
+        log('Updated claude-tempo profile in Windows Terminal');
       }
       return true;
     }
@@ -112,6 +116,7 @@ export function ensureWindowsTerminalProfile(): boolean {
       commandline: 'cmd.exe',
       icon: iconPath,
       hidden: true, // Hide from dropdown — only used programmatically
+      closeOnExit: 'always', // Force-killed sessions exit non-zero; auto-close the tab
     });
 
     // Write back with original formatting style (4-space indent to match WT default)

@@ -153,11 +153,8 @@ export async function skipTime(durationMs: number): Promise<void> {
  * The worker is shut down when `fn` resolves or rejects.
  *
  * Also spins up a tiny per-host worker on `claude-tempo-test-host` that stubs
- * `hardTerminateAttachment` — the #159 Gap 2 fix made `forceDetachUpdate` proxy
- * that activity on the reaped host's queue, so any phase-machine test that
- * exercises `forceDetachUpdate` or the `drainingDeadline` path needs the
- * activity to resolve somewhere. The stub reports a no-op kill which is the
- * correct answer for tests that don't spawn real processes.
+ * `hardTerminateAttachment` — needed by `forceDetachUpdate` and the fire-and-forget
+ * `destroyUpdate` (#164) which schedule the activity on the per-host queue.
  */
 export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
   const worker = await Worker.create({
@@ -190,6 +187,9 @@ export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
 /**
  * Like withWorker, but also registers the schedule-fire activities
  * so the scheduler workflow can cue target players.
+ *
+ * The host-queue worker for `hardTerminateAttachment` is provided globally
+ * by `setupTestEnv` — no per-test host worker is needed here.
  */
 export async function withWorkerAndActivities<T>(fn: () => Promise<T>): Promise<T> {
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
@@ -200,28 +200,7 @@ export async function withWorkerAndActivities<T>(fn: () => Promise<T>): Promise<
     workflowBundle,
     activities: scheduleActivities,
   });
-  // Per-host worker with a hardTerminateAttachment stub — required by the #159 Gap 2
-  // change that made `forceDetachUpdate` proxy that activity on the reaped host's queue.
-  const hostWorker = await Worker.create({
-    connection: testEnv.nativeConnection,
-    taskQueue: HOST_TASK_QUEUE,
-    activities: {
-      hardTerminateAttachment: async () => ({
-        killedPids: [],
-        strategy: 'none' as const,
-        notes: ['test stub'],
-      }),
-    },
-  });
-  return worker.runUntil(async () => {
-    const hostWorkerPromise = hostWorker.run();
-    try {
-      return await fn();
-    } finally {
-      hostWorker.shutdown();
-      await hostWorkerPromise.catch(() => { /* cleanup */ });
-    }
-  });
+  return worker.runUntil(fn);
 }
 
 /** Default metadata for a player session. Override fields as needed. */
