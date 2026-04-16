@@ -540,8 +540,14 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // Terminal: set phase = gone, revoke attachment, emit audit event with abandoned outbox
   // IDs, return from main loop → workflow COMPLETES. Per §2.5: abandon in-flight outbox
   // (no drain wait) — destroy is an explicit operator action; delivery is best-effort.
+  //
+  // #164: the handler is `async` because it also fires `hardTerminateAttachment` on the
+  // host's per-host task queue before the state flip, to prevent an orphaned claude.exe
+  // when destroy is invoked while an attachment is live. Unlike `forceDetachUpdate` this
+  // is wrapped best-effort — a failure there MUST NOT wedge the workflow, because destroy
+  // is terminal by contract. See issue #164 for the orphan repro.
 
-  setHandler(destroyUpdate, ({ reason, terminatedBy }) => {
+  setHandler(destroyUpdate, async ({ reason, terminatedBy }) => {
     if (phase === 'gone') return; // idempotent
     destroyRequested = true;
     // Record abandoned outbox entries for the history/audit event.
@@ -555,6 +561,31 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       );
     } else if (reason) {
       workflowLog.info(`destroy requested (reason: ${reason})`);
+    }
+    // #164: kill the OS process tree before flipping phase to `gone`. Mirrors the
+    // `forceDetachUpdate` hardTerminate path (same activity, same host routing) but
+    // BEST-EFFORT rather than strict: `destroy` is documented terminal (§2.5, "delivery
+    // is best-effort"), and wedging the workflow in a non-terminal state because the
+    // host worker is offline is strictly worse than a lingering claude.exe — a
+    // destroyed workflow that never completes breaks ensemble bookkeeping. On failure
+    // we log and continue to the state flip.
+    const killHost = input.metadata.hostname;
+    try {
+      const killResult: HardTerminateResult = await getHardTerminateProxy(killHost)({
+        ensemble: input.metadata.ensemble,
+        playerName: input.metadata.playerId,
+        agent: (input.metadata.agentType ?? 'claude') as AgentType,
+        workDir: input.metadata.workDir,
+      });
+      workflowLog.info(
+        `destroy hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
+        `killedPids=[${killResult.killedPids.join(',')}]`,
+      );
+    } catch (err) {
+      workflowLog.warn(
+        `destroy hard-terminate failed on ${killHost} (continuing, destroy is best-effort): ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+      );
     }
     // Revoke attachment (if any) — record metadata for orphanSummary/audit.
     if (currentAttachment) {

@@ -231,23 +231,65 @@ function findProcessesByCommandLine(binaryName: string, playerName: string): num
     // Prefer PowerShell's CIM provider — reliable CommandLine access without admin.
     // Fall back to wmic if PowerShell is missing (older Windows without it).
     //
-    // The regex matches `-n <name>` followed by the playerName with optional surrounding
-    // quotes. The regex guard at the top of this function has already established that
+    // The regex matches `-n` followed by the playerName, tolerant of the Windows quoted
+    // arg form. In production the spawned `claude.exe` receives argv re-serialized with
+    // CRT-style quoting, so its CommandLine as visible to Win32_Process looks like:
+    //   ... "server:claude-tempo" "-n" "<playerName>" "--session-id" ...
+    // Between `-n` and `<playerName>` there is literally `" "` — close-quote, space,
+    // open-quote — which `\s+` alone does NOT match. The character class `[\s"']+`
+    // accepts any combination of whitespace and quote characters, covering both the
+    // bare `-n <name>` form (used by tests and some launchers) and the quoted
+    // `"-n" "<name>"` form (real production). Same treatment on the trailing boundary
+    // so `"<name>"` terminates cleanly. This was the root cause of the smoke-run
+    // failure discovered behind #164+#165: the activity compiled and ran, but its
+    // regex never matched any real `claude.exe`, making the whole #159 kill path a
+    // silent no-op in production.
+    //
+    // The regex guard at the top of this function has already established that
     // `playerName` is `[A-Za-z0-9._-]+`, so direct interpolation into the PowerShell
-    // string is safe. We delimit the PowerShell regex literal with double-quoted `@(...)`
-    // style via a here-string to avoid nesting single-quote hell with the `["']?` chunk.
+    // string is safe. `.` and `-` are escaped as regex metachars before embedding
+    // into the `-match` pattern.
+    //
+    // Parent-walk (issue #165): for each matched process, look up its parent exactly one
+    // level via `ParentProcessId`. If that parent is `cmd.exe` AND its own CommandLine
+    // contains the same `-n <playerName>` sentinel, include the parent PID in the kill
+    // list. This clears the Windows Terminal tab when sessions are spawned via
+    // `cmd.exe /c start "" wt.exe ... cmd /k <innerCmd>` (see spawn.ts WT branch) — the
+    // inner `cmd /k` shell is the claude.exe parent; without killing it, WT leaves an
+    // unresponsive tab with cmd.exe alive on the prompt. Scope is strictly one level:
+    // grandparents are WT.exe / conhost.exe and must not be touched. The sentinel check
+    // reuses the same regex pattern used for the primary match — only cmd.exe shells
+    // that we spawned via the #159 pipeline can match.
+    const escapedName = playerName.replace(/[.-]/g, (c) => `\\${c}`);
     try {
-      // Build the PowerShell regex using PowerShell char-class syntax — `["''']?` inside a
-      // single-quoted PowerShell string (single-quote is the safer delimiter since our
-      // embedded Name='claude.exe' filter uses single quotes). Use `''` (two singles) to
-      // escape a single-quote inside a single-quoted PS literal. We don't need to match
-      // double-quotes around playerName in practice (taskline args aren't wrapped in DQ
-      // by our spawn path), so the simpler pattern `-n\s+<name>` suffices.
-      const escapedName = playerName.replace(/[.-]/g, (c) => `\\${c}`);
-      const psScript =
-        `$procs = Get-CimInstance Win32_Process -Filter "Name='${binaryName}'"; ` +
-        `$pattern = '-n\\s+${escapedName}(\\s|$)'; ` +
-        `$procs | Where-Object { $_.CommandLine -match $pattern } | Select-Object -ExpandProperty ProcessId`;
+      // Emit PARENT PIDs before child PIDs. taskkill /T /F cascades to descendants,
+      // so killing cmd.exe first also kills its claude.exe child in the same call —
+      // fewer WMI round-trips, and we correctly credit the parent kill instead of
+      // losing it to a race where claude.exe dies first and cmd.exe exits on its
+      // own (e.g. when its console has no more input). Ordering here flows directly
+      // into the kill loop via `parsePids`, which preserves insertion order.
+      //
+      // PS single-quoted string literal escapes `'` by doubling it: `''`. The bracket
+      // class `[\s"'']` therefore denotes the set { whitespace, `"`, `'` } in the
+      // compiled regex. Double-quote needs no escaping inside a PS single-quoted
+      // literal.
+      const psScript = [
+        `$procs = Get-CimInstance Win32_Process -Filter "Name='${binaryName}'";`,
+        `$pattern = '-n[\\s"'']+${escapedName}([\\s"'']|$)';`,
+        `$matched = $procs | Where-Object { $_.CommandLine -match $pattern };`,
+        `$result = @();`,
+        `foreach ($p in @($matched)) {`,
+        `  $ppid = $p.ParentProcessId;`,
+        `  if ($ppid) {`,
+        `    $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$ppid" -ErrorAction SilentlyContinue;`,
+        `    if ($parent -and $parent.Name -ieq 'cmd.exe' -and $parent.CommandLine -match $pattern) {`,
+        `      $result += [int]$parent.ProcessId;`,
+        `    }`,
+        `  }`,
+        `  $result += [int]$p.ProcessId;`,
+        `}`,
+        `$result | Select-Object -Unique`,
+      ].join(' ');
       const out = execFileSync('powershell', ['-NoProfile', '-Command', psScript], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
@@ -256,29 +298,68 @@ function findProcessesByCommandLine(binaryName: string, playerName: string): num
     } catch (err) {
       log(`powershell lookup failed (${errMsg(err)}); falling back to wmic`);
     }
+    // wmic fallback — older Windows without PowerShell. Parent-walk is best-effort here:
+    // we do a second wmic call to resolve parents for any matched child PIDs. If wmic
+    // itself is missing (Windows 11 24H2+ removed it), we return the child PIDs only —
+    // the WT orphan-tab fix won't engage, but the primary #159 kill still works.
+    //
+    // LIKE uses a single `%` between `-n` and `<playerName>` so the filter accepts any
+    // intervening characters (space, `" "`, `' '`). This intentionally overmatches —
+    // we then pull CommandLine back and post-filter with the same tolerate-quotes
+    // regex used in the PowerShell path so non-ours matches are rejected. Without
+    // this widening, the quoted production form (`"-n" "<name>"`) slips past the
+    // stricter `%-n <name>%` LIKE pattern entirely, which is the root cause this
+    // fix addresses.
+    const tolerantPattern = new RegExp(`-n[\\s"']+${escapedName}(?:[\\s"']|$)`);
     try {
       const out = execFileSync(
         'wmic',
         [
           'process',
           'where',
-          `Name='${binaryName}' and CommandLine like '%-n ${playerName}%'`,
+          `Name='${binaryName}' and CommandLine like '%-n%${playerName}%'`,
           'get',
-          'ProcessId',
+          'CommandLine,ProcessId,ParentProcessId',
           '/format:value',
         ],
         { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
       );
-      return parsePids(out);
+      const { pids: childPids, ppids } = parseWmicPidPpidFiltered(out, tolerantPattern);
+      const parentPids: number[] = [];
+      for (const ppid of ppids) {
+        try {
+          const parentOut = execFileSync(
+            'wmic',
+            [
+              'process',
+              'where',
+              `ProcessId=${ppid} and Name='cmd.exe' and CommandLine like '%-n%${playerName}%'`,
+              'get',
+              'CommandLine,ProcessId,ParentProcessId',
+              '/format:value',
+            ],
+            { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+          );
+          const { pids: matched } = parseWmicPidPpidFiltered(parentOut, tolerantPattern);
+          parentPids.push(...matched);
+        } catch {
+          /* no matching parent — leave it */
+        }
+      }
+      // Parents first so `taskkill /T /F` cascades to children in one call.
+      return [...new Set([...parentPids, ...childPids])];
     } catch (err) {
       log(`wmic lookup failed (${errMsg(err)}); giving up on Windows search`);
       return [];
     }
   }
 
-  // Unix: pgrep -fa returns lines like "<pid> <cmd>". Filter by binary and playerName match.
+  // Unix: pgrep -f returns PIDs whose full cmdline matches the pattern. Widen the
+  // `-n`-to-name separator to `[\s"']+` for parity with the Windows branch — some
+  // shells re-quote argv in the cmdline visible via /proc.
   try {
-    const pattern = `${binaryName}.*-n ${playerName}(\\b|$)`;
+    const escapedNameU = playerName.replace(/[.-]/g, (c) => `\\${c}`);
+    const pattern = `${binaryName}.*-n[\\s"']+${escapedNameU}(\\b|[\\s"']|$)`;
     const out = execFileSync('pgrep', ['-f', pattern], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -299,6 +380,44 @@ function parsePids(raw: string): number[] {
     if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) pids.add(pid);
   }
   return [...pids];
+}
+
+/**
+ * Parse wmic `/format:value` output that requested `CommandLine`, `ProcessId`, and
+ * `ParentProcessId`, and retain only blocks whose CommandLine matches `cmdPattern`.
+ *
+ * The caller widens the LIKE filter to `%-n%<name>%` so the quoted production form
+ * `"-n" "<name>"` passes the SQL-style match. Because that filter overmatches
+ * (it would also accept e.g. `-name foo<name>bar`), we post-filter per-block here
+ * using the same tolerate-quotes regex used in the PowerShell path. Blocks whose
+ * CommandLine fails the regex are discarded — their PID/PPID never enter the kill
+ * list. Output blocks look like:
+ *     CommandLine=<cmdline>\r\nParentProcessId=<n>\r\nProcessId=<m>\r\n\r\n
+ * `wmic` key ordering is alphabetical so CommandLine always precedes the IDs.
+ */
+function parseWmicPidPpidFiltered(
+  raw: string,
+  cmdPattern: RegExp,
+): { pids: number[]; ppids: number[] } {
+  const pids = new Set<number>();
+  const ppids = new Set<number>();
+  // Split on blank line separator — wmic uses \r\n\r\n between records.
+  for (const block of raw.split(/\r?\n\r?\n/)) {
+    if (!block.trim()) continue;
+    const cmdLineMatch = block.match(/^CommandLine=(.*)$/m);
+    const pidMatch = block.match(/^ProcessId=(\d+)$/m);
+    const ppidMatch = block.match(/^ParentProcessId=(\d+)$/m);
+    if (!cmdLineMatch || !pidMatch) continue;
+    const cmdLine = cmdLineMatch[1];
+    if (!cmdPattern.test(cmdLine)) continue;
+    const pid = parseInt(pidMatch[1], 10);
+    if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) pids.add(pid);
+    if (ppidMatch) {
+      const ppid = parseInt(ppidMatch[1], 10);
+      if (Number.isFinite(ppid) && ppid > 0 && ppid !== process.pid) ppids.add(ppid);
+    }
+  }
+  return { pids: [...pids], ppids: [...ppids] };
 }
 
 function errMsg(err: unknown): string {

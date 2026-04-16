@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Follow-up to #164+#165: `hardTerminate` regex now tolerates the production
+  quoted-arg form.** Smoke-testing the merged #164/#165 fixes surfaced a latent
+  #159 bug: the `-n\s+<playerName>` regex used by `findProcessesByCommandLine`
+  assumed a bare space between `-n` and the player name, but every real
+  `claude.exe` spawn routes through `src/spawn.ts` §WT, which hand-quotes each
+  token in the `cmd /k` innerCmd. The resulting CommandLine visible to
+  `Win32_Process` reads `... "-n" "<playerName>" ...` — close-quote, space,
+  open-quote — which `\s` does not match. Result: the #159 hardTerminate
+  pipeline was a silent no-op in production; every previous smoke-run only
+  passed because the adapter self-terminated on MCP detach. Regex widened to
+  `-n[\s"']+<escapedName>([\s"']|$)` across the PowerShell and wmic branches
+  (wmic LIKE filter broadened to `%-n%<name>%` with a post-filter that
+  reapplies the tolerant regex against CommandLine so overmatches are
+  discarded). Test fixture updated to reproduce the production-quoted topology
+  via a .bat indirection so the next regex-quoting regression fails loudly
+  instead of silently.
+- **#164 — `destroy` no longer leaves an orphaned `claude.exe` when an
+  attachment is live.** The `destroyUpdate` handler in the session workflow
+  predated the #159 `hardTerminateAttachment` pattern and flipped phase to
+  `gone` without killing the OS process tree — so destroying an attached
+  session silently leaked a `claude.exe` on Windows (and stray child
+  processes on Unix). `destroyUpdate` is now async and invokes
+  `hardTerminateAttachment` on the host's per-host task queue before the
+  state flip, using the same command-line-matching + sanity-guarded kill
+  as `forceDetach`. Unlike `forceDetach`, failure is **best-effort**: if
+  the host worker is offline or the activity throws, we log a warning and
+  still complete the workflow, because `destroy` is documented terminal
+  (design §2.5) and a wedged non-terminal workflow is strictly worse than
+  a lingering process. Idempotency on already-`gone`, outbox abandonment,
+  `ClaudeTempoStatus` search-attribute update, and the final audit message
+  are preserved. ([#164](https://github.com/vinceblank/claude-tempo/issues/164))
+- **#165 — `hardTerminate` now clears the Windows Terminal tab orphan.** The #159
+  fix killed `claude.exe` but not the parent `cmd.exe /k` shell that WT spawned
+  via `cmd.exe /c start "" wt.exe ... cmd /k <innerCmd>`, leaving an unresponsive
+  tab per `detach` / `restart --force` / `destroy`. `findProcessesByCommandLine`
+  now walks up exactly one PPID level for each matched PID and, if the parent is
+  `cmd.exe` and its CommandLine carries the same `-n <playerName>` sentinel, adds
+  it to the `taskkill /T /F` set. Sentinel guard reuses the #159 injection-defense
+  regex so unrelated cmd.exe instances are never touched. Grandparents (wt.exe /
+  conhost.exe) are out of scope by design — WT closes the tab on its own once the
+  shell exits. Localized to `src/activities/hard-terminate.ts`.
 - **#159 — detach/restart no longer leaves orphaned `claude.exe` on Windows.**
   Two coupled fixes make the session-lifecycle verbs reliable on Windows
   (and tighten them on macOS/Linux):
