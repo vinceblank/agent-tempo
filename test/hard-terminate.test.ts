@@ -247,9 +247,15 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
     // Kill any victim this test spawned that is still alive. Tests that spawn
     // via spawnTestVictim push onto `spawnedPids`; cleanup is best-effort so
     // a missing PID (already killed) does not fail the suite.
+    // On Windows, use taskkill /F which can terminate cmd.exe processes that
+    // process.kill(pid, 'SIGKILL') would fail on with EPERM.
     while (spawnedPids.length > 0) {
       const pid = spawnedPids.pop()!;
-      try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+      if (isWindows) {
+        try { execFileSync('taskkill', ['/F', '/PID', String(pid)], { stdio: 'ignore' }); } catch { /* already gone */ }
+      } else {
+        try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+      }
     }
   });
 
@@ -422,9 +428,32 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
     const cmdPid = cmdProc.pid!;
     spawnedPids.push(cmdPid);
 
-    // Give cmd.exe time to parse /k, execute the batch, and spawn the node child so
-    // both show up in the process table with the sentinel in their CommandLine.
-    await new Promise((r) => setTimeout(r, 1500));
+    // Poll until the node.exe child is visible in the process table — same 60x100ms
+    // pattern as spawnTestVictim. Replaces a fixed 1.5s sleep that could flake on CI.
+    const quotedSentinelPoll = new RegExp(`"-n"\\s+"${playerName.replace(/[.-]/g, (c) => `\\${c}`)}"`);
+    let nodeChildVisible = false;
+    for (let i = 0; i < 60 && !nodeChildVisible; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      try {
+        const out = execFileSync(
+          'powershell',
+          [
+            '-NoProfile',
+            '-Command',
+            `Get-CimInstance Win32_Process -Filter "Name='node.exe' AND ParentProcessId=${cmdPid}" | ForEach-Object { $_.CommandLine }`,
+          ],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+        );
+        if (quotedSentinelPoll.test(out)) {
+          nodeChildVisible = true;
+        }
+      } catch { /* retry */ }
+    }
+    if (!nodeChildVisible) {
+      throw new Error(
+        `parent-walk test: could not locate node.exe child of cmd.exe PID=${cmdPid} with sentinel for playerName=${playerName}`,
+      );
+    }
     expect(isAlive(cmdPid), 'parent cmd.exe should be alive after spawn').to.equal(true);
 
     // Fixture-invariant guards: both the parent cmd.exe and (if present) the node
@@ -484,6 +513,39 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
       // Safety net — clean up anything the parent-walk missed so CI doesn't leak procs.
       try { process.kill(cmdPid); } catch { /* already gone */ }
     }
+  });
+
+  it('kills a process whose playerName contains dots (regex-escape coverage)', async function () {
+    // Exercises the `replace(/[.-]/g, ...)` regex-escape path in findProcessesByCommandLine
+    // with a name containing dots — the hyphen path is already covered by every other test,
+    // but dots were untested and could break the WMI/pgrep pattern if not escaped.
+    const playerName = `tempo.player-1.test-${process.pid}-${Date.now()}`;
+    const victim = await spawnTestVictim({ binaryArg: 'node', playerName, tmpDir: tmpWorkDir });
+    spawnedPids.push(victim.pid);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(isAlive(victim.pid), 'victim should be alive after spawn').to.equal(true);
+
+    if (isWindows) {
+      const cmdline = readWindowsCommandLine(victim.pid);
+      expect(
+        cmdline,
+        `Windows fixture invariant: victim PID=${victim.pid} CommandLine should include quoted "-n" "<playerName>". Actual: ${cmdline}`,
+      ).to.match(new RegExp(`"-n"\\s+"${playerName.replace(/[.-]/g, (c) => `\\${c}`)}"`));
+    }
+
+    const result = await hardTerminateAttachment({
+      ensemble: 'test-ensemble',
+      playerName,
+      agent: 'copilot',
+      workDir: tmpWorkDir,
+    });
+
+    for (let i = 0; i < 30 && isAlive(victim.pid); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(isAlive(victim.pid), 'victim should be dead after hardTerminate').to.equal(false);
+    expect(result.killedPids, 'returned killedPids should include the victim').to.include(victim.pid);
+    expect(result.strategy).to.equal('search');
   });
 
   it('refuses to search when playerName fails the regex guard (injection defense)', async function () {
