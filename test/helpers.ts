@@ -210,6 +210,8 @@ export async function withCustomHardTerminate<T>(
     taskQueue: TASK_QUEUE,
     workflowBundle,
   });
+  // Register the host worker on the same task queue the workflow routes to
+  // (claude-tempo-test-host, matching hostname='test-host' in the test metadata).
   const hostWorker = await Worker.create({
     connection: testEnv.nativeConnection,
     taskQueue: HOST_TASK_QUEUE,
@@ -217,15 +219,19 @@ export async function withCustomHardTerminate<T>(
       hardTerminateAttachment: hardTerminateImpl,
     },
   });
-  return worker.runUntil(async () => {
-    const hostWorkerPromise = hostWorker.run();
-    try {
-      return await fn();
-    } finally {
-      hostWorker.shutdown();
-      await hostWorkerPromise.catch(() => { /* cleanup */ });
-    }
-  });
+  // Ensure the host worker is fully shut down before returning so subsequent
+  // tests that create workers on HOST_TASK_QUEUE don't hit "multiple workers
+  // with overlapping task types" (#150 cascade).
+  const hostWorkerPromise = hostWorker.run();
+  try {
+    return await worker.runUntil(fn);
+  } finally {
+    hostWorker.shutdown();
+    await hostWorkerPromise.catch(() => { /* cleanup */ });
+    // Give the native worker time to fully deregister from the Temporal server
+    // before the next test creates a new worker on the same queue.
+    await new Promise((r) => setTimeout(r, 200));
+  }
 }
 
 /**
