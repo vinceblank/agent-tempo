@@ -486,11 +486,10 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
           'InvalidMessageId',
         );
       }
-      // Canonical phase check — `phase === 'gone'` is set atomically by the
-      // `destroyUpdate` handler before `destroyRequested` flips, so this covers
-      // all terminal-state cases consistently. Replaces the pre-PR-C-commit-4
-      // `destroyed || destroyRequested` compound check (#119b).
-      if (phase === 'gone') {
+      // #164: `destroyUpdate` is now async (hardTerminate activity before state flip).
+      // During that await, `destroyRequested` is true but `phase` isn't yet `gone`.
+      // Check both to reject new work during the kill window.
+      if (phase === 'gone' || destroyRequested) {
         throw ApplicationFailure.nonRetryable(
           'Cannot start processing on destroyed session',
           'WorkflowGone',
@@ -563,29 +562,37 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       workflowLog.info(`destroy requested (reason: ${reason})`);
     }
     // #164: kill the OS process tree before flipping phase to `gone`. Mirrors the
-    // `forceDetachUpdate` hardTerminate path (same activity, same host routing) but
-    // BEST-EFFORT rather than strict: `destroy` is documented terminal (§2.5, "delivery
-    // is best-effort"), and wedging the workflow in a non-terminal state because the
-    // host worker is offline is strictly worse than a lingering claude.exe — a
-    // destroyed workflow that never completes breaks ensemble bookkeeping. On failure
-    // we log and continue to the state flip.
-    const killHost = input.metadata.hostname;
-    try {
-      const killResult: HardTerminateResult = await getHardTerminateProxy(killHost)({
-        ensemble: input.metadata.ensemble,
-        playerName: input.metadata.playerId,
-        agent: (input.metadata.agentType ?? 'claude') as AgentType,
-        workDir: input.metadata.workDir,
-      });
-      workflowLog.info(
-        `destroy hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
-        `killedPids=[${killResult.killedPids.join(',')}]`,
-      );
-    } catch (err) {
-      workflowLog.warn(
-        `destroy hard-terminate failed on ${killHost} (continuing, destroy is best-effort): ` +
-        `${err instanceof Error ? err.message : String(err)}`,
-      );
+    // `forceDetachUpdate` hardTerminate path but BEST-EFFORT: `destroy` is terminal by
+    // contract (§2.5, "delivery is best-effort"), and wedging the workflow because the
+    // host worker is offline is worse than a lingering claude.exe. On failure we log
+    // and continue to the state flip.
+    //
+    // Prefer the live attachment's hostname (where the process actually runs) over
+    // input.metadata.hostname (where the session was originally spawned). They differ
+    // after cross-host migration. If no attachment exists (already detached), fall back
+    // to metadata.hostname. Skip entirely if hostname is empty — routing to a malformed
+    // task queue ("claude-tempo-") would hang for 20s until activity timeout.
+    const killHost = currentAttachment?.hostname ?? input.metadata.hostname;
+    if (!killHost) {
+      workflowLog.warn('destroy: no hostname available, skipping hardTerminate');
+    } else {
+      try {
+        const killResult: HardTerminateResult = await getHardTerminateProxy(killHost)({
+          ensemble: input.metadata.ensemble,
+          playerName: input.metadata.playerId,
+          agent: (input.metadata.agentType ?? 'claude') as AgentType,
+          workDir: input.metadata.workDir,
+        });
+        workflowLog.info(
+          `destroy hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
+          `killedPids=[${killResult.killedPids.join(',')}]`,
+        );
+      } catch (err) {
+        workflowLog.warn(
+          `destroy hard-terminate failed on ${killHost} (continuing, destroy is best-effort): ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
     // Revoke attachment (if any) — record metadata for orphanSummary/audit.
     if (currentAttachment) {
@@ -621,7 +628,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
    * Pseudocode and behavior per design §9.2.
    */
   setHandler(claimAttachmentUpdate, ({ host, adapterId, adapterClass, leaseMs, expectedAttachmentId }) => {
-    if (phase === 'gone') {
+    if (phase === 'gone' || destroyRequested) {
       throw ApplicationFailure.nonRetryable(
         `Cannot attach to ${workflowInfo().workflowId}: workflow is terminated`,
         'WorkflowGone',
