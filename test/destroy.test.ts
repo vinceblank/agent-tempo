@@ -14,6 +14,7 @@ import {
   getClient,
   TASK_QUEUE,
 } from './helpers';
+import { claimAttachmentUpdate } from '../src/workflows/signals';
 
 describe('destroy verb — fixes #102 (graceful stop → resurrection loop)', function () {
   before(async function () {
@@ -169,6 +170,11 @@ describe('destroy verb — fixes #164 (orphaned claude.exe when attachment is li
           }),
         });
 
+        // Create a live attachment — the #164 bug only triggers when currentAttachment is non-null.
+        await handle.executeUpdate(claimAttachmentUpdate, {
+          args: [{ host: 'test-host', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
+        });
+
         await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'repro #164' }] });
 
         // Workflow still completes — destroy remains terminal.
@@ -208,6 +214,11 @@ describe('destroy verb — fixes #164 (orphaned claude.exe when attachment is li
           }),
         });
 
+        // Create a live attachment so hardTerminate is invoked.
+        await handle.executeUpdate(claimAttachmentUpdate, {
+          args: [{ host: 'test-host', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
+        });
+
         // The update MUST resolve (destroy is terminal even when hardTerminate fails).
         await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'kill fails' }] });
 
@@ -234,7 +245,12 @@ describe('destroy verb — fixes #164 (orphaned claude.exe when attachment is li
       async () => {
         const ensemble = `destroy-164-idem-${Date.now()}`;
         const handle = await startSession({
-          metadata: playerMetadata({ playerId: 'probe-gamma', ensemble }),
+          metadata: playerMetadata({ playerId: 'probe-gamma', ensemble, hostname: 'test-host' }),
+        });
+
+        // Create a live attachment so the first destroy triggers hardTerminate.
+        await handle.executeUpdate(claimAttachmentUpdate, {
+          args: [{ host: 'test-host', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
         });
 
         await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'first' }] });
