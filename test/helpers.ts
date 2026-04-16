@@ -73,6 +73,13 @@ export {
 
 let testEnv: TestWorkflowEnvironment;
 let workflowBundle: { code: string };
+/** Global host-queue worker that stubs hardTerminateAttachment for any workflow
+ *  teardown that fires the async destroyUpdate (#164). Without this, workflows
+ *  with live attachments that get destroyed during test cleanup hang waiting for
+ *  the activity on HOST_TASK_QUEUE, crashing the test server. Started by
+ *  setupTestEnv, stopped by teardownTestEnv. */
+let globalHostWorker: import('@temporalio/worker').Worker | null = null;
+let globalHostWorkerPromise: Promise<void> | null = null;
 
 export const TASK_QUEUE = 'test-claude-tempo';
 
@@ -124,6 +131,24 @@ export async function setupTestEnv(): Promise<void> {
   });
   const bundlePath = findWorkflowBundle();
   workflowBundle = { code: fs.readFileSync(bundlePath, 'utf-8') };
+
+  // Start a global host-queue worker that stubs hardTerminateAttachment.
+  // The #164 fix made destroyUpdate async — it fires hardTerminate on
+  // HOST_TASK_QUEUE when the workflow has a live attachment. Without a
+  // worker serving that queue, any workflow teardown that triggers destroy
+  // hangs until activity timeout, crashing the test server.
+  globalHostWorker = await Worker.create({
+    connection: testEnv.nativeConnection,
+    taskQueue: HOST_TASK_QUEUE,
+    activities: {
+      hardTerminateAttachment: async () => ({
+        killedPids: [],
+        strategy: 'none' as const,
+        notes: ['global test stub'],
+      }),
+    },
+  });
+  globalHostWorkerPromise = globalHostWorker.run().catch(() => { /* shutdown */ });
 }
 
 /**
@@ -131,6 +156,12 @@ export async function setupTestEnv(): Promise<void> {
  * after() hook.
  */
 export async function teardownTestEnv(): Promise<void> {
+  if (globalHostWorker) {
+    globalHostWorker.shutdown();
+    await globalHostWorkerPromise?.catch(() => {});
+    globalHostWorker = null;
+    globalHostWorkerPromise = null;
+  }
   await testEnv?.teardown();
 }
 
@@ -152,12 +183,8 @@ export async function skipTime(durationMs: number): Promise<void> {
  * Create and start a Worker that runs for the duration of `fn`.
  * The worker is shut down when `fn` resolves or rejects.
  *
- * Also spins up a tiny per-host worker on `claude-tempo-test-host` that stubs
- * `hardTerminateAttachment` — the #159 Gap 2 fix made `forceDetachUpdate` proxy
- * that activity on the reaped host's queue, so any phase-machine test that
- * exercises `forceDetachUpdate` or the `drainingDeadline` path needs the
- * activity to resolve somewhere. The stub reports a no-op kill which is the
- * correct answer for tests that don't spawn real processes.
+ * The host-queue worker for `hardTerminateAttachment` is provided globally
+ * by `setupTestEnv` — no per-test host worker is needed here.
  */
 export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
   const worker = await Worker.create({
@@ -165,72 +192,15 @@ export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
     taskQueue: TASK_QUEUE,
     workflowBundle,
   });
-  const hostWorker = await Worker.create({
-    connection: testEnv.nativeConnection,
-    taskQueue: HOST_TASK_QUEUE,
-    activities: {
-      hardTerminateAttachment: async () => ({
-        killedPids: [],
-        strategy: 'none' as const,
-        notes: ['test stub — no real process to kill'],
-      }),
-    },
-  });
-  return worker.runUntil(async () => {
-    const hostWorkerPromise = hostWorker.run();
-    try {
-      return await fn();
-    } finally {
-      hostWorker.shutdown();
-      await hostWorkerPromise.catch(() => { /* cleanup */ });
-    }
-  });
-}
-
-/**
- * Like `withWorker`, but lets the caller inject a custom `hardTerminateAttachment`
- * activity implementation on the per-host task queue. Used by #164 tests to
- * capture the activity inputs and assert best-effort behavior when it throws.
- */
-export async function withCustomHardTerminate<T>(
-  hardTerminateImpl: (input: {
-    ensemble: string;
-    playerName: string;
-    agent: string;
-    workDir: string;
-  }) => Promise<{
-    killedPids: number[];
-    strategy: 'search' | 'pidfile' | 'none';
-    notes: string[];
-  }>,
-  fn: () => Promise<T>,
-): Promise<T> {
-  const worker = await Worker.create({
-    connection: testEnv.nativeConnection,
-    taskQueue: TASK_QUEUE,
-    workflowBundle,
-  });
-  const hostWorker = await Worker.create({
-    connection: testEnv.nativeConnection,
-    taskQueue: HOST_TASK_QUEUE,
-    activities: {
-      hardTerminateAttachment: hardTerminateImpl,
-    },
-  });
-  return worker.runUntil(async () => {
-    const hostWorkerPromise = hostWorker.run();
-    try {
-      return await fn();
-    } finally {
-      hostWorker.shutdown();
-      await hostWorkerPromise.catch(() => { /* cleanup */ });
-    }
-  });
+  return worker.runUntil(fn);
 }
 
 /**
  * Like withWorker, but also registers the schedule-fire activities
  * so the scheduler workflow can cue target players.
+ *
+ * The host-queue worker for `hardTerminateAttachment` is provided globally
+ * by `setupTestEnv` — no per-test host worker is needed here.
  */
 export async function withWorkerAndActivities<T>(fn: () => Promise<T>): Promise<T> {
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
@@ -241,28 +211,7 @@ export async function withWorkerAndActivities<T>(fn: () => Promise<T>): Promise<
     workflowBundle,
     activities: scheduleActivities,
   });
-  // Per-host worker with a hardTerminateAttachment stub — required by the #159 Gap 2
-  // change that made `forceDetachUpdate` proxy that activity on the reaped host's queue.
-  const hostWorker = await Worker.create({
-    connection: testEnv.nativeConnection,
-    taskQueue: HOST_TASK_QUEUE,
-    activities: {
-      hardTerminateAttachment: async () => ({
-        killedPids: [],
-        strategy: 'none' as const,
-        notes: ['test stub'],
-      }),
-    },
-  });
-  return worker.runUntil(async () => {
-    const hostWorkerPromise = hostWorker.run();
-    try {
-      return await fn();
-    } finally {
-      hostWorker.shutdown();
-      await hostWorkerPromise.catch(() => { /* cleanup */ });
-    }
-  });
+  return worker.runUntil(fn);
 }
 
 /** Default metadata for a player session. Override fields as needed. */
