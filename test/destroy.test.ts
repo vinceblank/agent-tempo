@@ -133,19 +133,12 @@ describe('destroy verb — fixes #102 (graceful stop → resurrection loop)', fu
       await handle2.result();
     });
   });
-});
 
-describe('destroy verb — fixes #164 (orphaned claude.exe when attachment is live)', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  // #164: destroy with a live attachment must invoke hardTerminate before state flip.
+  // These tests share the test environment with the #102 block above to avoid
+  // double setupTestEnv() which causes ephemeral-server conflicts on CI (#150).
 
-  after(async function () {
-    await teardownTestEnv();
-  });
-
-  it('invokes hardTerminateAttachment on the host queue with the right args before flipping phase', async function () {
+  it('#164 — invokes hardTerminateAttachment on the host queue with the right args before flipping phase', async function () {
     this.timeout(15_000);
     const calls: Array<{
       ensemble: string;
