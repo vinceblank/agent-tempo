@@ -278,11 +278,15 @@ export function spawnInTerminal(
     if (detected === 'iterm2') {
       // Append `; exit` so the wrapping shell exits when claude does. `;` rather than
       // `&&` so exit runs regardless of claude's exit code (force-kill returns non-zero).
+      // JSON.stringify embeds the full shell command as a properly-escaped string literal
+      // so any `"` or `\` in paths/args doesn't break the AppleScript parser. Parity with
+      // the Ghostty path above.
+      const shellCmd = `cd ${shellQuote(workDir)} && ${claudeInvocation} ; exit`;
       const osaScript = `
         tell application "iTerm2"
           set newWindow to (create window with default profile)
           tell current session of newWindow
-            write text "cd ${shellQuote(workDir)} && ${claudeInvocation} ; exit"
+            write text ${JSON.stringify(shellCmd)}
           end tell
         end tell`;
       log('Using iTerm2 write-text path');
