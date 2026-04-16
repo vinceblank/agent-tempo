@@ -203,7 +203,7 @@ describe('destroy verb — fixes #164 (destroy with live attachment)', function 
       // Fire forceDetach and destroy concurrently.
       const results = await Promise.allSettled([
         handle.executeUpdate(forceDetachUpdate, {
-          args: [{ reason: 'race test', expectedAttachmentId: token.attachmentId }],
+          args: [{ reason: 'restart' as const, expectedAttachmentId: token.attachmentId, gracePeriodMs: 0 }],
         }),
         handle.executeUpdate(destroyUpdate, { args: [{ reason: 'race test' }] }),
       ]);
