@@ -567,31 +567,37 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     // host worker is offline is worse than a lingering claude.exe. On failure we log
     // and continue to the state flip.
     //
+    // Only kill if there's a live attachment — no point invoking the activity when
+    // the session is already detached or was never attached (the common case in tests
+    // and for sessions destroyed during `booting`). Skipping also avoids a 20s activity
+    // timeout when no host worker is running for the per-host task queue.
+    //
     // Prefer the live attachment's hostname (where the process actually runs) over
     // input.metadata.hostname (where the session was originally spawned). They differ
-    // after cross-host migration. If no attachment exists (already detached), fall back
-    // to metadata.hostname. Skip entirely if hostname is empty — routing to a malformed
-    // task queue ("claude-tempo-") would hang for 20s until activity timeout.
-    const killHost = currentAttachment?.hostname ?? input.metadata.hostname;
-    if (!killHost) {
-      workflowLog.warn('destroy: no hostname available, skipping hardTerminate');
-    } else {
-      try {
-        const killResult: HardTerminateResult = await getHardTerminateProxy(killHost)({
-          ensemble: input.metadata.ensemble,
-          playerName: input.metadata.playerId,
-          agent: (input.metadata.agentType ?? 'claude') as AgentType,
-          workDir: input.metadata.workDir,
-        });
-        workflowLog.info(
-          `destroy hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
-          `killedPids=[${killResult.killedPids.join(',')}]`,
-        );
-      } catch (err) {
-        workflowLog.warn(
-          `destroy hard-terminate failed on ${killHost} (continuing, destroy is best-effort): ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-        );
+    // after cross-host migration. Skip entirely if hostname is empty — routing to a
+    // malformed task queue ("claude-tempo-") would hang until activity timeout.
+    if (currentAttachment) {
+      const killHost = currentAttachment.hostname || input.metadata.hostname;
+      if (!killHost) {
+        workflowLog.warn('destroy: no hostname available, skipping hardTerminate');
+      } else {
+        try {
+          const killResult: HardTerminateResult = await getHardTerminateProxy(killHost)({
+            ensemble: input.metadata.ensemble,
+            playerName: input.metadata.playerId,
+            agent: (input.metadata.agentType ?? 'claude') as AgentType,
+            workDir: input.metadata.workDir,
+          });
+          workflowLog.info(
+            `destroy hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
+            `killedPids=[${killResult.killedPids.join(',')}]`,
+          );
+        } catch (err) {
+          workflowLog.warn(
+            `destroy hard-terminate failed on ${killHost} (continuing, destroy is best-effort): ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
     }
     // Revoke attachment (if any) — record metadata for orphanSummary/audit.
