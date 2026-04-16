@@ -161,6 +161,11 @@ export async function teardownTestEnv(): Promise<void> {
     await globalHostWorkerPromise?.catch(() => {});
     globalHostWorker = null;
     globalHostWorkerPromise = null;
+    // The Temporal native worker deregisters asynchronously after the JS
+    // promise resolves. Without a settle window, testEnv.teardown() tries
+    // to close the connection while the native worker still holds a ref,
+    // causing "Cannot close connection while Workers hold a reference".
+    await new Promise((r) => setTimeout(r, 500));
   }
   await testEnv?.teardown();
 }
