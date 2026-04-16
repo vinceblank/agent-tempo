@@ -255,11 +255,14 @@ export function spawnInTerminal(
     log(`Terminal detection: TERM_PROGRAM=${JSON.stringify(process.env.TERM_PROGRAM)}, detected=${detected}`);
 
     if (detected === 'ghostty') {
+      // Append `; exit` so the wrapping shell exits when claude does (clean or killed).
+      // Without it, claude exit returns control to the shell prompt and the tab lingers —
+      // parity with the Windows WT `closeOnExit: 'always'` + parent-walk fix from #166.
       const osaScript = `
         tell application "Ghostty"
           set cfg to new surface configuration
           set initial working directory of cfg to ${JSON.stringify(workDir)}
-          set initial input of cfg to ${JSON.stringify(claudeInvocation + '\n')}
+          set initial input of cfg to ${JSON.stringify(claudeInvocation + '; exit\n')}
           set win to new window with configuration cfg
         end tell`;
       log('Using Ghostty initial-input path');
@@ -273,11 +276,13 @@ export function spawnInTerminal(
     }
 
     if (detected === 'iterm2') {
+      // Append `; exit` so the wrapping shell exits when claude does. `;` rather than
+      // `&&` so exit runs regardless of claude's exit code (force-kill returns non-zero).
       const osaScript = `
         tell application "iTerm2"
           set newWindow to (create window with default profile)
           tell current session of newWindow
-            write text "cd ${shellQuote(workDir)} && ${claudeInvocation}"
+            write text "cd ${shellQuote(workDir)} && ${claudeInvocation} ; exit"
           end tell
         end tell`;
       log('Using iTerm2 write-text path');
@@ -313,7 +318,11 @@ export function spawnInTerminal(
       envExports,
       profileSource,
       `cd ${shellQuote(workDir)}`,
-      `${shellQuote(claudeBin)} ${claudeArgs.map(a => shellQuote(a)).join(' ')}`,
+      // `exec` so the shell is replaced by claude — when claude exits (clean or killed),
+      // the script process ends and Terminal.app closes the window per its settings.
+      // Without `exec`, bash waits for claude and then returns to prompt, leaving the
+      // window open. Parity with the WT `closeOnExit: 'always'` fix from #166.
+      `exec ${shellQuote(claudeBin)} ${claudeArgs.map(a => shellQuote(a)).join(' ')}`,
     ];
     writeFileSync(scriptPath, lines.join('\n') + '\n', { mode: 0o755 });
     log('Using Terminal.app .command path:', scriptPath);
