@@ -38,11 +38,12 @@ export function ensembleReadyDirective(name: string, playerCount: number): strin
   return [
     ensembleReadyBanner(name, playerCount),
     '',
-    'IMPORTANT: The ensemble is PAUSED. Do not take any action yet — the user has not described their task.',
+    'IMPORTANT: The ensemble is PAUSED and players are HELD. Do not take any action yet — the user has not described their task.',
     '',
     'When the user sends their first message, you must:',
-    '1. Call the `resume_ensemble` tool FIRST to unpause the scheduler and unlock player outboxes.',
-    '2. Then decompose the user\'s task using the lineup context above, and delegate to the appropriate players.',
+    '1. Call the `resume_ensemble` tool to unpause the scheduler and sessions.',
+    '2. Call the `release` tool (no args) to deliver any deferred task assignments to held players and unlock their outboxes.',
+    '3. Then decompose the user\'s task using the lineup context above, and delegate to the appropriate players.',
     '',
     'If the user has not spoken yet, wait silently.',
   ].join('\n');

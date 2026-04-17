@@ -30,6 +30,8 @@ interface ParsedArgs {
   /** Issue #172: `up --no-hold` / `conduct --no-hold` opts out of the new
    *  defer-conductor-instructions-until-first-user-message behavior. */
   noHold: boolean;
+  /** Issue #172: `resume --release` also signals releaseHeld to every session. */
+  release: boolean;
   ensemble?: string;
   agent?: AgentType;
   type?: string;
@@ -63,6 +65,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     replace: false,
     resume: false,
     noHold: false,
+    release: false,
     includeStale: false,
     fresh: false,
     force: false,
@@ -107,6 +110,9 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.resume = true;
     } else if (arg === '--no-hold') {
       result.noHold = true;
+    } else if (arg === '--release') {
+      // Issue #172: `claude-tempo resume --release` also releases held sessions.
+      result.release = true;
     } else if (arg === '--ensemble' && i + 1 < argv.length) {
       result.ensemble = argv[++i];
     } else if (arg === '--type' && i + 1 < argv.length) {
@@ -397,6 +403,7 @@ async function main() {
     case 'resume':
       await resume({
         ensemble: args.ensemble || ensemble,
+        release: args.release,
         ...overrides,
       });
       break;

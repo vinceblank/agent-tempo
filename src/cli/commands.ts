@@ -2768,6 +2768,9 @@ export async function release(opts: ReleaseOpts) {
 
 interface PauseResumeOpts extends CliOverrides {
   ensemble: string;
+  /** Issue #172: when true on `resume`, also fan out `releaseHeldSignal` to every
+   *  session so deferred task messages are delivered and outboxes unlocked in one shot. */
+  release?: boolean;
 }
 
 /** Pause an entire ensemble — sessions, scheduler, and maestro. */
@@ -2810,7 +2813,27 @@ export async function resume(opts: PauseResumeOpts) {
 
   const client = new Client({ connection, namespace: config.temporalNamespace });
   await setPausedState(client, opts.ensemble, false);
-  out.success(`Ensemble "${opts.ensemble}" resumed`);
+
+  // Issue #172: opt-in release — fan out `releaseHeldSignal` to every session.
+  // The workflow handler is idempotent on non-held sessions (no heldMessage,
+  // outboxLocked already false), so this is safe to blanket-signal.
+  let releasedCount = 0;
+  if (opts.release) {
+    const sanitized = opts.ensemble.replace(/["\\\n\r]/g, '');
+    const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${sanitized}"`;
+    for await (const wf of client.workflow.list({ query })) {
+      try {
+        const handle = client.workflow.getHandle(wf.workflowId);
+        await handle.signal(releaseHeldSignal);
+        releasedCount++;
+      } catch {
+        // Skip terminated / unreachable workflows
+      }
+    }
+    out.log(`  ${out.dim('released')} ${releasedCount} session${releasedCount !== 1 ? 's' : ''}`);
+  }
+
+  out.success(`Ensemble "${opts.ensemble}" resumed${opts.release ? ' (with release)' : ''}`);
   await connection.close();
 }
 
@@ -2877,7 +2900,7 @@ ${out.bold('Commands:')}
   ${out.cyan('restore')} [name]         Restore orphaned session(s) — interactive picker, or --all / --from-host / --dry-run
   ${out.cyan('release')} [ensemble]   Release all held players (unlock outbox, deliver messages)
   ${out.cyan('pause')}   [ensemble]   Pause an ensemble (sessions, scheduler, maestro)
-  ${out.cyan('resume')}  [ensemble]   Resume a paused ensemble
+  ${out.cyan('resume')}  [ensemble]   Resume a paused ensemble (add --release to also release held sessions)
   ${out.cyan('agent-types')} <sub>    Manage player type definitions (list/show/init)
   ${out.cyan('daemon')}    <sub>       Manage the worker daemon (start/stop/status/logs)
   ${out.cyan('upgrade')}  [version]    Upgrade claude-tempo to latest (or specific version)

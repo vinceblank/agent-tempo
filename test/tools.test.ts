@@ -32,6 +32,7 @@ import { registerDetachTool } from '../src/tools/detach';
 import { registerDestroyTool } from '../src/tools/destroy';
 import { registerMigrateTool } from '../src/tools/migrate';
 import { registerAttachmentInfoTool } from '../src/tools/attachment-info';
+import { registerResumeEnsembleTool } from '../src/tools/resume-ensemble';
 
 // ─────────────────────────────────────────────
 // Harness
@@ -1364,5 +1365,147 @@ describe('migrate tool (outbox-queued, QA B3)', function () {
     expect(result.isError).to.be.true;
     expect(result.content[0].text).to.include('host');
     expect(entries).to.have.length(0);
+  });
+});
+
+// ─────────────────────────────────────────────
+// resume_ensemble tool — `release` arg (Issue #172 final fix)
+// ─────────────────────────────────────────────
+
+/**
+ * Build a fake client that yields the given player IDs from `workflow.list()`
+ * and captures every signal sent to any handle. Used to verify the
+ * `resume_ensemble` tool fans out (or doesn't fan out) `releaseHeld`.
+ */
+function makeResumeClient(players: string[]): {
+  client: Client;
+  signals: Array<{ workflowId: string; name: string; payload: unknown }>;
+} {
+  const signals: Array<{ workflowId: string; name: string; payload: unknown }> = [];
+  const client = {
+    workflow: {
+      getHandle: (workflowId: string) => ({
+        signal: async (name: string, ...args: unknown[]) => {
+          signals.push({ workflowId, name, payload: args[0] });
+        },
+        // `scanEnsembleSessions` calls `getMetadata` + `getPart` on each
+        // listed workflow; return minimal valid shapes keyed off the
+        // workflowId so the scan doesn't swallow the session.
+        query: async (queryName: string) => {
+          const playerId = workflowId.replace(`claude-session-${testConfig.ensemble}-`, '');
+          if (queryName === 'getMetadata') {
+            return {
+              playerId,
+              ensemble: testConfig.ensemble,
+              hostname: 'test-host',
+              workDir: '/tmp',
+              isConductor: false,
+              agentType: 'claude',
+              status: 'active',
+            } satisfies SessionMetadata;
+          }
+          if (queryName === 'getPart') return 'no description';
+          throw new Error(`Unexpected query: ${queryName}`);
+        },
+      }),
+      list: async function* () {
+        for (const p of players) {
+          yield {
+            workflowId: `claude-session-${testConfig.ensemble}-${p}`,
+            searchAttributes: { ClaudeTempoPlayerId: [p] },
+          };
+        }
+      },
+    },
+  } as unknown as Client;
+  return { client, signals };
+}
+
+describe('resume_ensemble tool — release arg (Issue #172)', function () {
+  it('default (release omitted): unpause signals only, NO releaseHeld fan-out', async function () {
+    const { client, signals } = makeResumeClient(['alice', 'bob']);
+    const call = extractHandler((server) =>
+      registerResumeEnsembleTool(server, client, testConfig, getPlayerId),
+    );
+
+    const result = await call({});
+    expect(result.isError).to.not.equal(true);
+
+    // Should signal maestro (unpause), each session's setPaused(false), and scheduler unpause.
+    const maestroUnpause = signals.find((s) => s.name === 'maestroSetPaused');
+    expect(maestroUnpause, 'maestro should be unpaused').to.exist;
+    expect(maestroUnpause!.payload).to.equal(false);
+
+    const schedulerUnpause = signals.find((s) => s.name === 'setSchedulerPaused');
+    expect(schedulerUnpause, 'scheduler should be unpaused').to.exist;
+    expect(schedulerUnpause!.payload).to.equal(false);
+
+    const setPausedCalls = signals.filter((s) => s.name === 'setPaused');
+    expect(setPausedCalls).to.have.lengthOf(2); // one per session
+    for (const sp of setPausedCalls) expect(sp.payload).to.equal(false);
+
+    // Key assertion: NO releaseHeld should have fired in the default path.
+    const releaseHeldCalls = signals.filter((s) => s.name === 'releaseHeld');
+    expect(releaseHeldCalls, 'release must be opt-in — no releaseHeld without release: true').to.have.lengthOf(0);
+  });
+
+  it('release: false explicitly: identical to default — no releaseHeld', async function () {
+    const { client, signals } = makeResumeClient(['alice']);
+    const call = extractHandler((server) =>
+      registerResumeEnsembleTool(server, client, testConfig, getPlayerId),
+    );
+
+    await call({ release: false });
+    const releaseHeldCalls = signals.filter((s) => s.name === 'releaseHeld');
+    expect(releaseHeldCalls).to.have.lengthOf(0);
+  });
+
+  it('release: true: fans out releaseHeld to every active session', async function () {
+    const { client, signals } = makeResumeClient(['alice', 'bob', 'carol']);
+    const call = extractHandler((server) =>
+      registerResumeEnsembleTool(server, client, testConfig, getPlayerId),
+    );
+
+    const result = await call({ release: true });
+    expect(result.isError).to.not.equal(true);
+
+    // All three should receive both setPaused(false) AND releaseHeld.
+    const setPausedCalls = signals.filter((s) => s.name === 'setPaused');
+    expect(setPausedCalls).to.have.lengthOf(3);
+
+    const releaseHeldCalls = signals.filter((s) => s.name === 'releaseHeld');
+    expect(releaseHeldCalls).to.have.lengthOf(3);
+
+    // Each of alice/bob/carol should have been targeted exactly once for release.
+    const targeted = new Set(
+      releaseHeldCalls.map((s) =>
+        s.workflowId.replace(`claude-session-${testConfig.ensemble}-`, ''),
+      ),
+    );
+    expect(targeted).to.deep.equal(new Set(['alice', 'bob', 'carol']));
+
+    // The ordering per-session should be setPaused THEN releaseHeld — the
+    // handler must not leave sessions in a weird in-between state. We verify
+    // the first setPaused call appears before the first releaseHeld call.
+    const firstSetPausedIdx = signals.findIndex((s) => s.name === 'setPaused');
+    const firstReleaseIdx = signals.findIndex((s) => s.name === 'releaseHeld');
+    expect(firstSetPausedIdx).to.be.lessThan(firstReleaseIdx);
+
+    // Success message should mention release.
+    expect(result.content[0].text.toLowerCase()).to.include('release');
+  });
+
+  it('release: true with no active sessions: still unpauses maestro + scheduler, no fan-out', async function () {
+    const { client, signals } = makeResumeClient([]);
+    const call = extractHandler((server) =>
+      registerResumeEnsembleTool(server, client, testConfig, getPlayerId),
+    );
+
+    const result = await call({ release: true });
+    expect(result.isError).to.not.equal(true);
+
+    expect(signals.some((s) => s.name === 'maestroSetPaused')).to.be.true;
+    expect(signals.some((s) => s.name === 'setSchedulerPaused')).to.be.true;
+    expect(signals.filter((s) => s.name === 'releaseHeld')).to.have.lengthOf(0);
   });
 });

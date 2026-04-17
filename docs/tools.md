@@ -35,7 +35,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `cancel_stage` | Cancel an active stage by name. Conductor only. |
 | `release` | Release held player sessions — unlocks their outboxes and delivers deferred task messages. Omit `player` to release all held sessions. |
 | `pause_ensemble` | Pause all sessions in the ensemble: locks outbox dispatch and pauses the scheduler. `stop` commands still go through. |
-| `resume_ensemble` | Resume a paused ensemble — unlocks outbox dispatch and resumes the scheduler. Buffered outbox entries are dispatched. |
+| `resume_ensemble` | Resume a paused ensemble — unlocks outbox dispatch and resumes the scheduler. Buffered outbox entries are dispatched. Pass `release: true` to also release any held sessions (deliver deferred task messages and unlock their outboxes) in the same call — idempotent on non-held sessions. |
 
 ## v0.25 Changes
 
