@@ -6,6 +6,28 @@
  */
 
 /**
+ * CLI flag injected into every Claude Code spawn to carry the ensemble name as a
+ * sentinel in the process's CommandLine. `src/activities/hard-terminate.ts`
+ * matches against this flag to scope `destroy --all` kills to a single ensemble
+ * (issue #180): two ensembles sharing a lineup template (identical player names)
+ * must not clobber each other's processes.
+ *
+ * The claude CLI silently accepts this flag even when remote control is inactive,
+ * and the value remains visible in Win32_Process.CommandLine / /proc/<pid>/cmdline
+ * for the kill regex to match.
+ */
+export const ENSEMBLE_SENTINEL_FLAG = '--remote-control-session-name-prefix';
+
+/**
+ * Escape the two regex metacharacters that can appear in validated player/ensemble
+ * names (which are constrained to `[A-Za-z0-9._-]+`). Safe to interpolate the
+ * result into a regex source string.
+ */
+export function escapeNameForRegex(s: string): string {
+  return s.replace(/[.-]/g, (c) => `\\${c}`);
+}
+
+/**
  * Canonical "ensemble ready" banner shown after `up` / `conduct` completes
  * ensemble startup but before the user has typed their first message.
  *

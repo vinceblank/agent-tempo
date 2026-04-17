@@ -28,11 +28,18 @@ import { execFileSync, spawnSync } from 'child_process';
 import { existsSync, readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import type { AgentType } from '../types';
+import { ENSEMBLE_SENTINEL_FLAG, escapeNameForRegex } from '../constants';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:hard-terminate]', ...args);
 
 export interface HardTerminateInput {
-  /** Ensemble name — log context only. */
+  /**
+   * Ensemble name. Load-bearing: matched against the `ENSEMBLE_SENTINEL_FLAG
+   * <ensemble>` pair in each candidate's CommandLine so two ensembles sharing a
+   * lineup template (identical player names) don't kill each other's processes
+   * on `destroy --all` (issue #180). The sentinel is injected by
+   * `src/activities/outbox.ts` on every Claude Code spawn. See src/constants.ts.
+   */
   ensemble: string;
   /** Player name the session was spawned as. Matched against `claude.exe -n <name>` in the search path. */
   playerName: string;
@@ -102,9 +109,9 @@ export async function hardTerminateAttachment(input: HardTerminateInput): Promis
   const binaryName = agent === 'copilot'
     ? (process.platform === 'win32' ? 'node.exe' : 'node')
     : (process.platform === 'win32' ? 'claude.exe' : 'claude');
-  const pids = findProcessesByCommandLine(binaryName, playerName);
+  const pids = findProcessesByCommandLine(binaryName, playerName, ensemble);
   if (pids.length === 0) {
-    notes.push(`No ${binaryName} processes found matching playerName="${playerName}" — nothing to kill.`);
+    notes.push(`No ${binaryName} processes found matching playerName="${playerName}" ensemble="${ensemble}" — nothing to kill.`);
     log(`hardTerminate done (none) — nothing to kill`);
     return { killedPids, strategy: 'none', notes };
   }
@@ -115,7 +122,7 @@ export async function hardTerminateAttachment(input: HardTerminateInput): Promis
       notes.push(`kill(${pid}) failed: ${errMsg(err)}`);
     }
   }
-  notes.push(`Killed ${killedPids.length} ${binaryName} process(es) matching "${playerName}": [${killedPids.join(', ')}]`);
+  notes.push(`Killed ${killedPids.length} ${binaryName} process(es) matching "${playerName}" in ensemble "${ensemble}": [${killedPids.join(', ')}]`);
   log(`hardTerminate done (search) — killedPids=[${killedPids.join(',')}]`);
   return { killedPids, strategy: 'search', notes };
 }
@@ -216,16 +223,23 @@ async function killProcessTree(pid: number): Promise<boolean> {
 
 /**
  * Search the live process table for entries whose image matches `binaryName` and whose command
- * line contains `-n <playerName>`. Returns the set of matching PIDs, or `[]` when nothing
- * matches (including when the native lookup tool is missing).
+ * line contains BOTH `-n <playerName>` AND `--remote-control-session-name-prefix <ensemble>`.
+ * Returns the set of matching PIDs, or `[]` when nothing matches (including when the native
+ * lookup tool is missing).
  *
  * The command-line match mirrors the operator workaround documented in #159 — every spawn
- * we care about passes `-n <playerName>` (see `src/activities/outbox.ts` spawnArgs).
+ * we care about passes `-n <playerName>` (see `src/activities/outbox.ts` spawnArgs). The
+ * ensemble-prefix sentinel was added in #180 so two ensembles sharing a lineup template
+ * (identical player names) don't clobber each other on `destroy --all`.
  */
-function findProcessesByCommandLine(binaryName: string, playerName: string): number[] {
+function findProcessesByCommandLine(binaryName: string, playerName: string, ensemble: string): number[] {
   // Defensive: bail out on absurd inputs so we never inject into the PowerShell/pgrep expression.
   if (!playerName || !/^[A-Za-z0-9._\-]+$/.test(playerName)) {
     log(`findProcessesByCommandLine: refusing lookup for playerName="${playerName}" (failed regex guard)`);
+    return [];
+  }
+  if (!ensemble || !/^[A-Za-z0-9._\-]+$/.test(ensemble)) {
+    log(`findProcessesByCommandLine: refusing lookup for ensemble="${ensemble}" (failed regex guard)`);
     return [];
   }
 
@@ -262,7 +276,8 @@ function findProcessesByCommandLine(binaryName: string, playerName: string): num
     // grandparents are WT.exe / conhost.exe and must not be touched. The sentinel check
     // reuses the same regex pattern used for the primary match — only cmd.exe shells
     // that we spawned via the #159 pipeline can match.
-    const escapedName = playerName.replace(/[.-]/g, (c) => `\\${c}`);
+    const escapedName = escapeNameForRegex(playerName);
+    const escapedEnsemble = escapeNameForRegex(ensemble);
     try {
       // Emit PARENT PIDs before child PIDs. taskkill /T /F cascades to descendants,
       // so killing cmd.exe first also kills its claude.exe child in the same call —
@@ -275,16 +290,24 @@ function findProcessesByCommandLine(binaryName: string, playerName: string): num
       // class `[\s"'']` therefore denotes the set { whitespace, `"`, `'` } in the
       // compiled regex. Double-quote needs no escaping inside a PS single-quoted
       // literal.
+      //
+      // Two patterns are required to match (both AND-ed in the Where clause) so we
+      // never kill a process from a sibling ensemble that happens to share the same
+      // player name (#180). The ensemble sentinel is
+      // `--remote-control-session-name-prefix <ensemble>`, injected by outbox.ts.
+      // The parent-walk check applies the same pair so parent cmd.exe wrappers that
+      // don't carry the ensemble sentinel are left alone.
       const psScript = [
         `$procs = Get-CimInstance Win32_Process -Filter "Name='${binaryName}'";`,
         `$pattern = '-n[\\s"'']+${escapedName}([\\s"'']|$)';`,
-        `$matched = $procs | Where-Object { $_.CommandLine -match $pattern };`,
+        `$ensemblePattern = '${ENSEMBLE_SENTINEL_FLAG}[\\s"'']+${escapedEnsemble}([\\s"'']|$)';`,
+        `$matched = $procs | Where-Object { $_.CommandLine -match $pattern -and $_.CommandLine -match $ensemblePattern };`,
         `$result = @();`,
         `foreach ($p in @($matched)) {`,
         `  $ppid = $p.ParentProcessId;`,
         `  if ($ppid) {`,
         `    $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$ppid" -ErrorAction SilentlyContinue;`,
-        `    if ($parent -and $parent.Name -ieq 'cmd.exe' -and $parent.CommandLine -match $pattern) {`,
+        `    if ($parent -and $parent.Name -ieq 'cmd.exe' -and $parent.CommandLine -match $pattern -and $parent.CommandLine -match $ensemblePattern) {`,
         `      $result += [int]$parent.ProcessId;`,
         `    }`,
         `  }`,
@@ -313,21 +336,27 @@ function findProcessesByCommandLine(binaryName: string, playerName: string): num
     // this widening, the quoted production form (`"-n" "<name>"`) slips past the
     // stricter `%-n <name>%` LIKE pattern entirely, which is the root cause this
     // fix addresses.
-    const tolerantPattern = new RegExp(`-n[\\s"']+${escapedName}(?:[\\s"']|$)`);
+    //
+    // Both patterns (player name AND ensemble sentinel) must match for the block to
+    // survive the filter — mirrors the PowerShell path's AND guard for #180.
+    const tolerantPatterns = [
+      new RegExp(`-n[\\s"']+${escapedName}(?:[\\s"']|$)`),
+      new RegExp(`${ENSEMBLE_SENTINEL_FLAG}[\\s"']+${escapedEnsemble}(?:[\\s"']|$)`),
+    ];
     try {
       const out = execFileSync(
         'wmic',
         [
           'process',
           'where',
-          `Name='${binaryName}' and CommandLine like '%-n%${playerName}%'`,
+          `Name='${binaryName}' and CommandLine like '%-n%${playerName}%' and CommandLine like '%${ENSEMBLE_SENTINEL_FLAG}%${ensemble}%'`,
           'get',
           'CommandLine,ProcessId,ParentProcessId',
           '/format:value',
         ],
         { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true },
       );
-      const { pids: childPids, ppids } = parseWmicPidPpidFiltered(out, tolerantPattern);
+      const { pids: childPids, ppids } = parseWmicPidPpidFiltered(out, tolerantPatterns);
       const parentPids: number[] = [];
       for (const ppid of ppids) {
         try {
@@ -336,14 +365,14 @@ function findProcessesByCommandLine(binaryName: string, playerName: string): num
             [
               'process',
               'where',
-              `ProcessId=${ppid} and Name='cmd.exe' and CommandLine like '%-n%${playerName}%'`,
+              `ProcessId=${ppid} and Name='cmd.exe' and CommandLine like '%-n%${playerName}%' and CommandLine like '%${ENSEMBLE_SENTINEL_FLAG}%${ensemble}%'`,
               'get',
               'CommandLine,ProcessId,ParentProcessId',
               '/format:value',
             ],
             { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
           );
-          const { pids: matched } = parseWmicPidPpidFiltered(parentOut, tolerantPattern);
+          const { pids: matched } = parseWmicPidPpidFiltered(parentOut, tolerantPatterns);
           parentPids.push(...matched);
         } catch {
           /* no matching parent — leave it */
@@ -360,9 +389,17 @@ function findProcessesByCommandLine(binaryName: string, playerName: string): num
   // Unix: pgrep -f returns PIDs whose full cmdline matches the pattern.
   // pgrep uses POSIX ERE — `\s` is NOT a metacharacter (it matches literal 's').
   // Use `[[:space:]"']` for the whitespace/quote class instead.
+  //
+  // The combined pattern requires BOTH `-n <playerName>` AND
+  // `--remote-control-session-name-prefix <ensemble>` to be present, matching the
+  // Windows AND guard for #180. argv order is deterministic because spawnArgs in
+  // src/activities/outbox.ts places the ensemble sentinel before the name args.
   try {
-    const escapedNameU = playerName.replace(/[.-]/g, (c) => `\\${c}`);
-    const pattern = `${binaryName}.*-n[[:space:]"']+${escapedNameU}([[:space:]"']|$)`;
+    const escapedNameU = escapeNameForRegex(playerName);
+    const escapedEnsembleU = escapeNameForRegex(ensemble);
+    const pattern =
+      `${binaryName}.*${ENSEMBLE_SENTINEL_FLAG}[[:space:]"']+${escapedEnsembleU}([[:space:]"']|$)` +
+      `.*-n[[:space:]"']+${escapedNameU}([[:space:]"']|$)`;
     const out = execFileSync('pgrep', ['-f', pattern], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -387,20 +424,25 @@ function parsePids(raw: string): number[] {
 
 /**
  * Parse wmic `/format:value` output that requested `CommandLine`, `ProcessId`, and
- * `ParentProcessId`, and retain only blocks whose CommandLine matches `cmdPattern`.
+ * `ParentProcessId`, and retain only blocks whose CommandLine matches EVERY pattern
+ * in `cmdPatterns`.
  *
  * The caller widens the LIKE filter to `%-n%<name>%` so the quoted production form
  * `"-n" "<name>"` passes the SQL-style match. Because that filter overmatches
  * (it would also accept e.g. `-name foo<name>bar`), we post-filter per-block here
  * using the same tolerate-quotes regex used in the PowerShell path. Blocks whose
- * CommandLine fails the regex are discarded — their PID/PPID never enter the kill
+ * CommandLine fails any pattern are discarded — their PID/PPID never enter the kill
  * list. Output blocks look like:
  *     CommandLine=<cmdline>\r\nParentProcessId=<n>\r\nProcessId=<m>\r\n\r\n
  * `wmic` key ordering is alphabetical so CommandLine always precedes the IDs.
+ *
+ * Multi-pattern matching supports the #180 AND guard: callers pass [`-n <name>`,
+ * `--remote-control-session-name-prefix <ensemble>`] and both must match before
+ * the block's PID is eligible to kill.
  */
 function parseWmicPidPpidFiltered(
   raw: string,
-  cmdPattern: RegExp,
+  cmdPatterns: RegExp[],
 ): { pids: number[]; ppids: number[] } {
   const pids = new Set<number>();
   const ppids = new Set<number>();
@@ -412,7 +454,7 @@ function parseWmicPidPpidFiltered(
     const ppidMatch = block.match(/^ParentProcessId=(\d+)$/m);
     if (!cmdLineMatch || !pidMatch) continue;
     const cmdLine = cmdLineMatch[1];
-    if (!cmdPattern.test(cmdLine)) continue;
+    if (!cmdPatterns.every((p) => p.test(cmdLine))) continue;
     const pid = parseInt(pidMatch[1], 10);
     if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) pids.add(pid);
     if (ppidMatch) {
