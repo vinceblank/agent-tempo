@@ -27,15 +27,18 @@ src/
 │   ├── output.ts      # Shared CLI output formatting helpers
 │   └── preflight.ts   # Environment preflight checks
 ├── adapters/
+│   ├── README.md      # Adapter contract documentation
 │   ├── index.ts       # Adapter registry bootstrap + barrel exports
 │   ├── base.ts        # BaseAttachment + SdkAttachment base classes (lifecycle skeleton)
 │   ├── claude-code/   # InteractiveAttachment — Claude Code CLI adapter
-│   └── copilot/       # CopilotSdkAttachment — Copilot bridge adapter
+│   ├── copilot/       # CopilotSdkAttachment — Copilot bridge adapter
+│   └── sdk/           # SDK-style adapter base (used by Copilot bridge)
 ├── client/
 │   ├── interface.ts   # TempoClient TypeScript interface and related types
 │   └── index.ts       # TempoClient factory implementation and barrel re-exports
 ├── worker.ts          # Temporal worker setup (used by daemon only)
 ├── connection.ts      # Temporal connection factory (shared by server + CLI)
+├── constants.ts       # Shared string constants (ensemble ready banner/directive, etc.)
 ├── spawn.ts           # Cross-platform process spawning helpers
 ├── workflows/
 │   ├── session.ts     # claude-session workflow
@@ -44,9 +47,10 @@ src/
 │   ├── maestro-signals.ts / scheduler-signals.ts / signals.ts   # Signal/query/update type defs
 │   └── index.ts       # Workflow re-exports for worker bundle
 ├── activities/
-│   ├── outbox.ts      # Outbox delivery activities (cue, report, recruit, release, spawn)
-│   ├── maestro.ts     # Maestro activities
-│   ├── resolve.ts     # Session resolver shared by outbox + schedule-fire activities
+│   ├── outbox.ts         # Outbox delivery activities (cue, report, recruit, release, spawn)
+│   ├── maestro.ts        # Maestro activities
+│   ├── hard-terminate.ts # Per-host process kill activity (used by destroy when attached)
+│   ├── resolve.ts        # Session resolver shared by outbox + schedule-fire activities
 │   └── schedule-fire.ts
 ├── reconcile/
 │   └── orphans.ts     # Shared orphan-query helper (daemon reconcile-on-boot + CLI restore)
@@ -107,6 +111,7 @@ daemon worker notes, `npx ts-node` dev runner).
 - **Wire protocol**: All signal/query/update names are documented in [`docs/WIRE-PROTOCOL.md`](docs/WIRE-PROTOCOL.md) and are stable — renaming or removing any is a breaking change. **Process**: update `docs/WIRE-PROTOCOL.md` in the same commit as any new signal, query, or update.
 - **Daemon**: Standalone background process (`src/daemon.ts`) that runs all Temporal workers. Auto-started by any `claude-tempo` command. PID at `~/.claude-tempo/daemon.pid`; logs at `~/.claude-tempo/daemon.log`.
 - **Player types**: Reusable agent definitions in Claude Code's subagent format (`.md` files with YAML frontmatter). Three-tier lookup: project `.claude/agents/` → user `~/.claude/agents/` → shipped `examples/agents/`. Discover via `agent_types` tool or `claude-tempo agent-types` CLI. Shipped types: tempo-conductor, tempo-composer, tempo-soloist, tempo-tuner, tempo-critic, tempo-roadie, tempo-improv, tempo-liner.
+- **Lineup examples**: Four pre-built ensemble YAML files in `examples/ensembles/` — `tempo-big-band`, `tempo-dev-team`, `tempo-review-squad`, `tempo-jam-session`. Load with `claude-tempo up --lineup <name>` or the `load_lineup` tool.
 
 See [docs/concepts.md](docs/concepts.md) for the full glossary (Adapter, Attachment phases, Restart, Detach/Destroy, Migrate, Broadcast, Recall, Schedule, Lineup, Quality Gate, Worktree, Stage, Hold/Release, Pause/Resume, Maestro, TempoClient, and more).
 

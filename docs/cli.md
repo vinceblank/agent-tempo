@@ -9,7 +9,7 @@ claude-tempo <command> [options]
 | Command | Description |
 |---------|-------------|
 | `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor. Use `--lineup` to load a lineup. |
-| `down` | Full teardown — stop all sessions, daemon, and Temporal. Use `--keep-mcp` to preserve MCP config, `--keep-daemon` to leave the daemon running, `-y`/`--yes` to skip confirmation. |
+| `down [ensemble]` | Full teardown — stop all sessions, daemon, and Temporal. Use `--all` to stop all ensembles and Temporal, `--keep-mcp` to preserve MCP config, `--keep-daemon` to leave the daemon running, `-y`/`--yes` to skip confirmation. |
 | `server` | Start the Temporal dev server and register search attributes |
 | `conduct [ensemble]` | Start a conductor session (one per ensemble). Use `--resume` or `--replace` if one exists. Use `--lineup` to load a lineup with hold-on-startup semantics; `--no-hold` for immediate start. |
 | `start [ensemble]` | Start a player session |
@@ -23,6 +23,7 @@ claude-tempo <command> [options]
 | `detach <name>` | Gracefully detach the adapter for a session — triggers draining and clean handoff. Use when migrating a session to another host. |
 | `destroy <name>` | Terminate a session's workflow — ordered shutdown via outbox drain. Use for permanent removal. |
 | `migrate <name>` | Move a session to a different host — sugar for `setPreferredHost` + `restart` on the target machine. Use `--to <hostname>`. |
+| `attachment-info <name>` | Inspect the attachment phase, current holder, lease expiry, and in-flight message count for a session. |
 | `restore [name]` | **v0.25.** Restore orphaned (detached) sessions. Interactive picker by default; `--all` restores every orphan, `--from-host <hostname>` filters by preferred host, `--dry-run` lists without restoring. |
 | `release [ensemble]` | Release all held players — unlocks outboxes and delivers deferred task messages. Use `-n <name>` to release one player. |
 | `pause [ensemble]` | Pause the ensemble — locks all session outbox dispatch and pauses the scheduler. |
@@ -142,7 +143,8 @@ If the `claude` CLI is not available, falls back to creating `.mcp.json` in the 
 Full teardown — stops all sessions, the daemon, and Temporal, then removes MCP config:
 
 ```bash
-claude-tempo down                  # full teardown
+claude-tempo down                  # full teardown (current ensemble)
+claude-tempo down --all            # stop all ensembles, daemon, and Temporal
 claude-tempo down --keep-mcp       # preserve MCP config
 claude-tempo down --keep-daemon    # stop sessions and Temporal, but leave daemon running
 claude-tempo down -y               # skip confirmation prompt

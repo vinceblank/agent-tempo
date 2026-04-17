@@ -11,7 +11,6 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `listen` | Manually check for pending messages. |
 | `recruit` | Spawn a new Claude Code session in a directory. Can recruit a conductor with `conductor: true`. |
 | `report` | Send updates to the conductor. No-op if no conductor exists. |
-| `stop` | Hint shim — advises callers to use `destroy` or `detach` instead. Scheduled for removal in an upcoming release. |
 | `schedule` | Create a one-shot or recurring schedule to cue a player. |
 | `unschedule` | Cancel a named schedule. |
 | `schedules` | List all active schedules. |
@@ -22,7 +21,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `broadcast` | Send a message to all active players. Optional `type` filter limits to a specific player type. |
 | `restart` | Restart a player session — detaches the current adapter and re-spawns a fresh process. Works from any non-`gone` phase. Optional `host` param routes restart to a remote machine. |
 | `detach` | Gracefully detach a player's adapter — triggers draining and clean handoff. Use before a planned `migrate` or host maintenance. |
-| `destroy` | Terminate a session via ordered shutdown (outbox drain). Prefer over `stop` for permanent removal. |
+| `destroy` | Terminate a session via ordered shutdown (outbox drain). Use for permanent removal. |
 | `migrate` | Move a session to a different host — sets preferred host then triggers `restart` on the target machine's task queue. Requires `to` (target hostname). |
 | `attachment_info` | Fetch the current attachment phase, adapter ID, lease expiry, and in-flight message count for a player. Accepts `player` name. |
 | `recall` | Read your own message history. Shows received messages by default; pass `includeSent: true` for the full timeline. |
@@ -34,7 +33,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `stages` | List stages and their status. Conductor only. |
 | `cancel_stage` | Cancel an active stage by name. Conductor only. |
 | `release` | Release held player sessions — unlocks their outboxes and delivers deferred task messages. Omit `player` to release all held sessions. |
-| `pause_ensemble` | Pause all sessions in the ensemble: locks outbox dispatch and pauses the scheduler. `stop` commands still go through. |
+| `pause_ensemble` | Pause all sessions in the ensemble: locks outbox dispatch and pauses the scheduler. `destroy` commands still go through. |
 | `resume_ensemble` | Resume a paused ensemble — unlocks outbox dispatch and resumes the scheduler. Buffered outbox entries are dispatched. Pass `release: true` to also release any held sessions (deliver deferred task messages and unlock their outboxes) in the same call — idempotent on non-held sessions. |
 
 ## v0.25 Changes
@@ -42,7 +41,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 > **Breaking change in v0.25.0-beta.1**: The wire protocol between sessions and workers changed. If you are upgrading from v0.24.x, run `claude-tempo down` and `claude-tempo up` to reinitialize. Sessions from different versions cannot interoperate.
 
 - **`encore` removed** — replaced by `restart`. The `restart` tool works from any non-`gone` attachment phase and is not limited to stale sessions.
-- **`stop` deprecated** — the tool is now a hint shim and will be removed in an upcoming release. Use `destroy` (ordered shutdown) or `detach` (graceful adapter reap) instead.
+- **`stop` removed** — use `destroy` (ordered shutdown) or `detach` (graceful adapter reap) instead.
 - **New lifecycle verbs**: `restart`, `detach`, `destroy`, `migrate`, and `attachment_info` expose the v0.25 attachment state machine directly.
 
 ## Related
