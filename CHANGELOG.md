@@ -14,44 +14,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   immediately delivered `lineup.conductor.instructions` to the conductor,
   which then auto-executed the lineup's default Phase-1 workflow before the
   user had said anything. Now the conductor stays quiet on startup and
-  decomposes from user intent instead. Mechanics:
+  decomposes from user intent instead. User-facing behavior is unchanged
+  from the previous iteration; the implementation is simpler.
+  - **Simplified design** (v0.26 refactor): workflow-level
+    `pendingStartupContext` state and the `receiveMessage` interceptor were
+    **removed**. Instead, the conductor's lineup instructions plus a
+    combined banner + "wait for user, call `resume_ensemble` first"
+    directive are baked directly into `SessionInput.messages[]` at workflow
+    creation. The directive text itself drives the hold — the LLM reads
+    "wait silently until the user speaks, then call `resume_ensemble`
+    FIRST" and honors it. No workflow state, no signal filter.
   - `load_lineup` tool gains an `initialStartup: boolean` param. When true,
-    conductor instructions are stored via a new `setPendingStartupContext`
-    workflow update instead of being signalled as a `receiveMessage`, players
-    are recruited in warm hold, a canonical "ensemble ready" banner is
-    signalled to the conductor's tab, and then the entire ensemble is
-    paused via the existing `pause_ensemble` mechanism (scheduler +
-    per-session outbox + maestro) so nothing fires upstream while we wait.
-  - New conductor workflow state field `pendingStartupContext` carries the
-    deferred instructions across `continueAsNew`. The `receiveMessage` signal
-    handler intercepts the FIRST inbound message and delivers one combined
-    prompt: `[lineup context] + [resume-ensemble directive] + [user text]`.
-    The directive instructs Claude Code to call `resume_ensemble` BEFORE any
-    other action, which unpauses the scheduler and unlocks all player
-    outboxes. A `patched('v0.26-pending-startup-context')` marker guarantees
-    replay safety for pre-v0.26 workflows. No per-sender filter is needed
-    because `pause_ensemble` halts system/scheduler/maestro traffic upstream.
-  - CLI: `up --lineup` defaults to the new behavior; `--no-hold` opts out
-    for scripts that want legacy immediate-start. New `conduct --lineup
-    <name>` flag applies the same semantics when starting just a conductor.
-  - Shared `ensembleReadyBanner(name, playerCount)` constant is rendered
-    verbatim on CLI stdout, in the conductor's chat tab, and in the TUI so
-    the user sees the same wording on every entry point.
+    it signals the lineup instructions (`from: 'lineup'`) and the banner +
+    directive (`from: 'system'`) immediately and then pauses the entire
+    ensemble via `pause_ensemble` (scheduler + per-session outbox +
+    maestro). When false, it keeps legacy immediate-signal behavior with
+    no banner and no pause.
+  - CLI: `up --lineup` defaults to the new behavior and seeds the
+    conductor workflow's `SessionInput.messages` with the lineup
+    instructions + banner+directive at pre-creation time; `--no-hold` opts
+    out for scripts that want legacy immediate-start. New
+    `conduct --lineup <name>` flag applies the same semantics when
+    starting just a conductor.
+  - Shared `ensembleReadyBanner(name, playerCount)` is rendered verbatim
+    on CLI stdout. The combined banner + directive message body used by
+    the CLI and `load_lineup` tool is centralized in
+    `ensembleReadyDirective(name, playerCount)` in `src/constants.ts`.
+  - **Removed from the previous iteration** (none of these are reachable
+    without upstream code paths that no longer exist):
+    - `setPendingStartupContext` workflow update + `pendingStartupContext`
+      query — removed from `docs/WIRE-PROTOCOL.md`.
+    - `SessionInput.pendingStartupContext` and
+      `SessionInput.hasInitialStartupRun` fields.
+    - Workflow-level idempotency guard and `receiveMessage` interceptor —
+      the user's message typed in the conductor tab never flowed through
+      `receiveMessageSignal` anyway, so the interceptor fired on
+      player-join announcements instead of real user input.
+    - TUI `startupBanner` state + poll loop + `getPendingStartupContext`
+      TempoClient method. If the chat-header banner is useful later it
+      can be added back with a simpler mechanism.
+    - Blocked-detection suppression guard keyed on
+      `pendingStartupContext` — no longer needed because the conductor
+      is paused at the ensemble level, not via workflow state.
+  - The `patched('v0.26-pending-startup-context')` replay marker is
+    retained as a no-op in the session workflow so existing replay
+    histories that recorded the command deserialize cleanly.
   - Conductor-invoked `load_lineup` mid-work and `recruit` mid-work are
     unchanged — the conductor is already oriented there.
-  - New wire-protocol entries: `setPendingStartupContext` update and
-    `pendingStartupContext` query. See `docs/WIRE-PROTOCOL.md`.
-  - **Idempotency guard (restart / rejoin safety):** new workflow state
-    field `hasInitialStartupRun` flips `true` when the first real user
-    message consumes the held context and is carried across `continueAsNew`.
-    Once set, further `setPendingStartupContext` updates are refused as a
-    silent no-op (`{ stored: false }`) with a warning log — so a second
-    `up --lineup` against a post-release conductor cannot re-arm the hold.
-  - **Blocked-detection suppression while held:** the legacy 5-minute
-    `blocked` heuristic is skipped for a conductor whose
-    `pendingStartupContext` is non-null. A conductor intentionally waiting
-    for its first user message is not blocked, and would otherwise flap to
-    `blocked` status before the user had a chance to speak.
 
 ---
 

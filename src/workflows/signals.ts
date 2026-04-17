@@ -1,4 +1,10 @@
 import { defineSignal, defineQuery, defineUpdate } from '@temporalio/workflow';
+// Issue #172 (v0.26 simplification): the `setPendingStartupContext` update
+// and `pendingStartupContext` query were removed. Hold-on-startup is now
+// driven by baking the conductor's lineup instructions + banner/directive
+// directly into `SessionInput.messages[]` at workflow creation — no
+// workflow state, no `receiveMessage` interceptor. See CHANGELOG.
+
 import type {
   SessionMetadata,
   Message,
@@ -80,35 +86,6 @@ export const outboxLockedQuery = defineQuery<boolean>('outboxLocked');
 export const setPausedSignal = defineSignal<[boolean]>('setPaused');
 /** Query whether the session is paused. */
 export const pausedQuery = defineQuery<boolean>('paused');
-
-// ── Pending Startup Context (issue #172) ──
-//
-// Set via update on a fresh conductor workflow when `load_lineup` is called
-// through an initial-startup path (`up --lineup` / `conduct --lineup`). The
-// workflow defers the lineup's `conductor.instructions` until the user sends
-// their first real message, then prepends the stored context + a "release
-// players" directive to that first message so the conductor always acts on
-// the user's actual intent rather than the lineup's default behavior.
-//
-// Conductor-invoked `load_lineup` mid-work is unchanged — it still signals
-// instructions immediately.
-
-/**
- * Store pending startup context on the conductor's workflow state. Consumed by
- * the first inbound user message and then cleared. Conductor-only; signalled
- * by the `load_lineup` tool when `initialStartup=true`. Returns the stored
- * context for ack / observability in tests.
- */
-export const setPendingStartupContextUpdate = defineUpdate<
-  { stored: boolean },
-  [{ context: string; playersCount: number }]
->('setPendingStartupContext');
-
-/** Query the currently-stored pending startup context (or null when cleared). */
-export const pendingStartupContextQuery = defineQuery<{
-  context: string;
-  playersCount: number;
-} | null>('pendingStartupContext');
 
 // ── Conductor Signals ──
 

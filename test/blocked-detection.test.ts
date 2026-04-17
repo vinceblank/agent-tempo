@@ -284,50 +284,6 @@ describe('blocked session detection', function () {
     });
   });
 
-  // #172: a conductor held for its first user message (non-null
-  // `pendingStartupContext`) is intentionally waiting — NOT blocked. The
-  // legacy 5-min RR-based blocked heuristic must skip this case so a
-  // freshly-started lineup doesn't flap to `blocked` before the user
-  // speaks. Seed the workflow with inputs that WOULD normally trigger
-  // blocked (old lastInboundRRTime > lastOutboundTime) and verify
-  // suppression while held; then flush the hold with a user message and
-  // confirm the same heuristic becomes effective again on the next cycle
-  // once the RR window is re-triggered.
-  it('skips blocked-detection heuristic while conductor has pendingStartupContext', async function () {
-    this.timeout(30_000);
-    await withWorkerAndOutboxActivities(async () => {
-      const now = Date.now();
-      const handle = await startSession({
-        // Conductor status=active with stale inbound RR that would normally
-        // exceed the 5-min BLOCKED_WINDOW_MS and flip the session to blocked.
-        metadata: playerMetadata({
-          playerId: 'conductor',
-          isConductor: true,
-          status: 'active',
-        }),
-        disableStaleDetection: false,
-        lastInboundRRTime: now - 10 * 60 * 1000,
-        lastOutboundTime: now - 15 * 60 * 1000,
-        // #172: conductor is in the "held for first user message" state,
-        // so the guard should suppress the blocked heuristic.
-        pendingStartupContext: {
-          context: 'Initial lineup context (held)',
-          playersCount: 1,
-        },
-        outbox: seedOutbox(),
-      });
-
-      // Give the workflow a full condition-loop cycle to evaluate.
-      await new Promise((r) => setTimeout(r, 2000));
-      const meta: SessionMetadata = await handle.query(getMetadataQuery);
-      // Status MUST remain 'active' — suppression is active while held.
-      expect(meta.status).to.equal('active');
-
-      await deliverAll(handle);
-      await handle.executeUpdate(destroyUpdate, { args: [{}] });
-      await handle.result();
-    });
-  });
 });
 
 describe('blocked broadcast exclusion', function () {

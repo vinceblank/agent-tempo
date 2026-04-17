@@ -9,7 +9,7 @@ import { spawnInTerminal, spawnCopilotBridge, resolveClaudePath } from '../spawn
 import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
 import { getGitInfo } from '../git-info';
 import { createTemporalConnection } from '../connection';
-import { playerReportSignal, updateMetadataSignal, releaseHeldSignal, outboxLockedQuery, setPausedSignal, destroyUpdate, setPendingStartupContextUpdate } from '../workflows/signals';
+import { playerReportSignal, updateMetadataSignal, releaseHeldSignal, outboxLockedQuery, setPausedSignal, destroyUpdate } from '../workflows/signals';
 import { addScheduleSignal, setSchedulerPausedSignal } from '../workflows/scheduler-signals';
 import { maestroSetPausedSignal } from '../workflows/maestro-signals';
 import { AgentType, ScheduleEntry, SessionInput, SessionMetadata } from '../types';
@@ -21,7 +21,7 @@ import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
 import { shouldIncludeInBroadcast, validateEnsembleName } from '../utils/validation';
 import { isDaemonRunning, startDaemon, stopDaemon, getDaemonStatus, DAEMON_LOG_PATH } from './daemon';
 import { createTempoClient } from '../client';
-import { ensembleReadyBanner } from '../constants';
+import { ensembleReadyBanner, ensembleReadyDirective } from '../constants';
 import * as out from './output';
 
 /** Package root is two levels up from dist/cli/ */
@@ -56,13 +56,20 @@ async function ensureMaestroWorkflow(client: Client, config: Config, ensemble: s
 }
 
 /**
- * Issue #172: shared lineup-setup helper used by `up --lineup` and
- * `conduct --lineup`. Pre-creates the conductor workflow with the lineup's
- * conductor instructions deferred as `pendingStartupContext`, recruits
- * players in warm hold (`outboxLocked: true`, instructions stashed as
- * `heldMessage`), creates any scheduled entries, and signals the canonical
- * "ensemble ready" banner to the conductor's tab. Only creates workflows —
- * the caller is responsible for spawning the conductor / player processes.
+ * Issue #172 (v0.26 simplification): shared lineup-setup helper used by
+ * `up --lineup` and `conduct --lineup`. Pre-creates the conductor workflow
+ * with the lineup's conductor instructions + banner/directive baked directly
+ * into `SessionInput.messages`, recruits players in warm hold
+ * (`outboxLocked: true`, instructions stashed as `heldMessage`), creates any
+ * scheduled entries, and pauses the ensemble-wide scheduler/outbox/maestro
+ * upstream via the `pause_ensemble` signals. Only creates workflows — the
+ * caller is responsible for spawning the conductor / player processes.
+ *
+ * The directive baked into the system message instructs the LLM to wait
+ * silently until the user's first message and then call `resume_ensemble`
+ * before taking any other action. No workflow-level interceptor, no
+ * `pendingStartupContext` state, no filters — the directive itself drives
+ * the hold.
  */
 async function applyStartupLineup(args: {
   client: Client;
@@ -77,11 +84,38 @@ async function applyStartupLineup(args: {
   const { client, config, ensemble, lineup, initialStartup, conductorName } = args;
   const conductorWfId = conductorWorkflowId(ensemble);
 
-  // Pre-create the conductor workflow so we can seed `pendingStartupContext`
-  // BEFORE the Claude Code process spawns and reconnects via USE_EXISTING.
+  // Pre-create the conductor workflow with messages already seeded so the
+  // Claude Code process reads them at startup via USE_EXISTING.
   const { gitRoot: conductorGitRoot, gitBranch: conductorGitBranch } = getGitInfo(process.cwd());
   const conductorSessionId = randomUUID();
   const resolvedConductorType = lineup.conductor?.type ? resolveAgentType(lineup.conductor.type) : null;
+
+  // Build the seeded messages[] for the conductor. On initial-startup:
+  //   1. lineup instructions (from: 'lineup') — the role/phase/convention brief
+  //   2. banner + directive (from: 'system') — tells the LLM to wait for the
+  //      user, then call `resume_ensemble` first.
+  // On --no-hold: just the lineup instructions, no banner/directive, and no
+  // ensemble pause.
+  const seededMessages: NonNullable<SessionInput['messages']> = [];
+  if (lineup.conductor?.instructions) {
+    seededMessages.push({
+      id: randomUUID(),
+      from: 'lineup',
+      text: lineup.conductor.instructions,
+      timestamp: new Date().toISOString(),
+      delivered: false,
+    });
+  }
+  if (initialStartup) {
+    seededMessages.push({
+      id: randomUUID(),
+      from: 'system',
+      text: ensembleReadyDirective(lineup.name, lineup.players.length),
+      timestamp: new Date().toISOString(),
+      delivered: false,
+    });
+  }
+
   const conductorInput: SessionInput = {
     metadata: {
       playerId: conductorName,
@@ -103,23 +137,7 @@ async function applyStartupLineup(args: {
       temporalNamespace: config.temporalNamespace,
       taskQueue: config.taskQueue,
     },
-    // Same split as `up`: bake instructions into messages on --no-hold,
-    // otherwise seed pendingStartupContext and rely on the post-start update.
-    ...(lineup.conductor?.instructions && !initialStartup ? {
-      messages: [{
-        id: randomUUID(),
-        from: 'lineup',
-        text: lineup.conductor.instructions,
-        timestamp: new Date().toISOString(),
-        delivered: false,
-      }],
-    } : {}),
-    ...(lineup.conductor?.instructions && initialStartup ? {
-      pendingStartupContext: {
-        context: lineup.conductor.instructions,
-        playersCount: lineup.players.length,
-      },
-    } : {}),
+    ...(seededMessages.length > 0 ? { messages: seededMessages } : {}),
   };
 
   await client.workflow.start('claudeSessionWorkflow', {
@@ -134,28 +152,6 @@ async function applyStartupLineup(args: {
       ClaudeTempoPlayerId: [conductorName],
     },
   });
-
-  // Follow-up update + banner signal for the USE_EXISTING case.
-  if (initialStartup) {
-    try {
-      const conductorHandle = client.workflow.getHandle(conductorWfId);
-      if (lineup.conductor?.instructions) {
-        await conductorHandle.executeUpdate(setPendingStartupContextUpdate, {
-          args: [{
-            context: lineup.conductor.instructions,
-            playersCount: lineup.players.length,
-          }],
-        });
-      }
-      await conductorHandle.signal('receiveMessage', {
-        from: 'system',
-        text: ensembleReadyBanner(lineup.name, lineup.players.length),
-        responseRequested: false,
-      });
-    } catch (err) {
-      out.warn(`Could not seed conductor startup context: ${err}`);
-    }
-  }
 
   // Pre-create and spawn players.
   for (const player of lineup.players) {
@@ -284,6 +280,15 @@ async function applyStartupLineup(args: {
         out.warn(`Could not create schedule "${sched.name}": ${err}`);
       }
     }
+  }
+
+  // Issue #172 (v0.26): on initial-startup, pause the whole ensemble so the
+  // scheduler, per-session outbox dispatch, and maestro all stay quiet while
+  // we wait for the user's first message. The system directive baked into
+  // the conductor's messages[] tells the LLM to call `resume_ensemble` before
+  // taking any action once the user speaks.
+  if (initialStartup) {
+    await setPausedState(client, ensemble, true);
   }
 }
 
@@ -445,10 +450,10 @@ export async function start(opts: StartOpts) {
       const connection = await createTemporalConnection(config);
       const client = new Client({ connection, namespace: config.temporalNamespace });
       await ensureMaestroWorkflow(client, config, opts.ensemble);
-      // Issue #172: `conduct --lineup` — apply initial-startup semantics by
-      // pre-creating the conductor workflow with `pendingStartupContext` set
-      // and recruiting players in warm hold. The conductor process will
-      // reconnect to this pre-created workflow via `USE_EXISTING`.
+      // Issue #172 (v0.26): `conduct --lineup` — apply initial-startup
+      // semantics by pre-creating the conductor workflow with baked messages
+      // (lineup + banner/directive) and recruiting players in warm hold. The
+      // conductor process will reconnect via `USE_EXISTING`.
       if (startLineup) {
         await applyStartupLineup({
           client,
@@ -1110,9 +1115,37 @@ export async function up(opts: UpOpts) {
   const conductorTypeName = lineup?.conductor?.type;
   const resolvedConductorType = conductorTypeName ? resolveAgentType(conductorTypeName) : null;
 
-  // Pre-create conductor workflow — holds messages safely before process connects
+  // Pre-create conductor workflow — bakes the conductor instructions +
+  // banner/directive into the workflow's messages[] so the Claude Code
+  // process reads them at startup. Issue #172 (v0.26 simplification).
   const conductorSessionId = randomUUID();
   const { gitRoot: conductorGitRoot, gitBranch: conductorGitBranch } = getGitInfo(process.cwd());
+
+  // Build seeded messages for the conductor's inbox.
+  // - On initial-startup (default when a lineup is loaded): lineup
+  //   instructions + banner/directive telling the LLM to wait for the user
+  //   and call `resume_ensemble` first.
+  // - On --no-hold: just the lineup instructions, legacy immediate-start.
+  const conductorSeededMessages: NonNullable<SessionInput['messages']> = [];
+  if (lineup?.conductor?.instructions) {
+    conductorSeededMessages.push({
+      id: randomUUID(),
+      from: 'lineup',
+      text: lineup.conductor.instructions,
+      timestamp: new Date().toISOString(),
+      delivered: false,
+    });
+  }
+  if (initialStartup && lineup) {
+    conductorSeededMessages.push({
+      id: randomUUID(),
+      from: 'system',
+      text: ensembleReadyDirective(lineup.name, lineup.players.length),
+      timestamp: new Date().toISOString(),
+      delivered: false,
+    });
+  }
+
   const conductorInput: SessionInput = {
     metadata: {
       playerId: sessionName,
@@ -1134,33 +1167,7 @@ export async function up(opts: UpOpts) {
       temporalNamespace: config.temporalNamespace,
       taskQueue: config.taskQueue,
     },
-    // Issue #172: on initial-startup, do NOT bake conductor instructions into
-    // the workflow's inbox — they're stored as `pendingStartupContext` via
-    // the `setPendingStartupContext` update below, and combined with the
-    // user's first real message. With `--no-hold` (or no lineup), the legacy
-    // bake-into-messages path is preserved so immediate-start still works.
-    ...(lineup?.conductor?.instructions && !initialStartup ? {
-      messages: [{
-        id: randomUUID(),
-        from: 'lineup',
-        text: lineup.conductor.instructions,
-        timestamp: new Date().toISOString(),
-        delivered: false,
-      }],
-    } : {}),
-    // Seed the pending context in the initial SessionInput so a race where
-    // the conductor tab connects before our post-start update call doesn't
-    // leak the instructions to the conductor via some other path. The
-    // workflow's handler above sets this field on `updateMetadata`-free
-    // first-run, so seeding here is belt-and-suspenders — the real store
-    // happens via the update call below (which also covers the
-    // WorkflowIdConflictPolicy.USE_EXISTING resume case).
-    ...(lineup?.conductor?.instructions && initialStartup ? {
-      pendingStartupContext: {
-        context: lineup.conductor.instructions,
-        playersCount: lineup.players.length,
-      },
-    } : {}),
+    ...(conductorSeededMessages.length > 0 ? { messages: conductorSeededMessages } : {}),
   };
 
   await client.workflow.start('claudeSessionWorkflow', {
@@ -1176,35 +1183,6 @@ export async function up(opts: UpOpts) {
     },
   });
   out.check('Conductor workflow pre-created', true);
-
-  // Issue #172: when starting in initial-startup mode with lineup conductor
-  // instructions, store them as pending startup context on the conductor
-  // workflow. This covers the `USE_EXISTING` case where a prior workflow
-  // handle is reused and the `SessionInput.pendingStartupContext` seed above
-  // is ignored. Also send the canonical "ensemble ready" banner as a system
-  // message so the conductor's tab shows a marker.
-  if (initialStartup && lineup && conductorAgent !== 'copilot') {
-    try {
-      const conductorHandle = client.workflow.getHandle(conductorWfId);
-      if (lineup.conductor?.instructions) {
-        await conductorHandle.executeUpdate(setPendingStartupContextUpdate, {
-          args: [{
-            context: lineup.conductor.instructions,
-            playersCount: lineup.players.length,
-          }],
-        });
-      }
-      // Inline signal since we're already here — avoids a second round-trip
-      // through `load_lineup` just for the banner.
-      await conductorHandle.signal('receiveMessage', {
-        from: 'system',
-        text: ensembleReadyBanner(lineup.name, lineup.players.length),
-        responseRequested: false,
-      });
-    } catch (err) {
-      out.warn(`Could not seed conductor startup context: ${err}`);
-    }
-  }
 
   // Spawn the conductor process
   let pid: number | undefined;
@@ -1402,6 +1380,15 @@ export async function up(opts: UpOpts) {
         }
       }
     }
+  }
+
+  // Issue #172 (v0.26): on initial-startup, pause the whole ensemble so the
+  // scheduler, per-session outbox dispatch, and maestro all stay quiet while
+  // we wait for the user's first message. The system directive baked into
+  // the conductor's messages[] tells the LLM to call `resume_ensemble` before
+  // taking any action once the user speaks.
+  if (lineup && initialStartup) {
+    await setPausedState(client, opts.ensemble, true);
   }
 
   await connection.close();

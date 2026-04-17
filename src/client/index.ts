@@ -23,7 +23,6 @@ import type {
 import {
   submitOutboxUpdate,
   attachmentInfoQuery,
-  pendingStartupContextQuery,
 } from '../workflows/signals';
 import { resolveSession } from '../activities/resolve';
 import type { TempoClient, EnsembleSummary } from './interface';
@@ -437,27 +436,6 @@ export function createTempoClient(client: Client): TempoClient {
         return desc.status.name === 'RUNNING';
       } catch {
         return false;
-      }
-    },
-
-    /**
-     * Issue #172: query the conductor's `pendingStartupContext`. Returns
-     * `null` when the workflow doesn't exist, when the query isn't supported
-     * (pre-v0.26), or when no context is currently stored. The TUI polls
-     * this to decide whether to show the ensemble-ready banner in the
-     * chat header.
-     */
-    async getPendingStartupContext(
-      ensemble: string,
-    ): Promise<{ context: string; playersCount: number } | null> {
-      try {
-        const h = handle(conductorWorkflowId(ensemble));
-        const result = await h.query(pendingStartupContextQuery);
-        return result ?? null;
-      } catch {
-        // Conductor workflow missing, query unsupported, or transient error
-        // — degrade to "no banner".
-        return null;
       }
     },
 

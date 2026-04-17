@@ -87,12 +87,6 @@ function nextStaticId(): string {
   return `static-${++staticIdCounter}`;
 }
 
-/** Issue #172: thin helper so the poll-loop can cheaply check "do we still
- *  have a banner pinned?" without an extra re-render. */
-function currentStartupBanner(s: import('./store').TuiState): boolean {
-  return s.startupBanner != null;
-}
-
 /** Color for static item text. */
 function staticItemColor(item: StaticItem): string {
   switch (item.type) {
@@ -423,18 +417,11 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     if (state.activeEnsemble) {
       const count = state.players.length;
       const conductorInfo = state.conductorName ? '' : ' \u00b7 No conductor';
-      // Issue #172: when the conductor is still holding startup context, show
-      // the canonical "ensemble ready" banner in the header so the user sees
-      // the same wording here as on CLI stdout and inside the conductor tab.
-      if (state.startupBanner) {
-        const playerWord = state.startupBanner.playersCount === 1 ? 'player' : 'players';
-        return `Ensemble ${state.startupBanner.name} is ready \u00b7 ${state.startupBanner.playersCount} ${playerWord} on standby \u00b7 Describe your task to begin`;
-      }
       return `${state.activeEnsemble} \u00b7 ${count} player${count !== 1 ? 's' : ''}${conductorInfo} \u00b7 Connected`;
     }
     const count = state.ensembles?.length ?? 0;
     return count > 0 ? `${count} ensemble${count !== 1 ? 's' : ''} \u00b7 Connected` : 'Discovering ensembles...';
-  }, [state.phase, state.chatTarget, state.activeEnsemble, state.players, state.ensembles, state.startupBanner, state.conductorName]);
+  }, [state.phase, state.chatTarget, state.activeEnsemble, state.players, state.ensembles, state.conductorName]);
 
   // ── Hint text for prompt area ──
   const promptHints = useMemo(() => {
@@ -842,23 +829,6 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           }));
 
           dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages: [], history: [], schedules });
-
-          // Issue #172: poll the conductor's pending startup context so the
-          // banner flips from shown → hidden as soon as the user's first
-          // message consumes it. Soft failure → null means no banner.
-          try {
-            const pending = await api.getPendingStartupContext(ens);
-            if (pending) {
-              dispatch({
-                type: 'SET_STARTUP_BANNER',
-                banner: { name: ens, playersCount: pending.playersCount },
-              });
-            } else if (currentStartupBanner(stateRef.current)) {
-              dispatch({ type: 'SET_STARTUP_BANNER', banner: null });
-            }
-          } catch {
-            // best-effort — query may not be supported on older workflows
-          }
 
           // Skip redundant conversation dispatches when data hasn't changed
           // Always dispatch on first poll (conversation === null) to exit "Loading messages..."

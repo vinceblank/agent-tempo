@@ -234,24 +234,6 @@ export interface SessionInput {
     temporalNamespace: string;
     taskQueue: string;
   };
-  /**
-   * Lineup conductor.instructions stored via `setPendingStartupContext` for
-   * delivery on the conductor's first user message. Issue #172. Conductor-only;
-   * carried across `continueAsNew` so a pre-user-message continuation still
-   * combines the context + user text.
-   */
-  pendingStartupContext?: {
-    context: string;
-    playersCount: number;
-  };
-  /**
-   * Issue #172 idempotency guard. Flipped to `true` the moment the conductor's
-   * first real user message consumes and clears `pendingStartupContext`. Once
-   * true, subsequent `setPendingStartupContext` updates are refused (no-op,
-   * returns `{ stored: false }`). Carried across `continueAsNew` so the
-   * one-shot property survives restart and CAN boundaries. Conductor-only.
-   */
-  hasInitialStartupRun?: boolean;
 }
 
 export interface Message {

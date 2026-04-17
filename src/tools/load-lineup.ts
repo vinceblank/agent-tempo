@@ -8,13 +8,13 @@ import { loadAndResolveLineup, resolveAgentType } from '../ensemble/agent-types'
 import { resolveLineupPath } from '../ensemble/loader';
 import { resolveSession } from './resolve';
 import { scanEnsembleSessions } from '../activities/resolve';
-import { submitOutboxUpdate, setPendingStartupContextUpdate } from '../workflows/signals';
+import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
 import { parseDuration } from '../utils/duration';
 import { safeLineupPath } from '../utils/safe-path';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { PLAYER_NAME_MAX, PATH_MAX } from '../utils/validation';
-import { ensembleReadyBanner } from '../constants';
+import { ensembleReadyDirective } from '../constants';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:load-lineup]', ...args);
 
@@ -115,57 +115,48 @@ export function registerLoadLineupTool(
           }
 
           // Send conductor instructions.
-          // Issue #172: on the initial-startup path, DEFER instructions — store
-          // them as pending startup context on the conductor workflow so they
-          // combine with the user's first message instead of auto-firing.
+          // Issue #172 (v0.26 simplification): on the initial-startup path,
+          // signal the lineup instructions as a `receiveMessage` immediately
+          // — the ensemble-wide pause (below) stops any downstream dispatch,
+          // and the banner+directive signal (also below) tells the LLM to
+          // wait silently until the user speaks and then call
+          // `resume_ensemble` first. Legacy mid-work path also signals
+          // immediately — no branching required.
           if (lineup.conductor.instructions) {
-            if (initialStartup) {
-              try {
-                await handle.executeUpdate(setPendingStartupContextUpdate, {
-                  args: [{
-                    context: lineup.conductor.instructions,
-                    playersCount: lineup.players.length,
-                  }],
-                });
-                conductorActions.push('instructions deferred (initial startup)');
-                log('Conductor instructions stored as pending startup context');
-              } catch (err) {
-                failed.push(`conductor instructions (defer): ${err}`);
-              }
-            } else {
-              try {
-                await handle.signal('receiveMessage', {
-                  from: 'lineup',
-                  text: lineup.conductor.instructions,
-                  responseRequested: false,
-                });
-                conductorActions.push('instructions delivered');
-                log('Conductor instructions delivered');
-              } catch (err) {
-                failed.push(`conductor instructions: ${err}`);
-              }
+            try {
+              await handle.signal('receiveMessage', {
+                from: 'lineup',
+                text: lineup.conductor.instructions,
+                responseRequested: false,
+              });
+              conductorActions.push(initialStartup ? 'instructions seeded (initial startup)' : 'instructions delivered');
+              log('Conductor instructions delivered');
+            } catch (err) {
+              failed.push(`conductor instructions: ${err}`);
             }
           }
         }
 
-        // System-banner delivery.
-        // Issue #172: on the initial-startup path, send the canonical "ensemble
-        // ready" banner so the conductor's tab shows a visible marker while we
-        // wait for the user to speak. On the legacy hold path (conductor-
-        // invoked mid-work), keep the existing "hold mode standby" wording.
-        // Neither path is taken when a non-conductor session calls load_lineup.
+        // Conductor system-banner delivery.
+        // Issue #172 (v0.26): on initial-startup, signal the combined banner +
+        // "wait for user, call resume_ensemble first" directive so the LLM
+        // reads it alongside the lineup instructions. The directive text
+        // itself drives the hold — no workflow-side interceptor. On the
+        // legacy hold path (conductor-invoked mid-work), keep the existing
+        // "hold mode standby" wording. Neither path is taken when a
+        // non-conductor session calls load_lineup.
         if (isConductor && handle) {
           if (initialStartup) {
             try {
               // Use the resolved player count INCLUDING the conductor's own
-              // tab so the banner matches CLI stdout and TUI header.
+              // tab so the banner matches CLI stdout.
               const playerCount = lineup.players.length;
               await handle.signal('receiveMessage', {
                 from: 'system',
-                text: ensembleReadyBanner(lineup.name, playerCount),
+                text: ensembleReadyDirective(lineup.name, playerCount),
                 responseRequested: false,
               });
-              conductorActions.push('startup banner shown');
+              conductorActions.push('startup banner + directive delivered');
             } catch (err) {
               failed.push(`conductor startup banner: ${err}`);
             }

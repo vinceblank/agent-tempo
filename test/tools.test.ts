@@ -512,9 +512,9 @@ describe('load_lineup conductor section', function () {
     expect(signals).to.have.length(0);
   });
 
-  // ── Issue #172: initial-startup deferral ──
+  // ── Issue #172 (v0.26 simplification): initial-startup seeds messages + pauses ──
 
-  it('initialStartup=true: defers conductor instructions via setPendingStartupContext instead of signalling them', async function () {
+  it('initialStartup=true: signals lineup instructions + banner/directive and pauses the ensemble', async function () {
     const lineupPath = join(tmpDir, 'test-initial-startup.yaml');
     writeFileSync(lineupPath, [
       'name: test-initial-startup',
@@ -532,8 +532,7 @@ describe('load_lineup conductor section', function () {
       workflowId: `claude-session-${testConfig.ensemble}-conductor`,
       executeUpdate: async (name: any, opts: any) => {
         // `name` is the UpdateDefinition object produced by defineUpdate —
-        // its `.name` field is the wire name ("setPendingStartupContext").
-        // Fall back to plain-string for callers that use the string form.
+        // fall back to plain-string for callers that use the string form.
         const uname = typeof name === 'string' ? name : (name?.name || 'unknown');
         updates.push({ name: uname, args: opts?.args?.[0] });
         return 'fake-entry-id';
@@ -561,31 +560,32 @@ describe('load_lineup conductor section', function () {
 
     const result = await call({ path: lineupPath, initialStartup: true });
     expect(result.isError).to.be.undefined;
-    // Response mentions the deferred status.
-    expect(result.content[0].text).to.include('instructions deferred');
 
-    // Conductor must NOT receive the raw lineup instructions as a signal —
-    // they were deferred via the setPendingStartupContext update.
-    const instructionsSignal = signals.find(
-      (s) => s.name === 'receiveMessage' && s.args?.from === 'lineup',
-    );
-    expect(instructionsSignal, 'conductor must not see raw lineup instructions on initial-startup').to.be.undefined;
+    // v0.26 simplification: the tool fires two `receiveMessage` signals in
+    // order so the conductor reads them on startup.
+    //   1. lineup instructions (`from: 'lineup'`)
+    //   2. banner + "wait for user, then resume_ensemble first" directive
+    //      (`from: 'system'`)
+    const receiveMessages = signals.filter((s) => s.name === 'receiveMessage');
+    const lineupSignal = receiveMessages.find((s) => s.args?.from === 'lineup');
+    expect(lineupSignal, 'lineup instructions signal should have fired').to.exist;
+    expect(lineupSignal!.args.text).to.equal('You are the lead conductor.');
+    expect(lineupSignal!.args.responseRequested).to.equal(false);
 
-    // The setPendingStartupContext update MUST have fired with the lineup text.
-    const pending = updates.find((u) =>
-      u.name === 'setPendingStartupContext' || u.args?.context === 'You are the lead conductor.',
-    );
-    expect(pending, 'setPendingStartupContext should have fired').to.exist;
-    expect(pending!.args.context).to.equal('You are the lead conductor.');
-    expect(pending!.args.playersCount).to.equal(1);
-
-    // Canonical "ensemble ready" banner should have been delivered as a
-    // system message so the user sees it in the conductor's tab.
-    const banner = signals.find((s) => s.name === 'receiveMessage' && s.args?.from === 'system');
-    expect(banner, 'ensemble-ready banner should have been sent as a system message').to.exist;
+    const banner = receiveMessages.find((s) => s.args?.from === 'system');
+    expect(banner, 'banner+directive signal should have fired').to.exist;
     expect(banner!.args.text).to.include('is ready');
     expect(banner!.args.text).to.include('Describe your task to begin');
+    // The directive text itself drives the hold — the LLM reads "wait
+    // silently" + "call resume_ensemble FIRST" and honors it.
+    expect(banner!.args.text.toLowerCase()).to.include('resume_ensemble');
+    expect(banner!.args.text.toLowerCase()).to.include('wait');
     expect(banner!.args.responseRequested).to.equal(false);
+
+    // No `setPendingStartupContext` update — the simpler design has no
+    // workflow-level state for this.
+    const pending = updates.find((u) => u.name === 'setPendingStartupContext');
+    expect(pending, 'setPendingStartupContext must NOT be called in the simplified design').to.be.undefined;
 
     // Issue #172 simplification: the whole ensemble must be paused — the
     // maestro `maestroSetPaused` and scheduler `setSchedulerPaused` signals
@@ -600,7 +600,7 @@ describe('load_lineup conductor section', function () {
     expect(schedulerPause!.args).to.equal(true);
   });
 
-  it('initialStartup=false (default): preserves legacy signal-instructions-immediately behavior', async function () {
+  it('initialStartup=false (default): preserves legacy immediate-signal behavior, no banner or pause', async function () {
     const lineupPath = join(tmpDir, 'test-legacy-startup.yaml');
     writeFileSync(lineupPath, [
       'name: test-legacy-startup',
@@ -650,11 +650,15 @@ describe('load_lineup conductor section', function () {
     expect(instructionsSignal, 'legacy path must signal instructions immediately').to.exist;
     expect(instructionsSignal!.args.text).to.equal('Legacy instructions');
 
-    // setPendingStartupContext must NOT have been called.
-    const pending = updates.find(
-      (u) => u.name === 'setPendingStartupContext' || (u.args?.context === 'Legacy instructions'),
+    // Legacy path must NOT deliver the initial-startup banner+directive.
+    const banner = signals.find(
+      (s) => s.name === 'receiveMessage' && s.args?.from === 'system',
     );
-    expect(pending, 'legacy path must not defer instructions').to.be.undefined;
+    expect(banner, 'legacy path must not deliver the initial-startup banner').to.be.undefined;
+
+    // setPendingStartupContext must NOT have been called.
+    const pending = updates.find((u) => u.name === 'setPendingStartupContext');
+    expect(pending, 'setPendingStartupContext must NOT be called').to.be.undefined;
 
     // Legacy path must NOT pause the ensemble — that's initial-startup only.
     const maestroPause = signals.find((s) => s.name === 'maestroSetPaused');

@@ -11,10 +11,8 @@
  *
  * Used by:
  *   - CLI (`src/cli/commands.ts`) — printed on stdout after successful setup
- *   - `load_lineup` tool — delivered as a single system message on the
- *     conductor's inbox when `initialStartup=true`
- *   - TUI (`src/tui/App.tsx`) — rendered as a banner/header when entering a
- *     fresh ensemble whose conductor still has `pendingStartupContext`
+ *   - `load_lineup` tool — delivered as the banner half of the combined
+ *     system message seeded on the conductor's inbox when `initialStartup=true`
  *
  * Intentionally duplicated verbatim across surfaces so the user sees the same
  * phrasing on every entry point. See issue #172 for the rationale.
@@ -25,20 +23,27 @@ export function ensembleReadyBanner(name: string, playerCount: number): string {
 }
 
 /**
- * Short directive prepended to the user's first message when pending startup
- * context is being released. Separated from the banner so the conductor sees
- * a distinct "act now" prelude rather than a presentation-layer banner.
+ * Combined banner + "wait for user, then resume_ensemble first" directive
+ * baked into the conductor's `messages[]` at workflow creation on
+ * initial-startup paths (`up --lineup` / `conduct --lineup`). Issue #172.
  *
- * Issue #172: keeps the lineup's conductor instructions deferred until the
- * user has spoken, then combines context + user intent + directive into a
- * single prompt so the conductor never acts before the user speaks.
- *
- * The ensemble is paused at startup via `pause_ensemble` (scheduler +
- * per-session outbox + maestro), so the directive instructs the conductor to
- * call `resume_ensemble` BEFORE any other action — this unblocks the players
- * it will then delegate to.
+ * Delivered as a single `from: 'system'` message that the conductor reads
+ * alongside the lineup instructions. The directive is carried via the
+ * message text itself — the LLM reads "wait silently until the user speaks,
+ * then call `resume_ensemble` FIRST" and honors it. No workflow-level
+ * interceptor is needed; the ensemble-wide pause (`pause_ensemble`) is what
+ * actually stops other players from acting while the conductor waits.
  */
-export const RESUME_ENSEMBLE_DIRECTIVE =
-  'IMPORTANT: Call the `resume_ensemble` tool BEFORE any other action — ' +
-  'this unpauses the scheduler and unlocks all player outboxes. Then proceed ' +
-  'with the lineup context above and the user task below.';
+export function ensembleReadyDirective(name: string, playerCount: number): string {
+  return [
+    ensembleReadyBanner(name, playerCount),
+    '',
+    'IMPORTANT: The ensemble is PAUSED. Do not take any action yet — the user has not described their task.',
+    '',
+    'When the user sends their first message, you must:',
+    '1. Call the `resume_ensemble` tool FIRST to unpause the scheduler and unlock player outboxes.',
+    '2. Then decompose the user\'s task using the lineup context above, and delegate to the appropriate players.',
+    '',
+    'If the user has not spoken yet, wait silently.',
+  ].join('\n');
+}

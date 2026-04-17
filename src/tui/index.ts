@@ -123,7 +123,5 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
     ensureMaestroSession: fail,
     sendAsMaestro: fail,
     getMaestroMessages: async () => ({ received: [], sent: [] }),
-    // Issue #172: degrade silently — no Temporal = no banner.
-    getPendingStartupContext: async () => null,
   };
 }
