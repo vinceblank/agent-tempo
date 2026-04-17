@@ -1,17 +1,21 @@
 /**
  * Issue #172 — conductor defers lineup instructions until the user's first
- * message, then delivers a combined prompt (lineup context + release directive
- * + user text).
+ * message, then delivers a combined prompt (lineup context + resume-ensemble
+ * directive + user text).
  *
  * Covers the workflow-level pieces:
  *   - `setPendingStartupContextUpdate` stores context (conductor sessions only)
  *   - `pendingStartupContextQuery` returns the stored value (null when cleared)
  *   - First real user message triggers combined delivery and clears the field
  *   - Subsequent messages pass through unchanged
- *   - System / lineup / maestro / scheduler / conductor senders DO NOT trigger
- *     the release (so the ensemble-ready banner or scheduler fires landing
- *     before the user doesn't prematurely drain the context)
  *   - Non-conductor sessions reject the update (returns `stored: false`)
+ *
+ * Note: there is intentionally no per-sender filter in the handler — the
+ * `load_lineup` tool pauses the entire ensemble on the initial-startup path
+ * (scheduler + per-session outbox + maestro), so system/scheduler/maestro
+ * traffic is halted upstream. Any message that reaches the handler while
+ * held is either (a) a user message or (b) a maestro relay that carries a
+ * user message through.
  */
 import { expect } from 'chai';
 import {
@@ -103,9 +107,9 @@ describe('pending startup context (#172)', function () {
       expect(combined.from).to.equal('user');
       expect(combined.text).to.include('LINEUP_CONTEXT_MARKER');
       expect(combined.text).to.include('USER_TASK_MARKER');
-      // The release-players directive prelude MUST be present so the
-      // conductor knows to call `release` after decomposing.
-      expect(combined.text.toLowerCase()).to.include('release');
+      // The resume-ensemble directive prelude MUST be present so the
+      // conductor knows to call `resume_ensemble` before anything else.
+      expect(combined.text.toLowerCase()).to.include('resume_ensemble');
 
       // Pending context is cleared after first-user-message consumes it.
       const stored = await handle.query(pendingStartupContextQuery);
@@ -120,68 +124,6 @@ describe('pending startup context (#172)', function () {
       expect(msgs2).to.have.lengthOf(2);
       expect(msgs2[1].text).to.equal('SECOND_USER_MESSAGE');
       expect(msgs2[1].text).to.not.include('LINEUP_CONTEXT_MARKER');
-
-      await handle.executeUpdate(destroyUpdate, { args: [{}] });
-      await handle.result().catch(() => {});
-    });
-  });
-
-  it('does NOT flush pending context on system / lineup / maestro / scheduler / self messages', async function () {
-    this.timeout(10_000);
-    await withWorker(async () => {
-      const handle = await startSession({
-        metadata: conductorMetadata({ playerId: `pending-system-senders-${Date.now()}` }),
-      });
-      await handle.executeUpdate(setPendingStartupContextUpdate, {
-        args: [{ context: 'HELD_CONTEXT', playersCount: 1 }],
-      });
-
-      // System banner (the "ensemble ready" message) lands first.
-      await handle.signal(receiveMessageSignal, {
-        from: 'system',
-        text: 'Ensemble **x** is ready. 1 player on standby.',
-      });
-      // A scheduler fire lands before the user speaks.
-      await handle.signal(receiveMessageSignal, {
-        from: 'scheduler',
-        text: 'Scheduled nudge',
-      });
-      // Another conductor-to-self echo (e.g. self-cue).
-      await handle.signal(receiveMessageSignal, {
-        from: 'conductor',
-        text: 'echo',
-      });
-      // Maestro dashboard message (explicit flag path).
-      await handle.signal(receiveMessageSignal, {
-        from: 'some-dashboard',
-        text: 'maestro nudge',
-        isMaestro: true,
-      });
-      // Lineup (already deferred but double-check).
-      await handle.signal(receiveMessageSignal, {
-        from: 'lineup',
-        text: 'stray lineup signal',
-      });
-
-      // All system/maestro/scheduler/self/lineup traffic was stored verbatim
-      // and NONE of them consumed the pending context.
-      const before = await handle.query(pendingStartupContextQuery);
-      expect(before?.context).to.equal('HELD_CONTEXT');
-
-      // Now the real user speaks — THAT finally flushes the context.
-      await handle.signal(receiveMessageSignal, {
-        from: 'user',
-        text: 'Here is my task',
-      });
-      const after = await handle.query(pendingStartupContextQuery);
-      expect(after).to.equal(null);
-
-      const msgs = await handle.query(allMessagesQuery);
-      // 5 system-ish messages stored verbatim + 1 combined user message.
-      expect(msgs).to.have.lengthOf(6);
-      const userMsg = msgs[msgs.length - 1];
-      expect(userMsg.text).to.include('HELD_CONTEXT');
-      expect(userMsg.text).to.include('Here is my task');
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result().catch(() => {});

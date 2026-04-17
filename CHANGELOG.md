@@ -17,17 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   decomposes from user intent instead. Mechanics:
   - `load_lineup` tool gains an `initialStartup: boolean` param. When true,
     conductor instructions are stored via a new `setPendingStartupContext`
-    workflow update instead of being signalled as a `receiveMessage`. Players
-    are recruited in warm hold (`outboxLocked: true`), and a canonical
-    "ensemble ready" banner is signalled to the conductor's tab as a system
-    message.
+    workflow update instead of being signalled as a `receiveMessage`, players
+    are recruited in warm hold, a canonical "ensemble ready" banner is
+    signalled to the conductor's tab, and then the entire ensemble is
+    paused via the existing `pause_ensemble` mechanism (scheduler +
+    per-session outbox + maestro) so nothing fires upstream while we wait.
   - New conductor workflow state field `pendingStartupContext` carries the
     deferred instructions across `continueAsNew`. The `receiveMessage` signal
-    handler intercepts the FIRST real user message (filtering
-    `system`/`lineup`/`maestro`/`scheduler`/`conductor`/`isMaestro` traffic)
-    and delivers one combined prompt: `[lineup context] + [release directive]
-    + [user text]`. A `patched('v0.26-pending-startup-context')` marker
-    guarantees replay safety for pre-v0.26 workflows.
+    handler intercepts the FIRST inbound message and delivers one combined
+    prompt: `[lineup context] + [resume-ensemble directive] + [user text]`.
+    The directive instructs Claude Code to call `resume_ensemble` BEFORE any
+    other action, which unpauses the scheduler and unlocks all player
+    outboxes. A `patched('v0.26-pending-startup-context')` marker guarantees
+    replay safety for pre-v0.26 workflows. No per-sender filter is needed
+    because `pause_ensemble` halts system/scheduler/maestro traffic upstream.
   - CLI: `up --lineup` defaults to the new behavior; `--no-hold` opts out
     for scripts that want legacy immediate-start. New `conduct --lineup
     <name>` flag applies the same semantics when starting just a conductor.

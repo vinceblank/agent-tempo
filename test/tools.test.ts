@@ -586,6 +586,18 @@ describe('load_lineup conductor section', function () {
     expect(banner!.args.text).to.include('is ready');
     expect(banner!.args.text).to.include('Describe your task to begin');
     expect(banner!.args.responseRequested).to.equal(false);
+
+    // Issue #172 simplification: the whole ensemble must be paused — the
+    // maestro `maestroSetPaused` and scheduler `setSchedulerPaused` signals
+    // should have fired. (Per-session `setPaused` signals depend on the
+    // `list` generator returning sessions — this mock yields none, so only
+    // the maestro + scheduler signals are observable here.)
+    const maestroPause = signals.find((s) => s.name === 'maestroSetPaused');
+    expect(maestroPause, 'maestro pause signal should have fired on initial startup').to.exist;
+    expect(maestroPause!.args).to.equal(true);
+    const schedulerPause = signals.find((s) => s.name === 'setSchedulerPaused');
+    expect(schedulerPause, 'scheduler pause signal should have fired on initial startup').to.exist;
+    expect(schedulerPause!.args).to.equal(true);
   });
 
   it('initialStartup=false (default): preserves legacy signal-instructions-immediately behavior', async function () {
@@ -643,6 +655,12 @@ describe('load_lineup conductor section', function () {
       (u) => u.name === 'setPendingStartupContext' || (u.args?.context === 'Legacy instructions'),
     );
     expect(pending, 'legacy path must not defer instructions').to.be.undefined;
+
+    // Legacy path must NOT pause the ensemble — that's initial-startup only.
+    const maestroPause = signals.find((s) => s.name === 'maestroSetPaused');
+    expect(maestroPause, 'legacy path must not pause the ensemble').to.be.undefined;
+    const schedulerPause = signals.find((s) => s.name === 'setSchedulerPaused');
+    expect(schedulerPause, 'legacy path must not pause the scheduler').to.be.undefined;
   });
 
   it('sends hold standby to conductor even when lineup has no conductor section', async function () {

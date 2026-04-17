@@ -96,7 +96,7 @@ import type {
   OrphanSummary,
   SpawnOutboxEntry,
 } from '../types';
-import { RELEASE_PLAYERS_DIRECTIVE } from '../constants';
+import { RESUME_ENSEMBLE_DIRECTIVE } from '../constants';
 
 // ── Outbox Activity Proxies ──
 
@@ -383,39 +383,27 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   setHandler(receiveMessageSignal, (msg) => {
     // Issue #172: when a conductor has stored `pendingStartupContext` (lineup
     // instructions deferred from `up --lineup` / `conduct --lineup`), the
-    // FIRST real user message triggers a combined delivery:
-    //   [lineup context] + [release directive] + [user text]
+    // FIRST inbound message triggers a combined delivery:
+    //   [lineup context] + [resume-ensemble directive] + [user text]
     // …so the conductor acts on user intent rather than lineup defaults.
     //
-    // Scope guards:
-    //   - Only conductor sessions (isConductor === true)
-    //   - Only when pendingStartupContext is non-null (set via the initial-
-    //     startup path in `load_lineup`)
-    //   - Only for genuine user-facing messages — filter out system/lineup/
-    //     maestro/scheduler/self traffic so the context isn't prematurely
-    //     flushed by the "ensemble ready" banner or a schedule-fire that
-    //     lands before the human types.
+    // No per-sender filter is needed here because `load_lineup` pauses the
+    // entire ensemble (scheduler + per-session outbox + maestro) via the
+    // same signals the `pause_ensemble` tool fires. That stops system/
+    // scheduler/maestro traffic upstream, so any message that reaches this
+    // handler while held is either (a) the user's first message or (b) a
+    // maestro relay that carries a user message through — both should
+    // trigger the combined delivery and clear the hold.
     //
     // `patched('v0.26-pending-startup-context')` at the top of the workflow
     // guarantees replay safety for workflows that predate this change.
-    const SYSTEM_SENDERS = new Set([
-      'system',
-      'lineup',
-      'maestro',
-      'scheduler',
-      'conductor', // conductor-to-self echoes never release the hold
-    ]);
-    const isSystemMessage =
-      msg.isMaestro === true || SYSTEM_SENDERS.has(msg.from);
-
     if (
       input.metadata.isConductor === true &&
-      pendingStartupContext !== null &&
-      !isSystemMessage
+      pendingStartupContext !== null
     ) {
       const combined =
         `${pendingStartupContext.context}\n\n---\n\n` +
-        `${RELEASE_PLAYERS_DIRECTIVE}\n\n---\n\n` +
+        `${RESUME_ENSEMBLE_DIRECTIVE}\n\n---\n\n` +
         `User's first message:\n\n${msg.text}`;
       messages.push({
         id: uuid4(),

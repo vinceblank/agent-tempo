@@ -2,11 +2,12 @@ import { z } from 'zod';
 import { Cron } from 'croner';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle, WorkflowIdConflictPolicy } from '@temporalio/client';
-import { Config, schedulerWorkflowId } from '../config';
+import { Config, schedulerWorkflowId, maestroWorkflowId } from '../config';
 import { AgentType } from '../types';
 import { loadAndResolveLineup, resolveAgentType } from '../ensemble/agent-types';
 import { resolveLineupPath } from '../ensemble/loader';
 import { resolveSession } from './resolve';
+import { scanEnsembleSessions } from '../activities/resolve';
 import { submitOutboxUpdate, setPendingStartupContextUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
 import { parseDuration } from '../utils/duration';
@@ -333,6 +334,41 @@ export function registerLoadLineupTool(
             } catch (err) {
               failed.push(`schedule "${sched.name}": ${err}`);
             }
+          }
+        }
+
+        // Issue #172: on the initial-startup path, pause the whole ensemble
+        // so scheduler fires, maestro nudges, and per-session outbox dispatch
+        // are all halted while we wait for the user's first message. The
+        // conductor's `receiveMessageSignal` handler combines lineup context +
+        // user text and the combined prompt instructs Claude Code to call
+        // `resume_ensemble` BEFORE any other action. Inlines the three signals
+        // that `pause_ensemble` fires so we don't depend on the tool impl.
+        if (initialStartup && isConductor && handle) {
+          try {
+            const maestroId = maestroWorkflowId(config.ensemble);
+            await client.workflow.getHandle(maestroId).signal('maestroSetPaused', true);
+          } catch {
+            // Maestro may not be running yet — fine, it will start paused once spawned.
+          }
+          try {
+            const schedulerId = schedulerWorkflowId(config.ensemble);
+            await client.workflow.getHandle(schedulerId).signal('setSchedulerPaused', true);
+          } catch {
+            // Scheduler may not exist yet if no schedules are defined — ignore.
+          }
+          try {
+            const sessions = await scanEnsembleSessions(client, config.ensemble);
+            for (const session of sessions) {
+              try {
+                await client.workflow.getHandle(session.workflowId).signal('setPaused', true);
+              } catch {
+                // Individual session may have just terminated — skip.
+              }
+            }
+            conductorActions.push('ensemble paused (awaiting first user message)');
+          } catch (err) {
+            failed.push(`pause ensemble: ${formatError(err)}`);
           }
         }
 

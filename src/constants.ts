@@ -30,10 +30,15 @@ export function ensembleReadyBanner(name: string, playerCount: number): string {
  * a distinct "act now" prelude rather than a presentation-layer banner.
  *
  * Issue #172: keeps the lineup's conductor instructions deferred until the
- * user has spoken, then combines context + user intent + release directive
- * into a single prompt so the conductor never acts before the user speaks.
+ * user has spoken, then combines context + user intent + directive into a
+ * single prompt so the conductor never acts before the user speaks.
+ *
+ * The ensemble is paused at startup via `pause_ensemble` (scheduler +
+ * per-session outbox + maestro), so the directive instructs the conductor to
+ * call `resume_ensemble` BEFORE any other action — this unblocks the players
+ * it will then delegate to.
  */
-export const RELEASE_PLAYERS_DIRECTIVE =
-  'The ensemble is loaded and the user has just spoken for the first time. ' +
-  'Decompose their task using the lineup context above, then call the `release` ' +
-  'tool to unlock any held players and delegate work.';
+export const RESUME_ENSEMBLE_DIRECTIVE =
+  'IMPORTANT: Call the `resume_ensemble` tool BEFORE any other action — ' +
+  'this unpauses the scheduler and unlocks all player outboxes. Then proceed ' +
+  'with the lineup context above and the user task below.';
