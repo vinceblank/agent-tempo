@@ -1595,6 +1595,18 @@ export async function down(opts: DownOpts) {
     out.log(`  ${out.bold('Tearing down all ensembles')} (--all)`);
   }
 
+  // Confirm destructive --all on unspecified-ensemble path. Non-all paths
+  // already prompt earlier in the auto-detect block; this covers the
+  // scorched-earth `claude-tempo down --all` invocation, which otherwise
+  // ran silently.
+  if (!ensembleName && opts.all && !opts.yes) {
+    const confirmed = await confirmPrompt('Proceed?');
+    if (!confirmed) {
+      out.log('Aborted.');
+      process.exit(0);
+    }
+  }
+
   // Step 1: Terminate workflows for the target ensemble (or all ensembles)
   const temporalUp = await isTemporalReachable(config);
   let hasRemainingWorkflows = false;
