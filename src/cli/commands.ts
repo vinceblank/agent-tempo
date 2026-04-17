@@ -377,16 +377,26 @@ export async function start(opts: StartOpts) {
   // Issue #172: `conduct --lineup <name>` loads the lineup with the initial-
   // startup semantics. Resolved here so a bad name/path fails before we spawn
   // the process. Non-conductor `start` ignores `--lineup` (only `up` /
-  // `conduct` create ensembles from scratch).
+  // `conduct` create ensembles from scratch). `--resume` also ignores it:
+  // reconnecting to an existing conductor must NOT re-seed messages (a no-op
+  // under `USE_EXISTING`), re-recruit players, or re-pause the ensemble.
   let startLineup: ReturnType<typeof loadLineup> | undefined;
   if (opts.conductor && opts.lineup) {
-    try {
-      const resolution = resolveLineupPath(opts.lineup);
-      startLineup = loadLineup(resolution.path);
-    } catch (err: any) {
-      out.error(err.message);
-      process.exit(1);
+    if (opts.resume) {
+      out.warn('`--lineup` is ignored with `--resume` — reconnecting to existing conductor without re-applying lineup.');
+    } else {
+      try {
+        const resolution = resolveLineupPath(opts.lineup);
+        startLineup = loadLineup(resolution.path);
+      } catch (err: any) {
+        out.error(err.message);
+        process.exit(1);
+      }
     }
+  } else if (!opts.conductor && opts.lineup) {
+    // Plain `start --lineup` silently dropped the flag; surface a warning so
+    // users notice the mistake.
+    out.warn('`--lineup` is only meaningful with `conduct` or `up`, not `start` — ignored.');
   }
   const startInitialStartup = Boolean(startLineup) && !opts.noHold;
 
