@@ -6,7 +6,6 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 import { spawn } from 'child_process';
 import { CLAUDE_TEMPO_HOME, Config, ENV } from '../config';
 
@@ -21,6 +20,22 @@ const DAEMON_ENTRY_PATH = path.resolve(__dirname, '..', 'daemon.js');
 export interface DaemonStatus {
   running: boolean;
   pid?: number;
+}
+
+/**
+ * Probe whether a PID refers to a live process using `kill(pid, 0)`.
+ *
+ * EPERM is reported on Windows for foreign (UAC-isolated) processes and
+ * must be treated as "alive" — we just can't signal it. Anything else
+ * (ESRCH, ENOENT, invalid-pid) means the process is gone.
+ */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
 }
 
 /**
@@ -43,7 +58,6 @@ export function getDaemonStatus(): DaemonStatus {
   try {
     pid = parseInt(fs.readFileSync(DAEMON_PID_PATH, 'utf8').trim(), 10);
     if (isNaN(pid)) {
-      // Corrupt PID file
       fs.unlinkSync(DAEMON_PID_PATH);
       return { running: false };
     }
@@ -51,20 +65,12 @@ export function getDaemonStatus(): DaemonStatus {
     return { running: false };
   }
 
-  // Probe the process — kill(pid, 0) checks existence without sending a signal
-  try {
-    process.kill(pid, 0);
+  if (isPidAlive(pid)) {
     return { running: true, pid };
-  } catch (err: any) {
-    // EPERM means the process exists but we lack permission (e.g., Windows UAC).
-    // Treat it as running — the daemon is alive, we just can't signal it.
-    if (err.code === 'EPERM') {
-      return { running: true, pid };
-    }
-    // ESRCH or other errors mean the process is dead — clean up stale PID file
-    try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
-    return { running: false };
   }
+  // Process is dead — clean up stale PID file.
+  try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+  return { running: false };
 }
 
 /**
@@ -74,7 +80,130 @@ export function getDaemonStatus(): DaemonStatus {
  * redirected to a log file. Config is passed via environment variables.
  */
 /** Lock file path for preventing concurrent daemon starts. */
-const DAEMON_LOCK_PATH = DAEMON_PID_PATH + '.lock';
+export const DAEMON_LOCK_PATH = DAEMON_PID_PATH + '.lock';
+
+/**
+ * How long a start lock can sit on disk before we treat it as abandoned
+ * regardless of whether the recorded PID appears alive. Daemon startup
+ * should never take this long; longer values just delay recovery after a
+ * crashed starter (see issue #182).
+ */
+export const STALE_LOCK_MS = 30_000;
+
+/**
+ * Timeout for waiting on another starter's PID file — generous window for
+ * cold-start slack on fresh installs (npm-global, uncompiled native deps).
+ * Bumped from 10s per researcher recommendation for issue #182.
+ */
+export const DAEMON_START_TIMEOUT_MS = 30_000;
+
+/** Shape of the JSON persisted inside the start lock. */
+export interface LockFileContent {
+  /** PID of the process that acquired the lock. */
+  pid: number;
+  /** ms-since-epoch when the lock was acquired — used for age-based staleness. */
+  mtime: number;
+}
+
+/**
+ * Attempt to atomically create the start lock with {pid, mtime} contents.
+ *
+ * Returns `true` on success, `false` if the lock already exists. Any other
+ * error (EACCES, ENOSPC, …) propagates. Exported for unit testing the
+ * acquire path without spawning a real daemon.
+ */
+export function tryAcquireLockFile(
+  lockPath: string,
+  pid: number = process.pid,
+  now: number = Date.now(),
+): boolean {
+  try {
+    const content: LockFileContent = { pid, mtime: now };
+    // `wx` = atomic create-or-fail with EEXIST on conflict. Combined with
+    // writeFileSync, this writes the content in the same syscall sequence,
+    // so a racing reader never observes a zero-byte lock.
+    fs.writeFileSync(lockPath, JSON.stringify(content), { flag: 'wx' });
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw err;
+  }
+}
+
+/**
+ * Inspect a start lock and decide whether it's abandoned.
+ *
+ * A lock is stale when any of:
+ *  - the file is missing (treat as stale so callers retry immediately)
+ *  - the contents are malformed (not JSON, missing pid/mtime)
+ *  - mtime is older than {@link STALE_LOCK_MS}
+ *  - `process.kill(pid, 0)` reports ESRCH (or anything other than EPERM)
+ *
+ * EPERM on the PID probe is treated as "alive" to match
+ * {@link getDaemonStatus} — on Windows, UAC-isolated foreign processes
+ * return EPERM for a running PID, so we must not interpret it as dead.
+ *
+ * Exported for unit testing.
+ */
+export function checkLockFileStale(
+  lockPath: string,
+  now: number = Date.now(),
+): {
+  stale: boolean;
+  reason: string;
+  content: LockFileContent | null;
+} {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(lockPath, 'utf8');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') {
+      return { stale: true, reason: 'lock file missing', content: null };
+    }
+    return { stale: true, reason: `lock file unreadable (${code ?? 'unknown'})`, content: null };
+  }
+
+  let content: LockFileContent | null = null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.pid === 'number' && typeof parsed?.mtime === 'number') {
+      content = { pid: parsed.pid, mtime: parsed.mtime };
+    }
+  } catch {
+    // fall through — malformed
+  }
+  if (!content) {
+    const preview = raw.length > 80 ? raw.slice(0, 80) + '…' : raw;
+    return {
+      stale: true,
+      reason: `malformed lock content: ${JSON.stringify(preview)}`,
+      content: null,
+    };
+  }
+
+  const ageMs = now - content.mtime;
+  if (ageMs > STALE_LOCK_MS) {
+    return {
+      stale: true,
+      reason: `mtime ${Math.round(ageMs / 1000)}s old (>${STALE_LOCK_MS / 1000}s threshold)`,
+      content,
+    };
+  }
+
+  if (isPidAlive(content.pid)) {
+    return {
+      stale: false,
+      reason: `pid ${content.pid} alive, mtime ${ageMs}ms old`,
+      content,
+    };
+  }
+  return {
+    stale: true,
+    reason: `pid ${content.pid} not alive`,
+    content,
+  };
+}
 
 /**
  * Wait for the PID file to appear and contain a valid, live PID.
@@ -107,18 +236,33 @@ export async function startDaemon(config: Config): Promise<number> {
   // Ensure daemon directory exists
   fs.mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
 
-  // Acquire exclusive lock to prevent concurrent daemon starts.
-  // If another process is already starting the daemon, wait for the PID file.
-  let lockFd: number;
-  try {
-    lockFd = fs.openSync(DAEMON_LOCK_PATH, 'wx'); // atomic create-or-fail
-  } catch (err: any) {
-    if (err.code === 'EEXIST') {
-      // Another process is starting the daemon — wait for PID file
-      log('Another process is starting the daemon — waiting...');
-      return waitForDaemonPid(10_000);
+  // Acquire exclusive start lock. If another process holds the lock, decide
+  // whether to wait for it (live starter) or auto-repair it (stale from a
+  // crashed prior attempt — issue #182).
+  let acquired = tryAcquireLockFile(DAEMON_LOCK_PATH);
+  if (!acquired) {
+    const state = checkLockFileStale(DAEMON_LOCK_PATH);
+    if (state.stale) {
+      // Loud log — silent self-healing hides bugs. If this fires repeatedly
+      // it's a signal that daemon startup is crashing before PID-file write.
+      log(`⚠️  Stale daemon start lock detected — auto-repairing (${state.reason})`);
+      if (state.content) {
+        log(`⚠️  Lock contents: pid=${state.content.pid}, mtime=${new Date(state.content.mtime).toISOString()}`);
+      }
+      log('⚠️  If this repeats, inspect ' + DAEMON_LOG_PATH + ' for startup crashes.');
+      try { fs.unlinkSync(DAEMON_LOCK_PATH); } catch { /* already gone */ }
+      // Retry once. If we still lose, another process won the recovery race —
+      // fall through to the wait path.
+      acquired = tryAcquireLockFile(DAEMON_LOCK_PATH);
+      if (!acquired) {
+        log('Lost stale-lock recovery race to another starter — waiting for its daemon...');
+        return waitForDaemonPid(DAEMON_START_TIMEOUT_MS);
+      }
+    } else {
+      // Healthy concurrent starter — wait for its PID file.
+      log(`Another process is starting the daemon (${state.reason}) — waiting...`);
+      return waitForDaemonPid(DAEMON_START_TIMEOUT_MS);
     }
-    throw err;
   }
 
   try {
@@ -154,11 +298,11 @@ export async function startDaemon(config: Config): Promise<number> {
 
     log(`Spawned daemon process (pid ${child.pid})`);
 
-    // Wait for PID file to appear (daemon writes it on startup)
-    return await waitForDaemonPid(10_000);
+    // Wait for PID file to appear (daemon writes it on startup). Generous
+    // timeout for cold-start slack on fresh installs (#182).
+    return await waitForDaemonPid(DAEMON_START_TIMEOUT_MS);
   } finally {
-    // Release lock
-    fs.closeSync(lockFd);
+    // Release lock. We no longer hold an fd — writeFileSync closed it for us.
     try { fs.unlinkSync(DAEMON_LOCK_PATH); } catch { /* ignore */ }
   }
 }
