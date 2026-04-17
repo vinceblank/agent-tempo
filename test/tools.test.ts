@@ -1385,7 +1385,12 @@ function makeResumeClient(players: string[]): {
   const client = {
     workflow: {
       getHandle: (workflowId: string) => ({
-        signal: async (name: string, ...args: unknown[]) => {
+        // Temporal's `handle.signal` accepts either a string signal name OR a
+        // SignalDefinition `{ name, type }`. Normalize to the string form so
+        // tests can filter on `s.name === 'signalName'` regardless of which
+        // form the tool uses.
+        signal: async (nameOrDef: string | { name: string }, ...args: unknown[]) => {
+          const name = typeof nameOrDef === 'string' ? nameOrDef : nameOrDef.name;
           signals.push({ workflowId, name, payload: args[0] });
         },
         // `scanEnsembleSessions` calls `getMetadata` + `getPart` on each

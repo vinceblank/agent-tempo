@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config, maestroWorkflowId, schedulerWorkflowId } from '../config';
 import { scanEnsembleSessions } from '../activities/resolve';
+import { releaseHeldSignal } from '../workflows/signals';
 import { defineTool, ok, fail, formatError } from './helpers';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:resume]', ...args);
@@ -51,7 +52,7 @@ export function registerResumeEnsembleTool(
             sessionCount++;
             if (release) {
               try {
-                await sessionHandle.signal('releaseHeld');
+                await sessionHandle.signal(releaseHeldSignal);
                 releasedCount++;
               } catch (err) {
                 errors.push(`${session.playerId} release: ${formatError(err)}`);
