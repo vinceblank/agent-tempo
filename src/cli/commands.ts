@@ -90,21 +90,26 @@ function resolveConductorSessionName(
 }
 
 /**
- * Issue #172 (v0.26): pre-create the conductor workflow with lineup-seeded
- * `messages[]`. MUST run BEFORE the conductor process spawns — otherwise
- * `USE_EXISTING` silently drops the seeded input if the spawned Claude Code
- * MCP client registers the workflow first (review BLOCKER 3).
+ * Issue #172 (v0.26): pre-create the conductor workflow, optionally with
+ * lineup-seeded `messages[]`. MUST run BEFORE the conductor process spawns
+ * — otherwise `USE_EXISTING` silently drops the seeded input if the spawned
+ * Claude Code MCP client registers the workflow first (review BLOCKER 3).
  *
- * Seeded messages:
+ * Seeded messages (only when `lineup` is provided):
  *   1. lineup instructions (`from: 'lineup'`) — role/phase/convention brief
  *   2. banner + "wait for user, call `resume_ensemble` first" directive
  *      (`from: 'system'`), only on `initialStartup: true`
+ *
+ * When `lineup` is undefined (plain `up` / `conduct`), the workflow is still
+ * pre-created with empty seeded messages — this matches the prior inline
+ * behavior that held signals safely before the Claude Code MCP client
+ * connected.
  */
 async function seedConductorWorkflow(args: {
   client: Client;
   config: Config;
   ensemble: string;
-  lineup: import('../ensemble/schema').EnsembleLineup;
+  lineup?: import('../ensemble/schema').EnsembleLineup;
   initialStartup: boolean;
   conductorName: string;
   conductorAgent: AgentType;
@@ -113,10 +118,10 @@ async function seedConductorWorkflow(args: {
   const conductorWfId = conductorWorkflowId(ensemble);
   const { gitRoot: conductorGitRoot, gitBranch: conductorGitBranch } = getGitInfo(process.cwd());
   const conductorSessionId = randomUUID();
-  const resolvedConductorType = lineup.conductor?.type ? resolveAgentType(lineup.conductor.type) : null;
+  const resolvedConductorType = lineup?.conductor?.type ? resolveAgentType(lineup.conductor.type) : null;
 
   const seededMessages: NonNullable<SessionInput['messages']> = [];
-  if (lineup.conductor?.instructions) {
+  if (lineup?.conductor?.instructions) {
     seededMessages.push({
       id: randomUUID(),
       from: 'lineup',
@@ -125,7 +130,7 @@ async function seedConductorWorkflow(args: {
       delivered: false,
     });
   }
-  if (initialStartup) {
+  if (initialStartup && lineup) {
     seededMessages.push({
       id: randomUUID(),
       from: 'system',
@@ -193,6 +198,10 @@ async function applyLineupPlayersAndSchedules(args: {
   const { client, config, ensemble, lineup, initialStartup, conductorName } = args;
 
   // Pre-create and spawn players.
+  if (lineup.players.length > 0) {
+    console.log();
+    out.log(`Recruiting ${lineup.players.length} player${lineup.players.length !== 1 ? 's' : ''} from lineup...`);
+  }
   for (const player of lineup.players) {
     const playerAgent: AgentType = player.agent === 'copilot' ? 'copilot' : (player.agent === 'claude' ? 'claude' : args.conductorAgent);
     const playerWorkDir = player.workDir || process.cwd();
@@ -296,6 +305,8 @@ async function applyLineupPlayersAndSchedules(args: {
 
   // Create schedules (independent of hold state).
   if (lineup.schedules && lineup.schedules.length > 0) {
+    console.log();
+    out.log(`Creating ${lineup.schedules.length} schedule${lineup.schedules.length !== 1 ? 's' : ''}...`);
     for (const sched of lineup.schedules) {
       try {
         const entry = lineupScheduleToEntry(sched);
@@ -315,6 +326,7 @@ async function applyLineupPlayersAndSchedules(args: {
             },
           });
         }
+        out.check(sched.name, true, `→ ${sched.target}`);
       } catch (err) {
         out.warn(`Could not create schedule "${sched.name}": ${err}`);
       }
@@ -1192,81 +1204,30 @@ export async function up(opts: UpOpts) {
 
   out.log(`Launching conductor in ensemble ${out.cyan(opts.ensemble)}${conductorAgent === 'copilot' ? out.dim(' (copilot)') : ''}...`);
 
-  const sessionName = opts.name || lineup?.conductor?.name || (conductorAgent === 'copilot' ? `${opts.ensemble}-conductor` : 'conductor');
+  // Issue #172 review MAJOR 3: unified name resolution — same helper used by
+  // `start()`/`conduct --lineup` so spawn env vars and workflow metadata
+  // always agree.
+  const sessionName = resolveConductorSessionName({ ...opts, conductor: true, agent: conductorAgent }, lineup) as string;
 
-  // Resolve conductor agent type from lineup
+  // Legacy lineup.conductor.agent (string form, e.g. path to a system prompt)
+  // is passed through to the spawn CLI below — not to the workflow metadata.
   const conductorType = lineup?.conductor?.agent && lineup.conductor.agent !== 'default' && lineup.conductor.agent !== 'copilot'
     ? lineup.conductor.agent
     : undefined;
   const conductorTypeName = lineup?.conductor?.type;
   const resolvedConductorType = conductorTypeName ? resolveAgentType(conductorTypeName) : null;
 
-  // Pre-create conductor workflow — bakes the conductor instructions +
-  // banner/directive into the workflow's messages[] so the Claude Code
-  // process reads them at startup. Issue #172 (v0.26 simplification).
-  const conductorSessionId = randomUUID();
-  const { gitRoot: conductorGitRoot, gitBranch: conductorGitBranch } = getGitInfo(process.cwd());
-
-  // Build seeded messages for the conductor's inbox.
-  // - On initial-startup (default when a lineup is loaded): lineup
-  //   instructions + banner/directive telling the LLM to wait for the user
-  //   and call `resume_ensemble` first.
-  // - On --no-hold: just the lineup instructions, legacy immediate-start.
-  const conductorSeededMessages: NonNullable<SessionInput['messages']> = [];
-  if (lineup?.conductor?.instructions) {
-    conductorSeededMessages.push({
-      id: randomUUID(),
-      from: 'lineup',
-      text: lineup.conductor.instructions,
-      timestamp: new Date().toISOString(),
-      delivered: false,
-    });
-  }
-  if (initialStartup && lineup) {
-    conductorSeededMessages.push({
-      id: randomUUID(),
-      from: 'system',
-      text: ensembleReadyDirective(lineup.name, lineup.players.length),
-      timestamp: new Date().toISOString(),
-      delivered: false,
-    });
-  }
-
-  const conductorInput: SessionInput = {
-    metadata: {
-      playerId: sessionName,
-      ensemble: opts.ensemble,
-      hostname: hostname(),
-      workDir: process.cwd(),
-      gitRoot: conductorGitRoot,
-      gitBranch: conductorGitBranch,
-      isConductor: true,
-      agentType: conductorAgent,
-      status: 'pending',
-      sessionId: conductorSessionId,
-      ...(resolvedConductorType ? { playerType: resolvedConductorType.name, playerTypeDescription: resolvedConductorType.description || '' } : {}),
-    },
-    autoSummary: `Conductor session`,
-    disableStaleDetection: true,
-    temporalConfig: {
-      temporalAddress: config.temporalAddress,
-      temporalNamespace: config.temporalNamespace,
-      taskQueue: config.taskQueue,
-    },
-    ...(conductorSeededMessages.length > 0 ? { messages: conductorSeededMessages } : {}),
-  };
-
-  await client.workflow.start('claudeSessionWorkflow', {
-    workflowId: conductorWfId,
-    taskQueue: config.taskQueue,
-    args: [conductorInput],
-    workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
-    searchAttributes: {
-      ...(conductorGitRoot ? { ClaudeTempoGitRoot: [conductorGitRoot] } : {}),
-      ClaudeTempoHostname: [hostname()],
-      ClaudeTempoEnsemble: [opts.ensemble],
-      ClaudeTempoPlayerId: [sessionName],
-    },
+  // Pre-create conductor workflow via the shared helper (Issue #172 MAJOR 3):
+  // bakes lineup instructions + banner/directive into `messages[]` when a
+  // lineup is provided; plain pre-create when not.
+  await seedConductorWorkflow({
+    client,
+    config,
+    ensemble: opts.ensemble,
+    lineup,
+    initialStartup,
+    conductorName: sessionName,
+    conductorAgent,
   });
   out.check('Conductor workflow pre-created', true);
 
@@ -1309,172 +1270,24 @@ export async function up(opts: UpOpts) {
 
   out.success(`Conductor launched (pid ${pid ?? 'unknown'})`);
 
-  // Step 6: If lineup provided, recruit players and create schedules
+  // Step 6: If lineup provided, recruit players, create schedules, and
+  // pause the ensemble for initial-startup. All delegated to the shared
+  // helper (Issue #172 MAJOR 3) — same code path as `conduct --lineup`.
   if (lineup) {
-    // Ensure Maestro workflow is running
     await ensureMaestroWorkflow(client, config, opts.ensemble);
-
     if (lineup.conductor?.instructions) {
       out.check('Conductor instructions baked into workflow', true);
     }
-
-    // Pre-create and spawn players — no polling needed
-    if (lineup.players.length > 0) {
-      console.log();
-      out.log(`Recruiting ${lineup.players.length} player${lineup.players.length !== 1 ? 's' : ''} from lineup...`);
-
-      for (const player of lineup.players) {
-        const playerAgent: AgentType = player.agent === 'copilot' ? 'copilot' : (player.agent === 'claude' ? 'claude' : opts.agent);
-        const playerWorkDir = player.workDir || process.cwd();
-        const playerTypeName = player.type;
-        const resolvedPlayerType = playerTypeName ? resolveAgentType(playerTypeName) : null;
-
-        // Pre-create player workflow with initial message baked in
-        const playerSessionId = randomUUID();
-        const playerWfId = sessionWorkflowId(opts.ensemble, player.name);
-        const { gitRoot: playerGitRoot, gitBranch: playerGitBranch } = getGitInfo(playerWorkDir);
-
-        // Issue #172: on initial-startup, pre-create each player in warm hold
-        // with the lineup instructions stashed as `heldMessage` (NOT on the
-        // inbox — delivery is deferred until `release` fires). The legacy
-        // immediate-start path bakes instructions into `messages` as before.
-        const playerInput: SessionInput = {
-          metadata: {
-            playerId: player.name,
-            ensemble: opts.ensemble,
-            hostname: hostname(),
-            workDir: playerWorkDir,
-            gitRoot: playerGitRoot,
-            gitBranch: playerGitBranch,
-            isConductor: false,
-            agentType: playerAgent,
-            status: 'pending',
-            sessionId: playerSessionId,
-            recruitedBy: sessionName,
-            ...(resolvedPlayerType ? { playerType: resolvedPlayerType.name, playerTypeDescription: resolvedPlayerType.description || '' } : {}),
-          },
-          autoSummary: `Session in ${basename(resolve(playerWorkDir))}`,
-          disableStaleDetection: true,
-          temporalConfig: {
-            temporalAddress: config.temporalAddress,
-            temporalNamespace: config.temporalNamespace,
-            taskQueue: config.taskQueue,
-          },
-          ...(initialStartup
-            ? {
-                outboxLocked: true,
-                ...(player.instructions ? { heldMessage: player.instructions } : {}),
-              }
-            : (player.instructions ? {
-                messages: [{
-                  id: randomUUID(),
-                  from: 'lineup',
-                  text: player.instructions,
-                  timestamp: new Date().toISOString(),
-                  delivered: false,
-                }],
-              } : {})),
-        };
-
-        try {
-          await client.workflow.start('claudeSessionWorkflow', {
-            workflowId: playerWfId,
-            taskQueue: config.taskQueue,
-            args: [playerInput],
-            workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
-            searchAttributes: {
-              ...(playerGitRoot ? { ClaudeTempoGitRoot: [playerGitRoot] } : {}),
-              ClaudeTempoHostname: [hostname()],
-              ClaudeTempoEnsemble: [opts.ensemble],
-              ClaudeTempoPlayerId: [player.name],
-            },
-          });
-        } catch (err) {
-          out.warn(`Could not pre-create workflow for "${player.name}": ${err}`);
-          continue;
-        }
-
-        // Spawn the player process
-        try {
-          if (playerAgent === 'copilot') {
-            spawnCopilotBridge({
-              name: player.name,
-              ensemble: opts.ensemble,
-              temporalAddress: config.temporalAddress,
-              temporalNamespace: config.temporalNamespace,
-              temporalApiKey: config.temporalApiKey,
-              temporalTlsCertPath: config.temporalTlsCertPath,
-              temporalTlsKeyPath: config.temporalTlsKeyPath,
-              isConductor: false,
-              workDir: playerWorkDir,
-            });
-          } else {
-            const claudeArgs = [
-              '--dangerously-skip-permissions',
-              '--dangerously-load-development-channels', 'server:claude-tempo',
-              '-n', player.name,
-              ...(resolvedPlayerType?.nativeResolvable ? ['--agent', resolvedPlayerType.name] :
-                  resolvedPlayerType ? ['--system-prompt', resolvedPlayerType.path] : []),
-            ];
-            const playerEnvVars: Record<string, string> = {
-              ...temporalEnvVars,
-              [ENV.ENSEMBLE]: opts.ensemble,
-              [ENV.CONDUCTOR]: '',
-              [ENV.PLAYER_NAME]: player.name,
-            };
-            if (resolvedPlayerType) {
-              playerEnvVars[ENV.PLAYER_TYPE] = resolvedPlayerType.name;
-            }
-            spawnInTerminal(claudeArgs, playerWorkDir, playerEnvVars, { claudeBin: config.claudeBin });
-          }
-          out.log(`  ${out.green('ok')} ${out.bold(player.name)} in ${playerWorkDir}`);
-        } catch (err) {
-          out.warn(`Could not spawn "${player.name}": ${err}`);
-        }
-      }
-    }
-
-    // Create schedules
-    if (lineup.schedules && lineup.schedules.length > 0) {
-      console.log();
-      out.log(`Creating ${lineup.schedules.length} schedule${lineup.schedules.length !== 1 ? 's' : ''}...`);
-
-      for (const sched of lineup.schedules) {
-        try {
-          const entry = lineupScheduleToEntry(sched);
-          const schedulerWfId = schedulerWorkflowId(opts.ensemble);
-
-          // Try to signal existing scheduler; if not running, start it with this schedule as seed
-          try {
-            const handle = client.workflow.getHandle(schedulerWfId);
-            await handle.describe();
-            await handle.signal(addScheduleSignal, entry);
-          } catch {
-            await client.workflow.start('claudeSchedulerWorkflow', {
-              workflowId: schedulerWfId,
-              taskQueue: config.taskQueue,
-              args: [{ ensemble: opts.ensemble, entries: [entry] }],
-              workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
-              searchAttributes: {
-                ClaudeTempoEnsemble: [opts.ensemble],
-              },
-            });
-          }
-          out.check(sched.name, true, `→ ${sched.target}`);
-        } catch (err) {
-          out.warn(`Could not create schedule "${sched.name}": ${err}`);
-        }
-      }
-    }
-  }
-
-  // Issue #172 (v0.26): on initial-startup, pause the whole ensemble so the
-  // scheduler, per-session outbox dispatch, and maestro all stay quiet while
-  // we wait for the user's first message. The system directive baked into
-  // the conductor's messages[] tells the LLM to call `resume_ensemble` before
-  // taking any action once the user speaks.
-  if (lineup && initialStartup) {
-    await setPausedState(client, opts.ensemble, true);
+    await applyLineupPlayersAndSchedules({
+      client,
+      config,
+      ensemble: opts.ensemble,
+      lineup,
+      initialStartup,
+      conductorName: sessionName,
+      temporalEnvVars,
+      conductorAgent,
+    });
   }
 
   await connection.close();
@@ -3106,7 +2919,8 @@ ${out.bold('Other options:')}
   --keep-daemon               Don't stop the worker daemon (down only)
   -y, --yes                   Skip confirmation prompt (down only)
   --all                       Stop all sessions (stop only)
-  --lineup <name|file>         Load ensemble lineup by name or file path (up only)
+  --lineup <name|file>        Load ensemble lineup by name or file path (up/conduct)
+  --no-hold                   Skip startup hold (requires --lineup on up/conduct)
   --ensemble <name>           Target a specific ensemble (stop/down)
   -d, --dir <path>            Target directory (default: cwd)
 
