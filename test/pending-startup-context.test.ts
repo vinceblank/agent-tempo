@@ -204,4 +204,60 @@ describe('pending startup context (#172)', function () {
       await handle.result().catch(() => {});
     });
   });
+
+  // #172 restart/rejoin idempotency guard: once the first real user message
+  // has consumed the held context, subsequent `setPendingStartupContext`
+  // updates (e.g. a second `up --lineup` against a post-release conductor)
+  // MUST refuse silently — returning `{ stored: false }` rather than
+  // re-arming the hold.
+  it('setPendingStartupContext returns { stored: false } after the first user message has been consumed', async function () {
+    this.timeout(10_000);
+    await withWorker(async () => {
+      const handle = await startSession({
+        metadata: conductorMetadata({ playerId: `pending-idempotency-${Date.now()}` }),
+      });
+
+      // Arm + consume the hold normally.
+      const first = await handle.executeUpdate(setPendingStartupContextUpdate, {
+        args: [{ context: 'FIRST_CONTEXT', playersCount: 2 }],
+      });
+      expect(first.stored).to.equal(true);
+
+      await handle.signal(receiveMessageSignal, {
+        from: 'user',
+        text: 'first real user message',
+      });
+
+      // Cleared after consumption.
+      const clearedAfterFirst = await handle.query(pendingStartupContextQuery);
+      expect(clearedAfterFirst).to.equal(null);
+
+      // Second attempt to arm MUST be refused (idempotency guard) — the
+      // conductor is past initial startup and re-arming would silently
+      // corrupt behavior on the conductor's next user message.
+      const second = await handle.executeUpdate(setPendingStartupContextUpdate, {
+        args: [{ context: 'SECOND_CONTEXT', playersCount: 9 }],
+      });
+      expect(second.stored).to.equal(false);
+
+      // And the stored value must remain null — NOT re-armed.
+      const stillCleared = await handle.query(pendingStartupContextQuery);
+      expect(stillCleared).to.equal(null);
+
+      // A subsequent user message passes through verbatim (no combining with
+      // SECOND_CONTEXT, which was refused).
+      await handle.signal(receiveMessageSignal, {
+        from: 'user',
+        text: 'post-release message',
+      });
+      const msgs = await handle.query(allMessagesQuery);
+      // [0] = combined first-user prompt; [1] = plain second message.
+      expect(msgs).to.have.lengthOf(2);
+      expect(msgs[1].text).to.equal('post-release message');
+      expect(msgs[1].text).to.not.include('SECOND_CONTEXT');
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
 });

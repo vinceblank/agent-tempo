@@ -38,6 +38,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
     unchanged — the conductor is already oriented there.
   - New wire-protocol entries: `setPendingStartupContext` update and
     `pendingStartupContext` query. See `docs/WIRE-PROTOCOL.md`.
+  - **Idempotency guard (restart / rejoin safety):** new workflow state
+    field `hasInitialStartupRun` flips `true` when the first real user
+    message consumes the held context and is carried across `continueAsNew`.
+    Once set, further `setPendingStartupContext` updates are refused as a
+    silent no-op (`{ stored: false }`) with a warning log — so a second
+    `up --lineup` against a post-release conductor cannot re-arm the hold.
+  - **Blocked-detection suppression while held:** the legacy 5-minute
+    `blocked` heuristic is skipped for a conductor whose
+    `pendingStartupContext` is non-null. A conductor intentionally waiting
+    for its first user message is not blocked, and would otherwise flap to
+    `blocked` status before the user had a chance to speak.
 
 ---
 

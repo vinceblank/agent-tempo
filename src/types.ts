@@ -244,6 +244,14 @@ export interface SessionInput {
     context: string;
     playersCount: number;
   };
+  /**
+   * Issue #172 idempotency guard. Flipped to `true` the moment the conductor's
+   * first real user message consumes and clears `pendingStartupContext`. Once
+   * true, subsequent `setPendingStartupContext` updates are refused (no-op,
+   * returns `{ stored: false }`). Carried across `continueAsNew` so the
+   * one-shot property survives restart and CAN boundaries. Conductor-only.
+   */
+  hasInitialStartupRun?: boolean;
 }
 
 export interface Message {

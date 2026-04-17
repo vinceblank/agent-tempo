@@ -223,6 +223,13 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // rather than lineup defaults. Carried across continueAsNew.
   let pendingStartupContext: { context: string; playersCount: number } | null =
     input.pendingStartupContext ?? null;
+  // #172 idempotency guard: flipped to `true` the moment the first real user
+  // message consumes and clears `pendingStartupContext`. Once set, a later
+  // `setPendingStartupContext` update (e.g. a second `up --lineup` against a
+  // post-release conductor) is refused as a no-op rather than re-arming the
+  // hold. Carried across continueAsNew so restart / CAN-boundary transitions
+  // preserve the one-shot property.
+  let hasInitialStartupRun: boolean = input.hasInitialStartupRun ?? false;
 
   // ── v0.25 Attachment Lifecycle State (design §2.2) ──
   /** Current attachment lease, or null when detached. */
@@ -419,6 +426,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         isMaestro: msg.isMaestro,
       });
       pendingStartupContext = null;
+      // #172 idempotency guard: once the held context has been consumed by a
+      // real user message, `setPendingStartupContext` may not re-arm it.
+      hasInitialStartupRun = true;
       lastActivityTime = workflowNow().getTime();
       if (patched('v0.20-response-requested-blocked') && msg.responseRequested !== false) {
         lastInboundRRTime = workflowNow().getTime();
@@ -552,6 +562,17 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     if (input.metadata.isConductor !== true) {
       // No-op on non-conductor sessions — tool should never call this on a
       // player workflow, but be defensive rather than corrupt state.
+      return { stored: false };
+    }
+    // #172 idempotency guard: once the initial startup context has been
+    // consumed by the conductor's first user message, subsequent attempts to
+    // re-arm the hold (e.g. a second `up --lineup` against a post-release
+    // conductor) are refused silently. Returns `{ stored: false }` — not an
+    // error — matching the existing non-conductor short-circuit shape.
+    if (hasInitialStartupRun) {
+      workflowLog.warn(
+        'setPendingStartupContext refused — initial startup already consumed (idempotency guard)',
+      );
       return { stored: false };
     }
     pendingStartupContext = { context, playersCount };
@@ -1605,7 +1626,13 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       }
 
       const BLOCKED_WINDOW_MS = 5 * 60 * 1000;
+      // #172: a conductor held for its first user message is not blocked —
+      // it's intentionally waiting. Skip the legacy blocked-detection
+      // heuristic until the user speaks.
+      const heldForFirstUserMessage =
+        input.metadata.isConductor === true && pendingStartupContext !== null;
       if (
+        !heldForFirstUserMessage &&
         input.metadata.status === 'active' &&
         lastInboundRRTime > lastOutboundTime &&
         now - lastInboundRRTime > BLOCKED_WINDOW_MS
@@ -1671,6 +1698,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         // #172: pending startup context carried so a pre-user-message CAN
         // still combines context + first user text after the boundary.
         ...(pendingStartupContext ? { pendingStartupContext } : {}),
+        // #172 idempotency guard: preserve the one-shot property across CAN
+        // boundaries so a post-release conductor stays immune to re-arming.
+        hasInitialStartupRun,
       });
     }
   }
