@@ -137,6 +137,7 @@ function processMatchesExpected(pid: number, expected: string): boolean {
       const out = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
       });
       // First CSV field is the image name, quoted.
       const m = out.match(/^"([^"]+)"/);
@@ -180,6 +181,7 @@ async function killProcessTree(pid: number): Promise<boolean> {
     const result = spawnSync('taskkill', ['/T', '/F', '/PID', String(pid)], {
       stdio: ['ignore', 'ignore', 'pipe'],
       encoding: 'utf8',
+      windowsHide: true,
     });
     if (result.status === 0) return true;
     const stderr = (result.stderr || '').toString();
@@ -293,6 +295,7 @@ function findProcessesByCommandLine(binaryName: string, playerName: string): num
       const out = execFileSync('powershell', ['-NoProfile', '-Command', psScript], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
       });
       return parsePids(out);
     } catch (err) {
@@ -322,7 +325,7 @@ function findProcessesByCommandLine(binaryName: string, playerName: string): num
           'CommandLine,ProcessId,ParentProcessId',
           '/format:value',
         ],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true },
       );
       const { pids: childPids, ppids } = parseWmicPidPpidFiltered(out, tolerantPattern);
       const parentPids: number[] = [];
