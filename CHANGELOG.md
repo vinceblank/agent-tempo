@@ -7,65 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [0.25.0-beta.3] - 2026-04-16
+
+> **Beta release.** Consolidates session-lifecycle cleanup fixes validated via
+> live Windows smoke test across all single-machine verbs.
+>
+> **Install:** `npm i -g claude-tempo@beta`
+> **Rollback:** `npm i -g claude-tempo@0.25.0-beta.2`
+>
+> **Smoke coverage:** `recruit`, `cue`, `report`, `set_name`, `set_part`,
+> `who_am_i`, `recall`, `broadcast`, `listen`, `detach`, `restart --force`,
+> `destroy`, `schedule` / `unschedule` / `schedules`, `save_lineup` /
+> `load_lineup` / `release`, `worktree` (create/list/remove), `stage` /
+> `stages` / `cancel_stage`, `quality_gate` / `evaluate_gate` / `gates`.
+> `migrate` (cross-host) pending — requires second host to validate.
+
 ### Fixed
 
-- **Follow-up to #164+#165: `hardTerminate` regex now tolerates the production
-  quoted-arg form.** Smoke-testing the merged #164/#165 fixes surfaced a latent
-  #159 bug: the `-n\s+<playerName>` regex used by `findProcessesByCommandLine`
-  assumed a bare space between `-n` and the player name, but every real
-  `claude.exe` spawn routes through `src/spawn.ts` §WT, which hand-quotes each
-  token in the `cmd /k` innerCmd. The resulting CommandLine visible to
-  `Win32_Process` reads `... "-n" "<playerName>" ...` — close-quote, space,
-  open-quote — which `\s` does not match. Result: the #159 hardTerminate
-  pipeline was a silent no-op in production; every previous smoke-run only
-  passed because the adapter self-terminated on MCP detach. Regex widened to
-  `-n[\s"']+<escapedName>([\s"']|$)` across the PowerShell and wmic branches
-  (wmic LIKE filter broadened to `%-n%<name>%` with a post-filter that
-  reapplies the tolerant regex against CommandLine so overmatches are
-  discarded). Test fixture updated to reproduce the production-quoted topology
-  via a .bat indirection so the next regex-quoting regression fails loudly
-  instead of silently.
-- **#164 — `destroy` no longer leaves an orphaned `claude.exe` when an
-  attachment is live.** The `destroyUpdate` handler in the session workflow
-  predated the #159 `hardTerminateAttachment` pattern and flipped phase to
-  `gone` without killing the OS process tree — so destroying an attached
-  session silently leaked a `claude.exe` on Windows (and stray child
-  processes on Unix). `destroyUpdate` is now async and invokes
-  `hardTerminateAttachment` on the host's per-host task queue before the
-  state flip, using the same command-line-matching + sanity-guarded kill
-  as `forceDetach`. Unlike `forceDetach`, failure is **best-effort**: if
-  the host worker is offline or the activity throws, we log a warning and
-  still complete the workflow, because `destroy` is documented terminal
-  (design §2.5) and a wedged non-terminal workflow is strictly worse than
-  a lingering process. Idempotency on already-`gone`, outbox abandonment,
-  `ClaudeTempoStatus` search-attribute update, and the final audit message
-  are preserved. ([#164](https://github.com/vinceblank/claude-tempo/issues/164))
-- **#165 — `hardTerminate` now clears the Windows Terminal tab orphan.** The #159
-  fix killed `claude.exe` but not the parent `cmd.exe /k` shell that WT spawned
-  via `cmd.exe /c start "" wt.exe ... cmd /k <innerCmd>`, leaving an unresponsive
-  tab per `detach` / `restart --force` / `destroy`. `findProcessesByCommandLine`
-  now walks up exactly one PPID level for each matched PID and, if the parent is
-  `cmd.exe` and its CommandLine carries the same `-n <playerName>` sentinel, adds
-  it to the `taskkill /T /F` set. Sentinel guard reuses the #159 injection-defense
-  regex so unrelated cmd.exe instances are never touched. Grandparents (wt.exe /
-  conhost.exe) are out of scope by design — WT closes the tab on its own once the
-  shell exits. Localized to `src/activities/hard-terminate.ts`.
-- **#159 — detach/restart no longer leaves orphaned `claude.exe` on Windows.**
-  Two coupled fixes make the session-lifecycle verbs reliable on Windows
-  (and tighten them on macOS/Linux):
-  - `requestDetach` signal handler now honors the caller-supplied `deadlineMs`
-    (previously silently discarded in favor of the 5s default), and the main
-    loop's deadline race wakes up via a `wakeEpoch` sentinel when a signal
-    shortens the next deadline — previously the workflow stayed in `draining`
-    far past its grace window because the pre-scheduled timer was sized for
-    the next lease expiry.
-  - New `hardTerminateAttachment` activity runs on the per-host task queue
-    and actually kills the child process tree at the OS level —
-    `taskkill /T /F` on Windows (the `/T` flag walks MCP subprocess children),
-    process-group SIGTERM → SIGKILL on Unix. Wired into both
-    `forceDetachUpdate` (strict "kill first, then flip state") and the
-    drainingDeadline reap (best-effort). Command-line matching via
-    `-n <playerName>` with a strict regex guard against shell injection.
+- **#164 — `destroy` kills the live attachment's OS process tree.** Previously,
+  `destroyUpdate` cleared the workflow attachment and flipped phase to `gone`
+  without killing `claude.exe`, silently leaking a process per destroy on
+  Windows. The handler now awaits `hardTerminateAttachment` on the host's
+  per-host task queue before flipping `destroyRequested`, using a
+  destroy-specific 5s timeout so a missing host worker in test envs fails
+  fast instead of wedging for 20s. Best-effort: if the activity throws, we
+  log and continue to `setPhase('gone')` because `destroy` is terminal per
+  §2.5. Only fires when `currentAttachment` is non-null — no activity
+  overhead for sessions destroyed while already detached.
+  ([#164](https://github.com/vinceblank/claude-tempo/issues/164), [#166](https://github.com/vinceblank/claude-tempo/pull/166), [#169](https://github.com/vinceblank/claude-tempo/pull/169))
+- **#165 — parent `cmd.exe` walk closes the Windows Terminal tab orphan.**
+  The #159 fix killed `claude.exe` but not the parent `cmd.exe /k` shell that
+  WT spawned, leaving an unresponsive tab per `detach` / `restart --force` /
+  `destroy`. `findProcessesByCommandLine` now walks up exactly one PPID level
+  per matched PID and — if the parent is `cmd.exe` with the same
+  `-n <playerName>` sentinel in its CommandLine — adds it to the
+  `taskkill /T /F` set. Grandparents (`wt.exe`, `conhost.exe`) are out of
+  scope by design; WT auto-closes the tab once its shell process exits. New
+  profile setting `closeOnExit: "always"` on the `claude-tempo` WT profile
+  handles the non-zero-exit cases as a fallback.
+  ([#165](https://github.com/vinceblank/claude-tempo/issues/165), [#166](https://github.com/vinceblank/claude-tempo/pull/166))
+- **Latent #159 regex fix: `hardTerminate` now tolerates the production
+  quoted-arg form.** The original `-n\s+<playerName>` regex assumed a bare
+  space between `-n` and the player name, but `src/spawn.ts` §WT hand-quotes
+  each token in the `cmd /k` innerCmd, producing `... "-n" "<playerName>" ...`
+  in the CommandLine visible to `Win32_Process`. `\s` didn't match the `"`, so
+  **every previous #159 hardTerminate call was a silent no-op in production** —
+  earlier smoke runs only passed because the adapter self-terminated on MCP
+  detach. The regex is now `-n[\s"']+<escapedName>([\s"']|$)` on the PowerShell
+  branch, `[[:space:]"']` on the Unix pgrep branch (POSIX ERE — `\s` matches
+  literal 's' there), and `%-n%<name>%` + post-filter on the wmic fallback. Test
+  fixtures reproduce the production-quoted topology via a `.bat` indirection so
+  future regex-quoting regressions fail loudly instead of silently. ([#166](https://github.com/vinceblank/claude-tempo/pull/166))
+- **Fire-and-forget destroyUpdate regression from the bundled #166 fix.** An
+  early revision of #166 dropped the `await` on `hardTerminateAttachment` to
+  avoid CI test-env cascades. Temporal does not dispatch activities from a
+  workflow that has already set its terminal flag, so the activity was
+  scheduled but never run. Restored the `await` with a 5s best-effort timeout
+  and flipped `destroyRequested = true` after the await, keeping the main loop
+  alive long enough for the activity to reach the host worker. Verified
+  end-to-end via live smoke: `hardTerminate done (search) — killedPids=[<pid>]`
+  appears in the daemon log and the WT tab closes. ([#169](https://github.com/vinceblank/claude-tempo/pull/169))
+- **macOS: close terminal tabs on `detach` / `destroy`.** Parity with the
+  Windows WT fix from #166. Terminal.app, iTerm2, and Ghostty previously left
+  an interactive shell at a prompt after `claude.exe` exited. Now: Ghostty's
+  `initial input` and iTerm2's `write text` both append `; exit` (so the shell
+  exits after claude returns, regardless of exit code); Terminal.app's
+  `.command` script prepends `exec` to the claude invocation so the shell
+  slot is replaced — when claude exits, the script ends and Terminal.app
+  closes the window per its settings. iTerm2's AppleScript injection path was
+  also hardened with `JSON.stringify` escaping (reviewer catch). **Not tested
+  on macOS** — no Apple hardware available at release time; no process-leak
+  risk in any failure mode. ([#168](https://github.com/vinceblank/claude-tempo/pull/168))
+
+### Tests
+
+- **Closed review gaps from #166.** (1) Replaced the 1.5s fixed sleep in the
+  #165 parent-walk test with a polling loop, matching `spawnTestVictim`'s 60×100ms
+  pattern — prevents CI flakes on slow machines. (2) Added end-to-end coverage
+  for player names containing dots (`tempo.player-1.test-...`) so the
+  `replace(/[.-]/g, ...)` regex-escape path is exercised. (3) `afterEach`
+  cleanup is now platform-aware: `taskkill /F /PID` on Windows,
+  `process.kill('SIGKILL')` on Unix — fixes EPERM on Windows when the test
+  spawned `cmd.exe` processes without an IPC channel. ([#167](https://github.com/vinceblank/claude-tempo/pull/167))
+- **Added #164 behavioral tests.** `destroys a session with a live attachment —
+  workflow completes, isDestroyed=true` exercises the actual production bug
+  path (`claimAttachment` first, then `destroy`). `concurrent forceDetach +
+  destroy — workflow reaches gone without errors` tests the race window
+  discussed in the PR #166 review. ([#166](https://github.com/vinceblank/claude-tempo/pull/166))
+
+### Docs
+
+- **`load_lineup` `hold` flag: docstring now matches warm-hold implementation.**
+  The tool description previously claimed `hold=true` would create workflows
+  without spawning processes. The activity actually implements a "warm hold":
+  processes DO spawn and attach, but the outbox is locked and the player
+  receives a standby message until `release` is called. Surfaced during
+  smoke testing when a user reasonably expected no spawn. Behavior unchanged;
+  description corrected. ([#170](https://github.com/vinceblank/claude-tempo/pull/170))
+
+### Known Limitations (unchanged from beta.2)
+
+- `migrate` (cross-host) not validated in this beta — needs a second host.
+- Windows Terminal's `closeOnExit: "always"` profile setting may not auto-close
+  tabs on some WT versions when the shell exits non-zero; functional kill still
+  works, tab persists with "process exited" banner. Cosmetic only.
 
 ---
 
