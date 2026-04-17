@@ -33,7 +33,7 @@ export function registerLoadLineupTool(
     {
       name: z.string().max(PLAYER_NAME_MAX).optional().describe('Name of a lineup — resolves saved lineups, then shipped examples (e.g. "tempo-dev-team")'),
       path: z.string().max(PATH_MAX).optional().describe('Explicit file path to a lineup YAML file'),
-      hold: z.boolean().optional().describe('When true, create player workflows but do not spawn processes. Players stay in "held" status until explicitly released.'),
+      hold: z.boolean().optional().describe('When true, spawn players in "warm hold": processes start and attach but their outbox is locked, so they receive a standby message and defer their initial task until `release` is called.'),
     },
     async (args) => {
       const lineupName = (args as any).name as string | undefined;
