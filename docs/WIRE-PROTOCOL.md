@@ -217,6 +217,9 @@ The following custom Temporal search attributes are written by `claudeSessionWor
 | `ClaudeTempoGitRoot` | `Keyword` | Absolute path to the git repository root on the session's host. |
 | `ClaudeTempoPlayerType` | `Keyword` | Agent type name (e.g. `tempo-soloist`), set from the player's agent definition. |
 | `ClaudeTempoIsConductor` | `Bool` | `true` for conductor workflows, absent or `false` for regular players. Set via `upsertSearchAttributes` in `claudeSessionWorkflow` at startup and after `continueAsNew`. Enables efficient conductor discovery without scanning all session workflows. |
+| `ClaudeTempoAttachmentState` | `Keyword` | **v0.25.** Current attachment phase: `booting \| attached \| processing \| awaiting \| draining \| detached \| gone`. Enables external observers (TUI, monitoring, daemon reconcile-on-boot) to query session readiness without polling the `attachmentInfo` query. |
+| `ClaudeTempoAttachedHost` | `Keyword` | **v0.25.** Hostname of the machine currently holding the attachment lease. Empty string when no attachment is active (`detached` / `gone` phases). Used by daemon reconcile-on-boot to identify orphaned sessions whose adapter process may have died on this host. |
+| `ClaudeTempoAttachmentId` | `Keyword` | **v0.25.** UUID of the current attachment (from `claimAttachment`). Empty string when no attachment is active. Allows the daemon to correlate a specific adapter instance with the workflow that claimed it. |
 
 ---
 

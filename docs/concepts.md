@@ -145,15 +145,27 @@ a blocker from any player fails the entire stage. Stages survive `continueAsNew`
 
 ## Flow control
 
-**Hold / Release** — Controlled ensemble startup. `load_lineup(hold: true)` spawns all players
-with locked outboxes and a standby message ("waiting for release") instead of their real task.
-When ready, `release` (MCP tool or `claude-tempo release` CLI) unlocks outboxes and delivers
-the actual task messages. Use case: pre-warm a full team before kicking off a long job.
+**Hold / Release** — Controlled ensemble startup. Two modes:
+
+- **Deferred-startup hold** (`load_lineup(initialStartup: true)`, used by `up --lineup` and
+  `conduct --lineup`): lineup instructions + a banner/directive are baked into the conductor's
+  `SessionInput.messages[]` at workflow creation. The directive text instructs the conductor to
+  wait silently for the user's first message, then call `resume_ensemble { release: true }`
+  (which unpauses the ensemble AND releases held players in one call), then decompose. The entire
+  ensemble is paused via `pause_ensemble` (scheduler + per-session outboxes + Maestro) until
+  the conductor does so. Pass `--no-hold` to opt out and deliver instructions immediately.
+
+- **Explicit hold** (`load_lineup(hold: true)`, conductor-invoked mid-work): spawns players with
+  locked outboxes and a standby message instead of their real task. When ready, `release` (MCP
+  tool or `claude-tempo release` CLI) unlocks outboxes and delivers the actual task messages. Use
+  case: pre-warm a full team before kicking off a long job.
 
 **Pause / Resume** — Ensemble-wide mid-session flow control. `pause_ensemble` locks all session
 outboxes and signals the scheduler to skip fires; `resume_ensemble` reverses both. `stop` outbox
-entries bypass the pause lock and are always dispatched. Pause state is owned by the per-ensemble
-Maestro (`maestroSetPaused` signal) and synced to sessions and the scheduler.
+entries bypass the pause lock and are always dispatched. Pass `release: true` to `resume_ensemble`
+(or `--release` on `claude-tempo resume`) to also release any held sessions in the same call —
+idempotent on non-held sessions. Pause state is owned by the per-ensemble Maestro
+(`maestroSetPaused` signal) and synced to sessions and the scheduler.
 
 **Outbox lock** — A workflow-level flag on each session that gates outbox dispatch independently
 of pause. Used by the hold mechanism (`outboxLocked` query, `releaseHeld` signal) and the pause

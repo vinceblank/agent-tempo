@@ -18,7 +18,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `who_am_i` | Get your identity, role, player type, and session details. |
 | `agent_types` | List available player types with name, description, and source. |
 | `save_lineup` | Save the current ensemble as a YAML lineup (conductor only). |
-| `load_lineup` | Load a lineup to recruit players and create schedules. |
+| `load_lineup` | Load a lineup to recruit players and create schedules. `hold: true` spawns players in warm-hold (attached but deferred until `release`). `initialStartup: true` pauses the ensemble at startup and waits for the user's first message before the conductor acts. |
 | `broadcast` | Send a message to all active players. Optional `type` filter limits to a specific player type. |
 | `restart` | Restart a player session — detaches the current adapter and re-spawns a fresh process. Works from any non-`gone` phase. Optional `host` param routes restart to a remote machine. |
 | `detach` | Gracefully detach a player's adapter — triggers draining and clean handoff. Use before a planned `migrate` or host maintenance. |

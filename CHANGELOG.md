@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.25.0-beta.4] - 2026-04-17
 
 ### Added
 
@@ -61,6 +61,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
     histories that recorded the command deserialize cleanly.
   - Conductor-invoked `load_lineup` mid-work and `recruit` mid-work are
     unchanged — the conductor is already oriented there.
+
+### Fixed
+
+- **`resume_ensemble` directive lie** (#172): `ensembleReadyDirective` previously told the
+  conductor that `resume_ensemble` "unpauses the scheduler and unlocks player outboxes" — but
+  `resume_ensemble` never touched outbox locks. Held players would stay silent until the
+  conductor also called `release` by hand. Directive text now accurately describes the correct
+  sequence: call `resume_ensemble { release: true }` → decompose.
+- **`resume_ensemble` opt-in release** (#172): added `release?: boolean` arg (default `false`,
+  non-breaking). When `true`, fans out `releaseHeld` to every running session after unpausing —
+  idempotent on non-held sessions. Surface via `claude-tempo resume --release`. Eliminates the
+  two-step `resume` + `release` that the deferred-startup flow previously required.
+- **Directive message ordering** (#172): the system directive ("wait silently, then call
+  `resume_ensemble { release: true }`") is now seeded *before* the lineup instructions in the
+  conductor's `messages[]`. Previously the directive appeared after the lineup briefing, which
+  caused the LLM to miss the required startup tool calls when lineup instructions were long
+  (e.g. multi-phase lineups like `my-tempo-po`).
 
 ---
 

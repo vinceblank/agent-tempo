@@ -11,7 +11,7 @@ claude-tempo <command> [options]
 | `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor. Use `--lineup` to load a lineup. |
 | `down` | Full teardown — stop all sessions, daemon, and Temporal. Use `--keep-mcp` to preserve MCP config, `--keep-daemon` to leave the daemon running, `-y`/`--yes` to skip confirmation. |
 | `server` | Start the Temporal dev server and register search attributes |
-| `conduct [ensemble]` | Start a conductor session (one per ensemble). Use `--resume` or `--replace` if one exists. |
+| `conduct [ensemble]` | Start a conductor session (one per ensemble). Use `--resume` or `--replace` if one exists. Use `--lineup` to load a lineup with hold-on-startup semantics; `--no-hold` for immediate start. |
 | `start [ensemble]` | Start a player session |
 | `status [ensemble]` | Show active sessions and Temporal health |
 | `config` | Configure Temporal connection settings (interactive or `set`/`show`) |
@@ -23,9 +23,10 @@ claude-tempo <command> [options]
 | `detach <name>` | Gracefully detach the adapter for a session — triggers draining and clean handoff. Use when migrating a session to another host. |
 | `destroy <name>` | Terminate a session's workflow — ordered shutdown via outbox drain. Use for permanent removal. |
 | `migrate <name>` | Move a session to a different host — sugar for `setPreferredHost` + `restart` on the target machine. Use `--to <hostname>`. |
+| `restore [name]` | **v0.25.** Restore orphaned (detached) sessions. Interactive picker by default; `--all` restores every orphan, `--from-host <hostname>` filters by preferred host, `--dry-run` lists without restoring. |
 | `release [ensemble]` | Release all held players — unlocks outboxes and delivers deferred task messages. Use `-n <name>` to release one player. |
 | `pause [ensemble]` | Pause the ensemble — locks all session outbox dispatch and pauses the scheduler. |
-| `resume [ensemble]` | Resume a paused ensemble — unlocks outbox dispatch and restarts the scheduler. |
+| `resume [ensemble]` | Resume a paused ensemble — unlocks outbox dispatch and restarts the scheduler. Use `--release` to also release any held players in the same call. |
 | `ensemble <sub>` | Manage saved lineups (`save`, `list`, `show`) |
 | `agent-types <sub>` | Manage player types (`list`, `show <name>`, `init`) |
 | `daemon <sub>` | Manage the worker daemon (`start`, `stop`, `status`, `logs`) |
@@ -48,7 +49,9 @@ claude-tempo <command> [options]
 -d, --dir <path>              Target directory (default: cwd)
 --background                  Run Temporal in background (server only)
 --keep-mcp                    Preserve MCP config when tearing down (down only)
---lineup <name|file>          Load an ensemble lineup by name or file path (up only)
+--lineup <name|file>          Load an ensemble lineup by name or file path (up and conduct)
+--no-hold                     Skip hold-on-startup: deliver lineup instructions immediately without pausing the ensemble (up --lineup and conduct --lineup)
+--release                     Also release held players when resuming (resume only) — combines resume_ensemble + release into one call
 --resume                      Resume an existing conductor session (conduct only)
 --replace                     Stop existing conductor and start fresh (conduct only)
 -v, --version                 Print version and exit
@@ -184,6 +187,20 @@ claude-tempo destroy alice
 ```
 
 Prefer `destroy` over `stop` for permanent removal — it respects the v0.25 outbox and attachment lifecycle rather than force-terminating.
+
+### `claude-tempo restore`
+
+Re-attaches a fresh adapter to a session whose previous adapter exited uncleanly (crash, OS kill, host reboot). Message history and metadata are preserved.
+
+```bash
+claude-tempo restore                    # interactive picker
+claude-tempo restore alice              # restore a specific player by name
+claude-tempo restore --all              # restore every orphan on this host
+claude-tempo restore --from-host web-01 # filter by preferred host
+claude-tempo restore --dry-run          # list candidates without restoring
+```
+
+The daemon auto-restores orphans on boot when `restorePolicy` is configured; `restore` lets you trigger it manually.
 
 ### `claude-tempo migrate`
 

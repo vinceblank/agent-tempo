@@ -145,7 +145,7 @@ claude-tempo start [ensemble]   # start a player
 claude-tempo status [ensemble]  # list active sessions
 claude-tempo release [ensemble] # release held players (unlock + deliver tasks)
 claude-tempo pause [ensemble]   # pause all sessions and the scheduler
-claude-tempo resume [ensemble]  # resume a paused ensemble
+claude-tempo resume [ensemble]  # resume a paused ensemble (--release also releases held players)
 claude-tempo tui                # open the terminal UI
 claude-tempo daemon <sub>       # manage the worker daemon
 claude-tempo upgrade            # update to latest
