@@ -6,6 +6,7 @@ export function getGitInfo(workDir: string): { gitRoot?: string; gitBranch?: str
       cwd: workDir,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     }).trim();
     let gitBranch: string | undefined;
     try {
