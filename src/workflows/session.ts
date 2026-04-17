@@ -399,7 +399,13 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     // guarantees replay safety for workflows that predate this change.
     if (
       input.metadata.isConductor === true &&
-      pendingStartupContext !== null
+      pendingStartupContext !== null &&
+      // Our own "ensemble ready" banner is signalled via `receiveMessage` with
+      // `from: 'system'` — it MUST NOT be treated as the first user message
+      // or it will prematurely release the hold. `pause_ensemble` halts
+      // scheduler/outbox/maestro upstream, but we still send this banner
+      // ourselves, so we filter it out here.
+      msg.from !== 'system'
     ) {
       const combined =
         `${pendingStartupContext.context}\n\n---\n\n` +
