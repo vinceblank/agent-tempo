@@ -27,6 +27,9 @@ interface ParsedArgs {
   project: boolean;
   replace: boolean;
   resume: boolean;
+  /** Issue #172: `up --no-hold` / `conduct --no-hold` opts out of the new
+   *  defer-conductor-instructions-until-first-user-message behavior. */
+  noHold: boolean;
   ensemble?: string;
   agent?: AgentType;
   type?: string;
@@ -59,6 +62,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     project: false,
     replace: false,
     resume: false,
+    noHold: false,
     includeStale: false,
     fresh: false,
     force: false,
@@ -101,6 +105,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.replace = true;
     } else if (arg === '--resume') {
       result.resume = true;
+    } else if (arg === '--no-hold') {
+      result.noHold = true;
     } else if (arg === '--ensemble' && i + 1 < argv.length) {
       result.ensemble = argv[++i];
     } else if (arg === '--type' && i + 1 < argv.length) {
@@ -189,6 +195,11 @@ async function main() {
         skipPreflight: args.skipPreflight,
         agent: resolvedAgent(),
         dir: args.dir,
+        // Issue #172: `conduct --lineup <name>` loads a lineup during
+        // conductor startup with the same deferred-instructions semantics
+        // as `up --lineup`. `--no-hold` opts out.
+        lineup: args.lineup,
+        noHold: args.noHold,
         ...overrides,
       });
       break;
@@ -245,6 +256,8 @@ async function main() {
         ensemble,
         name: args.name,
         lineup: args.lineup,
+        // Issue #172: `--no-hold` opts out of the defer-and-hold behavior.
+        noHold: args.noHold,
         agent: resolvedAgent(),
         ...overrides,
       });

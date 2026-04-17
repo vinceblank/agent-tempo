@@ -56,6 +56,7 @@ Queries on a `claudeSessionWorkflow` instance (synchronous, read-only).
 | `isDestroyed` | `boolean` | Returns `true` if the session has been permanently destroyed via the `destroy` update. Adapters should check this before attempting reconnection — a destroyed session must not be resurrected. |
 | `attachmentInfo` | `AttachmentInfo` | **v0.25.** Returns the current attachment state: `{ phase, currentAttachment?, preferredHost?, inFlightCount, processingSince? }`. `phase` is one of `'booting' \| 'attached' \| 'processing' \| 'awaiting' \| 'draining' \| 'detached' \| 'gone'`. Adapters poll this to detect lease revocation / detach directives; tools read it for TUI and verb implementations. |
 | `orphanSummary` | `OrphanSummary` | **v0.25.** Returns metadata about a detached orphan — `{ detachedSince?, reason?, preferredHost?, lastAdapter? }`. The daemon uses this at reconcile-on-boot to decide whether to auto-restore per `restorePolicy`. |
+| `pendingStartupContext` | `{ context: string; playersCount: number } \| null` | **v0.26 (issue #172).** Conductor-only. Returns the lineup `conductor.instructions` currently deferred by an initial-startup `load_lineup` (`up --lineup` / `conduct --lineup`), or `null` once the user's first real message has consumed and cleared it. Used by the TUI to render the "ensemble ready" banner in the chat header until the user speaks. |
 
 ---
 
@@ -73,6 +74,7 @@ Workflow updates on a `claudeSessionWorkflow` instance (transactional, returns a
 | `forceDetach` | `{ reason: DetachReason; expectedAttachmentId?; gracePeriodMs: number }` | `{ reaped: boolean; previousAttachmentId? }` | **v0.25.** Revoke the current attachment. Returns `{ reaped: true, previousAttachmentId }` when a live attachment was revoked; `{ reaped: false }` when already detached (idempotent). `expectedAttachmentId` guards against TOCTOU. `gracePeriodMs` is reserved for future use — PR-A always detaches immediately. |
 | `enqueueSpawn` | `{ host, attachmentId, runId, resume, sessionId?, adapterId }` | `{ spawnEntryId: string }` | **v0.25.** Queue a spawn outbox entry carrying the claim token. Used by `restart` (PR-D) to route a fresh-adapter spawn to a per-host task queue after `claimAttachment`. |
 | `setPreferredHost` | `{ host: string }` | *(void)* | **v0.25.** Record a preferred host for daemon reconcile-on-boot (PR-E). |
+| `setPendingStartupContext` | `{ context: string; playersCount: number }` | `{ stored: boolean }` | **v0.26 (issue #172).** Conductor-only. Stores the lineup's `conductor.instructions` as `pendingStartupContext` so the workflow can combine them with the user's first real message rather than firing them immediately. Called by `load_lineup` when invoked on the initial-startup path (`up --lineup` / `conduct --lineup`). Returns `{ stored: true }` on conductor sessions; `{ stored: false }` (no-op) on player sessions so a misrouted call can't corrupt state. |
 
 ---
 

@@ -67,6 +67,8 @@ import {
   outboxLockedQuery,
   setPausedSignal,
   pausedQuery,
+  setPendingStartupContextUpdate,
+  pendingStartupContextQuery,
   processingStartUpdate,
   processingEndUpdate,
   inFlightMessagesQuery,
@@ -94,6 +96,7 @@ import type {
   OrphanSummary,
   SpawnOutboxEntry,
 } from '../types';
+import { RELEASE_PLAYERS_DIRECTIVE } from '../constants';
 
 // ── Outbox Activity Proxies ──
 
@@ -175,6 +178,11 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   patched('v0.18-stages');
   patched('v0.23-hold-release');
   patched('v0.25-attachment-lifecycle');
+  // Issue #172: conductor defers lineup instructions until the user's first
+  // message. Guards the `pendingStartupContext` state field + first-message
+  // interception; older workflows that predate this change replay safely
+  // because the patched marker gates the new behavior.
+  patched('v0.26-pending-startup-context');
 
   // Ensure search attributes are always current — critical when reconnecting
   // via WorkflowIdConflictPolicy.USE_EXISTING, which skips the attributes
@@ -207,6 +215,14 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   let outboxLocked = input.outboxLocked ?? false;
   let heldMessage: string | undefined = input.heldMessage;
   let paused = input.paused ?? false;
+
+  // ── Pending Startup Context (issue #172) ──
+  // Conductor-only: the lineup's `conductor.instructions` captured at
+  // initial-ensemble-startup time, held here until the user's first real
+  // message arrives so the conductor always decomposes from user intent
+  // rather than lineup defaults. Carried across continueAsNew.
+  let pendingStartupContext: { context: string; playersCount: number } | null =
+    input.pendingStartupContext ?? null;
 
   // ── v0.25 Attachment Lifecycle State (design §2.2) ──
   /** Current attachment lease, or null when detached. */
@@ -358,6 +374,58 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // ── Player Signal Handlers ──
 
   setHandler(receiveMessageSignal, (msg) => {
+    // Issue #172: when a conductor has stored `pendingStartupContext` (lineup
+    // instructions deferred from `up --lineup` / `conduct --lineup`), the
+    // FIRST real user message triggers a combined delivery:
+    //   [lineup context] + [release directive] + [user text]
+    // …so the conductor acts on user intent rather than lineup defaults.
+    //
+    // Scope guards:
+    //   - Only conductor sessions (isConductor === true)
+    //   - Only when pendingStartupContext is non-null (set via the initial-
+    //     startup path in `load_lineup`)
+    //   - Only for genuine user-facing messages — filter out system/lineup/
+    //     maestro/scheduler/self traffic so the context isn't prematurely
+    //     flushed by the "ensemble ready" banner or a schedule-fire that
+    //     lands before the human types.
+    //
+    // `patched('v0.26-pending-startup-context')` at the top of the workflow
+    // guarantees replay safety for workflows that predate this change.
+    const SYSTEM_SENDERS = new Set([
+      'system',
+      'lineup',
+      'maestro',
+      'scheduler',
+      'conductor', // conductor-to-self echoes never release the hold
+    ]);
+    const isSystemMessage =
+      msg.isMaestro === true || SYSTEM_SENDERS.has(msg.from);
+
+    if (
+      input.metadata.isConductor === true &&
+      pendingStartupContext !== null &&
+      !isSystemMessage
+    ) {
+      const combined =
+        `${pendingStartupContext.context}\n\n---\n\n` +
+        `${RELEASE_PLAYERS_DIRECTIVE}\n\n---\n\n` +
+        `User's first message:\n\n${msg.text}`;
+      messages.push({
+        id: uuid4(),
+        from: msg.from,
+        text: combined,
+        timestamp: workflowNow().toISOString(),
+        delivered: false,
+        isMaestro: msg.isMaestro,
+      });
+      pendingStartupContext = null;
+      lastActivityTime = workflowNow().getTime();
+      if (patched('v0.20-response-requested-blocked') && msg.responseRequested !== false) {
+        lastInboundRRTime = workflowNow().getTime();
+      }
+      return;
+    }
+
     messages.push({
       id: uuid4(),
       from: msg.from,
@@ -472,6 +540,25 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   });
 
   setHandler(pausedQuery, () => paused);
+
+  // ── Pending Startup Context Handlers (issue #172) ──
+  //
+  // Conductor-only: the `load_lineup` tool (initial-startup path) stores the
+  // lineup's `conductor.instructions` here instead of immediately signalling
+  // them. The `receiveMessageSignal` handler above drains + combines this
+  // with the user's first real message. Idempotent: re-setting overwrites.
+
+  setHandler(setPendingStartupContextUpdate, ({ context, playersCount }) => {
+    if (input.metadata.isConductor !== true) {
+      // No-op on non-conductor sessions — tool should never call this on a
+      // player workflow, but be defensive rather than corrupt state.
+      return { stored: false };
+    }
+    pendingStartupContext = { context, playersCount };
+    return { stored: true };
+  });
+
+  setHandler(pendingStartupContextQuery, () => pendingStartupContext);
 
   // ── Processing Lifecycle Handlers (fixes #99; v0.25 phase-aware) ──
 
@@ -1581,6 +1668,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         ...(drainingSince ? { drainingSince } : {}),
         ...(drainingDeadlineMs !== null ? { drainingDeadlineMs } : {}),
         ...(input.metadata.isConductor ? { commandHistory, reportHistory, qualityGates, worktrees, stages } : {}),
+        // #172: pending startup context carried so a pre-user-message CAN
+        // still combines context + first user text after the boundary.
+        ...(pendingStartupContext ? { pendingStartupContext } : {}),
       });
     }
   }

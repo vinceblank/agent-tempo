@@ -7,12 +7,13 @@ import { AgentType } from '../types';
 import { loadAndResolveLineup, resolveAgentType } from '../ensemble/agent-types';
 import { resolveLineupPath } from '../ensemble/loader';
 import { resolveSession } from './resolve';
-import { submitOutboxUpdate } from '../workflows/signals';
+import { submitOutboxUpdate, setPendingStartupContextUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
 import { parseDuration } from '../utils/duration';
 import { safeLineupPath } from '../utils/safe-path';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { PLAYER_NAME_MAX, PATH_MAX } from '../utils/validation';
+import { ensembleReadyBanner } from '../constants';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:load-lineup]', ...args);
 
@@ -34,11 +35,15 @@ export function registerLoadLineupTool(
       name: z.string().max(PLAYER_NAME_MAX).optional().describe('Name of a lineup — resolves saved lineups, then shipped examples (e.g. "tempo-dev-team")'),
       path: z.string().max(PATH_MAX).optional().describe('Explicit file path to a lineup YAML file'),
       hold: z.boolean().optional().describe('When true, spawn players in "warm hold": processes start and attach but their outbox is locked, so they receive a standby message and defer their initial task until `release` is called.'),
+      initialStartup: z.boolean().optional().describe('Issue #172: when true, the lineup was loaded as part of initial ensemble startup (`up --lineup` / `conduct --lineup`). Conductor instructions are stored as pending context and combined with the user\'s first message instead of firing immediately. Also recruits players with `hold: true`. Defaults to false — conductor-invoked mid-work `load_lineup` keeps the legacy behavior.'),
     },
     async (args) => {
       const lineupName = (args as any).name as string | undefined;
       const lineupPath = (args as any).path as string | undefined;
-      const hold = (args as any).hold === true;
+      const initialStartup = (args as any).initialStartup === true;
+      // Initial-startup always implies warm-hold — players should wait for
+      // the conductor to decompose the user's first message before starting.
+      const hold = (args as any).hold === true || initialStartup;
 
       if (!lineupName && !lineupPath) {
         return fail('Provide either `name` (saved lineup) or `path` (file path). Exactly one is required.');
@@ -108,35 +113,72 @@ export function registerLoadLineupTool(
             }
           }
 
-          // Send conductor instructions
+          // Send conductor instructions.
+          // Issue #172: on the initial-startup path, DEFER instructions — store
+          // them as pending startup context on the conductor workflow so they
+          // combine with the user's first message instead of auto-firing.
           if (lineup.conductor.instructions) {
-            try {
-              await handle.signal('receiveMessage', {
-                from: 'lineup',
-                text: lineup.conductor.instructions,
-                responseRequested: false,
-              });
-              conductorActions.push('instructions delivered');
-              log('Conductor instructions delivered');
-            } catch (err) {
-              failed.push(`conductor instructions: ${err}`);
+            if (initialStartup) {
+              try {
+                await handle.executeUpdate(setPendingStartupContextUpdate, {
+                  args: [{
+                    context: lineup.conductor.instructions,
+                    playersCount: lineup.players.length,
+                  }],
+                });
+                conductorActions.push('instructions deferred (initial startup)');
+                log('Conductor instructions stored as pending startup context');
+              } catch (err) {
+                failed.push(`conductor instructions (defer): ${err}`);
+              }
+            } else {
+              try {
+                await handle.signal('receiveMessage', {
+                  from: 'lineup',
+                  text: lineup.conductor.instructions,
+                  responseRequested: false,
+                });
+                conductorActions.push('instructions delivered');
+                log('Conductor instructions delivered');
+              } catch (err) {
+                failed.push(`conductor instructions: ${err}`);
+              }
             }
           }
         }
 
-        // When hold mode: tell conductor to wait for user direction.
-        // This runs regardless of whether the lineup has a `conductor:` section —
-        // what matters is that the caller IS the conductor and hold is active.
-        if (hold && isConductor && handle) {
-          try {
-            await handle.signal('receiveMessage', {
-              from: 'system',
-              text: 'Ensemble is loading in hold mode — players are connecting but on standby. Wait for instructions from the user or maestro before directing the ensemble. When ready, use the `release` tool to deliver task assignments to all held players.',
-              responseRequested: false,
-            });
-            conductorActions.push('hold mode standby');
-          } catch (err) {
-            failed.push(`conductor hold message: ${err}`);
+        // System-banner delivery.
+        // Issue #172: on the initial-startup path, send the canonical "ensemble
+        // ready" banner so the conductor's tab shows a visible marker while we
+        // wait for the user to speak. On the legacy hold path (conductor-
+        // invoked mid-work), keep the existing "hold mode standby" wording.
+        // Neither path is taken when a non-conductor session calls load_lineup.
+        if (isConductor && handle) {
+          if (initialStartup) {
+            try {
+              // Use the resolved player count INCLUDING the conductor's own
+              // tab so the banner matches CLI stdout and TUI header.
+              const playerCount = lineup.players.length;
+              await handle.signal('receiveMessage', {
+                from: 'system',
+                text: ensembleReadyBanner(lineup.name, playerCount),
+                responseRequested: false,
+              });
+              conductorActions.push('startup banner shown');
+            } catch (err) {
+              failed.push(`conductor startup banner: ${err}`);
+            }
+          } else if (hold) {
+            try {
+              await handle.signal('receiveMessage', {
+                from: 'system',
+                text: 'Ensemble is loading in hold mode — players are connecting but on standby. Wait for instructions from the user or maestro before directing the ensemble. When ready, use the `release` tool to deliver task assignments to all held players.',
+                responseRequested: false,
+              });
+              conductorActions.push('hold mode standby');
+            } catch (err) {
+              failed.push(`conductor hold message: ${err}`);
+            }
           }
         }
 

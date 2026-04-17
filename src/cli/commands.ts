@@ -9,7 +9,7 @@ import { spawnInTerminal, spawnCopilotBridge, resolveClaudePath } from '../spawn
 import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
 import { getGitInfo } from '../git-info';
 import { createTemporalConnection } from '../connection';
-import { playerReportSignal, updateMetadataSignal, releaseHeldSignal, outboxLockedQuery, setPausedSignal, destroyUpdate } from '../workflows/signals';
+import { playerReportSignal, updateMetadataSignal, releaseHeldSignal, outboxLockedQuery, setPausedSignal, destroyUpdate, setPendingStartupContextUpdate } from '../workflows/signals';
 import { addScheduleSignal, setSchedulerPausedSignal } from '../workflows/scheduler-signals';
 import { maestroSetPausedSignal } from '../workflows/maestro-signals';
 import { AgentType, ScheduleEntry, SessionInput, SessionMetadata } from '../types';
@@ -21,6 +21,7 @@ import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
 import { shouldIncludeInBroadcast, validateEnsembleName } from '../utils/validation';
 import { isDaemonRunning, startDaemon, stopDaemon, getDaemonStatus, DAEMON_LOG_PATH } from './daemon';
 import { createTempoClient } from '../client';
+import { ensembleReadyBanner } from '../constants';
 import * as out from './output';
 
 /** Package root is two levels up from dist/cli/ */
@@ -54,6 +55,238 @@ async function ensureMaestroWorkflow(client: Client, config: Config, ensemble: s
   }
 }
 
+/**
+ * Issue #172: shared lineup-setup helper used by `up --lineup` and
+ * `conduct --lineup`. Pre-creates the conductor workflow with the lineup's
+ * conductor instructions deferred as `pendingStartupContext`, recruits
+ * players in warm hold (`outboxLocked: true`, instructions stashed as
+ * `heldMessage`), creates any scheduled entries, and signals the canonical
+ * "ensemble ready" banner to the conductor's tab. Only creates workflows —
+ * the caller is responsible for spawning the conductor / player processes.
+ */
+async function applyStartupLineup(args: {
+  client: Client;
+  config: Config;
+  ensemble: string;
+  lineup: import('../ensemble/schema').EnsembleLineup;
+  initialStartup: boolean;
+  conductorName: string;
+  temporalEnvVars: Record<string, string>;
+  conductorAgent: AgentType;
+}): Promise<void> {
+  const { client, config, ensemble, lineup, initialStartup, conductorName } = args;
+  const conductorWfId = conductorWorkflowId(ensemble);
+
+  // Pre-create the conductor workflow so we can seed `pendingStartupContext`
+  // BEFORE the Claude Code process spawns and reconnects via USE_EXISTING.
+  const { gitRoot: conductorGitRoot, gitBranch: conductorGitBranch } = getGitInfo(process.cwd());
+  const conductorSessionId = randomUUID();
+  const resolvedConductorType = lineup.conductor?.type ? resolveAgentType(lineup.conductor.type) : null;
+  const conductorInput: SessionInput = {
+    metadata: {
+      playerId: conductorName,
+      ensemble,
+      hostname: hostname(),
+      workDir: process.cwd(),
+      gitRoot: conductorGitRoot,
+      gitBranch: conductorGitBranch,
+      isConductor: true,
+      agentType: args.conductorAgent,
+      status: 'pending',
+      sessionId: conductorSessionId,
+      ...(resolvedConductorType ? { playerType: resolvedConductorType.name, playerTypeDescription: resolvedConductorType.description || '' } : {}),
+    },
+    autoSummary: `Conductor session`,
+    disableStaleDetection: true,
+    temporalConfig: {
+      temporalAddress: config.temporalAddress,
+      temporalNamespace: config.temporalNamespace,
+      taskQueue: config.taskQueue,
+    },
+    // Same split as `up`: bake instructions into messages on --no-hold,
+    // otherwise seed pendingStartupContext and rely on the post-start update.
+    ...(lineup.conductor?.instructions && !initialStartup ? {
+      messages: [{
+        id: randomUUID(),
+        from: 'lineup',
+        text: lineup.conductor.instructions,
+        timestamp: new Date().toISOString(),
+        delivered: false,
+      }],
+    } : {}),
+    ...(lineup.conductor?.instructions && initialStartup ? {
+      pendingStartupContext: {
+        context: lineup.conductor.instructions,
+        playersCount: lineup.players.length,
+      },
+    } : {}),
+  };
+
+  await client.workflow.start('claudeSessionWorkflow', {
+    workflowId: conductorWfId,
+    taskQueue: config.taskQueue,
+    args: [conductorInput],
+    workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+    searchAttributes: {
+      ...(conductorGitRoot ? { ClaudeTempoGitRoot: [conductorGitRoot] } : {}),
+      ClaudeTempoHostname: [hostname()],
+      ClaudeTempoEnsemble: [ensemble],
+      ClaudeTempoPlayerId: [conductorName],
+    },
+  });
+
+  // Follow-up update + banner signal for the USE_EXISTING case.
+  if (initialStartup) {
+    try {
+      const conductorHandle = client.workflow.getHandle(conductorWfId);
+      if (lineup.conductor?.instructions) {
+        await conductorHandle.executeUpdate(setPendingStartupContextUpdate, {
+          args: [{
+            context: lineup.conductor.instructions,
+            playersCount: lineup.players.length,
+          }],
+        });
+      }
+      await conductorHandle.signal('receiveMessage', {
+        from: 'system',
+        text: ensembleReadyBanner(lineup.name, lineup.players.length),
+        responseRequested: false,
+      });
+    } catch (err) {
+      out.warn(`Could not seed conductor startup context: ${err}`);
+    }
+  }
+
+  // Pre-create and spawn players.
+  for (const player of lineup.players) {
+    const playerAgent: AgentType = player.agent === 'copilot' ? 'copilot' : (player.agent === 'claude' ? 'claude' : args.conductorAgent);
+    const playerWorkDir = player.workDir || process.cwd();
+    const resolvedPlayerType = player.type ? resolveAgentType(player.type) : null;
+    const playerSessionId = randomUUID();
+    const playerWfId = sessionWorkflowId(ensemble, player.name);
+    const { gitRoot: playerGitRoot, gitBranch: playerGitBranch } = getGitInfo(playerWorkDir);
+    const playerInput: SessionInput = {
+      metadata: {
+        playerId: player.name,
+        ensemble,
+        hostname: hostname(),
+        workDir: playerWorkDir,
+        gitRoot: playerGitRoot,
+        gitBranch: playerGitBranch,
+        isConductor: false,
+        agentType: playerAgent,
+        status: 'pending',
+        sessionId: playerSessionId,
+        recruitedBy: conductorName,
+        ...(resolvedPlayerType ? { playerType: resolvedPlayerType.name, playerTypeDescription: resolvedPlayerType.description || '' } : {}),
+      },
+      autoSummary: `Session in ${basename(resolve(playerWorkDir))}`,
+      disableStaleDetection: true,
+      temporalConfig: {
+        temporalAddress: config.temporalAddress,
+        temporalNamespace: config.temporalNamespace,
+        taskQueue: config.taskQueue,
+      },
+      ...(initialStartup
+        ? {
+            outboxLocked: true,
+            ...(player.instructions ? { heldMessage: player.instructions } : {}),
+          }
+        : (player.instructions ? {
+            messages: [{
+              id: randomUUID(),
+              from: 'lineup',
+              text: player.instructions,
+              timestamp: new Date().toISOString(),
+              delivered: false,
+            }],
+          } : {})),
+    };
+    try {
+      await client.workflow.start('claudeSessionWorkflow', {
+        workflowId: playerWfId,
+        taskQueue: config.taskQueue,
+        args: [playerInput],
+        workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+        searchAttributes: {
+          ...(playerGitRoot ? { ClaudeTempoGitRoot: [playerGitRoot] } : {}),
+          ClaudeTempoHostname: [hostname()],
+          ClaudeTempoEnsemble: [ensemble],
+          ClaudeTempoPlayerId: [player.name],
+        },
+      });
+    } catch (err) {
+      out.warn(`Could not pre-create workflow for "${player.name}": ${err}`);
+      continue;
+    }
+
+    // Spawn the player process.
+    try {
+      if (playerAgent === 'copilot') {
+        spawnCopilotBridge({
+          name: player.name,
+          ensemble,
+          temporalAddress: config.temporalAddress,
+          temporalNamespace: config.temporalNamespace,
+          temporalApiKey: config.temporalApiKey,
+          temporalTlsCertPath: config.temporalTlsCertPath,
+          temporalTlsKeyPath: config.temporalTlsKeyPath,
+          isConductor: false,
+          workDir: playerWorkDir,
+        });
+      } else {
+        const claudeArgs = [
+          '--dangerously-skip-permissions',
+          '--dangerously-load-development-channels', 'server:claude-tempo',
+          '-n', player.name,
+          ...(resolvedPlayerType?.nativeResolvable ? ['--agent', resolvedPlayerType.name] :
+              resolvedPlayerType ? ['--system-prompt', resolvedPlayerType.path] : []),
+        ];
+        const playerEnvVars: Record<string, string> = {
+          ...args.temporalEnvVars,
+          [ENV.ENSEMBLE]: ensemble,
+          [ENV.CONDUCTOR]: '',
+          [ENV.PLAYER_NAME]: player.name,
+        };
+        if (resolvedPlayerType) {
+          playerEnvVars[ENV.PLAYER_TYPE] = resolvedPlayerType.name;
+        }
+        spawnInTerminal(claudeArgs, playerWorkDir, playerEnvVars, { claudeBin: config.claudeBin });
+      }
+      out.log(`  ${out.green('ok')} ${out.bold(player.name)} in ${playerWorkDir}`);
+    } catch (err) {
+      out.warn(`Could not spawn "${player.name}": ${err}`);
+    }
+  }
+
+  // Create schedules (independent of hold state).
+  if (lineup.schedules && lineup.schedules.length > 0) {
+    for (const sched of lineup.schedules) {
+      try {
+        const entry = lineupScheduleToEntry(sched);
+        const schedulerWfId = schedulerWorkflowId(ensemble);
+        try {
+          const handle = client.workflow.getHandle(schedulerWfId);
+          await handle.describe();
+          await handle.signal(addScheduleSignal, entry);
+        } catch {
+          await client.workflow.start('claudeSchedulerWorkflow', {
+            workflowId: schedulerWfId,
+            taskQueue: config.taskQueue,
+            args: [{ ensemble, entries: [entry] }],
+            workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+            searchAttributes: {
+              ClaudeTempoEnsemble: [ensemble],
+            },
+          });
+        }
+      } catch (err) {
+        out.warn(`Could not create schedule "${sched.name}": ${err}`);
+      }
+    }
+  }
+}
+
 interface StartOpts extends CliOverrides {
   ensemble: string;
   conductor: boolean;
@@ -63,6 +296,18 @@ interface StartOpts extends CliOverrides {
   skipPreflight?: boolean;
   agent: AgentType;
   dir?: string;
+  /**
+   * Issue #172: `conduct --lineup <name>` — load a lineup during conductor
+   * startup and apply the same initial-startup semantics as `up --lineup`:
+   * conductor instructions deferred, players held, banner shown. Only
+   * meaningful when `conductor: true`.
+   */
+  lineup?: string;
+  /**
+   * Issue #172: opt out of the defer-conductor-instructions behavior.
+   * Forces the legacy immediate-start path even on `conduct --lineup`.
+   */
+  noHold?: boolean;
 }
 
 export async function start(opts: StartOpts) {
@@ -124,6 +369,22 @@ export async function start(opts: StartOpts) {
     }
   }
 
+  // Issue #172: `conduct --lineup <name>` loads the lineup with the initial-
+  // startup semantics. Resolved here so a bad name/path fails before we spawn
+  // the process. Non-conductor `start` ignores `--lineup` (only `up` /
+  // `conduct` create ensembles from scratch).
+  let startLineup: ReturnType<typeof loadLineup> | undefined;
+  if (opts.conductor && opts.lineup) {
+    try {
+      const resolution = resolveLineupPath(opts.lineup);
+      startLineup = loadLineup(resolution.path);
+    } catch (err: any) {
+      out.error(err.message);
+      process.exit(1);
+    }
+  }
+  const startInitialStartup = Boolean(startLineup) && !opts.noHold;
+
   out.log(`Starting ${out.bold(role)} in ensemble ${out.cyan(opts.ensemble)}${opts.agent === 'copilot' ? out.dim(' (copilot)') : ''}`);
 
   // Always forward all resolved Temporal settings to child processes.
@@ -184,13 +445,36 @@ export async function start(opts: StartOpts) {
       const connection = await createTemporalConnection(config);
       const client = new Client({ connection, namespace: config.temporalNamespace });
       await ensureMaestroWorkflow(client, config, opts.ensemble);
+      // Issue #172: `conduct --lineup` — apply initial-startup semantics by
+      // pre-creating the conductor workflow with `pendingStartupContext` set
+      // and recruiting players in warm hold. The conductor process will
+      // reconnect to this pre-created workflow via `USE_EXISTING`.
+      if (startLineup) {
+        await applyStartupLineup({
+          client,
+          config,
+          ensemble: opts.ensemble,
+          lineup: startLineup,
+          initialStartup: startInitialStartup,
+          conductorName: opts.name || startLineup.conductor?.name || (opts.agent === 'copilot' ? `${opts.ensemble}-conductor` : 'conductor'),
+          temporalEnvVars,
+          conductorAgent: opts.agent,
+        });
+      }
       await connection.close();
-    } catch {
-      // Maestro is non-critical
+    } catch (err) {
+      // Maestro is non-critical; lineup errors should be visible though.
+      if (startLineup) {
+        out.warn(`Lineup setup encountered errors: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 
   out.log(`\nCheck status: ${out.dim('claude-tempo status ' + opts.ensemble)}`);
+  if (startLineup && startInitialStartup) {
+    console.log();
+    out.log(`  ${ensembleReadyBanner(startLineup.name, startLineup.players.length)}`);
+  }
 }
 
 interface StatusOpts extends CliOverrides {
@@ -599,6 +883,12 @@ interface UpOpts extends CliOverrides {
   name?: string;
   lineup?: string;
   agent: AgentType;
+  /**
+   * Issue #172: when true, skip the "defer conductor instructions + hold
+   * players until user's first message" behavior and use the legacy
+   * immediate-start semantics. Ignored when `--lineup` is not set.
+   */
+  noHold?: boolean;
 }
 
 export async function up(opts: UpOpts) {
@@ -715,6 +1005,11 @@ export async function up(opts: UpOpts) {
   if (lineup) {
     out.check('Lineup loaded', true, lineup.name);
   }
+
+  // Issue #172: initial-startup behavior is on by default when a lineup is
+  // loaded. `--no-hold` opts out and preserves legacy immediate-start. No
+  // lineup ⇒ the flag is a no-op (nothing to defer).
+  const initialStartup = Boolean(lineup) && !opts.noHold;
 
   // Resolve conductor agent from lineup or CLI flags
   const conductorAgent: AgentType = lineup?.conductor?.agent === 'copilot' ? 'copilot' : opts.agent;
@@ -839,7 +1134,12 @@ export async function up(opts: UpOpts) {
       temporalNamespace: config.temporalNamespace,
       taskQueue: config.taskQueue,
     },
-    ...(lineup?.conductor?.instructions ? {
+    // Issue #172: on initial-startup, do NOT bake conductor instructions into
+    // the workflow's inbox — they're stored as `pendingStartupContext` via
+    // the `setPendingStartupContext` update below, and combined with the
+    // user's first real message. With `--no-hold` (or no lineup), the legacy
+    // bake-into-messages path is preserved so immediate-start still works.
+    ...(lineup?.conductor?.instructions && !initialStartup ? {
       messages: [{
         id: randomUUID(),
         from: 'lineup',
@@ -847,6 +1147,19 @@ export async function up(opts: UpOpts) {
         timestamp: new Date().toISOString(),
         delivered: false,
       }],
+    } : {}),
+    // Seed the pending context in the initial SessionInput so a race where
+    // the conductor tab connects before our post-start update call doesn't
+    // leak the instructions to the conductor via some other path. The
+    // workflow's handler above sets this field on `updateMetadata`-free
+    // first-run, so seeding here is belt-and-suspenders — the real store
+    // happens via the update call below (which also covers the
+    // WorkflowIdConflictPolicy.USE_EXISTING resume case).
+    ...(lineup?.conductor?.instructions && initialStartup ? {
+      pendingStartupContext: {
+        context: lineup.conductor.instructions,
+        playersCount: lineup.players.length,
+      },
     } : {}),
   };
 
@@ -863,6 +1176,35 @@ export async function up(opts: UpOpts) {
     },
   });
   out.check('Conductor workflow pre-created', true);
+
+  // Issue #172: when starting in initial-startup mode with lineup conductor
+  // instructions, store them as pending startup context on the conductor
+  // workflow. This covers the `USE_EXISTING` case where a prior workflow
+  // handle is reused and the `SessionInput.pendingStartupContext` seed above
+  // is ignored. Also send the canonical "ensemble ready" banner as a system
+  // message so the conductor's tab shows a marker.
+  if (initialStartup && lineup && conductorAgent !== 'copilot') {
+    try {
+      const conductorHandle = client.workflow.getHandle(conductorWfId);
+      if (lineup.conductor?.instructions) {
+        await conductorHandle.executeUpdate(setPendingStartupContextUpdate, {
+          args: [{
+            context: lineup.conductor.instructions,
+            playersCount: lineup.players.length,
+          }],
+        });
+      }
+      // Inline signal since we're already here — avoids a second round-trip
+      // through `load_lineup` just for the banner.
+      await conductorHandle.signal('receiveMessage', {
+        from: 'system',
+        text: ensembleReadyBanner(lineup.name, lineup.players.length),
+        responseRequested: false,
+      });
+    } catch (err) {
+      out.warn(`Could not seed conductor startup context: ${err}`);
+    }
+  }
 
   // Spawn the conductor process
   let pid: number | undefined;
@@ -928,6 +1270,10 @@ export async function up(opts: UpOpts) {
         const playerWfId = sessionWorkflowId(opts.ensemble, player.name);
         const { gitRoot: playerGitRoot, gitBranch: playerGitBranch } = getGitInfo(playerWorkDir);
 
+        // Issue #172: on initial-startup, pre-create each player in warm hold
+        // with the lineup instructions stashed as `heldMessage` (NOT on the
+        // inbox — delivery is deferred until `release` fires). The legacy
+        // immediate-start path bakes instructions into `messages` as before.
         const playerInput: SessionInput = {
           metadata: {
             playerId: player.name,
@@ -950,15 +1296,20 @@ export async function up(opts: UpOpts) {
             temporalNamespace: config.temporalNamespace,
             taskQueue: config.taskQueue,
           },
-          ...(player.instructions ? {
-            messages: [{
-              id: randomUUID(),
-              from: 'lineup',
-              text: player.instructions,
-              timestamp: new Date().toISOString(),
-              delivered: false,
-            }],
-          } : {}),
+          ...(initialStartup
+            ? {
+                outboxLocked: true,
+                ...(player.instructions ? { heldMessage: player.instructions } : {}),
+              }
+            : (player.instructions ? {
+                messages: [{
+                  id: randomUUID(),
+                  from: 'lineup',
+                  text: player.instructions,
+                  timestamp: new Date().toISOString(),
+                  delivered: false,
+                }],
+              } : {})),
         };
 
         try {
@@ -1068,6 +1419,14 @@ export async function up(opts: UpOpts) {
     out.log(`  Players: ${lineup.players.length}`);
     if (lineup.schedules?.length) out.log(`  Schedules: ${lineup.schedules.length}`);
     out.log(`\n  ${out.dim('claude-tempo status ' + opts.ensemble)}   See who\'s active`);
+  }
+  // Issue #172: print the canonical "ensemble ready" banner on stdout so the
+  // user sees the same wording in their terminal, the conductor's tab, and
+  // the TUI. On `--no-hold` the legacy wording is preserved implicitly since
+  // nothing is deferred — we only surface the banner on initial-startup paths.
+  if (lineup && initialStartup) {
+    console.log();
+    out.log(`  ${ensembleReadyBanner(lineup.name, lineup.players.length)}`);
   }
   console.log();
 }

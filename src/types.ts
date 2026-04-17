@@ -234,6 +234,16 @@ export interface SessionInput {
     temporalNamespace: string;
     taskQueue: string;
   };
+  /**
+   * Lineup conductor.instructions stored via `setPendingStartupContext` for
+   * delivery on the conductor's first user message. Issue #172. Conductor-only;
+   * carried across `continueAsNew` so a pre-user-message continuation still
+   * combines the context + user text.
+   */
+  pendingStartupContext?: {
+    context: string;
+    playersCount: number;
+  };
 }
 
 export interface Message {

@@ -237,6 +237,12 @@ export interface TuiState {
   confirmingDisband?: string;
   /** Lineup confirmation state (pending load). */
   confirmingLineup?: { action: 'load'; path: string; summary: string };
+  /**
+   * Issue #172: when the conductor has `pendingStartupContext`, show a
+   * canonical "ensemble ready" banner in the chat header. Cleared when the
+   * conductor's query returns `null` (user has sent their first message).
+   */
+  startupBanner?: { name: string; playersCount: number } | null;
   /** Recruit wizard state (active when phase === 'recruit'). */
   recruitState?: RecruitState;
   /** Schedule creation wizard state (active when phase === 'schedule-create'). */
@@ -337,6 +343,8 @@ export type TuiAction =
   // Chat shell actions
   | { type: 'COMMIT_STATIC'; item: StaticItem }
   | { type: 'SET_CONDUCTOR'; name?: string }
+  /** Issue #172: update the pending-startup banner from the conductor's query. */
+  | { type: 'SET_STARTUP_BANNER'; banner: { name: string; playersCount: number } | null }
   | { type: 'APPEND_SENT_MESSAGE'; to: string; text: string }
   | { type: 'HYDRATE_SENT_MESSAGES'; messages: Array<{ to: string; text: string; timestamp: string }> }
   | { type: 'ENTER_CHAT'; target: string }
@@ -593,6 +601,17 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'SET_CONDUCTOR':
       return { ...state, conductorName: action.name };
+
+    case 'SET_STARTUP_BANNER':
+      // Issue #172: no-op when the value hasn't changed so we don't force a
+      // re-render on every poll tick.
+      if (
+        (state.startupBanner?.name ?? null) === (action.banner?.name ?? null) &&
+        (state.startupBanner?.playersCount ?? null) === (action.banner?.playersCount ?? null)
+      ) {
+        return state;
+      }
+      return { ...state, startupBanner: action.banner };
 
     case 'APPEND_SENT_MESSAGE': {
       const newSent = [...state.sentMessages, { to: action.to, text: action.text, timestamp: new Date().toISOString() }];

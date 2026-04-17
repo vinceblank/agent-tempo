@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **#172 — Ensemble startup waits for the user's first message before the
+  conductor acts.** Previously, `claude-tempo up <ens> --lineup <name>`
+  immediately delivered `lineup.conductor.instructions` to the conductor,
+  which then auto-executed the lineup's default Phase-1 workflow before the
+  user had said anything. Now the conductor stays quiet on startup and
+  decomposes from user intent instead. Mechanics:
+  - `load_lineup` tool gains an `initialStartup: boolean` param. When true,
+    conductor instructions are stored via a new `setPendingStartupContext`
+    workflow update instead of being signalled as a `receiveMessage`. Players
+    are recruited in warm hold (`outboxLocked: true`), and a canonical
+    "ensemble ready" banner is signalled to the conductor's tab as a system
+    message.
+  - New conductor workflow state field `pendingStartupContext` carries the
+    deferred instructions across `continueAsNew`. The `receiveMessage` signal
+    handler intercepts the FIRST real user message (filtering
+    `system`/`lineup`/`maestro`/`scheduler`/`conductor`/`isMaestro` traffic)
+    and delivers one combined prompt: `[lineup context] + [release directive]
+    + [user text]`. A `patched('v0.26-pending-startup-context')` marker
+    guarantees replay safety for pre-v0.26 workflows.
+  - CLI: `up --lineup` defaults to the new behavior; `--no-hold` opts out
+    for scripts that want legacy immediate-start. New `conduct --lineup
+    <name>` flag applies the same semantics when starting just a conductor.
+  - Shared `ensembleReadyBanner(name, playerCount)` constant is rendered
+    verbatim on CLI stdout, in the conductor's chat tab, and in the TUI so
+    the user sees the same wording on every entry point.
+  - Conductor-invoked `load_lineup` mid-work and `recruit` mid-work are
+    unchanged — the conductor is already oriented there.
+  - New wire-protocol entries: `setPendingStartupContext` update and
+    `pendingStartupContext` query. See `docs/WIRE-PROTOCOL.md`.
+
 ---
 
 ## [0.25.0-beta.3] - 2026-04-16

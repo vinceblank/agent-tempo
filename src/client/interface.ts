@@ -100,6 +100,17 @@ export interface TempoClient {
   /** Check if the Global Maestro workflow is running. */
   hasGlobalMaestro(): Promise<boolean>;
 
+  /**
+   * Issue #172: query the conductor's currently-stored `pendingStartupContext`.
+   * Returns `null` when the conductor has no deferred lineup instructions
+   * (either `load_lineup` was never called with `initialStartup=true`, or the
+   * user's first real message has already been received and cleared it).
+   * Used by the TUI to render the "ensemble ready" banner while waiting on
+   * the user. Also returns `null` when the conductor workflow doesn't exist
+   * or doesn't support the query (pre-v0.26 workflows).
+   */
+  getPendingStartupContext(ensemble: string): Promise<{ context: string; playersCount: number } | null>;
+
   // ── Maestro session (TUI-owned workflow for two-way messaging) ──
 
   /** Ensure a maestro session workflow exists for the ensemble (create or reuse). */

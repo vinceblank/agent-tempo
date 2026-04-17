@@ -512,6 +512,139 @@ describe('load_lineup conductor section', function () {
     expect(signals).to.have.length(0);
   });
 
+  // ── Issue #172: initial-startup deferral ──
+
+  it('initialStartup=true: defers conductor instructions via setPendingStartupContext instead of signalling them', async function () {
+    const lineupPath = join(tmpDir, 'test-initial-startup.yaml');
+    writeFileSync(lineupPath, [
+      'name: test-initial-startup',
+      'conductor:',
+      '  instructions: "You are the lead conductor."',
+      'players:',
+      '  - name: alice',
+      '    workDir: /tmp/test',
+      '    instructions: "Be helpful"',
+    ].join('\n'));
+
+    const signals: Array<{ name: string; args: any }> = [];
+    const updates: Array<{ name: any; args: any }> = [];
+    const conductorHandle = {
+      workflowId: `claude-session-${testConfig.ensemble}-conductor`,
+      executeUpdate: async (name: any, opts: any) => {
+        // `name` is the UpdateDefinition object produced by defineUpdate —
+        // its `.name` field is the wire name ("setPendingStartupContext").
+        // Fall back to plain-string for callers that use the string form.
+        const uname = typeof name === 'string' ? name : (name?.name || 'unknown');
+        updates.push({ name: uname, args: opts?.args?.[0] });
+        return 'fake-entry-id';
+      },
+      signal: async (name: string, ...args: any[]) => { signals.push({ name, args: args[0] }); },
+      describe: async () => ({ status: { name: 'RUNNING' } }),
+    } as unknown as WorkflowHandle;
+
+    const clientForConductor = {
+      workflow: {
+        getHandle: () => conductorHandle,
+        start: async () => ({ runId: 'fake' }),
+        list: async function* () { /* no workflows */ },
+      },
+    } as unknown as Client;
+
+    const call = extractHandler((server) =>
+      registerLoadLineupTool(
+        server, clientForConductor, testConfig, getPlayerId, 'claude',
+        conductorHandle,
+        () => {},
+        true, // isConductor
+      ),
+    );
+
+    const result = await call({ path: lineupPath, initialStartup: true });
+    expect(result.isError).to.be.undefined;
+    // Response mentions the deferred status.
+    expect(result.content[0].text).to.include('instructions deferred');
+
+    // Conductor must NOT receive the raw lineup instructions as a signal —
+    // they were deferred via the setPendingStartupContext update.
+    const instructionsSignal = signals.find(
+      (s) => s.name === 'receiveMessage' && s.args?.from === 'lineup',
+    );
+    expect(instructionsSignal, 'conductor must not see raw lineup instructions on initial-startup').to.be.undefined;
+
+    // The setPendingStartupContext update MUST have fired with the lineup text.
+    const pending = updates.find((u) =>
+      u.name === 'setPendingStartupContext' || u.args?.context === 'You are the lead conductor.',
+    );
+    expect(pending, 'setPendingStartupContext should have fired').to.exist;
+    expect(pending!.args.context).to.equal('You are the lead conductor.');
+    expect(pending!.args.playersCount).to.equal(1);
+
+    // Canonical "ensemble ready" banner should have been delivered as a
+    // system message so the user sees it in the conductor's tab.
+    const banner = signals.find((s) => s.name === 'receiveMessage' && s.args?.from === 'system');
+    expect(banner, 'ensemble-ready banner should have been sent as a system message').to.exist;
+    expect(banner!.args.text).to.include('is ready');
+    expect(banner!.args.text).to.include('Describe your task to begin');
+    expect(banner!.args.responseRequested).to.equal(false);
+  });
+
+  it('initialStartup=false (default): preserves legacy signal-instructions-immediately behavior', async function () {
+    const lineupPath = join(tmpDir, 'test-legacy-startup.yaml');
+    writeFileSync(lineupPath, [
+      'name: test-legacy-startup',
+      'conductor:',
+      '  instructions: "Legacy instructions"',
+      'players: []',
+    ].join('\n'));
+
+    const signals: Array<{ name: string; args: any }> = [];
+    const updates: Array<{ name: any; args: any }> = [];
+    const conductorHandle = {
+      workflowId: `claude-session-${testConfig.ensemble}-conductor`,
+      executeUpdate: async (name: any, opts: any) => {
+        const uname = typeof name === 'string' ? name : (name.name || 'unknown');
+        updates.push({ name: uname, args: opts?.args?.[0] });
+        return 'fake-entry-id';
+      },
+      signal: async (name: string, ...args: any[]) => { signals.push({ name, args: args[0] }); },
+      describe: async () => ({ status: { name: 'RUNNING' } }),
+    } as unknown as WorkflowHandle;
+
+    const clientForConductor = {
+      workflow: {
+        getHandle: () => conductorHandle,
+        start: async () => ({ runId: 'fake' }),
+        list: async function* () { /* no workflows */ },
+      },
+    } as unknown as Client;
+
+    const call = extractHandler((server) =>
+      registerLoadLineupTool(
+        server, clientForConductor, testConfig, getPlayerId, 'claude',
+        conductorHandle,
+        () => {},
+        true, // isConductor
+      ),
+    );
+
+    const result = await call({ path: lineupPath });
+    expect(result.isError).to.be.undefined;
+    expect(result.content[0].text).to.include('instructions delivered');
+
+    // Legacy path: instructions arrive as a receiveMessage signal.
+    const instructionsSignal = signals.find(
+      (s) => s.name === 'receiveMessage' && s.args?.from === 'lineup',
+    );
+    expect(instructionsSignal, 'legacy path must signal instructions immediately').to.exist;
+    expect(instructionsSignal!.args.text).to.equal('Legacy instructions');
+
+    // setPendingStartupContext must NOT have been called.
+    const pending = updates.find(
+      (u) => u.name === 'setPendingStartupContext' || (u.args?.context === 'Legacy instructions'),
+    );
+    expect(pending, 'legacy path must not defer instructions').to.be.undefined;
+  });
+
   it('sends hold standby to conductor even when lineup has no conductor section', async function () {
     // Lineup with only a players section — no `conductor:` block
     const lineupPath = join(tmpDir, 'test-hold-no-conductor-section.yaml');
