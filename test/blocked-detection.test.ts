@@ -283,6 +283,7 @@ describe('blocked session detection', function () {
       await handle.result();
     });
   });
+
 });
 
 describe('blocked broadcast exclusion', function () {

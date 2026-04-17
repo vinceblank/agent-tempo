@@ -94,7 +94,6 @@ import type {
   OrphanSummary,
   SpawnOutboxEntry,
 } from '../types';
-
 // ── Outbox Activity Proxies ──
 
 const { deliverCue, deliverReport, terminateSession, startRecruitedSession, releasePlayer, deliverDetach, deliverDestroy, deliverRestart } =
@@ -175,6 +174,13 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   patched('v0.18-stages');
   patched('v0.23-hold-release');
   patched('v0.25-attachment-lifecycle');
+  // Issue #172: kept as a replay marker for workflows that predate the
+  // simpler hold-on-startup design (v0.26). The state field + interceptor
+  // were removed in favor of baking the banner/directive into
+  // `SessionInput.messages` at workflow creation, but leaving the patched
+  // marker ensures existing replay histories that recorded this command
+  // still deserialize cleanly. Safe no-op today.
+  patched('v0.26-pending-startup-context');
 
   // Ensure search attributes are always current — critical when reconnecting
   // via WorkflowIdConflictPolicy.USE_EXISTING, which skips the attributes

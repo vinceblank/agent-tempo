@@ -1,4 +1,10 @@
 import { defineSignal, defineQuery, defineUpdate } from '@temporalio/workflow';
+// Issue #172 (v0.26 simplification): the `setPendingStartupContext` update
+// and `pendingStartupContext` query were removed. Hold-on-startup is now
+// driven by baking the conductor's lineup instructions + banner/directive
+// directly into `SessionInput.messages[]` at workflow creation — no
+// workflow state, no `receiveMessage` interceptor. See CHANGELOG.
+
 import type {
   SessionMetadata,
   Message,

@@ -119,11 +119,18 @@ async function spawnTestVictim(opts: { binaryArg: string; playerName: string; tm
     const tmpDir = opts.tmpDir || tmpdir();
     const batPath = join(tmpDir, `victim-${opts.playerName}.bat`);
     const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
+    // Prefix with `start /B ""` so the child node.exe is launched without a
+    // visible console window. Without /B, node inherits no console from the
+    // windowsHide'd cmd parent and Windows creates a fresh one, causing a
+    // visible popup. /B = run in background, no new window. The empty ""
+    // after /B is required — it's the window title arg (never shown) that
+    // start consumes before the actual command.
     writeFileSync(
       batPath,
       [
         '@echo off',
         [
+          'start', '/B', '""',
           q(process.execPath),
           q('-e'),
           q(nodeScript),
@@ -199,6 +206,7 @@ async function spawnTestVictim(opts: { binaryArg: string; playerName: string; tm
   const child = spawn(process.execPath, args, {
     stdio: 'ignore',
     detached: true,
+    windowsHide: true,
   });
   child.unref();
   const waitForExit = () =>
@@ -231,6 +239,20 @@ function isAlive(pid: number): boolean {
 describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
   // Each case spawns a real process; allow generous timeout for slow CI + kill-grace.
   this.timeout(30_000);
+
+  // On Windows, this suite's fixtures spawn `cmd.exe /c .bat → node.exe` to
+  // reproduce the production-quoted `"-n" "<playerName>"` CommandLine topology.
+  // Even with `windowsHide: true` on cmd, Windows allocates a console for the
+  // grandchild node.exe because `CREATE_NO_WINDOW` does not propagate through
+  // cmd's internal CreateProcess. Result: every `npm test` run flashes console
+  // windows on Windows, which is disruptive when a player (e.g. tempo-devops)
+  // runs `npm test` on a recurring schedule. Gate the Windows suite behind
+  // `CLAUDE_TEMPO_RUN_WIN_INTEGRATION=1` (or `CI=true` in CI pipelines) so
+  // ambient local runs skip it. CI and manual opt-in still exercise it.
+  if (isWindows && !process.env.CI && !process.env.CLAUDE_TEMPO_RUN_WIN_INTEGRATION) {
+    it.skip('Windows hard-terminate integration tests — set CLAUDE_TEMPO_RUN_WIN_INTEGRATION=1 to run', () => {});
+    return;
+  }
 
   let tmpWorkDir: string;
   const spawnedPids: number[] = [];
@@ -327,7 +349,7 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
     // which exits immediately when stdio is ignored. Image name reports as 'ping.exe'
     // which is distinctly NOT 'node.exe', so the sanity guard must refuse.
     const bystander = isWindows
-      ? spawn('ping.exe', ['-n', '60', '127.0.0.1'], { stdio: 'ignore', detached: true })
+      ? spawn('ping.exe', ['-n', '60', '127.0.0.1'], { stdio: 'ignore', detached: true, windowsHide: true })
       : spawn('sleep', ['60'], { stdio: 'ignore', detached: true });
     bystander.unref();
     spawnedPids.push(bystander.pid!);
@@ -399,7 +421,10 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
       probeBat,
       [
         '@echo off',
+        // Prefix with `start /B ""` so node.exe is launched without a visible
+        // console window. Matches the pattern in `spawnTestVictim` (same fix).
         [
+          'start', '/B', '""',
           q(process.execPath),
           q('-e'),
           q(nodeScript),

@@ -32,6 +32,7 @@ import { registerDetachTool } from '../src/tools/detach';
 import { registerDestroyTool } from '../src/tools/destroy';
 import { registerMigrateTool } from '../src/tools/migrate';
 import { registerAttachmentInfoTool } from '../src/tools/attachment-info';
+import { registerResumeEnsembleTool } from '../src/tools/resume-ensemble';
 
 // ─────────────────────────────────────────────
 // Harness
@@ -510,6 +511,169 @@ describe('load_lineup conductor section', function () {
     expect(result.content[0].text).to.not.include('Conductor:');
     // No signals should have been sent for conductor section
     expect(signals).to.have.length(0);
+  });
+
+  // ── Issue #172 (v0.26 simplification): initial-startup seeds messages + pauses ──
+
+  it('initialStartup=true: signals lineup instructions + banner/directive and pauses the ensemble', async function () {
+    const lineupPath = join(tmpDir, 'test-initial-startup.yaml');
+    writeFileSync(lineupPath, [
+      'name: test-initial-startup',
+      'conductor:',
+      '  instructions: "You are the lead conductor."',
+      'players:',
+      '  - name: alice',
+      '    workDir: /tmp/test',
+      '    instructions: "Be helpful"',
+    ].join('\n'));
+
+    const signals: Array<{ name: string; args: any }> = [];
+    const updates: Array<{ name: any; args: any }> = [];
+    const conductorHandle = {
+      workflowId: `claude-session-${testConfig.ensemble}-conductor`,
+      executeUpdate: async (name: any, opts: any) => {
+        // `name` is the UpdateDefinition object produced by defineUpdate —
+        // fall back to plain-string for callers that use the string form.
+        const uname = typeof name === 'string' ? name : (name?.name || 'unknown');
+        updates.push({ name: uname, args: opts?.args?.[0] });
+        return 'fake-entry-id';
+      },
+      signal: async (name: string, ...args: any[]) => { signals.push({ name, args: args[0] }); },
+      describe: async () => ({ status: { name: 'RUNNING' } }),
+    } as unknown as WorkflowHandle;
+
+    const clientForConductor = {
+      workflow: {
+        getHandle: () => conductorHandle,
+        start: async () => ({ runId: 'fake' }),
+        list: async function* () { /* no workflows */ },
+      },
+    } as unknown as Client;
+
+    const call = extractHandler((server) =>
+      registerLoadLineupTool(
+        server, clientForConductor, testConfig, getPlayerId, 'claude',
+        conductorHandle,
+        () => {},
+        true, // isConductor
+      ),
+    );
+
+    const result = await call({ path: lineupPath, initialStartup: true });
+    expect(result.isError).to.be.undefined;
+
+    // Issue #172 follow-up: the tool fires two `receiveMessage` signals in
+    // a deliberate order — the `from: 'system'` directive FIRST so the LLM
+    // reads the "call resume_ensemble + release FIRST" framing before the
+    // lineup's role/phase briefing. Earlier messages weigh more heavily.
+    //   1. banner + directive (`from: 'system'`)
+    //   2. lineup instructions (`from: 'lineup'`)
+    const receiveMessages = signals.filter((s) => s.name === 'receiveMessage');
+    const lineupSignal = receiveMessages.find((s) => s.args?.from === 'lineup');
+    expect(lineupSignal, 'lineup instructions signal should have fired').to.exist;
+    expect(lineupSignal!.args.text).to.equal('You are the lead conductor.');
+    expect(lineupSignal!.args.responseRequested).to.equal(false);
+
+    const banner = receiveMessages.find((s) => s.args?.from === 'system');
+    expect(banner, 'banner+directive signal should have fired').to.exist;
+    expect(banner!.args.text).to.include('is ready');
+    expect(banner!.args.text).to.include('Describe your task to begin');
+    // The directive text itself drives the hold — the LLM reads "wait
+    // silently" + "call resume_ensemble FIRST" and honors it.
+    expect(banner!.args.text.toLowerCase()).to.include('resume_ensemble');
+    expect(banner!.args.text.toLowerCase()).to.include('wait');
+    expect(banner!.args.responseRequested).to.equal(false);
+
+    // Lock in the ordering: system directive must fire BEFORE lineup
+    // instructions. A regression that silently reorders them would
+    // re-introduce the "LLM skims past the directive" failure mode.
+    const systemIdx = receiveMessages.findIndex((s) => s.args?.from === 'system');
+    const lineupIdx = receiveMessages.findIndex((s) => s.args?.from === 'lineup');
+    expect(systemIdx).to.be.lessThan(lineupIdx, 'system directive must be signalled before lineup instructions');
+
+    // No `setPendingStartupContext` update — the simpler design has no
+    // workflow-level state for this.
+    const pending = updates.find((u) => u.name === 'setPendingStartupContext');
+    expect(pending, 'setPendingStartupContext must NOT be called in the simplified design').to.be.undefined;
+
+    // Issue #172 simplification: the whole ensemble must be paused — the
+    // maestro `maestroSetPaused` and scheduler `setSchedulerPaused` signals
+    // should have fired. (Per-session `setPaused` signals depend on the
+    // `list` generator returning sessions — this mock yields none, so only
+    // the maestro + scheduler signals are observable here.)
+    const maestroPause = signals.find((s) => s.name === 'maestroSetPaused');
+    expect(maestroPause, 'maestro pause signal should have fired on initial startup').to.exist;
+    expect(maestroPause!.args).to.equal(true);
+    const schedulerPause = signals.find((s) => s.name === 'setSchedulerPaused');
+    expect(schedulerPause, 'scheduler pause signal should have fired on initial startup').to.exist;
+    expect(schedulerPause!.args).to.equal(true);
+  });
+
+  it('initialStartup=false (default): preserves legacy immediate-signal behavior, no banner or pause', async function () {
+    const lineupPath = join(tmpDir, 'test-legacy-startup.yaml');
+    writeFileSync(lineupPath, [
+      'name: test-legacy-startup',
+      'conductor:',
+      '  instructions: "Legacy instructions"',
+      'players: []',
+    ].join('\n'));
+
+    const signals: Array<{ name: string; args: any }> = [];
+    const updates: Array<{ name: any; args: any }> = [];
+    const conductorHandle = {
+      workflowId: `claude-session-${testConfig.ensemble}-conductor`,
+      executeUpdate: async (name: any, opts: any) => {
+        const uname = typeof name === 'string' ? name : (name.name || 'unknown');
+        updates.push({ name: uname, args: opts?.args?.[0] });
+        return 'fake-entry-id';
+      },
+      signal: async (name: string, ...args: any[]) => { signals.push({ name, args: args[0] }); },
+      describe: async () => ({ status: { name: 'RUNNING' } }),
+    } as unknown as WorkflowHandle;
+
+    const clientForConductor = {
+      workflow: {
+        getHandle: () => conductorHandle,
+        start: async () => ({ runId: 'fake' }),
+        list: async function* () { /* no workflows */ },
+      },
+    } as unknown as Client;
+
+    const call = extractHandler((server) =>
+      registerLoadLineupTool(
+        server, clientForConductor, testConfig, getPlayerId, 'claude',
+        conductorHandle,
+        () => {},
+        true, // isConductor
+      ),
+    );
+
+    const result = await call({ path: lineupPath });
+    expect(result.isError).to.be.undefined;
+    expect(result.content[0].text).to.include('instructions delivered');
+
+    // Legacy path: instructions arrive as a receiveMessage signal.
+    const instructionsSignal = signals.find(
+      (s) => s.name === 'receiveMessage' && s.args?.from === 'lineup',
+    );
+    expect(instructionsSignal, 'legacy path must signal instructions immediately').to.exist;
+    expect(instructionsSignal!.args.text).to.equal('Legacy instructions');
+
+    // Legacy path must NOT deliver the initial-startup banner+directive.
+    const banner = signals.find(
+      (s) => s.name === 'receiveMessage' && s.args?.from === 'system',
+    );
+    expect(banner, 'legacy path must not deliver the initial-startup banner').to.be.undefined;
+
+    // setPendingStartupContext must NOT have been called.
+    const pending = updates.find((u) => u.name === 'setPendingStartupContext');
+    expect(pending, 'setPendingStartupContext must NOT be called').to.be.undefined;
+
+    // Legacy path must NOT pause the ensemble — that's initial-startup only.
+    const maestroPause = signals.find((s) => s.name === 'maestroSetPaused');
+    expect(maestroPause, 'legacy path must not pause the ensemble').to.be.undefined;
+    const schedulerPause = signals.find((s) => s.name === 'setSchedulerPaused');
+    expect(schedulerPause, 'legacy path must not pause the scheduler').to.be.undefined;
   });
 
   it('sends hold standby to conductor even when lineup has no conductor section', async function () {
@@ -1209,5 +1373,152 @@ describe('migrate tool (outbox-queued, QA B3)', function () {
     expect(result.isError).to.be.true;
     expect(result.content[0].text).to.include('host');
     expect(entries).to.have.length(0);
+  });
+});
+
+// ─────────────────────────────────────────────
+// resume_ensemble tool — `release` arg (Issue #172 final fix)
+// ─────────────────────────────────────────────
+
+/**
+ * Build a fake client that yields the given player IDs from `workflow.list()`
+ * and captures every signal sent to any handle. Used to verify the
+ * `resume_ensemble` tool fans out (or doesn't fan out) `releaseHeld`.
+ */
+function makeResumeClient(players: string[]): {
+  client: Client;
+  signals: Array<{ workflowId: string; name: string; payload: unknown }>;
+} {
+  const signals: Array<{ workflowId: string; name: string; payload: unknown }> = [];
+  const client = {
+    workflow: {
+      getHandle: (workflowId: string) => ({
+        // Temporal's `handle.signal` accepts either a string signal name OR a
+        // SignalDefinition `{ name, type }`. Normalize to the string form so
+        // tests can filter on `s.name === 'signalName'` regardless of which
+        // form the tool uses.
+        signal: async (nameOrDef: string | { name: string }, ...args: unknown[]) => {
+          const name = typeof nameOrDef === 'string' ? nameOrDef : nameOrDef.name;
+          signals.push({ workflowId, name, payload: args[0] });
+        },
+        // `scanEnsembleSessions` calls `getMetadata` + `getPart` on each
+        // listed workflow; return minimal valid shapes keyed off the
+        // workflowId so the scan doesn't swallow the session.
+        query: async (queryName: string) => {
+          const playerId = workflowId.replace(`claude-session-${testConfig.ensemble}-`, '');
+          if (queryName === 'getMetadata') {
+            return {
+              playerId,
+              ensemble: testConfig.ensemble,
+              hostname: 'test-host',
+              workDir: '/tmp',
+              isConductor: false,
+              agentType: 'claude',
+              status: 'active',
+            } satisfies SessionMetadata;
+          }
+          if (queryName === 'getPart') return 'no description';
+          throw new Error(`Unexpected query: ${queryName}`);
+        },
+      }),
+      list: async function* () {
+        for (const p of players) {
+          yield {
+            workflowId: `claude-session-${testConfig.ensemble}-${p}`,
+            searchAttributes: { ClaudeTempoPlayerId: [p] },
+          };
+        }
+      },
+    },
+  } as unknown as Client;
+  return { client, signals };
+}
+
+describe('resume_ensemble tool — release arg (Issue #172)', function () {
+  it('default (release omitted): unpause signals only, NO releaseHeld fan-out', async function () {
+    const { client, signals } = makeResumeClient(['alice', 'bob']);
+    const call = extractHandler((server) =>
+      registerResumeEnsembleTool(server, client, testConfig, getPlayerId),
+    );
+
+    const result = await call({});
+    expect(result.isError).to.not.equal(true);
+
+    // Should signal maestro (unpause), each session's setPaused(false), and scheduler unpause.
+    const maestroUnpause = signals.find((s) => s.name === 'maestroSetPaused');
+    expect(maestroUnpause, 'maestro should be unpaused').to.exist;
+    expect(maestroUnpause!.payload).to.equal(false);
+
+    const schedulerUnpause = signals.find((s) => s.name === 'setSchedulerPaused');
+    expect(schedulerUnpause, 'scheduler should be unpaused').to.exist;
+    expect(schedulerUnpause!.payload).to.equal(false);
+
+    const setPausedCalls = signals.filter((s) => s.name === 'setPaused');
+    expect(setPausedCalls).to.have.lengthOf(2); // one per session
+    for (const sp of setPausedCalls) expect(sp.payload).to.equal(false);
+
+    // Key assertion: NO releaseHeld should have fired in the default path.
+    const releaseHeldCalls = signals.filter((s) => s.name === 'releaseHeld');
+    expect(releaseHeldCalls, 'release must be opt-in — no releaseHeld without release: true').to.have.lengthOf(0);
+  });
+
+  it('release: false explicitly: identical to default — no releaseHeld', async function () {
+    const { client, signals } = makeResumeClient(['alice']);
+    const call = extractHandler((server) =>
+      registerResumeEnsembleTool(server, client, testConfig, getPlayerId),
+    );
+
+    await call({ release: false });
+    const releaseHeldCalls = signals.filter((s) => s.name === 'releaseHeld');
+    expect(releaseHeldCalls).to.have.lengthOf(0);
+  });
+
+  it('release: true: fans out releaseHeld to every active session', async function () {
+    const { client, signals } = makeResumeClient(['alice', 'bob', 'carol']);
+    const call = extractHandler((server) =>
+      registerResumeEnsembleTool(server, client, testConfig, getPlayerId),
+    );
+
+    const result = await call({ release: true });
+    expect(result.isError).to.not.equal(true);
+
+    // All three should receive both setPaused(false) AND releaseHeld.
+    const setPausedCalls = signals.filter((s) => s.name === 'setPaused');
+    expect(setPausedCalls).to.have.lengthOf(3);
+
+    const releaseHeldCalls = signals.filter((s) => s.name === 'releaseHeld');
+    expect(releaseHeldCalls).to.have.lengthOf(3);
+
+    // Each of alice/bob/carol should have been targeted exactly once for release.
+    const targeted = new Set(
+      releaseHeldCalls.map((s) =>
+        s.workflowId.replace(`claude-session-${testConfig.ensemble}-`, ''),
+      ),
+    );
+    expect(targeted).to.deep.equal(new Set(['alice', 'bob', 'carol']));
+
+    // The ordering per-session should be setPaused THEN releaseHeld — the
+    // handler must not leave sessions in a weird in-between state. We verify
+    // the first setPaused call appears before the first releaseHeld call.
+    const firstSetPausedIdx = signals.findIndex((s) => s.name === 'setPaused');
+    const firstReleaseIdx = signals.findIndex((s) => s.name === 'releaseHeld');
+    expect(firstSetPausedIdx).to.be.lessThan(firstReleaseIdx);
+
+    // Success message should mention release.
+    expect(result.content[0].text.toLowerCase()).to.include('release');
+  });
+
+  it('release: true with no active sessions: still unpauses maestro + scheduler, no fan-out', async function () {
+    const { client, signals } = makeResumeClient([]);
+    const call = extractHandler((server) =>
+      registerResumeEnsembleTool(server, client, testConfig, getPlayerId),
+    );
+
+    const result = await call({ release: true });
+    expect(result.isError).to.not.equal(true);
+
+    expect(signals.some((s) => s.name === 'maestroSetPaused')).to.be.true;
+    expect(signals.some((s) => s.name === 'setSchedulerPaused')).to.be.true;
+    expect(signals.filter((s) => s.name === 'releaseHeld')).to.have.lengthOf(0);
   });
 });

@@ -2,17 +2,19 @@ import { z } from 'zod';
 import { Cron } from 'croner';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle, WorkflowIdConflictPolicy } from '@temporalio/client';
-import { Config, schedulerWorkflowId } from '../config';
+import { Config, schedulerWorkflowId, maestroWorkflowId } from '../config';
 import { AgentType } from '../types';
 import { loadAndResolveLineup, resolveAgentType } from '../ensemble/agent-types';
 import { resolveLineupPath } from '../ensemble/loader';
 import { resolveSession } from './resolve';
+import { scanEnsembleSessions } from '../activities/resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
 import { parseDuration } from '../utils/duration';
 import { safeLineupPath } from '../utils/safe-path';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { PLAYER_NAME_MAX, PATH_MAX } from '../utils/validation';
+import { ensembleReadyDirective } from '../constants';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:load-lineup]', ...args);
 
@@ -34,11 +36,15 @@ export function registerLoadLineupTool(
       name: z.string().max(PLAYER_NAME_MAX).optional().describe('Name of a lineup — resolves saved lineups, then shipped examples (e.g. "tempo-dev-team")'),
       path: z.string().max(PATH_MAX).optional().describe('Explicit file path to a lineup YAML file'),
       hold: z.boolean().optional().describe('When true, spawn players in "warm hold": processes start and attach but their outbox is locked, so they receive a standby message and defer their initial task until `release` is called.'),
+      initialStartup: z.boolean().optional().describe('Issue #172: when true, the lineup was loaded as part of initial ensemble startup (`up --lineup` / `conduct --lineup`). Conductor instructions are stored as pending context and combined with the user\'s first message instead of firing immediately. Also recruits players with `hold: true`. Defaults to false — conductor-invoked mid-work `load_lineup` keeps the legacy behavior.'),
     },
     async (args) => {
       const lineupName = (args as any).name as string | undefined;
       const lineupPath = (args as any).path as string | undefined;
-      const hold = (args as any).hold === true;
+      const initialStartup = (args as any).initialStartup === true;
+      // Initial-startup always implies warm-hold — players should wait for
+      // the conductor to decompose the user's first message before starting.
+      const hold = (args as any).hold === true || initialStartup;
 
       if (!lineupName && !lineupPath) {
         return fail('Provide either `name` (saved lineup) or `path` (file path). Exactly one is required.');
@@ -68,6 +74,27 @@ export function registerLoadLineupTool(
         const recruited: string[] = [];
         const failed: string[] = [];
         const conductorActions: string[] = [];
+
+        // Issue #172 follow-up: on `initialStartup`, fire the `from: 'system'`
+        // directive BEFORE any lineup instructions. Earlier messages weigh
+        // more heavily with the LLM — putting the "call resume_ensemble +
+        // release FIRST" framing at the top of the conductor's inbox reduces
+        // the chance the model skims past it and goes straight to broadcast.
+        // Runs independently of whether the lineup has a `conductor:` section
+        // (e.g. players-only lineups still need the banner + directive).
+        if (initialStartup && isConductor && handle) {
+          try {
+            const playerCount = lineup.players.length;
+            await handle.signal('receiveMessage', {
+              from: 'system',
+              text: ensembleReadyDirective(lineup.name, playerCount),
+              responseRequested: false,
+            });
+            conductorActions.push('startup banner + directive delivered');
+          } catch (err) {
+            failed.push(`conductor startup banner: ${err}`);
+          }
+        }
 
         // Apply conductor section if present and this session is the conductor
         if (lineup.conductor && isConductor && handle) {
@@ -108,7 +135,14 @@ export function registerLoadLineupTool(
             }
           }
 
-          // Send conductor instructions
+          // Send conductor instructions.
+          // Issue #172 (v0.26 simplification): on the initial-startup path,
+          // signal the lineup instructions as a `receiveMessage` immediately
+          // — the ensemble-wide pause (below) stops any downstream dispatch,
+          // and the banner+directive signal (also below) tells the LLM to
+          // wait silently until the user speaks and then call
+          // `resume_ensemble` first. Legacy mid-work path also signals
+          // immediately — no branching required.
           if (lineup.conductor.instructions) {
             try {
               await handle.signal('receiveMessage', {
@@ -116,7 +150,7 @@ export function registerLoadLineupTool(
                 text: lineup.conductor.instructions,
                 responseRequested: false,
               });
-              conductorActions.push('instructions delivered');
+              conductorActions.push(initialStartup ? 'instructions seeded (initial startup)' : 'instructions delivered');
               log('Conductor instructions delivered');
             } catch (err) {
               failed.push(`conductor instructions: ${err}`);
@@ -124,10 +158,10 @@ export function registerLoadLineupTool(
           }
         }
 
-        // When hold mode: tell conductor to wait for user direction.
-        // This runs regardless of whether the lineup has a `conductor:` section —
-        // what matters is that the caller IS the conductor and hold is active.
-        if (hold && isConductor && handle) {
+        // Legacy hold-mode standby (conductor-invoked mid-work with hold: true).
+        // Runs ONLY on the non-initial-startup path — initialStartup handling
+        // happens earlier above, ordered before the lineup instructions.
+        if (!initialStartup && hold && isConductor && handle) {
           try {
             await handle.signal('receiveMessage', {
               from: 'system',
@@ -291,6 +325,41 @@ export function registerLoadLineupTool(
             } catch (err) {
               failed.push(`schedule "${sched.name}": ${err}`);
             }
+          }
+        }
+
+        // Issue #172: on the initial-startup path, pause the whole ensemble
+        // so scheduler fires, maestro nudges, and per-session outbox dispatch
+        // are all halted while we wait for the user's first message. The
+        // conductor's `receiveMessageSignal` handler combines lineup context +
+        // user text and the combined prompt instructs Claude Code to call
+        // `resume_ensemble` BEFORE any other action. Inlines the three signals
+        // that `pause_ensemble` fires so we don't depend on the tool impl.
+        if (initialStartup && isConductor && handle) {
+          try {
+            const maestroId = maestroWorkflowId(config.ensemble);
+            await client.workflow.getHandle(maestroId).signal('maestroSetPaused', true);
+          } catch {
+            // Maestro may not be running yet — fine, it will start paused once spawned.
+          }
+          try {
+            const schedulerId = schedulerWorkflowId(config.ensemble);
+            await client.workflow.getHandle(schedulerId).signal('setSchedulerPaused', true);
+          } catch {
+            // Scheduler may not exist yet if no schedules are defined — ignore.
+          }
+          try {
+            const sessions = await scanEnsembleSessions(client, config.ensemble);
+            for (const session of sessions) {
+              try {
+                await client.workflow.getHandle(session.workflowId).signal('setPaused', true);
+              } catch {
+                // Individual session may have just terminated — skip.
+              }
+            }
+            conductorActions.push('ensemble paused (awaiting first user message)');
+          } catch (err) {
+            failed.push(`pause ensemble: ${formatError(err)}`);
           }
         }
 

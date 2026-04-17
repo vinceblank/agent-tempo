@@ -421,7 +421,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     }
     const count = state.ensembles?.length ?? 0;
     return count > 0 ? `${count} ensemble${count !== 1 ? 's' : ''} \u00b7 Connected` : 'Discovering ensembles...';
-  }, [state.phase, state.chatTarget, state.activeEnsemble, state.players, state.ensembles]);
+  }, [state.phase, state.chatTarget, state.activeEnsemble, state.players, state.ensembles, state.conductorName]);
 
   // ── Hint text for prompt area ──
   const promptHints = useMemo(() => {

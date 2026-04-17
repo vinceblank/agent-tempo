@@ -55,9 +55,10 @@
     "prepublishOnly": "npm run build && npm test",
     "dev": "ts-node src/server.ts",
     "copilot-bridge": "ts-node src/adapters/copilot/adapter.ts",
-    "pretest": "tsc -p test/tsconfig.json",
+    "clean:test": "node -e \"require('fs').rmSync('dist-test',{recursive:true,force:true})\"",
+    "pretest": "npm run clean:test && tsc -p test/tsconfig.json",
     "test:tui": "vitest run",
-    "test:conformance": "tsc -p test/tsconfig.json && mocha --config .mocharc.conformance.yml",
+    "test:conformance": "npm run clean:test && tsc -p test/tsconfig.json && mocha --config .mocharc.conformance.yml",
     "test": "mocha && vitest run"
   },
   "optionalDependencies": {
