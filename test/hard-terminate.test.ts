@@ -240,6 +240,20 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
   // Each case spawns a real process; allow generous timeout for slow CI + kill-grace.
   this.timeout(30_000);
 
+  // On Windows, this suite's fixtures spawn `cmd.exe /c .bat → node.exe` to
+  // reproduce the production-quoted `"-n" "<playerName>"` CommandLine topology.
+  // Even with `windowsHide: true` on cmd, Windows allocates a console for the
+  // grandchild node.exe because `CREATE_NO_WINDOW` does not propagate through
+  // cmd's internal CreateProcess. Result: every `npm test` run flashes console
+  // windows on Windows, which is disruptive when a player (e.g. tempo-devops)
+  // runs `npm test` on a recurring schedule. Gate the Windows suite behind
+  // `CLAUDE_TEMPO_RUN_WIN_INTEGRATION=1` (or `CI=true` in CI pipelines) so
+  // ambient local runs skip it. CI and manual opt-in still exercise it.
+  if (isWindows && !process.env.CI && !process.env.CLAUDE_TEMPO_RUN_WIN_INTEGRATION) {
+    it.skip('Windows hard-terminate integration tests — set CLAUDE_TEMPO_RUN_WIN_INTEGRATION=1 to run', () => {});
+    return;
+  }
+
   let tmpWorkDir: string;
   const spawnedPids: number[] = [];
 
