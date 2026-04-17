@@ -10,6 +10,7 @@
  */
 import * as fs from 'fs';
 import * as os from 'os';
+import { setTimeout as sleep } from 'timers/promises';
 import { Client } from '@temporalio/client';
 import { WorkflowIdConflictPolicy } from '@temporalio/client';
 import { getConfig, CLAUDE_TEMPO_HOME, GLOBAL_MAESTRO_WORKFLOW_ID, loadDaemonConfig, isEnsembleAllowed, type DaemonConfig } from './config';
@@ -22,6 +23,44 @@ import { getMetadataQuery } from './workflows/signals';
 import type { GlobalMaestroInput, SessionMetadata } from './types';
 
 const log = (...args: unknown[]) => console.error(`[claude-tempo:daemon ${new Date().toISOString()}]`, ...args);
+
+/**
+ * Atomically write the daemon PID file via `writeFile(tmp) + rename(tmp, final)`.
+ *
+ * A racing reader (a CLI invocation that happens to poll during startup) will
+ * either see the previous file or the new one — never a half-written one.
+ *
+ * Windows sometimes fails the rename with EPERM/EBUSY/EACCES if an antivirus
+ * scanner or the previous handle is still active. We retry with short backoffs
+ * before giving up so a transient scanner doesn't crash startup.
+ *
+ * Exported for unit testing.
+ */
+export async function writePidFileAtomic(pidFilePath: string, pid: number): Promise<void> {
+  const tmp = `${pidFilePath}.tmp.${process.pid}`;
+  fs.writeFileSync(tmp, String(pid));
+
+  const retryCodes = new Set(['EPERM', 'EBUSY', 'EACCES']);
+  const backoffs = [50, 100, 200, 400]; // ms — total ≤ 750ms, bounded for startup
+  let lastErr: unknown;
+
+  for (let attempt = 0; attempt <= backoffs.length; attempt++) {
+    try {
+      fs.renameSync(tmp, pidFilePath);
+      return;
+    } catch (err) {
+      lastErr = err;
+      const code = (err as NodeJS.ErrnoException).code;
+      if (!code || !retryCodes.has(code) || attempt === backoffs.length) {
+        try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+        throw err;
+      }
+      await sleep(backoffs[attempt]);
+    }
+  }
+  // Unreachable — loop either returns or throws.
+  throw lastErr;
+}
 
 /**
  * Ensure the global Maestro workflow is running.
@@ -347,8 +386,10 @@ async function main() {
   // Ensure daemon directory exists
   fs.mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
 
-  // Write PID file — the parent polls for this to confirm startup
-  fs.writeFileSync(DAEMON_PID_PATH, String(process.pid));
+  // Write PID file — the parent polls for this to confirm startup.
+  // Atomic write: tmp + rename so a racing reader never sees a half-written
+  // file. Retries on Windows EPERM/EBUSY/EACCES (see #182).
+  await writePidFileAtomic(DAEMON_PID_PATH, process.pid);
   log(`Daemon started (pid ${process.pid})`);
   log(`PID file: ${DAEMON_PID_PATH}`);
   log(`Log file: ${DAEMON_LOG_PATH}`);
