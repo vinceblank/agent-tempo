@@ -95,10 +95,22 @@ function reapStaleTestVictims(): void {
  * or pass it through a shell (Unix). This forces the CommandLine visible to
  * Win32_Process to contain the quoted sentinel exactly as production does.
  */
-async function spawnTestVictim(opts: { binaryArg: string; playerName: string; tmpDir?: string }): Promise<{
+async function spawnTestVictim(opts: {
+  binaryArg: string;
+  playerName: string;
+  tmpDir?: string;
+  /**
+   * Ensemble name to embed as `--remote-control-session-name-prefix <ensemble>` in
+   * the victim's argv. Defaults to 'test-ensemble' to match the common-case callers
+   * that pass `ensemble: 'test-ensemble'` to `hardTerminateAttachment`. Tests that
+   * exercise cross-ensemble scoping (#180) pass distinct values per victim.
+   */
+  ensemble?: string;
+}): Promise<{
   pid: number;
   waitForExit: () => Promise<number | null>;
 }> {
+  const ensemble = opts.ensemble ?? 'test-ensemble';
   // Node one-liner that keeps the event loop alive forever. Process title isn't used
   // for command-line matching — we rely on the `-n <playerName>` marker in argv.
   const nodeScript = `setInterval(() => {}, 60000); process.on('SIGTERM', () => process.exit(0)); process.on('SIGINT', () => process.exit(0));`;
@@ -135,6 +147,8 @@ async function spawnTestVictim(opts: { binaryArg: string; playerName: string; tm
           q('-e'),
           q(nodeScript),
           q('--'),
+          q('--remote-control-session-name-prefix'),
+          q(ensemble),
           q('-n'),
           q(opts.playerName),
           q('--tempo-test-marker'),
@@ -149,9 +163,17 @@ async function spawnTestVictim(opts: { binaryArg: string; playerName: string; tm
     });
     cmdChild.unref();
     // cmd /c exits after spawning node; resolve the node child by its quoted
-    // sentinel. Async polling so we don't block the event loop — the earlier
+    // sentinels. Async polling so we don't block the event loop — the earlier
     // busy-wait variant starved spawn callbacks and the child never appeared.
-    const quotedSentinel = new RegExp(`"-n"\\s+"${opts.playerName.replace(/[.-]/g, (c) => `\\${c}`)}"`);
+    //
+    // Both the playerName AND the ensemble sentinel are required to identify a
+    // unique spawn: cross-ensemble tests (#180) spawn two victims with the same
+    // playerName but distinct ensembles, so matching on playerName alone would
+    // return the first-spawned PID for both calls.
+    const escName = opts.playerName.replace(/[.-]/g, (c) => `\\${c}`);
+    const escEnsemble = ensemble.replace(/[.-]/g, (c) => `\\${c}`);
+    const quotedNameSentinel = new RegExp(`"-n"\\s+"${escName}"`);
+    const quotedEnsembleSentinel = new RegExp(`"--remote-control-session-name-prefix"\\s+"${escEnsemble}"`);
     let victimPid = -1;
     for (let i = 0; i < 60 && victimPid === -1; i++) {
       await new Promise((r) => setTimeout(r, 100));
@@ -170,7 +192,7 @@ async function spawnTestVictim(opts: { binaryArg: string; playerName: string; tm
           if (sep === -1) continue;
           const pidStr = line.slice(0, sep);
           const cmdLine = line.slice(sep + 1);
-          if (quotedSentinel.test(cmdLine)) {
+          if (quotedNameSentinel.test(cmdLine) && quotedEnsembleSentinel.test(cmdLine)) {
             victimPid = parseInt(pidStr, 10);
             break;
           }
@@ -179,7 +201,7 @@ async function spawnTestVictim(opts: { binaryArg: string; playerName: string; tm
     }
     if (victimPid === -1) {
       throw new Error(
-        `spawnTestVictim: could not locate node.exe child with quoted sentinel for playerName=${opts.playerName}`,
+        `spawnTestVictim: could not locate node.exe child with quoted sentinels for playerName=${opts.playerName} ensemble=${ensemble}`,
       );
     }
     const waitForExit = () =>
@@ -199,6 +221,8 @@ async function spawnTestVictim(opts: { binaryArg: string; playerName: string; tm
     '-e',
     nodeScript,
     '--',
+    '--remote-control-session-name-prefix',
+    ensemble,
     '-n',
     opts.playerName,
     '--tempo-test-marker',
@@ -417,6 +441,9 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
     const nodeScript = `setInterval(function(){},60000);process.on('SIGTERM',function(){process.exit(0)});process.on('SIGINT',function(){process.exit(0)});`;
     const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
     const probeBat = join(tmpWorkDir, `probe-${playerName}.bat`);
+    // Both the parent cmd.exe and the child node.exe must carry the ensemble
+    // sentinel so the per-ensemble scoping (#180) lets hard-terminate match them.
+    const probeEnsemble = 'test-ensemble';
     writeFileSync(
       probeBat,
       [
@@ -429,6 +456,8 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
           q('-e'),
           q(nodeScript),
           q('--'),
+          q('--remote-control-session-name-prefix'),
+          q(probeEnsemble),
           q('-n'),
           q(playerName),
           q('--tempo-165-probe'),
@@ -436,13 +465,14 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
         '',
       ].join('\r\n'),
     );
-    // Spawn cmd.exe with `/k <bat> "-n" "<playerName>"` — Node's default argv
-    // serializer wraps each argument that contains no whitespace with... well,
-    // actually `-n` and `<playerName>` are bare tokens and Node will leave
-    // them unquoted. We need the parent cmd.exe's CommandLine to explicitly
-    // carry the quoted sentinel. Build the full command line as a pre-quoted
+    // Spawn cmd.exe with `/k <bat> "--remote-control-session-name-prefix" "<ensemble>" "-n" "<playerName>"` —
+    // Node's default argv serializer wraps each argument that contains no whitespace
+    // with... well, actually `-n` and `<playerName>` are bare tokens and Node will leave
+    // them unquoted. We need the parent cmd.exe's CommandLine to explicitly carry
+    // BOTH the quoted `-n` sentinel and the quoted ensemble sentinel so parent-walk
+    // engages with the #180 AND guard. Build the full command line as a pre-quoted
     // string and use verbatim mode so cmd receives it as-is.
-    const parentCmdTail = `${probeBat} "-n" "${playerName}" "--tempo-165-probe"`;
+    const parentCmdTail = `${probeBat} "--remote-control-session-name-prefix" "${probeEnsemble}" "-n" "${playerName}" "--tempo-165-probe"`;
     const cmdProc = spawn('cmd.exe', ['/k', parentCmdTail], {
       detached: true,
       stdio: 'ignore',
@@ -580,6 +610,86 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
     const result = await hardTerminateAttachment({
       ensemble: 'test-ensemble',
       playerName: `bad; rm -rf /; $(echo pwned)`,
+      agent: 'claude',
+      workDir: tmpWorkDir,
+    });
+    expect(result.killedPids).to.deep.equal([]);
+    expect(result.strategy).to.equal('none');
+  });
+
+  it('scopes kill to the target ensemble when two ensembles share a player name (#180)', async function () {
+    // Reproduces the cross-ensemble destroy bug: two ensembles using the same
+    // lineup template spawn sessions with identical player names. Before #180,
+    // `destroy --all` in ensembleA would find and kill claude.exe processes in
+    // BOTH ensembles because the kill regex only matched on `-n <playerName>`.
+    //
+    // With the ensemble sentinel injected by outbox.ts and the AND guard in
+    // findProcessesByCommandLine, only the ensembleA victim should die — the
+    // ensembleB victim carries a different sentinel and must survive.
+    const sharedName = `smoke-${process.pid}-${Date.now()}`;
+    const victimA = await spawnTestVictim({
+      binaryArg: 'node',
+      playerName: sharedName,
+      ensemble: 'ensembleA',
+      tmpDir: tmpWorkDir,
+    });
+    spawnedPids.push(victimA.pid);
+    const victimB = await spawnTestVictim({
+      binaryArg: 'node',
+      playerName: sharedName,
+      ensemble: 'ensembleB',
+      tmpDir: tmpWorkDir,
+    });
+    spawnedPids.push(victimB.pid);
+
+    // Give the OS a moment so both processes are visible in the table.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(isAlive(victimA.pid), 'victim A should be alive after spawn').to.equal(true);
+    expect(isAlive(victimB.pid), 'victim B should be alive after spawn').to.equal(true);
+
+    // Fixture invariants on Windows: confirm each CommandLine carries BOTH the
+    // `-n <sharedName>` and the distinct ensemble sentinel. Without this, the
+    // test cannot exercise the #180 AND guard.
+    if (isWindows) {
+      const cmdA = readWindowsCommandLine(victimA.pid);
+      const cmdB = readWindowsCommandLine(victimB.pid);
+      const escName = sharedName.replace(/[.-]/g, (c) => `\\${c}`);
+      expect(cmdA, `victim A CommandLine: ${cmdA}`).to.match(new RegExp(`"-n"\\s+"${escName}"`));
+      expect(cmdA, `victim A CommandLine: ${cmdA}`).to.match(/"--remote-control-session-name-prefix"\s+"ensembleA"/);
+      expect(cmdB, `victim B CommandLine: ${cmdB}`).to.match(new RegExp(`"-n"\\s+"${escName}"`));
+      expect(cmdB, `victim B CommandLine: ${cmdB}`).to.match(/"--remote-control-session-name-prefix"\s+"ensembleB"/);
+    }
+
+    // Call hardTerminate scoped to ensembleA only.
+    const result = await hardTerminateAttachment({
+      ensemble: 'ensembleA',
+      playerName: sharedName,
+      // 'copilot' routes the search to `node`/`node.exe` (same as other tests);
+      // the AND guard is identical for both adapters.
+      agent: 'copilot',
+      workDir: tmpWorkDir,
+    });
+
+    // Wait for victim A to actually die.
+    for (let i = 0; i < 30 && isAlive(victimA.pid); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(isAlive(victimA.pid), 'victim A (ensembleA) should be dead').to.equal(false);
+    expect(
+      isAlive(victimB.pid),
+      `victim B (ensembleB) should still be alive — cross-ensemble kill regression`,
+    ).to.equal(true);
+    expect(result.killedPids, 'killedPids should contain A only').to.deep.equal([victimA.pid]);
+    expect(result.strategy).to.equal('search');
+  });
+
+  it('refuses to search when ensemble fails the regex guard (injection defense)', async function () {
+    // Symmetric with the playerName injection guard: ensemble names with shell-special
+    // chars must not be interpolated into the PowerShell/pgrep pattern. The search
+    // should return empty with strategy 'none' — no kill attempted.
+    const result = await hardTerminateAttachment({
+      ensemble: `bad; $(echo pwned)`,
+      playerName: `benign-name-${process.pid}`,
       agent: 'claude',
       workDir: tmpWorkDir,
     });

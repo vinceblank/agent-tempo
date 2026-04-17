@@ -6,6 +6,7 @@ import * as crypto from 'crypto';
 import { Config, conductorWorkflowId, sessionWorkflowId } from '../config';
 import { AgentType, SessionInput, AdapterClass, AttachmentInfo, SessionMetadata, Message, DetachReason } from '../types';
 import { PREVIEW_MAX_LENGTH } from '../utils/validation';
+import { ENSEMBLE_SENTINEL_FLAG } from '../constants';
 import { getGitInfo } from '../git-info';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { ENV } from '../config';
@@ -353,9 +354,13 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             ? ['--allowedTools', ...allowedTools]
             : [];
 
+          // ENSEMBLE_SENTINEL_FLAG carries the ensemble name into the spawned
+          // claude.exe's CommandLine so hard-terminate can scope `destroy --all`
+          // kills by ensemble (issue #180). See src/constants.ts for details.
           const spawnArgs = [
             '--dangerously-skip-permissions',
             '--dangerously-load-development-channels', 'server:claude-tempo',
+            ENSEMBLE_SENTINEL_FLAG, ensemble,
             ...nameArgs,
             ...agentFlags,
             ...allowedToolsFlags,
