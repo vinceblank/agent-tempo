@@ -562,11 +562,12 @@ describe('load_lineup conductor section', function () {
     const result = await call({ path: lineupPath, initialStartup: true });
     expect(result.isError).to.be.undefined;
 
-    // v0.26 simplification: the tool fires two `receiveMessage` signals in
-    // order so the conductor reads them on startup.
-    //   1. lineup instructions (`from: 'lineup'`)
-    //   2. banner + "wait for user, then resume_ensemble first" directive
-    //      (`from: 'system'`)
+    // Issue #172 follow-up: the tool fires two `receiveMessage` signals in
+    // a deliberate order — the `from: 'system'` directive FIRST so the LLM
+    // reads the "call resume_ensemble + release FIRST" framing before the
+    // lineup's role/phase briefing. Earlier messages weigh more heavily.
+    //   1. banner + directive (`from: 'system'`)
+    //   2. lineup instructions (`from: 'lineup'`)
     const receiveMessages = signals.filter((s) => s.name === 'receiveMessage');
     const lineupSignal = receiveMessages.find((s) => s.args?.from === 'lineup');
     expect(lineupSignal, 'lineup instructions signal should have fired').to.exist;
@@ -582,6 +583,13 @@ describe('load_lineup conductor section', function () {
     expect(banner!.args.text.toLowerCase()).to.include('resume_ensemble');
     expect(banner!.args.text.toLowerCase()).to.include('wait');
     expect(banner!.args.responseRequested).to.equal(false);
+
+    // Lock in the ordering: system directive must fire BEFORE lineup
+    // instructions. A regression that silently reorders them would
+    // re-introduce the "LLM skims past the directive" failure mode.
+    const systemIdx = receiveMessages.findIndex((s) => s.args?.from === 'system');
+    const lineupIdx = receiveMessages.findIndex((s) => s.args?.from === 'lineup');
+    expect(systemIdx).to.be.lessThan(lineupIdx, 'system directive must be signalled before lineup instructions');
 
     // No `setPendingStartupContext` update — the simpler design has no
     // workflow-level state for this.

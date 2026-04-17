@@ -75,6 +75,27 @@ export function registerLoadLineupTool(
         const failed: string[] = [];
         const conductorActions: string[] = [];
 
+        // Issue #172 follow-up: on `initialStartup`, fire the `from: 'system'`
+        // directive BEFORE any lineup instructions. Earlier messages weigh
+        // more heavily with the LLM — putting the "call resume_ensemble +
+        // release FIRST" framing at the top of the conductor's inbox reduces
+        // the chance the model skims past it and goes straight to broadcast.
+        // Runs independently of whether the lineup has a `conductor:` section
+        // (e.g. players-only lineups still need the banner + directive).
+        if (initialStartup && isConductor && handle) {
+          try {
+            const playerCount = lineup.players.length;
+            await handle.signal('receiveMessage', {
+              from: 'system',
+              text: ensembleReadyDirective(lineup.name, playerCount),
+              responseRequested: false,
+            });
+            conductorActions.push('startup banner + directive delivered');
+          } catch (err) {
+            failed.push(`conductor startup banner: ${err}`);
+          }
+        }
+
         // Apply conductor section if present and this session is the conductor
         if (lineup.conductor && isConductor && handle) {
           // Apply conductor name
@@ -137,40 +158,19 @@ export function registerLoadLineupTool(
           }
         }
 
-        // Conductor system-banner delivery.
-        // Issue #172 (v0.26): on initial-startup, signal the combined banner +
-        // "wait for user, call resume_ensemble first" directive so the LLM
-        // reads it alongside the lineup instructions. The directive text
-        // itself drives the hold — no workflow-side interceptor. On the
-        // legacy hold path (conductor-invoked mid-work), keep the existing
-        // "hold mode standby" wording. Neither path is taken when a
-        // non-conductor session calls load_lineup.
-        if (isConductor && handle) {
-          if (initialStartup) {
-            try {
-              // Use the resolved player count INCLUDING the conductor's own
-              // tab so the banner matches CLI stdout.
-              const playerCount = lineup.players.length;
-              await handle.signal('receiveMessage', {
-                from: 'system',
-                text: ensembleReadyDirective(lineup.name, playerCount),
-                responseRequested: false,
-              });
-              conductorActions.push('startup banner + directive delivered');
-            } catch (err) {
-              failed.push(`conductor startup banner: ${err}`);
-            }
-          } else if (hold) {
-            try {
-              await handle.signal('receiveMessage', {
-                from: 'system',
-                text: 'Ensemble is loading in hold mode — players are connecting but on standby. Wait for instructions from the user or maestro before directing the ensemble. When ready, use the `release` tool to deliver task assignments to all held players.',
-                responseRequested: false,
-              });
-              conductorActions.push('hold mode standby');
-            } catch (err) {
-              failed.push(`conductor hold message: ${err}`);
-            }
+        // Legacy hold-mode standby (conductor-invoked mid-work with hold: true).
+        // Runs ONLY on the non-initial-startup path — initialStartup handling
+        // happens earlier above, ordered before the lineup instructions.
+        if (!initialStartup && hold && isConductor && handle) {
+          try {
+            await handle.signal('receiveMessage', {
+              from: 'system',
+              text: 'Ensemble is loading in hold mode — players are connecting but on standby. Wait for instructions from the user or maestro before directing the ensemble. When ready, use the `release` tool to deliver task assignments to all held players.',
+              responseRequested: false,
+            });
+            conductorActions.push('hold mode standby');
+          } catch (err) {
+            failed.push(`conductor hold message: ${err}`);
           }
         }
 

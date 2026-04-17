@@ -112,21 +112,26 @@ async function seedConductorWorkflow(args: {
   const conductorSessionId = randomUUID();
   const resolvedConductorType = lineup?.conductor?.type ? resolveAgentType(lineup.conductor.type) : null;
 
+  // Issue #172 follow-up: seed the `from: 'system'` directive BEFORE the
+  // lineup's role/phase brief. Earlier messages carry more weight with the
+  // LLM — putting the "call resume_ensemble + release FIRST" framing ahead
+  // of the lineup instructions reduces the chance the model skims past it
+  // and broadcasts directly.
   const seededMessages: NonNullable<SessionInput['messages']> = [];
-  if (lineup?.conductor?.instructions) {
-    seededMessages.push({
-      id: randomUUID(),
-      from: 'lineup',
-      text: lineup.conductor.instructions,
-      timestamp: new Date().toISOString(),
-      delivered: false,
-    });
-  }
   if (initialStartup && lineup) {
     seededMessages.push({
       id: randomUUID(),
       from: 'system',
       text: ensembleReadyDirective(lineup.name, lineup.players.length),
+      timestamp: new Date().toISOString(),
+      delivered: false,
+    });
+  }
+  if (lineup?.conductor?.instructions) {
+    seededMessages.push({
+      id: randomUUID(),
+      from: 'lineup',
+      text: lineup.conductor.instructions,
       timestamp: new Date().toISOString(),
       delivered: false,
     });
