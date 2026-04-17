@@ -244,9 +244,13 @@ export async function startSession(
     ...(inputOverrides.metadata ? {} : { metadata }),
   };
 
-  const workflowId = metadata.isConductor
-    ? `claude-session-${metadata.ensemble}-conductor`
-    : `claude-session-${metadata.ensemble}-${metadata.playerId}`;
+  // Always use playerId in the workflow ID. conductorMetadata() defaults
+  // playerId to 'conductor', so callers that don't override get the canonical
+  // 'claude-session-{ensemble}-conductor' ID unchanged. Callers that pass a
+  // non-default playerId (e.g. stages.test.ts uses 'stage-cond-N') get a
+  // unique ID per test, preventing WorkflowExecutionAlreadyStartedError
+  // cascades when a test fails before its cleanup destroyUpdate runs.
+  const workflowId = `claude-session-${metadata.ensemble}-${metadata.playerId}`;
 
   return testEnv.client.workflow.start('claudeSessionWorkflow', {
     workflowId,

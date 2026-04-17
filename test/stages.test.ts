@@ -10,7 +10,7 @@ import {
   conductorMetadata,
   withWorker,
   updateMetadataSignal,
-
+  skipTime,
   destroyUpdate,
 } from './helpers';
 import {
@@ -78,6 +78,7 @@ describe('pipeline stages', function () {
         text: 'Tests pass',
         type: 'result',
       });
+      await skipTime(1); // flush pending workflow task before querying
 
       let stages: StageEntry[] = await handle.query(stagesQuery);
       expect(stages[0].status).to.equal('active');
@@ -89,6 +90,7 @@ describe('pipeline stages', function () {
         text: 'All good',
         type: 'result',
       });
+      await skipTime(1); // flush pending workflow task before querying
 
       stages = await handle.query(stagesQuery);
       expect(stages[0].status).to.equal('complete');
@@ -125,6 +127,7 @@ describe('pipeline stages', function () {
         text: 'Build broken',
         type: 'blocker',
       });
+      await skipTime(1); // flush pending workflow task before querying
 
       const stages: StageEntry[] = await handle.query(stagesQuery);
       expect(stages[0].status).to.equal('failed');
@@ -163,6 +166,7 @@ describe('pipeline stages', function () {
         text: 'Found issues',
         type: 'blocker',
       });
+      await skipTime(1); // flush pending workflow task before querying
 
       let stages: StageEntry[] = await handle.query(stagesQuery);
       expect(stages[0].status).to.equal('active'); // Still active with continue policy
@@ -173,6 +177,7 @@ describe('pipeline stages', function () {
         text: 'Looks good',
         type: 'result',
       });
+      await skipTime(1); // flush pending workflow task before querying
 
       stages = await handle.query(stagesQuery);
       expect(stages[0].status).to.equal('failed');
@@ -205,6 +210,7 @@ describe('pipeline stages', function () {
         text: 'What API should I use?',
         type: 'question',
       });
+      await skipTime(1); // flush pending workflow task before querying
 
       const stages: StageEntry[] = await handle.query(stagesQuery);
       expect(stages[0].status).to.equal('active');
@@ -216,6 +222,7 @@ describe('pipeline stages', function () {
         text: 'Done',
         type: 'result',
       });
+      await skipTime(1); // flush pending workflow task before querying
 
       const stages2: StageEntry[] = await handle.query(stagesQuery);
       expect(stages2[0].status).to.equal('complete');
@@ -238,6 +245,7 @@ describe('pipeline stages', function () {
       });
 
       await handle.signal(cancelStageSignal, 'cancelled-stage');
+      await skipTime(1); // flush pending workflow task before querying
 
       const stages: StageEntry[] = await handle.query(stagesQuery);
       expect(stages[0].status).to.equal('cancelled');
@@ -271,6 +279,7 @@ describe('pipeline stages', function () {
         failurePolicy: 'continue',
         createdBy: 'stage-cond-7',
       });
+      await skipTime(1); // flush pending workflow task before querying
 
       const stages: StageEntry[] = await handle.query(stagesQuery);
       expect(stages).to.have.lengthOf(1);
