@@ -119,11 +119,18 @@ async function spawnTestVictim(opts: { binaryArg: string; playerName: string; tm
     const tmpDir = opts.tmpDir || tmpdir();
     const batPath = join(tmpDir, `victim-${opts.playerName}.bat`);
     const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
+    // Prefix with `start /B ""` so the child node.exe is launched without a
+    // visible console window. Without /B, node inherits no console from the
+    // windowsHide'd cmd parent and Windows creates a fresh one, causing a
+    // visible popup. /B = run in background, no new window. The empty ""
+    // after /B is required — it's the window title arg (never shown) that
+    // start consumes before the actual command.
     writeFileSync(
       batPath,
       [
         '@echo off',
         [
+          'start', '/B', '""',
           q(process.execPath),
           q('-e'),
           q(nodeScript),
@@ -199,6 +206,7 @@ async function spawnTestVictim(opts: { binaryArg: string; playerName: string; tm
   const child = spawn(process.execPath, args, {
     stdio: 'ignore',
     detached: true,
+    windowsHide: true,
   });
   child.unref();
   const waitForExit = () =>
@@ -327,7 +335,7 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
     // which exits immediately when stdio is ignored. Image name reports as 'ping.exe'
     // which is distinctly NOT 'node.exe', so the sanity guard must refuse.
     const bystander = isWindows
-      ? spawn('ping.exe', ['-n', '60', '127.0.0.1'], { stdio: 'ignore', detached: true })
+      ? spawn('ping.exe', ['-n', '60', '127.0.0.1'], { stdio: 'ignore', detached: true, windowsHide: true })
       : spawn('sleep', ['60'], { stdio: 'ignore', detached: true });
     bystander.unref();
     spawnedPids.push(bystander.pid!);
@@ -399,7 +407,10 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
       probeBat,
       [
         '@echo off',
+        // Prefix with `start /B ""` so node.exe is launched without a visible
+        // console window. Matches the pattern in `spawnTestVictim` (same fix).
         [
+          'start', '/B', '""',
           q(process.execPath),
           q('-e'),
           q(nodeScript),
