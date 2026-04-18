@@ -93,6 +93,12 @@ npm test
 > **Always run `npm run build` after changing workflow code (`src/workflows/`).** The build
 > pre-bundles workflows into `workflow-bundle.js` so all workers use identical code.
 
+> **Two test directories.** Mocha tests live in `test/` (Temporal workflow integration
+> suites, wire-protocol drift detector). Vitest tests live in `tests/` (TUI components,
+> TempoClient fallback paths). Both are first-class targets — when doing call-site
+> surveys or migrations, always grep **both** `test/` and `tests/` or you will miss
+> mocks and assertions that only live in one directory.
+
 See [docs/development.md](docs/development.md) for full setup (Temporal dev server command,
 daemon worker notes, `npx ts-node` dev runner).
 
@@ -106,7 +112,7 @@ daemon worker notes, `npx ts-node` dev runner).
 - **Cue**: A message sent to a player by name via Temporal signal
 - **Part**: A player's description of what it's working on
 - **Outbox**: Outbound requests (cue, report, recruit, restart, detach, destroy, …) go through the session's workflow outbox instead of directly signaling other workflows. The dispatch loop processes entries via activities, decoupling tools from cross-workflow signaling.
-- **Session status**: `pending → active → stale | blocked` (tracked via `ClaudeTempoStatus` search attribute). See [docs/concepts.md](docs/concepts.md) for full status mechanics.
+- **Attachment phase** (v0.26): Seven phases tracked on the session workflow — `booting → attached → processing | awaiting → draining → detached → gone`. The phase is authoritative for lifecycle truth: adapters drive it via `claimAttachment` / `adapterExited` / `forceDetach` / `destroy`, and the workflow publishes it on the `ClaudeTempoAttachmentState` search attribute. Replaced the v0.25 `ClaudeTempoStatus` heuristic (removed in v0.26). See [docs/concepts.md](docs/concepts.md) for the phase table and [docs/ops/v0.26-migration.md](docs/ops/v0.26-migration.md) for the upgrade path.
 - **Per-host task queues**: `host` param on `recruit`/`restart`/`migrate` routes to `claude-tempo-{hostname}` task queue. See [docs/concepts.md](docs/concepts.md) for cross-machine recruiting details.
 - **Wire protocol**: All signal/query/update names are documented in [`docs/WIRE-PROTOCOL.md`](docs/WIRE-PROTOCOL.md) and are stable — renaming or removing any is a breaking change. **Process**: update `docs/WIRE-PROTOCOL.md` in the same commit as any new signal, query, or update.
 - **Daemon**: Standalone background process (`src/daemon.ts`) that runs all Temporal workers. Auto-started by any `claude-tempo` command. PID at `~/.claude-tempo/daemon.pid`; logs at `~/.claude-tempo/daemon.log`.

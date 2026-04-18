@@ -1,5 +1,14 @@
 # Session Lifecycle & Multi-Host Architecture — Rebuild v2
 
+> **Editor's note (2026-04-18, v0.26-beta):** This design is now fully realized in code.
+> The legacy `ClaudeTempoStatus` / `SessionStatus` shim that the rebuild ladder left in
+> place for migration compatibility was removed in the **#174–#178 shim-removal epic**
+> (PRs #175, #176, #177, #178). Attachment phase (`ClaudeTempoAttachmentState`) is the
+> single source of lifecycle truth. The sections below describe the target state; where
+> they reference the legacy shim, read them as "historical context" for the v0.25
+> transition window. See [`docs/ops/v0.26-migration.md`](../ops/v0.26-migration.md) for
+> the operator upgrade path.
+
 > **Status**: Design proposal (v2, revision of Rebuild B after panel review)
 > **Author**: tempo-architect-2
 > **Branch**: `design/session-rebuild-v2`

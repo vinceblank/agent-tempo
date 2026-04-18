@@ -12,30 +12,41 @@
 
 When a session crashes or closes without graceful shutdown, Temporal detects it automatically:
 
-- If a message to a dead session remains undelivered for **3 minutes**, the workflow self-completes
-- Before exiting, it notifies the conductor with the undelivered message so work can be reassigned
-- Idle sessions with no pending messages are probed after 1 hour of inactivity via a heartbeat ping; if the ping goes undelivered, the session self-completes
+Liveness is now tracked via the attachment-phase lifecycle (see below) instead of the
+pre-v0.26 time-based heuristics (3-min stale, 5-min blocked). The adapter itself reports
+liveness to the workflow via the `heartbeat` signal; the workflow reaps the attachment
+if the lease expires. No message is force-undelivered or auto-re-routed — sessions that
+lose their adapter transition to `detached` and wait for a fresh `claimAttachment`.
 
-No manual cleanup needed — `cue` a dead player and the system handles the rest.
+## Attachment Phase Lifecycle (v0.26+)
 
-## Session Status Lifecycle
+Each session workflow has an attachment phase tracked on the `ClaudeTempoAttachmentState`
+search attribute and returned by the `attachmentInfo` query. The five user-facing buckets
+the CLI and TUI render are derived from the seven underlying phases:
 
-Each session has a status that tracks its connection state:
+| Label | Phases | When you see it |
+|-------|--------|-----------------|
+| `active` (green) | `attached`, `processing` | Session is connected and responsive |
+| `idle` (neutral) | `awaiting` | Attached, no work in flight, outbox drained |
+| `pending` (dim) | `booting` | Workflow created, adapter hasn't claimed yet |
+| `disconnected` (yellow) | `draining`, `detached` | Attachment reaped or in the middle of detaching; session is alive but unreachable until a fresh `claimAttachment` |
+| `gone` (gray) | `gone` | Terminal — `destroy` has run, workflow is complete |
 
-| Status | Meaning |
-|--------|---------|
-| `pending` | Workflow created by `recruit`, but the Claude Code process hasn't connected yet |
-| `active` | Session is running and responsive |
-| `stale` | Messages have gone undelivered for 3+ minutes — the session is likely disconnected |
-| `blocked` | Messages are being delivered but the session has produced no outbound activity for 5+ minutes — it may be stuck or spinning |
+Phase transitions are deterministic and adapter-driven:
+- **`booting → attached`** on first `claimAttachment` from the spawned adapter
+- **`attached → processing`** on `processingStart` update (blocking LLM/tool call)
+- **`processing → attached`** (or `awaiting`) on `processingEnd`
+- **`attached → draining`** on `requestDetach` signal (graceful reap)
+- **`draining → detached`** on `adapterExited` signal or `drainingDeadline` timeout
+- **`detached → attached`** on a fresh `claimAttachment` (restart / migrate / recovery)
+- **any → `gone`** on `destroyUpdate`
 
-Status transitions:
-- **`pending` → `active`** — when the spawned session connects and sends its `updateMetadata` signal
-- **`active` → `stale`** — when undelivered messages exceed the stale threshold (3 minutes)
-- **`active` → `blocked`** — when delivered messages produce no outbound response for 5+ minutes; auto-recovers to `active` on next outbound activity
-- Any status → **terminated** — on graceful shutdown or `stop`
+`claude-tempo status` shows `(pending)` / `(disconnected)` / `(gone)` labels next to player
+names. Filter sessions in the Temporal UI via `ClaudeTempoAttachmentState = "detached"`.
 
-`claude-tempo status` shows `(pending)` and `(stale)` indicators next to player names. The `ClaudeTempoStatus` search attribute is also set, so you can filter sessions by status in the Temporal UI (e.g., `ClaudeTempoStatus = "stale"`).
+> **Historical** — The pre-v0.26 `ClaudeTempoStatus` attribute (values `pending | active |
+> stale | blocked | terminated`) was removed in v0.26. See
+> [`docs/ops/v0.26-migration.md`](ops/v0.26-migration.md) for the operator upgrade path.
 
 ## Known Limitations
 

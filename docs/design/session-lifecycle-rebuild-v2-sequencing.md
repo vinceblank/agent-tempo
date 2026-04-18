@@ -436,4 +436,25 @@ Decisions recorded here so the implementing engineer has a single source of trut
 
 ---
 
+## 11. PR-H: Legacy shim removal (v0.26-beta, post-GA cleanup)
+
+Between v0.25.0 GA and v0.26-beta, the legacy `SessionStatus` / `ClaudeTempoStatus` /
+`BLOCKED_WINDOW_MS` shim was held in place so adapters could migrate at their own pace.
+The shim was removed in a four-PR epic (#174 parent) after the attachment-phase lifecycle
+had soaked for a full beta cycle:
+
+| PR | Scope | Commit |
+|----|-------|--------|
+| **#175** | workflow + types + resolver: delete `SessionStatus` enum, `ClaudeTempoStatus` writes, `BLOCKED_WINDOW_MS` heuristic, `_heartbeat`/`_ping` probe; add `phase` read in resolver. Keep `SessionMetadata.status?: string` / `EnsembleSessionInfo.status?: string` as vestigial Option-B bridges. | `bc69966` |
+| **#176** | tools + CLI + client + maestro: delete the two vestigial `status` fields, migrate every consumer to attachment phase (tags via Option-B bucket collapse). Leave `MaestroPlayerInfo.status?: string` as last vestigial bridge for TUI. | `3f581ee7` |
+| **#177** | TUI migration: introduce central `phaseToLabel` / `phaseToColor` / `phaseToIconName` helpers (module-scope frozen maps — zero per-frame allocation per `tui-performance.md`). Rename `MaestroPlayerInfo.status?: string` → `phase?: AttachmentPhase` with cascading rename through maestro activity + workflow + client. | `9008763e` |
+| **#178** | Tests + docs cleanup: delete `blocked-detection.test.ts`; rewrite 5 tests against `attachmentInfo.phase` / `ClaudeTempoAttachmentState` search attr; delete dead exports; deregister `ClaudeTempoStatus` from the daemon, docker-compose, and test helpers; update tier-1 docs; create `docs/ops/v0.26-migration.md`. | _this PR_ |
+
+All `patched()` markers preserved across the ladder — no workflow-replay breaking changes.
+The wire protocol (signals / queries / updates) was unaffected; `ClaudeTempoStatus` is a
+search attribute and its removal is an operator-visible cluster change rather than an MCP
+wire break. See `docs/ops/v0.26-migration.md` for the migration path.
+
+---
+
 **End of sequencing memo.**

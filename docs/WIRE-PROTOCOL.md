@@ -208,12 +208,17 @@ Workflow updates on a `claudeGlobalMaestroWorkflow` instance (transactional, ret
 
 The following custom Temporal search attributes are written by `claudeSessionWorkflow` and used for session discovery.
 
+> **v0.26-beta breaking change** — `ClaudeTempoStatus` has been removed. Lifecycle truth
+> now lives on `ClaudeTempoAttachmentState` (search attribute) and the `attachmentInfo`
+> query. Operators on long-lived Temporal clusters must manually drop the legacy
+> attribute — Temporal does not auto-unregister search attributes.
+> See [`docs/ops/v0.26-migration.md`](ops/v0.26-migration.md) for the upgrade steps.
+
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `ClaudeTempoEnsemble` | `Keyword` | Ensemble namespace (from `CLAUDE_TEMPO_ENSEMBLE` env var). Scopes sessions to a named group. |
 | `ClaudeTempoPlayerId` | `Keyword` | Human-readable player name (or hex ID before `set_name` is called). |
 | `ClaudeTempoHostname` | `Keyword` | Hostname of the machine running the session. Used to route spawn activities to the correct per-host task queue. |
-| `ClaudeTempoStatus` | `Keyword` | Session lifecycle state: `pending` → `active` → `stale` \| `blocked` \| `terminated`. `blocked` means the session is alive (delivering messages) but has produced no outbound activity for 5+ minutes — it may be stuck or spinning. Auto-recovers to `active` on next outbound. |
 | `ClaudeTempoGitRoot` | `Keyword` | Absolute path to the git repository root on the session's host. |
 | `ClaudeTempoPlayerType` | `Keyword` | Agent type name (e.g. `tempo-soloist`), set from the player's agent definition. |
 | `ClaudeTempoIsConductor` | `Bool` | `true` for conductor workflows, absent or `false` for regular players. Set via `upsertSearchAttributes` in `claudeSessionWorkflow` at startup and after `continueAsNew`. Enables efficient conductor discovery without scanning all session workflows. |
