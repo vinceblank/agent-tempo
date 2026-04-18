@@ -51,7 +51,10 @@ non-`gone` attachment phase (attached, awaiting, processing, draining, detached)
 
 **Detach** / **Destroy** — The two ways to end a session's current run:
 - `detach` gracefully reaps the adapter; the workflow survives in `detached` phase and can be
-  `restart`ed later with full history intact.
+  `restart`ed later with full history intact. Note: `detached` can be transient — adapters that
+  opt into reconnect (`shouldReconnect()`) will attempt to re-claim the session internally before
+  surfacing a permanent detach. If the 15-minute reconnect budget expires without success, the
+  adapter emits `DetachReason: 'reconnect-exhausted'` and shuts down.
 - `destroy` terminally ends the workflow (phase → `gone`), abandoning any in-flight outbox
   entries. Irreversible.
 

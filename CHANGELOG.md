@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sessions now self-heal after laptop sleep / network drop.** `InteractiveAttachment` opts into
+  the new reconnect loop in `BaseAttachment`: when the workflow revokes a lease (heartbeat-timeout
+  or superseded), the adapter re-attempts `claimAttachment` with exponential back-off for up to
+  15 minutes before giving up. Previously, any lease revocation caused permanent shutdown.
+  Adds `DetachReason: 'reconnect-exhausted'` for the terminal case. (#201 / #205)
+
 ### BREAKING CHANGES
 
 - **Dropped Node 18 support.** Minimum is now Node 20.
