@@ -739,7 +739,9 @@ function makeClientWithPlayers(
     playerId: string;
     ensemble?: string;
     playerType?: string;
-    status?: string;
+    /** Attachment phase exposed via `ClaudeTempoAttachmentState` search attribute.
+     *  Defaults to `'attached'` (the "live, deliverable" phase) when omitted. */
+    phase?: 'booting' | 'attached' | 'processing' | 'awaiting' | 'draining' | 'detached' | 'gone';
   }>,
 ): Client {
   return {
@@ -768,23 +770,13 @@ function makeClientWithPlayers(
       }),
       start: async () => ({ runId: 'fake-run-id' }),
       list: async function* () {
-        // Post-#176: broadcast/ensemble filtering reads phase from the
-        // `ClaudeTempoAttachmentState` search attribute. Synthesize phase
-        // values here from the test's legacy `status` field so existing
-        // tests continue to exercise the filter logic:
-        //   active → attached, stale → detached, pending → booting,
-        //   terminated → gone, blocked → detached, undefined → attached.
-        const statusToPhase = (status: string | undefined): string => {
-          if (status === 'stale' || status === 'blocked') return 'detached';
-          if (status === 'pending') return 'booting';
-          if (status === 'terminated') return 'gone';
-          return 'attached';
-        };
+        // Broadcast/ensemble filtering reads phase from the
+        // `ClaudeTempoAttachmentState` search attribute (v0.26).
         for (const p of players) {
           yield {
             workflowId: `claude-session-${testConfig.ensemble}-${p.playerId}`,
             searchAttributes: {
-              ClaudeTempoAttachmentState: [statusToPhase(p.status)],
+              ClaudeTempoAttachmentState: [p.phase ?? 'attached'],
             },
           };
         }
@@ -848,8 +840,8 @@ describe('broadcast tool validation', function () {
       registerBroadcastTool(
         server,
         makeClientWithPlayers([
-          { playerId: 'stale-player', status: 'stale' },
-          { playerId: 'active-player', status: 'active' },
+          { playerId: 'stale-player', phase: 'detached' },
+          { playerId: 'active-player', phase: 'attached' },
         ]),
         testConfig,
         getPlayerId,
@@ -867,7 +859,7 @@ describe('broadcast tool validation', function () {
       registerBroadcastTool(
         server,
         makeClientWithPlayers([
-          { playerId: 'stale-player', status: 'stale' },
+          { playerId: 'stale-player', phase: 'detached' },
         ]),
         testConfig,
         getPlayerId,
@@ -884,8 +876,8 @@ describe('broadcast tool validation', function () {
       registerBroadcastTool(
         server,
         makeClientWithPlayers([
-          { playerId: 'pending-player', status: 'pending' },
-          { playerId: 'active-player', status: 'active' },
+          { playerId: 'pending-player', phase: 'booting' },
+          { playerId: 'active-player', phase: 'attached' },
         ]),
         testConfig,
         getPlayerId,
@@ -903,8 +895,8 @@ describe('broadcast tool validation', function () {
       registerBroadcastTool(
         server,
         makeClientWithPlayers([
-          { playerId: 'terminated-player', status: 'terminated' },
-          { playerId: 'active-player', status: 'active' },
+          { playerId: 'terminated-player', phase: 'gone' },
+          { playerId: 'active-player', phase: 'attached' },
         ]),
         testConfig,
         getPlayerId,
@@ -922,9 +914,9 @@ describe('broadcast tool validation', function () {
       registerBroadcastTool(
         server,
         makeClientWithPlayers([
-          { playerId: 'pending-player', status: 'pending' },
-          { playerId: 'terminated-player', status: 'terminated' },
-          { playerId: 'stale-player', status: 'stale' },
+          { playerId: 'pending-player', phase: 'booting' },
+          { playerId: 'terminated-player', phase: 'gone' },
+          { playerId: 'stale-player', phase: 'detached' },
         ]),
         testConfig,
         getPlayerId,
@@ -1191,7 +1183,6 @@ function makeV2Client(opts: {
           workDir: '/work',
           isConductor: false,
           agentType,
-          status: 'active',
           adapterId: agentType === 'copilot' ? 'copilot' : 'claude-code',
           sessionId: 'sess-uuid',
         };

@@ -24,6 +24,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   declared supported surface with reality and removes the unsupported
   matrix slot, saving ~6 min per CI run. Users still on Node 18 must
   upgrade to Node 20 LTS (or later) before installing claude-tempo.
+- **`updateMetadata` signal no longer accepts `status` field.** The
+  legacy `status` field (kept as a TypeScript wire-compat vestige in
+  v0.26-beta.1 so older clients wouldn't get a schema-mismatch on
+  TypeScript type-check) has been removed from the signal's TypeScript
+  payload type. Runtime behavior is unchanged — the handler has ignored
+  the field since #175. Callers passing
+  `status: 'active' | 'pending' | 'terminated'` in `updateMetadata`
+  payloads must drop the field; attachment phase is driven by the V2
+  wire surface (`claimAttachment` / `adapterExited` / `forceDetach` /
+  `destroyUpdate`), visible via the `attachmentInfo` workflow query and
+  the `ClaudeTempoAttachmentState` search attribute.
+- **`createWorker()` factory removed** from `src/worker.ts`. The
+  function has thrown-on-call since v0.10. Use `createWorkers()` which
+  returns `{ sharedWorker, hostWorker }` — both must be run for
+  cross-machine recruiting to function.
+- **`src/tui/client.ts` back-compat re-export removed.** The shim
+  re-exported `createTempoClient` from `src/client/` for v0.24 TUI
+  compatibility. Internal consumers migrated by v0.26-beta.1 (#177).
+  Any external importer of `claude-tempo/tui/client` must switch to
+  `claude-tempo/client`.
 
 ## [0.26.0-beta.1] - 2026-04-18
 

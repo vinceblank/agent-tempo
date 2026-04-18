@@ -54,7 +54,7 @@ describe('destroy verb — fixes #102 (graceful stop → resurrection loop)', fu
       const ensemble = `destroy-attach-${Date.now()}`;
       // Start a live session, destroy it, then try to sneak in a processingStart update.
       const handle = await startSession({
-        metadata: playerMetadata({ playerId: 'destroy-attach', ensemble, status: 'active' }),
+        metadata: playerMetadata({ playerId: 'destroy-attach', ensemble }),
       });
 
       await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'test' }] });

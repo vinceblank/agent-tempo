@@ -96,14 +96,3 @@ export async function createWorkers(config: Config): Promise<DualWorkers> {
 
   return { sharedWorker, hostWorker };
 }
-
-/**
- * @deprecated Removed in v0.10 — use `createWorkers()` instead.
- * The old single-worker API silently leaked the hostWorker and broke
- * cross-machine recruiting.
- */
-export async function createWorker(_config: Config): Promise<never> {
-  throw new Error(
-    'createWorker() has been removed. Use createWorkers() instead — it returns { sharedWorker, hostWorker } and both must be run.',
-  );
-}
