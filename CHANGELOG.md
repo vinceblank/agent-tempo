@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.0-beta.3] - 2026-04-18
+
+> **Beta release.** Completes the adapter resilience trilogy: reconnect across `continueAsNew`
+> (#226), plus daemon singleton hardening, crash-proof CLI, and shared test environment.
+>
+> **Install:** `npm i -g claude-tempo@0.26.0-beta.3`
+> **Rollback:** `npm i -g claude-tempo@0.26.0-beta.2`
+
 ### Changed
 
 - **Shared `TestWorkflowEnvironment` across Mocha spec files** (#210 Phase 1). The
@@ -22,9 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   Maestro workflow into the next test under the shared env.
 - New CI lint (`scripts/check-test-ensemble-literals.sh`) fails on stray
   `'test-ensemble'` literals outside `test/helpers.ts` / `test/root-hooks.ts`.
+- Removed dead cleanup pass that called `terminate()` on already-completed workflows
+  (silent error swallow). (#144, #217)
+- `OrphanSummary` now includes `ensemble` and `playerId` fields directly, eliminating a
+  per-orphan lookup round-trip. (#145, #217)
 
 ### Fixed
 
+- **Orphan reconcile mis-parsed player identities** when either the ensemble or player name
+  contained dashes (e.g. `tempo-eng` in ensemble `tempo-impl` was parsed as
+  `ensemble=tempo-impl-tempo, playerId=eng`). Affected the `restore` CLI command and daemon
+  reconcile-on-boot. (#143, #217)
 - **Adapter reconnects across `continueAsNew`** (closes #226). When the session
   workflow continued-as-new, the adapter's heartbeat + phase-watcher ticks on
   the (now-closed) pinned runId hit `WorkflowNotFoundError` with message
