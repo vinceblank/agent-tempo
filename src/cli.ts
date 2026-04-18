@@ -1,16 +1,29 @@
 #!/usr/bin/env node
 
-// Lazy-loaded command surfaces — see `main()` below. We avoid a top-level
-// import of `./cli/commands` so that `claude-tempo daemon stop` stays
-// operable on Node versions where the Temporal SDK's transitive deps fail
-// to resolve (issue #157). The daemon command handler lives in its own
-// minimal module (`./cli/daemon-command`) that imports nothing from
-// Temporal or the workflow surface.
-import { configCommand } from './cli/config-command';
-import { runPreflight } from './cli/preflight';
+// Lazy-loaded command surfaces — see `main()` below. The CLI entrypoint
+// avoids top-level imports of any module that transitively pulls in the
+// Temporal SDK, so that recovery commands (`daemon stop`, `version`, `help`,
+// `config show/set`, `upgrade`) stay operable on Node versions where the
+// Temporal SDK's transitive deps fail to resolve (issue #157).
+//
+// Each command-specific handler lives in its own module:
+//   - `./cli/daemon-command`   (PR A) — `daemon` subcommands
+//   - `./cli/help-text`        (PR C) — `help` output
+//   - `./cli/upgrade-command`  (PR C) — `upgrade`
+//   - `./cli/config-command`   — `config` set/show/interactive
+//   - `./cli/preflight`        — Temporal-touching, legitimately not crash-proof
+//   - `./cli/commands`         — all Temporal-touching verbs (start, status, …)
+// The `test/cli-crash-proof-isolation.test.ts` suite asserts the crash-proof
+// modules carry no `@temporalio/*` / `rxjs` / `@grpc/*` leaks in their
+// `require.cache` after load.
+import { readFileSync } from 'fs';
+import { join, resolve } from 'path';
 import * as out from './cli/output';
 import { AgentType } from './types';
 import { ENV, CliOverrides, getConfig } from './config';
+
+/** Package root — cli.js compiles to dist/cli.js, so one level up. Used by the inline `version` handler. */
+const PACKAGE_ROOT = resolve(__dirname, '..');
 
 interface ParsedArgs {
   command: string;
@@ -192,12 +205,38 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const overrides = cliOverrides(args);
 
-  // Fast-path for `claude-tempo daemon …` — load ONLY the minimal daemon
-  // command module (#157). Avoids pulling in the full `./cli/commands`
-  // surface, which transitively imports `@temporalio/client` and crashes
-  // on Node versions with broken native-dep resolution. This guarantees
-  // `daemon stop` / `daemon status` remain available as recovery levers
-  // even when the rest of the CLI cannot load.
+  // ── Crash-proof fast paths (#157 PR C) ────────────────────────────────
+  // These handlers MUST NOT reach `./cli/commands`, `./cli/preflight`, or
+  // any other module that transitively imports `@temporalio/*` / `rxjs` /
+  // `@grpc/*`. Keeping their dispatch ABOVE the `import('./cli/commands')`
+  // line is what makes them resilient to a broken Temporal SDK install —
+  // the scenario users are often trying to recover from by running one of
+  // these very commands. Any future crash-proof candidate should slot in
+  // here AND get added to CRASH_PROOF_MODULES in the isolation test.
+  //
+  // Enumerated crash-proof entrypoints:
+  //   version / --version / -v          (inline below)
+  //   help / --help / -h                 (→ ./cli/help-text)
+  //   daemon <sub>                       (→ ./cli/daemon-command)  [PR A]
+  //   upgrade [version]                  (→ ./cli/upgrade-command) [PR C]
+  //   config / config show / config set  (→ ./cli/config-command)  [PR C]
+
+  if (args.command === 'version') {
+    try {
+      const pkg = JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8'));
+      out.log(`claude-tempo v${pkg.version}`);
+    } catch {
+      out.log('claude-tempo (unknown version)');
+    }
+    return;
+  }
+
+  if (args.command === 'help') {
+    const { printHelp } = await import('./cli/help-text');
+    printHelp();
+    return;
+  }
+
   if (args.command === 'daemon') {
     const { daemon } = await import('./cli/daemon-command');
     await daemon({
@@ -208,10 +247,25 @@ async function main() {
     return;
   }
 
+  if (args.command === 'upgrade') {
+    const { upgrade } = await import('./cli/upgrade-command');
+    await upgrade({
+      version: args.positional[1], // "0.20.0" | "latest" | undefined
+      ...overrides,
+    });
+    return;
+  }
+
+  if (args.command === 'config') {
+    const { configCommand } = await import('./cli/config-command');
+    await configCommand(args.positional);
+    return;
+  }
+
   // All other commands: lazy-load the full command surface now.
   const {
-    start, status, init, server, up, down, stop, help, version,
-    ensembleCommand, agentTypesCommand, broadcast, upgrade, release,
+    start, status, init, server, up, down, stop,
+    ensembleCommand, agentTypesCommand, broadcast, release,
     pause, resume, restart, detach, destroy, migrate, attachmentInfo, restore,
   } = await import('./cli/commands');
 
@@ -456,11 +510,12 @@ async function main() {
       await init({ dir: args.dir, project: args.project });
       break;
 
-    case 'config':
-      await configCommand(args.positional);
-      break;
-
-    case 'preflight':
+    case 'preflight': {
+      // Preflight legitimately requires Temporal (that's what it tests), so
+      // it's NOT in the crash-proof module set. Dynamic-imported here so its
+      // static import doesn't leak into the top-level module graph of cli.ts
+      // (which would undo the crash-proofing of version/help/daemon/etc).
+      const { runPreflight } = await import('./cli/preflight');
       const result = await runPreflight({
         dir: args.dir,
         ...overrides,
@@ -472,6 +527,7 @@ async function main() {
       }
       out.success('All checks passed');
       break;
+    }
 
     case 'tui': {
       const config = getConfig(overrides);
@@ -484,20 +540,8 @@ async function main() {
       break;
     }
 
-    case 'upgrade':
-      await upgrade({
-        version: args.positional[1], // e.g. "0.20.0" or "latest" or undefined
-        ...overrides,
-      });
-      break;
-
-    case 'version':
-      version();
-      break;
-
-    case 'help':
-      help();
-      break;
+    // `version`, `help`, `upgrade`, `config`, `daemon` handled above
+    // the `./cli/commands` import — crash-proof fast paths (#157 PR C).
 
     default:
       out.error(`Unknown command: ${args.command}`);

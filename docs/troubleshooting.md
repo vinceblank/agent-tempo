@@ -67,6 +67,39 @@ Pattern match is narrow (`claude-tempo` + `dist/daemon.js` in the command line) 
 these commands won't touch unrelated node processes. Review the list output before
 running the kill variant.
 
+## Crash-proof subcommands (recovery levers under broken Temporal SDK)
+
+Some CLI subcommands are engineered to work even when the Temporal SDK itself
+fails to load — for example, when upgrading across Node-version breakage or
+recovering from a corrupted native-dep build. These bypass `src/cli/commands`
+(which statically imports `@temporalio/client`) and route through minimal
+dedicated modules before any heavy import fires.
+
+| Subcommand | Crash-proof under broken Temporal SDK? | Notes |
+|---|---|---|
+| `claude-tempo version` / `-v` / `--version` | ✅ Yes | Reads `package.json.version` directly |
+| `claude-tempo help` / `-h` / `--help` | ✅ Yes | Static help text (`src/cli/help-text.ts`) |
+| `claude-tempo daemon <sub>` (`start`, `stop`, `status`, `logs`, `install`, `uninstall`) | ✅ Yes | `src/cli/daemon-command.ts` |
+| `claude-tempo upgrade [version]` | ✅ Yes | Temporal used dynamically for the *optional* active-session warning; silently skipped on SDK failure |
+| `claude-tempo config show` / `config set` | ✅ Yes | Pure fs / zod |
+| `claude-tempo config` (interactive) | ✅ Mostly | Connection-test step uses dynamic Temporal import; the rest of the flow (prompts, file writes) is crash-proof |
+| `claude-tempo preflight` | ❌ No | Intentional — preflight's job is to test Temporal reachability |
+| `claude-tempo attachment-info <name>` | ❌ No | Queries a workflow directly; requires live Temporal |
+| All other verbs (`start`, `stop`, `status`, `restart`, `detach`, `destroy`, `migrate`, `restore`, `pause`, `resume`, `release`, `broadcast`, `server`, `up`, `down`, `init`, …) | ❌ No | Inherently Temporal-touching |
+
+If you hit a broken SDK scenario and need to recover:
+
+```bash
+claude-tempo version                # confirms CLI loads at all
+claude-tempo daemon stop            # halt the broken daemon
+claude-tempo upgrade                # reinstall latest
+claude-tempo daemon start           # fresh daemon on repaired SDK
+```
+
+The `test/cli-crash-proof-isolation.test.ts` suite enforces this contract in
+CI — any static import of `@temporalio/*` / `rxjs` / `@grpc/*` / `nice-grpc`
+sneaking into the crash-proof modules fails the build.
+
 ## Stale Session Cleanup
 
 When a session crashes or closes without graceful shutdown, Temporal detects it automatically:

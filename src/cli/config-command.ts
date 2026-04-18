@@ -1,8 +1,13 @@
 import * as readline from 'readline';
 import { loadConfigFile, saveConfigFile, CONFIG_FILE_PATH, PersistedConfig, getConfigWithSources } from '../config';
-import { createTemporalConnection } from '../connection';
 import { getConfig } from '../config';
 import * as out from './output';
+
+// NOTE: `createTemporalConnection` is dynamic-imported inside `configInteractive`'s
+// connection-test step (issue #157 PR C). Top-level static import would pull in
+// `@temporalio/client`, defeating the crash-proof property of `config show` /
+// `config set` — both of which are pure fs operations and must remain operable
+// under a broken Temporal SDK install.
 
 const SECRET_KEYS = new Set(['temporalApiKey']);
 
@@ -118,6 +123,10 @@ export async function configInteractive(): Promise<void> {
       temporalTlsCertPath: config.temporalTlsCertPath,
       temporalTlsKeyPath: config.temporalTlsKeyPath,
     });
+    // Dynamic import keeps `config show` / `config set` crash-proof under
+    // a broken Temporal SDK install (#157 PR C). Interactive setup's
+    // connection test is the only path that actually needs the SDK.
+    const { createTemporalConnection } = await import('../connection');
     const conn = await Promise.race([
       createTemporalConnection(resolved),
       new Promise<never>((_, reject) =>

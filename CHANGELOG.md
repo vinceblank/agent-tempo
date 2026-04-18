@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`test`: CLI crash-proof isolation test was silently skipping in CI** due
+  to a wrong `__dirname` path resolution from the compiled test location
+  (`dist-test/test/` → `..` → `dist-test/` instead of the repo root). The
+  `before` hook's `fs.existsSync` check then failed, triggering `this.skip()`
+  on the entire suite, and mocha reports silent-skip as a benign pending
+  count that looks green in CI summaries. **PR #218's isolation guarantee
+  was never empirically verified by CI** for the duration between its merge
+  and this fix — only `scripts/verify-daemon-isolation-guard.js` (shipped in
+  PR #219) actually ran the detector. The property itself held in practice,
+  but the CI test was a placebo. This PR: (a) uses the correct two-level
+  `__dirname` resolution, (b) **fails loud** (throws) instead of skipping
+  when dist is missing — explicit `SKIP_ISOLATION_TEST=1` env gate for
+  dev-loop opt-out, (c) adds a counter + `after`-hook assertion that catches
+  any future `this.skip()` regression in the suite's `before` path. Caught
+  while extending the isolation suite for #157 PR C. (partial fix for #157)
 - **Adapter reconnect loop always resets its `reconnecting` flag** on every exit path.
   `BaseAttachment.runReconnectLoop` is now wrapped in `try/finally`, so aborts during
   backoff sleep, success, terminal bails, and unexpected throws all clean up state.
@@ -40,6 +55,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   FAIL if a forbidden import were injected — belt-and-suspenders paranoia per
   tempo-qa observation on PR #218. Run before a release or after touching CLI
   imports.
+- **`claude-tempo version` / `help` / `upgrade` / `config` are now crash-proof**
+  (partial fix for #157 PR C). Each now routes through a dedicated minimal
+  module (`src/cli/help-text.ts`, `src/cli/upgrade-command.ts`) or is inlined
+  in `src/cli.ts` (`version`), dispatched from `src/cli.ts` *before* the full
+  `./cli/commands` surface loads. `upgrade` references `@temporalio/client`
+  via dynamic import inside its active-session-warning try/catch so SDK
+  load failure silently skips the warning instead of crashing — exactly the
+  scenario a user invoking `upgrade` is trying to recover from. `config show`
+  and `config set` become crash-proof; `config` interactive's connection-test
+  step is still dynamic-imported Temporal. The `test/cli-crash-proof-isolation.test.ts`
+  suite enumerates `CRASH_PROOF_MODULES` and asserts — both at runtime (child-process
+  `require.cache` scan) and statically (source-file regex for `import X from 'pkg'`
+  syntax, excluding comments and `await import(...)`) — that no new regressions
+  leak Temporal-adjacent modules into these crash-proof entrypoints. Future
+  crash-proof candidates are a one-line addition to `CRASH_PROOF_MODULES`.
 
 ## [0.26.0-beta.2] - 2026-04-18
 
