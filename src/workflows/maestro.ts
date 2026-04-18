@@ -149,16 +149,15 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
           events.push({ type: 'player_joined', playerId: id, timestamp: now });
         } else {
           const old = oldMap.get(id)!;
-          // `status_changed` events fire on attachment-phase transitions
-          // post-#176 (the field value drifted from legacy SessionStatus to
-          // AttachmentPhase; the event name is kept for dashboard stability).
-          if (old.status !== player.status) {
+          // `status_changed` events fire on attachment-phase transitions; the
+          // event name is kept for dashboard stability (MaestroEvent wire shape).
+          if (old.phase !== player.phase) {
             events.push({
               type: 'status_changed',
               playerId: id,
               timestamp: now,
-              oldValue: old.status,
-              newValue: player.status,
+              oldValue: old.phase,
+              newValue: player.phase,
             });
           }
           // Part changed
@@ -187,11 +186,10 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
       players = newPlayers;
 
       // Track last time we saw running sessions — phases the ensemble can
-      // meaningfully coordinate with (post-#176). `status` carries an
-      // attachment-phase value (see MaestroPlayerInfo field-rename TODO).
-      const COORDINATABLE_PHASES = ['attached', 'processing', 'awaiting', 'booting'];
+      // meaningfully coordinate with (attached/processing/awaiting/booting).
+      const COORDINATABLE_PHASES: readonly string[] = ['attached', 'processing', 'awaiting', 'booting'];
       const hasRunningSessions = players.some(
-        (p) => p.status !== undefined && COORDINATABLE_PHASES.includes(p.status),
+        (p) => p.phase !== undefined && COORDINATABLE_PHASES.includes(p.phase),
       );
       if (hasRunningSessions) {
         lastActiveSessionTime = Date.now();
@@ -436,10 +434,9 @@ export async function claudeGlobalMaestroWorkflow(input: GlobalMaestroInput): Pr
             events.push({ type: 'player_joined', playerId: id, timestamp: now });
           } else {
             const old = oldMap.get(id)!;
-            // Post-#176: diffs attachment-phase values (see per-ensemble Maestro
-            // comment for rationale).
-            if (old.status !== player.status) {
-              events.push({ type: 'status_changed', playerId: id, timestamp: now, oldValue: old.status, newValue: player.status });
+            // Diffs attachment-phase values (see per-ensemble Maestro comment).
+            if (old.phase !== player.phase) {
+              events.push({ type: 'status_changed', playerId: id, timestamp: now, oldValue: old.phase, newValue: player.phase });
             }
             if (old.part !== player.part) {
               events.push({ type: 'part_changed', playerId: id, timestamp: now, oldValue: old.part, newValue: player.part });

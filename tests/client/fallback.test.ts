@@ -11,7 +11,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { createTempoClient } from '../../src/client';
-import type { MaestroPlayerInfo } from '../../src/types';
+import type { AttachmentPhase, MaestroPlayerInfo } from '../../src/types';
 
 // ── Helpers ──
 
@@ -61,7 +61,7 @@ function makeFakeClient(opts: {
   };
 }
 
-function p(id: string, ensemble = 'demo', status = 'active'): MaestroPlayerInfo {
+function p(id: string, ensemble = 'demo', phase: AttachmentPhase = 'attached'): MaestroPlayerInfo {
   return {
     playerId: id,
     ensemble,
@@ -70,7 +70,7 @@ function p(id: string, ensemble = 'demo', status = 'active'): MaestroPlayerInfo 
     workDir: '/tmp',
     isConductor: false,
     agentType: 'claude',
-    status,
+    phase,
   };
 }
 
@@ -140,9 +140,8 @@ describe('TempoClient.getPlayers — fallback precedence', () => {
     const players = await client.getPlayers('demo');
     expect(players).toHaveLength(1);
     expect(players[0].playerId).toBe('dave');
-    // Post-#176: `MaestroPlayerInfo.status` carries the attachment phase value
-    // read from `ClaudeTempoAttachmentState` (mock returns 'attached' above).
-    expect(players[0].status).toBe('attached');
+    // Post-#177: `MaestroPlayerInfo.phase` (renamed from `.status` in #177).
+    expect(players[0].phase).toBe('attached');
   });
 
   it('returns empty array when all three tiers fail', async () => {

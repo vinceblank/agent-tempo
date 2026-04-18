@@ -7,6 +7,7 @@
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { maestroWorkflowId, schedulerWorkflowId, sessionWorkflowId, conductorWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID } from '../config';
 import type {
+  AttachmentPhase,
   MaestroPlayerInfo,
   MaestroRelayMessage,
   HistoryEntry,
@@ -60,7 +61,9 @@ export function createTempoClient(client: Client): TempoClient {
             name,
             playerCount: players.length,
             hasConductor: !!conductor,
-            conductorStatus: conductor?.status,
+            // `conductorStatus` is a public TempoClient API field (EnsembleInfo);
+            // its value now carries the attachment-phase string (post-#176 drift).
+            conductorStatus: conductor?.phase,
           };
         });
         // Only trust Maestro if it has discovered ensembles; fall through to
@@ -149,9 +152,10 @@ export function createTempoClient(client: Client): TempoClient {
             workDir: '',
             isConductor: isConductorFromSA || isConductorFromId,
             agentType: 'claude',
-            // `MaestroPlayerInfo.status` carries the attachment phase post-#176.
-            // Populated from `ClaudeTempoAttachmentState` (replaces removed `ClaudeTempoStatus`).
-            status: Array.isArray(sa.ClaudeTempoAttachmentState) ? String(sa.ClaudeTempoAttachmentState[0]) : undefined,
+            // Attachment phase from `ClaudeTempoAttachmentState` search attr.
+            phase: Array.isArray(sa.ClaudeTempoAttachmentState)
+              ? (String(sa.ClaudeTempoAttachmentState[0]) as AttachmentPhase)
+              : undefined,
           });
         }
         return players;

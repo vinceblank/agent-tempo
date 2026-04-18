@@ -1,7 +1,11 @@
 /**
  * Formatting utilities for the TUI.
- * Timestamp formatting, text truncation, duration display.
+ * Timestamp formatting, text truncation, duration display,
+ * attachment-phase → label/color/icon mapping (post-#177).
  */
+
+import type { AttachmentPhase } from '../../types';
+import { THEME } from './theme';
 
 /** Format an ISO timestamp as a short time string (HH:MM:SS). */
 export function formatTime(iso: string): string {
@@ -33,16 +37,65 @@ export function truncate(text: string, maxLen: number, ellipsis = '...'): string
   return text.slice(0, maxLen - ellipsis.length) + ellipsis;
 }
 
-/** Format a player status for display. */
-export function formatStatus(status?: string): string {
-  switch (status) {
-    case 'active': return 'active';
-    case 'stale': return 'stale';
-    case 'pending': return 'pending';
-    case 'blocked': return 'blocked';
-    case 'terminated': return 'terminated';
-    default: return status || 'unknown';
-  }
+// ── Attachment-phase presentation mapping (post-#177) ──
+//
+// TUI consumers receive attachment-phase strings via `MaestroPlayerInfo.phase`
+// (renamed from `.status` in #177 after the shim-removal epic). The helpers
+// below collapse the seven attachment phases into five user-facing buckets:
+// active / idle / disconnected / pending / gone.
+//
+// Performance: the per-phase maps are frozen at module scope (per
+// docs/tui-performance.md — no per-frame object allocation). Callers just
+// do a dictionary lookup.
+
+/** User-facing phase labels shown in the TUI. */
+export type PhaseLabel = 'active' | 'idle' | 'disconnected' | 'pending' | 'gone' | 'unknown';
+
+/** Icon-bucket name used to key into `statusIcons()` (src/tui/utils/platform.ts). */
+export type PhaseIconName = 'active' | 'stale' | 'pending' | 'blocked' | 'terminated';
+
+const PHASE_TO_LABEL: Readonly<Record<AttachmentPhase, PhaseLabel>> = Object.freeze({
+  attached:   'active',
+  processing: 'active',
+  awaiting:   'idle',
+  draining:   'disconnected',
+  detached:   'disconnected',
+  booting:    'pending',
+  gone:       'gone',
+});
+
+const LABEL_TO_COLOR: Readonly<Record<PhaseLabel, string>> = Object.freeze({
+  active:       THEME.success,
+  idle:         THEME.text,
+  disconnected: THEME.warning,
+  pending:      THEME.dim,
+  gone:         THEME.dim,
+  unknown:      THEME.text,
+});
+
+const LABEL_TO_ICON_NAME: Readonly<Record<PhaseLabel, PhaseIconName>> = Object.freeze({
+  active:       'active',      // ● (filled)
+  idle:         'stale',       // ○ (hollow, neutral)
+  disconnected: 'blocked',     // ◐ (half, yellow)
+  pending:      'pending',     // ◔ (quarter, dim)
+  gone:         'terminated',  // ✕
+  unknown:      'blocked',     // ? → cautionary
+});
+
+/** Collapse an attachment phase into its user-facing label. */
+export function phaseToLabel(phase?: string): PhaseLabel {
+  if (!phase) return 'unknown';
+  return PHASE_TO_LABEL[phase as AttachmentPhase] ?? 'unknown';
+}
+
+/** Theme color (hex string or undefined under NO_COLOR) for a phase. */
+export function phaseToColor(phase?: string): string {
+  return LABEL_TO_COLOR[phaseToLabel(phase)];
+}
+
+/** Icon-bucket key for `statusIcons()` for a phase. */
+export function phaseToIconName(phase?: string): PhaseIconName {
+  return LABEL_TO_ICON_NAME[phaseToLabel(phase)];
 }
 
 /**

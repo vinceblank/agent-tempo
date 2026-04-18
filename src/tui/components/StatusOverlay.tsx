@@ -8,6 +8,8 @@ import React from 'react';
 import { useInk } from '../ink-context';
 import { THEME } from '../utils/theme';
 import type { MaestroPlayerInfo } from '../../types';
+import { phaseToLabel, phaseToColor, phaseToIconName } from '../utils/format';
+import { statusIcons, supportsUnicode } from '../utils/platform';
 
 export interface StatusOverlayProps {
   players: MaestroPlayerInfo[];
@@ -16,11 +18,9 @@ export interface StatusOverlayProps {
   contentHeight: number;
 }
 
-const iconMap: Record<string, string> = { active: '\u25CF', blocked: '\u25CB', stale: '\u25CC', pending: '\u23F3' };
-const colorMap: Record<string, string> = { active: THEME.success, blocked: THEME.text, stale: THEME.dim, pending: THEME.warning };
-
 export function StatusOverlay({ players, ensemble, scrollOffset, contentHeight }: StatusOverlayProps) {
   const { Text } = useInk();
+  const icons = statusIcons(supportsUnicode());
   const cols = process.stdout.columns || 80;
   const indent = 4;
   const maxWidth = Math.max(20, cols - indent);
@@ -54,8 +54,9 @@ export function StatusOverlay({ players, ensemble, scrollOffset, contentHeight }
   }
 
   for (const p of visiblePlayers) {
-    const icon = iconMap[p.status || 'unknown'] || '?';
-    const iconColor = colorMap[p.status || 'unknown'] || THEME.text;
+    // Attachment-phase → icon/color lookup (post-#177 Option-B mapping).
+    const icon = icons[phaseToIconName(p.phase)];
+    const iconColor = phaseToColor(p.phase);
     const conductor = p.isConductor ? ' \u2605' : '';
     children.push('\n\n');
     children.push(React.createElement(React.Fragment, { key: `${p.playerId}-1` },
@@ -63,7 +64,7 @@ export function StatusOverlay({ players, ensemble, scrollOffset, contentHeight }
       React.createElement(Text, { bold: true, color: THEME.text }, p.playerId),
       conductor ? React.createElement(Text, { color: THEME.warning }, conductor) : null,
     ));
-    const details = [p.status || 'unknown'];
+    const details: string[] = [phaseToLabel(p.phase)];
     if (p.gitBranch) details.push(p.gitBranch);
     if (p.playerType || p.agentType) details.push(p.playerType || p.agentType || '');
     children.push('\n');

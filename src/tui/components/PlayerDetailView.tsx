@@ -13,6 +13,8 @@ import React from 'react';
 import { useInk } from '../ink-context';
 import { THEME } from '../utils/theme';
 import type { MaestroPlayerInfo, SessionMetadata, Message, SentMessage } from '../../types';
+import { phaseToLabel, phaseToIconName } from '../utils/format';
+import { statusIcons, supportsUnicode } from '../utils/platform';
 
 const MAX_VISIBLE = 20;
 
@@ -57,9 +59,11 @@ export function PlayerDetailView({
   children.push(React.createElement(Text, { key: 'name', bold: true, color: THEME.accent }, `${icon}${playerId}`));
 
   // Metadata line 1: Type · Status [· Host when remote]
+  // Collapse the attachment phase via the Option-B helpers in utils/format.
   const type = player?.playerType || player?.agentType || '(default)';
-  const status = player?.status || 'unknown';
-  const statusDot = status === 'active' ? '\u25CF' : status === 'stale' ? '\u25CB' : '\u25A0';
+  const status = phaseToLabel(player?.phase);
+  const phaseIcons = statusIcons(supportsUnicode());
+  const statusDot = phaseIcons[phaseToIconName(player?.phase)];
   const host = player?.hostname || metadata?.hostname || '';
   const showRemoteHost = Boolean(host && localHost && host !== localHost);
   children.push('\n');
