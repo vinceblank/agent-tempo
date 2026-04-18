@@ -8,6 +8,8 @@ logs/
 *.js.map
 *.d.ts
 !jest.config.js
+# Operational scripts (not built from TS) — one-off manual tools.
+!scripts/*.js
 temporal-data.db
 
 pnpm-lock.yaml

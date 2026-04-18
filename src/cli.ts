@@ -202,6 +202,7 @@ async function main() {
     const { daemon } = await import('./cli/daemon-command');
     await daemon({
       subcommand: args.positional[1],
+      force: args.force,
       ...overrides,
     });
     return;

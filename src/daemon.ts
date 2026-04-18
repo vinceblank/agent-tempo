@@ -16,7 +16,7 @@ import { WorkflowIdConflictPolicy } from '@temporalio/client';
 import { getConfig, CLAUDE_TEMPO_HOME, GLOBAL_MAESTRO_WORKFLOW_ID, loadDaemonConfig, isEnsembleAllowed, type DaemonConfig } from './config';
 import { createWorkers } from './worker';
 import { createTemporalConnection } from './connection';
-import { DAEMON_PID_PATH, DAEMON_LOG_PATH } from './cli/daemon';
+import { DAEMON_PID_PATH, DAEMON_LOG_PATH, DAEMON_HEARTBEAT_PATH, HEARTBEAT_INTERVAL_MS } from './cli/daemon';
 import { createTempoClient } from './client';
 import { queryOrphanedSessions, type OrphanCandidate } from './reconcile/orphans';
 import type { GlobalMaestroInput } from './types';
@@ -334,6 +334,27 @@ async function main() {
   log(`PID file: ${DAEMON_PID_PATH}`);
   log(`Log file: ${DAEMON_LOG_PATH}`);
 
+  // Create the heartbeat file synchronously so the first `daemon status`
+  // invocation after startup never races the first interval tick. The
+  // subsequent interval only has to refresh the mtime — no branching on
+  // file-existence each tick (#157 PR B).
+  try {
+    fs.writeFileSync(DAEMON_HEARTBEAT_PATH, '');
+  } catch (err) {
+    // Non-fatal — the daemon still runs, `daemon status` just reports
+    // `heartbeatAge: null`. Log loudly so operators notice.
+    log('Failed to create heartbeat file (non-fatal):', (err as Error)?.message ?? err);
+  }
+  const heartbeatInterval = setInterval(() => {
+    try {
+      const now = Date.now() / 1000; // `fs.utimes` takes seconds since epoch
+      fs.utimesSync(DAEMON_HEARTBEAT_PATH, now, now);
+    } catch {
+      // Swallow — transient fs errors shouldn't take down the daemon.
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+  heartbeatInterval.unref();
+
   // Get config from env vars (passed by startDaemon via spawn env)
   const config = getConfig({});
 
@@ -348,6 +369,7 @@ async function main() {
   const hardExit = () => {
     log('Shutdown timeout — forcing exit');
     try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+    try { fs.unlinkSync(DAEMON_HEARTBEAT_PATH); } catch { /* ignore */ }
     process.exit(1);
   };
   // Mutable ref so the reconcile/cleanup init below can register its
@@ -362,6 +384,8 @@ async function main() {
     const timer = setTimeout(hardExit, 15_000);
     timer.unref();
     stopCleanupLoopRef?.();
+    clearInterval(heartbeatInterval);
+    try { fs.unlinkSync(DAEMON_HEARTBEAT_PATH); } catch { /* ignore */ }
     sharedWorker?.shutdown();
     hostWorker?.shutdown();
   };

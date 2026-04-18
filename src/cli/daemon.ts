@@ -13,6 +13,23 @@ const log = (...args: unknown[]) => console.error('[claude-tempo:daemon]', ...ar
 
 export const DAEMON_PID_PATH = path.join(CLAUDE_TEMPO_HOME, 'daemon.pid');
 export const DAEMON_LOG_PATH = path.join(CLAUDE_TEMPO_HOME, 'daemon.log');
+/**
+ * Path to the daemon heartbeat file. The running daemon touches this file
+ * on a {@link HEARTBEAT_INTERVAL_MS} cadence so `daemon status` can
+ * distinguish "pid is alive AND main loop is serving" from "pid is alive
+ * but something hung" (#157 diagnostic improvement).
+ */
+export const DAEMON_HEARTBEAT_PATH = path.join(CLAUDE_TEMPO_HOME, 'daemon.heartbeat');
+
+/** How often the daemon touches {@link DAEMON_HEARTBEAT_PATH}. */
+export const HEARTBEAT_INTERVAL_MS = 60_000;
+
+/**
+ * Multiplier applied to {@link HEARTBEAT_INTERVAL_MS} to decide whether a
+ * heartbeat is stale. A 2x buffer tolerates one missed tick (brief GC pause,
+ * synchronous activity) without false-flagging a healthy daemon.
+ */
+export const HEARTBEAT_STALE_MULTIPLIER = 2;
 
 /** Entry point for the daemon process (compiled JS). */
 const DAEMON_ENTRY_PATH = path.resolve(__dirname, '..', 'daemon.js');
@@ -20,6 +37,13 @@ const DAEMON_ENTRY_PATH = path.resolve(__dirname, '..', 'daemon.js');
 export interface DaemonStatus {
   running: boolean;
   pid?: number;
+  /**
+   * Milliseconds since the daemon last touched {@link DAEMON_HEARTBEAT_PATH}.
+   * `null` when no heartbeat file exists (fresh daemon hasn't ticked yet, or
+   * pre-heartbeat daemon). `undefined` when the daemon is not running at all.
+   * See {@link HEARTBEAT_STALE_MULTIPLIER} for the staleness threshold.
+   */
+  heartbeatAge?: number | null;
 }
 
 /**
@@ -66,11 +90,44 @@ export function getDaemonStatus(): DaemonStatus {
   }
 
   if (isPidAlive(pid)) {
-    return { running: true, pid };
+    return { running: true, pid, heartbeatAge: readHeartbeatAge() };
   }
   // Process is dead — clean up stale PID file.
   try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
   return { running: false };
+}
+
+/**
+ * Read the heartbeat file and return milliseconds since its mtime, or `null`
+ * if the file doesn't exist. Used by {@link getDaemonStatus} when the daemon
+ * is running — see the `heartbeatAge` field on {@link DaemonStatus}.
+ *
+ * Any other read/stat error is treated as "unknown" (`null`) rather than
+ * propagating — `daemon status` should degrade to silent-unknown rather than
+ * crash on an unexpected filesystem condition.
+ */
+function readHeartbeatAge(): number | null {
+  try {
+    const mtimeMs = fs.statSync(DAEMON_HEARTBEAT_PATH).mtimeMs;
+    const age = Date.now() - mtimeMs;
+    return age >= 0 ? age : 0;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @internal — exported for unit testing {@link DAEMON_CMDLINE_RE} edge cases
+ * without needing to spin up a real child process. Filters a scanner result
+ * to the "orphan" subset: matching processes that aren't the one the pid
+ * file is tracking. Used by `daemon start`'s pre-flight check (#157 PR B).
+ */
+export function selectOrphans(
+  scanned: DaemonProcessInfo[],
+  trackedPid: number | undefined,
+): DaemonProcessInfo[] {
+  if (trackedPid === undefined) return scanned;
+  return scanned.filter((p) => p.pid !== trackedPid);
 }
 
 /**

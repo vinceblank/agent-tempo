@@ -18,6 +18,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `reconnect-exhausted` terminal path (previously only covered by the abort-during-sleep
   unit test). (closes #206)
 
+### Added
+
+- **`daemon start` pre-flight orphan check + `--force` escape hatch** (partial fix
+  for #157). Before spawning, the CLI now scans for unexpected claude-tempo daemon
+  processes (command-line match via PR A's `scanClaudeTempoDaemons`) and aborts
+  with exit 1 + orphan list + troubleshooting-docs pointer if any are found. Pass
+  `--force` to bypass the check (and clear a stale pid file as a side effect).
+  Exit-1 default is deliberate: piling a new daemon on top of orphans is the
+  original #157 user-pain scenario; `--force` is the opt-in for CI scripts that
+  want idempotent-start behavior.
+- **Daemon heartbeat file** at `~/.claude-tempo/daemon.heartbeat`. The daemon
+  touches this file every 60 seconds; `daemon status` reports its age, flagging
+  "stale" when the last touch is >120s ago. Disambiguates "pid is alive AND
+  main loop is serving" from "pid is alive but something hung" — informational,
+  doesn't drive any automatic action. (partial fix for #157)
+- **`scripts/verify-daemon-isolation-guard.js`** — one-shot manual verification
+  script for the #157 isolation guard's fail-path. The `daemon-command-isolation`
+  test asserts no forbidden Temporal imports leak into the `require.cache` of
+  the daemon CLI module. This script empirically confirms the detector would
+  FAIL if a forbidden import were injected — belt-and-suspenders paranoia per
+  tempo-qa observation on PR #218. Run before a release or after touching CLI
+  imports.
+
 ## [0.26.0-beta.2] - 2026-04-18
 
 > **Beta release.** Fixes the adapter poller reconnect bug (#201), drops Node 18,
