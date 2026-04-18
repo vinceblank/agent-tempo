@@ -7,7 +7,7 @@
  * identically on all CI matrix entries regardless of platform.
  */
 import { expect } from 'chai';
-import { scanClaudeTempoDaemons } from '../src/cli/daemon';
+import { scanClaudeTempoDaemons, selectOrphans, type DaemonProcessInfo } from '../src/cli/daemon';
 
 describe('scanClaudeTempoDaemons', function () {
   describe('POSIX (ps) scanner', function () {
@@ -135,5 +135,38 @@ describe('scanClaudeTempoDaemons', function () {
       const result = scanClaudeTempoDaemons(stub, win);
       expect(result).to.deep.equal([]);
     });
+  });
+});
+
+describe('selectOrphans (#157 PR B)', function () {
+  const proc = (pid: number): DaemonProcessInfo => ({
+    pid,
+    commandLine: `node /path/claude-tempo/dist/daemon.js`,
+  });
+
+  it('returns the full scanner result when no tracked pid is provided', function () {
+    const scanned = [proc(111), proc(222), proc(333)];
+    expect(selectOrphans(scanned, undefined).map((p) => p.pid)).to.deep.equal([111, 222, 333]);
+  });
+
+  it('filters out the tracked pid from the scanner result', function () {
+    const scanned = [proc(111), proc(222), proc(333)];
+    expect(selectOrphans(scanned, 222).map((p) => p.pid)).to.deep.equal([111, 333]);
+  });
+
+  it('returns the full list when the tracked pid is not in the scanner result', function () {
+    // Mismatch can happen when pid file is stale — tracked pid is dead + not
+    // reported by scanner; all scanned pids are real orphans.
+    const scanned = [proc(111), proc(222)];
+    expect(selectOrphans(scanned, 999).map((p) => p.pid)).to.deep.equal([111, 222]);
+  });
+
+  it('returns [] when scanner is empty regardless of tracked pid', function () {
+    expect(selectOrphans([], undefined)).to.deep.equal([]);
+    expect(selectOrphans([], 111)).to.deep.equal([]);
+  });
+
+  it('returns [] when the only scanned process is the tracked pid', function () {
+    expect(selectOrphans([proc(111)], 111)).to.deep.equal([]);
   });
 });

@@ -19,6 +19,9 @@ import {
   stopDaemon,
   DAEMON_PID_PATH,
   DAEMON_LOCK_PATH,
+  DAEMON_HEARTBEAT_PATH,
+  HEARTBEAT_INTERVAL_MS,
+  HEARTBEAT_STALE_MULTIPLIER,
   STALE_LOCK_MS,
   tryAcquireLockFile,
   checkLockFileStale,
@@ -89,6 +92,57 @@ describe('daemon management', function () {
 
       // Corrupt PID file should have been cleaned up
       expect(fs.existsSync(DAEMON_PID_PATH)).to.be.false;
+    });
+
+    describe('heartbeatAge (#157 PR B)', function () {
+      // Run after any other getDaemonStatus test so we don't interfere with them.
+      afterEach(function () {
+        try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+        try { fs.unlinkSync(DAEMON_HEARTBEAT_PATH); } catch { /* ignore */ }
+      });
+
+      it('reports a fresh heartbeatAge when the heartbeat file exists and is recent', function () {
+        seedPidFile(DAEMON_PID_PATH, process.pid);
+        fs.writeFileSync(DAEMON_HEARTBEAT_PATH, '');
+        // mtime is now — age should be 0 or a few ms
+        const status = getDaemonStatus();
+        expect(status.running).to.be.true;
+        expect(status.heartbeatAge).to.be.a('number');
+        expect(status.heartbeatAge!).to.be.at.least(0);
+        expect(status.heartbeatAge!).to.be.below(1000); // sane upper bound for just-written file
+      });
+
+      it('reports heartbeatAge: null when the heartbeat file is missing (daemon running, pre-first-touch)', function () {
+        seedPidFile(DAEMON_PID_PATH, process.pid);
+        try { fs.unlinkSync(DAEMON_HEARTBEAT_PATH); } catch { /* ignore */ }
+        const status = getDaemonStatus();
+        expect(status.running).to.be.true;
+        expect(status.heartbeatAge).to.equal(null);
+      });
+
+      it('reports a stale heartbeatAge when the file mtime is beyond the stale threshold', function () {
+        seedPidFile(DAEMON_PID_PATH, process.pid);
+        fs.writeFileSync(DAEMON_HEARTBEAT_PATH, '');
+        // Backdate mtime to 5 intervals ago — well beyond the 2x staleness threshold.
+        const staleSecs = (HEARTBEAT_INTERVAL_MS * 5) / 1000;
+        const backdated = Date.now() / 1000 - staleSecs;
+        fs.utimesSync(DAEMON_HEARTBEAT_PATH, backdated, backdated);
+
+        const status = getDaemonStatus();
+        expect(status.running).to.be.true;
+        expect(status.heartbeatAge).to.be.a('number');
+        expect(status.heartbeatAge!).to.be.at.least(HEARTBEAT_INTERVAL_MS * HEARTBEAT_STALE_MULTIPLIER);
+      });
+
+      it('does not populate heartbeatAge when the daemon is not running', function () {
+        try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+        // Even if a stale heartbeat file is lying around, the running=false path
+        // returns early and never reads it — the field should be absent.
+        fs.writeFileSync(DAEMON_HEARTBEAT_PATH, '');
+        const status = getDaemonStatus();
+        expect(status.running).to.be.false;
+        expect(status.heartbeatAge).to.be.undefined;
+      });
     });
   });
 

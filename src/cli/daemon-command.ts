@@ -31,9 +31,57 @@ import {
   stopDaemon,
   getDaemonStatus,
   scanClaudeTempoDaemons,
+  selectOrphans,
+  DAEMON_PID_PATH,
   DAEMON_LOG_PATH,
+  HEARTBEAT_INTERVAL_MS,
+  HEARTBEAT_STALE_MULTIPLIER,
+  type DaemonProcessInfo,
+  type DaemonStatus,
 } from './daemon';
 import * as out from './output';
+
+/**
+ * Discriminated union describing the outcome of the `daemon start` pre-flight
+ * check. Exported for direct unit testing of the decision logic — the handler
+ * just maps these actions to console output + `process.exit` / spawn.
+ *
+ *   already-running — pid file is valid, no-op (not an error)
+ *   abort           — orphan daemons detected and `force` is false; caller
+ *                     should print the list + exit 1
+ *   spawn           — safe to proceed with `startDaemon`; caller should
+ *                     delete a stale pid file first when `cleanupStalePid`
+ *                     is true (only set on the `force` path)
+ *
+ * @internal
+ */
+export type StartPreflight =
+  | { action: 'already-running'; pid: number }
+  | { action: 'abort'; orphans: DaemonProcessInfo[] }
+  | { action: 'spawn'; cleanupStalePid: boolean };
+
+/**
+ * Pure decision function for `daemon start`. Given a scanner result and the
+ * current daemon status, computes whether to no-op, abort with orphans, or
+ * spawn. `force` bypasses the orphan check and signals that a stale pid file
+ * (if any) should be cleared before the spawn.
+ *
+ * @internal — exported for unit tests in test/daemon-start-orphan-check.test.ts.
+ */
+export function evaluateStartPreflight(
+  scanned: DaemonProcessInfo[],
+  status: DaemonStatus,
+  force: boolean,
+): StartPreflight {
+  if (status.running && typeof status.pid === 'number') {
+    return { action: 'already-running', pid: status.pid };
+  }
+  if (!force) {
+    const orphans = selectOrphans(scanned, status.pid);
+    if (orphans.length > 0) return { action: 'abort', orphans };
+  }
+  return { action: 'spawn', cleanupStalePid: force };
+}
 
 /** Package root is two levels up from dist/cli/ */
 const PACKAGE_ROOT = resolve(__dirname, '..', '..');
@@ -44,6 +92,14 @@ function packagingFile(...segments: string[]): string {
 
 export interface DaemonOpts extends CliOverrides {
   subcommand?: string;
+  /**
+   * Only meaningful for the `start` subcommand. Skips the orphan-process
+   * pre-flight check and spawns a daemon even if scanner-matched processes
+   * are found. Also cleans up a stale pid file if present. Use only when
+   * you've verified no conflicting claude-tempo daemons exist — or in CI
+   * scripts where idempotent-start is required (see `daemon status` first).
+   */
+  force?: boolean;
 }
 
 export async function daemon(opts: DaemonOpts): Promise<void> {
@@ -51,19 +107,49 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
 
   switch (opts.subcommand) {
     case 'start': {
-      if (isDaemonRunning()) {
-        const status = getDaemonStatus();
-        out.success(`Daemon already running (pid ${status.pid})`);
-        return;
-      }
-      out.log('Starting daemon...');
-      try {
-        const pid = await startDaemon(config);
-        out.success(`Daemon started (pid ${pid})`);
-        out.log(`  ${out.dim('Logs: ' + DAEMON_LOG_PATH)}`);
-      } catch (err: any) {
-        out.error(err.message || String(err));
-        process.exit(1);
+      const status = getDaemonStatus();
+      const preflight = evaluateStartPreflight(
+        // Skip the actual OS scan when we're already-running or force is set —
+        // the decision doesn't depend on it. Saves a shell-out on the happy path.
+        status.running || opts.force ? [] : scanClaudeTempoDaemons(),
+        status,
+        Boolean(opts.force),
+      );
+
+      switch (preflight.action) {
+        case 'already-running':
+          out.success(`Daemon already running (pid ${preflight.pid})`);
+          return;
+
+        case 'abort':
+          // Piling a new daemon on top of orphans is the original #157 user-pain
+          // scenario. User must clean up first — see troubleshooting docs.
+          out.error(`Found ${preflight.orphans.length} orphaned claude-tempo daemon process${preflight.orphans.length === 1 ? '' : 'es'} — daemon start aborted.`);
+          for (const p of preflight.orphans) out.log(`  pid ${p.pid}: ${p.commandLine}`);
+          out.log('');
+          out.log(`  ${out.dim('Emergency cleanup: see docs/troubleshooting.md → "Orphaned daemon processes"')}`);
+          out.log(`  ${out.dim('Override (use only after confirming): claude-tempo daemon start --force')}`);
+          process.exit(1);
+          break;
+
+        case 'spawn':
+          if (preflight.cleanupStalePid && existsSync(DAEMON_PID_PATH)) {
+            // Force path — clean up a stale pid file if present.
+            // `getDaemonStatus` already unlinks the file when it detects a
+            // dead pid; this handles the rarer "file exists, contents
+            // unparseable OR fs error" branch.
+            try { unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+          }
+          out.log('Starting daemon...');
+          try {
+            const pid = await startDaemon(config);
+            out.success(`Daemon started (pid ${pid})`);
+            out.log(`  ${out.dim('Logs: ' + DAEMON_LOG_PATH)}`);
+          } catch (err: any) {
+            out.error(err.message || String(err));
+            process.exit(1);
+          }
+          break;
       }
       break;
     }
@@ -83,10 +169,23 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
 
       if (status.running) {
         out.success(`Daemon running (pid ${status.pid})`);
+        // Heartbeat diagnostic — distinguishes "pid alive AND main loop
+        // serving" from "pid alive but something hung" (#157 PR B).
+        const staleThresholdMs = HEARTBEAT_INTERVAL_MS * HEARTBEAT_STALE_MULTIPLIER;
+        if (status.heartbeatAge !== undefined && status.heartbeatAge !== null) {
+          const ageSec = Math.round(status.heartbeatAge / 1000);
+          if (status.heartbeatAge > staleThresholdMs) {
+            out.warn(`  Last heartbeat: ${ageSec}s ago — STALE (threshold ${staleThresholdMs / 1000}s). The daemon's main loop may be hung.`);
+          } else {
+            out.log(`  ${out.dim(`Last heartbeat: ${ageSec}s ago`)}`);
+          }
+        } else if (status.heartbeatAge === null) {
+          out.log(`  ${out.dim('Last heartbeat: (not yet written — daemon just started or pre-heartbeat version)')}`);
+        }
         // Warn if the scanner reports extras the pid file doesn't know about —
         // orphans from a prior crashed run that never removed its pid file, or
         // a second daemon started by a stale concurrent CLI invocation (#157).
-        const extras = scanned.filter((p) => p.pid !== status.pid);
+        const extras = selectOrphans(scanned, status.pid);
         if (extras.length > 0) {
           out.warn(`Found ${extras.length} additional claude-tempo daemon process${extras.length === 1 ? '' : 'es'} not tracked by the pid file:`);
           for (const p of extras) out.log(`  pid ${p.pid}: ${p.commandLine}`);
@@ -152,12 +251,13 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
 
     default:
       out.error('Usage: claude-tempo daemon <start|stop|status|logs|install|uninstall>');
-      out.log(`\n  ${out.dim('claude-tempo daemon start')}       Start the worker daemon`);
-      out.log(`  ${out.dim('claude-tempo daemon stop')}        Stop the worker daemon`);
-      out.log(`  ${out.dim('claude-tempo daemon status')}      Check daemon status + list any orphans`);
-      out.log(`  ${out.dim('claude-tempo daemon logs')}        Tail daemon log output`);
-      out.log(`  ${out.dim('claude-tempo daemon install')}     Install as a system service`);
-      out.log(`  ${out.dim('claude-tempo daemon uninstall')}   Uninstall the system service`);
+      out.log(`\n  ${out.dim('claude-tempo daemon start [--force]')}  Start the worker daemon`);
+      out.log(`  ${out.dim('                           --force: skip orphan-process check + clear stale pid file')}`);
+      out.log(`  ${out.dim('claude-tempo daemon stop')}              Stop the worker daemon`);
+      out.log(`  ${out.dim('claude-tempo daemon status')}            Check daemon status + heartbeat + orphans`);
+      out.log(`  ${out.dim('claude-tempo daemon logs')}              Tail daemon log output`);
+      out.log(`  ${out.dim('claude-tempo daemon install')}           Install as a system service`);
+      out.log(`  ${out.dim('claude-tempo daemon uninstall')}         Uninstall the system service`);
       process.exit(1);
   }
 
