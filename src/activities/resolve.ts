@@ -1,5 +1,5 @@
 import { Client, WorkflowHandle } from '@temporalio/client';
-import { SessionMetadata } from '../types';
+import { SessionMetadata, AttachmentPhase } from '../types';
 
 /** Shared query for listing running session workflows. */
 const SESSION_LIST_QUERY = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
@@ -43,6 +43,20 @@ export interface EnsembleSessionInfo {
   isConductor: boolean;
   agentType: string;
   playerType?: string;
+  /**
+   * Attachment phase read from the `ClaudeTempoAttachmentState` search attribute.
+   * The authoritative post-#175 field. May be undefined for older workflows that
+   * predate the attachment lifecycle, or transiently while search attributes propagate.
+   */
+  phase?: AttachmentPhase;
+  /**
+   * @deprecated Vestigial bridge — removed in #176 along with the
+   * `SessionMetadata.status` field and its four consumer readers
+   * (cli/commands, client/index, tools/broadcast, tools/who-am-i).
+   * Populated from `metadata.status` (itself vestigial) for compile
+   * continuity only — the workflow no longer writes a meaningful value.
+   * Do not add new readers.
+   */
   status?: string;
 }
 
@@ -66,6 +80,15 @@ export async function scanEnsembleSessions(
 
       const part: string = await handle.query('getPart');
 
+      // Attachment phase lives in the `ClaudeTempoAttachmentState` search
+      // attribute (written by the workflow on every phase transition).
+      const phaseArr = workflow.searchAttributes?.ClaudeTempoAttachmentState as
+        | string[]
+        | undefined;
+      const phase = Array.isArray(phaseArr) && phaseArr.length > 0
+        ? (phaseArr[0] as AttachmentPhase)
+        : undefined;
+
       sessions.push({
         workflowId: workflow.workflowId,
         playerId: metadata.playerId,
@@ -77,6 +100,8 @@ export async function scanEnsembleSessions(
         isConductor: metadata.isConductor,
         agentType: metadata.agentType || 'claude',
         playerType: metadata.playerType,
+        phase,
+        // Vestigial passthrough for #176's consumers — see EnsembleSessionInfo.status.
         status: metadata.status,
       });
     } catch {

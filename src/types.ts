@@ -3,13 +3,6 @@
 
 export type AgentType = 'claude' | 'copilot';
 
-/**
- * @deprecated Legacy status enum. v0.25 replaces this with {@link AttachmentPhase}.
- * The PR-A compat shim translates legacy `updateMetadata({ status })` signal calls
- * into attachment-phase transitions. PR-D deletes the remaining callers.
- */
-export type SessionStatus = 'active' | 'stale' | 'pending' | 'terminated' | 'blocked';
-
 // ── v0.25 Attachment Lifecycle Types ──
 // Source of truth: docs/design/session-lifecycle-rebuild-v2.md §§2.2–2.6, §8, §11.1
 
@@ -153,7 +146,8 @@ export interface SessionMetadata {
    * mapping via `AdapterRegistry.resolveFromAgentType`.
    */
   adapterId?: string;
-  status?: SessionStatus;
+  /** @deprecated Vestigial — removed in #176. Do not add new readers. */
+  status?: string;
   /** Agent definition name (e.g., "tempo-soloist"). */
   playerType?: string;
   /** Short description from the agent definition. */
