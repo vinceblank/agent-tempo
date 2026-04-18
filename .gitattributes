@@ -1,0 +1,5 @@
+# Keep shell scripts LF-only so they run on Linux CI runners regardless of
+# the developer's core.autocrlf setting on Windows. Without this, Windows
+# clones get CRLF, which makes `bash` choke on `\r` at the end of shebang
+# and `set` / `if` lines.
+*.sh text eol=lf

@@ -11,6 +11,7 @@ import {
   setupTestEnv,
   teardownTestEnv,
   getClient,
+  getTestEnsemble,
   TASK_QUEUE,
   withWorkerAndMaestroActivities,
 } from './helpers';
@@ -23,11 +24,20 @@ import {
 } from '../src/workflows/maestro-signals';
 import type { MaestroPlayerInfo } from '../src/types';
 
-const ENSEMBLE = 'test-ensemble';
+/** Per-file ensemble namespace — seeded in `before()` (see #210). */
+let ENSEMBLE: string;
 /** Fast poll for tests — 500ms instead of the default 10s. */
 const FAST_POLL_MS = 500;
 /** Counter for unique workflow IDs across tests. */
 let testCounter = 0;
+
+/**
+ * Active handles registered during each `it()` body. Cleared + destroyed in
+ * `afterEach` so that even a test failing mid-body doesn't leak a running
+ * Maestro workflow under the shared `TestWorkflowEnvironment` (#210). Happy-
+ * path tests still signal shutdown inline; the hook is a safety net.
+ */
+const pendingHandles: WorkflowHandle[] = [];
 
 async function startMaestro(
   client: Client,
@@ -39,11 +49,13 @@ async function startMaestro(
     pollIntervalMs: FAST_POLL_MS,
   };
   const uniqueId = `claude-maestro-${input.ensemble}-${++testCounter}`;
-  return client.workflow.start('claudeMaestroWorkflow', {
+  const handle = await client.workflow.start('claudeMaestroWorkflow', {
     workflowId: uniqueId,
     taskQueue: TASK_QUEUE,
     args: [input],
   });
+  pendingHandles.push(handle);
+  return handle;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -54,10 +66,29 @@ describe('claudeMaestroWorkflow', function () {
   before(async function () {
     this.timeout(60_000);
     await setupTestEnv();
+    ENSEMBLE = getTestEnsemble();
   });
 
   after(async function () {
     await teardownTestEnv();
+  });
+
+  // #210: best-effort shutdown of any Maestro handle started this test. Most
+  // `it()` bodies shut down inline; this catches the failure path where an
+  // assertion throws before the explicit shutdown runs. Under the shared env
+  // an orphaned running Maestro keeps polling `refreshEnsembleState` and can
+  // drive cross-file flakes (mocked activities throw once the test's fixture
+  // closure exits).
+  afterEach(async function () {
+    const toClean = pendingHandles.splice(0);
+    for (const handle of toClean) {
+      try {
+        await handle.signal(maestroShutdownSignal);
+        await handle.result().catch(() => { /* shutdown returns COMPLETED */ });
+      } catch {
+        // Already shutdown inline, or the workflow already completed. Ignore.
+      }
+    }
   });
 
   describe('initial state and queries', function () {

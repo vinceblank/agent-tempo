@@ -1,3 +1,5 @@
 spec: dist-test/test/**/*.test.js
 timeout: 30000
 exit: true
+require:
+  - dist-test/test/root-hooks.js

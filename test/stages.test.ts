@@ -6,6 +6,7 @@ import {
   setupTestEnv,
   teardownTestEnv,
   getClient,
+  getTestEnsemble,
   startSession,
   conductorMetadata,
   withWorker,
@@ -21,7 +22,8 @@ import {
 } from '../src/workflows/signals';
 import type { StageEntry, Message } from '../src/types';
 
-const ENSEMBLE = 'test-ensemble';
+/** Per-file ensemble namespace — seeded in `before()` (see #210). */
+let ENSEMBLE: string;
 
 /**
  * Poll `assertFn` until it succeeds (no throw) or `timeoutMs` elapses.
@@ -60,6 +62,7 @@ describe('pipeline stages', function () {
   before(async function () {
     this.timeout(60_000);
     await setupTestEnv();
+    ENSEMBLE = getTestEnsemble();
   });
 
   after(async function () {

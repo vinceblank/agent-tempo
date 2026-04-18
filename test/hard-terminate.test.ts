@@ -101,8 +101,8 @@ async function spawnTestVictim(opts: {
   tmpDir?: string;
   /**
    * Ensemble name to embed as `--remote-control-session-name-prefix <ensemble>` in
-   * the victim's argv. Defaults to 'test-ensemble' to match the common-case callers
-   * that pass `ensemble: 'test-ensemble'` to `hardTerminateAttachment`. Tests that
+   * the victim's argv. Defaults to 'test-ensemble-hardterm-fixture' to match the common-case callers
+   * that pass `ensemble: 'test-ensemble-hardterm-fixture'` to `hardTerminateAttachment`. Tests that
    * exercise cross-ensemble scoping (#180) pass distinct values per victim.
    */
   ensemble?: string;
@@ -110,7 +110,7 @@ async function spawnTestVictim(opts: {
   pid: number;
   waitForExit: () => Promise<number | null>;
 }> {
-  const ensemble = opts.ensemble ?? 'test-ensemble';
+  const ensemble = opts.ensemble ?? 'test-ensemble-hardterm-fixture';
   // Node one-liner that keeps the event loop alive forever. Process title isn't used
   // for command-line matching — we rely on the `-n <playerName>` marker in argv.
   const nodeScript = `setInterval(() => {}, 60000); process.on('SIGTERM', () => process.exit(0)); process.on('SIGINT', () => process.exit(0));`;
@@ -333,7 +333,7 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
     }
 
     const result = await hardTerminateAttachment({
-      ensemble: 'test-ensemble',
+      ensemble: 'test-ensemble-hardterm-fixture',
       playerName,
       // 'copilot' bypasses the PID-file miss and still falls through to the search path
       // for `node` processes. We use copilot here intentionally: the test victim is `node`,
@@ -355,7 +355,7 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
   it('returns strategy=none + empty killedPids when no matching process exists', async function () {
     const playerName = `nonexistent-${process.pid}-${Date.now()}`;
     const result = await hardTerminateAttachment({
-      ensemble: 'test-ensemble',
+      ensemble: 'test-ensemble-hardterm-fixture',
       playerName,
       agent: 'claude',
       workDir: tmpWorkDir,
@@ -390,7 +390,7 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
       writeFileSync(pidPath, String(wrongPid));
 
       const result = await hardTerminateAttachment({
-        ensemble: 'test-ensemble',
+        ensemble: 'test-ensemble-hardterm-fixture',
         playerName,
         agent: 'copilot',
         workDir: tmpWorkDir,
@@ -443,7 +443,7 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
     const probeBat = join(tmpWorkDir, `probe-${playerName}.bat`);
     // Both the parent cmd.exe and the child node.exe must carry the ensemble
     // sentinel so the per-ensemble scoping (#180) lets hard-terminate match them.
-    const probeEnsemble = 'test-ensemble';
+    const probeEnsemble = 'test-ensemble-hardterm-fixture';
     writeFileSync(
       probeBat,
       [
@@ -542,7 +542,7 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
 
     try {
       const result = await hardTerminateAttachment({
-        ensemble: 'test-ensemble',
+        ensemble: 'test-ensemble-hardterm-fixture',
         playerName,
         // 'copilot' routes to node.exe search (no PID file exists → falls through).
         // The parent-walk applies regardless of binaryName — it only triggers when
@@ -589,7 +589,7 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
     }
 
     const result = await hardTerminateAttachment({
-      ensemble: 'test-ensemble',
+      ensemble: 'test-ensemble-hardterm-fixture',
       playerName,
       agent: 'copilot',
       workDir: tmpWorkDir,
@@ -608,7 +608,7 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
     // that pass junk should get back an empty result instead of arbitrary command
     // execution via the PowerShell/pgrep pattern.
     const result = await hardTerminateAttachment({
-      ensemble: 'test-ensemble',
+      ensemble: 'test-ensemble-hardterm-fixture',
       playerName: `bad; rm -rf /; $(echo pwned)`,
       agent: 'claude',
       workDir: tmpWorkDir,

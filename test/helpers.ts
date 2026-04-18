@@ -1,14 +1,29 @@
 /**
  * Test helpers for claude-tempo workflow tests.
  *
- * Provides a shared TestWorkflowEnvironment and convenience functions
- * for common multi-step scenarios (start session, send message, etc.).
+ * **Shared TestWorkflowEnvironment (#210 Phase 1)**:
+ * Environment creation is process-wide singleton. The first `setupTestEnv()`
+ * call builds a `TestWorkflowEnvironment`; subsequent calls reuse it and only
+ * re-seed a per-file random ensemble prefix (`test-ensemble-<suffix>`). The
+ * real teardown runs once at process exit via the global `after` hook in
+ * `test/root-hooks.ts`; per-file `after()` / `teardownTestEnv()` calls are
+ * no-ops in shared mode.
+ *
+ * Auto-namespacing: `playerMetadata()` / `conductorMetadata()` default
+ * `ensemble` to the per-file random prefix, so the 8+ test files that just
+ * call `playerMetadata()` without overriding ensemble automatically get
+ * their own isolated namespace under the shared env — no per-test edits.
+ *
+ * Fallback: set `TEMPO_TEST_ISOLATED=1` to restore per-file environments
+ * (each file creates + tears down its own env). Useful when debugging a
+ * flake you suspect is a cross-file state leak.
  */
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
 import { Client, WorkflowHandle, WorkflowIdConflictPolicy } from '@temporalio/client';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import { SessionInput, SessionMetadata, MaestroPlayerInfo } from '../src/types';
 import {
   receiveMessageSignal,
@@ -79,8 +94,30 @@ export {
   adapterExitedSignal,
 };
 
-let testEnv: TestWorkflowEnvironment;
-let workflowBundle: { code: string };
+let testEnv: TestWorkflowEnvironment | undefined;
+let workflowBundle: { code: string } | undefined;
+
+/** Opt-out switch — each `setupTestEnv` re-creates a fresh env when set. */
+const ISOLATED_MODE = process.env.TEMPO_TEST_ISOLATED === '1';
+
+/**
+ * Per-file random ensemble prefix. Re-seeded at every `setupTestEnv()` call
+ * (which Mocha invokes once per test file's top-level `before()` hook). Under
+ * shared env this gives each file its own workflow-ID namespace without any
+ * per-test edits. Default falls back to the pre-#210 literal for defensive
+ * safety if someone imports and uses `playerMetadata()` without calling
+ * `setupTestEnv()` first.
+ */
+let currentEnsemblePrefix = 'test-ensemble';
+
+/**
+ * The prefix derived by the most recent `setupTestEnv()` invocation. Exposed
+ * for tests that need to build their own IDs with the same namespace (e.g.
+ * `claude-session-${getTestEnsemble()}-custom-id`).
+ */
+export function getTestEnsemble(): string {
+  return currentEnsemblePrefix;
+}
 
 export const TASK_QUEUE = 'test-claude-tempo';
 
@@ -108,43 +145,98 @@ function findWorkflowBundle(): string {
 }
 
 /**
- * Initialize the shared test environment. Call once in the top-level
- * before() hook.
+ * Initialize the test environment. In shared mode (default), the first call
+ * creates a process-wide `TestWorkflowEnvironment` that all subsequent test
+ * files reuse; later calls only re-seed the per-file random ensemble prefix.
+ * In isolated mode (`TEMPO_TEST_ISOLATED=1`), every call tears down the
+ * previous env and builds a fresh one.
+ *
+ * Call from each test file's top-level `before()` hook — no change to the
+ * existing calling convention.
  */
 export async function setupTestEnv(): Promise<void> {
-  testEnv = await TestWorkflowEnvironment.createLocal({
-    server: {
-      // Register custom search attributes at server startup.
-      // `ClaudeTempoStatus` removed in v0.26 (#175 / #178).
-      extraArgs: [
-        '--search-attribute', 'ClaudeTempoEnsemble=Keyword',
-        '--search-attribute', 'ClaudeTempoPlayerId=Keyword',
-        '--search-attribute', 'ClaudeTempoHostname=Keyword',
-        '--search-attribute', 'ClaudeTempoGitRoot=Keyword',
-        '--search-attribute', 'ClaudeTempoPlayerType=Keyword',
-        '--search-attribute', 'ClaudeTempoIsConductor=Bool',
-        // v0.25 attachment lifecycle search attrs (§9, §11.2)
-        '--search-attribute', 'ClaudeTempoAttachedHost=Keyword',
-        '--search-attribute', 'ClaudeTempoAttachmentState=Keyword',
-        '--search-attribute', 'ClaudeTempoAttachmentId=Keyword',
-      ],
-    },
-  });
-  const bundlePath = findWorkflowBundle();
-  workflowBundle = { code: fs.readFileSync(bundlePath, 'utf-8') };
+  if (ISOLATED_MODE && testEnv) {
+    await testEnv.teardown();
+    testEnv = undefined;
+    workflowBundle = undefined;
+  }
+  if (!testEnv) {
+    testEnv = await TestWorkflowEnvironment.createLocal({
+      server: {
+        // Register custom search attributes at server startup.
+        // `ClaudeTempoStatus` removed in v0.26 (#175 / #178).
+        extraArgs: [
+          '--search-attribute', 'ClaudeTempoEnsemble=Keyword',
+          '--search-attribute', 'ClaudeTempoPlayerId=Keyword',
+          '--search-attribute', 'ClaudeTempoHostname=Keyword',
+          '--search-attribute', 'ClaudeTempoGitRoot=Keyword',
+          '--search-attribute', 'ClaudeTempoPlayerType=Keyword',
+          '--search-attribute', 'ClaudeTempoIsConductor=Bool',
+          // v0.25 attachment lifecycle search attrs (§9, §11.2)
+          '--search-attribute', 'ClaudeTempoAttachedHost=Keyword',
+          '--search-attribute', 'ClaudeTempoAttachmentState=Keyword',
+          '--search-attribute', 'ClaudeTempoAttachmentId=Keyword',
+        ],
+      },
+    });
+    const bundlePath = findWorkflowBundle();
+    workflowBundle = { code: fs.readFileSync(bundlePath, 'utf-8') };
+  }
+  // Re-seed per-file suffix. Short hex keeps workflow IDs readable in Temporal UI.
+  currentEnsemblePrefix = `test-ensemble-${crypto.randomBytes(4).toString('hex')}`;
 }
 
 /**
- * Tear down the shared test environment. Call once in the top-level
- * after() hook.
+ * Tear down the test environment. In isolated mode, tears down immediately.
+ * In shared mode (default), this is a no-op — the real teardown runs once at
+ * process exit via `mochaGlobalTeardown` in `test/root-hooks.ts`.
  */
 export async function teardownTestEnv(): Promise<void> {
-  await testEnv?.teardown();
+  if (ISOLATED_MODE) {
+    await testEnv?.teardown();
+    testEnv = undefined;
+    workflowBundle = undefined;
+  }
+  // Shared mode: intentionally no-op. See `teardownSharedTestEnv()` below.
 }
 
-/** Get the Temporal client from the test environment. */
+/**
+ * Process-wide teardown. Invoked once by the Mocha global `after` hook in
+ * `test/root-hooks.ts` after all spec files have finished. Not part of the
+ * public test API — do not call from individual test files.
+ *
+ * @internal
+ */
+export async function teardownSharedTestEnv(): Promise<void> {
+  if (testEnv) {
+    await testEnv.teardown();
+    testEnv = undefined;
+    workflowBundle = undefined;
+  }
+}
+
+/** Get the Temporal client from the test environment. Call `setupTestEnv()` first. */
 export function getClient(): Client {
+  if (!testEnv) {
+    throw new Error('getClient() called before setupTestEnv() — make sure your before() hook awaits setupTestEnv()');
+  }
   return testEnv.client;
+}
+
+/** Internal — resolves the current test env; for helpers only. */
+function requireTestEnv(): TestWorkflowEnvironment {
+  if (!testEnv) {
+    throw new Error('Test env not initialized — call setupTestEnv() from a before() hook');
+  }
+  return testEnv;
+}
+
+/** Internal — resolves the current workflow bundle. */
+function requireWorkflowBundle(): { code: string } {
+  if (!workflowBundle) {
+    throw new Error('Workflow bundle not loaded — call setupTestEnv() from a before() hook');
+  }
+  return workflowBundle;
 }
 
 /**
@@ -164,7 +256,7 @@ export function getClient(): Client {
  * (e.g. verifying behavior over a bounded duration).
  */
 export async function skipTime(durationMs: number): Promise<void> {
-  await testEnv.sleep(durationMs);
+  await requireTestEnv().sleep(durationMs);
 }
 
 /**
@@ -177,12 +269,12 @@ export async function skipTime(durationMs: number): Promise<void> {
  */
 export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
   const worker = await Worker.create({
-    connection: testEnv.nativeConnection,
+    connection: requireTestEnv().nativeConnection,
     taskQueue: TASK_QUEUE,
     workflowBundle,
   });
   const hostWorker = await Worker.create({
-    connection: testEnv.nativeConnection,
+    connection: requireTestEnv().nativeConnection,
     taskQueue: HOST_TASK_QUEUE,
     activities: {
       hardTerminateAttachment: async () => ({
@@ -212,9 +304,9 @@ export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
  */
 export async function withWorkerAndActivities<T>(fn: () => Promise<T>): Promise<T> {
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
-  const scheduleActivities = createScheduleActivities(testEnv.client);
+  const scheduleActivities = createScheduleActivities(requireTestEnv().client);
   const worker = await Worker.create({
-    connection: testEnv.nativeConnection,
+    connection: requireTestEnv().nativeConnection,
     taskQueue: TASK_QUEUE,
     workflowBundle,
     activities: scheduleActivities,
@@ -222,11 +314,17 @@ export async function withWorkerAndActivities<T>(fn: () => Promise<T>): Promise<
   return worker.runUntil(fn);
 }
 
-/** Default metadata for a player session. Override fields as needed. */
+/**
+ * Default metadata for a player session. Override fields as needed.
+ *
+ * `ensemble` defaults to the per-file random prefix seeded by the most recent
+ * `setupTestEnv()` call — auto-namespaces default callers under the shared
+ * `TestWorkflowEnvironment` (#210).
+ */
 export function playerMetadata(overrides: Partial<SessionMetadata> = {}): SessionMetadata {
   return {
     playerId: `player-${Date.now()}`,
-    ensemble: 'test-ensemble',
+    ensemble: currentEnsemblePrefix,
     hostname: 'test-host',
     workDir: '/tmp/test',
     isConductor: false,
@@ -271,7 +369,7 @@ export async function startSession(
   // cascades when a test fails before its cleanup destroyUpdate runs.
   const workflowId = `claude-session-${metadata.ensemble}-${metadata.playerId}`;
 
-  return testEnv.client.workflow.start('claudeSessionWorkflow', {
+  return requireTestEnv().client.workflow.start('claudeSessionWorkflow', {
     workflowId,
     taskQueue: TASK_QUEUE,
     args: [input],
@@ -398,17 +496,17 @@ export async function withWorkerAndOutboxActivities<T>(fn: () => Promise<T>): Pr
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
   const { createOutboxActivities } = await import('../src/activities/outbox');
 
-  const scheduleActivities = createScheduleActivities(testEnv.client);
-  const outboxActivities = createOutboxActivities(testEnv.client, {
+  const scheduleActivities = createScheduleActivities(requireTestEnv().client);
+  const outboxActivities = createOutboxActivities(requireTestEnv().client, {
     temporalAddress: '',
     temporalNamespace: 'default',
     taskQueue: TASK_QUEUE,
-    ensemble: 'test-ensemble',
+    ensemble: currentEnsemblePrefix,
     defaultAgent: 'claude',
   });
 
   const worker = await Worker.create({
-    connection: testEnv.nativeConnection,
+    connection: requireTestEnv().nativeConnection,
     taskQueue: TASK_QUEUE,
     workflowBundle,
     activities: {
@@ -427,7 +525,7 @@ export async function withWorkerAndOutboxActivities<T>(fn: () => Promise<T>): Pr
   });
   // Per-host worker — same stub so activities routed via the per-host queue also resolve.
   const hostWorker = await Worker.create({
-    connection: testEnv.nativeConnection,
+    connection: requireTestEnv().nativeConnection,
     taskQueue: HOST_TASK_QUEUE,
     activities: {
       spawnProcess: async () => ({ success: true }),
@@ -461,18 +559,18 @@ export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): P
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
   const { createOutboxActivities } = await import('../src/activities/outbox');
 
-  const scheduleActivities = createScheduleActivities(testEnv.client);
-  const outboxActivities = createOutboxActivities(testEnv.client, {
+  const scheduleActivities = createScheduleActivities(requireTestEnv().client);
+  const outboxActivities = createOutboxActivities(requireTestEnv().client, {
     temporalAddress: '',
     temporalNamespace: 'default',
     taskQueue: TASK_QUEUE,
-    ensemble: 'test-ensemble',
+    ensemble: currentEnsemblePrefix,
     defaultAgent: 'claude',
   });
 
   // Main worker: workflow execution + all outbox + schedule activities
   const mainWorker = await Worker.create({
-    connection: testEnv.nativeConnection,
+    connection: requireTestEnv().nativeConnection,
     taskQueue: TASK_QUEUE,
     workflowBundle,
     activities: {
@@ -487,7 +585,7 @@ export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): P
   // No workflowBundle — this worker only polls for activity tasks, matching
   // the production per-host worker config in src/worker.ts.
   const hostWorker = await Worker.create({
-    connection: testEnv.nativeConnection,
+    connection: requireTestEnv().nativeConnection,
     taskQueue: `claude-tempo-test-host`,
     activities: {
       spawnProcess: async () => ({ success: true }),
@@ -522,12 +620,12 @@ export async function withWorkerAndRecruitCapture<T>(
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
   const { createOutboxActivities } = await import('../src/activities/outbox');
 
-  const scheduleActivities = createScheduleActivities(testEnv.client);
-  const outboxActivities = createOutboxActivities(testEnv.client, {
+  const scheduleActivities = createScheduleActivities(requireTestEnv().client);
+  const outboxActivities = createOutboxActivities(requireTestEnv().client, {
     temporalAddress: '',
     temporalNamespace: 'default',
     taskQueue: TASK_QUEUE,
-    ensemble: 'test-ensemble',
+    ensemble: currentEnsemblePrefix,
     defaultAgent: 'claude',
   });
 
@@ -537,7 +635,7 @@ export async function withWorkerAndRecruitCapture<T>(
   };
 
   const mainWorker = await Worker.create({
-    connection: testEnv.nativeConnection,
+    connection: requireTestEnv().nativeConnection,
     taskQueue: TASK_QUEUE,
     workflowBundle,
     activities: {
@@ -548,7 +646,7 @@ export async function withWorkerAndRecruitCapture<T>(
   });
 
   const hostWorker = await Worker.create({
-    connection: testEnv.nativeConnection,
+    connection: requireTestEnv().nativeConnection,
     taskQueue: `claude-tempo-test-host`,
     activities: {
       spawnProcess: capturingSpawn,
@@ -588,10 +686,10 @@ export async function withWorkerAndMaestroActivities<T>(
   const relayedCommands: Array<{ text: string; source: string; replyTo?: string }> = [];
 
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
-  const scheduleActivities = createScheduleActivities(testEnv.client);
+  const scheduleActivities = createScheduleActivities(requireTestEnv().client);
 
   const worker = await Worker.create({
-    connection: testEnv.nativeConnection,
+    connection: requireTestEnv().nativeConnection,
     taskQueue: TASK_QUEUE,
     workflowBundle,
     activities: {
@@ -641,10 +739,10 @@ export async function withWorkerAndGlobalMaestroActivities<T>(
   const relayedCommands: Array<{ ensemble: string; text: string; source: string; replyTo?: string }> = [];
 
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
-  const scheduleActivities = createScheduleActivities(testEnv.client);
+  const scheduleActivities = createScheduleActivities(requireTestEnv().client);
 
   const worker = await Worker.create({
-    connection: testEnv.nativeConnection,
+    connection: requireTestEnv().nativeConnection,
     taskQueue: TASK_QUEUE,
     workflowBundle,
     activities: {
@@ -686,7 +784,7 @@ export async function reconnectSession(
     ? `claude-session-${metadata.ensemble}-conductor`
     : `claude-session-${metadata.ensemble}-${metadata.playerId}`;
 
-  return testEnv.client.workflow.start('claudeSessionWorkflow', {
+  return requireTestEnv().client.workflow.start('claudeSessionWorkflow', {
     workflowId,
     taskQueue: TASK_QUEUE,
     args: [input],

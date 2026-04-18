@@ -69,7 +69,7 @@ const testConfig: Config = {
   temporalAddress: 'localhost:7233',
   temporalNamespace: 'default',
   taskQueue: 'claude-tempo',
-  ensemble: 'test-ensemble',
+  ensemble: 'test-ensemble-tools-mock',
   defaultAgent: 'claude',
 };
 
@@ -323,7 +323,7 @@ describe('recruit tool force-terminate existing', function () {
         getHandle: (_id: string) => ({
           describe: async () => { throw new Error('workflow not found'); },
           query: async (name: string) => {
-            if (name === 'getMetadata') return { ensemble: 'test-ensemble', playerId: 'existing-player' } as any;
+            if (name === 'getMetadata') return { ensemble: 'test-ensemble-tools-mock', playerId: 'existing-player' } as any;
             return '';
           },
           signal: async () => {},
@@ -354,7 +354,7 @@ describe('recruit tool force-terminate existing', function () {
         getHandle: (_id: string) => ({
           describe: async () => { throw new Error('workflow not found'); },
           query: async (name: string) => {
-            if (name === 'getMetadata') return { ensemble: 'test-ensemble', playerId: 'existing-player' } as any;
+            if (name === 'getMetadata') return { ensemble: 'test-ensemble-tools-mock', playerId: 'existing-player' } as any;
             return '';
           },
           signal: async () => {},
@@ -1178,7 +1178,7 @@ function makeV2Client(opts: {
       if (name === 'getMetadata') {
         return {
           playerId,
-          ensemble: 'test-ensemble',
+          ensemble: 'test-ensemble-tools-mock',
           hostname,
           workDir: '/work',
           isConductor: false,

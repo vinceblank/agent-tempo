@@ -73,7 +73,7 @@ describe('worktree helpers', function () {
   describe('path normalization', function () {
     it('worktree path is under the base path', function () {
       const gitRoot = path.resolve('/repos/project');
-      const basePath = worktreeBasePath(gitRoot, 'test-ensemble');
+      const basePath = worktreeBasePath(gitRoot, 'test-ensemble-worktree-fixture');
       const playerPath = path.join(basePath, 'my-player');
       expect(playerPath.startsWith(basePath)).to.be.true;
     });

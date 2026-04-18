@@ -84,7 +84,7 @@ const testConfig: Config = {
   temporalAddress: 'localhost:7233',
   temporalNamespace: 'default',
   taskQueue: 'claude-tempo',
-  ensemble: 'test-ensemble',
+  ensemble: 'test-ensemble-restart-agent-mock',
   defaultAgent: 'claude',
 };
 
@@ -104,7 +104,7 @@ describe('deliverRestart agent type propagation (#184)', function () {
     const { client, captured } = makeClient({
       workflowId: 'claude-session-test-ensemble-soloist',
       metadata: {
-        ensemble: 'test-ensemble',
+        ensemble: 'test-ensemble-restart-agent-mock',
         playerId: 'soloist',
         hostname: 'test-host',
         workDir: join(tmpdir(), `cw-soloist-${Date.now()}`), // intentionally nonexistent
@@ -116,7 +116,7 @@ describe('deliverRestart agent type propagation (#184)', function () {
 
     const activities = createOutboxActivities(client as any, testConfig);
     const result = await activities.deliverRestart({
-      ensemble: 'test-ensemble',
+      ensemble: 'test-ensemble-restart-agent-mock',
       targetPlayerId: 'soloist',
       invokerPlayerId: 'tempo-conductor',
       fresh: true,
@@ -151,7 +151,7 @@ describe('deliverRestart agent type propagation (#184)', function () {
       const { client, captured } = makeClient({
         workflowId: 'claude-session-test-ensemble-eng',
         metadata: {
-          ensemble: 'test-ensemble',
+          ensemble: 'test-ensemble-restart-agent-mock',
           playerId: 'eng',
           hostname: 'test-host',
           workDir: fixtureRoot, // project-tier seeded here
@@ -163,7 +163,7 @@ describe('deliverRestart agent type propagation (#184)', function () {
 
       const activities = createOutboxActivities(client as any, testConfig);
       const result = await activities.deliverRestart({
-        ensemble: 'test-ensemble',
+        ensemble: 'test-ensemble-restart-agent-mock',
         targetPlayerId: 'eng',
         invokerPlayerId: 'tempo-conductor',
         fresh: true,
@@ -188,7 +188,7 @@ describe('deliverRestart agent type propagation (#184)', function () {
     const { client, captured } = makeClient({
       workflowId: 'claude-session-test-ensemble-plain',
       metadata: {
-        ensemble: 'test-ensemble',
+        ensemble: 'test-ensemble-restart-agent-mock',
         playerId: 'plain',
         hostname: 'test-host',
         workDir: tmpdir(),
@@ -200,7 +200,7 @@ describe('deliverRestart agent type propagation (#184)', function () {
 
     const activities = createOutboxActivities(client as any, testConfig);
     await activities.deliverRestart({
-      ensemble: 'test-ensemble',
+      ensemble: 'test-ensemble-restart-agent-mock',
       targetPlayerId: 'plain',
       invokerPlayerId: 'tempo-conductor',
       fresh: true,

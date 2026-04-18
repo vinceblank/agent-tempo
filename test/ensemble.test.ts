@@ -10,6 +10,7 @@ import {
   setupTestEnv,
   teardownTestEnv,
   getClient,
+  getTestEnsemble,
   withWorkerAndActivities,
   startSession,
   playerMetadata,
@@ -28,7 +29,8 @@ import { ScheduleEntry } from '../src/types';
 import { loadLineup } from '../src/ensemble/loader';
 import { listLineups } from '../src/ensemble/saver';
 
-const ENSEMBLE = 'test-ensemble';
+/** Per-file ensemble namespace — seeded in `before()` (see #210). */
+let ENSEMBLE: string;
 const SCHEDULER_TASK_QUEUE = 'test-claude-tempo';
 
 function schedulerWorkflowId(ensemble: string): string {
@@ -48,6 +50,7 @@ describe('ensemble lineups', function () {
   before(async function () {
     this.timeout(60_000);
     await setupTestEnv();
+    ENSEMBLE = getTestEnsemble();
     tmpDir = makeTmpDir();
   });
 

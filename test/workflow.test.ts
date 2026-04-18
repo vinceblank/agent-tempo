@@ -45,7 +45,9 @@ describe('claudeSessionWorkflow', function () {
         const result = await handle.query(getMetadataQuery);
 
         expect(result.playerId).to.equal('lifecycle-1');
-        expect(result.ensemble).to.equal('test-ensemble');
+        // `meta.ensemble` comes from `playerMetadata()` — under #210 shared env
+        // it's a per-file suffix (`test-ensemble-<random>`), otherwise the default.
+        expect(result.ensemble).to.equal(meta.ensemble);
         expect(result.hostname).to.equal('test-host');
         expect(result.isConductor).to.equal(false);
 
@@ -480,9 +482,8 @@ describe('claudeSessionWorkflow', function () {
 
     it('does not overwrite fields not included in the update', async function () {
       await withWorker(async () => {
-        const handle = await startSession({
-          metadata: playerMetadata({ playerId: 'meta-partial' }),
-        });
+        const initialMeta = playerMetadata({ playerId: 'meta-partial' });
+        const handle = await startSession({ metadata: initialMeta });
 
         // Update only hostname
         await handle.signal(updateMetadataSignal, { hostname: 'updated-host' });
@@ -491,7 +492,7 @@ describe('claudeSessionWorkflow', function () {
         expect(meta.hostname).to.equal('updated-host');
         // Original fields should be preserved
         expect(meta.playerId).to.equal('meta-partial');
-        expect(meta.ensemble).to.equal('test-ensemble');
+        expect(meta.ensemble).to.equal(initialMeta.ensemble);
         expect(meta.isConductor).to.equal(false);
 
         await handle.executeUpdate(destroyUpdate, { args: [{}] });
@@ -566,12 +567,10 @@ describe('claudeSessionWorkflow', function () {
 
     it('does not overwrite unrelated metadata when updating playerType', async function () {
       await withWorker(async () => {
-        const handle = await startSession({
-          metadata: playerMetadata({
-            playerId: 'type-partial-update',
-            ensemble: 'test-ensemble',
-          }),
-        });
+        // Drop the explicit ensemble override — #210 default is a per-file
+        // suffix; the assertion below compares against whatever the helper set.
+        const initialMeta = playerMetadata({ playerId: 'type-partial-update' });
+        const handle = await startSession({ metadata: initialMeta });
 
         await handle.signal(updateMetadataSignal, { playerType: 'tempo-tuner' });
 
@@ -579,7 +578,7 @@ describe('claudeSessionWorkflow', function () {
         expect(meta.playerType).to.equal('tempo-tuner');
         // Original fields preserved
         expect(meta.playerId).to.equal('type-partial-update');
-        expect(meta.ensemble).to.equal('test-ensemble');
+        expect(meta.ensemble).to.equal(initialMeta.ensemble);
         expect(meta.isConductor).to.equal(false);
 
         await handle.executeUpdate(destroyUpdate, { args: [{}] });
