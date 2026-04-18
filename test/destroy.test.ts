@@ -41,7 +41,7 @@ describe('destroy verb — fixes #102 (graceful stop → resurrection loop)', fu
       // Post-destroy: query returns true, metadata status is terminated
       expect(await handle.query(isDestroyedQuery)).to.equal(true);
       const meta = await handle.query(getMetadataQuery);
-      expect(meta.status).to.equal('terminated');
+      expect((meta as any).status).to.equal('terminated');
 
       // Workflow drains and completes on its own
       await handle.result();
@@ -180,7 +180,7 @@ describe('destroy verb — fixes #164 (destroy with live attachment)', function 
 
       expect(await handle.query(isDestroyedQuery)).to.equal(true);
       const meta = await handle.query(getMetadataQuery);
-      expect(meta.status).to.equal('terminated');
+      expect((meta as any).status).to.equal('terminated');
     });
   });
 

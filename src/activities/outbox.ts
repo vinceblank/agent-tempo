@@ -259,7 +259,6 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             // session workflow and dispatch path can resolve the adapter descriptor
             // from the registry without falling back to the legacy agentType field.
             adapterId: registry.resolveFromAgentType(agent),
-            status: 'pending',
             sessionId,
             ...(agentDefinition ? { playerType: agentDefinition } : {}),
             ...(agentDefinitionDescription ? { playerTypeDescription: agentDefinitionDescription } : {}),

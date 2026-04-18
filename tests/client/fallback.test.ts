@@ -130,7 +130,7 @@ describe('TempoClient.getPlayers — fallback precedence', () => {
             ClaudeTempoEnsemble: ['demo'],
             ClaudeTempoPlayerId: ['dave'],
             ClaudeTempoHostname: ['host-1'],
-            ClaudeTempoStatus: ['active'],
+            ClaudeTempoAttachmentState: ['attached'],
           },
         },
       ],
@@ -140,7 +140,9 @@ describe('TempoClient.getPlayers — fallback precedence', () => {
     const players = await client.getPlayers('demo');
     expect(players).toHaveLength(1);
     expect(players[0].playerId).toBe('dave');
-    expect(players[0].status).toBe('active');
+    // Post-#176: `MaestroPlayerInfo.status` carries the attachment phase value
+    // read from `ClaudeTempoAttachmentState` (mock returns 'attached' above).
+    expect(players[0].status).toBe('attached');
   });
 
   it('returns empty array when all three tiers fail', async () => {
@@ -211,7 +213,7 @@ describe('TempoClient.discoverEnsembles — fallback precedence', () => {
           searchAttributes: {
             ClaudeTempoEnsemble: ['mine'],
             ClaudeTempoIsConductor: [true],
-            ClaudeTempoStatus: ['active'],
+            ClaudeTempoAttachmentState: ['attached'],
           },
         },
         {
@@ -229,7 +231,9 @@ describe('TempoClient.discoverEnsembles — fallback precedence', () => {
     expect(ensembles[0].name).toBe('mine');
     expect(ensembles[0].playerCount).toBe(2);
     expect(ensembles[0].hasConductor).toBe(true);
-    expect(ensembles[0].conductorStatus).toBe('active');
+    // Post-#176: `conductorStatus` reads attachment phase from
+    // `ClaudeTempoAttachmentState` (mock returns 'attached' above).
+    expect(ensembles[0].conductorStatus).toBe('attached');
   });
 
   it('returns empty array when both Global Maestro and workflow list fail', async () => {

@@ -214,8 +214,20 @@ export async function withWorkerAndActivities<T>(fn: () => Promise<T>): Promise<
   return worker.runUntil(fn);
 }
 
+/**
+ * Options accepted by {@link playerMetadata}.
+ *
+ * `status` is not a `SessionMetadata` field anymore (removed in #176) — but many
+ * pre-existing test cases still pass a legacy `status: 'pending' | 'active'` etc.
+ * The helper accepts it for test ergonomics and silently drops it; those tests
+ * are either already skipped (#175 followup) or will be rewritten against
+ * `attachmentInfo.phase` in #178.
+ */
+export type TestMetadataOverrides = Partial<SessionMetadata> & { status?: string };
+
 /** Default metadata for a player session. Override fields as needed. */
-export function playerMetadata(overrides: Partial<SessionMetadata> = {}): SessionMetadata {
+export function playerMetadata(overrides: TestMetadataOverrides = {}): SessionMetadata {
+  const { status: _legacyStatus, ...rest } = overrides;
   return {
     playerId: `player-${Date.now()}`,
     ensemble: 'test-ensemble',
@@ -223,12 +235,12 @@ export function playerMetadata(overrides: Partial<SessionMetadata> = {}): Sessio
     workDir: '/tmp/test',
     isConductor: false,
     agentType: 'claude',
-    ...overrides,
+    ...rest,
   };
 }
 
 /** Default metadata for a conductor session. Override fields as needed. */
-export function conductorMetadata(overrides: Partial<SessionMetadata> = {}): SessionMetadata {
+export function conductorMetadata(overrides: TestMetadataOverrides = {}): SessionMetadata {
   return playerMetadata({
     playerId: 'conductor',
     isConductor: true,

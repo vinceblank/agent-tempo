@@ -58,14 +58,22 @@ export function registerEnsembleTool(
         return ok('No active sessions found.');
       }
 
+      // Option-B phase → tag mapping (see #176 PR):
+      //   booting → (pending); attached/processing/awaiting → no tag;
+      //   draining/detached → (disconnected); gone → (gone).
+      const phaseTag = (phase: string | undefined): string => {
+        if (phase === 'booting') return '(pending)';
+        if (phase === 'draining' || phase === 'detached') return '(disconnected)';
+        if (phase === 'gone') return '(gone)';
+        return '';
+      };
+
       const lines = players.map((p) => {
         const tags = [
           p.isYou ? '(you)' : '',
           p.isConductor ? '(conductor)' : '',
           p.agentType === 'copilot' ? '[copilot]' : '',
-          p.status === 'stale' ? '(stale)' : '',
-          p.status === 'pending' ? '(pending)' : '',
-          p.status === 'blocked' ? '(blocked)' : '',
+          phaseTag(p.phase),
         ].filter(Boolean).join(' ');
 
         const nameDisplay = p.playerType

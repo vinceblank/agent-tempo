@@ -91,8 +91,10 @@ export function createTempoClient(client: Client): TempoClient {
           const isConductorFromId = wf.workflowId?.endsWith('-conductor') ?? false;
           if (isConductorFromSA || isConductorFromId) {
             entry.hasConductor = true;
-            const statusArr = wf.searchAttributes?.ClaudeTempoStatus;
-            entry.conductorStatus = Array.isArray(statusArr) ? String(statusArr[0]) : undefined;
+            // Post-#175 the workflow writes `ClaudeTempoAttachmentState` (phase) in
+            // place of the removed `ClaudeTempoStatus` search attribute.
+            const phaseArr = wf.searchAttributes?.ClaudeTempoAttachmentState;
+            entry.conductorStatus = Array.isArray(phaseArr) ? String(phaseArr[0]) : undefined;
           }
 
           ensembleMap.set(name, entry);
@@ -147,7 +149,9 @@ export function createTempoClient(client: Client): TempoClient {
             workDir: '',
             isConductor: isConductorFromSA || isConductorFromId,
             agentType: 'claude',
-            status: Array.isArray(sa.ClaudeTempoStatus) ? String(sa.ClaudeTempoStatus[0]) : undefined,
+            // `MaestroPlayerInfo.status` carries the attachment phase post-#176.
+            // Populated from `ClaudeTempoAttachmentState` (replaces removed `ClaudeTempoStatus`).
+            status: Array.isArray(sa.ClaudeTempoAttachmentState) ? String(sa.ClaudeTempoAttachmentState[0]) : undefined,
           });
         }
         return players;

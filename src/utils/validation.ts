@@ -65,13 +65,24 @@ export const RESTART_CONTEXT_MESSAGES_MAX = 50;
 export const MAX_DETACH_DEADLINE_MS = 120_000;
 
 /**
- * Whether a session should be included in a broadcast based on its status.
- * Always excludes pending, terminated, and blocked. Excludes stale unless includeStale is true.
+ * Whether a session should be included in a broadcast based on its attachment phase.
+ *
+ * Option-B mapping (see #176 PR description):
+ *   - `attached` / `processing` / `awaiting` → include (talkable)
+ *   - `booting`                              → exclude (not ready — legacy "pending")
+ *   - `draining` / `detached`                → include only if includeDisconnected
+ *   - `gone`                                 → exclude (terminal — legacy "terminated")
+ *
+ * Undefined phase (older workflows pre-attachment-lifecycle, or transient
+ * search-attribute propagation) is treated as `booting` — safe default.
+ *
+ * The `includeDisconnected` parameter is surfaced to callers via the `includeStale`
+ * MCP tool argument (kept for wire compat; description updated).
  */
-export function shouldIncludeInBroadcast(status: string | undefined, includeStale: boolean): boolean {
-  const s = status || 'active';
-  if (s === 'pending' || s === 'terminated' || s === 'blocked') return false;
-  if (s === 'stale' && !includeStale) return false;
+export function shouldIncludeInBroadcast(phase: string | undefined, includeDisconnected: boolean): boolean {
+  const p = phase || 'booting';
+  if (p === 'gone' || p === 'booting') return false;
+  if ((p === 'draining' || p === 'detached') && !includeDisconnected) return false;
   return true;
 }
 

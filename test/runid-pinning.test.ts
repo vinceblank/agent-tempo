@@ -99,7 +99,7 @@ describe('runId pinning — prevents zombie-resurrection via unpinned handles', 
       expect(pinnedDesc.runId).to.equal(runId1);
       // Historical metadata still queryable
       const meta = await pinned1.query(getMetadataQuery);
-      expect(meta.status).to.equal('terminated');
+      expect((meta as any).status).to.equal('terminated');
 
       // Start run 2 (fresh)
       const h2 = await client.workflow.start('claudeSessionWorkflow', {

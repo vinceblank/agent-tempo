@@ -397,10 +397,10 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       input.metadata.sessionId = update.sessionId ?? (update as any).claudeSessionId;
     }
     // `update.status` / `update.enableStaleDetection` are silently dropped.
-    // Status tracking was removed in #175 — attachment phase (set by the V2
-    // wire surface: claimAttachment / adapterExited / forceDetach / destroy)
-    // is authoritative. The `SessionMetadata.status` field remains as a
-    // vestigial typing bridge and is removed in #176 along with its readers.
+    // Status tracking was removed in #175–#176 — attachment phase (set by the
+    // V2 wire surface: claimAttachment / adapterExited / forceDetach / destroy)
+    // is authoritative. The signal wire shape keeps these optional fields for
+    // backward compat with older clients; their values are no-ops.
     upsertSearchAttributes({
       ClaudeTempoEnsemble: [input.metadata.ensemble],
       ClaudeTempoPlayerId: [input.metadata.playerId],
@@ -1477,9 +1477,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
 
     // Legacy stale/blocked detection + `_heartbeat`/`_ping` probe removed in #175.
     // The phase machine (lease expiry, `processingDeadline`, `adapterExited`) is now
-    // the single source of liveness truth; see §§9.5.a/b above. The
-    // `SessionMetadata.status` field remains as a vestigial typing bridge and is
-    // dropped in #176 along with its four consumer readers.
+    // the single source of liveness truth; see §§9.5.a/b above.
 
     // Prevent unbounded history growth — let the SDK decide when.
     const info = workflowInfo();

@@ -45,19 +45,10 @@ export interface EnsembleSessionInfo {
   playerType?: string;
   /**
    * Attachment phase read from the `ClaudeTempoAttachmentState` search attribute.
-   * The authoritative post-#175 field. May be undefined for older workflows that
-   * predate the attachment lifecycle, or transiently while search attributes propagate.
+   * May be undefined for older workflows that predate the attachment lifecycle,
+   * or transiently while search attributes propagate.
    */
   phase?: AttachmentPhase;
-  /**
-   * @deprecated Vestigial bridge — removed in #176 along with the
-   * `SessionMetadata.status` field and its four consumer readers
-   * (cli/commands, client/index, tools/broadcast, tools/who-am-i).
-   * Populated from `metadata.status` (itself vestigial) for compile
-   * continuity only — the workflow no longer writes a meaningful value.
-   * Do not add new readers.
-   */
-  status?: string;
 }
 
 /**
@@ -101,8 +92,6 @@ export async function scanEnsembleSessions(
         agentType: metadata.agentType || 'claude',
         playerType: metadata.playerType,
         phase,
-        // Vestigial passthrough for #176's consumers — see EnsembleSessionInfo.status.
-        status: metadata.status,
       });
     } catch {
       // Workflow may have just completed — skip it
