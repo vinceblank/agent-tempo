@@ -10,7 +10,6 @@ import {
   conductorMetadata,
   withWorker,
   updateMetadataSignal,
-  skipTime,
   destroyUpdate,
 } from './helpers';
 import {
@@ -23,6 +22,35 @@ import {
 import type { StageEntry, Message } from '../src/types';
 
 const ENSEMBLE = 'test-ensemble';
+
+/**
+ * Poll `assertFn` until it succeeds (no throw) or `timeoutMs` elapses.
+ *
+ * Replaces the `await skipTime(1); expect(...)` pattern that raced the
+ * workflow dispatch loop on slow CI runners and caused intermittent
+ * failures on Node 22 (#190). `skipTime(1)` is a real 1ms sleep, which
+ * was gambling that the Rust worker core → JS workflow task → dispatch
+ * loop → state mutation round-trip completes within 1ms. On hosted
+ * runners under noisy-neighbor load it routinely doesn't.
+ *
+ * Local to this file per the #190 brief — global helper placement is
+ * deferred to the #191 test-architecture work.
+ */
+async function retry<T>(
+  assertFn: () => Promise<T>,
+  { timeoutMs = 5_000, intervalMs = 50 }: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      return await assertFn();
+    } catch (err) {
+      if (Date.now() >= deadline) throw err;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+}
 
 describe('pipeline stages', function () {
   before(async function () {
@@ -78,11 +106,12 @@ describe('pipeline stages', function () {
         text: 'Tests pass',
         type: 'result',
       });
-      await skipTime(1); // flush pending workflow task before querying
 
-      let stages: StageEntry[] = await handle.query(stagesQuery);
-      expect(stages[0].status).to.equal('active');
-      expect(stages[0].players.find((p: any) => p.playerId === 'alice')!.status).to.equal('reported');
+      await retry(async () => {
+        const stages: StageEntry[] = await handle.query(stagesQuery);
+        expect(stages[0].status).to.equal('active');
+        expect(stages[0].players.find((p: any) => p.playerId === 'alice')!.status).to.equal('reported');
+      });
 
       // Bob reports — stage should complete
       await handle.signal(playerReportSignal, {
@@ -90,18 +119,18 @@ describe('pipeline stages', function () {
         text: 'All good',
         type: 'result',
       });
-      await skipTime(1); // flush pending workflow task before querying
 
-      stages = await handle.query(stagesQuery);
-      expect(stages[0].status).to.equal('complete');
-      expect(stages[0].completedAt).to.be.a('string');
+      await retry(async () => {
+        const stages: StageEntry[] = await handle.query(stagesQuery);
+        expect(stages[0].status).to.equal('complete');
+        expect(stages[0].completedAt).to.be.a('string');
 
-      // Check completion message was injected
-      const messages: Message[] = await handle.query(allMessagesQuery);
-      const completion = messages.find((m: any) => m.text.includes('[stage complete]'));
-      expect(completion).to.exist;
-      expect(completion!.text).to.include('testing');
-      expect(completion!.from).to.equal('_stage');
+        const messages: Message[] = await handle.query(allMessagesQuery);
+        const completion = messages.find((m: any) => m.text.includes('[stage complete]'));
+        expect(completion, 'completion message').to.exist;
+        expect(completion!.text).to.include('testing');
+        expect(completion!.from).to.equal('_stage');
+      });
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
@@ -127,20 +156,19 @@ describe('pipeline stages', function () {
         text: 'Build broken',
         type: 'blocker',
       });
-      await skipTime(1); // flush pending workflow task before querying
 
-      const stages: StageEntry[] = await handle.query(stagesQuery);
-      expect(stages[0].status).to.equal('failed');
+      await retry(async () => {
+        const stages: StageEntry[] = await handle.query(stagesQuery);
+        expect(stages[0].status).to.equal('failed');
+        // Bob is still waiting (didn't need to report)
+        expect(stages[0].players.find((p: any) => p.playerId === 'bob')!.status).to.equal('waiting');
 
-      // Bob is still waiting (didn't need to report)
-      expect(stages[0].players.find((p: any) => p.playerId === 'bob')!.status).to.equal('waiting');
-
-      // Check failure message
-      const messages: Message[] = await handle.query(allMessagesQuery);
-      const failure = messages.find((m: any) => m.text.includes('[stage failed]') && m.text.includes('halted'));
-      expect(failure).to.exist;
-      expect(failure!.text).to.include('alice');
-      expect(failure!.text).to.include('Build broken');
+        const messages: Message[] = await handle.query(allMessagesQuery);
+        const failure = messages.find((m: any) => m.text.includes('[stage failed]') && m.text.includes('halted'));
+        expect(failure, 'failure message').to.exist;
+        expect(failure!.text).to.include('alice');
+        expect(failure!.text).to.include('Build broken');
+      });
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
@@ -160,16 +188,19 @@ describe('pipeline stages', function () {
         createdBy: 'stage-cond-4',
       });
 
-      // Alice reports blocker — should NOT halt
+      // Alice reports blocker — should NOT halt (continue policy)
       await handle.signal(playerReportSignal, {
         playerId: 'alice',
         text: 'Found issues',
         type: 'blocker',
       });
-      await skipTime(1); // flush pending workflow task before querying
 
-      let stages: StageEntry[] = await handle.query(stagesQuery);
-      expect(stages[0].status).to.equal('active'); // Still active with continue policy
+      await retry(async () => {
+        const stages: StageEntry[] = await handle.query(stagesQuery);
+        // Still active with continue policy — alice's blocker is recorded
+        // but the stage waits for everyone before transitioning.
+        expect(stages[0].status).to.equal('active');
+      });
 
       // Bob reports result — now all done, should fail because alice was blocked
       await handle.signal(playerReportSignal, {
@@ -177,15 +208,16 @@ describe('pipeline stages', function () {
         text: 'Looks good',
         type: 'result',
       });
-      await skipTime(1); // flush pending workflow task before querying
 
-      stages = await handle.query(stagesQuery);
-      expect(stages[0].status).to.equal('failed');
+      await retry(async () => {
+        const stages: StageEntry[] = await handle.query(stagesQuery);
+        expect(stages[0].status).to.equal('failed');
 
-      const messages: Message[] = await handle.query(allMessagesQuery);
-      const failure = messages.find((m: any) => m.text.includes('[stage failed]') && m.text.includes('blocker'));
-      expect(failure).to.exist;
-      expect(failure!.text).to.include('alice');
+        const messages: Message[] = await handle.query(allMessagesQuery);
+        const failure = messages.find((m: any) => m.text.includes('[stage failed]') && m.text.includes('blocker'));
+        expect(failure, 'failure message').to.exist;
+        expect(failure!.text).to.include('alice');
+      });
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
@@ -210,8 +242,11 @@ describe('pipeline stages', function () {
         text: 'What API should I use?',
         type: 'question',
       });
-      await skipTime(1); // flush pending workflow task before querying
 
+      // A question is a no-op on stage state. There's no post-signal state
+      // change to poll for — instead, we sleep briefly to give the dispatch
+      // loop a chance to (wrongly) mutate state, then assert it hasn't.
+      await new Promise((resolve) => setTimeout(resolve, 100));
       const stages: StageEntry[] = await handle.query(stagesQuery);
       expect(stages[0].status).to.equal('active');
       expect(stages[0].players[0].status).to.equal('waiting');
@@ -222,10 +257,11 @@ describe('pipeline stages', function () {
         text: 'Done',
         type: 'result',
       });
-      await skipTime(1); // flush pending workflow task before querying
 
-      const stages2: StageEntry[] = await handle.query(stagesQuery);
-      expect(stages2[0].status).to.equal('complete');
+      await retry(async () => {
+        const stages2: StageEntry[] = await handle.query(stagesQuery);
+        expect(stages2[0].status).to.equal('complete');
+      });
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
@@ -245,16 +281,16 @@ describe('pipeline stages', function () {
       });
 
       await handle.signal(cancelStageSignal, 'cancelled-stage');
-      await skipTime(1); // flush pending workflow task before querying
 
-      const stages: StageEntry[] = await handle.query(stagesQuery);
-      expect(stages[0].status).to.equal('cancelled');
-      expect(stages[0].completedAt).to.be.a('string');
+      await retry(async () => {
+        const stages: StageEntry[] = await handle.query(stagesQuery);
+        expect(stages[0].status).to.equal('cancelled');
+        expect(stages[0].completedAt).to.be.a('string');
 
-      // Check cancellation message
-      const messages: Message[] = await handle.query(allMessagesQuery);
-      const cancel = messages.find((m: any) => m.text.includes('[stage cancelled]'));
-      expect(cancel).to.exist;
+        const messages: Message[] = await handle.query(allMessagesQuery);
+        const cancel = messages.find((m: any) => m.text.includes('[stage cancelled]'));
+        expect(cancel, 'cancel message').to.exist;
+      });
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
@@ -279,12 +315,13 @@ describe('pipeline stages', function () {
         failurePolicy: 'continue',
         createdBy: 'stage-cond-7',
       });
-      await skipTime(1); // flush pending workflow task before querying
 
-      const stages: StageEntry[] = await handle.query(stagesQuery);
-      expect(stages).to.have.lengthOf(1);
-      expect(stages[0].players).to.have.lengthOf(3);
-      expect(stages[0].failurePolicy).to.equal('continue');
+      await retry(async () => {
+        const stages: StageEntry[] = await handle.query(stagesQuery);
+        expect(stages).to.have.lengthOf(1);
+        expect(stages[0].players).to.have.lengthOf(3);
+        expect(stages[0].failurePolicy).to.equal('continue');
+      });
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
