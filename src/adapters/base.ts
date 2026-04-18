@@ -288,14 +288,7 @@ export abstract class BaseAttachment {
       });
       this.heartbeatBackoff = 0;
     } catch (err) {
-      if (this.isWorkflowGone(err)) {
-        // C1 (PR-C dual-QA follow-up): WorkflowNotFound means the session workflow
-        // has COMPLETEd — that's the `destroy` terminal, not `agent-exited` (which
-        // means our local process died). Matches the phase-watcher `phase === 'gone'
-        // → fireTerminal('destroy')` branch below.
-        this.fireTerminal('destroy');
-        return;
-      }
+      if (await this.handleRunEndError(err)) return;
       this.heartbeatBackoff = Math.min(
         this.heartbeatBackoff ? this.heartbeatBackoff * LOOP_BACKOFF_FACTOR : this.descriptor.heartbeatMs,
         LOOP_BACKOFF_MAX_MS,
@@ -359,13 +352,7 @@ export abstract class BaseAttachment {
         return;
       }
     } catch (err) {
-      if (this.isWorkflowGone(err)) {
-        // C1 (PR-C dual-QA follow-up): WorkflowNotFound on the phase-watcher query
-        // has the same meaning as on the heartbeat signal — the workflow is gone,
-        // so the terminal reason is `destroy`.
-        this.fireTerminal('destroy');
-        return;
-      }
+      if (await this.handleRunEndError(err)) return;
       this.phaseBackoff = Math.min(
         this.phaseBackoff ? this.phaseBackoff * LOOP_BACKOFF_FACTOR : this.descriptor.heartbeatMs,
         LOOP_BACKOFF_MAX_MS,
@@ -376,13 +363,24 @@ export abstract class BaseAttachment {
   }
 
   /**
-   * Classify an error as terminal (WorkflowNotFound / ExecutionAlreadyCompleted / phase gone).
+   * Classify a Temporal error as terminal-class vs transient.
    *
-   * Uses name-sniffing rather than `instanceof` to avoid tight coupling to
-   * `@temporalio/client` internals — errors surface through both the Client SDK
-   * and the server's gRPC layer with slightly different shapes.
+   * **Gotcha the caller must know:** the Temporal Node SDK conflates the two
+   * terminal sub-kinds on pinned-runId signal/query failures. Both
+   *   (a) the closed run's specific runId no longer accepting traffic (CAN or
+   *       true COMPLETE / TERMINATED), and
+   *   (b) the workflow id having been fully GC'd
+   * surface as `WorkflowNotFoundError` with message "workflow execution already
+   * completed". We therefore can't tell them apart by error shape alone — the
+   * authoritative differentiator is `fetchHistory` ({@link findCanSuccessorRunId}).
+   * This method only says "yes, this is a terminal-class error; caller must
+   * decide sub-kind" vs "transient, keep retrying."
+   *
+   * Uses name/message-sniffing rather than `instanceof` to tolerate the slightly
+   * different shapes that errors take between `@temporalio/client` and the raw
+   * gRPC layer.
    */
-  private isWorkflowGone(err: unknown): boolean {
+  private isTerminalErr(err: unknown): boolean {
     const e = err as { name?: string; message?: string } | undefined;
     const name = e?.name ?? '';
     const msg = e?.message ?? '';
@@ -390,8 +388,65 @@ export abstract class BaseAttachment {
       name.includes('WorkflowNotFound') ||
       name.includes('WorkflowExecutionAlreadyCompleted') ||
       msg.includes('WorkflowGone') ||
-      msg.includes('NOT_FOUND')
+      msg.includes('NOT_FOUND') ||
+      msg.includes('workflow execution already completed')
     );
+  }
+
+  /**
+   * Shared error-classification path for the heartbeat + phase-watcher ticks (#226).
+   *
+   * Returns `true` if the error was a terminal-class (handled inline: CAN rebind
+   * kicked off, or destroy fired). Returns `false` when the caller should treat
+   * the error as transient and continue its backoff.
+   *
+   * Always consults `fetchHistory` on any terminal-class error, because the
+   * Temporal SDK can't distinguish CAN-close from true-complete at the error
+   * level — see {@link isTerminalErr}. The history lookup is cheap (only runs
+   * on terminal, so at most once per adapter lifetime per terminal) and safer
+   * than re-querying by workflow id (which could race a fresh session reusing
+   * the id).
+   */
+  private async handleRunEndError(err: unknown): Promise<boolean> {
+    if (!this.isTerminalErr(err)) return false;
+    // Always try to find a CAN successor — the Temporal SDK's error shape is
+    // ambiguous between CAN and true-destroy, so history is the only reliable
+    // disambiguator (option 1 from the #226 design brief).
+    const successorRunId = await this.findCanSuccessorRunId();
+    if (successorRunId) {
+      this.fireTerminalOrReconnect('continued-as-new', successorRunId);
+      return true;
+    }
+    // No CAN event in the closed run's history → truly terminal (COMPLETED /
+    // TERMINATED / FAILED / workflow-id GC'd).
+    this.fireTerminal('destroy');
+    return true;
+  }
+
+  /**
+   * Fetch the closed pinned run's history and return the runId of a CAN successor
+   * if present, else `null`. Scoped to the pinned (old) run via `this.pinnedHandle`,
+   * so it can't be fooled by a fresh session that happens to reuse the workflow id.
+   *
+   * Called only on the terminal path from {@link handleRunEndError}, so the cost
+   * of `fetchHistory` (a full event stream for the closed run) is paid at most
+   * once per terminal — not on every tick.
+   */
+  private async findCanSuccessorRunId(): Promise<string | null> {
+    if (!this.pinnedHandle) return null;
+    try {
+      const history = await this.pinnedHandle.fetchHistory();
+      const events = history?.events ?? [];
+      for (const ev of events) {
+        const attrs = ev.workflowExecutionContinuedAsNewEventAttributes;
+        const newRunId = attrs?.newExecutionRunId;
+        if (newRunId) return newRunId;
+      }
+      return null;
+    } catch (err) {
+      log('findCanSuccessorRunId: fetchHistory failed:', (err as Error)?.message ?? err);
+      return null;
+    }
   }
 
   private fireTerminal(reason: DetachReason): void {
@@ -491,7 +546,7 @@ export abstract class BaseAttachment {
    * Called by the heartbeat / phase-watcher ticks instead of `fireTerminal`
    * when the reason is potentially recoverable.
    */
-  private fireTerminalOrReconnect(reason: DetachReason): void {
+  private fireTerminalOrReconnect(reason: DetachReason, canSuccessorRunId?: string): void {
     if (this.stopped || this.terminalFired || this.reconnecting) return;
     if (!this.shouldReconnect(reason)) {
       this.fireTerminal(reason);
@@ -502,11 +557,92 @@ export abstract class BaseAttachment {
     if (this.heartbeatTimer) { clearTimeout(this.heartbeatTimer); this.heartbeatTimer = null; }
     if (this.phaseWatcherTimer) { clearTimeout(this.phaseWatcherTimer); this.phaseWatcherTimer = null; }
     log(`reconnect requested (reason=${reason})`);
+
+    // #226: CAN takes the short-circuit rebind path (no backoff, no re-claim —
+    // the workflow's §2.3 CAN-boundary lease extension keeps the lease alive
+    // across the transition). Every other recoverable reason goes through the
+    // full #201 budget-bounded re-claim loop.
+    if (reason === 'continued-as-new' && canSuccessorRunId) {
+      void this.runCanRebind(canSuccessorRunId).catch((err) => {
+        log(`CAN rebind crashed:`, (err as Error)?.message ?? err);
+        this.reconnecting = false;
+        this.fireTerminal('reconnect-exhausted');
+      });
+      return;
+    }
+
     void this.runReconnectLoop(reason).catch((err) => {
       log(`reconnect loop crashed:`, (err as Error)?.message ?? err);
       this.reconnecting = false;
       this.fireTerminal('reconnect-exhausted');
     });
+  }
+
+  /**
+   * #226 CAN rebind. Transparently repoints `pinnedHandle` at the successor run,
+   * keeps the existing `attachmentId` / `leaseMs` (the workflow extended the lease
+   * by one heartbeat interval during the CAN transition per §2.3, so the lease is
+   * still live on the new run), notifies the subclass to restart its delivery
+   * loop, and resumes heartbeat + phase-watcher.
+   *
+   * Why this is safe without re-claiming:
+   *  - The new run carries forward `currentAttachment` verbatim from the old run.
+   *  - The adapter's `attachmentId` still matches, so the next `heartbeat` /
+   *    `markDelivered` / `adapterExited` signal on the new pinned handle will be
+   *    accepted unchanged by the workflow's handlers.
+   *  - If the lease actually did expire before we got here (e.g. adapter was
+   *    offline through multiple CAN cycles), the next phase-watcher tick on the
+   *    new pinned handle will see `phase=detached` + no current attachment and
+   *    fall through to the existing #201 reclaim path — belt-and-suspenders.
+   */
+  private async runCanRebind(newRunId: string): Promise<void> {
+    try {
+      if (!this.client || !this.pinnedHandle || !this.token) {
+        log('runCanRebind: missing client/handle/token — firing terminal');
+        this.fireTerminal('reconnect-exhausted');
+        return;
+      }
+      const workflowId = this.pinnedHandle.workflowId;
+      const oldRunId = this.token.runId;
+
+      try {
+        // Tear down any subclass-owned stream against the stale pinned handle
+        // before repointing, so the subclass doesn't race itself on the rebuild.
+        await this.onReconnectStart('continued-as-new');
+      } catch (err) {
+        log('onReconnectStart threw:', (err as Error)?.message ?? err);
+      }
+
+      const newHandle = this.client.workflow.getHandle(workflowId, newRunId);
+      this.pinnedHandle = newHandle;
+      // Keep attachmentId + leaseMs (lease carried across CAN); refresh runId so
+      // diagnostic logging and any token-based debug output reflect the live run.
+      this.token = { ...this.token, runId: newRunId };
+      this.knownPhase = null; // force next phase-watcher tick to re-emit phaseChange
+      this.heartbeatBackoff = 0;
+      this.phaseBackoff = 0;
+      log(
+        `rebound ${workflowId} to CAN successor ` +
+        `(attachmentId=${this.token.attachmentId}, oldRunId=${oldRunId}, newRunId=${newRunId})`,
+      );
+
+      try {
+        await this.onReconnected(newHandle);
+      } catch (err) {
+        log('onReconnected threw:', (err as Error)?.message ?? err);
+      }
+
+      // Clear reconnecting BEFORE rescheduling so the first tick after rebind
+      // doesn't short-circuit on its own reconnecting-guard. Mirrors the pattern
+      // in `runReconnectLoop`'s success path (#206).
+      this.reconnecting = false;
+      if (!this.stopped) {
+        this.scheduleHeartbeat();
+        this.schedulePhaseWatcher();
+      }
+    } finally {
+      this.reconnecting = false;
+    }
   }
 
   /**
@@ -576,7 +712,13 @@ export abstract class BaseAttachment {
         try {
           info = await unpinned.query(attachmentInfoQuery);
         } catch (err) {
-          if (this.isWorkflowGone(err)) {
+          if (this.isTerminalErr(err)) {
+            // #226: either terminal kind inside the reconnect loop's pre-check
+            // ends the loop. We don't recurse into another CAN rebind here —
+            // that path is only for the pinned-handle tick ticks where we can
+            // read the closed run's history. Inside the loop the unpinned
+            // query has already followed any CAN chain, so a gone error means
+            // the workflow id is truly absent.
             log('reconnect: workflow gone during pre-check');
             this.fireTerminal('destroy');
             return;
@@ -644,7 +786,7 @@ export abstract class BaseAttachment {
           }
           return;
         } catch (err) {
-          if (this.isWorkflowGone(err)) {
+          if (this.isTerminalErr(err)) {
             log('reconnect: workflow gone during claim');
             this.fireTerminal('destroy');
             return;

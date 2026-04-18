@@ -31,6 +31,7 @@ import {
   forceDetachUpdate,
   attachmentInfoQuery,
 } from './helpers';
+import { testForceContinueAsNewSignal } from '../src/workflows/signals';
 import type { AttachmentInfo, Message, DetachReason } from '../src/types';
 import { InteractiveAttachment } from '../src/adapters/claude-code/adapter';
 import type { BaseAttachmentOptions } from '../src/adapters/base';
@@ -117,9 +118,11 @@ describe('adapter reconnect (#201)', function () {
   describe('shouldReconnect policy', () => {
     it('InteractiveAttachment opts into reconnect for lease-loss reasons only', () => {
       const adapter = new FastInteractiveAttachment();
-      // Recoverable — the workflow is still live, we just lost the lease.
+      // Recoverable — the workflow is still live, we just lost the lease (#201)
+      // or the pinned runId got CAN'd and we need to rebind (#226).
       expect(adapter.reconnectDecides('heartbeat-timeout')).to.equal(true);
       expect(adapter.reconnectDecides('superseded')).to.equal(true);
+      expect(adapter.reconnectDecides('continued-as-new')).to.equal(true);
       // Non-recoverable — workflow truly gone or user explicitly stopped.
       expect(adapter.reconnectDecides('destroy')).to.equal(false);
       expect(adapter.reconnectDecides('user-stop')).to.equal(false);
@@ -339,6 +342,179 @@ describe('adapter reconnect (#201)', function () {
           // Adapter's reconnect pre-check should see phase=gone / WorkflowGone
           // and fire `destroy` terminal. Exact wake-up time depends on where
           // the loop is in its backoff cycle.
+          const deadline = Date.now() + 8000;
+          while (Date.now() < deadline && terminals.length === 0) {
+            await new Promise((r) => setTimeout(r, 50));
+          }
+          expect(terminals, 'terminal should have fired').to.have.lengthOf(1);
+          expect(terminals[0]).to.equal('destroy');
+        } finally {
+          stop();
+          await handle.result().catch(() => { /* expected */ });
+        }
+      });
+    });
+  });
+
+  // #226: the session workflow's `continueAsNew` closes the adapter's pinned
+  // runId, and until this fix the adapter's tick loops conflated
+  // `WorkflowExecutionAlreadyCompleted` (old run closed, successor is live)
+  // with `WorkflowNotFound` (workflow id gone) — both fired `destroy`
+  // terminal, so the adapter stopped polling even though the successor was
+  // accepting signals. Result: inbound cues landed in `pendingMessages` and
+  // were silently marked `(undelivered)`.
+  //
+  // The fix reads the closed run's history for `WorkflowExecutionContinuedAsNew`,
+  // rebinds the pinned handle to the successor runId, and resumes delivery
+  // — no re-claim, because the workflow's §2.3 CAN-boundary lease extension
+  // keeps the lease alive across the transition. These tests drive the fix
+  // via the test-only `testForceContinueAsNewSignal` so the CAN path fires
+  // without spamming ~10k history events to hit the server's native threshold.
+  describe('CAN successor rebind (#226)', () => {
+    it('adapter rebinds to CAN successor runId and resumes delivery', async function () {
+      // Budget: initial claim (<1s) + CAN fire + first heartbeat-tick detection
+      // (400ms) + fetchHistory + rebind + delivery (<1s) comfortably <10s. The
+      // conductor brief specifies a 30s ceiling; 15s is plenty of headroom.
+      this.timeout(30_000);
+
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: `can-rebind-${Date.now()}` }),
+        });
+
+        const received: Message[][] = [];
+        const terminals: DetachReason[] = [];
+        const options: BaseAttachmentOptions = {
+          client: getClient(),
+          host: 'test-host',
+          // Reconnect-loop timing is only consulted for the #201 path; CAN
+          // rebind is a short-circuit (no backoff). Keep the shrunk values so
+          // this file's other suites stay fast.
+          reconnectTiming: { baseMs: 100, maxMs: 500, budgetMs: 10_000, backoffFactor: 1.5 },
+        };
+        const adapter = new FastInteractiveAttachment(options);
+        adapter.onTerminal((r) => { terminals.push(r); });
+        const stop = adapter.start(handle, async (msgs) => { received.push(msgs); });
+
+        try {
+          // 1. Adapter claims on the initial run. Capture its runId via describe()
+          //    so we can confirm the successor differs after CAN.
+          const firstAttached = await waitForAttachmentInfo(
+            handle,
+            (i) => i.phase === 'attached' && !!i.currentAttachment,
+            5000,
+            'initial attached',
+          );
+          const firstAttachmentId = firstAttached.currentAttachment!.attachmentId;
+          const firstRunId = firstAttached.currentAttachment!.runId;
+          const originalRunId = (await handle.describe()).runId;
+          expect(firstRunId, 'attachment runId should match the original run').to.equal(originalRunId);
+
+          // 2. Force CAN via the test-only signal. The unpinned `handle` routes
+          //    signals to the current run; once the workflow continues-as-new,
+          //    subsequent queries to `handle` resolve against the successor.
+          await handle.signal(testForceContinueAsNewSignal);
+
+          // 3. Wait for the successor run to be live — detected by describe()
+          //    returning a different runId than the original.
+          const canDeadline = Date.now() + 5000;
+          let successorRunId = originalRunId;
+          while (Date.now() < canDeadline) {
+            const desc = await handle.describe();
+            if (desc.runId !== originalRunId && desc.status.name === 'RUNNING') {
+              successorRunId = desc.runId;
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 50));
+          }
+          expect(successorRunId, 'CAN successor runId should differ from the original').to.not.equal(originalRunId);
+
+          // 4. Workflow carries `currentAttachment` forward across CAN with the
+          //    §2.3 lease extension, so the successor sees the same attachmentId.
+          //    The pinned adapter handle targeting `originalRunId` will now throw
+          //    `WorkflowExecutionAlreadyCompleted` on heartbeat / phase-watcher;
+          //    the fix detects that, reads history for the CAN event, and rebinds.
+          const rebindDeadline = Date.now() + 10_000;
+          let afterRebind = await handle.query(attachmentInfoQuery);
+          while (Date.now() < rebindDeadline) {
+            afterRebind = await handle.query(attachmentInfoQuery);
+            // The adapter's rebind triggers a fresh heartbeat on the successor run,
+            // which updates `currentAttachment.lastHeartbeatAt` beyond the value
+            // carried across CAN. Same attachmentId — no re-claim happened.
+            if (
+              afterRebind.currentAttachment?.attachmentId === firstAttachmentId &&
+              new Date(afterRebind.currentAttachment.lastHeartbeatAt).getTime() >
+                new Date(firstAttached.currentAttachment!.lastHeartbeatAt).getTime()
+            ) {
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 50));
+          }
+          expect(afterRebind.currentAttachment, 'attachment still present on successor').to.exist;
+          expect(
+            afterRebind.currentAttachment!.attachmentId,
+            'attachmentId preserved across CAN rebind (no re-claim)',
+          ).to.equal(firstAttachmentId);
+
+          // 5. Terminal must NOT have fired — the CAN rebind is transparent.
+          expect(terminals, 'no terminal during CAN rebind').to.deep.equal([]);
+
+          // 6. Send a cue AFTER CAN. This is the core repro of #226: pre-fix the
+          //    successor accepted the signal but no poller was bound to it, so the
+          //    message stayed `(undelivered)`. Post-fix the rebound poller delivers it.
+          await handle.signal(receiveMessageSignal, {
+            from: 'tester',
+            text: 'post-CAN cue',
+          });
+          const delivered = await waitForDelivered(handle, 1, 10_000);
+          expect(delivered.map((m) => m.text)).to.include('post-CAN cue');
+        } finally {
+          stop();
+          await handle.executeUpdate(destroyUpdate, { args: [{}] });
+          await handle.result().catch(() => { /* expected */ });
+        }
+      });
+    });
+
+    it('still fires `destroy` when the workflow truly completes (no CAN successor in history)', async function () {
+      // Regression guard for the classifier branch: if the pinned run closes
+      // without a `WorkflowExecutionContinuedAsNewEvent`, the adapter must fire
+      // `destroy`, not hang waiting for a successor that never materializes.
+      // The existing "destroyed mid-reconnect" test covers the workflow-id-gone
+      // path; this one covers the "specific run completed, no CAN chain" path
+      // that `handleRunEndError` introduces.
+      this.timeout(15_000);
+
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: `can-true-destroy-${Date.now()}` }),
+        });
+
+        const terminals: DetachReason[] = [];
+        const options: BaseAttachmentOptions = {
+          client: getClient(),
+          host: 'test-host',
+          reconnectTiming: { baseMs: 100, maxMs: 300, budgetMs: 5_000, backoffFactor: 1.5 },
+        };
+        const adapter = new FastInteractiveAttachment(options);
+        adapter.onTerminal((r) => { terminals.push(r); });
+        const stop = adapter.start(handle, async () => { /* no-op */ });
+
+        try {
+          await waitForAttachmentInfo(
+            handle,
+            (i) => i.phase === 'attached',
+            5000,
+            'initial attached',
+          );
+
+          // Destroy the workflow — closes the run, no CAN event in history.
+          // The adapter's next heartbeat/query tick will see
+          // `WorkflowExecutionAlreadyCompleted` (or `WorkflowNotFound` if the
+          // server is quick about GC); either way the classifier must route
+          // to `fireTerminal('destroy')`, not hang waiting for a rebind.
+          await handle.executeUpdate(destroyUpdate, { args: [{}] });
+
           const deadline = Date.now() + 8000;
           while (Date.now() < deadline && terminals.length === 0) {
             await new Promise((r) => setTimeout(r, 50));

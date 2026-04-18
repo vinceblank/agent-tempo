@@ -25,6 +25,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Adapter reconnects across `continueAsNew`** (closes #226). When the session
+  workflow continued-as-new, the adapter's heartbeat + phase-watcher ticks on
+  the (now-closed) pinned runId hit `WorkflowNotFoundError` with message
+  "workflow execution already completed" and fired `destroy` terminal
+  permanently — the adapter tore down even though the successor run was live
+  and accepting signals. Inbound cues accumulated in `pendingMessages` and were
+  silently marked `(undelivered)`; the reported repro was a cue signaled after
+  CAN that never surfaced in Claude Code context. Fix: on any terminal-class
+  error the adapter now reads the closed pinned run's history for a
+  `WorkflowExecutionContinuedAsNewEvent`, and if found rebinds `pinnedHandle`
+  to the successor runId in place (no re-claim — the workflow's §2.3 CAN-
+  boundary lease extension keeps the lease alive across the transition). A new
+  `DetachReason` value `'continued-as-new'` surfaces to the subclass via
+  `shouldReconnect`/`onReconnectStart`; `InteractiveAttachment` opts in, Copilot
+  keeps default-false. Follow-up to #201/#205 (lease-revoked reconnect) and
+  #215 (reconnecting-flag hardening). Added integration tests in
+  `test/adapter-reconnect.test.ts` covering both the CAN-rebind happy path
+  (driven by a new test-only `testForceContinueAsNew` signal) and the
+  regression path where `destroy` fires when no CAN event exists in history.
 - **`test`: CLI crash-proof isolation test was silently skipping in CI** due
   to a wrong `__dirname` path resolution from the compiled test location
   (`dist-test/test/` → `..` → `dist-test/` instead of the repo root). The

@@ -46,15 +46,16 @@ Pick the class whose delivery model matches your agent's behavior. If the agent 
 ```ts
 protected shouldReconnect(reason: DetachReason): boolean {
   // Return true to attempt re-claim instead of shutting down immediately.
-  return reason === 'superseded' || reason === 'heartbeat-timeout';
+  return reason === 'superseded' || reason === 'heartbeat-timeout'
+      || reason === 'continued-as-new';
 }
 ```
 
 **Shipped opt-ins:**
-- `InteractiveAttachment` opts in for `'superseded'` and `'heartbeat-timeout'`.
+- `InteractiveAttachment` opts in for `'superseded'`, `'heartbeat-timeout'`, and `'continued-as-new'`.
 - `CopilotSdkAttachment` (SDK adapters generally) does **not** opt in — pull adapters own their own session lifecycle.
 
-**Budget and behaviour:** The loop retries with exponential back-off for up to **15 minutes** of elapsed wall time. On each attempt it calls `attachmentInfo` to verify the session isn't `'gone'` before attempting `claimAttachment`. If the budget expires or the workflow is `gone`, the adapter emits `DetachReason: 'reconnect-exhausted'` and shuts down cleanly.
+**Budget and behaviour:** For `'superseded'` and `'heartbeat-timeout'` the loop retries with exponential back-off for up to **15 minutes** of elapsed wall time. On each attempt it calls `attachmentInfo` to verify the session isn't `'gone'` before attempting `claimAttachment`. If the budget expires or the workflow is `gone`, the adapter emits `DetachReason: 'reconnect-exhausted'` and shuts down cleanly. For `'continued-as-new'` (#226) the base class takes a short-circuit path — it reads the closed pinned run's history, extracts the `newExecutionRunId` from the `WorkflowExecutionContinuedAsNewEvent`, rebinds `pinnedHandle` in place, and calls `onReconnected` immediately (no backoff, no re-claim — the lease is carried across CAN per session workflow §2.3).
 
 Adapter authors should only opt in if the adapter can meaningfully re-establish state after a lease gap (i.e., the agent process is still alive and can resume work).
 
