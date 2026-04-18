@@ -7,13 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.0-beta.2] - 2026-04-18
+
+> **Beta release.** Fixes the adapter poller reconnect bug (#201), drops Node 18,
+> and removes the last v0.26 wire-compat vestiges.
+>
+> **Install:** `npm i -g claude-tempo@0.26.0-beta.2`
+> **Rollback:** `npm i -g claude-tempo@0.26.0-beta.1`
+
 ### Fixed
 
 - **Sessions now self-heal after laptop sleep / network drop.** `InteractiveAttachment` opts into
   the new reconnect loop in `BaseAttachment`: when the workflow revokes a lease (heartbeat-timeout
   or superseded), the adapter re-attempts `claimAttachment` with exponential back-off for up to
   15 minutes before giving up. Previously, any lease revocation caused permanent shutdown.
-  Adds `DetachReason: 'reconnect-exhausted'` for the terminal case. (#201 / #205)
+  Adds `DetachReason: 'reconnect-exhausted'` for the terminal case. (closes #201, #205)
 
 ### BREAKING CHANGES
 
@@ -23,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   because npm's engines field is advisory. This change aligns the
   declared supported surface with reality and removes the unsupported
   matrix slot, saving ~6 min per CI run. Users still on Node 18 must
-  upgrade to Node 20 LTS (or later) before installing claude-tempo.
+  upgrade to Node 20 LTS (or later) before installing claude-tempo. (#204)
 - **`updateMetadata` signal no longer accepts `status` field.** The
   legacy `status` field (kept as a TypeScript wire-compat vestige in
   v0.26-beta.1 so older clients wouldn't get a schema-mismatch on
@@ -34,16 +42,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   payloads must drop the field; attachment phase is driven by the V2
   wire surface (`claimAttachment` / `adapterExited` / `forceDetach` /
   `destroyUpdate`), visible via the `attachmentInfo` workflow query and
-  the `ClaudeTempoAttachmentState` search attribute.
+  the `ClaudeTempoAttachmentState` search attribute. (#212)
 - **`createWorker()` factory removed** from `src/worker.ts`. The
   function has thrown-on-call since v0.10. Use `createWorkers()` which
   returns `{ sharedWorker, hostWorker }` — both must be run for
-  cross-machine recruiting to function.
+  cross-machine recruiting to function. (#212)
 - **`src/tui/client.ts` back-compat re-export removed.** The shim
   re-exported `createTempoClient` from `src/client/` for v0.24 TUI
   compatibility. Internal consumers migrated by v0.26-beta.1 (#177).
   Any external importer of `claude-tempo/tui/client` must switch to
-  `claude-tempo/client`.
+  `claude-tempo/client`. (#212)
 
 ## [0.26.0-beta.1] - 2026-04-18
 
