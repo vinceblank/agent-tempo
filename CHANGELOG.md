@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Adapter reconnect loop always resets its `reconnecting` flag** on every exit path.
+  `BaseAttachment.runReconnectLoop` is now wrapped in `try/finally`, so aborts during
+  backoff sleep, success, terminal bails, and unexpected throws all clean up state.
+  Before this, a user-initiated `stopV2Lifecycle` racing a reconnect backoff could leave
+  `reconnecting=true` — harmless in practice (`stopped=true` gated all ticks) but the
+  leaked state masked diagnostics. Also adds an integration test for the
+  `reconnect-exhausted` terminal path (previously only covered by the abort-during-sleep
+  unit test). (closes #206)
+
 ## [0.26.0-beta.2] - 2026-04-18
 
 > **Beta release.** Fixes the adapter poller reconnect bug (#201), drops Node 18,

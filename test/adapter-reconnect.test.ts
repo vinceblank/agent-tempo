@@ -234,6 +234,66 @@ describe('adapter reconnect (#201)', function () {
       });
     });
 
+    it('fires `reconnect-exhausted` terminal when the budget elapses without re-claim', async function () {
+      // #206 follow-up: pre-#206 this path only had unit coverage via the abort-during-sleep case.
+      // We now assert the loop's budget-exhaustion exit fires the distinct terminal reason.
+      //
+      // Strategy: set `budgetMs: 0` so the loop's `while (!stopped && Date.now() < deadline)`
+      // guard evaluates to false immediately on entry — no claim attempts, straight to
+      // the budget-exhausted branch. The phase-watcher + forceDetach machinery is unchanged
+      // from the happy-path reconnect test, only the budget differs.
+      this.timeout(15_000);
+
+      await withWorker(async () => {
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: `reconnect-exhausted-${Date.now()}` }),
+        });
+
+        const terminals: DetachReason[] = [];
+        const options: BaseAttachmentOptions = {
+          client: getClient(),
+          host: 'test-host',
+          // budgetMs=0 → zero-ms deadline → the while-guard rejects on first check →
+          // no claim attempts → fires `reconnect-exhausted`. Base/max are arbitrary
+          // (never slept on) but set small so if the test ever regresses into running
+          // the loop body, it still finishes within the 15s timeout.
+          reconnectTiming: { baseMs: 100, maxMs: 200, budgetMs: 0, backoffFactor: 1.5 },
+        };
+        const adapter = new FastInteractiveAttachment(options);
+        adapter.onTerminal((r) => { terminals.push(r); });
+        const stop = adapter.start(handle, async () => { /* no-op */ });
+
+        try {
+          // Initial claim succeeds (budgetMs only affects the reconnect loop).
+          await waitForAttachmentInfo(
+            handle,
+            (i) => i.phase === 'attached',
+            5000,
+            'initial attached',
+          );
+
+          // Reap workflow-side. Phase watcher will detect `phase=detached, currentAttachment=undefined`
+          // and enter the reconnect loop — which, with budgetMs=0, bails out immediately.
+          await handle.executeUpdate(forceDetachUpdate, {
+            args: [{ reason: 'heartbeat-timeout', gracePeriodMs: 0 }],
+          });
+
+          // Wait for the terminal — single event, should land within one phase-watcher
+          // tick (descriptor.heartbeatMs * 5 = 2000ms) plus a few ms of loop bailout.
+          const deadline = Date.now() + 8000;
+          while (Date.now() < deadline && terminals.length === 0) {
+            await new Promise((r) => setTimeout(r, 50));
+          }
+          expect(terminals, 'terminal should have fired').to.have.lengthOf(1);
+          expect(terminals[0]).to.equal('reconnect-exhausted');
+        } finally {
+          stop();
+          await handle.executeUpdate(destroyUpdate, { args: [{}] });
+          await handle.result().catch(() => { /* expected */ });
+        }
+      });
+    });
+
     it('fires `destroy` terminal if the workflow is destroyed mid-reconnect', async function () {
       this.timeout(15_000);
 
