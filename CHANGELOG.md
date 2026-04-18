@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.25.0-beta.5] - 2026-04-18
+
+> **Beta release.** Three daemon and outbox stability fixes.
+>
+> **Install:** `npm i -g claude-tempo@beta`
+> **Rollback:** `npm i -g claude-tempo@0.25.0-beta.4`
+
+### Fixed
+
+- **#182 — Daemon recovers from stale startup lock.** A daemon process that
+  died abruptly (OOM kill, power loss) left a `.lock` file behind, causing the
+  next daemon startup to hang indefinitely waiting for the lock to clear. The
+  lock file is now JSON-formatted (`{ pid, mtime }`) so the daemon can detect
+  whether the lock owner is still alive; stale locks (dead PID) are removed and
+  acquisition retried. Atomic tmp+rename pid writes prevent partial reads.
+  Daemon-ready timeout extended from 10 s to 30 s to accommodate slower CI
+  machines.
+  ([#182](https://github.com/vinceblank/claude-tempo/issues/182), [#186](https://github.com/vinceblank/claude-tempo/pull/186))
+- **#183 — `restart --fresh` regenerates session UUID.** `restart --fresh` (and
+  `migrate --fresh`) reused the session's stored UUID for the new spawn, causing
+  "Session ID already in use" errors when a prior spawn had written a partial
+  `.jsonl` transcript before crashing. A new UUID is now generated for every
+  forced-fresh restart, ensuring a clean transcript path.
+  ([#183](https://github.com/vinceblank/claude-tempo/issues/183), [#187](https://github.com/vinceblank/claude-tempo/pull/187))
+- **#184 — Agent type propagates through `restart --fresh` pipeline.** A
+  regression caused forced-fresh restarts to lose the player's agent type
+  (`agentDefinition`, `agentDefinitionPath`, `nativeResolvable`), falling back to
+  defaults on the new spawn. These fields now flow through `restart --fresh` →
+  `enqueueSpawnUpdate` → spawn activity. The `enqueueSpawnUpdate` wire protocol
+  change is additive (new optional fields, non-breaking).
+  ([#184](https://github.com/vinceblank/claude-tempo/issues/184), [#188](https://github.com/vinceblank/claude-tempo/pull/188))
+
+---
+
 ## [0.25.0-beta.4] - 2026-04-17
 
 ### Added
