@@ -2345,13 +2345,7 @@ async function restoreOneOrphan(
   orphan: import('../reconcile/orphans').OrphanCandidate,
   localHostname: string,
 ): Promise<{ ok: boolean; message: string }> {
-  const ensembleMatch = /^claude-session-(.+)-[^-]+$/.exec(orphan.workflowId);
-  const playerMatch = /^claude-session-.+-([^-]+)$/.exec(orphan.workflowId);
-  if (!ensembleMatch || !playerMatch) {
-    return { ok: false, message: `${orphan.workflowId} — could not parse ensemble/playerId` };
-  }
-  const ensemble = ensembleMatch[1];
-  const playerId = playerMatch[1];
+  const { ensemble, playerId } = orphan.summary;
   const targetHost = orphan.summary.preferredHost ?? localHostname;
   try {
     const result = await tempo.restart(ensemble, playerId, {
@@ -2386,10 +2380,7 @@ export async function restore(opts: RestoreCliOpts) {
     // Specific `--name` filter.
     if (opts.name) {
       const wanted = opts.name;
-      orphans = orphans.filter((o) => {
-        const m = /^claude-session-.+-([^-]+)$/.exec(o.workflowId);
-        return m && m[1] === wanted;
-      });
+      orphans = orphans.filter((o) => o.summary.playerId === wanted);
     }
 
     if (orphans.length === 0) {

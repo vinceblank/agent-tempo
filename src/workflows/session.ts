@@ -886,6 +886,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
 
   /** `orphanSummary` query — daemon/CLI restore metadata when phase === 'detached'. */
   setHandler(orphanSummaryQuery, (): OrphanSummary => ({
+    ensemble: input.metadata.ensemble,
+    playerId: input.metadata.playerId,
     ...(detachedSince ? { detachedSince } : {}),
     ...(lastDetachReason ? { reason: lastDetachReason } : {}),
     ...(preferredHost ? { preferredHost } : {}),

@@ -77,6 +77,8 @@ function fixture(opts: {
       inFlightCount: 0,
     },
     summary: {
+      ensemble: opts.ensemble,
+      playerId: opts.playerId,
       ...(opts.detachedSince !== undefined ? { detachedSince: opts.detachedSince } : {}),
       ...(opts.preferredHost !== undefined ? { preferredHost: opts.preferredHost } : {}),
     },

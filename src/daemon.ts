@@ -19,8 +19,7 @@ import { createTemporalConnection } from './connection';
 import { DAEMON_PID_PATH, DAEMON_LOG_PATH } from './cli/daemon';
 import { createTempoClient } from './client';
 import { queryOrphanedSessions, type OrphanCandidate } from './reconcile/orphans';
-import { getMetadataQuery } from './workflows/signals';
-import type { GlobalMaestroInput, SessionMetadata } from './types';
+import type { GlobalMaestroInput } from './types';
 
 const log = (...args: unknown[]) => console.error(`[claude-tempo:daemon ${new Date().toISOString()}]`, ...args);
 
@@ -86,27 +85,6 @@ async function ensureGlobalMaestro(config: ReturnType<typeof getConfig>): Promis
 }
 
 // ── Reconcile-on-boot (PR-E §10.1) ──
-
-/**
- * Extract the `ClaudeTempoEnsemble` search attribute from a workflow id by
- * asking the workflow directly. Falls back to workflow-id parsing when the
- * query fails (workflow completed between listing and query).
- *
- * Used to evaluate `autoRestoreEnsembles` allowlist against each orphan.
- */
-async function ensembleOfOrphan(client: Client, orphan: OrphanCandidate): Promise<string | null> {
-  try {
-    const handle = client.workflow.getHandle(orphan.workflowId);
-    const meta = await handle.query(getMetadataQuery) as SessionMetadata;
-    return meta.ensemble ?? null;
-  } catch {
-    // `claude-session-{ensemble}-{playerId}` — best-effort parse if the
-    // workflow is gone already. `ensemble` may itself contain dashes; we
-    // take everything between the prefix and the last `-{playerId}`.
-    const match = /^claude-session-(.+)-[^-]+$/.exec(orphan.workflowId);
-    return match ? match[1] : null;
-  }
-}
 
 /**
  * PR-E reconcile-on-boot — design §10.1.
@@ -209,23 +187,14 @@ export async function reconcileOnBoot(
     }
 
     // Ensemble allowlist — simple prefix match per §8 answer 5.
-    const ensemble = await ensembleOfOrphan(client, o);
-    if (ensemble === null) {
-      log(`reconcile: [auto] skip ${o.workflowId} — could not determine ensemble`);
-      continue;
-    }
+    const ensemble = o.summary.ensemble;
     if (!isEnsembleAllowed(ensemble, daemonConfig.autoRestoreEnsembles)) {
       log(`reconcile: [auto] skip ${o.workflowId} — ensemble "${ensemble}" not in allowlist`);
       continue;
     }
 
-    // Restore target — extract playerId from workflow id.
-    const playerId = /^claude-session-.+-([^-]+)$/.exec(o.workflowId)?.[1];
-    if (!playerId) {
-      log(`reconcile: [auto] skip ${o.workflowId} — could not extract playerId`);
-      continue;
-    }
-
+    // Restore target — read canonical playerId from OrphanSummary (#143).
+    const playerId = o.summary.playerId;
     const targetHost = o.summary.preferredHost ?? hostname;
     try {
       const result = await tempo.restart(ensemble, playerId, {
@@ -277,19 +246,19 @@ export function selectStaleDetachedOrphans(
 /**
  * PR-E cleanup loop — design §13.4 regression row 1.
  *
- * Runs on a 6-hour timer (hardcoded per §8 answer 2). Two passes:
- *
- *  1. **Detached orphans older than `detachedMaxAgeDays`** → terminate via
- *     `TempoClient.destroy` so the workflow completes and eventually falls
- *     out of the namespace (or is reaped by {@link cleanupDestroyedWorkflows}
- *     on a later tick).
- *  2. **Destroyed workflows older than `destroyedMaxAgeDays`** → best-effort
- *     terminate-via-handle. Most Temporal namespaces have their own retention
- *     policy; this is additive.
+ * Runs on a 6-hour timer (hardcoded per §8 answer 2). Destroys detached
+ * orphans older than `detachedMaxAgeDays` via `TempoClient.destroy` so the
+ * workflow completes and eventually falls out of the namespace.
  *
  * Never touches `Running` workflows that still hold a live attachment
- * (filter is explicit on `phase === 'detached'` in pass 1; pass 2 uses
- * `ExecutionStatus = "Completed"`).
+ * (filter is explicit on `phase === 'detached'`).
+ *
+ * **Note (#144)**: an earlier revision included a "pass 2" that tried to
+ * `terminate()` already-Completed workflows as belt-and-suspenders retention.
+ * `terminate()` throws on Completed workflows in every Temporal namespace
+ * setting, so the pass was dead code masked by a swallowing catch. It was
+ * removed: namespace retention (Temporal Cloud default 30d, self-hosted
+ * configurable) is the authoritative reaper for Completed workflows.
  */
 export async function cleanupLoop(
   client: Client,
@@ -299,7 +268,6 @@ export async function cleanupLoop(
   const tempo = createTempoClient(client);
   const now = Date.now();
 
-  // Pass 1 — stale detached orphans.
   try {
     const orphans = await queryOrphanedSessions(client, { hostname }, log);
     const stale = selectStaleDetachedOrphans(
@@ -308,12 +276,7 @@ export async function cleanupLoop(
       now,
     );
     for (const o of stale) {
-      const ensemble = await ensembleOfOrphan(client, o);
-      const playerId = /^claude-session-.+-([^-]+)$/.exec(o.workflowId)?.[1];
-      if (!ensemble || !playerId) {
-        log(`cleanup: [detached] skip ${o.workflowId} — could not parse ensemble/playerId`);
-        continue;
-      }
+      const { ensemble, playerId } = o.summary;
       try {
         await tempo.destroy(ensemble, playerId, `detached >${daemonConfig.cleanupPolicy.detachedMaxAgeDays}d`);
         log(`cleanup: [detached] destroyed ${o.workflowId} (detachedSince=${o.summary.detachedSince})`);
@@ -322,30 +285,7 @@ export async function cleanupLoop(
       }
     }
   } catch (err) {
-    log('cleanup: pass-1 failed (non-fatal):', err instanceof Error ? err.message : String(err));
-  }
-
-  // Pass 2 — purge long-closed workflows (best-effort; most namespaces have
-  // a retention policy that already does this).
-  try {
-    const cutoffMs = now - daemonConfig.cleanupPolicy.destroyedMaxAgeDays * 24 * 60 * 60 * 1000;
-    const cutoffIso = new Date(cutoffMs).toISOString();
-    const query =
-      `WorkflowType = "claudeSessionWorkflow" ` +
-      `AND ExecutionStatus = "Completed" ` +
-      `AND CloseTime < "${cutoffIso}"`;
-    let count = 0;
-    for await (const wf of client.workflow.list({ query })) {
-      try {
-        await client.workflow.getHandle(wf.workflowId).terminate('cleanup: destroyed retention');
-        count++;
-      } catch { /* already gone */ }
-    }
-    if (count > 0) {
-      log(`cleanup: [destroyed] terminated ${count} workflow${count === 1 ? '' : 's'} older than ${daemonConfig.cleanupPolicy.destroyedMaxAgeDays}d`);
-    }
-  } catch (err) {
-    log('cleanup: pass-2 failed (non-fatal):', err instanceof Error ? err.message : String(err));
+    log('cleanup: failed (non-fatal):', err instanceof Error ? err.message : String(err));
   }
 }
 
