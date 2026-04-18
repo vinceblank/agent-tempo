@@ -55,6 +55,11 @@ export interface AdapterDescriptor {
  * Kept alongside the spec values so the workflow has a non-empty reason to record even
  * when the graceful drain path never acked. Safe to merge into `heartbeat-timeout` in a
  * future cleanup if the semantics converge.
+ *
+ * `reconnect-exhausted` is fired adapter-side by `BaseAttachment.runReconnectLoop` (#201)
+ * when the reconnect budget elapsed without recovering a live lease. Distinct from
+ * `heartbeat-timeout` so post-mortems can tell "lease expired once" from "poller tried
+ * to recover and gave up" — workflow-side reap accounting treats them identically.
  */
 export type DetachReason =
   | 'user-stop'
@@ -64,7 +69,8 @@ export type DetachReason =
   | 'agent-exited'
   | 'spawn-failed'
   | 'destroy'
-  | 'force';
+  | 'force'
+  | 'reconnect-exhausted';
 
 /**
  * Workflow-emitted directive to the attached adapter. Delivered via {@link AttachmentInfo}
