@@ -19,7 +19,7 @@
  */
 import type { Client, WorkflowHandle } from '@temporalio/client';
 import { BaseAttachment, type BaseAttachmentOptions } from '../base';
-import type { AdapterDescriptor } from '../../types';
+import type { AdapterDescriptor, DetachReason } from '../../types';
 import { Message } from '../../types';
 import { ENV } from '../../config';
 
@@ -111,14 +111,29 @@ function startMessagePoller(
  * V2 attachment lifecycle: the adapter calls `claimAttachment` via
  * `startV2Lifecycle()`, pins the runId, and runs the delivery poll on the
  * pinned handle. Base class drives heartbeat + phase watcher in parallel.
- * On lease revocation, `WorkflowNotFound`, or phase `gone`, the adapter
- * stops cleanly without attempting to re-claim.
+ *
+ * Reconnect (#201): the adapter opts into the base class's reconnect loop
+ * via {@link shouldReconnect}. On a recoverable terminal (lease reaped
+ * workflow-side without a competitor, or superseded-then-released), the
+ * base class runs a budget-bounded backoff + fresh-claim flow, then calls
+ * {@link onReconnected} with a freshly pinned handle so the delivery poll
+ * can resume. Truly terminal events (`destroy`, `reconnect-exhausted`)
+ * still tear the adapter down permanently.
  *
  * PR-H (#132): the legacy unpinned-poll fallback (gated on
  * `CLAUDE_TEMPO_LIFECYCLE_V2=0`) has been removed. V2 is the only path.
  */
 export class InteractiveAttachment extends BaseAttachment {
   readonly descriptor: AdapterDescriptor = claudeCodeDescriptor;
+
+  /** Current delivery poller stopper; null when no poll is running (pre-claim, mid-reconnect, post-terminal). */
+  private stopPoller: (() => void) | null = null;
+
+  /** Retained across `onReconnected` calls so the poller can be restarted on a new pinned handle. */
+  private onMessages: ((messages: Message[]) => Promise<void> | void) | null = null;
+
+  /** True once user-initiated `stop()` has fired or the adapter reached a true terminal. */
+  private localStopped = false;
 
   constructor(options: BaseAttachmentOptions = {}) {
     super(options);
@@ -140,42 +155,42 @@ export class InteractiveAttachment extends BaseAttachment {
   }
 
   /**
-   * V2 path: claim the attachment, pin the handle, then run the same
-   * poll/deliver/markDelivered loop against the pinned handle. The base class
-   * simultaneously drives heartbeats and the `attachmentInfo` watcher.
+   * V2 path: claim the attachment, pin the handle, then run the poll/deliver/
+   * markDelivered loop against the pinned handle. The base class simultaneously
+   * drives heartbeats and the `attachmentInfo` watcher, and (via {@link shouldReconnect})
+   * may reclaim on recoverable lease loss without this method firing terminal.
    *
    * Returns a stop function that tears down the delivery poll AND the base
    * class lifecycle. Safe to call multiple times.
    *
-   * **Error handling:** a `claimAttachment` rejection (`AttachmentConflict`,
-   * `WorkflowGone`) propagates up — the caller in `server.ts` treats it like
-   * any other startup failure. Runtime errors on the pinned handle
-   * (`WorkflowNotFound`, lease revocation) are caught by the base class
-   * heartbeat + watcher loops, which fire the `onTerminal` hook; this method
-   * subscribes to that hook to tear down the poll cleanly.
+   * **Error handling:** a `claimAttachment` rejection at startup
+   * (`AttachmentConflict`, `WorkflowGone`) propagates up — the caller in
+   * `server.ts` treats it like any other startup failure. Runtime lease loss
+   * on the pinned handle is first routed through `shouldReconnect`; only truly
+   * terminal reasons (`destroy`, `reconnect-exhausted`) reach `onTerminal`
+   * and tear down the poller permanently.
    */
   private startV2(
     workflowId: string,
     onMessages: (messages: Message[]) => Promise<void> | void,
   ): () => void {
-    let stopPoller: (() => void) | null = null;
-    let stopped = false;
+    this.onMessages = onMessages;
 
     const stop = () => {
-      if (stopped) return;
-      stopped = true;
-      if (stopPoller) { stopPoller(); stopPoller = null; }
+      if (this.localStopped) return;
+      this.localStopped = true;
+      if (this.stopPoller) { this.stopPoller(); this.stopPoller = null; }
       // Fire-and-forget — V2 graceful exit signals adapterExited to the workflow.
       void this.stopV2Lifecycle('user-stop', /* graceful */ true);
     };
 
-    // Terminal events from the base class: WorkflowNotFound, phase `gone`, or
-    // lease revoked. Tear down the delivery poll without calling stopV2Lifecycle
-    // again (base class already fired it via `stopped` flag).
+    // Terminal events from the base class: `destroy`, `reconnect-exhausted`, or any
+    // non-reconnectable reason. By the time this fires, the reconnect loop (if
+    // applicable) has already given up; tear the poller down permanently.
     this.onTerminal((reason) => {
-      log(`terminal (${reason}) — stopping delivery poll`);
-      stopped = true;
-      if (stopPoller) { stopPoller(); stopPoller = null; }
+      log(`terminal (${reason}) — stopping delivery poll permanently`);
+      this.localStopped = true;
+      if (this.stopPoller) { this.stopPoller(); this.stopPoller = null; }
     });
 
     // PR-D: when spawned by `restart` or `migrate`, the workflow has
@@ -189,17 +204,60 @@ export class InteractiveAttachment extends BaseAttachment {
     // the caller's startup bails — we haven't started the poll yet.
     this.startV2Lifecycle(workflowId, expectedAttachmentId)
       .then((pinned) => {
-        if (stopped) return; // caller bailed between await and here
-        stopPoller = startMessagePoller(pinned, onMessages);
+        if (this.localStopped) return; // caller bailed between await and here
+        this.stopPoller = startMessagePoller(pinned, onMessages);
       })
       .catch((err) => {
         log(`startV2Lifecycle failed: ${(err as Error)?.message ?? err}`);
         // Surface via stop — caller's shutdown path sees the error in logs
         // and proceeds with graceful shutdown. We don't re-throw here because
         // start() is synchronous by contract.
-        stopped = true;
+        this.localStopped = true;
       });
 
     return stop;
+  }
+
+  /**
+   * #201: reconnect opt-in. The interactive adapter is stateless wrt in-flight
+   * messages (no processing-signal pairing; `markDelivered` is idempotent), so
+   * both recoverable reasons are safe to replay on a fresh lease:
+   *
+   *   - `heartbeat-timeout`: the workflow reaped our lease (e.g. laptop slept).
+   *     Re-claim and resume — this is the #201 happy path.
+   *   - `superseded`: another adapter currently holds our slot. The reconnect
+   *     loop's pre-check will re-query and bail cleanly if that's still true;
+   *     we enter the loop in case the competitor releases during our backoff.
+   *
+   * Unrecoverable reasons (`destroy`, `gone`, anything else) fall through to
+   * the default `false`, firing terminal directly.
+   */
+  protected shouldReconnect(reason: DetachReason): boolean {
+    return reason === 'heartbeat-timeout' || reason === 'superseded';
+  }
+
+  /**
+   * Tear down the current poller immediately when entering the reconnect loop.
+   * The old pinned handle may still respond to `pendingMessages` queries but
+   * the workflow side will ignore our `markDelivered` signals (our `attachmentId`
+   * is no longer current), so continuing to poll wastes I/O and logs noise.
+   */
+  protected async onReconnectStart(_reason: DetachReason): Promise<void> {
+    if (this.stopPoller) {
+      this.stopPoller();
+      this.stopPoller = null;
+    }
+  }
+
+  /**
+   * Fresh pinned handle is live — restart the delivery poller. The workflow's
+   * `pendingMessages` queue carries everything that landed while we were
+   * detached; the first poll will drain it in one batch.
+   */
+  protected async onReconnected(handle: WorkflowHandle): Promise<void> {
+    if (this.localStopped || !this.onMessages) return;
+    // Belt-and-suspenders: if onReconnectStart was skipped somehow, don't leak.
+    if (this.stopPoller) { this.stopPoller(); this.stopPoller = null; }
+    this.stopPoller = startMessagePoller(handle, this.onMessages);
   }
 }
