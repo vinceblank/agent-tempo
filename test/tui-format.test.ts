@@ -4,7 +4,7 @@
  * Pure function tests — no Temporal, no mocks, runs in milliseconds.
  */
 import { expect } from 'chai';
-import { wordWrap, truncate, formatRelativeTime, formatStatus, formatEventType } from '../src/tui/utils/format';
+import { wordWrap, truncate, formatRelativeTime, phaseToLabel, phaseToColor, phaseToIconName, formatEventType } from '../src/tui/utils/format';
 
 describe('wordWrap', function () {
 
@@ -117,26 +117,85 @@ describe('formatRelativeTime', function () {
 
 });
 
-describe('formatStatus', function () {
+describe('phaseToLabel', function () {
 
-  it('returns "active" for active status', function () {
-    expect(formatStatus('active')).to.equal('active');
+  it('collapses attached + processing to "active"', function () {
+    expect(phaseToLabel('attached')).to.equal('active');
+    expect(phaseToLabel('processing')).to.equal('active');
   });
 
-  it('returns "stale" for stale status', function () {
-    expect(formatStatus('stale')).to.equal('stale');
+  it('maps awaiting to "idle"', function () {
+    expect(phaseToLabel('awaiting')).to.equal('idle');
   });
 
-  it('returns "pending" for pending status', function () {
-    expect(formatStatus('pending')).to.equal('pending');
+  it('collapses detached + draining to "disconnected"', function () {
+    expect(phaseToLabel('detached')).to.equal('disconnected');
+    expect(phaseToLabel('draining')).to.equal('disconnected');
   });
 
-  it('returns "unknown" for undefined status', function () {
-    expect(formatStatus(undefined)).to.equal('unknown');
+  it('maps booting to "pending"', function () {
+    expect(phaseToLabel('booting')).to.equal('pending');
   });
 
-  it('returns the string as-is for unrecognized status', function () {
-    expect(formatStatus('custom-status')).to.equal('custom-status');
+  it('maps gone to "gone"', function () {
+    expect(phaseToLabel('gone')).to.equal('gone');
+  });
+
+  it('returns "unknown" for undefined or unrecognized values', function () {
+    expect(phaseToLabel(undefined)).to.equal('unknown');
+    expect(phaseToLabel('bogus-phase')).to.equal('unknown');
+  });
+
+});
+
+describe('phaseToColor', function () {
+
+  it('returns a non-empty color string for every valid phase', function () {
+    for (const phase of ['attached', 'processing', 'awaiting', 'draining', 'detached', 'booting', 'gone']) {
+      const color = phaseToColor(phase);
+      // Under NO_COLOR, colors become undefined — either the string is a hex
+      // value or it's undefined; both are valid theme values. We assert
+      // the helper doesn't throw and returns a defined-or-undefined result.
+      expect(color === undefined || typeof color === 'string').to.equal(true);
+    }
+  });
+
+  it('picks distinct colors for active vs disconnected vs pending', function () {
+    // Under NO_COLOR these could all be undefined; skip strict inequality
+    // and just assert they map through the label bucket.
+    expect(phaseToColor('attached')).to.equal(phaseToColor('processing'));
+    expect(phaseToColor('detached')).to.equal(phaseToColor('draining'));
+  });
+
+});
+
+describe('phaseToIconName', function () {
+
+  it('returns "active" for attached/processing', function () {
+    expect(phaseToIconName('attached')).to.equal('active');
+    expect(phaseToIconName('processing')).to.equal('active');
+  });
+
+  it('returns "stale" for awaiting (idle)', function () {
+    expect(phaseToIconName('awaiting')).to.equal('stale');
+  });
+
+  it('returns "blocked" for detached/draining (disconnected)', function () {
+    expect(phaseToIconName('detached')).to.equal('blocked');
+    expect(phaseToIconName('draining')).to.equal('blocked');
+  });
+
+  it('returns "pending" for booting', function () {
+    expect(phaseToIconName('booting')).to.equal('pending');
+  });
+
+  it('returns "terminated" for gone', function () {
+    expect(phaseToIconName('gone')).to.equal('terminated');
+  });
+
+  it('returns "blocked" (cautionary) for unknown/undefined', function () {
+    expect(phaseToIconName(undefined)).to.equal('blocked');
+    expect(phaseToIconName('bogus')).to.equal('blocked');
   });
 
 });

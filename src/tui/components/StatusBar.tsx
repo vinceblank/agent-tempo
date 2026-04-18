@@ -6,6 +6,7 @@ import React from 'react';
 import { useInk } from '../ink-context';
 import { THEME } from '../utils/theme';
 import type { MaestroPlayerInfo } from '../../types';
+import { phaseToLabel } from '../utils/format';
 
 export interface StatusBarProps {
   ensemble: string | null;
@@ -36,17 +37,28 @@ export function StatusBar({ ensemble, players, playersLoaded, scheduleCount, con
     // Still loading — don't show incorrect counts
     children.push(React.createElement(Text, { key: 'pl', color: THEME.dim }, 'Loading...'));
   } else {
-    // Player breakdown by status
-    const active = players.filter(p => p.status === 'active').length;
-    const stale = players.filter(p => p.status === 'stale').length;
-    const pending = players.filter(p => p.status === 'pending').length;
-    const blocked = players.filter(p => p.status === 'blocked').length;
+    // Player breakdown by phase label (Option-B five buckets collapsed to four
+    // meaningful ones for the bar — `gone` players are terminal and not
+    // shown in the ensemble list).
+    let active = 0;
+    let idle = 0;
+    let disconnected = 0;
+    let pending = 0;
+    for (const p of players) {
+      switch (phaseToLabel(p.phase)) {
+        case 'active':       active++; break;
+        case 'idle':         idle++; break;
+        case 'disconnected': disconnected++; break;
+        case 'pending':      pending++; break;
+        // 'gone' / 'unknown' intentionally not counted in the summary line.
+      }
+    }
 
     const parts: string[] = [];
-    if (active > 0) parts.push(`${active} active`);
-    if (stale > 0) parts.push(`${stale} stale`);
-    if (blocked > 0) parts.push(`${blocked} blocked`);
-    if (pending > 0) parts.push(`${pending} pending`);
+    if (active > 0)       parts.push(`${active} active`);
+    if (idle > 0)         parts.push(`${idle} idle`);
+    if (disconnected > 0) parts.push(`${disconnected} disconnected`);
+    if (pending > 0)      parts.push(`${pending} pending`);
     const breakdown = parts.length > 0 ? ` (${parts.join(', ')})` : '';
     const playerLabel = `${players.length} player${players.length !== 1 ? 's' : ''}${breakdown}`;
 

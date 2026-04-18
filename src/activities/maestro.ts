@@ -100,10 +100,7 @@ export function createMaestroActivities(client: Client): MaestroActivities {
           isConductor: s.isConductor,
           agentType: s.agentType,
           playerType: s.playerType,
-          // Post-#176: `status` carries the attachment phase value. The field
-          // name is legacy-debt pending a rename to `phase` (see
-          // MaestroPlayerInfo declaration in types.ts).
-          status: s.phase,
+          phase: s.phase,
         }));
       } catch (err) {
         log('refreshEnsembleState failed:', err);

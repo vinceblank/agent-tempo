@@ -537,14 +537,8 @@ export interface MaestroPlayerInfo {
   isConductor: boolean;
   agentType: string;
   playerType?: string;
-  /**
-   * Attachment phase value (e.g. `'attached'`, `'detached'`, `'gone'`).
-   *
-   * TODO: rename to `phase` and retype as AttachmentPhase once the shim epic
-   * settles; kept as `status?: string` during #176 to minimize workflow-replay
-   * blast radius. Safe to clean up any time after beta.6.
-   */
-  status?: string;
+  /** Attachment phase (post-#177 — replaced legacy `status` field). */
+  phase?: AttachmentPhase;
 }
 
 /** A message relayed through the global Maestro for dashboard visibility. */

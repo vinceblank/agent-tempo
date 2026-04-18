@@ -8,6 +8,7 @@ import type { TempoClient } from '../client';
 import type { TuiAction, StaticItem } from './store';
 import type { Message, SentMessage } from '../types';
 import { statusIcons, supportsUnicode } from './utils/platform';
+import { phaseToLabel } from './utils/format';
 import { listAllLineups } from '../ensemble/saver';
 
 // ── Types ──
@@ -202,7 +203,10 @@ async function handleBroadcast(
     const players = await api.getPlayers(ctx.activeEnsemble);
     let sent = 0;
     for (const p of players) {
-      if (p.status === 'active') {
+      // Broadcast to talkable phases only — `active` (attached/processing) and
+      // `idle` (awaiting). Mirrors `shouldIncludeInBroadcast` in utils/validation.
+      const label = phaseToLabel(p.phase);
+      if (label === 'active' || label === 'idle') {
         try {
           await api.sendMessage(ctx.activeEnsemble, p.playerId, message, 'maestro');
           sent++;

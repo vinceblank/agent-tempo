@@ -8,6 +8,7 @@ import { useInk } from '../ink-context';
 import { statusIcons, supportsUnicode } from '../utils/platform';
 import type { MaestroPlayerInfo, MaestroRelayMessage } from '../../types';
 import { THEME } from '../utils/theme';
+import { phaseToColor, phaseToIconName } from '../utils/format';
 
 export interface ScheduleInfo {
   name: string;
@@ -63,17 +64,9 @@ export function MainView({ ensemble, players, messages, schedules, staticItemCou
   } else {
     for (let i = 0; i < players.length; i++) {
       const p = players[i];
-      const icon = p.isConductor ? icons.conductor
-        : p.status === 'active' ? icons.active
-        : p.status === 'stale' ? icons.stale
-        : p.status === 'pending' ? icons.pending
-        : p.status === 'terminated' ? icons.terminated
-        : icons.blocked;
-
-      const color = p.status === 'active' ? THEME.success
-        : p.status === 'stale' ? THEME.warning
-        : p.status === 'terminated' ? THEME.dim
-        : THEME.textMuted;
+      // Collapse the attachment phase via the Option-B helpers in utils/format.
+      const icon = p.isConductor ? icons.conductor : icons[phaseToIconName(p.phase)];
+      const color = phaseToColor(p.phase);
 
       const typeName = p.playerType || p.agentType || '';
       const part = p.part || '';

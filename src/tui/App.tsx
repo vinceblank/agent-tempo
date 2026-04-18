@@ -67,6 +67,8 @@ import { Picker } from './components/Picker';
 import type { PickerItem } from './components/Picker';
 import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames, PLAYER_PARAM_COMMANDS, SUBCOMMAND_MAP } from './commands';
 import { THEME } from './utils/theme';
+import { phaseToLabel, phaseToColor, phaseToIconName } from './utils/format';
+import { statusIcons as phaseStatusIcons, supportsUnicode as phaseSupportsUnicode } from './utils/platform';
 import { wordWrap } from './utils/format';
 import { loadHistory, saveHistory } from './utils/history';
 import type { TempoClient } from '../client';
@@ -410,7 +412,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     if (state.chatTarget) {
       const isConductor = state.chatTarget === state.conductorName;
       const player = state.players.find(p => p.playerId === state.chatTarget);
-      const status = player?.status || 'unknown';
+      const status = phaseToLabel(player?.phase);
       const icon = isConductor ? '\u2605' : '\u2022';
       return `${icon} ${state.chatTarget} \u00b7 ${status}${state.activeEnsemble ? ` \u00b7 ${state.activeEnsemble}` : ''}`;
     }
@@ -460,7 +462,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     if (state.pickerType === 'players') {
       // Apply status filter if set.
       const filtered = state.pickerStatusFilter
-        ? state.players.filter(p => p.status === state.pickerStatusFilter)
+        ? state.players.filter(p => p.phase === state.pickerStatusFilter)
         : state.players;
       // Sort by type for grouping, conductor first
       const sorted = [...filtered].sort((a, b) => {
@@ -469,13 +471,16 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         const typeB = b.playerType || b.agentType || '';
         return typeA.localeCompare(typeB) || a.playerId.localeCompare(b.playerId);
       });
+      // Resolve icons once for the whole map (not per-item) per
+      // docs/tui-performance.md — `statusIcons()` allocates a small object.
+      const icons = phaseStatusIcons(phaseSupportsUnicode());
       return sorted.map(p => ({
         id: p.playerId,
         label: p.playerId,
-        detail: `[${p.status || '?'}]`,
+        detail: `[${phaseToLabel(p.phase)}]`,
         meta: p.part || undefined,
-        icon: p.isConductor ? '\u2605' : p.status === 'active' ? '\u25CF' : p.status === 'stale' ? '\u25CB' : '\u25D4',
-        color: p.status === 'active' ? THEME.success : p.status === 'stale' ? THEME.warning : THEME.dim,
+        icon: p.isConductor ? '\u2605' : icons[phaseToIconName(p.phase)],
+        color: phaseToColor(p.phase),
         current: p.playerId === state.chatTarget,
         group: p.playerType || p.agentType || 'unknown',
       }));
@@ -1177,7 +1182,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         targetPlayer: state.chatTarget,
         targetPart: targetPlayer?.part,
         targetBranch: targetPlayer?.gitBranch,
-        targetStatus: targetPlayer?.status,
+        targetStatus: targetPlayer?.phase,
         targetHost: targetPlayer?.hostname,
         localHost: osHostname(),
         isConductor: memoizedChatData.isConductor,

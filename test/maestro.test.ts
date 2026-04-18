@@ -104,7 +104,7 @@ describe('claudeMaestroWorkflow', function () {
             workDir: '/tmp/test',
             isConductor: false,
             agentType: 'claude',
-            status: 'active',
+            phase: 'attached',
           }];
 
           // Wait for next refresh cycle
@@ -141,7 +141,7 @@ describe('claudeMaestroWorkflow', function () {
         workDir: '/tmp/test',
         isConductor: false,
         agentType: 'claude',
-        status: 'active',
+        phase: 'attached',
       };
 
       let currentPlayers: MaestroPlayerInfo[] = [{ ...initialPlayer }];
@@ -161,7 +161,7 @@ describe('claudeMaestroWorkflow', function () {
           currentPlayers = [{
             ...initialPlayer,
             part: 'Updated part',
-            status: 'stale',
+            phase: 'detached',
           }];
 
           await sleep(2000);
@@ -170,8 +170,8 @@ describe('claudeMaestroWorkflow', function () {
 
           const statusEvents = events.filter(e => e.type === 'status_changed' && e.playerId === 'bob');
           expect(statusEvents).to.have.length.greaterThanOrEqual(1);
-          expect(statusEvents[0].oldValue).to.equal('active');
-          expect(statusEvents[0].newValue).to.equal('stale');
+          expect(statusEvents[0].oldValue).to.equal('attached');
+          expect(statusEvents[0].newValue).to.equal('detached');
 
           const partEvents = events.filter(e => e.type === 'part_changed' && e.playerId === 'bob');
           expect(partEvents).to.have.length.greaterThanOrEqual(1);

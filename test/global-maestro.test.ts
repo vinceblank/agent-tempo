@@ -98,7 +98,7 @@ describe('claudeGlobalMaestroWorkflow', function () {
         workDir: '/tmp/a',
         isConductor: false,
         agentType: 'claude',
-        status: 'active',
+        phase: 'attached',
       };
 
       const player2: MaestroPlayerInfo = {
@@ -109,7 +109,7 @@ describe('claudeGlobalMaestroWorkflow', function () {
         workDir: '/tmp/b',
         isConductor: true,
         agentType: 'claude',
-        status: 'active',
+        phase: 'attached',
       };
 
       await withWorkerAndGlobalMaestroActivities(
