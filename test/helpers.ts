@@ -140,9 +140,20 @@ export function getClient(): Client {
 }
 
 /**
- * Fast-forward the test environment's clock without waiting real time.
- * Uses Temporal's time-skipping test server — workflow timers and
- * `condition(..., timeout)` calls see the skipped time immediately.
+ * Sleep `durationMs` milliseconds of **real wall-clock time**.
+ *
+ * Despite the name, this is NOT Temporal time-skipping — `setupTestEnv` uses
+ * `TestWorkflowEnvironment.createLocal()`, not `createTimeSkipping()`, so
+ * `testEnv.sleep(ms)` is a real sleep. Workflow timers and
+ * `condition(..., timeout)` calls do not see skipped time.
+ *
+ * **Do not use `skipTime(1)` (or other short sleeps) to flush a pending
+ * workflow task before querying** — that is a race against the dispatch
+ * loop and fails intermittently on slow CI runners (see #190). Use a
+ * poll-with-timeout helper that retries the assertion until it passes.
+ *
+ * Kept for tests that legitimately need to exercise a real timeout window
+ * (e.g. verifying behavior over a bounded duration).
  */
 export async function skipTime(durationMs: number): Promise<void> {
   await testEnv.sleep(durationMs);
