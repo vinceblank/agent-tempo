@@ -24,6 +24,7 @@ import {
   getPartQuery,
   allMessagesQuery,
   receiveMessageSignal,
+  updateMetadataSignal,
 } from '../workflows/signals';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:outbox]', ...args);
@@ -601,19 +602,34 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           });
         }
 
-        // Step 6 — enqueue the spawn on the target.
+        // Step 6 — enqueue the spawn.
+        //
+        // Issue #183: Claude Code rejects `--session-id <uuid>` when a transcript
+        // already exists at `~/.claude/projects/<encoded-path>/<uuid>.jsonl`
+        // ("Session ID already in use"). A prior failed spawn can leave that
+        // file behind, wedging every subsequent `fresh` restart that reuses the
+        // stored sessionId. Since `fresh` already skips `--resume`, we mint a
+        // new UUID and persist it on the target's metadata so later non-fresh
+        // restarts resume against the new transcript. Non-fresh restarts keep
+        // the stored sessionId for deterministic `--resume`.
+        let spawnSessionId = metadata.sessionId;
+        if (fresh) {
+          spawnSessionId = crypto.randomUUID();
+          await handle.signal(updateMetadataSignal, { sessionId: spawnSessionId });
+        }
+
         const { spawnEntryId } = await handle.executeUpdate(enqueueSpawnUpdate, {
           args: [{
             host: targetHost,
             attachmentId: token.attachmentId,
             runId: token.runId,
             resume: !fresh,
-            ...(metadata.sessionId ? { sessionId: metadata.sessionId } : {}),
+            ...(spawnSessionId ? { sessionId: spawnSessionId } : {}),
             adapterId,
           }],
         });
 
-        log(`Restart prepared for "${targetPlayerId}" — attachmentId=${token.attachmentId}, spawnEntryId=${spawnEntryId}, host=${targetHost}`);
+        log(`Restart prepared for "${targetPlayerId}" — attachmentId=${token.attachmentId}, spawnEntryId=${spawnEntryId}, host=${targetHost}${fresh ? ` (fresh sessionId=${spawnSessionId})` : ''}`);
         return { success: true };
       } catch (err) {
         if (err instanceof ApplicationFailure) throw err;
