@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.0-beta.3] - 2026-04-18
+
+> **Beta release.** Completes the adapter resilience trilogy: reconnect across `continueAsNew`
+> (#226), plus daemon singleton hardening, crash-proof CLI, and shared test environment.
+>
+> **Install:** `npm i -g claude-tempo@0.26.0-beta.3`
+> **Rollback:** `npm i -g claude-tempo@0.26.0-beta.2`
+
 ### Changed
 
 - **Shared `TestWorkflowEnvironment` across Mocha spec files** (#210 Phase 1). The
