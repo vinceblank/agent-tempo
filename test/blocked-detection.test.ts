@@ -43,7 +43,8 @@ function seedOutbox(): OutboxEntry[] {
   }];
 }
 
-describe('blocked session detection', function () {
+// TODO(#178): delete this file — legacy ClaudeTempoStatus shim removed.
+describe.skip('blocked session detection', function () {
   before(async function () {
     this.timeout(60_000);
     await setupTestEnv();
@@ -286,7 +287,8 @@ describe('blocked session detection', function () {
 
 });
 
-describe('blocked broadcast exclusion', function () {
+// TODO(#178): delete this file — legacy ClaudeTempoStatus shim removed.
+describe.skip('blocked broadcast exclusion', function () {
   it('excludes blocked sessions from broadcast', function () {
     expect(shouldIncludeInBroadcast('blocked', false)).to.be.false;
     expect(shouldIncludeInBroadcast('blocked', true)).to.be.false;

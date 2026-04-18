@@ -27,7 +27,6 @@ import type { HardTerminateResult } from '../activities/hard-terminate';
 
 import {
   SessionInput,
-  SessionStatus,
   Message,
   SentMessage,
   Command,
@@ -141,12 +140,6 @@ function getHardTerminateProxyForDestroy(hostname: string) {
 }
 
 export async function claudeSessionWorkflow(input: SessionInput): Promise<void> {
-  // ── Legacy timers (shim era only; removed in PR-C when all adapters cut over) ──
-  // Stale-by-undelivered is now gated on no in-flight messages AND the legacy status
-  // shim. Heartbeat-as-probe-message is superseded by the attachment heartbeat signal.
-  const STALE_MESSAGE_MS = 3 * 60 * 1000; // 3 minutes
-  const HEARTBEAT_PROBE_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
-
   // ── v0.25 Attachment Lifecycle Timers (design §2.3, §9.5) ──
   // PR-C commit 6 (#119a): each attachment carries its own `leaseMs` (negotiated at
   // claim time). No workflow-side default constant — heartbeats extend `expiresAt`
@@ -191,7 +184,6 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     ClaudeTempoHostname: [input.metadata.hostname],
     ...(input.metadata.gitRoot ? { ClaudeTempoGitRoot: [input.metadata.gitRoot] } : {}),
     ...(input.metadata.playerType ? { ClaudeTempoPlayerType: [input.metadata.playerType] } : {}),
-    ClaudeTempoStatus: [input.metadata.status || 'active'],
     ClaudeTempoIsConductor: [input.metadata.isConductor === true],
     // v0.25 attachment search attributes — initial values for a fresh/restored workflow.
     // Updated on every phase transition below.
@@ -217,7 +209,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // ── v0.25 Attachment Lifecycle State (design §2.2) ──
   /** Current attachment lease, or null when detached. */
   let currentAttachment: Attachment | null = input.currentAttachment ?? null;
-  /** Current phase — authoritative post-v0.25. Legacy `input.metadata.status` is shimmed onto this. */
+  /** Current phase — authoritative source of lifecycle truth after #175. */
   let phase: AttachmentPhase = input.phase ?? (currentAttachment ? 'attached' : 'booting');
   /** Preferred host for daemon reconcile-on-boot auto-restore. */
   let preferredHost: string | undefined = input.preferredHost ?? currentAttachment?.hostname ?? input.metadata.hostname;
@@ -345,13 +337,6 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
 
     lastActivityTime = workflowNow().getTime();
     lastOutboundTime = workflowNow().getTime();
-    // Legacy-compat: auto-recover from v0.24 `blocked` status when player sends outbound.
-    // The phase machine replaces this with `attachmentInfo` — but the shim keeps
-    // the legacy status search attr consistent for tools still reading it.
-    if (input.metadata.status === 'blocked') {
-      input.metadata.status = 'active';
-      upsertSearchAttributes({ ClaudeTempoStatus: ['active'] });
-    }
     return entry.id;
   }, {
     validator: (entry: OutboxEntryInput) => {
@@ -411,25 +396,17 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     if (update.sessionId != null || (update as any).claudeSessionId != null) {
       input.metadata.sessionId = update.sessionId ?? (update as any).claudeSessionId;
     }
-    if (update.status != null) {
-      // PR-H (#132): the v0.25.1 `updateMetadata({ status: 'terminated' })`
-      // compat shim has been removed. Status is now a presentation-only
-      // legacy field — phase transitions go through the V2 wire surface
-      // (`destroyUpdate`, `adapterExitedSignal`, `forceDetachUpdate`,
-      // `claimAttachmentUpdate`). Setters here just keep the legacy
-      // `ClaudeTempoStatus` search attribute consistent for tools still
-      // reading it; no phase-machine side effects.
-      const legacyStatus = update.status as SessionStatus;
-      input.metadata.status = legacyStatus;
-      if (update.enableStaleDetection) input.disableStaleDetection = false;
-    }
+    // `update.status` / `update.enableStaleDetection` are silently dropped.
+    // Status tracking was removed in #175 — attachment phase (set by the V2
+    // wire surface: claimAttachment / adapterExited / forceDetach / destroy)
+    // is authoritative. The `SessionMetadata.status` field remains as a
+    // vestigial typing bridge and is removed in #176 along with its readers.
     upsertSearchAttributes({
       ClaudeTempoEnsemble: [input.metadata.ensemble],
       ClaudeTempoPlayerId: [input.metadata.playerId],
       ClaudeTempoHostname: [input.metadata.hostname],
       ...(input.metadata.gitRoot ? { ClaudeTempoGitRoot: [input.metadata.gitRoot] } : {}),
       ...(input.metadata.playerType ? { ClaudeTempoPlayerType: [input.metadata.playerType] } : {}),
-      ClaudeTempoStatus: [input.metadata.status || 'active'],
       ClaudeTempoIsConductor: [input.metadata.isConductor === true],
     });
     lastActivityTime = workflowNow().getTime();
@@ -616,10 +593,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       lastDetachReason = 'destroy';
       currentAttachment = null;
     }
-    // Legacy-compat: keep ClaudeTempoStatus tracking so old tools see `terminated`.
-    input.metadata.status = 'terminated';
     upsertSearchAttributes({
-      ClaudeTempoStatus: ['terminated'],
       ClaudeTempoAttachedHost: [''],
       ClaudeTempoAttachmentId: [''],
     });
@@ -1501,58 +1475,11 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       if (outboxIdle) setPhase('awaiting');
     }
 
-    // ── Legacy stale / blocked detection (shim, removed in PR-C) ──
-    //
-    // The phase machine's lease-expiry + processingDeadline (handled above in §9.5.a/b)
-    // replaces this heuristic. We keep it so existing tools that read
-    // `ClaudeTempoStatus` get consistent values while adapters migrate.
-    //
-    // Suppression rules preserved from MVP:
-    //   - `inFlightMessages` non-empty → don't flag stale (would trigger #99 again)
-    //   - `phase === 'attached' | 'processing' | 'awaiting'` → treat like alive
-    if (!input.disableStaleDetection) {
-      const now = workflowNow().getTime();
-      const processingInFlight = inFlightMessages.size > 0;
-      const attachmentAlive = phase === 'attached' || phase === 'processing' || phase === 'awaiting';
-
-      const staleMessages = messages.filter(
-        (m) => !m.delivered && now - new Date(m.timestamp).getTime() > STALE_MESSAGE_MS,
-      );
-      const stuckPending = input.metadata.status === 'pending' && now - lastActivityTime > STALE_MESSAGE_MS;
-      if (
-        !processingInFlight &&
-        !attachmentAlive &&
-        (staleMessages.length > 0 || stuckPending) &&
-        input.metadata.status !== 'stale'
-      ) {
-        input.metadata.status = 'stale';
-        upsertSearchAttributes({ ClaudeTempoStatus: ['stale'] });
-      }
-
-      const BLOCKED_WINDOW_MS = 5 * 60 * 1000;
-      if (
-        input.metadata.status === 'active' &&
-        lastInboundRRTime > lastOutboundTime &&
-        now - lastInboundRRTime > BLOCKED_WINDOW_MS
-      ) {
-        input.metadata.status = 'blocked';
-        upsertSearchAttributes({ ClaudeTempoStatus: ['blocked'] });
-      }
-
-      // Legacy heartbeat probe — kept for old adapters that rely on periodic message flow.
-      // The v0.25 attachment `heartbeat` signal is the real liveness channel; this probe
-      // exists only so the MVP `_heartbeat`/`_ping` pattern in tests keeps working.
-      const noPending = messages.every((m) => m.delivered);
-      if (noPending && now - lastActivityTime > HEARTBEAT_PROBE_INTERVAL_MS) {
-        messages.push({
-          id: uuid4(),
-          from: '_heartbeat',
-          text: '_ping',
-          timestamp: workflowNow().toISOString(),
-          delivered: false,
-        });
-      }
-    }
+    // Legacy stale/blocked detection + `_heartbeat`/`_ping` probe removed in #175.
+    // The phase machine (lease expiry, `processingDeadline`, `adapterExited`) is now
+    // the single source of liveness truth; see §§9.5.a/b above. The
+    // `SessionMetadata.status` field remains as a vestigial typing bridge and is
+    // dropped in #176 along with its four consumer readers.
 
     // Prevent unbounded history growth — let the SDK decide when.
     const info = workflowInfo();

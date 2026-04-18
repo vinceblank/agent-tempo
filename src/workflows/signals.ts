@@ -27,7 +27,6 @@ import type {
 export type {
   SessionMetadata,
   SessionInput,
-  SessionStatus,
   Message,
   Command,
   PlayerReport,

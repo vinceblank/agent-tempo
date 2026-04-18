@@ -21,7 +21,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Client, WorkflowHandle } from '@temporalio/client';
 import type { Config } from '../src/config';
-import type { SessionMetadata, SessionStatus } from '../src/types';
+import type { SessionMetadata } from '../src/types';
 import { registerRecruitTool } from '../src/tools/recruit';
 import { registerScheduleTool } from '../src/tools/schedule';
 import { registerLoadLineupTool } from '../src/tools/load-lineup';
@@ -759,7 +759,7 @@ function makeClientWithPlayers(
               workDir: '/tmp',
               isConductor: false,
               agentType: 'claude',
-              status: (player?.status ?? 'active') as SessionStatus,
+              status: player?.status ?? 'active',
               playerType: player?.playerType,
             } satisfies SessionMetadata;
           }
