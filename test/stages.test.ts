@@ -38,7 +38,11 @@ const ENSEMBLE = 'test-ensemble';
  */
 async function retry<T>(
   assertFn: () => Promise<T>,
-  { timeoutMs = 5_000, intervalMs = 50 }: { timeoutMs?: number; intervalMs?: number } = {},
+  // Default timeout bumped from 5s→10s in #178 to absorb Node 24 CI latency
+  // spikes (#196/#197 saw the "completes stage when all players report result"
+  // test flake on first CI run, pass on rerun). 50ms polling × 200 iterations
+  // still well under worst-case scheduler variance.
+  { timeoutMs = 10_000, intervalMs = 50 }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   // eslint-disable-next-line no-constant-condition

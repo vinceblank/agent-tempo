@@ -15,7 +15,7 @@ import {
   submitOutboxUpdate,
   outboxQuery,
   updateMetadataSignal,
-
+  attachmentInfoQuery,
   destroyUpdate,
   getClient,
   TASK_QUEUE,
@@ -163,8 +163,7 @@ describe('outbox', function () {
   // ── Outbox stop delivery ──
 
   describe('stop delivery', function () {
-    // TODO(#178): rewrite against attachmentInfo.phase
-    it.skip('terminates the target session', async function () {
+    it('terminates the target session', async function () {
       this.timeout(30_000);
       await withWorkerAndOutboxActivities(async () => {
         const alice = await startSession({
@@ -180,8 +179,13 @@ describe('outbox', function () {
 
         await sleep(2000);
 
-        const bobMeta = await bob.query(getMetadataQuery);
-        expect((bobMeta as any).status).to.equal('terminated');
+        // Bob's attachment phase transitions to `gone` via the `stop` outbox entry
+        // triggering `destroyUpdate` on the target. Read the phase from the
+        // `ClaudeTempoAttachmentState` search attribute — it persists on the
+        // workflow description even after the workflow completes.
+        const bobDesc = await bob.describe();
+        const bobPhase = (bobDesc.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined)?.[0];
+        expect(bobPhase).to.equal('gone');
 
         const aliceOutbox = await alice.query(outboxQuery);
         expect(aliceOutbox[0].status).to.equal('delivered');
@@ -466,8 +470,7 @@ describe('outbox', function () {
   // ── Recruit delivery ──
 
   describe('recruit delivery', function () {
-    // TODO(#178): rewrite against attachmentInfo.phase
-    it.skip('pre-creates session workflow with initial message, playerType, and recruitedBy', async function () {
+    it('pre-creates session workflow with initial message, playerType, and recruitedBy', async function () {
       this.timeout(30_000);
       await withWorkerAndRecruitActivities(async () => {
         const ensemble = `recruit-${Date.now()}`;
@@ -520,7 +523,9 @@ describe('outbox', function () {
         expect(meta.playerType).to.equal('tempo-soloist');
         expect(meta.playerTypeDescription).to.equal('Senior engineer');
         expect(meta.recruitedBy).to.equal('recruiter');
-        expect((meta as any).status).to.equal('pending'); // TODO(#178): rewrite against attachmentInfo.phase
+        // Newly-recruited session boots in `booting` phase (no adapter attached yet).
+        const info = await recruitedHandle.query(attachmentInfoQuery);
+        expect(info.phase).to.equal('booting');
         expect(meta.ensemble).to.equal(ensemble);
         expect(meta.isConductor).to.equal(false);
 
@@ -631,8 +636,7 @@ describe('outbox', function () {
   // ── Stop delivery with conductor notification ──
 
   describe('stop delivery (conductor notification)', function () {
-    // TODO(#178): rewrite against attachmentInfo.phase
-    it.skip('notifies conductor with a system message when a session is terminated', async function () {
+    it('notifies conductor with a system message when a session is terminated', async function () {
       this.timeout(30_000);
       await withWorkerAndOutboxActivities(async () => {
         const ensemble = `stop-cond-${Date.now()}`;
@@ -653,9 +657,11 @@ describe('outbox', function () {
 
         await sleep(2000);
 
-        // Target should be marked terminated
-        const targetMeta = await target.query(getMetadataQuery);
-        expect((targetMeta as any).status).to.equal('terminated');
+        // Target's phase transitions to `gone` via the stop-delivery's destroyUpdate.
+        // Read from the `ClaudeTempoAttachmentState` search attribute — survives completion.
+        const targetDesc = await target.describe();
+        const targetPhase = (targetDesc.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined)?.[0];
+        expect(targetPhase).to.equal('gone');
 
         // Conductor should receive the system notification about the termination
         const conductorMessages = await conductor.query(allMessagesQuery);

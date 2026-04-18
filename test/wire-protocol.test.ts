@@ -115,12 +115,14 @@ function extractNamesFromDocs(docPath: string): Set<string> {
   return names;
 }
 
-/** Search attribute names — declared in the docs but not in `defineSignal` calls. */
+/**
+ * Search attribute names — declared in the docs but not in `defineSignal` calls.
+ * `ClaudeTempoStatus` was removed in v0.26 (#175 / #178).
+ */
 const SEARCH_ATTRIBUTE_NAMES = new Set([
   'ClaudeTempoEnsemble',
   'ClaudeTempoPlayerId',
   'ClaudeTempoHostname',
-  'ClaudeTempoStatus',
   'ClaudeTempoGitRoot',
   'ClaudeTempoPlayerType',
   'ClaudeTempoIsConductor',

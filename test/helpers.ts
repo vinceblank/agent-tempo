@@ -38,6 +38,10 @@ import {
   inFlightMessagesQuery,
   destroyUpdate,
   isDestroyedQuery,
+  attachmentInfoQuery,
+  claimAttachmentUpdate,
+  forceDetachUpdate,
+  adapterExitedSignal,
 } from '../src/workflows/signals';
 
 // Re-export signals/queries for convenience in test files
@@ -69,6 +73,10 @@ export {
   inFlightMessagesQuery,
   destroyUpdate,
   isDestroyedQuery,
+  attachmentInfoQuery,
+  claimAttachmentUpdate,
+  forceDetachUpdate,
+  adapterExitedSignal,
 };
 
 let testEnv: TestWorkflowEnvironment;
@@ -106,13 +114,13 @@ function findWorkflowBundle(): string {
 export async function setupTestEnv(): Promise<void> {
   testEnv = await TestWorkflowEnvironment.createLocal({
     server: {
-      // Register custom search attributes at server startup
+      // Register custom search attributes at server startup.
+      // `ClaudeTempoStatus` removed in v0.26 (#175 / #178).
       extraArgs: [
         '--search-attribute', 'ClaudeTempoEnsemble=Keyword',
         '--search-attribute', 'ClaudeTempoPlayerId=Keyword',
         '--search-attribute', 'ClaudeTempoHostname=Keyword',
         '--search-attribute', 'ClaudeTempoGitRoot=Keyword',
-        '--search-attribute', 'ClaudeTempoStatus=Keyword',
         '--search-attribute', 'ClaudeTempoPlayerType=Keyword',
         '--search-attribute', 'ClaudeTempoIsConductor=Bool',
         // v0.25 attachment lifecycle search attrs (§9, §11.2)

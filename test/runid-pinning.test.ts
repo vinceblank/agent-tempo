@@ -69,8 +69,7 @@ describe('runId pinning — prevents zombie-resurrection via unpinned handles', 
     });
   });
 
-  // TODO(#178): rewrite against attachmentInfo.phase
-  it.skip('pinned getHandle(wfId, runId) returns WorkflowNotFound if the pinned run is gone', async function () {
+  it('pinned getHandle(wfId, runId) returns WorkflowNotFound if the pinned run is gone', async function () {
     this.timeout(15_000);
     await withWorker(async () => {
       const ensemble = `pin-safe-${Date.now()}`;
@@ -97,9 +96,10 @@ describe('runId pinning — prevents zombie-resurrection via unpinned handles', 
       const pinned1 = client.workflow.getHandle(wfId, runId1);
       const pinnedDesc = await pinned1.describe();
       expect(pinnedDesc.runId).to.equal(runId1);
-      // Historical metadata still queryable
-      const meta = await pinned1.query(getMetadataQuery);
-      expect((meta as any).status).to.equal('terminated');
+      // Historical phase still readable via the `ClaudeTempoAttachmentState`
+      // search attribute — `gone` marks the terminal destroy state post-#175.
+      const pinnedPhase = (pinnedDesc.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined)?.[0];
+      expect(pinnedPhase).to.equal('gone');
 
       // Start run 2 (fresh)
       const h2 = await client.workflow.start('claudeSessionWorkflow', {

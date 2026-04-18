@@ -831,11 +831,13 @@ const SEARCH_ATTRIBUTES = [
   { name: 'ClaudeTempoGitRoot', type: 'Keyword' },
   { name: 'ClaudeTempoEnsemble', type: 'Keyword' },
   { name: 'ClaudeTempoPlayerId', type: 'Keyword' },
-  { name: 'ClaudeTempoStatus', type: 'Keyword' },
   { name: 'ClaudeTempoPlayerType', type: 'Keyword' },
   { name: 'ClaudeTempoIsConductor', type: 'Bool' },
   // v0.25 attachment lifecycle search attrs (design §9, §11.2).
-  // Ops note: registration documented in docs/ops/v0.25-search-attribute-registration.md.
+  // Ops note: registration documented in docs/ops/v0.26-migration.md.
+  // `ClaudeTempoStatus` was removed in v0.26 (#175 / #178); operators on
+  // long-lived Temporal clusters must manually drop the attribute — Temporal
+  // does not auto-unregister search attributes.
   { name: 'ClaudeTempoAttachedHost', type: 'Keyword' },
   { name: 'ClaudeTempoAttachmentState', type: 'Keyword' },
   { name: 'ClaudeTempoAttachmentId', type: 'Keyword' },

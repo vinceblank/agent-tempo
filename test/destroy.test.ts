@@ -6,9 +6,9 @@ import {
   withWorker,
   startSession,
   playerMetadata,
-  getMetadataQuery,
   destroyUpdate,
   isDestroyedQuery,
+  attachmentInfoQuery,
   processingStartUpdate,
   getClient,
   TASK_QUEUE,
@@ -24,8 +24,7 @@ describe('destroy verb — fixes #102 (graceful stop → resurrection loop)', fu
     await teardownTestEnv();
   });
 
-  // TODO(#178): rewrite against attachmentInfo.phase
-  it.skip('marks the workflow destroyed and transitions to terminated status', async function () {
+  it('marks the workflow destroyed and transitions phase to gone', async function () {
     this.timeout(15_000);
     await withWorker(async () => {
       const ensemble = `destroy-${Date.now()}`;
@@ -33,17 +32,18 @@ describe('destroy verb — fixes #102 (graceful stop → resurrection loop)', fu
         metadata: playerMetadata({ playerId: 'destroy-bob', ensemble }),
       });
 
-      // Pre-destroy: not destroyed
+      // Pre-destroy: not destroyed.
       expect(await handle.query(isDestroyedQuery)).to.equal(false);
 
       await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'user requested stop' }] });
 
-      // Post-destroy: query returns true, metadata status is terminated
+      // Post-destroy: isDestroyed flips true and attachment phase transitions to `gone`
+      // (the authoritative lifecycle-terminal indicator post-#175).
       expect(await handle.query(isDestroyedQuery)).to.equal(true);
-      const meta = await handle.query(getMetadataQuery);
-      expect((meta as any).status).to.equal('terminated');
+      const info = await handle.query(attachmentInfoQuery);
+      expect(info.phase).to.equal('gone');
 
-      // Workflow drains and completes on its own
+      // Workflow drains and completes on its own.
       await handle.result();
     });
   });
@@ -154,8 +154,7 @@ describe('destroy verb — fixes #164 (destroy with live attachment)', function 
     await teardownTestEnv();
   });
 
-  // TODO(#178): rewrite against attachmentInfo.phase
-  it.skip('destroys a session with a live attachment — workflow completes, isDestroyed=true', async function () {
+  it('destroys a session with a live attachment — workflow completes, isDestroyed=true', async function () {
     this.timeout(15_000);
     await withWorker(async () => {
       const ensemble = `destroy-164-claimed-${Date.now()}`;
@@ -174,13 +173,15 @@ describe('destroy verb — fixes #164 (destroy with live attachment)', function 
         args: [{ host: 'test-host', adapterId: 'claude-code', adapterClass: 'interactive', leaseMs: 30_000 }],
       });
 
-      // Destroy while attached — must not hang or throw.
+      // Capture phase before the workflow completes — queries don't work on
+      // completed workflows in all Temporal client versions.
       await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'repro #164' }] });
-      await handle.result();
+      const info = await handle.query(attachmentInfoQuery);
+      expect(info.phase).to.equal('gone');
 
+      // Destroy while attached — must not hang or throw.
+      await handle.result();
       expect(await handle.query(isDestroyedQuery)).to.equal(true);
-      const meta = await handle.query(getMetadataQuery);
-      expect((meta as any).status).to.equal('terminated');
     });
   });
 

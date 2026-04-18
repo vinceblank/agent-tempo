@@ -126,54 +126,11 @@ describe('processing lifecycle — fixes #99 (long tool calls misclassified as s
     });
   });
 
-  // TODO(#178): rewrite against attachmentInfo.phase
-  it.skip('suppresses stale detection while a message is in-flight, then resumes once released (#99)', async function () {
-    this.timeout(30_000);
-    await withWorkerAndOutboxActivities(async () => {
-      const now = Date.now();
-      // Pre-seed a 5-minute-old undelivered message (would normally trigger stale detection,
-      // since the threshold is 3 minutes) and pre-populate inFlightMessageIds so the very
-      // first main-loop iteration treats the adapter as processing.
-      const oldMsg: Message = {
-        id: 'msg-1',
-        from: 'conductor',
-        text: 'Do a long task',
-        timestamp: new Date(now - 5 * 60 * 1000).toISOString(),
-        delivered: false,
-      };
-
-      const handle = await startSession({
-        metadata: playerMetadata({ playerId: 'proc-stale', status: 'active' }),
-        disableStaleDetection: false,
-        messages: [oldMsg],
-        inFlightMessageIds: ['msg-1'],
-        processingSince: now - 5 * 60 * 1000,
-        // Seed the outbox so the main loop wakes on first iteration and runs stale check.
-        outbox: seedOutbox(),
-      });
-
-      // Give the workflow a beat to run its first main-loop iteration.
-      await new Promise((r) => setTimeout(r, 2000));
-      const meta1: SessionMetadata = await handle.query(getMetadataQuery);
-      expect((meta1 as any).status).to.not.equal('stale');
-      expect(await handle.query(inFlightMessagesQuery)).to.deep.equal(['msg-1']);
-
-      // End processing — next iteration should let stale detection fire.
-      await handle.executeUpdate(processingEndUpdate, { args: [{ messageId: 'msg-1' }] });
-      // Submit another outbox seed to wake the loop again.
-      await handle.executeUpdate(submitOutboxUpdate, {
-        args: [{ type: 'cue', targetPlayerId: '_probe2', message: '_wake2' }],
-      });
-      await new Promise((r) => setTimeout(r, 2000));
-
-      const meta2: SessionMetadata = await handle.query(getMetadataQuery);
-      expect((meta2 as any).status).to.equal('stale');
-
-      // Cleanup: deliver pending messages, then destroy. v0.25 destroy (§2.5) is
-      // "abandon and COMPLETE" — no drain-wait — so no signals after destroy.
-      await deliverAll(handle);
-      await handle.executeUpdate(destroyUpdate, { args: [{}] });
-      await handle.result().catch(() => {});
-    });
-  });
+  // #99 regression test deleted in #178: the `stale` detection heuristic it
+  // exercised was removed entirely in #175. The failure mode it prevented
+  // (long tool calls misclassified as stale) is now structurally impossible —
+  // the phase machine tracks in-flight work via `processingStart`/`processingEnd`
+  // and the 3-minute stale heuristic doesn't exist anymore. The
+  // `processingStart`/`processingEnd` → `inFlightMessages` contract is covered
+  // by the sibling `suspendOnProcessingStart` test above.
 });

@@ -12,7 +12,7 @@ import {
   submitOutboxUpdate,
   outboxQuery,
   updateMetadataSignal,
-
+  attachmentInfoQuery,
   destroyUpdate,
   allSentMessagesQuery,
   getClient,
@@ -35,8 +35,7 @@ describe('hold and release (warm hold)', function () {
   });
 
   describe('recruit with held flag (warm hold)', function () {
-    // TODO(#178): rewrite against attachmentInfo.phase
-    it.skip('creates workflow with outboxLocked and spawns process', async function () {
+    it('creates workflow with outboxLocked and spawns process', async function () {
       this.timeout(30_000);
       const spawnInputs: Array<Record<string, unknown>> = [];
       await withWorkerAndRecruitCapture(spawnInputs, async () => {
@@ -79,8 +78,11 @@ describe('hold and release (warm hold)', function () {
         const recruitedHandle = getClient().workflow.getHandle(
           `claude-session-${ensemble}-warm-held-player`,
         );
-        const metadata = await recruitedHandle.query(getMetadataQuery);
-        expect((metadata as any).status).to.equal('pending'); // not 'held' — process spawned. TODO(#178): rewrite against attachmentInfo.phase.
+        // Recruited workflow starts in `booting` phase (no adapter has claimed it
+        // yet — spawn is in-flight). The distinction vs a non-held recruit is
+        // `outboxLocked === true` (asserted below), not a separate phase value.
+        const info = await recruitedHandle.query(attachmentInfoQuery);
+        expect(info.phase).to.equal('booting');
 
         // Verify outbox IS locked
         const isLocked = await recruitedHandle.query(outboxLockedQuery);

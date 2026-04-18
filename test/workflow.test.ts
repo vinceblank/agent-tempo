@@ -13,7 +13,7 @@ import {
   markDeliveredSignal,
   recordSentMessageSignal,
   updateMetadataSignal,
-
+  attachmentInfoQuery,
   destroyUpdate,
   getPartQuery,
   getMetadataQuery,
@@ -399,57 +399,18 @@ describe('claudeSessionWorkflow', function () {
     });
   });
 
-  // ── Session status lifecycle ──
+  // ── Session phase lifecycle (post-#175 attachment phases) ──
 
-  describe('session status lifecycle', function () {
-    // TODO(#178): rewrite against attachmentInfo.phase
-    it.skip('starts with status from metadata', async function () {
+  describe('session phase lifecycle', function () {
+    it('starts in `booting` phase with no attachment', async function () {
       await withWorker(async () => {
         const handle = await startSession({
-          metadata: playerMetadata({ playerId: 'status-init', status: 'pending' }),
+          metadata: playerMetadata({ playerId: 'phase-init' }),
         });
 
-        const meta = await handle.query(getMetadataQuery);
-        expect((meta as any).status).to.equal('pending');
-
-        await handle.executeUpdate(destroyUpdate, { args: [{}] });
-        await handle.result();
-      });
-    });
-
-    it('defaults to active status when not specified', async function () {
-      await withWorker(async () => {
-        const handle = await startSession({
-          metadata: playerMetadata({ playerId: 'status-default' }),
-        });
-
-        // The workflow upserts ClaudeTempoStatus with input.metadata.status || 'active'
-        // but metadata.status itself remains undefined unless set
-        const meta = await handle.query(getMetadataQuery);
-        // status is undefined in metadata but search attribute defaults to 'active'
-        expect((meta as any).status).to.satisfy((s: string | undefined) => s === undefined || s === 'active');
-
-        await handle.executeUpdate(destroyUpdate, { args: [{}] });
-        await handle.result();
-      });
-    });
-
-    // TODO(#178): rewrite against attachmentInfo.phase
-    it.skip('transitions from pending to active via updateMetadata signal', async function () {
-      await withWorker(async () => {
-        const handle = await startSession({
-          metadata: playerMetadata({ playerId: 'status-transition', status: 'pending' }),
-        });
-
-        // Verify starts as pending
-        let meta = await handle.query(getMetadataQuery);
-        expect((meta as any).status).to.equal('pending');
-
-        // Transition to active (simulates what server.ts does when session connects)
-        await handle.signal(updateMetadataSignal, { status: 'active' });
-
-        meta = await handle.query(getMetadataQuery);
-        expect((meta as any).status).to.equal('active');
+        const info = await handle.query(attachmentInfoQuery);
+        expect(info.phase).to.equal('booting');
+        expect(info.currentAttachment).to.equal(undefined);
 
         await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
@@ -495,23 +456,22 @@ describe('claudeSessionWorkflow', function () {
       });
     });
 
-    // TODO(#178): rewrite against attachmentInfo.phase
-    it.skip('updates multiple fields in a single signal', async function () {
+    it('updates multiple fields in a single signal', async function () {
       await withWorker(async () => {
         const handle = await startSession({
-          metadata: playerMetadata({ playerId: 'meta-multi', status: 'pending' }),
+          metadata: playerMetadata({ playerId: 'meta-multi' }),
         });
 
         await handle.signal(updateMetadataSignal, {
           hostname: 'prod-host',
-          status: 'active',
           gitBranch: 'main',
+          gitRoot: '/repos/project',
         });
 
         const meta = await handle.query(getMetadataQuery);
         expect(meta.hostname).to.equal('prod-host');
-        expect((meta as any).status).to.equal('active');
         expect(meta.gitBranch).to.equal('main');
+        expect(meta.gitRoot).to.equal('/repos/project');
 
         await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
@@ -857,38 +817,10 @@ describe('claudeSessionWorkflow', function () {
     });
   });
 
-  // ── enableStaleDetection (P2) ──
-
-  describe('enableStaleDetection flag', function () {
-    // TODO(#178): rewrite against attachmentInfo.phase
-    it.skip('re-enables stale detection via updateMetadata signal without disrupting other fields', async function () {
-      this.timeout(15_000);
-      await withWorker(async () => {
-        const handle = await startSession({
-          metadata: playerMetadata({ playerId: 'stale-enable-test' }),
-          disableStaleDetection: true,
-        });
-
-        // Send the enableStaleDetection signal alongside a status update
-        await handle.signal(updateMetadataSignal, {
-          status: 'active',
-          enableStaleDetection: true,
-        });
-
-        // Workflow should still be running and queryable
-        const meta = await handle.query(getMetadataQuery);
-        expect((meta as any).status).to.equal('active');
-        expect(meta.playerId).to.equal('stale-enable-test');
-
-        // Terminate — PR-C commit 4 retired the v0.24 drain-wait semantic. The
-        // `updateMetadata({ status: 'terminated' })` shim now routes onto §2.5 destroy
-        // (abandon in-flight, COMPLETE immediately). The post-terminate delivery poll
-        // that the original test ran is no longer needed.
-        await handle.executeUpdate(destroyUpdate, { args: [{ terminatedBy: 'test' }] });
-        await handle.result();
-      });
-    });
-  });
+  // `enableStaleDetection` suite removed in #178 — the legacy stale-detection
+  // heuristic it toggled was deleted in #175. The signal wire shape still
+  // accepts the field for backward compat, but it has no observable effect;
+  // nothing to test.
 
   describe('sessionId metadata', function () {
     it('stores sessionId via updateMetadata signal', async function () {
