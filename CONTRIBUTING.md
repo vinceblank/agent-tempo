@@ -6,7 +6,7 @@ Thank you for your interest in contributing to claude-tempo! This guide will hel
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - A running [Temporal](https://temporal.io/) dev server
 
 ### Getting Started
