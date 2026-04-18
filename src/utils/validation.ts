@@ -52,8 +52,8 @@ export const GATE_NOTES_MAX = 1024;
 /** Timeout for npm install in worktrees (60s). */
 export const WORKTREE_INSTALL_TIMEOUT = 60000;
 
-/** Window for blocked session detection (5 minutes). */
-export const BLOCKED_WINDOW_MS = 5 * 60 * 1000;
+// `BLOCKED_WINDOW_MS` constant removed in v0.26 (#175 / #178) — the blocked
+// session heuristic it gated was replaced by the attachment-phase lifecycle.
 
 /** Maximum length for message preview truncation. */
 export const PREVIEW_MAX_LENGTH = 200;

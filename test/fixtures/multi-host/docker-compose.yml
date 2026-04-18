@@ -24,7 +24,7 @@ services:
       - --search-attribute=ClaudeTempoEnsemble=Keyword
       - --search-attribute=ClaudeTempoPlayerId=Keyword
       - --search-attribute=ClaudeTempoHostname=Keyword
-      - --search-attribute=ClaudeTempoStatus=Keyword
+      # ClaudeTempoStatus removed in v0.26 (#175 / #178).
       - --search-attribute=ClaudeTempoGitRoot=Keyword
       - --search-attribute=ClaudeTempoPlayerType=Keyword
       - --search-attribute=ClaudeTempoIsConductor=Bool
