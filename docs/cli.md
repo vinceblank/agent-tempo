@@ -30,7 +30,7 @@ claude-tempo <command> [options]
 | `resume [ensemble]` | Resume a paused ensemble — unlocks outbox dispatch and restarts the scheduler. Use `--release` to also release any held players in the same call. |
 | `ensemble <sub>` | Manage saved lineups (`save`, `list`, `show`) |
 | `agent-types <sub>` | Manage player types (`list`, `show <name>`, `init`) |
-| `daemon <sub>` | Manage the worker daemon (`start`, `stop`, `status`, `logs`) |
+| `daemon <sub>` | Manage the worker daemon (`start [--force]`, `stop`, `status`, `logs`) |
 | `tui [--ensemble <name>]` | Launch the interactive TUI — chat-focused shell with slash commands for managing players and ensembles |
 | `upgrade [version]` | Graceful self-update — stops daemon, installs new version, restarts daemon |
 | `version` | Print the installed version |

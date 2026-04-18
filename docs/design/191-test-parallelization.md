@@ -100,7 +100,7 @@ Researcher flagged 4 workers on 4-core as risky. 2 workers would be safer CPU-wi
 | Phase | Scope | PR title | Ship order | Files touched |
 |---|---|---|---|---|
 | 0 | Fix #209 (35s flake) | `fix(test): ...` | Before Phase 1 | 1 |
-| 1 | Option C — shared `TestWorkflowEnvironment` | `refactor(test): shared env, per-file namespace suffix` | After #209, observe 20 CI runs before Phase 2 | 3 |
+| 1 | Option C — shared `TestWorkflowEnvironment` | `refactor(test): shared env, per-file namespace suffix` | After #209, observe 5 CI runs before Phase 2 (reduced from 20 per v4) | 3 |
 | 2 | Option A — 2-way matrix shard | `feat(ci): shard mocha tests 2-way` | After Phase 1 stabilizes | ~4 (CI yaml, `shard-config.json`, `test/README.md`, scripts/package.json) |
 
 Phasing rationale: each phase is **independently valuable and cleanly revertible**. Phase 1 ships a test-helper refactor with no CI yaml changes. Phase 2 ships a CI yaml change with no test-code churn. If Phase 1 destabilizes, we roll back `test/helpers.ts` and the 2 test files — no CI plumbing to unwind. If Phase 2 misbehaves, we roll back the yaml and `shard-config.json` — test code unchanged.
@@ -109,7 +109,7 @@ Phasing rationale: each phase is **independently valuable and cleanly revertible
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| **Runtime state leak under shared env** (Phase 1) — audit was static-only | Medium | Medium–High | Run 20-iteration local loop pre-merge; canary the PR for 1 week on main before Phase 2. `TEMPO_TEST_ISOLATED=1 npm test` fallback path preserves per-file env for debugging. |
+| **Runtime state leak under shared env** (Phase 1) — audit was static-only | Medium | Medium–High | Run 20-iteration local loop pre-merge; observe 5 clean CI runs on main before Phase 2 (window reduced from 20 per v4 — Phase 1 landed clean with no state-leak signals). `TEMPO_TEST_ISOLATED=1 npm test` fallback path preserves per-file env for debugging. |
 | **Search-attribute re-registration** collides on second suite invocation | Low | Medium | Existing registration is idempotent; verify with explicit test. Document in `test/README.md`. |
 | **Workflow ID collisions** from a caller not using the random-suffix default | Medium during rollout | High (flaky cross-file contamination) | Lint rule or grep-based CI check: fail if `ensemble: 'test-ensemble'` appears as a literal outside `helpers.ts`. |
 | **Shard balance drift** as tests are added (Phase 2) | Medium | Low (one-line rebalance PR) | CI posts per-shard wall-clock; warn if `max/min > 1.3×`. |
@@ -121,7 +121,7 @@ Phasing rationale: each phase is **independently valuable and cleanly revertible
 ## 6. Recommendation
 
 1. Ship **#209** (separate PR) → critical path drops to 300s.
-2. Ship **Phase 1 (Option C shared env)** → critical path drops to **~215s (3m 35s)**. ~1-day refactor; 3 files touched; zero CI yaml changes. Run 20-iteration local loop pre-merge. Observe 20 CI runs post-merge watching for flakes before Phase 2.
+2. Ship **Phase 1 (Option C shared env)** → critical path drops to **~215s (3m 35s)**. ~1-day refactor; 3 files touched; zero CI yaml changes. Run 20-iteration local loop pre-merge. Observe 5 CI runs post-merge watching for flakes before Phase 2 (observation window reduced from 20 per v4).
 3. Ship **Phase 2 (Option A matrix shard)** once Phase 1 stabilizes → critical path drops to **~108s (1m 48s)**. ~50-line yaml + config PR. No test-code churn.
 4. Default **stop here**. Re-evaluate 3rd shard or `mocha --parallel` only if wall-clock creeps back above 2m over time.
 
@@ -137,3 +137,4 @@ Phasing rationale: each phase is **independently valuable and cleanly revertible
 - **v1** (initial): Recommended A → C phasing based on #16 spike estimate that C was ~1-week audit.
 - **v2**: Pivoted to **C → A** after workflow-ID audit reduced C's cost to ~1 day (3 files). Lower-risk first move; stress-tests shared-env stability before adding shard complexity.
 - **v3** (post-implementation, 2026-04-18): Phase 1 implementation (tempo-eng, #210) surfaced an estimation miss in the audit that fed v2. The audit reported **~8 literal `'test-ensemble'` occurrences** as the safety-critical collision surface; the actual full-repo sweep was **40 occurrences** across Tier A/B files. The extras lived in mock-only test files that bypass Temporal entirely, so the **safety property held** — zero collision risk at runtime — but the **cosmetic sweep** (literals to replace for consistency/lint-clean) was 5× larger than the design doc implied. No technical rework was needed; the Phase 1 PR simply had a larger diff than forecast. **Lesson for future audits of this kind**: separate the reported count into two metrics — *safety-relevant* (files that share the collision surface) and *total-sweep* (files the lint/rename touches, including Temporal-free ones). Conflating them understates PR size and risks reviewer surprise.
+- **v4** (2026-04-18 evening): Reduced the post-Phase-1 observation window from 20 → 5 clean CI runs before unlocking Phase 2 (matrix shard). Rationale: initial CI traffic post-merge showed zero flakes and no runtime state-leak signals (search-attribute re-registration, activity-stub leaks, and scheduler cron state all quiet). The v3 20-run bar was conservative — it was set when the shared-env audit was still static-only and runtime behaviour was unconfirmed; with two clean runs at decision time and no signals surfacing, 5 is a sufficient empirical bar. Decision-maker: vinceblank.

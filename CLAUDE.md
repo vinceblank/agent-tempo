@@ -20,12 +20,15 @@ src/
 ├── cli.ts             # CLI entry point (claude-tempo command)
 ├── daemon.ts          # Daemon entry point — runs Temporal workers as a detached background process
 ├── cli/
-│   ├── commands.ts    # CLI command implementations (up, start, conduct, status, stop, upgrade, …)
-│   ├── config-command.ts # config subcommand (interactive + set/show)
-│   ├── daemon.ts      # Daemon management utilities (start, stop, status, logs, isDaemonRunning)
+│   ├── commands.ts    # CLI command implementations (up, start, conduct, status, stop, …)
+│   ├── config-command.ts # config subcommand (interactive + set/show) — crash-proof for show/set
+│   ├── daemon.ts      # Daemon management utilities (start, stop, status, heartbeat, isDaemonRunning)
+│   ├── daemon-command.ts # daemon subcommand handler — crash-proof, no Temporal deps
+│   ├── help-text.ts   # help output — crash-proof, no Temporal deps
 │   ├── mcp.ts         # MCP server registration helpers (init, global vs project)
 │   ├── output.ts      # Shared CLI output formatting helpers
-│   └── preflight.ts   # Environment preflight checks
+│   ├── preflight.ts   # Environment preflight checks
+│   └── upgrade-command.ts # upgrade subcommand — crash-proof; dynamic-imports Temporal only for active-session warning
 ├── adapters/
 │   ├── README.md      # Adapter contract documentation
 │   ├── index.ts       # Adapter registry bootstrap + barrel exports

@@ -63,6 +63,12 @@ claude-tempo daemon start                                          # spawn a sin
 claude-tempo daemon status                                         # verify orphan count is zero
 ```
 
+Alternatively, once orphans are killed and the pid file is cleared, `daemon start --force` is a one-step shortcut — it bypasses the orphan pre-flight check and removes any stale pid file before spawning:
+
+```bash
+claude-tempo daemon start --force
+```
+
 Pattern match is narrow (`claude-tempo` + `dist/daemon.js` in the command line) so
 these commands won't touch unrelated node processes. Review the list output before
 running the kill variant.
