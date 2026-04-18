@@ -13,6 +13,8 @@ function makeOrphan(opts: {
   workflowId?: string;
   phase?: 'detached' | 'attached' | 'awaiting' | 'processing' | 'booting' | 'draining' | 'gone';
   detachedSince?: string;
+  ensemble?: string;
+  playerId?: string;
 }): OrphanCandidate {
   return {
     workflowId: opts.workflowId ?? 'claude-session-e1-p1',
@@ -21,6 +23,8 @@ function makeOrphan(opts: {
       inFlightCount: 0,
     },
     summary: {
+      ensemble: opts.ensemble ?? 'e1',
+      playerId: opts.playerId ?? 'p1',
       ...(opts.detachedSince !== undefined ? { detachedSince: opts.detachedSince } : {}),
     },
   };

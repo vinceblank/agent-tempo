@@ -58,7 +58,7 @@ function makeFakeClient(opts: {
             if (wf?.queryError) throw wf.queryError;
             const n = asName(name);
             if (n === 'attachmentInfo') return wf?.info;
-            if (n === 'orphanSummary') return wf?.summary ?? {};
+            if (n === 'orphanSummary') return wf?.summary ?? { ensemble: '', playerId: '' };
             return undefined;
           },
         };
@@ -79,7 +79,7 @@ describe('queryOrphanedSessions', function () {
         {
           workflowId: 'claude-session-e1-alice',
           info: { phase: 'detached', inFlightCount: 0 },
-          summary: { detachedSince: '2026-04-01T00:00:00Z', preferredHost: 'host-1' },
+          summary: { ensemble: 'e1', playerId: 'alice', detachedSince: '2026-04-01T00:00:00Z', preferredHost: 'host-1' },
         },
       ],
     });
@@ -88,6 +88,35 @@ describe('queryOrphanedSessions', function () {
     expect(orphans[0].workflowId).to.equal('claude-session-e1-alice');
     expect(orphans[0].info.phase).to.equal('detached');
     expect(orphans[0].summary.detachedSince).to.equal('2026-04-01T00:00:00Z');
+    expect(orphans[0].summary.ensemble).to.equal('e1');
+    expect(orphans[0].summary.playerId).to.equal('alice');
+  });
+
+  it('resolves dashed player names via OrphanSummary (regression: #143 regex dropped dashes)', async function () {
+    // Workflow id is `claude-session-{ensemble}-{playerId}`. The legacy
+    // regex `/^claude-session-.+-([^-]+)$/` greedily captured ensemble and
+    // took the last dash-delimited segment as playerId — for a workflow
+    // `claude-session-tempo-impl-tempo-eng` it produced
+    //   ensemble = "tempo-impl-tempo", playerId = "eng"
+    // instead of the canonical
+    //   ensemble = "tempo-impl",       playerId = "tempo-eng"
+    //
+    // Post-#143: consumers read ensemble/playerId directly from
+    // OrphanSummary (sourced from `input.metadata` in the workflow handler),
+    // so dashed names round-trip correctly.
+    const client = makeFakeClient({
+      workflows: [
+        {
+          workflowId: 'claude-session-tempo-impl-tempo-eng',
+          info: { phase: 'detached', inFlightCount: 0 },
+          summary: { ensemble: 'tempo-impl', playerId: 'tempo-eng' },
+        },
+      ],
+    });
+    const orphans = await queryOrphanedSessions(client, { hostname: 'host-1' });
+    expect(orphans).to.have.length(1);
+    expect(orphans[0].summary.ensemble).to.equal('tempo-impl');
+    expect(orphans[0].summary.playerId).to.equal('tempo-eng');
   });
 
   it('skips candidates whose adapter process the predicate reports alive', async function () {
@@ -114,7 +143,7 @@ describe('queryOrphanedSessions', function () {
         {
           workflowId: 'claude-session-e1-dead',
           info: { phase: 'detached', inFlightCount: 0 },
-          summary: {},
+          summary: { ensemble: 'e1', playerId: 'dead' },
         },
       ],
     });
@@ -136,7 +165,7 @@ describe('queryOrphanedSessions', function () {
         {
           workflowId: 'claude-session-e1-ok',
           info: { phase: 'detached', inFlightCount: 0 },
-          summary: {},
+          summary: { ensemble: 'e1', playerId: 'ok' },
         },
       ],
     });

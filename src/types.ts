@@ -128,8 +128,16 @@ export interface AttachmentInfo {
 /**
  * Returned by the `orphanSummary` query — shape matches what the daemon needs to render
  * a detached-orphan card and decide whether to auto-restore per `restorePolicy`.
+ *
+ * `ensemble` and `playerId` carry the workflow's canonical metadata identity —
+ * sourced from `input.metadata` in the workflow handler, not parsed from the
+ * workflow id (see #143). Consumers like `reconcileOnBoot`, `cleanupLoop`, and
+ * `restoreOneOrphan` read these directly instead of regex-parsing the workflow
+ * id (which loses dashes from player names like `tempo-eng`).
  */
 export interface OrphanSummary {
+  ensemble: string;
+  playerId: string;
   detachedSince?: string;
   reason?: DetachReason;
   preferredHost?: string;
