@@ -25,12 +25,23 @@ const { fireSchedule, computeNextCronFire } = proxyActivities<ScheduleActivities
   retry: { maximumAttempts: 3 },
 });
 
+/** Default self-termination grace period — 30 000 ms (see §scheduler "empty self-terminate"). */
+const DEFAULT_GRACE_PERIOD_MS = 30_000;
+
 export interface SchedulerInput {
   ensemble: string;
   /** Restored from continue-as-new. */
   entries?: ScheduleEntry[];
   /** Restored from continue-as-new: paused state. */
   paused?: boolean;
+  /**
+   * Milliseconds to wait for new entries before the workflow self-terminates when the
+   * entries list is empty. Defaults to {@link DEFAULT_GRACE_PERIOD_MS} — 30s in production.
+   * Tests override (e.g. to 100ms) to keep the "self-terminates when empty" case fast;
+   * `setupTestEnv` uses `createLocal()` so this delay is real wall-clock time.
+   * Always propagated via continue-as-new so behavior stays consistent across re-entries.
+   */
+  gracePeriodMs?: number;
 }
 
 export async function claudeSchedulerWorkflow(input: SchedulerInput): Promise<void> {
@@ -38,6 +49,7 @@ export async function claudeSchedulerWorkflow(input: SchedulerInput): Promise<vo
   let dirty = false; // flag to wake the loop when signals arrive
   let schedulerPaused = input.paused ?? false;
   let skippedWhilePaused = 0;
+  const gracePeriodMs = input.gracePeriodMs ?? DEFAULT_GRACE_PERIOD_MS;
 
   // ── Signal Handlers ──
 
@@ -84,9 +96,11 @@ export async function claudeSchedulerWorkflow(input: SchedulerInput): Promise<vo
   while (true) {
     // Self-terminate when empty
     if (entries.length === 0) {
-      // Wait a short period for new entries to arrive before terminating
+      // Wait `gracePeriodMs` for new entries to arrive before terminating.
+      // Production default is 30s; tests override via `SchedulerInput.gracePeriodMs`
+      // because `TestWorkflowEnvironment.createLocal()` does NOT time-skip.
       dirty = false;
-      await condition(() => dirty, '30 seconds');
+      await condition(() => dirty, gracePeriodMs);
       if (entries.length === 0) break;
     }
 
@@ -165,6 +179,9 @@ export async function claudeSchedulerWorkflow(input: SchedulerInput): Promise<vo
         ensemble: input.ensemble,
         entries,
         paused: schedulerPaused,
+        // Propagate the configured grace period — omitting this would silently
+        // revert tests that set a short window back to the 30s default on re-entry.
+        gracePeriodMs: input.gracePeriodMs,
       });
     }
   }
