@@ -12,16 +12,29 @@
 updates the `ClaudeTempoPlayerId` search attribute to a human-readable name. The name is how
 other players address you via `cue`.
 
-**Session status** — Each session tracks a lifecycle status via the `ClaudeTempoStatus` search
-attribute:
+**Attachment phase** (v0.26) — Each session workflow tracks a lifecycle phase via the
+`ClaudeTempoAttachmentState` search attribute. The phase is driven by the adapter lifecycle
+(see `src/adapters/`), not by a polling heuristic:
 
-- `pending` — Workflow pre-created; process not yet connected
-- `active` — Process connected and delivering messages
-- `stale` — Messages have gone undelivered for 3+ minutes (process may be idle or hung)
-- `blocked` — Session is alive (delivering messages) but has produced no response to a
-  `responseRequested: true` message for 5+ minutes. Blocked status auto-recovers to `active`
-  on next outbound. Informational messages (broadcasts, schedule-fires, heartbeats, system
-  notifications) set `responseRequested: false` and do not trigger blocked detection.
+- `booting` — Workflow exists, no adapter has claimed it yet (the state after `recruit`
+  creates the workflow but before the spawned process calls `claimAttachment`)
+- `attached` — An adapter holds a valid attachment and is idle-ready
+- `processing` — Attached AND at least one inbound message is in-flight in the adapter
+  (set via `processingStart` update; cleared via `processingEnd`)
+- `awaiting` — Attached, idle, outbox empty (presentation refinement of `attached`)
+- `draining` — Attachment requested detach; flushing outbox and awaiting `adapterExited`
+- `detached` — Workflow RUNNING, no attachment; outbox dispatch paused (`stop`/`destroy` bypass)
+- `gone` — Terminal; workflow COMPLETES after `destroy`
+
+Phase transitions are deterministic and recorded as workflow history events. External
+observers (the TUI, the CLI `ensemble` tool, the Maestro dashboard, the daemon
+`reconcileOnBoot` path) read the current phase from `ClaudeTempoAttachmentState` or the
+`attachmentInfo` query — both are authoritative.
+
+> **Historical note** — Before v0.26, sessions carried a `ClaudeTempoStatus` search attribute
+> with values `pending | active | stale | blocked | terminated`, driven by a 3-min stale and
+> 5-min blocked heuristic. That shim was removed in v0.26 (#174–#178 epic). See
+> [`docs/ops/v0.26-migration.md`](ops/v0.26-migration.md) for the upgrade path.
 
 ---
 

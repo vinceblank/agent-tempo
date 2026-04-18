@@ -5,6 +5,96 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.26.0-beta.1] - 2026-04-18
+
+> **Beta release.** Completes the #174 legacy-shim removal epic (PRs
+> [#175](https://github.com/vinceblank/claude-tempo/pull/192),
+> [#176](https://github.com/vinceblank/claude-tempo/pull/196),
+> [#177](https://github.com/vinceblank/claude-tempo/pull/197),
+> #178). The attachment-phase lifecycle (shipped in v0.25) is now the
+> single source of lifecycle truth; the compat shim that let adapters
+> migrate at their own pace through v0.25.x is gone.
+>
+> **Upgrade guide:** [`docs/ops/v0.26-migration.md`](docs/ops/v0.26-migration.md).
+>
+> **Install:** `npm i -g claude-tempo@0.26.0-beta.1`
+> **Rollback:** `npm i -g claude-tempo@0.25.0-beta.5`
+
+### BREAKING CHANGES
+
+- **`ClaudeTempoStatus` search attribute removed.** Long-lived Temporal
+  clusters must manually drop the attribute — Temporal does not
+  auto-unregister. See the migration guide for `tcld` / `temporal
+  operator` commands. Lifecycle truth now lives on
+  `ClaudeTempoAttachmentState` (seven-phase values) and the
+  `attachmentInfo` query.
+- **`SessionStatus` TypeScript enum removed** from the public SDK
+  surface. Use `AttachmentPhase` (`booting | attached | processing |
+  awaiting | draining | detached | gone`) for lifecycle-typed code.
+- **`SessionMetadata.status` field removed.** Query `attachmentInfo`
+  on the workflow handle for phase instead.
+- **`EnsembleSessionInfo.status` field removed**; replaced by
+  `EnsembleSessionInfo.phase?: AttachmentPhase`. `scanEnsembleSessions`
+  reads the new field from `ClaudeTempoAttachmentState`.
+- **`MaestroPlayerInfo.status` renamed to `phase?: AttachmentPhase`.**
+  External `TempoClient` consumers reading `player.status` must
+  migrate to `player.phase`.
+- **`BLOCKED_WINDOW_MS` / `SessionStatus` removed** from
+  `src/utils/validation.ts`.
+- **`updateMetadata` signal no longer writes `status`.** The field
+  remains on the signal wire-shape for backward compat (prevents older
+  clients from crashing on schema-mismatch) but has no observable
+  effect — phase transitions happen through the V2 wire surface
+  (`claimAttachment` / `adapterExited` / `forceDetach` /
+  `destroyUpdate`).
+- **Ensemble / CLI / TUI output labels collapsed.** Where v0.25
+  rendered `(stale)` / `(blocked)` / `(pending)` / `(terminated)`
+  tags, v0.26 renders `(pending)` / `(disconnected)` / `(gone)` — the
+  Option-B mapping from the seven underlying phases to five
+  user-facing buckets.
+- **End-to-end upgrade required.** A v0.25 CLI / TUI paired with a
+  v0.26 daemon (or the reverse) is not supported. Upgrade both sides
+  together.
+
+### Removed
+
+- Legacy `_heartbeat` / `_ping` probe messages (the workflow used to
+  inject these after 1 hour of idle) — the adapter `heartbeat` signal
+  is the real liveness channel.
+- 3-minute stale detection heuristic and 5-minute blocked-window
+  heuristic — replaced by adapter lease expiry and
+  `processingDeadline`.
+- `docs/ops/v0.25-beta1-release-checklist.md` — marked as historical
+  / superseded by the v0.26 migration guide.
+- `test/blocked-detection.test.ts` — obsolete (heuristics removed).
+- 9 other shim-era skipped tests (deleted or rewritten against
+  attachment phase assertions).
+
+### Fixed
+
+- **Node 24 CI flake on `test/stages.test.ts`.** Bumped the
+  `retry()` helper's default timeout from 5 s → 10 s to absorb
+  Node 24 scheduler variance; the "completes stage when all players
+  report result" test flaked on first CI run during #196 / #197 and
+  passed on rerun.
+
+### Docs
+
+- New [`docs/ops/v0.26-migration.md`](docs/ops/v0.26-migration.md) —
+  operator-facing migration guide with cluster-side attribute-drop
+  commands, SDK consumer-update checklist, and rollback steps.
+- Rewrote `docs/concepts.md`, `docs/troubleshooting.md`, and
+  `CLAUDE.md` "Attachment phase" section to describe the seven
+  phases in place of the removed `ClaudeTempoStatus`.
+- Added editor's note to `docs/design/session-lifecycle-rebuild-v2.md`
+  marking the design as realized.
+- Added § 11 to
+  `docs/design/session-lifecycle-rebuild-v2-sequencing.md` capturing
+  the PR-H shim-removal ladder (PRs #175–#178).
+- New `CLAUDE.md` callout on the `test/` (Mocha) vs `tests/`
+  (Vitest) directory split — both are first-class test targets and
+  must be grepped together during call-site migrations.
+
 ## [0.25.0-beta.5] - 2026-04-18
 
 > **Beta release.** Three daemon and outbox stability fixes.

@@ -208,6 +208,12 @@ Workflow updates on a `claudeGlobalMaestroWorkflow` instance (transactional, ret
 
 The following custom Temporal search attributes are written by `claudeSessionWorkflow` and used for session discovery.
 
+> **v0.26-beta breaking change** — `ClaudeTempoStatus` has been removed. Lifecycle truth
+> now lives on `ClaudeTempoAttachmentState` (search attribute) and the `attachmentInfo`
+> query. Operators on long-lived Temporal clusters must manually drop the legacy
+> attribute — Temporal does not auto-unregister search attributes.
+> See [`docs/ops/v0.26-migration.md`](ops/v0.26-migration.md) for the upgrade steps.
+
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `ClaudeTempoEnsemble` | `Keyword` | Ensemble namespace (from `CLAUDE_TEMPO_ENSEMBLE` env var). Scopes sessions to a named group. |

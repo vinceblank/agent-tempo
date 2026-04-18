@@ -21,7 +21,6 @@ temporal server start-dev \
   --search-attribute ClaudeTempoEnsemble=Keyword \
   --search-attribute ClaudeTempoPlayerId=Keyword \
   --search-attribute ClaudeTempoHostname=Keyword \
-  --search-attribute ClaudeTempoStatus=Keyword \
   --search-attribute ClaudeTempoGitRoot=Keyword \
   --search-attribute ClaudeTempoPlayerType=Keyword \
   --search-attribute ClaudeTempoIsConductor=Bool \
@@ -29,6 +28,9 @@ temporal server start-dev \
   --search-attribute ClaudeTempoAttachmentState=Keyword \
   --search-attribute ClaudeTempoAttachmentId=Keyword
 ```
+
+> `ClaudeTempoStatus` was removed in v0.26. If you're upgrading a long-lived cluster,
+> see [`docs/ops/v0.26-migration.md`](ops/v0.26-migration.md) for the operator-side drop.
 
 > **Note**: The `claude-tempo up` CLI command handles this automatically for production use.
 > The manual command above is the fallback for development environments where you want
