@@ -9,7 +9,6 @@ import {
   sendMessage,
   playerMetadata,
   conductorMetadata,
-  listEnsemble,
   waitForEnsembleMembers,
   resolveByName,
   isConductorRunning,
@@ -186,7 +185,7 @@ describe('multi-session integration', function () {
         });
 
         // 4. Verify both sessions are visible in the ensemble
-        const members = await listEnsemble(getClient(), ensemble);
+        const members = await waitForEnsembleMembers(getClient(), ensemble, 2);
         expect(members).to.have.lengthOf(2);
 
         const conductor = members.find((m) => m.isConductor);
@@ -285,7 +284,7 @@ describe('multi-session integration', function () {
         await handles[2].signal(setPartSignal, 'Configuring Terraform');
 
         // List and verify
-        const members = await listEnsemble(getClient(), ensemble);
+        const members = await waitForEnsembleMembers(getClient(), ensemble, 3);
         expect(members).to.have.lengthOf(3);
 
         // Verify each can be resolved and has correct part
@@ -375,7 +374,7 @@ describe('multi-session integration', function () {
         expect(deliveredMsg!.delivered).to.be.true;
 
         // 5. Verify the resumed session is visible in ensemble
-        const members = await listEnsemble(getClient(), ensemble);
+        const members = await waitForEnsembleMembers(getClient(), ensemble, 1);
         const conductor = members.find((m) => m.isConductor);
         expect(conductor).to.exist;
 
@@ -530,7 +529,7 @@ describe('multi-session integration', function () {
         await hCond.signal(setNameSignal, 'lead');
 
         // All three should still be visible
-        const members = await listEnsemble(getClient(), ensemble);
+        const members = await waitForEnsembleMembers(getClient(), ensemble, 3);
         expect(members).to.have.lengthOf(3);
 
         const cond = members.find((m) => m.isConductor);
