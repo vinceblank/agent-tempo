@@ -6,7 +6,7 @@ claude-tempo is an MCP server that enables multiple Claude Code sessions to coor
 
 ## Tech Stack
 
-- **Runtime**: Node.js 18+ with TypeScript
+- **Runtime**: Node.js 20+ with TypeScript
 - **MCP**: `@modelcontextprotocol/sdk` (stdio transport)
 - **Temporal**: `@temporalio/client`, `@temporalio/worker`, `@temporalio/workflow`, `@temporalio/activity`
 - **croner** — cron expression parsing and next-fire computation (used by `schedule` tool)

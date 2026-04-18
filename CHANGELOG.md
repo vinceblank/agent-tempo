@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### BREAKING CHANGES
+
+- **Dropped Node 18 support.** Minimum is now Node 20.
+  `@temporalio/core-bridge` 1.15.0 already required Node 20 at runtime
+  (its `engines.node` is `">= 20.0.0"`); the Node 18 CI job only passed
+  because npm's engines field is advisory. This change aligns the
+  declared supported surface with reality and removes the unsupported
+  matrix slot, saving ~6 min per CI run. Users still on Node 18 must
+  upgrade to Node 20 LTS (or later) before installing claude-tempo.
+
 ## [0.26.0-beta.1] - 2026-04-18
 
 > **Beta release.** Completes the #174 legacy-shim removal epic (PRs

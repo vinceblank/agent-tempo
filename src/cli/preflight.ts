@@ -31,9 +31,9 @@ export async function runPreflight(opts: CliOverrides & {
 
   // 1. Node.js version
   const major = parseInt(process.version.slice(1), 10);
-  const nodeOk = major >= 18;
-  out.check('Node.js >= 18', nodeOk, process.version);
-  if (!nodeOk) errors.push(`Node.js 18+ required, found ${process.version}`);
+  const nodeOk = major >= 20;
+  out.check('Node.js >= 20', nodeOk, process.version);
+  if (!nodeOk) errors.push(`Node.js 20+ required, found ${process.version}`);
 
   // 2. Temporal reachable
   let temporalOk = false;

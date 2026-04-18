@@ -54,7 +54,7 @@ COPILOT_BRIDGE_MODEL=gpt-4o claude-tempo start myband --agent copilot
 - Headless only — bridge sessions respond to cues, no interactive terminal
 - ~2-second polling latency (vs instant for Claude Code sessions)
 - `@github/copilot-sdk` adds ~243MB to node_modules
-- Node 20+ required (rest of claude-tempo works on Node 18+)
+- Node 20+ required
 
 ## Related
 
