@@ -79,8 +79,7 @@ jobs:
           script: |
             const tag = context.ref.replace('refs/tags/', '');
             const body = (process.env.CHANGELOG_NOTES || '').trim();
-
-            await github.rest.repos.createRelease({
+            const params = {
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
@@ -88,4 +87,35 @@ jobs:
               body: body || `Release ${tag}`,
               draft: false,
               prerelease: tag.includes('-'),
-            });
+            };
+
+            try {
+              await github.rest.repos.createRelease(params);
+              core.info(`GitHub Release created for ${tag}`);
+            } catch (err) {
+              // 422 Validation Failed: tag_name already_exists
+              // This happens when the workflow is re-run after a partial failure
+              // (e.g. the GH Release step failed but npm publish already succeeded).
+              // npm publish is the source of truth — treat an existing release as success.
+              const alreadyExists =
+                err.status === 422 &&
+                err.response?.data?.errors?.some(e => e.code === 'already_exists' && e.field === 'tag_name');
+
+              if (alreadyExists) {
+                core.warning(`GitHub Release for ${tag} already exists — updating body instead of failing.`);
+                const { data: existing } = await github.rest.repos.getReleaseByTag({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag: tag,
+                });
+                await github.rest.repos.updateRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: existing.id,
+                  body: params.body,
+                });
+                core.info(`GitHub Release for ${tag} updated.`);
+              } else {
+                throw err;
+              }
+            }
