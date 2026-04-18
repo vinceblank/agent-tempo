@@ -801,7 +801,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
    * `sessionId`/`adapterId` into the activity signature so the adapter boots
    * into the pre-claimed attachment.
    */
-  setHandler(enqueueSpawnUpdate, ({ host, attachmentId, runId, resume, sessionId, adapterId }) => {
+  setHandler(enqueueSpawnUpdate, ({ host, attachmentId, runId, resume, sessionId, adapterId, agentDefinition, agentDefinitionPath, nativeResolvable }) => {
     const spawnEntryId = uuid4();
     const entry: SpawnOutboxEntry = {
       id: spawnEntryId,
@@ -816,6 +816,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       resumeAttachment: resume,
       sessionId,
       adapterId,
+      agentDefinition,
+      agentDefinitionPath,
+      nativeResolvable,
       createdAt: workflowNow().toISOString(),
       status: 'pending',
     };
@@ -1437,6 +1440,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               attachmentId: entry.attachmentId,
               attachmentRunId: entry.attachmentRunId,
               adapterId: entry.adapterId,
+              agentDefinition: entry.agentDefinition,
+              agentDefinitionPath: entry.agentDefinitionPath,
+              nativeResolvable: entry.nativeResolvable,
             });
             break;
           }

@@ -184,6 +184,11 @@ export const enqueueSpawnUpdate = defineUpdate<
     resume: boolean;
     sessionId?: string;
     adapterId: string;
+    /** Resolved agent definition so restart spawns `--agent`/`--system-prompt`
+     *  the same way recruit does. See #184. */
+    agentDefinition?: string;
+    agentDefinitionPath?: string;
+    nativeResolvable?: boolean;
   }]
 >('enqueueSpawn');
 

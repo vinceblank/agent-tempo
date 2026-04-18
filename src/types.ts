@@ -413,6 +413,14 @@ export interface SpawnOutboxEntry extends OutboxEntryBase {
   resumeAttachment: boolean;
   /** Claude session id used for `--resume` and continuity. Optional — fresh spawns omit it. */
   sessionId?: string;
+  /** Resolved agent-definition name (e.g. `my-tempo-engineer`). */
+  agentDefinition?: string;
+  /** Absolute path to the agent-definition `.md` on the invoker host. */
+  agentDefinitionPath?: string;
+  /** True when the agent-definition is resolvable by name on the target host
+   *  (project/user tier) so the spawn can use `--agent <name>` instead of
+   *  `--system-prompt <path>`. */
+  nativeResolvable?: boolean;
 }
 
 export type OutboxEntry =
