@@ -41,14 +41,29 @@ function makeEntry(overrides: Partial<ScheduleEntry> & { name: string; message: 
   };
 }
 
+interface StartSchedulerOptions {
+  /**
+   * Override the empty-entries self-termination grace period. Defaults to the
+   * workflow's production 30 000ms. Tests that assert self-terminate behavior
+   * shrink this to ~100ms so the whole scenario runs in under a second
+   * (`createLocal()` does not time-skip).
+   */
+  gracePeriodMs?: number;
+}
+
 async function startScheduler(
   client: Client,
   entries: ScheduleEntry[] = [],
+  options: StartSchedulerOptions = {},
 ): Promise<WorkflowHandle> {
   return client.workflow.start('claudeSchedulerWorkflow', {
     workflowId: schedulerWorkflowId(ENSEMBLE),
     taskQueue: SCHEDULER_TASK_QUEUE,
-    args: [{ ensemble: ENSEMBLE, entries }],
+    args: [{
+      ensemble: ENSEMBLE,
+      entries,
+      ...(options.gracePeriodMs !== undefined ? { gracePeriodMs: options.gracePeriodMs } : {}),
+    }],
   });
 }
 
@@ -586,17 +601,23 @@ describe('claudeSchedulerWorkflow', function () {
 
   describe('self-termination', function () {
     it('self-terminates when schedule list is empty after grace period', async function () {
-      this.timeout(45_000);
+      // With a 100ms grace period the workflow self-terminates in <1s; the suite
+      // used to wait 35 real seconds on every run (#209).
+      this.timeout(10_000);
 
       await withWorkerAndActivities(async () => {
-        const handle = await startScheduler(getClient());
+        const handle = await startScheduler(getClient(), [], { gracePeriodMs: 100 });
 
-        // Empty scheduler should self-terminate after ~30s
-        // Wait and check status
-        await sleep(35_000);
-
-        const desc = await handle.describe();
-        expect(desc.status.name).to.equal('COMPLETED');
+        // Poll `describe()` until COMPLETED (or timeout via mocha). Real-time
+        // delay is dominated by the 100ms `condition()` + workflow-task dispatch.
+        const deadline = Date.now() + 5_000;
+        let last: Awaited<ReturnType<typeof handle.describe>> | undefined;
+        while (Date.now() < deadline) {
+          last = await handle.describe();
+          if (last.status.name === 'COMPLETED') break;
+          await sleep(50);
+        }
+        expect(last?.status.name).to.equal('COMPLETED');
       });
     });
   });
