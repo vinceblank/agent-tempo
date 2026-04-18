@@ -396,11 +396,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     if (update.sessionId != null || (update as any).claudeSessionId != null) {
       input.metadata.sessionId = update.sessionId ?? (update as any).claudeSessionId;
     }
-    // `update.status` / `update.enableStaleDetection` are silently dropped.
-    // Status tracking was removed in #175–#176 — attachment phase (set by the
-    // V2 wire surface: claimAttachment / adapterExited / forceDetach / destroy)
-    // is authoritative. The signal wire shape keeps these optional fields for
-    // backward compat with older clients; their values are no-ops.
+    // `update.enableStaleDetection` is silently dropped — attachment phase
+    // (driven by the V2 wire surface: claimAttachment / adapterExited /
+    // forceDetach / destroy) is authoritative for lifecycle state.
     upsertSearchAttributes({
       ClaudeTempoEnsemble: [input.metadata.ensemble],
       ClaudeTempoPlayerId: [input.metadata.playerId],

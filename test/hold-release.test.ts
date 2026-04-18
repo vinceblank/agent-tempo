@@ -285,7 +285,7 @@ describe('hold and release (warm hold)', function () {
 
         // Create an active (non-held) session
         const activeHandle = await startSession({
-          metadata: playerMetadata({ playerId: 'active-player', ensemble, status: 'active' }),
+          metadata: playerMetadata({ playerId: 'active-player', ensemble }),
         });
 
         const handle = await startSession({

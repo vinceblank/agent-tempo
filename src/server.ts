@@ -194,12 +194,12 @@ async function main() {
   }
 
   // If the workflow was pre-created by a recruiter, update it with real metadata
-  // and mark the session as active now that it's connected.
+  // now that it's connected. Attachment phase (not the removed `status` field)
+  // is driven by the V2 wire surface — see claimAttachment / adapterExited.
   await handle.signal('updateMetadata', {
     hostname: os.hostname(),
     gitRoot,
     gitBranch,
-    status: 'active',
     enableStaleDetection: true,
     ...(playerType ? { playerType } : {}),
     ...(playerTypeDescription ? { playerTypeDescription } : {}),

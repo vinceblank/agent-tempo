@@ -338,7 +338,7 @@ describe('claudeSessionWorkflow', function () {
       await withWorker(async () => {
         // Simulate what recruit does: start workflow with pre-loaded messages
         const handle = await startSession({
-          metadata: playerMetadata({ playerId: 'precreated-1', status: 'pending' }),
+          metadata: playerMetadata({ playerId: 'precreated-1' }),
           messages: [{
             id: 'pre-msg-1',
             from: 'conductor',
@@ -368,7 +368,7 @@ describe('claudeSessionWorkflow', function () {
     it('pre-loaded message can be delivered alongside new messages', async function () {
       await withWorker(async () => {
         const handle = await startSession({
-          metadata: playerMetadata({ playerId: 'precreated-2', status: 'pending' }),
+          metadata: playerMetadata({ playerId: 'precreated-2' }),
           messages: [{
             id: 'pre-msg-2',
             from: 'conductor',

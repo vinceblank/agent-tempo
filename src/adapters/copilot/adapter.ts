@@ -420,9 +420,8 @@ export class CopilotSdkAttachment extends SdkAttachment {
     // loss can't drop the event.
     this.onTerminal((reason) => {
       log(`V2 terminal (${reason}) — triggering cleanup`);
-      // Fire-and-forget: `cleanup` is idempotent and `signalTermination=false`
-      // because the workflow is either gone, destroyed, or about to reap us.
-      cleanup(false).catch((err) => log('terminal cleanup error:', err?.message ?? err));
+      // Fire-and-forget: `cleanup` is idempotent.
+      cleanup().catch((err) => log('terminal cleanup error:', err?.message ?? err));
     });
     try {
       // PR-D: read pre-claimed attachmentId (set by the spawn activity when
@@ -482,10 +481,8 @@ export class CopilotSdkAttachment extends SdkAttachment {
     let interval: ReturnType<typeof setInterval> | undefined;
 
     // Shared cleanup — disconnects session, removes PID file, stops client.
-    // `_signalTermination` is retained for call-site compatibility but no longer
-    // drives any workflow signal (PR-C commit 4 retired the legacy status signal).
     let shuttingDown = false;
-    const cleanup = async (_signalTermination: boolean) => {
+    const cleanup = async () => {
       if (shuttingDown) return;
       shuttingDown = true;
       polling = false;
@@ -584,7 +581,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
           const wfStatus = desc.status.name;
           if (wfStatus !== 'RUNNING') {
             log(`Workflow status is ${wfStatus} — exiting cleanly`);
-            await cleanup(false); // workflow already gone, don't signal
+            await cleanup();
             process.exit(0);
           }
           // Also check the in-workflow destroy flag — the workflow may still be RUNNING
@@ -594,14 +591,14 @@ export class CopilotSdkAttachment extends SdkAttachment {
             const isDestroyed: boolean = await handle.query('isDestroyed');
             if (isDestroyed) {
               log('Workflow destroyed — exiting cleanly');
-              await cleanup(false);
+              await cleanup();
               process.exit(0);
             }
           } catch { /* isDestroyed query unavailable pre-upgrade — safe to ignore */ }
         } catch (err: any) {
           // If we can't describe (e.g., workflow not found), it was likely terminated
           log(`Workflow describe failed: ${err?.message} — treating as terminated`);
-          await cleanup(false);
+          await cleanup();
           process.exit(0);
         }
       }
@@ -697,7 +694,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
           const recovered = await recreateSession();
           if (!recovered) {
             log('ERROR: Session recovery failed. Shutting down bridge.');
-            await cleanup(true);
+            await cleanup();
             process.exit(2);
           }
         }
@@ -710,7 +707,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
     // Graceful shutdown on SIGINT/SIGTERM — signal the workflow before exiting
     const shutdown = async () => {
       log('Shutting down (signal received)...');
-      await cleanup(true);
+      await cleanup();
       process.exit(0);
     };
 

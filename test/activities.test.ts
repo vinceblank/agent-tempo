@@ -60,9 +60,6 @@ function mockHandle(opts: {
   const signals: Array<{ name: string; args: unknown }> = [];
   const updates: Array<{ name: string; args: unknown }> = [];
 
-  // `status` field removed from `SessionMetadata` in #176; strip it off any
-  // `opts.metadata` override that still carries it (most tests predate the removal).
-  const { status: _legacyStatus, ...mdOverrides } = (opts.metadata ?? {}) as Partial<SessionMetadata> & { status?: string };
   const defaultMetadata: SessionMetadata = {
     playerId: 'player-1',
     ensemble: 'test-ensemble',
@@ -70,7 +67,7 @@ function mockHandle(opts: {
     workDir: '/tmp/work',
     isConductor: false,
     agentType: 'claude',
-    ...mdOverrides,
+    ...(opts.metadata ?? {}),
   };
 
   // Normalize: callers may pass either a string or a typed constant from
@@ -271,7 +268,6 @@ describe('scanEnsembleSessions', function () {
         isConductor: true,
         agentType: 'copilot',
         playerType: 'tempo-conductor',
-        status: 'active',
       },
     });
     const client = mockClient([h]);
@@ -533,9 +529,9 @@ describe('fireSchedule', function () {
   });
 
   it('delivers to all non-conductor sessions when target is "all"', async function () {
-    const player1 = mockHandle({ metadata: { playerId: 'p1', ensemble: 'e1', isConductor: false, status: 'active' } });
-    const player2 = mockHandle({ metadata: { playerId: 'p2', ensemble: 'e1', isConductor: false, status: 'active' } });
-    const conductor = mockHandle({ metadata: { playerId: 'cond', ensemble: 'e1', isConductor: true, status: 'active' } });
+    const player1 = mockHandle({ metadata: { playerId: 'p1', ensemble: 'e1', isConductor: false } });
+    const player2 = mockHandle({ metadata: { playerId: 'p2', ensemble: 'e1', isConductor: false } });
+    const conductor = mockHandle({ metadata: { playerId: 'cond', ensemble: 'e1', isConductor: true } });
     const client = mockClient([player1, player2, conductor]);
     const activities = createScheduleActivities(client as any);
 
@@ -609,7 +605,6 @@ describe('maestro activities', function () {
           isConductor: false,
           agentType: 'claude',
           playerType: 'tempo-soloist',
-          status: 'active',
         },
         part: 'coding features',
       });

@@ -459,7 +459,6 @@ export function createTempoClient(client: Client): TempoClient {
           hostname: 'dashboard',
           workDir: process.cwd(),
           isConductor: false,
-          status: 'active',
           agentType: 'claude',
           playerType: 'maestro',
           playerTypeDescription: 'TUI dashboard — human operator interface',
