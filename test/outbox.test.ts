@@ -279,6 +279,114 @@ describe('outbox', function () {
         await bob.result();
       });
     });
+
+    it('#183 fresh restart regenerates sessionId and persists it to target metadata', async function () {
+      this.timeout(30_000);
+      const spawnInputs: Array<Record<string, unknown>> = [];
+      await withWorkerAndRecruitCapture(spawnInputs, async () => {
+        const ensemble = `fresh-sid-${Date.now()}`;
+        const originalSessionId = 'original-uuid-from-a-failed-spawn';
+
+        const alice = await startSession({
+          metadata: playerMetadata({ playerId: 'alice-fresh-sid', ensemble }),
+        });
+        const bob = await startSession({
+          metadata: playerMetadata({
+            playerId: 'bob-fresh-sid',
+            ensemble,
+            sessionId: originalSessionId,
+          }),
+        });
+
+        // Sanity: bob starts with the original sessionId.
+        const before = await bob.query(getMetadataQuery) as { sessionId?: string };
+        expect(before.sessionId).to.equal(originalSessionId);
+
+        await alice.executeUpdate(submitOutboxUpdate, {
+          args: [{
+            type: 'restart',
+            targetPlayerId: 'bob-fresh-sid',
+            invokerPlayerId: 'alice-fresh-sid',
+            fresh: true,
+          }],
+        });
+
+        await sleep(3000);
+
+        const aliceOutbox = await alice.query(outboxQuery);
+        const entry = aliceOutbox.find((e) => e.type === 'restart');
+        expect(entry, 'restart entry exists').to.exist;
+        expect(entry!.status).to.equal('delivered');
+
+        // The spawn should have received a NEW sessionId, not the collided one.
+        expect(spawnInputs, 'spawnProcess was called').to.have.lengthOf.at.least(1);
+        const spawn = spawnInputs[spawnInputs.length - 1];
+        expect(spawn.sessionId, 'spawn sessionId set').to.be.a('string');
+        expect(spawn.sessionId, 'spawn sessionId regenerated').to.not.equal(originalSessionId);
+        expect(spawn.resume, 'fresh restart does not resume').to.equal(false);
+
+        // Target's metadata should now reflect the new sessionId so future
+        // (non-fresh) restarts resume against the new transcript.
+        const after = await bob.query(getMetadataQuery) as { sessionId?: string };
+        expect(after.sessionId).to.equal(spawn.sessionId);
+        expect(after.sessionId).to.not.equal(originalSessionId);
+
+        await alice.executeUpdate(destroyUpdate, { args: [{}] });
+        await bob.executeUpdate(destroyUpdate, { args: [{}] });
+        await alice.result();
+        await bob.result();
+      });
+    });
+
+    it('#183 non-fresh restart preserves stored sessionId for --resume', async function () {
+      this.timeout(30_000);
+      const spawnInputs: Array<Record<string, unknown>> = [];
+      await withWorkerAndRecruitCapture(spawnInputs, async () => {
+        const ensemble = `resume-sid-${Date.now()}`;
+        const originalSessionId = 'stored-uuid-we-want-to-keep';
+
+        const alice = await startSession({
+          metadata: playerMetadata({ playerId: 'alice-resume-sid', ensemble }),
+        });
+        const bob = await startSession({
+          metadata: playerMetadata({
+            playerId: 'bob-resume-sid',
+            ensemble,
+            sessionId: originalSessionId,
+          }),
+        });
+
+        await alice.executeUpdate(submitOutboxUpdate, {
+          args: [{
+            type: 'restart',
+            targetPlayerId: 'bob-resume-sid',
+            invokerPlayerId: 'alice-resume-sid',
+            // no `fresh` — default (context replay + resume)
+          }],
+        });
+
+        await sleep(3000);
+
+        const aliceOutbox = await alice.query(outboxQuery);
+        const entry = aliceOutbox.find((e) => e.type === 'restart');
+        expect(entry!.status).to.equal('delivered');
+
+        // Spawn should reuse the stored sessionId for deterministic --resume.
+        expect(spawnInputs).to.have.lengthOf.at.least(1);
+        const spawn = spawnInputs[spawnInputs.length - 1];
+        expect(spawn.sessionId, 'non-fresh restart preserves sessionId').to.equal(originalSessionId);
+        expect(spawn.resume, 'non-fresh restart resumes').to.equal(true);
+
+        // Metadata sessionId unchanged.
+        const after = await bob.query(getMetadataQuery) as { sessionId?: string };
+        expect(after.sessionId).to.equal(originalSessionId);
+
+        await alice.executeUpdate(destroyUpdate, { args: [{}] });
+        await bob.executeUpdate(destroyUpdate, { args: [{}] });
+        await alice.result();
+        await bob.result();
+      });
+    });
   });
 
   // ── Failure handling ──
