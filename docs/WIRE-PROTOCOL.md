@@ -370,3 +370,4 @@ String union used in `requestDetach`, `adapterExited`, and `forceDetach` to reco
 | `'spawn-failed'` | Spawn activity for a new attachment failed; workflow self-heals to `detached`. |
 | `'destroy'` | Session permanently destroyed via the `destroy` update. |
 | `'force'` | Main loop fired `drainingDeadline` — adapter sent `requestDetach` but never sent `adapterExited` within the grace period. Implementation extension; may merge with `'heartbeat-timeout'` in a future cleanup. |
+| `'reconnect-exhausted'` | **v0.26.** Adapter exhausted its 15-minute reconnect budget without successfully re-claiming the session. Terminal — the adapter shuts down after emitting this reason. Added in #205. |

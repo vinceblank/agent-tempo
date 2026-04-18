@@ -39,6 +39,25 @@ Two classes today (design §3.1, §4.1):
 
 Pick the class whose delivery model matches your agent's behavior. If the agent blocks on an LLM turn inside `deliver()`, you want `sdk` and `SdkAttachment` (PR-C centralizes the `processingStart`/`End` wrapping there).
 
+## Reconnect opt-in (`shouldReconnect`)
+
+**Added in #205 (v0.26).** `BaseAttachment` includes a built-in reconnect loop that fires when the phase watcher detects `phase=detached, currentAttachment=undefined` (lease revoked by the workflow — e.g. heartbeat-timeout after a laptop sleep). By default the loop is **disabled**; adapters opt in by overriding `shouldReconnect()`:
+
+```ts
+protected shouldReconnect(reason: DetachReason): boolean {
+  // Return true to attempt re-claim instead of shutting down immediately.
+  return reason === 'superseded' || reason === 'heartbeat-timeout';
+}
+```
+
+**Shipped opt-ins:**
+- `InteractiveAttachment` opts in for `'superseded'` and `'heartbeat-timeout'`.
+- `CopilotSdkAttachment` (SDK adapters generally) does **not** opt in — pull adapters own their own session lifecycle.
+
+**Budget and behaviour:** The loop retries with exponential back-off for up to **15 minutes** of elapsed wall time. On each attempt it calls `attachmentInfo` to verify the session isn't `'gone'` before attempting `claimAttachment`. If the budget expires or the workflow is `gone`, the adapter emits `DetachReason: 'reconnect-exhausted'` and shuts down cleanly.
+
+Adapter authors should only opt in if the adapter can meaningfully re-establish state after a lease gap (i.e., the agent process is still alive and can resume work).
+
 ## Adding a new adapter
 
 1. **Create a directory** under `src/adapters/<your-adapter>/` with `adapter.ts` and `index.ts`.
