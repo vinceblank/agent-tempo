@@ -11,6 +11,7 @@ import { getGitInfo } from '../git-info';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { ENV } from '../config';
 import { resolveSession } from './resolve';
+import { resolveAgentType } from '../ensemble/agent-types';
 import { registry } from '../adapters';
 import { hardTerminateAttachment, type HardTerminateInput, type HardTerminateResult } from './hard-terminate';
 import {
@@ -618,6 +619,16 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           await handle.signal(updateMetadataSignal, { sessionId: spawnSessionId });
         }
 
+        // Issue #184: re-resolve on the invoker host against the session's
+        // workDir (NOT the daemon's process.cwd — daemon runs elsewhere than
+        // the session's project, so the project-tier lookup needs the session's
+        // own cwd). `nativeResolvable` means the target can `--agent <name>`
+        // from its own tier lookup; the path fallback is shipped-relative so
+        // it exists on any host with claude-tempo installed — safe cross-host.
+        const resolved = metadata.playerType
+          ? resolveAgentType(metadata.playerType, metadata.workDir)
+          : null;
+
         const { spawnEntryId } = await handle.executeUpdate(enqueueSpawnUpdate, {
           args: [{
             host: targetHost,
@@ -626,6 +637,11 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             resume: !fresh,
             ...(spawnSessionId ? { sessionId: spawnSessionId } : {}),
             adapterId,
+            ...(resolved ? {
+              agentDefinition: resolved.name,
+              agentDefinitionPath: resolved.path,
+              nativeResolvable: resolved.nativeResolvable,
+            } : {}),
           }],
         });
 
