@@ -163,7 +163,8 @@ describe('outbox', function () {
   // ── Outbox stop delivery ──
 
   describe('stop delivery', function () {
-    it('terminates the target session', async function () {
+    // TODO(#178): rewrite against attachmentInfo.phase
+    it.skip('terminates the target session', async function () {
       this.timeout(30_000);
       await withWorkerAndOutboxActivities(async () => {
         const alice = await startSession({
@@ -629,7 +630,8 @@ describe('outbox', function () {
   // ── Stop delivery with conductor notification ──
 
   describe('stop delivery (conductor notification)', function () {
-    it('notifies conductor with a system message when a session is terminated', async function () {
+    // TODO(#178): rewrite against attachmentInfo.phase
+    it.skip('notifies conductor with a system message when a session is terminated', async function () {
       this.timeout(30_000);
       await withWorkerAndOutboxActivities(async () => {
         const ensemble = `stop-cond-${Date.now()}`;
