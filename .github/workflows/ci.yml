@@ -11,8 +11,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint-test-ensemble:
+    # Fast grep-based lint — guards against accidental `'test-ensemble'` literals
+    # outside `test/helpers.ts` (#210). Runs first so the matrix doesn't start
+    # three Node versions on a PR that will fail the literal check regardless.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check for stray `test-ensemble` literals in test/
+        run: bash scripts/check-test-ensemble-literals.sh
+
   build-and-test:
     runs-on: ubuntu-latest
+    needs: lint-test-ensemble
     strategy:
       matrix:
         node-version: [20, 22, 24]

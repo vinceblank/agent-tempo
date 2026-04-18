@@ -7,6 +7,7 @@ import {
   setupTestEnv,
   teardownTestEnv,
   getClient,
+  getTestEnsemble,
   startSession,
   playerMetadata,
   updateMetadataSignal,
@@ -24,7 +25,12 @@ import {
 } from '../src/workflows/scheduler-signals';
 import { ScheduleEntry } from '../src/types';
 
-const ENSEMBLE = 'test-ensemble';
+/**
+ * Per-file ensemble namespace. Seeded in `before()` after `setupTestEnv()` so
+ * the value comes from `getTestEnsemble()` (#210 random suffix) and this file's
+ * workflow IDs don't collide with any other file under the shared env.
+ */
+let ENSEMBLE: string;
 const SCHEDULER_TASK_QUEUE = 'test-claude-tempo';
 
 function schedulerWorkflowId(ensemble: string): string {
@@ -71,6 +77,7 @@ describe('claudeSchedulerWorkflow', function () {
   before(async function () {
     this.timeout(60_000);
     await setupTestEnv();
+    ENSEMBLE = getTestEnsemble();
   });
 
   after(async function () {

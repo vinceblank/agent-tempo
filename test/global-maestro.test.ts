@@ -28,6 +28,13 @@ import type { MaestroPlayerInfo } from '../src/types';
 const FAST_POLL_MS = 500;
 let testCounter = 0;
 
+/**
+ * Active handles registered during each `it()` body. Cleared + destroyed in
+ * `afterEach` to prevent Global Maestro instances leaking across files under
+ * the shared `TestWorkflowEnvironment` (#210).
+ */
+const pendingHandles: WorkflowHandle[] = [];
+
 async function startGlobalMaestro(
   client: Client,
   overrides: { knownEnsembles?: string[]; playersByEnsemble?: Record<string, MaestroPlayerInfo[]> } = {},
@@ -38,11 +45,13 @@ async function startGlobalMaestro(
     pollIntervalMs: FAST_POLL_MS,
   };
   const uniqueId = `claude-maestro-global-test-${++testCounter}`;
-  return client.workflow.start('claudeGlobalMaestroWorkflow', {
+  const handle = await client.workflow.start('claudeGlobalMaestroWorkflow', {
     workflowId: uniqueId,
     taskQueue: TASK_QUEUE,
     args: [input],
   });
+  pendingHandles.push(handle);
+  return handle;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -57,6 +66,22 @@ describe('claudeGlobalMaestroWorkflow', function () {
 
   after(async function () {
     await teardownTestEnv();
+  });
+
+  // #210: best-effort shutdown of any Global Maestro handle started this test.
+  // Under the shared env a leaked Global Maestro keeps polling
+  // `discoverEnsembles` / `refreshEnsembleState` after the test's mocked
+  // activity closures have exited, which surfaces as cross-file flakes.
+  afterEach(async function () {
+    const toClean = pendingHandles.splice(0);
+    for (const handle of toClean) {
+      try {
+        await handle.signal(maestroShutdownSignal);
+        await handle.result().catch(() => { /* COMPLETED */ });
+      } catch {
+        // Inline shutdown already happened, or workflow completed. Ignore.
+      }
+    }
   });
 
   describe('initial state and queries', function () {

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Shared `TestWorkflowEnvironment` across Mocha spec files** (#210 Phase 1). The
+  first `setupTestEnv()` call in a test run now builds a process-wide test
+  environment; subsequent calls reuse it and only re-seed a per-file random
+  ensemble prefix (`test-ensemble-<hex>`) so `playerMetadata()` defaults
+  auto-namespace without per-test edits. Real teardown happens once at process
+  exit via a Mocha `mochaGlobalTeardown` hook. Saves ~50-85s on the full Mocha
+  suite. Set `TEMPO_TEST_ISOLATED=1` to restore per-file env lifecycle when
+  debugging cross-file state leaks.
+- Added `afterEach` shutdown safety net to `test/maestro.test.ts` and
+  `test/global-maestro.test.ts` so a failing assertion doesn't leak a running
+  Maestro workflow into the next test under the shared env.
+- New CI lint (`scripts/check-test-ensemble-literals.sh`) fails on stray
+  `'test-ensemble'` literals outside `test/helpers.ts` / `test/root-hooks.ts`.
+
 ### Fixed
 
 - **Adapter reconnect loop always resets its `reconnecting` flag** on every exit path.

@@ -35,7 +35,7 @@ function mockConfig(overrides: Partial<Config> = {}): Config {
     temporalNamespace: 'default',
     defaultAgent: 'claude',
     taskQueue: 'claude-tempo',
-    ensemble: 'test-ensemble',
+    ensemble: 'test-ensemble-unit-mock',
     ...overrides,
   };
 }
@@ -62,7 +62,7 @@ function mockHandle(opts: {
 
   const defaultMetadata: SessionMetadata = {
     playerId: 'player-1',
-    ensemble: 'test-ensemble',
+    ensemble: 'test-ensemble-unit-mock',
     hostname: 'test-host',
     workDir: '/tmp/work',
     isConductor: false,
