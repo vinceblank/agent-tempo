@@ -231,6 +231,22 @@ export const orphanSummaryQuery = defineQuery<OrphanSummary>('orphanSummary');
 export const submitOutboxUpdate = defineUpdate<string, [OutboxEntryInput]>('submitOutbox');
 export const outboxQuery = defineQuery<OutboxEntry[]>('outbox');
 
+// ── Test-only Signals ──
+//
+// **Test-only.** Forces the session workflow's main loop to take the
+// `continueAsNew` branch on its next iteration, regardless of
+// `workflowInfo().continueAsNewSuggested`. Used by the adapter reconnect test
+// (#226) to exercise the CAN-boundary rebind path without spamming ~10k
+// history events to hit the server's native suggestion threshold.
+//
+// Production senders do not exist — the signal is a test fixture. Kept on the
+// main signal surface (rather than a side channel) so the workflow worker
+// bundle needs no special build flag to accept it. The wire name is a plain
+// identifier so the wire-protocol drift detector can match it in the docs
+// table (the doc regex in `test/wire-protocol.test.ts` only accepts
+// identifier-shaped names to avoid picking up prose false positives).
+export const testForceContinueAsNewSignal = defineSignal('testForceContinueAsNew');
+
 // ── Quality Gate Signals + Query (conductor-only) ──
 
 export const setQualityGateSignal = defineSignal<[{ task: string; criteria: string[]; createdBy: string }]>('setQualityGate');

@@ -60,6 +60,16 @@ export interface AdapterDescriptor {
  * when the reconnect budget elapsed without recovering a live lease. Distinct from
  * `heartbeat-timeout` so post-mortems can tell "lease expired once" from "poller tried
  * to recover and gave up" — workflow-side reap accounting treats them identically.
+ *
+ * `continued-as-new` is fired adapter-side by `BaseAttachment.tickHeartbeat` /
+ * `tickPhaseWatcher` (#226) when the pinned runId returns
+ * `WorkflowExecutionAlreadyCompleted` AND the closed run's history carries a
+ * `WorkflowExecutionContinuedAsNewEvent` pointing at a successor runId. When the
+ * subclass opts in via `shouldReconnect`, the base class transparently rebinds the
+ * pinned handle to the successor (no re-claim — the workflow's §2.3 CAN-boundary
+ * lease extension keeps the lease alive across the transition) and resumes delivery.
+ * When not opted in, the base class fires the reason as terminal just like any
+ * other non-recoverable lease loss.
  */
 export type DetachReason =
   | 'user-stop'
@@ -70,7 +80,8 @@ export type DetachReason =
   | 'spawn-failed'
   | 'destroy'
   | 'force'
-  | 'reconnect-exhausted';
+  | 'reconnect-exhausted'
+  | 'continued-as-new';
 
 /**
  * Workflow-emitted directive to the attached adapter. Delivered via {@link AttachmentInfo}

@@ -81,6 +81,8 @@ import {
   adapterExitedSignal,
   attachmentInfoQuery,
   orphanSummaryQuery,
+  // Test-only (#226 reconnect-after-CAN coverage)
+  testForceContinueAsNewSignal,
 } from './signals';
 import type {
   Attachment,
@@ -608,6 +610,24 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   });
 
   setHandler(isDestroyedQuery, () => destroyed || destroyRequested);
+
+  // ── Test-only CAN trigger (#226) ──
+  // Force the next main-loop iteration into the `continueAsNew` branch without
+  // waiting for the server's history-size threshold. Production code never sends
+  // this; the adapter reconnect test uses it to exercise the CAN-boundary path
+  // in <1s instead of emitting ~10k filler events. One-shot: the flag is cleared
+  // when the main loop acts on it, so repeated signals require repeated sends.
+  //
+  // The `wakeEpoch` bump is essential — the main loop's `condition()` predicate
+  // (see §9.5 loop body below) only wakes on outbox activity, phase changes,
+  // destroy, or `wakeEpoch` drift. Without the bump, an idle session would sit
+  // asleep until its lease-expiry deadline and the test would time out.
+  let forceContinueAsNew = false;
+  setHandler(testForceContinueAsNewSignal, () => {
+    forceContinueAsNew = true;
+    wakeEpoch++;
+    lastActivityTime = workflowNow().getTime();
+  });
 
   // ── v0.25 Attachment Lifecycle Handlers (design §§8, §9.2, §9.5) ──
 
@@ -1479,9 +1499,13 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     // The phase machine (lease expiry, `processingDeadline`, `adapterExited`) is now
     // the single source of liveness truth; see §§9.5.a/b above.
 
-    // Prevent unbounded history growth — let the SDK decide when.
+    // Prevent unbounded history growth — let the SDK decide when. The
+    // `forceContinueAsNew` flag (#226 test-only) piggybacks on this branch so
+    // the test fixture exercises the exact production CAN path, including the
+    // §2.3 lease extension below.
     const info = workflowInfo();
-    if (info.continueAsNewSuggested) {
+    if (info.continueAsNewSuggested || forceContinueAsNew) {
+      forceContinueAsNew = false;
       await condition(allHandlersFinished);
 
       // ── CAN-boundary lease extension (design §2.3) ──

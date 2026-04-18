@@ -120,6 +120,14 @@ function startMessagePoller(
  * can resume. Truly terminal events (`destroy`, `reconnect-exhausted`)
  * still tear the adapter down permanently.
  *
+ * CAN rebind (#226): when the session workflow continues-as-new, the pinned
+ * runId starts returning `WorkflowExecutionAlreadyCompleted`. The base class
+ * reads the closed run's history, extracts the successor runId from the
+ * `WorkflowExecutionContinuedAsNewEvent`, rebinds `pinnedHandle` in place (no
+ * re-claim — the workflow's §2.3 CAN-boundary lease extension keeps the lease
+ * alive across the transition), and calls {@link onReconnected} so we restart
+ * the poller on the live run. Transparent to upstream.
+ *
  * PR-H (#132): the legacy unpinned-poll fallback (gated on
  * `CLAUDE_TEMPO_LIFECYCLE_V2=0`) has been removed. V2 is the only path.
  */
@@ -219,21 +227,31 @@ export class InteractiveAttachment extends BaseAttachment {
   }
 
   /**
-   * #201: reconnect opt-in. The interactive adapter is stateless wrt in-flight
-   * messages (no processing-signal pairing; `markDelivered` is idempotent), so
-   * both recoverable reasons are safe to replay on a fresh lease:
+   * #201 / #226: reconnect opt-in. The interactive adapter is stateless wrt
+   * in-flight messages (no processing-signal pairing; `markDelivered` is
+   * idempotent), so every recoverable reason is safe to replay on a fresh or
+   * re-bound lease:
    *
-   *   - `heartbeat-timeout`: the workflow reaped our lease (e.g. laptop slept).
-   *     Re-claim and resume — this is the #201 happy path.
-   *   - `superseded`: another adapter currently holds our slot. The reconnect
-   *     loop's pre-check will re-query and bail cleanly if that's still true;
-   *     we enter the loop in case the competitor releases during our backoff.
+   *   - `heartbeat-timeout` (#201): the workflow reaped our lease (e.g. laptop
+   *     slept). Re-claim and resume — full budget-bounded reconnect loop.
+   *   - `superseded` (#201): another adapter currently holds our slot. The
+   *     reconnect loop's pre-check will re-query and bail cleanly if that's
+   *     still true; we enter the loop in case the competitor releases during
+   *     our backoff.
+   *   - `continued-as-new` (#226): the session workflow's CAN transition closed
+   *     our pinned runId while the workflow id kept running on a successor. The
+   *     base class transparently rebinds to the successor runId (no re-claim —
+   *     the lease is carried across CAN per §2.3) and our poller resumes.
    *
    * Unrecoverable reasons (`destroy`, `gone`, anything else) fall through to
    * the default `false`, firing terminal directly.
    */
   protected shouldReconnect(reason: DetachReason): boolean {
-    return reason === 'heartbeat-timeout' || reason === 'superseded';
+    return (
+      reason === 'heartbeat-timeout' ||
+      reason === 'superseded' ||
+      reason === 'continued-as-new'
+    );
   }
 
   /**
