@@ -56,9 +56,14 @@
     "dev": "ts-node src/server.ts",
     "copilot-bridge": "ts-node src/adapters/copilot/adapter.ts",
     "clean:test": "node -e \"require('fs').rmSync('dist-test',{recursive:true,force:true})\"",
-    "pretest": "npm run clean:test && tsc -p test/tsconfig.json",
+    "build:test": "npm run clean:test && tsc -p test/tsconfig.json",
+    "pretest": "npm run build:test",
     "test:tui": "vitest run",
-    "test:conformance": "npm run clean:test && tsc -p test/tsconfig.json && mocha --config .mocharc.conformance.yml",
+    "test:conformance": "npm run build:test && mocha --config .mocharc.conformance.yml",
+    "pretest:shard-1": "npm run build:test",
+    "test:shard-1": "node scripts/run-shard.js 1",
+    "pretest:shard-2": "npm run build:test",
+    "test:shard-2": "node scripts/run-shard.js 2",
     "test": "mocha && vitest run"
   },
   "optionalDependencies": {

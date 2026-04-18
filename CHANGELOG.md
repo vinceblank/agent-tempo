@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **2-way Mocha shard in CI** (#231, #191 Phase 2). The `build-and-test` GitHub
+  Actions job is now a `shard × node-version` matrix: 2 shards × 3 Node versions
+  = 6 Mocha jobs, with a separate Vitest-only job for the TUI / client
+  fallback suite. `test/shard-config.json` is the single source of truth for
+  the split — shard-1 pins the 5 heaviest files (scheduler, outbox,
+  phase-machine, hold-release, maestro, ~50% of wall-clock), shard-2 runs the
+  remaining files via Mocha's native `--ignore` flag. Local `npm test` still
+  runs the full suite unchanged; `npm run test:shard-1` / `test:shard-2`
+  mirror the CI invocations. `scripts/run-shard.js` is a thin wrapper that
+  expands the JSON into Mocha args — no custom runner, no test-code changes.
+  CI posts each shard's wall-clock to the job summary so drift (>20%
+  imbalance, per design §2) is visible without log diving. Rebalance rule,
+  shard-move procedure, and rationale live in the new `test/README.md`.
+  Critical-path target (post-#210 + shard): ~215s → ~108s. See
+  `docs/design/191-test-parallelization.md` §2 for the wall-clock math.
 - **Shared `TestWorkflowEnvironment` across Mocha spec files** (#210 Phase 1). The
   first `setupTestEnv()` call in a test run now builds a process-wide test
   environment; subsequent calls reuse it and only re-seed a per-file random

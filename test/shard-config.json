@@ -1,0 +1,10 @@
+{
+  "_comment": "2-way shard split for the Mocha suite (#231, docs/design/191-test-parallelization.md §2). shard-1 pins the 5 heaviest files; shard-2 is 'everything else' driven by the .mocharc.yml spec glob minus shard-1 via --ignore. Rebalance rule: if per-shard wall-clock drifts beyond 20%, move one file between shards in a one-line PR. See test/README.md for details.",
+  "shard-1": [
+    "test/scheduler.test.ts",
+    "test/outbox.test.ts",
+    "test/session-phase-machine.test.ts",
+    "test/hold-release.test.ts",
+    "test/maestro.test.ts"
+  ]
+}
