@@ -146,8 +146,6 @@ export interface SessionMetadata {
    * mapping via `AdapterRegistry.resolveFromAgentType`.
    */
   adapterId?: string;
-  /** @deprecated Vestigial — removed in #176. Do not add new readers. */
-  status?: string;
   /** Agent definition name (e.g., "tempo-soloist"). */
   playerType?: string;
   /** Short description from the agent definition. */
@@ -539,6 +537,13 @@ export interface MaestroPlayerInfo {
   isConductor: boolean;
   agentType: string;
   playerType?: string;
+  /**
+   * Attachment phase value (e.g. `'attached'`, `'detached'`, `'gone'`).
+   *
+   * TODO: rename to `phase` and retype as AttachmentPhase once the shim epic
+   * settles; kept as `status?: string` during #176 to minimize workflow-replay
+   * blast radius. Safe to clean up any time after beta.6.
+   */
   status?: string;
 }
 

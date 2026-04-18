@@ -22,7 +22,7 @@ export function registerBroadcastTool(
     {
       message: z.string().max(MESSAGE_MAX).describe('The message to broadcast'),
       type: z.string().optional().describe('Only send to players of this type (e.g., "tempo-soloist")'),
-      includeStale: z.boolean().optional().describe('Include stale sessions (default: false)'),
+      includeStale: z.boolean().optional().describe('Include disconnected sessions (draining/detached phases; default: false). Argument name kept for backward compatibility.'),
     },
     async (args) => {
       const { message, type: playerType, includeStale: rawIncludeStale } = args as {
@@ -30,7 +30,7 @@ export function registerBroadcastTool(
         type?: string;
         includeStale?: boolean;
       };
-      const includeStale = rawIncludeStale === true;
+      const includeDisconnected = rawIncludeStale === true;
 
       try {
         const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
@@ -47,8 +47,13 @@ export function registerBroadcastTool(
             // Exclude sender
             if (metadata.playerId === getPlayerId()) continue;
 
-            // Filter by status
-            if (!shouldIncludeInBroadcast(metadata.status, includeStale)) continue;
+            // Filter by attachment phase (post-#176). Phase lives on the
+            // `ClaudeTempoAttachmentState` search attribute.
+            const phaseArr = workflow.searchAttributes?.ClaudeTempoAttachmentState as
+              | string[]
+              | undefined;
+            const phase = Array.isArray(phaseArr) && phaseArr.length > 0 ? phaseArr[0] : undefined;
+            if (!shouldIncludeInBroadcast(phase, includeDisconnected)) continue;
 
             // Filter by player type if specified
             if (playerType && metadata.playerType !== playerType) continue;

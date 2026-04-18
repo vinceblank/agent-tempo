@@ -147,7 +147,6 @@ async function seedConductorWorkflow(args: {
       gitBranch: conductorGitBranch,
       isConductor: true,
       agentType: args.conductorAgent,
-      status: 'pending',
       sessionId: conductorSessionId,
       ...(resolvedConductorType ? { playerType: resolvedConductorType.name, playerTypeDescription: resolvedConductorType.description || '' } : {}),
     },
@@ -216,7 +215,6 @@ async function applyLineupPlayersAndSchedules(args: {
         gitBranch: playerGitBranch,
         isConductor: false,
         agentType: playerAgent,
-        status: 'pending',
         sessionId: playerSessionId,
         recruitedBy: conductorName,
         ...(resolvedPlayerType ? { playerType: resolvedPlayerType.name, playerTypeDescription: resolvedPlayerType.description || '' } : {}),
@@ -610,7 +608,7 @@ export async function status(opts: StatusOpts) {
     host: string;
     conductor: boolean;
     agentType: string;
-    status: string;
+    phase: string | undefined;
   }> = [];
 
   for await (const wf of client.workflow.list({ query })) {
@@ -626,6 +624,10 @@ export async function status(opts: StatusOpts) {
       // Filter by ensemble if specified
       if (opts.ensemble && ensemble !== opts.ensemble) continue;
 
+      // Attachment phase lives on the `ClaudeTempoAttachmentState` search attribute (post-#175).
+      const phaseArr = wf.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined;
+      const phase = Array.isArray(phaseArr) && phaseArr.length > 0 ? phaseArr[0] : undefined;
+
       sessions.push({
         id: wf.workflowId,
         name: (meta.playerId as string) || wf.workflowId.split('-').pop() || '?',
@@ -636,7 +638,7 @@ export async function status(opts: StatusOpts) {
         host: (meta.hostname as string) || '',
         conductor: (meta.isConductor as boolean) || false,
         agentType: (meta.agentType as string) || 'claude',
-        status: (meta.status as string) || 'active',
+        phase,
       });
     } catch {
       // workflow may have closed between list and query
@@ -700,13 +702,20 @@ export async function status(opts: StatusOpts) {
       return a.name.localeCompare(b.name);
     });
 
+    // Option-B phase → tag mapping (see #176 PR):
+    //   booting → (pending); attached/processing/awaiting → no tag;
+    //   draining/detached → (disconnected); gone → (gone).
+    const phaseLabel = (phase: string | undefined): string => {
+      if (phase === 'booting') return out.dim(' (pending)');
+      if (phase === 'draining' || phase === 'detached') return out.yellow(' (disconnected)');
+      if (phase === 'gone') return out.dim(' (gone)');
+      return '';
+    };
+
     for (const s of members) {
       const role = s.conductor ? out.yellow(' (conductor)') : '';
       const agent = s.agentType === 'copilot' ? out.dim(' [copilot]') : '';
-      const statusLabel = s.status === 'stale' ? out.yellow(' (stale)')
-        : s.status === 'pending' ? out.dim(' (pending)')
-        : s.status === 'blocked' ? out.yellow(' (blocked)')
-        : '';
+      const statusLabel = phaseLabel(s.phase);
       // Show PID info for copilot bridge sessions
       const pidInfo = s.agentType === 'copilot' ? getBridgePidInfo(s.name) : '';
       const name = out.bold(s.name);
@@ -1997,8 +2006,11 @@ export async function broadcast(opts: BroadcastOpts) {
 
       if (metadata.ensemble !== ensemble) continue;
 
-      // Filter by status
-      if (!shouldIncludeInBroadcast(metadata.status, !!opts.includeStale)) continue;
+      // Filter by attachment phase (post-#176). Phase lives on the
+      // `ClaudeTempoAttachmentState` search attribute.
+      const phaseArr = wf.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined;
+      const phase = Array.isArray(phaseArr) && phaseArr.length > 0 ? phaseArr[0] : undefined;
+      if (!shouldIncludeInBroadcast(phase, !!opts.includeStale)) continue;
 
       // Filter by player type if specified
       if (opts.type && metadata.playerType !== opts.type) continue;

@@ -759,7 +759,6 @@ function makeClientWithPlayers(
               workDir: '/tmp',
               isConductor: false,
               agentType: 'claude',
-              status: player?.status ?? 'active',
               playerType: player?.playerType,
             } satisfies SessionMetadata;
           }
@@ -769,8 +768,25 @@ function makeClientWithPlayers(
       }),
       start: async () => ({ runId: 'fake-run-id' }),
       list: async function* () {
+        // Post-#176: broadcast/ensemble filtering reads phase from the
+        // `ClaudeTempoAttachmentState` search attribute. Synthesize phase
+        // values here from the test's legacy `status` field so existing
+        // tests continue to exercise the filter logic:
+        //   active → attached, stale → detached, pending → booting,
+        //   terminated → gone, blocked → detached, undefined → attached.
+        const statusToPhase = (status: string | undefined): string => {
+          if (status === 'stale' || status === 'blocked') return 'detached';
+          if (status === 'pending') return 'booting';
+          if (status === 'terminated') return 'gone';
+          return 'attached';
+        };
         for (const p of players) {
-          yield { workflowId: `claude-session-${testConfig.ensemble}-${p.playerId}` };
+          yield {
+            workflowId: `claude-session-${testConfig.ensemble}-${p.playerId}`,
+            searchAttributes: {
+              ClaudeTempoAttachmentState: [statusToPhase(p.status)],
+            },
+          };
         }
       },
     },
@@ -1414,7 +1430,6 @@ function makeResumeClient(players: string[]): {
               workDir: '/tmp',
               isConductor: false,
               agentType: 'claude',
-              status: 'active',
             } satisfies SessionMetadata;
           }
           if (queryName === 'getPart') return 'no description';

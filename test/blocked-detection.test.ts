@@ -63,14 +63,14 @@ describe.skip('blocked session detection', function () {
       await handle.signal(updateMetadataSignal, { status: 'blocked' });
 
       let meta: SessionMetadata = await handle.query(getMetadataQuery);
-      expect(meta.status).to.equal('blocked');
+      expect((meta as any).status).to.equal('blocked');
 
       await handle.executeUpdate(submitOutboxUpdate, {
         args: [{ type: 'cue' as const, targetPlayerId: 'someone', message: 'hello' }],
       });
 
       meta = await handle.query(getMetadataQuery);
-      expect(meta.status).to.equal('active');
+      expect((meta as any).status).to.equal('active');
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
@@ -90,7 +90,7 @@ describe.skip('blocked session detection', function () {
       });
 
       const meta: SessionMetadata = await handle.query(getMetadataQuery);
-      expect(meta.status).to.equal('stale');
+      expect((meta as any).status).to.equal('stale');
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
@@ -106,7 +106,7 @@ describe.skip('blocked session detection', function () {
       await handle.signal(updateMetadataSignal, { status: 'blocked' });
 
       const meta: SessionMetadata = await handle.query(getMetadataQuery);
-      expect(meta.status).to.equal('blocked');
+      expect((meta as any).status).to.equal('blocked');
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
@@ -123,7 +123,7 @@ describe.skip('blocked session detection', function () {
       await handle.signal(setPartSignal, 'working on something');
 
       const meta: SessionMetadata = await handle.query(getMetadataQuery);
-      expect(meta.status).to.equal('blocked');
+      expect((meta as any).status).to.equal('blocked');
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
@@ -154,7 +154,7 @@ describe.skip('blocked session detection', function () {
 
       await new Promise(r => setTimeout(r, 2000));
       const meta: SessionMetadata = await handle.query(getMetadataQuery);
-      expect(meta.status).to.not.equal('blocked');
+      expect((meta as any).status).to.not.equal('blocked');
 
       await deliverAll(handle);
       // PR-C commit 4: terminate shim routes to §2.5 destroy semantics (abandon in-flight,
@@ -177,7 +177,7 @@ describe.skip('blocked session detection', function () {
 
       await new Promise(r => setTimeout(r, 2000));
       const meta: SessionMetadata = await handle.query(getMetadataQuery);
-      expect(meta.status).to.not.equal('blocked');
+      expect((meta as any).status).to.not.equal('blocked');
 
       await deliverAll(handle);
       // PR-C commit 4: terminate shim routes to §2.5 destroy semantics (abandon in-flight,
@@ -201,7 +201,7 @@ describe.skip('blocked session detection', function () {
 
       await new Promise(r => setTimeout(r, 2000));
       const meta: SessionMetadata = await handle.query(getMetadataQuery);
-      expect(meta.status).to.equal('blocked');
+      expect((meta as any).status).to.equal('blocked');
 
       await deliverAll(handle);
       // PR-C commit 4: terminate shim routes to §2.5 destroy semantics (abandon in-flight,
@@ -228,7 +228,7 @@ describe.skip('blocked session detection', function () {
 
       await new Promise(r => setTimeout(r, 2000));
       const meta: SessionMetadata = await handle.query(getMetadataQuery);
-      expect(meta.status).to.not.equal('blocked');
+      expect((meta as any).status).to.not.equal('blocked');
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       // PR-C commit 4: terminate → §2.5 destroy; second deliverAll removed.
@@ -247,14 +247,14 @@ describe.skip('blocked session detection', function () {
       });
 
       let meta: SessionMetadata = await handle.query(getMetadataQuery);
-      expect(meta.status).to.equal('blocked');
+      expect((meta as any).status).to.equal('blocked');
 
       await handle.executeUpdate(submitOutboxUpdate, {
         args: [{ type: 'cue' as const, targetPlayerId: 'someone', message: 'alive' }],
       });
 
       meta = await handle.query(getMetadataQuery);
-      expect(meta.status).to.equal('active');
+      expect((meta as any).status).to.equal('active');
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result();
@@ -275,7 +275,7 @@ describe.skip('blocked session detection', function () {
 
       await new Promise(r => setTimeout(r, 2000));
       const meta: SessionMetadata = await handle.query(getMetadataQuery);
-      expect(meta.status).to.not.equal('blocked');
+      expect((meta as any).status).to.not.equal('blocked');
 
       await deliverAll(handle);
       // PR-C commit 4: terminate shim routes to §2.5 destroy semantics (abandon in-flight,

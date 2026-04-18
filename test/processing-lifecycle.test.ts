@@ -155,7 +155,7 @@ describe('processing lifecycle — fixes #99 (long tool calls misclassified as s
       // Give the workflow a beat to run its first main-loop iteration.
       await new Promise((r) => setTimeout(r, 2000));
       const meta1: SessionMetadata = await handle.query(getMetadataQuery);
-      expect(meta1.status).to.not.equal('stale');
+      expect((meta1 as any).status).to.not.equal('stale');
       expect(await handle.query(inFlightMessagesQuery)).to.deep.equal(['msg-1']);
 
       // End processing — next iteration should let stale detection fire.
@@ -167,7 +167,7 @@ describe('processing lifecycle — fixes #99 (long tool calls misclassified as s
       await new Promise((r) => setTimeout(r, 2000));
 
       const meta2: SessionMetadata = await handle.query(getMetadataQuery);
-      expect(meta2.status).to.equal('stale');
+      expect((meta2 as any).status).to.equal('stale');
 
       // Cleanup: deliver pending messages, then destroy. v0.25 destroy (§2.5) is
       // "abandon and COMPLETE" — no drain-wait — so no signals after destroy.

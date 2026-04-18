@@ -42,7 +42,7 @@ function mockConfig(overrides: Partial<Config> = {}): Config {
 
 /** Create a mock workflow handle that records signal/query/update calls. */
 function mockHandle(opts: {
-  metadata?: Partial<SessionMetadata>;
+  metadata?: Partial<SessionMetadata> & { status?: string };
   part?: string;
   messages?: Array<{ from: string; text: string; timestamp: string }>;
   history?: unknown[];
@@ -60,6 +60,9 @@ function mockHandle(opts: {
   const signals: Array<{ name: string; args: unknown }> = [];
   const updates: Array<{ name: string; args: unknown }> = [];
 
+  // `status` field removed from `SessionMetadata` in #176; strip it off any
+  // `opts.metadata` override that still carries it (most tests predate the removal).
+  const { status: _legacyStatus, ...mdOverrides } = (opts.metadata ?? {}) as Partial<SessionMetadata> & { status?: string };
   const defaultMetadata: SessionMetadata = {
     playerId: 'player-1',
     ensemble: 'test-ensemble',
@@ -67,8 +70,7 @@ function mockHandle(opts: {
     workDir: '/tmp/work',
     isConductor: false,
     agentType: 'claude',
-    status: 'active',
-    ...opts.metadata,
+    ...mdOverrides,
   };
 
   // Normalize: callers may pass either a string or a typed constant from
@@ -278,7 +280,9 @@ describe('scanEnsembleSessions', function () {
     expect(sessions[0].isConductor).to.be.true;
     expect(sessions[0].agentType).to.equal('copilot');
     expect(sessions[0].playerType).to.equal('tempo-conductor');
-    expect(sessions[0].status).to.equal('active');
+    // Note: legacy `status` passthrough assertion removed in #176 — `scanEnsembleSessions`
+    // now exposes `phase` from `ClaudeTempoAttachmentState`. The mock does not populate
+    // search attributes, so `phase` stays undefined here; covered by #178 rewrite.
   });
 });
 
