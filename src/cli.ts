@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 
-import { start, status, init, server, up, down, stop, help, version, ensembleCommand, agentTypesCommand, broadcast, daemon, upgrade, release, pause, resume, restart, detach, destroy, migrate, attachmentInfo, restore } from './cli/commands';
+// Lazy-loaded command surfaces — see `main()` below. We avoid a top-level
+// import of `./cli/commands` so that `claude-tempo daemon stop` stays
+// operable on Node versions where the Temporal SDK's transitive deps fail
+// to resolve (issue #157). The daemon command handler lives in its own
+// minimal module (`./cli/daemon-command`) that imports nothing from
+// Temporal or the workflow surface.
 import { configCommand } from './cli/config-command';
 import { runPreflight } from './cli/preflight';
 import * as out from './cli/output';
@@ -185,8 +190,31 @@ function cliOverrides(args: ParsedArgs): CliOverrides {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const ensemble = args.positional[1] || process.env[ENV.ENSEMBLE] || 'default';
   const overrides = cliOverrides(args);
+
+  // Fast-path for `claude-tempo daemon …` — load ONLY the minimal daemon
+  // command module (#157). Avoids pulling in the full `./cli/commands`
+  // surface, which transitively imports `@temporalio/client` and crashes
+  // on Node versions with broken native-dep resolution. This guarantees
+  // `daemon stop` / `daemon status` remain available as recovery levers
+  // even when the rest of the CLI cannot load.
+  if (args.command === 'daemon') {
+    const { daemon } = await import('./cli/daemon-command');
+    await daemon({
+      subcommand: args.positional[1],
+      ...overrides,
+    });
+    return;
+  }
+
+  // All other commands: lazy-load the full command surface now.
+  const {
+    start, status, init, server, up, down, stop, help, version,
+    ensembleCommand, agentTypesCommand, broadcast, upgrade, release,
+    pause, resume, restart, detach, destroy, migrate, attachmentInfo, restore,
+  } = await import('./cli/commands');
+
+  const ensemble = args.positional[1] || process.env[ENV.ENSEMBLE] || 'default';
   // Resolve the default agent from config (only needed for commands that use it)
   const resolvedAgent = (): AgentType => args.agent ?? getConfig(overrides).defaultAgent;
 
@@ -420,13 +448,6 @@ async function main() {
       await agentTypesCommand({
         subcommand: args.positional[1],
         name: args.positional[2],
-      });
-      break;
-
-    case 'daemon':
-      await daemon({
-        subcommand: args.positional[1],
-        ...overrides,
       });
       break;
 

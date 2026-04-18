@@ -7,6 +7,65 @@
 | `workflow execution not found` errors | Restart the daemon: `claude-tempo daemon stop && claude-tempo daemon start` |
 | Sessions not responding to messages | Run `claude-tempo daemon status` — ensure the daemon is running |
 | `.mcp.json` keeps being recreated with `npx` | Delete `.mcp.json` and use user-level registration: `claude-tempo init` |
+| `claude-tempo daemon status` reports orphan processes | See **Orphaned daemon processes** below |
+| Multiple `node` processes pinning `@temporalio/core-bridge/index.node` (npm uninstall blocked) | See **Orphaned daemon processes** below |
+
+## Orphaned daemon processes
+
+> Added in response to issue [#157](https://github.com/vinceblank/claude-tempo/issues/157) —
+> users running on unsupported Node versions (or after a crashed daemon shutdown) may
+> accumulate node processes pinned to `claude-tempo/dist/daemon.js`. The PID file
+> (`~/.claude-tempo/daemon.pid`) can be missing even while daemons are still running,
+> which means `claude-tempo daemon stop` is a no-op. The command-line-scan helper
+> in `daemon status` now lists these, and this section documents the emergency
+> escape hatches.
+
+### Inspect
+
+```bash
+claude-tempo daemon status
+```
+
+If the daemon is tracked via the PID file, this lists any additional daemon processes
+the scanner finds. If the PID file is absent but the scanner finds matches, they are
+reported as orphans.
+
+### Windows — PowerShell
+
+```powershell
+# List all claude-tempo daemon processes
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+  Where-Object { $_.CommandLine -match 'claude-tempo.*[\\/]dist[\\/]daemon\.js' } |
+  Select-Object ProcessId, CommandLine |
+  Format-List
+
+# Kill all of them (after confirming the list above matches what you expect!)
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+  Where-Object { $_.CommandLine -match 'claude-tempo.*[\\/]dist[\\/]daemon\.js' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+```
+
+### macOS / Linux — shell
+
+```bash
+# List
+pgrep -af 'claude-tempo.*dist/daemon\.js'
+
+# Kill (again: inspect first)
+pkill -f 'claude-tempo.*dist/daemon\.js'
+```
+
+### After cleanup
+
+```bash
+rm -f ~/.claude-tempo/daemon.pid ~/.claude-tempo/daemon.pid.lock   # clear any stale file locks
+claude-tempo daemon start                                          # spawn a single fresh daemon
+claude-tempo daemon status                                         # verify orphan count is zero
+```
+
+Pattern match is narrow (`claude-tempo` + `dist/daemon.js` in the command line) so
+these commands won't touch unrelated node processes. Review the list output before
+running the kill variant.
 
 ## Stale Session Cleanup
 

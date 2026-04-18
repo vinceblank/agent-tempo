@@ -6,7 +6,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import { CLAUDE_TEMPO_HOME, Config, ENV } from '../config';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:daemon]', ...args);
@@ -305,6 +305,118 @@ export async function startDaemon(config: Config): Promise<number> {
     // Release lock. We no longer hold an fd — writeFileSync closed it for us.
     try { fs.unlinkSync(DAEMON_LOCK_PATH); } catch { /* ignore */ }
   }
+}
+
+/**
+ * Info about a running claude-tempo daemon process discovered via OS process
+ * listing. Returned by {@link scanClaudeTempoDaemons}.
+ */
+export interface DaemonProcessInfo {
+  pid: number;
+  /** Full command line as reported by the OS. */
+  commandLine: string;
+}
+
+/**
+ * Matches a node process running the compiled daemon entry — both global-install
+ * paths (`...\claude-tempo\dist\daemon.js`) and dev-tree paths. Narrow enough to
+ * exclude unrelated `node` processes on the system; never force-kills based on
+ * this match alone (self-healing is gated by explicit user action per #157).
+ */
+const DAEMON_CMDLINE_RE = /\bnode(?:\.exe)?\b.*\bclaude-tempo\b.*[\\/]dist[\\/]daemon\.js\b/i;
+
+/**
+ * Shell out to the platform process list and return any matching daemon
+ * processes. Hand-rolled per-platform to avoid a new dependency:
+ *  - Windows: PowerShell `Get-CimInstance Win32_Process` (modern, robust) with a
+ *    `tasklist` fallback for environments without PowerShell on PATH
+ *  - POSIX: `ps -eo pid,command` (portable across macOS + Linux)
+ *
+ * Returns `[]` on any scanner failure — this is a best-effort observability
+ * helper, not a correctness guarantee. Errors are swallowed so a broken
+ * scanner can't itself take down `daemon status`.
+ *
+ * Exported for testing with a stubbed executor.
+ */
+export function scanClaudeTempoDaemons(
+  exec: (cmd: string, args: readonly string[]) => string = (cmd, args) =>
+    execFileSync(cmd, args as string[], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }),
+  platform: NodeJS.Platform = process.platform,
+): DaemonProcessInfo[] {
+  try {
+    if (platform === 'win32') {
+      return scanWindows(exec);
+    }
+    return scanPosix(exec);
+  } catch {
+    return [];
+  }
+}
+
+/** Windows scan via PowerShell → CSV. Falls back to `wmic` if PowerShell is missing. */
+function scanWindows(exec: (cmd: string, args: readonly string[]) => string): DaemonProcessInfo[] {
+  // PowerShell CSV output puts ProcessId in col 0, CommandLine in col 1.
+  // `-NoProfile` avoids loading user profile scripts that would slow startup.
+  const ps =
+    "Get-CimInstance -ClassName Win32_Process -Filter \"Name='node.exe'\" | " +
+    'Select-Object ProcessId,CommandLine | ConvertTo-Csv -NoTypeInformation';
+  try {
+    const out = exec('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+    return parseCsvMatches(out);
+  } catch {
+    // Fall through to wmic — legacy, still present on most Windows SKUs.
+    const out = exec('wmic', ['process', 'where', "name='node.exe'", 'get', 'ProcessId,CommandLine', '/format:csv']);
+    return parseCsvMatches(out);
+  }
+}
+
+/** POSIX scan via `ps -eo pid,command`. */
+function scanPosix(exec: (cmd: string, args: readonly string[]) => string): DaemonProcessInfo[] {
+  const out = exec('ps', ['-eo', 'pid,command']);
+  const matches: DaemonProcessInfo[] = [];
+  for (const line of out.split('\n')) {
+    // Skip header row ("  PID COMMAND").
+    const trimmed = line.trim();
+    if (!trimmed || /^pid\b/i.test(trimmed)) continue;
+    const m = /^(\d+)\s+(.+)$/.exec(trimmed);
+    if (!m) continue;
+    const pid = parseInt(m[1], 10);
+    const commandLine = m[2];
+    if (!isNaN(pid) && DAEMON_CMDLINE_RE.test(commandLine) && pid !== process.pid) {
+      matches.push({ pid, commandLine });
+    }
+  }
+  return matches;
+}
+
+/** Parse CSV output from PowerShell's ConvertTo-Csv or wmic and filter matches. */
+function parseCsvMatches(csv: string): DaemonProcessInfo[] {
+  const matches: DaemonProcessInfo[] = [];
+  for (const line of csv.split(/\r?\n/)) {
+    // CSV rows: quoted fields separated by commas. Both PowerShell and wmic
+    // emit a header row + blank lines. Keep the parser permissive — we only
+    // need ProcessId (numeric) and a line that contains the daemon signature.
+    if (!line || /^"?ProcessId\b/i.test(line) || /^Node,Command/i.test(line)) continue;
+    // Find a plausible ProcessId (column order differs between PS and wmic:
+    // PS puts it first, wmic puts it last). Take the first numeric token
+    // that isn't obviously part of the command line (i.e. inside a long
+    // quoted path). In practice both formats surface the pid as a bare or
+    // single-quoted token unadjacent to path-like text.
+    const pidMatch = line.match(/(?:^|,)"?(\d+)"?(?=,|$)/);
+    if (!pidMatch) continue;
+    const pid = parseInt(pidMatch[1], 10);
+    if (isNaN(pid) || pid === process.pid) continue;
+    // Match the daemon signature against the FULL LINE. CSV quoting (both
+    // PowerShell's doubled-quote `""` form and backslash-escape variants)
+    // doesn't hide the literal `node.exe` and `claude-tempo\dist\daemon.js`
+    // substrings from a substring regex — splitting into quoted fields would
+    // wrongly separate `node.exe` from `claude-tempo\dist\daemon.js` when
+    // they're in different CSV columns (e.g. `"node.exe" "...\daemon.js"`).
+    if (DAEMON_CMDLINE_RE.test(line)) {
+      matches.push({ pid, commandLine: line });
+    }
+  }
+  return matches;
 }
 
 /**
