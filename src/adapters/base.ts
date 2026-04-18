@@ -530,126 +530,141 @@ export abstract class BaseAttachment {
    * firing terminal) on abort — `stopV2Lifecycle` owns teardown messaging.
    */
   private async runReconnectLoop(initialReason: DetachReason): Promise<void> {
-    if (!this.client || !this.host || !this.token || !this.pinnedHandle) {
-      log('runReconnectLoop: missing client/host/token/handle — aborting');
-      this.reconnecting = false;
-      this.fireTerminal('reconnect-exhausted');
-      return;
-    }
-
-    const workflowId = this.pinnedHandle.workflowId;
-    const oldAttachmentId = this.token.attachmentId;
-
+    // Single try/finally so `reconnecting` always resets no matter how we exit
+    // — success path, any fireTerminal, abort-during-sleep, or an unexpected
+    // throw. #206 fixed the prior abort-catch path that leaked `reconnecting=true`
+    // if `stopV2Lifecycle` aborted the backoff sleep.
     try {
-      await this.onReconnectStart(initialReason);
-    } catch (err) {
-      log('onReconnectStart threw:', (err as Error)?.message ?? err);
-    }
-
-    const deadline = Date.now() + this.reconnectBudgetMs;
-    let backoff = this.reconnectBaseMs;
-    let attempt = 0;
-
-    while (!this.stopped && Date.now() < deadline) {
-      attempt++;
-      log(`reconnect attempt ${attempt} (sleep ${Math.round(backoff)}ms)`);
-      try {
-        await this.abortableSleep(backoff);
-      } catch {
-        // User-initiated stop during sleep — teardown already owns the rest.
-        log('reconnect aborted by stop during backoff');
+      if (!this.client || !this.host || !this.token || !this.pinnedHandle) {
+        log('runReconnectLoop: missing client/host/token/handle — aborting');
+        this.fireTerminal('reconnect-exhausted');
         return;
       }
-      if (this.stopped) return;
 
-      // §Pre-check (architect §1): query attachmentInfo via a fresh unpinned handle.
-      // The old pinned handle's runId may be stale after a continueAsNew.
-      const unpinned = this.client.workflow.getHandle(workflowId);
-      let info: AttachmentInfo;
+      const workflowId = this.pinnedHandle.workflowId;
+      const oldAttachmentId = this.token.attachmentId;
+
       try {
-        info = await unpinned.query(attachmentInfoQuery);
+        await this.onReconnectStart(initialReason);
       } catch (err) {
-        if (this.isWorkflowGone(err)) {
-          log('reconnect: workflow gone during pre-check');
-          this.reconnecting = false;
-          this.fireTerminal('destroy');
-          return;
-        }
-        backoff = Math.min(backoff * this.reconnectBackoffFactor, this.reconnectMaxMs);
-        log(`reconnect pre-check transient error (next backoff ${Math.round(backoff)}ms):`, (err as Error)?.message ?? err);
-        continue;
+        log('onReconnectStart threw:', (err as Error)?.message ?? err);
       }
 
-      if (info.phase === 'gone') {
-        log('reconnect: phase=gone — giving up');
-        this.reconnecting = false;
-        this.fireTerminal('destroy');
-        return;
-      }
-      if (info.currentAttachment && info.currentAttachment.attachmentId !== oldAttachmentId) {
-        log(`reconnect: another adapter holds the lease (${info.currentAttachment.attachmentId}) — bailing`);
-        this.reconnecting = false;
-        this.fireTerminal('superseded');
-        return;
-      }
-      if (info.phase === 'draining') {
-        // About to reap — give the workflow one more tick to finish collapsing.
-        backoff = Math.min(backoff * this.reconnectBackoffFactor, this.reconnectMaxMs);
-        log(`reconnect: phase=draining, waiting (next backoff ${Math.round(backoff)}ms)`);
-        continue;
-      }
+      const deadline = Date.now() + this.reconnectBudgetMs;
+      let backoff = this.reconnectBaseMs;
+      let attempt = 0;
 
-      // §Claim: attempt a fresh `claimAttachment` (no expectedAttachmentId — our
-      // previous lease is revoked, this is a fresh claim from the workflow's POV).
-      try {
-        const newToken = await unpinned.executeUpdate(claimAttachmentUpdate, {
-          args: [{
-            host: this.host,
-            adapterId: this.descriptor.adapterId,
-            adapterClass: this.descriptor.adapterClass as AdapterClass,
-            leaseMs: 3 * this.descriptor.heartbeatMs,
-          }],
-        });
-
-        // Success — rebuild pinned handle from the NEW runId and hand it to the subclass.
-        this.token = newToken;
-        this.pinnedHandle = this.client.workflow.getHandle(workflowId, newToken.runId);
-        this.knownPhase = null; // force the next phase-watcher tick to re-emit phaseChange
-        this.heartbeatBackoff = 0;
-        this.phaseBackoff = 0;
-        log(
-          `reconnected to ${workflowId} after ${attempt} attempt(s) ` +
-          `(new attachmentId=${newToken.attachmentId}, runId=${newToken.runId})`,
-        );
-
+      while (!this.stopped && Date.now() < deadline) {
+        attempt++;
+        log(`reconnect attempt ${attempt} (sleep ${Math.round(backoff)}ms)`);
         try {
-          await this.onReconnected(this.pinnedHandle);
+          await this.abortableSleep(backoff);
+        } catch {
+          // User-initiated stop during sleep — teardown already owns the rest.
+          // The finally block still resets `reconnecting` so a subsequent
+          // reclaim attempt (hypothetical — stop normally ends the adapter) would
+          // find clean state. #206.
+          log('reconnect aborted by stop during backoff');
+          return;
+        }
+        if (this.stopped) return;
+
+        // §Pre-check (architect §1): query attachmentInfo via a fresh unpinned handle.
+        // The old pinned handle's runId may be stale after a continueAsNew.
+        const unpinned = this.client.workflow.getHandle(workflowId);
+        let info: AttachmentInfo;
+        try {
+          info = await unpinned.query(attachmentInfoQuery);
         } catch (err) {
-          log('onReconnected threw:', (err as Error)?.message ?? err);
+          if (this.isWorkflowGone(err)) {
+            log('reconnect: workflow gone during pre-check');
+            this.fireTerminal('destroy');
+            return;
+          }
+          backoff = Math.min(backoff * this.reconnectBackoffFactor, this.reconnectMaxMs);
+          log(`reconnect pre-check transient error (next backoff ${Math.round(backoff)}ms):`, (err as Error)?.message ?? err);
+          continue;
         }
 
-        this.reconnecting = false;
-        if (!this.stopped) {
-          this.scheduleHeartbeat();
-          this.schedulePhaseWatcher();
-        }
-        return;
-      } catch (err) {
-        if (this.isWorkflowGone(err)) {
-          log('reconnect: workflow gone during claim');
-          this.reconnecting = false;
+        if (info.phase === 'gone') {
+          log('reconnect: phase=gone — giving up');
           this.fireTerminal('destroy');
           return;
         }
-        backoff = Math.min(backoff * this.reconnectBackoffFactor, this.reconnectMaxMs);
-        log(`reconnect claim failed (next backoff ${Math.round(backoff)}ms):`, (err as Error)?.message ?? err);
-      }
-    }
+        if (info.currentAttachment && info.currentAttachment.attachmentId !== oldAttachmentId) {
+          log(`reconnect: another adapter holds the lease (${info.currentAttachment.attachmentId}) — bailing`);
+          this.fireTerminal('superseded');
+          return;
+        }
+        if (info.phase === 'draining') {
+          // About to reap — give the workflow one more tick to finish collapsing.
+          backoff = Math.min(backoff * this.reconnectBackoffFactor, this.reconnectMaxMs);
+          log(`reconnect: phase=draining, waiting (next backoff ${Math.round(backoff)}ms)`);
+          continue;
+        }
 
-    // Budget exhausted — give up cleanly.
-    log(`reconnect budget exhausted after ${attempt} attempt(s)`);
-    this.reconnecting = false;
-    this.fireTerminal('reconnect-exhausted');
+        // §Claim: attempt a fresh `claimAttachment` (no expectedAttachmentId — our
+        // previous lease is revoked, this is a fresh claim from the workflow's POV).
+        try {
+          const newToken = await unpinned.executeUpdate(claimAttachmentUpdate, {
+            args: [{
+              host: this.host,
+              adapterId: this.descriptor.adapterId,
+              adapterClass: this.descriptor.adapterClass as AdapterClass,
+              leaseMs: 3 * this.descriptor.heartbeatMs,
+            }],
+          });
+
+          // Success — rebuild pinned handle from the NEW runId and hand it to the subclass.
+          this.token = newToken;
+          this.pinnedHandle = this.client.workflow.getHandle(workflowId, newToken.runId);
+          this.knownPhase = null; // force the next phase-watcher tick to re-emit phaseChange
+          this.heartbeatBackoff = 0;
+          this.phaseBackoff = 0;
+          log(
+            `reconnected to ${workflowId} after ${attempt} attempt(s) ` +
+            `(new attachmentId=${newToken.attachmentId}, runId=${newToken.runId})`,
+          );
+
+          try {
+            await this.onReconnected(this.pinnedHandle);
+          } catch (err) {
+            log('onReconnected threw:', (err as Error)?.message ?? err);
+          }
+
+          // Clear the reconnecting flag BEFORE rescheduling so the first
+          // heartbeat/watcher tick after reconnect doesn't short-circuit on
+          // its own `this.reconnecting` guard. The finally block reasserts
+          // `reconnecting=false` after return; this early assignment is the
+          // one that matters for loop wiring.
+          this.reconnecting = false;
+          if (!this.stopped) {
+            this.scheduleHeartbeat();
+            this.schedulePhaseWatcher();
+          }
+          return;
+        } catch (err) {
+          if (this.isWorkflowGone(err)) {
+            log('reconnect: workflow gone during claim');
+            this.fireTerminal('destroy');
+            return;
+          }
+          backoff = Math.min(backoff * this.reconnectBackoffFactor, this.reconnectMaxMs);
+          log(`reconnect claim failed (next backoff ${Math.round(backoff)}ms):`, (err as Error)?.message ?? err);
+        }
+      }
+
+      // Budget exhausted — give up cleanly.
+      log(`reconnect budget exhausted after ${attempt} attempt(s)`);
+      this.fireTerminal('reconnect-exhausted');
+    } finally {
+      // Guarantee state reset regardless of which path we exited on. Safe to
+      // assign unconditionally — a successful reconnect also ends up here after
+      // the early assignment inside the success path (the early one is needed
+      // so tick reschedulers see `reconnecting=false`; this one is belt-and-
+      // suspenders for the abort/throw/terminal paths).
+      this.reconnecting = false;
+    }
   }
 }
 
