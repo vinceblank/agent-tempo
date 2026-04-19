@@ -93,6 +93,23 @@ signal (extends lease), `processingStart`/`processingEnd` updates (in-flight set
 `requestDetach` signal, `adapterExited` signal (collapses draining → detached), `forceDetach`
 update, `destroy` update. See `docs/design/session-lifecycle-rebuild-v2.md` §2.2, §2.4.
 
+**Heartbeat invariant** (#249): After a successful `claimAttachment`, the adapter's heartbeat
+loop MUST fire at the configured `heartbeatMs` cadence for the life of the lease. Silent
+orphaning of the loop (unhandled error, missed reschedule) is now detectable via structured
+log lines emitted by `src/adapters/base.ts` (grep `[claude-tempo:adapter]`):
+- `first heartbeat scheduled in Xms` — after claim
+- `heartbeat#1 delivered` — first successful tick; reset on reconnect/CAN-rebind
+- `heartbeats-delivered=N / phase-ticks=N` — liveness breadcrumb every 10 ticks
+- `guard tripped: {stopped, reconnecting, hasHandle, hasToken, terminalFired}` — emitted on
+  any tick early-return that would previously have silently orphaned the timer
+- `WARNING: heartbeat staleness` — phase-watcher fires when `lastHeartbeatAt` falls more
+  than 2× `heartbeatMs` behind `now`, before the workflow's lease-reap triggers
+
+Absence of `heartbeats-delivered=` in a multi-hour session log is a strong indicator of
+tick-orphan recurrence. The CAN-boundary lease extension also uses `currentAttachment.leaseMs`
+(= 3× `heartbeatMs`, negotiated at claim time) instead of a hardcoded 30s — ensuring a CAN
+between heartbeats does not prematurely reap a healthy attachment.
+
 ---
 
 ## Cross-ensemble primitives
