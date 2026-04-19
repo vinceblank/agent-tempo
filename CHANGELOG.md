@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   Cross-reference: #159 (earlier same-family Windows orphan bug), #164
   (initial attached-path hardTerminate wiring), #226 (adapter CAN-reconnect
   bug that exposed this cascade in the wild).
+- TUI store reducer now preserves state identity on clamped no-ops for
+  `STATUS_SCROLL_UP` and `PICKER_UP` — dispatching up-arrow at the top of a
+  list no longer triggers a spurious re-render (#244).
 - TUI palette reducer now preserves state identity on clamped no-ops, eliminating
   spurious re-renders when arrow-key repeat hits index 0 / clamped max (#108).
 - TUI `/`-command parser respects quoted arguments; `/schedule create … "0 * * * *"`
