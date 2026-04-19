@@ -26,6 +26,11 @@ import {
   attachmentInfoQuery,
 } from '../workflows/signals';
 import { resolveSession } from '../activities/resolve';
+import {
+  getAttachmentPhase,
+  getEnsembleName,
+  getIsConductor,
+} from '../utils/search-attributes';
 import type { TempoClient, EnsembleSummary } from './interface';
 
 // Re-export public types for consumers
@@ -79,9 +84,8 @@ export function createTempoClient(client: Client): TempoClient {
         const ensembleMap = new Map<string, { count: number; hasConductor: boolean; conductorStatus?: string }>();
 
         for await (const wf of client.workflow.list({ query })) {
-          const vals = wf.searchAttributes?.ClaudeTempoEnsemble;
-          if (!Array.isArray(vals) || vals.length === 0) continue;
-          const name = String(vals[0]);
+          const name = getEnsembleName(wf);
+          if (!name) continue;
 
           const entry = ensembleMap.get(name) || { count: 0, hasConductor: false };
           entry.count++;
@@ -89,15 +93,13 @@ export function createTempoClient(client: Client): TempoClient {
           // Preferred: ClaudeTempoIsConductor search attribute (canonical, queryable).
           // Fallback: workflow ID convention — covers the brief window after a
           // conductor spawn before the search attribute is indexed.
-          const saFlag = wf.searchAttributes?.ClaudeTempoIsConductor;
-          const isConductorFromSA = Array.isArray(saFlag) && saFlag[0] === true;
+          const isConductorFromSA = getIsConductor(wf) === true;
           const isConductorFromId = wf.workflowId?.endsWith('-conductor') ?? false;
           if (isConductorFromSA || isConductorFromId) {
             entry.hasConductor = true;
             // Post-#175 the workflow writes `ClaudeTempoAttachmentState` (phase) in
             // place of the removed `ClaudeTempoStatus` search attribute.
-            const phaseArr = wf.searchAttributes?.ClaudeTempoAttachmentState;
-            entry.conductorStatus = Array.isArray(phaseArr) ? String(phaseArr[0]) : undefined;
+            entry.conductorStatus = getAttachmentPhase(wf);
           }
 
           ensembleMap.set(name, entry);

@@ -7,6 +7,7 @@ import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { MESSAGE_MAX, shouldIncludeInBroadcast } from '../utils/validation';
+import { getAttachmentPhase } from '../utils/search-attributes';
 
 export function registerBroadcastTool(
   server: McpServer,
@@ -49,10 +50,7 @@ export function registerBroadcastTool(
 
             // Filter by attachment phase (post-#176). Phase lives on the
             // `ClaudeTempoAttachmentState` search attribute.
-            const phaseArr = workflow.searchAttributes?.ClaudeTempoAttachmentState as
-              | string[]
-              | undefined;
-            const phase = Array.isArray(phaseArr) && phaseArr.length > 0 ? phaseArr[0] : undefined;
+            const phase = getAttachmentPhase(workflow);
             if (!shouldIncludeInBroadcast(phase, includeDisconnected)) continue;
 
             // Filter by player type if specified

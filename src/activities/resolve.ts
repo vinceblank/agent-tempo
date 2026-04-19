@@ -1,5 +1,6 @@
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { SessionMetadata, AttachmentPhase } from '../types';
+import { getAttachmentPhase } from '../utils/search-attributes';
 
 /** Shared query for listing running session workflows. */
 const SESSION_LIST_QUERY = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
@@ -73,12 +74,7 @@ export async function scanEnsembleSessions(
 
       // Attachment phase lives in the `ClaudeTempoAttachmentState` search
       // attribute (written by the workflow on every phase transition).
-      const phaseArr = workflow.searchAttributes?.ClaudeTempoAttachmentState as
-        | string[]
-        | undefined;
-      const phase = Array.isArray(phaseArr) && phaseArr.length > 0
-        ? (phaseArr[0] as AttachmentPhase)
-        : undefined;
+      const phase = getAttachmentPhase(workflow);
 
       sessions.push({
         workflowId: workflow.workflowId,
