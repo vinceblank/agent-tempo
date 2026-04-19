@@ -25,6 +25,7 @@ import { getAttachmentPhase, getEnsembleName } from '../utils/search-attributes'
 import { isDaemonRunning, startDaemon, stopDaemon, getDaemonStatus, DAEMON_LOG_PATH } from './daemon';
 import { createTempoClient } from '../client';
 import { ENSEMBLE_SENTINEL_FLAG, ensembleReadyBanner, ensembleReadyDirective } from '../constants';
+import { buildTimeline, formatRecall } from '../utils/recall-format';
 import * as out from './output';
 
 /** Package root is two levels up from dist/cli/ */
@@ -2275,6 +2276,64 @@ export async function attachmentInfo(opts: VerbOpts) {
     // to the shared formatter so every surface picks it up at once.
     for (const line of formatAttachmentInfoForDisplay(opts.name, info)) {
       out.log(line);
+    }
+  } catch (err: any) {
+    out.error(err?.message || String(err));
+    process.exit(1);
+  } finally {
+    await connection.close();
+  }
+}
+
+// --- Recall command (#128) ---
+
+export interface RecallCliOpts extends VerbOpts {
+  limit?: number;
+  offset?: number;
+  previewLength?: number;
+  since?: string;
+  from?: string;
+  includeSent?: boolean;
+  /** Emit raw JSON `{ received, sent, total, shown, hasMore, text }` instead of the formatted timeline. */
+  json?: boolean;
+}
+
+export async function recall(opts: RecallCliOpts) {
+  const { config, connection, client } = await verbClient(opts);
+  const ensemble = opts.ensemble || config.ensemble;
+  try {
+    const tempo = createTempoClient(client);
+    const { received, sent } = await tempo.recall(ensemble, opts.name);
+    const timeline = buildTimeline(received, sent, Boolean(opts.includeSent));
+    const rendered = formatRecall(timeline, {
+      limit: opts.limit,
+      offset: opts.offset,
+      previewLength: opts.previewLength,
+      since: opts.since,
+      from: opts.from,
+    });
+    if (opts.json) {
+      // Machine-readable. Includes the rendered text too so callers can
+      // either re-render or pass through. Pagination state is explicit so
+      // shell pipelines don't have to parse the header line.
+      process.stdout.write(
+        JSON.stringify(
+          {
+            player: opts.name,
+            ensemble,
+            received,
+            sent: opts.includeSent ? sent : [],
+            total: rendered.total,
+            shown: rendered.shown,
+            hasMore: rendered.hasMore,
+            text: rendered.text,
+          },
+          null,
+          2,
+        ) + '\n',
+      );
+    } else {
+      out.log(rendered.text);
     }
   } catch (err: any) {
     out.error(err?.message || String(err));

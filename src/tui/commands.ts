@@ -11,6 +11,7 @@ import { statusIcons, supportsUnicode } from './utils/platform';
 import { phaseToLabel } from './utils/format';
 import { listAllLineups } from '../ensemble/saver';
 import { formatAttachmentInfoForDisplay } from '../utils/attachment-format';
+import { buildTimeline, formatRecall } from '../utils/recall-format';
 
 // ── Types ──
 
@@ -297,50 +298,118 @@ async function handleBroadcast(
   }
 }
 
-/** /recall [player] — fetch message history. */
+/**
+ * /recall [player] [--limit N] [--offset N] [--preview N] [--from X]
+ *         [--since ISO] [--include-sent]
+ *
+ * #128: unified per-session recall. Without a player positional, targets
+ * the ensemble's maestro session (the TUI's natural context); with a
+ * player positional, queries that player's session — same data shape the
+ * MCP `recall` tool and `claude-tempo recall <name>` CLI surface.
+ *
+ * The legacy pre-#128 behavior (aggregated maestro relay-log filtered
+ * by player) is retired; that path was inconsistent with the other two
+ * surfaces and the design doc on #128 explicitly chose parity.
+ */
 async function handleRecall(
   args: string[],
   dispatch: (action: TuiAction) => void,
   api: TempoClient,
+  ctx: CommandContext,
 ): Promise<void> {
-  try {
-    const ensembles = await api.discoverEnsembles();
-    if (ensembles.length === 0) {
-      commitStatic(dispatch, 'info', 'No ensembles running.');
-      return;
-    }
+  const ensemble = requireEnsemble(dispatch, ctx);
+  if (!ensemble) return;
 
-    const targetPlayer = args[0];
-    const lines: string[] = [];
-
-    for (const ens of ensembles) {
-      const messages = await api.getMessages(ens.name, 20);
-      const filtered = targetPlayer
-        ? messages.filter(m => m.from === targetPlayer || m.to === targetPlayer)
-        : messages;
-
-      if (filtered.length > 0) {
-        lines.push(`\n  ${ens.name} — ${filtered.length} message${filtered.length !== 1 ? 's' : ''}:`);
-        for (const m of filtered.slice(-15)) {
-          const time = formatTimestamp(m.timestamp);
-          const text = m.text.length > 60 ? m.text.slice(0, 57) + '...' : m.text;
-          lines.push(`    ${time}  ${m.from} \u2192 ${m.to}: ${text}`);
-        }
-      }
-    }
-
-    if (lines.length === 0) {
-      commitStatic(dispatch, 'info', targetPlayer
-        ? `No messages found for "${targetPlayer}".`
-        : 'No recent messages.');
-    } else {
-      const title = targetPlayer ? `Recall \u00B7 ${targetPlayer}` : 'Recall \u00B7 all';
-      lines.push('\n  \u2139 Showing Maestro event log. Main chat uses ensemble feed.');
-      dispatch({ type: 'SHOW_COMMAND_OVERLAY', title, content: lines.join('\n') });
-    }
-  } catch (err) {
-    commitStatic(dispatch, 'error', `Failed to recall messages: ${err}`);
+  const parsed = parseRecallFlags(args);
+  if (parsed.error) {
+    commitStatic(dispatch, 'error', parsed.error);
+    return;
   }
+  // Player defaults to the ensemble's maestro — see docstring.
+  const targetPlayer = parsed.player ?? 'maestro';
+
+  try {
+    const { received, sent } = await api.recall(ensemble, targetPlayer);
+    const timeline = buildTimeline(received, sent, Boolean(parsed.includeSent));
+    const rendered = formatRecall(timeline, {
+      limit: parsed.limit,
+      offset: parsed.offset,
+      previewLength: parsed.previewLength,
+      since: parsed.since,
+      from: parsed.from,
+    });
+    const title = `Recall \u00B7 ${targetPlayer}`;
+    dispatch({ type: 'SHOW_COMMAND_OVERLAY', title, content: rendered.text });
+  } catch (err) {
+    commitStatic(dispatch, 'error', `Failed to recall messages: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+interface ParsedRecallFlags {
+  player?: string;
+  limit?: number;
+  offset?: number;
+  previewLength?: number;
+  since?: string;
+  from?: string;
+  includeSent?: boolean;
+  error?: string;
+}
+
+/**
+ * Parse the `/recall` arg vector into structured flags. Exported for unit
+ * tests; the TUI handler consumes the structured result directly.
+ *
+ * Accepted shapes:
+ *   `/recall`                                    — maestro session
+ *   `/recall alice`                              — alice's session
+ *   `/recall --limit 5 --preview 80`             — flags only
+ *   `/recall alice --limit 5 --include-sent`     — player + flags
+ *
+ * Unknown flags or non-numeric values for numeric flags produce a usage
+ * error rather than silent drop, so the user isn't surprised by a default.
+ */
+export function parseRecallFlags(args: string[]): ParsedRecallFlags {
+  const out: ParsedRecallFlags = {};
+  let i = 0;
+  // Leading non-flag positional is the player override.
+  if (args.length > 0 && !args[0].startsWith('--')) {
+    out.player = args[0];
+    i = 1;
+  }
+  while (i < args.length) {
+    const flag = args[i];
+    const consumeNumber = (name: string, key: 'limit' | 'offset' | 'previewLength'): string | null => {
+      const raw = args[i + 1];
+      if (raw === undefined) return `Missing value for ${name}`;
+      const n = Number(raw);
+      if (!Number.isFinite(n) || !Number.isInteger(n) || n < (key === 'offset' ? 0 : 1)) {
+        return `Invalid ${name}: ${raw}`;
+      }
+      out[key] = n;
+      i += 2;
+      return null;
+    };
+    const consumeString = (name: string, key: 'since' | 'from'): string | null => {
+      const raw = args[i + 1];
+      if (raw === undefined) return `Missing value for ${name}`;
+      out[key] = raw;
+      i += 2;
+      return null;
+    };
+    let err: string | null = null;
+    switch (flag) {
+      case '--limit':   err = consumeNumber('--limit', 'limit'); break;
+      case '--offset':  err = consumeNumber('--offset', 'offset'); break;
+      case '--preview': err = consumeNumber('--preview', 'previewLength'); break;
+      case '--since':   err = consumeString('--since', 'since'); break;
+      case '--from':    err = consumeString('--from', 'from'); break;
+      case '--include-sent': out.includeSent = true; i += 1; break;
+      default: err = `Unknown flag: ${flag}`;
+    }
+    if (err) return { error: err };
+  }
+  return out;
 }
 
 // ── PR-D verbs — thin handlers calling TempoClient methods ──
@@ -1215,7 +1284,7 @@ export const COMMANDS: Record<string, CommandDef> = {
   },
   recall: {
     description: "Read a player's message history",
-    usage: '/recall [player] [--limit N]',
+    usage: '/recall [player] [--limit N] [--offset N] [--preview N] [--from X] [--since ISO] [--include-sent]',
     handler: handleRecall,
   },
   schedule: {

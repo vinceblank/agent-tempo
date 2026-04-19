@@ -143,6 +143,7 @@ claude-tempo up [ensemble]      # first-time setup
 claude-tempo conduct [ensemble] # start a conductor
 claude-tempo start [ensemble]   # start a player
 claude-tempo status [ensemble]  # list active sessions
+claude-tempo recall <name>      # read a player's message history (--limit/--offset/--preview/--from/--since/--include-sent/--json)
 claude-tempo attachment-info <name> # inspect a session's phase, holder, lease, and heartbeat age
 claude-tempo release [ensemble] # release held players (unlock + deliver tasks)
 claude-tempo pause [ensemble]   # pause all sessions and the scheduler
