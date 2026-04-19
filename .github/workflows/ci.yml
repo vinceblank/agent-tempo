@@ -20,6 +20,8 @@ jobs:
       - uses: actions/checkout@v6
       - name: Check for stray `test-ensemble` literals in test/
         run: bash scripts/check-test-ensemble-literals.sh
+      - name: Check this.skip() calls have SKIP-REASON annotations
+        run: node scripts/lint-skip-reasons.js
 
   build-and-test:
     # Mocha integration suite, sharded 2-way per docs/design/191-test-parallelization.md §2

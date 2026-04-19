@@ -8,8 +8,9 @@ logs/
 *.js.map
 *.d.ts
 !jest.config.js
-# Operational scripts (not built from TS) — one-off manual tools.
-!scripts/*.js
+# Compiled scripts go to dist/scripts/ (gitignored via dist/). Source in scripts/*.ts.
+# Exception: lint-skip-reasons.js is plain CommonJS — runs without a build step.
+!scripts/lint-skip-reasons.js
 temporal-data.db
 
 pnpm-lock.yaml

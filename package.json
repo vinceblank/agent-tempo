@@ -51,7 +51,8 @@
     "claude-tempo-server": "dist/server.js"
   },
   "scripts": {
-    "build": "tsc && node -e \"const{bundleWorkflowCode}=require('@temporalio/worker');const path=require('path');const fs=require('fs');bundleWorkflowCode({workflowsPath:path.resolve('dist/workflows/index.js')}).then(b=>{fs.writeFileSync('workflow-bundle.js',b.code);console.log('Workflow bundle created')})\"",
+    "build": "tsc && npm run build:scripts && node -e \"const{bundleWorkflowCode}=require('@temporalio/worker');const path=require('path');const fs=require('fs');bundleWorkflowCode({workflowsPath:path.resolve('dist/workflows/index.js')}).then(b=>{fs.writeFileSync('workflow-bundle.js',b.code);console.log('Workflow bundle created')})\"",
+    "build:scripts": "tsc -p scripts/tsconfig.json",
     "prepublishOnly": "npm run build && npm test",
     "dev": "ts-node src/server.ts",
     "copilot-bridge": "ts-node src/adapters/copilot/adapter.ts",
@@ -61,9 +62,9 @@
     "test:tui": "vitest run",
     "test:conformance": "npm run build:test && mocha --config .mocharc.conformance.yml",
     "pretest:shard-1": "npm run build:test",
-    "test:shard-1": "node scripts/run-shard.js 1",
+    "test:shard-1": "node dist/scripts/run-shard.js 1",
     "pretest:shard-2": "npm run build:test",
-    "test:shard-2": "node scripts/run-shard.js 2",
+    "test:shard-2": "node dist/scripts/run-shard.js 2",
     "test": "mocha && vitest run"
   },
   "optionalDependencies": {

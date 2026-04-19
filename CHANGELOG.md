@@ -71,6 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   that grew with doc surface and could silently mask a real undocumented wire name sharing
   a common field identifier. Matching is now by `(kind, name)` pairs — a handler documented
   as a Signal but declared as `defineQuery` in source will be caught as drift.
+- **`this.skip()` calls in test files now require a `// SKIP-REASON:` annotation** (#223). `scripts/lint-skip-reasons.js` scans `test/` and `tests/` and fails CI (as part of the `lint-test-ensemble` job) if any unannotated skip is found. Existing skips in `hard-terminate.test.ts` and `cli-crash-proof-isolation.test.ts` have been annotated.
+- **Scripts compiled from TypeScript to `dist/scripts/`** (#224). `scripts/run-shard.ts` and `scripts/verify-daemon-isolation-guard.ts` are now TypeScript sources; `npm run build:scripts` (included in `npm run build`) compiles them to `dist/scripts/`. Removes the fragile `!scripts/*.js` gitignore negation that would accidentally commit any future generated `.js` file. Invocation for the verification script: `npm run build:scripts && node dist/scripts/verify-daemon-isolation-guard.js`.
 
 ## [0.26.0-beta.3] - 2026-04-18
 
@@ -181,13 +183,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   "stale" when the last touch is >120s ago. Disambiguates "pid is alive AND
   main loop is serving" from "pid is alive but something hung" — informational,
   doesn't drive any automatic action. (partial fix for #157)
-- **`scripts/verify-daemon-isolation-guard.js`** — one-shot manual verification
+- **`scripts/verify-daemon-isolation-guard.ts`** — one-shot manual verification
   script for the #157 isolation guard's fail-path. The `daemon-command-isolation`
   test asserts no forbidden Temporal imports leak into the `require.cache` of
   the daemon CLI module. This script empirically confirms the detector would
   FAIL if a forbidden import were injected — belt-and-suspenders paranoia per
   tempo-qa observation on PR #218. Run before a release or after touching CLI
-  imports.
+  imports. (Compiled to `dist/scripts/` as of #224: `npm run build:scripts && node dist/scripts/verify-daemon-isolation-guard.js`)
 - **`claude-tempo version` / `help` / `upgrade` / `config` are now crash-proof**
   (partial fix for #157 PR C). Each now routes through a dedicated minimal
   module (`src/cli/help-text.ts`, `src/cli/upgrade-command.ts`) or is inlined

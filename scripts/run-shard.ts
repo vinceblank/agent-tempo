@@ -4,7 +4,7 @@
  * `docs/design/191-test-parallelization.md` §2).
  *
  * Usage:
- *   node scripts/run-shard.js <1|2>
+ *   node dist/scripts/run-shard.js <1|2>
  *
  *   shard-1 — run only the files listed in `shard-config.json` under
  *     `"shard-1"`. Runs Mocha with `--no-config` so positional args are the
@@ -28,17 +28,19 @@
  * or spawn error) so `npm run test:shard-*` and CI see identical semantics
  * to a direct `mocha` invocation.
  */
-const path = require('path');
-const { spawnSync } = require('child_process');
+import * as path from 'path';
+import * as fs from 'fs';
+import { spawnSync } from 'child_process';
 
 const shard = process.argv[2];
 if (shard !== '1' && shard !== '2') {
-  console.error('Usage: node scripts/run-shard.js <1|2>');
+  console.error('Usage: node dist/scripts/run-shard.js <1|2>');
   process.exit(2);
 }
 
-const config = require(path.join('..', 'test', 'shard-config.json'));
-const shard1Sources = Array.isArray(config['shard-1']) ? config['shard-1'] : [];
+const configPath = path.join(__dirname, '..', '..', 'test', 'shard-config.json');
+const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+const shard1Sources: string[] = Array.isArray(config['shard-1']) ? config['shard-1'] : [];
 if (shard1Sources.length === 0) {
   console.error('test/shard-config.json is missing or empty under "shard-1".');
   process.exit(2);
@@ -47,7 +49,7 @@ if (shard1Sources.length === 0) {
 // Map each source path to its compiled .js under dist-test. The helper stays
 // here (rather than in the JSON) so the JSON reads as a plain file list — no
 // build-path leakage into a config that engineers edit during rebalance.
-function toCompiled(sourcePath) {
+function toCompiled(sourcePath: string): string {
   return sourcePath
     .replace(/^test\//, 'dist-test/test/')
     .replace(/\.ts$/, '.js');
@@ -60,7 +62,7 @@ const shard1Compiled = shard1Sources.map(toCompiled);
 // pull in every file in the default glob. Forwarding `require` + `timeout`
 // + `exit` by hand keeps the shared TestWorkflowEnvironment teardown hook
 // wired up and the per-test timeout identical to a full-suite run.
-const shard1CliMirrorOfMocharc = [
+const shard1CliMirrorOfMocharc: string[] = [
   '--no-config',
   '--require',
   'dist-test/test/root-hooks.js',
@@ -69,7 +71,7 @@ const shard1CliMirrorOfMocharc = [
   '--exit',
 ];
 
-const mochaArgs =
+const mochaArgs: string[] =
   shard === '1'
     ? [...shard1CliMirrorOfMocharc, ...shard1Compiled]
     : shard1Compiled.flatMap((f) => ['--ignore', f]);
@@ -80,6 +82,7 @@ const mochaArgs =
 // dev-only script.
 const mochaBin = path.join(
   __dirname,
+  '..',
   '..',
   'node_modules',
   '.bin',
