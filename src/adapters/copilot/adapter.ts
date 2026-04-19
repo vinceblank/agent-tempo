@@ -72,14 +72,16 @@ try {
   CopilotClient = sdk.CopilotClient;
   approveAll = sdk.approveAll;
 } catch {
-  console.error(
-    'Error: @github/copilot-sdk is not installed.\n' +
-    'Install it with: npm install @github/copilot-sdk\n' +
-    'See the Copilot CLI integration section in the README.',
-  );
-  // Only exit if this file is being executed directly — don't crash callers that
-  // only import the class for its descriptor.
+  // When run as the Copilot bridge subprocess entrypoint, print an actionable
+  // error and exit so the user knows what to install. When imported by the
+  // adapter registry during normal MCP server startup, stay silent — the SDK
+  // is optional and non-Copilot users should see no noise. (#122)
   if (require.main === module) {
+    console.error(
+      'Error: @github/copilot-sdk is not installed.\n' +
+      'Install it with: npm install @github/copilot-sdk\n' +
+      'See the Copilot CLI integration section in the README.',
+    );
     process.exit(1);
   }
 }
