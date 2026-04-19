@@ -103,6 +103,36 @@ describe('tuiReducer — no-op identity', () => {
     expect(out).not.toBe(s);
     expect(out.paletteIndex).toBe(3);
   });
+
+  // ── Identity-rule assertions (fixed in #244) ──
+  // STATUS_SCROLL_UP and PICKER_UP both used `Math.max(0, ...)` spread with no
+  // identity guard, returning `{ ...state, ... }` even when already at 0. The
+  // fix mirrors the OVERLAY_SELECT / PALETTE_UP pattern.
+  it('STATUS_SCROLL_UP at offset 0 returns the same reference (identity rule)', () => {
+    const s = { ...s0(), statusScrollOffset: 0 };
+    const out = tuiReducer(s, { type: 'STATUS_SCROLL_UP' });
+    expect(out).toBe(s);
+  });
+
+  it('STATUS_SCROLL_UP above offset 0 produces a new state with decremented offset', () => {
+    const s = { ...s0(), statusScrollOffset: 3 };
+    const out = tuiReducer(s, { type: 'STATUS_SCROLL_UP' });
+    expect(out).not.toBe(s);
+    expect(out.statusScrollOffset).toBe(2);
+  });
+
+  it('PICKER_UP at index 0 returns the same reference (identity rule)', () => {
+    const s = { ...s0(), pickerIndex: 0 };
+    const out = tuiReducer(s, { type: 'PICKER_UP' });
+    expect(out).toBe(s);
+  });
+
+  it('PICKER_UP above index 0 produces a new state with decremented index', () => {
+    const s = { ...s0(), pickerIndex: 4 };
+    const out = tuiReducer(s, { type: 'PICKER_UP' });
+    expect(out).not.toBe(s);
+    expect(out.pickerIndex).toBe(3);
+  });
 });
 
 describe('tuiReducer — state transitions', () => {
