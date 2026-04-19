@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.0-beta.5] - 2026-04-19
+
+### Added
+- CLI: `attachment-info` command now displays heartbeat age (#138)
+
+### Fixed
+- worktree tool `create` action: reusing an existing directory with a different branch now correctly repoints the inner HEAD and refuses to destroy uncommitted work (previously silently reported the requested branch without changing HEAD) (#261)
+
 ## [0.26.0-beta.4] - 2026-04-19
 
 > **Beta release.** Closes the message-delivery trilogy (#249): heartbeat/watcher orphan fix,
