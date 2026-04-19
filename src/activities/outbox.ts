@@ -261,12 +261,19 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
   return {
     async deliverCue(input: DeliverCueInput): Promise<OutboxActivityResult> {
       const { ensemble, fromPlayerId, targetPlayerId, message } = input;
-      const handle = await resolveSession(client, ensemble, targetPlayerId);
-      if (!handle) {
-        throw ApplicationFailure.nonRetryable(`No active session found for "${targetPlayerId}"`);
+      try {
+        const handle = await resolveSession(client, ensemble, targetPlayerId);
+        if (!handle) {
+          throw ApplicationFailure.nonRetryable(`No active session found for "${targetPlayerId}"`);
+        }
+        await handle.signal('receiveMessage', { from: fromPlayerId, text: message });
+        return { success: true };
+      } catch (err) {
+        // #236: transient RPC errors (e.g. DEADLINE_EXCEEDED on the signal call)
+        // retry per the activity policy; WorkflowNotFound / validator rejections
+        // stay permanent. Unknown errors default to non-retryable.
+        classifyAndRethrow(err, `Cue failed for "${targetPlayerId}"`);
       }
-      await handle.signal('receiveMessage', { from: fromPlayerId, text: message });
-      return { success: true };
     },
 
     async deliverReport(input: DeliverReportInput): Promise<OutboxActivityResult> {
@@ -278,40 +285,45 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         await handle.signal('playerReport', { playerId: fromPlayerId, text, type: reportType });
         return { success: true };
       } catch (err) {
-        if (err instanceof ApplicationFailure) throw err;
-        throw ApplicationFailure.nonRetryable(
-          `Failed to deliver report to conductor: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        // #236: describe() / signal() hitting a transient RPC error now retries;
+        // WorkflowNotFound (conductor gone) stays permanent as before.
+        classifyAndRethrow(err, 'Failed to deliver report to conductor');
       }
     },
 
     async terminateSession(input: TerminateSessionInput): Promise<OutboxActivityResult> {
       const { ensemble, targetPlayerId, terminatedBy } = input;
-      const handle = await resolveSession(client, ensemble, targetPlayerId);
-      if (!handle) {
-        throw ApplicationFailure.nonRetryable(`No active session found for "${targetPlayerId}"`);
-      }
-      // PR-C commit 4: use the V2 `destroy` update — explicit operator termination
-      // per §2.5 (abandon in-flight, phase=gone, COMPLETE). The former
-      // `updateMetadata({ status: 'terminated' })` signal path was retired.
-      await handle.executeUpdate('destroy', {
-        args: [{ reason: 'stop via tool', terminatedBy }],
-      });
-
-      // Notify conductor about the termination (best effort)
       try {
-        const conductorId = conductorWorkflowId(ensemble);
-        const conductorHandle = client.workflow.getHandle(conductorId);
-        await conductorHandle.signal('receiveMessage', {
-          from: 'system',
-          text: `Session "${targetPlayerId}" was terminated by ${terminatedBy}.`,
-          responseRequested: false,
+        const handle = await resolveSession(client, ensemble, targetPlayerId);
+        if (!handle) {
+          throw ApplicationFailure.nonRetryable(`No active session found for "${targetPlayerId}"`);
+        }
+        // PR-C commit 4: use the V2 `destroy` update — explicit operator termination
+        // per §2.5 (abandon in-flight, phase=gone, COMPLETE). The former
+        // `updateMetadata({ status: 'terminated' })` signal path was retired.
+        await handle.executeUpdate('destroy', {
+          args: [{ reason: 'stop via tool', terminatedBy }],
         });
-      } catch {
-        // Conductor may not exist — that's fine
-      }
 
-      return { success: true };
+        // Notify conductor about the termination (best effort)
+        try {
+          const conductorId = conductorWorkflowId(ensemble);
+          const conductorHandle = client.workflow.getHandle(conductorId);
+          await conductorHandle.signal('receiveMessage', {
+            from: 'system',
+            text: `Session "${targetPlayerId}" was terminated by ${terminatedBy}.`,
+            responseRequested: false,
+          });
+        } catch {
+          // Conductor may not exist — that's fine
+        }
+
+        return { success: true };
+      } catch (err) {
+        // #236: transient RPC on the destroy update now retries; validator rejection
+        // (WorkflowGone, AttachmentMismatch) stays permanent.
+        classifyAndRethrow(err, `Terminate failed for "${targetPlayerId}"`);
+      }
     },
 
     async startRecruitedSession(input: StartRecruitedSessionInput): Promise<RecruitResult> {
@@ -388,9 +400,11 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         log(`Pre-created workflow ${workflowId} for recruit "${targetName}" (sessionId=${sessionId}, held=${!!held})`);
         return { success: true, sessionId };
       } catch (err) {
-        throw ApplicationFailure.nonRetryable(
-          `Failed to start recruited session "${targetName}": ${err instanceof Error ? err.message : String(err)}`,
-        );
+        // #236: transient RPC during workflow.start (e.g. temporal server flap)
+        // now retries; WorkflowNotFound / validation / auth failures stay permanent.
+        // Note: this activity's pre-#236 catch was missing the ApplicationFailure
+        // passthrough guard — `classifyAndRethrow` restores it for free.
+        classifyAndRethrow(err, `Failed to start recruited session "${targetName}"`);
       }
     },
 
@@ -474,9 +488,14 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
 
         return { success: true };
       } catch (err) {
-        throw ApplicationFailure.nonRetryable(
-          `Failed to spawn process for "${targetName}": ${err instanceof Error ? err.message : String(err)}`,
-        );
+        // #236: spawnProcess throws predominantly OS-side errors (ENOENT/EACCES
+        // on the claude binary, EAGAIN on process-table overflow). The classifier
+        // is tuned for Temporal RPC; OS errors don't match its transient
+        // signatures, so they still flow through as non-retryable — byte-for-byte
+        // behavior preservation. The upside of going through the helper: if a
+        // future OS error surfaces a transient shape we add to the classifier,
+        // spawnProcess benefits automatically.
+        classifyAndRethrow(err, `Failed to spawn process for "${targetName}"`);
       }
     },
 
@@ -502,10 +521,9 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         log(`Released held session "${targetPlayerId}"`);
         return { success: true };
       } catch (err) {
-        if (err instanceof ApplicationFailure) throw err;
-        throw ApplicationFailure.nonRetryable(
-          `Release failed for "${targetPlayerId}": ${err instanceof Error ? err.message : String(err)}`,
-        );
+        // #236: transient RPC on outboxLocked query / releaseHeld signal now
+        // retries; WorkflowNotFound / not-held validation stay permanent.
+        classifyAndRethrow(err, `Release failed for "${targetPlayerId}"`);
       }
     },
 

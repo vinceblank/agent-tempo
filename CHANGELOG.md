@@ -51,6 +51,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Extended the `classifyAndRethrow` / `isRetryableTemporalError` error-
+  classification pattern (introduced for `deliverDetach` /
+  `deliverDestroy` / `deliverRestart` in PR #235) to the remaining six
+  outbox delivery activities: `deliverCue`, `deliverReport`,
+  `terminateSession`, `startRecruitedSession`, `releasePlayer`, and
+  `spawnProcess`. Transient Temporal RPC errors (`TransportError`,
+  `DEADLINE_EXCEEDED`, `UNAVAILABLE`, `ECONN*`, etc.) now re-throw as
+  plain `Error` so the activity retry policy can back off and retry;
+  permanent classes (`WorkflowNotFoundError`, `WorkflowUpdateFailedError`,
+  "workflow execution already completed") and unknown errors stay
+  `ApplicationFailure.nonRetryable`. Pre-existing `deliverCue` and
+  `terminateSession` gain a new outer try/catch (previously no
+  catch-all; `handle.signal` / `handle.executeUpdate` errors bubbled
+  raw); `startRecruitedSession` and `spawnProcess` additionally gain the
+  `ApplicationFailure` passthrough guard (pre-#236 minor bug —
+  `classifyAndRethrow` restores it for free). Fifteen new unit tests
+  cover the retryable / non-retryable / unknown-default paths for the
+  five mock-driveable activities; `spawnProcess` coverage is deferred
+  pending module-stubbing test infra (OS-level errors don't match the
+  classifier's Temporal signatures, so behavior is byte-for-byte
+  preserved). (#236, follow-up to #140)
 - Replaced the wire-protocol drift detector's keyword-based
   `kindFromSectionHeader` with an explicit `SECTION_TO_KIND` allowlist that
   throws on any section header not in the table

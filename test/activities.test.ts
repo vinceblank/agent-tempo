@@ -706,6 +706,461 @@ describe('deliverRestart — error classification (#140)', function () {
   });
 });
 
+// ── #236: error classification for remaining outbox delivery activities ──
+//
+// PR #235 (#140) applied `classifyAndRethrow` to the 3 PR-D activities
+// (deliverDetach / deliverDestroy / deliverRestart). Follow-up #236 applies
+// the same helper to the 6 remaining outbox activities. These tests mirror
+// the #140 pattern: retryable / non-retryable / unknown-default per activity.
+//
+// Note on `spawnProcess`: its error source is the OS (`spawnInTerminal` /
+// `spawnCopilotBridge`), not the Temporal client — so it can't be driven via
+// the mock-client pattern used for the other activities. It gets one test
+// using a real nonexistent `claudeBin` to exercise the unknown-default path
+// (ENOENT → non-retryable), matching its byte-for-byte pre-#236 behavior.
+// The retryable / explicit-permanent cases for spawnProcess would require
+// module-level stubbing of `../spawn`, which isn't established in this
+// codebase's test patterns. See PR body for the follow-up note.
+
+describe('deliverCue — error classification (#236)', function () {
+  const baseMeta: SessionMetadata = {
+    playerId: 'bob',
+    ensemble: 'e1',
+    hostname: 'h',
+    workDir: '/w',
+    isConductor: false,
+    agentType: 'claude',
+  };
+
+  function handleWithSignalThrow(throwOnSignal: () => never) {
+    return mockHandle({
+      metadata: baseMeta,
+      signalFn() { throwOnSignal(); },
+      queryFn(name) { if (name === 'getMetadata') return baseMeta; return undefined; },
+    });
+  }
+
+  it('re-throws plain Error when handle.signal hits a transient RPC failure', async function () {
+    const handle = handleWithSignalThrow(() => {
+      throw namedError('TransportError', 'UNAVAILABLE: temporal dev server blip');
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.deliverCue({
+        ensemble: 'e1',
+        fromPlayerId: 'alice',
+        targetPlayerId: 'bob',
+        message: 'ping',
+      });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(Error);
+    expect(caught).to.not.be.instanceOf(ApplicationFailure);
+    expect((caught as Error).message).to.include('UNAVAILABLE');
+  });
+
+  it('wraps nonRetryable when handle.signal hits WorkflowNotFoundError', async function () {
+    const handle = handleWithSignalThrow(() => {
+      throw namedError('WorkflowNotFoundError', 'workflow execution already completed');
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.deliverCue({
+        ensemble: 'e1',
+        fromPlayerId: 'alice',
+        targetPlayerId: 'bob',
+        message: 'ping',
+      });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(ApplicationFailure);
+    expect((caught as ApplicationFailure).nonRetryable).to.equal(true);
+    expect((caught as Error).message).to.include('Cue failed');
+  });
+
+  it('wraps nonRetryable for unknown errors (conservative default)', async function () {
+    const handle = handleWithSignalThrow(() => {
+      throw namedError('ExoticCustomError', 'weird unclassified thing');
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.deliverCue({
+        ensemble: 'e1',
+        fromPlayerId: 'alice',
+        targetPlayerId: 'bob',
+        message: 'ping',
+      });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(ApplicationFailure);
+    expect((caught as ApplicationFailure).nonRetryable).to.equal(true);
+  });
+});
+
+describe('deliverReport — error classification (#236)', function () {
+  function conductorHandleWithSignalThrow(throwOnSignal: () => never) {
+    const h = mockHandle({
+      metadata: { playerId: 'conductor', ensemble: 'e1', isConductor: true },
+      signalFn() { throwOnSignal(); },
+    });
+    (h as any).workflowId = conductorWorkflowId('e1');
+    return h;
+  }
+
+  it('re-throws plain Error when conductor signal hits a transient RPC failure', async function () {
+    const conductor = conductorHandleWithSignalThrow(() => {
+      throw namedError('TransportError', 'DEADLINE_EXCEEDED: server slow');
+    });
+    const client = mockClient([conductor]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.deliverReport({
+        ensemble: 'e1',
+        fromPlayerId: 'alice',
+        text: 'task done',
+        reportType: 'result',
+      });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(Error);
+    expect(caught).to.not.be.instanceOf(ApplicationFailure);
+    expect((caught as Error).message).to.include('DEADLINE_EXCEEDED');
+  });
+
+  it('wraps nonRetryable when conductor signal hits WorkflowNotFoundError', async function () {
+    const conductor = conductorHandleWithSignalThrow(() => {
+      throw namedError('WorkflowNotFoundError', 'conductor gone');
+    });
+    const client = mockClient([conductor]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.deliverReport({
+        ensemble: 'e1',
+        fromPlayerId: 'alice',
+        text: 'help',
+        reportType: 'blocker',
+      });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(ApplicationFailure);
+    expect((caught as ApplicationFailure).nonRetryable).to.equal(true);
+    expect((caught as Error).message).to.include('Failed to deliver report');
+  });
+
+  it('wraps nonRetryable for unknown errors', async function () {
+    const conductor = conductorHandleWithSignalThrow(() => {
+      throw namedError('RandomError', 'mystery failure');
+    });
+    const client = mockClient([conductor]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.deliverReport({
+        ensemble: 'e1',
+        fromPlayerId: 'alice',
+        text: 'update',
+        reportType: 'update',
+      });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(ApplicationFailure);
+    expect((caught as ApplicationFailure).nonRetryable).to.equal(true);
+  });
+});
+
+describe('terminateSession — error classification (#236)', function () {
+  const targetMeta: SessionMetadata = {
+    playerId: 'bob',
+    ensemble: 'e1',
+    hostname: 'h',
+    workDir: '/w',
+    isConductor: false,
+    agentType: 'claude',
+  };
+
+  function handleWithDestroyUpdateThrow(throwOnUpdate: () => never) {
+    return mockHandle({
+      metadata: targetMeta,
+      queryFn(name) { if (name === 'getMetadata') return targetMeta; return undefined; },
+      updateFn(name) {
+        if (name === 'destroy') throwOnUpdate();
+        return undefined;
+      },
+    });
+  }
+
+  it('re-throws plain Error when destroy update hits a transient RPC failure', async function () {
+    const handle = handleWithDestroyUpdateThrow(() => {
+      throw namedError('TransportError', 'UNAVAILABLE');
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.terminateSession({
+        ensemble: 'e1',
+        targetPlayerId: 'bob',
+        terminatedBy: 'alice',
+      });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(Error);
+    expect(caught).to.not.be.instanceOf(ApplicationFailure);
+    expect((caught as Error).message).to.include('UNAVAILABLE');
+  });
+
+  it('wraps nonRetryable when destroy update hits WorkflowUpdateFailedError', async function () {
+    const handle = handleWithDestroyUpdateThrow(() => {
+      throw namedError('WorkflowUpdateFailedError', 'validator rejected');
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.terminateSession({
+        ensemble: 'e1',
+        targetPlayerId: 'bob',
+        terminatedBy: 'alice',
+      });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(ApplicationFailure);
+    expect((caught as ApplicationFailure).nonRetryable).to.equal(true);
+    expect((caught as Error).message).to.include('Terminate failed');
+  });
+
+  it('wraps nonRetryable for unknown errors', async function () {
+    const handle = handleWithDestroyUpdateThrow(() => {
+      throw namedError('OddError', 'unclassified condition');
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.terminateSession({
+        ensemble: 'e1',
+        targetPlayerId: 'bob',
+        terminatedBy: 'alice',
+      });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(ApplicationFailure);
+    expect((caught as ApplicationFailure).nonRetryable).to.equal(true);
+  });
+});
+
+describe('startRecruitedSession — error classification (#236)', function () {
+  /**
+   * `startRecruitedSession` calls `client.workflow.start(...)`. The shared
+   * `mockClient` helper's `start()` resolves to `{}`; to inject a throw we
+   * build a minimal inline client with a custom `start` per test.
+   */
+  function clientWhereStartThrows(throwOnStart: () => never) {
+    return {
+      workflow: {
+        getHandle() { throw new Error('unused'); },
+        list() { return { [Symbol.asyncIterator]() { return { async next() { return { done: true as const, value: undefined }; } }; } }; },
+        async start() { throwOnStart(); },
+      },
+    } as unknown;
+  }
+
+  const baseInput = {
+    ensemble: 'e1',
+    targetName: 'newbie',
+    workDir: '/tmp/work',
+    isConductor: false,
+    fromPlayerId: 'alice',
+    agent: 'claude' as const,
+    taskQueue: 'claude-tempo',
+  };
+
+  it('re-throws plain Error when workflow.start hits a transient RPC failure', async function () {
+    const client = clientWhereStartThrows(() => {
+      throw namedError('TransportError', 'DEADLINE_EXCEEDED: temporal slow start');
+    });
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.startRecruitedSession(baseInput);
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(Error);
+    expect(caught).to.not.be.instanceOf(ApplicationFailure);
+    expect((caught as Error).message).to.include('DEADLINE_EXCEEDED');
+  });
+
+  it('wraps nonRetryable when workflow.start hits WorkflowNotFoundError', async function () {
+    // Rare in practice (start normally creates the workflow), but a corrupted
+    // namespace or stale search attribute can surface this class. Permanent.
+    const client = clientWhereStartThrows(() => {
+      throw namedError('WorkflowNotFoundError', 'namespace not found');
+    });
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.startRecruitedSession(baseInput);
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(ApplicationFailure);
+    expect((caught as ApplicationFailure).nonRetryable).to.equal(true);
+    expect((caught as Error).message).to.include('Failed to start recruited session');
+  });
+
+  it('wraps nonRetryable for unknown errors', async function () {
+    const client = clientWhereStartThrows(() => {
+      throw namedError('WeirdError', 'unrecognized start failure');
+    });
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.startRecruitedSession(baseInput);
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(ApplicationFailure);
+    expect((caught as ApplicationFailure).nonRetryable).to.equal(true);
+  });
+});
+
+describe('releasePlayer — error classification (#236)', function () {
+  const heldMeta: SessionMetadata = {
+    playerId: 'bob',
+    ensemble: 'e1',
+    hostname: 'h',
+    workDir: '/w',
+    isConductor: false,
+    agentType: 'claude',
+  };
+
+  function handleWithOutboxLockedQueryThrow(throwOnQuery: () => never) {
+    return mockHandle({
+      metadata: heldMeta,
+      queryFn(name) {
+        if (name === 'getMetadata') return heldMeta;
+        if (name === 'outboxLocked') throwOnQuery();
+        return undefined;
+      },
+    });
+  }
+
+  it('re-throws plain Error when outboxLocked query hits a transient RPC failure', async function () {
+    const handle = handleWithOutboxLockedQueryThrow(() => {
+      throw namedError('TransportError', 'UNAVAILABLE');
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.releasePlayer({ ensemble: 'e1', targetPlayerId: 'bob' });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(Error);
+    expect(caught).to.not.be.instanceOf(ApplicationFailure);
+    expect((caught as Error).message).to.include('UNAVAILABLE');
+  });
+
+  it('wraps nonRetryable when outboxLocked query hits WorkflowNotFoundError', async function () {
+    const handle = handleWithOutboxLockedQueryThrow(() => {
+      throw namedError('WorkflowNotFoundError', 'session gone');
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.releasePlayer({ ensemble: 'e1', targetPlayerId: 'bob' });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(ApplicationFailure);
+    expect((caught as ApplicationFailure).nonRetryable).to.equal(true);
+    expect((caught as Error).message).to.include('Release failed');
+  });
+
+  it('wraps nonRetryable for unknown errors', async function () {
+    const handle = handleWithOutboxLockedQueryThrow(() => {
+      throw namedError('UnknownRelease', 'weird release failure');
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.releasePlayer({ ensemble: 'e1', targetPlayerId: 'bob' });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(ApplicationFailure);
+    expect((caught as ApplicationFailure).nonRetryable).to.equal(true);
+  });
+});
+
+// spawnProcess — error classification (#236): coverage deferred.
+//
+// spawnProcess's throws originate in `spawnInTerminal` / `spawnCopilotBridge`
+// (OS-level spawn errors — ENOENT, EACCES, EAGAIN), not the Temporal client.
+// The mock-client pattern used by the other 5 activities above can't drive
+// these paths, and this codebase doesn't yet have an established pattern for
+// module-level stubbing of `../spawn`. An attempt at a real-spawn test with
+// a bogus `claudeBin` surfaces platform-specific behavior (on Windows,
+// `wt.exe` opens a new terminal and fails in the child process — the parent
+// spawn succeeds), so it's not a reliable cross-platform probe.
+//
+// The classifier's Temporal-focused signatures don't match OS errors, so
+// spawnProcess's errors stay non-retryable under `classifyAndRethrow` —
+// byte-for-byte behavior preservation relative to pre-#236. Cross-checked by
+// code inspection (see PR #246 body). Unit-test coverage is tracked as a
+// follow-up that depends on introducing module-stubbing infra.
+
 // ── computeNextCronFire ──
 
 describe('computeNextCronFire', function () {
