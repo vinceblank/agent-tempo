@@ -119,7 +119,7 @@ export abstract class BaseAttachment {
   private firstHeartbeatLogged = false;
   /**
    * Monotonic heartbeat counter for the current attachment cycle. Reset on
-   * claim/reconnect/CAN-rebind. Emitted periodically (every {@link HEARTBEAT_SUMMARY_EVERY}
+   * claim/reconnect/CAN-rebind. Emitted periodically (every {@link LOOP_SUMMARY_EVERY}
    * ticks) so a long-running session leaves breadcrumbs in the log proving the loop is
    * alive — operators can `grep 'heartbeats-delivered='` to confirm health without
    * parsing Temporal history. Added in #249.
