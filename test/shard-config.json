@@ -1,0 +1,8 @@
+{
+  "_comment": "2-way shard split for the Mocha suite (#231, docs/design/191-test-parallelization.md §2). Rule: shard-1 pins the top-N heaviest files by CI wall-clock, with N chosen to land ≤1.2× drift between shards; shard-2 is 'everything else' via Mocha --ignore. Currently N=3 (session-phase-machine, outbox, scheduler — 171.1s, ~52% of total wall-clock). Rebalance procedure + 20% drift bound lives in test/README.md; derivation + historical rationale in the design doc §2.",
+  "shard-1": [
+    "test/session-phase-machine.test.ts",
+    "test/outbox.test.ts",
+    "test/scheduler.test.ts"
+  ]
+}
