@@ -9,9 +9,15 @@
  * Fails CI if:
  *  - a handler exists in code but is absent from the docs (undocumented surface)
  *  - a name exists in docs but not in code (stale documentation / typo)
+ *  - a name is present in both but under the wrong kind (e.g. documented as
+ *    "Signal" but declared as `defineQuery` in source)
  *
- * PR-G lands the check itself; the commit-tag mechanic for non-breaking-additive
- * vs. breaking-rename updates (per §17.9) is wired up as a separate CI follow-up.
+ * PR-G lands the check itself; #126 tightens the doc parser so it scopes
+ * extraction to section headers ("## Session Signals", "## Conductor Queries",
+ * etc.) and matches `(kind, name)` pairs rather than a flat name set. This
+ * eliminates the TYPE_REFERENCE_FIELDS allowlist, which grew with doc surface
+ * and could silently mask a real undocumented wire name that happened to share
+ * a field identifier.
  *
  * Design reference: docs/design/session-lifecycle-rebuild-v2.md §17.9
  * (superseded paragraph landing atomically in the same PR-G diff).
@@ -86,98 +92,73 @@ function extractNamesFromSource(filePath: string): WireName[] {
 }
 
 /**
- * Parse `docs/WIRE-PROTOCOL.md` and extract every wire name declared in a table
- * row. Table rows match the pattern `| \`name\` | ... | ... |` — the backtick-
- * quoted first column is the wire name.
+ * Infer the DefineKind for a WIRE-PROTOCOL.md `## Section Header`.
  *
- * The doc intermixes several table categories (signals, queries, updates,
- * search attributes). This parser deliberately does not categorize by kind —
- * drift is detected on the flat set of names, and the kind is only attached
- * for diagnostic output. That means a documented name moved from the "signals"
- * table to the "queries" table would NOT be flagged as drift — the source-side
- * defineSignal-vs-defineQuery distinction guards that, and a mis-categorized
- * doc entry is a docs-only lint issue out of scope for this check.
+ * Returns null for sections that should be skipped (Workflow Names, Search
+ * Attributes, Type Reference, Stability Guarantee, etc.).
  */
-function extractNamesFromDocs(docPath: string): Set<string> {
-  const text = fs.readFileSync(docPath, 'utf-8');
-  const names = new Set<string>();
-
-  // Structural row pattern: leading `|`, first cell is backtick-quoted name,
-  // then further `|` separators. Tolerant of surrounding whitespace.
-  // Only accepts identifier-shaped names so we don't pick up prose examples.
-  const ROW_RE = /^\|\s*`([A-Za-z_][A-Za-z0-9_]*)`\s*\|/gm;
-
-  let match: RegExpExecArray | null;
-  while ((match = ROW_RE.exec(text)) !== null) {
-    names.add(match[1]);
-  }
-
-  return names;
+function kindFromSectionHeader(header: string): DefineKind | null {
+  const lower = header.toLowerCase();
+  if (lower.includes('signal')) return 'signal';
+  if (lower.includes('quer') || lower.includes('query')) return 'query';
+  if (lower.includes('update')) return 'update';
+  return null;
 }
 
 /**
- * Search attribute names — declared in the docs but not in `defineSignal` calls.
- * `ClaudeTempoStatus` was removed in v0.26 (#175 / #178).
+ * Parse `docs/WIRE-PROTOCOL.md` and extract wire names, scoped by section.
+ *
+ * Splits the document at every `## Section Header` boundary and only extracts
+ * backtick-quoted table-row names from sections whose headers indicate they
+ * contain signal / query / update definitions. Sections like "## Workflow Names",
+ * "## Search Attributes", and "## Type Reference" are skipped — their table
+ * entries are either workflow function names (not `define*` calls), Temporal
+ * search attribute keys, or payload struct fields, none of which are wire-
+ * protocol handler names.
+ *
+ * This approach eliminates the TYPE_REFERENCE_FIELDS allowlist from PR-G, which
+ * grew with doc surface and could silently mask a real undocumented handler that
+ * happened to share a common field identifier (issue #126).
+ *
+ * Returns a WireName[] with `kind` inferred from the section header, enabling
+ * `(kind, name)` pair matching instead of the flat-name-set approach in PR-G.
  */
-const SEARCH_ATTRIBUTE_NAMES = new Set([
-  'ClaudeTempoEnsemble',
-  'ClaudeTempoPlayerId',
-  'ClaudeTempoHostname',
-  'ClaudeTempoGitRoot',
-  'ClaudeTempoPlayerType',
-  'ClaudeTempoIsConductor',
-  'ClaudeTempoAttachedHost',
-  'ClaudeTempoAttachmentState',
-  'ClaudeTempoAttachmentId',
-]);
+function extractNamesFromDocs(docPath: string): WireName[] {
+  const text = fs.readFileSync(docPath, 'utf-8');
+  const results: WireName[] = [];
 
-/**
- * Workflow function names declared in `src/workflows/*.ts` — they're documented
- * in WIRE-PROTOCOL.md's "## Workflow Names" table but appear as exported
- * functions, not `define*` calls, so the AST walker doesn't pick them up. These
- * names are stable per the doc's §Stability Guarantee. Sourced from `docs/WIRE-PROTOCOL.md`.
- */
-const WORKFLOW_NAMES = new Set([
-  'claudeSessionWorkflow',
-  'claudeSchedulerWorkflow',
-  'claudeMaestroWorkflow',
-  'claudeGlobalMaestroWorkflow',
-]);
+  // Split into top-level sections. We match `## ` (exactly two hashes + space)
+  // to capture section boundaries without also splitting on `### ` sub-headers.
+  const sectionRE = /^## (.+)$/gm;
+  const sectionMatches = [...text.matchAll(sectionRE)];
 
-/**
- * Type-reference field names (e.g. `task`, `criteria`, `failurePolicy`) appear
- * in the doc's `## Type Reference` tables. These are struct fields, not wire
- * names. The parser's identifier-shape regex picks them up; we filter them out
- * here. Keep this list narrow — if a real wire name happens to share a field
- * identifier, rename one.
- */
-const TYPE_REFERENCE_FIELDS = new Set([
-  // ScheduleEntry selected fields
-  'type', 'cronExpression', 'timezone',
-  // QualityGate selected fields
-  'task', 'criteria', 'createdBy', 'createdAt', 'status',
-  // WorktreeEntry
-  'player', 'path', 'branch', 'gitRoot',
-  // StageEntry
-  'name', 'players', 'failurePolicy', 'completedAt',
-  // RecruitOutboxEntry
-  'allowedTools',
-  // MaestroPlayerInfo
-  'playerId', 'ensemble', 'part', 'hostname', 'workDir', 'gitBranch',
-  'isConductor', 'agentType', 'playerType',
-  // EnsembleChatMessage
-  'id', 'from', 'to', 'text', 'timestamp', 'role',
-  // EnsembleChatQuery
-  'offset', 'limit',
-  // EnsembleChatResult
-  'messages', 'total', 'hasMore', 'hasConductor',
-  // MaestroRelayMessage
-  'direction',
-  // MaestroEvent
-  'oldValue', 'newValue',
-  // MaestroPendingCommand
-  'source', 'replyTo', 'error',
-]);
+  for (let i = 0; i < sectionMatches.length; i++) {
+    const header = sectionMatches[i][1]; // e.g. "Session Signals"
+    const kind = kindFromSectionHeader(header);
+    if (kind === null) continue; // skip Workflow Names, Search Attributes, etc.
+
+    const bodyStart = sectionMatches[i].index! + sectionMatches[i][0].length;
+    const bodyEnd = i + 1 < sectionMatches.length
+      ? sectionMatches[i + 1].index!
+      : text.length;
+    const body = text.slice(bodyStart, bodyEnd);
+
+    // Extract backtick-quoted identifiers from table first-column cells.
+    // Only accepts identifier-shaped names so we don't pick up prose examples.
+    const ROW_RE = /^\|\s*`([A-Za-z_][A-Za-z0-9_]*)`\s*\|/gm;
+    let match: RegExpExecArray | null;
+    while ((match = ROW_RE.exec(body)) !== null) {
+      results.push({ kind, name: match[1], source: 'docs/WIRE-PROTOCOL.md' });
+    }
+  }
+
+  return results;
+}
+
+/** Stable `(kind, name)` composite key for Map/Set lookups. */
+function wireKey(w: { kind: DefineKind; name: string }): string {
+  return `${w.kind}:${w.name}`;
+}
 
 describe('wire-protocol drift detector (§17.9)', function () {
   // At runtime this test file is compiled to `dist-test/test/wire-protocol.test.js`.
@@ -193,7 +174,7 @@ describe('wire-protocol drift detector (§17.9)', function () {
   const docsFile = path.join(repoRoot, 'docs', 'WIRE-PROTOCOL.md');
 
   let sourceNames: WireName[];
-  let docsNames: Set<string>;
+  let docsNames: WireName[];
 
   before(function () {
     // Sanity: target files exist where expected.
@@ -220,8 +201,17 @@ describe('wire-protocol drift detector (§17.9)', function () {
       `Verify ts-morph parsing of signals.ts + maestro-signals.ts + scheduler-signals.ts.`);
   });
 
-  it('every handler declared in source is documented in WIRE-PROTOCOL.md', function () {
-    const undocumented = sourceNames.filter((w) => !docsNames.has(w.name));
+  it('doc parser finds a plausible number of wire-protocol entries', function () {
+    // Guards against a section-header regex regression that silently skips all sections.
+    expect(docsNames.length).to.be.gte(20,
+      `Doc parser found only ${docsNames.length} entries; expected >= 20. ` +
+      `Check that extractNamesFromDocs correctly scopes to signal/query/update sections ` +
+      `in docs/WIRE-PROTOCOL.md.`);
+  });
+
+  it('every handler declared in source is documented in WIRE-PROTOCOL.md (matched by kind + name)', function () {
+    const docsKeySet = new Set(docsNames.map(wireKey));
+    const undocumented = sourceNames.filter((w) => !docsKeySet.has(wireKey(w)));
 
     if (undocumented.length > 0) {
       const bulleted = undocumented
@@ -229,31 +219,28 @@ describe('wire-protocol drift detector (§17.9)', function () {
         .join('\n');
       throw new Error(
         `\n${undocumented.length} handler(s) declared in code but missing from docs/WIRE-PROTOCOL.md:\n${bulleted}\n\n` +
-        `Document them (additive changes require commit tag 'wire-protocol:additive'; ` +
-        `renames/removals require 'wire-protocol:breaking' per design §17.9).`,
+        `Document them under the correct section (signals / queries / updates). ` +
+        `Additive changes require commit tag 'wire-protocol:additive'; ` +
+        `renames/removals require 'wire-protocol:breaking' per design §17.9.`,
       );
     }
   });
 
-  it('every name documented in WIRE-PROTOCOL.md exists in source (minus known non-wire entries)', function () {
-    const sourceNameSet = new Set(sourceNames.map((w) => w.name));
-    const stale: string[] = [];
-
-    for (const docName of docsNames) {
-      if (sourceNameSet.has(docName)) continue;
-      if (SEARCH_ATTRIBUTE_NAMES.has(docName)) continue;
-      if (TYPE_REFERENCE_FIELDS.has(docName)) continue;
-      if (WORKFLOW_NAMES.has(docName)) continue;
-      stale.push(docName);
-    }
+  it('every (kind, name) pair documented in WIRE-PROTOCOL.md exists in source', function () {
+    // The section-scoped doc parser excludes Workflow Names, Search Attributes,
+    // and Type Reference — no allowlists needed here (#126).
+    const sourceKeySet = new Set(sourceNames.map(wireKey));
+    const stale = docsNames.filter((w) => !sourceKeySet.has(wireKey(w)));
 
     if (stale.length > 0) {
+      const bulleted = stale
+        .map((w) => `  - [${w.kind}] ${w.name} (documented in docs/WIRE-PROTOCOL.md)`)
+        .join('\n');
       throw new Error(
-        `\n${stale.length} name(s) documented in docs/WIRE-PROTOCOL.md but not declared in source:\n` +
-        stale.map((n) => `  - ${n}`).join('\n') +
-        `\n\nEither the name was renamed/removed (update the docs, tag 'wire-protocol:breaking') ` +
-        `or it belongs in the SEARCH_ATTRIBUTE_NAMES / TYPE_REFERENCE_FIELDS / WORKFLOW_NAMES allowlists ` +
-        `in test/wire-protocol.test.ts.`,
+        `\n${stale.length} (kind, name) pair(s) documented in docs/WIRE-PROTOCOL.md but not declared in source:\n${bulleted}\n\n` +
+        `Either the handler was renamed/removed (update the docs, tag 'wire-protocol:breaking') ` +
+        `or it is documented under the wrong section kind (e.g. listed under "Signals" but ` +
+        `declared as defineQuery in code — move it to the correct table).`,
       );
     }
   });
