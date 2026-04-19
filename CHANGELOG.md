@@ -34,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Tightened `phaseTag()` in `src/tools/ensemble.ts` to accept
+  `AttachmentPhase | undefined` instead of `string | undefined`. Callers
+  always have the typed phase in hand via `EnsembleSessionInfo.phase`;
+  `string` lost enum discipline. Pure type tightening, zero runtime
+  behavior change. (#203)
 - **Extract CAN-boundary attachment-extension math into a pure function** (#127).
   The 4-line "push `lastHeartbeatAt` / `expiresAt` out to `now + heartbeatMs` so
   the new execution has room to land the next heartbeat" math was previously

@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import * as os from 'os';
 import { Config } from '../config';
-import { SessionMetadata } from '../types';
+import { SessionMetadata, AttachmentPhase } from '../types';
 import { scanEnsembleSessions } from '../activities/resolve';
 import { defineTool, ok, fail, formatError } from './helpers';
 
@@ -61,7 +61,9 @@ export function registerEnsembleTool(
       // Option-B phase → tag mapping (see #176 PR):
       //   booting → (pending); attached/processing/awaiting → no tag;
       //   draining/detached → (disconnected); gone → (gone).
-      const phaseTag = (phase: string | undefined): string => {
+      // #203: typed as AttachmentPhase (callers always have the typed phase
+      // in hand via EnsembleSessionInfo.phase); `string` lost enum discipline.
+      const phaseTag = (phase: AttachmentPhase | undefined): string => {
         if (phase === 'booting') return '(pending)';
         if (phase === 'draining' || phase === 'detached') return '(disconnected)';
         if (phase === 'gone') return '(gone)';
