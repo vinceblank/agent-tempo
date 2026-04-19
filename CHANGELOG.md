@@ -23,6 +23,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   previously an all-skipped stub awaiting this extraction). Behavior unchanged
   — the session workflow call site is a one-line swap. Follow-up to #125
   (PR-G) architect review.
+- **Outbox delivery activities now retry transient Temporal RPC errors** instead
+  of flattening every mid-algorithm failure to `ApplicationFailure.nonRetryable`.
+  `deliverDetach`, `deliverDestroy`, and `deliverRestart` route uncaught errors
+  through a new `isRetryableTemporalError` classifier: `TransportError`,
+  `TimeoutError`, `DEADLINE_EXCEEDED`, `UNAVAILABLE`, `RESOURCE_EXHAUSTED`,
+  `CANCELLED`, and common `ECONN*` / `ETIMEDOUT` signatures are re-thrown as
+  plain `Error` so the activity retry policy backs off and retries. Permanent
+  classes (`WorkflowNotFoundError`, `WorkflowUpdateFailedError`, "workflow
+  execution already completed") and unknown errors stay non-retryable. Typed
+  `ApplicationFailure.nonRetryable` throws inside the activity (e.g. "no
+  session found", "phase=gone") pass through unchanged. (#140)
+- Extracted `DEFAULT_RESTART_DETACH_DEADLINE_MS` (5s) and
+  `DEFAULT_RESTART_LEASE_MS` (90s) constants from `deliverRestart` into
+  `src/utils/validation.ts` for consistency with the other restart / detach
+  knobs already documented there. No behavioral change. (#139)
 
 ## [0.26.0-beta.3] - 2026-04-18
 

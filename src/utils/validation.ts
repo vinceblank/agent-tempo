@@ -65,6 +65,22 @@ export const RESTART_CONTEXT_MESSAGES_MAX = 50;
 export const MAX_DETACH_DEADLINE_MS = 120_000;
 
 /**
+ * Default graceful-detach deadline used by `deliverRestart`'s Step 2
+ * (`requestDetach` before a forced attachment handover). Internal, not
+ * user-controllable — well below `MAX_DETACH_DEADLINE_MS`. Extracted from
+ * a raw `5_000` literal in PR #136 F5 follow-up (#139).
+ */
+export const DEFAULT_RESTART_DETACH_DEADLINE_MS = 5_000;
+
+/**
+ * Default attachment lease (ms) used by `deliverRestart`'s Step 4
+ * (`claimAttachment`). Ninety seconds gives the freshly-spawned adapter
+ * enough runway to boot, renew, and begin heartbeating. Extracted from a
+ * raw `90_000` literal in PR #136 F5 follow-up (#139).
+ */
+export const DEFAULT_RESTART_LEASE_MS = 90_000;
+
+/**
  * Whether a session should be included in a broadcast based on its attachment phase.
  *
  * Option-B mapping (see #176 PR description):
