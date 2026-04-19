@@ -51,6 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Replaced the wire-protocol drift detector's keyword-based
+  `kindFromSectionHeader` with an explicit `SECTION_TO_KIND` allowlist that
+  throws on any section header not in the table
+  (`test/wire-protocol.test.ts`). Renames or typos in
+  `docs/WIRE-PROTOCOL.md` `## Section Header`s now surface as an immediate
+  test failure (`"Unknown WIRE-PROTOCOL section: ..."`) instead of
+  silently dropping drift coverage for the renamed section. Also removes
+  the dead `|| lower.includes('query')` branch from the old keyword
+  matcher. Two new unit tests pin classification for all 18 current
+  sections and assert the unknown-throws contract. (#239, follow-up to #126)
 - Tightened `phaseTag()` in `src/tools/ensemble.ts` to accept
   `AttachmentPhase | undefined` instead of `string | undefined`. Callers
   always have the typed phase in hand via `EnsembleSessionInfo.phase`;

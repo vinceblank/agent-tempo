@@ -92,17 +92,72 @@ function extractNamesFromSource(filePath: string): WireName[] {
 }
 
 /**
+ * Explicit allowlist mapping WIRE-PROTOCOL.md `## Section Header` → `DefineKind`
+ * (or `null` for documentation-only sections that should be skipped by the
+ * drift detector). #239 replaced the earlier keyword-matching classifier
+ * with this table for three reasons:
+ *
+ * 1. **Section-rename resilience.** The old `lower.includes('signal')`
+ *    matcher would silently return `null` if someone renamed
+ *    `## Session Signals` → `## Session Handlers` — drift detection would
+ *    quietly stop covering that section, and the guardrail would develop
+ *    a hole exactly where it was supposed to protect. With this table,
+ *    the rename triggers an immediate "Unknown WIRE-PROTOCOL section"
+ *    throw that points directly at the fix.
+ *
+ * 2. **Typo detection.** The old matcher happily skipped typos like
+ *    `## Session Singals`. The allowlist catches them at run time.
+ *
+ * 3. **Explicit doc ↔ test coupling.** Adding a section to
+ *    `docs/WIRE-PROTOCOL.md` now requires an explicit allowlist entry.
+ *    That's deliberate — it's the same kind of deliberate coupling as the
+ *    wire protocol itself.
+ *
+ * Trade-off: the table must be updated when a section is legitimately added
+ * to `WIRE-PROTOCOL.md`. That's the point.
+ */
+const SECTION_TO_KIND: Record<string, DefineKind | null> = {
+  // Signal sections
+  'Session Signals': 'signal',
+  'Conductor Signals': 'signal',
+  'Scheduler Signals': 'signal',
+  'Per-Ensemble Maestro Signal': 'signal',
+  'Global Maestro Signal': 'signal',
+  // Query sections
+  'Session Queries': 'query',
+  'Session Outbox Query': 'query',
+  'Conductor Query': 'query',
+  'Scheduler Queries': 'query',
+  'Per-Ensemble Maestro Queries': 'query',
+  'Global Maestro Queries': 'query',
+  // Update sections
+  'Session Updates': 'update',
+  'Per-Ensemble Maestro Update': 'update',
+  'Global Maestro Updates': 'update',
+  // Explicit skips — documentation-only sections whose table entries are
+  // not `define*` handler names (workflow function names, Temporal search
+  // attribute keys, or payload struct fields).
+  'Stability Guarantee': null,
+  'Workflow Names': null,
+  'Search Attributes': null,
+  'Type Reference': null,
+};
+
+/**
  * Infer the DefineKind for a WIRE-PROTOCOL.md `## Section Header`.
  *
- * Returns null for sections that should be skipped (Workflow Names, Search
- * Attributes, Type Reference, Stability Guarantee, etc.).
+ * Returns `null` for sections that should be skipped (Workflow Names,
+ * Search Attributes, Type Reference, Stability Guarantee). Throws when the
+ * section header is absent from `SECTION_TO_KIND` — surfaces rename / typo
+ * drift immediately rather than silently dropping coverage (#239).
  */
 function kindFromSectionHeader(header: string): DefineKind | null {
-  const lower = header.toLowerCase();
-  if (lower.includes('signal')) return 'signal';
-  if (lower.includes('quer') || lower.includes('query')) return 'query';
-  if (lower.includes('update')) return 'update';
-  return null;
+  if (!(header in SECTION_TO_KIND)) {
+    throw new Error(
+      `Unknown WIRE-PROTOCOL section: "${header}". Add it to SECTION_TO_KIND in test/wire-protocol.test.ts.`,
+    );
+  }
+  return SECTION_TO_KIND[header];
 }
 
 /**
@@ -264,5 +319,62 @@ describe('wire-protocol drift detector (§17.9)', function () {
         .join('\n');
       throw new Error(`\nWire-protocol name collisions across kinds:\n${bulleted}`);
     }
+  });
+});
+
+describe('kindFromSectionHeader — #239 allowlist', function () {
+  // Independent hardcoded expectations per acceptance criterion "test asserting
+  // each of the 18 current section names classifies correctly." A bug in
+  // SECTION_TO_KIND (e.g. a typo'd key, or a section accidentally mapped to
+  // the wrong kind) breaks this matrix. Keep in sync with docs/WIRE-PROTOCOL.md.
+  const EXPECTED_CLASSIFICATIONS: ReadonlyArray<readonly [string, DefineKind | null]> = [
+    // Signal sections
+    ['Session Signals', 'signal'],
+    ['Conductor Signals', 'signal'],
+    ['Scheduler Signals', 'signal'],
+    ['Per-Ensemble Maestro Signal', 'signal'],
+    ['Global Maestro Signal', 'signal'],
+    // Query sections
+    ['Session Queries', 'query'],
+    ['Session Outbox Query', 'query'],
+    ['Conductor Query', 'query'],
+    ['Scheduler Queries', 'query'],
+    ['Per-Ensemble Maestro Queries', 'query'],
+    ['Global Maestro Queries', 'query'],
+    // Update sections
+    ['Session Updates', 'update'],
+    ['Per-Ensemble Maestro Update', 'update'],
+    ['Global Maestro Updates', 'update'],
+    // Explicit skips
+    ['Stability Guarantee', null],
+    ['Workflow Names', null],
+    ['Search Attributes', null],
+    ['Type Reference', null],
+  ];
+
+  it('classifies each of the 18 current WIRE-PROTOCOL.md sections to the expected kind', function () {
+    expect(EXPECTED_CLASSIFICATIONS.length).to.equal(
+      18,
+      'expected 18 known sections — if adding/removing, update EXPECTED_CLASSIFICATIONS and SECTION_TO_KIND',
+    );
+    for (const [header, expected] of EXPECTED_CLASSIFICATIONS) {
+      expect(kindFromSectionHeader(header)).to.equal(
+        expected,
+        `section "${header}" misclassified`,
+      );
+    }
+  });
+
+  it('throws on unknown section header (rename/typo safety net)', function () {
+    expect(() => kindFromSectionHeader('Session Handlers')).to.throw(
+      /Unknown WIRE-PROTOCOL section:/,
+    );
+    expect(() => kindFromSectionHeader('Session Singals')).to.throw(
+      /Unknown WIRE-PROTOCOL section:/,
+    );
+    // Precise error-message contract — we promise a pointer to the fix.
+    expect(() => kindFromSectionHeader('Bogus Section')).to.throw(
+      /Add it to SECTION_TO_KIND/,
+    );
   });
 });

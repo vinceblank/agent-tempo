@@ -5,6 +5,8 @@ This document is the authoritative reference for all Temporal signal, query, upd
 ## Stability Guarantee
 
 > **These names are stable as of v0.10.** Renaming or removing any signal, query, update, or workflow name is a breaking change requiring a major version bump. Adding new names is non-breaking.
+>
+> **Adding a new `## Section` to this file** also requires a matching entry in the `SECTION_TO_KIND` map in `test/wire-protocol.test.ts` — the drift detector throws on unknown section headers.
 
 ---
 
