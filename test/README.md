@@ -40,12 +40,17 @@ CI splits the Mocha suite across two jobs per Node version. The split is
 [`shard-config.json`](shard-config.json) rather than derived from alphabetical
 order (which drifts as tests are added).
 
+**Rule** (design doc §2, v5): shard-1 pins the **top-N heaviest files by CI
+wall-clock**, with N chosen so cross-shard drift lands ≤1.2× (the 20% rebalance
+bound). Shard-2 is "everything else." As of PR #232 N=3 —
+`session-phase-machine.test.ts` (88.7s), `outbox.test.ts` (41.6s), and
+`scheduler.test.ts` (40.8s) — totalling ~52% of the Mocha suite's wall-clock
+despite being <10% of test count. Workflow-setup cost dominates per-test time
+in these files.
+
 Mechanics:
 
-- `shard-1` runs only the files listed in `shard-config.json`. These are the
-  heaviest integration suites as of PR #231 (scheduler, outbox, phase-machine,
-  hold-release, maestro) — ~5 files, ~50% of total wall-clock despite being
-  <10% of test count (workflow setup cost dominates).
+- `shard-1` runs only the files listed in `shard-config.json`.
 - `shard-2` runs the default `.mocharc.yml` spec **minus** the shard-1 files,
   via Mocha's native `--ignore` flag. No custom runner; no duplicated lists.
 - [`scripts/run-shard.js`](../scripts/run-shard.js) is a thin node wrapper that
@@ -64,17 +69,39 @@ Mechanics:
 > `exit:` options are mirrored as CLI flags so shard-1 runs with the same
 > shared-env teardown hook and per-test timeout as any other invocation.
 
-### How to move a file between shards
+### How to rebalance
 
-1. Edit `test/shard-config.json` — add or remove the file under `"shard-1"`.
-2. Run `npm run test:shard-1` and `npm run test:shard-2` locally. Note the
-   wall-clock of each (printed by `scripts/run-shard.js` tail + Mocha's own
-   summary line).
-3. If `max(shard-1, shard-2) / min(...) ≤ 1.2`, open a one-line PR. No other
-   files change. Commit title: `refactor(test): rebalance shard split (…)`.
-4. CI posts per-shard wall-clock to each job summary (top of the workflow run
-   page) — scan those numbers on the first few post-merge runs to confirm the
-   rebalance held.
+Rebalance is driven by the **top-N heaviest** rule from design §2:
+
+1. Identify the drift from CI. Each `build-and-test (shard-N, node-V)` job posts
+   its Mocha wall-clock to the job summary. If `max / min > 1.2` over 3+ runs,
+   rebalance.
+2. Decide which file(s) to move. Two patterns:
+   - **Shard-2 grew faster than shard-1** (because tests were added to shard-2):
+     add the next-heaviest file *from shard-2* to the `shard-1` list in
+     `shard-config.json`. Use a local per-file timing run (see §Local per-file
+     timing below) to pick the right file.
+   - **Shard-1 is heavier** (one of its files grew, e.g. new test cases added):
+     remove the *lightest* file from shard-1. Prefer removing over adding,
+     because shard-1 is meant to be "the small number of heavy files."
+3. Open a one-line PR. `shard-config.json` changes; nothing else. Commit title:
+   `refactor(test): rebalance shard-1 to top-N heaviest files (#<issue>)`.
+4. Scan CI summaries on the first 3 post-merge runs to confirm the rebalance
+   held. If drift is still >1.2×, you may need to move two files — escalate to
+   the PR reviewer before firing a second rebalance.
+
+### Local per-file timing
+
+`scripts/run-shard.js` is purposely single-file to keep PR scope small. A
+one-off wall-clock ranking of all test files is available via an ad-hoc Node
+snippet: run each `.test.js` under `dist-test/test` in isolation with
+`--no-config --require dist-test/test/root-hooks.js --timeout 30000 --exit`
+(matches shard-1's invocation) and `time` them. The current ranking is
+archived in `docs/design/191-test-parallelization.md` appendix v5.
+
+Do **not** check in a timing-runner script unless the project develops a
+recurring need to re-rank — the one-off snippet takes <10 min to re-run when
+needed, and a permanent script adds surface without providing continuous value.
 
 ### Rebalance rule (20% drift bound)
 

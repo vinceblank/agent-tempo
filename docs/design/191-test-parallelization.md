@@ -63,33 +63,34 @@ Mitigation: Phase 1 PR should include a 20-run loop of `npm test` locally + CI b
 
 Post-Phase 1 the critical path is ~215s. A 2-way split targets ~108s per shard. 3-way (~72s) costs 3 extra CI jobs for marginal wall-clock gain — reject.
 
-**Split rule — timing-balanced, manifested.** Alphabetical drifts. Proposal: `test/shard-config.json`:
+**Split rule — top-N heaviest, data-derived.** `test/shard-config.json` lists the top-N heaviest files by measured CI wall-clock, with N chosen so that cross-shard drift lands ≤1.2× (the 20% rebalance bound). Shard-2 is "everything else" driven by the default `.mocharc.yml` spec minus the shard-1 list via Mocha's `--ignore` flag. No custom runner; no alphabetical assignment (which drifts as tests are added).
+
+As of v5 (#231), N=3:
 
 ```json
 {
   "shard-1": [
-    "test/scheduler.test.ts",
-    "test/outbox.test.ts",
     "test/session-phase-machine.test.ts",
-    "test/hold-release.test.ts",
-    "test/maestro.test.ts"
-  ],
-  "shard-2": ["test/**/*.test.ts"]
+    "test/outbox.test.ts",
+    "test/scheduler.test.ts"
+  ]
 }
 ```
 
-Shard 2 is "everything else" via `--ignore`. Mocha's native `--file` + `--ignore` args — no custom runner.
+Measured per-file wall-clock (see v5 appendix for the full 48-file ranking):
 
-Post-#209 + shared-env math:
+| Shard | Files | Wall-clock | % of total |
+|---|---|---|---|
+| 1 | session-phase-machine (88.7s) + outbox (41.6s) + scheduler (40.8s) | **171.1s** | 52.1% |
+| 2 | remaining 45 files (sum of per-file times + shared-env overhead) | **157.0s** | 47.9% |
 
-| Shard | Files | Wall-clock (with shared env savings prorated) |
-|---|---|---|
-| 1 | scheduler + outbox + phase-machine + hold-release + maestro (~149s raw) | **~107s** |
-| 2 | remaining ~17 files (~146s raw) | **~105s** |
+Cross-shard drift: **1.09× (~9%)**, well within the 20% bound.
 
-CI jobs: 3 → 6 (2 shards × 3 Node versions). For a project of this size and free-tier budget, acceptable.
+CI jobs: 3 → 6 (2 shards × 3 Node versions) + 3 independent Vitest jobs. For a project of this size and free-tier budget, acceptable.
 
-When shard balance drifts >20%, an engineer moves a file between shards — one-line PR. Low toil.
+**Mocha 11 caveat (implementation note).** Mocha 11 *unions* the mocharc `spec:` glob with CLI positional args rather than replacing. A positional-args-only approach against the default config would silently pull in the full suite, so `scripts/run-shard.js` bypasses the mocharc for shard-1 via `--no-config` and mirrors the mocharc options (`require:` / `timeout:` / `exit:`) on the CLI. Shard-2 keeps the mocharc default plus `--ignore` per shard-1 file. See the `run-shard.js` docstring for details.
+
+**Rebalance rule.** When CI consistently shows per-shard `max/min > 1.2` across 3+ runs, update `shard-config.json` — either add the next-heaviest file (if shard-2 got heavier) or remove the current heaviest (if shard-1 got heavier). One-line edit, no other files change. `test/README.md` ships the operator-facing procedure.
 
 ## 3. `mocha --parallel` — reject
 
@@ -138,3 +139,22 @@ Phasing rationale: each phase is **independently valuable and cleanly revertible
 - **v2**: Pivoted to **C → A** after workflow-ID audit reduced C's cost to ~1 day (3 files). Lower-risk first move; stress-tests shared-env stability before adding shard complexity.
 - **v3** (post-implementation, 2026-04-18): Phase 1 implementation (tempo-eng, #210) surfaced an estimation miss in the audit that fed v2. The audit reported **~8 literal `'test-ensemble'` occurrences** as the safety-critical collision surface; the actual full-repo sweep was **40 occurrences** across Tier A/B files. The extras lived in mock-only test files that bypass Temporal entirely, so the **safety property held** — zero collision risk at runtime — but the **cosmetic sweep** (literals to replace for consistency/lint-clean) was 5× larger than the design doc implied. No technical rework was needed; the Phase 1 PR simply had a larger diff than forecast. **Lesson for future audits of this kind**: separate the reported count into two metrics — *safety-relevant* (files that share the collision surface) and *total-sweep* (files the lint/rename touches, including Temporal-free ones). Conflating them understates PR size and risks reviewer surprise.
 - **v4** (2026-04-18 evening): Reduced the post-Phase-1 observation window from 20 → 5 clean CI runs before unlocking Phase 2 (matrix shard). Rationale: initial CI traffic post-merge showed zero flakes and no runtime state-leak signals (search-attribute re-registration, activity-stub leaks, and scheduler cron state all quiet). The v3 20-run bar was conservative — it was set when the shared-env audit was still static-only and runtime behaviour was unconfirmed; with two clean runs at decision time and no signals surfacing, 5 is a sufficient empirical bar. Decision-maker: vinceblank.
+- **v5** (2026-04-18 late evening, PR #232): **Rebalanced shard-1 from 5 files to 3 after CI data disproved the initial 5-file split.** The v2/v3 design picked the 5 files it believed were heaviest based on pre-Phase-1 per-file characteristics; first CI run of the PR #232 implementation showed **2.24× drift** (shard-1 222s vs shard-2 99s) — a 124% imbalance, far above the 20% bound. Root cause: Phase 1's shared `TestWorkflowEnvironment` changed per-file scaling asymmetrically. Files that used to spend most of their time on env setup (which was previously per-file and is now amortized) shrank proportionally more than files dominated by in-test workflow work — so `session-phase-machine.test.ts` grew to be disproportionately heavy relative to the others in the original 5. Full 48-file wall-clock measurement (run locally with `mocha --no-config` per file, ratio cross-checked against CI — CI 2.24× vs laptop 2.43× confirms ratios carry between platforms even when absolute times don't) revealed the distribution below. Rebalanced to **shard-1 = {session-phase-machine, outbox, scheduler}** (top-3 heaviest, 171.1s = 52.1% of total), landing **1.09× drift (~9%)**. Also introduces the durable *"top-N heaviest, N chosen to land ≤1.2× drift"* rule in §2 — replaces the prior hard-coded 5-file list so future rebalances become "adjust N" rather than "re-derive which files to pick." Platform-stability observation (CI vs laptop ratio within noise) is documented for future debugging. Full per-file ranking (for reference during rebalance — do not reproduce in PRs):
+
+  | Time | File |
+  |---|---|
+  | 88.7s | `session-phase-machine.test.ts` |
+  | 41.6s | `outbox.test.ts` |
+  | 40.8s | `scheduler.test.ts` |
+  | 23.3s | `hold-release.test.ts` |
+  | 22.0s | `maestro.test.ts` |
+  | 14.6s | `pause-resume.test.ts` |
+  | 12.0s | `adapter-reconnect.test.ts` |
+  | 11.5s | `global-maestro.test.ts` |
+  | 11.4s | `session-lease.test.ts` |
+  | 10.6s | `adapter-claude-code-lifecycle-v2.test.ts` |
+  | 10.0s | `workflow.test.ts` |
+  | 6.0s | `integration.test.ts` |
+  | <6s | 36 remaining files (each ≤5.4s, most ≤2s) |
+
+  Decision-maker: tempo-conductor on PR #232 review.

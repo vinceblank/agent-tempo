@@ -23,10 +23,11 @@ jobs:
 
   build-and-test:
     # Mocha integration suite, sharded 2-way per docs/design/191-test-parallelization.md §2
-    # (#231). shard-1 pins the 5 heaviest files (scheduler, outbox, phase-machine,
-    # hold-release, maestro); shard-2 runs the rest via the default spec minus
-    # shard-1 via `--ignore`. Single source of truth is `test/shard-config.json`.
-    # Rebalance rule (20% drift) lives in `test/README.md`.
+    # (#231). Rule: shard-1 pins the top-N heaviest files by CI wall-clock
+    # (currently N=3 — see `test/shard-config.json`); shard-2 runs the rest
+    # via the default spec minus shard-1 via `--ignore`. Single source of
+    # truth is `test/shard-config.json`. Rebalance rule (20% drift bound)
+    # and shard-move procedure live in `test/README.md`.
     #
     # TUI (vitest) runs as a separate job below — no need to duplicate it across
     # every Mocha shard × Node combination.
