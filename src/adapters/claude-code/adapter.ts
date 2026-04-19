@@ -19,6 +19,7 @@
  */
 import type { Client, WorkflowHandle } from '@temporalio/client';
 import { BaseAttachment, type BaseAttachmentOptions } from '../base';
+import { isTerminalWorkflowError } from '../terminal-error';
 import type { AdapterDescriptor, DetachReason } from '../../types';
 import { Message } from '../../types';
 import { ENV } from '../../config';
@@ -49,9 +50,23 @@ const POLL_MAX_MS = 30000;
 /**
  * Poll a session workflow for pending messages and deliver them via `onMessages`.
  *
- * Verbatim lift from the old `src/channel.ts`. Module-private; callers go through
- * {@link InteractiveAttachment.start}. Used by both the V2 path (on a runId-pinned
- * handle) and the legacy compat path (on the unpinned handle from server.ts).
+ * Module-private; callers go through {@link InteractiveAttachment.start}. Runs
+ * on the V2 runId-pinned handle so `markDelivered` signals reach the correct
+ * execution.
+ *
+ * **Terminal-error handling (#249 Bug 4):** pre-#249 this loop's catch-all
+ * swallowed every error including `WorkflowNotFoundError` from a CAN-closed
+ * pinned runId, so the poller spun forever against a dead run while the
+ * successor accepted messages no one was draining. Post-fix: classify via
+ * the shared {@link isTerminalWorkflowError}, stop cleanly when seen, and
+ * rely on the base class's heartbeat/watcher `handleRunEndError` path to
+ * run the CAN rebind — which then calls `onReconnected` on
+ * {@link InteractiveAttachment} to start a fresh poller on the successor.
+ *
+ * This fix depends on Bugs 1+2 (tick orphan resistance) — if the heartbeat
+ * loop is dead, `onReconnected` never fires and the poller stays stopped
+ * without a replacement. See the Bug 4 commit message for the revert-together
+ * dependency.
  */
 function startMessagePoller(
   handle: WorkflowHandle,
@@ -61,6 +76,13 @@ function startMessagePoller(
   let timeout: ReturnType<typeof setTimeout> | null = null;
   let currentInterval = POLL_BASE_MS;
   let consecutiveErrors = 0;
+
+  const cleanupTimer = () => {
+    if (timeout) {
+      clearTimeout(timeout);
+      timeout = null;
+    }
+  };
 
   const poll = async () => {
     if (stopped) return;
@@ -77,6 +99,22 @@ function startMessagePoller(
       currentInterval = POLL_BASE_MS;
       consecutiveErrors = 0;
     } catch (err) {
+      // #249 Bug 4: surface terminal-class errors instead of swallowing. The
+      // pinned-runId handle throws `WorkflowNotFoundError` /
+      // `WorkflowExecutionAlreadyCompleted` when its run has CAN'd or been
+      // destroyed. Keep polling against the closed run is pointless and masks
+      // the lifecycle event from logs. Stop the poller here; the base class's
+      // heartbeat/watcher tick will trigger CAN rebind or terminal, and
+      // `onReconnected` restarts a fresh poller on the live run.
+      if (isTerminalWorkflowError(err)) {
+        log(
+          `poll hit terminal workflow error — stopping (onReconnected will restart on successor if recoverable):`,
+          (err as Error)?.message ?? err,
+        );
+        stopped = true;
+        cleanupTimer();
+        return;
+      }
       consecutiveErrors++;
       // Apply exponential backoff on errors
       currentInterval = Math.min(currentInterval * POLL_BACKOFF_FACTOR, POLL_MAX_MS);
@@ -93,10 +131,7 @@ function startMessagePoller(
 
   return () => {
     stopped = true;
-    if (timeout) {
-      clearTimeout(timeout);
-      timeout = null;
-    }
+    cleanupTimer();
   };
 }
 

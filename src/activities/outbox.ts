@@ -51,10 +51,12 @@ const log = (...args: unknown[]) => console.error('[claude-tempo:outbox]', ...ar
  * transient signatures if we see false-permanent rates in the wild.
  *
  * ## Why name/message sniffing, not `instanceof`
- * Matches the established pattern in `src/adapters/base.ts` `isTerminalErr`:
- * the Temporal Node SDK surfaces slightly different error shapes between
- * `@temporalio/client`, the gRPC layer, and `WorkflowUpdateFailedError`
- * wrappers. Sniffing on name + message is resilient across those shapes.
+ * Matches the established pattern in `src/adapters/terminal-error.ts`
+ * `isTerminalWorkflowError`: the Temporal Node SDK surfaces slightly different
+ * error shapes between `@temporalio/client`, the gRPC layer, and
+ * `WorkflowUpdateFailedError` wrappers. Sniffing on name + message is resilient
+ * across those shapes. Activity-side classification is kept separate here so
+ * `src/activities/` has no adapter-module dependency.
  */
 function isRetryableTemporalError(err: unknown): boolean {
   // ApplicationFailure instances have already been classified by the thrower

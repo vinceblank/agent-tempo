@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Message-delivery trilogy — heartbeat/watcher orphan + CAN lease math +
+  poller CAN-blindness** (#249). Four compounding bugs caused long-running
+  ensembles to silently stop delivering inbound cues: cues landed in workflow
+  inboxes as signal events, the workflow reported `phase=detached`, `recall`
+  still retrieved messages, but nothing ever pushed them into the Claude Code
+  session's context — and no adapter log fired. Reliable repro on
+  `v0.26.0-beta.3` after a multi-hour conductor session with at least one
+  `continueAsNew` boundary. Fixes:
+  1. **`tickHeartbeat` try/finally reschedule** (`src/adapters/base.ts`).
+     Pre-fix early-return paths (guard trips, handled terminal errors)
+     silently orphaned the heartbeat timer; the loop died with no teardown,
+     no log, no state change. Now wrapped in `try/finally` that reschedules
+     unless `stopped`, `reconnecting`, or `terminalFired` — the reconnect loop
+     and terminal machinery retain ownership of their cases, everything else
+     rearms.
+  2. **`tickPhaseWatcher` orphan parity** (`src/adapters/base.ts`). Same
+     orphan shape, same fix. When the heartbeat loop dies, the watcher is the
+     only remaining self-heal surface — losing it too meant no recovery short
+     of process restart.
+  3. **CAN-boundary lease math matches adapter cadence**
+     (`src/workflows/session.ts`, `src/workflows/attachment-math.ts`).
+     Pre-fix the `continueAsNew` extension was a hardcoded 30s, disconnected
+     from the adapter's actual `heartbeatMs` (60s for `claude-code`). A CAN
+     between heartbeats reaped healthy attachments before their next tick
+     could land. Post-fix uses `currentAttachment.leaseMs` (= 3× heartbeatMs,
+     negotiated at claim time), guarded by a `patched('v0.26-can-lease-from-attachment')`
+     so pre-#249 histories still replay deterministically. `extendAttachmentForCAN`
+     parameter renamed `heartbeatMs → extendMs` to match the semantic.
+  4. **Message-poller surfaces terminal `WorkflowNotFoundError`**
+     (`src/adapters/claude-code/adapter.ts`). Pre-fix the poller swallowed
+     every error — a CAN closed the pinned runId, `handle.query('pendingMessages')`
+     threw terminal-class, but the poller just backed off and spun forever
+     against a dead run while the successor ran unattended. Post-fix the
+     poller uses the newly-extracted `src/adapters/terminal-error.ts`
+     `isTerminalWorkflowError` classifier, logs the terminal event, and
+     exits cleanly; the base class's heartbeat/watcher rebind path restarts
+     a fresh poller on the successor via `onReconnected` (depends on bugs
+     1+2 being fixed — revert together).
+  5. **Diagnostic logging** for recurrence detection: `first heartbeat
+     scheduled in Xms` after claim, `heartbeat#1 delivered` on first tick,
+     `heartbeats-delivered=N` / `phase-ticks=N` summary every 10 ticks,
+     structured `guard tripped: {...}` on any tick early-return, and a
+     `WARNING: heartbeat staleness` line when the phase-watcher observes
+     `lastHeartbeatAt` falling more than 2× `heartbeatMs` behind `now`.
+     Operators can `grep '\[claude-tempo:adapter\]'` for breadcrumbs instead
+     of parsing Temporal history for hours.
 - **Suppress spurious `[copilot-bridge]` stderr on non-Copilot MCP startup** (#122).
   `src/adapters/copilot/adapter.ts` was printing "Error: @github/copilot-sdk is not
   installed" to stderr on every `claude-tempo up` / `src/server.ts` startup for users
