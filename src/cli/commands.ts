@@ -12,7 +12,9 @@ import { createTemporalConnection } from '../connection';
 import { playerReportSignal, updateMetadataSignal, releaseHeldSignal, outboxLockedQuery, setPausedSignal, destroyUpdate } from '../workflows/signals';
 import { addScheduleSignal, setSchedulerPausedSignal } from '../workflows/scheduler-signals';
 import { maestroSetPausedSignal } from '../workflows/maestro-signals';
-import { AgentType, AttachmentInfo, ScheduleEntry, SessionInput, SessionMetadata } from '../types';
+import { AgentType, ScheduleEntry, SessionInput, SessionMetadata } from '../types';
+import { formatDurationMs } from '../utils/duration';
+import { formatAttachmentInfoForDisplay } from '../utils/attachment-format';
 import { runPreflight } from './preflight';
 import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
 import { loadLineup, resolveLineupPath } from '../ensemble/loader';
@@ -27,13 +29,6 @@ import * as out from './output';
 
 /** Package root is two levels up from dist/cli/ */
 const PACKAGE_ROOT = resolve(__dirname, '..', '..');
-
-function formatDurationMs(ms: number): string {
-  if (ms >= 86_400_000) return `${ms / 86_400_000}d`;
-  if (ms >= 3_600_000) return `${ms / 3_600_000}h`;
-  if (ms >= 60_000) return `${ms / 60_000}m`;
-  return `${ms / 1000}s`;
-}
 
 /**
  * Ensure the Maestro workflow is running for the given ensemble.
@@ -2268,53 +2263,17 @@ export async function migrate(opts: MigrateCliOpts) {
   }
 }
 
-/**
- * Render `claude-tempo attachment-info <name>` output as an array of plain
- * strings. Pure — no Temporal, no stdout, no ANSI colors — so unit tests can
- * assert exact lines without booting a client (#138).
- *
- * `now` is injected (defaults to `Date.now()`) so tests can freeze the clock
- * and assert the heartbeat-age string deterministically. Heartbeat age uses
- * the same `formatDurationMs` helper the scheduler output uses, suffixed with
- * "ago" — e.g. `5s ago`, `2m ago`. Clock-skew (heartbeat timestamp in the
- * future) renders as `just now`; a malformed timestamp renders as `unknown`.
- */
-export function formatAttachmentInfoForCli(
-  name: string,
-  info: AttachmentInfo,
-  now: number = Date.now(),
-): string[] {
-  const lines: string[] = [
-    `${name} — phase: ${info.phase}`,
-    `  in-flight: ${info.inFlightCount}`,
-  ];
-  if (info.currentAttachment) {
-    const a = info.currentAttachment;
-    lines.push(`  attached on: ${a.hostname} (adapter: ${a.adapterId}/${a.adapterClass})`);
-    lines.push(`  attachmentId: ${a.attachmentId}`);
-    lines.push(`  lease expires: ${a.expiresAt}`);
-    lines.push(`  heartbeat: ${formatHeartbeatAge(a.lastHeartbeatAt, now)}`);
-  }
-  if (info.preferredHost) lines.push(`  preferred host: ${info.preferredHost}`);
-  if (info.processingSince) lines.push(`  processing since: ${info.processingSince}`);
-  return lines;
-}
-
-function formatHeartbeatAge(lastHeartbeatAt: string, now: number): string {
-  const then = Date.parse(lastHeartbeatAt);
-  if (!Number.isFinite(then)) return 'unknown';
-  const ageMs = now - then;
-  if (ageMs < 0) return 'just now'; // adapter clock ran ahead of ours — degrade gracefully
-  return `${formatDurationMs(ageMs)} ago`;
-}
-
 export async function attachmentInfo(opts: VerbOpts) {
   const { config, connection, client } = await verbClient(opts);
   const ensemble = opts.ensemble || config.ensemble;
   try {
     const tempo = createTempoClient(client);
     const info = await tempo.attachmentInfo(ensemble, opts.name);
-    for (const line of formatAttachmentInfoForCli(opts.name, info)) {
+    // #264 carved the per-surface formatter out to src/utils/attachment-format.ts
+    // so the TUI's /attachment-info renders identical output including heartbeat
+    // age. The CLI is now a pure consumer; if you need to add a field, add it
+    // to the shared formatter so every surface picks it up at once.
+    for (const line of formatAttachmentInfoForDisplay(opts.name, info)) {
       out.log(line);
     }
   } catch (err: any) {
