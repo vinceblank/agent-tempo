@@ -158,3 +158,10 @@ Phasing rationale: each phase is **independently valuable and cleanly revertible
   | <6s | 36 remaining files (each ≤5.4s, most ≤2s) |
 
   Decision-maker: tempo-conductor on PR #232 review.
+
+  **Empirical findings from the post-rebalance CI run** (added later the same evening, still v5 — these are measurements of the v5 split, not a new revision):
+
+  - **Achieved CI drift: 1.26×** (shard-1 avg 179s vs shard-2 avg 142s, Mocha step only). Projected local was 1.09×. Improvement vs the pre-rebalance 2.24× is 4.4× less drift.
+  - **Cross-platform ratio multiplier ≈ 1.16× (local → CI)**. Consistent across both the initial 5-file split (local 2.43× × 0.92 ≈ CI 2.24×) and the top-3 split (local 1.09× × 1.16 ≈ CI 1.26×). Ratios carry between platforms at a systematic bias rather than tight equivalence. **Future local-time projections should multiply by ~1.16 to estimate CI.**
+  - **Practical floor at current test topology.** `session-phase-machine.test.ts` alone is 88.7s ≈ 52% of shard-1; no 2-way file-level split can go below ~1.2× CI drift without splitting that single file. 1.26× sits inside the §5 warn threshold (1.3×) but above the §2 aspirational target (1.2×). Accepted as the practical floor for Phase 2; further tightening requires splitting `session-phase-machine.test.ts`, which is out of scope for Phase 2 and tracked as a follow-up issue.
+  - **Rebalance trigger rule** (operational, for future maintainers): re-measure wall-clock and potentially re-shard when (a) a new test file >30s is added to the suite, OR (b) any single existing file grows beyond ~80s — in that second case, consider splitting the file before rebalancing the shard config.
