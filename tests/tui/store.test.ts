@@ -121,6 +121,19 @@ describe('tuiReducer — no-op identity', () => {
     expect(out.statusScrollOffset).toBe(2);
   });
 
+  // #250 design-contract pin: STATUS_SCROLL_DOWN intentionally does NOT
+  // upper-bound the offset in the reducer — the max depends on
+  // `players.length` + `contentHeight`, both invisible to the reducer.
+  // `StatusOverlay` clamps at render time via `Math.min(scrollOffset, max)`.
+  // This test fails if someone adds an upper-bound clamp here without also
+  // updating the render layer and the action shape.
+  it('STATUS_SCROLL_DOWN always increments (render layer owns the upper-bound clamp)', () => {
+    const s = { ...s0(), statusScrollOffset: 9_999 };
+    const out = tuiReducer(s, { type: 'STATUS_SCROLL_DOWN' });
+    expect(out).not.toBe(s);
+    expect(out.statusScrollOffset).toBe(10_000);
+  });
+
   it('PICKER_UP at index 0 returns the same reference (identity rule)', () => {
     const s = { ...s0(), pickerIndex: 0 };
     const out = tuiReducer(s, { type: 'PICKER_UP' });
