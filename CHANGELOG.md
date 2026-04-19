@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Suppress spurious `[copilot-bridge]` stderr on non-Copilot MCP startup** (#122).
+  `src/adapters/copilot/adapter.ts` was printing "Error: @github/copilot-sdk is not
+  installed" to stderr on every `claude-tempo up` / `src/server.ts` startup for users
+  who don't have the Copilot SDK installed. The error only makes sense when the file is
+  run as the Copilot bridge subprocess entrypoint — not when the adapter registry imports
+  the class descriptor at startup. Fix: moved the `console.error` + `process.exit(1)`
+  inside the `require.main === module` guard so non-Copilot users see no noise at startup.
 - **`destroy` now terminates orphaned processes on `phase=detached` sessions**
   (#227). Before this, the destroy handler's hard-terminate branch was gated on
   `if (currentAttachment)` — correct for `phase=attached` (the original #164
