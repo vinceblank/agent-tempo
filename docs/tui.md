@@ -56,12 +56,12 @@ Use `/players <name>` to open a scrollable message history for any player.
 | `/detach <player>` | Gracefully detach a player's adapter — triggers draining and clean handoff. |
 | `/destroy <player>` | Terminate a session via ordered shutdown (outbox drain). Use for permanent removal. |
 | `/migrate <player> --to <hostname>` | Move a session to a different host. Requires target host to have an active daemon. |
-| `/attachment-info <player>` | Show the current attachment phase, lease expiry, and in-flight count for a player. |
+| `/attachment-info <player>` | Show the current attachment phase, lease expiry, heartbeat age, and in-flight count for a player. Output matches CLI and MCP surfaces (shared formatter, #264). |
 | `/disband` | Tear down the current ensemble — all sessions, scheduler, and Maestro |
 | `/players [name]` | Show detailed player info; no args opens interactive picker |
 | `/ensemble [name]` | Switch active ensemble context; no args opens picker |
 | `/status` | Show dismissible overlay with all players, status, type, and part |
-| `/recall [player]` | Show recent message history (optionally filtered to one player) |
+| `/recall [player]` | Query a player's inbox directly. Omit player to target the maestro session. Flags: `--limit N` (default 20), `--offset N` (paging), `--preview N` (truncate bodies; omit = full text), `--from X`, `--since ISO`, `--include-sent`. (#128: unified semantics with MCP `recall` and `claude-tempo recall` CLI.) |
 | `/search <term>` | Search message history across the ensemble |
 | `/schedule [create \| delete <name>]` | List active schedules (interactive overlay); `create` launches the schedule wizard; `delete <name>` cancels a named schedule |
 | `/lineup load <file> \| save [file]` | Load or save an ensemble lineup |
