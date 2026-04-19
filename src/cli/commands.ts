@@ -19,6 +19,7 @@ import { loadLineup, resolveLineupPath } from '../ensemble/loader';
 import { saveLineup, listLineups, readSavedLineup } from '../ensemble/saver';
 import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
 import { shouldIncludeInBroadcast, validateEnsembleName } from '../utils/validation';
+import { getAttachmentPhase, getEnsembleName } from '../utils/search-attributes';
 import { isDaemonRunning, startDaemon, stopDaemon, getDaemonStatus, DAEMON_LOG_PATH } from './daemon';
 import { createTempoClient } from '../client';
 import { ensembleReadyBanner, ensembleReadyDirective } from '../constants';
@@ -625,8 +626,7 @@ export async function status(opts: StatusOpts) {
       if (opts.ensemble && ensemble !== opts.ensemble) continue;
 
       // Attachment phase lives on the `ClaudeTempoAttachmentState` search attribute (post-#175).
-      const phaseArr = wf.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined;
-      const phase = Array.isArray(phaseArr) && phaseArr.length > 0 ? phaseArr[0] : undefined;
+      const phase = getAttachmentPhase(wf);
 
       sessions.push({
         id: wf.workflowId,
@@ -1409,10 +1409,8 @@ export async function down(opts: DownOpts) {
       const runningEnsembles = new Set<string>();
       const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
       for await (const wf of client.workflow.list({ query })) {
-        const vals = wf.searchAttributes?.ClaudeTempoEnsemble;
-        if (Array.isArray(vals) && vals.length > 0) {
-          runningEnsembles.add(String(vals[0]));
-        }
+        const name = getEnsembleName(wf);
+        if (name) runningEnsembles.add(name);
       }
 
       if (runningEnsembles.size === 0) {
@@ -1510,10 +1508,8 @@ export async function down(opts: DownOpts) {
       for await (const wf of client.workflow.list({ query: sessionQuery })) {
         // Track ensemble names for scheduler/maestro cleanup in --all mode
         if (!ensembleName) {
-          const vals = wf.searchAttributes?.ClaudeTempoEnsemble;
-          if (Array.isArray(vals) && vals.length > 0) {
-            discoveredEnsembles.add(String(vals[0]));
-          }
+          const name = getEnsembleName(wf);
+          if (name) discoveredEnsembles.add(name);
         }
         try {
           const handle = client.workflow.getHandle(wf.workflowId);
@@ -2010,8 +2006,7 @@ export async function broadcast(opts: BroadcastOpts) {
 
       // Filter by attachment phase (post-#176). Phase lives on the
       // `ClaudeTempoAttachmentState` search attribute.
-      const phaseArr = wf.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined;
-      const phase = Array.isArray(phaseArr) && phaseArr.length > 0 ? phaseArr[0] : undefined;
+      const phase = getAttachmentPhase(wf);
       if (!shouldIncludeInBroadcast(phase, !!opts.includeStale)) continue;
 
       // Filter by player type if specified

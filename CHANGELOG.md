@@ -34,6 +34,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Tightened `phaseTag()` in `src/tools/ensemble.ts` to accept
+  `AttachmentPhase | undefined` instead of `string | undefined`. Callers
+  always have the typed phase in hand via `EnsembleSessionInfo.phase`;
+  `string` lost enum discipline. Pure type tightening, zero runtime
+  behavior change. (#203)
+- Extracted shared search-attribute extraction helper to
+  `src/utils/search-attributes.ts` and migrated 9 call sites across
+  `src/client/index.ts`, `src/cli/commands.ts`, `src/tools/broadcast.ts`,
+  and `src/activities/resolve.ts`. The new module exports
+  `getSearchAttrString` / `getSearchAttrBool` primitives and typed wrappers
+  `getAttachmentPhase` (reads `ClaudeTempoAttachmentState` as
+  `AttachmentPhase`), `getEnsembleName` (reads `ClaudeTempoEnsemble`), and
+  `getIsConductor` (reads `ClaudeTempoIsConductor`). Structural
+  `SearchAttributeCarrier` type — no `@temporalio/client` import — keeps
+  the util reusable from tests and future callers. Pure refactor, no
+  behavior change. (#203)
 - **Extract CAN-boundary attachment-extension math into a pure function** (#127).
   The 4-line "push `lastHeartbeatAt` / `expiresAt` out to `now + heartbeatMs` so
   the new execution has room to land the next heartbeat" math was previously
