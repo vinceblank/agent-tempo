@@ -13,7 +13,7 @@ import React from 'react';
 import { useInk } from '../ink-context';
 import { THEME } from '../utils/theme';
 import type { MaestroPlayerInfo, SessionMetadata, Message, SentMessage } from '../../types';
-import { phaseToLabel, phaseToIconName } from '../utils/format';
+import { phaseToLabel, phaseToIconName, formatEarlierIndicator } from '../utils/format';
 import { statusIcons, supportsUnicode } from '../utils/platform';
 
 const MAX_VISIBLE = 20;
@@ -114,9 +114,14 @@ export function PlayerDetailView({
     children.push(React.createElement(Text, { key: 'mhdr', color: THEME.dim },
       `  Messages (${total} total \u00B7 showing ${visible.length})`));
 
-    if (earlierCount > 0) {
+    // #110: use the plural-aware helper instead of hardcoded "earlier messages".
+    // The helper returns null for count ≤ 0 / non-finite, subsuming the prior
+    // `if (earlierCount > 0)` guard. Singular/plural split is covered by the
+    // helper's unit tests in `tests/tui/chat-cap.test.ts`.
+    const earlierIndicator = formatEarlierIndicator(earlierCount);
+    if (earlierIndicator) {
       children.push('\n');
-      children.push(React.createElement(Text, { key: 'earlier', color: THEME.dim }, `  \u2191 ${earlierCount} earlier messages`));
+      children.push(React.createElement(Text, { key: 'earlier', color: THEME.dim }, `  ${earlierIndicator}`));
     }
 
     for (let i = 0; i < visible.length; i++) {
