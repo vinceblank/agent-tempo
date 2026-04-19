@@ -438,6 +438,274 @@ describe('terminateSession', function () {
 //  in test/tools.test.ts cover the §8.2 algorithm directly. `restart` operates
 //  on any non-`gone` phase; encore's `stale`-only variant was retired.)
 
+// ── #140: error classification in deliverDetach / deliverDestroy / deliverRestart ──
+//
+// The three activities added in PR-D originally wrapped every mid-algorithm
+// error as `ApplicationFailure.nonRetryable`, defeating activity-level retry
+// for transient RPC failures. These tests pin the post-#140 behavior:
+//   • Transient (DEADLINE_EXCEEDED, UNAVAILABLE, ECONNRESET, …) → re-thrown
+//     as plain Error so the activity retry policy takes over.
+//   • Permanent (WorkflowNotFound, WorkflowUpdateFailed, unknown) → wrapped
+//     as `ApplicationFailure.nonRetryable` so the outbox stops retrying.
+//
+// Unknown errors default to non-retryable to avoid infinite retry loops on
+// genuinely-permanent failures we haven't catalogued yet.
+
+/** Build an Error-like object with a specific `name` so the classifier sees it. */
+function namedError(name: string, message: string): Error {
+  const e = new Error(message);
+  e.name = name;
+  return e;
+}
+
+describe('deliverDetach — error classification (#140)', function () {
+  /** Baseline metadata so `resolveSession`'s `getMetadata` query matches e1/alice. */
+  const aliceMeta: SessionMetadata = {
+    playerId: 'alice',
+    ensemble: 'e1',
+    hostname: 'h',
+    workDir: '/w',
+    isConductor: false,
+    agentType: 'claude',
+  };
+
+  /**
+   * Build a mock handle that returns valid metadata on `getMetadata` (so
+   * `resolveSession` picks it up) but throws `throwOnAttachmentInfo` on the
+   * `attachmentInfo` query that `deliverDetach` does next. This isolates
+   * the catch-block classifier from the unrelated resolver path.
+   */
+  function handleWithAttachmentInfoThrow(throwOnAttachmentInfo: () => never) {
+    return mockHandle({
+      metadata: aliceMeta,
+      queryFn(name) {
+        if (name === 'attachmentInfo') throwOnAttachmentInfo();
+        if (name === 'getMetadata') return aliceMeta;
+        return undefined;
+      },
+    });
+  }
+
+  it('re-throws plain Error when handle.query hits a transient RPC failure', async function () {
+    const handle = handleWithAttachmentInfoThrow(() => {
+      throw namedError('TransportError', 'UNAVAILABLE: temporal dev server blip');
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.deliverDetach({ ensemble: 'e1', targetPlayerId: 'alice' });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    // Retryable path: plain Error, NOT an ApplicationFailure. The activity
+    // retry policy will see a regular failure and back off.
+    expect(caught).to.be.instanceOf(Error);
+    expect(caught).to.not.be.instanceOf(ApplicationFailure);
+    expect((caught as Error).message).to.include('UNAVAILABLE');
+  });
+
+  it('wraps nonRetryable when handle.query hits WorkflowNotFoundError', async function () {
+    const handle = handleWithAttachmentInfoThrow(() => {
+      throw namedError('WorkflowNotFoundError', 'workflow execution already completed');
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.deliverDetach({ ensemble: 'e1', targetPlayerId: 'alice' });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(ApplicationFailure);
+    expect((caught as ApplicationFailure).nonRetryable).to.equal(true);
+    expect((caught as Error).message).to.include('Detach failed');
+  });
+
+  it('wraps nonRetryable for unknown errors (conservative default)', async function () {
+    const handle = handleWithAttachmentInfoThrow(() => {
+      throw namedError('ExoticCustomError', 'something weird happened downstream');
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.deliverDetach({ ensemble: 'e1', targetPlayerId: 'alice' });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(ApplicationFailure);
+    expect((caught as ApplicationFailure).nonRetryable).to.equal(true);
+  });
+});
+
+describe('deliverDestroy — error classification (#140)', function () {
+  it('re-throws plain Error when executeUpdate hits a transient RPC failure', async function () {
+    const handle = mockHandle({
+      metadata: { playerId: 'bob', ensemble: 'e1' },
+      updateFn(name) {
+        if (name === 'destroy') {
+          throw namedError('TransportError', 'DEADLINE_EXCEEDED');
+        }
+        return undefined;
+      },
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.deliverDestroy({
+        ensemble: 'e1',
+        targetPlayerId: 'bob',
+        terminatedBy: 'alice',
+      });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(Error);
+    expect(caught).to.not.be.instanceOf(ApplicationFailure);
+    expect((caught as Error).message).to.include('DEADLINE_EXCEEDED');
+  });
+
+  it('wraps nonRetryable when executeUpdate hits WorkflowUpdateFailedError', async function () {
+    // The destroy update's validator rejected — retry won't change its mind.
+    const handle = mockHandle({
+      metadata: { playerId: 'bob', ensemble: 'e1' },
+      updateFn(name) {
+        if (name === 'destroy') {
+          throw namedError('WorkflowUpdateFailedError', 'validator rejected: WorkflowGone');
+        }
+        return undefined;
+      },
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.deliverDestroy({
+        ensemble: 'e1',
+        targetPlayerId: 'bob',
+        terminatedBy: 'alice',
+      });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(ApplicationFailure);
+    expect((caught as ApplicationFailure).nonRetryable).to.equal(true);
+    expect((caught as Error).message).to.include('Destroy failed');
+  });
+});
+
+describe('deliverRestart — error classification (#140)', function () {
+  const attachedPhase = {
+    phase: 'attached' as const,
+    inFlightCount: 0,
+    currentAttachment: { attachmentId: 'a1', hostname: 'host', adapterId: 'claude-code' },
+  };
+
+  it('re-throws plain Error when mid-algorithm claimAttachment hits ECONNRESET', async function () {
+    // Phase is 'detached' so we skip the reap branch and go straight to
+    // claimAttachment — isolates the throw site cleanly.
+    const handle = mockHandle({
+      metadata: { playerId: 'carol', ensemble: 'e1', agentType: 'claude' },
+      attachmentInfo: { phase: 'detached', inFlightCount: 0 },
+      updateFn(name) {
+        if (name === 'claimAttachment') {
+          throw namedError('TransportError', 'ECONNRESET: temporal server flap');
+        }
+        return undefined;
+      },
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.deliverRestart({
+        ensemble: 'e1',
+        targetPlayerId: 'carol',
+        invokerPlayerId: 'alice',
+      });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(Error);
+    expect(caught).to.not.be.instanceOf(ApplicationFailure);
+    expect((caught as Error).message).to.include('ECONNRESET');
+  });
+
+  it('wraps nonRetryable when forceDetach hits WorkflowUpdateFailedError', async function () {
+    // Phase attached + force=true → restart tries forceDetach. Validator
+    // rejection (e.g. attachmentId mismatch after a race) is permanent.
+    const handle = mockHandle({
+      metadata: { playerId: 'dave', ensemble: 'e1', agentType: 'claude' },
+      attachmentInfo: attachedPhase,
+      updateFn(name) {
+        if (name === 'forceDetach') {
+          throw namedError('WorkflowUpdateFailedError', 'attachmentId mismatch');
+        }
+        return undefined;
+      },
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.deliverRestart({
+        ensemble: 'e1',
+        targetPlayerId: 'dave',
+        invokerPlayerId: 'alice',
+        force: true,
+      });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(ApplicationFailure);
+    expect((caught as ApplicationFailure).nonRetryable).to.equal(true);
+    expect((caught as Error).message).to.include('Restart failed');
+  });
+
+  it('preserves existing nonRetryable for phase=gone (regression guard)', async function () {
+    // The explicit "was destroyed" throw inside the try block is an
+    // ApplicationFailure.nonRetryable and must pass through the new catch
+    // untouched — not re-wrapped, not re-classified.
+    const handle = mockHandle({
+      metadata: { playerId: 'ed', ensemble: 'e1' },
+      attachmentInfo: { phase: 'gone', inFlightCount: 0 },
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig());
+
+    let caught: unknown;
+    try {
+      await activities.deliverRestart({
+        ensemble: 'e1',
+        targetPlayerId: 'ed',
+        invokerPlayerId: 'alice',
+      });
+      expect.fail('should have thrown');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).to.be.instanceOf(ApplicationFailure);
+    expect((caught as ApplicationFailure).nonRetryable).to.equal(true);
+    expect((caught as Error).message).to.include('was destroyed');
+  });
+});
+
 // ── computeNextCronFire ──
 
 describe('computeNextCronFire', function () {

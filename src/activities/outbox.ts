@@ -5,7 +5,11 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { Config, conductorWorkflowId, sessionWorkflowId } from '../config';
 import { AgentType, SessionInput, AdapterClass, AttachmentInfo, SessionMetadata, Message, DetachReason } from '../types';
-import { PREVIEW_MAX_LENGTH } from '../utils/validation';
+import {
+  PREVIEW_MAX_LENGTH,
+  DEFAULT_RESTART_DETACH_DEADLINE_MS,
+  DEFAULT_RESTART_LEASE_MS,
+} from '../utils/validation';
 import { ENSEMBLE_SENTINEL_FLAG } from '../constants';
 import { getGitInfo } from '../git-info';
 import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
@@ -29,6 +33,89 @@ import {
 } from '../workflows/signals';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:outbox]', ...args);
+
+/**
+ * Classify a Temporal client error raised by `handle.query` / `handle.signal`
+ * / `handle.executeUpdate` as retryable (transient) vs permanent (#140).
+ *
+ * ## Contract
+ * - Returns `true` → caller should **re-throw the underlying Error** so the
+ *   activity's retry policy can back off and retry (per-worker config).
+ * - Returns `false` → caller should wrap in `ApplicationFailure.nonRetryable`
+ *   so the outbox surfaces a permanent failure and stops retrying.
+ *
+ * ## Safety posture
+ * **Conservative default: unknown → non-retryable.** Over-classifying as
+ * retryable causes infinite retry loops on genuinely permanent errors. The
+ * activity will fail fast on unknown cases; a follow-up PR can whitelist more
+ * transient signatures if we see false-permanent rates in the wild.
+ *
+ * ## Why name/message sniffing, not `instanceof`
+ * Matches the established pattern in `src/adapters/base.ts` `isTerminalErr`:
+ * the Temporal Node SDK surfaces slightly different error shapes between
+ * `@temporalio/client`, the gRPC layer, and `WorkflowUpdateFailedError`
+ * wrappers. Sniffing on name + message is resilient across those shapes.
+ */
+function isRetryableTemporalError(err: unknown): boolean {
+  // ApplicationFailure instances have already been classified by the thrower
+  // (nonRetryable=true/false). The calling code paths in this module only ask
+  // about non-ApplicationFailure errors, but this guard makes the helper safe
+  // to call unconditionally.
+  if (err instanceof ApplicationFailure) return false;
+  const e = err as { name?: string; message?: string } | undefined;
+  const name = e?.name ?? '';
+  const msg = e?.message ?? '';
+  // ── Permanent: workflow is genuinely gone or validator rejected the op. ──
+  if (
+    name.includes('WorkflowNotFound') ||
+    name.includes('WorkflowExecutionAlreadyCompleted') ||
+    // Update rejected by the workflow-side validator (e.g. `WorkflowGone`
+    // thrown from `claimAttachment`'s validator on a destroyed session).
+    // A retry won't make the validator change its mind.
+    name.includes('WorkflowUpdateFailed') ||
+    msg.includes('WorkflowGone') ||
+    msg.includes('workflow execution already completed')
+  ) return false;
+  // ── Transient: RPC / network / temporary SDK unavailability. ──
+  if (
+    name.includes('TransportError') ||
+    name.includes('TimeoutError') ||
+    msg.includes('DEADLINE_EXCEEDED') ||
+    msg.includes('UNAVAILABLE') ||
+    msg.includes('RESOURCE_EXHAUSTED') ||
+    msg.includes('CANCELLED') ||
+    /\bECONNRESET\b/.test(msg) ||
+    /\bECONNREFUSED\b/.test(msg) ||
+    /\bETIMEDOUT\b/.test(msg) ||
+    /\bENOTFOUND\b/.test(msg) ||
+    /\bEAI_AGAIN\b/.test(msg)
+  ) return true;
+  // Unknown shape — stay permanent (see "Safety posture" above).
+  return false;
+}
+
+/**
+ * Standard shape for the 3 §8.2 deliver activities' catch-all tail.
+ * Centralises the branch so each activity body stays concise.
+ *
+ * - If `err` is already an `ApplicationFailure` (typed permanent — e.g. the
+ *   explicit "not found" / "destroyed" throws), re-throw as-is.
+ * - If `err` is retryable per {@link isRetryableTemporalError}, re-throw the
+ *   original `Error` so the activity retry policy handles it.
+ * - Otherwise wrap in `ApplicationFailure.nonRetryable` with a caller-supplied
+ *   context prefix (e.g. `Detach failed for "alice"`).
+ */
+function classifyAndRethrow(err: unknown, contextPrefix: string): never {
+  if (err instanceof ApplicationFailure) throw err;
+  if (isRetryableTemporalError(err)) {
+    // Re-throw the original so the activity retry policy backs off and retries.
+    // Normalise non-Error throwables (extremely rare) into Error form.
+    throw err instanceof Error ? err : new Error(String(err));
+  }
+  throw ApplicationFailure.nonRetryable(
+    `${contextPrefix}: ${err instanceof Error ? err.message : String(err)}`,
+  );
+}
 
 // ── Activity input types ──
 
@@ -448,10 +535,10 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         log(`Detach signaled for "${targetPlayerId}" (deadline=${deadlineMs}ms)`);
         return { success: true };
       } catch (err) {
-        if (err instanceof ApplicationFailure) throw err;
-        throw ApplicationFailure.nonRetryable(
-          `Detach failed for "${targetPlayerId}": ${err instanceof Error ? err.message : String(err)}`,
-        );
+        // #140: re-throw transient RPC/network errors so the activity retry
+        // policy handles them; permanent cases (validator rejection, workflow
+        // gone, unknown) become `ApplicationFailure.nonRetryable`.
+        classifyAndRethrow(err, `Detach failed for "${targetPlayerId}"`);
       }
     },
 
@@ -490,10 +577,10 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         }
         return { success: true };
       } catch (err) {
-        if (err instanceof ApplicationFailure) throw err;
-        throw ApplicationFailure.nonRetryable(
-          `Destroy failed for "${targetPlayerId}": ${err instanceof Error ? err.message : String(err)}`,
-        );
+        // #140: transient errors (network, RPC timeout) become retryable;
+        // permanent cases (WorkflowNotFound, validator rejection) stay
+        // non-retryable. Unknown errors default to non-retryable.
+        classifyAndRethrow(err, `Destroy failed for "${targetPlayerId}"`);
       }
     },
 
@@ -530,7 +617,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             try {
               await handle.signal(requestDetachSignal, {
                 reason: 'restart',
-                deadlineMs: 5_000,
+                deadlineMs: DEFAULT_RESTART_DETACH_DEADLINE_MS,
               });
             } catch {
               // Best-effort; force path handles it below.
@@ -573,7 +660,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             host: targetHost,
             adapterId,
             adapterClass,
-            leaseMs: 90_000,
+            leaseMs: DEFAULT_RESTART_LEASE_MS,
           }],
         });
 
@@ -647,10 +734,11 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         log(`Restart prepared for "${targetPlayerId}" — attachmentId=${token.attachmentId}, spawnEntryId=${spawnEntryId}, host=${targetHost}${fresh ? ` (fresh sessionId=${spawnSessionId})` : ''}`);
         return { success: true };
       } catch (err) {
-        if (err instanceof ApplicationFailure) throw err;
-        throw ApplicationFailure.nonRetryable(
-          `Restart failed for "${targetPlayerId}": ${err instanceof Error ? err.message : String(err)}`,
-        );
+        // #140: the §8.2 restart algorithm fires many RPCs; any of them may
+        // hit a transient network/RPC error. Those get retried. Validator
+        // rejections (e.g. claim race), workflow-gone, and unknown errors
+        // stay permanent to avoid wedging the outbox on a dead target.
+        classifyAndRethrow(err, `Restart failed for "${targetPlayerId}"`);
       }
     },
 
