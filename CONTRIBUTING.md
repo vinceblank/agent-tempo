@@ -46,6 +46,7 @@ npm test
 2. **Write tests** alongside your code changes.
 3. **Run the full test suite** before submitting: `npm test`
 4. **Ensure the project builds** cleanly: `npm run build`
+5. **Annotate any `this.skip()` calls** with `// SKIP-REASON: <why>` on the same line or the line above. CI fails on unannotated skips.
 
 ## Commit Convention
 

@@ -417,7 +417,7 @@ describe('hardTerminateAttachment — OS kill (#159 Gap 2)', function () {
     // `findProcessesByCommandLine` now identifies that cmd.exe (same `-n` sentinel
     // in its own CommandLine) and adds it to the kill list, so WT closes the tab
     // when the shell exits.
-    if (!isWindows) this.skip();
+    if (!isWindows) this.skip(); // SKIP-REASON: Windows-only test — spawns Windows Terminal tab and uses win32 FindWindow/SendMessage APIs (#157)
 
     const playerName = `tempo165-${process.pid}-${Date.now()}`;
     // Set up the WT orphan topology:

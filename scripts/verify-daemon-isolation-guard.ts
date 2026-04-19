@@ -10,7 +10,7 @@
  * touching CLI imports) to confirm the detector's fail-side actually works.
  *
  * Usage:
- *   node scripts/verify-daemon-isolation-guard.js
+ *   npm run build:scripts && node dist/scripts/verify-daemon-isolation-guard.js
  *
  * How it works:
  *   Spawns a child `node -e "..."` that (a) requires the compiled
@@ -28,13 +28,11 @@
  *          the detector itself, or the test's FORBIDDEN_PATTERNS array is
  *          missing a case).
  */
-'use strict';
+import * as path from 'path';
+import * as fs from 'fs';
+import { spawnSync } from 'child_process';
 
-const path = require('path');
-const fs = require('fs');
-const { spawnSync } = require('child_process');
-
-const REPO_ROOT = path.resolve(__dirname, '..');
+const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const DAEMON_COMMAND_DIST = path.join(REPO_ROOT, 'dist', 'cli', 'daemon-command.js');
 
 if (!fs.existsSync(DAEMON_COMMAND_DIST)) {
@@ -42,12 +40,12 @@ if (!fs.existsSync(DAEMON_COMMAND_DIST)) {
   process.exit(1);
 }
 
-let temporalClientPath;
+let temporalClientPath: string;
 try {
   temporalClientPath = require.resolve('@temporalio/client', { paths: [REPO_ROOT] });
 } catch (err) {
   console.error('Could not resolve @temporalio/client from repo node_modules. Run `npm install` first.');
-  console.error(err && err.message);
+  console.error(err && (err as Error).message);
   process.exit(1);
 }
 
@@ -83,11 +81,11 @@ const result = spawnSync(process.execPath, ['-e', detector], {
 });
 
 if (result.status === 0) {
-  console.log('\n✅ Isolation guard fail-path verified. The detector correctly flags forbidden imports.');
+  console.log('\nIsolation guard fail-path verified. The detector correctly flags forbidden imports.');
   console.log('   (The isolation test in test/daemon-command-isolation.test.ts will catch a real regression.)');
   process.exit(0);
 } else {
-  console.error('\n❌ Isolation guard fail-path NOT verified.');
+  console.error('\nIsolation guard fail-path NOT verified.');
   if (result.status === 1) {
     console.error('   The detector silently accepted injected forbidden imports — regression in the detector itself,');
     console.error('   OR the FORBIDDEN_PATTERNS array in test/daemon-command-isolation.test.ts is missing a case.');

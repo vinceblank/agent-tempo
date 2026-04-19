@@ -18,8 +18,9 @@
  * enumerated module (or anything in its dep graph), this test will fail
  * loudly in CI before the regression ever reaches users.
  *
- * See also `scripts/verify-daemon-isolation-guard.js` for a one-shot
- * manual check that confirms the detector's fail-path is working.
+ * See also `dist/scripts/verify-daemon-isolation-guard.js` (built from
+ * `scripts/verify-daemon-isolation-guard.ts` via `npm run build:scripts`) for
+ * a one-shot manual check that confirms the detector's fail-path is working.
  */
 import { expect } from 'chai';
 import { execFileSync } from 'child_process';
@@ -131,7 +132,7 @@ describe('CLI crash-proof isolation (#157 regression guard)', function () {
       // Explicit operator opt-out. Logged loudly so it's noticed in CI logs.
       // eslint-disable-next-line no-console
       console.warn('[cli-crash-proof-isolation] SKIPPED via SKIP_ISOLATION_TEST=1');
-      this.skip();
+      this.skip(); // SKIP-REASON: explicit operator opt-out via SKIP_ISOLATION_TEST=1 env var — see module docstring
       return;
     }
     const missing = CRASH_PROOF_MODULES
