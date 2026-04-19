@@ -51,7 +51,7 @@ const NOW_ISO = '2026-04-01T12:31:15.000Z';
 
 describe('extendAttachmentForCAN (#127 — design §2.3)', function () {
   describe('happy path', () => {
-    it('sets lastHeartbeatAt to `now` and expiresAt to `now + heartbeatMs`', () => {
+    it('sets lastHeartbeatAt to `now` and expiresAt to `now + extendMs`', () => {
       const input = makeAttachment();
       const out = extendAttachmentForCAN(input, 30_000, NOW_MS);
 
@@ -111,14 +111,14 @@ describe('extendAttachmentForCAN (#127 — design §2.3)', function () {
       );
     });
 
-    it('accepts heartbeatMs = 0 (degenerate but not forbidden)', () => {
+    it('accepts extendMs = 0 (degenerate but not forbidden)', () => {
       const input = makeAttachment();
       const out = extendAttachmentForCAN(input, 0, NOW_MS);
       expect(out.lastHeartbeatAt).to.equal(NOW_ISO);
       expect(out.expiresAt).to.equal(NOW_ISO);
     });
 
-    it('accepts a very large heartbeatMs without overflow', () => {
+    it('accepts a very large extendMs without overflow', () => {
       // Temporal workflow heartbeatMs is bounded to 600_000 in practice, but
       // the pure function does not validate. Ensure arithmetic stays sane up
       // to at least ~year-2030 expiresAt.
@@ -137,10 +137,11 @@ describe('extendAttachmentForCAN (#127 — design §2.3)', function () {
   });
 
   describe('production call-site contract', () => {
-    it('models the session.ts invocation with HEARTBEAT_INTERVAL_MS = 30_000', () => {
-      // This mirrors the call site exactly — documents the expected
-      // production behavior so anyone reading the test can see what
-      // `session.ts` is doing without opening the workflow file.
+    it('legacy pre-#249 invocation: hardcoded HEARTBEAT_INTERVAL_MS = 30_000', () => {
+      // Documents the pre-#249 call shape — still reachable via the non-patched
+      // replay branch at `session.ts:1540` for histories that CAN'd before the
+      // #249 fix deployed. Preserved so a future refactor of the `patched()`
+      // gate doesn't silently break replay.
       const currentAttachment = makeAttachment({
         expiresAt: '2026-04-01T12:32:00.000Z', // 45s ahead of NOW_MS
       });
@@ -152,15 +153,49 @@ describe('extendAttachmentForCAN (#127 — design §2.3)', function () {
         NOW_MS,
       );
 
-      // New expiresAt is now + 30s = 2026-04-01T12:31:45.000Z — pushed out
-      // from the pre-call 2026-04-01T12:32:00.000Z by a net -15s? No:
-      // 12:31:15 + 30s = 12:31:45, which is actually 15 SECONDS EARLIER than
-      // the pre-call expiresAt. Document this: the extension floors to
-      // `now + heartbeatMs`, it does NOT take `max(current expiresAt,
-      // now + heartbeatMs)`. For the §2.3 use case (adapter was beating
-      // normally, pre-CAN expiresAt is at most ~2x heartbeatMs past now)
-      // this is fine — the new expiresAt guarantees a next heartbeat window.
+      // new expiresAt = now + 30s (NOT max(current, now+30s)) — documents the
+      // floor-to-extendMs semantic. For §2.3 this is fine because the adapter
+      // was beating normally pre-CAN (expiresAt ≤ ~2x heartbeatMs past now).
       expect(new Date(out.expiresAt).getTime()).to.equal(NOW_MS + 30_000);
+      expect(out.lastHeartbeatAt).to.equal(NOW_ISO);
+    });
+
+    it('post-#249 invocation: uses currentAttachment.leaseMs (claude-code = 180_000)', () => {
+      // #249 Bug 3: post-fix the session workflow passes `currentAttachment.leaseMs`
+      // (= 3 × heartbeatMs = 180_000 for claude-code) instead of the hardcoded 30_000
+      // constant. This test models the POST-fix call shape exactly so a regression
+      // that silently goes back to the legacy constant fails here.
+      //
+      // Assertions strengthened per tempo-researcher flag 5: equality on the exact
+      // extension value, and strict `>` on the expiresAt progression (guards against
+      // an identity-function regression that happens to leave lastHeartbeatAt fresh
+      // but leaves expiresAt unchanged).
+      const CLAUDE_CODE_HEARTBEAT_MS = 60_000;
+      const CLAUDE_CODE_LEASE_MS = 3 * CLAUDE_CODE_HEARTBEAT_MS; // 180_000
+      const preCanExpiresAt = '2026-04-01T12:32:00.000Z'; // 45s ahead of NOW_MS
+      const currentAttachment = makeAttachment({
+        leaseMs: CLAUDE_CODE_LEASE_MS,
+        expiresAt: preCanExpiresAt,
+      });
+
+      const out = extendAttachmentForCAN(
+        currentAttachment,
+        currentAttachment.leaseMs,
+        NOW_MS,
+      );
+
+      // Equality: new expiresAt = now + leaseMs exactly (not ≥ — stronger bound).
+      expect(new Date(out.expiresAt).getTime()).to.equal(NOW_MS + CLAUDE_CODE_LEASE_MS);
+      // Strict progression: the extension MUST push expiresAt forward from the
+      // pre-CAN value. 30_000 would have yielded 12:31:45 (earlier than 12:32:00);
+      // 180_000 yields 12:34:15. Pins the actual fix rather than just its floor.
+      expect(new Date(out.expiresAt).getTime()).to.be.greaterThan(
+        new Date(preCanExpiresAt).getTime(),
+      );
+      // Covers at least one full adapter heartbeat interval (AC #3 in #249).
+      expect(new Date(out.expiresAt).getTime() - NOW_MS).to.be.at.least(
+        CLAUDE_CODE_HEARTBEAT_MS,
+      );
       expect(out.lastHeartbeatAt).to.equal(NOW_ISO);
     });
   });

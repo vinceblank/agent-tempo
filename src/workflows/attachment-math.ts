@@ -28,8 +28,8 @@ import type { Attachment } from '../types';
  * `expiresAt` verbatim into the new execution, a transition that takes
  * ~100-500ms could leave the new run's first deadline race observing an
  * already-expired lease and reaping a healthy attachment. Pushing
- * `expiresAt` out to `now + heartbeatMs` guarantees the next normally-timed
- * heartbeat has room to arrive.
+ * `expiresAt` out to `now + extendMs` guarantees the adapter has room to land
+ * its next heartbeat.
  *
  * Why this is a total function (returns a new object unconditionally,
  * rather than accepting `null` and returning `undefined`): null-handling is
@@ -40,10 +40,14 @@ import type { Attachment } from '../types';
  * @param attachment - the pre-CAN attachment record. All non-timestamp
  *   fields (`attachmentId`, `hostname`, `adapterId`, `adapterClass`,
  *   `claimedAt`, `leaseMs`, `runId`) are carried forward verbatim.
- * @param heartbeatMs - the adapter's heartbeat cadence in milliseconds. The
- *   new `expiresAt` lands `heartbeatMs` past `now`. Callers typically pass
- *   the workflow's `HEARTBEAT_INTERVAL_MS` constant, but any non-negative
- *   integer is accepted — the function does not validate.
+ * @param extendMs - how far past `now` to push `expiresAt`, in milliseconds.
+ *   Post-#249 callers pass `attachment.leaseMs` (= 3 × heartbeatMs — covers one
+ *   full lease window and therefore at least one full heartbeat interval for
+ *   every adapter class). Pre-#249 callers passed a hardcoded 30_000 constant
+ *   which under-covered the claude-code adapter's 60s cadence — the rename
+ *   from `heartbeatMs` disambiguates that the parameter is a raw extension
+ *   duration, not a cadence. The function does not validate — any non-negative
+ *   integer is accepted.
  * @param now - current time in epoch milliseconds. In workflow context
  *   callers pass `new Date().getTime()` (the Temporal SDK intercepts `new
  *   Date()` to return replay-consistent time). In unit tests callers pass
@@ -52,12 +56,12 @@ import type { Attachment } from '../types';
  */
 export function extendAttachmentForCAN(
   attachment: Attachment,
-  heartbeatMs: number,
+  extendMs: number,
   now: number,
 ): Attachment {
   return {
     ...attachment,
     lastHeartbeatAt: new Date(now).toISOString(),
-    expiresAt: new Date(now + heartbeatMs).toISOString(),
+    expiresAt: new Date(now + extendMs).toISOString(),
   };
 }

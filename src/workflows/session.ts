@@ -147,7 +147,14 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // PR-C commit 6 (#119a): each attachment carries its own `leaseMs` (negotiated at
   // claim time). No workflow-side default constant — heartbeats extend `expiresAt`
   // by `currentAttachment.leaseMs`.
-  /** Default heartbeat cadence (interactive). SDK adapters use 30s; descriptor-driven in PR-C. */
+  /**
+   * Legacy CAN-extension constant. Retained solely so sessions that ran on a
+   * pre-#249 workflow bundle replay deterministically: the `patched()` branch at
+   * the CAN-boundary extension site selects this constant on the non-patched
+   * side, matching the exact arg sequence those histories recorded. New runs
+   * (and all post-#249 CAN transitions) use `currentAttachment.leaseMs` instead
+   * — see the call site below.
+   */
   const HEARTBEAT_INTERVAL_MS = 30_000;
   /**
    * Default grace period for `draining → detached` transition after requestDetach. Used when a
@@ -1533,11 +1540,28 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       // ── CAN-boundary lease extension (design §2.3) ──
       // The CAN transition is not instantaneous. If we write the old expiresAt into the
       // new execution and the transition takes ~100–500ms, the new execution's first main
-      // loop check could reap a healthy attachment as expired. Extend the lease by one
-      // heartbeat interval so a normally-beating adapter has room to land its next heartbeat.
+      // loop check could reap a healthy attachment as expired. Extend the lease so a
+      // normally-beating adapter has room to land its next heartbeat.
+      //
+      // #249 Bug 3: pre-fix this used a hardcoded 30s constant, but the claude-code
+      // adapter's `heartbeatMs` is 60s → CAN would grant 30s of runway when the adapter
+      // needed 60s minimum, so the first post-CAN main-loop tick reaped the healthy
+      // attachment before its next heartbeat could land. Post-fix we use
+      // `currentAttachment.leaseMs` (= 3 × heartbeatMs, negotiated at claim time) which
+      // matches what the adapter signed up for and covers at least one full heartbeat
+      // interval for every adapter class.
+      //
+      // The `patched()` gate keeps replay of pre-#249 workflow runs deterministic:
+      // histories that CAN'd on the old bundle recorded `extendAttachmentForCAN(…, 30_000, …)`,
+      // so replaying those runs must pick the legacy constant. New runs (and in-flight
+      // runs that CAN *after* the deploy) take the patched branch.
+      //
       // Math lives in `./attachment-math.ts` for direct unit testability (#127).
+      const extendMs = patched('v0.26-can-lease-from-attachment')
+        ? currentAttachment?.leaseMs ?? HEARTBEAT_INTERVAL_MS
+        : HEARTBEAT_INTERVAL_MS;
       const extendedAttachment = currentAttachment
-        ? extendAttachmentForCAN(currentAttachment, HEARTBEAT_INTERVAL_MS, workflowNow().getTime())
+        ? extendAttachmentForCAN(currentAttachment, extendMs, workflowNow().getTime())
         : undefined;
 
       await continueAsNew<typeof claudeSessionWorkflow>({

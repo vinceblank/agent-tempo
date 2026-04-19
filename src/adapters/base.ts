@@ -27,11 +27,21 @@ import type {
   AttachmentPhase,
   DetachReason,
 } from '../types';
+import { isTerminalWorkflowError } from './terminal-error';
 const log = (...args: unknown[]) => console.error('[claude-tempo:adapter]', ...args);
 
 /** Backoff tuning for the heartbeat + phase-watcher loops on transient errors. */
 const LOOP_BACKOFF_FACTOR = 1.5;
 const LOOP_BACKOFF_MAX_MS = 30_000;
+
+/**
+ * Emit a periodic `heartbeats-delivered=N` / `phase-ticks=N` summary every N
+ * successful ticks (#249). Chosen so a live claude-code adapter (60s cadence)
+ * logs roughly once every 10 minutes and an SDK adapter (30s cadence) once
+ * every 5 — rare enough to stay quiet, frequent enough that a 2-hour incident
+ * window always contains at least one breadcrumb.
+ */
+const LOOP_SUMMARY_EVERY = 10;
 
 /**
  * Reconnect tuning (#201). The loop retries `claimAttachment` with exponential backoff
@@ -100,6 +110,27 @@ export abstract class BaseAttachment {
   private stopped = false;
   private terminalFired = false;
   private knownPhase: AttachmentPhase | null = null;
+  /**
+   * `true` once a heartbeat has successfully landed on the current attachment (or rebind).
+   * Cleared on `startV2Lifecycle`, reconnect-loop success, and CAN rebind so each freshly
+   * live attachment emits its own `heartbeat#1 delivered` diagnostic. Added in #249 to
+   * distinguish "claim OK but heartbeat loop died" from "adapter just hasn't ticked yet."
+   */
+  private firstHeartbeatLogged = false;
+  /**
+   * Monotonic heartbeat counter for the current attachment cycle. Reset on
+   * claim/reconnect/CAN-rebind. Emitted periodically (every {@link HEARTBEAT_SUMMARY_EVERY}
+   * ticks) so a long-running session leaves breadcrumbs in the log proving the loop is
+   * alive — operators can `grep 'heartbeats-delivered='` to confirm health without
+   * parsing Temporal history. Added in #249.
+   */
+  private heartbeatsSent = 0;
+  /**
+   * Mirror of {@link heartbeatsSent} for the phase-watcher loop. Same emission cadence,
+   * same rationale — the watcher is the only self-heal surface when the heartbeat loop
+   * dies silently, so a summary log line proves it's still live too.
+   */
+  private phaseTicksDone = 0;
 
   private readonly phaseChangeListeners: Array<(phase: AttachmentPhase) => void> = [];
   private readonly leaseRevokedListeners: Array<(reason: DetachReason) => void> = [];
@@ -225,9 +256,16 @@ export abstract class BaseAttachment {
     });
 
     this.pinnedHandle = this.client.workflow.getHandle(workflowId, this.token.runId);
+    // #249: reset the per-attachment diagnostic counters so the next tick emits
+    // `heartbeat#1 delivered` on the freshly live lease. Without this reset a
+    // renewal path (e.g. restart → renewed claim) would never re-log first-heartbeat.
+    this.firstHeartbeatLogged = false;
+    this.heartbeatsSent = 0;
+    this.phaseTicksDone = 0;
     log(
       `${expectedAttachmentId ? 'renewed' : 'attached to'} ${workflowId} ` +
-      `(attachmentId=${this.token.attachmentId}, runId=${this.token.runId})`,
+      `(attachmentId=${this.token.attachmentId}, runId=${this.token.runId}); ` +
+      `first heartbeat scheduled in ${this.descriptor.heartbeatMs}ms`,
     );
 
     this.scheduleHeartbeat();
@@ -279,23 +317,88 @@ export abstract class BaseAttachment {
     this.heartbeatTimer = setTimeout(() => { void this.tickHeartbeat(); }, delay);
   }
 
+  /**
+   * Emit a loud diagnostic when a tick early-returns via one of its guard paths (#249).
+   * Pre-#249 these returns were silent — the only observable effect was "heartbeats stop
+   * arriving." Now operators can grep `adapter.*guard tripped` to confirm or rule out
+   * tick-orphan as a failure mode without needing workflow history.
+   *
+   * `terminalFired=true` / `stopped=true` guards are load-bearing on the terminal path
+   * (don't want to re-enter terminal) so they're expected during teardown; we still log
+   * them but at the same level — operators can correlate timestamps against the preceding
+   * `terminal (...) — stopping delivery poll permanently` line.
+   */
+  private logGuardTrip(loop: 'heartbeat' | 'phase-watcher'): void {
+    log(
+      `${loop} guard tripped:`,
+      JSON.stringify({
+        stopped: this.stopped,
+        reconnecting: this.reconnecting,
+        hasHandle: this.pinnedHandle !== null,
+        hasToken: this.token !== null,
+        terminalFired: this.terminalFired,
+      }),
+    );
+  }
+
+  /**
+   * Single tick of the heartbeat loop. Try/finally scaffolding (#249) guarantees
+   * reschedule in every path except genuinely terminal state (`stopped`,
+   * `terminalFired`) or when the reconnect loop has taken ownership of scheduling
+   * (`reconnecting`). Pre-#249 the three early-return paths at the top + the
+   * handled-terminal-error path silently orphaned the timer forever; a transient
+   * `reconnecting=true` window or a null-handle race was enough to kill the loop
+   * with no log and no teardown.
+   *
+   * Handled terminals (CAN rebind, destroy) still short-circuit via `return` —
+   * the `finally` block re-checks `reconnecting` / `terminalFired` before
+   * rescheduling, so the reconnect/terminal machinery keeps ownership of
+   * whatever comes next.
+   */
   private async tickHeartbeat(): Promise<void> {
-    if (this.stopped || this.reconnecting || !this.pinnedHandle || !this.token) return;
     try {
-      await this.pinnedHandle.signal(heartbeatSignal, {
-        attachmentId: this.token.attachmentId,
-        at: new Date().toISOString(),
-      });
-      this.heartbeatBackoff = 0;
-    } catch (err) {
-      if (await this.handleRunEndError(err)) return;
-      this.heartbeatBackoff = Math.min(
-        this.heartbeatBackoff ? this.heartbeatBackoff * LOOP_BACKOFF_FACTOR : this.descriptor.heartbeatMs,
-        LOOP_BACKOFF_MAX_MS,
-      );
-      log(`heartbeat transient error (retry in ${Math.round(this.heartbeatBackoff)}ms):`, (err as Error)?.message ?? err);
+      if (this.stopped || this.terminalFired) {
+        this.logGuardTrip('heartbeat');
+        return;
+      }
+      if (this.reconnecting) {
+        // Reconnect loop owns reschedule; this tick was queued before the guard
+        // flipped. Dropping it is correct — the reconnect path will rearm.
+        this.logGuardTrip('heartbeat');
+        return;
+      }
+      if (!this.pinnedHandle || !this.token) {
+        // Should be unreachable after `startV2Lifecycle` success — surface loudly
+        // if we ever hit it instead of silently orphaning (the pre-#249 behavior).
+        this.logGuardTrip('heartbeat');
+        return;
+      }
+      try {
+        await this.pinnedHandle.signal(heartbeatSignal, {
+          attachmentId: this.token.attachmentId,
+          at: new Date().toISOString(),
+        });
+        this.heartbeatBackoff = 0;
+        this.heartbeatsSent++;
+        if (!this.firstHeartbeatLogged) {
+          this.firstHeartbeatLogged = true;
+          log(`heartbeat#1 delivered (attachmentId=${this.token.attachmentId}, runId=${this.token.runId})`);
+        } else if (this.heartbeatsSent % LOOP_SUMMARY_EVERY === 0) {
+          log(`heartbeats-delivered=${this.heartbeatsSent} (attachmentId=${this.token.attachmentId})`);
+        }
+      } catch (err) {
+        if (await this.handleRunEndError(err)) return;
+        this.heartbeatBackoff = Math.min(
+          this.heartbeatBackoff ? this.heartbeatBackoff * LOOP_BACKOFF_FACTOR : this.descriptor.heartbeatMs,
+          LOOP_BACKOFF_MAX_MS,
+        );
+        log(`heartbeat transient error (retry in ${Math.round(this.heartbeatBackoff)}ms):`, (err as Error)?.message ?? err);
+      }
+    } finally {
+      if (!this.stopped && !this.reconnecting && !this.terminalFired) {
+        this.scheduleHeartbeat();
+      }
     }
-    if (!this.stopped && !this.reconnecting) this.scheduleHeartbeat();
   }
 
   private schedulePhaseWatcher(): void {
@@ -305,92 +408,108 @@ export abstract class BaseAttachment {
     this.phaseWatcherTimer = setTimeout(() => { void this.tickPhaseWatcher(); }, delay);
   }
 
-  private async tickPhaseWatcher(): Promise<void> {
-    if (this.stopped || this.reconnecting || !this.pinnedHandle || !this.token) return;
-    try {
-      const info: AttachmentInfo = await this.pinnedHandle.query(attachmentInfoQuery);
-      this.phaseBackoff = 0;
-
-      if (this.knownPhase !== info.phase) {
-        this.knownPhase = info.phase;
-        for (const l of this.phaseChangeListeners) {
-          try { l(info.phase); } catch (err) { log('phase listener threw:', err); }
-        }
-      }
-
-      // Lease revocation (§9.3) — another claimant took over.
-      if (
-        info.currentAttachment &&
-        info.currentAttachment.attachmentId !== this.token.attachmentId
-      ) {
-        log(`lease revoked: attachmentId ${info.currentAttachment.attachmentId} does not match ours ${this.token.attachmentId}`);
-        for (const l of this.leaseRevokedListeners) {
-          try { l('superseded'); } catch (err) { log('leaseRevoked listener threw:', err); }
-        }
-        this.fireTerminalOrReconnect('superseded');
-        return;
-      }
-
-      // #201: the workflow side reaped our lease (main-loop §9.5.a) without anyone
-      // else claiming. This is the laptop-sleep failure mode — `phase=detached` with
-      // `currentAttachment=undefined`. Before #201 this branch was silent and the
-      // poller kept querying a workflow that had already evicted us, so no cues were
-      // delivered until manual `restart`. Now we surface it as a recoverable terminal
-      // that the subclass can choose to reconnect through.
-      if (info.phase === 'detached' && !info.currentAttachment) {
-        log(`lease reaped workflow-side (phase=detached, no current attachment)`);
-        for (const l of this.leaseRevokedListeners) {
-          try { l('heartbeat-timeout'); } catch (err) { log('leaseRevoked listener threw:', err); }
-        }
-        this.fireTerminalOrReconnect('heartbeat-timeout');
-        return;
-      }
-
-      // Phase `gone` is terminal — workflow destroyed. Never recoverable.
-      if (info.phase === 'gone') {
-        this.fireTerminal('destroy');
-        return;
-      }
-    } catch (err) {
-      if (await this.handleRunEndError(err)) return;
-      this.phaseBackoff = Math.min(
-        this.phaseBackoff ? this.phaseBackoff * LOOP_BACKOFF_FACTOR : this.descriptor.heartbeatMs,
-        LOOP_BACKOFF_MAX_MS,
-      );
-      log(`phase watcher transient error (retry in ${Math.round(this.phaseBackoff)}ms):`, (err as Error)?.message ?? err);
-    }
-    if (!this.stopped && !this.reconnecting) this.schedulePhaseWatcher();
-  }
-
   /**
-   * Classify a Temporal error as terminal-class vs transient.
-   *
-   * **Gotcha the caller must know:** the Temporal Node SDK conflates the two
-   * terminal sub-kinds on pinned-runId signal/query failures. Both
-   *   (a) the closed run's specific runId no longer accepting traffic (CAN or
-   *       true COMPLETE / TERMINATED), and
-   *   (b) the workflow id having been fully GC'd
-   * surface as `WorkflowNotFoundError` with message "workflow execution already
-   * completed". We therefore can't tell them apart by error shape alone — the
-   * authoritative differentiator is `fetchHistory` ({@link findCanSuccessorRunId}).
-   * This method only says "yes, this is a terminal-class error; caller must
-   * decide sub-kind" vs "transient, keep retrying."
-   *
-   * Uses name/message-sniffing rather than `instanceof` to tolerate the slightly
-   * different shapes that errors take between `@temporalio/client` and the raw
-   * gRPC layer.
+   * Single tick of the phase-watcher loop. Same orphan-resistance scaffolding as
+   * {@link tickHeartbeat} (#249): try/finally reschedule, unconditional unless
+   * `stopped` / `terminalFired` / `reconnecting`. When the heartbeat loop dies
+   * silently, the watcher is the only remaining self-heal surface — losing it
+   * too meant the adapter had no path back to a healthy state short of process
+   * restart.
    */
-  private isTerminalErr(err: unknown): boolean {
-    const e = err as { name?: string; message?: string } | undefined;
-    const name = e?.name ?? '';
-    const msg = e?.message ?? '';
-    return (
-      name.includes('WorkflowNotFound') ||
-      name.includes('WorkflowExecutionAlreadyCompleted') ||
-      msg.includes('WorkflowGone') ||
-      msg.includes('NOT_FOUND') ||
-      msg.includes('workflow execution already completed')
-    );
+  private async tickPhaseWatcher(): Promise<void> {
+    try {
+      if (this.stopped || this.terminalFired) {
+        this.logGuardTrip('phase-watcher');
+        return;
+      }
+      if (this.reconnecting) {
+        this.logGuardTrip('phase-watcher');
+        return;
+      }
+      if (!this.pinnedHandle || !this.token) {
+        this.logGuardTrip('phase-watcher');
+        return;
+      }
+      try {
+        const info: AttachmentInfo = await this.pinnedHandle.query(attachmentInfoQuery);
+        this.phaseBackoff = 0;
+        this.phaseTicksDone++;
+        if (this.phaseTicksDone % LOOP_SUMMARY_EVERY === 0) {
+          log(`phase-ticks=${this.phaseTicksDone} (phase=${info.phase}, attachmentId=${this.token.attachmentId})`);
+        }
+
+        // #249: if the workflow-side attachment record shows our last heartbeat landed
+        // more than 2 * heartbeatMs ago, the heartbeat loop is drifting (or has
+        // silently died) even though the lease hasn't yet expired. Loud warning so
+        // operators can catch degradation before the reaper fires. Baseline is
+        // `claimedAt` on cycles before the first post-claim heartbeat lands.
+        if (info.currentAttachment && info.currentAttachment.attachmentId === this.token.attachmentId) {
+          const lastBeatMs = new Date(
+            info.currentAttachment.lastHeartbeatAt || info.currentAttachment.claimedAt,
+          ).getTime();
+          const ageMs = Date.now() - lastBeatMs;
+          if (ageMs > 2 * this.descriptor.heartbeatMs) {
+            log(
+              `WARNING: heartbeat staleness — lastHeartbeatAt=${info.currentAttachment.lastHeartbeatAt} ` +
+              `age=${ageMs}ms exceeds 2× heartbeatMs (${2 * this.descriptor.heartbeatMs}ms); ` +
+              `lease may be about to reap (expiresAt=${info.currentAttachment.expiresAt})`,
+            );
+          }
+        }
+
+        if (this.knownPhase !== info.phase) {
+          this.knownPhase = info.phase;
+          for (const l of this.phaseChangeListeners) {
+            try { l(info.phase); } catch (err) { log('phase listener threw:', err); }
+          }
+        }
+
+        // Lease revocation (§9.3) — another claimant took over.
+        if (
+          info.currentAttachment &&
+          info.currentAttachment.attachmentId !== this.token.attachmentId
+        ) {
+          log(`lease revoked: attachmentId ${info.currentAttachment.attachmentId} does not match ours ${this.token.attachmentId}`);
+          for (const l of this.leaseRevokedListeners) {
+            try { l('superseded'); } catch (err) { log('leaseRevoked listener threw:', err); }
+          }
+          this.fireTerminalOrReconnect('superseded');
+          return;
+        }
+
+        // #201: the workflow side reaped our lease (main-loop §9.5.a) without anyone
+        // else claiming. This is the laptop-sleep failure mode — `phase=detached` with
+        // `currentAttachment=undefined`. Before #201 this branch was silent and the
+        // poller kept querying a workflow that had already evicted us, so no cues were
+        // delivered until manual `restart`. Now we surface it as a recoverable terminal
+        // that the subclass can choose to reconnect through.
+        if (info.phase === 'detached' && !info.currentAttachment) {
+          log(`lease reaped workflow-side (phase=detached, no current attachment)`);
+          for (const l of this.leaseRevokedListeners) {
+            try { l('heartbeat-timeout'); } catch (err) { log('leaseRevoked listener threw:', err); }
+          }
+          this.fireTerminalOrReconnect('heartbeat-timeout');
+          return;
+        }
+
+        // Phase `gone` is terminal — workflow destroyed. Never recoverable.
+        if (info.phase === 'gone') {
+          this.fireTerminal('destroy');
+          return;
+        }
+      } catch (err) {
+        if (await this.handleRunEndError(err)) return;
+        this.phaseBackoff = Math.min(
+          this.phaseBackoff ? this.phaseBackoff * LOOP_BACKOFF_FACTOR : this.descriptor.heartbeatMs,
+          LOOP_BACKOFF_MAX_MS,
+        );
+        log(`phase watcher transient error (retry in ${Math.round(this.phaseBackoff)}ms):`, (err as Error)?.message ?? err);
+      }
+    } finally {
+      if (!this.stopped && !this.reconnecting && !this.terminalFired) {
+        this.schedulePhaseWatcher();
+      }
+    }
   }
 
   /**
@@ -402,13 +521,13 @@ export abstract class BaseAttachment {
    *
    * Always consults `fetchHistory` on any terminal-class error, because the
    * Temporal SDK can't distinguish CAN-close from true-complete at the error
-   * level — see {@link isTerminalErr}. The history lookup is cheap (only runs
-   * on terminal, so at most once per adapter lifetime per terminal) and safer
-   * than re-querying by workflow id (which could race a fresh session reusing
-   * the id).
+   * level — see {@link isTerminalWorkflowError}. The history lookup is cheap
+   * (only runs on terminal, so at most once per adapter lifetime per terminal)
+   * and safer than re-querying by workflow id (which could race a fresh session
+   * reusing the id).
    */
   private async handleRunEndError(err: unknown): Promise<boolean> {
-    if (!this.isTerminalErr(err)) return false;
+    if (!isTerminalWorkflowError(err)) return false;
     // Always try to find a CAN successor — the Temporal SDK's error shape is
     // ambiguous between CAN and true-destroy, so history is the only reliable
     // disambiguator (option 1 from the #226 design brief).
@@ -621,6 +740,13 @@ export abstract class BaseAttachment {
       this.knownPhase = null; // force next phase-watcher tick to re-emit phaseChange
       this.heartbeatBackoff = 0;
       this.phaseBackoff = 0;
+      // #249: reset per-attachment diagnostic counters so the first post-rebind
+      // heartbeat re-logs `heartbeat#1 delivered`. Without this a rebind could
+      // mask a dead loop on the successor run — we'd never see the confirmation
+      // that heartbeats resumed.
+      this.firstHeartbeatLogged = false;
+      this.heartbeatsSent = 0;
+      this.phaseTicksDone = 0;
       log(
         `rebound ${workflowId} to CAN successor ` +
         `(attachmentId=${this.token.attachmentId}, oldRunId=${oldRunId}, newRunId=${newRunId})`,
@@ -712,7 +838,7 @@ export abstract class BaseAttachment {
         try {
           info = await unpinned.query(attachmentInfoQuery);
         } catch (err) {
-          if (this.isTerminalErr(err)) {
+          if (isTerminalWorkflowError(err)) {
             // #226: either terminal kind inside the reconnect loop's pre-check
             // ends the loop. We don't recurse into another CAN rebind here —
             // that path is only for the pinned-handle tick ticks where we can
@@ -763,6 +889,11 @@ export abstract class BaseAttachment {
           this.knownPhase = null; // force the next phase-watcher tick to re-emit phaseChange
           this.heartbeatBackoff = 0;
           this.phaseBackoff = 0;
+          // #249: reset per-attachment diagnostic counters so the first post-reconnect
+          // heartbeat re-logs `heartbeat#1 delivered`. Parity with CAN rebind path.
+          this.firstHeartbeatLogged = false;
+          this.heartbeatsSent = 0;
+          this.phaseTicksDone = 0;
           log(
             `reconnected to ${workflowId} after ${attempt} attempt(s) ` +
             `(new attachmentId=${newToken.attachmentId}, runId=${newToken.runId})`,
@@ -786,7 +917,7 @@ export abstract class BaseAttachment {
           }
           return;
         } catch (err) {
-          if (this.isTerminalErr(err)) {
+          if (isTerminalWorkflowError(err)) {
             log('reconnect: workflow gone during claim');
             this.fireTerminal('destroy');
             return;
