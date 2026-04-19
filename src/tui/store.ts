@@ -581,8 +581,11 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       if (idx === state.overlay.selectedIndex) return state;
       return { ...state, overlay: { ...state.overlay, selectedIndex: idx } };
     }
-    case 'STATUS_SCROLL_UP':
-      return { ...state, statusScrollOffset: Math.max(0, state.statusScrollOffset - 1) };
+    case 'STATUS_SCROLL_UP': {
+      const next = Math.max(0, state.statusScrollOffset - 1);
+      if (next === state.statusScrollOffset) return state;
+      return { ...state, statusScrollOffset: next };
+    }
     case 'STATUS_SCROLL_DOWN':
       return { ...state, statusScrollOffset: state.statusScrollOffset + 1 };
 
@@ -592,8 +595,11 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     case 'HIDE_PICKER':
       return { ...state, pickerVisible: false, pickerType: null, pickerIntent: null, pickerIndex: 0, pickerStatusFilter: null };
 
-    case 'PICKER_UP':
-      return { ...state, pickerIndex: Math.max(0, state.pickerIndex - 1) };
+    case 'PICKER_UP': {
+      const next = Math.max(0, state.pickerIndex - 1);
+      if (next === state.pickerIndex) return state;
+      return { ...state, pickerIndex: next };
+    }
 
     case 'PICKER_DOWN': {
       const maxIdx = (state.pickerType === 'ensembles' ? (state.ensembles?.length ?? 0) : state.players.length - 1);
