@@ -587,6 +587,12 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       return { ...state, statusScrollOffset: next };
     }
     case 'STATUS_SCROLL_DOWN':
+      // #250: intentional — no upper-bound clamp lives in the reducer. The max
+      // offset depends on `players.length` and `contentHeight`, neither of which
+      // the reducer can see. `StatusOverlay` performs the final clamp via
+      // `Math.min(scrollOffset, max)` at render (components/StatusOverlay.tsx).
+      // Leaving the reducer unbounded + render-time clamping is cheaper than
+      // threading the render-time max back through every dispatch.
       return { ...state, statusScrollOffset: state.statusScrollOffset + 1 };
 
     case 'SHOW_PICKER':
