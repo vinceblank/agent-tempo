@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Extract CAN-boundary attachment-extension math into a pure function** (#127).
+  The 4-line "push `lastHeartbeatAt` / `expiresAt` out to `now + heartbeatMs` so
+  the new execution has room to land the next heartbeat" math was previously
+  inlined in `src/workflows/session.ts` immediately before `continueAsNew`,
+  making it effectively untestable without a full history-fill harness (rejected
+  in the PR-G architect review per #127 rationale — such a harness would test
+  Temporal's CAN-trigger heuristic rather than our extension logic, and is
+  brittle to SDK internals). The math now lives in
+  `src/workflows/attachment-math.ts` as the pure function
+  `extendAttachmentForCAN(attachment, heartbeatMs, now)`, backed by focused
+  unit tests in `test/workflows/can-boundary-extension.test.ts` (which was
+  previously an all-skipped stub awaiting this extraction). Behavior unchanged
+  — the session workflow call site is a one-line swap. Follow-up to #125
+  (PR-G) architect review.
+
 ## [0.26.0-beta.3] - 2026-04-18
 
 > **Beta release.** Completes the adapter resilience trilogy: reconnect across `continueAsNew`
