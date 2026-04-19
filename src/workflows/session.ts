@@ -561,26 +561,47 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     // soon as destroyRequested=true, before the activity has a chance to dispatch).
     // Best-effort: 5s timeout, log-and-continue on failure. `destroyRequested` flips
     // AFTER the activity so the main loop stays alive to dispatch it.
-    if (currentAttachment) {
-      const killHost = currentAttachment.hostname || input.metadata.hostname;
-      if (killHost) {
-        try {
-          const killResult: HardTerminateResult = await getHardTerminateProxyForDestroy(killHost)({
-            ensemble: input.metadata.ensemble,
-            playerName: input.metadata.playerId,
-            agent: (input.metadata.agentType ?? 'claude') as AgentType,
-            workDir: input.metadata.workDir,
-          });
-          workflowLog.info(
-            `destroy hard-terminate on ${killHost}: strategy=${killResult.strategy}, ` +
-            `killedPids=[${killResult.killedPids.join(',')}]`,
-          );
-        } catch (err) {
-          workflowLog.warn(
-            `destroy hard-terminate failed on ${killHost} (continuing, best-effort): ` +
-            `${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
+    //
+    // #227: the original (#164) guard was `if (currentAttachment)` — correct for the
+    // `phase=attached` case but silently skipped the kill when `phase=detached`, leaking
+    // `claude.exe` + terminal tab when a destroy ran on a session whose lease had been
+    // reaped. The ensemble cascade exposed by #226/#201 made this a reliable orphan
+    // generator: destroy → workflow COMPLETES, process survives. Fix: pick the best
+    // host we have from workflow state and fire the kill whenever *any* host is known.
+    //
+    // `hardTerminateAttachment` is already safe to run speculatively — it does image-
+    // name PID-reuse guards + command-line matching on `-n <playerName>` AND
+    // `--remote-control-session-name-prefix <ensemble>`, so a stale state that no
+    // longer corresponds to a live process returns `strategy: 'none'` with a clean
+    // log line. No new PID / attach-time wire-protocol fields needed.
+    //
+    // Host-pick priority (aligns with the reap path's provenance tracking):
+    //   1. `currentAttachment.hostname`  — `phase=attached` / `processing` / `awaiting`
+    //   2. `lastAdapterMeta.hostname`    — `phase=detached` (set by forceDetach / reap)
+    //   3. `preferredHost`               — post-CAN restore before any adapter landed
+    //   4. `input.metadata.hostname`     — recruit-time fallback (booting path)
+    const killHost =
+      currentAttachment?.hostname ??
+      lastAdapterMeta?.hostname ??
+      preferredHost ??
+      input.metadata.hostname;
+    if (killHost) {
+      try {
+        const killResult: HardTerminateResult = await getHardTerminateProxyForDestroy(killHost)({
+          ensemble: input.metadata.ensemble,
+          playerName: input.metadata.playerId,
+          agent: (input.metadata.agentType ?? 'claude') as AgentType,
+          workDir: input.metadata.workDir,
+        });
+        workflowLog.info(
+          `destroy hard-terminate on ${killHost} (phase=${phase}): strategy=${killResult.strategy}, ` +
+          `killedPids=[${killResult.killedPids.join(',')}]`,
+        );
+      } catch (err) {
+        workflowLog.warn(
+          `destroy hard-terminate failed on ${killHost} (continuing, best-effort): ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
     // Flip destroyRequested AFTER the kill so the main loop stays alive for activity

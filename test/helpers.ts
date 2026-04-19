@@ -223,6 +223,20 @@ export function getClient(): Client {
   return testEnv.client;
 }
 
+/**
+ * Get the shared `NativeConnection` for `Worker.create(...)`. Tests that need
+ * a custom Worker topology — for example, a per-host worker with a capturing
+ * `hardTerminateAttachment` stub (#227) — use this to build their own workers
+ * instead of going through `withWorker` / `withWorkerAndRecruitActivities`.
+ * Call `setupTestEnv()` first.
+ */
+export function getNativeConnection(): TestWorkflowEnvironment['nativeConnection'] {
+  if (!testEnv) {
+    throw new Error('getNativeConnection() called before setupTestEnv() — make sure your before() hook awaits setupTestEnv()');
+  }
+  return testEnv.nativeConnection;
+}
+
 /** Internal — resolves the current test env; for helpers only. */
 function requireTestEnv(): TestWorkflowEnvironment {
   if (!testEnv) {

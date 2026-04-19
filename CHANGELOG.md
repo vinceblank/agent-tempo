@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`destroy` now terminates orphaned processes on `phase=detached` sessions**
+  (#227). Before this, the destroy handler's hard-terminate branch was gated on
+  `if (currentAttachment)` — correct for `phase=attached` (the original #164
+  repro) but silently skipped when `phase=detached` (currentAttachment had been
+  nulled by the lease-reap path). Combined with the #226 CAN-cascade that
+  commonly left entire ensembles detached before teardown, every destroy
+  leaked its `claude.exe` + terminal tab; reliable repro during beta.2
+  teardown where 7/7 player workflows destroyed successfully but 7/7 processes
+  survived. The fix expands the guard to fire `hardTerminateAttachment`
+  whenever a host is known, pulling from the same provenance chain used
+  elsewhere (`currentAttachment.hostname` → `lastAdapterMeta.hostname` →
+  `preferredHost` → `input.metadata.hostname`). `hardTerminateAttachment`
+  itself is unchanged — its existing command-line match (`-n <playerName>`
+  AND `--remote-control-session-name-prefix <ensemble>`) plus image-name
+  PID-reuse guard already gives the equivalent of a stored-PID +
+  attach-time validation without any wire-protocol change. Best-effort, 5s
+  timeout, log-and-continue on failure. Regression-guarded by two new
+  integration tests in `test/destroy.test.ts` (one each for the attached
+  and detached paths) and an edge-case guard for the never-attached path.
+  Cross-reference: #159 (earlier same-family Windows orphan bug), #164
+  (initial attached-path hardTerminate wiring), #226 (adapter CAN-reconnect
+  bug that exposed this cascade in the wild).
+
 ### Changed
 
 - **Extract CAN-boundary attachment-extension math into a pure function** (#127).
