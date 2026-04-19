@@ -47,6 +47,7 @@ src/
 │   ├── session.ts     # claude-session workflow
 │   ├── scheduler.ts   # durable scheduler workflow (one per ensemble)
 │   ├── maestro.ts     # Maestro workflows — per-ensemble hub and global hub
+│   ├── attachment-math.ts # Pure CAN-boundary lease-extension helper (no Temporal imports)
 │   ├── maestro-signals.ts / scheduler-signals.ts / signals.ts   # Signal/query/update type defs
 │   └── index.ts       # Workflow re-exports for worker bundle
 ├── activities/
