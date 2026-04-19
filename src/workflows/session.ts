@@ -24,6 +24,7 @@ function workflowNow(): Date {
 
 import type { OutboxActivities } from '../activities/outbox';
 import type { HardTerminateResult } from '../activities/hard-terminate';
+import { extendAttachmentForCAN } from './attachment-math';
 
 import {
   SessionInput,
@@ -1513,12 +1514,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       // new execution and the transition takes ~100–500ms, the new execution's first main
       // loop check could reap a healthy attachment as expired. Extend the lease by one
       // heartbeat interval so a normally-beating adapter has room to land its next heartbeat.
+      // Math lives in `./attachment-math.ts` for direct unit testability (#127).
       const extendedAttachment = currentAttachment
-        ? {
-            ...currentAttachment,
-            lastHeartbeatAt: workflowNow().toISOString(),
-            expiresAt: new Date(workflowNow().getTime() + HEARTBEAT_INTERVAL_MS).toISOString(),
-          }
+        ? extendAttachmentForCAN(currentAttachment, HEARTBEAT_INTERVAL_MS, workflowNow().getTime())
         : undefined;
 
       await continueAsNew<typeof claudeSessionWorkflow>({
