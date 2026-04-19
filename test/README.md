@@ -42,10 +42,14 @@ order (which drifts as tests are added).
 
 **Rule** (design doc §2, v5): shard-1 pins the **top-N heaviest files by CI
 wall-clock**, with N chosen so cross-shard drift lands ≤1.2× (the 20% rebalance
-bound). Shard-2 is "everything else." As of PR #232 N=3 —
-`session-phase-machine.test.ts` (88.7s), `outbox.test.ts` (41.6s), and
-`scheduler.test.ts` (40.8s) — totalling ~52% of the Mocha suite's wall-clock
-despite being <10% of test count. Workflow-setup cost dominates per-test time
+bound). Shard-2 is "everything else." As of PR #233 N=4 — the old
+`session-phase-machine.test.ts` monolith was split into three files for future
+drift safety; shard-1 now carries
+`session-phase-detach.test.ts` (~48s, holds the two `skipTime` tests from #159
+Gap 1), `outbox.test.ts` (41.6s), `scheduler.test.ts` (40.8s), and
+`session-phase-claim.test.ts` (~22s) — totalling ~46% of the Mocha suite's
+wall-clock. `session-phase-processing.test.ts` (~18s) stays in shard-2 as the
+lightest of the three split files. Workflow-setup cost dominates per-test time
 in these files.
 
 Mechanics:

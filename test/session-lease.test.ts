@@ -3,7 +3,7 @@
  *
  * Covers the lease-extension primitive and CAN-boundary state carry-over. The
  * main-loop reap on lease expiry (§9.5.a) is exercised more robustly through the
- * phase-transition tests in `session-phase-machine.test.ts` (via forceDetach);
+ * phase-transition tests in `session-phase-detach.test.ts` (via forceDetach);
  * asserting the timer-based reap deterministically in TestWorkflowEnvironment
  * requires a fragile time-skip + poll dance, so we validate the state carry-over
  * and extension math here instead.
