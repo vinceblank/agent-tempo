@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `DEFAULT_RESTART_LEASE_MS` (90s) constants from `deliverRestart` into
   `src/utils/validation.ts` for consistency with the other restart / detach
   knobs already documented there. No behavioral change. (#139)
+- **Wire-protocol drift detector scopes doc extraction to section headers** (#126).
+  `test/wire-protocol.test.ts` now splits `docs/WIRE-PROTOCOL.md` at `## Section Header`
+  boundaries and only extracts names from sections whose headers indicate signal / query /
+  update content. Sections like "## Type Reference", "## Workflow Names", and
+  "## Search Attributes" are skipped. This eliminates the `TYPE_REFERENCE_FIELDS` allowlist
+  that grew with doc surface and could silently mask a real undocumented wire name sharing
+  a common field identifier. Matching is now by `(kind, name)` pairs — a handler documented
+  as a Signal but declared as `defineQuery` in source will be caught as drift.
 
 ## [0.26.0-beta.3] - 2026-04-18
 
