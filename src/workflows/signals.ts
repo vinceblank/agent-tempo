@@ -60,7 +60,12 @@ export type {
 
 // ── Player Signals ──
 
-export const receiveMessageSignal = defineSignal<[{ from: string; text: string; isMaestro?: boolean; responseRequested?: boolean }]>('receiveMessage');
+// `isScheduled` + `scheduleName` are set by `src/activities/schedule-fire.ts`
+// when the message originated from the scheduler workflow — allows dashboards
+// and consumers to distinguish scheduled fires from direct cues. Documented in
+// docs/WIRE-PROTOCOL.md; runtime senders have populated both fields since the
+// scheduler shipped, but the TS type drifted (#251). Optional everywhere.
+export const receiveMessageSignal = defineSignal<[{ from: string; text: string; isMaestro?: boolean; isScheduled?: boolean; scheduleName?: string; responseRequested?: boolean }]>('receiveMessage');
 export const recordSentMessageSignal = defineSignal<[{ to: string; text: string }]>('recordSentMessage');
 export const setPartSignal = defineSignal<[string]>('setPart');
 export const markDeliveredSignal = defineSignal<[string[]]>('markDelivered');

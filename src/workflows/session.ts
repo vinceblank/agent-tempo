@@ -1557,11 +1557,23 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       // runs that CAN *after* the deploy) take the patched branch.
       //
       // Math lives in `./attachment-math.ts` for direct unit testability (#127).
-      const extendMs = patched('v0.26-can-lease-from-attachment')
-        ? currentAttachment?.leaseMs ?? HEARTBEAT_INTERVAL_MS
-        : HEARTBEAT_INTERVAL_MS;
+      //
+      // #255 cleanup: the `patched()` call stays at the eager/unconditional
+      // position it was introduced in — relocating it inside the
+      // `currentAttachment ?` branch would skip marker recording on histories
+      // that hit the CAN site with a null attachment, risking replay
+      // non-determinism against those recordings. The dead-code cleanup is
+      // strictly the removal of the `?? HEARTBEAT_INTERVAL_MS` fallback that
+      // used to sit inside the ternary: on the patched branch it never fires
+      // (Attachment.leaseMs is required), and on the pre-patched branch the
+      // fallback is replaced by the bare constant — same value either way.
+      const usePatchedLease = patched('v0.26-can-lease-from-attachment');
       const extendedAttachment = currentAttachment
-        ? extendAttachmentForCAN(currentAttachment, extendMs, workflowNow().getTime())
+        ? extendAttachmentForCAN(
+            currentAttachment,
+            usePatchedLease ? currentAttachment.leaseMs : HEARTBEAT_INTERVAL_MS,
+            workflowNow().getTime(),
+          )
         : undefined;
 
       await continueAsNew<typeof claudeSessionWorkflow>({

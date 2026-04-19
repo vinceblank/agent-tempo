@@ -22,7 +22,7 @@ import { shouldIncludeInBroadcast, validateEnsembleName } from '../utils/validat
 import { getAttachmentPhase, getEnsembleName } from '../utils/search-attributes';
 import { isDaemonRunning, startDaemon, stopDaemon, getDaemonStatus, DAEMON_LOG_PATH } from './daemon';
 import { createTempoClient } from '../client';
-import { ensembleReadyBanner, ensembleReadyDirective } from '../constants';
+import { ENSEMBLE_SENTINEL_FLAG, ensembleReadyBanner, ensembleReadyDirective } from '../constants';
 import * as out from './output';
 
 /** Package root is two levels up from dist/cli/ */
@@ -278,6 +278,10 @@ async function applyLineupPlayersAndSchedules(args: {
         const claudeArgs = [
           '--dangerously-skip-permissions',
           '--dangerously-load-development-channels', 'server:claude-tempo',
+          // ENSEMBLE_SENTINEL_FLAG carries the ensemble name into the spawned
+          // claude.exe's CommandLine so hard-terminate can scope `destroy --all`
+          // kills by ensemble (#180, #259). Mirrors src/activities/outbox.ts.
+          ENSEMBLE_SENTINEL_FLAG, ensemble,
           '-n', player.name,
           ...(resolvedPlayerType?.nativeResolvable ? ['--agent', resolvedPlayerType.name] :
               resolvedPlayerType ? ['--system-prompt', resolvedPlayerType.path] : []),
@@ -524,6 +528,10 @@ export async function start(opts: StartOpts) {
     const claudeArgs = [
       '--dangerously-skip-permissions',
       '--dangerously-load-development-channels', 'server:claude-tempo',
+      // ENSEMBLE_SENTINEL_FLAG carries the ensemble name into the spawned
+      // claude.exe's CommandLine so hard-terminate can scope `destroy --all`
+      // kills by ensemble (#180, #259). Mirrors src/activities/outbox.ts.
+      ENSEMBLE_SENTINEL_FLAG, opts.ensemble,
     ];
     if (opts.resume && sessionName) {
       // Resume the previous Claude Code conversation by name
@@ -1249,6 +1257,10 @@ export async function up(opts: UpOpts) {
     const claudeArgs = [
       '--dangerously-skip-permissions',
       '--dangerously-load-development-channels', 'server:claude-tempo',
+      // ENSEMBLE_SENTINEL_FLAG carries the ensemble name into the spawned
+      // claude.exe's CommandLine so hard-terminate can scope `destroy --all`
+      // kills by ensemble (#180, #259). Mirrors src/activities/outbox.ts.
+      ENSEMBLE_SENTINEL_FLAG, opts.ensemble,
       '-n', sessionName,
       ...(resolvedConductorType?.nativeResolvable ? ['--agent', resolvedConductorType.name] :
           resolvedConductorType ? ['--system-prompt', resolvedConductorType.path] :
