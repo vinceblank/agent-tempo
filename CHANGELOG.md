@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.0-beta.4] - 2026-04-19
+
+> **Beta release.** Closes the message-delivery trilogy (#249): heartbeat/watcher orphan fix,
+> CAN-boundary lease math correction, poller CAN-blindness fix, and full diagnostic observability.
+> Also includes TUI identity-guard fixes, outbox retry hardening, and wire-protocol cleanup.
+>
+> **Install:** `npm i -g claude-tempo@0.26.0-beta.4`
+> **Rollback:** `npm i -g claude-tempo@0.26.0-beta.3`
+
 ### Fixed
 
 - **Message-delivery trilogy — heartbeat/watcher orphan + CAN lease math +
@@ -186,6 +195,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   as a Signal but declared as `defineQuery` in source will be caught as drift.
 - **`this.skip()` calls in test files now require a `// SKIP-REASON:` annotation** (#223). `scripts/lint-skip-reasons.js` scans `test/` and `tests/` and fails CI (as part of the `lint-test-ensemble` job) if any unannotated skip is found. Existing skips in `hard-terminate.test.ts` and `cli-crash-proof-isolation.test.ts` have been annotated.
 - **Scripts compiled from TypeScript to `dist/scripts/`** (#224). `scripts/run-shard.ts` and `scripts/verify-daemon-isolation-guard.ts` are now TypeScript sources; `npm run build:scripts` (included in `npm run build`) compiles them to `dist/scripts/`. Removes the fragile `!scripts/*.js` gitignore negation that would accidentally commit any future generated `.js` file. Invocation for the verification script: `npm run build:scripts && node dist/scripts/verify-daemon-isolation-guard.js`.
+- **`updateMetadata` signal no longer accepts `status?` field** (PR-H / #132, docs cleaned up in #252). The `status: 'terminated'` shim was retired in PR-H; `docs/WIRE-PROTOCOL.md` now reflects this. Use the `destroy` update for ordered session teardown.
 
 ## [0.26.0-beta.3] - 2026-04-18
 
