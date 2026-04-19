@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.0-beta.6] - 2026-04-19
+
+### Added
+- `recall` MCP tool: new `offset` (paging) and `previewLength` (body truncation) parameters (#128).
+- New `claude-tempo recall <player>` CLI command — reads a player's inbox with full flag parity to the MCP tool (`--limit`, `--offset`, `--preview`, `--from`, `--since`, `--include-sent`, `--json`) (#128).
+- TUI `/attachment-info` now renders heartbeat age, matching the CLI and MCP surfaces (#264).
+
+### Changed
+- **Breaking (TUI):** `/recall [player]` semantics changed — now queries the named player's inbox directly (or the maestro session if omitted), matching MCP and CLI. Previously rendered an aggregated maestro relay-log view filtered by player name. (#128)
+- `recall` no longer truncates message bodies by default — full text is returned unless `previewLength` is set (#128).
+- `attachment-info` output is now identical across CLI, TUI, and MCP, rendered by a single shared formatter (`src/utils/attachment-format.ts`) (#264).
+
 ## [0.26.0-beta.5] - 2026-04-19
 
 ### Added
