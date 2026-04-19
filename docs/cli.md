@@ -23,7 +23,7 @@ claude-tempo <command> [options]
 | `detach <name>` | Gracefully detach the adapter for a session — triggers draining and clean handoff. Use when migrating a session to another host. |
 | `destroy <name>` | Terminate a session's workflow — ordered shutdown via outbox drain. Use for permanent removal. |
 | `migrate <name>` | Move a session to a different host — sugar for `setPreferredHost` + `restart` on the target machine. Use `--to <hostname>`. |
-| `attachment-info <name>` | Inspect the attachment phase, current holder, lease expiry, and in-flight message count for a session. |
+| `attachment-info <name>` | Inspect a session's attachment phase, current holder, lease expiry, heartbeat age, and in-flight message count. |
 | `restore [name]` | **v0.25.** Restore orphaned (detached) sessions. Interactive picker by default; `--all` restores every orphan, `--from-host <hostname>` filters by preferred host, `--dry-run` lists without restoring. |
 | `release [ensemble]` | Release all held players — unlocks outboxes and delivers deferred task messages. Use `-n <name>` to release one player. |
 | `pause [ensemble]` | Pause the ensemble — locks all session outbox dispatch and pauses the scheduler. |

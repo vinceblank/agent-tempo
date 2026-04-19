@@ -12,7 +12,7 @@ import { createTemporalConnection } from '../connection';
 import { playerReportSignal, updateMetadataSignal, releaseHeldSignal, outboxLockedQuery, setPausedSignal, destroyUpdate } from '../workflows/signals';
 import { addScheduleSignal, setSchedulerPausedSignal } from '../workflows/scheduler-signals';
 import { maestroSetPausedSignal } from '../workflows/maestro-signals';
-import { AgentType, ScheduleEntry, SessionInput, SessionMetadata } from '../types';
+import { AgentType, AttachmentInfo, ScheduleEntry, SessionInput, SessionMetadata } from '../types';
 import { runPreflight } from './preflight';
 import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
 import { loadLineup, resolveLineupPath } from '../ensemble/loader';
@@ -2268,21 +2268,55 @@ export async function migrate(opts: MigrateCliOpts) {
   }
 }
 
+/**
+ * Render `claude-tempo attachment-info <name>` output as an array of plain
+ * strings. Pure — no Temporal, no stdout, no ANSI colors — so unit tests can
+ * assert exact lines without booting a client (#138).
+ *
+ * `now` is injected (defaults to `Date.now()`) so tests can freeze the clock
+ * and assert the heartbeat-age string deterministically. Heartbeat age uses
+ * the same `formatDurationMs` helper the scheduler output uses, suffixed with
+ * "ago" — e.g. `5s ago`, `2m ago`. Clock-skew (heartbeat timestamp in the
+ * future) renders as `just now`; a malformed timestamp renders as `unknown`.
+ */
+export function formatAttachmentInfoForCli(
+  name: string,
+  info: AttachmentInfo,
+  now: number = Date.now(),
+): string[] {
+  const lines: string[] = [
+    `${name} — phase: ${info.phase}`,
+    `  in-flight: ${info.inFlightCount}`,
+  ];
+  if (info.currentAttachment) {
+    const a = info.currentAttachment;
+    lines.push(`  attached on: ${a.hostname} (adapter: ${a.adapterId}/${a.adapterClass})`);
+    lines.push(`  attachmentId: ${a.attachmentId}`);
+    lines.push(`  lease expires: ${a.expiresAt}`);
+    lines.push(`  heartbeat: ${formatHeartbeatAge(a.lastHeartbeatAt, now)}`);
+  }
+  if (info.preferredHost) lines.push(`  preferred host: ${info.preferredHost}`);
+  if (info.processingSince) lines.push(`  processing since: ${info.processingSince}`);
+  return lines;
+}
+
+function formatHeartbeatAge(lastHeartbeatAt: string, now: number): string {
+  const then = Date.parse(lastHeartbeatAt);
+  if (!Number.isFinite(then)) return 'unknown';
+  const ageMs = now - then;
+  if (ageMs < 0) return 'just now'; // adapter clock ran ahead of ours — degrade gracefully
+  return `${formatDurationMs(ageMs)} ago`;
+}
+
 export async function attachmentInfo(opts: VerbOpts) {
   const { config, connection, client } = await verbClient(opts);
   const ensemble = opts.ensemble || config.ensemble;
   try {
     const tempo = createTempoClient(client);
     const info = await tempo.attachmentInfo(ensemble, opts.name);
-    out.log(`${out.bold(opts.name)} — phase: ${out.cyan(info.phase)}`);
-    out.log(`  in-flight: ${info.inFlightCount}`);
-    if (info.currentAttachment) {
-      out.log(`  attached on: ${info.currentAttachment.hostname} (adapter: ${info.currentAttachment.adapterId}/${info.currentAttachment.adapterClass})`);
-      out.log(`  attachmentId: ${info.currentAttachment.attachmentId}`);
-      out.log(`  lease expires: ${info.currentAttachment.expiresAt}`);
+    for (const line of formatAttachmentInfoForCli(opts.name, info)) {
+      out.log(line);
     }
-    if (info.preferredHost) out.log(`  preferred host: ${info.preferredHost}`);
-    if (info.processingSince) out.log(`  processing since: ${info.processingSince}`);
   } catch (err: any) {
     out.error(err?.message || String(err));
     process.exit(1);
