@@ -19,6 +19,19 @@ import type {
   AttachmentInfo,
 } from '../types';
 
+// ── Recall (#128) ──
+
+/**
+ * Raw (unfiltered, unsorted, unsliced) output of `TempoClient.recall`.
+ * The shared formatter at `src/utils/recall-format.ts` turns this into a
+ * timeline + pagination header; returning the raw shape keeps every
+ * surface's presentation logic testable without booting a client.
+ */
+export interface RecallClientResult {
+  received: Message[];
+  sent: SentMessage[];
+}
+
 // ── PR-D verb options ──
 
 export interface RestartClientOpts {
@@ -81,6 +94,13 @@ export interface TempoClient {
   migrate(ensemble: string, playerId: string, host: string, opts?: Omit<RestartClientOpts, 'host'>): Promise<RestartClientResult>;
   /** PR-D: Query a player's V2 attachment lifecycle state. */
   attachmentInfo(ensemble: string, playerId: string): Promise<AttachmentInfo>;
+  /**
+   * #128: Fetch a player's raw message timeline (received + sent). Throws
+   * when the session cannot be resolved. Callers are expected to feed the
+   * result through the shared `formatRecall` helper for filter / sort /
+   * slice / render; the client stays presentation-free.
+   */
+  recall(ensemble: string, playerId: string): Promise<RecallClientResult>;
   /** Get active schedules for an ensemble. */
   getSchedules(ensemble: string): Promise<ScheduleEntry[]>;
   /** Cancel a named schedule in an ensemble. */

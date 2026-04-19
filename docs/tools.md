@@ -24,7 +24,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `destroy` | Terminate a session via ordered shutdown (outbox drain). Use for permanent removal. |
 | `migrate` | Move a session to a different host — sets preferred host then triggers `restart` on the target machine's task queue. Requires `to` (target hostname). |
 | `attachment_info` | Fetch the current attachment phase, adapter ID, lease expiry, and in-flight message count for a player. Accepts `player` name. |
-| `recall` | Read your own message history. Shows received messages by default; pass `includeSent: true` for the full timeline. |
+| `recall` | Read your own message history. Shows received messages by default; pass `includeSent: true` for the full timeline. `offset` pages the timeline (gh-style `Showing X-Y of Z messages. Use offset: N for next page.`); `previewLength` truncates bodies to N chars (unset = full text). #128 unified the output with the TUI `/recall` and CLI `claude-tempo recall` via a shared formatter. |
 | `worktree` | Manage git worktrees for player isolation. Actions: `create`, `remove`, `list`. Conductor only. |
 | `quality_gate` | Define or replace a quality gate for a task — a named checklist of criteria that must pass. Conductor only. |
 | `evaluate_gate` | Mark one or more criteria on a quality gate as passed or failed. Conductor only. |

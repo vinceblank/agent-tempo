@@ -66,6 +66,14 @@ interface ParsedArgs {
   dryRun?: boolean;
   // PR-F cross-host flags
   yesSteal?: string;
+  // #128 recall flags (generic enough to share with future commands).
+  limit?: number;
+  offset?: number;
+  previewLength?: number;
+  since?: string;
+  from?: string;
+  includeSent: boolean;
+  json: boolean;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -87,6 +95,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     includeStale: false,
     fresh: false,
     force: false,
+    includeSent: false,
+    json: false,
   };
 
   let i = 0;
@@ -162,6 +172,35 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.fromHost = argv[++i];
     } else if (arg === '--dry-run') {
       result.dryRun = true;
+    } else if (arg === '--limit' && i + 1 < argv.length) {
+      const n = Number(argv[++i]);
+      if (Number.isInteger(n) && n >= 1) result.limit = n;
+      else {
+        out.error(`Invalid --limit: ${argv[i]}`);
+        process.exit(1);
+      }
+    } else if (arg === '--offset' && i + 1 < argv.length) {
+      const n = Number(argv[++i]);
+      if (Number.isInteger(n) && n >= 0) result.offset = n;
+      else {
+        out.error(`Invalid --offset: ${argv[i]}`);
+        process.exit(1);
+      }
+    } else if (arg === '--preview' && i + 1 < argv.length) {
+      const n = Number(argv[++i]);
+      if (Number.isInteger(n) && n >= 1) result.previewLength = n;
+      else {
+        out.error(`Invalid --preview: ${argv[i]}`);
+        process.exit(1);
+      }
+    } else if (arg === '--since' && i + 1 < argv.length) {
+      result.since = argv[++i];
+    } else if (arg === '--from' && i + 1 < argv.length) {
+      result.from = argv[++i];
+    } else if (arg === '--include-sent') {
+      result.includeSent = true;
+    } else if (arg === '--json') {
+      result.json = true;
     } else if (arg === '--agent' && i + 1 < argv.length) {
       const val = argv[++i];
       if (val !== 'claude' && val !== 'copilot') {
@@ -266,7 +305,7 @@ async function main() {
   const {
     start, status, init, server, up, down, stop,
     ensembleCommand, agentTypesCommand, broadcast, release,
-    pause, resume, restart, detach, destroy, migrate, attachmentInfo, restore,
+    pause, resume, restart, detach, destroy, migrate, attachmentInfo, recall, restore,
   } = await import('./cli/commands');
 
   const ensemble = args.positional[1] || process.env[ENV.ENSEMBLE] || 'default';
@@ -457,6 +496,28 @@ async function main() {
       await attachmentInfo({
         name,
         ensemble: args.ensemble || ensemble,
+        ...overrides,
+      });
+      break;
+    }
+
+    case 'recall': {
+      // Positional player is required — matches the #128 design.
+      const name = args.positional[1] || args.name;
+      if (!name) {
+        out.error('Usage: claude-tempo recall <player> [--limit N] [--offset N] [--preview N] [--from X] [--since ISO] [--include-sent] [--json]');
+        process.exit(1);
+      }
+      await recall({
+        name,
+        ensemble: args.ensemble || ensemble,
+        ...(args.limit !== undefined ? { limit: args.limit } : {}),
+        ...(args.offset !== undefined ? { offset: args.offset } : {}),
+        ...(args.previewLength !== undefined ? { previewLength: args.previewLength } : {}),
+        ...(args.since !== undefined ? { since: args.since } : {}),
+        ...(args.from !== undefined ? { from: args.from } : {}),
+        ...(args.includeSent ? { includeSent: true } : {}),
+        ...(args.json ? { json: true } : {}),
         ...overrides,
       });
       break;

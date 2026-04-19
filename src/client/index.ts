@@ -345,6 +345,20 @@ export function createTempoClient(client: Client): TempoClient {
       return target.query(attachmentInfoQuery);
     },
 
+    async recall(ensemble, playerId) {
+      // #128: direct session queries, no maestro round-trip. Throws rather
+      // than returning empties so the CLI / TUI wrappers can surface a
+      // clean "session not found" error instead of rendering a silently
+      // empty timeline that looks indistinguishable from "no messages yet."
+      const target = await resolveSession(client, ensemble, playerId);
+      if (!target) throw new Error(`No session found with name "${playerId}" in ensemble "${ensemble}".`);
+      const [received, sent] = await Promise.all([
+        target.query<Message[]>('allMessages'),
+        target.query<SentMessage[]>('allSentMessages'),
+      ]);
+      return { received, sent };
+    },
+
     async disbandEnsemble(ensemble: string): Promise<{ terminated: number }> {
       let terminated = 0;
 

@@ -111,6 +111,7 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
     destroy: fail,
     migrate: fail,
     attachmentInfo: fail,
+    recall: fail,
     disbandEnsemble: fail,
     isConnected: async () => false,
     hasGlobalMaestro: async () => false,

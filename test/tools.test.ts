@@ -1055,7 +1055,8 @@ describe('recall tool validation', function () {
 
       const result = await callWith({ limit: 5 });
       expect(result.isError).to.not.equal(true);
-      expect(result.content[0].text).to.match(/^5 messages/);
+      // #128 replaced the "<N> messages:" header with gh-style pagination.
+      expect(result.content[0].text).to.match(/^Showing 1-5 of 25 messages\. Use offset: 5 for next page\./);
       // The newest message (msg-24) should appear; oldest (msg-0) should not
       expect(result.content[0].text).to.include('msg-24');
       expect(result.content[0].text).to.not.include('msg-0');
