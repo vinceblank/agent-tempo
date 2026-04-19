@@ -77,7 +77,7 @@ src/
 │   ├── components/    # Ink components — see docs/tui.md for inventory
 │   └── utils/         # format, platform, theme, fullscreen, history
 ├── utils/
-│   ├── validation.ts / worktree.ts / safe-path.ts / duration.ts
+│   ├── validation.ts / worktree.ts / safe-path.ts / duration.ts / search-attributes.ts
 ├── types.ts           # Shared type definitions
 ├── git-info.ts        # Git repository detection helper
 └── config.ts          # Env var handling
