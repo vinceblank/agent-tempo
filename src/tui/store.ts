@@ -535,12 +535,22 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       if (!state.paletteVisible && state.paletteIndex === 0) return state;
       return { ...state, paletteVisible: false, paletteIndex: 0 };
 
-    case 'PALETTE_UP':
-      return { ...state, paletteIndex: Math.max(0, state.paletteIndex - 1) };
+    case 'PALETTE_UP': {
+      // #108: identity-preserving — returning `{ ...state, paletteIndex: same }`
+      // forces a re-render of the full app tree even when the value didn't change
+      // (e.g. holding arrow-up at index 0). Mirrors the OVERLAY_SELECT pattern
+      // below. See CLAUDE.md "Reducer state identity matters".
+      const next = Math.max(0, state.paletteIndex - 1);
+      if (next === state.paletteIndex) return state;
+      return { ...state, paletteIndex: next };
+    }
 
     case 'PALETTE_DOWN': {
+      // #108: same identity-preserving guard — holding arrow-down at the clamped
+      // max must not trigger spurious re-renders.
       const next = state.paletteIndex + 1;
       const clamped = action.max != null ? Math.min(next, action.max) : next;
+      if (clamped === state.paletteIndex) return state;
       return { ...state, paletteIndex: clamped };
     }
 

@@ -31,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   Cross-reference: #159 (earlier same-family Windows orphan bug), #164
   (initial attached-path hardTerminate wiring), #226 (adapter CAN-reconnect
   bug that exposed this cascade in the wild).
+- TUI palette reducer now preserves state identity on clamped no-ops, eliminating
+  spurious re-renders when arrow-key repeat hits index 0 / clamped max (#108).
+- TUI `/`-command parser respects quoted arguments; `/schedule create … "0 * * * *"`
+  and any other command taking a multi-word quoted value now tokenize correctly.
+  Adds an optional `unterminatedQuote?: boolean` flag on `ParsedCommand` for
+  strict downstream callers — the on-keystroke TUI path ignores it and keeps
+  forgiving input behavior (#109).
+- `PlayerDetailView` correctly pluralizes "earlier message(s)" via the existing
+  `formatEarlierIndicator` helper — fixes the long-standing "1 earlier messages"
+  grammar bug (#110).
 
 ### Changed
 

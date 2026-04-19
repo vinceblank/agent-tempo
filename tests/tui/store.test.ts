@@ -72,18 +72,37 @@ describe('tuiReducer — no-op identity', () => {
     expect(out).toBe(s);
   });
 
-  // ── KNOWN-FAILING / Finding for follow-up ──
-  // PALETTE_UP currently does `{ ...state, paletteIndex: Math.max(0, state.paletteIndex - 1) }`
-  // which creates a new state object even when the value is unchanged.
-  // Per CLAUDE.md "Reducer state identity matters", this forces a re-render
-  // on every arrow-up at the top. OVERLAY_SELECT (line ~568) already does the
-  // right thing — fix PALETTE_UP/PALETTE_DOWN the same way in a follow-up PR.
-  it.todo(
-    'TODO: PALETTE_UP at index 0 should return same reference (currently returns new object — see CLAUDE.md identity rule)',
-  );
-  it.todo(
-    'TODO: PALETTE_DOWN at clamped max should return same reference (same fix)',
-  );
+  // ── Identity-rule assertions (fixed in #108) ──
+  // Before #108, PALETTE_UP/DOWN always returned `{ ...state, paletteIndex: next }`
+  // even when `next === state.paletteIndex`, forcing a full re-render on every
+  // arrow-key repeat at the top (or clamped bottom) of the palette. These tests
+  // pin the OVERLAY_SELECT-style identity-preserving pattern — if a future edit
+  // reintroduces the spread-always form, `expect(out).toBe(s)` will fail.
+  it('PALETTE_UP at index 0 returns the same reference (identity rule)', () => {
+    const s = { ...s0(), paletteIndex: 0 };
+    const out = tuiReducer(s, { type: 'PALETTE_UP' });
+    expect(out).toBe(s);
+  });
+
+  it('PALETTE_UP above index 0 produces a new state with decremented index', () => {
+    const s = { ...s0(), paletteIndex: 3 };
+    const out = tuiReducer(s, { type: 'PALETTE_UP' });
+    expect(out).not.toBe(s);
+    expect(out.paletteIndex).toBe(2);
+  });
+
+  it('PALETTE_DOWN at clamped max returns the same reference (identity rule)', () => {
+    const s = { ...s0(), paletteIndex: 5 };
+    const out = tuiReducer(s, { type: 'PALETTE_DOWN', max: 5 });
+    expect(out).toBe(s);
+  });
+
+  it('PALETTE_DOWN below clamped max produces a new state with incremented index', () => {
+    const s = { ...s0(), paletteIndex: 2 };
+    const out = tuiReducer(s, { type: 'PALETTE_DOWN', max: 5 });
+    expect(out).not.toBe(s);
+    expect(out.paletteIndex).toBe(3);
+  });
 });
 
 describe('tuiReducer — state transitions', () => {
