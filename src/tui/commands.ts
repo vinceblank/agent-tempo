@@ -10,6 +10,7 @@ import type { Message, SentMessage } from '../types';
 import { statusIcons, supportsUnicode } from './utils/platform';
 import { phaseToLabel } from './utils/format';
 import { listAllLineups } from '../ensemble/saver';
+import { formatAttachmentInfoForDisplay } from '../utils/attachment-format';
 
 // ── Types ──
 
@@ -472,17 +473,11 @@ async function handleAttachmentInfo(
 
   try {
     const info = await api.attachmentInfo(ensemble, target);
-    const lines: string[] = [
-      `${target} — phase: ${info.phase}`,
-      `  in-flight: ${info.inFlightCount}`,
-    ];
-    if (info.currentAttachment) {
-      lines.push(`  attached on: ${info.currentAttachment.hostname} (${info.currentAttachment.adapterId}/${info.currentAttachment.adapterClass})`);
-      lines.push(`  attachmentId: ${info.currentAttachment.attachmentId}`);
-      lines.push(`  lease expires: ${info.currentAttachment.expiresAt}`);
-    }
-    if (info.preferredHost) lines.push(`  preferred host: ${info.preferredHost}`);
-    if (info.processingSince) lines.push(`  processing since: ${info.processingSince}`);
+    // #264: share the display formatter with the CLI (`src/utils/attachment-format.ts`)
+    // so both surfaces render heartbeat age + match each other's field order /
+    // edge-case handling. Pre-#264 this block inlined a near-identical render
+    // but omitted heartbeat age, creating a latent parity gap.
+    const lines = formatAttachmentInfoForDisplay(target, info);
     dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: `Attachment \u00B7 ${target}`, content: lines.join('\n') });
   } catch (err) {
     commitStatic(dispatch, 'error', `attachment_info failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);

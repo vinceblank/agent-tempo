@@ -1,7 +1,11 @@
 /**
- * Unit tests for the `claude-tempo attachment-info <name>` CLI command's
- * pure formatter (#138). Tests the extracted `formatAttachmentInfoForCli`
- * helper directly so no Temporal connection or TempoClient is required.
+ * Unit tests for the shared attachment-info display formatter. Originally
+ * added for #138 (CLI heartbeat age); the formatter was relocated to
+ * `src/utils/attachment-format.ts` in #264 so the TUI consumer could reuse
+ * it without drifting. These Mocha cases stay here to keep the CLI-side
+ * workflow/wire-protocol suite validating the pure pure-data-in / string-out
+ * contract; the TUI integration has companion vitest coverage at
+ * `tests/tui/attachment-info.test.ts`.
  *
  * Covers:
  *   - Happy path: currentAttachment present → all fields including heartbeat
@@ -21,13 +25,13 @@
  * the formatter itself is what #138's AC is about.
  */
 import { expect } from 'chai';
-import { formatAttachmentInfoForCli } from '../src/cli/commands';
+import { formatAttachmentInfoForDisplay } from '../src/utils/attachment-format';
 import type { AttachmentInfo } from '../src/types';
 
 // Frozen "now" so heartbeat-age strings are deterministic across CI runs.
 const NOW = Date.parse('2026-04-19T12:00:00.000Z');
 
-describe('formatAttachmentInfoForCli (#138)', function () {
+describe('formatAttachmentInfoForDisplay (#138, #264)', function () {
   it('happy path: attached session — renders all core fields + heartbeat age', function () {
     const info: AttachmentInfo = {
       phase: 'attached',
@@ -44,7 +48,7 @@ describe('formatAttachmentInfoForCli (#138)', function () {
         runId: 'run-xyz',
       },
     };
-    expect(formatAttachmentInfoForCli('tempo-eng', info, NOW)).to.deep.equal([
+    expect(formatAttachmentInfoForDisplay('tempo-eng', info, NOW)).to.deep.equal([
       'tempo-eng — phase: attached',
       '  in-flight: 0',
       '  attached on: main-laptop (adapter: claude-code/interactive)',
@@ -59,7 +63,7 @@ describe('formatAttachmentInfoForCli (#138)', function () {
       phase: 'detached',
       inFlightCount: 0,
     };
-    expect(formatAttachmentInfoForCli('tempo-eng', info, NOW)).to.deep.equal([
+    expect(formatAttachmentInfoForDisplay('tempo-eng', info, NOW)).to.deep.equal([
       'tempo-eng — phase: detached',
       '  in-flight: 0',
     ]);
@@ -83,7 +87,7 @@ describe('formatAttachmentInfoForCli (#138)', function () {
       preferredHost: 'remote-box',
       processingSince: '2026-04-19T11:59:45.000Z',
     };
-    expect(formatAttachmentInfoForCli('tempo-eng', info, NOW)).to.deep.equal([
+    expect(formatAttachmentInfoForDisplay('tempo-eng', info, NOW)).to.deep.equal([
       'tempo-eng — phase: processing',
       '  in-flight: 2',
       '  attached on: remote-box (adapter: copilot/sdk)',
@@ -111,7 +115,7 @@ describe('formatAttachmentInfoForCli (#138)', function () {
         runId: 'run-1',
       },
     };
-    const lines = formatAttachmentInfoForCli('p', info, NOW);
+    const lines = formatAttachmentInfoForDisplay('p', info, NOW);
     expect(lines).to.include('  heartbeat: just now');
   });
 
@@ -131,7 +135,7 @@ describe('formatAttachmentInfoForCli (#138)', function () {
         runId: 'run-1',
       },
     };
-    const lines = formatAttachmentInfoForCli('p', info, NOW);
+    const lines = formatAttachmentInfoForDisplay('p', info, NOW);
     expect(lines).to.include('  heartbeat: unknown');
   });
 });
