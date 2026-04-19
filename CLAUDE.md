@@ -90,7 +90,7 @@ touching `src/tui/`.
 
 ```bash
 npm install
-npm run build    # compiles TS + pre-bundles workflow code into workflow-bundle.js
+npm run build    # compiles TS, scripts/*.ts → dist/scripts/, and pre-bundles workflow code into workflow-bundle.js
 npm test
 ```
 

@@ -60,6 +60,10 @@ Tests use Temporal's `TestWorkflowEnvironment` — no live Temporal server requi
 `npm test`. The test harness loads the pre-built `workflow-bundle.js` from disk, so you
 must run `npm run build` before running tests after any workflow change.
 
+When temporarily skipping a test, every `this.skip()` call must carry a
+`// SKIP-REASON: <why>` annotation on the same line or the line immediately above.
+CI enforces this via `scripts/lint-skip-reasons.js` (exit 1 if any unannotated skip is found).
+
 ## Run in development
 
 ```bash
