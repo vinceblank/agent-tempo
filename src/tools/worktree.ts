@@ -94,7 +94,26 @@ export function registerWorktreeTool(
               }],
             });
 
-            return ok(`Worktree created for **${player}**:\n- Path: \`${result.path}\`\n- Branch: \`${result.branch}\`\n- Created: ${result.created ? 'new' : 'reused existing'}\n\nPlayer has been notified.`);
+            // #261: when we reused an existing worktree directory, surface the
+            // actual state transition (same branch / switched / created-from-main)
+            // so the conductor sees ground truth instead of the prior silent
+            // "reused existing" that implied the worktree was already on the
+            // requested branch.
+            const createdLabel = result.created
+              ? 'new'
+              : (() => {
+                  switch (result.switched) {
+                    case 'same':
+                      return `reused existing (already on \`${result.branch}\`)`;
+                    case 'switched':
+                      return `reused existing (switched to \`${result.branch}\`)`;
+                    case 'created-from-main':
+                      return `reused existing (created \`${result.branch}\` from origin/main)`;
+                    default:
+                      return 'reused existing';
+                  }
+                })();
+            return ok(`Worktree created for **${player}**:\n- Path: \`${result.path}\`\n- Branch: \`${result.branch}\`\n- Created: ${createdLabel}\n\nPlayer has been notified.`);
           }
 
           case 'remove': {
