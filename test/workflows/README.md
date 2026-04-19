@@ -9,9 +9,11 @@ Single-adapter (non-parameterized) tests that assert correctness of `claudeSessi
 
 ## Relation to existing PR-A coverage
 
-PR-A shipped two flat test files covering primitives:
+PR-A shipped the phase-machine tests covering primitives. After the #233 split they live in:
 
-- `test/session-phase-machine.test.ts` — 15 cases for phase reachability and transition rules (§2.2, §2.4, §9.2).
+- `test/session-phase-claim.test.ts` — claim/lease mechanics (§2.2, §2.4).
+- `test/session-phase-processing.test.ts` — processing/awaiting transitions (§2.2, §2.4, #117 cluster).
+- `test/session-phase-detach.test.ts` — requestDetach/drain/destroy/orphan reap (§2.4, §9.2, §9.5.a).
 - `test/session-lease.test.ts` — lease renewal + CAN-boundary boot-side restoration (§2.3 post-CAN).
 
 Tests in this directory **do not duplicate** those — they cover invariants that PR-A could not reach (e.g. the pre-CAN extension math, pause interactions, future orphan-reconcile paths). Cross-references live in individual test-file docstrings.
@@ -29,9 +31,9 @@ Each stub carries a specific `// TODO (PR-X):` comment naming the enabling chang
 ## Adding a new workflow-invariant test
 
 1. Create `test/workflows/<invariant-name>.test.ts`.
-2. Use `setupTestEnv()` / `teardownTestEnv()` / `withWorker()` from `test/helpers.ts` — same patterns as `test/session-phase-machine.test.ts`.
+2. Use `setupTestEnv()` / `teardownTestEnv()` / `withWorker()` from `test/helpers.ts` — same patterns as `test/session-phase-claim.test.ts` (and the other two split files).
 3. Reference the design doc section this invariant comes from.
-4. If the test duplicates something already in `test/session-phase-machine.test.ts` or `test/session-lease.test.ts`, don't add it — extend the existing file instead (per architect-2 guidance).
+4. If the test duplicates something already in the `test/session-phase-{claim,processing,detach}.test.ts` trio or `test/session-lease.test.ts`, don't add it — extend the existing file instead (per architect-2 guidance).
 
 Design reference: `docs/design/session-lifecycle-rebuild-v2.md` §§2.3, 8, 9.5, 10.
 Sequencing memo: `docs/design/session-lifecycle-rebuild-v2-sequencing.md` §3 PR-G.

@@ -15,8 +15,8 @@
  * Design reference: docs/design/session-lifecycle-rebuild-v2.md §4.5.
  * Sequencing memo: §3 PR-G.
  *
- * Cross-reference with PR-A coverage: `test/session-phase-machine.test.ts` and
- * `test/session-lease.test.ts` cover the workflow-side primitives directly
+ * Cross-reference with PR-A coverage: the `test/session-phase-{claim,processing,detach}.test.ts`
+ * trio and `test/session-lease.test.ts` cover the workflow-side primitives directly
  * (claimAttachment, heartbeat, forceDetach, processingStart/End, destroy). The
  * conformance suite below exercises the same primitives from the ADAPTER side —
  * "does adapter X actually CALL claimAttachment when it attaches, and does its
@@ -62,8 +62,10 @@ describe('adapter conformance suite (§4.5)', function () {
         // the attachment wire protocol.
         //
         // Workflow-side claimAttachment → attached transition is already covered by
-        // `test/session-phase-machine.test.ts:68` ("booting -> attached via claimAttachment").
-        // This case adds the adapter-side contract assertion on top of the workflow test.
+        // `test/session-phase-claim.test.ts` (search for title "booting -> attached via
+        // claimAttachment"). This case adds the adapter-side contract assertion on top
+        // of the workflow test. (Line-number reference dropped in the #233 split — the
+        // title is the stable handle.)
       });
 
       // ── Case 3: Heartbeat ─────────────────────────────────────────────
@@ -74,7 +76,7 @@ describe('adapter conformance suite (§4.5)', function () {
         // loop runs on descriptor.heartbeatMs.
         //
         // Signal-side heartbeat handling is covered by the wire-protocol test and by
-        // PR-A's session-phase-machine tests (which send heartbeats manually).
+        // PR-A's `test/session-phase-claim.test.ts` (which sends heartbeats manually).
       });
 
       // ── Case 4: Receive message (push or pull) ────────────────────────
