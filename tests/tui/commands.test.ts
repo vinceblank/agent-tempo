@@ -62,25 +62,62 @@ describe('parseCommand', () => {
     expect(parseCommand('\n/stop alice\t')!.args).toEqual(['alice']);
   });
 
-  it('does not crash on malformed input with embedded quote characters', () => {
-    // Current parser does not interpret quotes — it treats them as literal chars.
-    // This test guards against a future regression that might choke on them.
-    const malformed = parseCommand('/schedule create foo cron "0 * * * *');
-    expect(malformed).not.toBeNull();
-    expect(malformed!.name).toBe('schedule');
-    // The quote characters remain embedded in the tokens — parser is quote-naive.
-    expect(malformed!.args.length).toBeGreaterThan(0);
+  // ── Quote-aware tokenizer (#109) ──
+  // Before #109 the parser split on bare whitespace, so
+  //     /schedule create foo cron "0 * * * *"
+  // tokenized to 9 args with the cron cells split across them. #109 swapped
+  // the split for a tokenizer that honors balanced `"…"` / `'…'` runs and
+  // surfaces an `unterminatedQuote: true` flag when input is mid-typed with
+  // an open quote. Strict callers opt into the flag; the TUI on-keystroke
+  // path ignores it and keeps forgiving behavior.
+
+  it('/schedule create foo cron "0 * * * *" binds the cron expression as one arg', () => {
+    const parsed = parseCommand('/schedule create foo cron "0 * * * *"');
+    expect(parsed).not.toBeNull();
+    expect(parsed!.name).toBe('schedule');
+    expect(parsed!.args).toEqual(['create', 'foo', 'cron', '0 * * * *']);
+    expect(parsed!.unterminatedQuote).toBeUndefined();
   });
 
-  // ── KNOWN LIMITATION / Finding for follow-up ──
-  // The current parser splits on whitespace without honoring quoted strings.
-  // Per #105 Phase 1 review: commands like
-  //     /schedule create foo cron "0 * * * *"
-  // should treat the cron expression as a single arg. Today they don't.
-  // Flagged as a follow-up; no behavior change in this PR.
-  it.todo(
-    'TODO: /schedule create foo cron "0 * * * *" should bind the cron expression as one arg (quoted-string support)',
-  );
+  it('single-quoted argument is preserved as one token', () => {
+    const parsed = parseCommand("/x 'multi word value'");
+    expect(parsed!.args).toEqual(['multi word value']);
+    expect(parsed!.unterminatedQuote).toBeUndefined();
+  });
+
+  it('mixed quoting — double-quoted outer lets single quotes be literal', () => {
+    const parsed = parseCommand('/x "outer \'inner\' outer"');
+    expect(parsed!.args).toEqual(["outer 'inner' outer"]);
+  });
+
+  it('mixed quoting — single-quoted outer lets double quotes be literal', () => {
+    const parsed = parseCommand('/x \'outer "inner" outer\'');
+    expect(parsed!.args).toEqual(['outer "inner" outer']);
+  });
+
+  it('empty quoted string becomes an explicit empty-string arg', () => {
+    // Useful for commands that take an optional-but-positional string arg
+    // and want to pass "no value" explicitly.
+    const parsed = parseCommand('/x "" after');
+    expect(parsed!.args).toEqual(['', 'after']);
+  });
+
+  it('unterminated double quote surfaces unterminatedQuote=true; remainder flushes', () => {
+    // Mirrors the mid-typed input case — user is still composing. The parser
+    // must not throw or return null (forgiving-input philosophy), but it must
+    // flag the unterminated state so strict consumers can react.
+    const parsed = parseCommand('/schedule create foo cron "0 * * * *');
+    expect(parsed).not.toBeNull();
+    expect(parsed!.name).toBe('schedule');
+    expect(parsed!.args).toEqual(['create', 'foo', 'cron', '0 * * * *']);
+    expect(parsed!.unterminatedQuote).toBe(true);
+  });
+
+  it('unterminated single quote also flags unterminatedQuote=true', () => {
+    const parsed = parseCommand("/x 'hello world");
+    expect(parsed!.args).toEqual(['hello world']);
+    expect(parsed!.unterminatedQuote).toBe(true);
+  });
 });
 
 describe('command registry', () => {

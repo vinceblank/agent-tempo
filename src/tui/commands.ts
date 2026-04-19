@@ -20,6 +20,14 @@ export interface ParsedCommand {
   args: string[];
   /** The original raw input string. */
   raw: string;
+  /**
+   * #109: `true` when tokenization encountered an opening quote that never
+   * closed (e.g. user is mid-typing `/x "hello`). Strictly additive — existing
+   * handlers that don't inspect this field keep their forgiving-input behavior
+   * unchanged. Future strict-mode callers can opt in by checking the flag and
+   * surfacing an error sentinel before dispatch. Absent on well-formed input.
+   */
+  unterminatedQuote?: boolean;
 }
 
 /** Context passed to command handlers from the shell. */
@@ -51,21 +59,88 @@ export interface CommandDef {
 // ── Parser ──
 
 /**
+ * Quote-aware tokenizer (#109). Splits on whitespace EXCEPT within balanced
+ * `"…"` or `'…'` runs. Backslash escapes are intentionally NOT supported — the
+ * TUI's command surface is small and escape handling adds failure modes
+ * (Windows paths mis-escaping, for example). Callers that need literal quotes
+ * inside an argument can use the other quote kind: `/x "with 'apostrophe'"`.
+ *
+ * Returns a tuple of `{ tokens, unterminatedQuote }`:
+ *  - Well-formed input:  `unterminatedQuote === false`, all tokens split.
+ *  - Mid-typed input with an open quote (e.g. `/x "hello`): everything still
+ *    flushes as the final token and `unterminatedQuote === true` so downstream
+ *    strict callers can distinguish. The TUI's on-every-keystroke consumer
+ *    ignores the flag — forgiving input by design.
+ *
+ * Exported for unit tests; callers outside this module should use
+ * {@link parseCommand} which wraps this with slash-prefix validation and
+ * command-name lowercasing.
+ */
+export function tokenize(input: string): { tokens: string[]; unterminatedQuote: boolean } {
+  const tokens: string[] = [];
+  let cur = '';
+  let inSingle = false;
+  let inDouble = false;
+  // Tracks whether any char has been emitted into `cur` during the current
+  // token — needed so that an explicit empty string (`""`) becomes a real
+  // zero-length token rather than being collapsed with the surrounding
+  // whitespace boundary.
+  let hasContent = false;
+
+  const flush = () => {
+    if (cur.length > 0 || hasContent) {
+      tokens.push(cur);
+      cur = '';
+      hasContent = false;
+    }
+  };
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      hasContent = true;
+      continue;
+    }
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      hasContent = true;
+      continue;
+    }
+    if (/\s/.test(ch) && !inSingle && !inDouble) {
+      flush();
+      continue;
+    }
+    cur += ch;
+    hasContent = true;
+  }
+  flush();
+  return { tokens, unterminatedQuote: inSingle || inDouble };
+}
+
+/**
  * Parse raw input into a structured command.
  * Returns null if input is not a slash command (doesn't start with "/").
+ *
+ * Uses the quote-aware {@link tokenize} helper so `/schedule create foo cron "0 * * * *"`
+ * correctly binds the cron expression as a single argument (#109). When the input
+ * has an unterminated quote (user mid-typing), the `unterminatedQuote` flag is
+ * surfaced on the returned ParsedCommand — existing callers that ignore it keep
+ * their pre-#109 forgiving behavior.
  */
 export function parseCommand(input: string): ParsedCommand | null {
   const trimmed = input.trim();
   if (!trimmed.startsWith('/')) return null;
 
-  // Split on whitespace, treating the first token as the command
-  const parts = trimmed.slice(1).split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return null;
+  const { tokens, unterminatedQuote } = tokenize(trimmed.slice(1));
+  if (tokens.length === 0) return null;
 
-  const name = parts[0].toLowerCase();
-  const args = parts.slice(1);
+  const name = tokens[0].toLowerCase();
+  const args = tokens.slice(1);
 
-  return { name, args, raw: trimmed };
+  return unterminatedQuote
+    ? { name, args, raw: trimmed, unterminatedQuote: true }
+    : { name, args, raw: trimmed };
 }
 
 // ── Static item helper ──
