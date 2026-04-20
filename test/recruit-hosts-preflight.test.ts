@@ -14,6 +14,7 @@ import { expect } from 'chai';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Client, WorkflowHandle } from '@temporalio/client';
 import type { HostInfo, HostProfile } from '../src/types';
+import { getTestEnsemble } from './helpers';
 import {
   checkHostPreflight,
   nearestHostname,
@@ -204,8 +205,14 @@ function makeFakeHandle(): { handle: WorkflowHandle; captures: Array<unknown> } 
 }
 
 describe('registerRecruitTool host pre-flight (M15)', function () {
+  // Ensemble derived from the per-file random prefix (#210 shared-env
+  // convention). These tests don't actually call `setupTestEnv`, but
+  // the lint rule at `scripts/check-test-ensemble-literals.sh`
+  // requires the helper form rather than the bare fallback literal —
+  // the canonical way to stay consistent with future tests in the
+  // same file that might grow into workflow-touching cases.
   const cfg = {
-    ensemble: 'test-ensemble',
+    ensemble: getTestEnsemble(),
     taskQueue: 'claude-tempo',
     temporalNamespace: 'default',
     temporalAddress: 'localhost:7233',
