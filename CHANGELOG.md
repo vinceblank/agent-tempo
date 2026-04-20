@@ -7,6 +7,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-04-20
+
+> **Upgrade guide:** [`docs/ops/v0.26-migration.md`](docs/ops/v0.26-migration.md) —
+> cluster-side attribute-drop commands, SDK consumer-update checklist, and rollback steps.
+
+### Breaking Changes
+
+- **`ClaudeTempoStatus` search attribute removed.** Lifecycle truth now lives on
+  `ClaudeTempoAttachmentState` (seven phases: `booting | attached | processing |
+  awaiting | draining | detached | gone`) and the `attachmentInfo` query. Long-lived
+  Temporal clusters must manually drop the attribute — see the migration guide. (#174, beta.1)
+- **`SessionStatus` TypeScript enum removed** from the public SDK surface.
+  Use `AttachmentPhase` for lifecycle-typed code. (#174, beta.1)
+- **`SessionMetadata.status`, `EnsembleSessionInfo.status`, and `MaestroPlayerInfo.status`
+  removed.** `EnsembleSessionInfo.phase?: AttachmentPhase` and `MaestroPlayerInfo.phase`
+  replace them. (#174, beta.1)
+- **`updateMetadata` signal: `status?` field removed** from the TypeScript payload type.
+  The handler has ignored the field since v0.26-beta.1; callers passing
+  `status: 'active' | 'pending' | 'terminated'` must drop the field. (#212, beta.2)
+- **Dropped Node 18.** Minimum is now Node 20. (#204, beta.2)
+- **`createWorker()` factory removed** from `src/worker.ts` (threw-on-call since v0.10).
+  Use `createWorkers()` which returns `{ sharedWorker, hostWorker }`. (#212, beta.2)
+- **`src/tui/client.ts` back-compat re-export removed.** Switch to
+  `claude-tempo/client`. (#212, beta.2)
+- **TUI `/recall [player]`** now queries the named player's inbox directly (or the maestro
+  session if omitted), matching MCP and CLI. Previously rendered an aggregated maestro
+  relay-log view filtered by player name. (#128, beta.6)
+- **End-to-end upgrade required.** A v0.25 CLI/TUI paired with a v0.26 daemon (or the
+  reverse) is not supported. Upgrade both sides together. (#174, beta.1)
+
+### Added
+
+- **`hosts` MCP tool + `claude-tempo hosts` CLI command** — lists daemons polling this
+  Temporal namespace with their advertised capabilities. `recruit` now validates the
+  target host is live before spawning; pass `force: true` to bypass pre-flight. (#274)
+- **GitHub App integration** — `scripts/ensemble-gh` wrapper mints `claude-tempo[bot]`
+  installation tokens per-call for bot-authored PR/issue writes. (#276)
+- **`claude-tempo recall <player>` CLI command** — reads a player's inbox with full flag
+  parity to the MCP tool (`--limit`, `--offset`, `--preview`, `--from`, `--since`,
+  `--include-sent`, `--json`). (#128, beta.6)
+- **`attachment-info` heartbeat age** — CLI (`--heartbeat`) and TUI now display heartbeat
+  age alongside lease expiry, matching the MCP tool. Output is identical across all three
+  surfaces via a shared formatter (`src/utils/attachment-format.ts`). (#264, #138, betas 5–6)
+- **`recall` paging + preview** — MCP tool gains `offset` (paging) and `previewLength`
+  (body truncation) parameters. Message bodies are returned in full by default (no
+  implicit truncation). (#128, beta.6)
+- **Daemon heartbeat file** at `~/.claude-tempo/daemon.heartbeat` (touched every 60 s);
+  `daemon status` reports its age, distinguishing a healthy main loop from a hung
+  process. (#157, beta.3)
+- **`daemon start` pre-flight orphan check** — aborts with exit 1 if unexpected
+  claude-tempo daemon processes are found; `--force` bypasses. (#157, beta.3)
+- **Crash-proof CLI commands** — `version`, `help`, `upgrade`, `config show/set` no
+  longer import Temporal at startup, so they work even when the daemon connection is
+  broken. (#157, beta.3)
+- **Migration guide:** [`docs/ops/v0.26-migration.md`](docs/ops/v0.26-migration.md) —
+  cluster attribute-drop commands, SDK consumer-update checklist, rollback steps. (beta.1)
+
+### Fixed
+
+- **Message-delivery trilogy** (#249, beta.4): Four compounding bugs caused long-running
+  ensembles to silently stop delivering inbound cues after a `continueAsNew` boundary:
+  (1) `tickHeartbeat` `try/finally` reschedule — orphaned heartbeat timer on any guard
+  trip; (2) `tickPhaseWatcher` orphan parity — same fix; (3) CAN-boundary lease math now
+  uses `currentAttachment.leaseMs` (3× heartbeatMs) instead of a hardcoded 30 s; (4)
+  message-poller surfaces terminal `WorkflowNotFoundError` and rebinds to the successor
+  run instead of spinning against a dead runId.
+- **Sessions self-heal after `continueAsNew`** (#226, beta.3) — adapter reads the closed
+  run's history for a `WorkflowExecutionContinuedAsNewEvent` and rebinds `pinnedHandle`
+  to the successor in place; no re-claim required.
+- **Sessions self-heal after laptop sleep / network drop** (#201, #205, beta.2) —
+  `InteractiveAttachment` re-attempts `claimAttachment` with exponential back-off for up
+  to 15 minutes before giving up.
+- **`destroy` terminates orphaned processes on `phase=detached` sessions** (#227, beta.4)
+  — hard-terminate guard now fires whenever a hostname is known, not only when
+  `currentAttachment` is non-null.
+- **worktree `create` correctly repoints HEAD** (#261, beta.5) — reusing an existing
+  directory with a different branch no longer silently reports the requested branch
+  without updating HEAD.
+- **Orphan reconcile mis-parsed player identities with dashes** (#217, beta.3) — e.g.
+  `tempo-eng` in ensemble `tempo-impl` no longer splits as
+  `ensemble=tempo-impl-tempo, playerId=eng`.
+- **Copilot bridge stderr noise suppressed on non-Copilot startup** (#122, beta.4) —
+  `@github/copilot-sdk is not installed` no longer prints on every `claude-tempo up`
+  for users without the Copilot SDK.
+
+### Removed
+
+- Legacy `_heartbeat` / `_ping` workflow probe messages.
+- 3-minute stale detection and 5-minute blocked-window heuristics (replaced by adapter
+  lease expiry and `processingDeadline`).
+- `ClaudeTempoStatus` search attribute (use `ClaudeTempoAttachmentState`).
+- `BLOCKED_WINDOW_MS` / `SessionStatus` from `src/utils/validation.ts`.
+- `test/blocked-detection.test.ts` — obsolete.
+- `docs/ops/v0.25-beta1-release-checklist.md` — superseded by the v0.26 migration guide.
+
+---
+
+<!-- Pre-release history: beta.1 through beta.7 entries are preserved below. -->
+
 ## [0.26.0-beta.7] - 2026-04-20
 
 ### Fixed
