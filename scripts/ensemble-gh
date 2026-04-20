@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# ensemble-gh — run `gh` as claude-tempo[bot] instead of your personal account.
+#
+# Players in the ensemble should use this wrapper for any GitHub interaction
+# that should be attributed to the bot (issue comments, PR creation, merges,
+# etc.). It mints a fresh installation token via scripts/gh-app-token.js and
+# injects it as GH_TOKEN for a single gh invocation.
+#
+# Usage: ensemble-gh <any gh args>
+# Example: ensemble-gh issue comment 42 --body "Looking into this."
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "ensemble-gh: 'gh' CLI not found on PATH" >&2
+  exit 127
+fi
+
+token="$(node "$SCRIPT_DIR/gh-app-token.js")"
+if [ -z "$token" ]; then
+  echo "ensemble-gh: failed to mint installation token" >&2
+  exit 1
+fi
+
+# GH_TOKEN takes precedence over user auth for this invocation only.
+# Clear GITHUB_TOKEN too — if inherited from CI it would outrank GH_TOKEN.
+GH_TOKEN="$token" GITHUB_TOKEN="" exec gh "$@"

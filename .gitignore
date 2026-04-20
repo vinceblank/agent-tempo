@@ -11,7 +11,15 @@ logs/
 # Compiled scripts go to dist/scripts/ (gitignored via dist/). Source in scripts/*.ts.
 # Exception: lint-skip-reasons.js is plain CommonJS — runs without a build step.
 !scripts/lint-skip-reasons.js
+!scripts/gh-app-token.js
 temporal-data.db
+
+# Never commit secrets. Private keys, GitHub App .pem files, etc.
+secrets/
+*.pem
+*.p12
+*.pfx
+*.key
 
 pnpm-lock.yaml
 
