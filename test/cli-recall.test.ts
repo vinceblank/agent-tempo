@@ -13,8 +13,16 @@
  * half and a round-trip through JSON.stringify to catch format drift.
  */
 import { expect } from 'chai';
+import { spawnSync } from 'child_process';
+import * as path from 'path';
 import type { Message, SentMessage } from '../src/types';
 import { buildTimeline, formatRecall } from '../src/utils/recall-format';
+
+// `__dirname` at runtime is `<repo>/dist-test/test`. Repo root is two levels up,
+// matching the pattern `test/wire-protocol.test.ts` and `test/cli-spawn-sentinel.test.ts`
+// already use for source-path resolution.
+const REPO_ROOT = path.resolve(__dirname, '..', '..');
+const CLI_ENTRY = path.join(REPO_ROOT, 'dist', 'cli.js');
 
 describe('CLI recall formatter wiring (#128)', function () {
   const received: Message[] = [
@@ -62,6 +70,38 @@ describe('CLI recall formatter wiring (#128)', function () {
     expect(r.text).to.include('second message');
     expect(r.text).to.include('first message');
     expect(r.text).to.not.include('third message');
+  });
+
+  // ── Parser-cap tests (#270) ────────────────────────────────────────
+  // Exercise the real CLI argv parser as a subprocess so we get the
+  // production `process.exit(1)` semantics. The rejection happens in
+  // `parseArgs` before the command dispatch, so the subprocess exits
+  // without touching Temporal — safe to run without a dev server.
+  describe('--limit cap (#270)', function () {
+    this.timeout(10_000);
+
+    it('rejects --limit 101 with the shared max=100 error', function () {
+      const result = spawnSync(process.execPath, [CLI_ENTRY, 'recall', 'alice', '--limit', '101'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      expect(result.status).to.equal(1, `expected exit 1; got ${result.status}; stderr=${result.stderr}`);
+      // Error message must match the TUI parser verbatim so operators see the
+      // same suggestion regardless of entry point. (Exact string, not substring.)
+      expect(result.stderr).to.include('--limit exceeds max (100). Use --offset N to page through more results.');
+    });
+
+    it('accepts --limit 100 (the exact boundary) without parser error', function () {
+      // At 100 the parser must pass; the command will still fail downstream
+      // because there's no Temporal connection in the test env — we assert
+      // the error is NOT the parser's cap error.
+      const result = spawnSync(process.execPath, [CLI_ENTRY, 'recall', 'alice', '--limit', '100'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 8_000,
+      });
+      expect(result.stderr).to.not.include('--limit exceeds max');
+    });
   });
 
   it('--json equivalent: serializing the formatter result round-trips cleanly', function () {
