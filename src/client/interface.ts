@@ -17,6 +17,7 @@ import type {
   WorktreeEntry,
   EnsembleChatResult,
   AttachmentInfo,
+  HostInfo,
 } from '../types';
 
 // ── Recall (#128) ──
@@ -101,6 +102,13 @@ export interface TempoClient {
    * slice / render; the client stays presentation-free.
    */
   recall(ensemble: string, playerId: string): Promise<RecallClientResult>;
+  /**
+   * #274: List all daemons polling this Temporal namespace, joined with
+   * their boot-signaled capability profiles. Consumers typically feed
+   * the result through `formatHostList` for a consistent UX across
+   * CLI / TUI / MCP. `force: true` bypasses the 3-second result cache.
+   */
+  listHosts(opts?: { force?: boolean }): Promise<HostInfo[]>;
   /** Get active schedules for an ensemble. */
   getSchedules(ensemble: string): Promise<ScheduleEntry[]>;
   /** Cancel a named schedule in an ensemble. */

@@ -70,6 +70,7 @@ src/
 │   ├── load-lineup.ts / save-lineup.ts / agent-types.ts / resolve.ts
 │   ├── set-name.ts / set-part.ts / who-am-i.ts / release.ts
 │   ├── pause-ensemble.ts / resume-ensemble.ts
+│   ├── hosts.ts
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
 ├── tui/
 │   ├── App.tsx / store.ts / commands.ts   # TUI root, state, slash commands
@@ -78,6 +79,8 @@ src/
 │   └── utils/         # format, platform, theme, fullscreen, history
 ├── utils/
 │   ├── validation.ts / worktree.ts / safe-path.ts / duration.ts / search-attributes.ts
+│   ├── attachment-format.ts / recall-format.ts   # Shared display formatters (attachment-info, recall)
+│   ├── hosts.ts / format-hosts.ts                # Host enumeration + shared hosts display formatter (#274)
 ├── types.ts           # Shared type definitions
 ├── git-info.ts        # Git repository detection helper
 └── config.ts          # Env var handling
@@ -118,7 +121,7 @@ daemon worker notes, `npx ts-node` dev runner).
 - **Outbox**: Outbound requests (cue, report, recruit, restart, detach, destroy, …) go through the session's workflow outbox instead of directly signaling other workflows. The dispatch loop processes entries via activities, decoupling tools from cross-workflow signaling.
 - **Attachment phase** (v0.26): Seven phases tracked on the session workflow — `booting → attached → processing | awaiting → draining → detached → gone`. The phase is authoritative for lifecycle truth: adapters drive it via `claimAttachment` / `adapterExited` / `forceDetach` / `destroy`, and the workflow publishes it on the `ClaudeTempoAttachmentState` search attribute. Replaced the v0.25 `ClaudeTempoStatus` heuristic (removed in v0.26). See [docs/concepts.md](docs/concepts.md) for the phase table and [docs/ops/v0.26-migration.md](docs/ops/v0.26-migration.md) for the upgrade path.
 - **Adapter heartbeat observability** (#249): After `claimAttachment`, the base adapter logs `first heartbeat scheduled in Xms` then `heartbeat#1 delivered` on the first tick. Every 10 ticks it emits `heartbeats-delivered=N / phase-ticks=N` breadcrumbs. Any silent guard trip in `tickHeartbeat` / `tickPhaseWatcher` now emits a structured `guard tripped: {stopped, reconnecting, …}` log instead of silently orphaning the timer. The phase-watcher emits `WARNING: heartbeat staleness` when `lastHeartbeatAt` falls more than 2× `heartbeatMs` behind `now`. Grep `[claude-tempo:adapter]` to confirm loop health without parsing Temporal history.
-- **Per-host task queues**: `host` param on `recruit`/`restart`/`migrate` routes to `claude-tempo-{hostname}` task queue. See [docs/concepts.md](docs/concepts.md) for cross-machine recruiting details.
+- **Per-host task queues**: `host` param on `recruit`/`restart`/`migrate` routes to `claude-tempo-{hostname}` task queue. When `host` is set on `recruit`, a pre-flight check validates the target daemon is live and supports the requested agent type (`force: true` bypasses). Daemon boot profiles (hostname, platform, available player types) are advertised via the `hostProfile` signal and maintained in the global maestro's `hostProfiles` map — surfaced by the `hosts` MCP tool, `claude-tempo hosts` CLI, and `/hosts` TUI command (#274). See [docs/concepts.md](docs/concepts.md) for cross-machine recruiting details.
 - **Wire protocol**: All signal/query/update names are documented in [`docs/WIRE-PROTOCOL.md`](docs/WIRE-PROTOCOL.md) and are stable — renaming or removing any is a breaking change. **Process**: update `docs/WIRE-PROTOCOL.md` in the same commit as any new signal, query, or update.
 - **Daemon**: Standalone background process (`src/daemon.ts`) that runs all Temporal workers. Auto-started by any `claude-tempo` command. PID at `~/.claude-tempo/daemon.pid`; logs at `~/.claude-tempo/daemon.log`.
 - **Player types**: Reusable agent definitions in Claude Code's subagent format (`.md` files with YAML frontmatter). Three-tier lookup: project `.claude/agents/` → user `~/.claude/agents/` → shipped `examples/agents/`. Discover via `agent_types` tool or `claude-tempo agent-types` CLI. Shipped types: tempo-conductor, tempo-composer, tempo-soloist, tempo-tuner, tempo-critic, tempo-roadie, tempo-improv, tempo-liner.

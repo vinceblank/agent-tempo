@@ -345,6 +345,16 @@ export function createTempoClient(client: Client): TempoClient {
       return target.query(attachmentInfoQuery);
     },
 
+    async listHosts(opts: { force?: boolean } = {}) {
+      // Lazy import so this doesn't drag utils/hosts into every
+      // consumer of TempoClient at module-load time.
+      const { listHosts } = await import('../utils/hosts');
+      return listHosts(client, {
+        force: Boolean(opts.force),
+        namespace: client.options.namespace,
+      });
+    },
+
     async recall(ensemble, playerId) {
       // #128: direct session queries, no maestro round-trip. Throws rather
       // than returning empties so the CLI / TUI wrappers can surface a

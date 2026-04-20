@@ -22,8 +22,10 @@ import {
   maestroFetchPlayerMessagesUpdate,
   maestroFetchConductorHistoryUpdate,
   maestroGlobalSendCommandUpdate,
+  hostProfileSignal,
+  hostProfilesQuery,
 } from '../src/workflows/maestro-signals';
-import type { MaestroPlayerInfo } from '../src/types';
+import type { MaestroPlayerInfo, HostProfile } from '../src/types';
 
 const FAST_POLL_MS = 500;
 let testCounter = 0;
@@ -389,6 +391,149 @@ describe('claudeGlobalMaestroWorkflow', function () {
 
         const desc = await handle.describe();
         expect(desc.status.name).to.equal('COMPLETED');
+      });
+    });
+  });
+
+  // #274 — `hostProfile` signal + `hostProfiles` query surface.
+  //
+  // Architect QA invariant #1 (AC3c / M9): the signal handler accepts
+  // payloads with unknown extra fields and treats everything except
+  // `hostname` opaquely. These tests lock that contract in so a future
+  // maestro version can't tighten per-field validation without breaking
+  // forward/backward compat for daemons on different versions.
+  describe('hostProfile signal + hostProfiles query (#274)', function () {
+    // NB: every test must `signal(maestroShutdownSignal) + await result()`
+    // INSIDE the `withWorkerAndGlobalMaestroActivities` callback so the
+    // workflow completes while the test worker is still polling. Otherwise
+    // the afterEach shutdown races an already-stopped worker and
+    // `handle.result()` hangs (the signal never gets processed).
+
+    it('starts with an empty hostProfiles map', async function () {
+      this.timeout(10_000);
+      await withWorkerAndGlobalMaestroActivities({}, async () => {
+        const handle = await startGlobalMaestro(getClient());
+        const profiles = await handle.query(hostProfilesQuery);
+        expect(profiles).to.deep.equal({});
+        await handle.signal(maestroShutdownSignal);
+        await handle.result();
+      });
+    });
+
+    it('accepts a full profile and round-trips it verbatim through the query', async function () {
+      this.timeout(10_000);
+      await withWorkerAndGlobalMaestroActivities({}, async () => {
+        const handle = await startGlobalMaestro(getClient());
+
+        const profile: HostProfile = {
+          hostname: 'mac-alice',
+          version: '0.26.0-beta.7',
+          defaultAgent: 'claude',
+          availableAgentTypes: ['tempo-soloist', 'tempo-critic'],
+          availablePlayerTypes: ['tempo-soloist', 'tempo-critic', 'tempo-conductor'],
+          claudeBin: 'claude',
+          platform: 'darwin',
+          capabilities: ['interactive'],
+        };
+        await handle.signal(hostProfileSignal, profile);
+
+        const profiles = await handle.query(hostProfilesQuery);
+        expect(profiles).to.have.property('mac-alice');
+        expect(profiles['mac-alice']).to.deep.equal(profile);
+
+        await handle.signal(maestroShutdownSignal);
+        await handle.result();
+      });
+    });
+
+    it('accepts a minimal profile (hostname only) — AC3c open-schema contract', async function () {
+      this.timeout(10_000);
+      await withWorkerAndGlobalMaestroActivities({}, async () => {
+        const handle = await startGlobalMaestro(getClient());
+
+        await handle.signal(hostProfileSignal, { hostname: 'bare-host' });
+
+        const profiles = await handle.query(hostProfilesQuery);
+        expect(profiles).to.have.property('bare-host');
+        expect(profiles['bare-host'].hostname).to.equal('bare-host');
+        // No other fields enforced; the rest of the shape is opaque.
+
+        await handle.signal(maestroShutdownSignal);
+        await handle.result();
+      });
+    });
+
+    it('preserves unknown extra fields (additive forward-compat, M9)', async function () {
+      this.timeout(10_000);
+      await withWorkerAndGlobalMaestroActivities({}, async () => {
+        const handle = await startGlobalMaestro(getClient());
+
+        // Simulate a newer daemon advertising a field this maestro version
+        // doesn't model. The payload must be stored intact; a future
+        // `listHosts` join with a matching Zod guard will surface it.
+        await handle.signal(hostProfileSignal, {
+          hostname: 'future-host',
+          version: '99.0.0',
+          futureCapability: 'warp-drive',
+          experimentalFlags: { nested: { deep: 'value' } },
+        } as unknown as HostProfile);
+
+        const profiles = await handle.query(hostProfilesQuery);
+        expect(profiles['future-host']).to.have.property('futureCapability', 'warp-drive');
+        expect(profiles['future-host']).to.have.nested.property(
+          'experimentalFlags.nested.deep',
+          'value',
+        );
+
+        await handle.signal(maestroShutdownSignal);
+        await handle.result();
+      });
+    });
+
+    it('drops signals with a missing or malformed hostname silently', async function () {
+      this.timeout(10_000);
+      await withWorkerAndGlobalMaestroActivities({}, async () => {
+        const handle = await startGlobalMaestro(getClient());
+
+        // None of these should throw, none should be stored.
+        await handle.signal(hostProfileSignal, {} as unknown as HostProfile);
+        await handle.signal(hostProfileSignal, { hostname: '' } as unknown as HostProfile);
+        await handle.signal(hostProfileSignal, { hostname: 123 } as unknown as HostProfile);
+        await handle.signal(hostProfileSignal, { hostname: 'bad/slash' } as unknown as HostProfile);
+        await handle.signal(hostProfileSignal, {
+          hostname: 'a'.repeat(65), // >64 char cap
+        } as unknown as HostProfile);
+
+        const profiles = await handle.query(hostProfilesQuery);
+        expect(profiles).to.deep.equal({});
+
+        await handle.signal(maestroShutdownSignal);
+        await handle.result();
+      });
+    });
+
+    it('latest signal for a given hostname wins (upsert semantics)', async function () {
+      this.timeout(10_000);
+      await withWorkerAndGlobalMaestroActivities({}, async () => {
+        const handle = await startGlobalMaestro(getClient());
+
+        await handle.signal(hostProfileSignal, {
+          hostname: 'upsert-host',
+          version: '0.26.0-beta.6',
+          defaultAgent: 'claude',
+        });
+        await handle.signal(hostProfileSignal, {
+          hostname: 'upsert-host',
+          version: '0.26.0-beta.7',
+          defaultAgent: 'copilot',
+        });
+
+        const profiles = await handle.query(hostProfilesQuery);
+        expect(profiles['upsert-host'].version).to.equal('0.26.0-beta.7');
+        expect(profiles['upsert-host'].defaultAgent).to.equal('copilot');
+
+        await handle.signal(maestroShutdownSignal);
+        await handle.result();
       });
     });
   });

@@ -41,6 +41,8 @@ ${out.bold('Commands:')}
   ${out.cyan('migrate')} <name> --host Move a session to a different host
   ${out.cyan('attachment-info')} <name> Inspect the V2 attachment phase + current holder
   ${out.cyan('recall')} <name>          Read a player's message history (--limit/--offset/--preview/--from/--since/--include-sent/--json)
+  ${out.cyan('hosts')}                  List daemons polling this Temporal namespace with advertised capabilities (--all/--json)
+  ${out.cyan('refresh-host-profile')}   Re-advertise this daemon's capability profile to the global Maestro
   ${out.cyan('restore')} [name]         Restore orphaned session(s) — interactive picker, or --all / --from-host / --dry-run
   ${out.cyan('release')} [ensemble]   Release all held players (unlock outbox, deliver messages)
   ${out.cyan('pause')}   [ensemble]   Pause an ensemble (sessions, scheduler, maestro)

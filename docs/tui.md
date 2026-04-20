@@ -62,6 +62,7 @@ Use `/players <name>` to open a scrollable message history for any player.
 | `/ensemble [name]` | Switch active ensemble context; no args opens picker |
 | `/status` | Show dismissible overlay with all players, status, type, and part |
 | `/recall [player]` | Query a player's inbox directly. Omit player to target the maestro session. Flags: `--limit N` (default 20, max 100), `--offset N` (paging), `--preview N` (truncate bodies; omit = full text), `--from X`, `--since ISO`, `--include-sent`. (#128: unified semantics with MCP `recall` and `claude-tempo recall` CLI.) |
+| `/hosts [--all]` | List daemons polling this Temporal namespace with their advertised capabilities. `--all` includes stale hosts. Output matches CLI and MCP surfaces (shared formatter, #274). |
 | `/search <term>` | Search message history across the ensemble |
 | `/schedule [create \| delete <name>]` | List active schedules (interactive overlay); `create` launches the schedule wizard; `delete <name>` cancels a named schedule |
 | `/lineup load <file> \| save [file]` | Load or save an ensemble lineup |

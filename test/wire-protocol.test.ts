@@ -122,7 +122,7 @@ const SECTION_TO_KIND: Record<string, DefineKind | null> = {
   'Conductor Signals': 'signal',
   'Scheduler Signals': 'signal',
   'Per-Ensemble Maestro Signal': 'signal',
-  'Global Maestro Signal': 'signal',
+  'Global Maestro Signals': 'signal', // pluralized in #274 when hostProfile joined maestroNotifyMessage
   // Query sections
   'Session Queries': 'query',
   'Session Outbox Query': 'query',
@@ -333,7 +333,7 @@ describe('kindFromSectionHeader — #239 allowlist', function () {
     ['Conductor Signals', 'signal'],
     ['Scheduler Signals', 'signal'],
     ['Per-Ensemble Maestro Signal', 'signal'],
-    ['Global Maestro Signal', 'signal'],
+    ['Global Maestro Signals', 'signal'], // #274 pluralized; hostProfile + maestroNotifyMessage
     // Query sections
     ['Session Queries', 'query'],
     ['Session Outbox Query', 'query'],

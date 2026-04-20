@@ -2285,6 +2285,95 @@ export async function attachmentInfo(opts: VerbOpts) {
   }
 }
 
+// --- Hosts commands (#274) ---
+
+export interface HostsCliOpts extends CliOverrides {
+  ensemble?: string;
+  /** Include stale hosts (those not seen in the last minute). CLI default: false. */
+  all?: boolean;
+  /** Emit raw `HostInfo[]` JSON instead of the formatted table. */
+  json?: boolean;
+}
+
+export async function hosts(opts: HostsCliOpts) {
+  const { config, connection, client } = await verbClient(opts);
+  try {
+    const { listHosts } = await import('../utils/hosts');
+    const { formatHostList } = await import('../utils/format-hosts');
+    const list = await listHosts(client, {
+      force: true, // CLI always bypasses the cache — freshness expectation is "right now".
+      namespace: config.temporalNamespace,
+      taskQueue: config.taskQueue,
+    });
+    if (opts.json) {
+      process.stdout.write(JSON.stringify(list, null, 2) + '\n');
+    } else {
+      out.log(formatHostList(list, { includeStale: opts.all }));
+    }
+  } catch (err: any) {
+    out.error(err?.message || String(err));
+    process.exit(1);
+  } finally {
+    await connection.close();
+  }
+}
+
+export interface RefreshHostProfileCliOpts extends CliOverrides {
+  ensemble?: string;
+  /** Max wait for the new profile to appear in the maestro `hostProfiles` map. Default 10s. */
+  confirmTimeoutMs?: number;
+}
+
+/**
+ * #274 AC5d (M12) — manual re-signal of this host's profile to the
+ * global maestro. The daemon otherwise only re-signals on boot; this
+ * subcommand re-computes the profile + signals fresh.
+ *
+ * Exit semantics (per my implementation-time call to the conductor,
+ * approved): await ensureGlobalMaestro → signal → short poll on
+ * `hostProfiles()` to confirm the new version is visible → exit 0.
+ * Exits nonzero if the poll timeout elapses without confirmation.
+ */
+export async function refreshHostProfile(opts: RefreshHostProfileCliOpts) {
+  const { config, connection, client } = await verbClient(opts);
+  try {
+    const { computeHostProfile, scrubHostProfile, advertiseHostProfile } = await import('../daemon');
+    const { GLOBAL_MAESTRO_WORKFLOW_ID } = await import('../config');
+    const profile = scrubHostProfile(computeHostProfile(config));
+    const result = await advertiseHostProfile(client, profile, { log: (...a) => out.log(a.map(String).join(' ')) });
+    if (!result.ok) {
+      out.error(`hostProfile signal failed after ${result.attempts} attempts. Global Maestro may be unreachable.`);
+      process.exit(1);
+    }
+    // Short confirmation poll — give the workflow a moment to apply the
+    // signal and respond to the query with the fresh version. If the
+    // maestro is absent entirely, the query will throw and we exit 1.
+    const deadline = Date.now() + (opts.confirmTimeoutMs ?? 10_000);
+    const target = profile.version;
+    const handle = client.workflow.getHandle(GLOBAL_MAESTRO_WORKFLOW_ID);
+    while (Date.now() < deadline) {
+      try {
+        const profiles = (await handle.query('hostProfiles')) as Record<string, { version?: string }>;
+        const live = profiles[profile.hostname];
+        if (live && live.version === target) {
+          out.success(`Host profile for "${profile.hostname}" refreshed (version ${target}).`);
+          return;
+        }
+      } catch {
+        // retry until deadline
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    out.error(`Signal sent but not yet reflected in hostProfiles() query after ${opts.confirmTimeoutMs ?? 10_000}ms. May succeed shortly; re-run to confirm.`);
+    process.exit(1);
+  } catch (err: any) {
+    out.error(err?.message || String(err));
+    process.exit(1);
+  } finally {
+    await connection.close();
+  }
+}
+
 // --- Recall command (#128) ---
 
 export interface RecallCliOpts extends VerbOpts {

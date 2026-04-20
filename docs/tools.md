@@ -9,7 +9,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `set_name` | Set a human-readable name for this session. |
 | `set_part` | Describe what you're working on. Visible to others via `ensemble`. |
 | `listen` | Manually check for pending messages. |
-| `recruit` | Spawn a new Claude Code session in a directory. Can recruit a conductor with `conductor: true`. |
+| `recruit` | Spawn a new Claude Code session in a directory. Can recruit a conductor with `conductor: true`. When `host` is set, validates the target daemon is live and supports the requested agent before spawning; pass `force: true` to bypass pre-flight (#274). |
 | `report` | Send updates to the conductor. No-op if no conductor exists. |
 | `schedule` | Create a one-shot or recurring schedule to cue a player. |
 | `unschedule` | Cancel a named schedule. |
@@ -25,6 +25,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `migrate` | Move a session to a different host — sets preferred host then triggers `restart` on the target machine's task queue. Requires `to` (target hostname). |
 | `attachment_info` | Fetch the current attachment phase, adapter ID, lease expiry, heartbeat age, and in-flight message count for a player. Accepts `player` name. Output matches CLI and TUI surfaces (shared formatter, #264). |
 | `recall` | Read your own message history. Shows received messages by default; pass `includeSent: true` for the full timeline. `limit` caps results (default 20, max 100); `offset` pages the timeline (gh-style `Showing X-Y of Z messages. Use offset: N for next page.`); `previewLength` truncates bodies to N chars (unset = full text). #128 unified the output with the TUI `/recall` and CLI `claude-tempo recall` via a shared formatter. |
+| `hosts` | **#274.** List all daemons polling this Temporal namespace, joined with their boot-signaled capability profile (default agent, available player types, platform, claude bin basename). Optional `includeStale: true` shows hosts not seen in the last minute; `force: true` bypasses the 3-second result cache. Output matches CLI `claude-tempo hosts` and TUI `/hosts` (shared formatter, AC10a). |
 | `worktree` | Manage git worktrees for player isolation. Actions: `create`, `remove`, `list`. Conductor only. |
 | `quality_gate` | Define or replace a quality gate for a task — a named checklist of criteria that must pass. Conductor only. |
 | `evaluate_gate` | Mark one or more criteria on a quality gate as passed or failed. Conductor only. |
