@@ -11,6 +11,7 @@ import { statusIcons, supportsUnicode } from './utils/platform';
 import { phaseToLabel } from './utils/format';
 import { listAllLineups } from '../ensemble/saver';
 import { formatAttachmentInfoForDisplay } from '../utils/attachment-format';
+import { formatHostList } from '../utils/format-hosts';
 import { buildTimeline, formatRecall } from '../utils/recall-format';
 
 // ── Types ──
@@ -295,6 +296,31 @@ async function handleBroadcast(
     commitStatic(dispatch, 'message', `\u2714 Broadcast delivered to ${sent} player${sent !== 1 ? 's' : ''}: ${message}`);
   } catch (err) {
     commitStatic(dispatch, 'error', `\u2717 Broadcast failed: ${err}`);
+  }
+}
+
+/**
+ * /hosts [--all] — list daemons polling this Temporal namespace.
+ *
+ * #274. Surfaces the same data as `claude-tempo hosts` CLI and the
+ * `hosts` MCP tool via the shared `formatHostList` helper.
+ * `--all` opts into stale hosts; default hides them.
+ */
+async function handleHosts(
+  args: string[],
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+): Promise<void> {
+  const includeStale = args.includes('--all');
+  try {
+    const list = await api.listHosts({ force: true });
+    dispatch({
+      type: 'SHOW_COMMAND_OVERLAY',
+      title: 'Hosts',
+      content: formatHostList(list, { includeStale }),
+    });
+  } catch (err) {
+    commitStatic(dispatch, 'error', `/hosts failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -1289,6 +1315,11 @@ export const COMMANDS: Record<string, CommandDef> = {
     description: 'Inspect the V2 attachment state of a session',
     usage: '/attachment-info <player>',
     handler: handleAttachmentInfo,
+  },
+  hosts: {
+    description: 'List daemons polling this Temporal namespace with advertised capabilities (#274)',
+    usage: '/hosts [--all]',
+    handler: handleHosts,
   },
   recall: {
     description: "Read a player's message history",

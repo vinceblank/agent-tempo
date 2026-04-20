@@ -313,7 +313,7 @@ async function main() {
   const {
     start, status, init, server, up, down, stop,
     ensembleCommand, agentTypesCommand, broadcast, release,
-    pause, resume, restart, detach, destroy, migrate, attachmentInfo, recall, restore,
+    pause, resume, restart, detach, destroy, migrate, attachmentInfo, recall, hosts, refreshHostProfile, restore,
   } = await import('./cli/commands');
 
   const ensemble = args.positional[1] || process.env[ENV.ENSEMBLE] || 'default';
@@ -503,6 +503,24 @@ async function main() {
       }
       await attachmentInfo({
         name,
+        ensemble: args.ensemble || ensemble,
+        ...overrides,
+      });
+      break;
+    }
+
+    case 'hosts': {
+      await hosts({
+        ensemble: args.ensemble || ensemble,
+        ...(args.all ? { all: true } : {}),
+        ...(args.json ? { json: true } : {}),
+        ...overrides,
+      });
+      break;
+    }
+
+    case 'refresh-host-profile': {
+      await refreshHostProfile({
         ensemble: args.ensemble || ensemble,
         ...overrides,
       });
