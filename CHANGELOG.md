@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.0-beta.7] - 2026-04-20
+
+### Fixed
+- `recall` CLI and TUI now enforce `--limit` max=100, matching the MCP tool (closes a parity gap from v0.26.0-beta.6). (#270)
+
 ## [0.26.0-beta.6] - 2026-04-19
 
 ### Added
