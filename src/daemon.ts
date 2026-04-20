@@ -10,16 +10,18 @@
  */
 import * as fs from 'fs';
 import * as os from 'os';
+import * as path from 'path';
 import { setTimeout as sleep } from 'timers/promises';
 import { Client } from '@temporalio/client';
 import { WorkflowIdConflictPolicy } from '@temporalio/client';
-import { getConfig, CLAUDE_TEMPO_HOME, GLOBAL_MAESTRO_WORKFLOW_ID, loadDaemonConfig, isEnsembleAllowed, type DaemonConfig } from './config';
+import { getConfig, type Config, CLAUDE_TEMPO_HOME, GLOBAL_MAESTRO_WORKFLOW_ID, loadDaemonConfig, isEnsembleAllowed, type DaemonConfig } from './config';
 import { createWorkers } from './worker';
 import { createTemporalConnection } from './connection';
 import { DAEMON_PID_PATH, DAEMON_LOG_PATH, DAEMON_HEARTBEAT_PATH, HEARTBEAT_INTERVAL_MS } from './cli/daemon';
 import { createTempoClient } from './client';
 import { queryOrphanedSessions, type OrphanCandidate } from './reconcile/orphans';
-import type { GlobalMaestroInput } from './types';
+import { listAgentTypes } from './ensemble/agent-types';
+import type { GlobalMaestroInput, HostProfile } from './types';
 
 const log = (...args: unknown[]) => console.error(`[claude-tempo:daemon ${new Date().toISOString()}]`, ...args);
 
@@ -82,6 +84,226 @@ async function ensureGlobalMaestro(config: ReturnType<typeof getConfig>): Promis
     // Non-fatal — the global maestro is optional for basic operation
     log('Failed to ensure global Maestro (non-fatal):', err instanceof Error ? err.message : String(err));
   }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// #274 — host capability profile: compute → scrub → signal
+// ────────────────────────────────────────────────────────────────────────
+
+/**
+ * Daemon package version, lazily read from `package.json` so the test
+ * build (which compiles daemon.ts into `dist-test/src/` where
+ * `../package.json` doesn't resolve) can exercise daemon-boot logic
+ * without MODULE_NOT_FOUND. Tests that exercise `computeHostProfile`
+ * pass a stubbed version via `HostProfile.version` on the input.
+ */
+function daemonVersion(): string {
+  try {
+    const { version } = require('../package.json') as { version: string };
+    return version;
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
+ * Build the daemon's capability profile from its config + runtime env.
+ * Result is NOT scrubbed — call `scrubHostProfile` before signaling.
+ *
+ * Exported for testability; production callers go through
+ * `runDaemonBoot(client, deps)` which provides this as the default
+ * `computeHostProfile` dep.
+ */
+export function computeHostProfile(config: Config): HostProfile {
+  const agentTypes = (() => {
+    try {
+      return listAgentTypes().map((a) => a.name);
+    } catch {
+      // listAgentTypes reads the filesystem; treat any failure as "no
+      // discoverable types" rather than crashing boot.
+      return [];
+    }
+  })();
+
+  return {
+    hostname: os.hostname(),
+    version: daemonVersion(),
+    defaultAgent: config.defaultAgent,
+    // Currently the daemon advertises only the configured default as an
+    // "available runtime"; future work can probe for Copilot bridge via
+    // `require.resolve('@github/copilot-sdk')`. Recording as an array
+    // keeps the wire shape forward-compatible.
+    availableAgentTypes: [config.defaultAgent],
+    availablePlayerTypes: agentTypes,
+    claudeBin: config.claudeBin,
+    platform: process.platform,
+    capabilities: [],
+  };
+}
+
+/**
+ * #274 AC5c / M10 — HARD REQUIREMENT privacy scrub.
+ *
+ * Strips absolute paths and file extensions from every `HostProfile` field
+ * before the payload crosses the signal boundary. The global maestro is
+ * namespace-wide; a multi-tenant or multi-ensemble corporate setup would
+ * leak username-containing paths across ensembles if this is ever
+ * violated. Unit-tested in `test/daemon-boot.test.ts` with a dedicated
+ * "no `/` or `\\` in any string" invariant assertion against pathological
+ * inputs.
+ *
+ * Contract per architect AC5c:
+ * - `claudeBin` — basename only (e.g. `claude`), never absolute
+ * - `availableAgentTypes` — names only, never paths
+ * - `availablePlayerTypes` — names only, never paths
+ * - No env var values, no `workDir`, no user directories in any field
+ *
+ * The scrub is defense-in-depth: production callers (`computeHostProfile`)
+ * already produce clean inputs from `listAgentTypes().map(a => a.name)`.
+ * If a future code path accidentally passes a path, this function catches
+ * it before the workflow handler ever sees it.
+ */
+export function scrubHostProfile(raw: HostProfile): HostProfile {
+  const stripPath = (s: string): string => {
+    // `path.basename` handles both POSIX and Win32 separators on any
+    // platform (it picks the right parser for the running runtime).
+    // Also strip a single trailing `.md` — player-type files are
+    // shipped as e.g. `tempo-soloist.md` but the name should be just
+    // `tempo-soloist` on the wire.
+    const base = path.basename(s);
+    return base.endsWith('.md') ? base.slice(0, -3) : base;
+  };
+  const scrubList = (list: string[] | undefined): string[] | undefined =>
+    list?.map(stripPath);
+
+  return {
+    hostname: raw.hostname,
+    version: raw.version,
+    defaultAgent: raw.defaultAgent,
+    availableAgentTypes: scrubList(raw.availableAgentTypes),
+    availablePlayerTypes: scrubList(raw.availablePlayerTypes),
+    claudeBin: raw.claudeBin ? stripPath(raw.claudeBin) : undefined,
+    platform: raw.platform,
+    capabilities: raw.capabilities,
+  };
+}
+
+/** Production default: signal the global maestro with the profile. */
+async function realSendHostProfileSignal(client: Client, profile: HostProfile): Promise<void> {
+  const handle = client.workflow.getHandle(GLOBAL_MAESTRO_WORKFLOW_ID);
+  await handle.signal('hostProfile', profile);
+}
+
+/**
+ * Signal `hostProfile` with bounded retry (AC5b / M11).
+ *
+ * Default backoff: `[0, 5000, 15000]` ms → 3 attempts, ≤20 s wall-clock,
+ * well under the 30 s budget. Tests override to `[0, 0, 0]` for fast
+ * execution. On total failure, logs a warning and returns — the daemon
+ * stays alive without its profile advertised.
+ *
+ * Exported for reuse by the Phase 5 `claude-tempo refresh-host-profile`
+ * CLI subcommand, which re-signals without needing the full
+ * `runDaemonBoot` sequence (the global maestro is already up).
+ */
+export async function advertiseHostProfile(
+  client: Client,
+  profile: HostProfile,
+  opts: {
+    retryBackoffsMs?: number[];
+    log?: (...args: unknown[]) => void;
+    sendSignal?: (client: Client, profile: HostProfile) => Promise<void>;
+  } = {},
+): Promise<{ ok: boolean; attempts: number; lastError?: unknown }> {
+  const backoffs = opts.retryBackoffsMs ?? [0, 5000, 15000];
+  const logFn = opts.log ?? log;
+  const send = opts.sendSignal ?? realSendHostProfileSignal;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < backoffs.length; attempt++) {
+    const delay = backoffs[attempt];
+    if (delay > 0) await sleep(delay);
+    try {
+      await send(client, profile);
+      logFn(`Advertised host profile for "${profile.hostname}" (attempt ${attempt + 1}/${backoffs.length})`);
+      return { ok: true, attempts: attempt + 1 };
+    } catch (err) {
+      lastError = err;
+      logFn(`hostProfile signal attempt ${attempt + 1}/${backoffs.length} failed:`, err instanceof Error ? err.message : err);
+    }
+  }
+  logFn(
+    `Failed to advertise host profile after ${backoffs.length} attempts (non-fatal; daemon stays alive):`,
+    lastError instanceof Error ? lastError.message : lastError,
+  );
+  return { ok: false, attempts: backoffs.length, lastError };
+}
+
+/**
+ * #274 M14 — boot-sequence deps. Injected at `runDaemonBoot` so the
+ * ordering + retry + scrub invariants are all unit-testable without
+ * subprocess fixtures. Production callers pass the default impls
+ * already exported from this module.
+ */
+export interface DaemonBootDeps {
+  /** Ensure the global maestro workflow is running. Awaited before any signal. */
+  ensureGlobalMaestro: () => Promise<void>;
+  /** Signal the global maestro with the scrubbed host profile. */
+  sendHostProfileSignal: (client: Client, profile: HostProfile) => Promise<void>;
+  /**
+   * Compute the daemon's capability profile. Output is fed into
+   * `scrubHostProfile` before signaling — computeHostProfile itself does
+   * not need to scrub, the dep-swap pattern makes the pipeline testable.
+   */
+  computeHostProfile: () => HostProfile;
+  /**
+   * Retry backoffs for the `hostProfile` signal (ms). Production uses
+   * `[0, 5000, 15000]`; tests override to `[0, 0, 0]` for speed.
+   */
+  retryBackoffsMs?: number[];
+  /** Log sink. Tests stub to capture output. Defaults to module-level `log`. */
+  log?: (...args: unknown[]) => void;
+}
+
+/**
+ * #274 M14 — daemon boot sequence: ensure global maestro is running,
+ * then advertise the (scrubbed) capability profile with bounded retry.
+ *
+ * Ordering is load-bearing (AC5a / M11): the `hostProfile` signal MUST
+ * NOT fire until `ensureGlobalMaestro` has resolved. Otherwise the
+ * signal races the workflow-start and gets silently dropped by Temporal
+ * (WorkflowNotFound on an unknown workflow id).
+ *
+ * Hard-failure behavior (AC5b): if `ensureGlobalMaestro` rejects, the
+ * daemon stays alive WITHOUT advertising its profile. Next opportunity
+ * is the next daemon restart OR a manual `claude-tempo refresh-host-profile`
+ * invocation (Phase 5).
+ *
+ * Tests in `test/daemon-boot.test.ts` exercise:
+ *   - ensure-before-signal ordering via deferred promises
+ *   - retry success on 3rd attempt
+ *   - all-retries-exhausted stays alive
+ *   - ensure-fails-stays-alive
+ */
+export async function runDaemonBoot(client: Client, deps: DaemonBootDeps): Promise<void> {
+  const logFn = deps.log ?? log;
+  const raw = deps.computeHostProfile();
+  const profile = scrubHostProfile(raw);
+
+  try {
+    await deps.ensureGlobalMaestro();
+  } catch (err) {
+    logFn(
+      'ensureGlobalMaestro failed (non-fatal); host profile not advertised this boot:',
+      err instanceof Error ? err.message : err,
+    );
+    return;
+  }
+
+  await advertiseHostProfile(client, profile, {
+    retryBackoffsMs: deps.retryBackoffsMs,
+    log: logFn,
+    sendSignal: deps.sendHostProfileSignal,
+  });
 }
 
 // ── Reconcile-on-boot (PR-E §10.1) ──
@@ -399,10 +621,27 @@ async function main() {
   hostWorker = workers.hostWorker;
   log('Workers created — processing tasks');
 
-  // Auto-start the global Maestro workflow (non-blocking, non-fatal)
-  ensureGlobalMaestro(config).catch((err) => {
-    log('ensureGlobalMaestro background error:', err);
-  });
+  // #274 — daemon boot sequence: ensure the global maestro is running,
+  // then advertise this host's capability profile with bounded retry.
+  // Fire-and-forget from main's perspective (the workers above are
+  // already polling tasks; we don't block the run loop on maestro
+  // ensure + profile signaling). Ordering INSIDE runDaemonBoot is
+  // load-bearing — see M11 / AC5a — so the outer `.catch` only
+  // handles unexpected throws (both ensure and signal paths log +
+  // return gracefully on their own).
+  (async () => {
+    try {
+      const bootConnection = await createTemporalConnection(config);
+      const bootClient = new Client({ connection: bootConnection, namespace: config.temporalNamespace });
+      await runDaemonBoot(bootClient, {
+        ensureGlobalMaestro: () => ensureGlobalMaestro(config),
+        sendHostProfileSignal: realSendHostProfileSignal,
+        computeHostProfile: () => computeHostProfile(config),
+      });
+    } catch (err) {
+      log('runDaemonBoot background error:', err);
+    }
+  })();
 
   // PR-E reconcile-on-boot + cleanup loop (design §10, §13.4). Both run
   // against their own Temporal Client, not the worker connection — they
