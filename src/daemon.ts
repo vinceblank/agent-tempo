@@ -165,12 +165,19 @@ export function computeHostProfile(config: Config): HostProfile {
  */
 export function scrubHostProfile(raw: HostProfile): HostProfile {
   const stripPath = (s: string): string => {
-    // `path.basename` handles both POSIX and Win32 separators on any
-    // platform (it picks the right parser for the running runtime).
+    // Platform-independent basename: `path.basename` is runtime-bound —
+    // on POSIX it doesn't recognise `\` as a separator, so a Windows
+    // daemon's signal leaking `'C:\Users\alice\bin\claude.exe'` into
+    // a Linux-hosted global maestro would bypass the scrub entirely
+    // (CI caught exactly this on Ubuntu shard-2). Normalize first,
+    // then use `path.posix.basename` explicitly so the scrub is
+    // deterministic regardless of where the daemon or maestro runs.
+    //
     // Also strip a single trailing `.md` — player-type files are
     // shipped as e.g. `tempo-soloist.md` but the name should be just
     // `tempo-soloist` on the wire.
-    const base = path.basename(s);
+    const normalized = s.replace(/\\/g, '/');
+    const base = path.posix.basename(normalized);
     return base.endsWith('.md') ? base.slice(0, -3) : base;
   };
   const scrubList = (list: string[] | undefined): string[] | undefined =>
