@@ -38,7 +38,11 @@ import {
   maestroFetchPlayerMessagesUpdate,
   maestroFetchConductorHistoryUpdate,
   maestroGlobalSendCommandUpdate,
+  // #274 — host discovery
+  hostProfileSignal,
+  hostProfilesQuery,
 } from './maestro-signals';
+import type { HostProfile } from '../types';
 
 // ── Activity Proxies ──
 // Only proxy activities actually used in the workflow.
@@ -298,6 +302,11 @@ export async function claudeGlobalMaestroWorkflow(input: GlobalMaestroInput): Pr
   const recentMessages: MaestroRelayMessage[] = input.recentMessages ?? [];
   const events: MaestroEvent[] = input.events ?? [];
   const pendingCommands: MaestroPendingCommand[] = input.pendingCommands ?? [];
+  // #274 — host capability ledger. Plain `Record<hostname, HostProfile>`
+  // so CAN serialization is the default-converter happy path (Maps require
+  // a codec tweak). Lazy GC of stale hosts happens at the `listHosts` join
+  // site; the workflow itself just stores forever (or until CAN).
+  const hostProfiles: Record<string, HostProfile> = { ...(input.hostProfiles ?? {}) };
   let shutdownRequested = false;
   let actionQueued = false;
 
@@ -313,6 +322,34 @@ export async function claudeGlobalMaestroWorkflow(input: GlobalMaestroInput): Pr
     if (msgExcess > 0) recentMessages.splice(0, msgExcess);
   });
 
+  /**
+   * #274 — daemon boot signal carrying the host's capability profile.
+   *
+   * Validation policy per architect delta AC3c (M9): ONLY `hostname` is
+   * validated here (required, ≤64 chars, alphanumeric + `_-`). All other
+   * fields are stored opaquely — the per-field Zod guard lives at the
+   * `listHosts` join site in `src/utils/hosts.ts`, never at this
+   * handler. This keeps the workflow additive-compatible across daemon
+   * versions: a newer daemon can signal new fields and older maestros
+   * will still accept the payload; an older daemon's payload is accepted
+   * by a newer maestro without special-casing.
+   *
+   * The hostname regex is inlined (rather than importing from
+   * `src/utils/validation.ts`) to keep the workflow bundle's import
+   * surface narrow — it's pure constants either way.
+   */
+  setHandler(hostProfileSignal, (payload) => {
+    if (!payload || typeof payload !== 'object') return;
+    const hostname = (payload as { hostname?: unknown }).hostname;
+    if (typeof hostname !== 'string') return;
+    if (hostname.length === 0 || hostname.length > 64) return;
+    if (!/^[a-zA-Z0-9_-]+$/.test(hostname)) return;
+    // Cast is deliberate: `HostProfile` has an open `[extraField]: unknown`
+    // index signature, so the spread is semantically safe. TypeScript can't
+    // prove narrower optional fields from the spread alone.
+    hostProfiles[hostname] = { ...payload, hostname } as HostProfile;
+  });
+
   // ── Query Handlers ──
 
   setHandler(maestroEnsemblesQuery, () => knownEnsembles);
@@ -320,6 +357,8 @@ export async function claudeGlobalMaestroWorkflow(input: GlobalMaestroInput): Pr
   setHandler(maestroRecentMessagesQuery, () => recentMessages);
   setHandler(maestroEventsQuery, () => events);
   setHandler(maestroPendingCommandsQuery, () => pendingCommands);
+  // Return a defensive copy so callers can't mutate workflow state.
+  setHandler(hostProfilesQuery, () => ({ ...hostProfiles }));
 
   // ── Update Handlers (can await activities) ──
 
@@ -503,6 +542,11 @@ export async function claudeGlobalMaestroWorkflow(input: GlobalMaestroInput): Pr
         events,
         pendingCommands: pendingCommands.filter((c) => c.status === 'pending'),
         pollIntervalMs: input.pollIntervalMs,
+        // #274 — carry the capability ledger across the CAN boundary so
+        // hosts that signaled their profile in a prior execution don't
+        // disappear on the next one (they won't re-signal until the next
+        // daemon boot).
+        hostProfiles,
       });
     }
   }
