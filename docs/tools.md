@@ -9,7 +9,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `set_name` | Set a human-readable name for this session. |
 | `set_part` | Describe what you're working on. Visible to others via `ensemble`. |
 | `listen` | Manually check for pending messages. |
-| `recruit` | Spawn a new Claude Code session in a directory. Can recruit a conductor with `conductor: true`. |
+| `recruit` | Spawn a new Claude Code session in a directory. Can recruit a conductor with `conductor: true`. When `host` is set, validates the target daemon is live and supports the requested agent before spawning; pass `force: true` to bypass pre-flight (#274). |
 | `report` | Send updates to the conductor. No-op if no conductor exists. |
 | `schedule` | Create a one-shot or recurring schedule to cue a player. |
 | `unschedule` | Cancel a named schedule. |
