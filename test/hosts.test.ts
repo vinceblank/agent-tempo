@@ -82,7 +82,8 @@ describe('parseIdentity (#274 AC6d)', function () {
   it('returns null for opaque third-party identities (skipped silently)', function () {
     expect(parseIdentity('some-other-worker-identity')).to.equal(null);
     expect(parseIdentity('')).to.equal(null);
-    expect(parseIdentity('claude-tempo:too:few')).to.equal(null);
+    // Note: `claude-tempo:too:few` is malformed (3-segment), covered by the
+    // next test's rejection path — not a taxonomy-opaque case.
     expect(parseIdentity('abc@host')).to.equal(null); // non-numeric pid
     expect(parseIdentity('0@host')).to.equal(null); // pid must be > 0
   });

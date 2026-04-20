@@ -112,13 +112,9 @@ describe('scrubHostProfile (#274 AC5c / M10 — privacy)', function () {
     }
   });
 
-  it('strips path prefixes from availableAgentTypes', function () {
-    const out = scrubHostProfile({
-      hostname: 'h',
-      availableAgentTypes: ['/opt/runtimes/claude', 'copilot'],
-    });
-    expect(out.availableAgentTypes).to.deep.equal(['claude', 'copilot']);
-  });
+  // (Architect/QA trim: "strips path prefixes from availableAgentTypes" was
+  // subsumed by the INVARIANT test below, which covers both agentTypes and
+  // playerTypes against pathological input. Removed pre-PR.)
 
   // ── The invariant test. If this ever flakes, the privacy contract is
   //    broken and the signaled payload could leak usernames cross-ensemble.
@@ -213,20 +209,9 @@ describe('advertiseHostProfile retry behavior (#274 AC5b / M11)', function () {
     expect((result.lastError as Error).message).to.equal('perma-fail-3');
   });
 
-  it('respects a custom backoff list length (single-attempt mode)', async function () {
-    let calls = 0;
-    const sendSignal = async () => {
-      calls++;
-      throw new Error('perma-fail');
-    };
-    const result = await advertiseHostProfile(fakeClient, profile, {
-      retryBackoffsMs: [0],
-      log: () => {},
-      sendSignal,
-    });
-    expect(result.attempts).to.equal(1);
-    expect(calls).to.equal(1);
-  });
+  // (Architect + QA independently flagged: "respects a custom backoff list
+  // length (single-attempt mode)" is implicit from the retry-count tests
+  // above — removing pre-PR as agreed.)
 });
 
 // ────────────────────────────────────────────────────────────────────────

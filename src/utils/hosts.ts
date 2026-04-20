@@ -214,45 +214,19 @@ export async function listHosts(client: Client, opts: ListHostsOpts = {}): Promi
     describe(client, namespace, taskQueue, TASK_QUEUE_TYPE_ACTIVITY),
   ]);
 
-  // Parse identities and group by hostname+pid. Opaque identities drop out.
-  interface Key { hostname: string; pid: number }
-  const parsedByIdentity = new Map<string, ParsedIdentity & Key>();
-  const takePoller = (p: RawPoller) => {
-    const parsed = parseIdentity(p.identity);
-    if (!parsed) return null;
-    parsedByIdentity.set(p.identity, parsed);
-    return parsed;
-  };
-  for (const p of sharedWorkflow) takePoller(p);
-  for (const p of sharedActivity) takePoller(p);
-
-  const hostnames = Array.from(new Set(Array.from(parsedByIdentity.values()).map((p) => p.hostname)));
-  hostnames.sort();
-
-  // RPC 3 — per-host activity queue. Parallel across hostnames.
-  const perHostActivityMap = new Map<string, RawPoller[]>();
-  await Promise.all(
-    hostnames.map(async (hostname) => {
-      try {
-        const rows = await describe(client, namespace, hostTaskQueue(taskQueue, hostname), TASK_QUEUE_TYPE_ACTIVITY);
-        perHostActivityMap.set(hostname, rows);
-      } catch {
-        // Per-host-queue not registered yet → empty. Don't fail the whole call.
-        perHostActivityMap.set(hostname, []);
-      }
-    }),
-  );
-
-  // Profile fetch (guarded by maestro presence)
-  const profiles = await fetchProfiles(client).catch(() => null);
-
-  // ── Build InstanceInfo per (hostname, pid) ──
-  // Merge the three poller streams by `identity`; each daemon sets the
-  // same identity on both the shared-workflow and shared-activity pollers
-  // AND on the per-host-activity worker. If the hostname → pid is
-  // present in any stream, an InstanceInfo entry is emitted.
+  // ── Build InstanceInfo per (hostname, pid) as we consume each stream ──
+  // Each daemon sets the same identity on both the shared-workflow and
+  // shared-activity pollers AND on the per-host-activity worker, so the
+  // (hostname, pid) key merges naturally across streams. Opaque identities
+  // drop out of `parseIdentity` and are skipped silently (AC6d).
   const hostInstances = new Map<string, Map<number, InstanceInfo>>();
-  const markInstance = (hostname: string, pid: number, mutate: (i: InstanceInfo) => void, ident?: ParsedIdentity, poller?: RawPoller) => {
+  const markInstance = (
+    hostname: string,
+    pid: number,
+    flag: 'hasWorkflowWorker' | 'hasActivityWorker' | 'hasHostQueueWorker',
+    ident: ParsedIdentity,
+    poller: RawPoller,
+  ) => {
     let byPid = hostInstances.get(hostname);
     if (!byPid) {
       byPid = new Map();
@@ -262,35 +236,48 @@ export async function listHosts(client: Client, opts: ListHostsOpts = {}): Promi
     if (!inst) {
       inst = {
         pid,
-        version: ident?.version ?? 'unknown',
-        identity: poller?.identity ?? '',
-        lastAccessTime: poller?.lastAccessTimeIso ?? '',
+        version: ident.version,
+        identity: poller.identity,
+        lastAccessTime: poller.lastAccessTimeIso,
         hasWorkflowWorker: false,
         hasActivityWorker: false,
         hasHostQueueWorker: false,
-        ...(ident?.legacy ? { legacy: true as const } : {}),
+        ...(ident.legacy ? { legacy: true as const } : {}),
       };
       byPid.set(pid, inst);
-    } else if (poller && poller.lastAccessTimeMs > (Date.parse(inst.lastAccessTime) || 0)) {
-      // Keep the freshest timestamp across the three streams; helps tests
-      // and operators see the most recent signal-of-life for this pid.
-      inst.lastAccessTime = poller.lastAccessTimeIso;
-      inst.identity = poller.identity;
     }
-    mutate(inst);
+    inst[flag] = true;
   };
   const consume = (pollers: RawPoller[], flag: 'hasWorkflowWorker' | 'hasActivityWorker' | 'hasHostQueueWorker') => {
     for (const p of pollers) {
-      const ident = parsedByIdentity.get(p.identity) ?? parseIdentity(p.identity);
+      const ident = parseIdentity(p.identity);
       if (!ident) continue;
-      parsedByIdentity.set(p.identity, ident as ParsedIdentity & Key);
-      markInstance(ident.hostname, ident.pid, (i) => { i[flag] = true; }, ident, p);
+      markInstance(ident.hostname, ident.pid, flag, ident, p);
     }
   };
   consume(sharedWorkflow, 'hasWorkflowWorker');
   consume(sharedActivity, 'hasActivityWorker');
-  for (const hostname of hostnames) {
-    consume(perHostActivityMap.get(hostname) ?? [], 'hasHostQueueWorker');
+
+  // Hostnames discovered from the shared queues drive the per-host RPC fan-out.
+  const hostnames = Array.from(hostInstances.keys()).sort();
+
+  // RPC 3 — per-host activity queue. Parallel with the profile fetch.
+  const [perHostActivityRows, profiles] = await Promise.all([
+    Promise.all(
+      hostnames.map(async (hostname) => {
+        try {
+          const rows = await describe(client, namespace, hostTaskQueue(taskQueue, hostname), TASK_QUEUE_TYPE_ACTIVITY);
+          return [hostname, rows] as const;
+        } catch {
+          // Per-host-queue not registered yet → empty. Don't fail the whole call.
+          return [hostname, [] as RawPoller[]] as const;
+        }
+      }),
+    ),
+    fetchProfiles(client).catch(() => null),
+  ]);
+  for (const [, rows] of perHostActivityRows) {
+    consume(rows, 'hasHostQueueWorker');
   }
 
   // ── Build HostInfo per hostname ──
