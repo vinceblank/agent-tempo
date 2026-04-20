@@ -173,12 +173,20 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (arg === '--dry-run') {
       result.dryRun = true;
     } else if (arg === '--limit' && i + 1 < argv.length) {
-      const n = Number(argv[++i]);
-      if (Number.isInteger(n) && n >= 1) result.limit = n;
-      else {
-        out.error(`Invalid --limit: ${argv[i]}`);
+      const raw = argv[++i];
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 1) {
+        out.error(`Invalid --limit: ${raw}`);
         process.exit(1);
       }
+      // #270: cap at 100 to match the MCP Zod schema. Recall queries load
+      // the full inbox/sent history from the workflow; the cap bounds the
+      // worst-case payload across every surface. Use `--offset` to page.
+      if (n > 100) {
+        out.error(`--limit exceeds max (100). Use --offset N to page through more results.`);
+        process.exit(1);
+      }
+      result.limit = n;
     } else if (arg === '--offset' && i + 1 < argv.length) {
       const n = Number(argv[++i]);
       if (Number.isInteger(n) && n >= 0) result.offset = n;

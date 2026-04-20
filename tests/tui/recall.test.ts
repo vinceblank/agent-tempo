@@ -74,6 +74,17 @@ describe('parseRecallFlags', () => {
     const r = parseRecallFlags(['--preview', '0']);
     expect(r.error).toMatch(/Invalid --preview/);
   });
+
+  it('--limit 101 rejected with max=100 hint (#270)', () => {
+    const r = parseRecallFlags(['--limit', '101']);
+    // Exact message is shared with the CLI parser — tested for substring to
+    // catch both "exceeds max (100)" and the "--offset" workaround hint.
+    expect(r.error).toBe('--limit exceeds max (100). Use --offset N to page through more results.');
+  });
+
+  it('--limit 100 is still accepted (boundary)', () => {
+    expect(parseRecallFlags(['--limit', '100'])).toEqual({ limit: 100 });
+  });
 });
 
 // ── Handler integration ────────────────────────────────────────────────

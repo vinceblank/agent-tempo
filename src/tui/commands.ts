@@ -386,6 +386,14 @@ export function parseRecallFlags(args: string[]): ParsedRecallFlags {
       if (!Number.isFinite(n) || !Number.isInteger(n) || n < (key === 'offset' ? 0 : 1)) {
         return `Invalid ${name}: ${raw}`;
       }
+      // #270: cap --limit at 100 to match the MCP Zod schema. Recall queries
+      // load the full inbox/sent history from the workflow; the cap bounds
+      // the worst-case payload across every surface. Error message matches
+      // the CLI parser at `src/cli.ts` verbatim so operators see the same
+      // suggestion regardless of entry point.
+      if (key === 'limit' && n > 100) {
+        return `--limit exceeds max (100). Use --offset N to page through more results.`;
+      }
       out[key] = n;
       i += 2;
       return null;
