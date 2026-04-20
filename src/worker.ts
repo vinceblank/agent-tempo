@@ -14,6 +14,34 @@ const log = (...args: unknown[]) => console.error('[claude-tempo:worker]', ...ar
 
 const BUNDLE_PATH = path.resolve(__dirname, '..', 'workflow-bundle.js');
 
+/**
+ * #274 — deliberately set worker identity so host-discovery (`listHosts` in
+ * `src/utils/hosts.ts`) can parse pollers back into `hostname:pid:version`
+ * tuples without guessing at the SDK default (`<pid>@<hostname>`, which
+ * loses the version axis and is only informally guaranteed).
+ *
+ * Format: `claude-tempo:<hostname>:<pid>:<version>`. Colons are safe
+ * because the middle segments have their own validation:
+ *   - hostname passes `PLAYER_NAME_REGEX` on the signal side (≤64 chars,
+ *     no colons by construction on any platform the daemon supports)
+ *   - pid is numeric
+ *   - version is a semver-ish string (no colons)
+ *
+ * Legacy identities (`<pid>@<hostname>`) from pre-#274 daemons remain
+ * parseable at the join site — see `parseIdentity` in
+ * `src/utils/hosts.ts` for the dual-format tolerance.
+ */
+function workerIdentity(): string {
+  // Lazy-require so the test build (which compiles worker.ts into
+  // `dist-test/src/` where `../package.json` doesn't resolve) doesn't
+  // throw MODULE_NOT_FOUND at module-load time when daemon tests
+  // transitively import this file. `createWorkers` is only called from
+  // production code paths, so this runs against the real `dist/`
+  // layout where `../package.json` is the repo root.
+  const { version } = require('../package.json') as { version: string };
+  return `claude-tempo:${os.hostname()}:${process.pid}:${version}`;
+}
+
 async function getWorkflowBundle(): Promise<{ code: string }> {
   // Use pre-built bundle if it exists, otherwise bundle from source
   if (fs.existsSync(BUNDLE_PATH)) {
@@ -60,6 +88,7 @@ export async function createWorkers(config: Config): Promise<DualWorkers> {
     connection,
     namespace: config.temporalNamespace,
     taskQueue: config.taskQueue,
+    identity: workerIdentity(), // #274 — parseable claude-tempo:<host>:<pid>:<version>
     workflowBundle,
     shutdownGraceTime: SHUTDOWN_GRACE_TIME,
     shutdownForceTime: SHUTDOWN_FORCE_TIME,
@@ -84,6 +113,7 @@ export async function createWorkers(config: Config): Promise<DualWorkers> {
     connection: hostConnection,
     namespace: config.temporalNamespace,
     taskQueue: hostTaskQueue(config.taskQueue, os.hostname()),
+    identity: workerIdentity(), // #274 — same format, both pollers under one identity
     shutdownGraceTime: SHUTDOWN_GRACE_TIME,
     shutdownForceTime: SHUTDOWN_FORCE_TIME,
     activities: {

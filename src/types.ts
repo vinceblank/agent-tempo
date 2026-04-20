@@ -192,6 +192,94 @@ export interface AgentTypeInfo {
   allowedTools?: string[];
 }
 
+// ── Host profile / liveness types (#274) ────────────────────────────────
+// `HostProfile` is the capability snapshot each daemon advertises to the
+// global maestro at boot via the `hostProfile` signal. `HostInfo` +
+// `InstanceInfo` are the client-side join shapes returned by
+// `listHosts(client)` — they layer Temporal poller liveness on top of the
+// advertised profile. Live workflow wire type is `HostProfile`; everything
+// else is consumer-side.
+
+/**
+ * Capability snapshot advertised by a daemon at boot.
+ *
+ * Intentionally an OPEN schema: only `hostname` is required and validated
+ * at signal receipt. All other fields are optional and stored opaquely so
+ * the global maestro can accept payloads from daemons running newer or
+ * older versions without breaking. Per-field Zod validation happens at the
+ * `listHosts` join site, never at the workflow signal handler (see #274
+ * architect delta AC3c / M9).
+ *
+ * **Privacy contract (AC5c / M10 — HARD REQUIREMENT):** daemon-side scrub
+ * MUST strip absolute paths, env vars, and user-home directories before
+ * signaling. The global maestro is namespace-wide; a multi-tenant or
+ * multi-ensemble corporate setup would leak username-containing paths
+ * across ensembles if this is ever violated. `claudeBin` is basename only.
+ * `availableAgentTypes` is type names only.
+ */
+export interface HostProfile {
+  /** Required. Validated against PLAYER_NAME_REGEX at signal receipt. */
+  hostname: string;
+  /** Daemon package version string (e.g. `0.26.0-beta.7`). Optional — legacy daemons may omit. */
+  version?: string;
+  defaultAgent?: AgentType;
+  /** Agent type NAMES only. Never file paths — see privacy contract above. */
+  availableAgentTypes?: string[];
+  availablePlayerTypes?: string[];
+  /** Basename only (e.g. `'claude'`). Never absolute — see privacy contract above. */
+  claudeBin?: string;
+  platform?: NodeJS.Platform;
+  capabilities?: string[];
+  /**
+   * Open-schema escape hatch: unknown fields carried opaquely across
+   * daemon-version skew. Consumers MUST NOT rely on specific keys here
+   * without a Zod guard at read time.
+   */
+  [extraField: string]: unknown;
+}
+
+/**
+ * Single daemon-process instance observed by Temporal's poller registry.
+ * A `HostInfo` may carry ≥1 instance when multiple daemons run on the same
+ * hostname (e.g. different `CLAUDE_TEMPO_HOME` per user session).
+ */
+export interface InstanceInfo {
+  pid: number;
+  /** Parsed from worker identity. `'unknown'` for legacy-format identities (`<pid>@<hostname>`). */
+  version: string;
+  /** Raw `poller.identity` as Temporal returned it. */
+  identity: string;
+  /** ISO 8601. */
+  lastAccessTime: string;
+  hasWorkflowWorker: boolean;
+  hasActivityWorker: boolean;
+  /** `true` when the per-host activity queue (`claude-tempo-<hostname>`) has a live poller. Controls `HostInfo.recruitReady`. */
+  hasHostQueueWorker: boolean;
+  /** Set only when identity was in the legacy `<pid>@<hostname>` form. */
+  legacy?: true;
+}
+
+/**
+ * Joined liveness + capability view returned by `src/utils/hosts.ts`.
+ * `freshness === 'live'` iff any instance's `lastAccessTime` is within the
+ * `HOST_FRESHNESS_THRESHOLD_MS` window. `recruitReady` is `true` iff some
+ * instance has BOTH shared-activity AND per-host-activity pollers live —
+ * the minimum a recruit dispatch needs.
+ */
+export interface HostInfo {
+  hostname: string;
+  instances: InstanceInfo[];
+  recruitReady: boolean;
+  freshness: 'live' | 'stale';
+  profile?: HostProfile;
+  /**
+   * - `'fresh'` — profile present and the signaling daemon's parsed version matches a live identity
+   * - `'stale'` — profile present but identity/version disagrees (M13 reconciliation) or the signaling daemon is not currently polling
+   * - `'missing'` — daemon is live but no profile record exists (pre-HostProfile daemon, global maestro unreachable at boot, or global maestro absent)
+   */
+  profileStaleness: 'fresh' | 'stale' | 'missing';
+}
+
 export interface SessionInput {
   metadata: SessionMetadata;
   /** Restored from continue-as-new */

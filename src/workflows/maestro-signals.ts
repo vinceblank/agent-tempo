@@ -8,6 +8,7 @@ import type {
   EnsembleChatQuery,
   Message,
   SentMessage,
+  HostProfile,
 } from '../types';
 
 // Re-export types for convenience within workflow code
@@ -67,6 +68,22 @@ export const maestroSendCommandUpdate = defineUpdate<string, [{ text: string; so
 /** Notify the global Maestro of a relayed message (for Phase 2 push-based updates). */
 export const maestroNotifyMessageSignal = defineSignal<[MaestroRelayMessage]>('maestroNotifyMessage');
 
+/**
+ * #274 — daemon advertises its capability profile at boot.
+ *
+ * Payload typed as `Record<string, unknown>` at the wire boundary so the
+ * global maestro handler can accept additive fields from future daemon
+ * versions without breaking. Handler validates ONLY `hostname` (required,
+ * `PLAYER_NAME_REGEX`, ≤64 chars); all other fields stored opaquely. Per-
+ * field Zod validation happens at the `listHosts` join site in
+ * `src/utils/hosts.ts`, never here. See #274 architect delta AC3c (M9).
+ *
+ * Daemons MUST scrub PII before signaling (AC5c / M10) — claudeBin is
+ * basename only; availableAgentTypes is type names only; no absolute
+ * paths, env vars, or user-home fragments.
+ */
+export const hostProfileSignal = defineSignal<[Record<string, unknown>]>('hostProfile');
+
 // ── Global Maestro Queries ──
 
 /** Get the list of known ensembles. */
@@ -77,6 +94,20 @@ export const maestroPlayersByEnsembleQuery = defineQuery<Record<string, MaestroP
 
 /** Get recent messages across all ensembles (ring buffer, max 500). */
 export const maestroRecentMessagesQuery = defineQuery<MaestroRelayMessage[]>('maestroRecentMessages');
+
+/**
+ * #274 — the `hostname → HostProfile` map maintained by the global maestro.
+ *
+ * Returned as a plain `Record<string, HostProfile>` (not a `Map`) so the
+ * default Temporal payload converter serializes it without a codec tweak.
+ * The `src/utils/hosts.ts` join helper consumes this and reconstructs a
+ * `Map`-shaped view at the consumer boundary if callers find it useful.
+ *
+ * Consumers MUST treat the returned profiles as opaque beyond the
+ * `hostname` field — per-field validation happens at the join site, not
+ * at query time.
+ */
+export const hostProfilesQuery = defineQuery<Record<string, HostProfile>>('hostProfiles');
 
 // ── Global Maestro Updates ──
 

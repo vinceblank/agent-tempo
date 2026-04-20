@@ -172,13 +172,14 @@ Workflow update on a `claudeMaestroWorkflow` instance (transactional, returns a 
 
 ---
 
-## Global Maestro Signal
+## Global Maestro Signals
 
-Signal sent **to** a `claudeGlobalMaestroWorkflow` instance (`claude-maestro-global`).
+Signals sent **to** a `claudeGlobalMaestroWorkflow` instance (`claude-maestro-global`).
 
 | Signal Name | Payload | Description |
 |-------------|---------|-------------|
 | `maestroNotifyMessage` | `MaestroRelayMessage` | Push-notify the global Maestro of a relayed message. Used for push-based message notifications. |
+| `hostProfile` | `Record<string, unknown>` | **#274.** Daemon advertises its capability profile at boot: `hostname` (required), plus optional `version`, `defaultAgent`, `availableAgentTypes`, `availablePlayerTypes`, `claudeBin` (basename only), `platform`, `capabilities`. Open schema — additive fields beyond the documented set are stored opaquely so older maestros survive newer daemons. Handler validates only `hostname` (PLAYER_NAME_REGEX, ≤64 chars). Full typed shape: see `HostProfile` below. |
 
 ---
 
@@ -191,6 +192,7 @@ Queries on a `claudeGlobalMaestroWorkflow` instance (synchronous, read-only).
 | `maestroEnsembles` | `string[]` | All ensemble names currently known to the global Maestro. |
 | `maestroPlayersByEnsemble` | `Record<string, MaestroPlayerInfo[]>` | All players grouped by ensemble. Each `MaestroPlayerInfo` includes an `ensemble` field. |
 | `maestroRecentMessages` | `MaestroRelayMessage[]` | Ring buffer of recent messages relayed across all ensembles (max 500). |
+| `hostProfiles` | `Record<string, HostProfile>` | **#274.** Map of `hostname → HostProfile` advertised by daemons via the `hostProfile` signal. Carried through CAN with the rest of maestro state. Joined with Temporal poller liveness by `src/utils/hosts.ts` to produce the consumer-facing `HostInfo[]`. |
 
 ---
 
@@ -275,6 +277,24 @@ Types referenced above are defined in `src/types.ts` and re-exported from `src/w
 | `createdAt` | `string` | ISO timestamp of stage creation. |
 | `createdBy` | `string` | Player ID of the conductor that created the stage. |
 | `completedAt` | `string?` | ISO timestamp of completion, failure, or cancellation. |
+
+### `HostProfile` (#274)
+
+Advertised by daemons via the `hostProfile` signal. **Open schema** — consumers MUST NOT rely on specific keys beyond `hostname` without a per-field guard.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `hostname` | `string` | **Required.** Validated against `PLAYER_NAME_REGEX` (≤64 chars). |
+| `version` | `string?` | Daemon package version string (e.g. `"0.26.0-beta.7"`). |
+| `defaultAgent` | `'claude' \| 'copilot'` *(optional)* | Default agent type used for recruits omitting `--agent`. |
+| `availableAgentTypes` | `string[]?` | Agent type **names** only (no file paths — privacy scrub). |
+| `availablePlayerTypes` | `string[]?` | Player type names the daemon can resolve via project/user/shipped tiers. |
+| `claudeBin` | `string?` | Basename only (e.g. `"claude"`). **Never** absolute — privacy scrub. |
+| `platform` | `NodeJS.Platform?` | Reported from `process.platform`. |
+| `capabilities` | `string[]?` | Free-form capability flags (future extension). |
+| `[extraField]` | `unknown` | Additive open-schema escape hatch for forward compatibility. |
+
+Privacy contract: daemons MUST scrub absolute paths, env values, and user directories before signaling. See `src/daemon.ts` `scrubHostProfile` + `test/daemon-boot.test.ts` scrub invariant.
 
 ### `RecruitOutboxEntry` (selected fields)
 
