@@ -1260,7 +1260,7 @@ async function handleRestore(
     } else if (conductorOutcome.reason === 'spawnFailed') {
       commitStatic(dispatch, 'error', `  Conductor spawn failed: ${conductorOutcome.error}`);
     }
-    // `alreadyLive` + `noConductorRecord` are silent — no action needed.
+    // `alreadyLive` is silent — no action needed.
   } catch (err) {
     commitStatic(dispatch, 'error', `\u2717 Restore failed: ${err instanceof Error ? err.message : String(err)}`);
   }

@@ -12,7 +12,6 @@ import type { TempoClient } from './interface';
 
 export type EnsureConductorSpawnedOutcome =
   | { spawned: false; reason: 'alreadyLive' }
-  | { spawned: false; reason: 'noConductorRecord' }
   | { spawned: true }
   | { spawned: false; reason: 'spawnFailed'; error: string };
 

@@ -1172,6 +1172,22 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           },
         });
       }
+      // Mirror the `/restore` slash two-op: ensure a conductor terminal is
+      // live so the home-view restore path never strands the user on a
+      // reattached-but-conductor-less ensemble.
+      const { ensureConductorSpawned } = await import('../client/ensure-conductor-spawned');
+      const conductorOutcome = await ensureConductorSpawned(target, api);
+      if (!conductorOutcome.spawned && conductorOutcome.reason === 'spawnFailed') {
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: {
+            id: nextStaticId(),
+            type: 'error',
+            content: `Conductor spawn failed for "${target}": ${conductorOutcome.error}`,
+            timestamp: Date.now(),
+          },
+        });
+      }
       dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: target });
     } catch (err) {
       dispatch({
