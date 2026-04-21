@@ -28,6 +28,7 @@ import {
   destroyUpdate,
   requestDetachSignal,
   releaseHeldSignal,
+  setPausedSignal,
 } from '../workflows/signals';
 import { resolveSession, scanEnsembleSessions } from '../activities/resolve';
 import { restoreOrphansOnce, type RestoreOrphansSummary } from '../reconcile/orphans';
@@ -436,14 +437,14 @@ export function createTempoClient(client: Client): TempoClient {
     async pause(ensemble) {
       await Promise.all([
         pauseMaestroAndScheduler(client, ensemble),
-        signalAllSessions(client, ensemble, 'setPaused', true),
+        signalAllSessions(client, ensemble, setPausedSignal.name, true),
       ]);
     },
 
     async play(ensemble, opts = {}) {
       const [, unpaused] = await Promise.all([
         unpauseMaestroAndScheduler(client, ensemble),
-        signalAllSessions(client, ensemble, 'setPaused', false),
+        signalAllSessions(client, ensemble, setPausedSignal.name, false),
       ]);
       if (opts.release === true && unpaused.sent > 0) {
         // Fan out releaseHeld AFTER everyone is unpaused so no session

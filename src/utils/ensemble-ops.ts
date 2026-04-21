@@ -17,6 +17,8 @@
 import type { Client } from '@temporalio/client';
 import { maestroWorkflowId, schedulerWorkflowId } from '../config';
 import { scanEnsembleSessions } from '../activities/resolve';
+import { maestroSetPausedSignal } from '../workflows/maestro-signals';
+import { setSchedulerPausedSignal } from '../workflows/scheduler-signals';
 
 /**
  * Result of a pause/unpause toggle. Each flag reflects whether the signal
@@ -52,8 +54,8 @@ async function toggleMaestroAndScheduler(
   // Two independent RPCs — run them in parallel. Each catches its own
   // error so one missing workflow doesn't block the other's state change.
   const [maestro, scheduler] = await Promise.all([
-    safeSignal(client, maestroWorkflowId(ensemble), 'maestroSetPaused', paused),
-    safeSignal(client, schedulerWorkflowId(ensemble), 'setSchedulerPaused', paused),
+    safeSignal(client, maestroWorkflowId(ensemble), maestroSetPausedSignal.name, paused),
+    safeSignal(client, schedulerWorkflowId(ensemble), setSchedulerPausedSignal.name, paused),
   ]);
   return { maestro, scheduler };
 }

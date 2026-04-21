@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config } from '../config';
-import { releaseHeldSignal } from '../workflows/signals';
+import { releaseHeldSignal, setPausedSignal } from '../workflows/signals';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { unpauseMaestroAndScheduler, signalAllSessions } from '../utils/ensemble-ops';
 
@@ -28,7 +28,7 @@ export function registerPlayTool(
         // Unpause everything in parallel: maestro + scheduler + every session.
         const [toggle, sessions] = await Promise.all([
           unpauseMaestroAndScheduler(client, config.ensemble),
-          signalAllSessions(client, config.ensemble, 'setPaused', false),
+          signalAllSessions(client, config.ensemble, setPausedSignal.name, false),
         ]);
 
         // `releaseHeld` is idempotent — safe to fan out to everyone. Keep it

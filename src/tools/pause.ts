@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config } from '../config';
+import { setPausedSignal } from '../workflows/signals';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { pauseMaestroAndScheduler, signalAllSessions } from '../utils/ensemble-ops';
 
@@ -21,7 +22,7 @@ export function registerPauseTool(
       try {
         const [toggle, sessions] = await Promise.all([
           pauseMaestroAndScheduler(client, config.ensemble),
-          signalAllSessions(client, config.ensemble, 'setPaused', true),
+          signalAllSessions(client, config.ensemble, setPausedSignal.name, true),
         ]);
 
         const bits: string[] = [
