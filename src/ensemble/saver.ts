@@ -95,9 +95,11 @@ export async function saveLineup(
     // No scheduler running or no schedules
   }
 
+  // An empty `{}` satisfies the schema when no conductor session is live;
+  // downstream consumers apply the field-level defaults.
   const lineup: EnsembleLineup = {
     name: ensemble,
-    conductor,
+    conductor: conductor ?? {},
     players,
     ...(schedules.length > 0 ? { schedules } : {}),
   };

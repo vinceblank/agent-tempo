@@ -171,6 +171,7 @@ describe('agent-types', function () {
       const lineupDir = join(TEST_DIR, 'lineups');
       createLineupFile(lineupDir, 'test.yaml', [
         'name: test-lineup',
+        'conductor: {}',
         'players:',
         '  - name: arch',
         '    type: tempo-composer',
@@ -193,6 +194,7 @@ describe('agent-types', function () {
       const lineupDir = join(TEST_DIR, 'lineups');
       createLineupFile(lineupDir, 'bad.yaml', [
         'name: bad-lineup',
+        'conductor: {}',
         'players:',
         '  - name: mystery',
         '    type: nonexistent-agent',
@@ -218,6 +220,7 @@ describe('agent-types', function () {
       const lineupDir = join(TEST_DIR, 'lineups');
       createLineupFile(lineupDir, 'restricted.yaml', [
         'name: restricted-lineup',
+        'conductor: {}',
         'players:',
         '  - name: reader',
         '    type: read-only-type',
@@ -249,6 +252,7 @@ describe('agent-types', function () {
       const lineupDir = join(TEST_DIR, 'lineups');
       createLineupFile(lineupDir, 'empty-override.yaml', [
         'name: empty-override-lineup',
+        'conductor: {}',
         'players:',
         '  - name: worker',
         '    type: empty-tools-type',
@@ -270,6 +274,7 @@ describe('agent-types', function () {
       const lineupDir = join(TEST_DIR, 'lineups');
       createLineupFile(lineupDir, 'override.yaml', [
         'name: override-lineup',
+        'conductor: {}',
         'players:',
         '  - name: reader',
         '    type: read-only-type',
@@ -291,6 +296,7 @@ describe('agent-types', function () {
       const lineupDir = join(TEST_DIR, 'lineups');
       createLineupFile(lineupDir, 'direct-tools.yaml', [
         'name: direct-tools-lineup',
+        'conductor: {}',
         'players:',
         '  - name: custom',
         '    allowedTools: [Read, WebFetch]',
@@ -310,6 +316,7 @@ describe('agent-types', function () {
       const lineupDir = join(TEST_DIR, 'lineups');
       createLineupFile(lineupDir, 'plain.yaml', [
         'name: plain-lineup',
+        'conductor: {}',
         'players:',
         '  - name: alice',
         '  - name: bob',

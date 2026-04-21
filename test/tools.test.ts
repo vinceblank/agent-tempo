@@ -676,11 +676,12 @@ describe('load_lineup conductor section', function () {
     expect(schedulerPause, 'legacy path must not pause the scheduler').to.be.undefined;
   });
 
-  it('sends hold standby to conductor even when lineup has no conductor section', async function () {
-    // Lineup with only a players section — no `conductor:` block
-    const lineupPath = join(tmpDir, 'test-hold-no-conductor-section.yaml');
+  it('sends hold standby to conductor with a bare conductor section (no instructions)', async function () {
+    // Bare `conductor: {}` block — no instructions to deliver.
+    const lineupPath = join(tmpDir, 'test-hold-bare-conductor.yaml');
     writeFileSync(lineupPath, [
       'name: test-hold-no-cond',
+      'conductor: {}',
       'players:',
       '  - name: alice',
       '    workDir: /tmp/test',

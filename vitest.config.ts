@@ -11,7 +11,12 @@ import { defineConfig } from 'vitest/config';
  */
 export default defineConfig({
   test: {
-    include: ['tests/tui/**/*.test.ts', 'tests/client/**/*.test.ts'],
+    include: [
+      'tests/tui/**/*.test.ts',
+      'tests/client/**/*.test.ts',
+      'tests/ensemble/**/*.test.ts',
+      'tests/config/**/*.test.ts',
+    ],
     environment: 'node',
     globals: false,
     // Keep these tests fast — no Ink, no Temporal, no I/O beyond mocks.
