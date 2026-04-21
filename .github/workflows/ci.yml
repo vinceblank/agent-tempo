@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/285-tui-first-maestro]
   pull_request:
-    branches: [main]
+    branches: [main, feat/285-tui-first-maestro]
 
 concurrency:
   group: ci-${{ github.ref }}
