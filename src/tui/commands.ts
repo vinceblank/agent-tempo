@@ -1505,3 +1505,81 @@ export const SUBCOMMAND_MAP: Record<string, string[]> = {
   lineup: ['load', 'save'],
   ensemble: ['save', 'list', 'show'],
 };
+
+/**
+ * Classify the current input for palette-autocomplete purposes.
+ *
+ * The TUI palette is visible in three modes:
+ *   - `command`: user is typing `/` + partial command name (no space yet)
+ *   - `player` : user is typing `@` + partial player name (no space yet)
+ *   - `player-arg`: user typed a PLAYER_PARAM_COMMAND followed by a space,
+ *     and is now typing the first positional argument (a player name)
+ *
+ * Returns `null` when the input does not match any palette-eligible shape
+ * (e.g. plain chat, or a second positional arg).
+ *
+ * Pure function — safe to call from React render and unit tests.
+ */
+export type PaletteMode = 'command' | 'player' | 'player-arg';
+
+export interface PaletteContext {
+  mode: PaletteMode;
+  /** Lowercased partial token being completed (may be empty). */
+  partial: string;
+  /**
+   * Prefix of the current input that should be preserved when the user
+   * selects a palette item. The selected name is appended to this prefix.
+   * For `command`/`player` modes this is always `'/'` or `'@'`.
+   * For `player-arg` mode this is `/<cmd> ` (note trailing space).
+   */
+  replacePrefix: string;
+}
+
+export function classifyPaletteInput(raw: string): PaletteContext | null {
+  const trimmed = raw.trimStart();
+  if (!trimmed) return null;
+
+  // Command-name completion: "/rec"
+  if (trimmed.startsWith('/') && !trimmed.includes(' ')) {
+    return { mode: 'command', partial: trimmed.slice(1).toLowerCase(), replacePrefix: '/' };
+  }
+
+  // @-player completion: "@al"
+  if (trimmed.startsWith('@') && !trimmed.includes(' ')) {
+    return { mode: 'player', partial: trimmed.slice(1).toLowerCase(), replacePrefix: '@' };
+  }
+
+  // Player-arg completion: "/restart co"
+  if (trimmed.startsWith('/') && trimmed.includes(' ')) {
+    const spaceIdx = trimmed.indexOf(' ');
+    const cmd = trimmed.slice(1, spaceIdx).toLowerCase();
+    const afterCmd = trimmed.slice(spaceIdx + 1);
+    // Only surface palette for the FIRST positional arg (no further space yet).
+    if (afterCmd.includes(' ')) return null;
+    if (PLAYER_PARAM_COMMANDS.has(cmd)) {
+      return {
+        mode: 'player-arg',
+        partial: afterCmd.toLowerCase(),
+        replacePrefix: `/${cmd} `,
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Filter a list of player names by a partial, using prefix + segment match
+ * (e.g. partial `co` matches `conductor` and `tempo-composer`).
+ *
+ * Pure function — safe to call from React render and unit tests.
+ */
+export function filterPlayerNames(names: readonly string[], partial: string): string[] {
+  const lower = partial.toLowerCase();
+  if (!lower) return [...names];
+  return names.filter((n) => {
+    const l = n.toLowerCase();
+    if (l === lower) return false;
+    return l.startsWith(lower) || l.split('-').some((seg) => seg.startsWith(lower));
+  });
+}

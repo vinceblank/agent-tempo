@@ -71,7 +71,7 @@ import { ConversationStream } from './components/ConversationStream';
 import { PlayerDetailView } from './components/PlayerDetailView';
 import { Picker } from './components/Picker';
 import type { PickerItem } from './components/Picker';
-import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames, PLAYER_PARAM_COMMANDS, SUBCOMMAND_MAP } from './commands';
+import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames, PLAYER_PARAM_COMMANDS, SUBCOMMAND_MAP, classifyPaletteInput, filterPlayerNames } from './commands';
 import { removedSlashCommandHelp } from './removed-commands';
 import { THEME } from './utils/theme';
 import { phaseToLabel, phaseToColor, phaseToIconName } from './utils/format';
@@ -525,37 +525,36 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     })),
   []);
 
-  // Palette filter state — updated via onInputChange ref callback (no dispatch per keystroke)
-  const [paletteFilter, setPaletteFilter] = useState('');
+  // Palette filter state — updated via onInputChange ref callback (no dispatch per keystroke).
+  // Stores the full PaletteContext (mode + partial + replacePrefix) so the palette can
+  // show player names for `/restart <partial>`-style player-arg inputs, not just bare
+  // `/cmd` and `@name` inputs.
+  const [paletteCtx, setPaletteCtx] = useState<ReturnType<typeof classifyPaletteInput>>(null);
   const handleInputChange = useCallback((value: string) => {
     inputValueRef.current = value;
-    const trimmed = value.trimStart();
-    if ((trimmed.startsWith('/') || trimmed.startsWith('@')) && !trimmed.includes(' ')) {
-      setPaletteFilter(trimmed.toLowerCase());
-    } else {
-      setPaletteFilter(prev => prev === '' ? prev : '');
-    }
+    const next = classifyPaletteInput(value);
+    // Reference-equal no-op avoidance: only dispatch when mode/partial actually changed.
+    setPaletteCtx(prev => {
+      if (prev === next) return prev;
+      if (prev && next && prev.mode === next.mode && prev.partial === next.partial && prev.replacePrefix === next.replacePrefix) {
+        return prev;
+      }
+      return next;
+    });
   }, []);
 
   // Player commands and subcommand map imported from commands.ts
 
-  const paletteIsPlayerMode = paletteFilter.startsWith('@');
-
   const filteredPaletteCommands = useMemo(() => {
-    if (!state.paletteVisible) return [];
-    if (paletteIsPlayerMode) {
-      const partial = paletteFilter.slice(1); // strip @
-      return playerNamesList
-        .filter(n => {
-          const lower = n.toLowerCase();
-          return !partial || lower.startsWith(partial) || lower.split('-').some(seg => seg.startsWith(partial));
-        })
-        .map(n => ({ name: n, usage: `@${n}`, description: '' }));
+    if (!state.paletteVisible || !paletteCtx) return [];
+    if (paletteCtx.mode === 'player' || paletteCtx.mode === 'player-arg') {
+      return filterPlayerNames(playerNamesList, paletteCtx.partial)
+        .map(n => ({ name: n, usage: `${paletteCtx.replacePrefix}${n}`, description: '' }));
     }
-    const cmdFilter = paletteFilter.startsWith('/') ? paletteFilter.slice(1) : paletteFilter;
-    if (!cmdFilter) return allPaletteCommands;
-    return allPaletteCommands.filter(c => c.name.startsWith(cmdFilter));
-  }, [state.paletteVisible, paletteFilter, paletteIsPlayerMode, allPaletteCommands, playerNamesList]);
+    // command mode
+    if (!paletteCtx.partial) return allPaletteCommands;
+    return allPaletteCommands.filter(c => c.name.startsWith(paletteCtx.partial));
+  }, [state.paletteVisible, paletteCtx, allPaletteCommands, playerNamesList]);
 
   // Clamp palette index
   const clampedPaletteIndex = Math.min(state.paletteIndex, Math.max(0, filteredPaletteCommands.length - 1));
@@ -575,15 +574,18 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   }, [state.paletteIndex, filteredPaletteCommands.length]);
 
   const handlePaletteSelect = useCallback(() => {
-    if (filteredPaletteCommands.length > 0) {
+    if (filteredPaletteCommands.length > 0 && paletteCtx) {
       const selected = filteredPaletteCommands[clampedPaletteIndex];
-      const prefix = paletteIsPlayerMode ? '@' : '/';
-      const value = `${prefix}${selected.name} `;
+      // replacePrefix already carries the right leading characters:
+      //   command mode    → '/'         → `${/}recruit `
+      //   player mode     → '@'         → `${@}conductor `
+      //   player-arg mode → '/restart ' → `${/restart }conductor `
+      const value = `${paletteCtx.replacePrefix}${selected.name} `;
       promptRef.current?.setValue(value);
       inputValueRef.current = value;
       dispatch({ type: 'HIDE_PALETTE' });
     }
-  }, [filteredPaletteCommands, clampedPaletteIndex, paletteIsPlayerMode]);
+  }, [filteredPaletteCommands, clampedPaletteIndex, paletteCtx]);
 
   // ── Command submission handler ──
   const handleSubmit = useCallback(async (input: string) => {
@@ -1641,7 +1643,8 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       ? React.createElement(CommandPalette, {
           commands: filteredPaletteCommands,
           selectedIndex: clampedPaletteIndex,
-          prefix: paletteIsPlayerMode ? '@' : '/',
+          // Display prefix mirrors what the user's input would become on select.
+          prefix: paletteCtx?.replacePrefix ?? '/',
         })
       : null,
     ), // closes live area Box

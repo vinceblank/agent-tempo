@@ -6,7 +6,7 @@
  * Issue #105, Phase 1. No Ink — pure-logic tests only.
  */
 import { describe, it, expect } from 'vitest';
-import { filterPaletteCommands } from '../../src/tui/commands';
+import { filterPaletteCommands, classifyPaletteInput, filterPlayerNames, PLAYER_PARAM_COMMANDS } from '../../src/tui/commands';
 import { initialState, tuiReducer, type TuiState } from '../../src/tui/store';
 
 interface PCmd { name: string; usage: string; description: string }
@@ -110,5 +110,100 @@ describe('tuiReducer — palette index transitions', () => {
     const out = tuiReducer(s, { type: 'PALETTE_UP' });
     expect(out.paletteIndex).toBe(0);
     expect(out.paletteIndex).not.toBe(-1);
+  });
+});
+
+describe('classifyPaletteInput (#306 player-arg autocomplete)', () => {
+  it('returns null for empty / whitespace / plain chat input', () => {
+    expect(classifyPaletteInput('')).toBeNull();
+    expect(classifyPaletteInput('   ')).toBeNull();
+    expect(classifyPaletteInput('hello world')).toBeNull();
+  });
+
+  it('classifies "/rec" as command mode with partial "rec"', () => {
+    const ctx = classifyPaletteInput('/rec');
+    expect(ctx).toEqual({ mode: 'command', partial: 'rec', replacePrefix: '/' });
+  });
+
+  it('classifies bare "/" as command mode with empty partial', () => {
+    expect(classifyPaletteInput('/')).toEqual({ mode: 'command', partial: '', replacePrefix: '/' });
+  });
+
+  it('classifies "@al" as player mode with partial "al"', () => {
+    expect(classifyPaletteInput('@al')).toEqual({ mode: 'player', partial: 'al', replacePrefix: '@' });
+  });
+
+  it('classifies "/restart " as player-arg mode with empty partial', () => {
+    const ctx = classifyPaletteInput('/restart ');
+    expect(ctx).toEqual({ mode: 'player-arg', partial: '', replacePrefix: '/restart ' });
+  });
+
+  it('classifies "/restart co" as player-arg mode with partial "co"', () => {
+    expect(classifyPaletteInput('/restart co')).toEqual({
+      mode: 'player-arg',
+      partial: 'co',
+      replacePrefix: '/restart ',
+    });
+  });
+
+  it('classifies every PLAYER_PARAM_COMMAND after a space', () => {
+    for (const cmd of PLAYER_PARAM_COMMANDS) {
+      const ctx = classifyPaletteInput(`/${cmd} `);
+      expect(ctx, `missing palette mode for /${cmd} <space>`).not.toBeNull();
+      expect(ctx!.mode).toBe('player-arg');
+      expect(ctx!.replacePrefix).toBe(`/${cmd} `);
+    }
+  });
+
+  it('does NOT surface palette for non-player-param commands after a space', () => {
+    // `/recruit foo` is free-form — recruit name, not a picker.
+    expect(classifyPaletteInput('/recruit foo')).toBeNull();
+    // `/cue alice hello` is also free-form.
+    expect(classifyPaletteInput('/cue alice hello')).toBeNull();
+  });
+
+  it('does NOT surface palette for second positional arg (after two spaces)', () => {
+    // Only the first arg (a player name) is completed. Subsequent args are
+    // free-form (e.g. worktree create <name> — the name is typed by the user).
+    expect(classifyPaletteInput('/worktree create foo')).toBeNull();
+    expect(classifyPaletteInput('/restart alice extra')).toBeNull();
+  });
+
+  it('lowercases the partial', () => {
+    expect(classifyPaletteInput('/RESTART Co')!.partial).toBe('co');
+    expect(classifyPaletteInput('/RECRUIT')!.partial).toBe('recruit');
+  });
+
+  it('ignores leading whitespace before the /', () => {
+    expect(classifyPaletteInput('  /restart ')!.mode).toBe('player-arg');
+  });
+});
+
+describe('filterPlayerNames (#306)', () => {
+  const names = ['conductor', 'tempo-composer', 'tempo-soloist', 'alice'];
+
+  it('empty partial returns all names', () => {
+    expect(filterPlayerNames(names, '')).toEqual(names);
+  });
+
+  it('prefix match wins', () => {
+    expect(filterPlayerNames(names, 'con')).toEqual(['conductor']);
+  });
+
+  it('segment match across hyphens (co matches tempo-composer)', () => {
+    // `co` matches both `conductor` (prefix) and `tempo-composer` (segment).
+    expect(filterPlayerNames(names, 'co')).toEqual(['conductor', 'tempo-composer']);
+  });
+
+  it('exact match is excluded (nothing left to complete)', () => {
+    expect(filterPlayerNames(names, 'conductor')).toEqual([]);
+  });
+
+  it('is case-insensitive', () => {
+    expect(filterPlayerNames(names, 'CON')).toEqual(['conductor']);
+  });
+
+  it('returns empty when nothing matches', () => {
+    expect(filterPlayerNames(names, 'zzz')).toEqual([]);
   });
 });
