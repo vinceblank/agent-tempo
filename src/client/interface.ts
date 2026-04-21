@@ -19,6 +19,7 @@ import type {
   AttachmentInfo,
   HostInfo,
 } from '../types';
+import type { RestoreOrphansSummary } from '../reconcile/orphans';
 
 // ── Recall (#128) ──
 
@@ -57,6 +58,38 @@ export interface RestartClientResult {
   entryId: string;
 }
 
+// ── #287: ensemble-scope verb summaries ──
+
+/** Per-target outcome returned by `shutdown`. */
+export interface EnsembleShutdownDetail {
+  playerId: string;
+  outcome: 'detaching' | 'skipped-self' | 'failed';
+  error?: string;
+}
+
+export interface EnsembleShutdownSummary {
+  detached: number;
+  skipped: number;
+  failed: number;
+  maestroPaused: boolean;
+  schedulerPaused: boolean;
+  details: EnsembleShutdownDetail[];
+}
+
+/** Per-target outcome returned by ensemble-scope `destroy`. */
+export interface EnsembleDestroyDetail {
+  target: string;
+  outcome: 'destroyed' | 'terminated' | 'skipped-self' | 'failed';
+  error?: string;
+}
+
+export interface EnsembleDestroySummary {
+  destroyed: number;
+  terminated: number;
+  failed: number;
+  details: EnsembleDestroyDetail[];
+}
+
 // ── Public Types ──
 
 export interface EnsembleSummary {
@@ -89,8 +122,35 @@ export interface TempoClient {
   restart(ensemble: string, playerId: string, opts?: RestartClientOpts): Promise<RestartClientResult>;
   /** PR-D: Gracefully detach a player's adapter. Workflow survives in `detached`. */
   detach(ensemble: string, playerId: string, deadlineMs?: number): Promise<void>;
-  /** PR-D: Terminally destroy a player's workflow. */
-  destroy(ensemble: string, playerId: string, reason?: string): Promise<void>;
+  /**
+   * #287: Terminally destroy a workflow. Single-player when `playerId` is
+   * given; ensemble-scope (peer sessions → scheduler → maestro → conductor)
+   * when `playerId` is omitted. Ensemble-scope returns a count summary.
+   */
+  destroy(ensemble: string, playerId?: string, reason?: string): Promise<void | EnsembleDestroySummary>;
+  /**
+   * #287: Pause every session in the ensemble + scheduler + maestro. MCP
+   * counterpart of the `pause` tool. Replaces the v0.26 `pauseEnsemble` shape.
+   */
+  pause(ensemble: string): Promise<void>;
+  /**
+   * #287: Unpause every session + scheduler + maestro. `release: true` also
+   * fans out `releaseHeld` so any held sessions deliver their buffered task
+   * messages. MCP counterpart of the `play` tool.
+   */
+  play(ensemble: string, opts?: { release?: boolean }): Promise<void>;
+  /**
+   * #287: Graceful ensemble teardown — fan-out detach + pause scheduler +
+   * pause maestro. Workflows survive in `detached`; pair with `restore`.
+   */
+  shutdown(ensemble: string, opts?: { deadlineMs?: number; reason?: string }): Promise<EnsembleShutdownSummary>;
+  /**
+   * #287: Bring the ensemble back up after `shutdown`. Reattaches all local
+   * orphans (delegates to the shared `restoreOrphansOnce` helper) and
+   * unpauses the scheduler + maestro. Does NOT spawn a conductor terminal
+   * — CLI owns that (design #285 S4).
+   */
+  restore(ensemble: string): Promise<RestoreOrphansSummary>;
   /** PR-D: Migrate a player to a different host — sugar for restart({host}). */
   migrate(ensemble: string, playerId: string, host: string, opts?: Omit<RestartClientOpts, 'host'>): Promise<RestartClientResult>;
   /** PR-D: Query a player's V2 attachment lifecycle state. */
