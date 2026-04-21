@@ -13,11 +13,19 @@ import { App } from './App';
 import { isTerminalLargeEnough, MIN_COLUMNS, MIN_ROWS } from './utils/platform';
 import { enterFullscreen, exitFullscreen, registerFullscreenCleanup } from './utils/fullscreen';
 import { isDaemonRunning, startDaemon } from '../cli/daemon';
+import type { BootstrapResult } from '../cli/startup';
 
 export interface TuiOpts {
   config: Config;
   /** If provided, start in single-ensemble view. If omitted, start in home (multi-ensemble) view. */
   ensemble?: string;
+  /**
+   * #289: pre-computed bootstrap result fed in from the CLI default path.
+   * When present, the TUI skips its own daemon/connection probing and
+   * hands the result straight to HomeView as initial props (S5 / #290).
+   * Absent for the subcommand paths that don't run bootstrap.
+   */
+  bootstrap?: BootstrapResult;
 }
 
 export async function run(opts: TuiOpts): Promise<void> {
