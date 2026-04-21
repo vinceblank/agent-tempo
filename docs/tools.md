@@ -34,15 +34,25 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `stages` | List stages and their status. Conductor only. |
 | `cancel_stage` | Cancel an active stage by name. Conductor only. |
 | `release` | Release held player sessions — unlocks their outboxes and delivers deferred task messages. Omit `player` to release all held sessions. |
-| `pause_ensemble` | Pause all sessions in the ensemble: locks outbox dispatch and pauses the scheduler. `destroy` commands still go through. |
-| `resume_ensemble` | Resume a paused ensemble — unlocks outbox dispatch and resumes the scheduler. Buffered outbox entries are dispatched. Pass `release: true` to also release any held sessions (deliver deferred task messages and unlock their outboxes) in the same call — idempotent on non-held sessions. |
+| `pause` | Pause all sessions in the ensemble: locks outbox dispatch and pauses the scheduler. `destroy` commands still go through. (#287) |
+| `play` | Resume a paused ensemble — unlocks outbox dispatch and resumes the scheduler. Buffered outbox entries are dispatched. Pass `release: true` to also release any held sessions in the same call — idempotent on non-held sessions. (#287) |
+| `shutdown` | Gracefully shut down the entire ensemble — signals all players to drain and detach, then stops the conductor. Use instead of per-player `detach` calls when tearing down. (#287) |
+| `restore` | Restore orphaned sessions in one ensemble on this host — re-attaches a fresh adapter to every `detached` session whose preferred host matches. Pass `ensemble` to target a specific ensemble. (#287, #288) |
 
-## v0.25 Changes
+## Version History
+
+### v0.27 Changes (#285–#291)
+
+- **`pause_ensemble` renamed to `pause`**, **`resume_ensemble` renamed to `play`** — shorter names, consistent with TUI `/pause` and `/play` slash commands.
+- **`shutdown` added** — ensemble-scope graceful teardown; replaces per-player `detach` chains.
+- **`restore` added** — ensemble-scope orphan recovery; replaces the v0.25 interactive CLI flow.
+
+### v0.25 Changes
 
 > **Breaking change in v0.25.0-beta.1**: The wire protocol between sessions and workers changed. If you are upgrading from v0.24.x, run `claude-tempo down` and `claude-tempo up` to reinitialize. Sessions from different versions cannot interoperate.
 
 - **`encore` removed** — replaced by `restart`. The `restart` tool works from any non-`gone` attachment phase and is not limited to stale sessions.
-- **`stop` removed** — use `destroy` (ordered shutdown) or `detach` (graceful adapter reap) instead.
+- **`stop` removed** — use `destroy` (ordered shutdown) instead.
 - **New lifecycle verbs**: `restart`, `detach`, `destroy`, `migrate`, and `attachment_info` expose the v0.25 attachment state machine directly.
 
 ## Related
