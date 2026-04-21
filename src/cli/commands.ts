@@ -567,6 +567,37 @@ export async function start(opts: StartOpts) {
       out.warn(`Lineup player/schedule setup encountered errors: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
+
+  // #93: resume flow — after the conductor is spawned, scan for orphaned
+  // player workflows on this host and enqueue `restart` entries on their
+  // outboxes so the daemon re-attaches. Reuses the same helper the daemon
+  // calls at boot (`reconcileOnBoot`). Only fires when the user explicitly
+  // chose the resume path (`--resume` or `up` option 2).
+  if (opts.conductor && opts.resume && conductorClient) {
+    try {
+      const { restoreOrphansOnce, formatRestoreOutcome } = await import('../reconcile/orphans');
+      const summary = await restoreOrphansOnce(
+        conductorClient,
+        { hostname: hostname(), invokerPlayerId: 'cli', policy: 'auto' },
+      );
+      if (summary.details.length > 0) {
+        console.log();
+        out.heading('Orphaned players');
+        for (const d of summary.details) {
+          const text = `${d.playerId} — ${formatRestoreOutcome(d.outcome)}`;
+          switch (d.outcome.kind) {
+            case 'queued': out.success(text); break;
+            case 'failed': out.warn(text); break;
+            case 'skipped': out.log(`  ${out.dim(text)}`); break;
+          }
+        }
+        out.log(`${summary.reattached} reattached, ${summary.skipped} skipped, ${summary.failed} failed.`);
+      }
+    } catch (err) {
+      out.warn(`Orphan restore scan failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   if (conductorConnection) {
     try { await conductorConnection.close(); } catch { /* best effort */ }
   }

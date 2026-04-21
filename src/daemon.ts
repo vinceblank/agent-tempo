@@ -14,12 +14,12 @@ import * as path from 'path';
 import { setTimeout as sleep } from 'timers/promises';
 import { Client } from '@temporalio/client';
 import { WorkflowIdConflictPolicy } from '@temporalio/client';
-import { getConfig, type Config, CLAUDE_TEMPO_HOME, GLOBAL_MAESTRO_WORKFLOW_ID, loadDaemonConfig, isEnsembleAllowed, type DaemonConfig } from './config';
+import { getConfig, type Config, CLAUDE_TEMPO_HOME, GLOBAL_MAESTRO_WORKFLOW_ID, loadDaemonConfig, type DaemonConfig } from './config';
 import { createWorkers } from './worker';
 import { createTemporalConnection } from './connection';
 import { DAEMON_PID_PATH, DAEMON_LOG_PATH, DAEMON_HEARTBEAT_PATH, HEARTBEAT_INTERVAL_MS } from './cli/daemon';
 import { createTempoClient } from './client';
-import { queryOrphanedSessions, type OrphanCandidate } from './reconcile/orphans';
+import { queryOrphanedSessions, restoreOrphansOnce, type OrphanCandidate } from './reconcile/orphans';
 import { listAgentTypes } from './ensemble/agent-types';
 import type { GlobalMaestroInput, HostProfile } from './types';
 
@@ -351,99 +351,37 @@ export async function reconcileOnBoot(
 
   log(`reconcile: scanning for orphans on host="${hostname}" (policy=${daemonConfig.restorePolicy})`);
 
-  let orphans: OrphanCandidate[];
-  try {
-    orphans = await queryOrphanedSessions(client, { hostname }, log);
-  } catch (err) {
-    log('reconcile: orphan query failed (non-fatal):', err instanceof Error ? err.message : String(err));
-    return;
-  }
+  // #93 / #285: the decision loop (cross-host filter, age window, allowlist,
+  // restart via outbox) was extracted to `restoreOrphansOnce` so the CLI
+  // resume flow (`up` option 2, `conduct --resume`) shares the same
+  // behavior. Pass `invokerPlayerId: 'daemon'` to preserve the previous
+  // operator identity, and inject `now` as a closure over the pinned ref
+  // time so the existing rebuild-reboot tests keep their fixture semantics.
+  const summary = await restoreOrphansOnce(
+    client,
+    {
+      hostname,
+      invokerPlayerId: 'daemon',
+      policy: daemonConfig.restorePolicy,
+      autoRestoreMaxAgeHours: daemonConfig.autoRestoreMaxAgeHours,
+      autoRestoreEnsembles: daemonConfig.autoRestoreEnsembles,
+      now: () => now,
+    },
+    log,
+  );
 
-  if (orphans.length === 0) {
+  const total = summary.reattached + summary.skipped + summary.failed;
+  if (total === 0) {
     log('reconcile: no orphans found');
     return;
   }
-
-  log(`reconcile: found ${orphans.length} orphan${orphans.length === 1 ? '' : 's'}`);
-
-  // PR-F cross-host filter (design §16 + brief §8 answer 2). A session whose
-  // `preferredHost` points to a different machine should not be restored by
-  // this daemon — the remote host's daemon is the authoritative restorer.
-  // Log-and-skip only: proactive cross-daemon signaling is a v0.26 feature
-  // (tracked as a follow-up; see brief §6 "reconcileOnBoot cross-host signal
-  // path is out of scope").
-  const originalOrphans = orphans;
-  orphans = originalOrphans.filter((o) => {
-    if (o.summary.preferredHost && o.summary.preferredHost !== hostname) {
-      log(`skipping restore for ${o.workflowId}: preferredHost=${o.summary.preferredHost}, localHost=${hostname}`);
-      return false;
-    }
-    return true;
-  });
-  const crossHostSkipped = originalOrphans.length - orphans.length;
-  if (crossHostSkipped > 0) {
-    log(`reconcile: skipped ${crossHostSkipped} orphan${crossHostSkipped === 1 ? '' : 's'} preferring remote hosts`);
-  }
-  if (orphans.length === 0) {
-    // All candidates filtered out — nothing to do on this host.
-    return;
-  }
-
-  if (daemonConfig.restorePolicy === 'prompt') {
-    for (const o of orphans) {
-      log(
-        `reconcile: [prompt] ${o.workflowId} ` +
-        `— phase=${o.info.phase} detachedSince=${o.summary.detachedSince ?? '(unknown)'} ` +
-        `preferredHost=${o.summary.preferredHost ?? '(unset)'}`,
-      );
-    }
+  log(
+    `reconcile: ${summary.reattached} reattached, ` +
+    `${summary.skipped} skipped, ${summary.failed} failed ` +
+    `(scanned ${total})`,
+  );
+  if (daemonConfig.restorePolicy === 'prompt' && summary.skipped > 0) {
     log('reconcile: [prompt] run `claude-tempo restore` to restore interactively');
-    return;
-  }
-
-  // restorePolicy === 'auto'
-  const ageWindowMs = daemonConfig.autoRestoreMaxAgeHours * 60 * 60 * 1000;
-  const tempo = createTempoClient(client);
-
-  for (const o of orphans) {
-    // Age filter — ignore orphans older than autoRestoreMaxAgeHours.
-    if (o.summary.detachedSince) {
-      const detachedAt = Date.parse(o.summary.detachedSince);
-      if (Number.isFinite(detachedAt) && now - detachedAt > ageWindowMs) {
-        log(`reconcile: [auto] skip ${o.workflowId} — detachedSince out of age window`);
-        continue;
-      }
-    }
-
-    // Ensemble allowlist — simple prefix match per §8 answer 5.
-    const ensemble = o.summary.ensemble;
-    if (!isEnsembleAllowed(ensemble, daemonConfig.autoRestoreEnsembles)) {
-      log(`reconcile: [auto] skip ${o.workflowId} — ensemble "${ensemble}" not in allowlist`);
-      continue;
-    }
-
-    // Restore target — read canonical playerId from OrphanSummary (#143).
-    const playerId = o.summary.playerId;
-    const targetHost = o.summary.preferredHost ?? hostname;
-    try {
-      const result = await tempo.restart(ensemble, playerId, {
-        host: targetHost,
-        invokerPlayerId: 'daemon',
-      });
-      log(
-        `reconcile: [auto] queued restart for "${playerId}" in "${ensemble}" ` +
-        `on host="${targetHost}" (outbox ${result.entryId})`,
-      );
-    } catch (err) {
-      // §10.6: silent backoff on AttachmentConflict. Any other failure logs
-      // but doesn't break the reconcile loop.
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('AttachmentConflict')) {
-        log(`reconcile: [auto] skip ${o.workflowId} — attachment already claimed (AttachmentConflict)`);
-      } else {
-        log(`reconcile: [auto] restart failed for ${o.workflowId}: ${msg}`);
-      }
-    }
   }
 }
 
