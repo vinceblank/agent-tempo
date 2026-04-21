@@ -59,6 +59,11 @@ import { PromptArea } from './components/PromptArea';
 import { StatusBar } from './components/StatusBar';
 import { ScheduleWizard } from './components/ScheduleWizard';
 import { CreateEnsembleWizard } from './components/CreateEnsembleWizard';
+import { HomeView } from './components/HomeView';
+import { NewEnsembleModal } from './components/NewEnsembleModal';
+import { LoadLineupModal } from './components/LoadLineupModal';
+import { RestoreConfirmModal } from './components/RestoreConfirmModal';
+import type { HomeViewInitial } from './components/HomeView';
 import { CommandPalette } from './components/CommandPalette';
 import { StatusOverlay } from './components/StatusOverlay';
 import { ConversationStream } from './components/ConversationStream';
@@ -1002,16 +1007,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     dispatch({ type: 'CREATE_ENSEMBLE_SUBMIT' });
     const { name, workDir, lineup } = wizState.answers;
     try {
-      const { execFile } = require('child_process') as typeof import('child_process');
-      const args = lineup
-        ? ['up', name, '--lineup', lineup]
-        : ['up', name];
-      await new Promise<void>((resolve, reject) => {
-        execFile('claude-tempo', args, { cwd: workDir, timeout: 60000, shell: true }, (err: Error | null, _stdout: string, stderr: string) => {
-          if (err) reject(new Error(stderr?.trim() || err.message || 'Unknown error'));
-          else resolve();
-        });
-      });
+      await api.createEnsemble({ ensemble: name, workDir, ...(lineup ? { lineup } : {}) });
       dispatch({
         type: 'COMMIT_STATIC',
         item: { id: nextStaticId(), type: 'info', content: `\u2714 Ensemble "${name}" created.`, timestamp: Date.now() },
@@ -1020,13 +1016,117 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     } catch (err) {
       dispatch({ type: 'CREATE_ENSEMBLE_DONE', error: err instanceof Error ? err.message : String(err) });
     }
-  }, []);
+  }, [api]);
   const handleCreateEnsCancel = useCallback(() => {
     dispatch({ type: 'EXIT_CREATE_ENSEMBLE' });
   }, []);
   const handleCreateEnsDone = useCallback(() => {
     dispatch({ type: 'EXIT_CREATE_ENSEMBLE' });
   }, []);
+
+  // ── Home view ─────────────────────────────────────────────────────────
+  const [cwdGitRoot] = useState<string | null>(() => {
+    const { getGitInfo } = require('../git-info') as typeof import('../git-info');
+    return getGitInfo(process.cwd()).gitRoot ?? null;
+  });
+
+  const bootstrapInitial = useMemo<HomeViewInitial>(() => ({
+    ensembles: state.ensembles ?? [],
+    cwdGitRoot,
+    badges: { orphanCount: 0 },
+  }), [state.ensembles, cwdGitRoot]);
+
+  const handleHomeEnter = useCallback((name: string) => {
+    dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: name });
+  }, []);
+
+  const handleHomeQuit = useCallback(() => {
+    exit();
+  }, [exit]);
+
+  const handleHomeOpenNew = useCallback(() => {
+    dispatch({ type: 'OPEN_HOME_MODAL', modal: { type: 'new' } });
+  }, []);
+
+  const handleHomeOpenLineup = useCallback(() => {
+    dispatch({ type: 'OPEN_HOME_MODAL', modal: { type: 'lineup' } });
+  }, []);
+
+  const handleHomeOpenRestore = useCallback((ensembleName: string) => {
+    const match = state.ensembles?.find((e) => e.name === ensembleName);
+    dispatch({
+      type: 'OPEN_HOME_MODAL',
+      modal: {
+        type: 'restore',
+        ensemble: ensembleName,
+        playerCount: Math.max(0, (match?.playerCount ?? 1) - (match?.hasConductor ? 1 : 0)),
+        conductor: match?.hasConductor ? 'conductor' : undefined,
+      },
+    });
+  }, [state.ensembles]);
+
+  const handleHomeModalClose = useCallback(() => {
+    dispatch({ type: 'CLOSE_HOME_MODAL' });
+  }, []);
+
+  const handleHomeNewSubmit = useCallback(async (name: string) => {
+    dispatch({ type: 'SET_HOME_MODAL_STATUS', submitting: true });
+    try {
+      await api.createEnsemble({ ensemble: name });
+      dispatch({ type: 'CLOSE_HOME_MODAL' });
+      dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: name });
+    } catch (err) {
+      dispatch({
+        type: 'SET_HOME_MODAL_STATUS',
+        submitting: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [api]);
+
+  const handleHomeLineupSubmit = useCallback(async (args: { ensemble: string; lineupPath: string }) => {
+    dispatch({ type: 'SET_HOME_MODAL_STATUS', submitting: true });
+    try {
+      await api.createEnsemble({ ensemble: args.ensemble, lineup: args.lineupPath });
+      dispatch({ type: 'CLOSE_HOME_MODAL' });
+      dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: args.ensemble });
+    } catch (err) {
+      dispatch({
+        type: 'SET_HOME_MODAL_STATUS',
+        submitting: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [api]);
+
+  const handleHomeRestoreConfirm = useCallback(async () => {
+    const modal = stateRef.current.homeModal;
+    if (!modal || modal.type !== 'restore') return;
+    const target = modal.ensemble;
+    dispatch({ type: 'SET_HOME_MODAL_STATUS', submitting: true });
+    try {
+      const summary = await api.restore(target);
+      dispatch({ type: 'CLOSE_HOME_MODAL' });
+      if (summary.failed > 0) {
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: {
+            id: nextStaticId(),
+            type: 'error',
+            content: `Restore partial: ${summary.reattached} queued, ${summary.failed} failed, ${summary.skipped} skipped.`,
+            timestamp: Date.now(),
+          },
+        });
+      }
+      dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: target });
+    } catch (err) {
+      dispatch({
+        type: 'SET_HOME_MODAL_STATUS',
+        submitting: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [api]);
 
   // ── Memoize chat messages (must be before early return — Rules of Hooks) ──
   const memoizedChatData = useMemo(() => {
@@ -1172,6 +1272,52 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         onConfirm: handleCreateEnsConfirm,
         onCancel: handleCreateEnsCancel,
         onDone: handleCreateEnsDone,
+      });
+    }
+
+    // Home-view modals (#290). Render in place of HomeView so the modal
+    // owns keyboard focus — HomeView's own useInput short-circuits when a
+    // modal is up (matches the wizard pattern).
+    if (state.homeModal?.type === 'new') {
+      return React.createElement(NewEnsembleModal, {
+        onSubmit: handleHomeNewSubmit,
+        onCancel: handleHomeModalClose,
+        submitting: state.homeModalSubmitting,
+        error: state.homeModalError,
+      });
+    }
+    if (state.homeModal?.type === 'lineup') {
+      return React.createElement(LoadLineupModal, {
+        onSubmit: handleHomeLineupSubmit,
+        onCancel: handleHomeModalClose,
+        submitting: state.homeModalSubmitting,
+        error: state.homeModalError,
+      });
+    }
+    if (state.homeModal?.type === 'restore') {
+      return React.createElement(RestoreConfirmModal, {
+        ensemble: state.homeModal.ensemble,
+        playerCount: state.homeModal.playerCount,
+        conductorName: state.homeModal.conductor,
+        onConfirm: handleHomeRestoreConfirm,
+        onCancel: handleHomeModalClose,
+        submitting: state.homeModalSubmitting,
+        error: state.homeModalError,
+      });
+    }
+
+    // Home view (#290) — renders when on the 'home' navigation and the
+    // app is past the splash connection check. The view pre-renders from
+    // the current `ensembles` snapshot and refreshes itself on a timer.
+    if (state.phase === 'main' && state.view === 'home' && state.splashConnected) {
+      return React.createElement(HomeView, {
+        initial: bootstrapInitial,
+        client: api,
+        onEnterEnsemble: handleHomeEnter,
+        onCreateEnsemble: handleHomeOpenNew,
+        onLoadLineup: handleHomeOpenLineup,
+        onRestoreEnsemble: handleHomeOpenRestore,
+        onQuit: handleHomeQuit,
       });
     }
 

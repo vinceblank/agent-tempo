@@ -144,6 +144,81 @@ export function createTempoClient(client: Client): TempoClient {
       }
     },
 
+    async listEnsembles(): Promise<EnsembleSummary[]> {
+      // Direct workflow-list scan — the Global Maestro index only tracks
+      // live ensembles, so classifying parked ensembles requires reading
+      // the attachment-state search attribute per workflow.
+      const LIVE_PHASES = new Set<AttachmentPhase>([
+        'attached', 'processing', 'awaiting', 'booting', 'draining',
+      ]);
+      type Agg = {
+        count: number;
+        hasConductor: boolean;
+        conductorStatus?: string;
+        hasLive: boolean;
+        hasDetached: boolean;
+      };
+      const byEnsemble = new Map<string, Agg>();
+      try {
+        const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+        for await (const wf of client.workflow.list({ query })) {
+          const name = getEnsembleName(wf);
+          if (!name) continue;
+          const phase = getAttachmentPhase(wf) as AttachmentPhase | undefined;
+          const entry = byEnsemble.get(name) ?? {
+            count: 0, hasConductor: false, hasLive: false, hasDetached: false,
+          };
+          entry.count++;
+          if (phase === 'detached') entry.hasDetached = true;
+          else if (phase && LIVE_PHASES.has(phase)) entry.hasLive = true;
+
+          const isConductorFromSA = getIsConductor(wf) === true;
+          const isConductorFromId = wf.workflowId?.endsWith('-conductor') ?? false;
+          if (isConductorFromSA || isConductorFromId) {
+            entry.hasConductor = true;
+            if (phase) entry.conductorStatus = phase;
+          }
+          byEnsemble.set(name, entry);
+        }
+      } catch {
+        return [];
+      }
+
+      const out: EnsembleSummary[] = [];
+      for (const [name, info] of byEnsemble) {
+        // Skip ensembles with no non-gone sessions — they're either
+        // terminating or fully destroyed.
+        if (!info.hasLive && !info.hasDetached) continue;
+        out.push({
+          name,
+          playerCount: info.count,
+          hasConductor: info.hasConductor,
+          conductorStatus: info.conductorStatus,
+          state: info.hasLive ? 'running' : 'parked',
+        });
+      }
+      return out;
+    },
+
+    async createEnsemble(opts: { ensemble: string; workDir?: string; lineup?: string }): Promise<void> {
+      // Delegates to the existing `claude-tempo up` CLI path; a future
+      // auto-provision flow will replace the shell-out.
+      const { execFile } = await import('child_process');
+      const args = opts.lineup
+        ? ['up', opts.ensemble, '--lineup', opts.lineup]
+        : ['up', opts.ensemble];
+      await new Promise<void>((resolve, reject) => {
+        execFile('claude-tempo', args, {
+          cwd: opts.workDir ?? process.cwd(),
+          timeout: 60_000,
+          shell: true,
+        }, (err, _stdout, stderr) => {
+          if (err) reject(new Error(stderr?.toString().trim() || err.message || 'createEnsemble failed'));
+          else resolve();
+        });
+      });
+    },
+
     async getPlayers(ensemble: string): Promise<MaestroPlayerInfo[]> {
       // Strategy 1: Global Maestro — filter by ensemble
       try {

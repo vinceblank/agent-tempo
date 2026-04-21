@@ -97,6 +97,8 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
   const fail = () => Promise.reject(new Error('Not connected to Temporal'));
   return {
     discoverEnsembles: async () => [],
+    listEnsembles: async () => [],
+    createEnsemble: fail,
     getPlayers: async () => [],
     getMessages: async () => [],
     getConductorHistory: async () => [],
