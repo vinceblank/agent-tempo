@@ -5,6 +5,7 @@ on:
     branches: [main, feat/285-tui-first-maestro]
   pull_request:
     branches: [main, feat/285-tui-first-maestro]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
