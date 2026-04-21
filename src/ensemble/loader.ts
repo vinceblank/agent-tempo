@@ -71,6 +71,21 @@ export function loadLineup(filePath: string): EnsembleLineup {
     throw new Error(`Invalid lineup: "name" is required and must be a non-empty string`);
   }
 
+  // Every ensemble must define exactly one conductor — the default chat
+  // target and anchor for the maestro's `getEnsembleChat`.
+  const remediation =
+    `Add a conductor block with 'name:' (default "conductor") and 'agent:' (default from CLAUDE_TEMPO_DEFAULT_AGENT config).`;
+  if (doc.conductor == null) {
+    throw new Error(
+      `lineup "${doc.name}" is missing a conductor; every ensemble must define exactly one conductor. ${remediation}`,
+    );
+  }
+  if (typeof doc.conductor !== 'object' || Array.isArray(doc.conductor)) {
+    throw new Error(
+      `lineup "${doc.name}" has a malformed conductor (expected a mapping, got ${Array.isArray(doc.conductor) ? 'array' : typeof doc.conductor}). ${remediation}`,
+    );
+  }
+
   // Required: players array
   if (!Array.isArray(doc.players)) {
     throw new Error(`Invalid lineup: "players" must be an array`);
