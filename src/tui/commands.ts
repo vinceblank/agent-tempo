@@ -229,34 +229,24 @@ async function handlePlayer(
 async function handleDestroy(
   args: string[],
   dispatch: (action: TuiAction) => void,
+  _api: TempoClient,
+  ctx: CommandContext,
 ): Promise<void> {
   if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /destroy <player> [reason]');
+    commitStatic(dispatch, 'error', 'Usage: /destroy <player|ensemble> [reason]');
     return;
   }
 
   const target = args[0];
-  const reason = args.slice(1).join(' ') || undefined;
-  // Enter confirmation mode — App.tsx handles the y/n input + the
-  // TempoClient.destroy() call in the yes branch.
-  dispatch({ type: 'CONFIRM_STOP', player: target, ...(reason !== undefined ? { reason } : {}) });
-}
-
-/** /disband — tear down the current ensemble (with confirmation). */
-async function handleDisband(
-  _args: string[],
-  dispatch: (action: TuiAction) => void,
-  _api: TempoClient,
-  ctx: CommandContext,
-): Promise<void> {
-  const ensemble = ctx.activeEnsemble;
-  if (!ensemble) {
-    commitStatic(dispatch, 'error', 'No active ensemble. Navigate to one first with /ensemble <name>.');
+  // Ensemble scope: target matches the active ensemble → typed-name
+  // confirmation. Player scope: any other target → y/N. The active-ensemble
+  // match is unambiguous inside a single-ensemble TUI session.
+  if (target === ctx.activeEnsemble) {
+    dispatch({ type: 'CONFIRM_ENSEMBLE_DESTROY', ensemble: target });
     return;
   }
-
-  // Enter confirmation mode — App.tsx handles the y/n input
-  dispatch({ type: 'CONFIRM_DISBAND', ensemble });
+  const reason = args.slice(1).join(' ') || undefined;
+  dispatch({ type: 'CONFIRM_STOP', player: target, ...(reason !== undefined ? { reason } : {}) });
 }
 
 /** /broadcast <message> — send a message to all active players in the current ensemble. */
@@ -492,36 +482,6 @@ async function handleRestart(
     commitStatic(dispatch, 'error', `Restart failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
-
-/** /detach <player> [deadlineMs] — gracefully reap the adapter; workflow survives. */
-async function handleDetach(
-  args: string[],
-  dispatch: (action: TuiAction) => void,
-  api: TempoClient,
-  ctx: CommandContext,
-): Promise<void> {
-  if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /detach <player> [deadlineMs]');
-    return;
-  }
-  const ensemble = requireEnsemble(dispatch, ctx);
-  if (!ensemble) return;
-
-  const target = args[0];
-  const deadlineMs = args[1] ? Number(args[1]) : undefined;
-
-  try {
-    await api.detach(ensemble, target, deadlineMs);
-    commitStatic(dispatch, 'info', `\u2198 Detach signaled for ${target} (draining up to ${deadlineMs ?? 5000}ms).`);
-  } catch (err) {
-    commitStatic(dispatch, 'error', `Detach failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-// PR-H (#132): the no-confirmation `handleDestroy` shipped in PR-D was
-// consolidated into the confirmed-prompt flow at handleDestroy near line
-// 138 (formerly the `/stop` handler). One `/destroy` slash command, one
-// y/N confirmation, one TempoClient.destroy() call.
 
 /** /migrate <player> <host> [--fresh] [--force] — restart on a different host. */
 async function handleMigrate(
@@ -1191,60 +1151,127 @@ async function handleGo(
   }
 }
 
-/** /pause — pause the current ensemble. */
+/**
+ * Resolve the ensemble target from args/context, emitting a friendly error
+ * when neither is available. Shared by every ensemble-scoped verb below.
+ */
+function resolveEnsembleArg(
+  args: string[],
+  ctx: CommandContext,
+  dispatch: (action: TuiAction) => void,
+  verb: string,
+): string | null {
+  const target = args[0] ?? ctx.activeEnsemble;
+  if (!target) {
+    commitStatic(dispatch, 'error', `No active ensemble. Use /ensemble to select one, or /${verb} <ensemble>.`);
+    return null;
+  }
+  return target;
+}
+
+/** /pause [ensemble] — pause every session + scheduler + maestro. */
 async function handlePause(
-  _args: string[],
+  args: string[],
   dispatch: (action: TuiAction) => void,
   api: TempoClient,
   ctx: CommandContext,
 ): Promise<void> {
-  const ensemble = ctx.activeEnsemble;
-  if (!ensemble) {
-    commitStatic(dispatch, 'error', 'No active ensemble. Use /ensemble to select one.');
-    return;
-  }
-
-  const ensembles = await api.discoverEnsembles();
-  const ens = ensembles.find(e => e.name === ensemble);
-  if (!ens?.hasConductor) {
-    commitStatic(dispatch, 'error', 'No conductor in this ensemble. /pause requires a conductor.');
-    return;
-  }
-
+  const ensemble = resolveEnsembleArg(args, ctx, dispatch, 'pause');
+  if (!ensemble) return;
   try {
-    await api.sendCommand(ensemble, '/pause', 'maestro');
-    commitStatic(dispatch, 'info', '\u23F8 Pause command sent to conductor.');
+    await api.pause(ensemble);
+    commitStatic(dispatch, 'info', `\u23F8 Paused ensemble "${ensemble}".`);
   } catch (err) {
-    commitStatic(dispatch, 'error', `\u2717 Pause failed: ${err}`);
+    commitStatic(dispatch, 'error', `\u2717 Pause failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
-/** /resume — resume a paused ensemble. */
-async function handleResume(
-  _args: string[],
+/** /play [ensemble] — resume a paused ensemble (renamed from /resume). */
+async function handlePlay(
+  args: string[],
   dispatch: (action: TuiAction) => void,
   api: TempoClient,
   ctx: CommandContext,
 ): Promise<void> {
-  const ensemble = ctx.activeEnsemble;
-  if (!ensemble) {
-    commitStatic(dispatch, 'error', 'No active ensemble. Use /ensemble to select one.');
-    return;
-  }
-
-  const ensembles = await api.discoverEnsembles();
-  const ens = ensembles.find(e => e.name === ensemble);
-  if (!ens?.hasConductor) {
-    commitStatic(dispatch, 'error', 'No conductor in this ensemble. /resume requires a conductor.');
-    return;
-  }
-
+  const ensemble = resolveEnsembleArg(args, ctx, dispatch, 'play');
+  if (!ensemble) return;
   try {
-    await api.sendCommand(ensemble, '/resume', 'maestro');
-    commitStatic(dispatch, 'info', '\u25B6 Resume command sent to conductor.');
+    await api.play(ensemble);
+    commitStatic(dispatch, 'info', `\u25B6 Resumed ensemble "${ensemble}".`);
   } catch (err) {
-    commitStatic(dispatch, 'error', `\u2717 Resume failed: ${err}`);
+    commitStatic(dispatch, 'error', `\u2717 Play failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/** /shutdown [ensemble] — graceful teardown (detach adapters + pause maestro/scheduler). */
+async function handleShutdown(
+  args: string[],
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  const ensemble = resolveEnsembleArg(args, ctx, dispatch, 'shutdown');
+  if (!ensemble) return;
+  commitStatic(dispatch, 'info', `\u2026 Shutting down "${ensemble}" \u2026`);
+  try {
+    const summary = await api.shutdown(ensemble);
+    for (const d of summary.details) {
+      const line = `  ${d.playerId} \u2014 ${d.outcome}${d.error ? `: ${d.error}` : ''}`;
+      commitStatic(dispatch, d.outcome === 'failed' ? 'error' : 'info', line);
+    }
+    commitStatic(
+      dispatch,
+      summary.failed === 0 ? 'info' : 'error',
+      `\u2714 Shutdown "${ensemble}" \u2014 ${summary.detached} detached, ${summary.skipped} skipped, ${summary.failed} failed` +
+        `${summary.maestroPaused ? ', maestro paused' : ''}${summary.schedulerPaused ? ', scheduler paused' : ''}.`,
+    );
+  } catch (err) {
+    commitStatic(dispatch, 'error', `\u2717 Shutdown failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** /restore [ensemble] — bring a parked ensemble back (reattach orphans + spawn conductor if absent). */
+async function handleRestore(
+  args: string[],
+  dispatch: (action: TuiAction) => void,
+  api: TempoClient,
+  ctx: CommandContext,
+): Promise<void> {
+  const ensemble = resolveEnsembleArg(args, ctx, dispatch, 'restore');
+  if (!ensemble) return;
+  commitStatic(dispatch, 'info', `\u2026 Restoring "${ensemble}" \u2026`);
+  try {
+    const summary = await api.restore(ensemble);
+    const { formatRestoreOutcome } = await import('../reconcile/orphans');
+    for (const d of summary.details) {
+      const text = `  ${d.playerId} \u2014 ${formatRestoreOutcome(d.outcome)}`;
+      commitStatic(dispatch, d.outcome.kind === 'failed' ? 'error' : 'info', text);
+    }
+    commitStatic(
+      dispatch,
+      summary.failed === 0 ? 'info' : 'error',
+      `\u2714 Restore "${ensemble}" \u2014 ${summary.reattached} reattached, ${summary.skipped} skipped, ${summary.failed} failed.`,
+    );
+    // Step 2: ensure a conductor terminal is present (spawn if absent).
+    const { ensureConductorSpawned } = await import('../client/ensure-conductor-spawned');
+    const conductorOutcome = await ensureConductorSpawned(ensemble, api);
+    if (conductorOutcome.spawned) {
+      commitStatic(dispatch, 'info', '  Conductor terminal launched.');
+    } else if (conductorOutcome.reason === 'spawnFailed') {
+      commitStatic(dispatch, 'error', `  Conductor spawn failed: ${conductorOutcome.error}`);
+    }
+    // `alreadyLive` + `noConductorRecord` are silent — no action needed.
+  } catch (err) {
+    commitStatic(dispatch, 'error', `\u2717 Restore failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** /home — navigate back to the home view without touching workflow state. */
+async function handleHome(
+  _args: string[],
+  dispatch: (action: TuiAction) => void,
+): Promise<void> {
+  dispatch({ type: 'NAVIGATE_HOME' });
 }
 
 // ── Utility ──
@@ -1279,13 +1306,6 @@ export const COMMANDS: Record<string, CommandDef> = {
     usage: '/recruit <name> [--type <type>] [--dir <path>]',
     handler: handleRecruit,
   },
-  // PR-H (#132): `/stop` removed. Use `/destroy` (terminal, prompts y/N)
-  // or `/detach` (graceful reap; future addition).
-  disband: {
-    description: 'Tear down the current ensemble (all sessions + scheduler)',
-    usage: '/disband',
-    handler: handleDisband,
-  },
   broadcast: {
     description: 'Send a message to all active players',
     usage: '/broadcast <message>',
@@ -1296,14 +1316,9 @@ export const COMMANDS: Record<string, CommandDef> = {
     usage: '/restart <player> [--fresh] [--force]',
     handler: handleRestart,
   },
-  detach: {
-    description: 'Gracefully reap a session\'s adapter (workflow survives)',
-    usage: '/detach <player> [deadlineMs]',
-    handler: handleDetach,
-  },
   destroy: {
-    description: 'Terminally end a session workflow (prompts y/N first)',
-    usage: '/destroy <player> [reason]',
+    description: 'Terminally destroy a player (y/N) or an ensemble (typed-name)',
+    usage: '/destroy <player|ensemble> [reason]',
     handler: handleDestroy,
   },
   migrate: {
@@ -1387,14 +1402,29 @@ export const COMMANDS: Record<string, CommandDef> = {
     handler: handleGo,
   },
   pause: {
-    description: 'Pause the ensemble (sessions, scheduler)',
-    usage: '/pause',
+    description: 'Pause every session + scheduler + maestro in the ensemble',
+    usage: '/pause [ensemble]',
     handler: handlePause,
   },
-  resume: {
-    description: 'Resume a paused ensemble',
-    usage: '/resume',
-    handler: handleResume,
+  play: {
+    description: 'Resume a paused ensemble (renamed from /resume — avoids collision with `claude --resume`)',
+    usage: '/play [ensemble]',
+    handler: handlePlay,
+  },
+  shutdown: {
+    description: 'Graceful ensemble teardown — detach adapters, pause maestro + scheduler',
+    usage: '/shutdown [ensemble]',
+    handler: handleShutdown,
+  },
+  restore: {
+    description: 'Restore a parked ensemble — reattach orphans, unpause maestro + scheduler',
+    usage: '/restore [ensemble]',
+    handler: handleRestore,
+  },
+  home: {
+    description: 'Return to the home view (does not touch workflows)',
+    usage: '/home',
+    handler: handleHome,
   },
   back: {
     description: 'Return to maestro view',
@@ -1458,8 +1488,7 @@ export function resolveHelpTarget(raw: string): { name: string; def: CommandDef 
 }
 
 /** Commands that take a player name as their first parameter. */
-// PR-H (#132): `stop` removed from this set; `/destroy` covers the slot.
-export const PLAYER_PARAM_COMMANDS = new Set(['worktree', 'restart', 'detach', 'destroy', 'attachment-info']);
+export const PLAYER_PARAM_COMMANDS = new Set(['worktree', 'restart', 'destroy', 'attachment-info']);
 
 /** Commands with hardcoded subcommands (shown in autocomplete). */
 export const SUBCOMMAND_MAP: Record<string, string[]> = {

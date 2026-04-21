@@ -235,6 +235,19 @@ export interface TuiState {
   confirmingStopReason?: string;
   /** Ensemble name pending disband confirmation (null = not confirming). */
   confirmingDisband?: string;
+  /**
+   * Ensemble name pending `/destroy <ensemble>` typed-name confirmation.
+   * Distinct from `confirmingDisband` because the gate is typed-name rather
+   * than y/N.
+   */
+  confirmingEnsembleDestroy?: {
+    ensemble: string;
+    /** Current contents of the typed-confirmation input. */
+    input: string;
+    /** Mismatch error shown beneath the input; cleared on next keystroke. */
+    error?: string;
+    submitting?: boolean;
+  };
   /** Lineup confirmation state (pending load). */
   confirmingLineup?: { action: 'load'; path: string; summary: string };
   /** Recruit wizard state (active when phase === 'recruit'). */
@@ -380,6 +393,12 @@ export type TuiAction =
   // Disband confirmation
   | { type: 'CONFIRM_DISBAND'; ensemble: string }
   | { type: 'CANCEL_DISBAND' }
+  // Ensemble-scope /destroy typed-name confirmation
+  | { type: 'CONFIRM_ENSEMBLE_DESTROY'; ensemble: string }
+  | { type: 'ENSEMBLE_DESTROY_INPUT'; input: string }
+  | { type: 'ENSEMBLE_DESTROY_SUBMIT_BUSY' }
+  | { type: 'ENSEMBLE_DESTROY_MISMATCH' }
+  | { type: 'CANCEL_ENSEMBLE_DESTROY' }
   // Lineup confirmation
   | { type: 'CONFIRM_LINEUP'; action: 'load'; path: string; summary: string }
   | { type: 'CANCEL_LINEUP' }
@@ -925,6 +944,48 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         homeModalSubmitting: action.submitting ?? state.homeModalSubmitting,
         homeModalError: action.error,
       };
+
+    case 'CONFIRM_ENSEMBLE_DESTROY':
+      return {
+        ...state,
+        confirmingEnsembleDestroy: { ensemble: action.ensemble, input: '' },
+      };
+
+    case 'ENSEMBLE_DESTROY_INPUT': {
+      if (!state.confirmingEnsembleDestroy) return state;
+      return {
+        ...state,
+        confirmingEnsembleDestroy: {
+          ...state.confirmingEnsembleDestroy,
+          input: action.input,
+          error: undefined,
+        },
+      };
+    }
+
+    case 'ENSEMBLE_DESTROY_SUBMIT_BUSY': {
+      if (!state.confirmingEnsembleDestroy) return state;
+      return {
+        ...state,
+        confirmingEnsembleDestroy: { ...state.confirmingEnsembleDestroy, submitting: true, error: undefined },
+      };
+    }
+
+    case 'ENSEMBLE_DESTROY_MISMATCH': {
+      if (!state.confirmingEnsembleDestroy) return state;
+      const { ensemble, input } = state.confirmingEnsembleDestroy;
+      return {
+        ...state,
+        confirmingEnsembleDestroy: {
+          ...state.confirmingEnsembleDestroy,
+          submitting: false,
+          error: `"${input}" \u2260 "${ensemble}" \u2014 type the ensemble name exactly to confirm.`,
+        },
+      };
+    }
+
+    case 'CANCEL_ENSEMBLE_DESTROY':
+      return { ...state, confirmingEnsembleDestroy: undefined };
 
     default:
       return state;
