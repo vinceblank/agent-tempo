@@ -128,6 +128,14 @@ export interface TempoClient {
    * up <name>` so the spawned conductor terminal matches the CLI path.
    */
   createEnsemble(opts: CreateEnsembleOpts): Promise<void>;
+  /**
+   * Spawn a conductor terminal for an existing ensemble — the restore-
+   * after-shutdown path. Shells out to `claude-tempo up <name>` which is
+   * idempotent at the workflow layer. Semantically distinct from
+   * {@link TempoClient.createEnsemble}: this fires on an ensemble that
+   * already exists; a "create" contradiction would mislead future readers.
+   */
+  spawnConductor(opts: { ensemble: string; workDir?: string }): Promise<void>;
   /** Get current player snapshot for an ensemble. */
   getPlayers(ensemble: string): Promise<MaestroPlayerInfo[]>;
   /** Get recent messages for an ensemble. */

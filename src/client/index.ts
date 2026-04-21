@@ -72,6 +72,26 @@ function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * Invoke the `claude-tempo` CLI as a child process. Shared by
+ * {@link TempoClient.createEnsemble} and {@link TempoClient.spawnConductor}
+ * so both entry points share the same process semantics (cwd default,
+ * timeout, shell-quoted args).
+ */
+async function runTempoCli(args: string[], workDir?: string): Promise<void> {
+  const { execFile } = await import('child_process');
+  await new Promise<void>((resolve, reject) => {
+    execFile('claude-tempo', args, {
+      cwd: workDir ?? process.cwd(),
+      timeout: 60_000,
+      shell: true,
+    }, (err, _stdout, stderr) => {
+      if (err) reject(new Error(stderr?.toString().trim() || err.message || `claude-tempo ${args[0]} failed`));
+      else resolve();
+    });
+  });
+}
+
 // ── Factory ──
 
 export function createTempoClient(client: Client): TempoClient {
@@ -201,22 +221,19 @@ export function createTempoClient(client: Client): TempoClient {
     },
 
     async createEnsemble(opts: { ensemble: string; workDir?: string; lineup?: string }): Promise<void> {
-      // Delegates to the existing `claude-tempo up` CLI path; a future
-      // auto-provision flow will replace the shell-out.
-      const { execFile } = await import('child_process');
       const args = opts.lineup
         ? ['up', opts.ensemble, '--lineup', opts.lineup]
         : ['up', opts.ensemble];
-      await new Promise<void>((resolve, reject) => {
-        execFile('claude-tempo', args, {
-          cwd: opts.workDir ?? process.cwd(),
-          timeout: 60_000,
-          shell: true,
-        }, (err, _stdout, stderr) => {
-          if (err) reject(new Error(stderr?.toString().trim() || err.message || 'createEnsemble failed'));
-          else resolve();
-        });
-      });
+      await runTempoCli(args, opts.workDir);
+    },
+
+    async spawnConductor(opts: { ensemble: string; workDir?: string }): Promise<void> {
+      // `claude-tempo up <ensemble>` is idempotent at the workflow layer —
+      // re-invoking it on a live ensemble reuses the existing conductor
+      // workflow (deterministic workflow ID). Distinct from
+      // `createEnsemble` so call sites read as "make sure the conductor
+      // terminal is running", not "create a new ensemble".
+      await runTempoCli(['up', opts.ensemble], opts.workDir);
     },
 
     async getPlayers(ensemble: string): Promise<MaestroPlayerInfo[]> {

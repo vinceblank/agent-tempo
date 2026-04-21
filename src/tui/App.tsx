@@ -63,6 +63,7 @@ import { HomeView } from './components/HomeView';
 import { NewEnsembleModal } from './components/NewEnsembleModal';
 import { LoadLineupModal } from './components/LoadLineupModal';
 import { RestoreConfirmModal } from './components/RestoreConfirmModal';
+import { DestroyConfirmModal } from './components/DestroyConfirmModal';
 import type { HomeViewInitial } from './components/HomeView';
 import { CommandPalette } from './components/CommandPalette';
 import { StatusOverlay } from './components/StatusOverlay';
@@ -71,6 +72,7 @@ import { PlayerDetailView } from './components/PlayerDetailView';
 import { Picker } from './components/Picker';
 import type { PickerItem } from './components/Picker';
 import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames, PLAYER_PARAM_COMMANDS, SUBCOMMAND_MAP } from './commands';
+import { removedSlashCommandHelp } from './removed-commands';
 import { THEME } from './utils/theme';
 import { phaseToLabel, phaseToColor, phaseToIconName } from './utils/format';
 import { statusIcons as phaseStatusIcons, supportsUnicode as phaseSupportsUnicode } from './utils/platform';
@@ -660,12 +662,13 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       }
 
       if (!isValidCommand(parsed.name)) {
+        const migrationHint = removedSlashCommandHelp(parsed.name);
         dispatch({
           type: 'COMMIT_STATIC',
           item: {
             id: nextStaticId(),
             type: 'error',
-            content: `Unknown command: /${parsed.name}. Type /help for available commands.`,
+            content: migrationHint ?? `Unknown command: /${parsed.name}. Type /help for available commands.`,
             timestamp: Date.now(),
           },
         });
@@ -1099,6 +1102,57 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     }
   }, [api]);
 
+  // /destroy <ensemble> typed-name confirmation handlers (#291)
+  const handleEnsembleDestroyInput = useCallback((next: string) => {
+    dispatch({ type: 'ENSEMBLE_DESTROY_INPUT', input: next });
+  }, []);
+
+  const handleEnsembleDestroyCancel = useCallback(() => {
+    dispatch({ type: 'CANCEL_ENSEMBLE_DESTROY' });
+    dispatch({
+      type: 'COMMIT_STATIC',
+      item: { id: nextStaticId(), type: 'info', content: 'Destroy cancelled.', timestamp: Date.now() },
+    });
+  }, []);
+
+  const handleEnsembleDestroySubmit = useCallback(async () => {
+    const pending = stateRef.current.confirmingEnsembleDestroy;
+    if (!pending) return;
+    if (pending.input !== pending.ensemble) {
+      dispatch({ type: 'ENSEMBLE_DESTROY_MISMATCH' });
+      return;
+    }
+    dispatch({ type: 'ENSEMBLE_DESTROY_SUBMIT_BUSY' });
+    const target = pending.ensemble;
+    try {
+      const summary = await api.destroy(target);
+      dispatch({ type: 'CANCEL_ENSEMBLE_DESTROY' });
+      if (summary && 'details' in summary) {
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: {
+            id: nextStaticId(),
+            type: summary.failed > 0 ? 'error' : 'info',
+            content: `\u2714 Destroyed "${target}" \u2014 ${summary.destroyed} destroyed, ${summary.terminated} terminated, ${summary.failed} failed.`,
+            timestamp: Date.now(),
+          },
+        });
+      }
+      dispatch({ type: 'NAVIGATE_HOME' });
+    } catch (err) {
+      dispatch({ type: 'CANCEL_ENSEMBLE_DESTROY' });
+      dispatch({
+        type: 'COMMIT_STATIC',
+        item: {
+          id: nextStaticId(),
+          type: 'error',
+          content: `\u2717 Destroy failed for "${target}": ${err instanceof Error ? err.message : String(err)}`,
+          timestamp: Date.now(),
+        },
+      });
+    }
+  }, [api]);
+
   const handleHomeRestoreConfirm = useCallback(async () => {
     const modal = stateRef.current.homeModal;
     if (!modal || modal.type !== 'restore') return;
@@ -1114,6 +1168,22 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
             id: nextStaticId(),
             type: 'error',
             content: `Restore partial: ${summary.reattached} queued, ${summary.failed} failed, ${summary.skipped} skipped.`,
+            timestamp: Date.now(),
+          },
+        });
+      }
+      // Mirror the `/restore` slash two-op: ensure a conductor terminal is
+      // live so the home-view restore path never strands the user on a
+      // reattached-but-conductor-less ensemble.
+      const { ensureConductorSpawned } = await import('../client/ensure-conductor-spawned');
+      const conductorOutcome = await ensureConductorSpawned(target, api);
+      if (!conductorOutcome.spawned && conductorOutcome.reason === 'spawnFailed') {
+        dispatch({
+          type: 'COMMIT_STATIC',
+          item: {
+            id: nextStaticId(),
+            type: 'error',
+            content: `Conductor spawn failed for "${target}": ${conductorOutcome.error}`,
             timestamp: Date.now(),
           },
         });
@@ -1303,6 +1373,19 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         onCancel: handleHomeModalClose,
         submitting: state.homeModalSubmitting,
         error: state.homeModalError,
+      });
+    }
+
+    // /destroy <ensemble> typed-name confirmation modal (#291)
+    if (state.confirmingEnsembleDestroy) {
+      return React.createElement(DestroyConfirmModal, {
+        ensemble: state.confirmingEnsembleDestroy.ensemble,
+        input: state.confirmingEnsembleDestroy.input,
+        error: state.confirmingEnsembleDestroy.error,
+        submitting: state.confirmingEnsembleDestroy.submitting,
+        onInput: handleEnsembleDestroyInput,
+        onSubmit: handleEnsembleDestroySubmit,
+        onCancel: handleEnsembleDestroyCancel,
       });
     }
 
@@ -1538,7 +1621,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     React.createElement(PromptArea, {
       hints: promptHints,
       onSubmit: handleSubmit,
-      disabled: (state.phase !== 'main' && state.phase !== 'chat') || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay || !!state.overlay,
+      disabled: (state.phase !== 'main' && state.phase !== 'chat') || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingEnsembleDestroy || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay || !!state.overlay,
       commandNames: commandNamesList,
       playerNames: playerNamesList,
       initialHistory: cmdHistory,
