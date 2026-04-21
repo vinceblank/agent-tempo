@@ -476,14 +476,15 @@ export function createTempoClient(client: Client): TempoClient {
     },
 
     async restore(ensemble): Promise<RestoreOrphansSummary> {
-      // `ensemble` targets the maestro/scheduler unpause; the orphan helper
-      // scans all local orphans (it's host-scoped, not ensemble-scoped —
-      // the next #285 slice may narrow it).
+      // Scope the orphan scan to the requested ensemble (#298 — matches the
+      // `ensemble?` filter the CLI/TUI pass through) and unpause maestro +
+      // scheduler for the same ensemble in parallel.
       const [summary] = await Promise.all([
         restoreOrphansOnce(client, {
           hostname: osHostname(),
           invokerPlayerId: 'tempo-client',
           policy: 'auto',
+          ensemble,
         }),
         unpauseMaestroAndScheduler(client, ensemble),
       ]);

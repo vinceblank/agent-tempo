@@ -285,6 +285,14 @@ describe('TempoClient.restore (#287)', () => {
     expect(calls.some((c) => c.name === 'maestroSetPaused' && c.payload === false)).toBe(true);
   });
 
+  it('#298: scopes the orphan scan to the requested ensemble', async () => {
+    const { client } = makeClient({ ensemble: 'my-band', players: [] });
+    await createTempoClient(client as any).restore('my-band');
+
+    const [, opts] = vi.mocked(mod.restoreOrphansOnce).mock.calls[0];
+    expect(opts.ensemble).toBe('my-band');
+  });
+
   it('tolerates missing scheduler + maestro (best-effort unpause)', async () => {
     const { client } = makeClient({ ensemble: 'e1', players: [], hasScheduler: false, hasMaestroHub: false });
     await expect(createTempoClient(client as any).restore('e1')).resolves.toMatchObject({
