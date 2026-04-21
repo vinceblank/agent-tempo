@@ -3,7 +3,6 @@
  * Parses user input into structured commands and provides handler
  * implementations for each command.
  */
-import { execFile } from 'child_process';
 import type { TempoClient } from '../client';
 import type { TuiAction, StaticItem } from './store';
 import type { Message, SentMessage } from '../types';
@@ -449,7 +448,7 @@ function requireEnsemble(
   return ctx.activeEnsemble;
 }
 
-/** /restart <player> [--fresh] [--force] — revive a player session per §8.2. */
+/** /restart <player> [--fresh] [--no-force] — revive a player session per §8.2. */
 async function handleRestart(
   args: string[],
   dispatch: (action: TuiAction) => void,
@@ -457,7 +456,7 @@ async function handleRestart(
   ctx: CommandContext,
 ): Promise<void> {
   if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /restart <player> [--fresh] [--force]');
+    commitStatic(dispatch, 'error', 'Usage: /restart <player> [--fresh] [--no-force]');
     return;
   }
   const ensemble = requireEnsemble(dispatch, ctx);
@@ -465,7 +464,10 @@ async function handleRestart(
 
   const target = args[0];
   const fresh = args.includes('--fresh');
-  const force = args.includes('--force');
+  // Default: steal the lease. /restart is nearly always invoked against a
+  // live-but-unresponsive session, so forcing is the common case. Pass
+  // --no-force to refuse if a live attachment is present.
+  const force = !args.includes('--no-force');
 
   try {
     const result = await api.restart(ensemble, target, {
@@ -996,17 +998,22 @@ async function handleRecruitConductor(
     return;
   }
 
-  commitStatic(dispatch, 'info', '\u2026 Recruiting conductor (tempo-conductor)...');
+  commitStatic(dispatch, 'info', '\u2026 Recruiting conductor (tempo-conductor)\u2026');
 
-  // Spawn the conductor directly via CLI — no conductor exists yet to receive commands
-  // shell: true resolves .cmd wrappers on Windows
-  execFile('claude-tempo', ['conduct', ensemble], { timeout: 30000, shell: true }, (execErr: any) => {
-    if (execErr) {
-      commitStatic(dispatch, 'error', `\u2717 Failed to recruit conductor: ${execErr.message || execErr}`);
-    } else {
-      commitStatic(dispatch, 'info', '\u2714 Conductor started. Auto-connecting...');
-    }
-  });
+  // `claude-tempo conduct` was removed in #288. Delegate to the shared helper
+  // which query-first checks for a live conductor phase, then shells out via
+  // `client.spawnConductor` (which runs `claude-tempo up <ensemble>`). This is
+  // the same two-op `/restore` uses, so the recruit-vs-restore code paths stay
+  // aligned.
+  const { ensureConductorSpawned } = await import('../client/ensure-conductor-spawned');
+  const outcome = await ensureConductorSpawned(ensemble, api);
+  if (outcome.spawned) {
+    commitStatic(dispatch, 'info', '\u2714 Conductor terminal launched.');
+  } else if (outcome.reason === 'alreadyLive') {
+    commitStatic(dispatch, 'info', '\u2714 Conductor is already attached to this ensemble.');
+  } else {
+    commitStatic(dispatch, 'error', `\u2717 Conductor spawn failed: ${outcome.error}`);
+  }
 }
 
 /** /lineup load|save — manage ensemble lineups. */
@@ -1312,8 +1319,8 @@ export const COMMANDS: Record<string, CommandDef> = {
     handler: handleBroadcast,
   },
   restart: {
-    description: 'Restart a session (reap + claim + context replay + spawn)',
-    usage: '/restart <player> [--fresh] [--force]',
+    description: 'Restart a session (reap + claim + context replay + spawn). Steals a live lease by default — pass --no-force to refuse if held.',
+    usage: '/restart <player> [--fresh] [--no-force]',
     handler: handleRestart,
   },
   destroy: {
