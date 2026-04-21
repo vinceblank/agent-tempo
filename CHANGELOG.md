@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **CLI minimal surface** (#288): `stop`, `restart`, `detach`, `migrate`, `conduct`, `start`,
+  `pause`, `resume`, and `disband` are removed from the CLI. Use the TUI slash commands
+  (`/restart`, `/shutdown`, `/destroy`, `/pause`, `/play`, `/recruit`) instead. A migration
+  table is at [github.com/vinceblank/claude-tempo/issues/285](https://github.com/vinceblank/claude-tempo/issues/285).
+- **MCP tool renames** (#287): `pause_ensemble` renamed to `pause`; `resume_ensemble` renamed
+  to `play`. Update any scripts or prompts that call these tools by name.
+- **Lineup schema: conductor required** (#286): Lineup YAML files must now include a top-level
+  `conductor` field. Lineups without one are rejected at load time with a schema validation
+  error.
+
+### Changed
+
+- **Bootstrap preflight slimmed** (#289): Bare `claude-tempo` invocation no longer probes for
+  the `claude` binary at startup — redundant with `resolveClaudePath()` and too strict for
+  Copilot-only setups. Missing `claude` is now surfaced at spawn time with a clearer
+  per-recruit error. Preflight hard requirements remain Node ≥ 20 and a writable
+  `~/.claude-tempo`.
+- **`down --destroy`** (#288): `claude-tempo down` gains a `--destroy` flag that terminates
+  every workflow across every ensemble before tearing down infrastructure. Replaces the
+  previous multi-step `destroy` + `down` sequence.
+- **`restore` rewritten to ensemble-scope** (#288): `claude-tempo restore <ensemble>` now
+  targets a single ensemble on this host. The interactive multi-flag picker (`--all`,
+  `--from-host`, `--dry-run`) is replaced by the TUI home-view restore modal.
+
+### Added
+
+- **TUI home view** (#290): Bare `claude-tempo` invocation launches a two-list home screen
+  (all running ensembles + players) with a restore modal for orphaned sessions. Connects to
+  the global Maestro for cross-ensemble discovery.
+- **TUI slash commands aligned with MCP surface** (#291): New commands — `/play`, `/shutdown`,
+  `/restore`, `/home` — mirror the renamed/new MCP tools. `/destroy` extended to accept an
+  ensemble name in addition to a player name. Legacy commands (`/detach`, `/disband`,
+  `/resume`, `/pause_ensemble`, `/resume_ensemble`) show migration hints.
+- **`TempoClient.spawnConductor` + `ensureConductorSpawned`** (#291): New helpers on the
+  `TempoClient` interface for orchestrating conductor lifecycle from the TUI restore flow and
+  bootstrap state machine.
+- **`TempoClient.restore()`** (#302): Wired through `TempoClient` so the TUI restore modal
+  and CLI `restore` command share a single implementation path.
+- **Auto-provisioning bootstrap state machine** (#289): Six-step idempotent sequence
+  (preflight → MCP config → Temporal reachability → search attributes → daemon → conductor)
+  runs on bare `claude-tempo` invocation and produces a `BootstrapResult` consumed by the
+  home view as initial props.
+
+### Fixed
+
+- **Orphan-recovery helper extracted to shared module** (#93): `reconcileOrphans` logic moved
+  to `src/reconcile/orphans.ts` and reused by both daemon reconcile-on-boot and the new CLI
+  `restore` command, eliminating the previous duplication.
+
 ## [0.26.0] - 2026-04-20
 
 > **Upgrade guide:** [`docs/ops/v0.26-migration.md`](docs/ops/v0.26-migration.md) —

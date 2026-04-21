@@ -59,11 +59,10 @@ claude-tempo up
 This starts Temporal, registers the MCP server, launches the daemon, and opens a conductor session. Then add players:
 
 ```bash
-claude-tempo start          # open a player session
 claude-tempo status         # see who's active
 ```
 
-Or ask the conductor to `recruit` players from inside Claude Code.
+Or use the TUI to recruit players, or ask the conductor to `recruit` from inside Claude Code.
 
 ### Manual setup
 
@@ -71,8 +70,7 @@ Or ask the conductor to `recruit` players from inside Claude Code.
 claude-tempo server         # start Temporal dev server
 claude-tempo init           # register MCP server globally
 claude-tempo preflight      # verify environment
-claude-tempo conduct        # start a conductor
-claude-tempo start          # start a player
+claude-tempo up             # launch conductor via auto-provisioning
 ```
 
 ## Upgrading
@@ -90,11 +88,14 @@ claude-tempo upgrade 0.22.0
 ## Stopping & Tear Down
 
 ```bash
-# Stop a specific player session
-claude-tempo stop my-ensemble player-name
+# Terminate all sessions in an ensemble
+claude-tempo destroy my-ensemble
 
 # Tear down everything (all sessions, schedulers, and Maestro workflows)
 claude-tempo down --all
+
+# Tear down and terminate all workflows in one step
+claude-tempo down --destroy -y
 
 # Stop the background daemon
 claude-tempo daemon stop
@@ -107,17 +108,17 @@ claude-tempo daemon stop
 ## Core Concepts
 
 - **Player** — A Claude Code session registered as a Temporal workflow
-- **Conductor** — An optional orchestration hub (one per ensemble); receives `report` calls and connects to external interfaces
+- **Conductor** — Required orchestration hub (one per ensemble); receives `report` calls and connects to external interfaces. Lineup schema enforces its presence.
 - **Ensemble** — A named group of players isolated from other ensembles; defaults to `default`
 - **Cue** — A message sent to a player by name via Temporal signal
 - **Lineup** — A YAML file that defines a full team and recruits them in one step
 - **Player Type** — A reusable agent definition (`.md` with YAML frontmatter) that gives a player a named role
 
-Players in one ensemble cannot see or message players in another:
+Players in one ensemble cannot see or message players in another. Launch `claude-tempo` to open the TUI and switch between ensembles, or target a specific ensemble directly:
 
 ```bash
-claude-tempo conduct frontend   # conduct the "frontend" ensemble
-claude-tempo start backend      # join the "backend" ensemble
+claude-tempo up frontend        # provision and launch conductor in "frontend"
+claude-tempo up backend         # provision and launch conductor in "backend"
 ```
 
 ## MCP Tools
@@ -139,17 +140,16 @@ Tools available inside Claude Code sessions connected to claude-tempo:
 ## CLI
 
 ```bash
-claude-tempo up [ensemble]      # first-time setup
-claude-tempo conduct [ensemble] # start a conductor
-claude-tempo start [ensemble]   # start a player
+claude-tempo                    # launch TUI (auto-provisions on first run)
+claude-tempo up [ensemble]      # provision infrastructure and launch conductor
+claude-tempo down [--destroy]   # tear down infrastructure (--destroy also terminates workflows)
 claude-tempo status [ensemble]  # list active sessions
+claude-tempo destroy <ensemble> # terminate all sessions in an ensemble
+claude-tempo restore <ensemble> # restore orphaned sessions on this host
 claude-tempo hosts              # list daemons polling this Temporal namespace (--all/--json)
-claude-tempo recall <name>      # read a player's message history (--limit/--offset/--preview/--from/--since/--include-sent/--json)
+claude-tempo recall <name>      # read a player's message history (--limit/--offset/--preview/--json)
 claude-tempo attachment-info <name> # inspect a session's phase, holder, lease, and heartbeat age
 claude-tempo release [ensemble] # release held players (unlock + deliver tasks)
-claude-tempo pause [ensemble]   # pause all sessions and the scheduler
-claude-tempo resume [ensemble]  # resume a paused ensemble (--release also releases held players)
-claude-tempo tui                # open the terminal UI
 claude-tempo daemon <sub>       # manage the worker daemon
 claude-tempo upgrade            # update to latest
 ```
@@ -240,7 +240,7 @@ claude-tempo tui --ensemble my-ensemble   # direct ensemble mode
 The TUI provides a chat-focused shell for managing your ensemble:
 
 - **Ensemble chat feed** — live aggregated view of conductor + player traffic; type bare text to message the conductor, `@player message` to message directly
-- **Slash commands** — `/recruit`, `/status`, `/schedule`, `/gates`, `/stages`, `/worktree`, `/go` (release held), `/pause`, `/resume`, and more; type `/help` for the full list
+- **Slash commands** — `/recruit`, `/status`, `/schedule`, `/gates`, `/stages`, `/worktree`, `/go` (release held), `/pause`, `/play`, `/shutdown`, `/restore`, `/home`, and more; type `/help` for the full list
 - **Interactive overlays and wizards** — step-by-step flows for recruiting players, creating schedules, and managing ensembles
 
 📖 [TUI reference → docs/tui.md](docs/tui.md)
