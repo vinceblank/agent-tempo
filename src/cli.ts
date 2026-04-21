@@ -478,9 +478,31 @@ async function main() {
       // If --ensemble or positional arg given, start in single-ensemble view.
       // Otherwise, start in multi-ensemble home view.
       const tuiEnsemble = args.ensemble || args.positional[1] || undefined;
+
+      // #289 / S7: run the auto-provisioning bootstrap before handing off
+      // to the TUI. Steps 1–6 register MCP, ensure Temporal reachability,
+      // boot the daemon, and prefetch badges + ensembles so the TUI home
+      // view renders instantly. `skipPreflight` bypass: power users can
+      // opt out if the cache / disk-probe cost ever regresses (no current
+      // way to trigger, but the flag is already on the parser).
+      let bootstrapResult;
+      if (!args.skipPreflight) {
+        const { bootstrap } = await import('./cli/startup');
+        try {
+          bootstrapResult = await bootstrap({ config });
+        } catch (err) {
+          // Bootstrap is best-effort — per-step failures degrade into
+          // `StepOutcome.status: 'failed'` and a usable result. A thrown
+          // error means something outside the step boundaries broke
+          // (e.g. cache-dir creation). Log + continue with an undefined
+          // bootstrap payload so the TUI still launches.
+          out.warn(`Bootstrap hit an unexpected error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
       // Dynamic import — TUI module uses ESM ink
       const { run: runTui } = await import('./tui/index');
-      await runTui({ config, ensemble: tuiEnsemble });
+      await runTui({ config, ensemble: tuiEnsemble, ...(bootstrapResult ? { bootstrap: bootstrapResult } : {}) });
       break;
     }
 
