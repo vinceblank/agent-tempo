@@ -2,10 +2,11 @@
  * Unit tests for #291 slash-command surface changes — registry alignment,
  * migration hints, and the typed-name `/destroy <ensemble>` reducer path.
  */
-import { describe, it, expect } from 'vitest';
-import { COMMANDS, getCommandNames } from '../../src/tui/commands';
+import { describe, it, expect, vi } from 'vitest';
+import { COMMANDS, getCommandNames, type CommandContext } from '../../src/tui/commands';
 import { REMOVED_SLASH_COMMANDS, removedSlashCommandHelp } from '../../src/tui/removed-commands';
-import { tuiReducer, initialState, type TuiState } from '../../src/tui/store';
+import { tuiReducer, initialState, type TuiAction, type TuiState } from '../../src/tui/store';
+import type { TempoClient } from '../../src/client';
 
 describe('slash-command registry (#291)', () => {
   it('registers the new ensemble-scope verbs', () => {
@@ -110,5 +111,143 @@ describe('/destroy <ensemble> typed-name reducer actions', () => {
     expect(s.confirmingEnsembleDestroy).toBeUndefined();
     const out = tuiReducer(s, { type: 'ENSEMBLE_DESTROY_INPUT', input: 'x' });
     expect(out).toBe(s);
+  });
+});
+
+// ── #306: /destroy handler guards + visible prompt ──
+//
+// Three regression tests for the pre-merge smoke-test bugs:
+//  1. `/destroy conductor` must refuse — #294 established "conductor required"
+//     as an ensemble invariant. Before this fix it silently dispatched
+//     CONFIRM_STOP and the UI never rendered the prompt, wedging input.
+//  2. `/destroy <peer>` must emit a visible scrollback prompt alongside the
+//     CONFIRM_STOP dispatch. Before this fix the user saw input freeze with
+//     no feedback.
+//  3. The existing ensemble-typed-name path must still work (no regression).
+
+function makeNoopApi(): TempoClient {
+  const unused = vi.fn(() => {
+    throw new Error('TempoClient method not expected during /destroy handler');
+  });
+  return new Proxy({} as TempoClient, { get: () => unused });
+}
+
+describe('/destroy handler guards (#306)', () => {
+  const CTX: CommandContext = { activeEnsemble: 'myband' };
+
+  it('refuses /destroy conductor with an error + redirect (does NOT dispatch CONFIRM_STOP)', async () => {
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+    const handler = COMMANDS.destroy.handler!;
+    await handler(['conductor'], dispatch, makeNoopApi(), CTX);
+
+    // No confirmation dispatched — the whole point of the guard.
+    const confirmCalls = dispatch.mock.calls.filter(
+      ([a]) => (a as { type: string }).type === 'CONFIRM_STOP',
+    );
+    expect(confirmCalls.length).toBe(0);
+
+    // Exactly one error scrollback line.
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const action = dispatch.mock.calls[0][0] as {
+      type: string;
+      item: { type: string; content: string };
+    };
+    expect(action.type).toBe('COMMIT_STATIC');
+    expect(action.item.type).toBe('error');
+    expect(action.item.content).toMatch(/Cannot destroy the conductor/);
+    // Redirects point at the real alternatives.
+    expect(action.item.content).toMatch(/\/shutdown/);
+    expect(action.item.content).toMatch(/\/restart conductor/);
+    // Active-ensemble name gets inlined for the whole-ensemble destroy hint.
+    expect(action.item.content).toMatch(/\/destroy myband/);
+  });
+
+  it('refuses /destroy conductor even when activeEnsemble is null (falls back to <ensemble>)', async () => {
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+    const handler = COMMANDS.destroy.handler!;
+    await handler(['conductor'], dispatch, makeNoopApi(), { activeEnsemble: null });
+
+    const action = dispatch.mock.calls[0][0] as {
+      type: string;
+      item: { type: string; content: string };
+    };
+    expect(action.item.content).toMatch(/\/destroy <ensemble>/);
+  });
+
+  it('/destroy <peer> emits a visible y/n prompt scrollback line BEFORE the CONFIRM_STOP dispatch', async () => {
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+    const handler = COMMANDS.destroy.handler!;
+    await handler(['alice'], dispatch, makeNoopApi(), CTX);
+
+    // Exactly two dispatches: visible prompt, then confirmation request.
+    expect(dispatch).toHaveBeenCalledTimes(2);
+
+    const first = dispatch.mock.calls[0][0] as {
+      type: string;
+      item: { type: string; content: string };
+    };
+    expect(first.type).toBe('COMMIT_STATIC');
+    expect(first.item.type).toBe('info');
+    expect(first.item.content).toMatch(/Destroy alice\?/);
+    expect(first.item.content).toMatch(/y to confirm/);
+    expect(first.item.content).toMatch(/n to cancel/);
+
+    const second = dispatch.mock.calls[1][0] as {
+      type: string;
+      player: string;
+      reason?: string;
+    };
+    expect(second.type).toBe('CONFIRM_STOP');
+    expect(second.player).toBe('alice');
+    expect(second.reason).toBeUndefined();
+  });
+
+  it('/destroy <peer> <reason …> forwards the reason on both the prompt and the CONFIRM_STOP action', async () => {
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+    const handler = COMMANDS.destroy.handler!;
+    await handler(['alice', 'stuck', 'in', 'a', 'loop'], dispatch, makeNoopApi(), CTX);
+
+    const prompt = dispatch.mock.calls[0][0] as {
+      type: string;
+      item: { content: string };
+    };
+    expect(prompt.item.content).toMatch(/Reason: stuck in a loop\./);
+
+    const confirm = dispatch.mock.calls[1][0] as {
+      type: string;
+      player: string;
+      reason?: string;
+    };
+    expect(confirm.type).toBe('CONFIRM_STOP');
+    expect(confirm.player).toBe('alice');
+    expect(confirm.reason).toBe('stuck in a loop');
+  });
+
+  it('ensemble-scope (/destroy matches activeEnsemble) still routes to typed-name confirmation', async () => {
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+    const handler = COMMANDS.destroy.handler!;
+    await handler(['myband'], dispatch, makeNoopApi(), CTX);
+
+    // Exactly one dispatch: the typed-name confirmation. No CONFIRM_STOP,
+    // no prompt line (the typed-name UI renders its own copy).
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const action = dispatch.mock.calls[0][0] as { type: string; ensemble: string };
+    expect(action.type).toBe('CONFIRM_ENSEMBLE_DESTROY');
+    expect(action.ensemble).toBe('myband');
+  });
+
+  it('usage error when no target provided (no dispatches beyond the usage line)', async () => {
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+    const handler = COMMANDS.destroy.handler!;
+    await handler([], dispatch, makeNoopApi(), CTX);
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const action = dispatch.mock.calls[0][0] as {
+      type: string;
+      item: { type: string; content: string };
+    };
+    expect(action.type).toBe('COMMIT_STATIC');
+    expect(action.item.type).toBe('error');
+    expect(action.item.content).toMatch(/Usage:/);
   });
 });

@@ -237,6 +237,22 @@ async function handleDestroy(
   }
 
   const target = args[0];
+
+  // #306: Conductor is an ensemble invariant (#294) — it can't be destroyed
+  // standalone without leaving the ensemble in an invalid state (no conductor
+  // to accept cues, no coordination). Redirect the user to the correct verb
+  // instead of silently dispatching a confirmation the UI never renders.
+  if (target === 'conductor') {
+    commitStatic(
+      dispatch,
+      'error',
+      `✗ Cannot destroy the conductor — ensembles require one (see #294). ` +
+        `Use /shutdown to park this ensemble, /restart conductor to revive it, or ` +
+        `/destroy ${ctx.activeEnsemble ?? '<ensemble>'} to terminate the whole ensemble.`,
+    );
+    return;
+  }
+
   // Ensemble scope: target matches the active ensemble → typed-name
   // confirmation. Player scope: any other target → y/N. The active-ensemble
   // match is unambiguous inside a single-ensemble TUI session.
@@ -244,7 +260,17 @@ async function handleDestroy(
     dispatch({ type: 'CONFIRM_ENSEMBLE_DESTROY', ensemble: target });
     return;
   }
+
+  // #306: CONFIRM_STOP locks the input line awaiting y/N, but the existing
+  // UI didn't render any scrollback prompt to explain why — users just saw
+  // their input freeze until Esc. Emit an explicit prompt line so the
+  // keybind is discoverable.
   const reason = args.slice(1).join(' ') || undefined;
+  commitStatic(
+    dispatch,
+    'info',
+    `⚠ Destroy ${target}? Press y to confirm, n to cancel.${reason ? ' Reason: ' + reason + '.' : ''}`,
+  );
   dispatch({ type: 'CONFIRM_STOP', player: target, ...(reason !== undefined ? { reason } : {}) });
 }
 
