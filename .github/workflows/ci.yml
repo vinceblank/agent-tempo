@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, feat/285-tui-first-maestro]
+    branches: [main]
   pull_request:
-    branches: [main, feat/285-tui-first-maestro]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
