@@ -243,6 +243,19 @@ export interface TuiState {
   scheduleWizard?: ScheduleWizardState;
   /** Create ensemble wizard state (active when phase === 'create-ensemble'). */
   createEnsembleState?: CreateEnsembleState;
+  /**
+   * Home-view modal overlay. `undefined` = no modal. Restore carries the
+   * target ensemble + conductor name + parked player count so the
+   * confirmation body doesn't re-query the backend.
+   */
+  homeModal?:
+    | { type: 'new' }
+    | { type: 'lineup' }
+    | { type: 'restore'; ensemble: string; playerCount: number; conductor?: string };
+  /** True while a home-view modal's submit handler is in flight. */
+  homeModalSubmitting?: boolean;
+  /** Error surfaced inside the active home modal (spawn failure, etc.). */
+  homeModalError?: string;
   /** Status overlay visible (shows player list). */
   statusOverlay: boolean;
   /** Generic command overlay (title + pre-formatted content). Shown by data-display commands. */
@@ -390,7 +403,11 @@ export type TuiAction =
   | { type: 'CREATE_ENSEMBLE_PREV_STEP' }
   | { type: 'CREATE_ENSEMBLE_SUBMIT' }
   | { type: 'CREATE_ENSEMBLE_DONE'; error?: string; ensemble?: string }
-  | { type: 'EXIT_CREATE_ENSEMBLE' };
+  | { type: 'EXIT_CREATE_ENSEMBLE' }
+  // Home-view modals
+  | { type: 'OPEN_HOME_MODAL'; modal: NonNullable<TuiState['homeModal']> }
+  | { type: 'CLOSE_HOME_MODAL' }
+  | { type: 'SET_HOME_MODAL_STATUS'; submitting?: boolean; error?: string };
 
 // ── Reducer ──
 
@@ -885,6 +902,29 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         createEnsembleState: undefined,
       };
     }
+
+    case 'OPEN_HOME_MODAL':
+      return {
+        ...state,
+        homeModal: action.modal,
+        homeModalSubmitting: false,
+        homeModalError: undefined,
+      };
+
+    case 'CLOSE_HOME_MODAL':
+      return {
+        ...state,
+        homeModal: undefined,
+        homeModalSubmitting: false,
+        homeModalError: undefined,
+      };
+
+    case 'SET_HOME_MODAL_STATUS':
+      return {
+        ...state,
+        homeModalSubmitting: action.submitting ?? state.homeModalSubmitting,
+        homeModalError: action.error,
+      };
 
     default:
       return state;

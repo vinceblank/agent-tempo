@@ -97,11 +97,37 @@ export interface EnsembleSummary {
   playerCount: number;
   hasConductor: boolean;
   conductorStatus?: string;
+  /**
+   * `'running'` when any session is in a live phase,
+   * `'parked'` when every session is `detached`. Populated by
+   * {@link TempoClient.listEnsembles}; absent on `discoverEnsembles` results.
+   */
+  state?: 'running' | 'parked';
+}
+
+/** Options for {@link TempoClient.createEnsemble}. */
+export interface CreateEnsembleOpts {
+  /** New ensemble name. Must pass `validateEnsembleName`. */
+  ensemble: string;
+  /** Working directory for the spawned conductor terminal. Defaults to `process.cwd()`. */
+  workDir?: string;
+  /** Optional lineup name or path forwarded to `claude-tempo up --lineup …`. */
+  lineup?: string;
 }
 
 export interface TempoClient {
   /** Discover all running ensembles across the cluster. */
   discoverEnsembles(): Promise<EnsembleSummary[]>;
+  /**
+   * List every ensemble with at least one live workflow, splitting running
+   * from parked (all-sessions-detached) via `state`.
+   */
+  listEnsembles(): Promise<EnsembleSummary[]>;
+  /**
+   * Create a new ensemble + conductor session. Shells out to `claude-tempo
+   * up <name>` so the spawned conductor terminal matches the CLI path.
+   */
+  createEnsemble(opts: CreateEnsembleOpts): Promise<void>;
   /** Get current player snapshot for an ensemble. */
   getPlayers(ensemble: string): Promise<MaestroPlayerInfo[]>;
   /** Get recent messages for an ensemble. */

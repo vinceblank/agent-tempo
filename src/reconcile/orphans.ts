@@ -45,6 +45,8 @@ export interface OrphanCandidate {
 export interface OrphanQueryFilter {
   /** Local hostname to match against `ClaudeTempoAttachedHost` / `ClaudeTempoHostname`. */
   hostname: string;
+  /** Optional ensemble narrowing pushed into the visibility query. */
+  ensemble?: string;
   /**
    * When set, override `isAdapterProcessAlive`. Default stub returns `false`
    * (always assume dead, conservative always-restore). Tests pass a custom
@@ -74,8 +76,11 @@ function sanitizeQueryValue(value: string): string {
  * given hostname. Exposed (rather than inlined) so tests can introspect the
  * query shape without a live Temporal connection.
  */
-export function buildOrphanQuery(hostname: string): string {
+export function buildOrphanQuery(hostname: string, ensemble?: string): string {
   const h = sanitizeQueryValue(hostname);
+  const ensembleClause = ensemble
+    ? ` AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}"`
+    : '';
   return (
     `WorkflowType = "claudeSessionWorkflow" ` +
     `AND ExecutionStatus = "Running" ` +
@@ -85,7 +90,7 @@ export function buildOrphanQuery(hostname: string): string {
       `OR ` +
       `(ClaudeTempoAttachmentState = "detached" ` +
         `AND ClaudeTempoHostname = "${h}")` +
-    `)`
+    `)${ensembleClause}`
   );
 }
 
@@ -106,7 +111,7 @@ export async function queryOrphanedSessions(
   log: (...args: unknown[]) => void = () => {},
 ): Promise<OrphanCandidate[]> {
   const isAlive = filter.isAdapterProcessAlive ?? isAdapterProcessAliveStub;
-  const query = buildOrphanQuery(filter.hostname);
+  const query = buildOrphanQuery(filter.hostname, filter.ensemble);
 
   const orphans: OrphanCandidate[] = [];
 
@@ -153,9 +158,7 @@ export interface RestoreOrphansOpts {
   /** `'auto'` — call `restart` on each eligible candidate.
    *  `'prompt'` — log each candidate; do not call `restart`. */
   policy: 'auto' | 'prompt';
-  /** Optional narrowing filter — only consider orphans in this ensemble.
-   *  Used by the `claude-tempo restore <ensemble>` CLI (#288) so bulk
-   *  scripted restoration can target one ensemble at a time. */
+  /** Optional narrowing filter — only consider orphans in this ensemble. */
   ensemble?: string;
   /** Orphans whose `detachedSince` exceeds this window are skipped.
    *  Default: 24 hours. Ignored when `policy === 'prompt'`. */
@@ -263,7 +266,11 @@ export async function restoreOrphansOnce(
 
   let orphans: OrphanCandidate[];
   try {
-    orphans = await queryOrphanedSessions(client, { hostname: opts.hostname }, log);
+    orphans = await queryOrphanedSessions(
+      client,
+      { hostname: opts.hostname, ...(opts.ensemble ? { ensemble: opts.ensemble } : {}) },
+      log,
+    );
   } catch (err) {
     log('restoreOrphansOnce: orphan query failed (non-fatal):', err instanceof Error ? err.message : String(err));
     return summary;
