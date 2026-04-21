@@ -5,10 +5,7 @@ import { z } from 'zod';
 import { AgentType } from './types';
 import { validateEnsembleName } from './utils/validation';
 
-const VALID_AGENTS: AgentType[] = ['claude', 'copilot'];
-function validAgent(value: string | undefined): AgentType {
-  return VALID_AGENTS.includes(value as AgentType) ? (value as AgentType) : 'claude';
-}
+const VALID_AGENTS: readonly AgentType[] = ['claude', 'copilot'] as const;
 
 /** Environment variable name constants — use these instead of string literals. */
 export const ENV = {
@@ -292,6 +289,52 @@ export function parseTemporalYaml(content: string): PersistedConfig {
   return result;
 }
 
+/**
+ * Human-readable source labels for `defaultAgent` validation errors.
+ * Single source of truth shared by {@link parseAgent} callers; keeps the
+ * "invalid value" error message and the `config show` source column aligned.
+ */
+const AGENT_SOURCE_LABELS: Record<ConfigSource, string> = {
+  flag: '--agent CLI flag',
+  env: `${ENV.DEFAULT_AGENT} env var`,
+  config: `defaultAgent in ${CONFIG_FILE_PATH}`,
+  'temporal-cli': 'Temporal CLI config',
+  default: 'default',
+  none: 'none',
+};
+
+/**
+ * Parse an agent value against the {@link AgentType} union.
+ * Throws when `value` is present but not a valid agent; returns `'claude'`
+ * for empty/unset values so callers can use it as a source-aware default.
+ */
+export function parseAgent(value: string | undefined, source: ConfigSource): AgentType {
+  if (value == null || value === '') return 'claude';
+  if (!VALID_AGENTS.includes(value as AgentType)) {
+    throw new Error(
+      `Invalid agent "${value}" from ${AGENT_SOURCE_LABELS[source]}. ` +
+      `Valid values: ${VALID_AGENTS.join(', ')}.`,
+    );
+  }
+  return value as AgentType;
+}
+
+/**
+ * Resolve `defaultAgent` through the standard precedence chain and validate
+ * against the {@link AgentType} union. Each step passes its own source tag
+ * so `parseAgent` error messages point at the offending origin.
+ */
+function resolveDefaultAgent(
+  cliVal: string | undefined,
+  configFileVal: string | undefined,
+): AgentType {
+  if (cliVal) return parseAgent(cliVal, 'flag');
+  const envVal = process.env[ENV.DEFAULT_AGENT];
+  if (envVal) return parseAgent(envVal, 'env');
+  if (configFileVal) return parseAgent(configFileVal, 'config');
+  return 'claude';
+}
+
 /** CLI flag overrides — passed down from the arg parser. */
 export interface CliOverrides {
   temporalAddress?: string;
@@ -352,9 +395,7 @@ export function getConfig(overrides: CliOverrides = {}): Config {
       overrides.temporalTlsKeyPath, ENV.TEMPORAL_TLS_KEY_PATH,
       configFile.temporalTlsKeyPath, temporalCli.temporalTlsKeyPath,
     ),
-    defaultAgent: validAgent(overrides.defaultAgent
-      || process.env[ENV.DEFAULT_AGENT]
-      || configFile.defaultAgent),
+    defaultAgent: resolveDefaultAgent(overrides.defaultAgent, configFile.defaultAgent),
     claudeBin: process.env[ENV.CLAUDE_BIN] || configFile.claudeBin || undefined,
     taskQueue: process.env[ENV.TASK_QUEUE] ?? 'claude-tempo',
     ensemble: process.env[ENV.ENSEMBLE] ?? 'default',
@@ -414,7 +455,7 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
       temporalApiKey: apiKey.value,
       temporalTlsCertPath: tlsCert.value,
       temporalTlsKeyPath: tlsKey.value,
-      defaultAgent: validAgent(defaultAgent.value),
+      defaultAgent: parseAgent(defaultAgent.value, defaultAgent.source),
       claudeBin: claudeBin.value,
       taskQueue: process.env[ENV.TASK_QUEUE] ?? 'claude-tempo',
       ensemble: process.env[ENV.ENSEMBLE] ?? 'default',
