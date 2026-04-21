@@ -249,10 +249,10 @@ The TUI provides a chat-focused shell for managing your ensemble:
 
 > **Experimental** — subject to breaking changes.
 
-GitHub Copilot CLI sessions can join an ensemble using `--agent copilot`:
+GitHub Copilot CLI sessions can join an ensemble using `--agent copilot`. Recruit one from the TUI:
 
-```bash
-claude-tempo start myband --agent copilot -n copilot-1
+```
+/recruit copilot-1 --agent copilot
 ```
 
 📖 [Copilot bridge setup and limitations → docs/copilot.md](docs/copilot.md)

@@ -86,7 +86,7 @@ Interactive overlays (`/schedule`, `/gates`, `/stages`, `/worktree`) support arr
 - **`/restore` added** — ensemble-scope orphan recovery via the home view modal or directly.
 - **`/home` added** — multi-ensemble home screen with two-list layout (ensembles + players) and restore modal. (#290)
 - **`/destroy <player|ensemble>`** — extended to accept an ensemble name in addition to a player name.
-- **Removed**: `/stop`, `/detach`, `/disband`, `/pause_ensemble`, `/resume_ensemble` — each shows a migration hint pointing to the replacement command.
+- **Removed**: `/resume`, `/detach`, `/disband`, `/pause_ensemble`, `/resume_ensemble` — each shows a migration hint pointing to the replacement command.
 - **Bare `claude-tempo` invocation** launches the TUI directly (with auto-provisioning); `claude-tempo tui` is a synonym.
 
 ### v0.25 Changes
