@@ -207,3 +207,54 @@ describe('filterPlayerNames (#306)', () => {
     expect(filterPlayerNames(names, 'zzz')).toEqual([]);
   });
 });
+
+// The scenarios below pin the logic layer for the "/destroy conductor" dead-key
+// bug the PromptArea Enter handler fix is built on. The keyboard handler itself
+// (PromptArea.tsx useInput) cannot be exercised from Vitest without Ink render
+// (the project deliberately keeps tests/tui/ free of Ink — see vitest.config.ts),
+// so these tests anchor the invariants the handler depends on:
+//
+//   1. classifyPaletteInput keeps returning `player-arg` mode even when the
+//      user has typed an exact player name — the palette is still "visible" by
+//      policy.
+//   2. filterPlayerNames returns [] for that exact match — the palette has
+//      zero suggestions.
+//   3. (1) + (2) describe the trap. The fix in PromptArea is: on Enter, always
+//      close the palette and fall through to the regular submit block, never
+//      attempt an accept-via-Enter branch. Tab remains the accept key.
+describe('palette + Enter dead-key regression (#306)', () => {
+  const names = ['conductor', 'tempo-composer', 'alice'];
+
+  it('"/destroy conductor" classifies as player-arg (palette visible by policy)', () => {
+    const ctx = classifyPaletteInput('/destroy conductor');
+    expect(ctx).toEqual({
+      mode: 'player-arg',
+      partial: 'conductor',
+      replacePrefix: '/destroy ',
+    });
+  });
+
+  it('"/destroy conductor" yields zero palette suggestions (exact match excluded)', () => {
+    const ctx = classifyPaletteInput('/destroy conductor')!;
+    expect(filterPlayerNames(names, ctx.partial)).toEqual([]);
+  });
+
+  it('"/destroy " (trailing space) classifies as player-arg with all names available', () => {
+    const ctx = classifyPaletteInput('/destroy ');
+    expect(ctx).toEqual({ mode: 'player-arg', partial: '', replacePrefix: '/destroy ' });
+    // Empty partial lists everything — Tab selects, Enter submits bare command.
+    expect(filterPlayerNames(names, ctx!.partial)).toEqual(names);
+  });
+
+  // Every PLAYER_PARAM_COMMAND can hit the same trap when typed with an exact
+  // player name. Pin the invariant for each so a future rename can't regress it.
+  it('every PLAYER_PARAM_COMMAND with an exact player name yields zero suggestions', () => {
+    for (const cmd of PLAYER_PARAM_COMMANDS) {
+      const raw = `/${cmd} conductor`;
+      const ctx = classifyPaletteInput(raw);
+      expect(ctx, `palette should be active for ${raw}`).not.toBeNull();
+      expect(ctx!.mode).toBe('player-arg');
+      expect(filterPlayerNames(names, ctx!.partial), `${raw} should have 0 suggestions`).toEqual([]);
+    }
+  });
+});

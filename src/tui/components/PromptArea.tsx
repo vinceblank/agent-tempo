@@ -212,15 +212,12 @@ export const PromptArea = React.memo(function PromptArea({
       if (key.downArrow) { r.onPaletteDown?.(); return; }
       if (key.tab) { r.onPaletteSelect?.(); return; }
       if (key.return) {
-        const trimmedInput = r.value.trim();
-        const cmdName = trimmedInput.startsWith('/') ? trimmedInput.slice(1).toLowerCase() : '';
-        if (cmdName && r.commandNames.includes(cmdName)) {
-          r.onPaletteToggle?.(false);
-          // Fall through to Enter/submit below
-        } else {
-          r.onPaletteSelect?.();
-          return;
-        }
+        // Enter always submits. Use Tab to accept a palette suggestion. This
+        // avoids accept-vs-submit ambiguity when the typed command already
+        // matches exactly but the palette has no remaining suggestions
+        // (e.g. "/destroy conductor"). Close the palette and fall through to
+        // the regular Enter/submit block below.
+        r.onPaletteToggle?.(false);
       }
       if (key.escape) { r.onPaletteToggle?.(false); return; }
     }
