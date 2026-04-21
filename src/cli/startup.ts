@@ -27,7 +27,6 @@ import * as semver from 'semver';
 import { Client } from '@temporalio/client';
 import { Config, CLAUDE_TEMPO_HOME } from '../config';
 import { createTemporalConnection } from '../connection';
-import { resolveClaudePath } from '../spawn';
 import { isMcpConfigured, isGlobalMcpRegistered, addGlobalMcp } from './mcp';
 import {
   DAEMON_PID_PATH,
@@ -340,19 +339,11 @@ async function stepPreflight(
     const major = parseInt(process.version.slice(1), 10);
     if (major < 20) errors.push(`Node.js 20+ required, found ${process.version}`);
 
-    const claudePath = resolveClaudePath();
-    if (claudePath === 'claude') {
-      // `resolveClaudePath` returns the literal `'claude'` on miss — the
-      // caller is expected to rely on `PATH`. That's fine at runtime, but
-      // preflight catches the "not installed" case early.
-      try {
-        execFileSync(process.platform === 'win32' ? 'where' : 'which', ['claude'], {
-          stdio: 'ignore',
-        });
-      } catch {
-        errors.push('claude binary not found on PATH. Install Claude Code from https://claude.com/claude-code');
-      }
-    }
+    // No `claude` binary probe here: the user's default agent may be
+    // `copilot`, and spawn-time errors are more actionable than a startup
+    // preflight block. CI environments without claude installed also need
+    // bootstrap to succeed so the TUI can render diagnostics. A future
+    // TUI badge can surface "claude not found" when the agent requires it.
 
     try {
       fs.mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
