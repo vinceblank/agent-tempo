@@ -141,13 +141,25 @@ describe('COMMANDS registry', function () {
     'broadcast', 'players', 'status', 'help', 'quit',
     'recruit', 'recall', 'schedule',
     'gates', 'stages', 'worktree', 'lineup', 'ensemble', 'back',
-    // PR-D verbs
-    'restart', 'detach', 'destroy', 'migrate', 'attachment-info',
+    // PR-D verbs (detach/migrate removed per #288/#291)
+    'restart', 'destroy', 'attachment-info',
+    // #287/#291 ensemble-scope verbs
+    'pause', 'play', 'shutdown', 'restore', 'home',
   ];
 
   for (const cmd of expectedCommands) {
     it(`registers "${cmd}" command`, function () {
       expect(COMMANDS).to.have.property(cmd);
+    });
+  }
+
+  // #291: each of these was removed from the registry; the TUI's unknown-
+  // command branch pipes them through `removed-commands.ts` for a migration
+  // hint instead of hitting the generic "unknown command" error.
+  const removedCommands = ['detach', 'disband', 'resume', 'pause_ensemble', 'resume_ensemble'];
+  for (const cmd of removedCommands) {
+    it(`"${cmd}" is NOT registered (removed in #291)`, function () {
+      expect(COMMANDS).to.not.have.property(cmd);
     });
   }
 
