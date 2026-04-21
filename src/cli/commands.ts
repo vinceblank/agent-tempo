@@ -2099,21 +2099,18 @@ interface RestoreCliOpts extends CliOverrides {
 }
 
 /**
- * `claude-tempo restore <ensemble>` — delegate to the shared orphan-recovery
- * loop ({@link restoreOrphansOnce}) with the ensemble filter applied. The
- * TUI home view (#290) is the picker surface; the CLI is the scriptable
- * bulk operation, one ensemble at a time.
+ * `claude-tempo restore <ensemble>` — delegate to {@link TempoClient.restore},
+ * which reattaches orphans AND unpauses maestro + scheduler (#298 — the
+ * direct-to-`restoreOrphansOnce` path left the ensemble paused after a
+ * `shutdown → restore` roundtrip). The TUI home view (#290) is the picker
+ * surface; the CLI is the scriptable bulk operation, one ensemble at a time.
  */
 export async function restore(opts: RestoreCliOpts) {
   const { connection, client } = await verbClient(opts);
   try {
-    const { restoreOrphansOnce, formatRestoreOutcome } = await import('../reconcile/orphans');
-    const summary = await restoreOrphansOnce(client, {
-      hostname: hostname(),
-      invokerPlayerId: 'cli',
-      policy: 'auto',
-      ensemble: opts.ensemble,
-    });
+    const { formatRestoreOutcome } = await import('../reconcile/orphans');
+    const tempo = createTempoClient(client);
+    const summary = await tempo.restore(opts.ensemble);
 
     if (summary.details.length === 0) {
       out.log(`No orphans in ensemble "${opts.ensemble}" on this host.`);
