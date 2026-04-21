@@ -285,6 +285,47 @@ describe('restoreOrphansOnce', function () {
     expect(tempo.calls[0].opts.host).to.equal(HOST);
   });
 
+  // #288 — CLI `restore <ensemble>` narrows the orphan loop to a single
+  // ensemble. The filter runs BEFORE cross-host / age / allowlist filtering
+  // so excluded ensembles never appear in `details`.
+  it('ensemble filter — only matching ensembles are considered', async function () {
+    const client = makeFakeClient([
+      fx({ ensemble: 'band-a', playerId: 'alice', detachedSince: new Date(NOW - 60_000).toISOString() }),
+      fx({ ensemble: 'band-b', playerId: 'bob', detachedSince: new Date(NOW - 60_000).toISOString() }),
+      fx({ ensemble: 'band-a', playerId: 'charlie', detachedSince: new Date(NOW - 60_000).toISOString() }),
+    ]);
+    const tempo = stubTempo();
+    const summary = await restoreOrphansOnce(client, {
+      hostname: HOST,
+      invokerPlayerId: 'cli',
+      policy: 'auto',
+      ensemble: 'band-a',
+      now: () => NOW,
+      tempoClientFactory: tempo.factory,
+    });
+    expect(tempo.calls.map((c) => c.ensemble)).to.deep.equal(['band-a', 'band-a']);
+    expect(summary.reattached).to.equal(2);
+    expect(summary.details.map((d) => d.playerId)).to.deep.equal(['alice', 'charlie']);
+  });
+
+  it('ensemble filter — empty result when no orphans match the filter', async function () {
+    const client = makeFakeClient([
+      fx({ ensemble: 'band-a', playerId: 'alice', detachedSince: new Date(NOW - 60_000).toISOString() }),
+    ]);
+    const tempo = stubTempo();
+    const summary = await restoreOrphansOnce(client, {
+      hostname: HOST,
+      invokerPlayerId: 'cli',
+      policy: 'auto',
+      ensemble: 'band-b',
+      now: () => NOW,
+      tempoClientFactory: tempo.factory,
+    });
+    expect(tempo.calls).to.have.length(0);
+    expect(summary.details).to.have.length(0);
+    expect(summary.reattached).to.equal(0);
+  });
+
   describe('formatRestoreOutcome', function () {
     it('renders queued with entry id', function () {
       expect(formatRestoreOutcome({ kind: 'queued', entryId: 'entry-7' }))
