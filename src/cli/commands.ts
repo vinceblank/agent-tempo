@@ -9,7 +9,7 @@ import { spawnInTerminal, spawnCopilotBridge, resolveClaudePath } from '../spawn
 import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
 import { getGitInfo } from '../git-info';
 import { createTemporalConnection } from '../connection';
-import { playerReportSignal, updateMetadataSignal, releaseHeldSignal, outboxLockedQuery, setPausedSignal, destroyUpdate } from '../workflows/signals';
+import { releaseHeldSignal, outboxLockedQuery, setPausedSignal, destroyUpdate } from '../workflows/signals';
 import { addScheduleSignal, setSchedulerPausedSignal } from '../workflows/scheduler-signals';
 import { maestroSetPausedSignal } from '../workflows/maestro-signals';
 import { AgentType, ScheduleEntry, SessionInput, SessionMetadata } from '../types';
@@ -362,7 +362,13 @@ interface StartOpts extends CliOverrides {
   noHold?: boolean;
 }
 
-export async function start(opts: StartOpts) {
+/**
+ * #288: no longer exported — the `start`/`conduct` CLI verbs were removed.
+ * Still invoked internally by `up()` for its post-provisioning conductor +
+ * player spawn. Slice 7 will replace this internal usage with the new
+ * auto-provision flow, after which this function can be deleted outright.
+ */
+async function start(opts: StartOpts) {
   const config = getConfig(opts);
   const workDir = opts.dir || process.cwd();
 
@@ -1418,224 +1424,138 @@ async function confirmPrompt(message: string): Promise<boolean> {
   });
 }
 
+/**
+ * Require the user to type `expected` verbatim to confirm an irrecoverable
+ * action. Exits with code 1 in non-TTY environments.
+ */
+async function typedConfirmPrompt(message: string, expected: string): Promise<boolean> {
+  if (!process.stdin.isTTY) {
+    out.error('Non-interactive environment: use --yes / -y to skip this confirmation.');
+    process.exit(1);
+  }
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise<boolean>((resolve) => {
+    rl.question(`${message}\n  Type ${out.bold(expected)} to confirm: `, (answer) => {
+      rl.close();
+      resolve(answer.trim() === expected);
+    });
+  });
+}
+
 // --- Teardown: `down` command ---
 
 interface DownOpts extends CliOverrides {
-  /** Explicitly specified ensemble name. If undefined, auto-detect from running workflows. */
-  ensemble?: string;
-  all: boolean;
   removeMcp: boolean;
   keepDaemon: boolean;
   yes: boolean;
+  /** When true, terminate every workflow across every ensemble before
+   *  stopping infra. Without it, workflows stay on the Temporal server and
+   *  resume on the next `up`. */
+  destroy: boolean;
   dir: string;
 }
 
 export async function down(opts: DownOpts) {
   const config = getConfig(opts);
-  let ensembleName = opts.ensemble;
-
-  // Auto-detect ensemble if not explicitly specified
-  if (!ensembleName && !opts.all) {
-    const temporalUp = await isTemporalReachable(config);
-    if (!temporalUp) {
-      out.error('No ensembles running (Temporal is not reachable).');
-      process.exit(1);
-    }
-    let connection: Connection | undefined;
-    try {
-      connection = await createTemporalConnection(config);
-      const client = new Client({ connection, namespace: config.temporalNamespace });
-      const runningEnsembles = new Set<string>();
-      const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
-      for await (const wf of client.workflow.list({ query })) {
-        const name = getEnsembleName(wf);
-        if (name) runningEnsembles.add(name);
-      }
-
-      if (runningEnsembles.size === 0) {
-        out.error('No ensembles running.');
-        process.exit(1);
-      } else if (runningEnsembles.size === 1) {
-        ensembleName = [...runningEnsembles][0];
-        // Auto-detected ensemble requires confirmation unless --yes
-        if (!opts.yes) {
-          out.heading('claude-tempo teardown');
-          out.log(`  This will destroy ensemble ${out.bold(ensembleName)}: all sessions, daemon, and Temporal server.`);
-          const confirmed = await confirmPrompt('Proceed?');
-          if (!confirmed) {
-            out.log('Aborted.');
-            process.exit(0);
-          }
-        }
-      } else {
-        // Multiple ensembles: require confirmation or --yes for each
-        if (!opts.yes) {
-          out.heading('claude-tempo teardown');
-          out.log(`  Multiple ensembles running:`);
-          for (const name of [...runningEnsembles].sort()) {
-            out.log(`    - ${name}`);
-          }
-          out.log('');
-          out.log(`  This will destroy ${out.bold('all')} of them: sessions, daemon, and Temporal server.`);
-          const confirmed = await confirmPrompt('Proceed?');
-          if (!confirmed) {
-            out.log('Aborted. To tear down a specific ensemble:');
-            for (const name of [...runningEnsembles].sort()) {
-              out.log(`  - claude-tempo down ${name}`);
-            }
-            process.exit(0);
-          }
-          // Treat as --all since user confirmed tearing down everything
-          opts.all = true;
-        } else {
-          // --yes with multiple ensembles: treat as --all
-          opts.all = true;
-        }
-      }
-    } catch (err) {
-      out.error(`Could not detect running ensembles: ${(err as Error).message}`);
-      process.exit(1);
-    } finally {
-      await connection?.close();
-    }
-  }
-
-  // When --all is set without a specific ensemble, we terminate everything
-  if (!ensembleName && opts.all) {
-    ensembleName = undefined;
-  }
-
-  // Validate ensemble name before interpolating into query strings
-  if (ensembleName) {
-    const nameErr = validateEnsembleName(ensembleName);
-    if (nameErr) { out.error(nameErr); process.exit(1); }
-  }
 
   out.heading('claude-tempo teardown');
-  if (ensembleName) {
-    out.log(`  Ensemble: ${out.bold(ensembleName)}${opts.all ? ' (--all: will also stop Temporal server)' : ''}`);
-  } else {
-    out.log(`  ${out.bold('Tearing down all ensembles')} (--all)`);
-  }
+  out.log(opts.destroy
+    ? `  ${out.bold('Destroying all workflows')}, then stopping daemon + Temporal.`
+    : `  Stopping daemon + Temporal. Workflows stay parked for the next ${out.dim('claude-tempo up')}.`,
+  );
 
-  // Confirm destructive --all on unspecified-ensemble path. Non-all paths
-  // already prompt earlier in the auto-detect block; this covers the
-  // scorched-earth `claude-tempo down --all` invocation, which otherwise
-  // ran silently.
-  if (!ensembleName && opts.all && !opts.yes) {
-    const confirmed = await confirmPrompt('Proceed?');
-    if (!confirmed) {
-      out.log('Aborted.');
-      process.exit(0);
-    }
-  }
-
-  // Step 1: Terminate workflows for the target ensemble (or all ensembles)
+  // Step 1 (destroy mode only): enumerate + terminate workflows across every
+  // ensemble, after a typed confirmation showing the user what's at stake.
   const temporalUp = await isTemporalReachable(config);
-  let hasRemainingWorkflows = false;
-  if (temporalUp) {
+  if (opts.destroy && temporalUp) {
     try {
       const connection = await createTemporalConnection(config);
       const client = new Client({ connection, namespace: config.temporalNamespace });
-
-      // Terminate session workflows — scoped to ensemble if specified, otherwise all
-      const sessionQuery = ensembleName
-        ? `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${ensembleName}"`
-        : `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
-      let terminated = 0;
-      const discoveredEnsembles = new Set<string>();
-      for await (const wf of client.workflow.list({ query: sessionQuery })) {
-        // Track ensemble names for scheduler/maestro cleanup in --all mode
-        if (!ensembleName) {
+      try {
+        // Single enumeration pass — buffer workflowIds and ensemble names so
+        // the confirmation-display and termination loops share the same list.
+        const sessionIds: string[] = [];
+        const runningEnsembles = new Set<string>();
+        const listQuery = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+        for await (const wf of client.workflow.list({ query: listQuery })) {
+          sessionIds.push(wf.workflowId);
           const name = getEnsembleName(wf);
-          if (name) discoveredEnsembles.add(name);
+          if (name) runningEnsembles.add(name);
         }
-        try {
-          const handle = client.workflow.getHandle(wf.workflowId);
-          await handle.terminate('claude-tempo down');
-          terminated++;
-        } catch { /* already closed */ }
-      }
 
-      // Terminate scheduler and maestro workflows for each ensemble
-      const ensemblesToClean = ensembleName ? [ensembleName] : [...discoveredEnsembles];
-      for (const name of ensemblesToClean) {
-        // Scheduler
-        try {
-          const schedulerHandle = client.workflow.getHandle(schedulerWorkflowId(name));
-          await schedulerHandle.terminate('claude-tempo down');
-          terminated++;
-        } catch { /* no scheduler or already closed */ }
-        // Per-ensemble Maestro
-        try {
-          const maestroHandle = client.workflow.getHandle(maestroWorkflowId(name));
-          await maestroHandle.terminate('claude-tempo down');
-          terminated++;
-        } catch { /* no maestro or already closed */ }
-      }
+        if (runningEnsembles.size === 0) {
+          out.log('  No active workflows to destroy.');
+        } else {
+          if (!opts.yes) {
+            console.log();
+            out.log('  The following ensembles will be destroyed:');
+            for (const name of [...runningEnsembles].sort()) {
+              out.log(`    - ${name}`);
+            }
+            console.log();
+            const confirmed = await typedConfirmPrompt(
+              `  This terminates every workflow in every ensemble (${runningEnsembles.size}) and cannot be undone.`,
+              'destroy',
+            );
+            if (!confirmed) {
+              out.log('Aborted.');
+              process.exit(0);
+            }
+          }
 
-      // Terminate global Maestro when tearing down all ensembles
-      if (!ensembleName) {
-        try {
-          const globalMaestroHandle = client.workflow.getHandle(GLOBAL_MAESTRO_WORKFLOW_ID);
-          await globalMaestroHandle.terminate('claude-tempo down');
-          terminated++;
-        } catch { /* no global maestro or already closed */ }
-      }
+          // Fan out terminations in parallel. Individual failures are
+          // swallowed — closed workflows are fine, and the overall operation
+          // is best-effort scorched-earth.
+          const terminate = async (id: string): Promise<boolean> => {
+            try {
+              await client.workflow.getHandle(id).terminate('claude-tempo down --destroy');
+              return true;
+            } catch {
+              return false;
+            }
+          };
+          const targets: string[] = [...sessionIds];
+          for (const name of runningEnsembles) {
+            targets.push(schedulerWorkflowId(name), maestroWorkflowId(name));
+          }
+          targets.push(GLOBAL_MAESTRO_WORKFLOW_ID);
+          const results = await Promise.all(targets.map(terminate));
+          const terminated = results.filter(Boolean).length;
 
-      // Check if other workflows still running (to decide whether to kill Temporal)
-      if (!opts.all) {
-        const allRunningQuery = 'ExecutionStatus = "Running"';
-        for await (const _ of client.workflow.list({ query: allRunningQuery })) {
-          hasRemainingWorkflows = true;
-          break;
+          out.success(`Terminated ${terminated} workflow${terminated !== 1 ? 's' : ''} across ${runningEnsembles.size} ensemble${runningEnsembles.size !== 1 ? 's' : ''}`);
         }
+      } finally {
+        await connection.close();
       }
-
-      await connection.close();
-      const scope = ensembleName ? `in ensemble "${ensembleName}"` : 'across all ensembles';
-      if (terminated > 0) {
-        out.success(`Terminated ${terminated} workflow${terminated !== 1 ? 's' : ''} ${scope}`);
-      } else {
-        out.warn(`No active workflows found ${scope}`);
-      }
-    } catch {
-      out.warn('Could not terminate active sessions');
+    } catch (err) {
+      out.warn(`Could not terminate active workflows: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   // Step 2: Kill bridge processes via PID files
   killBridgeProcesses();
 
-  // Step 2.5: Stop worker daemon — unless --keep-daemon or other ensembles still active
+  // Step 3: Stop worker daemon unless `--keep-daemon`.
   if (opts.keepDaemon) {
     if (isDaemonRunning()) {
       out.log(`  ${out.dim('Worker daemon left running (--keep-daemon)')}`);
     }
-  } else if (opts.all || !hasRemainingWorkflows) {
-    if (stopDaemon()) {
-      out.success('Worker daemon stopped');
-    }
-  } else if (isDaemonRunning()) {
-    out.log(`  ${out.dim('Worker daemon left running (other ensembles still active)')}`);
+  } else if (stopDaemon()) {
+    out.success('Worker daemon stopped');
   }
 
-  // Step 3: Stop Temporal server — only if --all flag or no other workflows remain
-  if (temporalUp && (opts.all || !hasRemainingWorkflows)) {
-    // Find and kill the temporal dev server process
+  // Step 4: Stop Temporal dev server.
+  if (temporalUp) {
     try {
       if (process.platform === 'win32') {
         execFileSync('taskkill', ['/F', '/IM', 'temporal.exe'], { stdio: 'ignore' });
       } else {
-        // Kill temporal server processes started by start-dev
         execFileSync('pkill', ['-f', 'temporal server start-dev'], { stdio: 'ignore' });
       }
       out.success('Temporal server stopped');
     } catch {
       out.warn('Could not stop Temporal server (may need to stop it manually)');
     }
-  } else if (temporalUp) {
-    out.log(`  ${out.dim('Temporal server left running (other ensembles still active)')}`);
   } else {
     out.log(`  ${out.dim('Temporal not running')}`);
   }
@@ -1703,154 +1623,6 @@ export async function down(opts: DownOpts) {
   console.log();
 }
 
-// --- Stop sessions: `stop` command ---
-
-interface StopOpts extends CliOverrides {
-  /** Stop a specific player by name. */
-  name?: string;
-  /** Stop all sessions in this ensemble. */
-  ensemble?: string;
-  /** Stop every session across all ensembles. */
-  all?: boolean;
-}
-
-export async function stop(opts: StopOpts) {
-  const config = getConfig(opts);
-
-  if (!opts.name && !opts.ensemble && !opts.all) {
-    out.error('Specify what to stop:');
-    out.log(`  ${out.dim('claude-tempo stop <ensemble>')}          Stop all sessions in an ensemble`);
-    out.log(`  ${out.dim('claude-tempo stop <ensemble> -n <name>')} Stop a specific session`);
-    out.log(`  ${out.dim('claude-tempo stop --all')}               Stop everything`);
-    process.exit(1);
-  }
-
-  let connection: Connection;
-  try {
-    connection = await Promise.race([
-      createTemporalConnection(config),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
-    ]);
-  } catch {
-    out.error(`Cannot connect to Temporal at ${config.temporalAddress}`);
-    process.exit(1);
-    return;
-  }
-
-  const client = new Client({ connection, namespace: config.temporalNamespace });
-
-  if (opts.name) {
-    // Stop a specific player by name (optionally scoped to ensemble)
-    await stopByName(client, opts.name, config, opts.ensemble);
-  } else {
-    // Stop multiple sessions (--ensemble or --all)
-    const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
-
-    let stopped = 0;
-    for await (const wf of client.workflow.list({ query })) {
-      try {
-        const handle = client.workflow.getHandle(wf.workflowId);
-
-        // Filter by ensemble using metadata if specified
-        if (opts.ensemble) {
-          try {
-            const meta = (await handle.query('getMetadata')) as Record<string, unknown>;
-            if ((meta.ensemble as string) !== opts.ensemble) continue;
-          } catch {
-            continue;
-          }
-        }
-
-        // V2 `destroy` update — sets isDestroyed so adapter recovery (bridge
-        // recreateSession) sees "no" and exits cleanly instead of zombie-
-        // rejoining (#102). PR-H (#132) removed the `hardTerminate` escape
-        // hatch and the underlying `updateMetadata({status:'terminated'})`
-        // shim it relied on; every v0.25+ workflow supports `destroy` natively.
-        await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'stop via CLI' }] });
-        stopped++;
-        out.log(`  ${out.dim('stopped')} ${wf.workflowId}`);
-      } catch {
-        // already closed
-      }
-    }
-
-    // Clean up PID files
-    if (opts.ensemble || opts.all) {
-      killBridgeProcesses();
-    }
-
-    if (stopped > 0) {
-      out.success(`Stopped ${stopped} session${stopped !== 1 ? 's' : ''}`);
-    } else {
-      out.log(opts.ensemble
-        ? `No active sessions in ensemble "${opts.ensemble}".`
-        : 'No active sessions found.');
-    }
-  }
-
-  await connection.close();
-}
-
-async function stopByName(client: Client, name: string, config: Config, ensemble?: string) {
-  // Find the workflow by player name using metadata queries (not search attributes).
-  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
-  let found = false;
-
-  for await (const wf of client.workflow.list({ query })) {
-    const handle = client.workflow.getHandle(wf.workflowId);
-
-    // Check metadata to match by name and ensemble
-    let metadata: Record<string, unknown>;
-    try {
-      metadata = (await handle.query('getMetadata')) as Record<string, unknown>;
-      if ((metadata.playerId as string) !== name) continue;
-      if (ensemble && (metadata.ensemble as string) !== ensemble) continue;
-    } catch {
-      continue;
-    }
-
-    found = true;
-
-    if (metadata.isConductor) {
-      out.warn(`"${name}" is a conductor session`);
-    }
-
-    // Notify the conductor that this session was stopped (if it's not the conductor itself)
-    if (!metadata.isConductor && metadata.ensemble) {
-      try {
-        const conductorWfId = conductorWorkflowId(metadata.ensemble as string);
-        const conductorHandle = client.workflow.getHandle(conductorWfId);
-        await conductorHandle.signal(playerReportSignal, {
-          playerId: name,
-          text: 'Session stopped by CLI',
-          type: 'result' as const,
-        });
-      } catch {
-        // No conductor or conductor not running — fine
-      }
-    }
-
-    // V2 `destroy` update — sets isDestroyed so adapter recovery (e.g.
-    // copilot-bridge's recreateSession) stops instead of rejoining as a
-    // zombie (#102). PR-H (#132) removed the `hardTerminate` escape hatch
-    // and the underlying `updateMetadata({status:'terminated'})` shim.
-    try {
-      await handle.executeUpdate(destroyUpdate, { args: [{ reason: 'stop via CLI' }] });
-      out.success(`Stopped "${name}"`);
-    } catch {
-      out.warn(`Could not signal "${name}" — it may have already exited`);
-    }
-
-    // Try to kill bridge process via PID file
-    killBridgePid(name);
-    break;
-  }
-
-  if (!found) {
-    out.error(`No active session found with name "${name}"`);
-    process.exit(1);
-  }
-}
 
 /**
  * Read PID info for a copilot bridge session from its PID file.
@@ -1871,30 +1643,6 @@ function getBridgePidInfo(name: string): string {
     }
   } catch {
     return '';
-  }
-}
-
-/**
- * Kill a bridge process by reading its PID file from logs/.
- * Cleans up the PID file after.
- */
-function killBridgePid(name: string) {
-  const pidPath = join(process.cwd(), 'logs', `${name}.pid`);
-  if (!existsSync(pidPath)) return;
-
-  try {
-    const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
-    if (!isNaN(pid)) {
-      try {
-        process.kill(pid);
-        out.log(`  ${out.dim(`Killed bridge process (pid ${pid})`)}`);
-      } catch {
-        // Process already dead
-      }
-    }
-    unlinkSync(pidPath);
-  } catch {
-    // PID file unreadable — ignore
   }
 }
 
@@ -2084,32 +1832,16 @@ export async function broadcast(opts: BroadcastOpts) {
   await connection.close();
 }
 
-// --- PR-D verb commands (restart / detach / destroy / migrate / attachment-info) ---
+// --- Destroy + attachment-info CLI verbs ---
 
 interface VerbOpts extends CliOverrides {
   name: string;
   ensemble?: string;
 }
 
-interface RestartCliOpts extends VerbOpts {
-  host?: string;
-  fresh?: boolean;
-  force?: boolean;
-  contextMessages?: number;
-  /** PR-F: required when force-restarting a session attached to a different host. */
-  yesSteal?: string;
-}
-
-interface DetachCliOpts extends VerbOpts {
-  deadlineMs?: number;
-}
-
-interface DestroyCliOpts extends VerbOpts {
-  reason?: string;
-}
-
-interface MigrateCliOpts extends RestartCliOpts {
-  host: string;
+interface DestroyCliOpts extends CliOverrides {
+  ensemble: string;
+  yes: boolean;
 }
 
 /** Shared connection + client helper for verb commands. */
@@ -2129,164 +1861,61 @@ async function verbClient(opts: CliOverrides): Promise<{ config: Config; connect
   return { config, connection, client };
 }
 
-export async function restart(opts: RestartCliOpts) {
-  const { config, connection, client } = await verbClient(opts);
-  const ensemble = opts.ensemble || config.ensemble;
-  try {
-    const tempo = createTempoClient(client);
-
-    // PR-F §16.5 guard — cross-host force-restart requires --yes-steal match.
-    await enforceCliYesSteal(tempo, ensemble, opts.name, {
-      ...(opts.force !== undefined ? { force: opts.force } : {}),
-      ...(opts.yesSteal !== undefined ? { yesSteal: opts.yesSteal } : {}),
-      verbName: 'restart',
-      targetHostFlag: '--host',
-      ...(opts.host !== undefined ? { targetHostValue: opts.host } : {}),
-    });
-
-    const result = await tempo.restart(ensemble, opts.name, {
-      ...(opts.host !== undefined ? { host: opts.host } : {}),
-      ...(opts.fresh !== undefined ? { fresh: opts.fresh } : {}),
-      ...(opts.force !== undefined ? { force: opts.force } : {}),
-      ...(opts.contextMessages !== undefined ? { contextMessages: opts.contextMessages } : {}),
-      invokerPlayerId: 'cli',
-    });
-    out.success(
-      `Restart queued for "${result.playerId}"` +
-      `${result.host ? ` on ${result.host}` : ''}` +
-      `${opts.fresh ? ' (fresh)' : ''}${opts.force ? ' (force)' : ''}.`,
-    );
-    out.log(`  ${out.dim(`outbox entry: ${result.entryId}`)}`);
-    if (opts.host) {
-      out.log(`  ${out.dim(`Verify a claude-tempo daemon is running on "${opts.host}" — tasks will queue until one picks them up.`)}`);
-    }
-  } catch (err: any) {
-    out.error(err?.message || String(err));
-    process.exit(1);
-  } finally {
-    await connection.close();
-  }
-}
-
-export async function detach(opts: DetachCliOpts) {
-  const { config, connection, client } = await verbClient(opts);
-  const ensemble = opts.ensemble || config.ensemble;
-  try {
-    const tempo = createTempoClient(client);
-    await tempo.detach(ensemble, opts.name, opts.deadlineMs);
-    out.success(`Detach signaled for "${opts.name}" (draining up to ${opts.deadlineMs ?? 5000}ms).`);
-  } catch (err: any) {
-    out.error(err?.message || String(err));
-    process.exit(1);
-  } finally {
-    await connection.close();
-  }
-}
-
+/**
+ * `claude-tempo destroy <ensemble> [-y]` — terminate every workflow in an
+ * ensemble (#288). Prompts with the ensemble name and workflow count unless
+ * `-y` is passed. The per-player destroy path lives in the TUI (`/destroy
+ * --player`).
+ */
 export async function destroy(opts: DestroyCliOpts) {
   const { config, connection, client } = await verbClient(opts);
-  const ensemble = opts.ensemble || config.ensemble;
   try {
-    const tempo = createTempoClient(client);
-    await tempo.destroy(ensemble, opts.name, opts.reason);
-    out.success(`"${opts.name}" destroyed${opts.reason ? ` (reason: ${opts.reason})` : ''}.`);
-  } catch (err: any) {
-    out.error(err?.message || String(err));
-    process.exit(1);
-  } finally {
-    await connection.close();
-  }
-}
+    const handles: Array<{ id: string; label: string }> = [];
+    const sessionQuery = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${opts.ensemble}"`;
+    for await (const wf of client.workflow.list({ query: sessionQuery })) {
+      handles.push({ id: wf.workflowId, label: 'session' });
+    }
+    const probe = async (id: string, label: string): Promise<{ id: string; label: string } | null> => {
+      try {
+        const desc = await client.workflow.getHandle(id).describe();
+        return desc.status.name === 'RUNNING' ? { id, label } : null;
+      } catch { return null; }
+    };
+    const sidecars = await Promise.all([
+      probe(schedulerWorkflowId(opts.ensemble), 'scheduler'),
+      probe(maestroWorkflowId(opts.ensemble), 'maestro'),
+    ]);
+    for (const s of sidecars) if (s) handles.push(s);
 
-/**
- * CLI-side `--yes-steal` guard (§16.5 Option B, brief §8 answer 5).
- *
- * Detects cross-host force-restart at the CLI layer and emits a
- * copy-paste-friendly error including the exact re-run command. Returns the
- * confirmed hostname on success; exits the process (code 1) on rejection —
- * intentionally synchronous UX per "hard error, no interactive prompt".
- *
- * Shared by `migrate` and `restart` CLI commands so both surfaces have
- * identical error text.
- */
-async function enforceCliYesSteal(
-  tempo: ReturnType<typeof createTempoClient>,
-  ensemble: string,
-  playerName: string,
-  opts: {
-    force?: boolean;
-    yesSteal?: string;
-    /** For the "re-run" suggestion — the CLI verb name (`migrate` or `restart`). */
-    verbName: string;
-    /** For the "re-run" suggestion — flag that carries the target host. */
-    targetHostFlag: string;
-    /** Resolved target host value (e.g. opts.host for migrate). */
-    targetHostValue?: string;
-  },
-  localHostname: string = hostname(),
-): Promise<void> {
-  if (!opts.force) return;
+    if (handles.length === 0) {
+      out.log(`No active workflows in ensemble "${opts.ensemble}".`);
+      return;
+    }
 
-  let info;
-  try {
-    info = await tempo.attachmentInfo(ensemble, playerName);
-  } catch {
-    // Target may not exist or be destroyed — let the downstream call surface
-    // its own error. Not our job to synthesize cross-host errors here.
-    return;
-  }
+    if (!opts.yes) {
+      out.heading(`Destroy ensemble "${opts.ensemble}"`);
+      for (const h of handles) {
+        out.log(`  ${out.dim('-')} ${h.label}: ${h.id}`);
+      }
+      console.log();
+      const confirmed = await typedConfirmPrompt(
+        `  This terminates ${handles.length} workflow${handles.length !== 1 ? 's' : ''} and cannot be undone.`,
+        'destroy',
+      );
+      if (!confirmed) {
+        out.log('Aborted.');
+        process.exit(0);
+      }
+    }
 
-  const currentHost = info.currentAttachment?.hostname;
-  if (!currentHost || currentHost === localHostname) return;
-
-  const targetFlag = opts.targetHostValue
-    ? `${opts.targetHostFlag} ${opts.targetHostValue}`
-    : opts.targetHostFlag;
-  const reRun = `claude-tempo ${opts.verbName} ${playerName} ${targetFlag} --yes-steal=${currentHost} --force`;
-
-  if (!opts.yesSteal) {
-    out.error(`session "${playerName}" is attached to host "${currentHost}".`);
-    out.log('  To confirm moving it, re-run with --yes-steal:');
-    out.log(`\n    ${reRun}\n`);
-    out.log('  This safety flag prevents accidental cross-host session takeover.');
-    process.exit(1);
-  }
-  if (opts.yesSteal !== currentHost) {
-    out.error(`--yes-steal mismatch: session "${playerName}" is on "${currentHost}", not "${opts.yesSteal}".`);
-    out.log('  Re-run with the correct hostname:');
-    out.log(`\n    ${reRun}\n`);
-    process.exit(1);
-  }
-}
-
-export async function migrate(opts: MigrateCliOpts) {
-  if (!opts.host) {
-    out.error('Usage: claude-tempo migrate <name> --to <hostname> [--force --yes-steal=<current-host>]');
-    process.exit(1);
-  }
-  const { config, connection, client } = await verbClient(opts);
-  const ensemble = opts.ensemble || config.ensemble;
-  try {
-    const tempo = createTempoClient(client);
-
-    // PR-F §16.5 guard — cross-host force-migrate requires --yes-steal match.
-    await enforceCliYesSteal(tempo, ensemble, opts.name, {
-      ...(opts.force !== undefined ? { force: opts.force } : {}),
-      ...(opts.yesSteal !== undefined ? { yesSteal: opts.yesSteal } : {}),
-      verbName: 'migrate',
-      targetHostFlag: '--to',
-      targetHostValue: opts.host,
-    });
-
-    const result = await tempo.migrate(ensemble, opts.name, opts.host, {
-      ...(opts.fresh !== undefined ? { fresh: opts.fresh } : {}),
-      ...(opts.force !== undefined ? { force: opts.force } : {}),
-      ...(opts.contextMessages !== undefined ? { contextMessages: opts.contextMessages } : {}),
-      invokerPlayerId: 'cli',
-    });
-    out.success(`Migrate queued for "${result.playerId}" → ${result.host ?? opts.host}.`);
-    out.log(`  ${out.dim(`outbox entry: ${result.entryId}`)}`);
-    out.log(`  ${out.dim(`Verify a claude-tempo daemon is running on "${opts.host}" — tasks will queue until one picks them up.`)}`);
+    const results = await Promise.all(handles.map(async (h) => {
+      try {
+        await client.workflow.getHandle(h.id).terminate(`claude-tempo destroy ${opts.ensemble}`);
+        return true;
+      } catch { return false; }
+    }));
+    const terminated = results.filter(Boolean).length;
+    out.success(`Terminated ${terminated} workflow${terminated !== 1 ? 's' : ''} in "${opts.ensemble}".`);
   } catch (err: any) {
     out.error(err?.message || String(err));
     process.exit(1);
@@ -2463,152 +2092,44 @@ export async function recall(opts: RecallCliOpts) {
   }
 }
 
-// --- PR-E restore command (design §10.3) ---
+// --- Restore command (#288 clean break: ensemble-scoped, no picker flags) ---
 
 interface RestoreCliOpts extends CliOverrides {
-  /** Specific player name to restore. Omitted means "interactive picker". */
-  name?: string;
-  ensemble?: string;
-  /** Restore every orphan in the namespace, respecting allowlist. */
-  all?: boolean;
-  /** Filter to orphans whose `preferredHost` matches this value. */
-  fromHost?: string;
-  /** List candidates without restoring. */
-  dryRun?: boolean;
+  ensemble: string;
 }
 
 /**
- * Render a single orphan row. Used by both the dry-run list and the
- * interactive picker.
+ * `claude-tempo restore <ensemble>` — delegate to the shared orphan-recovery
+ * loop ({@link restoreOrphansOnce}) with the ensemble filter applied. The
+ * TUI home view (#290) is the picker surface; the CLI is the scriptable
+ * bulk operation, one ensemble at a time.
  */
-function formatOrphanRow(o: import('../reconcile/orphans').OrphanCandidate, index?: number): string {
-  const idx = index !== undefined ? `${(index + 1).toString().padStart(2, ' ')}. ` : '';
-  const phase = o.info.phase;
-  const since = o.summary.detachedSince ?? '(unknown)';
-  const pref = o.summary.preferredHost ?? '(unset)';
-  return `${idx}${o.workflowId}`
-    + `\n    phase: ${phase} · detachedSince: ${since} · preferredHost: ${pref}`;
-}
-
-/**
- * Prompt the operator to select one of the orphan candidates. Returns the
- * selected index (0-based) or `null` on cancel.
- *
- * Uses Node's `readline` — matches the existing conductor-conflict prompt
- * pattern in `up` command. No `inquirer` dep.
- */
-async function pickOrphan(
-  orphans: import('../reconcile/orphans').OrphanCandidate[],
-): Promise<number | null> {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  out.log('Select orphan to restore:');
-  orphans.forEach((o, i) => out.log(formatOrphanRow(o, i)));
-  const answer: string = await new Promise((resolve) => {
-    rl.question(`\n  Choice [1-${orphans.length}, or 'q' to cancel]: `, resolve);
-  });
-  rl.close();
-  const trimmed = answer.trim().toLowerCase();
-  if (trimmed === 'q' || trimmed === '' || trimmed === 'cancel') return null;
-  const n = parseInt(trimmed, 10);
-  if (Number.isNaN(n) || n < 1 || n > orphans.length) return null;
-  return n - 1;
-}
-
-/**
- * Restore one orphan via `TempoClient.restart`. Extracted so the `--all` +
- * specific-name + interactive paths share identical error handling +
- * formatting.
- */
-async function restoreOneOrphan(
-  tempo: ReturnType<typeof createTempoClient>,
-  orphan: import('../reconcile/orphans').OrphanCandidate,
-  localHostname: string,
-): Promise<{ ok: boolean; message: string }> {
-  const { ensemble, playerId } = orphan.summary;
-  const targetHost = orphan.summary.preferredHost ?? localHostname;
-  try {
-    const result = await tempo.restart(ensemble, playerId, {
-      host: targetHost,
-      invokerPlayerId: 'cli',
-    });
-    return {
-      ok: true,
-      message: `${playerId} in ${ensemble} → ${targetHost} (outbox ${result.entryId})`,
-    };
-  } catch (err: any) {
-    const msg = err?.message || String(err);
-    if (msg.includes('AttachmentConflict')) {
-      return { ok: false, message: `${playerId} — already claimed (AttachmentConflict)` };
-    }
-    return { ok: false, message: `${playerId} — ${msg}` };
-  }
-}
-
 export async function restore(opts: RestoreCliOpts) {
-  const { config, connection, client } = await verbClient(opts);
-  const localHost = hostname();
+  const { connection, client } = await verbClient(opts);
   try {
-    const { queryOrphanedSessions } = await import('../reconcile/orphans');
-    let orphans = await queryOrphanedSessions(client, { hostname: localHost });
+    const { restoreOrphansOnce, formatRestoreOutcome } = await import('../reconcile/orphans');
+    const summary = await restoreOrphansOnce(client, {
+      hostname: hostname(),
+      invokerPlayerId: 'cli',
+      policy: 'auto',
+      ensemble: opts.ensemble,
+    });
 
-    // `--from-host` filter.
-    if (opts.fromHost) {
-      orphans = orphans.filter((o) => o.summary.preferredHost === opts.fromHost);
-    }
-
-    // Specific `--name` filter.
-    if (opts.name) {
-      const wanted = opts.name;
-      orphans = orphans.filter((o) => o.summary.playerId === wanted);
-    }
-
-    if (orphans.length === 0) {
-      out.log('No orphaned sessions on this host.');
-      if (opts.fromHost) out.log(`  ${out.dim(`(filter: --from-host=${opts.fromHost})`)}`);
-      if (opts.name) out.log(`  ${out.dim(`(filter: name=${opts.name})`)}`);
+    if (summary.details.length === 0) {
+      out.log(`No orphans in ensemble "${opts.ensemble}" on this host.`);
       return;
     }
 
-    // `--dry-run` lists + exits.
-    if (opts.dryRun) {
-      out.log(`Found ${orphans.length} orphan${orphans.length === 1 ? '' : 's'}${opts.fromHost ? ` on host ${opts.fromHost}` : ''} (dry-run):`);
-      orphans.forEach((o, i) => out.log(formatOrphanRow(o, i)));
-      return;
-    }
-
-    const tempo = createTempoClient(client);
-
-    // `--all` or `--from-host` or `--name` with unique match → batch restore.
-    if (opts.all || opts.fromHost || (opts.name && orphans.length === 1)) {
-      out.log(`Restoring ${orphans.length} orphan${orphans.length === 1 ? '' : 's'}...`);
-      let ok = 0;
-      let failed = 0;
-      for (const o of orphans) {
-        const r = await restoreOneOrphan(tempo, o, localHost);
-        if (r.ok) {
-          out.success(r.message);
-          ok++;
-        } else {
-          out.warn(r.message);
-          failed++;
-        }
+    out.heading(`Restored orphans in "${opts.ensemble}"`);
+    for (const d of summary.details) {
+      const text = `${d.playerId} — ${formatRestoreOutcome(d.outcome)}`;
+      switch (d.outcome.kind) {
+        case 'queued': out.success(text); break;
+        case 'failed': out.warn(text); break;
+        case 'skipped': out.log(`  ${out.dim(text)}`); break;
       }
-      out.log(`\nRestore complete — ${ok} queued, ${failed} skipped/failed.`);
-      return;
     }
-
-    // Interactive single-select picker.
-    const idx = await pickOrphan(orphans);
-    if (idx === null) {
-      out.log('Cancelled.');
-      return;
-    }
-    const r = await restoreOneOrphan(tempo, orphans[idx], localHost);
-    if (r.ok) out.success(r.message);
-    else {
-      out.error(r.message);
-      process.exit(1);
-    }
+    out.log(`\n${summary.reattached} reattached, ${summary.skipped} skipped, ${summary.failed} failed.`);
   } catch (err: any) {
     out.error(err?.message || String(err));
     process.exit(1);
@@ -2734,78 +2255,12 @@ export async function release(opts: ReleaseOpts) {
   await connection.close();
 }
 
-interface PauseResumeOpts extends CliOverrides {
-  ensemble: string;
-  /** Issue #172: when true on `resume`, also fan out `releaseHeldSignal` to every
-   *  session so deferred task messages are delivered and outboxes unlocked in one shot. */
-  release?: boolean;
-}
-
-/** Pause an entire ensemble — sessions, scheduler, and maestro. */
-export async function pause(opts: PauseResumeOpts) {
-  const config = getConfig(opts);
-
-  let connection: Connection;
-  try {
-    connection = await Promise.race([
-      createTemporalConnection(config),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
-    ]);
-  } catch {
-    out.error(`Cannot connect to Temporal at ${config.temporalAddress}`);
-    process.exit(1);
-    return;
-  }
-
-  const client = new Client({ connection, namespace: config.temporalNamespace });
-  await setPausedState(client, opts.ensemble, true);
-  out.success(`Ensemble "${opts.ensemble}" paused`);
-  await connection.close();
-}
-
-/** Resume an entire ensemble — sessions, scheduler, and maestro. */
-export async function resume(opts: PauseResumeOpts) {
-  const config = getConfig(opts);
-
-  let connection: Connection;
-  try {
-    connection = await Promise.race([
-      createTemporalConnection(config),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
-    ]);
-  } catch {
-    out.error(`Cannot connect to Temporal at ${config.temporalAddress}`);
-    process.exit(1);
-    return;
-  }
-
-  const client = new Client({ connection, namespace: config.temporalNamespace });
-  await setPausedState(client, opts.ensemble, false);
-
-  // Issue #172: opt-in release — fan out `releaseHeldSignal` to every session.
-  // The workflow handler is idempotent on non-held sessions (no heldMessage,
-  // outboxLocked already false), so this is safe to blanket-signal.
-  let releasedCount = 0;
-  if (opts.release) {
-    const sanitized = opts.ensemble.replace(/["\\\n\r]/g, '');
-    const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${sanitized}"`;
-    for await (const wf of client.workflow.list({ query })) {
-      try {
-        const handle = client.workflow.getHandle(wf.workflowId);
-        await handle.signal(releaseHeldSignal);
-        releasedCount++;
-      } catch {
-        // Skip terminated / unreachable workflows
-      }
-    }
-    out.log(`  ${out.dim('released')} ${releasedCount} session${releasedCount !== 1 ? 's' : ''}`);
-  }
-
-  out.success(`Ensemble "${opts.ensemble}" resumed${opts.release ? ' (with release)' : ''}`);
-  await connection.close();
-}
-
-/** Shared logic: set paused state across all ensemble components. */
+/**
+ * Fan out the paused/unpaused state to every component of an ensemble —
+ * maestro hub, scheduler, and each session. Shared by the TUI `/pause` +
+ * `/play` surface and by the internal initial-startup hold in
+ * {@link applyLineupPlayersAndSchedules}.
+ */
 async function setPausedState(client: Client, ensemble: string, paused: boolean) {
   // 1. Signal maestro hub
   try {

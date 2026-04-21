@@ -153,6 +153,10 @@ export interface RestoreOrphansOpts {
   /** `'auto'` — call `restart` on each eligible candidate.
    *  `'prompt'` — log each candidate; do not call `restart`. */
   policy: 'auto' | 'prompt';
+  /** Optional narrowing filter — only consider orphans in this ensemble.
+   *  Used by the `claude-tempo restore <ensemble>` CLI (#288) so bulk
+   *  scripted restoration can target one ensemble at a time. */
+  ensemble?: string;
   /** Orphans whose `detachedSince` exceeds this window are skipped.
    *  Default: 24 hours. Ignored when `policy === 'prompt'`. */
   autoRestoreMaxAgeHours?: number;
@@ -282,10 +286,11 @@ export async function restoreOrphansOnce(
     log(`restoreOrphansOnce: ${o.workflowId} — ${formatRestoreOutcome(outcome)}`);
   };
 
-  // PR-F cross-host filter (design §16). Remote orphans are the remote
-  // daemon's problem; we log-and-skip locally.
+  // Filter: (1) ensemble narrowing from the caller, (2) PR-F cross-host
+  // filter (design §16 — remote orphans are the remote daemon's problem).
   const candidates: OrphanCandidate[] = [];
   for (const o of orphans) {
+    if (opts.ensemble && o.summary.ensemble !== opts.ensemble) continue;
     if (o.summary.preferredHost && o.summary.preferredHost !== opts.hostname) {
       record(o, { kind: 'skipped', reason: 'preferredHost', detail: o.summary.preferredHost });
       continue;

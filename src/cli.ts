@@ -43,29 +43,19 @@ interface ParsedArgs {
   yes: boolean;
   all: boolean;
   project: boolean;
-  replace: boolean;
-  resume: boolean;
-  /** Issue #172: `up --no-hold` / `conduct --no-hold` opts out of the new
-   *  defer-conductor-instructions-until-first-user-message behavior. */
+  /** Issue #172: `up --no-hold` opts out of the defer-conductor-instructions-
+   *  until-first-user-message behavior. */
   noHold: boolean;
-  /** Issue #172: `resume --release` also signals releaseHeld to every session. */
-  release: boolean;
+  /** When set with `down`, terminate every live workflow across all
+   *  ensembles before stopping infra. */
+  destroy: boolean;
   ensemble?: string;
   agent?: AgentType;
   type?: string;
   includeStale: boolean;
   host?: string;
-  // PR-D verb flags
-  fresh: boolean;
+  /** `daemon start --force` — bypass the stale-PID-file guard. */
   force: boolean;
-  contextMessages?: number;
-  deadlineMs?: number;
-  reason?: string;
-  // PR-E restore flags
-  fromHost?: string;
-  dryRun?: boolean;
-  // PR-F cross-host flags
-  yesSteal?: string;
   // #128 recall flags (generic enough to share with future commands).
   limit?: number;
   offset?: number;
@@ -88,12 +78,9 @@ function parseArgs(argv: string[]): ParsedArgs {
     yes: false,
     all: false,
     project: false,
-    replace: false,
-    resume: false,
     noHold: false,
-    release: false,
+    destroy: false,
     includeStale: false,
-    fresh: false,
     force: false,
     includeSent: false,
     json: false,
@@ -114,7 +101,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.temporalTlsKeyPath = argv[++i];
     } else if (arg === '--lineup' && i + 1 < argv.length) {
       result.lineup = argv[++i];
-    } else if ((arg === '-n' || arg === '--name') && i + 1 < argv.length) {
+    } else if (arg === '--name' && i + 1 < argv.length) {
+      // Alias for the positional form on `recall` / `attachment-info`.
       result.name = argv[++i];
     } else if ((arg === '-d' || arg === '--dir') && i + 1 < argv.length) {
       result.dir = argv[++i];
@@ -132,46 +120,21 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.all = true;
     } else if (arg === '--project') {
       result.project = true;
-    } else if (arg === '--replace') {
-      result.replace = true;
-    } else if (arg === '--resume') {
-      result.resume = true;
     } else if (arg === '--no-hold') {
       result.noHold = true;
-    } else if (arg === '--release') {
-      // Issue #172: `claude-tempo resume --release` also releases held sessions.
-      result.release = true;
+    } else if (arg === '--destroy') {
+      result.destroy = true;
     } else if (arg === '--ensemble' && i + 1 < argv.length) {
       result.ensemble = argv[++i];
     } else if (arg === '--type' && i + 1 < argv.length) {
       result.type = argv[++i];
     } else if (arg === '--include-stale') {
       result.includeStale = true;
-    } else if ((arg === '--host' || arg === '--to') && i + 1 < argv.length) {
-      // `--to` is the migrate-UX alias for `--host` (brief §3 Site 4).
+    } else if (arg === '--host' && i + 1 < argv.length) {
       result.host = argv[++i];
-    } else if (arg === '--yes-steal' && i + 1 < argv.length) {
-      // Space-separated form: `--yes-steal <hostname>`.
-      result.yesSteal = argv[++i];
-    } else if (arg.startsWith('--yes-steal=')) {
-      // Equals form (preferred per brief): `--yes-steal=<hostname>`.
-      result.yesSteal = arg.slice('--yes-steal='.length);
-    } else if (arg === '--fresh') {
-      result.fresh = true;
     } else if (arg === '--force') {
+      // Only consumed by `daemon start --force` to bypass the stale-PID guard.
       result.force = true;
-    } else if (arg === '--context-messages' && i + 1 < argv.length) {
-      const n = Number(argv[++i]);
-      if (Number.isFinite(n) && n >= 0) result.contextMessages = n;
-    } else if (arg === '--deadline' && i + 1 < argv.length) {
-      const n = Number(argv[++i]);
-      if (Number.isFinite(n) && n >= 0) result.deadlineMs = n;
-    } else if (arg === '--reason' && i + 1 < argv.length) {
-      result.reason = argv[++i];
-    } else if (arg === '--from-host' && i + 1 < argv.length) {
-      result.fromHost = argv[++i];
-    } else if (arg === '--dry-run') {
-      result.dryRun = true;
     } else if (arg === '--limit' && i + 1 < argv.length) {
       const raw = argv[++i];
       const n = Number(raw);
@@ -309,11 +272,20 @@ async function main() {
     return;
   }
 
+  // Removed-verb fast path (#288). Intercepted BEFORE the Temporal-touching
+  // `./cli/commands` import so the friendly error message works even when
+  // Temporal is broken — same reasoning as the crash-proof `help` path.
+  const { REMOVED_VERBS, printRemovedVerbMessage } = await import('./cli/removed-verbs');
+  if (Object.prototype.hasOwnProperty.call(REMOVED_VERBS, args.command)) {
+    printRemovedVerbMessage(args.command);
+    process.exit(1);
+  }
+
   // All other commands: lazy-load the full command surface now.
   const {
-    start, status, init, server, up, down, stop,
+    status, init, server, up, down,
     ensembleCommand, agentTypesCommand, broadcast, release,
-    pause, resume, restart, detach, destroy, migrate, attachmentInfo, recall, hosts, refreshHostProfile, restore,
+    destroy, attachmentInfo, recall, hosts, refreshHostProfile, restore,
   } = await import('./cli/commands');
 
   const ensemble = args.positional[1] || process.env[ENV.ENSEMBLE] || 'default';
@@ -321,37 +293,6 @@ async function main() {
   const resolvedAgent = (): AgentType => args.agent ?? getConfig(overrides).defaultAgent;
 
   switch (args.command) {
-    case 'conduct':
-      await start({
-        ensemble,
-        conductor: true,
-        replace: args.replace,
-        resume: args.resume,
-        name: args.name,
-        skipPreflight: args.skipPreflight,
-        agent: resolvedAgent(),
-        dir: args.dir,
-        // Issue #172: `conduct --lineup <name>` loads a lineup during
-        // conductor startup with the same deferred-instructions semantics
-        // as `up --lineup`. `--no-hold` opts out.
-        lineup: args.lineup,
-        noHold: args.noHold,
-        ...overrides,
-      });
-      break;
-
-    case 'start':
-      await start({
-        ensemble,
-        conductor: false,
-        name: args.name,
-        skipPreflight: args.skipPreflight,
-        agent: resolvedAgent(),
-        dir: args.dir,
-        ...overrides,
-      });
-      break;
-
     case 'status':
       await status({
         ensemble: args.positional[1], // undefined = show all
@@ -366,22 +307,12 @@ async function main() {
       });
       break;
 
-    case 'stop':
-      await stop({
-        name: args.name,
-        ensemble: args.positional[1],
-        all: args.all || undefined,
-        ...overrides,
-      });
-      break;
-
     case 'down':
       await down({
-        ensemble: args.ensemble || args.positional[1] || process.env[ENV.ENSEMBLE],
-        all: args.all,
         removeMcp: !args.keepMcp,
         keepDaemon: args.keepDaemon,
         yes: args.yes,
+        destroy: args.destroy,
         dir: args.dir,
         ...overrides,
       });
@@ -392,7 +323,6 @@ async function main() {
         ensemble,
         name: args.name,
         lineup: args.lineup,
-        // Issue #172: `--no-hold` opts out of the defer-and-hold behavior.
         noHold: args.noHold,
         agent: resolvedAgent(),
         ...overrides,
@@ -422,73 +352,15 @@ async function main() {
       });
       break;
 
-    case 'restart': {
-      const name = args.positional[1] || args.name;
-      if (!name) {
-        out.error('Usage: claude-tempo restart <name> [--host <hostname>] [--fresh] [--force] [--yes-steal=<current-host>] [--context-messages <N>]');
-        process.exit(1);
-      }
-      await restart({
-        name,
-        ensemble: args.ensemble || ensemble,
-        ...(args.host !== undefined ? { host: args.host } : {}),
-        fresh: args.fresh,
-        force: args.force,
-        ...(args.contextMessages !== undefined ? { contextMessages: args.contextMessages } : {}),
-        ...(args.yesSteal !== undefined ? { yesSteal: args.yesSteal } : {}),
-        ...overrides,
-      });
-      break;
-    }
-
-    case 'detach': {
-      const name = args.positional[1] || args.name;
-      if (!name) {
-        out.error('Usage: claude-tempo detach <name> [--deadline <ms>]');
-        process.exit(1);
-      }
-      await detach({
-        name,
-        ensemble: args.ensemble || ensemble,
-        ...(args.deadlineMs !== undefined ? { deadlineMs: args.deadlineMs } : {}),
-        ...overrides,
-      });
-      break;
-    }
-
     case 'destroy': {
-      const name = args.positional[1] || args.name;
-      if (!name) {
-        out.error('Usage: claude-tempo destroy <name> [--reason "<text>"]');
+      const target = args.positional[1] || args.ensemble || process.env[ENV.ENSEMBLE];
+      if (!target) {
+        out.error('Usage: claude-tempo destroy <ensemble> [-y]');
         process.exit(1);
       }
       await destroy({
-        name,
-        ensemble: args.ensemble || ensemble,
-        ...(args.reason !== undefined ? { reason: args.reason } : {}),
-        ...overrides,
-      });
-      break;
-    }
-
-    case 'migrate': {
-      const name = args.positional[1] || args.name;
-      if (!name) {
-        out.error('Usage: claude-tempo migrate <name> --to <hostname> [--force --yes-steal=<current-host>] [--fresh]');
-        process.exit(1);
-      }
-      if (!args.host) {
-        out.error('`--to <hostname>` is required for migrate. Use `restart` to revive on the current host.');
-        process.exit(1);
-      }
-      await migrate({
-        name,
-        ensemble: args.ensemble || ensemble,
-        host: args.host,
-        fresh: args.fresh,
-        force: args.force,
-        ...(args.contextMessages !== undefined ? { contextMessages: args.contextMessages } : {}),
-        ...(args.yesSteal !== undefined ? { yesSteal: args.yesSteal } : {}),
+        ensemble: target,
+        yes: args.yes,
         ...overrides,
       });
       break;
@@ -550,33 +422,18 @@ async function main() {
     }
 
     case 'restore': {
-      // Positional <name> optional — omitted means "interactive picker".
-      const name = args.positional[1] || args.name;
+      // #288: ensemble-scoped, no flags. Positional ensemble name is required.
+      const target = args.positional[1] || args.ensemble || process.env[ENV.ENSEMBLE];
+      if (!target) {
+        out.error('Usage: claude-tempo restore <ensemble>');
+        process.exit(1);
+      }
       await restore({
-        ensemble: args.ensemble || ensemble,
-        ...(name ? { name } : {}),
-        ...(args.all ? { all: true } : {}),
-        ...(args.fromHost ? { fromHost: args.fromHost } : {}),
-        ...(args.dryRun ? { dryRun: true } : {}),
+        ensemble: target,
         ...overrides,
       });
       break;
     }
-
-    case 'pause':
-      await pause({
-        ensemble: args.ensemble || ensemble,
-        ...overrides,
-      });
-      break;
-
-    case 'resume':
-      await resume({
-        ensemble: args.ensemble || ensemble,
-        release: args.release,
-        ...overrides,
-      });
-      break;
 
     case 'ensemble':
       await ensembleCommand({
@@ -627,8 +484,9 @@ async function main() {
       break;
     }
 
-    // `version`, `help`, `upgrade`, `config`, `daemon` handled above
-    // the `./cli/commands` import — crash-proof fast paths (#157 PR C).
+    // `version`, `help`, `upgrade`, `config`, `daemon`, and removed-verb
+    // dispatch handled above the `./cli/commands` import — crash-proof
+    // fast paths (#157 PR C + #288).
 
     default:
       out.error(`Unknown command: ${args.command}`);
