@@ -114,6 +114,11 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
     recall: fail,
     listHosts: async () => [],
     disbandEnsemble: fail,
+    // #287 ensemble-scope verbs — same offline fail-fast shape.
+    pause: fail,
+    play: fail,
+    shutdown: fail,
+    restore: fail,
     isConnected: async () => false,
     hasGlobalMaestro: async () => false,
     getSchedules: async () => [],

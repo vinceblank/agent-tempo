@@ -4,6 +4,7 @@
  * Extracted from `src/tui/client.ts` so that non-TUI consumers (CLI, tests,
  * external integrations) can create a TempoClient without depending on Ink/React.
  */
+import { hostname as osHostname } from 'os';
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { maestroWorkflowId, schedulerWorkflowId, sessionWorkflowId, conductorWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID } from '../config';
 import type {
@@ -24,17 +25,39 @@ import type {
 import {
   submitOutboxUpdate,
   attachmentInfoQuery,
+  destroyUpdate,
+  requestDetachSignal,
+  releaseHeldSignal,
+  setPausedSignal,
 } from '../workflows/signals';
-import { resolveSession } from '../activities/resolve';
+import { resolveSession, scanEnsembleSessions } from '../activities/resolve';
+import { restoreOrphansOnce, type RestoreOrphansSummary } from '../reconcile/orphans';
+import {
+  pauseMaestroAndScheduler,
+  unpauseMaestroAndScheduler,
+  signalAllSessions,
+} from '../utils/ensemble-ops';
 import {
   getAttachmentPhase,
   getEnsembleName,
   getIsConductor,
 } from '../utils/search-attributes';
-import type { TempoClient, EnsembleSummary } from './interface';
+import type {
+  TempoClient,
+  EnsembleSummary,
+  EnsembleShutdownSummary,
+  EnsembleDestroySummary,
+} from './interface';
 
 // Re-export public types for consumers
-export type { TempoClient, EnsembleSummary } from './interface';
+export type {
+  TempoClient,
+  EnsembleSummary,
+  EnsembleShutdownSummary,
+  EnsembleShutdownDetail,
+  EnsembleDestroySummary,
+  EnsembleDestroyDetail,
+} from './interface';
 
 // ── Helpers ──
 
@@ -42,6 +65,11 @@ export type { TempoClient, EnsembleSummary } from './interface';
  *  Strips characters that could break or inject into the query. */
 function sanitizeQueryValue(value: string): string {
   return value.replace(/["\\\n\r]/g, '');
+}
+
+/** Shared unknown-error → string helper for summary `error` fields. */
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 // ── Factory ──
@@ -320,6 +348,81 @@ export function createTempoClient(client: Client): TempoClient {
     },
 
     async destroy(ensemble, playerId, reason) {
+      // #287: ensemble-scope when `playerId` is omitted. Peer sessions in
+      // parallel → scheduler + maestro terminate in parallel → conductor
+      // last so it sees every peer teardown. Matches the destroy tool.
+      if (playerId === undefined) {
+        const destroyReason = reason ?? 'ensemble destroy via TempoClient';
+        const conductorWfId = conductorWorkflowId(ensemble);
+        const sessions = await scanEnsembleSessions(client, ensemble);
+
+        const peers: typeof sessions = [];
+        let conductorPresent = false;
+        for (const s of sessions) {
+          if (s.workflowId === conductorWfId) conductorPresent = true;
+          else peers.push(s);
+        }
+
+        const summary: EnsembleDestroySummary = {
+          destroyed: 0,
+          terminated: 0,
+          failed: 0,
+          details: [],
+        };
+        const destroyArgs = { reason: destroyReason, terminatedBy: 'tempo-client' };
+
+        // Peers in parallel.
+        const peerResults = await Promise.allSettled(
+          peers.map(async (s) => {
+            try {
+              await handle(s.workflowId).executeUpdate(destroyUpdate, { args: [destroyArgs] });
+              return { session: s, outcome: 'destroyed' as const };
+            } catch (err) {
+              return { session: s, outcome: 'failed' as const, error: errMsg(err) };
+            }
+          }),
+        );
+        for (const r of peerResults) {
+          if (r.status !== 'fulfilled') continue;
+          const v = r.value;
+          if (v.outcome === 'destroyed') {
+            summary.details.push({ target: v.session.playerId, outcome: 'destroyed' });
+            summary.destroyed++;
+          } else {
+            summary.details.push({ target: v.session.playerId, outcome: 'failed', error: v.error });
+            summary.failed++;
+          }
+        }
+
+        // Scheduler + maestro terminate in parallel. `terminate` rejects on
+        // missing workflows; treat as "not present" (don't count as failure).
+        const [schedRes, maestroRes] = await Promise.allSettled([
+          handle(schedulerWorkflowId(ensemble)).terminate(destroyReason),
+          handle(maestroWorkflowId(ensemble)).terminate(destroyReason),
+        ]);
+        if (schedRes.status === 'fulfilled') {
+          summary.details.push({ target: 'scheduler', outcome: 'terminated' });
+          summary.terminated++;
+        }
+        if (maestroRes.status === 'fulfilled') {
+          summary.details.push({ target: 'maestro', outcome: 'terminated' });
+          summary.terminated++;
+        }
+
+        // Conductor last.
+        if (conductorPresent) {
+          try {
+            await handle(conductorWfId).executeUpdate(destroyUpdate, { args: [destroyArgs] });
+            summary.details.push({ target: 'conductor', outcome: 'destroyed' });
+            summary.destroyed++;
+          } catch (err) {
+            summary.details.push({ target: 'conductor', outcome: 'failed', error: errMsg(err) });
+            summary.failed++;
+          }
+        }
+        return summary;
+      }
+
       const maestroId = sessionWorkflowId(ensemble, 'maestro');
       const h = handle(maestroId);
       const entry: OutboxEntryInput = {
@@ -329,6 +432,62 @@ export function createTempoClient(client: Client): TempoClient {
         notifyConductor: true,
       };
       await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
+    },
+
+    async pause(ensemble) {
+      await Promise.all([
+        pauseMaestroAndScheduler(client, ensemble),
+        signalAllSessions(client, ensemble, setPausedSignal.name, true),
+      ]);
+    },
+
+    async play(ensemble, opts = {}) {
+      const [, unpaused] = await Promise.all([
+        unpauseMaestroAndScheduler(client, ensemble),
+        signalAllSessions(client, ensemble, setPausedSignal.name, false),
+      ]);
+      if (opts.release === true && unpaused.sent > 0) {
+        // Fan out releaseHeld AFTER everyone is unpaused so no session
+        // receives `releaseHeld` while still paused.
+        await signalAllSessions(client, ensemble, releaseHeldSignal.name, undefined);
+      }
+    },
+
+    async shutdown(ensemble, opts = {}) {
+      const deadlineMs = opts.deadlineMs ?? 5_000;
+      const [toggle, fanout] = await Promise.all([
+        pauseMaestroAndScheduler(client, ensemble),
+        signalAllSessions(client, ensemble, requestDetachSignal.name, { reason: 'user-stop', deadlineMs }),
+      ]);
+      return {
+        detached: fanout.sent,
+        skipped: fanout.skipped,
+        failed: fanout.failed,
+        maestroPaused: toggle.maestro,
+        schedulerPaused: toggle.scheduler,
+        details: fanout.perSession.map((p) =>
+          p.outcome === 'sent'
+            ? { playerId: p.playerId, outcome: 'detaching' as const }
+            : p.outcome === 'failed'
+              ? { playerId: p.playerId, outcome: 'failed' as const, error: p.error }
+              : { playerId: p.playerId, outcome: 'skipped-self' as const },
+        ),
+      };
+    },
+
+    async restore(ensemble): Promise<RestoreOrphansSummary> {
+      // `ensemble` targets the maestro/scheduler unpause; the orphan helper
+      // scans all local orphans (it's host-scoped, not ensemble-scoped —
+      // the next #285 slice may narrow it).
+      const [summary] = await Promise.all([
+        restoreOrphansOnce(client, {
+          hostname: osHostname(),
+          invokerPlayerId: 'tempo-client',
+          policy: 'auto',
+        }),
+        unpauseMaestroAndScheduler(client, ensemble),
+      ]);
+      return summary;
     },
 
     async migrate(ensemble, playerId, host, opts = {}) {

@@ -69,7 +69,7 @@ src/
 │   ├── worktree.ts / stage.ts / stages.ts / cancel-stage.ts
 │   ├── load-lineup.ts / save-lineup.ts / agent-types.ts / resolve.ts
 │   ├── set-name.ts / set-part.ts / who-am-i.ts / release.ts
-│   ├── pause-ensemble.ts / resume-ensemble.ts
+│   ├── pause.ts / play.ts / shutdown.ts / restore.ts
 │   ├── hosts.ts
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
 ├── tui/
