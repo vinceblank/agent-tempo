@@ -349,6 +349,126 @@ describe('restoreOrphansOnce', function () {
     });
   });
 
+  // #306 — user-invoked `/restore` narrows the orphan scan to
+  // `phases: ['detached']`. A live `attached` fixture must NOT be treated
+  // as an orphan candidate, or the caller will enqueue `deliverRestart` →
+  // `requestDetach` against a healthy session and the `drainingDeadline`
+  // hard-termination path will kill the adapter. This was the third PR #306
+  // blocker: `/restore` tore down a live conductor that had NOT detached.
+  describe('phases filter (#306)', function () {
+    it("phases=['detached'] — an 'attached' fixture is filtered out; zero restarts enqueued", async function () {
+      const client = makeFakeClient([
+        fx({
+          ensemble: 'e1',
+          playerId: 'live-conductor',
+          phase: 'attached',
+          detachedSince: new Date(NOW - 60_000).toISOString(),
+        }),
+      ]);
+      const tempo = stubTempo();
+      const summary = await restoreOrphansOnce(client, {
+        hostname: HOST,
+        invokerPlayerId: 'cli',
+        policy: 'auto',
+        phases: ['detached'],
+        now: () => NOW,
+        tempoClientFactory: tempo.factory,
+      });
+      // Zero restart calls — the live fixture was filtered at the
+      // phase-allowlist gate inside `queryOrphanedSessions`. Because the
+      // filter happens BEFORE `restoreOrphansOnce`'s own counter emitter,
+      // there is no `skipped` detail entry — the candidate is simply
+      // invisible to the restore loop.
+      expect(tempo.calls).to.have.length(0);
+      expect(summary).to.deep.equal({ reattached: 0, skipped: 0, failed: 0, details: [] });
+    });
+
+    it("phases=['detached'] — a 'detached' fixture is still restored", async function () {
+      const client = makeFakeClient([
+        fx({
+          ensemble: 'e1',
+          playerId: 'parked',
+          phase: 'detached',
+          detachedSince: new Date(NOW - 60_000).toISOString(),
+        }),
+      ]);
+      const tempo = stubTempo();
+      const summary = await restoreOrphansOnce(client, {
+        hostname: HOST,
+        invokerPlayerId: 'cli',
+        policy: 'auto',
+        phases: ['detached'],
+        now: () => NOW,
+        tempoClientFactory: tempo.factory,
+      });
+      expect(tempo.calls).to.have.length(1);
+      expect(summary.reattached).to.equal(1);
+      expect(summary.details[0].playerId).to.equal('parked');
+    });
+
+    it("no phases (daemon reconcile default) — an 'attached' fixture is included as a candidate and restart is enqueued", async function () {
+      // Daemon reconcile-on-boot has no PID memory after a crash, so it
+      // legitimately treats every live phase as a presumed orphan. An
+      // `AttachmentConflict` from a still-live adapter is the intended
+      // guard (counted as `skipped` per §10.6). Here we verify the
+      // candidate is NOT pre-filtered — the restart does get enqueued.
+      const client = makeFakeClient([
+        fx({
+          ensemble: 'e1',
+          playerId: 'maybe-live',
+          phase: 'attached',
+          detachedSince: new Date(NOW - 60_000).toISOString(),
+        }),
+      ]);
+      const tempo = stubTempo();
+      const summary = await restoreOrphansOnce(client, {
+        hostname: HOST,
+        invokerPlayerId: 'daemon',
+        policy: 'auto',
+        // NOTE: no `phases` — broad default preserved.
+        now: () => NOW,
+        tempoClientFactory: tempo.factory,
+      });
+      expect(tempo.calls).to.have.length(1);
+      expect(summary.reattached).to.equal(1);
+    });
+
+    it("phases=['detached'] — mixed fixtures only return the detached one", async function () {
+      const client = makeFakeClient([
+        fx({
+          ensemble: 'e1',
+          playerId: 'live',
+          phase: 'attached',
+          detachedSince: new Date(NOW - 60_000).toISOString(),
+        }),
+        fx({
+          ensemble: 'e1',
+          playerId: 'parked',
+          phase: 'detached',
+          detachedSince: new Date(NOW - 60_000).toISOString(),
+        }),
+        fx({
+          ensemble: 'e1',
+          playerId: 'processing-now',
+          phase: 'processing',
+          detachedSince: new Date(NOW - 60_000).toISOString(),
+        }),
+      ]);
+      const tempo = stubTempo();
+      const summary = await restoreOrphansOnce(client, {
+        hostname: HOST,
+        invokerPlayerId: 'cli',
+        policy: 'auto',
+        phases: ['detached'],
+        now: () => NOW,
+        tempoClientFactory: tempo.factory,
+      });
+      expect(tempo.calls.map((c) => c.playerId)).to.deep.equal(['parked']);
+      expect(summary.reattached).to.equal(1);
+      expect(summary.details).to.have.length(1);
+    });
+  });
+
   it('preferredHost === local hostname — not filtered as cross-host', async function () {
     const client = makeFakeClient([
       fx({

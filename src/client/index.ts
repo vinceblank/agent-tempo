@@ -571,12 +571,22 @@ export function createTempoClient(client: Client): TempoClient {
       // Scope the orphan scan to the requested ensemble (#298 — matches the
       // `ensemble?` filter the CLI/TUI pass through) and unpause maestro +
       // scheduler for the same ensemble in parallel.
+      //
+      // #306: narrow to `phases: ['detached']`. User-invoked `/restore`
+      // revives a parked ensemble — a live attached/processing session is
+      // NOT a restorable orphan and must not be flagged as one. The broad
+      // live-phase default is reserved for daemon reconcile-on-boot + CLI
+      // `up --resume`, which have no PID memory after a crash and must
+      // treat every live phase as a presumed orphan. Without this narrowing
+      // a healthy conductor gets deliverRestart → requestDetach and is
+      // hard-terminated by `drainingDeadline`.
       const [summary] = await Promise.all([
         restoreOrphansOnce(client, {
           hostname: osHostname(),
           invokerPlayerId: 'tempo-client',
           policy: 'auto',
           ensemble,
+          phases: ['detached'],
         }),
         unpauseMaestroAndScheduler(client, ensemble),
       ]);

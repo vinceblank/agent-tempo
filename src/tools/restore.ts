@@ -49,6 +49,12 @@ export function registerRestoreTool(
               hostname: osHostname(),
               invokerPlayerId: getPlayerId(),
               policy: 'auto',
+              // #306: narrow to detached-only so a live attached/processing
+              // session is never flagged as an orphan by user-invoked
+              // `/restore`. Daemon reconcile-on-boot + CLI `up --resume`
+              // keep the broad live-phase default (no PID memory after
+              // crash → must treat every live phase as presumed orphan).
+              phases: ['detached'],
             },
             log,
           );

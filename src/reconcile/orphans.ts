@@ -26,10 +26,33 @@
  * are the worse failure mode.
  */
 import type { Client } from '@temporalio/client';
-import type { AttachmentInfo, OrphanSummary } from '../types';
+import type { AttachmentInfo, AttachmentPhase, OrphanSummary } from '../types';
 import { attachmentInfoQuery, orphanSummaryQuery } from '../workflows/signals';
 import { isEnsembleAllowed } from '../config';
 import { createTempoClient } from '../client';
+
+/**
+ * Default broad phase set used by daemon reconcile-on-boot and CLI
+ * `up --resume`. Both paths have no PID memory after a crash and must
+ * treat every live phase as a presumed orphan — the post-query
+ * `isAdapterProcessAlive` predicate (and, in practice, the restart outbox
+ * raising `AttachmentConflict` against a live adapter) is what protects
+ * genuinely-attached sessions from being torn down.
+ *
+ * Includes `'detached'` so the broad query emits both §10.1 clauses:
+ *   - active-host live-phase (`ClaudeTempoAttachedHost = host AND state IN (...)`)
+ *   - detached home-host (`state = "detached" AND ClaudeTempoHostname = host`)
+ *
+ * User-invoked `/restore` narrows this to `['detached']` via the `phases`
+ * filter so a healthy live session is never flagged as an orphan candidate.
+ */
+const DEFAULT_ORPHAN_PHASES: AttachmentPhase[] = [
+  'attached',
+  'processing',
+  'awaiting',
+  'draining',
+  'detached',
+];
 
 /**
  * A session workflow observed to be an orphan: the workflow is alive but no
@@ -48,11 +71,31 @@ export interface OrphanQueryFilter {
   /** Optional ensemble narrowing pushed into the visibility query. */
   ensemble?: string;
   /**
+   * Restrict the visibility query to specific attachment phases. Defaults to
+   * the broad live-phase set (`attached | processing | awaiting | draining`)
+   * for daemon reconcile-on-boot, which must treat every live phase as
+   * presumed-orphan (no PID memory post-crash). User-invoked `/restore`
+   * narrows this to `['detached']` so a healthy attached session is never
+   * flagged as an orphan candidate.
+   *
+   * The `detached` home-host clause is always included when `phases`
+   * contains `'detached'`; the active-host clause is included when `phases`
+   * contains any of the live phases.
+   */
+  phases?: AttachmentPhase[];
+  /**
    * When set, override `isAdapterProcessAlive`. Default stub returns `false`
    * (always assume dead, conservative always-restore). Tests pass a custom
    * predicate; production callers omit.
    */
   isAdapterProcessAlive?: (hostname: string, workflowId: string) => boolean;
+}
+
+/** Options shape for {@link buildOrphanQuery}. */
+export interface BuildOrphanQueryOpts {
+  hostname: string;
+  ensemble?: string;
+  phases?: AttachmentPhase[];
 }
 
 /**
@@ -75,22 +118,57 @@ function sanitizeQueryValue(value: string): string {
  * Build the visibility-query string matching the §10.1 candidate set for the
  * given hostname. Exposed (rather than inlined) so tests can introspect the
  * query shape without a live Temporal connection.
+ *
+ * Accepts either the legacy `(hostname, ensemble?)` positional form (used by
+ * existing tests + the §10.1 reconcile-on-boot caller) or the opts-object
+ * form that carries a `phases` filter — used by user-invoked `/restore` to
+ * narrow the visibility query to `detached` only so live sessions are never
+ * flagged as orphan candidates.
  */
-export function buildOrphanQuery(hostname: string, ensemble?: string): string {
-  const h = sanitizeQueryValue(hostname);
-  const ensembleClause = ensemble
-    ? ` AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}"`
+export function buildOrphanQuery(opts: BuildOrphanQueryOpts): string;
+export function buildOrphanQuery(hostname: string, ensemble?: string): string;
+export function buildOrphanQuery(
+  hostnameOrOpts: string | BuildOrphanQueryOpts,
+  ensemble?: string,
+): string {
+  const opts: BuildOrphanQueryOpts = typeof hostnameOrOpts === 'string'
+    ? { hostname: hostnameOrOpts, ...(ensemble !== undefined ? { ensemble } : {}) }
+    : hostnameOrOpts;
+
+  const h = sanitizeQueryValue(opts.hostname);
+  const ensembleClause = opts.ensemble
+    ? ` AND ClaudeTempoEnsemble = "${sanitizeQueryValue(opts.ensemble)}"`
     : '';
+
+  const phases = opts.phases && opts.phases.length > 0
+    ? opts.phases
+    : DEFAULT_ORPHAN_PHASES;
+  const livePhases = phases.filter((p) => p !== 'detached');
+  const includeDetached = phases.includes('detached');
+
+  const clauses: string[] = [];
+  if (livePhases.length > 0) {
+    const liveList = livePhases.map((p) => `"${p}"`).join(',');
+    clauses.push(
+      `(ClaudeTempoAttachedHost = "${h}" AND ClaudeTempoAttachmentState IN (${liveList}))`,
+    );
+  }
+  if (includeDetached) {
+    clauses.push(
+      `(ClaudeTempoAttachmentState = "detached" AND ClaudeTempoHostname = "${h}")`,
+    );
+  }
+
+  // Safety net — both arms empty means caller passed `phases: []`. Fall back
+  // to the default broad set rather than emit an invalid `AND ()` clause.
+  if (clauses.length === 0) {
+    return buildOrphanQuery({ ...opts, phases: DEFAULT_ORPHAN_PHASES });
+  }
+
   return (
     `WorkflowType = "claudeSessionWorkflow" ` +
     `AND ExecutionStatus = "Running" ` +
-    `AND (` +
-      `(ClaudeTempoAttachedHost = "${h}" ` +
-        `AND ClaudeTempoAttachmentState IN ("attached","processing","awaiting","draining")) ` +
-      `OR ` +
-      `(ClaudeTempoAttachmentState = "detached" ` +
-        `AND ClaudeTempoHostname = "${h}")` +
-    `)${ensembleClause}`
+    `AND (${clauses.join(' OR ')})${ensembleClause}`
   );
 }
 
@@ -111,7 +189,20 @@ export async function queryOrphanedSessions(
   log: (...args: unknown[]) => void = () => {},
 ): Promise<OrphanCandidate[]> {
   const isAlive = filter.isAdapterProcessAlive ?? isAdapterProcessAliveStub;
-  const query = buildOrphanQuery(filter.hostname, filter.ensemble);
+  const query = buildOrphanQuery({
+    hostname: filter.hostname,
+    ...(filter.ensemble !== undefined ? { ensemble: filter.ensemble } : {}),
+    ...(filter.phases !== undefined ? { phases: filter.phases } : {}),
+  });
+
+  // Defense-in-depth: even though the visibility query filters by phase,
+  // re-check `info.phase` after fetching the fresh `attachmentInfo`. A
+  // session may have transitioned between list + query, and we never want a
+  // live `attached`/`processing`/`awaiting` session to be returned to a
+  // caller that narrowed to `['detached']`.
+  const phaseAllowlist = filter.phases && filter.phases.length > 0
+    ? new Set<AttachmentPhase>(filter.phases)
+    : null;
 
   const orphans: OrphanCandidate[] = [];
 
@@ -119,6 +210,11 @@ export async function queryOrphanedSessions(
     const handle = client.workflow.getHandle(wf.workflowId);
     try {
       const info = await handle.query(attachmentInfoQuery) as AttachmentInfo;
+
+      // Phase allowlist re-check (see above).
+      if (phaseAllowlist && info.phase && !phaseAllowlist.has(info.phase)) {
+        continue;
+      }
 
       // Live adapter — not an orphan.
       if (info.currentAttachment && isAlive(info.currentAttachment.hostname, wf.workflowId)) {
@@ -160,6 +256,13 @@ export interface RestoreOrphansOpts {
   policy: 'auto' | 'prompt';
   /** Optional narrowing filter — only consider orphans in this ensemble. */
   ensemble?: string;
+  /**
+   * Optional phase narrowing — forwarded to {@link queryOrphanedSessions}.
+   * Defaults to the broad live-phase set for daemon reconcile-on-boot +
+   * CLI `up --resume`. User-invoked `/restore` narrows this to
+   * `['detached']` so a healthy attached session is never flagged.
+   */
+  phases?: AttachmentPhase[];
   /** Orphans whose `detachedSince` exceeds this window are skipped.
    *  Default: 24 hours. Ignored when `policy === 'prompt'`. */
   autoRestoreMaxAgeHours?: number;
@@ -268,7 +371,11 @@ export async function restoreOrphansOnce(
   try {
     orphans = await queryOrphanedSessions(
       client,
-      { hostname: opts.hostname, ...(opts.ensemble ? { ensemble: opts.ensemble } : {}) },
+      {
+        hostname: opts.hostname,
+        ...(opts.ensemble ? { ensemble: opts.ensemble } : {}),
+        ...(opts.phases ? { phases: opts.phases } : {}),
+      },
       log,
     );
   } catch (err) {
