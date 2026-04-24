@@ -1679,7 +1679,7 @@ function renderNotifications(
       return React.createElement(
         Text,
         { key: `notif-${n.id}`, color },
-        `${icon} ${stripLeadingIcon(n.content)}`,
+        `${icon}  ${stripLeadingIcon(n.content)}`,
       );
     }),
   );
@@ -1714,13 +1714,13 @@ export function pinnedConfirmationLines(
     const reason = state.confirmingStopReason ? ` Reason: ${state.confirmingStopReason}.` : '';
     out.push({
       key: 'confirm-stop',
-      text: `⚠ Destroy ${state.confirmingStop}? Press y to confirm, n to cancel.${reason}`,
+      text: `⚠  Destroy ${state.confirmingStop}? Press y to confirm, n to cancel.${reason}`,
     });
   }
   if (state.confirmingDisband) {
     out.push({
       key: 'confirm-disband',
-      text: `⚠ Disband ensemble "${state.confirmingDisband}"? All sessions will be terminated. Press y to confirm, n to cancel.`,
+      text: `⚠  Disband ensemble "${state.confirmingDisband}"? All sessions will be terminated. Press y to confirm, n to cancel.`,
     });
   }
   if (state.confirmingEnsembleDestroy) {
@@ -1731,13 +1731,13 @@ export function pinnedConfirmationLines(
     // with the other confirmation states.
     out.push({
       key: 'confirm-ensemble-destroy',
-      text: `⚠ Destroy ensemble "${state.confirmingEnsembleDestroy.ensemble}"? Type the ensemble name to confirm, Esc to cancel.`,
+      text: `⚠  Destroy ensemble "${state.confirmingEnsembleDestroy.ensemble}"? Type the ensemble name to confirm, Esc to cancel.`,
     });
   }
   if (state.confirmingLineup) {
     out.push({
       key: 'confirm-lineup',
-      text: `⚠ ${state.confirmingLineup.summary}? Press y to confirm, n to cancel.`,
+      text: `⚠  ${state.confirmingLineup.summary}? Press y to confirm, n to cancel.`,
     });
   }
   return out;
