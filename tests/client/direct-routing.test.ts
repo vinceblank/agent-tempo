@@ -122,6 +122,25 @@ describe('TempoClient.recruit (#306)', () => {
     expect(entry.held).toBe(true);
   });
 
+  // #306 regression: when opts.host is omitted the entry must still carry a
+  // real `targetHostname` so the session workflow's `case 'recruit'` dispatch
+  // routes spawnProcess to an actual host worker. Without this, the fallback
+  // `entry.targetHostname || input.metadata.hostname` path would route to
+  // `claude-tempo-dashboard` — the TUI maestro session's placeholder hostname
+  // — and spawnProcess would hang forever on an unattended task queue.
+  it('defaults targetHostname to the current OS hostname when host is omitted', async () => {
+    const { hostname: osHostname } = await import('os');
+    const { client, entries } = makeClient({ ensemble: 'band' });
+    const tempo = createTempoClient(client as any);
+    await tempo.recruit('band', { name: 'elsa', workDir: '/repo' });
+    const entry = entries[0].args as any;
+    expect(entry.targetHostname).toBe(osHostname());
+    // Critically: not 'dashboard' (the maestro session's metadata.hostname).
+    expect(entry.targetHostname).not.toBe('dashboard');
+    // ...and not undefined (which falls through to the maestro's placeholder).
+    expect(entry.targetHostname).toBeDefined();
+  });
+
   it('throws when playerType resolves to no known agent type', async () => {
     const { client } = makeClient({ ensemble: 'band' });
     const tempo = createTempoClient(client as any);

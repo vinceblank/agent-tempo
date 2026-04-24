@@ -438,6 +438,16 @@ export function createTempoClient(client: Client): TempoClient {
 
       const maestroId = sessionWorkflowId(ensemble, 'maestro');
       const h = handle(maestroId);
+      // #306 fix: always set `targetHostname` on the entry. The TUI-owned
+      // maestro session stores `hostname: 'dashboard'` in its metadata
+      // (a placeholder, not a real host), so the session workflow's
+      // fallback path — `entry.targetHostname || input.metadata.hostname`
+      // — routes `spawnProcess` to task queue `claude-tempo-dashboard`,
+      // which has no worker. The MCP `recruit` tool worked because the
+      // conductor session that ran it had a real OS hostname in metadata.
+      // Mirror that behavior here by defaulting to `osHostname()` when
+      // the caller didn't pin a specific host.
+      const targetHostname = opts.host ?? osHostname();
       const entry = {
         type: 'recruit' as const,
         targetName: opts.name,
@@ -451,7 +461,7 @@ export function createTempoClient(client: Client): TempoClient {
         ...(agentDefinition
           ? { agentDefinition, agentDefinitionPath, agentDefinitionDescription, nativeResolvable, allowedTools }
           : opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
-        ...(opts.host !== undefined ? { targetHostname: opts.host } : {}),
+        targetHostname,
         ...(opts.held === true ? { held: true } : {}),
       } satisfies OutboxEntryInput;
       const entryId = await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
