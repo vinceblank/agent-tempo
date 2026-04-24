@@ -1668,8 +1668,19 @@ function renderNotifications(
       return React.createElement(
         Text,
         { key: `notif-${n.id}`, color },
-        `${icon} ${n.content}`,
+        `${icon} ${stripLeadingIcon(n.content)}`,
       );
     }),
   );
+}
+
+/**
+ * #306: Strip a leading kind-icon (`✗ `, `⚠ `, `ⓘ `) from notification
+ * content. Defensive: many call sites historically prepended the icon into
+ * the message string, and the renderer also prepends a kind-based icon —
+ * without this normalization the user sees the icon twice (e.g.
+ * `✗ ✗ Cannot destroy the conductor …`). Exported for unit testing.
+ */
+export function stripLeadingIcon(content: string): string {
+  return content.replace(/^[✗⚠ⓘ]\s+/u, '');
 }

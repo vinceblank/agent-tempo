@@ -22,6 +22,7 @@ import {
   type NotificationItem,
 } from '../../src/tui/store';
 import { commitNotification } from '../../src/tui/commands';
+import { stripLeadingIcon } from '../../src/tui/App';
 
 function makeNotification(
   overrides: Partial<NotificationItem> = {},
@@ -213,5 +214,37 @@ describe('commitNotification helper (#306)', () => {
     const [first] = dispatch.mock.calls[0] as [{ notification: NotificationItem }];
     const [second] = dispatch.mock.calls[1] as [{ notification: NotificationItem }];
     expect(second.notification.id).toBeGreaterThan(first.notification.id);
+  });
+});
+
+describe('stripLeadingIcon (#306)', () => {
+  // The renderer prepends a kind-based icon; many historical call sites
+  // also embedded the icon in the content string. Without normalization
+  // the user sees the icon twice (e.g. "✗ ✗ Cannot destroy …"). This
+  // helper de-duplicates at the render boundary.
+  it('strips a leading "✗ " from error-style content', () => {
+    expect(stripLeadingIcon('✗ foo')).toBe('foo');
+  });
+
+  it('strips a leading "⚠ " from warn-style content', () => {
+    expect(stripLeadingIcon('⚠ bar')).toBe('bar');
+  });
+
+  it('strips a leading "ⓘ " from info-style content', () => {
+    expect(stripLeadingIcon('ⓘ baz')).toBe('baz');
+  });
+
+  it('leaves content without a leading icon unchanged', () => {
+    expect(stripLeadingIcon('no icon')).toBe('no icon');
+  });
+
+  it('only strips the single leading icon, not occurrences mid-string', () => {
+    expect(stripLeadingIcon('foo ✗ bar')).toBe('foo ✗ bar');
+  });
+
+  it('does not strip an icon that lacks a trailing space', () => {
+    // The renderer always emits "icon + space"; a bare leading glyph
+    // without a space is most likely intentional (not a duplicated icon).
+    expect(stripLeadingIcon('✗bar')).toBe('✗bar');
   });
 });
