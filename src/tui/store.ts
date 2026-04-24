@@ -47,6 +47,36 @@ export interface StaticItem {
   msgRouteLabel?: string;
 }
 
+// ── Notifications (bottom-pinned, auto-expiring) ──
+
+/**
+ * #306: Bottom-pinned ephemeral notifications for errors + warnings.
+ *
+ * Before #306 these rode `commitStatic('error'|'warn', …)` and scrolled out
+ * of view — users missed critical guard errors (e.g. `/destroy conductor`
+ * refusals) because a few lines of other output pushed them above the fold.
+ * Notifications render below the prompt, auto-dismiss on TTL, and can be
+ * dismissed with Esc.
+ */
+export interface NotificationItem {
+  id: number;
+  kind: 'error' | 'warn' | 'info';
+  content: string;
+  timestamp: number;
+  /** Absolute ms epoch when this notification should disappear. */
+  expiresAt: number;
+}
+
+/** Default TTLs by kind — errors get extra time to read. */
+export const NOTIFICATION_TTL_MS = {
+  error: 8000,
+  warn: 5000,
+  info: 5000,
+} as const;
+
+/** Maximum concurrent notifications; oldest is dropped when exceeded. */
+export const NOTIFICATION_CAP = 3;
+
 // ── Recruit wizard ──
 
 export type RecruitStep = 'name' | 'agent' | 'type' | 'workDir' | 'message' | 'host' | 'confirm' | 'done';
@@ -221,6 +251,19 @@ export interface TuiState {
   // ── Chat shell ──
   /** Committed scroll-up history items. */
   staticItems: StaticItem[];
+  /**
+   * #306: Bottom-pinned ephemeral notifications — errors/warnings that must
+   * stay visible until dismissed rather than scrolling off the top. The
+   * renderer filters expired entries on every tick via a separate state
+   * counter so the auto-dismiss doesn't need a reducer pass.
+   */
+  notifications: NotificationItem[];
+  /**
+   * #306: Monotonic tick counter — bumped every 500ms by a root-level effect
+   * to force re-renders so expired notifications disappear without requiring
+   * a reducer action per expiration. Cheap — a single integer diff.
+   */
+  notificationTick: number;
   /** Player name when in chat mode (bare text sends message to this target). */
   chatTarget?: string;
   /** Name of the conductor in the active ensemble. */
@@ -323,6 +366,8 @@ export function initialState(ensemble?: string): TuiState {
     playerScrollOffset: 0,
 
     staticItems: [],
+    notifications: [],
+    notificationTick: 0,
     chatTarget: undefined,
     sentMessages: [],
     statusOverlay: false,
@@ -362,6 +407,12 @@ export type TuiAction =
   | { type: 'PLAYER_SCROLL_DOWN' }
   // Chat shell actions
   | { type: 'COMMIT_STATIC'; item: StaticItem }
+  // Bottom-pinned notifications (#306)
+  | { type: 'ADD_NOTIFICATION'; notification: NotificationItem }
+  | { type: 'DISMISS_NOTIFICATION'; id: number }
+  | { type: 'DISMISS_OLDEST_NOTIFICATION' }
+  | { type: 'CLEAR_NOTIFICATIONS' }
+  | { type: 'NOTIFICATION_TICK' }
   | { type: 'SET_CONDUCTOR'; name?: string }
   | { type: 'APPEND_SENT_MESSAGE'; to: string; text: string }
   | { type: 'HYDRATE_SENT_MESSAGES'; messages: Array<{ to: string; text: string; timestamp: string }> }
@@ -559,6 +610,55 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       // Trim to last 500 entries for memory management
       const trimmed = newItems.length > 500 ? newItems.slice(-500) : newItems;
       return { ...state, staticItems: trimmed };
+    }
+
+    // ── Bottom-pinned notifications (#306) ──
+
+    case 'ADD_NOTIFICATION': {
+      const now = Date.now();
+      // Filter out expired entries before appending so the cap check isn't
+      // polluted by stale notifications that should already be gone.
+      const live = state.notifications.filter(n => n.expiresAt > now);
+      const appended = [...live, action.notification];
+      // Cap at NOTIFICATION_CAP — oldest drops off when exceeded.
+      const capped = appended.length > NOTIFICATION_CAP
+        ? appended.slice(appended.length - NOTIFICATION_CAP)
+        : appended;
+      return { ...state, notifications: capped };
+    }
+
+    case 'DISMISS_NOTIFICATION': {
+      const next = state.notifications.filter(n => n.id !== action.id);
+      if (next.length === state.notifications.length) return state;
+      return { ...state, notifications: next };
+    }
+
+    case 'DISMISS_OLDEST_NOTIFICATION': {
+      // Filter-expired-first so Esc acts on what the user actually sees.
+      const now = Date.now();
+      const live = state.notifications.filter(n => n.expiresAt > now);
+      if (live.length === 0) {
+        // Still compact if any expired slipped through — keeps the array clean
+        if (live.length !== state.notifications.length) {
+          return { ...state, notifications: live };
+        }
+        return state;
+      }
+      return { ...state, notifications: live.slice(1) };
+    }
+
+    case 'CLEAR_NOTIFICATIONS': {
+      if (state.notifications.length === 0) return state;
+      return { ...state, notifications: [] };
+    }
+
+    case 'NOTIFICATION_TICK': {
+      // Cheap re-render trigger so expired notifications disappear from the
+      // rendered stack without requiring a reducer action per expiration.
+      // The render pass filters by `expiresAt > Date.now()`. Only the counter
+      // changes — we leave the notifications array alone to avoid thrashing
+      // the React children identity.
+      return { ...state, notificationTick: state.notificationTick + 1 };
     }
 
     // ── Command palette ──

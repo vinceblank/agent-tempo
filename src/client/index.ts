@@ -26,6 +26,7 @@ import {
   submitOutboxUpdate,
   attachmentInfoQuery,
   destroyUpdate,
+  outboxLockedQuery,
   requestDetachSignal,
   releaseHeldSignal,
   setPausedSignal,
@@ -47,6 +48,9 @@ import type {
   EnsembleSummary,
   EnsembleShutdownSummary,
   EnsembleDestroySummary,
+  RecruitClientOpts,
+  RecruitClientResult,
+  ReleaseClientResult,
 } from './interface';
 
 // Re-export public types for consumers
@@ -57,6 +61,9 @@ export type {
   EnsembleShutdownDetail,
   EnsembleDestroySummary,
   EnsembleDestroyDetail,
+  RecruitClientOpts,
+  RecruitClientResult,
+  ReleaseClientResult,
 } from './interface';
 
 // ── Helpers ──
@@ -405,6 +412,111 @@ export function createTempoClient(client: Client): TempoClient {
     // ── PR-D verbs — enqueue on the TUI-owned maestro session's outbox.
     //   The dispatch loop runs `deliverDetach` / `deliverDestroy` /
     //   `deliverRestart` activities against the target (QA B1/B2/B3).
+
+    async recruit(ensemble, opts) {
+      // #306: Lazy-import the agent-type resolver so the TUI/CLI bundle
+      // doesn't pull in the subagent YAML crawler at module-load time.
+      // The `held` flow on the TUI side doesn't currently exercise this;
+      // `playerType` is only resolved when supplied.
+      let agentDefinition: string | undefined;
+      let agentDefinitionPath: string | undefined;
+      let agentDefinitionDescription: string | undefined;
+      let nativeResolvable: boolean | undefined;
+      let allowedTools: string[] | undefined;
+      if (opts.playerType) {
+        const { resolveAgentType } = await import('../ensemble/agent-types');
+        const info = resolveAgentType(opts.playerType);
+        if (!info) {
+          throw new Error(`Unknown agent type "${opts.playerType}"`);
+        }
+        agentDefinition = info.name;
+        agentDefinitionPath = info.path;
+        agentDefinitionDescription = info.description;
+        nativeResolvable = info.nativeResolvable;
+        allowedTools = info.allowedTools;
+      }
+
+      const maestroId = sessionWorkflowId(ensemble, 'maestro');
+      const h = handle(maestroId);
+      const entry = {
+        type: 'recruit' as const,
+        targetName: opts.name,
+        workDir: opts.workDir,
+        isConductor: opts.isConductor === true,
+        agent: opts.agent ?? 'claude',
+        ...(opts.initialMessage !== undefined ? { initialMessage: opts.initialMessage } : {}),
+        // If a player-type is provided, let the outbox activity supply the
+        // agent definition bundle; otherwise fall back to an explicit
+        // systemPrompt path (mirrors the recruit MCP tool's branching).
+        ...(agentDefinition
+          ? { agentDefinition, agentDefinitionPath, agentDefinitionDescription, nativeResolvable, allowedTools }
+          : opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
+        ...(opts.host !== undefined ? { targetHostname: opts.host } : {}),
+        ...(opts.held === true ? { held: true } : {}),
+      } satisfies OutboxEntryInput;
+      const entryId = await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
+      return { playerId: opts.name, entryId };
+    },
+
+    async release(ensemble, playerId): Promise<ReleaseClientResult> {
+      const maestroId = sessionWorkflowId(ensemble, 'maestro');
+      const mh = handle(maestroId);
+      const submitRelease = async (target: string): Promise<void> => {
+        const entry: OutboxEntryInput = { type: 'release', targetPlayerId: target };
+        await mh.executeUpdate(submitOutboxUpdate, { args: [entry] });
+      };
+
+      if (playerId) {
+        // Single-player release — match the MCP tool: only submit when the
+        // session's outbox is actually locked, so the caller sees a clean
+        // error instead of a no-op success for already-running sessions.
+        const target = await resolveSession(client, ensemble, playerId);
+        if (!target) {
+          throw new Error(`No session found with name "${playerId}" in ensemble "${ensemble}".`);
+        }
+        let isLocked = false;
+        try {
+          isLocked = await target.query(outboxLockedQuery);
+        } catch {
+          // Query may fail for old workflows — treat as "not held" to avoid
+          // false-positive release requests on pre-outboxLocked builds.
+        }
+        if (!isLocked) {
+          throw new Error(`Session "${playerId}" is not held (outbox not locked).`);
+        }
+        await submitRelease(playerId);
+        return { released: [playerId], errors: [] };
+      }
+
+      // Bulk release — scan + query + enqueue each held session. The scan
+      // skips the TUI's own maestro session so we don't try to release
+      // ourselves. Errors are returned as soft failures so the caller can
+      // render a partial-success summary.
+      const sessions = await scanEnsembleSessions(client, ensemble);
+      const held: Array<{ playerId: string; workflowId: string }> = [];
+      for (const s of sessions) {
+        if (s.playerId === 'maestro') continue;
+        try {
+          const sh = handle(s.workflowId);
+          const locked = await sh.query(outboxLockedQuery);
+          if (locked) held.push(s);
+        } catch {
+          // Skip sessions where the query fails (old workflows, terminated).
+        }
+      }
+
+      const released: string[] = [];
+      const errors: Array<{ playerId: string; error: string }> = [];
+      for (const s of held) {
+        try {
+          await submitRelease(s.playerId);
+          released.push(s.playerId);
+        } catch (err) {
+          errors.push({ playerId: s.playerId, error: errMsg(err) });
+        }
+      }
+      return { released, errors };
+    },
 
     async restart(ensemble, playerId, opts = {}) {
       const invokerPlayerId = opts.invokerPlayerId ?? 'cli';

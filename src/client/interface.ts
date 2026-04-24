@@ -5,6 +5,7 @@
  * external integrations) can depend on the interface without pulling in Ink/React.
  */
 import type {
+  AgentType,
   MaestroPlayerInfo,
   MaestroRelayMessage,
   HistoryEntry,
@@ -35,6 +36,45 @@ export interface RecallClientResult {
 }
 
 // ── PR-D verb options ──
+
+// ── #306: Recruit (direct TempoClient path) ──
+
+/**
+ * Options for {@link TempoClient.recruit} — direct submit of a `recruit`
+ * outbox entry from the caller's maestro session. Mirrors the `recruit`
+ * MCP tool's parameters, minus the conductor-only bits handled by the
+ * `load_lineup` flow. The TUI uses this to bypass the conductor LLM hop
+ * for UI-initiated recruiting (the prior path routed through the
+ * maestro hub → conductor → MCP tool, which required a live conductor).
+ */
+export interface RecruitClientOpts {
+  name: string;
+  workDir: string;
+  agent?: AgentType;
+  /** Agent type name from the subagent registry (e.g. "tempo-soloist"). */
+  playerType?: string;
+  isConductor?: boolean;
+  initialMessage?: string;
+  systemPrompt?: string;
+  host?: string;
+  /** When true, spawn process but lock outbox until `release`. */
+  held?: boolean;
+}
+
+export interface RecruitClientResult {
+  playerId: string;
+  /** Outbox entry id submitted on the maestro session's workflow. */
+  entryId: string;
+}
+
+// ── #306: Release (direct TempoClient path) ──
+
+export interface ReleaseClientResult {
+  /** Names of players released, in scan order. */
+  released: string[];
+  /** Soft-failure diagnostics per player, if any. */
+  errors: Array<{ playerId: string; error: string }>;
+}
 
 export interface RestartClientOpts {
   /** Target host (defaults to session's preferredHost or last-known hostname). */
@@ -152,6 +192,22 @@ export interface TempoClient {
   sendMessage(ensemble: string, to: string, text: string, source: string): Promise<string>;
   /** Terminate a player's workflow. */
   terminatePlayer(ensemble: string, playerId: string): Promise<void>;
+  /**
+   * #306: Recruit a player directly via the caller's maestro session outbox.
+   * Replaces the legacy TUI path of routing `/recruit …` through the
+   * conductor's Claude Code session. Structural-op parity with the `recruit`
+   * MCP tool — enqueues a `recruit` outbox entry; the dispatch loop spawns
+   * the process. The conductor's LLM is never in the critical path.
+   */
+  recruit(ensemble: string, opts: RecruitClientOpts): Promise<RecruitClientResult>;
+  /**
+   * #306: Release held players directly via the caller's maestro session
+   * outbox. Without `playerId`, scans the ensemble for sessions whose
+   * outbox is locked and enqueues a `release` entry for each. With
+   * `playerId`, releases just that session. Structural-op parity with
+   * the `release` MCP tool.
+   */
+  release(ensemble: string, playerId?: string): Promise<ReleaseClientResult>;
   /** PR-D: Restart a player — §8.2 algorithm. Works on any non-`gone` phase. */
   restart(ensemble: string, playerId: string, opts?: RestartClientOpts): Promise<RestartClientResult>;
   /** PR-D: Gracefully detach a player's adapter. Workflow survives in `detached`. */

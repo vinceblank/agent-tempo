@@ -146,20 +146,21 @@ describe('/destroy handler guards (#306)', () => {
     );
     expect(confirmCalls.length).toBe(0);
 
-    // Exactly one error scrollback line.
+    // Exactly one bottom-pinned notification (#306 — errors moved off
+    // scroll-back so users can't miss guard-rail refusals).
     expect(dispatch).toHaveBeenCalledTimes(1);
     const action = dispatch.mock.calls[0][0] as {
       type: string;
-      item: { type: string; content: string };
+      notification: { kind: string; content: string };
     };
-    expect(action.type).toBe('COMMIT_STATIC');
-    expect(action.item.type).toBe('error');
-    expect(action.item.content).toMatch(/Cannot destroy the conductor/);
+    expect(action.type).toBe('ADD_NOTIFICATION');
+    expect(action.notification.kind).toBe('error');
+    expect(action.notification.content).toMatch(/Cannot destroy the conductor/);
     // Redirects point at the real alternatives.
-    expect(action.item.content).toMatch(/\/shutdown/);
-    expect(action.item.content).toMatch(/\/restart conductor/);
+    expect(action.notification.content).toMatch(/\/shutdown/);
+    expect(action.notification.content).toMatch(/\/restart conductor/);
     // Active-ensemble name gets inlined for the whole-ensemble destroy hint.
-    expect(action.item.content).toMatch(/\/destroy myband/);
+    expect(action.notification.content).toMatch(/\/destroy myband/);
   });
 
   it('refuses /destroy conductor even when activeEnsemble is null (falls back to <ensemble>)', async () => {
@@ -169,9 +170,9 @@ describe('/destroy handler guards (#306)', () => {
 
     const action = dispatch.mock.calls[0][0] as {
       type: string;
-      item: { type: string; content: string };
+      notification: { kind: string; content: string };
     };
-    expect(action.item.content).toMatch(/\/destroy <ensemble>/);
+    expect(action.notification.content).toMatch(/\/destroy <ensemble>/);
   });
 
   it('/destroy <peer> emits a visible y/n prompt scrollback line BEFORE the CONFIRM_STOP dispatch', async () => {
@@ -244,10 +245,10 @@ describe('/destroy handler guards (#306)', () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
     const action = dispatch.mock.calls[0][0] as {
       type: string;
-      item: { type: string; content: string };
+      notification: { kind: string; content: string };
     };
-    expect(action.type).toBe('COMMIT_STATIC');
-    expect(action.item.type).toBe('error');
-    expect(action.item.content).toMatch(/Usage:/);
+    expect(action.type).toBe('ADD_NOTIFICATION');
+    expect(action.notification.kind).toBe('error');
+    expect(action.notification.content).toMatch(/Usage:/);
   });
 });

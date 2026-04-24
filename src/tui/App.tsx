@@ -13,7 +13,7 @@ import React, { useReducer, useEffect, useCallback, useMemo, useState } from 're
 import { hostname as osHostname } from 'os';
 import { useInk } from './ink-context';
 import { tuiReducer, initialState } from './store';
-import type { StaticItem, RecruitAnswers, ScheduleAnswers, CreateEnsembleAnswers } from './store';
+import type { StaticItem, RecruitAnswers, ScheduleAnswers, CreateEnsembleAnswers, TuiState } from './store';
 import type { PromptAreaHandle } from './components/PromptArea';
 
 /** Ink Key interface — mirrors the key object passed to useInput callbacks. */
@@ -71,7 +71,7 @@ import { ConversationStream } from './components/ConversationStream';
 import { PlayerDetailView } from './components/PlayerDetailView';
 import { Picker } from './components/Picker';
 import type { PickerItem } from './components/Picker';
-import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames, PLAYER_PARAM_COMMANDS, SUBCOMMAND_MAP, classifyPaletteInput, filterPlayerNames } from './commands';
+import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames, PLAYER_PARAM_COMMANDS, SUBCOMMAND_MAP, classifyPaletteInput, filterPlayerNames, commitNotification } from './commands';
 import { removedSlashCommandHelp } from './removed-commands';
 import { THEME } from './utils/theme';
 import { phaseToLabel, phaseToColor, phaseToIconName } from './utils/format';
@@ -322,15 +322,9 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
                 // Try next ensemble
               }
             }
-            dispatch({
-              type: 'COMMIT_STATIC',
-              item: { id: nextStaticId(), type: 'error', content: `\u2717 Player "${target}" not found in any ensemble.`, timestamp: Date.now() },
-            });
+            commitNotification(dispatch, 'error', `\u2717 Player "${target}" not found in any ensemble.`);
           } catch (err) {
-            dispatch({
-              type: 'COMMIT_STATIC',
-              item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to destroy ${target}: ${err}`, timestamp: Date.now() },
-            });
+            commitNotification(dispatch, 'error', `\u2717 Failed to destroy ${target}: ${err}`);
           }
         })();
       } else if (input === 'n' || input === 'N' || key.escape) {
@@ -358,10 +352,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
             // Navigate back to home view
             dispatch({ type: 'NAVIGATE_HOME' });
           } catch (err) {
-            dispatch({
-              type: 'COMMIT_STATIC',
-              item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to disband "${ensemble}": ${err}`, timestamp: Date.now() },
-            });
+            commitNotification(dispatch, 'error', `\u2717 Failed to disband "${ensemble}": ${err}`);
           }
         })();
       } else if (input === 'n' || input === 'N' || key.escape) {
@@ -381,10 +372,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         const activeEns = s.activeEnsemble;
         dispatch({ type: 'CANCEL_LINEUP' });
         if (!activeEns) {
-          dispatch({
-            type: 'COMMIT_STATIC',
-            item: { id: nextStaticId(), type: 'error', content: 'No active ensemble.', timestamp: Date.now() },
-          });
+          commitNotification(dispatch, 'error', 'No active ensemble.');
         } else {
           (async () => {
             try {
@@ -394,10 +382,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
                 item: { id: nextStaticId(), type: 'info', content: `\u2714 Lineup load requested: ${lineupPath}`, timestamp: Date.now() },
               });
             } catch (err) {
-              dispatch({
-                type: 'COMMIT_STATIC',
-                item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to load lineup: ${err}`, timestamp: Date.now() },
-              });
+              commitNotification(dispatch, 'error', `\u2717 Failed to load lineup: ${err}`);
             }
           })();
         }
@@ -408,6 +393,17 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           item: { id: nextStaticId(), type: 'info', content: 'Lineup load cancelled.', timestamp: Date.now() },
         });
       }
+      return;
+    }
+
+    // #306: Esc dismisses the oldest live notification when no other
+    // Esc-consumer is active (overlays, pickers, confirmations all return
+    // early above). Filter-expired-first is handled in the reducer so this
+    // always acts on what the user is actually looking at. No-op when the
+    // stack is empty, so other Esc fallthroughs — like clearing a typed
+    // command — aren't disturbed.
+    if (key.escape && s.notifications.some(n => n.expiresAt > Date.now())) {
+      dispatch({ type: 'DISMISS_OLDEST_NOTIFICATION' });
       return;
     }
   }, [exit, api])); // Stable deps only — reads stateRef.current for everything else
@@ -665,15 +661,11 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
 
       if (!isValidCommand(parsed.name)) {
         const migrationHint = removedSlashCommandHelp(parsed.name);
-        dispatch({
-          type: 'COMMIT_STATIC',
-          item: {
-            id: nextStaticId(),
-            type: 'error',
-            content: migrationHint ?? `Unknown command: /${parsed.name}. Type /help for available commands.`,
-            timestamp: Date.now(),
-          },
-        });
+        commitNotification(
+          dispatch,
+          'error',
+          migrationHint ?? `Unknown command: /${parsed.name}. Type /help for available commands.`,
+        );
         return;
       }
 
@@ -697,15 +689,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         const ctx = { activeEnsemble: s.activeEnsemble, defaultAgent };
         await cmd.handler(parsed.args, dispatch, api, ctx);
       } catch (err) {
-        dispatch({
-          type: 'COMMIT_STATIC',
-          item: {
-            id: nextStaticId(),
-            type: 'error',
-            content: `Error running /${parsed.name}: ${err}`,
-            timestamp: Date.now(),
-          },
-        });
+        commitNotification(dispatch, 'error', `Error running /${parsed.name}: ${err}`);
       }
     } else if (s.activeEnsemble) {
       // Bare text → route via @player or to conductor
@@ -715,30 +699,22 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           // @player message → send directly to that player
           const [, targetPlayer, message] = atMatch;
           dispatch({ type: 'APPEND_SENT_MESSAGE', to: targetPlayer, text: `@${targetPlayer} ${message}` });
-          api.sendAsMaestro(s.activeEnsemble!, targetPlayer, message).catch(err => dispatch({
-            type: 'COMMIT_STATIC',
-            item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to deliver to @${targetPlayer}: ${err}`, timestamp: Date.now() },
-          }));
+          api.sendAsMaestro(s.activeEnsemble!, targetPlayer, message).catch(err =>
+            commitNotification(dispatch, 'error', `\u2717 Failed to deliver to @${targetPlayer}: ${err}`),
+          );
         } else if (s.conductorName || s.hasConductor) {
           // No @prefix → send to conductor
           const conductorTarget = s.conductorName || 'conductor';
           dispatch({ type: 'APPEND_SENT_MESSAGE', to: conductorTarget, text: trimmed });
-          api.sendCommand(s.activeEnsemble!, trimmed, 'maestro').catch(err => dispatch({
-            type: 'COMMIT_STATIC',
-            item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to deliver: ${err}`, timestamp: Date.now() },
-          }));
+          api.sendCommand(s.activeEnsemble!, trimmed, 'maestro').catch(err =>
+            commitNotification(dispatch, 'error', `\u2717 Failed to deliver: ${err}`),
+          );
         } else {
           // No conductor — show error
-          dispatch({
-            type: 'COMMIT_STATIC',
-            item: { id: nextStaticId(), type: 'error', content: 'No conductor. Use @player to message directly, or /recruit a conductor.', timestamp: Date.now() },
-          });
+          commitNotification(dispatch, 'error', 'No conductor. Use @player to message directly, or /recruit a conductor.');
         }
       } catch (err) {
-        dispatch({
-          type: 'COMMIT_STATIC',
-          item: { id: nextStaticId(), type: 'error', content: `\u2717 Error: ${err}`, timestamp: Date.now() },
-        });
+        commitNotification(dispatch, 'error', `\u2717 Error: ${err}`);
       }
     } else {
       // Bare text in main mode — hint to use commands
@@ -909,14 +885,18 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     const a = state.recruitState.answers;
 
     try {
-      const parts = [`/recruit ${a.name}`];
-      if (a.playerType) parts.push(`--type "${a.playerType}"`);
-      if (a.agent !== 'claude') parts.push(`--agent ${a.agent}`);
-      if (a.workDir) parts.push(`--dir "${a.workDir}"`);
-      if (a.host !== 'localhost') parts.push(`--host ${a.host}`);
-      if (a.initialMessage) parts.push(`-- ${a.initialMessage}`);
-
-      await api.sendCommand(activeEns, parts.join(' '), 'maestro');
+      // #306: Direct TempoClient path — submit the recruit entry on the
+      // TUI's own maestro session instead of round-tripping through the
+      // conductor's Claude Code session. Works when no conductor is present
+      // (the wizard's original use-case) and eliminates the 2-5s LLM hop.
+      await api.recruit(activeEns, {
+        name: a.name,
+        workDir: a.workDir,
+        agent: a.agent,
+        ...(a.playerType ? { playerType: a.playerType } : {}),
+        ...(a.host && a.host !== 'localhost' ? { host: a.host } : {}),
+        ...(a.initialMessage ? { initialMessage: a.initialMessage } : {}),
+      });
       dispatch({ type: 'RECRUIT_DONE' });
       dispatch({
         type: 'COMMIT_STATIC',
@@ -1143,15 +1123,11 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       dispatch({ type: 'NAVIGATE_HOME' });
     } catch (err) {
       dispatch({ type: 'CANCEL_ENSEMBLE_DESTROY' });
-      dispatch({
-        type: 'COMMIT_STATIC',
-        item: {
-          id: nextStaticId(),
-          type: 'error',
-          content: `\u2717 Destroy failed for "${target}": ${err instanceof Error ? err.message : String(err)}`,
-          timestamp: Date.now(),
-        },
-      });
+      commitNotification(
+        dispatch,
+        'error',
+        `\u2717 Destroy failed for "${target}": ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }, [api]);
 
@@ -1164,15 +1140,11 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       const summary = await api.restore(target);
       dispatch({ type: 'CLOSE_HOME_MODAL' });
       if (summary.failed > 0) {
-        dispatch({
-          type: 'COMMIT_STATIC',
-          item: {
-            id: nextStaticId(),
-            type: 'error',
-            content: `Restore partial: ${summary.reattached} queued, ${summary.failed} failed, ${summary.skipped} skipped.`,
-            timestamp: Date.now(),
-          },
-        });
+        commitNotification(
+          dispatch,
+          'error',
+          `Restore partial: ${summary.reattached} queued, ${summary.failed} failed, ${summary.skipped} skipped.`,
+        );
       }
       // Mirror the `/restore` slash two-op: ensure a conductor terminal is
       // live so the home-view restore path never strands the user on a
@@ -1180,15 +1152,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       const { ensureConductorSpawned } = await import('../client/ensure-conductor-spawned');
       const conductorOutcome = await ensureConductorSpawned(target, api);
       if (!conductorOutcome.spawned && conductorOutcome.reason === 'spawnFailed') {
-        dispatch({
-          type: 'COMMIT_STATIC',
-          item: {
-            id: nextStaticId(),
-            type: 'error',
-            content: `Conductor spawn failed for "${target}": ${conductorOutcome.error}`,
-            timestamp: Date.now(),
-          },
-        });
+        commitNotification(dispatch, 'error', `Conductor spawn failed for "${target}": ${conductorOutcome.error}`);
       }
       dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: target });
     } catch (err) {
@@ -1537,6 +1501,21 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     );
   }
 
+  // ── Notification expiry tick (#306) ──
+  // A single interval keeps the notifications stack fresh — when any
+  // notification exists, bump the tick counter every 500ms so the render
+  // pass re-evaluates `expiresAt > Date.now()` and drops expired entries
+  // from view. Auto-stops (cleared to 0) when the stack empties, avoiding
+  // a background timer when there's nothing to watch. Cheap — one integer
+  // diff per tick, and only while notifications are live.
+  useEffect(() => {
+    if (state.notifications.length === 0) return undefined;
+    const id = setInterval(() => {
+      dispatch({ type: 'NOTIFICATION_TICK' });
+    }, 500);
+    return () => clearInterval(id);
+  }, [state.notifications.length]);
+
   // ── Static items — rendered once to stdout, become native terminal scrollback ──
   const { Static } = useInk();
 
@@ -1546,7 +1525,12 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   const paletteLines = (state.paletteVisible && filteredPaletteCommands.length > 0)
     ? Math.min(filteredPaletteCommands.length, 6) + (filteredPaletteCommands.length > 6 ? 2 : 0) // items + scroll indicators
     : 0;
-  const FOOTER_LINES = 4 + paletteLines; // StatusBar + divider + PromptArea + bottom divider + palette
+  // #306: Notifications stack lives below the palette. Each live notification
+  // takes one line; when the stack is empty, this contributes zero to the
+  // footer so the main content area gets the full terminal height back.
+  const now = Date.now();
+  const notificationLines = state.notifications.filter(n => n.expiresAt > now).length;
+  const FOOTER_LINES = 4 + paletteLines + notificationLines; // StatusBar + divider + PromptArea + bottom divider + palette + notifications
   const contentHeight = Math.max(3, termRows - 1 - FOOTER_LINES);
 
   // Splash phase — full screen, no chrome (title/status/prompt hidden)
@@ -1647,6 +1631,45 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           prefix: paletteCtx?.replacePrefix ?? '/',
         })
       : null,
+    // #306: Bottom-pinned notifications — errors/warnings stay visible below
+    // the prompt until they TTL out (8s for errors, 5s otherwise) or the user
+    // hits Esc. Filters by `expiresAt` every render; the notificationTick
+    // counter forces periodic re-renders while entries are live.
+    renderNotifications(state.notifications, Box, Text),
     ), // closes live area Box
   ); // closes Fragment
+}
+
+/**
+ * #306: Render the bottom-pinned notification stack. Kept as a free function
+ * (not a component) so the caller composes Ink primitives directly — the
+ * App's render tree is already heavy with createElement calls, and a
+ * dedicated component for 10 lines of JSX would add a layout boundary for
+ * no gain.
+ */
+function renderNotifications(
+  notifications: TuiState['notifications'],
+  Box: React.ComponentType<any>,
+  Text: React.ComponentType<any>,
+): React.ReactNode {
+  const now = Date.now();
+  const live = notifications.filter(n => n.expiresAt > now);
+  if (live.length === 0) return null;
+  return React.createElement(
+    Box,
+    { flexDirection: 'column', paddingLeft: 1, paddingRight: 1 },
+    ...live.map(n => {
+      const icon = n.kind === 'error' ? '✗'
+        : n.kind === 'warn' ? '⚠'
+        : 'ⓘ';
+      const color = n.kind === 'error' ? THEME.error
+        : n.kind === 'warn' ? THEME.warning
+        : THEME.accent;
+      return React.createElement(
+        Text,
+        { key: `notif-${n.id}`, color },
+        `${icon} ${n.content}`,
+      );
+    }),
+  );
 }

@@ -117,6 +117,8 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
     sendMessage: fail,
     terminatePlayer: fail,
     // PR-D verbs — all fail in offline dummy mode.
+    recruit: fail,
+    release: fail,
     restart: fail,
     detach: fail,
     destroy: fail,

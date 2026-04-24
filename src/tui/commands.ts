@@ -4,7 +4,8 @@
  * implementations for each command.
  */
 import type { TempoClient } from '../client';
-import type { TuiAction, StaticItem } from './store';
+import type { TuiAction, StaticItem, NotificationItem } from './store';
+import { NOTIFICATION_TTL_MS } from './store';
 import type { Message, SentMessage } from '../types';
 import { statusIcons, supportsUnicode } from './utils/platform';
 import { phaseToLabel } from './utils/format';
@@ -163,6 +164,37 @@ function commitStatic(
   });
 }
 
+// ── Bottom-pinned notifications (#306) ──
+
+let _notificationIdCounter = 0;
+function nextNotificationId(): number {
+  return ++_notificationIdCounter;
+}
+
+/**
+ * #306: Dispatch a bottom-pinned notification — auto-expires after TTL
+ * (8s for errors, 5s for warn/info). Use for errors and warnings that
+ * must stay visible while other output streams by; regular activity
+ * logs still go through {@link commitStatic}.
+ */
+export function commitNotification(
+  dispatch: (action: TuiAction) => void,
+  kind: NotificationItem['kind'],
+  content: string,
+): void {
+  const now = Date.now();
+  dispatch({
+    type: 'ADD_NOTIFICATION',
+    notification: {
+      id: nextNotificationId(),
+      kind,
+      content,
+      timestamp: now,
+      expiresAt: now + NOTIFICATION_TTL_MS[kind],
+    },
+  });
+}
+
 // ── Handlers ──
 
 /** /players — show interactive player picker. */
@@ -206,9 +238,9 @@ async function handlePlayer(
       return;
     }
 
-    commitStatic(dispatch, 'error', `Player "${target}" not found in any ensemble.`);
+    commitNotification(dispatch, 'error', `Player "${target}" not found in any ensemble.`);
   } catch (err) {
-    commitStatic(dispatch, 'error', `Failed to get player info: ${err}`);
+    commitNotification(dispatch, 'error', `Failed to get player info: ${err}`);
   }
 }
 
@@ -232,7 +264,7 @@ async function handleDestroy(
   ctx: CommandContext,
 ): Promise<void> {
   if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /destroy <player|ensemble> [reason]');
+    commitNotification(dispatch, 'error', 'Usage: /destroy <player|ensemble> [reason]');
     return;
   }
 
@@ -243,7 +275,7 @@ async function handleDestroy(
   // to accept cues, no coordination). Redirect the user to the correct verb
   // instead of silently dispatching a confirmation the UI never renders.
   if (target === 'conductor') {
-    commitStatic(
+    commitNotification(
       dispatch,
       'error',
       `✗ Cannot destroy the conductor — ensembles require one (see #294). ` +
@@ -282,12 +314,12 @@ async function handleBroadcast(
   ctx: CommandContext,
 ): Promise<void> {
   if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /broadcast <message>');
+    commitNotification(dispatch, 'error', 'Usage: /broadcast <message>');
     return;
   }
 
   if (!ctx.activeEnsemble) {
-    commitStatic(dispatch, 'error', 'No active ensemble. Select one with /ensemble first.');
+    commitNotification(dispatch, 'error', 'No active ensemble. Select one with /ensemble first.');
     return;
   }
 
@@ -310,7 +342,7 @@ async function handleBroadcast(
     }
     commitStatic(dispatch, 'message', `\u2714 Broadcast delivered to ${sent} player${sent !== 1 ? 's' : ''}: ${message}`);
   } catch (err) {
-    commitStatic(dispatch, 'error', `\u2717 Broadcast failed: ${err}`);
+    commitNotification(dispatch, 'error', `\u2717 Broadcast failed: ${err}`);
   }
 }
 
@@ -335,7 +367,7 @@ async function handleHosts(
       content: formatHostList(list, { includeStale }),
     });
   } catch (err) {
-    commitStatic(dispatch, 'error', `/hosts failed: ${err instanceof Error ? err.message : String(err)}`);
+    commitNotification(dispatch, 'error', `/hosts failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -363,7 +395,7 @@ async function handleRecall(
 
   const parsed = parseRecallFlags(args);
   if (parsed.error) {
-    commitStatic(dispatch, 'error', parsed.error);
+    commitNotification(dispatch, 'error', parsed.error);
     return;
   }
   // Player defaults to the ensemble's maestro — see docstring.
@@ -382,7 +414,7 @@ async function handleRecall(
     const title = `Recall \u00B7 ${targetPlayer}`;
     dispatch({ type: 'SHOW_COMMAND_OVERLAY', title, content: rendered.text });
   } catch (err) {
-    commitStatic(dispatch, 'error', `Failed to recall messages: ${err instanceof Error ? err.message : String(err)}`);
+    commitNotification(dispatch, 'error', `Failed to recall messages: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -468,7 +500,7 @@ function requireEnsemble(
   ctx: CommandContext,
 ): string | null {
   if (!ctx.activeEnsemble) {
-    commitStatic(dispatch, 'error', 'No active ensemble. Use /ensemble <name> first.');
+    commitNotification(dispatch, 'error', 'No active ensemble. Use /ensemble <name> first.');
     return null;
   }
   return ctx.activeEnsemble;
@@ -482,7 +514,7 @@ async function handleRestart(
   ctx: CommandContext,
 ): Promise<void> {
   if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /restart <player> [--fresh] [--no-force]');
+    commitNotification(dispatch, 'error', 'Usage: /restart <player> [--fresh] [--no-force]');
     return;
   }
   const ensemble = requireEnsemble(dispatch, ctx);
@@ -507,7 +539,7 @@ async function handleRestart(
       `\u21BB Restart queued for ${result.playerId}${result.host ? ` on ${result.host}` : ''} (outbox ${result.entryId}).`,
     );
   } catch (err) {
-    commitStatic(dispatch, 'error', `Restart failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);
+    commitNotification(dispatch, 'error', `Restart failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -519,7 +551,7 @@ async function handleMigrate(
   ctx: CommandContext,
 ): Promise<void> {
   if (args.length < 2) {
-    commitStatic(dispatch, 'error', 'Usage: /migrate <player> <host> [--fresh] [--force]');
+    commitNotification(dispatch, 'error', 'Usage: /migrate <player> <host> [--fresh] [--force]');
     return;
   }
   const ensemble = requireEnsemble(dispatch, ctx);
@@ -542,7 +574,7 @@ async function handleMigrate(
       `\u27A4 Migrate queued for ${result.playerId} \u2192 ${result.host ?? host} (outbox ${result.entryId}).`,
     );
   } catch (err) {
-    commitStatic(dispatch, 'error', `Migrate failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);
+    commitNotification(dispatch, 'error', `Migrate failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -554,7 +586,7 @@ async function handleAttachmentInfo(
   ctx: CommandContext,
 ): Promise<void> {
   if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /attachment-info <player>');
+    commitNotification(dispatch, 'error', 'Usage: /attachment-info <player>');
     return;
   }
   const ensemble = requireEnsemble(dispatch, ctx);
@@ -571,7 +603,7 @@ async function handleAttachmentInfo(
     const lines = formatAttachmentInfoForDisplay(target, info);
     dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: `Attachment \u00B7 ${target}`, content: lines.join('\n') });
   } catch (err) {
-    commitStatic(dispatch, 'error', `attachment_info failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);
+    commitNotification(dispatch, 'error', `attachment_info failed for ${target}: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -604,14 +636,14 @@ async function deleteSchedule(
   ctx: CommandContext,
 ): Promise<void> {
   if (!ctx.activeEnsemble) {
-    commitStatic(dispatch, 'error', 'No active ensemble. Select one with /ensemble first.');
+    commitNotification(dispatch, 'error', 'No active ensemble. Select one with /ensemble first.');
     return;
   }
   try {
     await api.cancelSchedule(ctx.activeEnsemble, name);
     commitStatic(dispatch, 'message', `\u2714 Schedule "${name}" deleted.`);
   } catch (err) {
-    commitStatic(dispatch, 'error', `\u2717 Failed to delete schedule "${name}": ${err}`);
+    commitNotification(dispatch, 'error', `\u2717 Failed to delete schedule "${name}": ${err}`);
   }
 }
 
@@ -634,20 +666,20 @@ async function handleSchedule(
     // /schedule delete <name>
     if (sub === 'delete') {
       if (args.length < 2) {
-        commitStatic(dispatch, 'error', 'Usage: /schedule delete <name>');
+        commitNotification(dispatch, 'error', 'Usage: /schedule delete <name>');
         return;
       }
       await deleteSchedule(args[1], dispatch, api, ctx);
       return;
     }
 
-    commitStatic(dispatch, 'error', `Unknown subcommand: ${sub}. Usage: /schedule [create | delete <name>]`);
+    commitNotification(dispatch, 'error', `Unknown subcommand: ${sub}. Usage: /schedule [create | delete <name>]`);
     return;
   }
 
   // /schedule (no args) → show interactive overlay
   if (!ctx.activeEnsemble) {
-    commitStatic(dispatch, 'error', 'No active ensemble. Select one with /ensemble first.');
+    commitNotification(dispatch, 'error', 'No active ensemble. Select one with /ensemble first.');
     return;
   }
   try {
@@ -694,7 +726,7 @@ async function handleSchedule(
       },
     });
   } catch (err) {
-    commitStatic(dispatch, 'error', `Failed to fetch schedules: ${err}`);
+    commitNotification(dispatch, 'error', `Failed to fetch schedules: ${err}`);
   }
 }
 
@@ -706,7 +738,7 @@ async function handleUnschedule(
   ctx: CommandContext,
 ): Promise<void> {
   if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /unschedule <name> (hint: use /schedule delete <name>)');
+    commitNotification(dispatch, 'error', 'Usage: /unschedule <name> (hint: use /schedule delete <name>)');
     return;
   }
   await deleteSchedule(args[0], dispatch, api, ctx);
@@ -775,7 +807,7 @@ async function handleGates(
       });
     }
   } catch (err) {
-    commitStatic(dispatch, 'error', `Failed to fetch gates: ${err}`);
+    commitNotification(dispatch, 'error', `Failed to fetch gates: ${err}`);
   }
 }
 
@@ -837,7 +869,7 @@ async function handleStages(
       });
     }
   } catch (err) {
-    commitStatic(dispatch, 'error', `Failed to fetch stages: ${err}`);
+    commitNotification(dispatch, 'error', `Failed to fetch stages: ${err}`);
   }
 }
 
@@ -853,18 +885,18 @@ async function handleWorktree(
   // /worktree create <player> [--branch <name>] — delegate to conductor
   if (subcommand === 'create') {
     if (args.length < 2) {
-      commitStatic(dispatch, 'error', 'Usage: /worktree create <player> [--branch <name>]');
+      commitNotification(dispatch, 'error', 'Usage: /worktree create <player> [--branch <name>]');
       return;
     }
     const ensemble = ctx.activeEnsemble;
     if (!ensemble) {
-      commitStatic(dispatch, 'error', 'No active ensemble. Use /ensemble to select one.');
+      commitNotification(dispatch, 'error', 'No active ensemble. Use /ensemble to select one.');
       return;
     }
     const ensembles = await api.discoverEnsembles();
     const ens = ensembles.find(e => e.name === ensemble);
     if (!ens?.hasConductor) {
-      commitStatic(dispatch, 'error', 'No conductor in this ensemble. Worktree create requires a conductor.');
+      commitNotification(dispatch, 'error', 'No conductor in this ensemble. Worktree create requires a conductor.');
       return;
     }
     const cmdParts = args.slice(0); // ['create', '<player>', ...flags]
@@ -876,18 +908,18 @@ async function handleWorktree(
   // /worktree remove <player> — delegate to conductor
   if (subcommand === 'remove') {
     if (args.length < 2) {
-      commitStatic(dispatch, 'error', 'Usage: /worktree remove <player>');
+      commitNotification(dispatch, 'error', 'Usage: /worktree remove <player>');
       return;
     }
     const ensemble = ctx.activeEnsemble;
     if (!ensemble) {
-      commitStatic(dispatch, 'error', 'No active ensemble. Use /ensemble to select one.');
+      commitNotification(dispatch, 'error', 'No active ensemble. Use /ensemble to select one.');
       return;
     }
     const ensembles = await api.discoverEnsembles();
     const ens = ensembles.find(e => e.name === ensemble);
     if (!ens?.hasConductor) {
-      commitStatic(dispatch, 'error', 'No conductor in this ensemble. Worktree remove requires a conductor.');
+      commitNotification(dispatch, 'error', 'No conductor in this ensemble. Worktree remove requires a conductor.');
       return;
     }
     await api.sendCommand(ensemble, `/worktree remove ${args[1]}`, 'maestro');
@@ -896,7 +928,7 @@ async function handleWorktree(
   }
 
   if (subcommand !== 'list') {
-    commitStatic(dispatch, 'error', `Unknown subcommand: ${subcommand}. Usage: /worktree [list | create <player> | remove <player>]`);
+    commitNotification(dispatch, 'error', `Unknown subcommand: ${subcommand}. Usage: /worktree [list | create <player> | remove <player>]`);
     return;
   }
 
@@ -934,7 +966,7 @@ async function handleWorktree(
       });
     }
   } catch (err) {
-    commitStatic(dispatch, 'error', `Failed to fetch worktrees: ${err}`);
+    commitNotification(dispatch, 'error', `Failed to fetch worktrees: ${err}`);
   }
 }
 
@@ -946,7 +978,7 @@ async function handleSearch(
   ctx: CommandContext,
 ): Promise<void> {
   if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /search <term>');
+    commitNotification(dispatch, 'error', 'Usage: /search <term>');
     return;
   }
 
@@ -1007,7 +1039,7 @@ async function handleSearch(
 
     dispatch({ type: 'SHOW_COMMAND_OVERLAY', title: `Search \u00B7 "${term}"`, content: lines.join('\n') });
   } catch (err) {
-    commitStatic(dispatch, 'error', `Search failed: ${err}`);
+    commitNotification(dispatch, 'error', `Search failed: ${err}`);
   }
 }
 
@@ -1020,7 +1052,7 @@ async function handleRecruitConductor(
 ): Promise<void> {
   const ensemble = ctx.activeEnsemble;
   if (!ensemble) {
-    commitStatic(dispatch, 'error', 'No active ensemble. Use /ensemble to select or create one.');
+    commitNotification(dispatch, 'error', 'No active ensemble. Use /ensemble to select or create one.');
     return;
   }
 
@@ -1038,7 +1070,7 @@ async function handleRecruitConductor(
   } else if (outcome.reason === 'alreadyLive') {
     commitStatic(dispatch, 'info', '\u2714 Conductor is already attached to this ensemble.');
   } else {
-    commitStatic(dispatch, 'error', `\u2717 Conductor spawn failed: ${outcome.error}`);
+    commitNotification(dispatch, 'error', `\u2717 Conductor spawn failed: ${outcome.error}`);
   }
 }
 
@@ -1050,7 +1082,7 @@ async function handleLineup(
   ctx: CommandContext,
 ): Promise<void> {
   if (args.length === 0) {
-    commitStatic(dispatch, 'error', 'Usage: /lineup load <file> | /lineup save [file]');
+    commitNotification(dispatch, 'error', 'Usage: /lineup load <file> | /lineup save [file]');
     return;
   }
 
@@ -1080,7 +1112,7 @@ async function handleLineup(
           },
         });
       } catch {
-        commitStatic(dispatch, 'error', 'Usage: /lineup load <name>');
+        commitNotification(dispatch, 'error', 'Usage: /lineup load <name>');
       }
       return;
     }
@@ -1098,7 +1130,7 @@ async function handleLineup(
   if (subcommand === 'save') {
     const ensemble = ctx.activeEnsemble;
     if (!ensemble) {
-      commitStatic(dispatch, 'error', 'No active ensemble. Use /ensemble <name> first.');
+      commitNotification(dispatch, 'error', 'No active ensemble. Use /ensemble <name> first.');
       return;
     }
 
@@ -1107,12 +1139,12 @@ async function handleLineup(
       await api.sendCommand(ensemble, `/save_lineup ${filePath}`, 'maestro');
       commitStatic(dispatch, 'info', `\u2714 Lineup save requested: ${filePath}`);
     } catch (err) {
-      commitStatic(dispatch, 'error', `\u2717 Failed to save lineup: ${err}`);
+      commitNotification(dispatch, 'error', `\u2717 Failed to save lineup: ${err}`);
     }
     return;
   }
 
-  commitStatic(dispatch, 'error', `Unknown lineup subcommand: ${subcommand}. Use: load, save`);
+  commitNotification(dispatch, 'error', `Unknown lineup subcommand: ${subcommand}. Use: load, save`);
 }
 
 /** /ensembles — show interactive ensemble picker. */
@@ -1144,7 +1176,7 @@ async function handleEnsemble(
 
     if (!match) {
       const available = ensembles.map(e => e.name).join(', ') || 'none';
-      commitStatic(dispatch, 'error', `Ensemble "${name}" not found. Available: ${available}`);
+      commitNotification(dispatch, 'error', `Ensemble "${name}" not found. Available: ${available}`);
       return;
     }
 
@@ -1152,11 +1184,20 @@ async function handleEnsemble(
     dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: name });
     commitStatic(dispatch, 'info', `\u2714 Switched to ensemble: ${name} (${match.playerCount} player${match.playerCount !== 1 ? 's' : ''})`);
   } catch (err) {
-    commitStatic(dispatch, 'error', `Failed to switch ensemble: ${err}`);
+    commitNotification(dispatch, 'error', `Failed to switch ensemble: ${err}`);
   }
 }
 
-/** /go — release all held players in the current ensemble. */
+/**
+ * /go — release all held players in the current ensemble.
+ *
+ * #306: Direct TempoClient path — the legacy `sendCommand('/release',
+ * 'maestro')` routed through the maestro hub → conductor's Claude Code
+ * session → `release` MCP tool, which required a live conductor + added
+ * 2-5s of LLM-interpretation latency. `api.release(ensemble)` submits
+ * release outbox entries from the TUI's own maestro session; no conductor
+ * needed, no LLM hop, clean partial-success diagnostics.
+ */
 async function handleGo(
   _args: string[],
   dispatch: (action: TuiAction) => void,
@@ -1165,22 +1206,28 @@ async function handleGo(
 ): Promise<void> {
   const ensemble = ctx.activeEnsemble;
   if (!ensemble) {
-    commitStatic(dispatch, 'error', 'No active ensemble. Use /ensemble to select one.');
-    return;
-  }
-
-  const ensembles = await api.discoverEnsembles();
-  const ens = ensembles.find(e => e.name === ensemble);
-  if (!ens?.hasConductor) {
-    commitStatic(dispatch, 'error', 'No conductor in this ensemble. /go requires a conductor.');
+    commitNotification(dispatch, 'error', 'No active ensemble. Use /ensemble to select one.');
     return;
   }
 
   try {
-    await api.sendCommand(ensemble, '/release', 'maestro');
-    commitStatic(dispatch, 'info', '\u2714 Release command sent to conductor.');
+    const summary = await api.release(ensemble);
+    if (summary.released.length === 0 && summary.errors.length === 0) {
+      commitStatic(dispatch, 'info', 'No held players to release.');
+      return;
+    }
+    if (summary.released.length > 0) {
+      commitStatic(
+        dispatch,
+        'info',
+        `\u2714 Released ${summary.released.length} player${summary.released.length !== 1 ? 's' : ''}: ${summary.released.join(', ')}`,
+      );
+    }
+    for (const e of summary.errors) {
+      commitNotification(dispatch, 'error', `\u2717 Release failed for ${e.playerId}: ${e.error}`);
+    }
   } catch (err) {
-    commitStatic(dispatch, 'error', `\u2717 Release failed: ${err}`);
+    commitNotification(dispatch, 'error', `\u2717 Release failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -1196,7 +1243,7 @@ function resolveEnsembleArg(
 ): string | null {
   const target = args[0] ?? ctx.activeEnsemble;
   if (!target) {
-    commitStatic(dispatch, 'error', `No active ensemble. Use /ensemble to select one, or /${verb} <ensemble>.`);
+    commitNotification(dispatch, 'error', `No active ensemble. Use /ensemble to select one, or /${verb} <ensemble>.`);
     return null;
   }
   return target;
@@ -1215,7 +1262,7 @@ async function handlePause(
     await api.pause(ensemble);
     commitStatic(dispatch, 'info', `\u23F8 Paused ensemble "${ensemble}".`);
   } catch (err) {
-    commitStatic(dispatch, 'error', `\u2717 Pause failed: ${err instanceof Error ? err.message : String(err)}`);
+    commitNotification(dispatch, 'error', `\u2717 Pause failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -1232,7 +1279,7 @@ async function handlePlay(
     await api.play(ensemble);
     commitStatic(dispatch, 'info', `\u25B6 Resumed ensemble "${ensemble}".`);
   } catch (err) {
-    commitStatic(dispatch, 'error', `\u2717 Play failed: ${err instanceof Error ? err.message : String(err)}`);
+    commitNotification(dispatch, 'error', `\u2717 Play failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -1259,7 +1306,7 @@ async function handleShutdown(
         `${summary.maestroPaused ? ', maestro paused' : ''}${summary.schedulerPaused ? ', scheduler paused' : ''}.`,
     );
   } catch (err) {
-    commitStatic(dispatch, 'error', `\u2717 Shutdown failed: ${err instanceof Error ? err.message : String(err)}`);
+    commitNotification(dispatch, 'error', `\u2717 Shutdown failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -1291,11 +1338,11 @@ async function handleRestore(
     if (conductorOutcome.spawned) {
       commitStatic(dispatch, 'info', '  Conductor terminal launched.');
     } else if (conductorOutcome.reason === 'spawnFailed') {
-      commitStatic(dispatch, 'error', `  Conductor spawn failed: ${conductorOutcome.error}`);
+      commitNotification(dispatch, 'error', `  Conductor spawn failed: ${conductorOutcome.error}`);
     }
     // `alreadyLive` is silent — no action needed.
   } catch (err) {
-    commitStatic(dispatch, 'error', `\u2717 Restore failed: ${err instanceof Error ? err.message : String(err)}`);
+    commitNotification(dispatch, 'error', `\u2717 Restore failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
