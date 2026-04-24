@@ -175,46 +175,38 @@ describe('/destroy handler guards (#306)', () => {
     expect(action.notification.content).toMatch(/\/destroy <ensemble>/);
   });
 
-  it('/destroy <peer> emits a visible y/n prompt scrollback line BEFORE the CONFIRM_STOP dispatch', async () => {
+  it('/destroy <peer> dispatches only CONFIRM_STOP — the y/n prompt is a pinned render, not scrollback', async () => {
     const dispatch = vi.fn<(a: TuiAction) => void>();
     const handler = COMMANDS.destroy.handler!;
     await handler(['alice'], dispatch, makeNoopApi(), CTX);
 
-    // Exactly two dispatches: visible prompt, then confirmation request.
-    expect(dispatch).toHaveBeenCalledTimes(2);
+    // Exactly one dispatch: the confirmation state update. The visible
+    // prompt is rendered from `state.confirmingStop` by App.tsx's
+    // `renderPinnedConfirmations` (pinned below the input), so it can't
+    // scroll off-screen as new messages arrive — which is why we no
+    // longer emit a `COMMIT_STATIC` prompt line here.
+    expect(dispatch).toHaveBeenCalledTimes(1);
 
-    const first = dispatch.mock.calls[0][0] as {
-      type: string;
-      item: { type: string; content: string };
-    };
-    expect(first.type).toBe('COMMIT_STATIC');
-    expect(first.item.type).toBe('info');
-    expect(first.item.content).toMatch(/Destroy alice\?/);
-    expect(first.item.content).toMatch(/y to confirm/);
-    expect(first.item.content).toMatch(/n to cancel/);
-
-    const second = dispatch.mock.calls[1][0] as {
+    const action = dispatch.mock.calls[0][0] as {
       type: string;
       player: string;
       reason?: string;
     };
-    expect(second.type).toBe('CONFIRM_STOP');
-    expect(second.player).toBe('alice');
-    expect(second.reason).toBeUndefined();
+    expect(action.type).toBe('CONFIRM_STOP');
+    expect(action.player).toBe('alice');
+    expect(action.reason).toBeUndefined();
   });
 
-  it('/destroy <peer> <reason …> forwards the reason on both the prompt and the CONFIRM_STOP action', async () => {
+  it('/destroy <peer> <reason …> forwards the reason only on the CONFIRM_STOP action (rendered by the pinned prompt)', async () => {
     const dispatch = vi.fn<(a: TuiAction) => void>();
     const handler = COMMANDS.destroy.handler!;
     await handler(['alice', 'stuck', 'in', 'a', 'loop'], dispatch, makeNoopApi(), CTX);
 
-    const prompt = dispatch.mock.calls[0][0] as {
-      type: string;
-      item: { content: string };
-    };
-    expect(prompt.item.content).toMatch(/Reason: stuck in a loop\./);
+    // Still exactly one dispatch — reason lives on the state field and
+    // surfaces via the pinned render, not via scrollback.
+    expect(dispatch).toHaveBeenCalledTimes(1);
 
-    const confirm = dispatch.mock.calls[1][0] as {
+    const confirm = dispatch.mock.calls[0][0] as {
       type: string;
       player: string;
       reason?: string;

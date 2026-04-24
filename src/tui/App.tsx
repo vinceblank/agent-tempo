@@ -1530,7 +1530,12 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   // footer so the main content area gets the full terminal height back.
   const now = Date.now();
   const notificationLines = state.notifications.filter(n => n.expiresAt > now).length;
-  const FOOTER_LINES = 4 + paletteLines + notificationLines; // StatusBar + divider + PromptArea + bottom divider + palette + notifications
+  // Pinned confirmation lines — persist exactly as long as the state does,
+  // no TTL. Each active confirmation state contributes one line above the
+  // notifications stack. Keeps the y/N prompt anchored below the input so
+  // it can't scroll away under new messages.
+  const confirmationLines = countPinnedConfirmationLines(state);
+  const FOOTER_LINES = 4 + paletteLines + confirmationLines + notificationLines; // StatusBar + divider + PromptArea + bottom divider + palette + pinned confirmations + notifications
   const contentHeight = Math.max(3, termRows - 1 - FOOTER_LINES);
 
   // Splash phase — full screen, no chrome (title/status/prompt hidden)
@@ -1631,6 +1636,12 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           prefix: paletteCtx?.replacePrefix ?? '/',
         })
       : null,
+    // Pinned confirmation prompts — sit directly below the prompt area,
+    // above the notifications stack. Unlike notifications, these have no
+    // TTL and persist exactly as long as the corresponding `confirming*`
+    // state field is set. Keeps the y/N (or typed-name) prompt visible
+    // even when new chat messages are flooding the scroll-up history.
+    renderPinnedConfirmations(state, Box, Text),
     // #306: Bottom-pinned notifications — errors/warnings stay visible below
     // the prompt until they TTL out (8s for errors, 5s otherwise) or the user
     // hits Esc. Filters by `expiresAt` every render; the notificationTick
@@ -1683,4 +1694,90 @@ function renderNotifications(
  */
 export function stripLeadingIcon(content: string): string {
   return content.replace(/^[✗⚠ⓘ]\s+/u, '');
+}
+
+/**
+ * #306: Build the pinned-confirmation line(s) for the current state. Returns
+ * an array (possibly empty) of `{ key, text }` entries — one per active
+ * `confirming*` state field. Rendered above the notifications stack by
+ * `renderPinnedConfirmations` and sized by `countPinnedConfirmationLines`
+ * so `FOOTER_LINES` reserves terminal rows correctly.
+ *
+ * Pure function, exported for unit testing — no Ink imports, no dispatch.
+ * The render helper below is the only caller that wraps these in Text nodes.
+ */
+export function pinnedConfirmationLines(
+  state: Pick<TuiState, 'confirmingStop' | 'confirmingStopReason' | 'confirmingDisband' | 'confirmingEnsembleDestroy' | 'confirmingLineup'>,
+): Array<{ key: string; text: string }> {
+  const out: Array<{ key: string; text: string }> = [];
+  if (state.confirmingStop) {
+    const reason = state.confirmingStopReason ? ` Reason: ${state.confirmingStopReason}.` : '';
+    out.push({
+      key: 'confirm-stop',
+      text: `⚠ Destroy ${state.confirmingStop}? Press y to confirm, n to cancel.${reason}`,
+    });
+  }
+  if (state.confirmingDisband) {
+    out.push({
+      key: 'confirm-disband',
+      text: `⚠ Disband ensemble "${state.confirmingDisband}"? All sessions will be terminated. Press y to confirm, n to cancel.`,
+    });
+  }
+  if (state.confirmingEnsembleDestroy) {
+    // Typed-name gate — the detailed input UX lives in the full-screen
+    // modal; this pinned reminder mirrors the modal's question so the
+    // bottom of the screen still answers "what am I being asked?" at a
+    // glance. Shown even while the modal is up for layout consistency
+    // with the other confirmation states.
+    out.push({
+      key: 'confirm-ensemble-destroy',
+      text: `⚠ Destroy ensemble "${state.confirmingEnsembleDestroy.ensemble}"? Type the ensemble name to confirm, Esc to cancel.`,
+    });
+  }
+  if (state.confirmingLineup) {
+    out.push({
+      key: 'confirm-lineup',
+      text: `⚠ ${state.confirmingLineup.summary}? Press y to confirm, n to cancel.`,
+    });
+  }
+  return out;
+}
+
+/**
+ * #306: Count of pinned confirmation lines — one per active `confirming*`
+ * state field. Consumed by the `FOOTER_LINES` reservation so the live
+ * content area shrinks when a confirmation is active, keeping the pinned
+ * prompt on-screen.
+ */
+export function countPinnedConfirmationLines(
+  state: Pick<TuiState, 'confirmingStop' | 'confirmingStopReason' | 'confirmingDisband' | 'confirmingEnsembleDestroy' | 'confirmingLineup'>,
+): number {
+  return pinnedConfirmationLines(state).length;
+}
+
+/**
+ * #306: Render the pinned confirmation prompts as Ink Text nodes. Kept
+ * free-function (mirroring `renderNotifications`) because the App's root
+ * render tree is already `createElement`-heavy and a dedicated component
+ * would add a layout boundary for zero gain. Uses THEME.warning so the
+ * user's eye is drawn away from the chat scroll-up area.
+ */
+function renderPinnedConfirmations(
+  state: TuiState,
+  Box: React.ComponentType<any>,
+  Text: React.ComponentType<any>,
+): React.ReactNode {
+  const lines = pinnedConfirmationLines(state);
+  if (lines.length === 0) return null;
+  return React.createElement(
+    Box,
+    { flexDirection: 'column', paddingLeft: 1, paddingRight: 1 },
+    ...lines.map(line =>
+      React.createElement(
+        Text,
+        { key: line.key, color: THEME.warning, bold: true },
+        line.text,
+      ),
+    ),
+  );
 }

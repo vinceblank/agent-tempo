@@ -293,16 +293,14 @@ async function handleDestroy(
     return;
   }
 
-  // #306: CONFIRM_STOP locks the input line awaiting y/N, but the existing
-  // UI didn't render any scrollback prompt to explain why — users just saw
-  // their input freeze until Esc. Emit an explicit prompt line so the
-  // keybind is discoverable.
+  // #306: CONFIRM_STOP locks the input line awaiting y/N. The discoverability
+  // prompt was previously emitted to scrollback via commitStatic, but that
+  // line scrolled off-screen as new messages arrived — leaving the user
+  // staring at a frozen input. Replaced with a pinned render in App.tsx
+  // (`renderPinnedConfirmations`) that persists exactly as long as
+  // `state.confirmingStop` does (no TTL). The reason carried here surfaces
+  // in the pinned line too.
   const reason = args.slice(1).join(' ') || undefined;
-  commitStatic(
-    dispatch,
-    'info',
-    `⚠ Destroy ${target}? Press y to confirm, n to cancel.${reason ? ' Reason: ' + reason + '.' : ''}`,
-  );
   dispatch({ type: 'CONFIRM_STOP', player: target, ...(reason !== undefined ? { reason } : {}) });
 }
 
