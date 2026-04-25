@@ -531,7 +531,11 @@ async function handleRestart(
       force,
       invokerPlayerId: 'tui',
     });
-    commitStatic(
+    // #306: Command-result summary as a bottom-pinned notification so it
+    // stays visible while subsequent activity (heartbeats, joins, etc.)
+    // streams into scrollback. Pre-#306 this rode commitStatic('info') and
+    // the user often missed the entryId / host on a busy ensemble.
+    commitNotification(
       dispatch,
       'info',
       `\u21BB Restart queued for ${result.playerId}${result.host ? ` on ${result.host}` : ''} (outbox ${result.entryId}).`,
@@ -1293,16 +1297,21 @@ async function handleShutdown(
   commitStatic(dispatch, 'info', `\u2026 Shutting down "${ensemble}" \u2026`);
   try {
     const summary = await api.shutdown(ensemble);
+    // #306: per-player detail lines stay in scrollback as a record; the
+    // aggregate summary below is pinned so it can't scroll above the fold
+    // on a busy chat. After success we also land the user on home, since
+    // a parked ensemble has no live players to talk to.
     for (const d of summary.details) {
       const line = `  ${d.playerId} \u2014 ${d.outcome}${d.error ? `: ${d.error}` : ''}`;
       commitStatic(dispatch, d.outcome === 'failed' ? 'error' : 'info', line);
     }
-    commitStatic(
+    commitNotification(
       dispatch,
       summary.failed === 0 ? 'info' : 'error',
       `\u2714 Shutdown "${ensemble}" \u2014 ${summary.detached} detached, ${summary.skipped} skipped, ${summary.failed} failed` +
         `${summary.maestroPaused ? ', maestro paused' : ''}${summary.schedulerPaused ? ', scheduler paused' : ''}.`,
     );
+    dispatch({ type: 'NAVIGATE_HOME' });
   } catch (err) {
     commitNotification(dispatch, 'error', `\u2717 Shutdown failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -1321,11 +1330,13 @@ async function handleRestore(
   try {
     const summary = await api.restore(ensemble);
     const { formatRestoreOutcome } = await import('../reconcile/orphans');
+    // #306: per-player detail lines stay in scrollback as a record; the
+    // aggregate summary below is pinned so it can't scroll above the fold.
     for (const d of summary.details) {
       const text = `  ${d.playerId} \u2014 ${formatRestoreOutcome(d.outcome)}`;
       commitStatic(dispatch, d.outcome.kind === 'failed' ? 'error' : 'info', text);
     }
-    commitStatic(
+    commitNotification(
       dispatch,
       summary.failed === 0 ? 'info' : 'error',
       `\u2714 Restore "${ensemble}" \u2014 ${summary.reattached} reattached, ${summary.skipped} skipped, ${summary.failed} failed.`,

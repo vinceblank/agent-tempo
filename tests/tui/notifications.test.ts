@@ -10,6 +10,11 @@
  *  - CLEAR_NOTIFICATIONS empties the stack.
  *  - Per-kind TTL values (errors get extra time to read).
  *  - commitNotification helper dispatches the correct action shape.
+ *  - Command-result summaries (`/shutdown`, `/restore`, `/restart`) surface
+ *    as pinned notifications so the user doesn't lose the summary in
+ *    scrollback (smoke-test feedback on #306).
+ *  - `/shutdown` success additionally dispatches NAVIGATE_HOME so the user
+ *    isn't stranded in a parked-and-empty ensemble view.
  */
 import { describe, it, expect, vi } from 'vitest';
 import {
@@ -21,8 +26,9 @@ import {
   type TuiState,
   type NotificationItem,
 } from '../../src/tui/store';
-import { commitNotification } from '../../src/tui/commands';
+import { commitNotification, COMMANDS, type CommandContext } from '../../src/tui/commands';
 import { stripLeadingIcon } from '../../src/tui/App';
+import type { TempoClient } from '../../src/client';
 
 function makeNotification(
   overrides: Partial<NotificationItem> = {},
@@ -214,6 +220,179 @@ describe('commitNotification helper (#306)', () => {
     const [first] = dispatch.mock.calls[0] as [{ notification: NotificationItem }];
     const [second] = dispatch.mock.calls[1] as [{ notification: NotificationItem }];
     expect(second.notification.id).toBeGreaterThan(first.notification.id);
+  });
+});
+
+// ── Command-result summaries → pinned notifications + NAVIGATE_HOME ──
+//
+// Smoke-test feedback on #306: `/shutdown` (and friends) emitted multiple
+// `commitStatic` lines, with the load-bearing summary as the last one. On a
+// busy chat the summary scrolled off-screen and the user landed in a
+// now-empty ensemble view with no live players to talk to. The fix routes
+// the aggregate summary through `commitNotification` (bottom-pinned, 5s TTL
+// for info / 8s for error) and dispatches `NAVIGATE_HOME` after a successful
+// shutdown so the user is taken back to the home view automatically.
+
+interface DispatchedAction {
+  type: string;
+  notification?: { kind: string; content: string };
+}
+
+function captureDispatch(): {
+  dispatch: (a: TuiAction) => void;
+  calls: () => DispatchedAction[];
+} {
+  const dispatch = vi.fn<(a: TuiAction) => void>();
+  return {
+    dispatch,
+    calls: () => dispatch.mock.calls.map(([a]) => a as DispatchedAction),
+  };
+}
+
+function findNotification(calls: DispatchedAction[]): { kind: string; content: string } | undefined {
+  const hit = calls.find(c => c.type === 'ADD_NOTIFICATION');
+  return hit?.notification;
+}
+
+function findNavigateHome(calls: DispatchedAction[]): boolean {
+  return calls.some(c => c.type === 'NAVIGATE_HOME');
+}
+
+describe('command-result summaries land as pinned notifications (#306 smoke fix)', () => {
+  const CTX: CommandContext = { activeEnsemble: 'smoke' };
+
+  it('/shutdown success surfaces a pinned summary AND navigates home', async () => {
+    const { dispatch, calls } = captureDispatch();
+    const fakeApi = {
+      shutdown: vi.fn(async () => ({
+        detached: 2,
+        skipped: 0,
+        failed: 0,
+        maestroPaused: true,
+        schedulerPaused: true,
+        details: [
+          { playerId: 'alice', outcome: 'detaching' as const },
+          { playerId: 'bob', outcome: 'detaching' as const },
+        ],
+      })),
+    } as unknown as TempoClient;
+
+    const handler = COMMANDS.shutdown.handler!;
+    await handler([], dispatch, fakeApi, CTX);
+
+    // Summary surfaces as a notification — not as the final commitStatic line.
+    const note = findNotification(calls());
+    expect(note).toBeDefined();
+    expect(note!.kind).toBe('info');
+    expect(note!.content).toMatch(/Shutdown "smoke"/);
+    expect(note!.content).toMatch(/2 detached/);
+    expect(note!.content).toMatch(/maestro paused/);
+
+    // NAVIGATE_HOME fires after success so the user lands on the home view
+    // instead of being stuck in the now-parked ensemble.
+    expect(findNavigateHome(calls())).toBe(true);
+  });
+
+  it('/shutdown failure surfaces a pinned ERROR summary (still navigates home — ensemble is still parked)', async () => {
+    const { dispatch, calls } = captureDispatch();
+    const fakeApi = {
+      shutdown: vi.fn(async () => ({
+        detached: 1,
+        skipped: 0,
+        failed: 1,
+        maestroPaused: false,
+        schedulerPaused: false,
+        details: [
+          { playerId: 'alice', outcome: 'detaching' as const },
+          { playerId: 'bob', outcome: 'failed' as const, error: 'timeout' },
+        ],
+      })),
+    } as unknown as TempoClient;
+
+    const handler = COMMANDS.shutdown.handler!;
+    await handler([], dispatch, fakeApi, CTX);
+
+    const note = findNotification(calls());
+    expect(note).toBeDefined();
+    expect(note!.kind).toBe('error');
+    expect(note!.content).toMatch(/1 detached/);
+    expect(note!.content).toMatch(/1 failed/);
+    // Still navigate home — failure here means *some* sessions failed to
+    // detach, but the user's intent was still "leave this ensemble." The
+    // pinned error summary persists across the navigation.
+    expect(findNavigateHome(calls())).toBe(true);
+  });
+
+  it('/shutdown thrown error surfaces a pinned error AND does NOT navigate home', async () => {
+    const { dispatch, calls } = captureDispatch();
+    const fakeApi = {
+      shutdown: vi.fn(async () => {
+        throw new Error('temporal-down');
+      }),
+    } as unknown as TempoClient;
+
+    const handler = COMMANDS.shutdown.handler!;
+    await handler([], dispatch, fakeApi, CTX);
+
+    const note = findNotification(calls());
+    expect(note).toBeDefined();
+    expect(note!.kind).toBe('error');
+    expect(note!.content).toMatch(/Shutdown failed/);
+    expect(note!.content).toMatch(/temporal-down/);
+    // Throw == teardown didn't run, ensemble still live — leave the user where they are.
+    expect(findNavigateHome(calls())).toBe(false);
+  });
+
+  it('/restore success surfaces a pinned summary (does NOT navigate home — user wants to USE the restored ensemble)', async () => {
+    const { dispatch, calls } = captureDispatch();
+    const fakeApi = {
+      restore: vi.fn(async () => ({
+        reattached: 1,
+        skipped: 0,
+        failed: 0,
+        details: [
+          { playerId: 'alice', outcome: { kind: 'reattached' as const } },
+        ],
+      })),
+      // Stub the conductor-spawn helper's transitive calls so the import path
+      // resolves cleanly without trying to actually spawn anything.
+      query: vi.fn(async () => undefined),
+      spawnConductor: vi.fn(async () => ({ spawned: false, reason: 'alreadyLive' as const })),
+    } as unknown as TempoClient;
+
+    const handler = COMMANDS.restore.handler!;
+    await handler([], dispatch, fakeApi, CTX);
+
+    const note = findNotification(calls());
+    expect(note).toBeDefined();
+    expect(note!.kind).toBe('info');
+    expect(note!.content).toMatch(/Restore "smoke"/);
+    expect(note!.content).toMatch(/1 reattached/);
+    // Don't navigate home — restore lands the user on the active ensemble view.
+    expect(findNavigateHome(calls())).toBe(false);
+  });
+
+  it('/restart success surfaces a pinned summary with the entryId + host', async () => {
+    const { dispatch, calls } = captureDispatch();
+    const fakeApi = {
+      restart: vi.fn(async () => ({
+        playerId: 'alice',
+        host: 'localhost',
+        entryId: 'outbox-42',
+      })),
+    } as unknown as TempoClient;
+
+    const handler = COMMANDS.restart.handler!;
+    await handler(['alice'], dispatch, fakeApi, CTX);
+
+    const note = findNotification(calls());
+    expect(note).toBeDefined();
+    expect(note!.kind).toBe('info');
+    expect(note!.content).toMatch(/Restart queued for alice/);
+    expect(note!.content).toMatch(/on localhost/);
+    expect(note!.content).toMatch(/outbox-42/);
+    // /restart targets a single player — no need to navigate.
+    expect(findNavigateHome(calls())).toBe(false);
   });
 });
 

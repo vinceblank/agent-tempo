@@ -313,10 +313,13 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
             for (const ens of ensembles) {
               try {
                 await api.destroy(ens.name, target, reason);
-                dispatch({
-                  type: 'COMMIT_STATIC',
-                  item: { id: nextStaticId(), type: 'info', content: `\u2716 Destroyed ${target}${reason ? ` (${reason})` : ''}.`, timestamp: Date.now() },
-                });
+                // #306: command-result summary as a bottom-pinned notification
+                // so the user actually sees the confirmation when chat is busy.
+                commitNotification(
+                  dispatch,
+                  'info',
+                  `\u2716 Destroyed ${target}${reason ? ` (${reason})` : ''}.`,
+                );
                 return;
               } catch {
                 // Try next ensemble
@@ -1110,15 +1113,13 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       const summary = await api.destroy(target);
       dispatch({ type: 'CANCEL_ENSEMBLE_DESTROY' });
       if (summary && 'details' in summary) {
-        dispatch({
-          type: 'COMMIT_STATIC',
-          item: {
-            id: nextStaticId(),
-            type: summary.failed > 0 ? 'error' : 'info',
-            content: `\u2714 Destroyed "${target}" \u2014 ${summary.destroyed} destroyed, ${summary.terminated} terminated, ${summary.failed} failed.`,
-            timestamp: Date.now(),
-          },
-        });
+        // #306: aggregate ensemble-destroy summary surfaces as a bottom-pinned
+        // notification so it's still visible after we navigate the user home.
+        commitNotification(
+          dispatch,
+          summary.failed > 0 ? 'error' : 'info',
+          `\u2714 Destroyed "${target}" \u2014 ${summary.destroyed} destroyed, ${summary.terminated} terminated, ${summary.failed} failed.`,
+        );
       }
       dispatch({ type: 'NAVIGATE_HOME' });
     } catch (err) {
