@@ -6,7 +6,7 @@ import React from 'react';
 import { useInk } from '../ink-context';
 import { THEME } from '../utils/theme';
 import type { MaestroPlayerInfo } from '../../types';
-import { phaseToLabel } from '../utils/format';
+import { phaseToLabel, filterRealPlayers } from '../utils/format';
 
 export interface StatusBarProps {
   ensemble: string | null;
@@ -37,6 +37,12 @@ export function StatusBar({ ensemble, players, playersLoaded, scheduleCount, con
     // Still loading — don't show incorrect counts
     children.push(React.createElement(Text, { key: 'pl', color: THEME.dim }, 'Loading...'));
   } else {
+    // Exclude the maestro session from headline counts — it is the TUI's own
+    // dashboard attachment, not a peer agent. The full list (including the
+    // maestro) is still surfaced in `/players` and the status overlay so the
+    // user can see internal state honestly.
+    const realPlayers = filterRealPlayers(players);
+
     // Player breakdown by phase label (Option-B five buckets collapsed to four
     // meaningful ones for the bar — `gone` players are terminal and not
     // shown in the ensemble list).
@@ -44,7 +50,7 @@ export function StatusBar({ ensemble, players, playersLoaded, scheduleCount, con
     let idle = 0;
     let disconnected = 0;
     let pending = 0;
-    for (const p of players) {
+    for (const p of realPlayers) {
       switch (phaseToLabel(p.phase)) {
         case 'active':       active++; break;
         case 'idle':         idle++; break;
@@ -60,7 +66,7 @@ export function StatusBar({ ensemble, players, playersLoaded, scheduleCount, con
     if (disconnected > 0) parts.push(`${disconnected} disconnected`);
     if (pending > 0)      parts.push(`${pending} pending`);
     const breakdown = parts.length > 0 ? ` (${parts.join(', ')})` : '';
-    const playerLabel = `${players.length} player${players.length !== 1 ? 's' : ''}${breakdown}`;
+    const playerLabel = `${realPlayers.length} player${realPlayers.length !== 1 ? 's' : ''}${breakdown}`;
 
     children.push(React.createElement(Text, { key: 'pl', color: THEME.dim }, playerLabel));
 

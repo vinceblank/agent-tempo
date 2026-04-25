@@ -74,7 +74,7 @@ import type { PickerItem } from './components/Picker';
 import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames, PLAYER_PARAM_COMMANDS, SUBCOMMAND_MAP, classifyPaletteInput, filterPlayerNames, commitNotification } from './commands';
 import { removedSlashCommandHelp } from './removed-commands';
 import { THEME } from './utils/theme';
-import { phaseToLabel, phaseToColor, phaseToIconName } from './utils/format';
+import { phaseToLabel, phaseToColor, phaseToIconName, filterRealPlayers } from './utils/format';
 import { statusIcons as phaseStatusIcons, supportsUnicode as phaseSupportsUnicode } from './utils/platform';
 import { wordWrap } from './utils/format';
 import { loadHistory, saveHistory } from './utils/history';
@@ -423,7 +423,10 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       return `${icon} ${state.chatTarget} \u00b7 ${status}${state.activeEnsemble ? ` \u00b7 ${state.activeEnsemble}` : ''}`;
     }
     if (state.activeEnsemble) {
-      const count = state.players.length;
+      // Headline count excludes the maestro session (TUI's own dashboard
+      // attachment). The full list with the maestro is still available in
+      // `/players` and the status overlay.
+      const count = filterRealPlayers(state.players).length;
       const conductorInfo = state.conductorName ? '' : ' \u00b7 No conductor';
       return `${state.activeEnsemble} \u00b7 ${count} player${count !== 1 ? 's' : ''}${conductorInfo} \u00b7 Connected`;
     }
@@ -784,8 +787,17 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           dispatch({ type: 'REFRESH_ENSEMBLES', ensembles });
 
           // Auto-connect only when exactly 1 ensemble AND not in splash mode
-          // Splash handles ensemble selection via Enter key
-          if (ensembles.length === 1 && !s.activeEnsemble && s.phase !== 'splash') {
+          // AND the user hasn't just explicitly navigated home (otherwise a
+          // `/shutdown` or `/back` from a single-ensemble cluster immediately
+          // bounces the user back into the just-parked ensemble).
+          // Splash handles ensemble selection via Enter key.
+          const suppressUntil = s.suppressAutoSelectUntil ?? 0;
+          if (
+            ensembles.length === 1
+            && !s.activeEnsemble
+            && s.phase !== 'splash'
+            && Date.now() >= suppressUntil
+          ) {
             const autoEns = ensembles[0].name;
             dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: autoEns });
             dispatch({
