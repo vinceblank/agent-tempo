@@ -335,15 +335,6 @@ export interface TuiState {
   pickerIndex: number;
   /** Optional status filter for player picker. */
   pickerStatusFilter: string | null;
-  /**
-   * Bug-A guard for #306 follow-up: when the user explicitly navigates home
-   * (via `/shutdown`, `/disband`, `/back` from an ensemble, etc.) the next
-   * poll tick was auto-reselecting the just-parked ensemble because there is
-   * exactly 1 known ensemble. This timestamp suppresses that auto-select for
-   * a short window so the user actually lands on the home view. Compared
-   * against `Date.now()` in the poller; cleared by NAVIGATE_ENSEMBLE.
-   */
-  suppressAutoSelectUntil?: number;
 }
 
 export function initialState(ensemble?: string): TuiState {
@@ -507,6 +498,10 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     // ── Navigation ──
 
     case 'NAVIGATE_HOME':
+      // Auto-select was removed from the poller (#306 follow-up): HomeView
+      // is the explicit ensemble picker, so once the user lands on home they
+      // stay there until they pick an ensemble themselves. This action just
+      // resets ensemble/player state and the chat shell.
       return {
         ...state,
         view: 'home',
@@ -525,10 +520,6 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         playerMetadata: null,
         playerMessages: [],
         selectedPlayerIndex: 0,
-        // Suppress the poller's auto-select for 5 s so that a `/shutdown` or
-        // `/back` from a single-ensemble cluster doesn't immediately bounce
-        // the user back into the just-parked ensemble.
-        suppressAutoSelectUntil: Date.now() + 5000,
       };
 
     case 'NAVIGATE_ENSEMBLE':
@@ -550,9 +541,6 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         playerMetadata: null,
         playerMessages: [],
         selectedPlayerIndex: 0,
-        // Clear any pending auto-select suppression — the user explicitly
-        // chose this ensemble (via the picker / Enter from home).
-        suppressAutoSelectUntil: undefined,
       };
 
     case 'NAVIGATE_PLAYER':

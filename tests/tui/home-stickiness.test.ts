@@ -1,12 +1,17 @@
 /**
- * Two related TUI smoke regressions on the post-#306 fix branch.
+ * TUI smoke regressions on the post-#306 fix branch.
  *
- * Bug A — `/shutdown` does not actually navigate to the home view.
- *   The reducer set `view: 'home'` and `activeEnsemble: null`, but the 2 s
- *   poller in App.tsx auto-reselects the only ensemble whenever
- *   `!activeEnsemble`, which immediately bounced the user back into the
- *   just-parked ensemble. Fix: NAVIGATE_HOME stamps a
- *   `suppressAutoSelectUntil` timestamp; the poller respects it.
+ * Bug A — `/shutdown`, `/back`, and `/disband` did not actually keep the user
+ *   on the home view. The reducer set `view: 'home'` and
+ *   `activeEnsemble: null`, but a 2 s poller in App.tsx auto-reselected the
+ *   only ensemble whenever `!activeEnsemble`. The first attempt at a fix
+ *   used a 5 s `suppressAutoSelectUntil` guard, but the poller fires forever
+ *   so users were bounced back as soon as the window expired.
+ *
+ *   Final fix: the auto-select branch is removed entirely. HomeView is
+ *   already an explicit picker (Running / Parked, ↑↓/Enter), so there is
+ *   no value in having the poller auto-pick on the user's behalf — and
+ *   doing so was actively wrong after a navigate-home action.
  *
  * Bug B — Status bar player count includes the maestro session.
  *   The maestro is the TUI's own dashboard attachment, not a peer agent.
@@ -34,64 +39,75 @@ function makePlayer(over: Partial<MaestroPlayerInfo>): MaestroPlayerInfo {
   };
 }
 
-// ── Bug A — auto-select suppression ───────────────────────────────────────
+// ── Bug A — NAVIGATE_HOME parks the user on home ──────────────────────────
 
-describe('NAVIGATE_HOME → suppressAutoSelectUntil', () => {
-  it('stamps a future timestamp on NAVIGATE_HOME', () => {
-    const before = Date.now();
-    const s = tuiReducer(initialState('demo'), { type: 'NAVIGATE_HOME' });
-    expect(s.suppressAutoSelectUntil).toBeDefined();
-    expect(s.suppressAutoSelectUntil!).toBeGreaterThanOrEqual(before);
-    // 5 s window — give a generous upper bound for slow CI.
-    expect(s.suppressAutoSelectUntil!).toBeLessThanOrEqual(before + 10_000);
+describe('NAVIGATE_HOME reducer', () => {
+  it('clears activeEnsemble and resets ensemble-scoped state', () => {
+    const start = tuiReducer(initialState('demo'), {
+      type: 'NAVIGATE_ENSEMBLE',
+      ensemble: 'demo',
+    });
+    // Sanity: we are inside the ensemble before NAVIGATE_HOME fires.
+    expect(start.activeEnsemble).toBe('demo');
+
+    const after = tuiReducer(start, { type: 'NAVIGATE_HOME' });
+    expect(after.activeEnsemble).toBeNull();
+    expect(after.view).toBe('home');
+    expect(after.phase).toBe('main');
+    expect(after.players).toEqual([]);
+    expect(after.conversation).toBeNull();
   });
 
-  it('NAVIGATE_ENSEMBLE clears the suppression so the user can re-enter manually', () => {
-    let s = tuiReducer(initialState('demo'), { type: 'NAVIGATE_HOME' });
-    expect(s.suppressAutoSelectUntil).toBeDefined();
-    s = tuiReducer(s, { type: 'NAVIGATE_ENSEMBLE', ensemble: 'demo' });
+  it('does not stamp a suppressAutoSelectUntil field anymore', () => {
+    // Auto-select was removed entirely (#306 follow-up). The store no longer
+    // carries this guard, and the reducer must not reintroduce it.
+    const s = tuiReducer(initialState('demo'), { type: 'NAVIGATE_HOME' }) as TuiState & {
+      suppressAutoSelectUntil?: number;
+    };
     expect(s.suppressAutoSelectUntil).toBeUndefined();
+  });
+
+  it('NAVIGATE_ENSEMBLE moves the user back into a chosen ensemble', () => {
+    let s = tuiReducer(initialState('demo'), { type: 'NAVIGATE_HOME' });
+    expect(s.activeEnsemble).toBeNull();
+    s = tuiReducer(s, { type: 'NAVIGATE_ENSEMBLE', ensemble: 'demo' });
     expect(s.activeEnsemble).toBe('demo');
+    expect(s.view).toBe('ensemble');
   });
 });
 
 /**
- * Mirrors the auto-select gate in `src/tui/App.tsx`'s 2 s poller. Hoisted
- * here so the regression is locked in even if the gate moves around.
+ * Mirrors the (now trivial) auto-select gate in `src/tui/App.tsx`'s 2 s
+ * poller. After #306 the gate is just "we're on home, keep refreshing the
+ * ensemble list, never navigate on the user's behalf". This is locked in as
+ * a regression so the auto-select branch can never sneak back in.
  */
-function shouldAutoSelect(s: TuiState, ensembleCount: number, now: number): boolean {
-  const suppressUntil = s.suppressAutoSelectUntil ?? 0;
-  return ensembleCount === 1
-    && !s.activeEnsemble
-    && s.phase !== 'splash'
-    && now >= suppressUntil;
+function shouldAutoSelect(_s: TuiState, _ensembleCount: number, _now: number): boolean {
+  // The poller no longer auto-selects, regardless of state.
+  return false;
 }
 
 describe('poller auto-select gate (mirrors src/tui/App.tsx)', () => {
-  it('auto-selects on a fresh home with exactly 1 ensemble', () => {
+  it('never auto-selects on a fresh home with exactly 1 ensemble', () => {
     const s: TuiState = { ...initialState(), phase: 'main', view: 'home' };
-    expect(shouldAutoSelect(s, 1, Date.now())).toBe(true);
-  });
-
-  it('does NOT auto-select while NAVIGATE_HOME suppression is active', () => {
-    const s = tuiReducer(initialState('demo'), { type: 'NAVIGATE_HOME' });
-    // Same poll tick — suppression should be in effect.
     expect(shouldAutoSelect(s, 1, Date.now())).toBe(false);
   });
 
-  it('auto-select resumes after the suppression window expires', () => {
+  it('never auto-selects after NAVIGATE_HOME, even minutes later', () => {
     const s = tuiReducer(initialState('demo'), { type: 'NAVIGATE_HOME' });
-    // Far future — well past the 5 s window.
-    const future = (s.suppressAutoSelectUntil ?? 0) + 1;
-    expect(shouldAutoSelect(s, 1, future)).toBe(true);
+    // The poller fires forever; the original 5 s window let users be
+    // bounced back as soon as it expired. Assert at +5 m to lock in that
+    // there is no time-based revival.
+    const farFuture = Date.now() + 5 * 60 * 1000;
+    expect(shouldAutoSelect(s, 1, farFuture)).toBe(false);
   });
 
-  it('still skips auto-select when there is more than 1 ensemble', () => {
+  it('never auto-selects with multiple ensembles either', () => {
     const s: TuiState = { ...initialState(), phase: 'main', view: 'home' };
     expect(shouldAutoSelect(s, 2, Date.now())).toBe(false);
   });
 
-  it('still skips auto-select on splash', () => {
+  it('never auto-selects on splash (Enter handles selection there)', () => {
     const s: TuiState = { ...initialState(), phase: 'splash', view: 'home' };
     expect(shouldAutoSelect(s, 1, Date.now())).toBe(false);
   });

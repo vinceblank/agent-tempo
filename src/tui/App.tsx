@@ -786,33 +786,12 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           const ensembles = await api.discoverEnsembles();
           dispatch({ type: 'REFRESH_ENSEMBLES', ensembles });
 
-          // Auto-connect only when exactly 1 ensemble AND not in splash mode
-          // AND the user hasn't just explicitly navigated home (otherwise a
-          // `/shutdown` or `/back` from a single-ensemble cluster immediately
-          // bounces the user back into the just-parked ensemble).
-          // Splash handles ensemble selection via Enter key.
-          const suppressUntil = s.suppressAutoSelectUntil ?? 0;
-          if (
-            ensembles.length === 1
-            && !s.activeEnsemble
-            && s.phase !== 'splash'
-            && Date.now() >= suppressUntil
-          ) {
-            const autoEns = ensembles[0].name;
-            dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: autoEns });
-            dispatch({
-              type: 'COMMIT_STATIC',
-              item: { id: `auto-${Date.now()}`, type: 'info', content: `\u2714 Connected to ensemble: ${autoEns}`, timestamp: Date.now() },
-            });
-            // Discover conductor but don't auto-enter chat — let user navigate
-            try {
-              const players = await api.getPlayers(autoEns);
-              const conductor = players.find(p => p.isConductor);
-              if (conductor) {
-                dispatch({ type: 'SET_CONDUCTOR', name: conductor.playerId });
-              }
-            } catch { /* best effort */ }
-          }
+          // Intentionally no auto-select: HomeView is an explicit picker
+          // (Running / Parked, arrow keys + Enter). Auto-selecting on the
+          // poller was bouncing users back into a just-parked ensemble after
+          // `/shutdown`, `/back`, or `/disband`. Splash handles its own
+          // selection via Enter; everywhere else, the user picks from
+          // HomeView.
         } else {
           // Single source: maestro workflow for players, schedules, and ensemble chat
           const ens = s.activeEnsemble!;
