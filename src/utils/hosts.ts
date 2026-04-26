@@ -56,7 +56,12 @@ interface CacheEntry {
 }
 let cache: CacheEntry | null = null;
 
-/** Test hook — never call from production code. */
+/**
+ * Test hook — never call from production code.
+ *
+ * Convention: `__<verb><Noun>ForTests`, co-located with the module that owns
+ * the state. See `docs/adr/0006-test-hooks-naming.md`.
+ */
 export function __resetHostsCacheForTests(): void {
   cache = null;
 }
