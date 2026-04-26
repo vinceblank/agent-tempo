@@ -42,15 +42,27 @@ export function registerDestroyTool(
     'destroy',
     'Terminally destroy a session workflow (when `playerId` is given) or the entire ensemble (when omitted): every peer session, the scheduler, the maestro, and the conductor. COMPLETEs workflows and cannot be undone. For graceful reap use `shutdown`; for a clean revive use `restart`.',
     {
-      playerId: z.string().max(PLAYER_NAME_MAX).optional().describe('Target player name. Omit to destroy the entire ensemble.'),
+      // #306: `.min(1)` rejects `{playerId: ""}` at the SDK boundary so a
+      // buggy MCP caller can't silently fall through to ensemble-wide
+      // destroy mode. The handler also guards programmatic callers that
+      // bypass Zod (see explicit `playerId === ''` rejection below).
+      playerId: z.string().min(1).max(PLAYER_NAME_MAX).optional().describe('Target player name. Omit to destroy the entire ensemble.'),
       reason: z.string().max(500).optional().describe('Optional reason recorded in the workflow\'s audit event'),
     },
     async (args) => {
       const { playerId, reason } = args as { playerId?: string; reason?: string };
       const callerId = getPlayerId();
 
+      // #306: defense-in-depth for callers that bypass Zod (test harnesses,
+      // direct handler invocation). Zod's `.min(1)` already covers normal
+      // MCP traffic; this guard ensures empty-string never falls through to
+      // ensemble-wide destroy mode regardless of how the handler is reached.
+      if (playerId === '') {
+        return fail('`playerId` cannot be an empty string. Omit it to destroy the entire ensemble.');
+      }
+
       // ── Single-player mode (existing behaviour) ─────────────────────────
-      if (playerId !== undefined && playerId !== '') {
+      if (playerId !== undefined) {
         const nameError = validatePlayerName(playerId);
         if (nameError) return fail(nameError);
 

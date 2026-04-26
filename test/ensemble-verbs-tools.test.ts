@@ -437,4 +437,29 @@ describe('destroy tool — ensemble scope (#287)', function () {
     expect(result.isError).to.equal(true);
     expect(result.content[0].text).to.match(/own session/i);
   });
+
+  // #306: a buggy caller passing `{playerId: ""}` must NOT silently fall
+  // through to ensemble-wide destroy mode. The Zod schema (`.min(1)`)
+  // catches normal MCP traffic; the handler guard catches programmatic
+  // callers that bypass Zod (e.g. this test harness, which captures the
+  // raw handler closure without running schema validation).
+  it('rejects empty-string playerId with a clear error', async function () {
+    const ensemble = 'destroy-empty-playerid';
+    const { client, calls } = makeClient({
+      ensemble,
+      players: ['alice', 'bob'],
+      includeConductor: true,
+    });
+    const call = extractHandler((server) =>
+      registerDestroyTool(server, client, testConfig(ensemble), () => 'operator', fakeHandle),
+    );
+    const result = await call({ playerId: '' });
+    expect(result.isError).to.equal(true);
+    expect(result.content[0].text).to.match(/empty string/i);
+
+    // Critical: NO destroy / terminate calls landed. An empty-string
+    // playerId must NEVER be treated as ensemble-wide destroy.
+    expect(calls.filter((c) => c.kind === 'update' && c.name === 'destroy')).to.have.lengthOf(0);
+    expect(calls.filter((c) => c.kind === 'terminate')).to.have.lengthOf(0);
+  });
 });
