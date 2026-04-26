@@ -14,7 +14,7 @@ import type { AttachmentInfo, OrphanSummary } from '../src/types';
 
 describe('buildOrphanQuery', function () {
   it('produces the §10.1 visibility query for a given hostname', function () {
-    const q = buildOrphanQuery('host-1');
+    const q = buildOrphanQuery({ hostname: 'host-1' });
     expect(q).to.include('WorkflowType = "claudeSessionWorkflow"');
     expect(q).to.include('ExecutionStatus = "Running"');
     expect(q).to.include('ClaudeTempoAttachedHost = "host-1"');
@@ -24,7 +24,7 @@ describe('buildOrphanQuery', function () {
   });
 
   it('sanitizes quote/backslash/newline chars out of the hostname', function () {
-    const q = buildOrphanQuery('host"with\nquotes');
+    const q = buildOrphanQuery({ hostname: 'host"with\nquotes' });
     expect(q).to.not.include('host"with');
     expect(q).to.not.include('\n');
     expect(q).to.include('hostwithquotes');

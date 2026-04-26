@@ -28,7 +28,6 @@ import { registerLoadLineupTool } from '../src/tools/load-lineup';
 import { registerBroadcastTool } from '../src/tools/broadcast';
 import { registerRecallTool } from '../src/tools/recall';
 import { registerRestartTool } from '../src/tools/restart';
-import { registerDetachTool } from '../src/tools/detach';
 import { registerDestroyTool } from '../src/tools/destroy';
 import { registerMigrateTool } from '../src/tools/migrate';
 import { registerAttachmentInfoTool } from '../src/tools/attachment-info';
@@ -1258,37 +1257,6 @@ function makeCaptureHandle(): { handle: WorkflowHandle; entries: Array<{ name: s
   } as unknown as WorkflowHandle;
   return { handle, entries };
 }
-
-describe('detach tool (outbox-queued, QA B1)', function () {
-  it('enqueues DetachOutboxEntry with reason + deadlineMs', async function () {
-    const { client } = makeV2Client({ playerId: 'bob' });
-    const { handle, entries } = makeCaptureHandle();
-    const call = extractHandler((server) =>
-      registerDetachTool(server, client, testConfig, getPlayerId, handle),
-    );
-    const result = await call({ playerId: 'bob', deadlineMs: 3000 });
-    expect(result.isError).to.not.equal(true);
-    expect(entries).to.have.length(1);
-    expect(entries[0].name).to.equal('submitOutbox');
-    const entry = entries[0].args as any;
-    expect(entry.type).to.equal('detach');
-    expect(entry.targetPlayerId).to.equal('bob');
-    expect(entry.reason).to.equal('user-stop');
-    expect(entry.deadlineMs).to.equal(3000);
-  });
-
-  it('rejects self-detach before enqueueing', async function () {
-    const { client } = makeV2Client({ playerId: TEST_PLAYER_ID });
-    const { handle, entries } = makeCaptureHandle();
-    const call = extractHandler((server) =>
-      registerDetachTool(server, client, testConfig, getPlayerId, handle),
-    );
-    const result = await call({ playerId: TEST_PLAYER_ID });
-    expect(result.isError).to.be.true;
-    expect(result.content[0].text).to.include('own session');
-    expect(entries).to.have.length(0);
-  });
-});
 
 describe('destroy tool (outbox-queued, QA B2)', function () {
   it('enqueues DestroyOutboxEntry with reason + notifyConductor', async function () {

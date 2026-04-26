@@ -7,7 +7,7 @@
  *   - parseCommand() — input parsing
  *   - COMMANDS registry — completeness and structure
  *   - getCommandNames(), isValidCommand(), formatHelpSummary()
- *   - isSentMessage(), formatTimestamp() — utility helpers
+ *   - formatTimestamp() — utility helper
  */
 import { expect } from 'chai';
 import {
@@ -16,10 +16,8 @@ import {
   getCommandNames,
   isValidCommand,
   formatHelpSummary,
-  isSentMessage,
   formatTimestamp,
 } from '../src/tui/commands';
-import type { Message, SentMessage } from '../src/types';
 
 // ─────────────────────────────────────────────
 // parseCommand
@@ -246,35 +244,6 @@ describe('formatHelpSummary', function () {
     for (const [, def] of Object.entries(COMMANDS)) {
       expect(summary).to.include(def.usage);
     }
-  });
-
-});
-
-// ─────────────────────────────────────────────
-// isSentMessage
-// ─────────────────────────────────────────────
-
-describe('isSentMessage', function () {
-
-  it('returns true for a SentMessage with direction "sent"', function () {
-    const sent: SentMessage & { direction: 'sent' } = {
-      id: '1', to: 'player', text: 'hello', timestamp: '2026-01-01T00:00:00Z', direction: 'sent',
-    };
-    expect(isSentMessage(sent)).to.be.true;
-  });
-
-  it('returns false for a Message (no direction field)', function () {
-    const msg: Message = {
-      id: '1', from: 'player', text: 'hello', timestamp: '2026-01-01T00:00:00Z', delivered: true,
-    };
-    expect(isSentMessage(msg)).to.be.false;
-  });
-
-  it('returns false for a Message with isMaestro flag', function () {
-    const msg: Message = {
-      id: '1', from: 'maestro', text: 'hi', timestamp: '2026-01-01T00:00:00Z', delivered: true, isMaestro: true,
-    };
-    expect(isSentMessage(msg)).to.be.false;
   });
 
 });

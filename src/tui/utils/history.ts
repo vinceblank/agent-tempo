@@ -51,18 +51,3 @@ export function saveHistory(entries: string[]): void {
   }
 }
 
-/**
- * Append a command to history (deduplicates consecutive identical entries).
- * Writes to disk immediately.
- */
-export function appendHistory(entries: string[], command: string): string[] {
-  const trimmed = command.trim();
-  if (!trimmed) return entries;
-  // Deduplicate consecutive identical commands
-  if (entries.length > 0 && entries[entries.length - 1] === trimmed) {
-    return entries;
-  }
-  const updated = [...entries, trimmed].slice(-MAX_ENTRIES);
-  saveHistory(updated);
-  return updated;
-}

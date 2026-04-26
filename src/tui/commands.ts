@@ -1385,11 +1385,6 @@ async function handleHome(
 
 // ── Utility ──
 
-/** Type guard: distinguish SentMessage (has `to` + `direction`) from Message (has `from`). */
-export function isSentMessage(m: Message | (SentMessage & { direction: 'sent' })): m is SentMessage & { direction: 'sent' } {
-  return 'direction' in m && (m as SentMessage & { direction: 'sent' }).direction === 'sent';
-}
-
 export function formatTimestamp(ts: string): string {
   try {
     const d = new Date(ts);
@@ -1589,19 +1584,6 @@ export function filterPaletteCommands<T extends { name: string }>(
   if (!prefix) return [...commands];
   const lower = prefix.toLowerCase();
   return commands.filter((c) => c.name.toLowerCase().startsWith(lower));
-}
-
-/**
- * Resolve the target of a `/help <name>` invocation. Accepts either
- * `recruit` or `/recruit` — both resolve to the same command def.
- * Returns null if the command is unknown.
- */
-export function resolveHelpTarget(raw: string): { name: string; def: CommandDef } | null {
-  const name = raw.replace(/^\//, '').trim().toLowerCase();
-  if (!name) return null;
-  const def = COMMANDS[name];
-  if (!def) return null;
-  return { name, def };
 }
 
 /** Commands that take a player name as their first parameter. */

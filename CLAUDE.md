@@ -76,7 +76,6 @@ src/
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
 ├── tui/
 │   ├── App.tsx / store.ts / commands.ts   # TUI root, state, slash commands
-│   ├── client.ts                          # Backward-compat shim → src/client/
 │   ├── components/    # Ink components — see docs/tui.md for inventory
 │   └── utils/         # format, platform, theme, fullscreen, history
 ├── utils/

@@ -119,22 +119,11 @@ function sanitizeQueryValue(value: string): string {
  * given hostname. Exposed (rather than inlined) so tests can introspect the
  * query shape without a live Temporal connection.
  *
- * Accepts either the legacy `(hostname, ensemble?)` positional form (used by
- * existing tests + the §10.1 reconcile-on-boot caller) or the opts-object
- * form that carries a `phases` filter — used by user-invoked `/restore` to
- * narrow the visibility query to `detached` only so live sessions are never
- * flagged as orphan candidates.
+ * The opts-object form carries a `phases` filter — used by user-invoked
+ * `/restore` to narrow the visibility query to `detached` only so live
+ * sessions are never flagged as orphan candidates.
  */
-export function buildOrphanQuery(opts: BuildOrphanQueryOpts): string;
-export function buildOrphanQuery(hostname: string, ensemble?: string): string;
-export function buildOrphanQuery(
-  hostnameOrOpts: string | BuildOrphanQueryOpts,
-  ensemble?: string,
-): string {
-  const opts: BuildOrphanQueryOpts = typeof hostnameOrOpts === 'string'
-    ? { hostname: hostnameOrOpts, ...(ensemble !== undefined ? { ensemble } : {}) }
-    : hostnameOrOpts;
-
+export function buildOrphanQuery(opts: BuildOrphanQueryOpts): string {
   const h = sanitizeQueryValue(opts.hostname);
   const ensembleClause = opts.ensemble
     ? ` AND ClaudeTempoEnsemble = "${sanitizeQueryValue(opts.ensemble)}"`
