@@ -31,6 +31,7 @@ import {
   releaseHeldSignal,
   setPausedSignal,
 } from '../workflows/signals';
+import { maestroPausedQuery } from '../workflows/maestro-signals';
 import { resolveSession, scanEnsembleSessions } from '../activities/resolve';
 import { restoreOrphansOnce, type RestoreOrphansSummary } from '../reconcile/orphans';
 import {
@@ -42,6 +43,7 @@ import {
   getAttachmentPhase,
   getEnsembleName,
   getIsConductor,
+  getSearchAttrString,
 } from '../utils/search-attributes';
 import type {
   TempoClient,
@@ -191,11 +193,24 @@ export function createTempoClient(client: Client): TempoClient {
         for await (const wf of client.workflow.list({ query })) {
           const name = getEnsembleName(wf);
           if (!name) continue;
+
+          // Exclude the maestro session from the headline player count.
+          // The maestro is the TUI's own dashboard attachment, not a peer
+          // agent — counting it produced confusing "(2 players)" rows on
+          // a fresh ensemble with one real player. Mirrors the
+          // `filterRealPlayers` rule used in StatusBar (cf6becd). Detect
+          // via the canonical `ClaudeTempoPlayerType` search attribute,
+          // with a workflow-id-suffix fallback for the brief post-start
+          // window before search attributes propagate.
+          const playerType = getSearchAttrString(wf, 'ClaudeTempoPlayerType');
+          const isMaestroSession = playerType === 'maestro'
+            || (wf.workflowId?.endsWith('-maestro') ?? false);
+
           const phase = getAttachmentPhase(wf) as AttachmentPhase | undefined;
           const entry = byEnsemble.get(name) ?? {
             count: 0, hasConductor: false, hasLive: false, hasDetached: false,
           };
-          entry.count++;
+          if (!isMaestroSession) entry.count++;
           if (phase === 'detached') entry.hasDetached = true;
           else if (phase && LIVE_PHASES.has(phase)) entry.hasLive = true;
 
@@ -211,17 +226,46 @@ export function createTempoClient(client: Client): TempoClient {
         return [];
       }
 
+      // Per-ensemble paused lookup: a `/shutdown` flips
+      // `maestroSetPausedSignal` on the maestro hub workflow but leaves the
+      // session phases largely untouched (the dashboard maestro session
+      // keeps its phase, and peer sessions go to `detached`). The hub's
+      // `maestroPaused` query is the authoritative "ensemble is parked"
+      // signal — fall back to the phase heuristic when the hub doesn't
+      // exist (bare ensemble before any conductor / TUI was attached).
+      const pausedByEnsemble = new Map<string, boolean>();
+      await Promise.all(
+        [...byEnsemble.keys()].map(async (name) => {
+          try {
+            const paused = await handle(maestroWorkflowId(name)).query(maestroPausedQuery);
+            pausedByEnsemble.set(name, !!paused);
+          } catch {
+            // Hub workflow not running — leave undefined so the phase
+            // heuristic below decides classification.
+          }
+        }),
+      );
+
       const out: EnsembleSummary[] = [];
       for (const [name, info] of byEnsemble) {
         // Skip ensembles with no non-gone sessions — they're either
         // terminating or fully destroyed.
         if (!info.hasLive && !info.hasDetached) continue;
+        const paused = pausedByEnsemble.get(name);
+        // Authoritative when the hub answered; otherwise use the phase
+        // heuristic — `hasLive` covers the case where a bare ensemble was
+        // started without a maestro hub yet.
+        const state: 'running' | 'parked' = paused === true
+          ? 'parked'
+          : paused === false
+            ? 'running'
+            : (info.hasLive ? 'running' : 'parked');
         out.push({
           name,
           playerCount: info.count,
           hasConductor: info.hasConductor,
           conductorStatus: info.conductorStatus,
-          state: info.hasLive ? 'running' : 'parked',
+          state,
         });
       }
       return out;
