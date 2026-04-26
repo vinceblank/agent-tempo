@@ -74,13 +74,53 @@ Current per-ensemble maestro state (measured against `src/workflows/maestro.ts:6
 | `cachedChatMeta` + `chatHighWater` | constant | ~1 KiB |
 | **Existing total** | | **~316 KiB** |
 
-Adding coat-check entries with the proposed caps (100 entries × 1 MiB max each = 100 MiB worst case) is the dominant new state contributor. Headroom analysis:
+### Three Temporal payload constraints, not just one
 
-- **Workflow state in memory** — bounded by Node heap, not Temporal. 100 MiB is fine for daemon process.
-- **Per-event payload size on signals/updates** — Temporal default cap is 4 MiB per payload. The `coatCheckPut` update args carry the content, so the **per-entry size cap MUST be set below 4 MiB**. Recommend **1 MiB** for safety margin.
-- **Per-workflow event history** — Temporal default cap is 50 MB total. Each `coatCheckPut` update generates ~2 history events (input + output). With 100 entries × 1 MiB writes ~200 MiB to history → exceeds 50 MB ceiling **before CAN**. Mitigation: trigger CAN aggressively when history approaches the limit, OR restrict per-entry size further. **Selected mitigation**: keep 1 MiB per-entry cap; rely on `continueAsNewSuggested` (already wired in `maestro.ts:252-267`) to roll history before the 50 MB limit. Coat-check state carries through CAN like every other field.
+Each constraint binds independently — the design must survive all three:
 
-**Conclusion**: maestro state is sized correctly for v1. If usage patterns force >1 MiB per entry, that's a v2 signal to switch to FS or external blob — graceful future path, doesn't block this design.
+| Constraint | Default | What it bounds |
+|---|---|---|
+| Per-payload size | 4 MiB | One serialized `Payload` (signal arg, update arg, query result, **CAN input**, etc.) |
+| Per-workflow event history | 50 MB total | Sum of all events serialized into the workflow's history |
+| Workflow memory | Node heap | In-memory state during execution |
+
+The **CAN-input constraint is the load-bearing one** for coat-check sizing. When `continueAsNewSuggested` fires (v0 spec said "rely on it"), the maestro serialises its accumulated state — including all live coat-check entries — into a single `MaestroInput` payload. That payload is bounded by 4 MiB, **not** 50 MB. If the aggregate of coat-check content + existing maestro state (`players`, `events`, `pendingCommands`, `cachedChat` ≈ 316 KiB) exceeds 4 MiB, CAN serialization fails, the workflow can't roll history, and the workflow eventually wedges at the 50 MB history ceiling. The original §3.2 missed this and proposed 100 × 1 MiB = up to 100 MiB aggregate — would have wedged in production.
+
+### Selected approach: aggregate state cap (Option 1)
+
+> **qa-2 reviewer credit**: surfaced this gap on PR #327 review. The two options below frame qa-2's analysis; Option 1 selected for the reasons in §3.4.
+
+**Caps**:
+
+| Parameter | Value | Calculation |
+|---|---|---|
+| Aggregate coat-check state ceiling | **1.6 MiB** | Comfortable margin under 4 MiB CAN-payload limit, leaving ≥2 MiB of headroom for the rest of `MaestroInput` (~316 KiB existing state + future growth) |
+| Per-entry content size | **32 KiB max** | Covers a ~5K-word markdown report (canonical "researcher Phase 1 report" use case at ~18 KiB) with comfortable headroom for code blocks |
+| Per-ensemble entry count | **50** | 50 × 32 KiB = 1.6 MiB exactly. Generous slot count — issue #318's motivating examples suggest dozens of items per ensemble in practice |
+| Eviction trigger | Composite TTL OR LRU(50), whichever fires first | Same composite policy; counts adjust to the new cap |
+
+**Why these specific numbers**:
+
+- **Aggregate ≤ 1.6 MiB, not 2 MiB or 3 MiB**: CAN input serialises the *entire* MaestroInput. Existing fields are ~316 KiB; future maestro state may grow (e.g. `hostProfiles` map already added in v0.27). 1.6 MiB coat-check + 316 KiB existing + 1 MiB future-growth budget = 2.9 MiB, well under 4 MiB. 2 MiB cap would leave only ~1.7 MiB headroom — too tight.
+- **Per-entry 32 KiB, not 64 KiB**: 50 × 64 KiB = 3.2 MiB exceeds the 1.6 MiB aggregate. Could allow 25 × 64 KiB = 1.6 MiB, but smaller slot counts increase noisy-player crowd-out risk (see §7 footnote). 32 KiB / 50 slots is the better ratio.
+- **50 slots, not 100**: doubling the slot count would double aggregate state at fixed per-entry cap, breaking the 1.6 MiB ceiling. 50 is the natural slot count given the per-entry choice.
+
+### Why not Option 2 (external storage) for v1
+
+External storage (filesystem `~/.claude-tempo/coatcheck/<ensemble>/<ticket>` or activity-mediated blob store) gives unbounded per-entry size at the cost of:
+
+- **Replay determinism** — workflow state must NOT contain the content; activities read/write it. Workflow only carries metadata. Adds an activity round-trip on every put/get.
+- **Cross-machine fragility** — host-bound FS doesn't survive the future cross-host-coat-check use case the issue flagged as v2 scope. Forces storage to migrate again later.
+- **Operator-managed cleanup** — TTL eviction must run as a background activity, not in the maestro main loop.
+- **Larger v1 surface area** — new activity, new lifecycle hook, more code paths for the audit-and-test grid.
+
+For motivating use cases (5-10K word reports = ~18-60 KiB each), the 32 KiB per-entry cap covers the canonical "researcher Phase 1 report" comfortably. **Reports beyond 32 KiB are rare enough to fall back to the existing manual doc-PR pattern (§2 row 3) until a v2 signal warrants the storage swap.**
+
+The v2 upgrade path stays graceful: `maestroCoatCheckPut` validates the entry then writes — swapping in-memory storage for activity-mediated FS storage is a workflow-internal change, not an API change. Callers don't see the difference.
+
+### Conclusion
+
+Maestro workflow state with the **1.6 MiB aggregate / 32 KiB per-entry / 50-slot** caps survives all three Temporal payload constraints. v2 path to external storage stays open via the existing `maestroCoatCheckPut` API; v1 caps are the binding decision.
 
 ---
 
@@ -118,7 +158,7 @@ export const maestroCoatCheckPutUpdate = defineUpdate<
   { ticket: string; expiresAt: string },
   [{
     summary: string;
-    content: string;        // ≤ 1 MiB
+    content: string;        // ≤ 32 KiB (per §3 caps; aggregate ≤ 1.6 MiB across all live entries)
     ttl?: string;           // duration string (e.g. "7d"); default 7d, min 1h, max 30d
     putBy: string;          // caller identity (player name); maestro records for audit
     contentType?: string;   // e.g. "text/markdown"; opaque hint, not validated
@@ -214,8 +254,9 @@ The receiver's session sees the ticket on the `Message` payload and can call `co
 | Policy | Default | Bounds | Configurable |
 |---|---|---|---|
 | TTL on `coat_check_put` (when caller omits) | 7 days | min 1 hour, max 30 days | Per-call via `ttl` arg |
-| Per-entry content size | n/a | max 1 MiB (Temporal payload safety margin against 4 MiB ceiling) | No |
-| Per-ensemble entry count | n/a | max 100 (LRU on overflow) | Future env var if needed |
+| Per-entry content size | n/a | max **32 KiB** (per §3.3 — covers a ~5K-word markdown report; reports beyond this fall back to manual doc-PR pattern) | No |
+| Per-ensemble entry count | n/a | max **50** (LRU on overflow; combined with per-entry cap = 1.6 MiB aggregate state ceiling, safely under the 4 MiB CAN-payload limit) | Future env var if v2 storage swap warrants |
+| Aggregate coat-check state ceiling | n/a | **1.6 MiB** (50 × 32 KiB) — bounds the slice of `MaestroInput` that CAN serialises | No |
 | Eviction trigger | Composite: TTL expiry **OR** LRU evict on count overflow, whichever fires first | n/a | n/a |
 | TTL refresh on `coat_check_get`? | **No** — tickets are immutable; `get` does not extend TTL | n/a | Future option if abuse patterns warrant |
 
@@ -249,6 +290,15 @@ LRU eviction runs on `coatCheckPut` admission: if `coatCheck.size === 100`, evic
 
 **Why conductor-only evict**: prevents one player from clobbering another's parked content. The conductor is the natural arbiter for cleanup. Audit trail (`putBy` + `evictedBy`) makes either side accountable.
 
+**Noisy-player edge case**: any-player put combined with LRU-oldest-first eviction means a single noisy player can crowd out older legitimate entries. Mitigations layered into v1:
+
+- 50-slot ceiling caps the worst-case crowd-out at 50 entries deep — older items beyond that are gone anyway
+- 32 KiB per-entry cap means a noisy player must spam many entries to fill the buffer, not one giant blob
+- Conductor-only evict gives the operator a manual hammer for genuinely abusive patterns
+- Audit trail (`putBy` per entry) makes the noisy player visible in `coat_check_list` output
+
+For v1 these protections are sufficient. If observed abuse warrants stronger guarantees (per-player slot quotas, write-rate limits), they're additive without changing the wire protocol — flagged in §11 forward-looking.
+
 **Future extension** — per-ensemble policy override (e.g. `getCoatCheckPolicyQuery` reading from a config flag). Not in v1 scope; flagged in §11.
 
 ---
@@ -275,7 +325,9 @@ if (Date.now() - lastActiveSessionTime > IDLE_TIMEOUT_MS) {
 }
 ```
 
-Bug here is `Date.now()` in a workflow (should be `workflow.now()`) — already a follow-up. For coat-check purposes, extend the bypass: do NOT terminate if any non-expired coat-check entries exist. New condition:
+> **Pre-existing bug to address opportunistically when implementing**: `Date.now()` is non-deterministic in workflow context — should be `workflow.now()`. Not introduced by this design but the implementer touches this exact line, so swap the call as a free fix in the same PR. Track separately if scope balloons, but it's a one-line correction.
+
+For coat-check purposes, extend the bypass: do NOT terminate if any non-expired coat-check entries exist. New condition:
 
 ```ts
 const hasLiveCoatCheck = [...coatCheck.values()]
