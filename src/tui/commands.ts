@@ -1150,23 +1150,18 @@ async function handleLineup(
 }
 
 /** /ensembles — show interactive ensemble picker. */
-async function handleEnsembles(
-  _args: string[],
-  dispatch: (action: TuiAction) => void,
-  _api: TempoClient,
-): Promise<void> {
-  dispatch({ type: 'SHOW_PICKER', pickerType: 'ensembles' });
-}
-
-/** /ensemble <name> — switch active ensemble context. */
+/** /ensemble <name> — switch active ensemble context, or navigate home if no args. */
 async function handleEnsemble(
   args: string[],
   dispatch: (action: TuiAction) => void,
   api: TempoClient,
 ): Promise<void> {
   if (args.length === 0) {
-    // No args — show ensemble picker
-    dispatch({ type: 'SHOW_PICKER', pickerType: 'ensembles' });
+    // #306: No args — navigate to the full home view (Online/Paused/Offline
+    // picker, badges, cwd-pinning, loading state) instead of the bare picker
+    // overlay. The home view is the canonical ensemble switcher; /ensemble
+    // exists for direct-by-name shortcut.
+    dispatch({ type: 'NAVIGATE_HOME' });
     return;
   }
 
@@ -1472,8 +1467,8 @@ export const COMMANDS: Record<string, CommandDef> = {
     handler: handleLineup,
   },
   ensemble: {
-    description: 'Switch active ensemble context',
-    usage: '/ensemble <name>',
+    description: 'Switch active ensemble by name (or open home view with no arg)',
+    usage: '/ensemble [name]',
     handler: handleEnsemble,
   },
   search: {
