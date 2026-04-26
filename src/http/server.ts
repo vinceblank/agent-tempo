@@ -17,6 +17,7 @@
 import * as http from 'http';
 import type { TempoClient } from '../client/interface';
 import { ENV } from '../config';
+import type { AggregateRunner } from './aggregate';
 import {
   bearerRequired,
   extractBearerToken,
@@ -40,6 +41,11 @@ import {
   buildEnsembleSnapshot,
   EnsembleNotFoundError,
 } from './snapshot';
+import {
+  ConnectionCap,
+  DEFAULT_MAX_CONNECTIONS,
+  handleSseRequest,
+} from './sse-handler';
 import type { HealthV1 } from './event-types';
 
 const log = (...args: unknown[]) =>
@@ -74,6 +80,19 @@ export interface HttpServerOptions {
    * Test seam — lets unit tests stub `process.uptime`-style readings.
    */
   startedAtMs?: number;
+  /**
+   * Aggregate poll loop + per-ensemble buses. When provided, the
+   * server lights up `/v1/events/:ensemble` and `/v1/events` (PR-2).
+   * When absent, those routes return `503 streaming-not-implemented`
+   * (PR-1 behavior).
+   */
+  aggregate?: AggregateRunner;
+  /**
+   * Process-wide SSE connection cap. Defaults to
+   * `Number(process.env[ENV.SSE_MAX_CONNECTIONS]) || 100`. Set to a
+   * low value in tests to exercise the 503 path.
+   */
+  maxSseConnections?: number;
 }
 
 export interface HttpServerHandle {
@@ -120,9 +139,19 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
   }
 
   const startedAt = opts.startedAtMs ?? Date.now();
-  // PR-1: no SSE infrastructure → subscriber count is hard-coded zero.
-  // PR-2 swaps this for the live `EnsembleEventBus` subscriber set.
-  const subscriberCount = () => 0;
+  // §7.3 process-wide cap. Defaults to 100 per spec; env var override.
+  const capLimitEnv = process.env[ENV.SSE_MAX_CONNECTIONS];
+  const capLimit =
+    opts.maxSseConnections ??
+    (capLimitEnv != null && capLimitEnv !== '' ? Number(capLimitEnv) : DEFAULT_MAX_CONNECTIONS);
+  if (!Number.isInteger(capLimit) || capLimit < 1) {
+    throw new Error(`Invalid SSE max connections: ${capLimit}`);
+  }
+  const sseConnectionCap = new ConnectionCap(capLimit);
+  // Subscriber count = aggregate's live SSE subscribers. Falls back to
+  // 0 when no aggregate (PR-1 server, no SSE).
+  const subscriberCount = () =>
+    opts.aggregate ? opts.aggregate.totalSubscriberCount() : 0;
 
   const server = http.createServer((req, res) =>
     handle(req, res, {
@@ -134,6 +163,8 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
       httpToken,
       startedAt,
       subscriberCount,
+      aggregate: opts.aggregate ?? null,
+      sseConnectionCap,
     }).catch((err) => {
       log('unhandled handler error:', err instanceof Error ? err.message : err);
       if (!res.headersSent) {
@@ -217,6 +248,10 @@ interface HandleContext {
   httpToken: string | null;
   startedAt: number;
   subscriberCount: () => number;
+  /** Present when PR-2 streaming is wired; null on PR-1-only deployments. */
+  aggregate: AggregateRunner | null;
+  /** Process-wide SSE subscriber cap (§7.3). */
+  sseConnectionCap: ConnectionCap;
 }
 
 /**
@@ -286,11 +321,41 @@ export async function handle(
     return handleState(res, ctx, ensemble);
   }
 
-  // /v1/events* (SSE) — defined in spec but PR-1 doesn't ship streaming.
-  // Return a clear "not implemented yet" so consumers don't conflate this
-  // with "ensemble doesn't exist".
-  if (pathname === '/v1/events' || pathname.startsWith('/v1/events/')) {
-    return errorResponse(res, 503, { error: 'streaming-not-implemented' }, { 'Retry-After': '60' });
+  // /v1/events* (SSE). Dispatch to the SSE handler when an aggregate
+  // is wired; otherwise stay on the PR-1 503 placeholder so the route
+  // signals "feature exists, not yet wired" rather than "ensemble
+  // doesn't exist".
+  if (pathname === '/v1/events') {
+    if (!ctx.aggregate) {
+      return errorResponse(res, 503, { error: 'streaming-not-implemented' }, { 'Retry-After': '60' });
+    }
+    return handleSseRequest(req, res, {
+      client: ctx.client,
+      bus: ctx.aggregate.globalBus(),
+      emitSnapshot: false,
+      cap: ctx.sseConnectionCap,
+    });
+  }
+  const evtMatch = pathname.match(/^\/v1\/events\/([^/]+)$/);
+  if (evtMatch) {
+    if (!ctx.aggregate) {
+      return errorResponse(res, 503, { error: 'streaming-not-implemented' }, { 'Retry-After': '60' });
+    }
+    const ensemble = decodeURIComponent(evtMatch[1]);
+    // Validate existence before opening the SSE stream — clean 404 when
+    // the ensemble was never live, instead of an empty stream.
+    const list = await ctx.client.listEnsembles().catch(() => []);
+    if (!list.find((e) => e.name === ensemble)) {
+      return errorResponse(res, 404, { error: 'ensemble-not-found', ensemble });
+    }
+    const bus = ctx.aggregate.getOrCreateEnsembleBus(ensemble);
+    return handleSseRequest(req, res, {
+      client: ctx.client,
+      bus,
+      emitSnapshot: true,
+      ensemble,
+      cap: ctx.sseConnectionCap,
+    });
   }
 
   return errorResponse(res, 404, { error: 'not-found' });
