@@ -56,6 +56,33 @@ const RECONNECT_MAX_MS = 60_000;
 const RECONNECT_BACKOFF_FACTOR = 1.5;
 
 /**
+ * #258: tiebreaker timeout for the `describe()` confirmation that gates
+ * `fireTerminal('destroy')` from the reconnect-loop pre-check. The Temporal
+ * SDK's per-call default is conservative (10s+); we'd rather conclude
+ * "describe is hung, treat as terminal" in 3s than freeze the reconnect
+ * loop on a slow visibility-API call.
+ */
+const DESCRIBE_TIMEOUT_MS = 3_000;
+
+/**
+ * Workflow execution statuses that are unambiguously terminal — used by
+ * the #258 `describe()` tiebreaker to decide whether a transient
+ * pre-check error reflects a genuinely-gone workflow (fire destroy) or a
+ * transient blip (continue the loop). Anything not in this set, including
+ * `RUNNING`, `PAUSED`, `UNSPECIFIED`, and `UNKNOWN`, is treated as
+ * non-terminal — conservatively keeps the loop alive when classification
+ * is ambiguous.
+ */
+const TERMINAL_WORKFLOW_STATUSES = new Set<string>([
+  'COMPLETED',
+  'FAILED',
+  'CANCELLED',
+  'TERMINATED',
+  'CONTINUED_AS_NEW',
+  'TIMED_OUT',
+]);
+
+/**
  * Override bundle for the reconnect loop timing (#201). Production defaults are
  * tuned for laptop-sleep cycles (15-min elapsed budget, 10s base, 60s cap). Tests
  * override to run the whole loop in <1s. Any field omitted falls back to the
@@ -580,6 +607,62 @@ export abstract class BaseAttachment {
     }
   }
 
+  /**
+   * #258 tiebreaker: confirm whether a workflow is genuinely terminal after
+   * the reconnect-loop pre-check threw a terminal-class error. Used to
+   * distinguish a real workflow-gone state from a transient gRPC /
+   * visibility-API blip that classified as terminal.
+   *
+   * Returns:
+   *  - `{ kind: 'running', statusName }` — workflow is alive (any
+   *    non-terminal status). Caller should treat the original error as
+   *    transient and continue the reconnect loop.
+   *  - `{ kind: 'terminal', statusName }` — workflow is in a terminal
+   *    status (`COMPLETED` / `FAILED` / `CANCELLED` / `TERMINATED` /
+   *    `CONTINUED_AS_NEW` / `TIMED_OUT`). Caller should fire destroy.
+   *  - `{ kind: 'describe-threw' }` — `describe()` itself failed. Treat
+   *    as terminal (fire destroy) — consistent with pre-#258 semantics
+   *    when classification is ambiguous, and avoids spinning forever on
+   *    a workflow we can't reach.
+   *  - `{ kind: 'timed-out' }` — `describe()` exceeded
+   *    {@link DESCRIBE_TIMEOUT_MS}. Treat as terminal (fire destroy) —
+   *    same rationale: prefer clean shutdown to a hung loop.
+   *
+   * The unpinned handle follows any CAN chain to the latest run, so
+   * `desc.status.name === 'CONTINUED_AS_NEW'` here means the workflow
+   * id itself is closed (no successor) — genuinely terminal.
+   */
+  private async confirmWorkflowTerminal(
+    unpinned: WorkflowHandle,
+  ): Promise<
+    | { kind: 'running'; statusName: string }
+    | { kind: 'terminal'; statusName: string }
+    | { kind: 'describe-threw' }
+    | { kind: 'timed-out' }
+  > {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const desc = await Promise.race<
+        { status: { name: string } } | 'timeout'
+      >([
+        unpinned.describe() as Promise<{ status: { name: string } }>,
+        new Promise<'timeout'>((resolve) => {
+          timer = setTimeout(() => resolve('timeout'), DESCRIBE_TIMEOUT_MS);
+        }),
+      ]);
+      if (desc === 'timeout') return { kind: 'timed-out' };
+      const statusName = desc.status?.name ?? 'UNKNOWN';
+      if (TERMINAL_WORKFLOW_STATUSES.has(statusName)) {
+        return { kind: 'terminal', statusName };
+      }
+      return { kind: 'running', statusName };
+    } catch {
+      return { kind: 'describe-threw' };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // #201 reconnect machinery. Subclasses opt in by overriding `shouldReconnect`.
   // ───────────────────────────────────────────────────────────────────────────
@@ -839,13 +922,43 @@ export abstract class BaseAttachment {
           info = await unpinned.query(attachmentInfoQuery);
         } catch (err) {
           if (isTerminalWorkflowError(err)) {
-            // #226: either terminal kind inside the reconnect loop's pre-check
-            // ends the loop. We don't recurse into another CAN rebind here —
-            // that path is only for the pinned-handle tick ticks where we can
-            // read the closed run's history. Inside the loop the unpinned
-            // query has already followed any CAN chain, so a gone error means
-            // the workflow id is truly absent.
-            log('reconnect: workflow gone during pre-check');
+            // #258: ONE terminal-class pre-check error is not enough evidence
+            // to destroy the adapter. The classifier matches phrasings
+            // (`WorkflowNotFound`, `NOT_FOUND`, "workflow execution already
+            // completed") that can ALSO surface from transient gRPC blips and
+            // momentary visibility-API hiccups. Pre-#258, this branch fired
+            // `fireTerminal('destroy')` immediately — a single transient
+            // error orphaned the adapter for the rest of the session
+            // (heartbeat + watcher dead via `terminalFired`, poller torn
+            // down by `onReconnectStart` + `onTerminal` listener).
+            //
+            // Tiebreaker: confirm with `describe()` against the same unpinned
+            // handle. If the workflow is genuinely gone, `describe()` will
+            // either return a closed status (COMPLETED/TERMINATED/...) or
+            // itself throw — fire destroy with confidence. If it returns
+            // RUNNING (or any non-terminal status), the original error was
+            // transient — log and continue the loop. Bounded by
+            // `DESCRIBE_TIMEOUT_MS` so a slow visibility-API call can't hang
+            // the reconnect path indefinitely.
+            const errClass = (err as Error)?.name ?? 'unknown';
+            const errMsg = (err as Error)?.message ?? String(err);
+            const tiebreak = await this.confirmWorkflowTerminal(unpinned);
+            if (tiebreak.kind === 'running') {
+              log(
+                `reconnect: pre-check threw ${errClass} but describe() shows ` +
+                `${tiebreak.statusName} — treating as transient, continuing loop ` +
+                `(originalError="${errMsg}")`,
+              );
+              backoff = Math.min(backoff * this.reconnectBackoffFactor, this.reconnectMaxMs);
+              continue;
+            }
+            const confirmDesc = tiebreak.kind === 'terminal'
+              ? `describe() confirmed ${tiebreak.statusName}`
+              : `describe() ${tiebreak.kind === 'describe-threw' ? 'threw' : 'timed out'}`;
+            log(
+              `reconnect: pre-check terminal (${errClass}) and ${confirmDesc} — firing destroy ` +
+              `(originalError="${errMsg}")`,
+            );
             this.fireTerminal('destroy');
             return;
           }
