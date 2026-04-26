@@ -898,6 +898,32 @@ export function createTempoClient(client: Client): TempoClient {
       }
     },
 
+    async isAnySessionHeld(ensemble: string): Promise<boolean> {
+      // Scan the ensemble's sessions and check the per-session
+      // `outboxLocked` query. The maestro session is skipped — it's the
+      // TUI's own dashboard attachment, not a peer agent that the user-
+      // facing `/go` should target. Per-session query failures are
+      // treated as "not held" so a single flaky workflow doesn't make
+      // the whole ensemble appear held forever.
+      try {
+        const sessions = await scanEnsembleSessions(client, ensemble);
+        for (const s of sessions) {
+          if (s.playerId === 'maestro') continue;
+          try {
+            const sh = handle(s.workflowId);
+            const locked = await sh.query(outboxLockedQuery);
+            if (locked) return true;
+          } catch {
+            // Old workflow without `outboxLocked` query, or terminated
+            // mid-scan — skip this session, keep checking the rest.
+          }
+        }
+        return false;
+      } catch {
+        return false;
+      }
+    },
+
     async getGates(ensemble: string): Promise<QualityGate[]> {
       // Gates are stored on the conductor's workflow
       try {

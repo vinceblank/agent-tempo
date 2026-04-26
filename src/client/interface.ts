@@ -285,6 +285,20 @@ export interface TempoClient {
    * visible (status bar segment + tooltip-style hint to type `/play`).
    */
   isMaestroPaused(ensemble: string): Promise<boolean>;
+  /**
+   * #306 follow-up: True when at least one session in the ensemble has its
+   * outbox locked (i.e. is `held`). Companion to {@link isMaestroPaused};
+   * the two are orthogonal — `/load_lineup` flips both, `/pause` flips just
+   * paused, `/recruit --held` flips just held. The TUI polls this to surface
+   * a yellow `held` segment + a `Tip: /go` hint, so users don't sit paused
+   * watching held players that need releasing.
+   *
+   * Skips the maestro session (the TUI's own dashboard attachment) so a
+   * locked maestro outbox — never a real held-player state — doesn't
+   * trigger the indicator. Returns `false` when the scan or every per-
+   * session query fails (treat absence as "not held").
+   */
+  isAnySessionHeld(ensemble: string): Promise<boolean>;
   /** Disband an ensemble: terminate all sessions, scheduler, and maestro workflows. */
   disbandEnsemble(ensemble: string): Promise<{ terminated: number }>;
   /** Check if the Temporal connection is alive. */

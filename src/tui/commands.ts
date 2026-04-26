@@ -1210,6 +1210,10 @@ async function handleGo(
   try {
     const summary = await api.release(ensemble);
     if (summary.released.length === 0 && summary.errors.length === 0) {
+      // #306 follow-up: even with nothing to release, defensively clear
+      // the held indicator. The poll will reconcile in 2s; this just
+      // prevents a stale indicator from flashing yellow until then.
+      dispatch({ type: 'SET_ENSEMBLE_HELD', held: false });
       commitNotification(dispatch, 'info', 'No held players to release.');
       return;
     }
@@ -1220,6 +1224,10 @@ async function handleGo(
         `\u2714 Released ${summary.released.length} player${summary.released.length !== 1 ? 's' : ''}: ${summary.released.join(', ')}`,
       );
     }
+    // #306 follow-up: optimistically clear the held indicator so the
+    // StatusBar `held` segment + the pinned `Tip: /go` line disappear
+    // immediately. Mirrors the pause/play optimistic toggle.
+    dispatch({ type: 'SET_ENSEMBLE_HELD', held: false });
     for (const e of summary.errors) {
       commitNotification(dispatch, 'error', `\u2717 Release failed for ${e.playerId}: ${e.error}`);
     }
@@ -1281,9 +1289,15 @@ async function handlePlay(
     // Bug B: optimistically clear the StatusBar `paused` segment so users
     // get instant feedback that the resume took effect.
     dispatch({ type: 'SET_ENSEMBLE_PAUSED', paused: false });
-    commitStatic(dispatch, 'info', `\u25B6 Resumed ensemble "${ensemble}".`);
+    // #306 follow-up: defensive clear of the held flag. `/play` does NOT
+    // release held players (held + paused are orthogonal — `/load_lineup`
+    // flips both, `/play` clears only paused), but if the held indicator
+    // was stale this prevents it from lingering until the next poll. The
+    // 2s poll will resync if any player is still actually held.
+    dispatch({ type: 'SET_ENSEMBLE_HELD', held: false });
+    commitStatic(dispatch, 'info', `▶ Resumed ensemble "${ensemble}".`);
   } catch (err) {
-    commitNotification(dispatch, 'error', `\u2717 Play failed: ${err instanceof Error ? err.message : String(err)}`);
+    commitNotification(dispatch, 'error', `✗ Play failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

@@ -23,6 +23,15 @@ export interface StatusBarProps {
    * outbox dispatcher).
    */
   ensemblePaused?: boolean;
+  /**
+   * #306 follow-up: Whether at least one session in the active ensemble
+   * has its outbox locked (`held`). Drives a yellow "held" segment.
+   * Independent of `ensemblePaused` because `/load_lineup` flips both
+   * flags at once but `/play` only clears pause — users would otherwise
+   * see "no paused indicator" and assume the ensemble is fully resumed
+   * when held players were still frozen behind the locked outbox.
+   */
+  ensembleHeld?: boolean;
 }
 
 /**
@@ -43,7 +52,7 @@ export interface StatusBarSegment {
  * just maps each segment to a `<Text>` element.
  */
 export function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
-  const { ensemble, players, playersLoaded, scheduleCount, connected, conductorName, ensemblePaused } = props;
+  const { ensemble, players, playersLoaded, scheduleCount, connected, conductorName, ensemblePaused, ensembleHeld } = props;
 
   const healthColor = connected ? THEME.success : THEME.error;
   const healthDot = connected ? '●' : '○';
@@ -101,15 +110,31 @@ export function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[
       );
     }
 
-    // Bug B: yellow `paused` segment when the maestro hub is paused. Placed
-    // before the "No conductor" warning so the most actionable state
-    // (`/play` resumes) reads first when both apply. The same guard
-    // (`ensemble && …`) keeps the segment off the home view.
-    if (ensemble && ensemblePaused) {
+    // Bug B + #306 follow-up: yellow `paused`/`held`/`paused + held` segment
+    // when the maestro hub is paused or any session has its outbox locked
+    // (or both — `/load_lineup` flips both flags at once). Placed before
+    // the "No conductor" warning so the most actionable state reads first
+    // when both apply. The same guard (`ensemble && …`) keeps the segment
+    // off the home view.
+    //
+    // Combined-glyph variant for paused + held picks `⏸⊕ paused + held`
+    // over two separate segments — scans cleaner at terminal density and
+    // lets the matching tip below the input ("Tip: type /play to unpause
+    // + /go to release held players.") read as one instruction.
+    if (ensemble && (ensemblePaused || ensembleHeld)) {
+      let label: string;
+      if (ensemblePaused && ensembleHeld) {
+        label = '⏸⊕ paused + held';
+      } else if (ensemblePaused) {
+        // U+23F8 PAUSE SYMBOL — single glyph, mirrors the U+26A0 warning below.
+        label = '⏸ paused';
+      } else {
+        // U+2295 CIRCLED PLUS — distinct from pause, suggests "more buffered".
+        label = '⊕ held';
+      }
       segments.push(
         { key: 'sp', color: THEME.dim, text: ' · ' },
-        // U+23F8 PAUSE SYMBOL — single glyph, mirrors the U+26A0 warning below.
-        { key: 'pa', color: THEME.warning, text: '⏸ paused' },
+        { key: 'pa', color: THEME.warning, text: label },
       );
     }
 

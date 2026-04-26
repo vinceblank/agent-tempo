@@ -795,7 +795,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         } else {
           // Single source: maestro workflow for players, schedules, and ensemble chat
           const ens = s.activeEnsemble!;
-          const [players, schedules, chatResult, paused] = await Promise.all([
+          const [players, schedules, chatResult, paused, held] = await Promise.all([
             api.getPlayers(ens),
             api.getSchedules(ens),
             api.getEnsembleChat(ens, 0, 50),
@@ -804,9 +804,16 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
             // bare ensembles don't render the indicator. Cheap RPC; runs
             // alongside the existing poll batch with no extra wakeups.
             api.isMaestroPaused(ens),
+            // #306 follow-up: poll for any session with `outboxLocked`
+            // (held). Independent of paused — `/load_lineup` flips both
+            // simultaneously but `/play` only clears pause. Without this
+            // the user unpauses an ensemble and watches every player
+            // stay frozen behind the locked outbox.
+            api.isAnySessionHeld(ens),
           ]);
 
           dispatch({ type: 'SET_ENSEMBLE_PAUSED', paused });
+          dispatch({ type: 'SET_ENSEMBLE_HELD', held });
 
           // Map ensemble chat to conversation format for ConversationStream
           const conversation = chatResult.messages.map(m => ({
@@ -1537,6 +1544,11 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   // notifications stack. Keeps the y/N prompt anchored below the input so
   // it can't scroll away under new messages.
   const confirmationLines = countPinnedConfirmationLines(state);
+  // #306 follow-up: Pinned paused/held tip — 1 row when an ensemble is
+  // paused or held (or both), 0 otherwise. Same accounting pattern as
+  // confirmationLines so the live content area reclaims the row when the
+  // tip auto-clears on state change.
+  const tipLines = countPinnedTipLines(state);
   // #306: Hide the chat prompt on the home view. Home is a wizard/picker
   // (arrow keys + Enter), not a chat target — there is no ensemble to talk
   // to, and a visible input box double-fires Enter (HomeView's own useInput
@@ -1546,7 +1558,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   // divider) so the live content area reclaims that space.
   const hidePrompt = isHomeView(state);
   const promptFooterLines = hidePrompt ? 0 : 2; // PromptArea + bottom divider
-  const FOOTER_LINES = 2 + promptFooterLines + paletteLines + confirmationLines + notificationLines; // StatusBar + divider + (PromptArea + bottom divider when shown) + palette + pinned confirmations + notifications
+  const FOOTER_LINES = 2 + promptFooterLines + paletteLines + confirmationLines + tipLines + notificationLines; // StatusBar + divider + (PromptArea + bottom divider when shown) + palette + pinned confirmations + paused/held tip + notifications
   const contentHeight = Math.max(3, termRows - 1 - FOOTER_LINES);
 
   // Splash phase — full screen, no chrome (title/status/prompt hidden)
@@ -1617,6 +1629,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       connected: true,
       conductorName: state.conductorName,
       ensemblePaused: state.ensemblePaused,
+      ensembleHeld: state.ensembleHeld,
     }),
     // Bottom divider (1 Text node, no Box wrapper)
     React.createElement(Text, { color: THEME.border }, ` ${dividerLine} `),
@@ -1662,6 +1675,10 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     // state field is set. Keeps the y/N (or typed-name) prompt visible
     // even when new chat messages are flooding the scroll-up history.
     renderPinnedConfirmations(state, Box, Text),
+    // #306 follow-up: paused/held informational tip. Dim color so it
+    // sits behind the warning-yellow confirmations and red-error
+    // notifications visually. Auto-clears on state change.
+    renderPinnedTip(state, Box, Text),
     // #306: Bottom-pinned notifications — errors/warnings stay visible below
     // the prompt until they TTL out (8s for errors, 5s otherwise) or the user
     // hits Esc. Filters by `expiresAt` every render; the notificationTick
@@ -1790,6 +1807,50 @@ export function countPinnedConfirmationLines(
 }
 
 /**
+ * #306 follow-up: Build the pinned tip line for the current paused/held
+ * state. Returns `null` when neither flag is set — no tip should render.
+ *
+ * The tip appears below the input prompt in a dim color (informational,
+ * not an error or warning) and tells the user which slash commands they
+ * need to fully resume the ensemble. `/load_lineup` flips both flags;
+ * `/play` clears only paused; `/go` clears only held — without this
+ * tip users would unpause an ensemble and stare at frozen players.
+ *
+ * Pure function, exported for unit testing — no Ink imports.
+ */
+export function pinnedTipLine(
+  state: Pick<TuiState, 'ensemblePaused' | 'ensembleHeld' | 'activeEnsemble'>,
+): { key: string; text: string } | null {
+  // Hide tips on the home view — there's no ensemble context to act on,
+  // and the prompt itself is hidden there too (see `hidePrompt` in App).
+  if (!state.activeEnsemble) return null;
+  if (state.ensemblePaused && state.ensembleHeld) {
+    return {
+      key: 'tip-paused-held',
+      text: 'Tip: Type /play to unpause + /go to release held players.',
+    };
+  }
+  if (state.ensemblePaused) {
+    return { key: 'tip-paused', text: 'Tip: Type /play to resume.' };
+  }
+  if (state.ensembleHeld) {
+    return { key: 'tip-held', text: 'Tip: Type /go to release held players.' };
+  }
+  return null;
+}
+
+/**
+ * Count of pinned tip lines (0 or 1). Mirrors
+ * {@link countPinnedConfirmationLines} so `FOOTER_LINES` can reserve a
+ * row for the tip without re-evaluating the state shape twice.
+ */
+export function countPinnedTipLines(
+  state: Pick<TuiState, 'ensemblePaused' | 'ensembleHeld' | 'activeEnsemble'>,
+): number {
+  return pinnedTipLine(state) ? 1 : 0;
+}
+
+/**
  * #306: Render the pinned confirmation prompts as Ink Text nodes. Kept
  * free-function (mirroring `renderNotifications`) because the App's root
  * render tree is already `createElement`-heavy and a dedicated component
@@ -1812,6 +1873,30 @@ function renderPinnedConfirmations(
         { key: line.key, color: THEME.warning, bold: true },
         line.text,
       ),
+    ),
+  );
+}
+
+/**
+ * #306 follow-up: Render the pinned paused/held tip below the input. Dim
+ * (THEME.dim) so it reads as informational and doesn't compete visually
+ * with the yellow confirmation prompts above or red notifications below.
+ * Auto-clears when the state changes — no user dismissal needed.
+ */
+function renderPinnedTip(
+  state: TuiState,
+  Box: React.ComponentType<any>,
+  Text: React.ComponentType<any>,
+): React.ReactNode {
+  const tip = pinnedTipLine(state);
+  if (!tip) return null;
+  return React.createElement(
+    Box,
+    { flexDirection: 'column', paddingLeft: 1, paddingRight: 1 },
+    React.createElement(
+      Text,
+      { key: tip.key, color: THEME.dim },
+      tip.text,
     ),
   );
 }
