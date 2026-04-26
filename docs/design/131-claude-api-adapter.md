@@ -490,6 +490,9 @@ export class DirectApiAttachment extends SdkAttachment {
   }
 
   private async pollLoop(pinned: WorkflowHandle): Promise<void> {
+    // POLL_INTERVAL_MS: 2-5s typical (Copilot bridge uses 2000ms; implementer
+    // picks one in that range — too tight wastes Temporal RPCs, too loose
+    // delays cue delivery noticeably).
     while (!this.shouldStop()) {
       const messages = await pinned.query(pendingMessagesQuery);
       if (messages.length === 0) {
@@ -497,24 +500,30 @@ export class DirectApiAttachment extends SdkAttachment {
         continue;
       }
       const msg = messages[0];
-      const prompt = await this.buildPrompt(pinned, msg);
-      await this.deliver(pinned, msg, prompt, TURN_TIMEOUT_MS, this.invokeSdk.bind(this));
+      // Stash the conversation on `this` for invokeSdk to consume; skip the
+      // intermediate JSON-stringify/parse round trip (build the Anthropic
+      // message array directly inside invokeSdk from `this.pendingHistory`).
+      await this.loadHistory(pinned);
+      await this.deliver(pinned, msg, /* prompt unused */ '', TURN_TIMEOUT_MS, this.invokeSdk.bind(this));
     }
   }
 
-  private async buildPrompt(pinned: WorkflowHandle, _msg: Message): Promise<string> {
-    // Caller passes the conversation; invokeSdk reads from buildPrompt's stored state.
-    // (Shape TBD by implementer — could be a stash on `this` rather than the prompt arg.)
+  private pendingHistory: { received: Message[]; sent: Array<{ to: string; text: string }> } = { received: [], sent: [] };
+
+  private async loadHistory(pinned: WorkflowHandle): Promise<void> {
     const [received, sent] = await Promise.all([
       pinned.query(allMessagesQuery) as Promise<Message[]>,
       pinned.query(allSentMessagesQuery) as Promise<Array<{ to: string; text: string }>>,
     ]);
-    return JSON.stringify({ received, sent });   // placeholder shape; engineer to refine
+    this.pendingHistory = { received, sent };
   }
 
   protected async invokeSdk(_prompt: string, _timeoutMs: number): Promise<unknown> {
     this.abortController = new AbortController();
-    const messages = /* deserialize prompt → Anthropic Messages API shape */;
+    // Build the Anthropic Messages API array directly from in-memory history —
+    // no JSON stringify/parse round trip. `from: 'maestro' | <other-player>` →
+    // 'user'; the player's own previous responses → 'assistant'.
+    const messages = this.buildAnthropicMessages(this.pendingHistory);
     let assistantText = '';
 
     try {
@@ -591,8 +600,10 @@ if (require.main === module) {
 
 ### 9.2 Workflow integration (Mocha, `test/`)
 
-- `test/adapter-conformance.test.ts` (existing) — parameterizes over every registered descriptor; new adapter must pass the existing nine conformance cases.
-- `test/adapters/claude-api-lifecycle.test.ts` — full spawn → claim → turn → detach with mock Anthropic backend; verify `processingStart/End` pairing fires correctly.
+- `test/adapter-sdk-lifecycle-v2.test.ts` (existing) — the SDK-class lifecycle baseline that `CopilotSdkAttachment` already passes. The new adapter must pass the same lifecycle cases (claim → first heartbeat → processingStart/End pairing → markDelivered → graceful detach → superseded abort). Either parameterize this suite over both `copilot` and `claude-api` descriptors, or extract its cases into a shared helper that the new test (below) calls.
+- `test/adapter-claude-api-lifecycle.test.ts` (**NEW**, naming follows the existing `adapter-{id}-lifecycle-v2.test.ts` convention) — claude-api-specific integration with mock `@anthropic-ai/sdk`: full spawn → claim → turn (with mocked stream events) → tool_use round-trip → detach. Verifies `processingStart`/`End` pairing fires correctly per turn, `AbortController` propagates on superseded, `maxRetries: 0` is set on the Anthropic constructor.
+
+The conformance suite the design originally referenced (`adapter-conformance.test.ts` parameterizing over every descriptor) does NOT exist as a single file today — it lives distributed across `adapter-sdk-lifecycle-v2.test.ts` (SDK class), `adapter-claude-code-lifecycle-v2.test.ts` (interactive class), and the targeted suites (`adapter-258-precheck-tiebreaker`, `adapter-process-lifecycle-telemetry`, `adapter-reconnect`). Implementer should add the new claude-api lifecycle test alongside, NOT consolidate the existing layout.
 
 ### 9.3 Wire-protocol drift detector
 
@@ -615,6 +626,12 @@ The Claude API adapter needs a system prompt that establishes the player as part
 - Coordination conventions (broadcast intent before branch switches, conductor authority, etc.)
 
 Implementer pulls the same instructions string into the system prompt at session-init time (one-shot, cached). The prompt does **not** repeat per turn — it lives in the cached prefix.
+
+**Headless-identity addendum** — the system prompt must clearly distinguish a `claude-api` player from a `claude-code` player so the LLM doesn't reach for tools it doesn't have. Append a short paragraph after `MCP_INSTRUCTIONS` such as:
+
+> You are a **headless** claude-api player — you have access to the claude-tempo MCP tools (cue, report, recall, ensemble, broadcast, recruit, set_part, …) but **NOT** the file-edit, shell, or web tools that a `claude-code` player would have (no Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch). For tasks requiring file edits or shell commands, ask the conductor to recruit a `claude-code` player and hand off via cue. (File-op tool support is planned for a Phase 2 enhancement.)
+
+The addendum lives under the same `cache_control: { type: 'ephemeral' }` block as the rest of the system prompt — cost is amortized across the session.
 
 ---
 
