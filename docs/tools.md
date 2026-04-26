@@ -20,7 +20,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `load_lineup` | Load a lineup to recruit players and create schedules. `hold: true` spawns players in warm-hold (attached but deferred until `release`). `initialStartup: true` pauses the ensemble at startup and waits for the user's first message before the conductor acts. |
 | `broadcast` | Send a message to all active players. Optional `type` filter limits to a specific player type. |
 | `restart` | Restart a player session — detaches the current adapter and re-spawns a fresh process. Works from any non-`gone` phase. Optional `host` param routes restart to a remote machine. |
-| `destroy` | Terminate a session via ordered shutdown (outbox drain). Use for permanent removal. |
+| `destroy` | Terminate a session via ordered shutdown (outbox drain). When `playerId` is omitted, destroys the entire ensemble (peers → scheduler/maestro → conductor last). On partial failure (`Promise.allSettled` returns any `failed`), the response surfaces a "N peer(s) in indeterminate state — run `/destroy <ensemble>` again to clean up" hint; re-running is safe (workflow-side `destroyUpdate` is idempotent). |
 | `migrate` | Move a session to a different host — sets preferred host then triggers `restart` on the target machine's task queue. Requires `to` (target hostname). |
 | `attachment_info` | Fetch the current attachment phase, adapter ID, lease expiry, heartbeat age, and in-flight message count for a player. Accepts `player` name. Output matches CLI and TUI surfaces (shared formatter, #264). |
 | `recall` | Read your own message history. Shows received messages by default; pass `includeSent: true` for the full timeline. `limit` caps results (default 20, max 100); `offset` pages the timeline (gh-style `Showing X-Y of Z messages. Use offset: N for next page.`); `previewLength` truncates bodies to N chars (unset = full text). #128 unified the output with the TUI `/recall` and CLI `claude-tempo recall` via a shared formatter. |
@@ -36,7 +36,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `pause` | Pause all sessions in the ensemble: locks outbox dispatch and pauses the scheduler. `destroy` commands still go through. (#287) |
 | `play` | Resume a paused ensemble — unlocks outbox dispatch and resumes the scheduler. Buffered outbox entries are dispatched. Pass `release: true` to also release any held sessions in the same call — idempotent on non-held sessions. (#287) |
 | `shutdown` | Gracefully shut down the entire ensemble — signals all players to drain and detach, then stops the conductor. Use instead of per-player `detach` calls when tearing down. (#287) |
-| `restore` | Restore orphaned sessions in one ensemble on this host — re-attaches a fresh adapter to every `detached` session whose preferred host matches. Pass `ensemble` to target a specific ensemble. (#287, #288) |
+| `restore` | Restore orphaned sessions in one ensemble — re-attaches a fresh adapter to every `detached` session whose preferred host matches. Defaults to scanning the local OS hostname. Pass `hostname: "<other-host>"` for cross-host setups (per-host task queues, #274) where the operator's daemon runs on a different machine than the parked sessions. (#287, #288, #306 follow-up) |
 
 ## Version History
 
