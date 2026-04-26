@@ -27,4 +27,5 @@ Keep ADRs short. They're decision *records*, not design documents — link out t
 | [0006](0006-test-hooks-naming.md) | Test-hooks naming convention | Accepted |
 | [0007](0007-tempoclient-core-withspawn-split.md) | TempoClient Core / WithSpawn split | Accepted (design — implementation deferred) |
 | [0008](0008-coat-check-pattern.md) | Coat-check pattern for large cues | Accepted (design — implementation deferred) |
+| [0009](0009-protobuf-migration-strategy.md) | Full protobuf payload migration strategy | Accepted (design — implementation deferred to post-#318) |
 | [0010](0010-drop-caller-controllable-event-cursor.md) | Drop caller-controllable event cursor from `subscribe` API | Accepted |
