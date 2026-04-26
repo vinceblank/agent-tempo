@@ -172,10 +172,25 @@ export function registerDestroyTool(
         }
 
         const summaryLine = `${destroyed} destroyed, ${terminated} terminated, ${failed} failed`;
-        const lines: string[] = [`Ensemble **${config.ensemble}** destroyed.`, summaryLine];
+        const headline = failed > 0
+          ? `Ensemble **${config.ensemble}** partially destroyed.`
+          : `Ensemble **${config.ensemble}** destroyed.`;
+        const lines: string[] = [headline, summaryLine];
         const failures = details.filter((d) => d.outcome === 'failed');
         if (failures.length > 0) {
           lines.push(`Errors:\n${failures.map((d) => `  - ${d.target}: ${d.error}`).join('\n')}`);
+          // #306 follow-up: surface the indeterminate-state hint from my own
+          // PR-#306 holistic review (regression risk #3). `Promise.allSettled`
+          // returned `failed` outcomes for these peers — the workflows may
+          // be in any state from "still running" to "destroyed but RPC
+          // timed out". Re-running `destroy` is safe (idempotent on the
+          // workflow side: `destroyUpdate` on a `gone` workflow is a no-op
+          // via the `isDestroyedQuery` guard) and the cleanest recovery.
+          const noun = failed === 1 ? 'peer' : 'peers';
+          lines.push(
+            `⚠ ${failed} ${noun} in indeterminate state — ` +
+            `run \`/destroy ${config.ensemble}\` again to clean up.`,
+          );
         }
         log(`Ensemble destroy by ${callerId}: ${summaryLine}`);
         return ok(lines.join('\n'));

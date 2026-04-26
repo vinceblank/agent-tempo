@@ -535,4 +535,61 @@ describe('destroy tool — ensemble scope (#287)', function () {
     expect(calls.filter((c) => c.kind === 'update' && c.name === 'destroy')).to.have.lengthOf(0);
     expect(calls.filter((c) => c.kind === 'terminate')).to.have.lengthOf(0);
   });
+
+  // #306 follow-up (regression risk #3 from the holistic review):
+  // ensemble-scope destroy uses `Promise.allSettled`, so individual peer
+  // failures land as `failed` outcomes instead of throwing. The tool
+  // surfaces a count, but the user has no way to know that re-running is
+  // the recovery path. Pin a hint in the response message that says so.
+  it('partial-failure surfaces an indeterminate-state hint and "partially destroyed" headline', async function () {
+    const ensemble = 'destroy-partial-fail';
+    // alice's `executeUpdate` throws — simulates an RPC failure mid-fan-out.
+    const aliceWfId = `claude-session-${ensemble}-alice`;
+    const { client } = makeClient({
+      ensemble,
+      players: ['alice', 'bob'],
+      includeConductor: true,
+      failOnUpdate: new Set([aliceWfId]),
+    });
+    const call = extractHandler((server) =>
+      registerDestroyTool(server, client, testConfig(ensemble), () => 'operator', fakeHandle),
+    );
+    const result = await call({});
+    // The tool itself succeeds — `Promise.allSettled` doesn't throw, and
+    // the partial failure is surfaced in the user-facing text instead.
+    expect(result.isError).to.not.equal(true);
+
+    const text = result.content[0].text;
+    // Headline shifts from "destroyed" to "partially destroyed" so the
+    // user can't miss that something didn't go cleanly.
+    expect(text).to.include('partially destroyed');
+    expect(text).to.not.include(`Ensemble **${ensemble}** destroyed.`);
+    // Counts include the failure.
+    expect(text).to.match(/\b1 failed\b/);
+    // The actionable hint surfaces the slash command + ensemble name.
+    expect(text).to.include('1 peer in indeterminate state');
+    expect(text).to.include(`run \`/destroy ${ensemble}\``);
+    expect(text).to.include('again to clean up');
+    // Errors block still present so the user sees what failed.
+    expect(text).to.include('alice:');
+  });
+
+  // Plural variant: when ≥2 peers fail, the hint says "peers" (not "peer").
+  it('partial-failure with multiple failures pluralizes the hint correctly', async function () {
+    const ensemble = 'destroy-partial-fail-many';
+    const aliceWfId = `claude-session-${ensemble}-alice`;
+    const bobWfId = `claude-session-${ensemble}-bob`;
+    const { client } = makeClient({
+      ensemble,
+      players: ['alice', 'bob', 'charlie'],
+      includeConductor: true,
+      failOnUpdate: new Set([aliceWfId, bobWfId]),
+    });
+    const call = extractHandler((server) =>
+      registerDestroyTool(server, client, testConfig(ensemble), () => 'operator', fakeHandle),
+    );
+    const result = await call({});
+    expect(result.isError).to.not.equal(true);
+    expect(result.content[0].text).to.include('2 peers in indeterminate state');
+  });
 });
