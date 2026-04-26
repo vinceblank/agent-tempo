@@ -64,6 +64,30 @@ When temporarily skipping a test, every `this.skip()` call must carry a
 `// SKIP-REASON: <why>` annotation on the same line or the line immediately above.
 CI enforces this via `scripts/lint-skip-reasons.js` (exit 1 if any unannotated skip is found).
 
+## Surface registry
+
+`docs/SURFACE-REGISTRY.md` is the canonical inventory of every public-facing surface:
+MCP tools, CLI commands, and TUI slash commands. Keep it in sync when adding or removing
+a surface entry.
+
+```bash
+# Verify the registry matches source (fast, no build required):
+npm run lint:surface-drift
+```
+
+CI enforces this via the `lint-surface-drift` job in `.github/workflows/ci.yml`.
+
+**What to update after adding a new surface:**
+
+| Surface added | Update |
+|---|---|
+| New MCP tool in `src/tools/` | Add row to `docs/SURFACE-REGISTRY.md` § 1 |
+| New CLI command in `src/cli.ts` | Add row to `docs/SURFACE-REGISTRY.md` § 2 |
+| New TUI slash command in `src/tui/commands.ts` | Add row to `docs/SURFACE-REGISTRY.md` § 3 |
+
+The lint script exits non-zero if any entry is missing or if a removed surface still
+appears in the registry. Run it locally before pushing to catch drift early.
+
 ## Run in development
 
 ```bash

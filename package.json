@@ -65,7 +65,8 @@
     "test:shard-1": "node dist/scripts/run-shard.js 1",
     "pretest:shard-2": "npm run build:test && npm run build:scripts",
     "test:shard-2": "node dist/scripts/run-shard.js 2",
-    "test": "mocha && vitest run"
+    "test": "mocha && vitest run",
+    "lint:surface-drift": "node scripts/check-surface-drift.js"
   },
   "optionalDependencies": {
     "@github/copilot-sdk": "^0.2.0"

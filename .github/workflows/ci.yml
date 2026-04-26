@@ -24,6 +24,16 @@ jobs:
       - name: Check this.skip() calls have SKIP-REASON annotations
         run: node scripts/lint-skip-reasons.js
 
+  lint-surface-drift:
+    # Fast registry drift check — guards against undocumented or phantom surface
+    # entries in docs/SURFACE-REGISTRY.md (#305 / #333).
+    # No build or npm install needed — pure file parsing.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check surface registry against source
+        run: node scripts/check-surface-drift.js
+
   build-and-test:
     # Mocha integration suite, sharded 2-way per docs/design/191-test-parallelization.md §2
     # (#231). Rule: shard-1 pins the top-N heaviest files by CI wall-clock
