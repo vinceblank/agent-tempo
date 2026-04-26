@@ -409,6 +409,9 @@ function handleOptions(
 }
 
 function handleHealth(res: http.ServerResponse, ctx: HandleContext): void {
+  // #336 — sample process memory at request time. `process.memoryUsage()`
+  // is synchronous + cheap (~microseconds), safe inside a request handler.
+  const mem = process.memoryUsage();
   const body: HealthV1 = {
     ok: true,
     namespace: ctx.namespace,
@@ -416,6 +419,13 @@ function handleHealth(res: http.ServerResponse, ctx: HandleContext): void {
     uptimeMs: Math.max(0, Date.now() - ctx.startedAt),
     ensembleCount: 0, // populated below
     subscriberCount: ctx.subscriberCount(),
+    memory: {
+      rss: mem.rss,
+      heapTotal: mem.heapTotal,
+      heapUsed: mem.heapUsed,
+      external: mem.external,
+      arrayBuffers: mem.arrayBuffers,
+    },
   };
   // Best-effort ensemble count — soft-fail to 0 rather than 500ing on a
   // healthcheck. `/v1/health` MUST stay reachable even when Temporal is

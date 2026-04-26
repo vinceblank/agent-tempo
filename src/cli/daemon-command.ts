@@ -24,7 +24,9 @@ import { existsSync, readFileSync, mkdirSync, unlinkSync, copyFileSync, statSync
 import { join, resolve } from 'path';
 import { homedir } from 'os';
 import { execFileSync, spawn as cpSpawn } from 'child_process';
+import * as http from 'http';
 import { CliOverrides, getConfig } from '../config';
+import { readPortFile } from '../http/port-file';
 import {
   isDaemonRunning,
   startDaemon,
@@ -202,6 +204,11 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
       break;
     }
 
+    case 'stats': {
+      await daemonStats();
+      break;
+    }
+
     case 'logs': {
       if (!existsSync(DAEMON_LOG_PATH)) {
         out.warn('No daemon log file found');
@@ -250,11 +257,12 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
       break;
 
     default:
-      out.error('Usage: claude-tempo daemon <start|stop|status|logs|install|uninstall>');
+      out.error('Usage: claude-tempo daemon <start|stop|status|stats|logs|install|uninstall>');
       out.log(`\n  ${out.dim('claude-tempo daemon start [--force]')}  Start the worker daemon`);
       out.log(`  ${out.dim('                           --force: skip orphan-process check + clear stale pid file')}`);
       out.log(`  ${out.dim('claude-tempo daemon stop')}              Stop the worker daemon`);
       out.log(`  ${out.dim('claude-tempo daemon status')}            Check daemon status + heartbeat + orphans`);
+      out.log(`  ${out.dim('claude-tempo daemon stats')}             Show memory + uptime + ensemble count`);
       out.log(`  ${out.dim('claude-tempo daemon logs')}              Tail daemon log output`);
       out.log(`  ${out.dim('claude-tempo daemon install')}           Install as a system service`);
       out.log(`  ${out.dim('claude-tempo daemon uninstall')}         Uninstall the system service`);
@@ -373,4 +381,128 @@ async function daemonUninstall(): Promise<void> {
 
   out.error(`Unsupported platform: ${platform}`);
   process.exit(1);
+}
+
+// ── #336: `daemon stats` — memory + uptime snapshot ────────────────────
+
+/**
+ * Shape of `/v1/health` we depend on. Mirrors the production
+ * {@link HealthV1} interface but is duplicated here so this file's strict
+ * "no Temporal-deps" import policy isn't violated by re-using the type
+ * from `src/http/event-types.ts` (which itself transitively imports
+ * Temporal-flavored types).
+ *
+ * The wire shape is the public contract; if the daemon ever drops the
+ * `memory` field we want this CLI to render gracefully (n/a) rather
+ * than crash.
+ */
+interface HealthResponseShape {
+  ok?: unknown;
+  namespace?: unknown;
+  version?: unknown;
+  uptimeMs?: unknown;
+  ensembleCount?: unknown;
+  subscriberCount?: unknown;
+  memory?: {
+    rss?: unknown;
+    heapTotal?: unknown;
+    heapUsed?: unknown;
+    external?: unknown;
+    arrayBuffers?: unknown;
+  };
+}
+
+/** Pretty-print a byte count as MB (rounded). Pure helper, exported for tests. */
+export function formatBytesAsMb(n: unknown): string {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return 'n/a';
+  return `${Math.round(n / (1024 * 1024))} MB`;
+}
+
+/** Pretty-print a millisecond uptime as `Xh Ym Zs`. Pure helper, exported for tests. */
+export function formatUptime(ms: unknown): string {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return 'n/a';
+  const totalSec = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSec / 3600);
+  const minutes = Math.floor((totalSec % 3600) / 60);
+  const seconds = totalSec % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+/** GET `http://127.0.0.1:<port>/v1/health` and parse the JSON body. Used by `daemon stats`. */
+function fetchHealth(port: number): Promise<HealthResponseShape> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { hostname: '127.0.0.1', port, path: '/v1/health', method: 'GET', timeout: 3000 },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          if (res.statusCode !== 200) {
+            reject(new Error(`HTTP ${res.statusCode}`));
+            return;
+          }
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+          } catch (err) {
+            reject(err);
+          }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy(new Error('request timed out after 3000ms'));
+    });
+    req.end();
+  });
+}
+
+/**
+ * Render the `daemon stats` payload to stdout. Filed under #336 — gives
+ * operators a one-shot way to spot daemon memory growth without tailing
+ * logs or attaching a debugger.
+ */
+async function daemonStats(): Promise<void> {
+  // First check the daemon is even running — surface a friendlier message
+  // than a raw ECONNREFUSED if not.
+  const status = getDaemonStatus();
+  if (!status.running) {
+    out.warn('Daemon is not running — start it with `claude-tempo daemon start`');
+    process.exit(1);
+  }
+
+  const port = readPortFile();
+  if (port === null) {
+    out.error('Daemon port file not found at ~/.claude-tempo/daemon.port');
+    out.log(`  ${out.dim('The daemon may be from a pre-HTTP build. Restart it with `claude-tempo daemon stop && start`.')}`);
+    process.exit(1);
+  }
+
+  let body: HealthResponseShape;
+  try {
+    body = await fetchHealth(port);
+  } catch (err) {
+    out.error(`Failed to query daemon at http://127.0.0.1:${port}/v1/health: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+
+  out.success(`Daemon stats (pid ${status.pid})`);
+  out.log(`  ${out.dim('Version:        ')}${typeof body.version === 'string' ? body.version : 'n/a'}`);
+  out.log(`  ${out.dim('Namespace:      ')}${typeof body.namespace === 'string' ? body.namespace : 'n/a'}`);
+  out.log(`  ${out.dim('Uptime:         ')}${formatUptime(body.uptimeMs)}`);
+  out.log(`  ${out.dim('Ensembles:      ')}${typeof body.ensembleCount === 'number' ? body.ensembleCount : 'n/a'}`);
+  out.log(`  ${out.dim('SSE subscribers:')}${typeof body.subscriberCount === 'number' ? ` ${body.subscriberCount}` : ' n/a'}`);
+  out.log('');
+  if (body.memory) {
+    out.log(`  ${out.dim('Memory (#336 diagnostic):')}`);
+    out.log(`    ${out.dim('RSS:           ')}${formatBytesAsMb(body.memory.rss)}`);
+    out.log(`    ${out.dim('Heap used:     ')}${formatBytesAsMb(body.memory.heapUsed)}`);
+    out.log(`    ${out.dim('Heap total:    ')}${formatBytesAsMb(body.memory.heapTotal)}`);
+    out.log(`    ${out.dim('External:      ')}${formatBytesAsMb(body.memory.external)}`);
+    out.log(`    ${out.dim('Array buffers: ')}${formatBytesAsMb(body.memory.arrayBuffers)}`);
+  } else {
+    out.warn('Memory diagnostics not present in /v1/health response — daemon may be from a pre-#336 build.');
+  }
 }

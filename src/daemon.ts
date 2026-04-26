@@ -385,6 +385,61 @@ export async function reconcileOnBoot(
   }
 }
 
+// ── Memory reporter (#336) ──
+
+/** Default cadence for the periodic memory log. */
+const MEMORY_REPORT_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
+ * Pure formatter — turns a `process.memoryUsage()` snapshot into a single
+ * space-separated `key=NNNmb` string suitable for grepping out of the log.
+ *
+ * Exported for unit testing without a live process.
+ */
+export function formatMemoryUsage(usage: NodeJS.MemoryUsage): string {
+  const mb = (n: number) => Math.round(n / (1024 * 1024));
+  return (
+    `rss=${mb(usage.rss)}mb ` +
+    `heapUsed=${mb(usage.heapUsed)}mb ` +
+    `heapTotal=${mb(usage.heapTotal)}mb ` +
+    `external=${mb(usage.external)}mb ` +
+    `arrayBuffers=${mb(usage.arrayBuffers)}mb`
+  );
+}
+
+/**
+ * #336 — schedule a periodic `[claude-tempo:daemon ...] memory: ...` log
+ * line so the next memory-leak investigation has a baseline + growth curve
+ * directly in the daemon log instead of needing a debugger attach.
+ *
+ * Returns a stop function the daemon's shutdown handler invokes.
+ *
+ * `unref()` on the timer handle so memory reporting alone never keeps the
+ * daemon alive — workers + the HTTP listener are the only legitimate
+ * long-lived references.
+ */
+export function startMemoryReporter(
+  intervalMs: number = MEMORY_REPORT_INTERVAL_MS,
+  logFn: (...args: unknown[]) => void = log,
+  sample: () => NodeJS.MemoryUsage = () => process.memoryUsage(),
+): () => void {
+  const tick = () => {
+    try {
+      logFn(`memory: ${formatMemoryUsage(sample())}`);
+    } catch (err) {
+      // `process.memoryUsage()` can't realistically throw, but if a custom
+      // sampler does we don't want to take the daemon down.
+      logFn('memory: sample failed (non-fatal):', err instanceof Error ? err.message : err);
+    }
+  };
+  // Emit immediately so the first log line is the baseline (otherwise an
+  // operator polling early sees nothing for `intervalMs`).
+  tick();
+  const timer = setInterval(tick, intervalMs);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
 // ── Cleanup loop (PR-E §13.4) ──
 
 /** Hardcoded cleanup loop period per PR-E §8 answer 2. */
@@ -543,6 +598,9 @@ async function main() {
   // cancellation with shutdown (declared after signal handlers to preserve
   // the existing signal-handler-first safety ordering).
   let stopCleanupLoopRef: (() => void) | null = null;
+  // #336 — memory reporter. Started unconditionally below; shutdown
+  // clears the interval so the daemon can drain cleanly.
+  let stopMemoryReporterRef: (() => void) | null = null;
   // #94/#95 PR-1 — HTTP server handle. Started after workers are up
   // (so handlers calling into TempoClient hit a live worker), drained
   // here on shutdown. Mutable ref because `startHttpServer` is awaited
@@ -559,6 +617,7 @@ async function main() {
     const timer = setTimeout(hardExit, 15_000);
     timer.unref();
     stopCleanupLoopRef?.();
+    stopMemoryReporterRef?.();
     clearInterval(heartbeatInterval);
     try { fs.unlinkSync(DAEMON_HEARTBEAT_PATH); } catch { /* ignore */ }
     // HTTP server closes ahead of workers. The HTTP `close()` itself
@@ -593,6 +652,12 @@ async function main() {
   sharedWorker = workers.sharedWorker;
   hostWorker = workers.hostWorker;
   log('Workers created — processing tasks');
+
+  // #336 — start the periodic memory reporter alongside the workers. The
+  // first sample lands in the log immediately as a baseline; subsequent
+  // samples fire every MEMORY_REPORT_INTERVAL_MS and let operators spot
+  // unbounded growth without attaching a debugger.
+  stopMemoryReporterRef = startMemoryReporter();
 
   // #274 — daemon boot sequence: ensure the global maestro is running,
   // then advertise this host's capability profile with bounded retry.

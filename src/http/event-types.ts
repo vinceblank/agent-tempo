@@ -42,6 +42,27 @@ export interface HealthV1 {
    * has no streaming endpoints yet. PR-2 wires this to the live subscriber set.
    */
   subscriberCount: number;
+  /**
+   * #336 memory diagnostics — exposes `process.memoryUsage()` at request
+   * time so external monitors and `claude-tempo daemon stats` can spot
+   * leaks without attaching a debugger. Bytes; see Node docs for field
+   * semantics. Optional so legacy clients ignoring the field don't break.
+   */
+  memory?: MemoryUsageV1;
+}
+
+/** Snapshot of `process.memoryUsage()` at request time. All values in bytes. */
+export interface MemoryUsageV1 {
+  /** Resident Set Size — the total memory the OS has allocated for the process. */
+  rss: number;
+  /** V8 heap total. */
+  heapTotal: number;
+  /** V8 heap used. */
+  heapUsed: number;
+  /** Memory used by native C++ objects bound to JS (e.g. Temporal SDK). */
+  external: number;
+  /** Memory allocated for ArrayBuffers + SharedArrayBuffers. */
+  arrayBuffers: number;
 }
 
 /**
