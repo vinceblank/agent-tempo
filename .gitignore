@@ -9,9 +9,10 @@ logs/
 *.d.ts
 !jest.config.js
 # Compiled scripts go to dist/scripts/ (gitignored via dist/). Source in scripts/*.ts.
-# Exception: lint-skip-reasons.js is plain CommonJS — runs without a build step.
+# Exception: plain CommonJS scripts that run without a build step.
 !scripts/lint-skip-reasons.js
 !scripts/gh-app-token.js
+!scripts/check-surface-drift.js
 temporal-data.db
 
 # Debug artifacts from `temporal workflow show > foo-history.json` (#207).

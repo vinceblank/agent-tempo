@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Surface drift detector** (#305): `scripts/check-surface-drift.js` + `npm run lint:surface-drift`
+  — compares `docs/SURFACE-REGISTRY.md` against source for MCP tools, CLI commands, and TUI slash
+  commands. Exits non-zero on any undocumented or phantom entry. Wired into CI as the
+  `lint-surface-drift` job. See [docs/development.md](docs/development.md) for usage.
+
 ## [0.27.0] - 2026-04-26
 
 ### Breaking Changes
