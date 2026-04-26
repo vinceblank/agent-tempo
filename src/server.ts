@@ -41,9 +41,6 @@ import { registerStageTool } from './tools/stage';
 import { registerStagesTool } from './tools/stages';
 import { registerCancelStageTool } from './tools/cancel-stage';
 import { registerRestartTool } from './tools/restart';
-// NOTE: `registerDetachTool` is intentionally NOT re-exported on the MCP
-// surface (#287). The underlying `detach` outbox + signal plumbing is still
-// used internally by `shutdown` (fan-out detach to every session).
 import { registerDestroyTool } from './tools/destroy';
 import { registerMigrateTool } from './tools/migrate';
 import { registerAttachmentInfoTool } from './tools/attachment-info';
