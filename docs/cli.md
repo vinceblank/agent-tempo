@@ -8,6 +8,7 @@ claude-tempo <command> [options]
 
 | Command | Description |
 |---------|-------------|
+| `tui [ensemble]` | Launch the Terminal UI. Omit `ensemble` for the multi-ensemble home view; pass a name to open directly in that ensemble. (Auto-provisions on first run.) |
 | `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor. Use `--lineup` to load a lineup. |
 | `down [ensemble]` | Full teardown — stop all sessions, daemon, and Temporal. Use `--all` to stop all ensembles and Temporal, `--keep-mcp` to preserve MCP config, `--keep-daemon` to leave the daemon running, `-y`/`--yes` to skip confirmation. Add `--destroy` to also terminate every workflow before tearing down. |
 | `server` | Start the Temporal dev server and register search attributes |

@@ -20,7 +20,6 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `load_lineup` | Load a lineup to recruit players and create schedules. `hold: true` spawns players in warm-hold (attached but deferred until `release`). `initialStartup: true` pauses the ensemble at startup and waits for the user's first message before the conductor acts. |
 | `broadcast` | Send a message to all active players. Optional `type` filter limits to a specific player type. |
 | `restart` | Restart a player session — detaches the current adapter and re-spawns a fresh process. Works from any non-`gone` phase. Optional `host` param routes restart to a remote machine. |
-| `detach` | Gracefully detach a player's adapter — triggers draining and clean handoff. Use before a planned `migrate` or host maintenance. |
 | `destroy` | Terminate a session via ordered shutdown (outbox drain). Use for permanent removal. |
 | `migrate` | Move a session to a different host — sets preferred host then triggers `restart` on the target machine's task queue. Requires `to` (target hostname). |
 | `attachment_info` | Fetch the current attachment phase, adapter ID, lease expiry, heartbeat age, and in-flight message count for a player. Accepts `player` name. Output matches CLI and TUI surfaces (shared formatter, #264). |
@@ -46,6 +45,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 - **`pause_ensemble` renamed to `pause`**, **`resume_ensemble` renamed to `play`** — shorter names, consistent with TUI `/pause` and `/play` slash commands.
 - **`shutdown` added** — ensemble-scope graceful teardown; replaces per-player `detach` chains.
 - **`restore` added** — ensemble-scope orphan recovery; replaces the v0.25 interactive CLI flow.
+- **`detach` MCP tool removed** — functionality is now internal to `shutdown` (#287). Single-target graceful detach is no longer exposed on the MCP surface.
 
 ### v0.25 Changes
 

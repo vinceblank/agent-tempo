@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`shutdown` and `restore` MCP tools** (#287): New ensemble-scope tools — `shutdown` gracefully drains all players and stops the conductor; `restore` reattaches orphaned `detached` sessions on the current host. Replace per-player `detach` call chains.
 - **TUI home view** (#290): Bare `claude-tempo` invocation launches a two-list home screen
   (all running ensembles + players) with a restore modal for orphaned sessions. Connects to
   the global Maestro for cross-ensemble discovery.
