@@ -30,6 +30,191 @@ import type {
 import { isTerminalWorkflowError } from './terminal-error';
 const log = (...args: unknown[]) => console.error('[claude-tempo:adapter]', ...args);
 
+// ── Hypothesis A telemetry (#258 follow-up) ─────────────────────────────
+//
+// The structured `terminal fire` log shipped in #258 made the next
+// adapter-silence incident self-describing — but only for cases where
+// `fireTerminal` actually fires. Hypothesis A (process death — crash, OOM,
+// Windows sleep, terminal close, SIGKILL) wouldn't produce that log
+// because the process never reached the code path. The handlers below
+// close that gap: a future #258 recurrence with no `fireTerminal` log AND
+// no `adapter-process-terminating` log narrows to a distinct hypothesis
+// (likely SIGKILL / abrupt OS termination — file separately).
+//
+// Design tenets:
+//   - **Idempotent registration**: a module-level boolean ensures multiple
+//     adapter instances spawning in the same process never double-register
+//     handlers. Repeated `installProcessLifecycleTelemetry()` calls no-op.
+//   - **Additive only**: every `process.on(...)` call appends; nothing
+//     calls `removeAllListeners`. Coexists with the test-cleanup chain in
+//     `test/helpers.ts` (#312) and the daemon's own SIGTERM/SIGINT
+//     shutdown function.
+//   - **Synchronous logging on terminal signals**: process termination
+//     doesn't await async log flushes. `console.error` to stderr is
+//     synchronous on POSIX + Windows, which is enough.
+//   - **No behavior change on uncaughtException**: we register
+//     `uncaughtExceptionMonitor` (Node 13.7+) to telemeter without
+//     suppressing Node's default crash. If the runtime predates that
+//     event, we fall back to `uncaughtException` + `process.exit(1)`
+//     which preserves "don't swallow."
+//   - **Test gating**: mocha defines `it` globally (vitest with
+//     `globals: false` does not). Skip auto-install whenever the test
+//     framework signal is present so we don't fight the existing zombie
+//     reap in `test/helpers.ts`. The unit tests for these handlers spawn
+//     a dedicated child Node process where the gate doesn't fire.
+
+/**
+ * Live adapters in this process. Populated by `startV2Lifecycle` after a
+ * successful claim; emptied on `stopV2Lifecycle` and `fireTerminal`.
+ * Each lifecycle handler iterates this set to build the per-adapter
+ * snapshot in the structured log.
+ */
+const liveAdapters = new Set<BaseAttachment>();
+
+let processLifecycleTelemetryInstalled = false;
+let processLifecycleHandlerRefs: Array<{ event: string; handler: (...args: unknown[]) => void }> = [];
+
+/**
+ * Should `installProcessLifecycleTelemetry()` actually wire up handlers?
+ *
+ * - Forced on by `CLAUDE_TEMPO_LIFECYCLE_TELEMETRY=1` (used by the
+ *   child-process tests for these handlers — see
+ *   `test/adapter-process-lifecycle-telemetry.test.ts`).
+ * - Forced off by `CLAUDE_TEMPO_LIFECYCLE_TELEMETRY=0`.
+ * - Off when running under mocha (detected via `globalThis.it` —
+ *   mocha defines this; vitest with `globals: false` does not).
+ * - Off when `NODE_ENV === 'test'` — belt and suspenders.
+ * - Otherwise on.
+ */
+function shouldInstallLifecycleTelemetry(force: boolean): boolean {
+  if (force) return true;
+  const flag = process.env.CLAUDE_TEMPO_LIFECYCLE_TELEMETRY;
+  if (flag === '1' || flag === 'true') return true;
+  if (flag === '0' || flag === 'false') return false;
+  // Mocha exposes BDD globals (`it`, `describe`, …) on the global object;
+  // our vitest config opts out of globals so it doesn't trigger this gate.
+  if (typeof (globalThis as { it?: unknown }).it === 'function') return false;
+  if (process.env.NODE_ENV === 'test') return false;
+  return true;
+}
+
+/** Snapshot of adapter state included in every telemetry frame. */
+interface AdapterTelemetrySnapshot {
+  attachmentId: string | null;
+  workflowId: string | null;
+  runId: string | null;
+  heartbeatsSent: number;
+  phaseTicksDone: number;
+}
+
+function snapshotLiveAdapters(): AdapterTelemetrySnapshot[] {
+  const out: AdapterTelemetrySnapshot[] = [];
+  for (const adapter of liveAdapters) {
+    out.push(adapter._captureTelemetrySnapshot());
+  }
+  return out;
+}
+
+/**
+ * Build the structured frame emitted by every lifecycle handler. Pure
+ * function — exposed for unit tests that don't want to spawn a child
+ * process.
+ */
+export function buildProcessTerminatingFrame(
+  signal: string,
+  errorMessage?: string,
+  snapshot: AdapterTelemetrySnapshot[] = snapshotLiveAdapters(),
+): string {
+  return JSON.stringify({
+    event: 'adapter-process-terminating',
+    signal,
+    ...(errorMessage !== undefined ? { errorMessage } : {}),
+    adapterCount: snapshot.length,
+    adapters: snapshot,
+  });
+}
+
+function emitTerminatingLog(signal: string, errorMessage?: string): void {
+  // `console.error` synchronously writes to stderr on POSIX + Windows.
+  // The `[claude-tempo:adapter]` prefix matches the rest of the adapter
+  // logs so a single grep surfaces both the existing `terminal fire`
+  // line and these new lifecycle lines for the same incident.
+  log(`adapter-process-terminating: ${buildProcessTerminatingFrame(signal, errorMessage)}`);
+}
+
+/**
+ * Install the process-lifecycle telemetry handlers. Idempotent. Skipped
+ * by default in test environments (see {@link shouldInstallLifecycleTelemetry}).
+ *
+ * Production callers (and the first `startV2Lifecycle()` call on any
+ * adapter) invoke without arguments. Unit tests pass `{ force: true }`
+ * to bypass the env gate.
+ */
+export function installProcessLifecycleTelemetry(opts: { force?: boolean } = {}): void {
+  if (processLifecycleTelemetryInstalled) return;
+  if (!shouldInstallLifecycleTelemetry(opts.force === true)) return;
+  processLifecycleTelemetryInstalled = true;
+
+  const handlers: Array<{ event: string; handler: (...args: unknown[]) => void }> = [];
+
+  // `exit` — synchronous, last chance. Don't do async work; just log.
+  const onExit = () => emitTerminatingLog('exit');
+  process.on('exit', onExit);
+  handlers.push({ event: 'exit', handler: onExit as (...args: unknown[]) => void });
+
+  // `beforeExit` — event loop is empty but Node hasn't exited yet.
+  const onBeforeExit = () => emitTerminatingLog('beforeExit');
+  process.on('beforeExit', onBeforeExit);
+  handlers.push({ event: 'beforeExit', handler: onBeforeExit as (...args: unknown[]) => void });
+
+  // SIGTERM — graceful termination request (kill, supervisord, systemd).
+  const onSigterm = () => emitTerminatingLog('SIGTERM');
+  process.on('SIGTERM', onSigterm);
+  handlers.push({ event: 'SIGTERM', handler: onSigterm as (...args: unknown[]) => void });
+
+  // SIGINT — Ctrl+C from a controlling terminal.
+  const onSigint = () => emitTerminatingLog('SIGINT');
+  process.on('SIGINT', onSigint);
+  handlers.push({ event: 'SIGINT', handler: onSigint as (...args: unknown[]) => void });
+
+  // `uncaughtExceptionMonitor` lets us telemeter without suppressing
+  // Node's default crash behavior. The default action runs unchanged:
+  // print stack, exit non-zero. The codebase's `engines` requirement
+  // (Node 20+) guarantees this event is available — Node 13.7+.
+  const onUncaughtMonitor = (err: Error) => {
+    emitTerminatingLog('uncaughtException', err instanceof Error ? err.message : String(err));
+  };
+  process.on('uncaughtExceptionMonitor', onUncaughtMonitor);
+  handlers.push({ event: 'uncaughtExceptionMonitor', handler: onUncaughtMonitor as (...args: unknown[]) => void });
+
+  // `unhandledRejection` — log only. Adding a listener prevents Node's
+  // default crash on unhandled promise rejections (Node 15+); that's
+  // intentional per the brief ("log + don't crash").
+  const onUnhandled = (reason: unknown) => {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    emitTerminatingLog('unhandledRejection', msg);
+  };
+  process.on('unhandledRejection', onUnhandled);
+  handlers.push({ event: 'unhandledRejection', handler: onUnhandled as (...args: unknown[]) => void });
+
+  processLifecycleHandlerRefs = handlers;
+}
+
+/** Test-only — uninstall handlers + reset state. */
+export function _resetProcessLifecycleTelemetryForTest(): void {
+  for (const { event, handler } of processLifecycleHandlerRefs) {
+    process.off(event, handler);
+  }
+  processLifecycleHandlerRefs = [];
+  processLifecycleTelemetryInstalled = false;
+  liveAdapters.clear();
+}
+
+/** Test-only — direct access to the live-adapter set. */
+export function _liveAdaptersForTest(): ReadonlySet<BaseAttachment> {
+  return liveAdapters;
+}
+
 /** Backoff tuning for the heartbeat + phase-watcher loops on transient errors. */
 const LOOP_BACKOFF_FACTOR = 1.5;
 const LOOP_BACKOFF_MAX_MS = 30_000;
@@ -234,6 +419,22 @@ export abstract class BaseAttachment {
   }
 
   /**
+   * Hypothesis A telemetry — capture the adapter state included in
+   * process-lifecycle log frames. Public so the module-level
+   * `snapshotLiveAdapters()` helper can read private fields without an
+   * `any` cast; consumers other than the telemetry path should not call it.
+   */
+  _captureTelemetrySnapshot(): AdapterTelemetrySnapshot {
+    return {
+      attachmentId: this.token?.attachmentId ?? null,
+      workflowId: this.pinnedHandle?.workflowId ?? null,
+      runId: this.token?.runId ?? null,
+      heartbeatsSent: this.heartbeatsSent,
+      phaseTicksDone: this.phaseTicksDone,
+    };
+  }
+
+  /**
    * Subscribe to terminal events — `WorkflowNotFound` (§9.4) and phase `gone`.
    * Terminal fires at most once per instance. Subclasses stop delivery + exit.
    */
@@ -283,6 +484,13 @@ export abstract class BaseAttachment {
     });
 
     this.pinnedHandle = this.client.workflow.getHandle(workflowId, this.token.runId);
+    // Hypothesis A telemetry — register this adapter so a future process-
+    // lifecycle handler (exit / SIGTERM / uncaughtException / …) can
+    // include its state in the structured log. `installProcessLifecycleTelemetry`
+    // is idempotent + env-gated; first call wires the handlers, subsequent
+    // calls no-op.
+    liveAdapters.add(this);
+    installProcessLifecycleTelemetry();
     // #249: reset the per-attachment diagnostic counters so the next tick emits
     // `heartbeat#1 delivered` on the freshly live lease. Without this reset a
     // renewal path (e.g. restart → renewed claim) would never re-log first-heartbeat.
@@ -311,6 +519,10 @@ export abstract class BaseAttachment {
   protected async stopV2Lifecycle(reason: DetachReason = 'user-stop', graceful = false): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
+    // Hypothesis A telemetry — keep `liveAdapters` accurate so a subsequent
+    // process-lifecycle handler firing after stop doesn't include a
+    // already-torn-down adapter in its frame.
+    liveAdapters.delete(this);
 
     if (this.heartbeatTimer) {
       clearTimeout(this.heartbeatTimer);
@@ -621,6 +833,8 @@ export abstract class BaseAttachment {
     if (this.terminalFired) return;
     this.terminalFired = true;
     this.stopped = true;
+    // Hypothesis A telemetry — same reasoning as `stopV2Lifecycle`.
+    liveAdapters.delete(this);
     log(
       `terminal fire:`,
       JSON.stringify({
