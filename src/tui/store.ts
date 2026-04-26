@@ -161,9 +161,6 @@ export function defaultRecruitAnswers(defaultAgent: 'claude' | 'copilot' = 'clau
   };
 }
 
-/** @deprecated Use defaultRecruitAnswers(agent) instead. Kept for test compatibility. */
-export const DEFAULT_RECRUIT_ANSWERS: RecruitAnswers = defaultRecruitAnswers();
-
 // ── Create Ensemble wizard ──
 
 export type CreateEnsembleStep = 'name' | 'workDir' | 'lineup' | 'confirm' | 'done';
