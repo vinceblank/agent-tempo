@@ -52,6 +52,16 @@ When metrics show the 750 ms poll loop is the bottleneck (e.g. namespace > 100 e
 
 Both paths preserve the SSE contract — clients see no difference. **Don't pre-optimize.** Pick the path after seeing real numbers.
 
+### Interaction with the bootEpoch event-id format
+
+Both v2 paths must preserve the `<bootEpoch>:<seq>` event-id contract from SSE-PROTOCOL.md §5.
+
+- The bootEpoch is the **daemon process boot time**, not the aggregate process or workflow run id. It's frozen for the daemon's lifetime regardless of which aggregate strategy is active. Switching from polling to workflow-side push does not bump the epoch.
+- The `seq` counter is owned by the daemon's `EnsembleEventBus` (see Appendix A in SSE-PROTOCOL.md). Both v2 paths funnel events through the same bus, so the seq stays monotonic per `(bootEpoch, ensemble)` regardless of which producer fed the bus.
+- Only a **daemon process restart** advances the epoch. Workers restarting (e.g. Temporal connection reset) do not — the daemon process is the unit of identity for the event log.
+
+Consumers reconnecting across a daemon restart see `event: gap` with `reason: 'epoch-mismatch'` regardless of which aggregate strategy is active. The recovery path (re-fetch `/v1/state/:ensemble`, reconnect with the snapshot's `lastEventId`) is identical. Implementer guidance: when prototyping v2, write the bus-emitter shim first and keep the `EnsembleEventBus` interface frozen — that preserves the wire contract through the upgrade.
+
 ## References
 
 - SSE-PROTOCOL.md §11 (state source).
