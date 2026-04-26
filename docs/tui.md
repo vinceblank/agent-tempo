@@ -104,7 +104,7 @@ The TUI queries two background Temporal workflows for its data — no separate s
 - **Per-ensemble Maestro** (`claude-maestro-{ensemble}`) — the primary data source. Maintains a player snapshot (refreshed periodically), a ring-buffer event log (max 200 entries), and an aggregated ensemble chat cache (max 500 entries, refreshed every ~10s via `fetchEnsembleChat`). The TUI polls the `maestroEnsembleChat` query to populate the conversation stream.
 - **Global Maestro** (`claude-maestro-global`) — spans all ensembles. Used by the TUI home screen to discover running ensembles and aggregate players across them. Exposes on-demand player/conductor message history via `maestroFetchPlayerMessages` and `maestroFetchConductorHistory` updates.
 
-The TUI's API layer (`src/tui/client.ts`) wraps these queries behind a `TempoClient` interface, with graceful fallback from Global → per-ensemble Maestro → direct workflow list queries. Both workflows start automatically with the conductor and require no additional setup. Signal/query/update names are documented in [WIRE-PROTOCOL.md](WIRE-PROTOCOL.md).
+The TUI's API layer (`src/client/`) wraps these queries behind a `TempoClient` interface, with graceful fallback from Global → per-ensemble Maestro → direct workflow list queries. Both workflows start automatically with the conductor and require no additional setup. Signal/query/update names are documented in [WIRE-PROTOCOL.md](WIRE-PROTOCOL.md).
 
 ## Behaviors and Edge Cases
 
