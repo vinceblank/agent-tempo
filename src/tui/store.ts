@@ -19,6 +19,37 @@ import type { EnsembleSummary } from '../client';
 
 // ── State ──
 
+/** Conversation-entry shape rendered by `ConversationStream`. */
+export interface ConversationEntry {
+  id: string;
+  from: string;
+  to: string;
+  text: string;
+  timestamp: string;
+  direction: 'in' | 'out';
+  role?: 'maestro-out' | 'maestro-in' | 'conductor-out' | 'conductor-in';
+  thirdParty?: boolean;
+}
+
+/**
+ * Project an `EnsembleChatMessage` into a `ConversationEntry`. Shared by
+ * the reducer's incremental path (`APPEND_CHAT_MESSAGE`) and the SSE
+ * snapshot/recovery paths (`src/tui/sse-handler.ts`) so both produce the
+ * same shape.
+ */
+export function toConversationEntry(m: EnsembleChatMessage): ConversationEntry {
+  return {
+    id: m.id,
+    from: m.from,
+    to: m.to,
+    text: m.text,
+    timestamp: m.timestamp,
+    direction: m.role === 'maestro-out' ? 'out' : 'in',
+    role: m.role,
+    thirdParty: m.role === 'conductor-out' || m.role === 'conductor-in',
+  };
+}
+
 /**
  * TuiView tracks the *navigation hierarchy* (home → ensemble → player).
  * It determines what data to fetch and what breadcrumb context to show.
@@ -422,6 +453,15 @@ export type TuiAction =
   | { type: 'REFRESH_ENSEMBLE_DATA'; players: MaestroPlayerInfo[]; messages: MaestroRelayMessage[]; history: HistoryEntry[]; schedules?: ScheduleEntry[] }
   | { type: 'SET_CONVERSATION'; conversation: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out'; role?: 'maestro-out' | 'maestro-in' | 'conductor-out' | 'conductor-in'; thirdParty?: boolean }> }
   | { type: 'SET_ENSEMBLE_CHAT'; chat: EnsembleChatResult }
+  // ── #94/#95 PR-4a: incremental updates from the SSE event stream ──
+  /** Append one new chat message — used by `event: chat.appended`. Updates `ensembleChat` and `conversation` together. */
+  | { type: 'APPEND_CHAT_MESSAGE'; message: EnsembleChatMessage }
+  /** Insert or update a player by `playerId` — used by `event: player.added` and `event: player.phase_changed`. */
+  | { type: 'UPSERT_PLAYER'; player: MaestroPlayerInfo }
+  /** Remove a player by `playerId` — used by `event: player.removed`. */
+  | { type: 'REMOVE_PLAYER'; playerId: string }
+  /** Replace the schedules slice — used by `event: schedules.changed`. */
+  | { type: 'SET_SCHEDULES'; schedules: ScheduleEntry[] }
   | { type: 'REFRESH_PLAYER_DATA'; metadata: SessionMetadata | null; messages: Array<Message | (SentMessage & { direction: 'sent' })> }
   | { type: 'PLAYER_SCROLL_UP' }
   | { type: 'PLAYER_SCROLL_DOWN' }
@@ -613,6 +653,65 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         ensembleChat: action.chat.messages,
         hasConductor: action.chat.hasConductor,
       };
+
+    // ── #94/#95 PR-4a — SSE event stream incremental updates ──
+
+    case 'APPEND_CHAT_MESSAGE': {
+      // `chat.appended` SSE events arrive one-per-message. We push onto
+      // `ensembleChat` and derive a matching conversation entry via
+      // `toConversationEntry` (also used by the snapshot path), so
+      // ChatView/ConversationStream see a continuous timeline. Cap the
+      // in-memory slice at 500 to bound memory on long-running sessions;
+      // PR-4b will adjust this as part of the scroll-view migration.
+      const m = action.message;
+      const newChat = [...state.ensembleChat, m];
+      const cappedChat = newChat.length > 500 ? newChat.slice(-500) : newChat;
+      const baseConv = state.conversation ?? [];
+      const newConv = [...baseConv, toConversationEntry(m)];
+      const cappedConv = newConv.length > 500 ? newConv.slice(-500) : newConv;
+      return { ...state, ensembleChat: cappedChat, conversation: cappedConv };
+    }
+
+    case 'UPSERT_PLAYER': {
+      // `player.added` and `player.phase_changed` both land here — added
+      // creates a new entry; phase_changed updates fields on the existing
+      // entry. Identity-preserving when the wire payload matches the
+      // current cached entry exactly so StatusBar/MainView don't churn
+      // on duplicate events (e.g. a quick disconnect/reconnect).
+      const incoming = action.player;
+      const idx = state.players.findIndex((p) => p.playerId === incoming.playerId);
+      if (idx === -1) {
+        return { ...state, players: [...state.players, incoming], playersLoaded: true };
+      }
+      const existing = state.players[idx];
+      const merged = { ...existing, ...incoming };
+      const fieldsEqual =
+        existing.phase === merged.phase
+        && existing.part === merged.part
+        && existing.hostname === merged.hostname
+        && existing.workDir === merged.workDir
+        && existing.isConductor === merged.isConductor
+        && existing.gitBranch === merged.gitBranch
+        && existing.playerType === merged.playerType
+        && existing.agentType === merged.agentType;
+      if (fieldsEqual) return state;
+      const next = state.players.slice();
+      next[idx] = merged;
+      return { ...state, players: next };
+    }
+
+    case 'REMOVE_PLAYER': {
+      const next = state.players.filter((p) => p.playerId !== action.playerId);
+      if (next.length === state.players.length) return state;
+      return {
+        ...state,
+        players: next,
+        selectedPlayerIndex: Math.min(state.selectedPlayerIndex, Math.max(0, next.length - 1)),
+      };
+    }
+
+    case 'SET_SCHEDULES':
+      return { ...state, schedules: action.schedules };
 
     case 'REFRESH_PLAYER_DATA':
       return {
