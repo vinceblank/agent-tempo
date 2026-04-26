@@ -128,6 +128,11 @@ export function HomeView(props: HomeViewProps): React.ReactElement {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // #306: Track whether the first refresh has completed so the empty state
+  // doesn't flash "No ensembles yet" before the discovery query returns.
+  // Bootstrap may pass a stale or empty `initial.ensembles`; only after the
+  // mount-time refresh do we trust an empty list as "really empty."
+  const [firstRefreshDone, setFirstRefreshDone] = useState(initial.ensembles.length > 0);
 
   const lists = useMemo(
     () => partitionEnsembles(ensembles, initial.cwdGitRoot),
@@ -161,10 +166,15 @@ export function HomeView(props: HomeViewProps): React.ReactElement {
     } finally {
       refreshingRef.current = false;
       setRefreshing(false);
+      setFirstRefreshDone(true);
     }
   }, [client]);
 
   useEffect(() => {
+    // #306: Kick an immediate refresh on mount so the user doesn't see
+    // "No ensembles yet" while waiting for the 10s polling timer's first
+    // tick. The timer continues polling at the regular cadence after.
+    refresh();
     const timer = setInterval(refresh, REFRESH_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [refresh]);
@@ -203,6 +213,7 @@ export function HomeView(props: HomeViewProps): React.ReactElement {
     lists, selectedIdx,
     refreshing, error,
     badges: initial.badges,
+    firstRefreshDone,
   });
 }
 
@@ -216,10 +227,11 @@ interface RenderBodyProps {
   refreshing: boolean;
   error: string | null;
   badges: BootstrapBadges;
+  firstRefreshDone: boolean;
 }
 
 function renderBody(props: RenderBodyProps): React.ReactElement {
-  const { Box, Text, lists, selectedIdx, refreshing, error, badges } = props;
+  const { Box, Text, lists, selectedIdx, refreshing, error, badges, firstRefreshDone } = props;
   const icons = statusIcons(supportsUnicode());
 
   const isEmpty = lists.flat.length === 0;
@@ -243,15 +255,22 @@ function renderBody(props: RenderBodyProps): React.ReactElement {
   }
 
   if (isEmpty) {
+    // #306: Until the first refresh completes, show a loading state instead
+    // of "No ensembles yet" — bootstrap may pass an empty initial list while
+    // discovery is in flight, and flashing the "no ensembles" copy is jarring.
     children.push(
       React.createElement(Box, { key: 'home-empty', marginTop: 1 },
-        React.createElement(Text, { color: THEME.dim },
-          '  No ensembles yet. Press ',
-          React.createElement(Text, { bold: true, color: THEME.text }, 'N'),
-          ' to create one, or ',
-          React.createElement(Text, { bold: true, color: THEME.text }, 'L'),
-          ' to load a lineup.',
-        ),
+        firstRefreshDone
+          ? React.createElement(Text, { color: THEME.dim },
+              '  No ensembles yet. Press ',
+              React.createElement(Text, { bold: true, color: THEME.text }, 'N'),
+              ' to create one, or ',
+              React.createElement(Text, { bold: true, color: THEME.text }, 'L'),
+              ' to load a lineup.',
+            )
+          : React.createElement(Text, { color: THEME.dim },
+              '  Loading ensembles …',
+            ),
       ),
     );
   } else {
