@@ -261,3 +261,117 @@ describe('tuiReducer — state transitions', () => {
     expect(s.staticItems[s.staticItems.length - 1].content).toBe('entry-504');
   });
 });
+
+// ── #94/#95 PR-4a — SSE event stream incremental updates ──
+
+describe('tuiReducer — SSE incremental actions', () => {
+  function makePlayer(playerId: string, overrides: Partial<MaestroPlayerInfo> = {}): MaestroPlayerInfo {
+    return {
+      playerId,
+      ensemble: 'demo',
+      part: '',
+      hostname: 'host-1',
+      workDir: '/work',
+      isConductor: false,
+      agentType: 'claude',
+      ...overrides,
+    };
+  }
+
+  it('UPSERT_PLAYER inserts when playerId is unknown and sets playersLoaded', () => {
+    const s = s0();
+    expect(s.playersLoaded).toBe(false);
+    const out = tuiReducer(s, { type: 'UPSERT_PLAYER', player: makePlayer('alice') });
+    expect(out.players.map((p) => p.playerId)).toEqual(['alice']);
+    expect(out.playersLoaded).toBe(true);
+  });
+
+  it('UPSERT_PLAYER merges fields onto an existing entry', () => {
+    const s: TuiState = { ...s0(), players: [makePlayer('alice', { phase: 'attached' })] };
+    const out = tuiReducer(s, {
+      type: 'UPSERT_PLAYER',
+      player: makePlayer('alice', { phase: 'awaiting' }),
+    });
+    expect(out.players).toHaveLength(1);
+    expect(out.players[0].phase).toBe('awaiting');
+  });
+
+  it('UPSERT_PLAYER returns same reference when nothing changed (no-op identity)', () => {
+    const existing = makePlayer('alice', { phase: 'attached', part: 'x' });
+    const s: TuiState = { ...s0(), players: [existing] };
+    const out = tuiReducer(s, {
+      type: 'UPSERT_PLAYER',
+      player: { ...existing },
+    });
+    expect(out).toBe(s);
+  });
+
+  it('REMOVE_PLAYER drops the matching player and clamps selectedPlayerIndex', () => {
+    const s: TuiState = {
+      ...s0(),
+      players: [makePlayer('alice'), makePlayer('bob'), makePlayer('carol')],
+      selectedPlayerIndex: 2,
+    };
+    const out = tuiReducer(s, { type: 'REMOVE_PLAYER', playerId: 'carol' });
+    expect(out.players.map((p) => p.playerId)).toEqual(['alice', 'bob']);
+    expect(out.selectedPlayerIndex).toBe(1);
+  });
+
+  it('REMOVE_PLAYER returns same reference when playerId is not present', () => {
+    const s: TuiState = { ...s0(), players: [makePlayer('alice')] };
+    const out = tuiReducer(s, { type: 'REMOVE_PLAYER', playerId: 'ghost' });
+    expect(out).toBe(s);
+  });
+
+  it('SET_SCHEDULES replaces the schedules slice', () => {
+    const s = s0();
+    const schedules = [{
+      name: 'nightly',
+      target: 'alice',
+      message: 'tick',
+      schedType: 'cron' as const,
+      cron: '0 0 * * *',
+      tz: 'UTC',
+      nextFire: '2026-04-27T00:00:00Z',
+    }];
+    const out = tuiReducer(s, { type: 'SET_SCHEDULES', schedules });
+    expect(out.schedules).toBe(schedules);
+  });
+
+  it('APPEND_CHAT_MESSAGE pushes onto ensembleChat and conversation', () => {
+    const s = s0();
+    const m = {
+      id: 'm1',
+      from: 'alice',
+      to: 'maestro',
+      text: 'hello',
+      timestamp: '2026-04-26T12:00:00Z',
+      role: 'maestro-in' as const,
+    };
+    const out = tuiReducer(s, { type: 'APPEND_CHAT_MESSAGE', message: m });
+    expect(out.ensembleChat).toHaveLength(1);
+    expect(out.ensembleChat[0].id).toBe('m1');
+    expect(out.conversation).toHaveLength(1);
+    expect(out.conversation![0].direction).toBe('in');
+  });
+
+  it('APPEND_CHAT_MESSAGE caps both ensembleChat and conversation at 500', () => {
+    let s: TuiState = s0();
+    for (let i = 0; i < 505; i++) {
+      s = tuiReducer(s, {
+        type: 'APPEND_CHAT_MESSAGE',
+        message: {
+          id: `m-${i}`,
+          from: 'alice',
+          to: 'maestro',
+          text: `t-${i}`,
+          timestamp: '2026-04-26T12:00:00Z',
+          role: 'maestro-in',
+        },
+      });
+    }
+    expect(s.ensembleChat).toHaveLength(500);
+    expect(s.conversation).toHaveLength(500);
+    expect(s.ensembleChat[s.ensembleChat.length - 1].id).toBe('m-504');
+  });
+});

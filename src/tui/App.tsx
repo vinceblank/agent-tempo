@@ -79,6 +79,7 @@ import { statusIcons as phaseStatusIcons, supportsUnicode as phaseSupportsUnicod
 import { wordWrap } from './utils/format';
 import { loadHistory, saveHistory } from './utils/history';
 import type { TempoClient } from '../client';
+import { handleSseEvent } from './sse-handler';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const packageVersion: string = require('../../package.json').version;
@@ -128,9 +129,6 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   const stateRef = React.useRef(state);
   stateRef.current = state; // Always current on every render
 
-  // ── Refs for poll dedup (skip dispatches when data hasn't changed) ──
-  const lastPollRef = React.useRef({ playerCount: 0, lastMsgId: '', historyLen: 0, scheduleCount: 0, maestroMsgCount: 0 });
-  const lastChatRef = React.useRef({ total: 0, lastTs: '' });
   // Track which messages have been committed to Static (overflow from live area)
   const overflowCommittedRef = React.useRef(new Set<string>());
   // Overflow data computed during render, committed to Static via useEffect
@@ -145,7 +143,6 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   useEffect(() => {
     lastSeenMsgRef.current = undefined;
     lastSeenMaestroRef.current = undefined;
-    lastPollRef.current = { playerCount: 0, lastMsgId: '', historyLen: 0, scheduleCount: 0, maestroMsgCount: 0 };
     overflowCommittedRef.current.clear();
     // Add separator when switching between ensembles (not on initial load)
     if (state.activeEnsemble && prevEnsembleRef.current !== state.activeEnsemble && prevEnsembleRef.current !== undefined) {
@@ -244,8 +241,6 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     if (s.view === 'player') {
       if (key.escape) {
         dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: s.activeEnsemble! });
-        // Reset chat cache so next poll immediately re-dispatches conversation
-        lastChatRef.current = { total: 0, lastTs: '' };
         return;
       }
       if (key.upArrow) { dispatch({ type: 'PLAYER_SCROLL_UP' }); return; }
@@ -775,100 +770,101 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     );
   }, [state.activeEnsemble, api]);
 
-  // ── Polling loop ──
+  // ── #94/#95 PR-4a: data acquisition is split across three effects ──
+  //
+  // Previously a single 2 s `setInterval` fanned out 5 RPCs/tick (players,
+  // schedules, chat, paused, held) and conditionally drilled into a
+  // selected player. After PR-3 the per-ensemble surface is exposed via
+  // SSE, so we:
+  //   1. Keep a 2 s poll for the home view's ensemble list (no per-
+  //      ensemble surface there; SSE wouldn't help).
+  //   2. Subscribe to the daemon's SSE event stream for the active
+  //      ensemble so player/chat/flags/schedule updates land in
+  //      sub-second latency rather than waiting for a poll tick.
+  //   3. Keep a 2 s poll for the player drill-in view — per
+  //      docs/SSE-PROTOCOL.md §11 the per-player + per-message
+  //      endpoints are intentionally Temporal-direct.
+  // PR-4b will replace the rendering primitives (chat scrollback +
+  // player list); this PR deliberately leaves layout untouched so a
+  // streaming regression is bisectable independent of scroll changes.
+
+  // Effect 1: home-view ensembles list polling.
   useEffect(() => {
     if (state.phase !== 'splash' && state.phase !== 'main' && state.phase !== 'chat') return;
+    if (state.activeEnsemble) return;
 
-    const interval = setInterval(async () => {
+    let cancelled = false;
+    const tick = async (): Promise<void> => {
       try {
-        const s = stateRef.current;
-        if (!s.activeEnsemble) {
-          const ensembles = await api.discoverEnsembles();
-          dispatch({ type: 'REFRESH_ENSEMBLES', ensembles });
+        const ensembles = await api.discoverEnsembles();
+        if (cancelled) return;
+        // Intentionally no auto-select: HomeView is an explicit picker
+        // (Online / Paused / Offline, arrow keys + Enter). Auto-selecting
+        // on the poller was bouncing users back into a just-shut-down
+        // ensemble after `/shutdown`, `/back`, or `/disband`.
+        dispatch({ type: 'REFRESH_ENSEMBLES', ensembles });
+      } catch (err) {
+        console.error('[tui:home-poll] error:', err);
+      }
+    };
+    void tick();
+    const interval = setInterval(tick, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [state.phase, state.activeEnsemble, api]);
 
-          // Intentionally no auto-select: HomeView is an explicit picker
-          // (Online / Paused / Offline, arrow keys + Enter). Auto-selecting
-          // on the poller was bouncing users back into a just-shut-down
-          // ensemble after `/shutdown`, `/back`, or `/disband`. Splash
-          // handles its own selection via Enter; everywhere else, the user
-          // picks from HomeView.
-        } else {
-          // Single source: maestro workflow for players, schedules, and ensemble chat
-          const ens = s.activeEnsemble!;
-          const [players, schedules, chatResult, paused, held] = await Promise.all([
-            api.getPlayers(ens),
-            api.getSchedules(ens),
-            api.getEnsembleChat(ens, 0, 50),
-            // Bug B: poll the maestro hub's paused flag so the StatusBar
-            // surfaces it immediately. Returns false on hub-not-running so
-            // bare ensembles don't render the indicator. Cheap RPC; runs
-            // alongside the existing poll batch with no extra wakeups.
-            api.isMaestroPaused(ens),
-            // #306 follow-up: poll for any session with `outboxLocked`
-            // (held). Independent of paused — `/load_lineup` flips both
-            // simultaneously but `/play` only clears pause. Without this
-            // the user unpauses an ensemble and watches every player
-            // stay frozen behind the locked outbox.
-            api.isAnySessionHeld(ens),
-          ]);
+  // Effect 2: active-ensemble SSE subscription.
+  useEffect(() => {
+    if (state.phase !== 'splash' && state.phase !== 'main' && state.phase !== 'chat') return;
+    if (!state.activeEnsemble) return;
 
-          dispatch({ type: 'SET_ENSEMBLE_PAUSED', paused });
-          dispatch({ type: 'SET_ENSEMBLE_HELD', held });
+    const ensemble = state.activeEnsemble;
+    const controller = new AbortController();
 
-          // Map ensemble chat to conversation format for ConversationStream
-          const conversation = chatResult.messages.map(m => ({
-            id: m.id,
-            from: m.from,
-            to: m.to,
-            text: m.text,
-            timestamp: m.timestamp,
-            direction: (m.role === 'maestro-out' ? 'out' : 'in') as 'in' | 'out',
-            role: m.role,
-            thirdParty: m.role === 'conductor-out' || m.role === 'conductor-in',
-          }));
-
-          dispatch({ type: 'REFRESH_ENSEMBLE_DATA', players, messages: [], history: [], schedules });
-
-          // Skip redundant conversation dispatches when data hasn't changed
-          // Always dispatch on first poll (conversation === null) to exit "Loading messages..."
-          const lastChatMsg = chatResult.messages[chatResult.messages.length - 1];
-          const newLastTs = lastChatMsg?.timestamp ?? '';
-          const isFirstLoad = stateRef.current.conversation === null;
-          if (isFirstLoad || chatResult.total !== lastChatRef.current.total || newLastTs !== lastChatRef.current.lastTs) {
-            dispatch({ type: 'SET_CONVERSATION', conversation });
-            dispatch({ type: 'SET_ENSEMBLE_CHAT', chat: chatResult });
-            lastChatRef.current = { total: chatResult.total, lastTs: newLastTs };
-          }
-
-          // Track conductor
-          const currentS = stateRef.current;
-          if (!currentS.conductorName) {
-            const conductor = players.find(p => p.isConductor);
-            if (conductor) {
-              dispatch({ type: 'SET_CONDUCTOR', name: conductor.playerId });
-            }
-          }
-
-          // Fetch player-specific data when viewing a player
-          if (currentS.view === 'player' && currentS.activePlayer) {
-            try {
-              const [playerMeta, playerMsgs] = await Promise.all([
-                api.getPlayerMetadata(ens, currentS.activePlayer),
-                api.getPlayerMessages(ens, currentS.activePlayer),
-              ]);
-              dispatch({ type: 'REFRESH_PLAYER_DATA', metadata: playerMeta, messages: playerMsgs });
-            } catch {
-              // Best-effort — player may have been terminated
-            }
-          }
+    void (async () => {
+      try {
+        for await (const event of api.subscribe(ensemble, { signal: controller.signal })) {
+          await handleSseEvent(event, dispatch, ensemble, api);
         }
       } catch (err) {
-        console.error('[tui:poll] error:', err);
+        // AbortError on teardown is expected — only log unexpected failures.
+        if (controller.signal.aborted) return;
+        console.error('[tui:subscribe] error:', err);
       }
-    }, 2000);
+    })();
 
-    return () => clearInterval(interval);
+    return () => controller.abort();
   }, [state.phase, state.activeEnsemble, api]);
+
+  // Effect 3: player drill-in polling (per spec §11 — Temporal-direct).
+  useEffect(() => {
+    if (state.view !== 'player') return;
+    if (!state.activeEnsemble || !state.activePlayer) return;
+
+    const ensemble = state.activeEnsemble;
+    const playerId = state.activePlayer;
+    let cancelled = false;
+    const tick = async (): Promise<void> => {
+      try {
+        const [metadata, messages] = await Promise.all([
+          api.getPlayerMetadata(ensemble, playerId),
+          api.getPlayerMessages(ensemble, playerId),
+        ]);
+        if (cancelled) return;
+        dispatch({ type: 'REFRESH_PLAYER_DATA', metadata, messages });
+      } catch {
+        // Best-effort — player may have been terminated mid-poll.
+      }
+    };
+    void tick();
+    const interval = setInterval(tick, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [state.view, state.activeEnsemble, state.activePlayer, api]);
 
   // ── Recruit wizard callbacks (must be before early return — Rules of Hooks) ──
   const handleRecruitAnswer = useCallback((answer: Partial<RecruitAnswers>) => {
