@@ -521,7 +521,7 @@ export abstract class BaseAttachment {
 
         // Phase `gone` is terminal — workflow destroyed. Never recoverable.
         if (info.phase === 'gone') {
-          this.fireTerminal('destroy');
+          this.fireTerminal('destroy', 'tickPhaseWatcher:phase-gone');
           return;
         }
       } catch (err) {
@@ -565,7 +565,7 @@ export abstract class BaseAttachment {
     }
     // No CAN event in the closed run's history → truly terminal (COMPLETED /
     // TERMINATED / FAILED / workflow-id GC'd).
-    this.fireTerminal('destroy');
+    this.fireTerminal('destroy', 'handleRunEndError:no-can-successor');
     return true;
   }
 
@@ -595,10 +595,44 @@ export abstract class BaseAttachment {
     }
   }
 
-  private fireTerminal(reason: DetachReason): void {
+  /**
+   * Fire the terminal hook — the adapter is going dark and won't recover.
+   *
+   * #258: emits a structured log line on every fire so the next post-CAN
+   * silence incident is unambiguous in logs. Pre-#258, a `fireTerminal`
+   * from an unexpected source (the root cause was a silent destroy from
+   * the reconnect-loop pre-check on a transient terminal-class error) was
+   * indistinguishable from process death in workflow history — both produced
+   * "no further heartbeats." The structured log includes:
+   *
+   *   - `reason` — the existing DetachReason
+   *   - `callsite` — the calling function or rationale (passed by every
+   *     callsite so the source is grep-able without parsing stack traces)
+   *   - `attachmentId` / `workflowId` / `runId` — for cross-referencing
+   *     against workflow history when bisecting an incident
+   *   - `heartbeatsSent` / `phaseTicksDone` — the existing #249 counters
+   *     so an operator can correlate "loop alive at N heartbeats, then
+   *     terminal fired at this callsite" without external context
+   *
+   * Idempotent — repeat calls (e.g. reconnect-exhausted re-fires after
+   * destroy) early-return without re-logging. The first fire wins.
+   */
+  private fireTerminal(reason: DetachReason, callsite = 'unspecified'): void {
     if (this.terminalFired) return;
     this.terminalFired = true;
     this.stopped = true;
+    log(
+      `terminal fire:`,
+      JSON.stringify({
+        reason,
+        callsite,
+        attachmentId: this.token?.attachmentId ?? null,
+        workflowId: this.pinnedHandle?.workflowId ?? null,
+        runId: this.token?.runId ?? null,
+        heartbeatsSent: this.heartbeatsSent,
+        phaseTicksDone: this.phaseTicksDone,
+      }),
+    );
     if (this.heartbeatTimer) { clearTimeout(this.heartbeatTimer); this.heartbeatTimer = null; }
     if (this.phaseWatcherTimer) { clearTimeout(this.phaseWatcherTimer); this.phaseWatcherTimer = null; }
     this.abortSleepers();
@@ -751,7 +785,7 @@ export abstract class BaseAttachment {
   private fireTerminalOrReconnect(reason: DetachReason, canSuccessorRunId?: string): void {
     if (this.stopped || this.terminalFired || this.reconnecting) return;
     if (!this.shouldReconnect(reason)) {
-      this.fireTerminal(reason);
+      this.fireTerminal(reason, 'fireTerminalOrReconnect:not-recoverable');
       return;
     }
     // Pause the heartbeat + watcher loops for the duration of the reconnect.
@@ -768,7 +802,7 @@ export abstract class BaseAttachment {
       void this.runCanRebind(canSuccessorRunId).catch((err) => {
         log(`CAN rebind crashed:`, (err as Error)?.message ?? err);
         this.reconnecting = false;
-        this.fireTerminal('reconnect-exhausted');
+        this.fireTerminal('reconnect-exhausted', 'runCanRebind:crashed');
       });
       return;
     }
@@ -776,7 +810,7 @@ export abstract class BaseAttachment {
     void this.runReconnectLoop(reason).catch((err) => {
       log(`reconnect loop crashed:`, (err as Error)?.message ?? err);
       this.reconnecting = false;
-      this.fireTerminal('reconnect-exhausted');
+      this.fireTerminal('reconnect-exhausted', 'runReconnectLoop:crashed');
     });
   }
 
@@ -801,7 +835,7 @@ export abstract class BaseAttachment {
     try {
       if (!this.client || !this.pinnedHandle || !this.token) {
         log('runCanRebind: missing client/handle/token — firing terminal');
-        this.fireTerminal('reconnect-exhausted');
+        this.fireTerminal('reconnect-exhausted', 'runCanRebind:missing-state');
         return;
       }
       const workflowId = this.pinnedHandle.workflowId;
@@ -882,7 +916,7 @@ export abstract class BaseAttachment {
     try {
       if (!this.client || !this.host || !this.token || !this.pinnedHandle) {
         log('runReconnectLoop: missing client/host/token/handle — aborting');
-        this.fireTerminal('reconnect-exhausted');
+        this.fireTerminal('reconnect-exhausted', 'runReconnectLoop:missing-state');
         return;
       }
 
@@ -959,7 +993,7 @@ export abstract class BaseAttachment {
               `reconnect: pre-check terminal (${errClass}) and ${confirmDesc} — firing destroy ` +
               `(originalError="${errMsg}")`,
             );
-            this.fireTerminal('destroy');
+            this.fireTerminal('destroy', 'runReconnectLoop:precheck-terminal-confirmed');
             return;
           }
           backoff = Math.min(backoff * this.reconnectBackoffFactor, this.reconnectMaxMs);
@@ -969,12 +1003,12 @@ export abstract class BaseAttachment {
 
         if (info.phase === 'gone') {
           log('reconnect: phase=gone — giving up');
-          this.fireTerminal('destroy');
+          this.fireTerminal('destroy', 'runReconnectLoop:phase-gone');
           return;
         }
         if (info.currentAttachment && info.currentAttachment.attachmentId !== oldAttachmentId) {
           log(`reconnect: another adapter holds the lease (${info.currentAttachment.attachmentId}) — bailing`);
-          this.fireTerminal('superseded');
+          this.fireTerminal('superseded', 'runReconnectLoop:other-holder');
           return;
         }
         if (info.phase === 'draining') {
@@ -1032,7 +1066,7 @@ export abstract class BaseAttachment {
         } catch (err) {
           if (isTerminalWorkflowError(err)) {
             log('reconnect: workflow gone during claim');
-            this.fireTerminal('destroy');
+            this.fireTerminal('destroy', 'runReconnectLoop:claim-terminal');
             return;
           }
           backoff = Math.min(backoff * this.reconnectBackoffFactor, this.reconnectMaxMs);
@@ -1042,7 +1076,7 @@ export abstract class BaseAttachment {
 
       // Budget exhausted — give up cleanly.
       log(`reconnect budget exhausted after ${attempt} attempt(s)`);
-      this.fireTerminal('reconnect-exhausted');
+      this.fireTerminal('reconnect-exhausted', 'runReconnectLoop:budget-exhausted');
     } finally {
       // Guarantee state reset regardless of which path we exited on. Safe to
       // assign unconditionally — a successful reconnect also ends up here after
