@@ -244,3 +244,41 @@ describe('/destroy handler guards (#306)', () => {
     expect(action.notification.content).toMatch(/Usage:/);
   });
 });
+
+// ── #306: /restart defaults force=true (commit e9e8359) ──
+//
+// /restart is nearly always invoked against a live-but-unresponsive session,
+// so the pre-#306 default of force=false made the common case fail with
+// "use force=true to steal the lease". Pin the new default so a future
+// refactor can't silently regress to force=false.
+
+describe('/restart force=true default (#306)', () => {
+  const CTX: CommandContext = { activeEnsemble: 'myband' };
+
+  /** Stubs only `restart`; everything else throws if accessed. */
+  function makeRestartApi(restart: TempoClient['restart']): TempoClient {
+    const unused = vi.fn(() => {
+      throw new Error('TempoClient method not expected during /restart handler');
+    });
+    return new Proxy({} as TempoClient, {
+      get: (_t, prop) => (prop === 'restart' ? restart : unused),
+    });
+  }
+
+  it('/restart <player> with no flags forwards force: true', async () => {
+    const restart = vi.fn(async () => ({
+      playerId: 'alice', host: 'main-laptop', entryId: 'entry-1',
+    }));
+    const handler = COMMANDS.restart.handler!;
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+
+    await handler(['alice'], dispatch, makeRestartApi(restart), CTX);
+
+    expect(restart).toHaveBeenCalledOnce();
+    expect(restart).toHaveBeenCalledWith('myband', 'alice', {
+      fresh: false,
+      force: true,
+      invokerPlayerId: 'tui',
+    });
+  });
+});
