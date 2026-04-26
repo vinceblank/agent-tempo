@@ -30,3 +30,4 @@ Keep ADRs short. They're decision *records*, not design documents — link out t
 | [0009](0009-protobuf-migration-strategy.md) | Full protobuf payload migration strategy | Accepted (design — implementation deferred to post-#318) |
 | [0010](0010-drop-caller-controllable-event-cursor.md) | Drop caller-controllable event cursor from `subscribe` API | Accepted |
 | [0011](0011-player-saveable-state.md) | Player-saveable state primitive | Accepted (design — implementation deferred) |
+| [0012](0012-claude-api-adapter.md) | Headless Claude API adapter (Phase 1, no advisor) | Accepted (design — implementation deferred) |
