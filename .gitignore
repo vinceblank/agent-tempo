@@ -18,6 +18,9 @@ temporal-data.db
 # Debug artifacts from `temporal workflow show > foo-history.json` (#207).
 *-history.json
 
+# Temporary design handoff extraction directories.
+.tmp-design-handoff/
+
 # Never commit secrets. Private keys, GitHub App .pem files, etc.
 secrets/
 *.pem

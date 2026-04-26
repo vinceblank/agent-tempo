@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>claude-tempo · Maestro dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css?v=38" />
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="shared.jsx"></script>
+<script type="text/babel" src="primitives.jsx"></script>
+<script type="text/babel" src="workspace.jsx"></script>
+<script type="text/babel" src="screens.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "theme": "dark",
+  "accent": "#E07A5F",
+  "density": 6,
+  "showTempoStrip": true,
+  "showMetronome": true,
+  "viewport": "desktop"
+}/*EDITMODE-END*/;
+
+const VIEWPORTS = {
+  desktop: { w: 1440, h: 900,  label: "Desktop · 1440" },
+  laptop:  { w: 1180, h: 820,  label: "Laptop · 1180" },
+  tablet:  { w: 834,  h: 1100, label: "Tablet · 834"  },
+  phone:   { w: 390,  h: 780,  label: "Phone · 390"   },
+};
+
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t.theme;
+  document.documentElement.style.setProperty("--accent", t.accent);
+  document.documentElement.dataset.density = String(t.density);
+  document.documentElement.dataset.viewport = t.viewport;
+  window.__tweaks = t;
+}
+
+function App() {
+  const [tweaks, setTweaks] = window.useTweaks(TWEAK_DEFAULTS);
+  // Sync side-effects synchronously so children reading window.__tweaks
+  // during render see the current value (useEffect would run after paint).
+  window.__tweaks = tweaks;
+  React.useEffect(() => applyTheme(tweaks), [tweaks]);
+
+  const vp = VIEWPORTS[tweaks.viewport] || VIEWPORTS.desktop;
+  const W = vp.w, H = vp.h;
+
+  return (
+    <>
+      <window.DesignCanvas>
+
+        <window.DCSection id="primary" title="The Maestro · primary surface" subtitle="One ensemble, full focus. The conductor chat sits at center; the players, feed, and tempo orbit it.">
+          <window.DCArtboard id="workspace" label="A · Ensemble workspace · @my-band" width={W} height={H}>
+            <window.EnsembleWorkspace tweaks={tweaks} />
+          </window.DCArtboard>
+          <window.DCArtboard id="player-detail" label="B · Player detail sheet · @lead" width={W} height={H}>
+            <window.PlayerDetail tweaks={tweaks} />
+          </window.DCArtboard>
+        </window.DCSection>
+
+        <window.DCSection id="overview" title="Overview & creation" subtitle="Zooming out: every ensemble at a glance, then the flow to spin a new one up.">
+          <window.DCArtboard id="overview" label="C · Overview · all ensembles" width={W} height={H}>
+            <window.Overview />
+          </window.DCArtboard>
+          <window.DCArtboard id="create-ensemble" label="D · Create ensemble (lineup)" width={W} height={H}>
+            <window.CreateEnsemble />
+          </window.DCArtboard>
+          <window.DCArtboard id="recruit" label="E · Recruit a player" width={W} height={H}>
+            <window.RecruitWizard />
+          </window.DCArtboard>
+        </window.DCSection>
+
+        <window.DCSection id="library" title="Library" subtitle="Reusable building blocks: agent definitions, lineups, recurring deliveries.">
+          <window.DCArtboard id="loadouts" label="F · Loadouts" width={W} height={H}>
+            <window.Loadouts />
+          </window.DCArtboard>
+          <window.DCArtboard id="player-types" label="G · Player types" width={W} height={H}>
+            <window.PlayerTypes />
+          </window.DCArtboard>
+          <window.DCArtboard id="schedules" label="H · Schedules" width={W} height={H}>
+            <window.Schedules />
+          </window.DCArtboard>
+        </window.DCSection>
+
+        <window.DCSection id="infra" title="Infrastructure" subtitle="Where the work actually runs.">
+          <window.DCArtboard id="hosts" label="I · Hosts" width={W} height={H}>
+            <window.Hosts />
+          </window.DCArtboard>
+        </window.DCSection>
+
+        <window.DCPostIt top={40} left={40} rotate={-3} width={220}>
+          claude-tempo Maestro · web dashboard. Distinct visual language from the TUI; shares the metronome motif + terracotta accent. Theme + density wire through Tweaks.
+        </window.DCPostIt>
+
+      </window.DesignCanvas>
+
+      <window.TweaksPanel title="Tweaks">
+        <window.TweakSection label="Theme">
+          <window.TweakRadio label="Mode"
+            value={tweaks.theme}
+            onChange={(v) => setTweaks("theme", v)}
+            options={[{value:"dark", label:"Dark"}, {value:"light", label:"Light"}]} />
+          <window.TweakColor label="Accent" value={tweaks.accent}
+            onChange={(v) => setTweaks("accent", v)} />
+        </window.TweakSection>
+        <window.TweakSection label="Density">
+          <window.TweakSlider label="Information density"
+            min={4} max={9} step={1} value={tweaks.density}
+            onChange={(v) => setTweaks("density", v)} />
+        </window.TweakSection>
+        <window.TweakSection label="Viewport">
+          <window.TweakRadio label="Screen size"
+            value={tweaks.viewport}
+            onChange={(v) => setTweaks("viewport", v)}
+            options={[
+              {value:"desktop", label:"Desktop"},
+              {value:"laptop",  label:"Laptop"},
+              {value:"tablet",  label:"Tablet"},
+              {value:"phone",   label:"Phone"},
+            ]} />
+        </window.TweakSection>
+        <window.TweakSection label="Motion & motif">
+          <window.TweakToggle label="Show tempo strip" value={tweaks.showTempoStrip}
+            onChange={(v) => setTweaks("showTempoStrip", v)} />
+          <window.TweakToggle label="Animate metronome" value={tweaks.showMetronome}
+            onChange={(v) => setTweaks("showMetronome", v)} />
+        </window.TweakSection>
+      </window.TweaksPanel>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

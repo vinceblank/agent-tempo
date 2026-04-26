@@ -1,0 +1,992 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>claude-tempo · TUI Design System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    /* Canonical theme tokens — sourced from src/tui/utils/theme.ts */
+    --bg: #0A0E12;
+    --bg-title: #141820;
+    --border: #2A3140;
+    --muted: #3D4555;
+    --dim: #6B7280;
+    --text: #FAF3EE;
+    --text-muted: #9CA3AF;
+    --accent: #E07A5F;       /* terracotta */
+    --success: #81C784;
+    --warning: #F2CC8F;
+    --error: #EF5350;
+    --input-bg: #1A1F28;
+
+    /* Docs-only tokens (paper) */
+    --paper: #F6F1EA;
+    --paper-2: #EFE8DE;
+    --ink: #141820;
+    --ink-dim: #4B5563;
+    --rule: #D9CFC2;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Inter", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+    font-feature-settings: "ss01", "cv11";
+  }
+
+  .mono, code, pre { font-family: "JetBrains Mono", ui-monospace, monospace; font-variant-ligatures: none; }
+
+  /* ── Page shell ─────────────────────────────────────────── */
+  .page {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 56px 40px 120px;
+  }
+
+  .masthead {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 24px;
+    align-items: end;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 28px;
+    margin-bottom: 48px;
+  }
+  .masthead h1 {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 44px;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -0.02em;
+  }
+  .masthead h1 .accent { color: var(--accent); }
+  .masthead p {
+    margin: 8px 0 0;
+    color: var(--ink-dim);
+    max-width: 62ch;
+  }
+  .meta {
+    text-align: right;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    color: var(--ink-dim);
+    line-height: 1.7;
+  }
+  .meta .v { color: var(--accent); font-weight: 600; }
+
+  /* ── Section headers ─────────────────────────────────────── */
+  section { margin: 72px 0 0; scroll-margin-top: 24px; }
+  section > header {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 24px;
+    align-items: baseline;
+    padding-bottom: 16px;
+    margin-bottom: 24px;
+    border-bottom: 1px solid var(--rule);
+  }
+  section > header .num {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    color: var(--accent);
+    letter-spacing: 0.1em;
+    font-weight: 600;
+  }
+  section > header h2 {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 26px;
+    font-weight: 600;
+    margin: 0 0 4px;
+    letter-spacing: -0.01em;
+  }
+  section > header p {
+    margin: 0;
+    color: var(--ink-dim);
+    font-size: 13px;
+    max-width: 72ch;
+  }
+
+  h3 {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    color: var(--ink-dim);
+    text-transform: uppercase;
+    margin: 28px 0 12px;
+    font-weight: 600;
+  }
+
+  p.lede { margin: 0 0 16px; max-width: 72ch; color: var(--ink-dim); }
+
+  /* ── Grid helpers ─────────────────────────────────────────── */
+  .grid { display: grid; gap: 16px; }
+  .grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+  .grid.cols-6 { grid-template-columns: repeat(6, 1fr); }
+
+  /* ── Color swatch ─────────────────────────────────────────── */
+  .swatch {
+    border: 1px solid var(--rule);
+    background: var(--paper-2);
+    border-radius: 0;
+    overflow: hidden;
+  }
+  .swatch .chip { height: 88px; }
+  .swatch .meta-row {
+    padding: 10px 12px 12px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .swatch .name { font-weight: 600; color: var(--ink); }
+  .swatch .hex { color: var(--ink-dim); }
+  .swatch .role { color: var(--ink-dim); display: block; margin-top: 2px; }
+
+  /* ── Terminal preview ───────────────────────────────────── */
+  .term {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12.5px;
+    line-height: 1.5;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 20px 40px -30px rgba(10,14,18,0.5);
+  }
+  .term .chrome {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 12px;
+    background: #07090C;
+    border-bottom: 1px solid var(--border);
+  }
+  .term .chrome .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .term .chrome .dot.r { background: #553A36; }
+  .term .chrome .dot.y { background: #554A31; }
+  .term .chrome .dot.g { background: #36553A; }
+  .term .chrome .label {
+    margin-left: 10px; color: var(--dim); font-size: 11px;
+  }
+  .term .body {
+    padding: 10px 12px;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .term.compact .body { padding: 8px 12px; }
+
+  /* Ink color classes mirror theme tokens */
+  .t-bg { background: var(--bg); }
+  .t-bg-title { background: var(--bg-title); }
+  .t-text { color: var(--text); }
+  .t-dim { color: var(--dim); }
+  .t-muted { color: var(--muted); }
+  .t-text-muted { color: var(--text-muted); }
+  .t-accent { color: var(--accent); }
+  .t-success { color: var(--success); }
+  .t-warning { color: var(--warning); }
+  .t-error { color: var(--error); }
+  .t-bold { font-weight: 700; }
+
+  /* Input bg (out-bound message row) */
+  .t-input-bg { background: var(--input-bg); }
+
+  /* ── Info cards ─────────────────────────────────────────── */
+  .card {
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    padding: 16px 18px;
+  }
+  .card h4 {
+    margin: 0 0 8px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink);
+  }
+  .card p { margin: 0; color: var(--ink-dim); font-size: 13px; }
+
+  /* ── Data table ─────────────────────────────────────────── */
+  table.spec {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+  }
+  table.spec th, table.spec td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  table.spec th {
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    font-weight: 600;
+    background: var(--paper-2);
+  }
+  table.spec td.hex { color: var(--ink-dim); }
+  table.spec td .dot {
+    display: inline-block; width: 10px; height: 10px; vertical-align: -1px;
+    margin-right: 8px; border-radius: 50%;
+    border: 1px solid rgba(0,0,0,0.1);
+  }
+  table.spec td.icon {
+    font-size: 14px;
+    text-align: center;
+    width: 40px;
+  }
+
+  /* ── Callout ─────────────────────────────────────────────── */
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--paper-2);
+    padding: 12px 16px;
+    font-size: 13px;
+    color: var(--ink-dim);
+  }
+  .callout strong { color: var(--ink); }
+
+  /* ── Brand mark: metronome ──────────────────────────────── */
+  .brand-mark {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 32px;
+    align-items: center;
+    background: var(--bg);
+    padding: 40px 36px;
+    border: 1px solid var(--border);
+  }
+  .brand-mark .glyph {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 14px;
+    line-height: 1.0;
+    color: var(--text);
+    white-space: pre;
+    text-align: center;
+  }
+  .brand-mark .glyph .arm { color: var(--accent); }
+  .brand-mark .wordmark {
+    font-family: "JetBrains Mono", monospace;
+    color: var(--text);
+  }
+  .brand-mark .wordmark .title {
+    color: var(--accent); font-weight: 700; font-size: 32px; letter-spacing: -0.01em;
+  }
+  .brand-mark .wordmark .tagline { color: var(--dim); font-size: 13px; margin-top: 6px; }
+  .brand-mark .wordmark .version { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+  /* Tiny inline dot used in color tables */
+  .hexdot {
+    display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    vertical-align: -2px; margin-right: 8px;
+    border: 1px solid rgba(0,0,0,0.12);
+  }
+
+  /* ── Phase matrix ─────────────────────────────────────────── */
+  .phase-row td:first-child { font-weight: 600; color: var(--ink); }
+
+  /* ── Footer ─────────────────────────────────────────────── */
+  footer.end {
+    margin-top: 96px;
+    padding-top: 24px;
+    border-top: 1px solid var(--rule);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    color: var(--ink-dim);
+    display: flex; justify-content: space-between;
+  }
+
+  /* Layout note: terminal legend */
+  .legend-dots { display: inline-flex; gap: 14px; font-family: "JetBrains Mono", monospace; font-size: 12px; align-items: center; }
+  .legend-dots .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: -1px; }
+
+  /* Two-column spec: preview + description */
+  .split { display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; align-items: start; }
+  @media (max-width: 960px) {
+    .split { grid-template-columns: 1fr; }
+    .grid.cols-6 { grid-template-columns: repeat(3, 1fr); }
+    .grid.cols-4 { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <header class="masthead">
+    <div>
+      <h1><span class="accent">claude-tempo</span> · TUI design system</h1>
+      <p>Visual language, tokens, and component anatomy for the claude-tempo terminal UI. Warm-neutral dark palette, monospace-only typography, and a metronome motif shared with the conductor/player coordination model.</p>
+    </div>
+    <div class="meta">
+      v <span class="v">0.1</span><br />
+      src/tui/utils/theme.ts<br />
+      src/tui/utils/platform.ts<br />
+      src/tui/utils/format.ts
+    </div>
+  </header>
+
+  <!-- ── 01 Brand ───────────────────────────────────────────── -->
+  <section id="brand">
+    <header>
+      <div class="num">01 / BRAND</div>
+      <div>
+        <h2>Brand mark &amp; voice</h2>
+        <p>The product coordinates multi-session Claude Code workflows via Temporal. Musical vocabulary — <span class="mono">conductor</span>, <span class="mono">player</span>, <span class="mono">ensemble</span>, <span class="mono">cue</span>, <span class="mono">tempo</span> — is the source of the visual motif. A pendulum-and-triangle metronome is the primary mark; the quarter note ♩ is the in-product glyph for user input.</p>
+      </div>
+    </header>
+
+    <div class="brand-mark">
+      <div class="glyph" aria-label="Metronome mark (center frame)">
+<span>           <span class="arm">▁</span>
+         <span class="arm">▕ ▏</span>
+        <span>▁▁</span><span class="arm">▕ ▏</span><span>▁▁</span>
+      <span>▁▁▁</span><span class="arm">▕ ▏</span><span>▁▁▁</span>
+    <span>▁▁▁▁</span><span class="arm">▕ ▏</span><span>▁▁▁▁</span>
+  <span>▁▁▁▁▁</span><span class="arm">◉</span><span>▁▁▁▁▁</span>
+<span> ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔</span>
+</span>
+      </div>
+      <div class="wordmark">
+        <div class="title">claude-tempo</div>
+        <div class="tagline">Multi-session orchestration via Temporal</div>
+        <div class="version">v0.26</div>
+      </div>
+    </div>
+
+    <div class="grid cols-3" style="margin-top:24px;">
+      <div class="card">
+        <h4>Voice</h4>
+        <p>Direct, technical, musician-adjacent. Avoid jargon for its own sake but use the ensemble vocabulary consistently — a session is a "player", a terminated session is "gone", a held player is "released".</p>
+      </div>
+      <div class="card">
+        <h4>Primary glyph</h4>
+        <p>The quarter note <span class="mono" style="color:var(--accent);">♩</span> (U+2669) fronts the user's input prompt and every out-bound message. It is the only decorative glyph allowed on bare text lines.</p>
+      </div>
+      <div class="card">
+        <h4>Motif restraint</h4>
+        <p>Musical glyphs appear in exactly three places: the splash metronome, the prompt indicator, and the conductor star <span class="mono" style="color:var(--warning);">★</span>. Do not introduce new musical symbols.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 02 Colors ──────────────────────────────────────────── -->
+  <section id="color">
+    <header>
+      <div class="num">02 / COLOR</div>
+      <div>
+        <h2>Color tokens</h2>
+        <p>Thirteen named colors cover the entire TUI. Warm cream foreground (<span class="mono">#FAF3EE</span>) on a near-black warm-cool neutral (<span class="mono">#0A0E12</span>), with a terracotta accent (<span class="mono">#E07A5F</span>). Status colors are pulled from the pastel-terminal family so they sit comfortably with the accent instead of fighting it.</p>
+      </div>
+    </header>
+
+    <h3>Surface &amp; structure</h3>
+    <div class="grid cols-4">
+      <div class="swatch">
+        <div class="chip" style="background:#0A0E12;"></div>
+        <div class="meta-row">
+          <div class="name">bg</div>
+          <div class="hex">#0A0E12</div>
+          <span class="role">Primary canvas. All TUI views sit on this.</span>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background:#141820;"></div>
+        <div class="meta-row">
+          <div class="name">bgTitle</div>
+          <div class="hex">#141820</div>
+          <span class="role">TitleBar / pinned chrome tint. Slightly lifted surface.</span>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background:#1A1F28;"></div>
+        <div class="meta-row">
+          <div class="name">inputBg</div>
+          <div class="hex">#1A1F28</div>
+          <span class="role">Out-bound message row background. Signals the user's own voice.</span>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background:#2A3140;"></div>
+        <div class="meta-row">
+          <div class="name">border</div>
+          <div class="hex">#2A3140</div>
+          <span class="role">Hairline dividers and panel edges.</span>
+        </div>
+      </div>
+    </div>
+
+    <h3>Foreground</h3>
+    <div class="grid cols-4">
+      <div class="swatch">
+        <div class="chip" style="background:#FAF3EE;"></div>
+        <div class="meta-row">
+          <div class="name">text</div>
+          <div class="hex">#FAF3EE</div>
+          <span class="role">Default foreground. Warm cream, not pure white.</span>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background:#9CA3AF;"></div>
+        <div class="meta-row">
+          <div class="name">textMuted</div>
+          <div class="hex">#9CA3AF</div>
+          <span class="role">Secondary copy. Player part lines, third-party bodies.</span>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background:#6B7280;"></div>
+        <div class="meta-row">
+          <div class="name">dim</div>
+          <div class="hex">#6B7280</div>
+          <span class="role">Metadata, timestamps, separators (·), hint text.</span>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background:#3D4555;"></div>
+        <div class="meta-row">
+          <div class="name">muted</div>
+          <div class="hex">#3D4555</div>
+          <span class="role">Disabled state, version strings, placeholder shade.</span>
+        </div>
+      </div>
+    </div>
+
+    <h3>Accent &amp; signal</h3>
+    <div class="grid cols-4">
+      <div class="swatch">
+        <div class="chip" style="background:#E07A5F;"></div>
+        <div class="meta-row">
+          <div class="name">accent</div>
+          <div class="hex">#E07A5F · terracotta</div>
+          <span class="role">Brand mark, selected palette item, prompt glyph, inbound headers.</span>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background:#81C784;"></div>
+        <div class="meta-row">
+          <div class="name">success</div>
+          <div class="hex">#81C784</div>
+          <span class="role">Connected status, active phase, ✓ markers.</span>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background:#F2CC8F;"></div>
+        <div class="meta-row">
+          <div class="name">warning</div>
+          <div class="hex">#F2CC8F</div>
+          <span class="role">Disconnected/blocked phase, "No conductor", conductor star ★.</span>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background:#EF5350;"></div>
+        <div class="meta-row">
+          <div class="name">error</div>
+          <div class="hex">#EF5350</div>
+          <span class="role">Connection failures, hard errors, destructive-action confirms.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top:24px;">
+      <strong>NO_COLOR.</strong> When the <span class="mono">NO_COLOR</span> environment variable is set, every token resolves to <span class="mono">undefined</span> and Ink renders monochrome. Every component must remain legible without color — rely on glyphs, bold weight, and labels for meaning, never color alone.
+    </div>
+  </section>
+
+  <!-- ── 03 Typography ───────────────────────────────────── -->
+  <section id="type">
+    <header>
+      <div class="num">03 / TYPOGRAPHY</div>
+      <div>
+        <h2>Typography</h2>
+        <p>One family: the terminal's monospace. Hierarchy is expressed through <span class="mono">bold</span>, color tokens, and a small spacing vocabulary — there are no type-size options in a TUI. Spec the exact Ink <span class="mono">&lt;Text&gt;</span> props for each role.</p>
+      </div>
+    </header>
+
+    <div class="term compact" style="margin-bottom:16px;">
+      <div class="chrome">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="label">claude-tempo — typography roles</span>
+      </div>
+      <div class="body"><span class="t-accent t-bold">claude-tempo</span>                                             <span class="t-dim">0.26.0</span>
+
+  <span class="t-accent t-bold">Ensemble: my-band</span> <span class="t-dim">(3 players)</span>
+
+  <span class="t-success">●</span> <span class="t-bold t-text">alice</span> <span class="t-warning">★</span>
+    <span class="t-dim">active · main · tempo-soloist</span>
+    <span class="t-text-muted">Building the React dashboard.</span>
+
+  <span class="t-dim">←</span> <span class="t-accent">alice</span>  <span class="t-dim">14:22</span>
+    <span class="t-text">PR is up — needs a review when you have a moment.</span>
+
+ <span class="t-accent t-bold">♩</span> <span class="t-text">draft the release notes for v0.27</span><span class="t-accent">█</span>
+  <span class="t-muted">Press / for commands · @player to DM</span></div>
+    </div>
+
+    <table class="spec">
+      <thead><tr><th>Role</th><th>Ink props</th><th>Token</th><th>Used for</th></tr></thead>
+      <tbody>
+        <tr><td>Brand / title</td><td><span class="mono">bold color={accent}</span></td><td><span class="hexdot" style="background:#E07A5F;"></span>accent</td><td>TitleBar left, Splash wordmark, section headings.</td></tr>
+        <tr><td>Body default</td><td><span class="mono">color={text}</span></td><td><span class="hexdot" style="background:#FAF3EE;"></span>text</td><td>Primary message bodies, input value.</td></tr>
+        <tr><td>Body secondary</td><td><span class="mono">color={textMuted}</span></td><td><span class="hexdot" style="background:#9CA3AF;"></span>textMuted</td><td>Player <span class="mono">part</span> lines, third-party message bodies.</td></tr>
+        <tr><td>Metadata</td><td><span class="mono">color={dim}</span></td><td><span class="hexdot" style="background:#6B7280;"></span>dim</td><td>Timestamps, route labels, separators (<span class="mono">·</span>), overlay hints.</td></tr>
+        <tr><td>Placeholder</td><td><span class="mono">color={muted}</span></td><td><span class="hexdot" style="background:#3D4555;"></span>muted</td><td>Disabled prompt, version strings, empty-state tips.</td></tr>
+        <tr><td>Selected</td><td><span class="mono">bold color={accent}</span></td><td><span class="hexdot" style="background:#E07A5F;"></span>accent</td><td>Highlighted palette/overlay row (▸ indicator).</td></tr>
+        <tr><td>Inbound header</td><td><span class="mono">color={accent}</span></td><td><span class="hexdot" style="background:#E07A5F;"></span>accent</td><td>Sender name on <span class="mono">← alice  14:22</span> rows.</td></tr>
+        <tr><td>Status ok</td><td><span class="mono">color={success}</span></td><td><span class="hexdot" style="background:#81C784;"></span>success</td><td>✓ Connected, active phase dot.</td></tr>
+        <tr><td>Status warn</td><td><span class="mono">color={warning}</span></td><td><span class="hexdot" style="background:#F2CC8F;"></span>warning</td><td>⚠ No conductor, disconnected phase, conductor star.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout" style="margin-top:18px;">
+      <strong>No Unicode box-drawing for hierarchy.</strong> The TUI never draws boxes around things; structure is carried entirely by indentation, blank lines, and color. This keeps the Yoga node count under control (see §09 Performance) and survives narrow terminals.
+    </div>
+  </section>
+
+  <!-- ── 04 Iconography ──────────────────────────────────── -->
+  <section id="icons">
+    <header>
+      <div class="num">04 / ICONOGRAPHY</div>
+      <div>
+        <h2>Glyphs &amp; fallbacks</h2>
+        <p>Every glyph has an ASCII fallback for SSH sessions and non-UTF-8 locales. Unicode is detected via <span class="mono">WT_SESSION</span>, <span class="mono">LANG</span>, and platform; when unavailable, <span class="mono">statusIcons(false)</span> substitutes safe ASCII. Never ship a glyph without a fallback.</p>
+      </div>
+    </header>
+
+    <h3>Status icons</h3>
+    <table class="spec">
+      <thead><tr><th>Name</th><th style="text-align:center;">Unicode</th><th style="text-align:center;">ASCII</th><th>Code</th><th>Semantic use</th></tr></thead>
+      <tbody>
+        <tr><td>active</td><td class="icon" style="color:#81C784;">●</td><td class="icon">*</td><td class="hex">U+25CF</td><td>Player is attached and processing.</td></tr>
+        <tr><td>stale</td><td class="icon" style="color:#FAF3EE;">○</td><td class="icon">o</td><td class="hex">U+25CB</td><td>Idle — attached but awaiting input.</td></tr>
+        <tr><td>pending</td><td class="icon" style="color:#6B7280;">◔</td><td class="icon">~</td><td class="hex">U+25D4</td><td>Booting; not yet attached.</td></tr>
+        <tr><td>blocked</td><td class="icon" style="color:#F2CC8F;">◐</td><td class="icon">!</td><td class="hex">U+25D0</td><td>Draining or detached — disconnected.</td></tr>
+        <tr><td>terminated</td><td class="icon" style="color:#6B7280;">✕</td><td class="icon">x</td><td class="hex">U+2715</td><td>Gone — workflow terminated.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Role &amp; affordance glyphs</h3>
+    <table class="spec">
+      <thead><tr><th>Name</th><th style="text-align:center;">Unicode</th><th style="text-align:center;">ASCII</th><th>Code</th><th>Used on</th></tr></thead>
+      <tbody>
+        <tr><td>conductor</td><td class="icon" style="color:#F2CC8F;">★</td><td class="icon">#</td><td class="hex">U+2605</td><td>Trailing marker on the conductor player.</td></tr>
+        <tr><td>player</td><td class="icon" style="color:#9CA3AF;">•</td><td class="icon">-</td><td class="hex">U+2022</td><td>Generic bullet in ensemble lists.</td></tr>
+        <tr><td>selected</td><td class="icon" style="color:#E07A5F;">▸</td><td class="icon">&gt;</td><td class="hex">U+25B8</td><td>Selected row in palettes, overlays, pickers.</td></tr>
+        <tr><td>inbound</td><td class="icon" style="color:#6B7280;">←</td><td class="icon">&lt;-</td><td class="hex">U+2190</td><td>Header prefix on messages received.</td></tr>
+        <tr><td>arrow</td><td class="icon" style="color:#6B7280;">→</td><td class="icon">-&gt;</td><td class="hex">U+2192</td><td>Conductor routing labels: <span class="mono">alice → bob</span>.</td></tr>
+        <tr><td>check</td><td class="icon" style="color:#81C784;">✓</td><td class="icon">+</td><td class="hex">U+2714</td><td>Splash "Connected" indicator.</td></tr>
+        <tr><td>scroll-up</td><td class="icon" style="color:#6B7280;">↑</td><td class="icon">^</td><td class="hex">U+2191</td><td>"N more above" in scrolled lists.</td></tr>
+        <tr><td>scroll-dn</td><td class="icon" style="color:#6B7280;">↓</td><td class="icon">v</td><td class="hex">U+2193</td><td>"N more below" in scrolled lists.</td></tr>
+        <tr><td>prompt</td><td class="icon" style="color:#E07A5F;">♩</td><td class="icon">&gt;</td><td class="hex">U+2669</td><td>Input prompt glyph and out-bound message marker.</td></tr>
+        <tr><td>cursor</td><td class="icon" style="color:#E07A5F;">█</td><td class="icon">_</td><td class="hex">U+2588</td><td>Blinking cursor block.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── 05 Layout ────────────────────────────────────────── -->
+  <section id="layout">
+    <header>
+      <div class="num">05 / LAYOUT</div>
+      <div>
+        <h2>Shell anatomy</h2>
+        <p>The TUI has five pinned regions and one scrolling canvas. Minimum terminal size is <span class="mono">80×24</span>; below <span class="mono">60×15</span> during resize a soft warning appears. Every component renders as a single <span class="mono">&lt;Text&gt;</span> root to keep Yoga under 10 nodes.</p>
+      </div>
+    </header>
+
+    <div class="term">
+      <div class="chrome">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="label">claude-tempo tui — shell anatomy · 120×26</span>
+      </div>
+      <div class="body"><span class="t-bg-title">  <span class="t-accent t-bold">claude-tempo</span>                                                                             <span class="t-dim">my-band · 3 players</span>   </span>
+<span class="t-dim">────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+
+ <span class="t-dim">← alice  14:22</span>
+    <span class="t-text">PR is up — needs a review when you have a moment.</span>
+
+ <span class="t-dim">← bob  14:23</span>
+    <span class="t-text">I'll take the backend changes.</span>
+
+ <span class="t-accent t-bold">♩</span> <span class="t-text">sounds good — push when ready</span>                                                                       
+    <span class="t-text">also let's sync on the migration plan</span>                                                           
+
+                                                                                                                      
+ <span class="t-dim">  ▸</span><span class="t-accent t-bold"> /recruit</span><span class="t-muted">  spawn a new player</span>                                                                   
+ <span class="t-dim">    /status</span><span class="t-muted">  show all players</span>                                                                       
+ <span class="t-dim">    /schedule</span><span class="t-muted">  list schedules</span>                                                                       
+
+ <span class="t-accent t-bold">♩</span> <span class="t-text">/re</span><span class="t-accent">█</span>                                                                                                
+<span class="t-dim">────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+ <span class="t-accent">my-band</span><span class="t-dim"> · 3 players (2 active, 1 idle) · </span><span class="t-success">●</span><span class="t-dim"> Connected</span>                                                    </div>
+    </div>
+
+    <div class="grid cols-3" style="margin-top:18px;">
+      <div class="card"><h4>① TitleBar</h4><p>Pinned top. Brand on left (accent bold), context on right (dim). Background <span class="mono">bgTitle</span>. One row.</p></div>
+      <div class="card"><h4>② Scrollback</h4><p>Native terminal scrollback. Completed messages flow into it as they scroll off the ConversationStream viewport.</p></div>
+      <div class="card"><h4>③ ConversationStream</h4><p>Live feed. Fits as many recent messages as rows allow, works backward from newest. Out-bound rows get an <span class="mono">inputBg</span> tint.</p></div>
+      <div class="card"><h4>④ CommandPalette</h4><p>Floating dropdown above the prompt when the user types <span class="mono">/</span> or <span class="mono">@</span>. Max 6 visible rows; scroll indicators above/below.</p></div>
+      <div class="card"><h4>⑤ PromptArea</h4><p>Pinned bottom. <span class="mono">♩</span> prompt + current value + <span class="mono">█</span> cursor. Placeholder hint when empty, completion hint line above.</p></div>
+      <div class="card"><h4>⑥ StatusBar</h4><p>Pinned bottom-most. Single line: ensemble · player breakdown · schedule count · conductor warning · connection dot.</p></div>
+    </div>
+
+    <div class="callout" style="margin-top:20px;">
+      <strong>Spacing.</strong> All block separation is by blank lines — one blank between peers, two blanks between groups (player cards, message clusters). Indentation is two or three spaces; never tabs. A 3-space indent (<span class="mono">INDENT</span>) aligns continuation lines with message-header glyphs.
+    </div>
+  </section>
+
+  <!-- ── 06 Components ──────────────────────────────────── -->
+  <section id="components">
+    <header>
+      <div class="num">06 / COMPONENTS</div>
+      <div>
+        <h2>Component inventory</h2>
+        <p>Each component is documented as a rendered mock plus the exact tokens it consumes. Components live in <span class="mono">src/tui/components/</span> and must render as a single <span class="mono">&lt;Text&gt;</span> root (see §09).</p>
+      </div>
+    </header>
+
+    <!-- TitleBar -->
+    <h3>TitleBar · pinned top</h3>
+    <div class="split">
+      <div class="term compact">
+        <div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="label">TitleBar</span></div>
+        <div class="body"><span class="t-bg-title">  <span class="t-accent t-bold">claude-tempo</span>                                                   <span class="t-dim">my-band · 3 players</span>  </span></div>
+      </div>
+      <div>
+        <p class="lede">Single-row banner. Brand stays hard-left at 2-space inset; right-hand context is padded to the right edge via calculated spaces — never a flex <span class="mono">&lt;Box&gt;</span>.</p>
+        <p><strong>Tokens:</strong> <span class="mono">bgTitle</span>, <span class="mono">accent</span> (brand), <span class="mono">dim</span> (context).</p>
+      </div>
+    </div>
+
+    <!-- StatusBar -->
+    <h3>StatusBar · pinned bottom</h3>
+    <div class="split">
+      <div class="term compact">
+        <div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="label">StatusBar</span></div>
+        <div class="body"> <span class="t-accent">my-band</span><span class="t-dim"> · 3 players (2 active, 1 idle) · 1 schedule · </span><span class="t-warning">⚠ No conductor</span><span class="t-dim"> · </span><span class="t-success">●</span><span class="t-dim"> Connected</span></div>
+      </div>
+      <div>
+        <p class="lede">Comma-separated phase breakdown + schedule count + conductor warning + connection dot. Separators are always <span class="mono">·</span> (U+00B7) in <span class="mono">dim</span>. <span class="mono">gone</span> players never appear here.</p>
+        <p><strong>Phase buckets:</strong> active, idle, disconnected, pending. See §07 for the full mapping.</p>
+      </div>
+    </div>
+
+    <!-- StatusOverlay -->
+    <h3>StatusOverlay · dismissible</h3>
+    <div class="split">
+      <div class="term compact">
+        <div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="label">/status</span></div>
+        <div class="body">  <span class="t-accent t-bold">Ensemble: my-band (3 players)</span>
+
+  <span class="t-success">●</span> <span class="t-bold t-text">alice</span> <span class="t-warning">★</span>
+    <span class="t-dim">active · main · tempo-conductor</span>
+    <span class="t-text-muted">Coordinating frontend / backend work.</span>
+
+  <span class="t-text">○</span> <span class="t-bold t-text">bob</span>
+    <span class="t-dim">idle · feat/auth · tempo-soloist</span>
+    <span class="t-text-muted">Waiting on design review.</span>
+
+  <span class="t-warning">◐</span> <span class="t-bold t-text">carol</span>
+    <span class="t-dim">disconnected · main · tempo-critic</span>
+
+  <span class="t-dim">↑↓ scroll, Esc to dismiss</span></div>
+      </div>
+      <div>
+        <p class="lede">Player cards: icon + name + conductor star, then dim detail line (<span class="mono">phase · branch · type</span>), then optional part in <span class="mono">textMuted</span>. Cards separated by a blank line. Hint row always in <span class="mono">dim</span> at the bottom.</p>
+        <p><strong>Anatomy:</strong> glyph (phase color) → bold name → warning-colored ★ → detail row → muted part. Long lines wrap at a 4-space hanging indent.</p>
+      </div>
+    </div>
+
+    <!-- CommandPalette -->
+    <h3>CommandPalette · floating dropdown</h3>
+    <div class="split">
+      <div class="term compact">
+        <div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="label">palette (typed "/re")</span></div>
+        <div class="body">  <span class="t-dim">↑ 2 more above</span>
+  <span class="t-accent">▸ </span><span class="t-accent t-bold">/recruit</span><span class="t-muted">  spawn a new player</span>
+    <span class="t-dim">  </span><span class="t-success">/recruit-conductor</span><span class="t-muted">  recruit a conductor for this ensemble</span>
+    <span class="t-dim">  </span><span class="t-success">/recall</span><span class="t-muted">  read a player's message history</span>
+    <span class="t-dim">  </span><span class="t-success">/release</span><span class="t-muted">  release held players</span>
+    <span class="t-dim">  </span><span class="t-success">/restart</span><span class="t-muted">  restart a player</span>
+    <span class="t-dim">  </span><span class="t-success">/resume</span><span class="t-muted">  resume a paused ensemble</span>
+  <span class="t-dim">↓ 4 more below</span></div>
+      </div>
+      <div>
+        <p class="lede">Max 6 visible rows. The selected row uses accent color + bold + a leading <span class="mono">▸</span>. Non-selected rows use <span class="mono">success</span> green for the command token (a terminal convention for runnable things) and <span class="mono">muted</span> for description.</p>
+        <p><strong>Tokens:</strong> <span class="mono">accent</span>, <span class="mono">success</span>, <span class="mono">muted</span>, <span class="mono">dim</span>.</p>
+      </div>
+    </div>
+
+    <!-- ConversationStream -->
+    <h3>ConversationStream · message feed</h3>
+    <div class="split">
+      <div class="term compact">
+        <div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="label">Ensemble chat</span></div>
+        <div class="body"> <span class="t-dim">← alice</span><span class="t-dim">  14:22</span>
+    <span class="t-text">PR is up — needs a review when you</span>
+    <span class="t-text">have a moment.</span>
+
+    <span class="t-dim">alice → bob</span><span class="t-dim">  14:23</span>
+    <span class="t-text-muted">ship the migration once tests pass</span>
+
+<span class="t-input-bg"> <span class="t-accent t-bold">♩</span> <span class="t-text">sounds good — push when ready</span>                 </span>
+<span class="t-input-bg">    <span class="t-text">also let's sync on the migration plan</span>         </span></div>
+      </div>
+      <div>
+        <p class="lede">Three message roles are rendered distinctly:</p>
+        <ul style="margin:8px 0 0 16px; color:var(--ink-dim); font-size:13px;">
+          <li><strong>Inbound direct:</strong> <span class="mono">← sender  HH:MM</span> header, <span class="mono">text</span> body.</li>
+          <li><strong>Third-party (conductor routing):</strong> dim header with <span class="mono">from → to  HH:MM</span>, <span class="mono">textMuted</span> body, capped at 4 lines with "… (N more lines)".</li>
+          <li><strong>Out-bound:</strong> <span class="mono">♩</span> prefix, <span class="mono">text</span> body, full-row <span class="mono">inputBg</span> tint.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- PromptArea -->
+    <h3>PromptArea · input</h3>
+    <div class="split">
+      <div class="term compact">
+        <div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="label">Prompt — idle &amp; typing</span></div>
+        <div class="body">  <span class="t-muted">recruit  recruit-conductor  recall</span>
+ <span class="t-accent t-bold">♩</span> <span class="t-text">/re</span><span class="t-accent">█</span>
+
+ <span class="t-accent t-bold">♩</span> <span class="t-accent">█</span><span class="t-dim">Type a message, /command, or @player…</span>
+
+ <span class="t-accent t-bold">♩</span> <span class="t-muted">...</span></div>
+      </div>
+      <div>
+        <p class="lede">Three states: <strong>typing</strong> (value + cursor, with optional tab-completion hint line above in <span class="mono">muted</span>), <strong>empty</strong> (cursor + placeholder hint in <span class="mono">dim</span>), <strong>disabled</strong> (<span class="mono">...</span> in <span class="mono">muted</span>) during wizards or splash.</p>
+        <p><strong>Tokens:</strong> <span class="mono">accent</span> (♩, cursor, completion chosen), <span class="mono">text</span>, <span class="mono">dim</span>, <span class="mono">muted</span>.</p>
+      </div>
+    </div>
+
+    <!-- Splash -->
+    <h3>Splash · landing screen</h3>
+    <div class="split">
+      <div class="term compact">
+        <div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="label">claude-tempo tui</span></div>
+        <div class="body">
+
+                        <span class="t-text">⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀</span>
+                        <span class="t-text">⠀⠀⠀</span><span class="t-accent">⢀⣀</span><span class="t-text">⠀⠀⠀</span>
+                        <span class="t-text">⠀⠀</span><span class="t-accent">⢠⡏⢳⡀</span><span class="t-text">⠀⠀</span>
+                        <span class="t-text">⠀</span><span class="t-accent">⢠⠟</span><span class="t-text">⠀⠀</span><span class="t-accent">⢻⡄</span><span class="t-text">⠀</span>
+                        <span class="t-text">⠀</span><span class="t-accent">⠟⠒⠒⠒⠒⠻</span><span class="t-text">⠀</span>
+
+                      <span class="t-accent t-bold">claude-tempo</span>
+             <span class="t-dim">Multi-session orchestration via Temporal</span>
+                           <span class="t-muted">v0.26.0</span>
+
+                          <span class="t-success">✓ Connected</span>
+
+                    <span class="t-accent">▸ </span><span class="t-accent t-bold">★ my-band (3 players)</span>
+                      <span class="t-text-muted">• backend-team (2 players)</span>
+                      <span class="t-text-muted">• experiments (0 players)</span>
+
+                      <span class="t-dim">+ Create new ensemble</span>
+
+                 <span class="t-accent t-bold">↑↓ to select, Enter to continue</span>
+                                                                               </div>
+      </div>
+      <div>
+        <p class="lede">Vertically centered. The metronome is a 3-frame braille animation at 30×12 cells (swings left → center → right every 300ms). Ensemble list shows up to 5 with up/down scroll indicators. Selected row uses <span class="mono">▸</span> in accent + bold.</p>
+        <p><strong>States:</strong> connecting (spinner in warning), connected &amp; loading (<span class="mono">⟳ Discovering ensembles…</span> in dim), connected &amp; ready (list + "+ Create"), connected &amp; empty (<span class="mono">No ensembles running.</span>).</p>
+      </div>
+    </div>
+
+    <!-- Wizard pattern -->
+    <h3>Wizard pattern · Recruit / Schedule / Create ensemble</h3>
+    <div class="split">
+      <div class="term compact">
+        <div class="chrome"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="label">/recruit — step 2 of 4</span></div>
+        <div class="body">  <span class="t-accent t-bold">Recruit a new player</span>  <span class="t-dim">· step 2 / 4</span>
+
+  <span class="t-dim">Name</span>        <span class="t-text">frontend-eng</span>
+  <span class="t-accent t-bold">Type</span>        <span class="t-text">tempo-soloist</span><span class="t-accent">█</span>
+  <span class="t-dim">Work dir</span>    <span class="t-muted">/repos/my-app</span>
+  <span class="t-dim">Task</span>        <span class="t-muted">—</span>
+
+    <span class="t-accent">▸ </span><span class="t-accent t-bold">tempo-soloist</span><span class="t-muted">   single-focus engineer</span>
+      <span class="t-dim">tempo-composer</span><span class="t-muted">  architect / planner</span>
+      <span class="t-dim">tempo-critic</span><span class="t-muted">    reviewer</span>
+      <span class="t-dim">tempo-tuner</span><span class="t-muted">     performance / quality</span>
+
+  <span class="t-dim">↑↓ select · Enter to confirm · Esc to cancel</span></div>
+      </div>
+      <div>
+        <p class="lede">Wizards are a stack of labeled rows: current step label in <span class="mono">accent</span> bold, filled rows in <span class="mono">text</span>, not-yet-set rows in <span class="mono">muted</span>. Picker overlay hangs below the active row with the same <span class="mono">▸</span> selector.</p>
+        <p><strong>Applies to:</strong> RecruitWizard, ScheduleWizard, CreateEnsembleWizard.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 07 Phase state ──────────────────────────────────── -->
+  <section id="phase">
+    <header>
+      <div class="num">07 / STATE</div>
+      <div>
+        <h2>Attachment-phase matrix</h2>
+        <p>Seven internal attachment phases collapse to five user-facing buckets. This table is the single source of truth for how a player looks at any moment — icon, color, and label. Maps directly onto <span class="mono">src/tui/utils/format.ts</span>.</p>
+      </div>
+    </header>
+
+    <table class="spec">
+      <thead>
+        <tr>
+          <th>Internal phase</th>
+          <th>Bucket</th>
+          <th style="text-align:center;">Icon</th>
+          <th>Icon bucket</th>
+          <th>Color</th>
+          <th>Shown in StatusBar?</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="phase-row"><td>attached</td><td>active</td><td class="icon" style="color:#81C784;">●</td><td>active</td><td><span class="hexdot" style="background:#81C784;"></span>success</td><td>yes</td></tr>
+        <tr class="phase-row"><td>processing</td><td>active</td><td class="icon" style="color:#81C784;">●</td><td>active</td><td><span class="hexdot" style="background:#81C784;"></span>success</td><td>yes</td></tr>
+        <tr class="phase-row"><td>awaiting</td><td>idle</td><td class="icon" style="color:#FAF3EE;">○</td><td>stale</td><td><span class="hexdot" style="background:#FAF3EE;"></span>text</td><td>yes</td></tr>
+        <tr class="phase-row"><td>draining</td><td>disconnected</td><td class="icon" style="color:#F2CC8F;">◐</td><td>blocked</td><td><span class="hexdot" style="background:#F2CC8F;"></span>warning</td><td>yes</td></tr>
+        <tr class="phase-row"><td>detached</td><td>disconnected</td><td class="icon" style="color:#F2CC8F;">◐</td><td>blocked</td><td><span class="hexdot" style="background:#F2CC8F;"></span>warning</td><td>yes</td></tr>
+        <tr class="phase-row"><td>booting</td><td>pending</td><td class="icon" style="color:#6B7280;">◔</td><td>pending</td><td><span class="hexdot" style="background:#6B7280;"></span>dim</td><td>yes</td></tr>
+        <tr class="phase-row"><td>gone</td><td>gone</td><td class="icon" style="color:#6B7280;">✕</td><td>terminated</td><td><span class="hexdot" style="background:#6B7280;"></span>dim</td><td>no (terminal)</td></tr>
+        <tr class="phase-row"><td>(unknown)</td><td>unknown</td><td class="icon" style="color:#F2CC8F;">◐</td><td>blocked</td><td><span class="hexdot" style="background:#FAF3EE;"></span>text</td><td>no</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout" style="margin-top:18px;">
+      <strong>Invariant.</strong> Never hand-pick a color or icon for a player — call <span class="mono">phaseToColor(phase)</span> and <span class="mono">phaseToIconName(phase)</span> then index <span class="mono">statusIcons()</span>. These lookup maps are frozen at module scope so repeated calls are allocation-free.
+    </div>
+  </section>
+
+  <!-- ── 08 Accessibility ────────────────────────────────── -->
+  <section id="a11y">
+    <header>
+      <div class="num">08 / ACCESSIBILITY</div>
+      <div>
+        <h2>Accessibility &amp; resilience</h2>
+        <p>The TUI must work on unstyled terminals, in SSH sessions without Unicode, and for users who disable color. None of these is a degraded mode — all three are supported paths.</p>
+      </div>
+    </header>
+
+    <div class="grid cols-3">
+      <div class="card">
+        <h4>NO_COLOR</h4>
+        <p>When <span class="mono">process.env.NO_COLOR</span> is set, <span class="mono">THEME</span> resolves every key to <span class="mono">undefined</span>. Every meaning that lives in a color must <em>also</em> live in a glyph, label, or bold weight.</p>
+      </div>
+      <div class="card">
+        <h4>Unicode fallback</h4>
+        <p><span class="mono">supportsUnicode()</span> checks <span class="mono">WT_SESSION</span>, SSH env, <span class="mono">LANG</span>, and platform. ASCII fallbacks are declared next to every glyph in <span class="mono">statusIcons()</span> and the metronome drops to a single-character animation.</p>
+      </div>
+      <div class="card">
+        <h4>Minimum size</h4>
+        <p><strong>80 × 24</strong> at launch or the process exits. A soft warning appears below <strong>60 × 15</strong> during live resize. All component layouts assume 80 columns of usable width.</p>
+      </div>
+      <div class="card">
+        <h4>Keyboard-only</h4>
+        <p>Nothing in the TUI requires a pointing device. Every surface documents its keys in a footer line in <span class="mono">dim</span> color (e.g. <span class="mono">↑↓ scroll, Esc to dismiss</span>).</p>
+      </div>
+      <div class="card">
+        <h4>Scroll indicators</h4>
+        <p>Any windowed list (palette, status, ensembles) shows <span class="mono">↑ N more above</span> / <span class="mono">↓ N more below</span> in <span class="mono">dim</span> when content is clipped, never silently truncates.</p>
+      </div>
+      <div class="card">
+        <h4>Echo &amp; latency</h4>
+        <p>Out-bound messages render optimistically from local echo with the <span class="mono">♩</span> glyph, then deduplicate against the server feed within a 30s window. Network blips never look like lost keystrokes.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 09 Performance ─────────────────────────────────── -->
+  <section id="perf">
+    <header>
+      <div class="num">09 / PERFORMANCE</div>
+      <div>
+        <h2>Rendering rules</h2>
+        <p>Ink is React + Yoga layout over the terminal. Every Yoga node costs a full-screen recompute on change, so the design system's structural rules are inseparable from its visual ones.</p>
+      </div>
+    </header>
+
+    <div class="grid cols-2">
+      <div class="card">
+        <h4>One Text root per component</h4>
+        <p>Every component in <span class="mono">src/tui/components/</span> renders <em>one</em> <span class="mono">&lt;Text&gt;</span> element at the top. Children must be nested <span class="mono">&lt;Text&gt;</span> or plain strings — these become ink-virtual-text (0 Yoga nodes). Avoid <span class="mono">&lt;Box&gt;</span> for layout in leaf components.</p>
+      </div>
+      <div class="card">
+        <h4>Precomputed padding</h4>
+        <p>Right-alignment (TitleBar, StatusBar) uses calculated space strings based on <span class="mono">process.stdout.columns</span>, not flex. Vertical centering (Splash) pads with <span class="mono">\n</span> repetitions.</p>
+      </div>
+      <div class="card">
+        <h4>Frozen lookup maps</h4>
+        <p>Phase → label/color/icon maps are <span class="mono">Object.freeze</span>d at module scope. No per-frame object allocation in hot paths.</p>
+      </div>
+      <div class="card">
+        <h4>Uncontrolled inputs</h4>
+        <p>PromptArea keeps its own local state. Parent never re-renders per keystroke; it receives the final value via ref or on submit.</p>
+      </div>
+      <div class="card">
+        <h4>Viewport-only rendering</h4>
+        <p>ConversationStream walks backward from the newest message and stops when the line budget is filled. Older messages are committed to native scrollback via <span class="mono">&lt;Static&gt;</span>.</p>
+      </div>
+      <div class="card">
+        <h4>Stable callbacks</h4>
+        <p>Every <span class="mono">useInput</span> callback reads a <span class="mono">ref.current</span> bag instead of closing over state. The callback identity never changes, which keeps Ink's key-binding registration stable.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 10 Usage guide ────────────────────────────────── -->
+  <section id="usage">
+    <header>
+      <div class="num">10 / USAGE</div>
+      <div>
+        <h2>Do / don't</h2>
+        <p>Short rules that keep additions consistent with the existing surface.</p>
+      </div>
+    </header>
+
+    <div class="grid cols-2">
+      <div class="card" style="border-left:3px solid var(--success);">
+        <h4 style="color:var(--ink);">Do</h4>
+        <ul style="margin:6px 0 0 16px; color:var(--ink-dim); font-size:13px; line-height:1.6;">
+          <li>Route all color access through <span class="mono">THEME</span>.</li>
+          <li>Use phase helpers (<span class="mono">phaseToLabel</span>, <span class="mono">phaseToColor</span>, <span class="mono">phaseToIconName</span>) for anything player-related.</li>
+          <li>Ship ASCII fallbacks alongside any new glyph.</li>
+          <li>Keep copy direct: "No conductor", "3 players (2 active, 1 idle)".</li>
+          <li>Indent continuation lines to 3 spaces to align with the <span class="mono">♩</span> prompt.</li>
+          <li>End scrollable surfaces with a <span class="mono">dim</span> key-hint line.</li>
+        </ul>
+      </div>
+      <div class="card" style="border-left:3px solid var(--error);">
+        <h4 style="color:var(--ink);">Don't</h4>
+        <ul style="margin:6px 0 0 16px; color:var(--ink-dim); font-size:13px; line-height:1.6;">
+          <li>Introduce new colors — if a role feels missing, reuse a token or open a design review.</li>
+          <li>Draw Unicode borders around things; indentation + color is the whole layout system.</li>
+          <li>Use emoji; the metronome vocabulary (♩ ★ • ▸) is the full kit.</li>
+          <li>Rely on color alone to convey a state — always pair with a glyph or label.</li>
+          <li>Add <span class="mono">&lt;Box&gt;</span> layout inside leaf components; keep it single-<span class="mono">Text</span>.</li>
+          <li>Hardcode a phase check — phases change; the lookup maps don't.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer class="end">
+    <span>claude-tempo · TUI design system</span>
+    <span>tokens: <span class="mono">src/tui/utils/theme.ts</span> · glyphs: <span class="mono">src/tui/utils/platform.ts</span> · phase: <span class="mono">src/tui/utils/format.ts</span></span>
+  </footer>
+
+</div>
+
+</body>
+</html>
