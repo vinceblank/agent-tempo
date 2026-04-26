@@ -36,7 +36,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `pause` | Pause all sessions in the ensemble: locks outbox dispatch and pauses the scheduler. `destroy` commands still go through. (#287) |
 | `play` | Resume a paused ensemble — unlocks outbox dispatch and resumes the scheduler. Buffered outbox entries are dispatched. Pass `release: true` to also release any held sessions in the same call — idempotent on non-held sessions. (#287) |
 | `shutdown` | Gracefully shut down the entire ensemble — signals all players to drain and detach, then stops the conductor. Use instead of per-player `detach` calls when tearing down. (#287) |
-| `restore` | Restore orphaned sessions in one ensemble on this host — re-attaches a fresh adapter to every `detached` session whose preferred host matches. Pass `ensemble` to target a specific ensemble. (#287, #288) |
+| `restore` | Restore orphaned sessions in one ensemble — re-attaches a fresh adapter to every `detached` session whose preferred host matches. Defaults to scanning the local OS hostname. Pass `hostname: "<other-host>"` for cross-host setups (per-host task queues, #274) where the operator's daemon runs on a different machine than the parked sessions. (#287, #288, #306 follow-up) |
 
 ## Version History
 

@@ -396,6 +396,73 @@ describe('restore tool (#287)', function () {
       (orphansModule as any).restoreOrphansOnce = originalFn;
     }
   });
+
+  // #306 follow-up (regression risk #2 from the holistic review):
+  // cross-host restore. The MCP tool runs inside the daemon worker; if
+  // the operator's daemon is on host A but the parked sessions' workflows
+  // were attached to host B before shutdown, the visibility query
+  // (`AND ClaudeTempoHostname = "<host>"`) needs B's hostname, not A's.
+  // The tool now accepts an optional `hostname` param.
+  it('forwards a custom hostname arg through to restoreOrphansOnce', async function () {
+    const ensemble = 'restore-cross-host';
+    const orphansModule = require('../src/reconcile/orphans') as typeof import('../src/reconcile/orphans');
+    const originalFn = orphansModule.restoreOrphansOnce;
+    let capturedOpts: { hostname?: string } | null = null;
+    (orphansModule as any).restoreOrphansOnce = async (_c: unknown, opts: { hostname?: string }) => {
+      capturedOpts = opts;
+      return { reattached: 0, skipped: 0, failed: 0, details: [] };
+    };
+
+    try {
+      const { client } = makeClient({ ensemble, players: [] });
+      const call = extractHandler((server) =>
+        registerRestoreTool(server, client, testConfig(ensemble), () => 'operator'),
+      );
+      const result = await call({ hostname: 'remote-host-b' });
+      expect(result.isError).to.not.equal(true);
+
+      // The custom hostname is what reached restoreOrphansOnce.
+      expect(capturedOpts).to.not.equal(null);
+      expect(capturedOpts!.hostname).to.equal('remote-host-b');
+
+      // The headline surfaces the explicit host so the user can see it
+      // wasn't a default-host scan.
+      expect(result.content[0].text).to.include('(host: remote-host-b)');
+    } finally {
+      (orphansModule as any).restoreOrphansOnce = originalFn;
+    }
+  });
+
+  it('omitted hostname defaults to the local OS hostname (preserves prior behavior)', async function () {
+    const ensemble = 'restore-default-host';
+    const orphansModule = require('../src/reconcile/orphans') as typeof import('../src/reconcile/orphans');
+    const originalFn = orphansModule.restoreOrphansOnce;
+    let capturedOpts: { hostname?: string } | null = null;
+    (orphansModule as any).restoreOrphansOnce = async (_c: unknown, opts: { hostname?: string }) => {
+      capturedOpts = opts;
+      return { reattached: 0, skipped: 0, failed: 0, details: [] };
+    };
+
+    try {
+      const { client } = makeClient({ ensemble, players: [] });
+      const call = extractHandler((server) =>
+        registerRestoreTool(server, client, testConfig(ensemble), () => 'operator'),
+      );
+      const result = await call({});
+      expect(result.isError).to.not.equal(true);
+
+      // Default = `os.hostname()` — the actual value depends on the
+      // machine, so we just assert it's a non-empty string.
+      expect(capturedOpts!.hostname).to.be.a('string');
+      expect((capturedOpts!.hostname as string).length).to.be.greaterThan(0);
+
+      // The headline does NOT show "(host: ...)" when default — preserves
+      // the original output shape for callers that don't pass the param.
+      expect(result.content[0].text).to.not.include('(host:');
+    } finally {
+      (orphansModule as any).restoreOrphansOnce = originalFn;
+    }
+  });
 });
 
 // ── destroy (ensemble scope) ────────────────────────────────────────────
