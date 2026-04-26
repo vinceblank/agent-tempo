@@ -206,6 +206,7 @@ describe('process-lifecycle handlers — end-to-end via child process', function
     // registration path is the same, and POSIX coverage is enough
     // for the contract.
     if (process.platform === 'win32') {
+      // SKIP-REASON: Windows TerminateProcess doesn't deliver POSIX signals — production registration path is unaffected.
       this.skip();
       return;
     }
@@ -224,6 +225,7 @@ describe('process-lifecycle handlers — end-to-end via child process', function
     // is purely additive (it just logs), so platform parity isn't load-
     // bearing for the telemetry contract.
     if (process.platform === 'win32') {
+      // SKIP-REASON: Windows SIGINT delivery diverges from POSIX in cmd.exe-hosted children — telemetry contract is platform-agnostic, POSIX coverage suffices.
       this.skip();
       return;
     }
