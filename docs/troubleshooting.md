@@ -20,6 +20,11 @@
 > in `daemon status` now lists these, and this section documents the emergency
 > escape hatches.
 
+> **Automatic reaping (commit `5399945`):** `claude-tempo daemon stop` now automatically
+> reaps zombie daemon processes left over from a crash — no manual `taskkill`/`kill` needed
+> in most cases. Fall back to the steps below only if `daemon stop` itself fails or exits
+> while processes remain.
+
 ### Inspect
 
 ```bash

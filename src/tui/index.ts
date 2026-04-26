@@ -13,11 +13,19 @@ import { App } from './App';
 import { isTerminalLargeEnough, MIN_COLUMNS, MIN_ROWS } from './utils/platform';
 import { enterFullscreen, exitFullscreen, registerFullscreenCleanup } from './utils/fullscreen';
 import { isDaemonRunning, startDaemon } from '../cli/daemon';
+import type { BootstrapResult } from '../cli/startup';
 
 export interface TuiOpts {
   config: Config;
   /** If provided, start in single-ensemble view. If omitted, start in home (multi-ensemble) view. */
   ensemble?: string;
+  /**
+   * #289: pre-computed bootstrap result fed in from the CLI default path.
+   * When present, the TUI skips its own daemon/connection probing and
+   * hands the result straight to HomeView as initial props (S5 / #290).
+   * Absent for the subcommand paths that don't run bootstrap.
+   */
+  bootstrap?: BootstrapResult;
 }
 
 export async function run(opts: TuiOpts): Promise<void> {
@@ -97,6 +105,9 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
   const fail = () => Promise.reject(new Error('Not connected to Temporal'));
   return {
     discoverEnsembles: async () => [],
+    listEnsembles: async () => [],
+    createEnsemble: fail,
+    spawnConductor: fail,
     getPlayers: async () => [],
     getMessages: async () => [],
     getConductorHistory: async () => [],
@@ -106,6 +117,8 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
     sendMessage: fail,
     terminatePlayer: fail,
     // PR-D verbs — all fail in offline dummy mode.
+    recruit: fail,
+    release: fail,
     restart: fail,
     detach: fail,
     destroy: fail,
@@ -114,11 +127,18 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
     recall: fail,
     listHosts: async () => [],
     disbandEnsemble: fail,
+    // #287 ensemble-scope verbs — same offline fail-fast shape.
+    pause: fail,
+    play: fail,
+    shutdown: fail,
+    restore: fail,
     isConnected: async () => false,
     hasGlobalMaestro: async () => false,
     getSchedules: async () => [],
     cancelSchedule: fail,
     getEnsembleChat: async () => ({ messages: [], total: 0, hasMore: false, hasConductor: false }),
+    isMaestroPaused: async () => false,
+    isAnySessionHeld: async () => false,
     getGates: async () => [],
     getStages: async () => [],
     getWorktrees: async () => [],

@@ -4,8 +4,31 @@
  * attachment-phase → label/color/icon mapping (post-#177).
  */
 
-import type { AttachmentPhase } from '../../types';
+import type { AttachmentPhase, MaestroPlayerInfo } from '../../types';
 import { THEME } from './theme';
+
+/**
+ * The maestro session is the TUI's own dashboard attachment — a synthetic
+ * "player" the human operator drives directly, not a peer agent. It shows up
+ * in the maestro's player list (so `/players` is an honest representation of
+ * internal state), but headline counts in the status bar / context string
+ * should exclude it. Otherwise a fresh ensemble with one real player reads
+ * confusingly as "2 players (1 active, 1 pending)".
+ */
+export function isMaestroPlayer(p: { playerId?: string; playerType?: string }): boolean {
+  return p.playerId === 'maestro' || p.playerType === 'maestro';
+}
+
+/** Filter the maestro out of a list of players for headline counts. */
+export function filterRealPlayers<T extends { playerId?: string; playerType?: string }>(
+  players: readonly T[],
+): T[] {
+  return players.filter((p) => !isMaestroPlayer(p));
+}
+
+// `MaestroPlayerInfo` re-exported for callers that only care about the
+// filter helpers above (avoids a second import).
+export type { MaestroPlayerInfo };
 
 /** Format an ISO timestamp as a short time string (HH:MM:SS). */
 export function formatTime(iso: string): string {

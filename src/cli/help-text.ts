@@ -20,40 +20,41 @@ export function printHelp(): void {
 ${out.bold('claude-tempo')} — Multi-session Claude Code coordination via Temporal
 
 ${out.bold('Getting started:')}
-  ${out.cyan('claude-tempo up')}                  Set up everything and launch a conductor
+  ${out.cyan('claude-tempo up')}                  Start infrastructure, then launch the TUI with ${out.dim('claude-tempo')}
 
 ${out.bold('Usage:')}
+  claude-tempo                         Launch the TUI (auto-provisions + opens home view)
+  claude-tempo <ensemble>              Launch the TUI directly into an ensemble view
   claude-tempo <command> [options]
 
 ${out.bold('Commands:')}
-  ${out.cyan('up')}      [ensemble]    First-time setup: start Temporal, configure MCP, launch conductor
-  ${out.cyan('down')}    [ensemble]    Tear down everything: sessions, daemon, Temporal server, MCP config
-  ${out.cyan('server')}                Start the Temporal dev server and register search attributes
-  ${out.cyan('conduct')} [ensemble]    Start a conductor session (resumes existing, --replace to restart)
-  ${out.cyan('start')}   [ensemble]    Start a player session
-  ${out.cyan('stop')}    [ensemble]    Stop sessions (-n <name> for one, or --all)
-  ${out.cyan('status')}  [ensemble]    Show active sessions and Temporal health
-  ${out.cyan('ensemble')} <sub>       Manage saved ensemble lineups (save/list/show)
-  ${out.cyan('broadcast')} <message>   Send a message to all active players
-  ${out.cyan('restart')} <name>        Restart a session (reap + claim + context replay + spawn)
-  ${out.cyan('detach')} <name>         Gracefully reap a session's adapter (workflow survives)
-  ${out.cyan('destroy')} <name>        Terminally end a session workflow
-  ${out.cyan('migrate')} <name> --host Move a session to a different host
-  ${out.cyan('attachment-info')} <name> Inspect the V2 attachment phase + current holder
-  ${out.cyan('recall')} <name>          Read a player's message history (--limit/--offset/--preview/--from/--since/--include-sent/--json)
-  ${out.cyan('hosts')}                  List daemons polling this Temporal namespace with advertised capabilities (--all/--json)
-  ${out.cyan('refresh-host-profile')}   Re-advertise this daemon's capability profile to the global Maestro
-  ${out.cyan('restore')} [name]         Restore orphaned session(s) — interactive picker, or --all / --from-host / --dry-run
-  ${out.cyan('release')} [ensemble]   Release all held players (unlock outbox, deliver messages)
-  ${out.cyan('pause')}   [ensemble]   Pause an ensemble (sessions, scheduler, maestro)
-  ${out.cyan('resume')}  [ensemble]   Resume a paused ensemble (add --release to also release held sessions)
-  ${out.cyan('agent-types')} <sub>    Manage player type definitions (list/show/init)
-  ${out.cyan('daemon')}    <sub>       Manage the worker daemon (start/stop/status/logs)
-  ${out.cyan('upgrade')}  [version]    Upgrade claude-tempo to latest (or specific version)
-  ${out.cyan('config')}                Configure Temporal connection settings
-  ${out.cyan('init')}                  Register MCP server globally (or --project for .mcp.json)
-  ${out.cyan('preflight')}             Run preflight checks only
-  ${out.cyan('help')}                  Show this help message
+  ${out.cyan('up')}                       Start infrastructure only — Temporal, daemon, MCP registration
+  ${out.cyan('down')}                     Stop infrastructure; workflows stay parked for the next ${out.dim('up')}
+  ${out.cyan('down --destroy [-y]')}      Terminate every workflow across every ensemble, then stop infrastructure
+  ${out.cyan('server')}                   Start the Temporal dev server and register search attributes
+  ${out.cyan('status')}  [ensemble]       Show active sessions and Temporal health
+  ${out.cyan('ensemble')} <sub>           Manage saved ensemble lineups (save/list/show)
+  ${out.cyan('broadcast')} <message>      Send a message to all active players
+  ${out.cyan('destroy')} <ensemble> [-y]  Terminate every workflow in one ensemble (typed confirmation)
+  ${out.cyan('attachment-info')} <name>   Inspect the V2 attachment phase + current holder
+  ${out.cyan('recall')} <name>            Read a player's message history (--limit/--offset/--preview/--from/--since/--include-sent/--json)
+  ${out.cyan('hosts')}                    List daemons polling this Temporal namespace with advertised capabilities (--all/--json)
+  ${out.cyan('refresh-host-profile')}     Re-advertise this daemon's capability profile to the global Maestro
+  ${out.cyan('restore')} <ensemble>       Restore orphaned sessions in one ensemble on this host
+  ${out.cyan('release')} [ensemble]       Release all held players (unlock outbox, deliver messages)
+  ${out.cyan('agent-types')} <sub>        Manage player type definitions (list/show/init)
+  ${out.cyan('daemon')}    <sub>          Manage the worker daemon (start/stop/status/logs)
+  ${out.cyan('upgrade')}  [version]       Upgrade claude-tempo to latest (or specific version)
+  ${out.cyan('config')}                   Configure Temporal connection settings
+  ${out.cyan('init')}                     Register MCP server globally (or --project for .mcp.json)
+  ${out.cyan('preflight')}                Run preflight checks only
+  ${out.cyan('help')}                     Show this help message
+
+${out.bold('Removed — use the TUI:')}
+  ${out.dim('stop / restart / detach / migrate')}   → ${out.dim('/destroy · /restart · /shutdown')}
+  ${out.dim('conduct / start / recruit / disband')} → ${out.dim('launch `claude-tempo` · /recruit · /destroy')}
+  ${out.dim('pause / resume')}                     → ${out.dim('/pause · /play')}
+  See https://github.com/vinceblank/claude-tempo/issues/285 for the full migration table.
 
 ${out.bold('Connection options (all commands):')}
   --temporal-address <addr>    Temporal server address (default: localhost:7233)
@@ -63,19 +64,19 @@ ${out.bold('Connection options (all commands):')}
   --temporal-tls-key <path>    Path to TLS client key
 
 ${out.bold('Other options:')}
-  -n, --name <name>           Set the session window name (start/conduct/up only)
-  --agent <claude|copilot>    Agent type to spawn (default: from config; start/conduct)
-  --skip-preflight            Skip preflight checks (start/conduct only)
-  --background                Run Temporal in background (server only)
-  --project                   Use per-project .mcp.json instead of global (init only)
-  --keep-mcp                  Don't remove MCP config (down only)
-  --keep-daemon               Don't stop the worker daemon (down only)
-  -y, --yes                   Skip confirmation prompt (down only)
-  --all                       Stop all sessions (stop only)
-  --lineup <name|file>        Load ensemble lineup by name or file path (up/conduct)
-  --no-hold                   Skip startup hold (requires --lineup on up/conduct)
-  --ensemble <name>           Target a specific ensemble (stop/down)
-  -d, --dir <path>            Target directory (default: cwd)
+  --name <name>                Set session window name (up only)
+  --agent <claude|copilot>     Agent type to spawn (default: from config; up)
+  --skip-preflight             Skip preflight checks
+  --background                 Run Temporal in background (server only)
+  --project                    Use per-project .mcp.json instead of global (init only)
+  --keep-mcp                   Don't remove MCP config (down only)
+  --keep-daemon                Don't stop the worker daemon (down only)
+  --destroy                    Also terminate every workflow (down only)
+  -y, --yes                    Skip confirmation prompt (down --destroy, destroy)
+  --lineup <name|file>         Load ensemble lineup by name or file path (up)
+  --no-hold                    Skip startup hold (requires --lineup on up)
+  --ensemble <name>            Target a specific ensemble (broadcast, destroy, restore)
+  -d, --dir <path>             Target directory (default: cwd)
 
 ${out.bold('Config command:')}
   ${out.dim('claude-tempo config')}              Interactive connection setup
@@ -90,13 +91,12 @@ ${out.bold('Config command:')}
 ${out.bold('First time? Run this:')}
   ${out.dim('cd your-project')}
   ${out.dim('claude-tempo up')}
+  ${out.dim('claude-tempo')}            # Launch the TUI
 
 ${out.bold('Typical workflow:')}
-  ${out.dim('claude-tempo server')}               Start Temporal (once, keep running)
-  ${out.dim('claude-tempo conduct myband')}       Start a conductor
-  ${out.dim('claude-tempo start myband')}         Add player sessions
-  ${out.dim('claude-tempo start myband --agent copilot -n copilot-1')}   Add a Copilot player
-  ${out.dim('claude-tempo status myband')}        Check who's active
+  ${out.dim('claude-tempo up')}                 Start infrastructure (once per host)
+  ${out.dim('claude-tempo')}                    Launch the TUI
+  ${out.dim('claude-tempo status myband')}      Check who's active in an ensemble
 
 ${out.bold('Environment:')}
   CLAUDE_TEMPO_ENSEMBLE       Default ensemble name (fallback: "default")

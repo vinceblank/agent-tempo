@@ -28,6 +28,8 @@ src/
 │   ├── mcp.ts         # MCP server registration helpers (init, global vs project)
 │   ├── output.ts      # Shared CLI output formatting helpers
 │   ├── preflight.ts   # Environment preflight checks
+│   ├── removed-verbs.ts # lookup table for the 10 CLI verbs removed in #288 — dispatches migration hints before loading Temporal surface
+│   ├── startup.ts     # auto-provisioning bootstrap state machine (#289) — six-step idempotent sequence used by bare `claude-tempo` invocation
 │   └── upgrade-command.ts # upgrade subcommand — crash-proof; dynamic-imports Temporal only for active-session warning
 ├── adapters/
 │   ├── README.md      # Adapter contract documentation
@@ -69,7 +71,7 @@ src/
 │   ├── worktree.ts / stage.ts / stages.ts / cancel-stage.ts
 │   ├── load-lineup.ts / save-lineup.ts / agent-types.ts / resolve.ts
 │   ├── set-name.ts / set-part.ts / who-am-i.ts / release.ts
-│   ├── pause-ensemble.ts / resume-ensemble.ts
+│   ├── pause.ts / play.ts / shutdown.ts / restore.ts
 │   ├── hosts.ts
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
 ├── tui/

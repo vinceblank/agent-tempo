@@ -13,7 +13,18 @@
  * Fallback: set `TEMPO_TEST_ISOLATED=1` to restore per-file env lifecycle.
  * In that mode this teardown is a no-op (each file tore down its own env).
  */
-import { teardownSharedTestEnv } from './helpers';
+import { reapOrphanTemporalServers, teardownSharedTestEnv } from './helpers';
+
+/**
+ * Reap orphan `temporal-sdk-typescript-*` ephemeral servers from prior
+ * crashed runs before the suite starts. A live zombie holds the spawn
+ * lock and turns the next `setupTestEnv()` into "Failed to start
+ * ephemeral server: Access is denied. (os error 5)". Symmetric with the
+ * teardown below.
+ */
+export const mochaGlobalSetup = async function (): Promise<void> {
+  await reapOrphanTemporalServers();
+};
 
 export const mochaGlobalTeardown = async function (): Promise<void> {
   await teardownSharedTestEnv();

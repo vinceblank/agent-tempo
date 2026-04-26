@@ -32,7 +32,7 @@ import { registerDetachTool } from '../src/tools/detach';
 import { registerDestroyTool } from '../src/tools/destroy';
 import { registerMigrateTool } from '../src/tools/migrate';
 import { registerAttachmentInfoTool } from '../src/tools/attachment-info';
-import { registerResumeEnsembleTool } from '../src/tools/resume-ensemble';
+import { registerPlayTool } from '../src/tools/play';
 
 // ─────────────────────────────────────────────
 // Harness
@@ -676,11 +676,12 @@ describe('load_lineup conductor section', function () {
     expect(schedulerPause, 'legacy path must not pause the scheduler').to.be.undefined;
   });
 
-  it('sends hold standby to conductor even when lineup has no conductor section', async function () {
-    // Lineup with only a players section — no `conductor:` block
-    const lineupPath = join(tmpDir, 'test-hold-no-conductor-section.yaml');
+  it('sends hold standby to conductor with a bare conductor section (no instructions)', async function () {
+    // Bare `conductor: {}` block — no instructions to deliver.
+    const lineupPath = join(tmpDir, 'test-hold-bare-conductor.yaml');
     writeFileSync(lineupPath, [
       'name: test-hold-no-cond',
+      'conductor: {}',
       'players:',
       '  - name: alice',
       '    workDir: /tmp/test',
@@ -1441,11 +1442,11 @@ function makeResumeClient(players: string[]): {
   return { client, signals };
 }
 
-describe('resume_ensemble tool — release arg (Issue #172)', function () {
+describe('play tool — release arg (Issue #172, renamed from resume_ensemble per #287)', function () {
   it('default (release omitted): unpause signals only, NO releaseHeld fan-out', async function () {
     const { client, signals } = makeResumeClient(['alice', 'bob']);
     const call = extractHandler((server) =>
-      registerResumeEnsembleTool(server, client, testConfig, getPlayerId),
+      registerPlayTool(server, client, testConfig, getPlayerId),
     );
 
     const result = await call({});
@@ -1472,7 +1473,7 @@ describe('resume_ensemble tool — release arg (Issue #172)', function () {
   it('release: false explicitly: identical to default — no releaseHeld', async function () {
     const { client, signals } = makeResumeClient(['alice']);
     const call = extractHandler((server) =>
-      registerResumeEnsembleTool(server, client, testConfig, getPlayerId),
+      registerPlayTool(server, client, testConfig, getPlayerId),
     );
 
     await call({ release: false });
@@ -1483,7 +1484,7 @@ describe('resume_ensemble tool — release arg (Issue #172)', function () {
   it('release: true: fans out releaseHeld to every active session', async function () {
     const { client, signals } = makeResumeClient(['alice', 'bob', 'carol']);
     const call = extractHandler((server) =>
-      registerResumeEnsembleTool(server, client, testConfig, getPlayerId),
+      registerPlayTool(server, client, testConfig, getPlayerId),
     );
 
     const result = await call({ release: true });
@@ -1518,7 +1519,7 @@ describe('resume_ensemble tool — release arg (Issue #172)', function () {
   it('release: true with no active sessions: still unpauses maestro + scheduler, no fan-out', async function () {
     const { client, signals } = makeResumeClient([]);
     const call = extractHandler((server) =>
-      registerResumeEnsembleTool(server, client, testConfig, getPlayerId),
+      registerPlayTool(server, client, testConfig, getPlayerId),
     );
 
     const result = await call({ release: true });

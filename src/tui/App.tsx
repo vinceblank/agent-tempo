@@ -13,7 +13,7 @@ import React, { useReducer, useEffect, useCallback, useMemo, useState } from 're
 import { hostname as osHostname } from 'os';
 import { useInk } from './ink-context';
 import { tuiReducer, initialState } from './store';
-import type { StaticItem, RecruitAnswers, ScheduleAnswers, CreateEnsembleAnswers } from './store';
+import type { StaticItem, RecruitAnswers, ScheduleAnswers, CreateEnsembleAnswers, TuiState } from './store';
 import type { PromptAreaHandle } from './components/PromptArea';
 
 /** Ink Key interface — mirrors the key object passed to useInput callbacks. */
@@ -59,15 +59,22 @@ import { PromptArea } from './components/PromptArea';
 import { StatusBar } from './components/StatusBar';
 import { ScheduleWizard } from './components/ScheduleWizard';
 import { CreateEnsembleWizard } from './components/CreateEnsembleWizard';
+import { HomeView } from './components/HomeView';
+import { NewEnsembleModal } from './components/NewEnsembleModal';
+import { LoadLineupModal } from './components/LoadLineupModal';
+import { RestoreConfirmModal } from './components/RestoreConfirmModal';
+import { DestroyConfirmModal } from './components/DestroyConfirmModal';
+import type { HomeViewInitial } from './components/HomeView';
 import { CommandPalette } from './components/CommandPalette';
 import { StatusOverlay } from './components/StatusOverlay';
 import { ConversationStream } from './components/ConversationStream';
 import { PlayerDetailView } from './components/PlayerDetailView';
 import { Picker } from './components/Picker';
 import type { PickerItem } from './components/Picker';
-import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames, PLAYER_PARAM_COMMANDS, SUBCOMMAND_MAP } from './commands';
+import { parseCommand, isValidCommand, formatHelpSummary, COMMANDS, getCommandNames, PLAYER_PARAM_COMMANDS, SUBCOMMAND_MAP, classifyPaletteInput, filterPlayerNames, commitNotification } from './commands';
+import { removedSlashCommandHelp } from './removed-commands';
 import { THEME } from './utils/theme';
-import { phaseToLabel, phaseToColor, phaseToIconName } from './utils/format';
+import { phaseToLabel, phaseToColor, phaseToIconName, filterRealPlayers } from './utils/format';
 import { statusIcons as phaseStatusIcons, supportsUnicode as phaseSupportsUnicode } from './utils/platform';
 import { wordWrap } from './utils/format';
 import { loadHistory, saveHistory } from './utils/history';
@@ -306,24 +313,21 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
             for (const ens of ensembles) {
               try {
                 await api.destroy(ens.name, target, reason);
-                dispatch({
-                  type: 'COMMIT_STATIC',
-                  item: { id: nextStaticId(), type: 'info', content: `\u2716 Destroyed ${target}${reason ? ` (${reason})` : ''}.`, timestamp: Date.now() },
-                });
+                // #306: command-result summary as a bottom-pinned notification
+                // so the user actually sees the confirmation when chat is busy.
+                commitNotification(
+                  dispatch,
+                  'info',
+                  `\u2716 Destroyed ${target}${reason ? ` (${reason})` : ''}.`,
+                );
                 return;
               } catch {
                 // Try next ensemble
               }
             }
-            dispatch({
-              type: 'COMMIT_STATIC',
-              item: { id: nextStaticId(), type: 'error', content: `\u2717 Player "${target}" not found in any ensemble.`, timestamp: Date.now() },
-            });
+            commitNotification(dispatch, 'error', `\u2717 Player "${target}" not found in any ensemble.`);
           } catch (err) {
-            dispatch({
-              type: 'COMMIT_STATIC',
-              item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to destroy ${target}: ${err}`, timestamp: Date.now() },
-            });
+            commitNotification(dispatch, 'error', `\u2717 Failed to destroy ${target}: ${err}`);
           }
         })();
       } else if (input === 'n' || input === 'N' || key.escape) {
@@ -351,10 +355,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
             // Navigate back to home view
             dispatch({ type: 'NAVIGATE_HOME' });
           } catch (err) {
-            dispatch({
-              type: 'COMMIT_STATIC',
-              item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to disband "${ensemble}": ${err}`, timestamp: Date.now() },
-            });
+            commitNotification(dispatch, 'error', `\u2717 Failed to disband "${ensemble}": ${err}`);
           }
         })();
       } else if (input === 'n' || input === 'N' || key.escape) {
@@ -374,10 +375,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         const activeEns = s.activeEnsemble;
         dispatch({ type: 'CANCEL_LINEUP' });
         if (!activeEns) {
-          dispatch({
-            type: 'COMMIT_STATIC',
-            item: { id: nextStaticId(), type: 'error', content: 'No active ensemble.', timestamp: Date.now() },
-          });
+          commitNotification(dispatch, 'error', 'No active ensemble.');
         } else {
           (async () => {
             try {
@@ -387,10 +385,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
                 item: { id: nextStaticId(), type: 'info', content: `\u2714 Lineup load requested: ${lineupPath}`, timestamp: Date.now() },
               });
             } catch (err) {
-              dispatch({
-                type: 'COMMIT_STATIC',
-                item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to load lineup: ${err}`, timestamp: Date.now() },
-              });
+              commitNotification(dispatch, 'error', `\u2717 Failed to load lineup: ${err}`);
             }
           })();
         }
@@ -401,6 +396,17 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           item: { id: nextStaticId(), type: 'info', content: 'Lineup load cancelled.', timestamp: Date.now() },
         });
       }
+      return;
+    }
+
+    // #306: Esc dismisses the oldest live notification when no other
+    // Esc-consumer is active (overlays, pickers, confirmations all return
+    // early above). Filter-expired-first is handled in the reducer so this
+    // always acts on what the user is actually looking at. No-op when the
+    // stack is empty, so other Esc fallthroughs — like clearing a typed
+    // command — aren't disturbed.
+    if (key.escape && s.notifications.some(n => n.expiresAt > Date.now())) {
+      dispatch({ type: 'DISMISS_OLDEST_NOTIFICATION' });
       return;
     }
   }, [exit, api])); // Stable deps only — reads stateRef.current for everything else
@@ -417,7 +423,10 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       return `${icon} ${state.chatTarget} \u00b7 ${status}${state.activeEnsemble ? ` \u00b7 ${state.activeEnsemble}` : ''}`;
     }
     if (state.activeEnsemble) {
-      const count = state.players.length;
+      // Headline count excludes the maestro session (TUI's own dashboard
+      // attachment). The full list with the maestro is still available in
+      // `/players` and the status overlay.
+      const count = filterRealPlayers(state.players).length;
       const conductorInfo = state.conductorName ? '' : ' \u00b7 No conductor';
       return `${state.activeEnsemble} \u00b7 ${count} player${count !== 1 ? 's' : ''}${conductorInfo} \u00b7 Connected`;
     }
@@ -518,37 +527,36 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     })),
   []);
 
-  // Palette filter state — updated via onInputChange ref callback (no dispatch per keystroke)
-  const [paletteFilter, setPaletteFilter] = useState('');
+  // Palette filter state — updated via onInputChange ref callback (no dispatch per keystroke).
+  // Stores the full PaletteContext (mode + partial + replacePrefix) so the palette can
+  // show player names for `/restart <partial>`-style player-arg inputs, not just bare
+  // `/cmd` and `@name` inputs.
+  const [paletteCtx, setPaletteCtx] = useState<ReturnType<typeof classifyPaletteInput>>(null);
   const handleInputChange = useCallback((value: string) => {
     inputValueRef.current = value;
-    const trimmed = value.trimStart();
-    if ((trimmed.startsWith('/') || trimmed.startsWith('@')) && !trimmed.includes(' ')) {
-      setPaletteFilter(trimmed.toLowerCase());
-    } else {
-      setPaletteFilter(prev => prev === '' ? prev : '');
-    }
+    const next = classifyPaletteInput(value);
+    // Reference-equal no-op avoidance: only dispatch when mode/partial actually changed.
+    setPaletteCtx(prev => {
+      if (prev === next) return prev;
+      if (prev && next && prev.mode === next.mode && prev.partial === next.partial && prev.replacePrefix === next.replacePrefix) {
+        return prev;
+      }
+      return next;
+    });
   }, []);
 
   // Player commands and subcommand map imported from commands.ts
 
-  const paletteIsPlayerMode = paletteFilter.startsWith('@');
-
   const filteredPaletteCommands = useMemo(() => {
-    if (!state.paletteVisible) return [];
-    if (paletteIsPlayerMode) {
-      const partial = paletteFilter.slice(1); // strip @
-      return playerNamesList
-        .filter(n => {
-          const lower = n.toLowerCase();
-          return !partial || lower.startsWith(partial) || lower.split('-').some(seg => seg.startsWith(partial));
-        })
-        .map(n => ({ name: n, usage: `@${n}`, description: '' }));
+    if (!state.paletteVisible || !paletteCtx) return [];
+    if (paletteCtx.mode === 'player' || paletteCtx.mode === 'player-arg') {
+      return filterPlayerNames(playerNamesList, paletteCtx.partial)
+        .map(n => ({ name: n, usage: `${paletteCtx.replacePrefix}${n}`, description: '' }));
     }
-    const cmdFilter = paletteFilter.startsWith('/') ? paletteFilter.slice(1) : paletteFilter;
-    if (!cmdFilter) return allPaletteCommands;
-    return allPaletteCommands.filter(c => c.name.startsWith(cmdFilter));
-  }, [state.paletteVisible, paletteFilter, paletteIsPlayerMode, allPaletteCommands, playerNamesList]);
+    // command mode
+    if (!paletteCtx.partial) return allPaletteCommands;
+    return allPaletteCommands.filter(c => c.name.startsWith(paletteCtx.partial));
+  }, [state.paletteVisible, paletteCtx, allPaletteCommands, playerNamesList]);
 
   // Clamp palette index
   const clampedPaletteIndex = Math.min(state.paletteIndex, Math.max(0, filteredPaletteCommands.length - 1));
@@ -568,15 +576,18 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   }, [state.paletteIndex, filteredPaletteCommands.length]);
 
   const handlePaletteSelect = useCallback(() => {
-    if (filteredPaletteCommands.length > 0) {
+    if (filteredPaletteCommands.length > 0 && paletteCtx) {
       const selected = filteredPaletteCommands[clampedPaletteIndex];
-      const prefix = paletteIsPlayerMode ? '@' : '/';
-      const value = `${prefix}${selected.name} `;
+      // replacePrefix already carries the right leading characters:
+      //   command mode    → '/'         → `${/}recruit `
+      //   player mode     → '@'         → `${@}conductor `
+      //   player-arg mode → '/restart ' → `${/restart }conductor `
+      const value = `${paletteCtx.replacePrefix}${selected.name} `;
       promptRef.current?.setValue(value);
       inputValueRef.current = value;
       dispatch({ type: 'HIDE_PALETTE' });
     }
-  }, [filteredPaletteCommands, clampedPaletteIndex, paletteIsPlayerMode]);
+  }, [filteredPaletteCommands, clampedPaletteIndex, paletteCtx]);
 
   // ── Command submission handler ──
   const handleSubmit = useCallback(async (input: string) => {
@@ -592,7 +603,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
 
     if (parsed) {
       // Slash command
-      if (parsed.name === 'quit') {
+      if (parsed.name === 'quit' || parsed.name === 'exit') {
         exit();
         return;
       }
@@ -655,15 +666,12 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       }
 
       if (!isValidCommand(parsed.name)) {
-        dispatch({
-          type: 'COMMIT_STATIC',
-          item: {
-            id: nextStaticId(),
-            type: 'error',
-            content: `Unknown command: /${parsed.name}. Type /help for available commands.`,
-            timestamp: Date.now(),
-          },
-        });
+        const migrationHint = removedSlashCommandHelp(parsed.name);
+        commitNotification(
+          dispatch,
+          'error',
+          migrationHint ?? `Unknown command: /${parsed.name}. Type /help for available commands.`,
+        );
         return;
       }
 
@@ -687,15 +695,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         const ctx = { activeEnsemble: s.activeEnsemble, defaultAgent };
         await cmd.handler(parsed.args, dispatch, api, ctx);
       } catch (err) {
-        dispatch({
-          type: 'COMMIT_STATIC',
-          item: {
-            id: nextStaticId(),
-            type: 'error',
-            content: `Error running /${parsed.name}: ${err}`,
-            timestamp: Date.now(),
-          },
-        });
+        commitNotification(dispatch, 'error', `Error running /${parsed.name}: ${err}`);
       }
     } else if (s.activeEnsemble) {
       // Bare text → route via @player or to conductor
@@ -705,30 +705,22 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           // @player message → send directly to that player
           const [, targetPlayer, message] = atMatch;
           dispatch({ type: 'APPEND_SENT_MESSAGE', to: targetPlayer, text: `@${targetPlayer} ${message}` });
-          api.sendAsMaestro(s.activeEnsemble!, targetPlayer, message).catch(err => dispatch({
-            type: 'COMMIT_STATIC',
-            item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to deliver to @${targetPlayer}: ${err}`, timestamp: Date.now() },
-          }));
+          api.sendAsMaestro(s.activeEnsemble!, targetPlayer, message).catch(err =>
+            commitNotification(dispatch, 'error', `\u2717 Failed to deliver to @${targetPlayer}: ${err}`),
+          );
         } else if (s.conductorName || s.hasConductor) {
           // No @prefix → send to conductor
           const conductorTarget = s.conductorName || 'conductor';
           dispatch({ type: 'APPEND_SENT_MESSAGE', to: conductorTarget, text: trimmed });
-          api.sendCommand(s.activeEnsemble!, trimmed, 'maestro').catch(err => dispatch({
-            type: 'COMMIT_STATIC',
-            item: { id: nextStaticId(), type: 'error', content: `\u2717 Failed to deliver: ${err}`, timestamp: Date.now() },
-          }));
+          api.sendCommand(s.activeEnsemble!, trimmed, 'maestro').catch(err =>
+            commitNotification(dispatch, 'error', `\u2717 Failed to deliver: ${err}`),
+          );
         } else {
           // No conductor — show error
-          dispatch({
-            type: 'COMMIT_STATIC',
-            item: { id: nextStaticId(), type: 'error', content: 'No conductor. Use @player to message directly, or /recruit a conductor.', timestamp: Date.now() },
-          });
+          commitNotification(dispatch, 'error', 'No conductor. Use @player to message directly, or /recruit a conductor.');
         }
       } catch (err) {
-        dispatch({
-          type: 'COMMIT_STATIC',
-          item: { id: nextStaticId(), type: 'error', content: `\u2717 Error: ${err}`, timestamp: Date.now() },
-        });
+        commitNotification(dispatch, 'error', `\u2717 Error: ${err}`);
       }
     } else {
       // Bare text in main mode — hint to use commands
@@ -794,32 +786,34 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           const ensembles = await api.discoverEnsembles();
           dispatch({ type: 'REFRESH_ENSEMBLES', ensembles });
 
-          // Auto-connect only when exactly 1 ensemble AND not in splash mode
-          // Splash handles ensemble selection via Enter key
-          if (ensembles.length === 1 && !s.activeEnsemble && s.phase !== 'splash') {
-            const autoEns = ensembles[0].name;
-            dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: autoEns });
-            dispatch({
-              type: 'COMMIT_STATIC',
-              item: { id: `auto-${Date.now()}`, type: 'info', content: `\u2714 Connected to ensemble: ${autoEns}`, timestamp: Date.now() },
-            });
-            // Discover conductor but don't auto-enter chat — let user navigate
-            try {
-              const players = await api.getPlayers(autoEns);
-              const conductor = players.find(p => p.isConductor);
-              if (conductor) {
-                dispatch({ type: 'SET_CONDUCTOR', name: conductor.playerId });
-              }
-            } catch { /* best effort */ }
-          }
+          // Intentionally no auto-select: HomeView is an explicit picker
+          // (Online / Paused / Offline, arrow keys + Enter). Auto-selecting
+          // on the poller was bouncing users back into a just-shut-down
+          // ensemble after `/shutdown`, `/back`, or `/disband`. Splash
+          // handles its own selection via Enter; everywhere else, the user
+          // picks from HomeView.
         } else {
           // Single source: maestro workflow for players, schedules, and ensemble chat
           const ens = s.activeEnsemble!;
-          const [players, schedules, chatResult] = await Promise.all([
+          const [players, schedules, chatResult, paused, held] = await Promise.all([
             api.getPlayers(ens),
             api.getSchedules(ens),
             api.getEnsembleChat(ens, 0, 50),
+            // Bug B: poll the maestro hub's paused flag so the StatusBar
+            // surfaces it immediately. Returns false on hub-not-running so
+            // bare ensembles don't render the indicator. Cheap RPC; runs
+            // alongside the existing poll batch with no extra wakeups.
+            api.isMaestroPaused(ens),
+            // #306 follow-up: poll for any session with `outboxLocked`
+            // (held). Independent of paused — `/load_lineup` flips both
+            // simultaneously but `/play` only clears pause. Without this
+            // the user unpauses an ensemble and watches every player
+            // stay frozen behind the locked outbox.
+            api.isAnySessionHeld(ens),
           ]);
+
+          dispatch({ type: 'SET_ENSEMBLE_PAUSED', paused });
+          dispatch({ type: 'SET_ENSEMBLE_HELD', held });
 
           // Map ensemble chat to conversation format for ConversationStream
           const conversation = chatResult.messages.map(m => ({
@@ -899,14 +893,18 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     const a = state.recruitState.answers;
 
     try {
-      const parts = [`/recruit ${a.name}`];
-      if (a.playerType) parts.push(`--type "${a.playerType}"`);
-      if (a.agent !== 'claude') parts.push(`--agent ${a.agent}`);
-      if (a.workDir) parts.push(`--dir "${a.workDir}"`);
-      if (a.host !== 'localhost') parts.push(`--host ${a.host}`);
-      if (a.initialMessage) parts.push(`-- ${a.initialMessage}`);
-
-      await api.sendCommand(activeEns, parts.join(' '), 'maestro');
+      // #306: Direct TempoClient path — submit the recruit entry on the
+      // TUI's own maestro session instead of round-tripping through the
+      // conductor's Claude Code session. Works when no conductor is present
+      // (the wizard's original use-case) and eliminates the 2-5s LLM hop.
+      await api.recruit(activeEns, {
+        name: a.name,
+        workDir: a.workDir,
+        agent: a.agent,
+        ...(a.playerType ? { playerType: a.playerType } : {}),
+        ...(a.host && a.host !== 'localhost' ? { host: a.host } : {}),
+        ...(a.initialMessage ? { initialMessage: a.initialMessage } : {}),
+      });
       dispatch({ type: 'RECRUIT_DONE' });
       dispatch({
         type: 'COMMIT_STATIC',
@@ -1002,16 +1000,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     dispatch({ type: 'CREATE_ENSEMBLE_SUBMIT' });
     const { name, workDir, lineup } = wizState.answers;
     try {
-      const { execFile } = require('child_process') as typeof import('child_process');
-      const args = lineup
-        ? ['up', name, '--lineup', lineup]
-        : ['up', name];
-      await new Promise<void>((resolve, reject) => {
-        execFile('claude-tempo', args, { cwd: workDir, timeout: 60000, shell: true }, (err: Error | null, _stdout: string, stderr: string) => {
-          if (err) reject(new Error(stderr?.trim() || err.message || 'Unknown error'));
-          else resolve();
-        });
-      });
+      await api.createEnsemble({ ensemble: name, workDir, ...(lineup ? { lineup } : {}) });
       dispatch({
         type: 'COMMIT_STATIC',
         item: { id: nextStaticId(), type: 'info', content: `\u2714 Ensemble "${name}" created.`, timestamp: Date.now() },
@@ -1020,13 +1009,169 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     } catch (err) {
       dispatch({ type: 'CREATE_ENSEMBLE_DONE', error: err instanceof Error ? err.message : String(err) });
     }
-  }, []);
+  }, [api]);
   const handleCreateEnsCancel = useCallback(() => {
     dispatch({ type: 'EXIT_CREATE_ENSEMBLE' });
   }, []);
   const handleCreateEnsDone = useCallback(() => {
     dispatch({ type: 'EXIT_CREATE_ENSEMBLE' });
   }, []);
+
+  // ── Home view ─────────────────────────────────────────────────────────
+  const [cwdGitRoot] = useState<string | null>(() => {
+    const { getGitInfo } = require('../git-info') as typeof import('../git-info');
+    return getGitInfo(process.cwd()).gitRoot ?? null;
+  });
+
+  const bootstrapInitial = useMemo<HomeViewInitial>(() => ({
+    ensembles: state.ensembles ?? [],
+    cwdGitRoot,
+    badges: { orphanCount: 0 },
+  }), [state.ensembles, cwdGitRoot]);
+
+  const handleHomeEnter = useCallback((name: string) => {
+    dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: name });
+  }, []);
+
+  const handleHomeQuit = useCallback(() => {
+    exit();
+  }, [exit]);
+
+  const handleHomeOpenNew = useCallback(() => {
+    // #306: Use the full CreateEnsembleWizard (same as Splash's `+ Create new
+    // ensemble` row) so the user gets the multi-step name → dir → lineup
+    // flow instead of the bare single-prompt NewEnsembleModal.
+    dispatch({ type: 'ENTER_CREATE_ENSEMBLE' });
+  }, []);
+
+  const handleHomeOpenLineup = useCallback(() => {
+    dispatch({ type: 'OPEN_HOME_MODAL', modal: { type: 'lineup' } });
+  }, []);
+
+  const handleHomeOpenRestore = useCallback((ensembleName: string) => {
+    const match = state.ensembles?.find((e) => e.name === ensembleName);
+    dispatch({
+      type: 'OPEN_HOME_MODAL',
+      modal: {
+        type: 'restore',
+        ensemble: ensembleName,
+        playerCount: Math.max(0, (match?.playerCount ?? 1) - (match?.hasConductor ? 1 : 0)),
+        conductor: match?.hasConductor ? 'conductor' : undefined,
+      },
+    });
+  }, [state.ensembles]);
+
+  const handleHomeModalClose = useCallback(() => {
+    dispatch({ type: 'CLOSE_HOME_MODAL' });
+  }, []);
+
+  const handleHomeNewSubmit = useCallback(async (name: string) => {
+    dispatch({ type: 'SET_HOME_MODAL_STATUS', submitting: true });
+    try {
+      await api.createEnsemble({ ensemble: name });
+      dispatch({ type: 'CLOSE_HOME_MODAL' });
+      dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: name });
+    } catch (err) {
+      dispatch({
+        type: 'SET_HOME_MODAL_STATUS',
+        submitting: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [api]);
+
+  const handleHomeLineupSubmit = useCallback(async (args: { ensemble: string; lineupPath: string }) => {
+    dispatch({ type: 'SET_HOME_MODAL_STATUS', submitting: true });
+    try {
+      await api.createEnsemble({ ensemble: args.ensemble, lineup: args.lineupPath });
+      dispatch({ type: 'CLOSE_HOME_MODAL' });
+      dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: args.ensemble });
+    } catch (err) {
+      dispatch({
+        type: 'SET_HOME_MODAL_STATUS',
+        submitting: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [api]);
+
+  // /destroy <ensemble> typed-name confirmation handlers (#291)
+  const handleEnsembleDestroyInput = useCallback((next: string) => {
+    dispatch({ type: 'ENSEMBLE_DESTROY_INPUT', input: next });
+  }, []);
+
+  const handleEnsembleDestroyCancel = useCallback(() => {
+    dispatch({ type: 'CANCEL_ENSEMBLE_DESTROY' });
+    dispatch({
+      type: 'COMMIT_STATIC',
+      item: { id: nextStaticId(), type: 'info', content: 'Destroy cancelled.', timestamp: Date.now() },
+    });
+  }, []);
+
+  const handleEnsembleDestroySubmit = useCallback(async () => {
+    const pending = stateRef.current.confirmingEnsembleDestroy;
+    if (!pending) return;
+    if (pending.input !== pending.ensemble) {
+      dispatch({ type: 'ENSEMBLE_DESTROY_MISMATCH' });
+      return;
+    }
+    dispatch({ type: 'ENSEMBLE_DESTROY_SUBMIT_BUSY' });
+    const target = pending.ensemble;
+    try {
+      const summary = await api.destroy(target);
+      dispatch({ type: 'CANCEL_ENSEMBLE_DESTROY' });
+      if (summary && 'details' in summary) {
+        // #306: aggregate ensemble-destroy summary surfaces as a bottom-pinned
+        // notification so it's still visible after we navigate the user home.
+        commitNotification(
+          dispatch,
+          summary.failed > 0 ? 'error' : 'info',
+          `\u2714 Destroyed "${target}" \u2014 ${summary.destroyed} destroyed, ${summary.terminated} terminated, ${summary.failed} failed.`,
+        );
+      }
+      dispatch({ type: 'NAVIGATE_HOME' });
+    } catch (err) {
+      dispatch({ type: 'CANCEL_ENSEMBLE_DESTROY' });
+      commitNotification(
+        dispatch,
+        'error',
+        `\u2717 Destroy failed for "${target}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }, [api]);
+
+  const handleHomeRestoreConfirm = useCallback(async () => {
+    const modal = stateRef.current.homeModal;
+    if (!modal || modal.type !== 'restore') return;
+    const target = modal.ensemble;
+    dispatch({ type: 'SET_HOME_MODAL_STATUS', submitting: true });
+    try {
+      const summary = await api.restore(target);
+      dispatch({ type: 'CLOSE_HOME_MODAL' });
+      if (summary.failed > 0) {
+        commitNotification(
+          dispatch,
+          'error',
+          `Restore partial: ${summary.reattached} queued, ${summary.failed} failed, ${summary.skipped} skipped.`,
+        );
+      }
+      // Mirror the `/restore` slash two-op: ensure a conductor terminal is
+      // live so the home-view restore path never strands the user on a
+      // reattached-but-conductor-less ensemble.
+      const { ensureConductorSpawned } = await import('../client/ensure-conductor-spawned');
+      const conductorOutcome = await ensureConductorSpawned(target, api);
+      if (!conductorOutcome.spawned && conductorOutcome.reason === 'spawnFailed') {
+        commitNotification(dispatch, 'error', `Conductor spawn failed for "${target}": ${conductorOutcome.error}`);
+      }
+      dispatch({ type: 'NAVIGATE_ENSEMBLE', ensemble: target });
+    } catch (err) {
+      dispatch({
+        type: 'SET_HOME_MODAL_STATUS',
+        submitting: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [api]);
 
   // ── Memoize chat messages (must be before early return — Rules of Hooks) ──
   const memoizedChatData = useMemo(() => {
@@ -1175,6 +1320,65 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       });
     }
 
+    // Home-view modals (#290). Render in place of HomeView so the modal
+    // owns keyboard focus — HomeView's own useInput short-circuits when a
+    // modal is up (matches the wizard pattern).
+    if (state.homeModal?.type === 'new') {
+      return React.createElement(NewEnsembleModal, {
+        onSubmit: handleHomeNewSubmit,
+        onCancel: handleHomeModalClose,
+        submitting: state.homeModalSubmitting,
+        error: state.homeModalError,
+      });
+    }
+    if (state.homeModal?.type === 'lineup') {
+      return React.createElement(LoadLineupModal, {
+        onSubmit: handleHomeLineupSubmit,
+        onCancel: handleHomeModalClose,
+        submitting: state.homeModalSubmitting,
+        error: state.homeModalError,
+      });
+    }
+    if (state.homeModal?.type === 'restore') {
+      return React.createElement(RestoreConfirmModal, {
+        ensemble: state.homeModal.ensemble,
+        playerCount: state.homeModal.playerCount,
+        conductorName: state.homeModal.conductor,
+        onConfirm: handleHomeRestoreConfirm,
+        onCancel: handleHomeModalClose,
+        submitting: state.homeModalSubmitting,
+        error: state.homeModalError,
+      });
+    }
+
+    // /destroy <ensemble> typed-name confirmation modal (#291)
+    if (state.confirmingEnsembleDestroy) {
+      return React.createElement(DestroyConfirmModal, {
+        ensemble: state.confirmingEnsembleDestroy.ensemble,
+        input: state.confirmingEnsembleDestroy.input,
+        error: state.confirmingEnsembleDestroy.error,
+        submitting: state.confirmingEnsembleDestroy.submitting,
+        onInput: handleEnsembleDestroyInput,
+        onSubmit: handleEnsembleDestroySubmit,
+        onCancel: handleEnsembleDestroyCancel,
+      });
+    }
+
+    // Home view (#290) — renders when on the 'home' navigation and the
+    // app is past the splash connection check. The view pre-renders from
+    // the current `ensembles` snapshot and refreshes itself on a timer.
+    if (state.phase === 'main' && state.view === 'home' && state.splashConnected) {
+      return React.createElement(HomeView, {
+        initial: bootstrapInitial,
+        client: api,
+        onEnterEnsemble: handleHomeEnter,
+        onCreateEnsemble: handleHomeOpenNew,
+        onLoadLineup: handleHomeOpenLineup,
+        onRestoreEnsemble: handleHomeOpenRestore,
+        onQuit: handleHomeQuit,
+      });
+    }
+
     if (state.chatTarget && memoizedChatData) {
       const targetPlayer = state.players.find(p => p.playerId === state.chatTarget);
 
@@ -1306,6 +1510,21 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     );
   }
 
+  // ── Notification expiry tick (#306) ──
+  // A single interval keeps the notifications stack fresh — when any
+  // notification exists, bump the tick counter every 500ms so the render
+  // pass re-evaluates `expiresAt > Date.now()` and drops expired entries
+  // from view. Auto-stops (cleared to 0) when the stack empties, avoiding
+  // a background timer when there's nothing to watch. Cheap — one integer
+  // diff per tick, and only while notifications are live.
+  useEffect(() => {
+    if (state.notifications.length === 0) return undefined;
+    const id = setInterval(() => {
+      dispatch({ type: 'NOTIFICATION_TICK' });
+    }, 500);
+    return () => clearInterval(id);
+  }, [state.notifications.length]);
+
   // ── Static items — rendered once to stdout, become native terminal scrollback ──
   const { Static } = useInk();
 
@@ -1315,7 +1534,31 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   const paletteLines = (state.paletteVisible && filteredPaletteCommands.length > 0)
     ? Math.min(filteredPaletteCommands.length, 6) + (filteredPaletteCommands.length > 6 ? 2 : 0) // items + scroll indicators
     : 0;
-  const FOOTER_LINES = 4 + paletteLines; // StatusBar + divider + PromptArea + bottom divider + palette
+  // #306: Notifications stack lives below the palette. Each live notification
+  // takes one line; when the stack is empty, this contributes zero to the
+  // footer so the main content area gets the full terminal height back.
+  const now = Date.now();
+  const notificationLines = state.notifications.filter(n => n.expiresAt > now).length;
+  // Pinned confirmation lines — persist exactly as long as the state does,
+  // no TTL. Each active confirmation state contributes one line above the
+  // notifications stack. Keeps the y/N prompt anchored below the input so
+  // it can't scroll away under new messages.
+  const confirmationLines = countPinnedConfirmationLines(state);
+  // #306 follow-up: Pinned paused/held tip — 1 row when an ensemble is
+  // paused or held (or both), 0 otherwise. Same accounting pattern as
+  // confirmationLines so the live content area reclaims the row when the
+  // tip auto-clears on state change.
+  const tipLines = countPinnedTipLines(state);
+  // #306: Hide the chat prompt on the home view. Home is a wizard/picker
+  // (arrow keys + Enter), not a chat target — there is no ensemble to talk
+  // to, and a visible input box double-fires Enter (HomeView's own useInput
+  // selects the row, PromptArea's useInput submits the empty buffer). The
+  // Splash phase already follows this pattern; home now mirrors it. When
+  // hidden we drop 2 lines from FOOTER_LINES (PromptArea row + the second
+  // divider) so the live content area reclaims that space.
+  const hidePrompt = isHomeView(state);
+  const promptFooterLines = hidePrompt ? 0 : 2; // PromptArea + bottom divider
+  const FOOTER_LINES = 2 + promptFooterLines + paletteLines + confirmationLines + tipLines + notificationLines; // StatusBar + divider + (PromptArea + bottom divider when shown) + palette + pinned confirmations + paused/held tip + notifications
   const contentHeight = Math.max(3, termRows - 1 - FOOTER_LINES);
 
   // Splash phase — full screen, no chrome (title/status/prompt hidden)
@@ -1385,36 +1628,275 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       scheduleCount: state.schedules.length,
       connected: true,
       conductorName: state.conductorName,
+      ensemblePaused: state.ensemblePaused,
+      ensembleHeld: state.ensembleHeld,
     }),
     // Bottom divider (1 Text node, no Box wrapper)
     React.createElement(Text, { color: THEME.border }, ` ${dividerLine} `),
-    // Prompt area (1 Box + 2-3 Text nodes — uncontrolled, no parent dispatch per keystroke)
-    React.createElement(PromptArea, {
-      hints: promptHints,
-      onSubmit: handleSubmit,
-      disabled: (state.phase !== 'main' && state.phase !== 'chat') || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay || !!state.overlay,
-      commandNames: commandNamesList,
-      playerNames: playerNamesList,
-      initialHistory: cmdHistory,
-      onHistoryUpdate: handleHistoryUpdate,
-      onInputChange: handleInputChange,
-      paletteVisible: state.paletteVisible,
-      onPaletteToggle: handlePaletteToggle,
-      onPaletteUp: handlePaletteUp,
-      onPaletteDown: handlePaletteDown,
-      onPaletteSelect: handlePaletteSelect,
-      inputRef: promptRef,
-    }),
-    // Bottom divider (1 Text node)
-    React.createElement(Text, { color: THEME.border }, ` ${dividerLine} `),
+    // Prompt area + bottom divider — hidden on the home view (#306).
+    // Home is a picker, not a chat target; the input would either eat keys
+    // or double-fire Enter against HomeView's own useInput. Mirrors the
+    // Splash phase, which renders no prompt at all.
+    hidePrompt
+      ? null
+      : React.createElement(PromptArea, {
+          hints: promptHints,
+          onSubmit: handleSubmit,
+          disabled: (state.phase !== 'main' && state.phase !== 'chat') || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingEnsembleDestroy || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay || !!state.overlay,
+          commandNames: commandNamesList,
+          playerNames: playerNamesList,
+          initialHistory: cmdHistory,
+          onHistoryUpdate: handleHistoryUpdate,
+          onInputChange: handleInputChange,
+          paletteVisible: state.paletteVisible,
+          onPaletteToggle: handlePaletteToggle,
+          onPaletteUp: handlePaletteUp,
+          onPaletteDown: handlePaletteDown,
+          onPaletteSelect: handlePaletteSelect,
+          inputRef: promptRef,
+        }),
+    // Bottom divider (1 Text node) — also hidden when the prompt is hidden
+    // so the footer accounting in FOOTER_LINES stays consistent.
+    hidePrompt
+      ? null
+      : React.createElement(Text, { color: THEME.border }, ` ${dividerLine} `),
     // Command palette (1 Text node when visible)
     state.paletteVisible && filteredPaletteCommands.length > 0
       ? React.createElement(CommandPalette, {
           commands: filteredPaletteCommands,
           selectedIndex: clampedPaletteIndex,
-          prefix: paletteIsPlayerMode ? '@' : '/',
+          // Display prefix mirrors what the user's input would become on select.
+          prefix: paletteCtx?.replacePrefix ?? '/',
         })
       : null,
+    // Pinned confirmation prompts — sit directly below the prompt area,
+    // above the notifications stack. Unlike notifications, these have no
+    // TTL and persist exactly as long as the corresponding `confirming*`
+    // state field is set. Keeps the y/N (or typed-name) prompt visible
+    // even when new chat messages are flooding the scroll-up history.
+    renderPinnedConfirmations(state, Box, Text),
+    // #306 follow-up: paused/held informational tip. Dim color so it
+    // sits behind the warning-yellow confirmations and red-error
+    // notifications visually. Auto-clears on state change.
+    renderPinnedTip(state, Box, Text),
+    // #306: Bottom-pinned notifications — errors/warnings stay visible below
+    // the prompt until they TTL out (8s for errors, 5s otherwise) or the user
+    // hits Esc. Filters by `expiresAt` every render; the notificationTick
+    // counter forces periodic re-renders while entries are live.
+    renderNotifications(state.notifications, Box, Text),
     ), // closes live area Box
   ); // closes Fragment
+}
+
+/**
+ * #306: Render the bottom-pinned notification stack. Kept as a free function
+ * (not a component) so the caller composes Ink primitives directly — the
+ * App's render tree is already heavy with createElement calls, and a
+ * dedicated component for 10 lines of JSX would add a layout boundary for
+ * no gain.
+ */
+function renderNotifications(
+  notifications: TuiState['notifications'],
+  Box: React.ComponentType<any>,
+  Text: React.ComponentType<any>,
+): React.ReactNode {
+  const now = Date.now();
+  const live = notifications.filter(n => n.expiresAt > now);
+  if (live.length === 0) return null;
+  return React.createElement(
+    Box,
+    { flexDirection: 'column', paddingLeft: 1, paddingRight: 1 },
+    ...live.map(n => {
+      const icon = n.kind === 'error' ? '✗'
+        : n.kind === 'warn' ? '⚠'
+        : 'ⓘ';
+      const color = n.kind === 'error' ? THEME.error
+        : n.kind === 'warn' ? THEME.warning
+        : THEME.accent;
+      return React.createElement(
+        Text,
+        { key: `notif-${n.id}`, color },
+        `${icon}  ${stripLeadingIcon(n.content)}`,
+      );
+    }),
+  );
+}
+
+/**
+ * #306: Strip a leading kind-icon (`✗ `, `⚠ `, `ⓘ `) from notification
+ * content. Defensive: many call sites historically prepended the icon into
+ * the message string, and the renderer also prepends a kind-based icon —
+ * without this normalization the user sees the icon twice (e.g.
+ * `✗ ✗ Cannot destroy the conductor …`). Exported for unit testing.
+ */
+export function stripLeadingIcon(content: string): string {
+  return content.replace(/^[✗⚠ⓘ]\s+/u, '');
+}
+
+/**
+ * #306: True when the TUI is on the home picker view — `phase === 'main'`
+ * AND `view === 'home'`. The chat input has no target on this view (the
+ * ensemble has not been entered yet), and HomeView owns Enter to navigate
+ * its own row list. Render guard for PromptArea + the second divider so
+ * the input cannot double-fire alongside HomeView's own `useInput`.
+ *
+ * Pure function, exported so tests can pin the guard's logic without
+ * standing up an Ink render. Mirrors the splash-phase bypass pattern.
+ */
+export function isHomeView(state: Pick<TuiState, 'phase' | 'view'>): boolean {
+  return state.phase === 'main' && state.view === 'home';
+}
+
+/**
+ * #306: Build the pinned-confirmation line(s) for the current state. Returns
+ * an array (possibly empty) of `{ key, text }` entries — one per active
+ * `confirming*` state field. Rendered above the notifications stack by
+ * `renderPinnedConfirmations` and sized by `countPinnedConfirmationLines`
+ * so `FOOTER_LINES` reserves terminal rows correctly.
+ *
+ * Pure function, exported for unit testing — no Ink imports, no dispatch.
+ * The render helper below is the only caller that wraps these in Text nodes.
+ */
+export function pinnedConfirmationLines(
+  state: Pick<TuiState, 'confirmingStop' | 'confirmingStopReason' | 'confirmingDisband' | 'confirmingEnsembleDestroy' | 'confirmingLineup'>,
+): Array<{ key: string; text: string }> {
+  const out: Array<{ key: string; text: string }> = [];
+  if (state.confirmingStop) {
+    const reason = state.confirmingStopReason ? ` Reason: ${state.confirmingStopReason}.` : '';
+    out.push({
+      key: 'confirm-stop',
+      text: `⚠  Destroy ${state.confirmingStop}? Press y to confirm, n to cancel.${reason}`,
+    });
+  }
+  if (state.confirmingDisband) {
+    out.push({
+      key: 'confirm-disband',
+      text: `⚠  Disband ensemble "${state.confirmingDisband}"? All sessions will be terminated. Press y to confirm, n to cancel.`,
+    });
+  }
+  if (state.confirmingEnsembleDestroy) {
+    // Typed-name gate — the detailed input UX lives in the full-screen
+    // modal; this pinned reminder mirrors the modal's question so the
+    // bottom of the screen still answers "what am I being asked?" at a
+    // glance. Shown even while the modal is up for layout consistency
+    // with the other confirmation states.
+    out.push({
+      key: 'confirm-ensemble-destroy',
+      text: `⚠  Destroy ensemble "${state.confirmingEnsembleDestroy.ensemble}"? Type the ensemble name to confirm, Esc to cancel.`,
+    });
+  }
+  if (state.confirmingLineup) {
+    out.push({
+      key: 'confirm-lineup',
+      text: `⚠  ${state.confirmingLineup.summary}? Press y to confirm, n to cancel.`,
+    });
+  }
+  return out;
+}
+
+/**
+ * #306: Count of pinned confirmation lines — one per active `confirming*`
+ * state field. Consumed by the `FOOTER_LINES` reservation so the live
+ * content area shrinks when a confirmation is active, keeping the pinned
+ * prompt on-screen.
+ */
+export function countPinnedConfirmationLines(
+  state: Pick<TuiState, 'confirmingStop' | 'confirmingStopReason' | 'confirmingDisband' | 'confirmingEnsembleDestroy' | 'confirmingLineup'>,
+): number {
+  return pinnedConfirmationLines(state).length;
+}
+
+/**
+ * #306 follow-up: Build the pinned tip line for the current paused/held
+ * state. Returns `null` when neither flag is set — no tip should render.
+ *
+ * The tip appears below the input prompt in a dim color (informational,
+ * not an error or warning) and tells the user which slash commands they
+ * need to fully resume the ensemble. `/load_lineup` flips both flags;
+ * `/play` clears only paused; `/go` clears only held — without this
+ * tip users would unpause an ensemble and stare at frozen players.
+ *
+ * Pure function, exported for unit testing — no Ink imports.
+ */
+export function pinnedTipLine(
+  state: Pick<TuiState, 'ensemblePaused' | 'ensembleHeld' | 'activeEnsemble'>,
+): { key: string; text: string } | null {
+  // Hide tips on the home view — there's no ensemble context to act on,
+  // and the prompt itself is hidden there too (see `hidePrompt` in App).
+  if (!state.activeEnsemble) return null;
+  if (state.ensemblePaused && state.ensembleHeld) {
+    return {
+      key: 'tip-paused-held',
+      text: 'Tip: Type /play to unpause + /go to release held players.',
+    };
+  }
+  if (state.ensemblePaused) {
+    return { key: 'tip-paused', text: 'Tip: Type /play to resume.' };
+  }
+  if (state.ensembleHeld) {
+    return { key: 'tip-held', text: 'Tip: Type /go to release held players.' };
+  }
+  return null;
+}
+
+/**
+ * Count of pinned tip lines (0 or 1). Mirrors
+ * {@link countPinnedConfirmationLines} so `FOOTER_LINES` can reserve a
+ * row for the tip without re-evaluating the state shape twice.
+ */
+export function countPinnedTipLines(
+  state: Pick<TuiState, 'ensemblePaused' | 'ensembleHeld' | 'activeEnsemble'>,
+): number {
+  return pinnedTipLine(state) ? 1 : 0;
+}
+
+/**
+ * #306: Render the pinned confirmation prompts as Ink Text nodes. Kept
+ * free-function (mirroring `renderNotifications`) because the App's root
+ * render tree is already `createElement`-heavy and a dedicated component
+ * would add a layout boundary for zero gain. Uses THEME.warning so the
+ * user's eye is drawn away from the chat scroll-up area.
+ */
+function renderPinnedConfirmations(
+  state: TuiState,
+  Box: React.ComponentType<any>,
+  Text: React.ComponentType<any>,
+): React.ReactNode {
+  const lines = pinnedConfirmationLines(state);
+  if (lines.length === 0) return null;
+  return React.createElement(
+    Box,
+    { flexDirection: 'column', paddingLeft: 1, paddingRight: 1 },
+    ...lines.map(line =>
+      React.createElement(
+        Text,
+        { key: line.key, color: THEME.warning, bold: true },
+        line.text,
+      ),
+    ),
+  );
+}
+
+/**
+ * #306 follow-up: Render the pinned paused/held tip below the input. Dim
+ * (THEME.dim) so it reads as informational and doesn't compete visually
+ * with the yellow confirmation prompts above or red notifications below.
+ * Auto-clears when the state changes — no user dismissal needed.
+ */
+function renderPinnedTip(
+  state: TuiState,
+  Box: React.ComponentType<any>,
+  Text: React.ComponentType<any>,
+): React.ReactNode {
+  const tip = pinnedTipLine(state);
+  if (!tip) return null;
+  return React.createElement(
+    Box,
+    { flexDirection: 'column', paddingLeft: 1, paddingRight: 1 },
+    React.createElement(
+      Text,
+      { key: tip.key, color: THEME.dim },
+      tip.text,
+    ),
+  );
 }

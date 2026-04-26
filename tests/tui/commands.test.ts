@@ -135,12 +135,12 @@ describe('command registry', () => {
     expect(isValidCommand('nope')).toBe(false);
   });
 
-  it('isValidCommand rejects removed aliases (regression for /home, /maestro, etc.)', () => {
-    // Per CLAUDE.md: /home, /maestro, /dashboard, /exit, /unschedule are NOT registered.
-    expect(isValidCommand('home')).toBe(false);
+  it('isValidCommand rejects removed aliases', () => {
+    // `/home` is now a first-class verb (#291) — see slash-commands.test.ts.
+    // `/exit` is now an alias for `/quit` (#306).
+    // The remaining ones stayed removed from the v0.26 cleanup.
     expect(isValidCommand('maestro')).toBe(false);
     expect(isValidCommand('dashboard')).toBe(false);
-    expect(isValidCommand('exit')).toBe(false);
     expect(isValidCommand('unschedule')).toBe(false);
   });
 

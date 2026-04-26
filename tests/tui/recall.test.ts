@@ -134,7 +134,7 @@ describe('/recall TUI handler (#128)', () => {
     expect(action.title).toBe('Recall \u00B7 alice');
   });
 
-  it('flag parse error dispatches a COMMIT_STATIC error, not an overlay', async () => {
+  it('flag parse error dispatches a notification, not an overlay', async () => {
     const dispatch = vi.fn<(a: TuiAction) => void>();
     const handler = COMMANDS['recall'].handler!;
     await handler(['--nope'], dispatch, makeApi(received, []), CTX);
@@ -144,8 +144,10 @@ describe('/recall TUI handler (#128)', () => {
       ([a]) => (a as { type: string }).type === 'SHOW_COMMAND_OVERLAY',
     );
     expect(overlays.length).toBe(0);
+    // #306: error feedback rides the bottom-pinned notification stack instead
+    // of COMMIT_STATIC so it survives long stretches of chat activity above.
     const errors = dispatch.mock.calls.filter(
-      ([a]) => (a as { type: string }).type === 'COMMIT_STATIC',
+      ([a]) => (a as { type: string }).type === 'ADD_NOTIFICATION',
     );
     expect(errors.length).toBe(1);
   });

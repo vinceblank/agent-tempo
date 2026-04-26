@@ -104,9 +104,12 @@ schedules:
       expect(lineup.schedules![0].count).to.equal(5);
     });
 
-    it('loads a minimal lineup with only name and players', function () {
+    it('loads a minimal lineup with a bare conductor block and players', function () {
+      // Every lineup must define a conductor block, but the inner fields
+      // may all be omitted — the loader preserves whatever was supplied.
       const yamlContent = `
 name: minimal
+conductor: {}
 players:
   - name: solo-player
 `;
@@ -118,7 +121,7 @@ players:
       expect(lineup.name).to.equal('minimal');
       expect(lineup.players).to.have.lengthOf(1);
       expect(lineup.players[0].name).to.equal('solo-player');
-      expect(lineup.conductor).to.be.undefined;
+      expect(lineup.conductor).to.exist;
       expect(lineup.schedules).to.be.undefined;
     });
   });
@@ -135,21 +138,36 @@ players:
 
     it('rejects lineup with missing players', function () {
       const filePath = join(tmpDir, 'no-players.yaml');
-      writeFileSync(filePath, `name: test\n`);
+      writeFileSync(filePath, `name: test\nconductor: {}\n`);
 
       expect(() => loadLineup(filePath)).to.throw('"players" must be an array');
     });
 
+    it('rejects lineup with missing conductor', function () {
+      const filePath = join(tmpDir, 'no-conductor.yaml');
+      writeFileSync(filePath, `name: solo\nplayers:\n  - name: p1\n`);
+
+      expect(() => loadLineup(filePath)).to.throw(/lineup "solo" is missing a conductor/);
+      expect(() => loadLineup(filePath)).to.throw(/CLAUDE_TEMPO_DEFAULT_AGENT/);
+    });
+
+    it('rejects lineup where conductor is malformed (non-object)', function () {
+      const filePath = join(tmpDir, 'bad-conductor.yaml');
+      writeFileSync(filePath, `name: bad\nconductor: "not-an-object"\nplayers:\n  - name: p1\n`);
+
+      expect(() => loadLineup(filePath)).to.throw(/lineup "bad" has a malformed conductor/);
+    });
+
     it('rejects lineup with invalid player name', function () {
       const filePath = join(tmpDir, 'bad-player-name.yaml');
-      writeFileSync(filePath, `name: test\nplayers:\n  - name: "bad name!"\n`);
+      writeFileSync(filePath, `name: test\nconductor: {}\nplayers:\n  - name: "bad name!"\n`);
 
       expect(() => loadLineup(filePath)).to.throw('invalid characters');
     });
 
     it('rejects lineup with empty player name', function () {
       const filePath = join(tmpDir, 'empty-player-name.yaml');
-      writeFileSync(filePath, `name: test\nplayers:\n  - name: ""\n`);
+      writeFileSync(filePath, `name: test\nconductor: {}\nplayers:\n  - name: ""\n`);
 
       expect(() => loadLineup(filePath)).to.throw('players[0].name is required');
     });
@@ -172,14 +190,14 @@ players:
 
     it('rejects schedule missing timing fields', function () {
       const filePath = join(tmpDir, 'bad-schedule.yaml');
-      writeFileSync(filePath, `name: test\nplayers:\n  - name: p1\nschedules:\n  - name: sched\n    message: hello\n    target: p1\n`);
+      writeFileSync(filePath, `name: test\nconductor: {}\nplayers:\n  - name: p1\nschedules:\n  - name: sched\n    message: hello\n    target: p1\n`);
 
       expect(() => loadLineup(filePath)).to.throw('at least one of: at, delay, every, cron');
     });
 
     it('accepts schedule with cron timing', function () {
       const filePath = join(tmpDir, 'cron-schedule.yaml');
-      writeFileSync(filePath, `name: test\nplayers:\n  - name: p1\nschedules:\n  - name: nightly\n    message: run\n    target: p1\n    cron: "0 2 * * *"\n    timezone: America/Detroit\n`);
+      writeFileSync(filePath, `name: test\nconductor: {}\nplayers:\n  - name: p1\nschedules:\n  - name: nightly\n    message: run\n    target: p1\n    cron: "0 2 * * *"\n    timezone: America/Detroit\n`);
 
       const lineup = loadLineup(filePath);
       expect(lineup.schedules).to.have.lengthOf(1);
@@ -189,7 +207,7 @@ players:
 
     it('accepts schedule with at + every combination', function () {
       const filePath = join(tmpDir, 'at-every-schedule.yaml');
-      writeFileSync(filePath, `name: test\nplayers:\n  - name: p1\nschedules:\n  - name: nightly-triage\n    message: run triage\n    target: p1\n    at: "2026-04-05T02:00:00Z"\n    every: 24h\n`);
+      writeFileSync(filePath, `name: test\nconductor: {}\nplayers:\n  - name: p1\nschedules:\n  - name: nightly-triage\n    message: run triage\n    target: p1\n    at: "2026-04-05T02:00:00Z"\n    every: 24h\n`);
 
       const lineup = loadLineup(filePath);
       expect(lineup.schedules).to.have.lengthOf(1);
@@ -199,14 +217,14 @@ players:
 
     it('rejects schedule missing message', function () {
       const filePath = join(tmpDir, 'sched-no-msg.yaml');
-      writeFileSync(filePath, `name: test\nplayers:\n  - name: p1\nschedules:\n  - name: sched\n    target: p1\n    every: 1h\n`);
+      writeFileSync(filePath, `name: test\nconductor: {}\nplayers:\n  - name: p1\nschedules:\n  - name: sched\n    target: p1\n    every: 1h\n`);
 
       expect(() => loadLineup(filePath)).to.throw('schedules[0].message is required');
     });
 
     it('rejects schedule missing target', function () {
       const filePath = join(tmpDir, 'sched-no-target.yaml');
-      writeFileSync(filePath, `name: test\nplayers:\n  - name: p1\nschedules:\n  - name: sched\n    message: hello\n    every: 1h\n`);
+      writeFileSync(filePath, `name: test\nconductor: {}\nplayers:\n  - name: p1\nschedules:\n  - name: sched\n    message: hello\n    every: 1h\n`);
 
       expect(() => loadLineup(filePath)).to.throw('schedules[0].target is required');
     });

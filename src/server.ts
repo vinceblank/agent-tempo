@@ -29,8 +29,10 @@ import { registerWhoAmITool } from './tools/who-am-i';
 import { registerBroadcastTool } from './tools/broadcast';
 import { registerRecallTool } from './tools/recall';
 import { registerReleaseTool } from './tools/release';
-import { registerPauseEnsembleTool } from './tools/pause-ensemble';
-import { registerResumeEnsembleTool } from './tools/resume-ensemble';
+import { registerPauseTool } from './tools/pause';
+import { registerPlayTool } from './tools/play';
+import { registerShutdownTool } from './tools/shutdown';
+import { registerRestoreTool } from './tools/restore';
 import { registerQualityGateTool } from './tools/quality-gate';
 import { registerEvaluateGateTool } from './tools/evaluate-gate';
 import { registerGatesTool } from './tools/gates';
@@ -39,7 +41,9 @@ import { registerStageTool } from './tools/stage';
 import { registerStagesTool } from './tools/stages';
 import { registerCancelStageTool } from './tools/cancel-stage';
 import { registerRestartTool } from './tools/restart';
-import { registerDetachTool } from './tools/detach';
+// NOTE: `registerDetachTool` is intentionally NOT re-exported on the MCP
+// surface (#287). The underlying `detach` outbox + signal plumbing is still
+// used internally by `shutdown` (fan-out detach to every session).
 import { registerDestroyTool } from './tools/destroy';
 import { registerMigrateTool } from './tools/migrate';
 import { registerAttachmentInfoTool } from './tools/attachment-info';
@@ -283,13 +287,15 @@ async function main() {
   registerBroadcastTool(mcpServer, client, config, getPlayerId, handle);
   registerRecallTool(mcpServer, handle, getPlayerId);
   registerReleaseTool(mcpServer, client, config, getPlayerId, handle);
-  registerPauseEnsembleTool(mcpServer, client, config, getPlayerId);
-  registerResumeEnsembleTool(mcpServer, client, config, getPlayerId);
+  registerPauseTool(mcpServer, client, config, getPlayerId);
+  registerPlayTool(mcpServer, client, config, getPlayerId);
+  registerShutdownTool(mcpServer, client, config, getPlayerId);
+  registerRestoreTool(mcpServer, client, config, getPlayerId);
   // PR-D new verbs — enqueue outbox entries on the caller's workflow; the
-  // session dispatch loop runs the `deliverDetach` / `deliverDestroy` /
-  // `deliverRestart` activities against the target.
+  // session dispatch loop runs the `deliverDestroy` / `deliverRestart`
+  // activities against the target. `detach` is no longer on the public MCP
+  // surface (#287); `shutdown` owns ensemble-scope detach.
   registerRestartTool(mcpServer, client, config, getPlayerId, handle);
-  registerDetachTool(mcpServer, client, config, getPlayerId, handle);
   registerDestroyTool(mcpServer, client, config, getPlayerId, handle);
   registerMigrateTool(mcpServer, client, config, getPlayerId, handle);
   registerAttachmentInfoTool(mcpServer, client, config);

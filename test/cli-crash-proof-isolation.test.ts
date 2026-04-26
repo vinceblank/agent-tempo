@@ -104,6 +104,9 @@ const CRASH_PROOF_MODULES: readonly CrashProofModule[] = [
   { name: 'upgrade-command', ts: 'src/cli/upgrade-command.ts', dist: 'dist/cli/upgrade-command.js' },
   // PR C — `claude-tempo config` (connection test uses dynamic import)
   { name: 'config-command', ts: 'src/cli/config-command.ts', dist: 'dist/cli/config-command.js' },
+  // #288 — removed-verb friendly errors: fire BEFORE `./cli/commands` loads
+  // so they work even when the Temporal SDK install is broken.
+  { name: 'removed-verbs', ts: 'src/cli/removed-verbs.ts', dist: 'dist/cli/removed-verbs.js' },
 ];
 
 /**

@@ -14,7 +14,7 @@
 import React, { useState, useCallback, useRef, useImperativeHandle } from 'react';
 import { useInk } from '../ink-context';
 import { THEME } from '../utils/theme';
-import { PLAYER_PARAM_COMMANDS, SUBCOMMAND_MAP } from '../commands';
+import { PLAYER_PARAM_COMMANDS, SUBCOMMAND_MAP, classifyPaletteInput } from '../commands';
 
 const MAX_HISTORY = 50;
 
@@ -124,8 +124,9 @@ export const PromptArea = React.memo(function PromptArea({
     setTabCycleIndex(prev => prev === 0 ? prev : 0);
     // Only toggle palette when visibility actually changes — avoids parent dispatch on every keystroke
     if (r.onPaletteToggle) {
-      const trimmed = newValue.trimStart();
-      const shouldShow = (trimmed.startsWith('/') || trimmed.startsWith('@')) && !trimmed.includes(' ');
+      // The palette shows for: "/cmd", "@name", and "/PLAYER_PARAM_CMD <partial>".
+      // classifyPaletteInput centralizes the rule so PromptArea + App stay in sync.
+      const shouldShow = classifyPaletteInput(newValue) !== null;
       if (shouldShow !== !!r.paletteVisible) {
         r.onPaletteToggle(shouldShow);
       }
@@ -211,15 +212,12 @@ export const PromptArea = React.memo(function PromptArea({
       if (key.downArrow) { r.onPaletteDown?.(); return; }
       if (key.tab) { r.onPaletteSelect?.(); return; }
       if (key.return) {
-        const trimmedInput = r.value.trim();
-        const cmdName = trimmedInput.startsWith('/') ? trimmedInput.slice(1).toLowerCase() : '';
-        if (cmdName && r.commandNames.includes(cmdName)) {
-          r.onPaletteToggle?.(false);
-          // Fall through to Enter/submit below
-        } else {
-          r.onPaletteSelect?.();
-          return;
-        }
+        // Enter always submits. Use Tab to accept a palette suggestion. This
+        // avoids accept-vs-submit ambiguity when the typed command already
+        // matches exactly but the palette has no remaining suggestions
+        // (e.g. "/destroy conductor"). Close the palette and fall through to
+        // the regular Enter/submit block below.
+        r.onPaletteToggle?.(false);
       }
       if (key.escape) { r.onPaletteToggle?.(false); return; }
     }

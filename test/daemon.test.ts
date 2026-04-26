@@ -164,9 +164,16 @@ describe('daemon management', function () {
   });
 
   describe('stopDaemon', function () {
+    // Inject an empty scan + no-op killer so these tests don't accidentally
+    // signal real daemon processes that happen to be running on the dev box.
+    const noopOpts = {
+      scan: () => [] as Array<{ pid: number; commandLine: string }>,
+      killer: () => { /* no-op */ },
+    };
+
     it('returns false when daemon is not running', function () {
       try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
-      expect(stopDaemon()).to.be.false;
+      expect(stopDaemon(noopOpts)).to.be.false;
     });
 
     it('removes PID file when stopping', function () {
@@ -175,10 +182,134 @@ describe('daemon management', function () {
       seedPidFile(DAEMON_PID_PATH, deadPid);
 
       // stopDaemon checks status first — dead PID means not running
-      const result = stopDaemon();
+      const result = stopDaemon(noopOpts);
       // Since the process is dead, getDaemonStatus will return false and clean up
       expect(result).to.be.false;
       expect(fs.existsSync(DAEMON_PID_PATH)).to.be.false;
+    });
+  });
+
+  // ── Zombie-reaping (this PR) ──
+  //
+  // `stopDaemon` must also kill orphan `node dist/daemon.js` processes that
+  // the PID file doesn't track — otherwise `down --destroy` and
+  // `daemon stop` leave zombies polling Temporal task queues with stale
+  // (pre-rebuild) code in memory.
+  describe('stopDaemon — zombie reaping', function () {
+    afterEach(function () {
+      try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+    });
+
+    it('kills tracked daemon AND zombies discovered by the scanner', function () {
+      seedPidFile(DAEMON_PID_PATH, process.pid); // tracked = current process (alive)
+      const killed: number[] = [];
+      const scan = () => [
+        { pid: 99001, commandLine: 'node /tmp/claude-tempo/dist/daemon.js' },
+        { pid: 99002, commandLine: 'node /opt/claude-tempo/dist/daemon.js' },
+      ];
+      const killer = (pid: number) => { killed.push(pid); };
+
+      const result = stopDaemon({ scan, killer });
+
+      expect(result).to.be.true;
+      // Tracked PID + both zombies
+      expect(killed.sort()).to.deep.equal([process.pid, 99001, 99002].sort());
+      // PID file is always cleaned up after a tracked-stop
+      expect(fs.existsSync(DAEMON_PID_PATH)).to.be.false;
+    });
+
+    it('reaps zombies even when no tracked daemon exists', function () {
+      try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+      const killed: number[] = [];
+      const scan = () => [
+        { pid: 88001, commandLine: 'node /tmp/claude-tempo/dist/daemon.js' },
+      ];
+      const killer = (pid: number) => { killed.push(pid); };
+
+      const result = stopDaemon({ scan, killer });
+
+      expect(result).to.be.true;
+      expect(killed).to.deep.equal([88001]);
+    });
+
+    it('excludes the tracked PID from the zombie list (selectOrphans)', function () {
+      seedPidFile(DAEMON_PID_PATH, process.pid);
+      const killed: number[] = [];
+      // Scanner happens to also report the tracked PID (e.g. our own daemon
+      // showed up in the OS process listing). selectOrphans must drop it so
+      // we don't double-signal.
+      const scan = () => [
+        { pid: process.pid, commandLine: 'node /tmp/claude-tempo/dist/daemon.js' },
+        { pid: 77001, commandLine: 'node /opt/claude-tempo/dist/daemon.js' },
+      ];
+      const killer = (pid: number) => { killed.push(pid); };
+
+      stopDaemon({ scan, killer });
+
+      // process.pid is killed exactly once (via the tracked path), 77001 once
+      // (via the zombie path). No duplicate.
+      const counts = killed.reduce<Record<number, number>>((acc, p) => {
+        acc[p] = (acc[p] ?? 0) + 1;
+        return acc;
+      }, {});
+      expect(counts[process.pid]).to.equal(1);
+      expect(counts[77001]).to.equal(1);
+    });
+
+    it('returns true when only zombies are killed (no tracked daemon)', function () {
+      try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+      const scan = () => [{ pid: 66001, commandLine: 'node x/dist/daemon.js' }];
+      const killer = () => { /* succeeds */ };
+      expect(stopDaemon({ scan, killer })).to.be.true;
+    });
+
+    it('survives scanner failures (returns true if tracked daemon was killed)', function () {
+      seedPidFile(DAEMON_PID_PATH, process.pid);
+      const killed: number[] = [];
+      const scan = () => { throw new Error('ps: not found'); };
+      const killer = (pid: number) => { killed.push(pid); };
+
+      const result = stopDaemon({ scan, killer });
+
+      expect(result).to.be.true;
+      // Tracked PID was still killed despite scanner blowing up
+      expect(killed).to.deep.equal([process.pid]);
+    });
+
+    it('survives killer errors on individual zombies (continues to next)', function () {
+      try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+      const killed: number[] = [];
+      const scan = () => [
+        { pid: 55001, commandLine: 'node x/dist/daemon.js' },
+        { pid: 55002, commandLine: 'node y/dist/daemon.js' },
+        { pid: 55003, commandLine: 'node z/dist/daemon.js' },
+      ];
+      const killer = (pid: number) => {
+        if (pid === 55002) throw new Error('ESRCH');
+        killed.push(pid);
+      };
+
+      const result = stopDaemon({ scan, killer });
+
+      // 55001 and 55003 got killed; 55002 threw and was swallowed
+      expect(result).to.be.true;
+      expect(killed.sort()).to.deep.equal([55001, 55003]);
+    });
+
+    it('uses SIGTERM on POSIX, no signal on Windows', function () {
+      try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+      const calls: Array<{ pid: number; signal: NodeJS.Signals | number | undefined }> = [];
+      const scan = () => [{ pid: 44001, commandLine: 'node x/dist/daemon.js' }];
+      const killer = (pid: number, signal?: NodeJS.Signals | number) => {
+        calls.push({ pid, signal });
+      };
+
+      stopDaemon({ scan, killer, platform: 'linux' });
+      expect(calls).to.deep.equal([{ pid: 44001, signal: 'SIGTERM' }]);
+
+      calls.length = 0;
+      stopDaemon({ scan, killer, platform: 'win32' });
+      expect(calls).to.deep.equal([{ pid: 44001, signal: undefined }]);
     });
   });
 

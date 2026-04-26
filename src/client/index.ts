@@ -4,6 +4,7 @@
  * Extracted from `src/tui/client.ts` so that non-TUI consumers (CLI, tests,
  * external integrations) can create a TempoClient without depending on Ink/React.
  */
+import { hostname as osHostname } from 'os';
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { maestroWorkflowId, schedulerWorkflowId, sessionWorkflowId, conductorWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID } from '../config';
 import type {
@@ -24,17 +25,48 @@ import type {
 import {
   submitOutboxUpdate,
   attachmentInfoQuery,
+  destroyUpdate,
+  outboxLockedQuery,
+  requestDetachSignal,
+  releaseHeldSignal,
+  setPausedSignal,
 } from '../workflows/signals';
-import { resolveSession } from '../activities/resolve';
+import { maestroPausedQuery } from '../workflows/maestro-signals';
+import { resolveSession, scanEnsembleSessions } from '../activities/resolve';
+import { restoreOrphansOnce, type RestoreOrphansSummary } from '../reconcile/orphans';
+import {
+  pauseMaestroAndScheduler,
+  unpauseMaestroAndScheduler,
+  signalAllSessions,
+} from '../utils/ensemble-ops';
 import {
   getAttachmentPhase,
   getEnsembleName,
   getIsConductor,
+  getSearchAttrString,
 } from '../utils/search-attributes';
-import type { TempoClient, EnsembleSummary } from './interface';
+import type {
+  TempoClient,
+  EnsembleSummary,
+  EnsembleShutdownSummary,
+  EnsembleDestroySummary,
+  RecruitClientOpts,
+  RecruitClientResult,
+  ReleaseClientResult,
+} from './interface';
 
 // Re-export public types for consumers
-export type { TempoClient, EnsembleSummary } from './interface';
+export type {
+  TempoClient,
+  EnsembleSummary,
+  EnsembleShutdownSummary,
+  EnsembleShutdownDetail,
+  EnsembleDestroySummary,
+  EnsembleDestroyDetail,
+  RecruitClientOpts,
+  RecruitClientResult,
+  ReleaseClientResult,
+} from './interface';
 
 // ── Helpers ──
 
@@ -42,6 +74,31 @@ export type { TempoClient, EnsembleSummary } from './interface';
  *  Strips characters that could break or inject into the query. */
 function sanitizeQueryValue(value: string): string {
   return value.replace(/["\\\n\r]/g, '');
+}
+
+/** Shared unknown-error → string helper for summary `error` fields. */
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Invoke the `claude-tempo` CLI as a child process. Shared by
+ * {@link TempoClient.createEnsemble} and {@link TempoClient.spawnConductor}
+ * so both entry points share the same process semantics (cwd default,
+ * timeout, shell-quoted args).
+ */
+async function runTempoCli(args: string[], workDir?: string): Promise<void> {
+  const { execFile } = await import('child_process');
+  await new Promise<void>((resolve, reject) => {
+    execFile('claude-tempo', args, {
+      cwd: workDir ?? process.cwd(),
+      timeout: 60_000,
+      shell: true,
+    }, (err, _stdout, stderr) => {
+      if (err) reject(new Error(stderr?.toString().trim() || err.message || `claude-tempo ${args[0]} failed`));
+      else resolve();
+    });
+  });
 }
 
 // ── Factory ──
@@ -114,6 +171,134 @@ export function createTempoClient(client: Client): TempoClient {
       } catch {
         return [];
       }
+    },
+
+    async listEnsembles(): Promise<EnsembleSummary[]> {
+      // Direct workflow-list scan — the Global Maestro index only tracks
+      // live ensembles, so classifying paused/offline ensembles requires
+      // reading the attachment-state search attribute per workflow.
+      //
+      // `liveAdapterCount` distinguishes `paused` (≥1 live adapter, can
+      // resume in place via `/play`) from `offline` (zero live adapters,
+      // requires `/restore`). The maestro session is excluded from this
+      // count — it's the TUI's own dashboard attachment, never a peer
+      // agent that user-facing `/play` should target.
+      const LIVE_PHASES = new Set<AttachmentPhase>([
+        'attached', 'processing', 'awaiting', 'booting', 'draining',
+      ]);
+      type Agg = {
+        count: number;
+        hasConductor: boolean;
+        conductorStatus?: string;
+        liveAdapterCount: number;
+        hasDetached: boolean;
+      };
+      const byEnsemble = new Map<string, Agg>();
+      try {
+        const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+        for await (const wf of client.workflow.list({ query })) {
+          const name = getEnsembleName(wf);
+          if (!name) continue;
+
+          // Exclude the maestro session from the headline player count.
+          // The maestro is the TUI's own dashboard attachment, not a peer
+          // agent — counting it produced confusing "(2 players)" rows on
+          // a fresh ensemble with one real player. Mirrors the
+          // `filterRealPlayers` rule used in StatusBar (cf6becd). Detect
+          // via the canonical `ClaudeTempoPlayerType` search attribute,
+          // with a workflow-id-suffix fallback for the brief post-start
+          // window before search attributes propagate.
+          const playerType = getSearchAttrString(wf, 'ClaudeTempoPlayerType');
+          const isMaestroSession = playerType === 'maestro'
+            || (wf.workflowId?.endsWith('-maestro') ?? false);
+
+          const phase = getAttachmentPhase(wf) as AttachmentPhase | undefined;
+          const entry = byEnsemble.get(name) ?? {
+            count: 0, hasConductor: false, liveAdapterCount: 0, hasDetached: false,
+          };
+          if (!isMaestroSession) entry.count++;
+          if (phase === 'detached') entry.hasDetached = true;
+          else if (phase && LIVE_PHASES.has(phase) && !isMaestroSession) {
+            entry.liveAdapterCount++;
+          }
+
+          const isConductorFromSA = getIsConductor(wf) === true;
+          const isConductorFromId = wf.workflowId?.endsWith('-conductor') ?? false;
+          if (isConductorFromSA || isConductorFromId) {
+            entry.hasConductor = true;
+            if (phase) entry.conductorStatus = phase;
+          }
+          byEnsemble.set(name, entry);
+        }
+      } catch {
+        return [];
+      }
+
+      // Per-ensemble paused lookup: `/pause` and `/shutdown` both flip
+      // `maestroSetPausedSignal` on the maestro hub workflow. The hub's
+      // `maestroPaused` query is the authoritative "ensemble is paused"
+      // signal — fall back to the phase heuristic when the hub doesn't
+      // exist (bare ensemble before any conductor / TUI was attached).
+      const pausedByEnsemble = new Map<string, boolean>();
+      await Promise.all(
+        [...byEnsemble.keys()].map(async (name) => {
+          try {
+            const paused = await handle(maestroWorkflowId(name)).query(maestroPausedQuery);
+            pausedByEnsemble.set(name, !!paused);
+          } catch {
+            // Hub workflow not running — leave undefined so the phase
+            // heuristic below decides classification.
+          }
+        }),
+      );
+
+      const out: EnsembleSummary[] = [];
+      for (const [name, info] of byEnsemble) {
+        // Skip ensembles with no non-gone sessions — they're either
+        // terminating or fully destroyed.
+        if (info.liveAdapterCount === 0 && !info.hasDetached) continue;
+        const paused = pausedByEnsemble.get(name);
+        // Three-state classification:
+        //   online  — hub unpaused (or no hub + at least one live adapter).
+        //   paused  — hub paused AND at least one live adapter remains
+        //             (`/pause` semantics: resume in place via `/play`).
+        //   offline — hub paused AND zero live adapters
+        //             (`/shutdown` semantics: requires `/restore`).
+        // When the hub didn't answer (no maestro yet), fall back to the
+        // phase heuristic — a live adapter implies online.
+        let state: 'online' | 'paused' | 'offline';
+        if (paused === true) {
+          state = info.liveAdapterCount > 0 ? 'paused' : 'offline';
+        } else if (paused === false) {
+          state = 'online';
+        } else {
+          state = info.liveAdapterCount > 0 ? 'online' : 'offline';
+        }
+        out.push({
+          name,
+          playerCount: info.count,
+          hasConductor: info.hasConductor,
+          conductorStatus: info.conductorStatus,
+          state,
+        });
+      }
+      return out;
+    },
+
+    async createEnsemble(opts: { ensemble: string; workDir?: string; lineup?: string }): Promise<void> {
+      const args = opts.lineup
+        ? ['up', opts.ensemble, '--lineup', opts.lineup]
+        : ['up', opts.ensemble];
+      await runTempoCli(args, opts.workDir);
+    },
+
+    async spawnConductor(opts: { ensemble: string; workDir?: string }): Promise<void> {
+      // `claude-tempo up <ensemble>` is idempotent at the workflow layer —
+      // re-invoking it on a live ensemble reuses the existing conductor
+      // workflow (deterministic workflow ID). Distinct from
+      // `createEnsemble` so call sites read as "make sure the conductor
+      // terminal is running", not "create a new ensemble".
+      await runTempoCli(['up', opts.ensemble], opts.workDir);
     },
 
     async getPlayers(ensemble: string): Promise<MaestroPlayerInfo[]> {
@@ -286,6 +471,121 @@ export function createTempoClient(client: Client): TempoClient {
     //   The dispatch loop runs `deliverDetach` / `deliverDestroy` /
     //   `deliverRestart` activities against the target (QA B1/B2/B3).
 
+    async recruit(ensemble, opts) {
+      // #306: Lazy-import the agent-type resolver so the TUI/CLI bundle
+      // doesn't pull in the subagent YAML crawler at module-load time.
+      // The `held` flow on the TUI side doesn't currently exercise this;
+      // `playerType` is only resolved when supplied.
+      let agentDefinition: string | undefined;
+      let agentDefinitionPath: string | undefined;
+      let agentDefinitionDescription: string | undefined;
+      let nativeResolvable: boolean | undefined;
+      let allowedTools: string[] | undefined;
+      if (opts.playerType) {
+        const { resolveAgentType } = await import('../ensemble/agent-types');
+        const info = resolveAgentType(opts.playerType);
+        if (!info) {
+          throw new Error(`Unknown agent type "${opts.playerType}"`);
+        }
+        agentDefinition = info.name;
+        agentDefinitionPath = info.path;
+        agentDefinitionDescription = info.description;
+        nativeResolvable = info.nativeResolvable;
+        allowedTools = info.allowedTools;
+      }
+
+      const maestroId = sessionWorkflowId(ensemble, 'maestro');
+      const h = handle(maestroId);
+      // #306 fix: always set `targetHostname` on the entry. The TUI-owned
+      // maestro session stores `hostname: 'dashboard'` in its metadata
+      // (a placeholder, not a real host), so the session workflow's
+      // fallback path — `entry.targetHostname || input.metadata.hostname`
+      // — routes `spawnProcess` to task queue `claude-tempo-dashboard`,
+      // which has no worker. The MCP `recruit` tool worked because the
+      // conductor session that ran it had a real OS hostname in metadata.
+      // Mirror that behavior here by defaulting to `osHostname()` when
+      // the caller didn't pin a specific host.
+      const targetHostname = opts.host ?? osHostname();
+      const entry = {
+        type: 'recruit' as const,
+        targetName: opts.name,
+        workDir: opts.workDir,
+        isConductor: opts.isConductor === true,
+        agent: opts.agent ?? 'claude',
+        ...(opts.initialMessage !== undefined ? { initialMessage: opts.initialMessage } : {}),
+        // If a player-type is provided, let the outbox activity supply the
+        // agent definition bundle; otherwise fall back to an explicit
+        // systemPrompt path (mirrors the recruit MCP tool's branching).
+        ...(agentDefinition
+          ? { agentDefinition, agentDefinitionPath, agentDefinitionDescription, nativeResolvable, allowedTools }
+          : opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
+        targetHostname,
+        ...(opts.held === true ? { held: true } : {}),
+      } satisfies OutboxEntryInput;
+      const entryId = await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
+      return { playerId: opts.name, entryId };
+    },
+
+    async release(ensemble, playerId): Promise<ReleaseClientResult> {
+      const maestroId = sessionWorkflowId(ensemble, 'maestro');
+      const mh = handle(maestroId);
+      const submitRelease = async (target: string): Promise<void> => {
+        const entry: OutboxEntryInput = { type: 'release', targetPlayerId: target };
+        await mh.executeUpdate(submitOutboxUpdate, { args: [entry] });
+      };
+
+      if (playerId) {
+        // Single-player release — match the MCP tool: only submit when the
+        // session's outbox is actually locked, so the caller sees a clean
+        // error instead of a no-op success for already-running sessions.
+        const target = await resolveSession(client, ensemble, playerId);
+        if (!target) {
+          throw new Error(`No session found with name "${playerId}" in ensemble "${ensemble}".`);
+        }
+        let isLocked = false;
+        try {
+          isLocked = await target.query(outboxLockedQuery);
+        } catch {
+          // Query may fail for old workflows — treat as "not held" to avoid
+          // false-positive release requests on pre-outboxLocked builds.
+        }
+        if (!isLocked) {
+          throw new Error(`Session "${playerId}" is not held (outbox not locked).`);
+        }
+        await submitRelease(playerId);
+        return { released: [playerId], errors: [] };
+      }
+
+      // Bulk release — scan + query + enqueue each held session. The scan
+      // skips the TUI's own maestro session so we don't try to release
+      // ourselves. Errors are returned as soft failures so the caller can
+      // render a partial-success summary.
+      const sessions = await scanEnsembleSessions(client, ensemble);
+      const held: Array<{ playerId: string; workflowId: string }> = [];
+      for (const s of sessions) {
+        if (s.playerId === 'maestro') continue;
+        try {
+          const sh = handle(s.workflowId);
+          const locked = await sh.query(outboxLockedQuery);
+          if (locked) held.push(s);
+        } catch {
+          // Skip sessions where the query fails (old workflows, terminated).
+        }
+      }
+
+      const released: string[] = [];
+      const errors: Array<{ playerId: string; error: string }> = [];
+      for (const s of held) {
+        try {
+          await submitRelease(s.playerId);
+          released.push(s.playerId);
+        } catch (err) {
+          errors.push({ playerId: s.playerId, error: errMsg(err) });
+        }
+      }
+      return { released, errors };
+    },
+
     async restart(ensemble, playerId, opts = {}) {
       const invokerPlayerId = opts.invokerPlayerId ?? 'cli';
       const maestroId = sessionWorkflowId(ensemble, 'maestro');
@@ -320,6 +620,81 @@ export function createTempoClient(client: Client): TempoClient {
     },
 
     async destroy(ensemble, playerId, reason) {
+      // #287: ensemble-scope when `playerId` is omitted. Peer sessions in
+      // parallel → scheduler + maestro terminate in parallel → conductor
+      // last so it sees every peer teardown. Matches the destroy tool.
+      if (playerId === undefined) {
+        const destroyReason = reason ?? 'ensemble destroy via TempoClient';
+        const conductorWfId = conductorWorkflowId(ensemble);
+        const sessions = await scanEnsembleSessions(client, ensemble);
+
+        const peers: typeof sessions = [];
+        let conductorPresent = false;
+        for (const s of sessions) {
+          if (s.workflowId === conductorWfId) conductorPresent = true;
+          else peers.push(s);
+        }
+
+        const summary: EnsembleDestroySummary = {
+          destroyed: 0,
+          terminated: 0,
+          failed: 0,
+          details: [],
+        };
+        const destroyArgs = { reason: destroyReason, terminatedBy: 'tempo-client' };
+
+        // Peers in parallel.
+        const peerResults = await Promise.allSettled(
+          peers.map(async (s) => {
+            try {
+              await handle(s.workflowId).executeUpdate(destroyUpdate, { args: [destroyArgs] });
+              return { session: s, outcome: 'destroyed' as const };
+            } catch (err) {
+              return { session: s, outcome: 'failed' as const, error: errMsg(err) };
+            }
+          }),
+        );
+        for (const r of peerResults) {
+          if (r.status !== 'fulfilled') continue;
+          const v = r.value;
+          if (v.outcome === 'destroyed') {
+            summary.details.push({ target: v.session.playerId, outcome: 'destroyed' });
+            summary.destroyed++;
+          } else {
+            summary.details.push({ target: v.session.playerId, outcome: 'failed', error: v.error });
+            summary.failed++;
+          }
+        }
+
+        // Scheduler + maestro terminate in parallel. `terminate` rejects on
+        // missing workflows; treat as "not present" (don't count as failure).
+        const [schedRes, maestroRes] = await Promise.allSettled([
+          handle(schedulerWorkflowId(ensemble)).terminate(destroyReason),
+          handle(maestroWorkflowId(ensemble)).terminate(destroyReason),
+        ]);
+        if (schedRes.status === 'fulfilled') {
+          summary.details.push({ target: 'scheduler', outcome: 'terminated' });
+          summary.terminated++;
+        }
+        if (maestroRes.status === 'fulfilled') {
+          summary.details.push({ target: 'maestro', outcome: 'terminated' });
+          summary.terminated++;
+        }
+
+        // Conductor last.
+        if (conductorPresent) {
+          try {
+            await handle(conductorWfId).executeUpdate(destroyUpdate, { args: [destroyArgs] });
+            summary.details.push({ target: 'conductor', outcome: 'destroyed' });
+            summary.destroyed++;
+          } catch (err) {
+            summary.details.push({ target: 'conductor', outcome: 'failed', error: errMsg(err) });
+            summary.failed++;
+          }
+        }
+        return summary;
+      }
+
       const maestroId = sessionWorkflowId(ensemble, 'maestro');
       const h = handle(maestroId);
       const entry: OutboxEntryInput = {
@@ -329,6 +704,81 @@ export function createTempoClient(client: Client): TempoClient {
         notifyConductor: true,
       };
       await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
+    },
+
+    async pause(ensemble) {
+      await Promise.all([
+        pauseMaestroAndScheduler(client, ensemble),
+        signalAllSessions(client, ensemble, setPausedSignal.name, true),
+      ]);
+    },
+
+    async play(ensemble, opts = {}) {
+      const [, unpaused] = await Promise.all([
+        unpauseMaestroAndScheduler(client, ensemble),
+        signalAllSessions(client, ensemble, setPausedSignal.name, false),
+      ]);
+      if (opts.release === true && unpaused.sent > 0) {
+        // Fan out releaseHeld AFTER everyone is unpaused so no session
+        // receives `releaseHeld` while still paused.
+        await signalAllSessions(client, ensemble, releaseHeldSignal.name, undefined);
+      }
+    },
+
+    async shutdown(ensemble, opts = {}) {
+      const deadlineMs = opts.deadlineMs ?? 5_000;
+      const [toggle, fanout] = await Promise.all([
+        pauseMaestroAndScheduler(client, ensemble),
+        signalAllSessions(client, ensemble, requestDetachSignal.name, { reason: 'user-stop', deadlineMs }),
+      ]);
+      return {
+        detached: fanout.sent,
+        skipped: fanout.skipped,
+        failed: fanout.failed,
+        maestroPaused: toggle.maestro,
+        schedulerPaused: toggle.scheduler,
+        details: fanout.perSession.map((p) =>
+          p.outcome === 'sent'
+            ? { playerId: p.playerId, outcome: 'detaching' as const }
+            : p.outcome === 'failed'
+              ? { playerId: p.playerId, outcome: 'failed' as const, error: p.error }
+              : { playerId: p.playerId, outcome: 'skipped-self' as const },
+        ),
+      };
+    },
+
+    async restore(ensemble): Promise<RestoreOrphansSummary> {
+      // Scope the orphan scan to the requested ensemble (#298 — matches the
+      // `ensemble?` filter the CLI/TUI pass through) and unpause maestro +
+      // scheduler for the same ensemble in parallel.
+      //
+      // #306: narrow to `phases: ['detached']`. User-invoked `/restore`
+      // revives a parked ensemble — a live attached/processing session is
+      // NOT a restorable orphan and must not be flagged as one. The broad
+      // live-phase default is reserved for daemon reconcile-on-boot + CLI
+      // `up --resume`, which have no PID memory after a crash and must
+      // treat every live phase as a presumed orphan. Without this narrowing
+      // a healthy conductor gets deliverRestart → requestDetach and is
+      // hard-terminated by `drainingDeadline`.
+      //
+      // Bug A: also fan out `setPaused=false` to every session. Without
+      // this, sessions whose `paused` flag was flipped (via `/pause` or
+      // any prior pause path) stay frozen — the conductor receives
+      // messages but its outbox dispatcher is gated by `!paused`, so
+      // typed messages get no reply. Mirrors the pattern in `play()`:
+      // the maestro/scheduler hub toggle is not enough on its own.
+      const [summary] = await Promise.all([
+        restoreOrphansOnce(client, {
+          hostname: osHostname(),
+          invokerPlayerId: 'tempo-client',
+          policy: 'auto',
+          ensemble,
+          phases: ['detached'],
+        }),
+        unpauseMaestroAndScheduler(client, ensemble),
+        signalAllSessions(client, ensemble, setPausedSignal.name, false),
+      ]);
+      return summary;
     },
 
     async migrate(ensemble, playerId, host, opts = {}) {
@@ -432,6 +882,45 @@ export function createTempoClient(client: Client): TempoClient {
         return await h.query('maestroEnsembleChat', { offset, limit });
       } catch {
         return { messages: [], total: 0, hasMore: false, hasConductor: false };
+      }
+    },
+
+    async isMaestroPaused(ensemble: string): Promise<boolean> {
+      // Reads the same `maestroPaused` query that `listEnsembles` uses for
+      // the home-view classification. Treat hub-not-running as "not paused"
+      // — bare ensembles without a maestro hub aren't displaying any
+      // pause-related state in the chat view either.
+      try {
+        const paused = await handle(maestroWorkflowId(ensemble)).query(maestroPausedQuery);
+        return !!paused;
+      } catch {
+        return false;
+      }
+    },
+
+    async isAnySessionHeld(ensemble: string): Promise<boolean> {
+      // Scan the ensemble's sessions and check the per-session
+      // `outboxLocked` query. The maestro session is skipped — it's the
+      // TUI's own dashboard attachment, not a peer agent that the user-
+      // facing `/go` should target. Per-session query failures are
+      // treated as "not held" so a single flaky workflow doesn't make
+      // the whole ensemble appear held forever.
+      try {
+        const sessions = await scanEnsembleSessions(client, ensemble);
+        for (const s of sessions) {
+          if (s.playerId === 'maestro') continue;
+          try {
+            const sh = handle(s.workflowId);
+            const locked = await sh.query(outboxLockedQuery);
+            if (locked) return true;
+          } catch {
+            // Old workflow without `outboxLocked` query, or terminated
+            // mid-scan — skip this session, keep checking the rest.
+          }
+        }
+        return false;
+      } catch {
+        return false;
       }
     },
 

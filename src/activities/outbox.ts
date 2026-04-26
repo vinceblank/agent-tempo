@@ -715,15 +715,22 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         // already exists at `~/.claude/projects/<encoded-path>/<uuid>.jsonl`
         // ("Session ID already in use"). A prior failed spawn can leave that
         // file behind, wedging every subsequent `fresh` restart that reuses the
-        // stored sessionId. Since `fresh` already skips `--resume`, we mint a
-        // new UUID and persist it on the target's metadata so later non-fresh
-        // restarts resume against the new transcript. Non-fresh restarts keep
-        // the stored sessionId for deterministic `--resume`.
-        let spawnSessionId = metadata.sessionId;
-        if (fresh) {
-          spawnSessionId = crypto.randomUUID();
-          await handle.signal(updateMetadataSignal, { sessionId: spawnSessionId });
-        }
+        // stored sessionId.
+        //
+        // #306: `/restart` ALWAYS spawns a fresh Claude Code process — never
+        // `--resume <id>`. The transcript `.jsonl` for the prior `spawnSessionId`
+        // is NOT guaranteed to have been flushed to disk before the prior
+        // adapter was hard-terminated (Windows `taskkill /T /F` is synchronous
+        // and unconditional). Claude Code then errors out with "No conversation
+        // found with session ID" and the new terminal drops to shell.
+        //
+        // Context preservation is already handled by the Step 5 replay above —
+        // we re-send recent messages to the fresh session. That's authoritative;
+        // the session-id `--resume` path was only ever a bonus on top. So we
+        // mint a new UUID on every restart, persist it to metadata, and never
+        // pass `resume: true` to the spawn.
+        const spawnSessionId = crypto.randomUUID();
+        await handle.signal(updateMetadataSignal, { sessionId: spawnSessionId });
 
         // Issue #184: re-resolve on the invoker host against the session's
         // workDir (NOT the daemon's process.cwd — daemon runs elsewhere than
@@ -740,8 +747,9 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             host: targetHost,
             attachmentId: token.attachmentId,
             runId: token.runId,
-            resume: !fresh,
-            ...(spawnSessionId ? { sessionId: spawnSessionId } : {}),
+            // #306: `/restart` is always a fresh spawn (see comment above).
+            resume: false,
+            sessionId: spawnSessionId,
             adapterId,
             ...(resolved ? {
               agentDefinition: resolved.name,
@@ -751,7 +759,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           }],
         });
 
-        log(`Restart prepared for "${targetPlayerId}" — attachmentId=${token.attachmentId}, spawnEntryId=${spawnEntryId}, host=${targetHost}${fresh ? ` (fresh sessionId=${spawnSessionId})` : ''}`);
+        log(`Restart prepared for "${targetPlayerId}" — attachmentId=${token.attachmentId}, spawnEntryId=${spawnEntryId}, host=${targetHost}, fresh sessionId=${spawnSessionId}${fresh ? ' (context replay skipped)' : ''}`);
         return { success: true };
       } catch (err) {
         // #140: the §8.2 restart algorithm fires many RPCs; any of them may

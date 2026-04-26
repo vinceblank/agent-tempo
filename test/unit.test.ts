@@ -457,10 +457,10 @@ describe('getConfig', function () {
       expect(cfg.defaultAgent).to.equal('copilot');
     });
 
-    it('unknown agent string falls back to "claude"', function () {
-      // validAgent() treats unrecognised strings as 'claude'
-      const cfg = getConfig({ defaultAgent: 'gpt-4o' as any });
-      expect(cfg.defaultAgent).to.equal('claude');
+    it('unknown agent string throws with actionable error', function () {
+      // Invalid agent values error rather than silently falling back.
+      expect(() => getConfig({ defaultAgent: 'gpt-4o' as any }))
+        .to.throw(/Invalid agent "gpt-4o"/);
     });
   });
 

@@ -47,6 +47,36 @@ export interface StaticItem {
   msgRouteLabel?: string;
 }
 
+// ── Notifications (bottom-pinned, auto-expiring) ──
+
+/**
+ * #306: Bottom-pinned ephemeral notifications for errors + warnings.
+ *
+ * Before #306 these rode `commitStatic('error'|'warn', …)` and scrolled out
+ * of view — users missed critical guard errors (e.g. `/destroy conductor`
+ * refusals) because a few lines of other output pushed them above the fold.
+ * Notifications render below the prompt, auto-dismiss on TTL, and can be
+ * dismissed with Esc.
+ */
+export interface NotificationItem {
+  id: number;
+  kind: 'error' | 'warn' | 'info';
+  content: string;
+  timestamp: number;
+  /** Absolute ms epoch when this notification should disappear. */
+  expiresAt: number;
+}
+
+/** Default TTLs by kind — errors get extra time to read. */
+export const NOTIFICATION_TTL_MS = {
+  error: 8000,
+  warn: 5000,
+  info: 5000,
+} as const;
+
+/** Maximum concurrent notifications; oldest is dropped when exceeded. */
+export const NOTIFICATION_CAP = 3;
+
 // ── Recruit wizard ──
 
 export type RecruitStep = 'name' | 'agent' | 'type' | 'workDir' | 'message' | 'host' | 'confirm' | 'done';
@@ -205,6 +235,27 @@ export interface TuiState {
   ensembleChat: EnsembleChatMessage[];
   /** Whether the active ensemble has a conductor. */
   hasConductor: boolean;
+  /**
+   * Bug B: Whether the active ensemble's maestro hub is paused. Polled
+   * alongside players/chat. The conductor's session-level `paused` flag
+   * blocks outbox dispatch, so the TUI surfaces this in the status bar
+   * (`paused` segment) so users don't wonder why typed messages aren't
+   * getting a reply. Optimistically toggled by `/pause` and `/play`.
+   */
+  ensemblePaused: boolean;
+  /**
+   * #306 follow-up: Whether at least one session in the active ensemble
+   * has its outbox locked (`held`). Mirrors {@link ensemblePaused} —
+   * polled in the same 2s loop, reset on nav transitions, optimistically
+   * cleared by `/play` and `/go`. Drives the StatusBar `held` segment +
+   * the "Tip: type /go" hint pinned below the input.
+   *
+   * Independent of `ensemblePaused` because `/load_lineup` produces
+   * paused + held simultaneously, and resuming both requires `/play`
+   * AND `/go`. Without surfacing held separately, users got stuck
+   * unpausing an ensemble that still had every player frozen.
+   */
+  ensembleHeld: boolean;
   /** Currently highlighted player index (ensemble view). */
   selectedPlayerIndex: number;
 
@@ -221,6 +272,19 @@ export interface TuiState {
   // ── Chat shell ──
   /** Committed scroll-up history items. */
   staticItems: StaticItem[];
+  /**
+   * #306: Bottom-pinned ephemeral notifications — errors/warnings that must
+   * stay visible until dismissed rather than scrolling off the top. The
+   * renderer filters expired entries on every tick via a separate state
+   * counter so the auto-dismiss doesn't need a reducer pass.
+   */
+  notifications: NotificationItem[];
+  /**
+   * #306: Monotonic tick counter — bumped every 500ms by a root-level effect
+   * to force re-renders so expired notifications disappear without requiring
+   * a reducer action per expiration. Cheap — a single integer diff.
+   */
+  notificationTick: number;
   /** Player name when in chat mode (bare text sends message to this target). */
   chatTarget?: string;
   /** Name of the conductor in the active ensemble. */
@@ -235,6 +299,19 @@ export interface TuiState {
   confirmingStopReason?: string;
   /** Ensemble name pending disband confirmation (null = not confirming). */
   confirmingDisband?: string;
+  /**
+   * Ensemble name pending `/destroy <ensemble>` typed-name confirmation.
+   * Distinct from `confirmingDisband` because the gate is typed-name rather
+   * than y/N.
+   */
+  confirmingEnsembleDestroy?: {
+    ensemble: string;
+    /** Current contents of the typed-confirmation input. */
+    input: string;
+    /** Mismatch error shown beneath the input; cleared on next keystroke. */
+    error?: string;
+    submitting?: boolean;
+  };
   /** Lineup confirmation state (pending load). */
   confirmingLineup?: { action: 'load'; path: string; summary: string };
   /** Recruit wizard state (active when phase === 'recruit'). */
@@ -243,6 +320,19 @@ export interface TuiState {
   scheduleWizard?: ScheduleWizardState;
   /** Create ensemble wizard state (active when phase === 'create-ensemble'). */
   createEnsembleState?: CreateEnsembleState;
+  /**
+   * Home-view modal overlay. `undefined` = no modal. Restore carries the
+   * target ensemble + conductor name + parked player count so the
+   * confirmation body doesn't re-query the backend.
+   */
+  homeModal?:
+    | { type: 'new' }
+    | { type: 'lineup' }
+    | { type: 'restore'; ensemble: string; playerCount: number; conductor?: string };
+  /** True while a home-view modal's submit handler is in flight. */
+  homeModalSubmitting?: boolean;
+  /** Error surfaced inside the active home modal (spawn failure, etc.). */
+  homeModalError?: string;
   /** Status overlay visible (shows player list). */
   statusOverlay: boolean;
   /** Generic command overlay (title + pre-formatted content). Shown by data-display commands. */
@@ -289,6 +379,8 @@ export function initialState(ensemble?: string): TuiState {
     conversation: null,
     ensembleChat: [],
     hasConductor: false,
+    ensemblePaused: false,
+    ensembleHeld: false,
     selectedPlayerIndex: 0,
 
     activePlayer: null,
@@ -297,6 +389,8 @@ export function initialState(ensemble?: string): TuiState {
     playerScrollOffset: 0,
 
     staticItems: [],
+    notifications: [],
+    notificationTick: 0,
     chatTarget: undefined,
     sentMessages: [],
     statusOverlay: false,
@@ -336,7 +430,15 @@ export type TuiAction =
   | { type: 'PLAYER_SCROLL_DOWN' }
   // Chat shell actions
   | { type: 'COMMIT_STATIC'; item: StaticItem }
+  // Bottom-pinned notifications (#306)
+  | { type: 'ADD_NOTIFICATION'; notification: NotificationItem }
+  | { type: 'DISMISS_NOTIFICATION'; id: number }
+  | { type: 'DISMISS_OLDEST_NOTIFICATION' }
+  | { type: 'CLEAR_NOTIFICATIONS' }
+  | { type: 'NOTIFICATION_TICK' }
   | { type: 'SET_CONDUCTOR'; name?: string }
+  | { type: 'SET_ENSEMBLE_PAUSED'; paused: boolean }
+  | { type: 'SET_ENSEMBLE_HELD'; held: boolean }
   | { type: 'APPEND_SENT_MESSAGE'; to: string; text: string }
   | { type: 'HYDRATE_SENT_MESSAGES'; messages: Array<{ to: string; text: string; timestamp: string }> }
   | { type: 'ENTER_CHAT'; target: string }
@@ -367,6 +469,12 @@ export type TuiAction =
   // Disband confirmation
   | { type: 'CONFIRM_DISBAND'; ensemble: string }
   | { type: 'CANCEL_DISBAND' }
+  // Ensemble-scope /destroy typed-name confirmation
+  | { type: 'CONFIRM_ENSEMBLE_DESTROY'; ensemble: string }
+  | { type: 'ENSEMBLE_DESTROY_INPUT'; input: string }
+  | { type: 'ENSEMBLE_DESTROY_SUBMIT_BUSY' }
+  | { type: 'ENSEMBLE_DESTROY_MISMATCH' }
+  | { type: 'CANCEL_ENSEMBLE_DESTROY' }
   // Lineup confirmation
   | { type: 'CONFIRM_LINEUP'; action: 'load'; path: string; summary: string }
   | { type: 'CANCEL_LINEUP' }
@@ -390,7 +498,11 @@ export type TuiAction =
   | { type: 'CREATE_ENSEMBLE_PREV_STEP' }
   | { type: 'CREATE_ENSEMBLE_SUBMIT' }
   | { type: 'CREATE_ENSEMBLE_DONE'; error?: string; ensemble?: string }
-  | { type: 'EXIT_CREATE_ENSEMBLE' };
+  | { type: 'EXIT_CREATE_ENSEMBLE' }
+  // Home-view modals
+  | { type: 'OPEN_HOME_MODAL'; modal: NonNullable<TuiState['homeModal']> }
+  | { type: 'CLOSE_HOME_MODAL' }
+  | { type: 'SET_HOME_MODAL_STATUS'; submitting?: boolean; error?: string };
 
 // ── Reducer ──
 
@@ -411,6 +523,10 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     // ── Navigation ──
 
     case 'NAVIGATE_HOME':
+      // Auto-select was removed from the poller (#306 follow-up): HomeView
+      // is the explicit ensemble picker, so once the user lands on home they
+      // stay there until they pick an ensemble themselves. This action just
+      // resets ensemble/player state and the chat shell.
       return {
         ...state,
         view: 'home',
@@ -428,6 +544,8 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         conversation: null,
         playerMetadata: null,
         playerMessages: [],
+        ensemblePaused: false,
+        ensembleHeld: false,
         selectedPlayerIndex: 0,
       };
 
@@ -449,6 +567,8 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         conversation: null,
         playerMetadata: null,
         playerMessages: [],
+        ensemblePaused: false,
+        ensembleHeld: false,
         selectedPlayerIndex: 0,
       };
 
@@ -523,6 +643,55 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       // Trim to last 500 entries for memory management
       const trimmed = newItems.length > 500 ? newItems.slice(-500) : newItems;
       return { ...state, staticItems: trimmed };
+    }
+
+    // ── Bottom-pinned notifications (#306) ──
+
+    case 'ADD_NOTIFICATION': {
+      const now = Date.now();
+      // Filter out expired entries before appending so the cap check isn't
+      // polluted by stale notifications that should already be gone.
+      const live = state.notifications.filter(n => n.expiresAt > now);
+      const appended = [...live, action.notification];
+      // Cap at NOTIFICATION_CAP — oldest drops off when exceeded.
+      const capped = appended.length > NOTIFICATION_CAP
+        ? appended.slice(appended.length - NOTIFICATION_CAP)
+        : appended;
+      return { ...state, notifications: capped };
+    }
+
+    case 'DISMISS_NOTIFICATION': {
+      const next = state.notifications.filter(n => n.id !== action.id);
+      if (next.length === state.notifications.length) return state;
+      return { ...state, notifications: next };
+    }
+
+    case 'DISMISS_OLDEST_NOTIFICATION': {
+      // Filter-expired-first so Esc acts on what the user actually sees.
+      const now = Date.now();
+      const live = state.notifications.filter(n => n.expiresAt > now);
+      if (live.length === 0) {
+        // Still compact if any expired slipped through — keeps the array clean
+        if (live.length !== state.notifications.length) {
+          return { ...state, notifications: live };
+        }
+        return state;
+      }
+      return { ...state, notifications: live.slice(1) };
+    }
+
+    case 'CLEAR_NOTIFICATIONS': {
+      if (state.notifications.length === 0) return state;
+      return { ...state, notifications: [] };
+    }
+
+    case 'NOTIFICATION_TICK': {
+      // Cheap re-render trigger so expired notifications disappear from the
+      // rendered stack without requiring a reducer action per expiration.
+      // The render pass filters by `expiresAt > Date.now()`. Only the counter
+      // changes — we leave the notifications array alone to avoid thrashing
+      // the React children identity.
+      return { ...state, notificationTick: state.notificationTick + 1 };
     }
 
     // ── Command palette ──
@@ -615,6 +784,19 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'SET_CONDUCTOR':
       return { ...state, conductorName: action.name };
+
+    case 'SET_ENSEMBLE_PAUSED':
+      // Identity-preserving: skip the dispatch when value didn't change so
+      // the StatusBar tree doesn't re-render every poll tick.
+      if (state.ensemblePaused === action.paused) return state;
+      return { ...state, ensemblePaused: action.paused };
+
+    case 'SET_ENSEMBLE_HELD':
+      // Identity-preserving — same rationale as SET_ENSEMBLE_PAUSED. The
+      // 2s held-poll would otherwise reconcile the StatusBar every tick
+      // even when nothing changed.
+      if (state.ensembleHeld === action.held) return state;
+      return { ...state, ensembleHeld: action.held };
 
     case 'APPEND_SENT_MESSAGE': {
       const newSent = [...state.sentMessages, { to: action.to, text: action.text, timestamp: new Date().toISOString() }];
@@ -885,6 +1067,71 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         createEnsembleState: undefined,
       };
     }
+
+    case 'OPEN_HOME_MODAL':
+      return {
+        ...state,
+        homeModal: action.modal,
+        homeModalSubmitting: false,
+        homeModalError: undefined,
+      };
+
+    case 'CLOSE_HOME_MODAL':
+      return {
+        ...state,
+        homeModal: undefined,
+        homeModalSubmitting: false,
+        homeModalError: undefined,
+      };
+
+    case 'SET_HOME_MODAL_STATUS':
+      return {
+        ...state,
+        homeModalSubmitting: action.submitting ?? state.homeModalSubmitting,
+        homeModalError: action.error,
+      };
+
+    case 'CONFIRM_ENSEMBLE_DESTROY':
+      return {
+        ...state,
+        confirmingEnsembleDestroy: { ensemble: action.ensemble, input: '' },
+      };
+
+    case 'ENSEMBLE_DESTROY_INPUT': {
+      if (!state.confirmingEnsembleDestroy) return state;
+      return {
+        ...state,
+        confirmingEnsembleDestroy: {
+          ...state.confirmingEnsembleDestroy,
+          input: action.input,
+          error: undefined,
+        },
+      };
+    }
+
+    case 'ENSEMBLE_DESTROY_SUBMIT_BUSY': {
+      if (!state.confirmingEnsembleDestroy) return state;
+      return {
+        ...state,
+        confirmingEnsembleDestroy: { ...state.confirmingEnsembleDestroy, submitting: true, error: undefined },
+      };
+    }
+
+    case 'ENSEMBLE_DESTROY_MISMATCH': {
+      if (!state.confirmingEnsembleDestroy) return state;
+      const { ensemble, input } = state.confirmingEnsembleDestroy;
+      return {
+        ...state,
+        confirmingEnsembleDestroy: {
+          ...state.confirmingEnsembleDestroy,
+          submitting: false,
+          error: `"${input}" \u2260 "${ensemble}" \u2014 type the ensemble name exactly to confirm.`,
+        },
+      };
+    }
+
+    case 'CANCEL_ENSEMBLE_DESTROY':
+      return { ...state, confirmingEnsembleDestroy: undefined };
 
     default:
       return state;
