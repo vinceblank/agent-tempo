@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-04-26
+
 ### Breaking Changes
 
 - **CLI minimal surface** (#288): `stop`, `restart`, `detach`, `migrate`, `conduct`, `start`,
