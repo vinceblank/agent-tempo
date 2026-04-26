@@ -56,6 +56,33 @@ const RECONNECT_MAX_MS = 60_000;
 const RECONNECT_BACKOFF_FACTOR = 1.5;
 
 /**
+ * #258: tiebreaker timeout for the `describe()` confirmation that gates
+ * `fireTerminal('destroy')` from the reconnect-loop pre-check. The Temporal
+ * SDK's per-call default is conservative (10s+); we'd rather conclude
+ * "describe is hung, treat as terminal" in 3s than freeze the reconnect
+ * loop on a slow visibility-API call.
+ */
+const DESCRIBE_TIMEOUT_MS = 3_000;
+
+/**
+ * Workflow execution statuses that are unambiguously terminal — used by
+ * the #258 `describe()` tiebreaker to decide whether a transient
+ * pre-check error reflects a genuinely-gone workflow (fire destroy) or a
+ * transient blip (continue the loop). Anything not in this set, including
+ * `RUNNING`, `PAUSED`, `UNSPECIFIED`, and `UNKNOWN`, is treated as
+ * non-terminal — conservatively keeps the loop alive when classification
+ * is ambiguous.
+ */
+const TERMINAL_WORKFLOW_STATUSES = new Set<string>([
+  'COMPLETED',
+  'FAILED',
+  'CANCELLED',
+  'TERMINATED',
+  'CONTINUED_AS_NEW',
+  'TIMED_OUT',
+]);
+
+/**
  * Override bundle for the reconnect loop timing (#201). Production defaults are
  * tuned for laptop-sleep cycles (15-min elapsed budget, 10s base, 60s cap). Tests
  * override to run the whole loop in <1s. Any field omitted falls back to the
@@ -494,7 +521,7 @@ export abstract class BaseAttachment {
 
         // Phase `gone` is terminal — workflow destroyed. Never recoverable.
         if (info.phase === 'gone') {
-          this.fireTerminal('destroy');
+          this.fireTerminal('destroy', 'tickPhaseWatcher:phase-gone');
           return;
         }
       } catch (err) {
@@ -538,7 +565,7 @@ export abstract class BaseAttachment {
     }
     // No CAN event in the closed run's history → truly terminal (COMPLETED /
     // TERMINATED / FAILED / workflow-id GC'd).
-    this.fireTerminal('destroy');
+    this.fireTerminal('destroy', 'handleRunEndError:no-can-successor');
     return true;
   }
 
@@ -568,15 +595,105 @@ export abstract class BaseAttachment {
     }
   }
 
-  private fireTerminal(reason: DetachReason): void {
+  /**
+   * Fire the terminal hook — the adapter is going dark and won't recover.
+   *
+   * #258: emits a structured log line on every fire so the next post-CAN
+   * silence incident is unambiguous in logs. Pre-#258, a `fireTerminal`
+   * from an unexpected source (the root cause was a silent destroy from
+   * the reconnect-loop pre-check on a transient terminal-class error) was
+   * indistinguishable from process death in workflow history — both produced
+   * "no further heartbeats." The structured log includes:
+   *
+   *   - `reason` — the existing DetachReason
+   *   - `callsite` — the calling function or rationale (passed by every
+   *     callsite so the source is grep-able without parsing stack traces)
+   *   - `attachmentId` / `workflowId` / `runId` — for cross-referencing
+   *     against workflow history when bisecting an incident
+   *   - `heartbeatsSent` / `phaseTicksDone` — the existing #249 counters
+   *     so an operator can correlate "loop alive at N heartbeats, then
+   *     terminal fired at this callsite" without external context
+   *
+   * Idempotent — repeat calls (e.g. reconnect-exhausted re-fires after
+   * destroy) early-return without re-logging. The first fire wins.
+   */
+  private fireTerminal(reason: DetachReason, callsite = 'unspecified'): void {
     if (this.terminalFired) return;
     this.terminalFired = true;
     this.stopped = true;
+    log(
+      `terminal fire:`,
+      JSON.stringify({
+        reason,
+        callsite,
+        attachmentId: this.token?.attachmentId ?? null,
+        workflowId: this.pinnedHandle?.workflowId ?? null,
+        runId: this.token?.runId ?? null,
+        heartbeatsSent: this.heartbeatsSent,
+        phaseTicksDone: this.phaseTicksDone,
+      }),
+    );
     if (this.heartbeatTimer) { clearTimeout(this.heartbeatTimer); this.heartbeatTimer = null; }
     if (this.phaseWatcherTimer) { clearTimeout(this.phaseWatcherTimer); this.phaseWatcherTimer = null; }
     this.abortSleepers();
     for (const l of this.terminalListeners) {
       try { l(reason); } catch (err) { log('terminal listener threw:', err); }
+    }
+  }
+
+  /**
+   * #258 tiebreaker: confirm whether a workflow is genuinely terminal after
+   * the reconnect-loop pre-check threw a terminal-class error. Used to
+   * distinguish a real workflow-gone state from a transient gRPC /
+   * visibility-API blip that classified as terminal.
+   *
+   * Returns:
+   *  - `{ kind: 'running', statusName }` — workflow is alive (any
+   *    non-terminal status). Caller should treat the original error as
+   *    transient and continue the reconnect loop.
+   *  - `{ kind: 'terminal', statusName }` — workflow is in a terminal
+   *    status (`COMPLETED` / `FAILED` / `CANCELLED` / `TERMINATED` /
+   *    `CONTINUED_AS_NEW` / `TIMED_OUT`). Caller should fire destroy.
+   *  - `{ kind: 'describe-threw' }` — `describe()` itself failed. Treat
+   *    as terminal (fire destroy) — consistent with pre-#258 semantics
+   *    when classification is ambiguous, and avoids spinning forever on
+   *    a workflow we can't reach.
+   *  - `{ kind: 'timed-out' }` — `describe()` exceeded
+   *    {@link DESCRIBE_TIMEOUT_MS}. Treat as terminal (fire destroy) —
+   *    same rationale: prefer clean shutdown to a hung loop.
+   *
+   * The unpinned handle follows any CAN chain to the latest run, so
+   * `desc.status.name === 'CONTINUED_AS_NEW'` here means the workflow
+   * id itself is closed (no successor) — genuinely terminal.
+   */
+  private async confirmWorkflowTerminal(
+    unpinned: WorkflowHandle,
+  ): Promise<
+    | { kind: 'running'; statusName: string }
+    | { kind: 'terminal'; statusName: string }
+    | { kind: 'describe-threw' }
+    | { kind: 'timed-out' }
+  > {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const desc = await Promise.race<
+        { status: { name: string } } | 'timeout'
+      >([
+        unpinned.describe() as Promise<{ status: { name: string } }>,
+        new Promise<'timeout'>((resolve) => {
+          timer = setTimeout(() => resolve('timeout'), DESCRIBE_TIMEOUT_MS);
+        }),
+      ]);
+      if (desc === 'timeout') return { kind: 'timed-out' };
+      const statusName = desc.status?.name ?? 'UNKNOWN';
+      if (TERMINAL_WORKFLOW_STATUSES.has(statusName)) {
+        return { kind: 'terminal', statusName };
+      }
+      return { kind: 'running', statusName };
+    } catch {
+      return { kind: 'describe-threw' };
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
@@ -668,7 +785,7 @@ export abstract class BaseAttachment {
   private fireTerminalOrReconnect(reason: DetachReason, canSuccessorRunId?: string): void {
     if (this.stopped || this.terminalFired || this.reconnecting) return;
     if (!this.shouldReconnect(reason)) {
-      this.fireTerminal(reason);
+      this.fireTerminal(reason, 'fireTerminalOrReconnect:not-recoverable');
       return;
     }
     // Pause the heartbeat + watcher loops for the duration of the reconnect.
@@ -685,7 +802,7 @@ export abstract class BaseAttachment {
       void this.runCanRebind(canSuccessorRunId).catch((err) => {
         log(`CAN rebind crashed:`, (err as Error)?.message ?? err);
         this.reconnecting = false;
-        this.fireTerminal('reconnect-exhausted');
+        this.fireTerminal('reconnect-exhausted', 'runCanRebind:crashed');
       });
       return;
     }
@@ -693,7 +810,7 @@ export abstract class BaseAttachment {
     void this.runReconnectLoop(reason).catch((err) => {
       log(`reconnect loop crashed:`, (err as Error)?.message ?? err);
       this.reconnecting = false;
-      this.fireTerminal('reconnect-exhausted');
+      this.fireTerminal('reconnect-exhausted', 'runReconnectLoop:crashed');
     });
   }
 
@@ -718,7 +835,7 @@ export abstract class BaseAttachment {
     try {
       if (!this.client || !this.pinnedHandle || !this.token) {
         log('runCanRebind: missing client/handle/token — firing terminal');
-        this.fireTerminal('reconnect-exhausted');
+        this.fireTerminal('reconnect-exhausted', 'runCanRebind:missing-state');
         return;
       }
       const workflowId = this.pinnedHandle.workflowId;
@@ -799,7 +916,7 @@ export abstract class BaseAttachment {
     try {
       if (!this.client || !this.host || !this.token || !this.pinnedHandle) {
         log('runReconnectLoop: missing client/host/token/handle — aborting');
-        this.fireTerminal('reconnect-exhausted');
+        this.fireTerminal('reconnect-exhausted', 'runReconnectLoop:missing-state');
         return;
       }
 
@@ -839,14 +956,44 @@ export abstract class BaseAttachment {
           info = await unpinned.query(attachmentInfoQuery);
         } catch (err) {
           if (isTerminalWorkflowError(err)) {
-            // #226: either terminal kind inside the reconnect loop's pre-check
-            // ends the loop. We don't recurse into another CAN rebind here —
-            // that path is only for the pinned-handle tick ticks where we can
-            // read the closed run's history. Inside the loop the unpinned
-            // query has already followed any CAN chain, so a gone error means
-            // the workflow id is truly absent.
-            log('reconnect: workflow gone during pre-check');
-            this.fireTerminal('destroy');
+            // #258: ONE terminal-class pre-check error is not enough evidence
+            // to destroy the adapter. The classifier matches phrasings
+            // (`WorkflowNotFound`, `NOT_FOUND`, "workflow execution already
+            // completed") that can ALSO surface from transient gRPC blips and
+            // momentary visibility-API hiccups. Pre-#258, this branch fired
+            // `fireTerminal('destroy')` immediately — a single transient
+            // error orphaned the adapter for the rest of the session
+            // (heartbeat + watcher dead via `terminalFired`, poller torn
+            // down by `onReconnectStart` + `onTerminal` listener).
+            //
+            // Tiebreaker: confirm with `describe()` against the same unpinned
+            // handle. If the workflow is genuinely gone, `describe()` will
+            // either return a closed status (COMPLETED/TERMINATED/...) or
+            // itself throw — fire destroy with confidence. If it returns
+            // RUNNING (or any non-terminal status), the original error was
+            // transient — log and continue the loop. Bounded by
+            // `DESCRIBE_TIMEOUT_MS` so a slow visibility-API call can't hang
+            // the reconnect path indefinitely.
+            const errClass = (err as Error)?.name ?? 'unknown';
+            const errMsg = (err as Error)?.message ?? String(err);
+            const tiebreak = await this.confirmWorkflowTerminal(unpinned);
+            if (tiebreak.kind === 'running') {
+              log(
+                `reconnect: pre-check threw ${errClass} but describe() shows ` +
+                `${tiebreak.statusName} — treating as transient, continuing loop ` +
+                `(originalError="${errMsg}")`,
+              );
+              backoff = Math.min(backoff * this.reconnectBackoffFactor, this.reconnectMaxMs);
+              continue;
+            }
+            const confirmDesc = tiebreak.kind === 'terminal'
+              ? `describe() confirmed ${tiebreak.statusName}`
+              : `describe() ${tiebreak.kind === 'describe-threw' ? 'threw' : 'timed out'}`;
+            log(
+              `reconnect: pre-check terminal (${errClass}) and ${confirmDesc} — firing destroy ` +
+              `(originalError="${errMsg}")`,
+            );
+            this.fireTerminal('destroy', 'runReconnectLoop:precheck-terminal-confirmed');
             return;
           }
           backoff = Math.min(backoff * this.reconnectBackoffFactor, this.reconnectMaxMs);
@@ -856,12 +1003,12 @@ export abstract class BaseAttachment {
 
         if (info.phase === 'gone') {
           log('reconnect: phase=gone — giving up');
-          this.fireTerminal('destroy');
+          this.fireTerminal('destroy', 'runReconnectLoop:phase-gone');
           return;
         }
         if (info.currentAttachment && info.currentAttachment.attachmentId !== oldAttachmentId) {
           log(`reconnect: another adapter holds the lease (${info.currentAttachment.attachmentId}) — bailing`);
-          this.fireTerminal('superseded');
+          this.fireTerminal('superseded', 'runReconnectLoop:other-holder');
           return;
         }
         if (info.phase === 'draining') {
@@ -919,7 +1066,7 @@ export abstract class BaseAttachment {
         } catch (err) {
           if (isTerminalWorkflowError(err)) {
             log('reconnect: workflow gone during claim');
-            this.fireTerminal('destroy');
+            this.fireTerminal('destroy', 'runReconnectLoop:claim-terminal');
             return;
           }
           backoff = Math.min(backoff * this.reconnectBackoffFactor, this.reconnectMaxMs);
@@ -929,7 +1076,7 @@ export abstract class BaseAttachment {
 
       // Budget exhausted — give up cleanly.
       log(`reconnect budget exhausted after ${attempt} attempt(s)`);
-      this.fireTerminal('reconnect-exhausted');
+      this.fireTerminal('reconnect-exhausted', 'runReconnectLoop:budget-exhausted');
     } finally {
       // Guarantee state reset regardless of which path we exited on. Safe to
       // assign unconditionally — a successful reconnect also ends up here after
