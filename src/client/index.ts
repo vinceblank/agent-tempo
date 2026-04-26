@@ -760,6 +760,13 @@ export function createTempoClient(client: Client): TempoClient {
       // treat every live phase as a presumed orphan. Without this narrowing
       // a healthy conductor gets deliverRestart → requestDetach and is
       // hard-terminated by `drainingDeadline`.
+      //
+      // Bug A: also fan out `setPaused=false` to every session. Without
+      // this, sessions whose `paused` flag was flipped (via `/pause` or
+      // any prior pause path) stay frozen — the conductor receives
+      // messages but its outbox dispatcher is gated by `!paused`, so
+      // typed messages get no reply. Mirrors the pattern in `play()`:
+      // the maestro/scheduler hub toggle is not enough on its own.
       const [summary] = await Promise.all([
         restoreOrphansOnce(client, {
           hostname: osHostname(),
@@ -769,6 +776,7 @@ export function createTempoClient(client: Client): TempoClient {
           phases: ['detached'],
         }),
         unpauseMaestroAndScheduler(client, ensemble),
+        signalAllSessions(client, ensemble, setPausedSignal.name, false),
       ]);
       return summary;
     },
