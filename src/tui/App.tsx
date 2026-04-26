@@ -1534,7 +1534,16 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   // notifications stack. Keeps the y/N prompt anchored below the input so
   // it can't scroll away under new messages.
   const confirmationLines = countPinnedConfirmationLines(state);
-  const FOOTER_LINES = 4 + paletteLines + confirmationLines + notificationLines; // StatusBar + divider + PromptArea + bottom divider + palette + pinned confirmations + notifications
+  // #306: Hide the chat prompt on the home view. Home is a wizard/picker
+  // (arrow keys + Enter), not a chat target — there is no ensemble to talk
+  // to, and a visible input box double-fires Enter (HomeView's own useInput
+  // selects the row, PromptArea's useInput submits the empty buffer). The
+  // Splash phase already follows this pattern; home now mirrors it. When
+  // hidden we drop 2 lines from FOOTER_LINES (PromptArea row + the second
+  // divider) so the live content area reclaims that space.
+  const hidePrompt = isHomeView(state);
+  const promptFooterLines = hidePrompt ? 0 : 2; // PromptArea + bottom divider
+  const FOOTER_LINES = 2 + promptFooterLines + paletteLines + confirmationLines + notificationLines; // StatusBar + divider + (PromptArea + bottom divider when shown) + palette + pinned confirmations + notifications
   const contentHeight = Math.max(3, termRows - 1 - FOOTER_LINES);
 
   // Splash phase — full screen, no chrome (title/status/prompt hidden)
@@ -1608,25 +1617,33 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     }),
     // Bottom divider (1 Text node, no Box wrapper)
     React.createElement(Text, { color: THEME.border }, ` ${dividerLine} `),
-    // Prompt area (1 Box + 2-3 Text nodes — uncontrolled, no parent dispatch per keystroke)
-    React.createElement(PromptArea, {
-      hints: promptHints,
-      onSubmit: handleSubmit,
-      disabled: (state.phase !== 'main' && state.phase !== 'chat') || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingEnsembleDestroy || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay || !!state.overlay,
-      commandNames: commandNamesList,
-      playerNames: playerNamesList,
-      initialHistory: cmdHistory,
-      onHistoryUpdate: handleHistoryUpdate,
-      onInputChange: handleInputChange,
-      paletteVisible: state.paletteVisible,
-      onPaletteToggle: handlePaletteToggle,
-      onPaletteUp: handlePaletteUp,
-      onPaletteDown: handlePaletteDown,
-      onPaletteSelect: handlePaletteSelect,
-      inputRef: promptRef,
-    }),
-    // Bottom divider (1 Text node)
-    React.createElement(Text, { color: THEME.border }, ` ${dividerLine} `),
+    // Prompt area + bottom divider — hidden on the home view (#306).
+    // Home is a picker, not a chat target; the input would either eat keys
+    // or double-fire Enter against HomeView's own useInput. Mirrors the
+    // Splash phase, which renders no prompt at all.
+    hidePrompt
+      ? null
+      : React.createElement(PromptArea, {
+          hints: promptHints,
+          onSubmit: handleSubmit,
+          disabled: (state.phase !== 'main' && state.phase !== 'chat') || !!state.confirmingStop || !!state.confirmingDisband || !!state.confirmingEnsembleDestroy || !!state.confirmingLineup || state.pickerVisible || state.statusOverlay || !!state.overlay,
+          commandNames: commandNamesList,
+          playerNames: playerNamesList,
+          initialHistory: cmdHistory,
+          onHistoryUpdate: handleHistoryUpdate,
+          onInputChange: handleInputChange,
+          paletteVisible: state.paletteVisible,
+          onPaletteToggle: handlePaletteToggle,
+          onPaletteUp: handlePaletteUp,
+          onPaletteDown: handlePaletteDown,
+          onPaletteSelect: handlePaletteSelect,
+          inputRef: promptRef,
+        }),
+    // Bottom divider (1 Text node) — also hidden when the prompt is hidden
+    // so the footer accounting in FOOTER_LINES stays consistent.
+    hidePrompt
+      ? null
+      : React.createElement(Text, { color: THEME.border }, ` ${dividerLine} `),
     // Command palette (1 Text node when visible)
     state.paletteVisible && filteredPaletteCommands.length > 0
       ? React.createElement(CommandPalette, {
@@ -1694,6 +1711,20 @@ function renderNotifications(
  */
 export function stripLeadingIcon(content: string): string {
   return content.replace(/^[✗⚠ⓘ]\s+/u, '');
+}
+
+/**
+ * #306: True when the TUI is on the home picker view — `phase === 'main'`
+ * AND `view === 'home'`. The chat input has no target on this view (the
+ * ensemble has not been entered yet), and HomeView owns Enter to navigate
+ * its own row list. Render guard for PromptArea + the second divider so
+ * the input cannot double-fire alongside HomeView's own `useInput`.
+ *
+ * Pure function, exported so tests can pin the guard's logic without
+ * standing up an Ink render. Mirrors the splash-phase bypass pattern.
+ */
+export function isHomeView(state: Pick<TuiState, 'phase' | 'view'>): boolean {
+  return state.phase === 'main' && state.view === 'home';
 }
 
 /**
