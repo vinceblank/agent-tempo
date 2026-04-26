@@ -91,7 +91,7 @@ query. `awaiting` is the idle refinement of `attached` (lease held, no in-flight
 Transitions are driven by V2 wire primitives: `claimAttachment` update (claim/renew), `heartbeat`
 signal (extends lease), `processingStart`/`processingEnd` updates (in-flight set),
 `requestDetach` signal, `adapterExited` signal (collapses draining → detached), `forceDetach`
-update, `destroy` update. See `docs/design/session-lifecycle-rebuild-v2.md` §2.2, §2.4.
+update, `destroy` update.
 
 **Heartbeat invariant** (#249): After a successful `claimAttachment`, the adapter's heartbeat
 loop MUST fire at the configured `heartbeatMs` cadence for the life of the lease. Silent

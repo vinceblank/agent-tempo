@@ -1,7 +1,6 @@
 # Architecture — Session Model and Ensemble Coordination
 
 > **Scope:** Describes the target state after the v0.25 rebuild (PR-A through PR-F merged).
-> **Design doc-of-record:** `docs/design/session-lifecycle-rebuild-v2.md` — full phase machine, transition invariants, and restart algorithm.
 > **Wire protocol:** `docs/WIRE-PROTOCOL.md` — exact signal/query/update names and stability guarantees.
 > **Quick definitions:** [`docs/concepts.md`](concepts.md) — full glossary.
 
@@ -197,9 +196,6 @@ Layer 1 is topology-agnostic. A `claudeSessionWorkflow` has no awareness of whic
 
 | Topic | Reference |
 |---|---|
-| Phase machine invariants and transition rules | `docs/design/session-lifecycle-rebuild-v2.md` §2.2, §2.4 |
-| Restart algorithm | `docs/design/session-lifecycle-rebuild-v2.md` §8.2 |
-| Orphan restore policy and decision tree | `docs/design/session-lifecycle-rebuild-v2.md` §10.2 |
 | Exact signal/query/update names and types | `docs/WIRE-PROTOCOL.md` |
 | Key concept definitions (player, ensemble, adapter, etc.) | [`docs/concepts.md`](concepts.md) |
 | Adapter authoring guide | `src/adapters/README.md` |
