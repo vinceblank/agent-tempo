@@ -148,11 +148,56 @@ function findOrphanTemporalServers(): number[] {
 }
 
 /**
- * Kill any pre-existing `temporal-sdk-typescript-*` processes that survived
- * a prior crashed Mocha run. Called once at the start of `npm test` from
- * the `mochaGlobalSetup` fixture in `root-hooks.ts`.
+ * Synchronous reap, suitable for `process.on('exit')` handlers (which
+ * can't await). Returns the PIDs that were successfully killed so callers
+ * can log/report. Never throws — a failed reap must not block exit.
  *
- * Never throws — a failed reap must not block the test suite from starting.
+ * Implementation note: `process.kill(pid, 'SIGKILL')` is synchronous on
+ * both POSIX and Windows (Node maps it to `TerminateProcess` on Win),
+ * and `execFileSync` is — by definition — synchronous. So the whole loop
+ * runs to completion before `process.on('exit')` returns.
+ */
+function reapOrphanTemporalServersSync(): number[] {
+  const reaped: number[] = [];
+  let pids: number[] = [];
+  try {
+    pids = findOrphanTemporalServers();
+  } catch {
+    return reaped;
+  }
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 'SIGKILL');
+      reaped.push(pid);
+    } catch {
+      // Already dead, perms denied, etc. Try Windows taskkill /F as a
+      // last-resort fallback before giving up on this PID.
+      if (process.platform === 'win32') {
+        try {
+          execFileSync('taskkill', ['/PID', String(pid), '/F'], { stdio: 'ignore' });
+          reaped.push(pid);
+          continue;
+        } catch {
+          /* give up on this pid; loop continues */
+        }
+      }
+      // Don't warn from sync reap — the exit handler runs in contexts
+      // (e.g. SIGINT during teardown) where stderr writes can race the
+      // shutdown. The async wrapper below logs the per-pid attempt.
+    }
+  }
+  return reaped;
+}
+
+/**
+ * Kill any pre-existing `temporal-sdk-typescript-*` processes that survived
+ * a prior crashed Mocha run, OR any leftover spawned by the current run that
+ * haven't been torn down yet. Called from:
+ *   - `mochaGlobalSetup` (pre-suite — clears prior crashes)
+ *   - `mochaGlobalTeardown` (post-suite — clears normal-exit leftovers)
+ *
+ * Never throws — a failed reap must not block the test suite from starting
+ * or finishing.
  */
 export async function reapOrphanTemporalServers(): Promise<void> {
   try {
@@ -160,7 +205,7 @@ export async function reapOrphanTemporalServers(): Promise<void> {
     if (pids.length === 0) return;
     console.log(
       `[test:cleanup] reaping ${pids.length} orphan temporal-sdk-typescript ` +
-      `process(es) from prior crashed runs: ${pids.join(', ')}`,
+      `process(es): ${pids.join(', ')}`,
     );
     for (const pid of pids) {
       try {
@@ -181,6 +226,88 @@ export async function reapOrphanTemporalServers(): Promise<void> {
     }
   } catch (err) {
     console.warn('[test:cleanup] orphan reap failed (non-fatal):', err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// v2: last-ditch zombie reaper for crash exits + SIGINT/SIGTERM (#306).
+//
+// v1 (`fa3a96d`) reaps only BEFORE the suite. If a test crashes mid-flow
+// or `teardown()` is skipped — the exact "Failed to start ephemeral
+// server: Access is denied. (os error 5)" failure mode that blocked the
+// full Mocha suite during #306 smoke-testing — fresh ephemerals from THIS
+// run orphan and the next `npm test` invocation hits the same wall until
+// the next pre-suite reap fires.
+//
+// v2 closes the gap: register `process.on('exit')` so any exit path that
+// reaches Node's normal teardown (clean exit, `process.exit()`, unhandled
+// exception, mocha's signal-handler chain calling exit) reaps zombies
+// synchronously before the process is reaped itself. SIGINT/SIGTERM
+// listeners are belt-and-suspenders for the case where mocha doesn't
+// install its own — they reap then call `process.exit()` with the
+// canonical signal exit code.
+//
+// SIGKILL is the irreducible gap: by OS contract, no userland handler
+// runs. The pre-suite reap (v1, kept) catches those leftovers next run.
+//
+// Gated to Windows because POSIX doesn't hit the spawn-lock bug — the
+// reap is harmless there but the registration is unnecessary noise.
+// ─────────────────────────────────────────────────────────────────────────
+let zombieReaperInstalled = false;
+
+/**
+ * Install last-ditch process-exit handlers that reap orphan
+ * `temporal-sdk-typescript-*` zombies synchronously. Idempotent — repeat
+ * calls are no-ops. Called once from `mochaGlobalSetup` in
+ * `test/root-hooks.ts`.
+ *
+ * No-op on POSIX (`process.platform !== 'win32'`).
+ */
+export function installTemporalZombieReaper(): void {
+  if (zombieReaperInstalled) return;
+  zombieReaperInstalled = true;
+  if (process.platform !== 'win32') return;
+
+  // `exit` — synchronous, runs on clean exit + `process.exit()` +
+  // unhandled exception + mocha-driven signal handlers that call exit.
+  // Sync reap is the right shape: handlers can't await.
+  process.on('exit', () => {
+    try {
+      const reaped = reapOrphanTemporalServersSync();
+      if (reaped.length > 0) {
+        console.log(
+          `[test:cleanup] exit handler reaped ${reaped.length} ` +
+          `temporal-sdk-typescript zombie(s): ${reaped.join(', ')}`,
+        );
+      }
+    } catch {
+      /* swallow — process is already exiting */
+    }
+  });
+
+  // SIGINT / SIGTERM — defensive. Mocha typically installs its own
+  // SIGINT handler that triggers a graceful test abort + `process.exit`,
+  // which our `exit` handler above catches. These run BEFORE mocha's
+  // chain (Node fires listeners in registration order — we register at
+  // suite setup, mocha at run start), so we reap first then re-emit
+  // `process.exit` with the canonical exit code so any later listener
+  // sees a definitively-terminating process.
+  for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+    process.on(sig, () => {
+      try {
+        const reaped = reapOrphanTemporalServersSync();
+        if (reaped.length > 0) {
+          console.log(
+            `[test:cleanup] ${sig} reaped ${reaped.length} ` +
+            `temporal-sdk-typescript zombie(s): ${reaped.join(', ')}`,
+          );
+        }
+      } catch {
+        /* swallow — we're shutting down */
+      }
+      // POSIX-canonical signal exit codes (128 + signal number).
+      process.exit(sig === 'SIGINT' ? 130 : 143);
+    });
   }
 }
 
