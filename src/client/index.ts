@@ -48,6 +48,7 @@ import {
 import type {
   TempoClient,
   EnsembleSummary,
+  EnsembleShutdownDetail,
   EnsembleShutdownSummary,
   EnsembleDestroySummary,
   RecruitClientOpts,
@@ -737,13 +738,20 @@ export function createTempoClient(client: Client): TempoClient {
         failed: fanout.failed,
         maestroPaused: toggle.maestro,
         schedulerPaused: toggle.scheduler,
-        details: fanout.perSession.map((p) =>
-          p.outcome === 'sent'
-            ? { playerId: p.playerId, outcome: 'detaching' as const }
-            : p.outcome === 'failed'
-              ? { playerId: p.playerId, outcome: 'failed' as const, error: p.error }
-              : { playerId: p.playerId, outcome: 'skipped-self' as const },
-        ),
+        // #299 sibling: TempoClient does not pass a `skip` predicate to
+        // `signalAllSessions`, so `fanout.perSession[*].outcome` will never
+        // be `'skipped'` here. The narrowed `EnsembleShutdownDetail.outcome`
+        // reflects the actual public surface; the `'skipped'` branch is an
+        // explicit no-op that emits nothing.
+        details: fanout.perSession.flatMap((p): EnsembleShutdownDetail[] => {
+          if (p.outcome === 'sent') {
+            return [{ playerId: p.playerId, outcome: 'detaching' }];
+          }
+          if (p.outcome === 'failed') {
+            return [{ playerId: p.playerId, outcome: 'failed', error: p.error }];
+          }
+          return []; // 'skipped' is unreachable in the TempoClient path
+        }),
       };
     },
 
