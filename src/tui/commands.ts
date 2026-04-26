@@ -768,7 +768,7 @@ async function handleGates(
     } else {
       const ensembles = await api.discoverEnsembles();
       if (ensembles.length === 0) {
-        commitStatic(dispatch, 'info', 'No ensembles running.');
+        commitNotification(dispatch, 'info', 'No ensembles running.');
         return;
       }
       ensembleNames = ensembles.map(e => e.name);
@@ -796,7 +796,7 @@ async function handleGates(
     }
 
     if (allItems.length === 0) {
-      commitStatic(dispatch, 'info', 'No quality gates defined.');
+      commitNotification(dispatch, 'info', 'No quality gates defined.');
     } else {
       dispatch({
         type: 'SHOW_OVERLAY',
@@ -827,7 +827,7 @@ async function handleStages(
     } else {
       const ensembles = await api.discoverEnsembles();
       if (ensembles.length === 0) {
-        commitStatic(dispatch, 'info', 'No ensembles running.');
+        commitNotification(dispatch, 'info', 'No ensembles running.');
         return;
       }
       ensembleNames = ensembles.map(e => e.name);
@@ -858,7 +858,7 @@ async function handleStages(
     }
 
     if (allItems.length === 0) {
-      commitStatic(dispatch, 'info', 'No stages defined.');
+      commitNotification(dispatch, 'info', 'No stages defined.');
     } else {
       dispatch({
         type: 'SHOW_OVERLAY',
@@ -937,7 +937,7 @@ async function handleWorktree(
   try {
     const ensembles = await api.discoverEnsembles();
     if (ensembles.length === 0) {
-      commitStatic(dispatch, 'info', 'No ensembles running.');
+      commitNotification(dispatch, 'info', 'No ensembles running.');
       return;
     }
 
@@ -955,7 +955,7 @@ async function handleWorktree(
     }
 
     if (allItems.length === 0) {
-      commitStatic(dispatch, 'info', 'No active worktrees.');
+      commitNotification(dispatch, 'info', 'No active worktrees.');
     } else {
       dispatch({
         type: 'SHOW_OVERLAY',
@@ -1022,7 +1022,7 @@ async function handleSearch(
     }
 
     if (allResults.length === 0) {
-      commitStatic(dispatch, 'info', `No messages matching "${term}".`);
+      commitNotification(dispatch, 'info', `No messages matching "${term}".`);
       return;
     }
 
@@ -1096,7 +1096,7 @@ async function handleLineup(
       try {
         const lineups = listAllLineups();
         if (lineups.length === 0) {
-          commitStatic(dispatch, 'info', 'No lineups available. Create one with /lineup save.');
+          commitNotification(dispatch, 'info', 'No lineups available. Create one with /lineup save.');
           return;
         }
         const items = lineups.map(l => ({
@@ -1210,7 +1210,7 @@ async function handleGo(
   try {
     const summary = await api.release(ensemble);
     if (summary.released.length === 0 && summary.errors.length === 0) {
-      commitStatic(dispatch, 'info', 'No held players to release.');
+      commitNotification(dispatch, 'info', 'No held players to release.');
       return;
     }
     if (summary.released.length > 0) {
