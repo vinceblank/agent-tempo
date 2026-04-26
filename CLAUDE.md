@@ -107,6 +107,13 @@ npm test
 > surveys or migrations, always grep **both** `test/` and `tests/` or you will miss
 > mocks and assertions that only live in one directory.
 
+> **Test-only hooks live with the module they reset and follow the
+> `__<verb><Noun>ForTests` naming convention** — see
+> [docs/adr/0006-test-hooks-naming.md](docs/adr/0006-test-hooks-naming.md). The
+> double-underscore prefix telegraphs "test escape hatch, do not call from
+> production code"; the hook's doc-comment should restate that explicitly. Hooks
+> are never surfaced through barrels or `TempoClient`.
+
 See [docs/development.md](docs/development.md) for full setup (Temporal dev server command,
 daemon worker notes, `npx ts-node` dev runner).
 

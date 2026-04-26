@@ -24,6 +24,7 @@ import {
   maestroGlobalSendCommandUpdate,
   hostProfileSignal,
   hostProfilesQuery,
+  hostProfilesWithExistenceQuery,
 } from '../src/workflows/maestro-signals';
 import type { MaestroPlayerInfo, HostProfile } from '../src/types';
 
@@ -532,6 +533,45 @@ describe('claudeGlobalMaestroWorkflow', function () {
         expect(profiles['upsert-host'].version).to.equal('0.26.0-beta.7');
         expect(profiles['upsert-host'].defaultAgent).to.equal('copilot');
 
+        await handle.signal(maestroShutdownSignal);
+        await handle.result();
+      });
+    });
+
+    // #280 — combined existence + profiles query.
+    it('hostProfilesWithExistence returns exists:true plus the same profile map', async function () {
+      this.timeout(10_000);
+      await withWorkerAndGlobalMaestroActivities({}, async () => {
+        const handle = await startGlobalMaestro(getClient());
+
+        const profile: HostProfile = {
+          hostname: 'combined-host',
+          version: '0.27.0',
+          defaultAgent: 'claude',
+        };
+        await handle.signal(hostProfileSignal, profile);
+
+        const combined = await handle.query(hostProfilesWithExistenceQuery);
+        expect(combined.exists).to.equal(true);
+        expect(combined.profiles).to.have.property('combined-host');
+        expect(combined.profiles['combined-host']).to.deep.equal(profile);
+
+        // Result must agree with the legacy single-purpose query (back-compat).
+        const legacy = await handle.query(hostProfilesQuery);
+        expect(combined.profiles).to.deep.equal(legacy);
+
+        await handle.signal(maestroShutdownSignal);
+        await handle.result();
+      });
+    });
+
+    it('hostProfilesWithExistence returns exists:true with empty profiles when no host has signaled', async function () {
+      this.timeout(10_000);
+      await withWorkerAndGlobalMaestroActivities({}, async () => {
+        const handle = await startGlobalMaestro(getClient());
+        const combined = await handle.query(hostProfilesWithExistenceQuery);
+        expect(combined.exists).to.equal(true);
+        expect(combined.profiles).to.deep.equal({});
         await handle.signal(maestroShutdownSignal);
         await handle.result();
       });

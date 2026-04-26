@@ -41,6 +41,8 @@ import {
   // #274 — host discovery
   hostProfileSignal,
   hostProfilesQuery,
+  // #280 — combined existence + profiles query
+  hostProfilesWithExistenceQuery,
 } from './maestro-signals';
 import type { HostProfile } from '../types';
 
@@ -359,6 +361,13 @@ export async function claudeGlobalMaestroWorkflow(input: GlobalMaestroInput): Pr
   setHandler(maestroPendingCommandsQuery, () => pendingCommands);
   // Return a defensive copy so callers can't mutate workflow state.
   setHandler(hostProfilesQuery, () => ({ ...hostProfiles }));
+  // #280 — combined query: reaching this handler proves the workflow is
+  // running, so `exists` is always `true` here. Callers infer "missing"
+  // by catching transport-level errors (workflow not found, etc.).
+  setHandler(hostProfilesWithExistenceQuery, () => ({
+    exists: true,
+    profiles: { ...hostProfiles },
+  }));
 
   // ── Update Handlers (can await activities) ──
 

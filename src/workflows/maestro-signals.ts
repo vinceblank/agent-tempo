@@ -109,6 +109,28 @@ export const maestroRecentMessagesQuery = defineQuery<MaestroRelayMessage[]>('ma
  */
 export const hostProfilesQuery = defineQuery<Record<string, HostProfile>>('hostProfiles');
 
+/**
+ * #280 — combined existence + profiles query.
+ *
+ * Saves a round-trip on the `listHosts` cache-miss path: the prior
+ * implementation called `handle.describe()` to confirm the workflow was
+ * `RUNNING` then `handle.query('hostProfiles')` to fetch the data — two
+ * sequential RPCs against the same handle. Callers can now hit a single
+ * query: success → `{ exists: true, profiles }`; transport failure
+ * (workflow not found, terminated, unreachable) → caller catches and
+ * treats as `null` (i.e. "missing"). The `exists: true` flag is set
+ * explicitly by the handler so future variants — e.g. an "I'm running
+ * but in degraded mode" signal — could carry `exists: false` over the
+ * wire without breaking older clients.
+ *
+ * Wire-protocol additive change (new query, no rename) — the legacy
+ * `hostProfiles` query stays for backwards compatibility.
+ */
+export const hostProfilesWithExistenceQuery = defineQuery<{
+  exists: boolean;
+  profiles: Record<string, HostProfile>;
+}>('hostProfilesWithExistence');
+
 // ── Global Maestro Updates ──
 
 /** Send a message to a player in a specific ensemble. Returns the message ID. */

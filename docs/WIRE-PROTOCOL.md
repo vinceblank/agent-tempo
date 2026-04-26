@@ -192,7 +192,8 @@ Queries on a `claudeGlobalMaestroWorkflow` instance (synchronous, read-only).
 | `maestroEnsembles` | `string[]` | All ensemble names currently known to the global Maestro. |
 | `maestroPlayersByEnsemble` | `Record<string, MaestroPlayerInfo[]>` | All players grouped by ensemble. Each `MaestroPlayerInfo` includes an `ensemble` field. |
 | `maestroRecentMessages` | `MaestroRelayMessage[]` | Ring buffer of recent messages relayed across all ensembles (max 500). |
-| `hostProfiles` | `Record<string, HostProfile>` | **#274.** Map of `hostname → HostProfile` advertised by daemons via the `hostProfile` signal. Carried through CAN with the rest of maestro state. Joined with Temporal poller liveness by `src/utils/hosts.ts` to produce the consumer-facing `HostInfo[]`. |
+| `hostProfiles` | `Record<string, HostProfile>` | **#274.** Map of `hostname → HostProfile` advertised by daemons via the `hostProfile` signal. Carried through CAN with the rest of maestro state. Joined with Temporal poller liveness by `src/utils/hosts.ts` to produce the consumer-facing `HostInfo[]`. **Note:** `hostProfilesWithExistence` (below) is the preferred single-RPC entry point for callers that also need to confirm the workflow is running; this query remains supported for backwards compatibility. |
+| `hostProfilesWithExistence` | `{ exists: boolean; profiles: Record<string, HostProfile> }` | **#280.** Single-RPC combined existence + profiles query. Replaces the prior two-call pattern (`handle.describe()` for liveness then `handle.query('hostProfiles')` for data) used by `src/utils/hosts.ts` on cache miss. Reaching the handler proves the workflow is running, so `exists` is always `true` on success; transport failure (workflow not found, terminated, unreachable) is caught at the call site and treated as "missing". The explicit `exists` flag preserves room for a future "running but degraded" variant without breaking older clients. |
 
 ---
 

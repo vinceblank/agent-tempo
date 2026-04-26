@@ -15,6 +15,7 @@ import {
   parseIdentity,
   __resetHostsCacheForTests,
   HOST_FRESHNESS_THRESHOLD_MS,
+  HOST_FANOUT_CONCURRENCY,
 } from '../src/utils/hosts';
 import { formatHostList } from '../src/utils/format-hosts';
 
@@ -115,10 +116,12 @@ describe('listHosts (#274 AC6)', function () {
       [`claude-tempo-mac-alice:${TASK_QUEUE_TYPE_ACTIVITY}`]: [mkPoller(ident, 1_000)],
     };
     const hosts = await listHosts(fakeClient, {
-      now: () => NOW,
-      describePollers: stubDescribe(table),
-      fetchProfiles: async () => ({ 'mac-alice': profileFresh }),
       force: true,
+      deps: {
+        now: () => NOW,
+        describePollers: stubDescribe(table),
+        fetchProfiles: async () => ({ 'mac-alice': profileFresh }),
+      },
     });
     expect(hosts).to.have.length(1);
     const [h] = hosts;
@@ -143,10 +146,12 @@ describe('listHosts (#274 AC6)', function () {
       // no activity, no per-host
     };
     const hosts = await listHosts(fakeClient, {
-      now: () => NOW,
-      describePollers: stubDescribe(table),
-      fetchProfiles: async () => ({}),
       force: true,
+      deps: {
+        now: () => NOW,
+        describePollers: stubDescribe(table),
+        fetchProfiles: async () => ({}),
+      },
     });
     expect(hosts).to.have.length(1);
     expect(hosts[0].recruitReady).to.equal(false);
@@ -164,10 +169,12 @@ describe('listHosts (#274 AC6)', function () {
       [`claude-tempo-h:${TASK_QUEUE_TYPE_ACTIVITY}`]: [mkPoller(ident, stale)],
     };
     const hosts = await listHosts(fakeClient, {
-      now: () => NOW,
-      describePollers: stubDescribe(table),
-      fetchProfiles: async () => null,
       force: true,
+      deps: {
+        now: () => NOW,
+        describePollers: stubDescribe(table),
+        fetchProfiles: async () => null,
+      },
     });
     expect(hosts).to.have.length(1);
     expect(hosts[0].freshness).to.equal('stale');
@@ -181,12 +188,14 @@ describe('listHosts (#274 AC6)', function () {
       [`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller(ident, 1_000)],
     };
     const hosts = await listHosts(fakeClient, {
-      now: () => NOW,
-      describePollers: stubDescribe(table),
-      fetchProfiles: async () => ({
-        h: { hostname: 'h', version: '0.26.0' },
-      }),
       force: true,
+      deps: {
+        now: () => NOW,
+        describePollers: stubDescribe(table),
+        fetchProfiles: async () => ({
+          h: { hostname: 'h', version: '0.26.0' },
+        }),
+      },
     });
     expect(hosts).to.have.length(1);
     expect(hosts[0].instances[0].version).to.equal('0.27.0', 'identity wins on version');
@@ -200,10 +209,12 @@ describe('listHosts (#274 AC6)', function () {
       [`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller(ident, 1_000)],
     };
     const hosts = await listHosts(fakeClient, {
-      now: () => NOW,
-      describePollers: stubDescribe(table),
-      fetchProfiles: async () => null,
       force: true,
+      deps: {
+        now: () => NOW,
+        describePollers: stubDescribe(table),
+        fetchProfiles: async () => null,
+      },
     });
     expect(hosts[0].profile).to.equal(undefined);
     expect(hosts[0].profileStaleness).to.equal('missing');
@@ -215,10 +226,12 @@ describe('listHosts (#274 AC6)', function () {
       [`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller(ident, 1_000)],
     };
     const hosts = await listHosts(fakeClient, {
-      now: () => NOW,
-      describePollers: stubDescribe(table),
-      fetchProfiles: async () => ({}), // maestro reachable, empty map
       force: true,
+      deps: {
+        now: () => NOW,
+        describePollers: stubDescribe(table),
+        fetchProfiles: async () => ({}), // maestro reachable, empty map
+      },
     });
     expect(hosts[0].profileStaleness).to.equal('missing');
   });
@@ -231,13 +244,51 @@ describe('listHosts (#274 AC6)', function () {
       ],
     };
     const hosts = await listHosts(fakeClient, {
-      now: () => NOW,
-      describePollers: stubDescribe(table),
-      fetchProfiles: async () => null,
       force: true,
+      deps: {
+        now: () => NOW,
+        describePollers: stubDescribe(table),
+        fetchProfiles: async () => null,
+      },
     });
     expect(hosts).to.have.length(1);
     expect(hosts[0].instances.map((i) => i.pid).sort()).to.deep.equal([1, 2]);
+  });
+
+  it('per-host fan-out scales past HOST_FANOUT_CONCURRENCY without dropping hosts (#281)', async function () {
+    // 2× the cap so we know the limiter has to queue some calls. Every
+    // host should still appear in the result — the cap throttles RPCs,
+    // it must never silently drop work.
+    const hostCount = HOST_FANOUT_CONCURRENCY * 2;
+    const table: Record<string, RawPoller[]> = {};
+    const expectedHostnames: string[] = [];
+    for (let i = 0; i < hostCount; i++) {
+      const hostname = `h${i}`;
+      expectedHostnames.push(hostname);
+      const ident = `claude-tempo:${hostname}:${1000 + i}:0.27.0`;
+      table[`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`] = [
+        ...(table[`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`] ?? []),
+        mkPoller(ident, 1_000),
+      ];
+      table[`claude-tempo-${hostname}:${TASK_QUEUE_TYPE_ACTIVITY}`] = [mkPoller(ident, 1_000)];
+    }
+
+    let perHostQueueCalls = 0;
+    const describe = async (
+      _c: Client, _ns: string, taskQueueName: string, taskQueueType: TaskQueueType,
+    ): Promise<RawPoller[]> => {
+      if (taskQueueName.startsWith('claude-tempo-')) perHostQueueCalls++;
+      return table[`${taskQueueName}:${taskQueueType}`] ?? [];
+    };
+
+    const hosts = await listHosts(fakeClient, {
+      force: true,
+      deps: { now: () => NOW, describePollers: describe, fetchProfiles: async () => null },
+    });
+
+    expect(hosts).to.have.length(hostCount);
+    expect(hosts.map((h) => h.hostname).sort()).to.deep.equal(expectedHostnames.slice().sort());
+    expect(perHostQueueCalls).to.equal(hostCount, 'every host queue is described exactly once');
   });
 
   it('opaque third-party identities are skipped silently', async function () {
@@ -248,10 +299,12 @@ describe('listHosts (#274 AC6)', function () {
       ],
     };
     const hosts = await listHosts(fakeClient, {
-      now: () => NOW,
-      describePollers: stubDescribe(table),
-      fetchProfiles: async () => null,
       force: true,
+      deps: {
+        now: () => NOW,
+        describePollers: stubDescribe(table),
+        fetchProfiles: async () => null,
+      },
     });
     expect(hosts).to.have.length(1);
     expect(hosts[0].hostname).to.equal('h');
@@ -262,10 +315,12 @@ describe('listHosts (#274 AC6)', function () {
       [`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller('42@legacy-host', 1_000)],
     };
     const hosts = await listHosts(fakeClient, {
-      now: () => NOW,
-      describePollers: stubDescribe(table),
-      fetchProfiles: async () => null,
       force: true,
+      deps: {
+        now: () => NOW,
+        describePollers: stubDescribe(table),
+        fetchProfiles: async () => null,
+      },
     });
     expect(hosts).to.have.length(1);
     expect(hosts[0].instances[0].legacy).to.equal(true);
@@ -280,23 +335,26 @@ describe('listHosts (#274 AC6)', function () {
       calls++;
       return [mkPoller('claude-tempo:h:1:0.26', 1_000)];
     };
-    const first = await listHosts(fakeClient, { now: () => NOW, describePollers: describe, fetchProfiles: async () => null, force: true });
+    const deps = { now: () => NOW, describePollers: describe, fetchProfiles: async () => null };
+    const first = await listHosts(fakeClient, { force: true, deps });
     const callsAfterFirst = calls;
-    const second = await listHosts(fakeClient, { now: () => NOW, describePollers: describe, fetchProfiles: async () => null });
+    const second = await listHosts(fakeClient, { deps });
     expect(calls).to.equal(callsAfterFirst, 'cache hit — no additional describe calls');
     expect(second).to.deep.equal(first);
 
-    const third = await listHosts(fakeClient, { now: () => NOW, describePollers: describe, fetchProfiles: async () => null, force: true });
+    const third = await listHosts(fakeClient, { force: true, deps });
     expect(calls).to.be.greaterThan(callsAfterFirst, 'force:true bypassed cache');
     expect(third).to.deep.equal(first);
   });
 
   it('empty result when no pollers', async function () {
     const hosts = await listHosts(fakeClient, {
-      now: () => NOW,
-      describePollers: async () => [],
-      fetchProfiles: async () => null,
       force: true,
+      deps: {
+        now: () => NOW,
+        describePollers: async () => [],
+        fetchProfiles: async () => null,
+      },
     });
     expect(hosts).to.deep.equal([]);
   });

@@ -23,6 +23,7 @@
  */
 import type { Client } from '@temporalio/client';
 import { temporal } from '@temporalio/proto';
+import pLimit from 'p-limit';
 import { hostTaskQueue, GLOBAL_MAESTRO_WORKFLOW_ID } from '../config';
 import type { HostInfo, HostProfile, InstanceInfo } from '../types';
 
@@ -38,6 +39,16 @@ export const HOST_FRESHNESS_THRESHOLD_MS = 60_000;
 /** Read-through cache TTL for the join result. AC6h. */
 export const CACHE_TTL_MS = 3_000;
 
+/**
+ * #281 — concurrency cap for the per-host RPC fan-out.
+ *
+ * `Promise.all(hostnames.map(describe...))` is unbounded; at >20 hosts that
+ * thunder-herds the Temporal frontend's per-namespace RPS budget. 8 keeps
+ * the common case (≤8 hosts) at full parallelism while preventing the worst
+ * case from spiking the backend.
+ */
+export const HOST_FANOUT_CONCURRENCY = 8;
+
 // Module-level memo. Not exported — bypass via `listHosts(client, { force: true })`.
 interface CacheEntry {
   timestamp: number;
@@ -45,7 +56,12 @@ interface CacheEntry {
 }
 let cache: CacheEntry | null = null;
 
-/** Test hook — never call from production code. */
+/**
+ * Test hook — never call from production code.
+ *
+ * Convention: `__<verb><Noun>ForTests`, co-located with the module that owns
+ * the state. See `docs/adr/0006-test-hooks-naming.md`.
+ */
 export function __resetHostsCacheForTests(): void {
   cache = null;
 }
@@ -147,21 +163,33 @@ async function describeQueuePollers(
   return out;
 }
 
-async function hasGlobalMaestro(client: Client): Promise<boolean> {
-  try {
-    const handle = client.workflow.getHandle(GLOBAL_MAESTRO_WORKFLOW_ID);
-    const desc = await handle.describe();
-    return desc.status.name === 'RUNNING';
-  } catch {
-    return false;
-  }
-}
-
+/**
+ * #280 — single combined query against the global maestro.
+ *
+ * Replaces the prior two-RPC dance (`handle.describe()` for liveness
+ * then `handle.query('hostProfiles')` for data) with one round trip.
+ * Reaching the handler proves the workflow is running, so the caller
+ * gets `{ exists: true, profiles }`. Any transport-level failure
+ * (workflow not found, terminated, namespace unreachable, query
+ * handler not registered on an older maestro) is caught and surfaced
+ * as `null`, which the join site treats as `profileStaleness: 'missing'`.
+ *
+ * Note: we deliberately fall back to `null` on ANY error rather than
+ * trying the legacy `hostProfiles` query as a second attempt — the
+ * combined query has been on every maestro since this commit, so a
+ * mismatched daemon/maestro pair is a deployment bug worth surfacing
+ * as missing-profile (which still lets the listing succeed) rather
+ * than masking with extra RPCs.
+ */
 async function fetchHostProfiles(client: Client): Promise<Record<string, HostProfile> | null> {
-  if (!(await hasGlobalMaestro(client))) return null;
   try {
     const handle = client.workflow.getHandle(GLOBAL_MAESTRO_WORKFLOW_ID);
-    return (await handle.query('hostProfiles')) as Record<string, HostProfile>;
+    const result = (await handle.query('hostProfilesWithExistence')) as {
+      exists: boolean;
+      profiles: Record<string, HostProfile>;
+    } | undefined;
+    if (!result || !result.exists) return null;
+    return result.profiles;
   } catch {
     return null;
   }
@@ -171,13 +199,13 @@ async function fetchHostProfiles(client: Client): Promise<Record<string, HostPro
 // listHosts — the public join helper
 // ────────────────────────────────────────────────────────────────────────
 
-export interface ListHostsOpts {
-  /** Bypass the 3s TTL cache. CLI/TUI refresh handlers pass `true`. */
-  force?: boolean;
-  /** Default `'default'`. */
-  namespace?: string;
-  /** Default `'claude-tempo'`. */
-  taskQueue?: string;
+/**
+ * Dep-injection seam used by tests. Production callers OMIT this entirely —
+ * grouping it under `deps` (vs. mixing into the top level of `ListHostsOpts`)
+ * keeps the user-facing surface (`force`, `namespace`, `taskQueue`) cleanly
+ * separated from internal test wiring. See #283.
+ */
+export interface ListHostsDeps {
   /** `Date.now` replacement for deterministic tests. */
   now?: () => number;
   /**
@@ -195,16 +223,28 @@ export interface ListHostsOpts {
   fetchProfiles?: (client: Client) => Promise<Record<string, HostProfile> | null>;
 }
 
+export interface ListHostsOpts {
+  /** Bypass the 3s TTL cache. CLI/TUI refresh handlers pass `true`. */
+  force?: boolean;
+  /** Default `'default'`. */
+  namespace?: string;
+  /** Default `'claude-tempo'`. */
+  taskQueue?: string;
+  /** Test-only dep-injection seam. Production callers omit. */
+  deps?: ListHostsDeps;
+}
+
 export async function listHosts(client: Client, opts: ListHostsOpts = {}): Promise<HostInfo[]> {
-  const now = opts.now ? opts.now() : Date.now();
+  const deps = opts.deps ?? {};
+  const now = deps.now ? deps.now() : Date.now();
   if (!opts.force && cache && now - cache.timestamp < CACHE_TTL_MS) {
     return cache.hosts;
   }
 
   const namespace = opts.namespace ?? 'default';
   const taskQueue = opts.taskQueue ?? 'claude-tempo';
-  const describe = opts.describePollers ?? describeQueuePollers;
-  const fetchProfiles = opts.fetchProfiles ?? fetchHostProfiles;
+  const describe = deps.describePollers ?? describeQueuePollers;
+  const fetchProfiles = deps.fetchProfiles ?? fetchHostProfiles;
 
   const { TASK_QUEUE_TYPE_WORKFLOW, TASK_QUEUE_TYPE_ACTIVITY } = temporal.api.enums.v1.TaskQueueType;
 
@@ -261,18 +301,23 @@ export async function listHosts(client: Client, opts: ListHostsOpts = {}): Promi
   // Hostnames discovered from the shared queues drive the per-host RPC fan-out.
   const hostnames = Array.from(hostInstances.keys()).sort();
 
-  // RPC 3 — per-host activity queue. Parallel with the profile fetch.
+  // RPC 3 — per-host activity queue. Parallel with the profile fetch,
+  // but capped at HOST_FANOUT_CONCURRENCY so a deployment with many hosts
+  // doesn't thunder-herd the Temporal frontend (#281).
+  const limit = pLimit(HOST_FANOUT_CONCURRENCY);
   const [perHostActivityRows, profiles] = await Promise.all([
     Promise.all(
-      hostnames.map(async (hostname) => {
-        try {
-          const rows = await describe(client, namespace, hostTaskQueue(taskQueue, hostname), TASK_QUEUE_TYPE_ACTIVITY);
-          return [hostname, rows] as const;
-        } catch {
-          // Per-host-queue not registered yet → empty. Don't fail the whole call.
-          return [hostname, [] as RawPoller[]] as const;
-        }
-      }),
+      hostnames.map((hostname) =>
+        limit(async () => {
+          try {
+            const rows = await describe(client, namespace, hostTaskQueue(taskQueue, hostname), TASK_QUEUE_TYPE_ACTIVITY);
+            return [hostname, rows] as const;
+          } catch {
+            // Per-host-queue not registered yet → empty. Don't fail the whole call.
+            return [hostname, [] as RawPoller[]] as const;
+          }
+        }),
+      ),
     ),
     fetchProfiles(client).catch(() => null),
   ]);
