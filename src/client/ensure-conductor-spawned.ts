@@ -11,7 +11,7 @@
  * parsing strings. Never throws — callers should treat a missing conductor
  * as a soft failure.
  */
-import type { TempoClient } from './interface';
+import type { TempoClientWithSpawn } from './interface';
 
 export type EnsureConductorSpawnedOutcome =
   | { spawned: false; reason: 'alreadyLive' }
@@ -20,14 +20,17 @@ export type EnsureConductorSpawnedOutcome =
 
 /**
  * If the ensemble already has a conductor session in a live phase, no-op.
- * Otherwise shell out via {@link TempoClient.spawnConductor} to open a
- * conductor terminal. The `claude-tempo up` path is idempotent at the
- * workflow layer, so a benign race (two restores in flight) converges on
- * one workflow.
+ * Otherwise shell out via {@link TempoClientWithSpawn.spawnConductor} to
+ * open a conductor terminal. The `claude-tempo up` path is idempotent at
+ * the workflow layer, so a benign race (two restores in flight) converges
+ * on one workflow.
+ *
+ * Typed against `TempoClientWithSpawn` (not `TempoClient` alias) so the
+ * spawn dependency is explicit at the call site (#308 follow-up).
  */
 export async function ensureConductorSpawned(
   ensemble: string,
-  client: TempoClient,
+  client: TempoClientWithSpawn,
 ): Promise<EnsureConductorSpawnedOutcome> {
   try {
     const info = await client.attachmentInfo(ensemble, 'conductor');
