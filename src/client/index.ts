@@ -175,8 +175,14 @@ export function createTempoClient(client: Client): TempoClient {
 
     async listEnsembles(): Promise<EnsembleSummary[]> {
       // Direct workflow-list scan — the Global Maestro index only tracks
-      // live ensembles, so classifying parked ensembles requires reading
-      // the attachment-state search attribute per workflow.
+      // live ensembles, so classifying paused/offline ensembles requires
+      // reading the attachment-state search attribute per workflow.
+      //
+      // `liveAdapterCount` distinguishes `paused` (≥1 live adapter, can
+      // resume in place via `/play`) from `offline` (zero live adapters,
+      // requires `/restore`). The maestro session is excluded from this
+      // count — it's the TUI's own dashboard attachment, never a peer
+      // agent that user-facing `/play` should target.
       const LIVE_PHASES = new Set<AttachmentPhase>([
         'attached', 'processing', 'awaiting', 'booting', 'draining',
       ]);
@@ -184,7 +190,7 @@ export function createTempoClient(client: Client): TempoClient {
         count: number;
         hasConductor: boolean;
         conductorStatus?: string;
-        hasLive: boolean;
+        liveAdapterCount: number;
         hasDetached: boolean;
       };
       const byEnsemble = new Map<string, Agg>();
@@ -208,11 +214,13 @@ export function createTempoClient(client: Client): TempoClient {
 
           const phase = getAttachmentPhase(wf) as AttachmentPhase | undefined;
           const entry = byEnsemble.get(name) ?? {
-            count: 0, hasConductor: false, hasLive: false, hasDetached: false,
+            count: 0, hasConductor: false, liveAdapterCount: 0, hasDetached: false,
           };
           if (!isMaestroSession) entry.count++;
           if (phase === 'detached') entry.hasDetached = true;
-          else if (phase && LIVE_PHASES.has(phase)) entry.hasLive = true;
+          else if (phase && LIVE_PHASES.has(phase) && !isMaestroSession) {
+            entry.liveAdapterCount++;
+          }
 
           const isConductorFromSA = getIsConductor(wf) === true;
           const isConductorFromId = wf.workflowId?.endsWith('-conductor') ?? false;
@@ -226,11 +234,9 @@ export function createTempoClient(client: Client): TempoClient {
         return [];
       }
 
-      // Per-ensemble paused lookup: a `/shutdown` flips
-      // `maestroSetPausedSignal` on the maestro hub workflow but leaves the
-      // session phases largely untouched (the dashboard maestro session
-      // keeps its phase, and peer sessions go to `detached`). The hub's
-      // `maestroPaused` query is the authoritative "ensemble is parked"
+      // Per-ensemble paused lookup: `/pause` and `/shutdown` both flip
+      // `maestroSetPausedSignal` on the maestro hub workflow. The hub's
+      // `maestroPaused` query is the authoritative "ensemble is paused"
       // signal — fall back to the phase heuristic when the hub doesn't
       // exist (bare ensemble before any conductor / TUI was attached).
       const pausedByEnsemble = new Map<string, boolean>();
@@ -250,16 +256,24 @@ export function createTempoClient(client: Client): TempoClient {
       for (const [name, info] of byEnsemble) {
         // Skip ensembles with no non-gone sessions — they're either
         // terminating or fully destroyed.
-        if (!info.hasLive && !info.hasDetached) continue;
+        if (info.liveAdapterCount === 0 && !info.hasDetached) continue;
         const paused = pausedByEnsemble.get(name);
-        // Authoritative when the hub answered; otherwise use the phase
-        // heuristic — `hasLive` covers the case where a bare ensemble was
-        // started without a maestro hub yet.
-        const state: 'running' | 'parked' = paused === true
-          ? 'parked'
-          : paused === false
-            ? 'running'
-            : (info.hasLive ? 'running' : 'parked');
+        // Three-state classification:
+        //   online  — hub unpaused (or no hub + at least one live adapter).
+        //   paused  — hub paused AND at least one live adapter remains
+        //             (`/pause` semantics: resume in place via `/play`).
+        //   offline — hub paused AND zero live adapters
+        //             (`/shutdown` semantics: requires `/restore`).
+        // When the hub didn't answer (no maestro yet), fall back to the
+        // phase heuristic — a live adapter implies online.
+        let state: 'online' | 'paused' | 'offline';
+        if (paused === true) {
+          state = info.liveAdapterCount > 0 ? 'paused' : 'offline';
+        } else if (paused === false) {
+          state = 'online';
+        } else {
+          state = info.liveAdapterCount > 0 ? 'online' : 'offline';
+        }
         out.push({
           name,
           playerCount: info.count,

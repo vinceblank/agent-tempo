@@ -787,11 +787,11 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           dispatch({ type: 'REFRESH_ENSEMBLES', ensembles });
 
           // Intentionally no auto-select: HomeView is an explicit picker
-          // (Running / Parked, arrow keys + Enter). Auto-selecting on the
-          // poller was bouncing users back into a just-parked ensemble after
-          // `/shutdown`, `/back`, or `/disband`. Splash handles its own
-          // selection via Enter; everywhere else, the user picks from
-          // HomeView.
+          // (Online / Paused / Offline, arrow keys + Enter). Auto-selecting
+          // on the poller was bouncing users back into a just-shut-down
+          // ensemble after `/shutdown`, `/back`, or `/disband`. Splash
+          // handles its own selection via Enter; everywhere else, the user
+          // picks from HomeView.
         } else {
           // Single source: maestro workflow for players, schedules, and ensemble chat
           const ens = s.activeEnsemble!;

@@ -9,9 +9,9 @@
  *   so users were bounced back as soon as the window expired.
  *
  *   Final fix: the auto-select branch is removed entirely. HomeView is
- *   already an explicit picker (Running / Parked, ↑↓/Enter), so there is
- *   no value in having the poller auto-pick on the user's behalf — and
- *   doing so was actively wrong after a navigate-home action.
+ *   already an explicit picker (Online / Paused / Offline, ↑↓/Enter), so
+ *   there is no value in having the poller auto-pick on the user's behalf —
+ *   and doing so was actively wrong after a navigate-home action.
  *
  * Bug B — Status bar player count includes the maestro session.
  *   The maestro is the TUI's own dashboard attachment, not a peer agent.

@@ -138,11 +138,17 @@ export interface EnsembleSummary {
   hasConductor: boolean;
   conductorStatus?: string;
   /**
-   * `'running'` when any session is in a live phase,
-   * `'parked'` when every session is `detached`. Populated by
-   * {@link TempoClient.listEnsembles}; absent on `discoverEnsembles` results.
+   * Lifecycle classification populated by {@link TempoClient.listEnsembles}
+   * (absent on `discoverEnsembles` results):
+   *
+   * - `'online'`  — maestro hub is unpaused (`maestroPaused === false`).
+   * - `'paused'`  — maestro hub is paused **and** at least one session is
+   *                 still in a live attachment phase. Operationally this is
+   *                 a `/pause` (resume in place via `/play`).
+   * - `'offline'` — maestro hub is paused **and** no live adapters remain.
+   *                 Operationally this is a `/shutdown` (requires `/restore`).
    */
-  state?: 'running' | 'parked';
+  state?: 'online' | 'paused' | 'offline';
 }
 
 /** Options for {@link TempoClient.createEnsemble}. */

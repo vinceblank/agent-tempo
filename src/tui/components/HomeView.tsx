@@ -1,10 +1,12 @@
 /**
- * HomeView — two-list landing surface (Running / Parked). Polls
+ * HomeView — three-list landing surface (Online / Paused / Offline). Polls
  * `listEnsembles` every 10s; `r` forces an immediate refresh.
  *
- * Parked rows whose ensemble name matches the cwd's git-root basename are
- * pinned to the top of the parked list with a `⬡` badge — the visual
+ * Offline rows whose ensemble name matches the cwd's git-root basename are
+ * pinned to the top of the offline list with a `⬡` badge — the visual
  * affordance for "press Enter to restore the ensemble you created here".
+ * Online and Paused rows are not cwd-pinned — entering them is a no-op
+ * navigation, not a restore that needs a per-cwd hint.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInk } from '../ink-context';
@@ -36,49 +38,59 @@ export interface HomeViewProps {
 }
 
 interface SortedLists {
-  running: EnsembleSummary[];
-  parked: EnsembleSummary[];
-  /** Flat sequence used for keyboard navigation. Running first, then parked. */
+  online: EnsembleSummary[];
+  paused: EnsembleSummary[];
+  offline: EnsembleSummary[];
+  /**
+   * Flat sequence used for keyboard navigation. Order matches render
+   * order: Online → Paused → Offline (cwd-match offline rows first).
+   */
   flat: Array<{ ensemble: EnsembleSummary; isCwdMatch: boolean }>;
-  /** Count of cwd-matched parked ensembles pinned at the top of the parked list. */
+  /** Count of cwd-matched offline ensembles pinned at the top of the offline list. */
   cwdMatchCount: number;
 }
 
 /**
- * Split + sort ensembles into Running and Parked lists with cwd-match rows
- * pinned to the top of the Parked list. Pure function for testability.
+ * Split + sort ensembles into Online / Paused / Offline lists with
+ * cwd-match rows pinned to the top of the Offline list. Pure function for
+ * testability.
  */
 export function partitionEnsembles(
   ensembles: readonly EnsembleSummary[],
   cwdGitRoot: string | null,
   cwdMatcher: (ensemble: EnsembleSummary, gitRoot: string) => boolean = defaultCwdMatcher,
 ): SortedLists {
-  const running: EnsembleSummary[] = [];
-  const parkedMatch: EnsembleSummary[] = [];
-  const parkedOther: EnsembleSummary[] = [];
+  const online: EnsembleSummary[] = [];
+  const paused: EnsembleSummary[] = [];
+  const offlineMatch: EnsembleSummary[] = [];
+  const offlineOther: EnsembleSummary[] = [];
 
   for (const e of ensembles) {
-    if (e.state === 'running') {
-      running.push(e);
-    } else if (e.state === 'parked') {
-      if (cwdGitRoot && cwdMatcher(e, cwdGitRoot)) parkedMatch.push(e);
-      else parkedOther.push(e);
+    if (e.state === 'online') {
+      online.push(e);
+    } else if (e.state === 'paused') {
+      paused.push(e);
+    } else if (e.state === 'offline') {
+      if (cwdGitRoot && cwdMatcher(e, cwdGitRoot)) offlineMatch.push(e);
+      else offlineOther.push(e);
     }
   }
 
   // Alphabetical — recency-desc will replace this once `lastActivityAt` is
   // threaded through `EnsembleSummary`.
-  running.sort((a, b) => a.name.localeCompare(b.name));
-  parkedMatch.sort((a, b) => a.name.localeCompare(b.name));
-  parkedOther.sort((a, b) => a.name.localeCompare(b.name));
+  online.sort((a, b) => a.name.localeCompare(b.name));
+  paused.sort((a, b) => a.name.localeCompare(b.name));
+  offlineMatch.sort((a, b) => a.name.localeCompare(b.name));
+  offlineOther.sort((a, b) => a.name.localeCompare(b.name));
 
-  const parked = [...parkedMatch, ...parkedOther];
+  const offline = [...offlineMatch, ...offlineOther];
   const flat = [
-    ...running.map((ensemble) => ({ ensemble, isCwdMatch: false })),
-    ...parkedMatch.map((ensemble) => ({ ensemble, isCwdMatch: true })),
-    ...parkedOther.map((ensemble) => ({ ensemble, isCwdMatch: false })),
+    ...online.map((ensemble) => ({ ensemble, isCwdMatch: false })),
+    ...paused.map((ensemble) => ({ ensemble, isCwdMatch: false })),
+    ...offlineMatch.map((ensemble) => ({ ensemble, isCwdMatch: true })),
+    ...offlineOther.map((ensemble) => ({ ensemble, isCwdMatch: false })),
   ];
-  return { running, parked, flat, cwdMatchCount: parkedMatch.length };
+  return { online, paused, offline, flat, cwdMatchCount: offlineMatch.length };
 }
 
 /**
@@ -170,8 +182,14 @@ export function HomeView(props: HomeViewProps): React.ReactElement {
     if (key.return && total > 0) {
       const row = lists.flat[selectedIdx];
       if (!row) return;
-      if (row.ensemble.state === 'running') onEnterEnsemble(row.ensemble.name);
-      else if (row.ensemble.state === 'parked') onRestoreEnsemble(row.ensemble.name);
+      // Online + Paused both navigate into the ensemble — paused ensembles
+      // are signal-paused but their workflows are alive and the user can
+      // run `/play` from inside. Offline requires the full restore path.
+      if (row.ensemble.state === 'online' || row.ensemble.state === 'paused') {
+        onEnterEnsemble(row.ensemble.name);
+      } else if (row.ensemble.state === 'offline') {
+        onRestoreEnsemble(row.ensemble.name);
+      }
       return;
     }
     if (input === 'n' || input === 'N') { onCreateEnsemble(); return; }
@@ -237,30 +255,54 @@ function renderBody(props: RenderBodyProps): React.ReactElement {
       ),
     );
   } else {
-    // Running section (header always shown, dimmed when empty)
-    children.push(
-      React.createElement(Box, { key: 'home-running', marginTop: 1, flexDirection: 'column' },
-        React.createElement(
-          Text,
-          { bold: true, color: lists.running.length > 0 ? THEME.text : THEME.dim },
-          lists.running.length > 0 ? ' Running' : ' Running (none)',
-        ),
-        ...lists.running.map((e, i) => renderRow({
-          Text, key: `run-${e.name}`, icons,
-          ensemble: e, selected: i === selectedIdx, isCwdMatch: false,
-        })),
-      ),
-    );
+    // Three sections in priority order: Online → Paused → Offline.
+    // Each section's header is skipped when the section is empty so the
+    // landing page stays compact on a fresh ensemble (no "Paused (none)"
+    // / "Offline (none)" noise). Cursor offsets must mirror the flat
+    // sequence built by `partitionEnsembles`.
+    let cursorOffset = 0;
 
-    if (lists.parked.length > 0) {
-      const parkedStart = lists.running.length;
+    if (lists.online.length > 0) {
+      const start = cursorOffset;
       children.push(
-        React.createElement(Box, { key: 'home-parked', marginTop: 1, flexDirection: 'column' },
-          React.createElement(Text, { bold: true, color: THEME.text }, ' Parked'),
-          ...lists.parked.map((e, i) => renderRow({
-            Text, key: `park-${e.name}`, icons,
+        React.createElement(Box, { key: 'home-online', marginTop: 1, flexDirection: 'column' },
+          React.createElement(Text, { bold: true, color: THEME.text }, ' Online'),
+          ...lists.online.map((e, i) => renderRow({
+            Text, key: `online-${e.name}`, icons,
             ensemble: e,
-            selected: (parkedStart + i) === selectedIdx,
+            selected: (start + i) === selectedIdx,
+            isCwdMatch: false,
+          })),
+        ),
+      );
+      cursorOffset += lists.online.length;
+    }
+
+    if (lists.paused.length > 0) {
+      const start = cursorOffset;
+      children.push(
+        React.createElement(Box, { key: 'home-paused', marginTop: 1, flexDirection: 'column' },
+          React.createElement(Text, { bold: true, color: THEME.text }, ' Paused'),
+          ...lists.paused.map((e, i) => renderRow({
+            Text, key: `paused-${e.name}`, icons,
+            ensemble: e,
+            selected: (start + i) === selectedIdx,
+            isCwdMatch: false,
+          })),
+        ),
+      );
+      cursorOffset += lists.paused.length;
+    }
+
+    if (lists.offline.length > 0) {
+      const start = cursorOffset;
+      children.push(
+        React.createElement(Box, { key: 'home-offline', marginTop: 1, flexDirection: 'column' },
+          React.createElement(Text, { bold: true, color: THEME.text }, ' Offline'),
+          ...lists.offline.map((e, i) => renderRow({
+            Text, key: `offline-${e.name}`, icons,
+            ensemble: e,
+            selected: (start + i) === selectedIdx,
             isCwdMatch: i < lists.cwdMatchCount,
           })),
         ),
@@ -282,7 +324,15 @@ interface RenderRowProps {
 
 function renderRow({ Text, key, icons, ensemble, selected, isCwdMatch }: RenderRowProps): React.ReactElement {
   const cursor = selected ? '\u276F' : ' ';
-  const glyph = ensemble.state === 'running' ? icons.active : icons.stale;
+  // Online uses the active glyph; paused + offline both use the stale
+  // glyph (no live attachment activity). Color disambiguates: warning
+  // for paused (transient, fast resume via /play) vs dim for offline
+  // (needs /restore to come back).
+  const glyph = ensemble.state === 'online' ? icons.active : icons.stale;
+  const glyphColor =
+    ensemble.state === 'online' ? THEME.success
+    : ensemble.state === 'paused' ? THEME.warning
+    : THEME.dim;
   const cwdBadge = isCwdMatch ? '\u2B21 ' : '';
   const playerSuffix = ` (${ensemble.playerCount} player${ensemble.playerCount === 1 ? '' : 's'})`;
 
@@ -290,7 +340,7 @@ function renderRow({ Text, key, icons, ensemble, selected, isCwdMatch }: RenderR
     Text,
     { key, color: selected ? THEME.text : THEME.textMuted },
     ` ${cursor} `,
-    React.createElement(Text, { color: ensemble.state === 'running' ? THEME.success : THEME.dim }, `${glyph} `),
+    React.createElement(Text, { color: glyphColor }, `${glyph} `),
     isCwdMatch
       ? React.createElement(Text, { color: THEME.accent, bold: true }, cwdBadge)
       : null,

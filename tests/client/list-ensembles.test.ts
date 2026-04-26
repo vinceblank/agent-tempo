@@ -1,7 +1,7 @@
 /**
  * Unit tests for `TempoClient.listEnsembles`. Mocks the Temporal Client so
- * we never touch a live server; the goal is to lock in the running-vs-parked
- * split that the TUI home view relies on.
+ * we never touch a live server; the goal is to lock in the three-state
+ * online/paused/offline classification that the TUI home view relies on.
  */
 import { describe, it, expect } from 'vitest';
 import { createTempoClient } from '../../src/client';
@@ -66,24 +66,24 @@ function makeClient(
 }
 
 describe('TempoClient.listEnsembles', () => {
-  it('classifies an ensemble with any live session as running', async () => {
+  it('classifies an ensemble with any live session as online (no hub)', async () => {
     const tempo = createTempoClient(makeClient([
       wf({ workflowId: 'claude-session-alpha-conductor', ensemble: 'alpha', phase: 'attached', isConductor: true }),
       wf({ workflowId: 'claude-session-alpha-p1', ensemble: 'alpha', phase: 'detached' }),
     ]) as any);
     const list = await tempo.listEnsembles();
     expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ name: 'alpha', state: 'running', hasConductor: true, playerCount: 2 });
+    expect(list[0]).toMatchObject({ name: 'alpha', state: 'online', hasConductor: true, playerCount: 2 });
   });
 
-  it('classifies an all-detached ensemble as parked', async () => {
+  it('classifies an all-detached ensemble as offline (no hub)', async () => {
     const tempo = createTempoClient(makeClient([
       wf({ workflowId: 'claude-session-beta-conductor', ensemble: 'beta', phase: 'detached', isConductor: true }),
       wf({ workflowId: 'claude-session-beta-p1', ensemble: 'beta', phase: 'detached' }),
     ]) as any);
     const list = await tempo.listEnsembles();
     expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ name: 'beta', state: 'parked', hasConductor: true, playerCount: 2 });
+    expect(list[0]).toMatchObject({ name: 'beta', state: 'offline', hasConductor: true, playerCount: 2 });
   });
 
   it('skips ensembles with no live or detached sessions', async () => {
@@ -134,20 +134,22 @@ describe('TempoClient.listEnsembles', () => {
     expect(list[0].playerCount).toBe(1); // only alice
   });
 
-  // ── Running vs Parked driven by maestro hub `paused` query ───────────────
-  // After `/shutdown`, maestroSetPausedSignal flips the hub's `paused`
-  // flag. The session phases stay attached/processing for the dashboard
-  // maestro session — relying on phase alone misclassified shut-down
-  // ensembles as Running. The hub's `maestroPaused` query is now the
-  // authoritative classifier; the phase heuristic is the fallback.
+  // ── Online / Paused / Offline driven by maestro hub `paused` query ──────
+  // After `/pause` or `/shutdown`, maestroSetPausedSignal flips the hub's
+  // `paused` flag. The hub's `maestroPaused` query is the authoritative
+  // classifier; the live-adapter count distinguishes paused (resume in
+  // place via `/play`) from offline (needs `/restore`). The phase
+  // heuristic is the fallback when the hub doesn't answer.
 
-  it('classifies an ensemble as parked when maestro hub reports paused=true', async () => {
+  it('classifies a paused hub with a live peer adapter as `paused` (resume in place)', async () => {
+    // Mirrors the `/pause` flow: hub paused, but every peer adapter is
+    // still attached — `/play` will fan unpause back out without needing
+    // a restore. The dashboard maestro session is excluded from the
+    // live-adapter count so its always-attached phase doesn't flip the
+    // verdict.
     const tempo = createTempoClient(
       makeClient(
         [
-          // The dashboard maestro session keeps an attached phase even after
-          // shutdown — only peer sessions get `requestDetach`. Pre-#306 this
-          // ran as Running because `hasLive` was true.
           wf({ workflowId: 'claude-session-eps-alice', ensemble: 'eps', phase: 'attached' }),
           wf({ workflowId: 'claude-session-eps-maestro', ensemble: 'eps', phase: 'attached', playerType: 'maestro' }),
         ],
@@ -156,10 +158,28 @@ describe('TempoClient.listEnsembles', () => {
     );
     const list = await tempo.listEnsembles();
     expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ name: 'eps', state: 'parked', playerCount: 1 });
+    expect(list[0]).toMatchObject({ name: 'eps', state: 'paused', playerCount: 1 });
   });
 
-  it('classifies an ensemble as running when maestro hub reports paused=false', async () => {
+  it('classifies a paused hub with no live peer adapters as `offline` (needs restore)', async () => {
+    // Mirrors the `/shutdown` flow: hub paused and every peer session is
+    // detached. The dashboard maestro keeps its attached phase but is
+    // excluded from the live-adapter count, so the verdict is offline.
+    const tempo = createTempoClient(
+      makeClient(
+        [
+          wf({ workflowId: 'claude-session-shut-alice', ensemble: 'shut', phase: 'detached' }),
+          wf({ workflowId: 'claude-session-shut-maestro', ensemble: 'shut', phase: 'attached', playerType: 'maestro' }),
+        ],
+        { shut: true },
+      ) as any,
+    );
+    const list = await tempo.listEnsembles();
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ name: 'shut', state: 'offline', playerCount: 1 });
+  });
+
+  it('classifies an ensemble as online when maestro hub reports paused=false', async () => {
     const tempo = createTempoClient(
       makeClient(
         [
@@ -172,12 +192,13 @@ describe('TempoClient.listEnsembles', () => {
     );
     const list = await tempo.listEnsembles();
     expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ name: 'zeta', state: 'running', playerCount: 1 });
+    expect(list[0]).toMatchObject({ name: 'zeta', state: 'online', playerCount: 1 });
   });
 
   it('falls back to the phase heuristic when the maestro hub does not exist', async () => {
     // Bare ensemble with no hub (pre-#287 / pre-conductor / pre-TUI). The
-    // hub query throws; the phase heuristic decides.
+    // hub query throws; the phase heuristic decides — a live adapter
+    // present means online.
     const tempo = createTempoClient(
       makeClient([
         wf({ workflowId: 'claude-session-eta-alice', ensemble: 'eta', phase: 'attached' }),
@@ -185,6 +206,6 @@ describe('TempoClient.listEnsembles', () => {
     );
     const list = await tempo.listEnsembles();
     expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ name: 'eta', state: 'running' });
+    expect(list[0]).toMatchObject({ name: 'eta', state: 'online' });
   });
 });
