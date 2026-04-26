@@ -1,8 +1,11 @@
 /**
  * Shared helper for restore-after-shutdown: make sure a conductor terminal
  * is attached to an ensemble before `/restore` completes. Called by the
- * TUI `/restore` slash command and the CLI `restore <ensemble>` path (when
- * the latter adopts it in a follow-up).
+ * TUI `/restore` slash command (`App.tsx`, `commands.ts`).
+ *
+ * NOTE: This file lives in `src/client/` because the CLI `restore` command
+ * was expected to adopt it. If no CLI consumer adopts within 2 PRs after
+ * #308 merges, move to `src/tui/utils/` — current consumers are TUI-only.
  *
  * Returns a structured outcome so callers can render a summary without
  * parsing strings. Never throws — callers should treat a missing conductor
