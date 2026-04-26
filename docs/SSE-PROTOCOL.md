@@ -357,6 +357,7 @@ Contrast with `event: gap`, which is a **hard gap** spanning all event kinds and
 - Additive payload fields, new event types, and new endpoints ship within `/v1/` and are non-breaking.
 - Renames, removals, semantic changes → `/v2/` with deprecation overlap.
 - The `v` field on event payloads exists so a future `/v1/` event MAY have a richer schema variant; consumers select handling by `(eventType, v)` pair.
+- **The `eventId` `(bootEpoch, seq)` tuple is part of the wire contract, not an implementation detail.** Both halves are observable to consumers via `Last-Event-ID`, the `gap` event's `from`/`to` fields, and the `lastEventId` snapshot field. Changing the format (e.g. swapping the colon separator, dropping the epoch, repurposing `bootEpoch` to mean something other than daemon process boot time) is a `/v2/` break — not an internal refactor.
 
 ---
 
