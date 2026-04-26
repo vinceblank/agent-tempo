@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 140" fill="none">
+  
+  
+  <path d="M160 18 L122 100 L198 100 Z" stroke="#FAF3EE" stroke-width="3" fill="none" stroke-linejoin="round"></path>
+  
+  <line x1="160" y1="88" x2="182" y2="24" stroke="#E07A5F" stroke-width="3" stroke-linecap="round"></line>
+  
+  <circle cx="160" cy="88" r="3.5" fill="#E07A5F"></circle>
+  
+  <text x="160" y="132" text-anchor="middle" font-family="&#39;JetBrains Mono&#39;,&#39;SF Mono&#39;,&#39;Consolas&#39;,monospace" font-size="18" font-weight="600" fill="#FAF3EE" letter-spacing="-0.5">claude-tempo</text>
+</svg>
