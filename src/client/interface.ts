@@ -21,6 +21,7 @@ import type {
   HostInfo,
 } from '../types';
 import type { RestoreOrphansSummary } from '../reconcile/orphans';
+import type { SubscribeOptions, TempoEvent } from '../http/event-types';
 
 // ── Recall (#128) ──
 
@@ -322,6 +323,35 @@ export interface TempoClient {
   isConnected(): Promise<boolean>;
   /** Check if the Global Maestro workflow is running. */
   hasGlobalMaestro(): Promise<boolean>;
+
+  // ── #94/#95 PR-3: Subscribe to the daemon's SSE event stream ──
+
+  /**
+   * Subscribe to the per-ensemble SSE event stream exposed by the daemon
+   * at `/v1/events/:ensemble`. Returns an `AsyncIterable<TempoEvent>` —
+   * iterate with `for await` to consume events. The stream is
+   * snapshot-then-stream: a synthetic `event: snapshot` arrives first
+   * (carrying the `/v1/state/:ensemble` payload), then live diff events
+   * follow per [`docs/SSE-PROTOCOL.md`](../../docs/SSE-PROTOCOL.md).
+   *
+   * **Cancellation**: pass `opts.signal` (`AbortSignal`) to terminate the
+   * stream from the caller side, or simply `break` out of the `for await`
+   * — the wrapper's iterator hooks `return()` to abort the underlying
+   * transport (§7.4). The wrapper transparently reconnects on TCP drops
+   * with `Last-Event-ID` carried across reconnects (§7.5).
+   *
+   * **Gap recovery**: `gap` and `chat.compressed` events surface to the
+   * consumer (not swallowed). `gap` requires a `/v1/state/:ensemble`
+   * re-fetch + resubscribe per §7.2; `chat.compressed` is a soft gap
+   * scoped to the chat slice only per §7.6.
+   */
+  subscribe(ensemble: string, opts?: SubscribeOptions): AsyncIterable<TempoEvent>;
+  /**
+   * Subscribe to the global cluster-shape stream at `/v1/events`. Carries
+   * only the cluster-wide events (`ensemble.created`, `ensemble.destroyed`,
+   * `host_profile.changed`, `heartbeat`, `gap`, `throttled`).
+   */
+  subscribe(opts?: SubscribeOptions): AsyncIterable<TempoEvent>;
 
   // ── Maestro session (TUI-owned workflow for two-way messaging) ──
 

@@ -145,5 +145,14 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
     ensureMaestroSession: fail,
     sendAsMaestro: fail,
     getMaestroMessages: async () => ({ received: [], sent: [] }),
+    // PR-3 (#94/#95): SSE subscribe stub — yields nothing and completes
+    // immediately so a `for await` loop on the offline dummy doesn't hang.
+    subscribe: () => ({
+      [Symbol.asyncIterator]() {
+        return {
+          next: () => Promise.resolve({ value: undefined as never, done: true }),
+        };
+      },
+    }),
   };
 }
