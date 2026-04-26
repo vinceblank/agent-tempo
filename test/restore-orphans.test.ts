@@ -13,6 +13,8 @@
  */
 import { expect } from 'chai';
 import { restoreOrphansOnce, formatRestoreOutcome } from '../src/reconcile/orphans';
+import { createOutboxActivities } from '../src/activities/outbox';
+import type { Config } from '../src/config';
 import type { AttachmentInfo, OrphanSummary } from '../src/types';
 
 const asName = (n: unknown) => typeof n === 'string' ? n : (n as any).name;
@@ -488,5 +490,168 @@ describe('restoreOrphansOnce', function () {
     });
     expect(tempo.calls).to.have.length(1);
     expect(summary.reattached).to.equal(1);
+  });
+
+  // #306 — end-to-end: orphan reattach via `restoreOrphansOnce` flows through
+  // `tempo.restart` → outbox `restart` entry → `deliverRestart` activity →
+  // `enqueueSpawn` update. The same invariant that protects `/restart`
+  // (commit 17a7858) must hold here: ALWAYS mint a new sessionId, ALWAYS
+  // pass `resume: false`. The prior session's `.jsonl` transcript is not
+  // guaranteed to have been flushed before the orphan's adapter died, so
+  // `claude --resume <prior-uuid>` would error with "No conversation found
+  // with session ID" and the new terminal would drop to shell. Wire this
+  // test through the real `deliverRestart` activity (not a stubbed restart)
+  // so the end-to-end path is locked in regardless of which intermediate
+  // layer changes.
+  describe('end-to-end orphan reattach flow (#306)', function () {
+    const PRIOR_SESSION_ID = 'e1536377-6268-4fa7-8882-2aee08467f96';
+    const FRESH_RUN_ID = 'r-fresh-1';
+    const FRESH_ATTACHMENT_ID = 'a-fresh-1';
+
+    /**
+     * Build a Temporal `Client` shape rich enough to walk the full
+     * `deliverRestart` algorithm. Captures every `executeUpdate` so the
+     * test can locate the `enqueueSpawn` payload and assert on its shape.
+     */
+    function makeRichClient(orphan: {
+      ensemble: string;
+      playerId: string;
+      priorSessionId: string;
+    }) {
+      const captured: Array<{ name: string; args: unknown }> = [];
+      // The orphan's session workflow: phase=detached so `deliverRestart`
+      // skips the request-detach / forceDetach branches and goes straight
+      // to claim → enqueue spawn. Metadata pre-populated with the prior
+      // (now stale) sessionId — the regression target. The fix mints a new
+      // UUID and persists it via `updateMetadata`; tests for that signal
+      // are no-ops here (we assert on the spawn payload directly).
+      const sessionMetadata: Record<string, unknown> = {
+        ensemble: orphan.ensemble,
+        playerId: orphan.playerId,
+        hostname: HOST,
+        workDir: '/tmp/orphan-workdir',
+        isConductor: true,
+        agentType: 'claude',
+        sessionId: orphan.priorSessionId,
+      };
+      const sessionInfo: AttachmentInfo = {
+        phase: 'detached',
+        inFlightCount: 0,
+      };
+      const sessionHandle = {
+        async query(name: unknown) {
+          const n = asName(name);
+          if (n === 'getMetadata') return sessionMetadata;
+          if (n === 'attachmentInfo') return sessionInfo;
+          if (n === 'orphanSummary') {
+            return {
+              ensemble: orphan.ensemble,
+              playerId: orphan.playerId,
+              detachedSince: new Date(NOW - 60_000).toISOString(),
+            } as OrphanSummary;
+          }
+          if (n === 'getPart') return '';
+          if (n === 'allMessages') return [];
+          return undefined;
+        },
+        async signal(_name: unknown, _payload?: unknown) {
+          // updateMetadata + receiveMessage are durable side effects in
+          // the real workflow; we don't need to mirror them — the spawn
+          // payload is the assertion target.
+        },
+        async executeUpdate(nameOrDef: unknown, opts: { args: unknown[] }) {
+          const n = asName(nameOrDef);
+          captured.push({ name: n, args: opts.args[0] });
+          if (n === 'claimAttachment') {
+            return { attachmentId: FRESH_ATTACHMENT_ID, runId: FRESH_RUN_ID };
+          }
+          if (n === 'enqueueSpawn') {
+            return { spawnEntryId: 'spawn-e2e-1' };
+          }
+          if (n === 'forceDetach') return { reaped: false };
+          return {};
+        },
+      };
+
+      const client = {
+        workflow: {
+          getHandle: () => sessionHandle,
+          async *list() {
+            yield {
+              workflowId: `claude-session-${orphan.ensemble}-${orphan.playerId}`,
+            };
+          },
+        },
+      };
+
+      return { client, captured };
+    }
+
+    const baseConfig: Config = {
+      temporalAddress: 'localhost:7233',
+      temporalNamespace: 'default',
+      taskQueue: 'claude-tempo',
+      ensemble: 'test-orphan-e2e',
+      defaultAgent: 'claude',
+    };
+
+    it('orphan reattach produces enqueueSpawn with resume:false + fresh sessionId', async function () {
+      const orphan = {
+        ensemble: 'e1',
+        playerId: 'conductor',
+        priorSessionId: PRIOR_SESSION_ID,
+      };
+      const { client, captured } = makeRichClient(orphan);
+
+      // Real `deliverRestart` from the outbox activities — same code that
+      // runs in production on the dispatch loop. The `tempoClientFactory`
+      // funnels every `tempo.restart` call from `restoreOrphansOnce`
+      // straight into this activity, so the assertion below is on the
+      // identical payload that the session workflow's `enqueueSpawnUpdate`
+      // handler would receive in the wild.
+      const activities = createOutboxActivities(client as any, baseConfig);
+      const factory = () => ({
+        restart: async (ensemble: string, playerId: string, opts: any) => {
+          await activities.deliverRestart({
+            ensemble,
+            targetPlayerId: playerId,
+            invokerPlayerId: opts.invokerPlayerId ?? 'cli',
+            ...(opts.host !== undefined ? { host: opts.host } : {}),
+          });
+          return { playerId, entryId: 'restart-entry-1' };
+        },
+      });
+
+      const summary = await restoreOrphansOnce(client as any, {
+        hostname: HOST,
+        invokerPlayerId: 'cli',
+        policy: 'auto',
+        ensemble: orphan.ensemble,
+        phases: ['detached'],
+        now: () => NOW,
+        tempoClientFactory: factory,
+      });
+
+      expect(summary.reattached, 'one orphan reattached').to.equal(1);
+      expect(summary.failed, 'no failures').to.equal(0);
+
+      const enq = captured.find((c) => c.name === 'enqueueSpawn');
+      expect(enq, 'enqueueSpawn was called').to.exist;
+      const args = enq!.args as any;
+
+      // The bug: spawn used `resume: true` + the prior sessionId, then
+      // claude --resume <uuid> failed with "No conversation found".
+      expect(args.resume, 'spawn resume flag is false').to.equal(false);
+      expect(args.sessionId, 'spawn sessionId is set').to.be.a('string');
+      expect(args.sessionId, 'spawn sessionId is fresh, NOT the orphan\'s prior id').to.not.equal(PRIOR_SESSION_ID);
+      // Sanity: shape is a UUIDv4.
+      expect(args.sessionId).to.match(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+      // Routing fields the dispatch loop relies on — the pre-claimed token
+      // should propagate through to the spawn entry.
+      expect(args.attachmentId).to.equal(FRESH_ATTACHMENT_ID);
+      expect(args.runId).to.equal(FRESH_RUN_ID);
+    });
   });
 });
