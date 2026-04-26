@@ -147,21 +147,33 @@ async function describeQueuePollers(
   return out;
 }
 
-async function hasGlobalMaestro(client: Client): Promise<boolean> {
-  try {
-    const handle = client.workflow.getHandle(GLOBAL_MAESTRO_WORKFLOW_ID);
-    const desc = await handle.describe();
-    return desc.status.name === 'RUNNING';
-  } catch {
-    return false;
-  }
-}
-
+/**
+ * #280 — single combined query against the global maestro.
+ *
+ * Replaces the prior two-RPC dance (`handle.describe()` for liveness
+ * then `handle.query('hostProfiles')` for data) with one round trip.
+ * Reaching the handler proves the workflow is running, so the caller
+ * gets `{ exists: true, profiles }`. Any transport-level failure
+ * (workflow not found, terminated, namespace unreachable, query
+ * handler not registered on an older maestro) is caught and surfaced
+ * as `null`, which the join site treats as `profileStaleness: 'missing'`.
+ *
+ * Note: we deliberately fall back to `null` on ANY error rather than
+ * trying the legacy `hostProfiles` query as a second attempt — the
+ * combined query has been on every maestro since this commit, so a
+ * mismatched daemon/maestro pair is a deployment bug worth surfacing
+ * as missing-profile (which still lets the listing succeed) rather
+ * than masking with extra RPCs.
+ */
 async function fetchHostProfiles(client: Client): Promise<Record<string, HostProfile> | null> {
-  if (!(await hasGlobalMaestro(client))) return null;
   try {
     const handle = client.workflow.getHandle(GLOBAL_MAESTRO_WORKFLOW_ID);
-    return (await handle.query('hostProfiles')) as Record<string, HostProfile>;
+    const result = (await handle.query('hostProfilesWithExistence')) as {
+      exists: boolean;
+      profiles: Record<string, HostProfile>;
+    } | undefined;
+    if (!result || !result.exists) return null;
+    return result.profiles;
   } catch {
     return null;
   }
