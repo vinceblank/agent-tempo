@@ -260,11 +260,11 @@ export interface SubscribeOptions {
    * hit the wire. Setup/correctness events are always emitted regardless.
    */
   topics?: SubscribeTopic[];
-  /**
-   * Resume from a previous run. Pass the `lastEventId` from a prior
-   * `/v1/state/:ensemble` snapshot or a previously received SSE frame.
-   */
-  lastEventId?: EventIdToken;
+  // NOTE: `lastEventId` (caller-controllable cursor resume) was deliberately
+  // dropped — see ADR 0010. Snapshot-then-stream covers every realistic
+  // case; in-session reconnect uses Last-Event-ID under the hood
+  // (auto-managed by native EventSource on browser; tracked manually by
+  // the fetch wrapper on Node).
 }
 
 // ── Re-exports — convenience for PR-2/PR-3 importers ─────────────────────

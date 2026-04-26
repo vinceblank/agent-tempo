@@ -67,6 +67,12 @@ This document is the authoritative reference for the **HTTP/SSE event source** e
 | Auto-generation | First daemon boot with bearer mode required AND no `httpToken` set: daemon writes `crypto.randomBytes(32).toString('base64url')` to the file (mode `0600`). |
 | Rotation | Delete the field; next daemon boot regenerates. Live SSE connections retain their grant; new connections must present the new token. |
 
+> **Bearer mode requires the fetch transport.** Native browser `EventSource`
+> cannot set custom request headers on the initial connect, so any
+> consumer that supplies a token (or whose request `Origin` triggers
+> bearer mode) must use the `TempoClient.subscribe` fetch path. The
+> wrapper picks transports automatically — see Appendix A and ADR 0010.
+
 ### 3.2 CORS (only enforced when bearer mode is active)
 
 | Property | Default | Override |
@@ -227,8 +233,9 @@ export interface SubscribeOptions {
   signal?: AbortSignal;
   /** Server-side topic filter — server drops other event kinds before they hit the wire. */
   topics?: ('phase' | 'chat' | 'flags' | 'schedules' | 'heartbeat')[];
-  /** Resume from a previous run. Pass the `lastEventId` from a prior `/v1/state/:ensemble` snapshot. */
-  lastEventId?: string;
+  // NOTE: caller-controllable cursor resume (`lastEventId`) was deliberately
+  // dropped — see ADR 0010. Snapshot-then-stream covers every realistic
+  // case; in-session reconnect uses Last-Event-ID under the hood.
 }
 ```
 
@@ -301,14 +308,24 @@ The PR-3 wrapper MUST honor consumer cancellation through both standard JavaScri
 
 ### 7.5 Transport reconnect parity (`EventSource` vs `fetch`)
 
-Browser `EventSource` automatically reconnects on TCP drop and replays the last received `id:` line as `Last-Event-ID` on the new connection. The Node `fetch().body` text-stream parser does **not** ship this behavior. The PR-3 wrapper MUST close that gap so consumers see identical reconnect/replay semantics on both transports:
+The PR-3 wrapper picks one of two transports per `subscribe(...)` invocation. Selection is hidden from the consumer — the AsyncIterable contract is identical either way.
 
-- The wrapper tracks the most recently parsed `id:` line in memory.
-- On transport disconnect (TCP error, `fetch` body iterator end before `signal.aborted`), the wrapper opens a fresh request with `Last-Event-ID: <last-tracked-id>` and resumes the AsyncIterable yield without surfacing the reconnect to the consumer.
-- Reconnect backoff: `100 ms × 2^attempt`, capped at 30 s, reset to 0 ms on a successful connection that yields ≥1 event.
+**Native `EventSource`** is preferred when both:
+- it's available in the runtime (browser; Node 22+ optionally), AND
+- no bearer token is set (loopback dev — bearer requires custom headers, see §3.1).
+
+Native `EventSource` automatically reconnects on TCP drop and replays the last received `id:` line as `Last-Event-ID` on the new connection. **In-session reconnect is browser-managed.** The wrapper just opens it, listens, and closes on consumer abort.
+
+**`fetch().body`** is used otherwise (Node 20, or any path that needs `Authorization: Bearer …`). Manual reconnect logic in the wrapper:
+
+- Tracks the most recently parsed `id:` line in memory.
+- On transport disconnect (TCP error, `fetch` body iterator end before `signal.aborted`), opens a fresh request with `Last-Event-ID: <last-tracked-id>` and resumes the AsyncIterable yield without surfacing the reconnect to the consumer.
+- Reconnect backoff: `100 ms × 2^attempt`, capped at 30 s, reset on a successful connection that yields ≥ 1 event.
 - If `Last-Event-ID` triggers `event: gap` on the new connection, the wrapper yields that `gap` event to the consumer (do not swallow — the consumer needs to re-fetch state).
 
-The result is that a `for-await` loop over `subscribe(...)` is transport-agnostic: the consumer can't tell whether the underlying socket dropped 12 times during the loop's lifetime.
+**Caller-controllable cursor for cross-session resume is intentionally NOT supported** — see [ADR 0010](adr/0010-drop-caller-controllable-event-cursor.md). `Last-Event-ID` is a wrapper-internal mechanism for in-session reconnect only. Consumers that want post-restart resume re-fetch `/v1/state/:ensemble` and resubscribe — the same path they'd take after `event: gap`.
+
+The result: a `for-await` loop over `subscribe(...)` is transport-agnostic. The consumer can't tell whether the underlying socket dropped 12 times during the loop's lifetime, or which transport is in use.
 
 ### 7.6 `chat.compressed` consumer recovery
 
@@ -401,7 +418,7 @@ If a future use case demands per-player streams (e.g. real-time co-pilot pairing
 | `src/http/aggregate.ts` | 750 ms poll loop, diff vs last snapshot, emit events to ring buffer |
 | `src/http/events.ts` | `EnsembleEventBus`, ring buffer, `Last-Event-ID` replay, throttle/coalesce rules from §6 + §8 |
 | `src/http/event-types.ts` | TS interfaces for every event payload + `SSE_EVENT_KINDS` const array (drift detector) |
-| `src/client/subscribe.ts` | `TempoClient.subscribe(ensemble, opts)` — AsyncIterable wrapper. Two transports: `EventSource` when available, `fetch().body` parser otherwise |
+| `src/client/subscribe.ts` | `TempoClient.subscribe(ensemble, opts)` — AsyncIterable wrapper. Two transports: native `EventSource` when available AND no bearer token (free in-session reconnect via auto-managed `Last-Event-ID`); `fetch().body` parser otherwise (Node 20 or any path needing `Authorization`). See ADR 0010. |
 | `test/sse/wire-protocol.test.ts` | Drift detector — every section header in this file maps to a known event kind |
 
 ---

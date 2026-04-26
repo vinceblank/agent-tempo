@@ -55,6 +55,7 @@ import type {
   RecruitClientResult,
   ReleaseClientResult,
 } from './interface';
+import { createSubscribe, type SubscribeDeps } from './subscribe';
 
 // Re-export public types for consumers
 export type {
@@ -68,6 +69,8 @@ export type {
   RecruitClientResult,
   ReleaseClientResult,
 } from './interface';
+export type { SubscribeOptions, SubscribeTopic, TempoEvent } from '../http/event-types';
+export { SubscribeHttpError, type SubscribeDeps } from './subscribe';
 
 // ── Helpers ──
 
@@ -104,8 +107,21 @@ async function runTempoCli(args: string[], workDir?: string): Promise<void> {
 
 // ── Factory ──
 
-export function createTempoClient(client: Client): TempoClient {
+/**
+ * Optional construction params. `subscribeDeps` is forwarded to the SSE
+ * wrapper at `src/client/subscribe.ts` — pass overrides for `baseUrl`,
+ * `token`, `fetchImpl`, or `sleep` from tests / non-default environments.
+ */
+export interface CreateTempoClientOpts {
+  subscribeDeps?: SubscribeDeps;
+}
+
+export function createTempoClient(
+  client: Client,
+  opts: CreateTempoClientOpts = {},
+): TempoClient {
   const globalMaestroId = GLOBAL_MAESTRO_WORKFLOW_ID;
+  const subscribe = createSubscribe(opts.subscribeDeps);
 
   /** Helper: get a workflow handle by ID. */
   function handle(workflowId: string) {
@@ -113,6 +129,7 @@ export function createTempoClient(client: Client): TempoClient {
   }
 
   return {
+    subscribe,
     async discoverEnsembles(): Promise<EnsembleSummary[]> {
       // Strategy 1: Global Maestro playersByEnsemble query
       try {
