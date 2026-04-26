@@ -228,6 +228,19 @@ types live in `interface.ts`; the factory implementation lives in `index.ts`. Pr
 Uses Global Maestro as the primary source with graceful fallback to per-ensemble Maestro and
 direct workflow list queries.
 
+**Ensemble state** — Every ensemble is classified into one of three states by TempoClient and
+surfaced in the TUI home view and `claude-tempo status`:
+
+- **online** — the maestro hub is unpaused (or, if no hub exists yet, at least one player has a
+  live adapter attached).
+- **paused** — the hub is paused AND at least one player has a live adapter. The ensemble can
+  resume in place via `/play` without losing sessions.
+- **offline** — the hub is paused AND zero players have live adapters. Sessions may still exist
+  as `detached` workflows; use `/restore` to reattach them.
+
+The maestro session itself is excluded from adapter counts. Source:
+`src/client/index.ts` (classification block, `liveAdapterCount` + `maestroPaused` query).
+
 ---
 
 ## Related
