@@ -40,3 +40,44 @@ export {
   toPlayerSummaryV1,
   SNAPSHOT_CHAT_LIMIT,
 } from './snapshot';
+export {
+  AggregateRunner,
+  DEFAULT_POLL_INTERVAL_MS,
+  canonicalize,
+  hashOf,
+  diffEnsembleSet,
+  diffEnsembleSnapshot,
+  diffHostProfiles,
+} from './aggregate';
+export {
+  EnsembleEventBus,
+  type EventBus,
+  type Subscription,
+  type BusEvent,
+  type SubscribeOpts,
+  type TopicCategory,
+  topicOf,
+  startHeartbeatTimer,
+  DEFAULT_HEARTBEAT_MS,
+} from './event-bus';
+export {
+  SeqAllocator,
+  formatEventId,
+  parseEventId,
+  compareEventIds,
+  type EventIdTuple,
+} from './event-id';
+export {
+  ConnectionCap,
+  DEFAULT_MAX_CONNECTIONS,
+  PER_CONNECTION_BUFFER_LIMIT,
+  frameSseEvent,
+  frameSseComment,
+  parseTopicQuery,
+  handleSseRequest,
+} from './sse-handler';
+export {
+  createRingBuffer,
+  RING_BUFFER_CAPACITY,
+  type RingBuffer,
+} from './ring-buffer';

@@ -83,8 +83,27 @@ export function extractBearerToken(authHeader: string | undefined): string | nul
 }
 
 /**
- * Constant-time token comparison. Falls back to a length-mismatch fast
- * path before `crypto.timingSafeEqual` which throws on differing lengths.
+ * Constant-time token comparison.
+ *
+ * **Length-leak tradeoff** (PR-1 review followup): the leading
+ * length-mismatch short-circuit reveals the expected token length to a
+ * timing observer who can measure the difference between "rejected
+ * before constant-time compare" and "ran the full constant-time
+ * compare". Mitigations considered:
+ *
+ *  1. Pad the received token to a fixed length before comparison.
+ *     Adds branching in the pad path that itself can leak via timing.
+ *  2. Use HMAC-then-compare to render length irrelevant at the cost of
+ *     an extra hash per request.
+ *
+ * Neither is worth it for a token whose length is fixed by our own
+ * generator (`crypto.randomBytes(32).toString('base64url')` is always
+ * 43 chars). An attacker observing length learns nothing they can't
+ * trivially guess from inspecting the daemon's source. Without the
+ * length gate `crypto.timingSafeEqual` throws on mismatched lengths,
+ * which would force a try/catch in the hot path with worse timing
+ * properties. Document the assumption here so a future contributor
+ * reading "constant-time" doesn't assume length is also blinded.
  */
 export function tokensMatch(received: string, expected: string): boolean {
   if (received.length !== expected.length) return false;

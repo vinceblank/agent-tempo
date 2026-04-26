@@ -548,6 +548,9 @@ async function main() {
   // here on shutdown. Mutable ref because `startHttpServer` is awaited
   // below the `shutdown` declaration.
   let httpServerHandle: import('./http').HttpServerHandle | null = null;
+  // #94/#95 PR-2 — aggregate poll loop + per-ensemble buses. Owned by
+  // the daemon process; `close()` drains every per-ensemble bus.
+  let aggregateRunner: import('./http/aggregate').AggregateRunner | null = null;
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -558,10 +561,23 @@ async function main() {
     stopCleanupLoopRef?.();
     clearInterval(heartbeatInterval);
     try { fs.unlinkSync(DAEMON_HEARTBEAT_PATH); } catch { /* ignore */ }
-    // HTTP closes ahead of workers — port file removal must precede
-    // worker drain so a CLI poll racing the shutdown sees ECONNREFUSED
-    // (the right "daemon is going away" signal) rather than a stale
-    // port pointing at a dead listener.
+    // HTTP server closes ahead of workers. The HTTP `close()` itself
+    // returns a Promise that resolves only after live SSE sockets
+    // drain (5 s) — by which point the listener is already refusing
+    // new connections AND the port file has been unlinked. The fire-
+    // and-forget `.catch()` here means we don't await drain, so the
+    // worker shutdown below races the HTTP drain. That's intentional:
+    // the worker drain budget is 15 s (`hardExit`), which exceeds
+    // HTTP's 5 s drain window — so a polling CLI sees ECONNREFUSED
+    // either at the listener level (if it polled after `close()`
+    // returned) OR is force-disconnected (if it was inside the drain
+    // window and the worker drain pulled the rug). Both signals mean
+    // "daemon is going away," which is the contract.
+    //
+    // The aggregate runner is closed first so per-ensemble buses stop
+    // pushing events while the SSE handler is still draining its
+    // sockets — preventing wasted work in the drain window.
+    aggregateRunner?.close();
     httpServerHandle?.close().catch((err) =>
       log('http close error (non-fatal):', err instanceof Error ? err.message : err),
     );
@@ -632,13 +648,21 @@ async function main() {
     try {
       const { startHttpServer } = await import('./http');
       const { createTempoClient } = await import('./client');
+      const { AggregateRunner } = await import('./http/aggregate');
       const httpClient = createTempoClient(reconcileClient);
+      // Single shared bootEpoch — every bus the daemon constructs uses
+      // this same value, frozen for the process lifetime per §5.
+      const bootEpoch = Date.now();
+      aggregateRunner = new AggregateRunner({ client: httpClient, bootEpoch });
+      aggregateRunner.start();
       httpServerHandle = await startHttpServer({
         client: httpClient,
         namespace: config.temporalNamespace,
         version: daemonVersion(),
+        aggregate: aggregateRunner,
       });
       log(`HTTP listening on http://${httpServerHandle.bindAddr}:${httpServerHandle.port}`);
+      log(`Aggregate poll loop running (bootEpoch=${bootEpoch})`);
     } catch (err) {
       log('http server init failed (non-fatal):', err instanceof Error ? err.message : String(err));
     }
