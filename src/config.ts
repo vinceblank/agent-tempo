@@ -37,6 +37,18 @@ export const ENV = {
   ATTACHMENT_ID: 'CLAUDE_TEMPO_ATTACHMENT_ID',
   ATTACHMENT_RUN_ID: 'CLAUDE_TEMPO_ATTACHMENT_RUN_ID',
   ADAPTER_ID: 'CLAUDE_TEMPO_ADAPTER_ID',
+  /**
+   * Daemon HTTP/SSE event source (#94, #95). See SSE-PROTOCOL.md §1, §3.
+   * `HTTP_BIND` defaults to `127.0.0.1`. Setting to `0.0.0.0` forces
+   * bearer mode. `DAEMON_PORT` defaults to `8473` (the `t-e-m-p-o`
+   * mnemonic; not IANA-registered). `CORS_ORIGINS` is a comma-separated
+   * explicit allowlist (no wildcards) — only consulted in bearer mode.
+   * `SSE_MAX_CONNECTIONS` caps live SSE subscribers (PR-2; defaults 100).
+   */
+  HTTP_BIND: 'CLAUDE_TEMPO_HTTP_BIND',
+  DAEMON_PORT: 'CLAUDE_TEMPO_DAEMON_PORT',
+  CORS_ORIGINS: 'CLAUDE_TEMPO_CORS_ORIGINS',
+  SSE_MAX_CONNECTIONS: 'CLAUDE_TEMPO_SSE_MAX_CONNECTIONS',
 } as const;
 
 // PR-H (#132): `lifecycleV2Enabled()` removed. The V2 attachment-lease path
@@ -64,6 +76,15 @@ export interface PersistedConfig {
   temporalTlsKeyPath?: string;
   defaultAgent?: AgentType;
   claudeBin?: string;
+  /**
+   * Bearer token for the daemon's HTTP/SSE event source (#94, #95,
+   * SSE-PROTOCOL.md §3.1). Auto-generated on first daemon boot when
+   * bearer mode is required (`CLAUDE_TEMPO_HTTP_BIND` non-loopback OR
+   * a request with a non-loopback `Origin`) and no token is set:
+   * `crypto.randomBytes(32).toString('base64url')`, 0600 on POSIX.
+   * Rotation = delete this field; next daemon boot regenerates.
+   */
+  httpToken?: string;
 }
 
 export const CLAUDE_TEMPO_HOME = join(homedir(), '.claude-tempo');

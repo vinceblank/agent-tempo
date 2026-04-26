@@ -18,6 +18,7 @@ export default defineConfig({
       'tests/config/**/*.test.ts',
       'tests/cli/**/*.test.ts',
       'tests/reconcile/**/*.test.ts',
+      'tests/http/**/*.test.ts',
     ],
     environment: 'node',
     globals: false,

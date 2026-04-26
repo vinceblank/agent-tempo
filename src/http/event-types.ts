@@ -1,0 +1,272 @@
+/**
+ * SSE event-source wire types — shared by the daemon (server, PR-1/PR-2) and
+ * the TempoClient subscribe wrapper (PR-3). The drift detector at
+ * `test/sse/wire-protocol.test.ts` (PR-2 deliverable) cross-checks
+ * `SSE_EVENT_KINDS` against the §6 table in `docs/SSE-PROTOCOL.md`.
+ *
+ * **Reference**: [`docs/SSE-PROTOCOL.md`](../../docs/SSE-PROTOCOL.md).
+ *
+ * **Stability**: every name and field shape here is part of the v1 wire
+ * contract. Renaming or removing requires a major version bump (path prefix
+ * `/v1/` → `/v2/`). Adding new event types or additive payload fields is
+ * non-breaking.
+ *
+ * **PR-1 scope**: the snapshot endpoints (`/v1/health`, `/v1/state/:ensemble`,
+ * `/v1/ensembles`, `/v1/hosts`) consume `HealthV1`, `EnsembleStateV1`, and
+ * `PlayerSummaryV1`. The SSE event union and `TempoClient.subscribe`
+ * interface are defined here for PR-2/PR-3 to import without duplication.
+ */
+import type {
+  AttachmentPhase,
+  EnsembleChatMessage,
+  HostProfile,
+  HostInfo,
+  ScheduleEntry,
+} from '../types';
+import type { EnsembleSummary } from '../client/interface';
+
+// ── §4. Snapshot payload shapes ──────────────────────────────────────────
+
+/** §4.1 — `/v1/health` — never authenticated. */
+export interface HealthV1 {
+  ok: true;
+  /** Temporal namespace the daemon is connected to. */
+  namespace: string;
+  /** Daemon package version. */
+  version: string;
+  uptimeMs: number;
+  /** Count of distinct ensembles known to the daemon at request time. */
+  ensembleCount: number;
+  /**
+   * Open SSE connections (`/v1/events*`). Always `0` in PR-1 — the daemon
+   * has no streaming endpoints yet. PR-2 wires this to the live subscriber set.
+   */
+  subscriberCount: number;
+}
+
+/**
+ * §4.3 — `/v1/state/:ensemble` — single-ensemble snapshot.
+ *
+ * `lastEventId` is the snapshot/stream bridge token. PR-1 returns the
+ * sentinel `"0:0"`; PR-2 pairs this with the live aggregate so consumers
+ * passing it back as `Last-Event-ID` to `/v1/events/:ensemble` resume from
+ * the exact tick the snapshot reflects.
+ */
+export interface EnsembleStateV1 {
+  v: 1;
+  ensemble: string;
+  /** ISO timestamp recorded when the snapshot was assembled. */
+  capturedAt: string;
+  /**
+   * Opaque event-id token of the form `"<bootEpoch>:<seq>"` (see §5).
+   *
+   * **Atomicity contract**: the snapshot reflects state as of this id.
+   * Every event with a `(bootEpoch, seq)` lexicographically greater than
+   * `lastEventId` is NOT yet reflected in `players`, `chat`, `schedules`,
+   * `flags`, or `hostProfiles`.
+   *
+   * **PR-1 sentinel**: the snapshot endpoints ship before any event source
+   * exists, so PR-1 returns `"0:0"`. PR-2 subscribers passing this back
+   * see an `epoch-mismatch` `gap` event and re-fetch — correct behavior.
+   */
+  lastEventId: string;
+  state: 'online' | 'paused' | 'offline';
+  hasConductor: boolean;
+  flags: { paused: boolean; held: boolean };
+  players: PlayerSummaryV1[];
+  schedules: ScheduleEntry[];
+  /**
+   * Bounded slice of the maestro hub's chat ring (most-recent-first per
+   * the hub's `maestroEnsembleChat` query). Consumers paging older
+   * messages drop down to `recall` / `getEnsembleChat` direct.
+   */
+  chat: { messages: EnsembleChatMessage[]; total: number; hasMore: boolean };
+  /**
+   * Snapshot of the global hostname → `HostProfile` map. Embedded so a
+   * consumer rendering one ensemble doesn't need a parallel `/v1/hosts`
+   * call to label players by host capabilities. Same shape as the global
+   * map; daemons do not partition by ensemble.
+   */
+  hostProfiles: Record<string, HostProfile>;
+}
+
+/**
+ * §4.3 — per-player projection used inside `EnsembleStateV1.players` and
+ * the `player.added` event payload (§6).
+ */
+export interface PlayerSummaryV1 {
+  playerId: string;
+  ensemble: string;
+  hostname: string;
+  isConductor: boolean;
+  agentType: 'claude' | 'copilot';
+  playerType?: string;
+  /** Authoritative attachment phase (post-v0.26 — see WIRE-PROTOCOL.md). */
+  phase?: AttachmentPhase;
+  part: string;
+  workDir: string;
+  gitBranch?: string;
+  /** Absent on `detached` / `gone` phases. ISO timestamp. */
+  lastHeartbeatAt?: string;
+  /** Present only when `phase === 'processing'`. ISO timestamp. */
+  processingSince?: string;
+}
+
+// ── §5. SSE framing — event-id token format ─────────────────────────────
+
+/**
+ * The eventId token used in the `id:` line of the SSE frame and as the
+ * `Last-Event-ID` header round-trip. Format `"<bootEpoch>:<seq>"`:
+ *
+ * - `bootEpoch` — daemon process boot time as Unix epoch milliseconds,
+ *   frozen for the process lifetime. A daemon restart advances the epoch;
+ *   a worker restart (e.g. Temporal connection reset) does NOT.
+ * - `seq` — uint64 monotonic counter starting at 0, incrementing once per
+ *   event emitted to the bus.
+ *
+ * Comparison rule: server compares the client-supplied `Last-Event-ID` to
+ * the live `(bootEpoch, seq)` pair as a numeric tuple — `clientEpoch`
+ * first, then `clientSeq`. Mismatched epoch → `gap` event with reason
+ * `epoch-mismatch`. Matched epoch with `seq < ringStart` → `gap` with
+ * reason `overflow`.
+ */
+export type EventIdToken = string;
+
+/**
+ * The PR-1 sentinel `lastEventId` value — emitted on `/v1/state/:ensemble`
+ * before PR-2 lights up the aggregate poll loop. Subscribers passing this
+ * back as `Last-Event-ID` once PR-2 ships will see an `epoch-mismatch`
+ * gap event (because the live daemon's `bootEpoch` is non-zero) and
+ * re-fetch — correct behavior.
+ */
+export const PR1_SENTINEL_EVENT_ID: EventIdToken = '0:0';
+
+// ── §6. Event types — drift-detector contract ────────────────────────────
+
+/**
+ * Canonical list of every SSE event `type` the daemon emits. The drift
+ * detector (PR-2) reads this array and asserts every `## row` in
+ * `docs/SSE-PROTOCOL.md` §6 has a matching entry — and vice versa.
+ *
+ * **Append-only**. Do not remove. New event types ship as additive `/v1/`
+ * additions; removals require `/v2/`.
+ */
+export const SSE_EVENT_KINDS = [
+  'snapshot',
+  'gap',
+  'throttled',
+  'heartbeat',
+  'ensemble.created',
+  'ensemble.destroyed',
+  'player.added',
+  'player.removed',
+  'player.phase_changed',
+  'chat.appended',
+  'chat.compressed',
+  'flags.changed',
+  'schedules.changed',
+  'host_profile.changed',
+] as const;
+
+export type SseEventKind = (typeof SSE_EVENT_KINDS)[number];
+
+/** Common envelope for every event. */
+export interface SseEventBase {
+  v: 1;
+  /** §5 — `"<bootEpoch>:<seq>"`. */
+  eventId: EventIdToken;
+}
+
+/**
+ * Discriminated union of every event payload exposed by the daemon's
+ * `/v1/events*` endpoints. PR-3's `TempoClient.subscribe` returns
+ * `AsyncIterable<TempoEvent>`.
+ */
+export type TempoEvent =
+  | (SseEventBase & { type: 'snapshot'; payload: EnsembleStateV1 })
+  | (SseEventBase & {
+      type: 'gap';
+      payload: { from: string; to: string; reason: 'epoch-mismatch' | 'overflow' };
+    })
+  | (SseEventBase & {
+      type: 'throttled';
+      payload: { droppedSince: string; count: number };
+    })
+  | (SseEventBase & { type: 'heartbeat'; payload: { at: string } })
+  | (SseEventBase & {
+      type: 'ensemble.created';
+      payload: { ensemble: string; createdAt: string; hasConductor: boolean };
+    })
+  | (SseEventBase & {
+      type: 'ensemble.destroyed';
+      payload: { ensemble: string; destroyedAt: string };
+    })
+  | (SseEventBase & { type: 'player.added'; payload: PlayerSummaryV1 })
+  | (SseEventBase & {
+      type: 'player.removed';
+      payload: {
+        playerId: string;
+        ensemble: string;
+        removedAt: string;
+        reason: 'destroyed' | 'gone';
+      };
+    })
+  | (SseEventBase & {
+      type: 'player.phase_changed';
+      payload: {
+        playerId: string;
+        ensemble: string;
+        phase: AttachmentPhase;
+        lastHeartbeatAt?: string;
+        processingSince?: string;
+        at: string;
+      };
+    })
+  | (SseEventBase & { type: 'chat.appended'; payload: EnsembleChatMessage })
+  | (SseEventBase & {
+      type: 'chat.compressed';
+      payload: { dropped: number; since: string };
+    })
+  | (SseEventBase & {
+      type: 'flags.changed';
+      payload: { ensemble: string; paused: boolean; held: boolean; at: string };
+    })
+  | (SseEventBase & {
+      type: 'schedules.changed';
+      payload: { ensemble: string; schedules: ScheduleEntry[]; at: string };
+    })
+  | (SseEventBase & { type: 'host_profile.changed'; payload: HostProfile });
+
+// ── §6.1 — `TempoClient.subscribe` API surface ───────────────────────────
+
+/**
+ * Subset of event categories the server can pre-filter on `?topics=...`.
+ * Maps roughly to `phase → player.phase_changed`, `chat → chat.*`,
+ * `flags → flags.changed`, `schedules → schedules.changed`,
+ * `heartbeat → heartbeat`. Setup events (`snapshot`, `gap`, `throttled`,
+ * `player.added`, `player.removed`, ensemble lifecycle, `host_profile.*`)
+ * are always included — they're the bare minimum for correctness.
+ */
+export type SubscribeTopic = 'phase' | 'chat' | 'flags' | 'schedules' | 'heartbeat';
+
+export interface SubscribeOptions {
+  /**
+   * Aborts the iterator and tears down the underlying transport. See
+   * SSE-PROTOCOL.md §7.4.
+   */
+  signal?: AbortSignal;
+  /**
+   * Server-side topic filter. Server drops other event kinds before they
+   * hit the wire. Setup/correctness events are always emitted regardless.
+   */
+  topics?: SubscribeTopic[];
+  /**
+   * Resume from a previous run. Pass the `lastEventId` from a prior
+   * `/v1/state/:ensemble` snapshot or a previously received SSE frame.
+   */
+  lastEventId?: EventIdToken;
+}
+
+// ── Re-exports — convenience for PR-2/PR-3 importers ─────────────────────
+
+export type { EnsembleSummary, HostInfo, AttachmentPhase, HostProfile, EnsembleChatMessage, ScheduleEntry };

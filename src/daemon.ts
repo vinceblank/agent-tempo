@@ -543,6 +543,11 @@ async function main() {
   // cancellation with shutdown (declared after signal handlers to preserve
   // the existing signal-handler-first safety ordering).
   let stopCleanupLoopRef: (() => void) | null = null;
+  // #94/#95 PR-1 — HTTP server handle. Started after workers are up
+  // (so handlers calling into TempoClient hit a live worker), drained
+  // here on shutdown. Mutable ref because `startHttpServer` is awaited
+  // below the `shutdown` declaration.
+  let httpServerHandle: import('./http').HttpServerHandle | null = null;
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -553,6 +558,13 @@ async function main() {
     stopCleanupLoopRef?.();
     clearInterval(heartbeatInterval);
     try { fs.unlinkSync(DAEMON_HEARTBEAT_PATH); } catch { /* ignore */ }
+    // HTTP closes ahead of workers — port file removal must precede
+    // worker drain so a CLI poll racing the shutdown sees ECONNREFUSED
+    // (the right "daemon is going away" signal) rather than a stale
+    // port pointing at a dead listener.
+    httpServerHandle?.close().catch((err) =>
+      log('http close error (non-fatal):', err instanceof Error ? err.message : err),
+    );
     sharedWorker?.shutdown();
     hostWorker?.shutdown();
   };
@@ -593,10 +605,11 @@ async function main() {
   // call `workflow.list` + `workflow.getHandle().query(...)` which are
   // client-side operations. Non-fatal: any failure is logged and the
   // daemon continues running.
+  let reconcileClient: Client | null = null;
   try {
     const daemonConfig = loadDaemonConfig();
     const reconcileConnection = await createTemporalConnection(config);
-    const reconcileClient = new Client({ connection: reconcileConnection, namespace: config.temporalNamespace });
+    reconcileClient = new Client({ connection: reconcileConnection, namespace: config.temporalNamespace });
 
     // Fire-and-forget reconcile; the daemon must not block on this.
     reconcileOnBoot(reconcileClient, daemonConfig).catch((err) => {
@@ -608,6 +621,29 @@ async function main() {
     log(`cleanup loop scheduled (every ${CLEANUP_INTERVAL_MS / 3_600_000}h)`);
   } catch (err) {
     log('reconcile/cleanup init failed (non-fatal):', err instanceof Error ? err.message : String(err));
+  }
+
+  // #94/#95 PR-1 — HTTP snapshot endpoints. Reuses the reconcile client
+  // (already long-lived; the snapshot handlers fan out the same
+  // visibility queries that reconcile/cleanup do). Non-fatal: any
+  // listener error logs and the daemon stays alive — Temporal workers
+  // are the durable concern.
+  if (reconcileClient) {
+    try {
+      const { startHttpServer } = await import('./http');
+      const { createTempoClient } = await import('./client');
+      const httpClient = createTempoClient(reconcileClient);
+      httpServerHandle = await startHttpServer({
+        client: httpClient,
+        namespace: config.temporalNamespace,
+        version: daemonVersion(),
+      });
+      log(`HTTP listening on http://${httpServerHandle.bindAddr}:${httpServerHandle.port}`);
+    } catch (err) {
+      log('http server init failed (non-fatal):', err instanceof Error ? err.message : String(err));
+    }
+  } else {
+    log('http server skipped: no Temporal client available');
   }
 
   // Run both workers — blocks until shutdown + drain completes
