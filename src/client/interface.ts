@@ -179,7 +179,22 @@ export interface CreateEnsembleOpts {
   lineup?: string;
 }
 
-export interface TempoClient {
+/**
+ * #308 follow-up: pure-RPC subset of the TempoClient surface.
+ *
+ * `TempoClientCore` is the headless-safe interface — every method routes
+ * through the Temporal `Client` and never spawns a local terminal. Safe to
+ * instantiate inside the daemon, the SSE event source, MCP tools, and
+ * future SDK consumers that don't carry a `child_process` dependency.
+ *
+ * The TUI (and any other TTY-bound consumer that needs to launch a
+ * conductor terminal) imports {@link TempoClientWithSpawn} instead, which
+ * extends this interface with the two spawn methods.
+ *
+ * See `docs/adr/0007-tempoclient-core-withspawn-split.md` and
+ * `docs/design/tempoclient-core-spawn-split.md` for the rationale.
+ */
+export interface TempoClientCore {
   /** Discover all running ensembles across the cluster. */
   discoverEnsembles(): Promise<EnsembleSummary[]>;
   /**
@@ -187,19 +202,6 @@ export interface TempoClient {
    * from parked (all-sessions-detached) via `state`.
    */
   listEnsembles(): Promise<EnsembleSummary[]>;
-  /**
-   * Create a new ensemble + conductor session. Shells out to `claude-tempo
-   * up <name>` so the spawned conductor terminal matches the CLI path.
-   */
-  createEnsemble(opts: CreateEnsembleOpts): Promise<void>;
-  /**
-   * Spawn a conductor terminal for an existing ensemble — the restore-
-   * after-shutdown path. Shells out to `claude-tempo up <name>` which is
-   * idempotent at the workflow layer. Semantically distinct from
-   * {@link TempoClient.createEnsemble}: this fires on an ensemble that
-   * already exists; a "create" contradiction would mislead future readers.
-   */
-  spawnConductor(opts: { ensemble: string; workDir?: string }): Promise<void>;
   /** Get current player snapshot for an ensemble. */
   getPlayers(ensemble: string): Promise<MaestroPlayerInfo[]>;
   /** Get recent messages for an ensemble. */
@@ -362,3 +364,39 @@ export interface TempoClient {
   /** Get messages received + sent by the maestro session. */
   getMaestroMessages(ensemble: string): Promise<{ received: Message[]; sent: SentMessage[] }>;
 }
+
+/**
+ * #308 follow-up: TTY-bound superset of {@link TempoClientCore}.
+ *
+ * Adds the two methods that shell out to a local terminal via
+ * `claude-tempo up …`. Required for the TUI's "create ensemble" wizard
+ * and the restore-after-shutdown flow. **DO NOT depend on this interface
+ * from headless contexts** — the daemon, MCP tools, and SSE event source
+ * must use {@link TempoClientCore}.
+ */
+export interface TempoClientWithSpawn extends TempoClientCore {
+  /**
+   * Spawn a new conductor terminal for a brand-new ensemble. Shells out to
+   * `claude-tempo up <name>` so the spawned conductor terminal matches the
+   * CLI path. **Requires a TTY context** — DO NOT call from MCP tools, the
+   * daemon, or other headless processes.
+   */
+  createEnsemble(opts: CreateEnsembleOpts): Promise<void>;
+  /**
+   * Spawn a conductor terminal for an existing ensemble — the restore-
+   * after-shutdown path. Shells out to `claude-tempo up <name>` which is
+   * idempotent at the workflow layer. Semantically distinct from
+   * {@link TempoClientWithSpawn.createEnsemble}: this fires on an ensemble
+   * that already exists; a "create" contradiction would mislead future
+   * readers. **Requires a TTY context.**
+   */
+  spawnConductor(opts: { ensemble: string; workDir?: string }): Promise<void>;
+}
+
+/**
+ * Backwards-compatible alias preserved indefinitely (per ADR 0007's
+ * forward-looking note). Existing code that imports `TempoClient` keeps
+ * the full surface (Core + spawn). New consumers that want headless
+ * safety should import {@link TempoClientCore} directly.
+ */
+export type TempoClient = TempoClientWithSpawn;
