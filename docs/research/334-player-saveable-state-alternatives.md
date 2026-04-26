@@ -10,11 +10,11 @@
 
 ## 1. Prior art
 
-- **Anthropic harness-design blog** — *"Context resets with structured artifacts work better than summarization for maintaining coherence in long-running sessions."* The core pattern: rather than letting the agent silently summarize context, give it an **explicit primitive to commit a curated artifact, then start fresh from that artifact.** The agent's authorial intent — what's worth keeping — is preserved; the model isn't asked to do summarization implicitly under context pressure.
+- **Anthropic harness-design blog** — the article frames the pattern as: *"Context resets — clearing the context window entirely and starting a fresh agent, combined with a structured handoff that carries the previous agent's state and the next steps — addresses both these issues."* The core idea: rather than letting the agent silently compress context, give it an **explicit primitive to commit a curated artifact, then start fresh from that artifact.** The agent's authorial intent — what's worth keeping — is preserved; the model isn't asked to do that compression implicitly under context pressure.
 - **Adjacent agentic patterns**:
   - **Aider's `/clear` + `/save`/`/load`** — manual artifact-then-restart, file-based.
   - **Cursor's "Memories"** — single-key per workspace, IDE-mediated, persists across sessions.
-  - **OpenAI Assistants `thread.metadata`** — small string blob attached to a thread (16 KB cap, no transcript role).
+  - **OpenAI Assistants `thread.metadata`** — `Record<string, string>` attached to a thread, capped at **16 keys with 64-char keys and 512-char values** (aggregate ≈ 9 KiB). No transcript role.
   - **Gastown's "handoff bundle"** (per prior memory analysis) — transcript fragment + structured handoff dict; no replay primitive.
 - **Common shape across all of these**: small structured artifact + opt-in restart-with-artifact. None expose multi-key in v1; multi-key shows up only in editor-class tools (Cursor) and even there it's bounded.
 - **Authorial discipline observation**: the blog calls out that *unstructured* save-state degrades fast — the agent puts everything in. Tools that succeed nudge toward a template (Aider's commit-message style; Cursor's "what should I remember?" prompt).
