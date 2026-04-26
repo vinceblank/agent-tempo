@@ -15,6 +15,7 @@ import {
   parseIdentity,
   __resetHostsCacheForTests,
   HOST_FRESHNESS_THRESHOLD_MS,
+  HOST_FANOUT_CONCURRENCY,
 } from '../src/utils/hosts';
 import { formatHostList } from '../src/utils/format-hosts';
 
@@ -252,6 +253,42 @@ describe('listHosts (#274 AC6)', function () {
     });
     expect(hosts).to.have.length(1);
     expect(hosts[0].instances.map((i) => i.pid).sort()).to.deep.equal([1, 2]);
+  });
+
+  it('per-host fan-out scales past HOST_FANOUT_CONCURRENCY without dropping hosts (#281)', async function () {
+    // 2× the cap so we know the limiter has to queue some calls. Every
+    // host should still appear in the result — the cap throttles RPCs,
+    // it must never silently drop work.
+    const hostCount = HOST_FANOUT_CONCURRENCY * 2;
+    const table: Record<string, RawPoller[]> = {};
+    const expectedHostnames: string[] = [];
+    for (let i = 0; i < hostCount; i++) {
+      const hostname = `h${i}`;
+      expectedHostnames.push(hostname);
+      const ident = `claude-tempo:${hostname}:${1000 + i}:0.27.0`;
+      table[`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`] = [
+        ...(table[`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`] ?? []),
+        mkPoller(ident, 1_000),
+      ];
+      table[`claude-tempo-${hostname}:${TASK_QUEUE_TYPE_ACTIVITY}`] = [mkPoller(ident, 1_000)];
+    }
+
+    let perHostQueueCalls = 0;
+    const describe = async (
+      _c: Client, _ns: string, taskQueueName: string, taskQueueType: TaskQueueType,
+    ): Promise<RawPoller[]> => {
+      if (taskQueueName.startsWith('claude-tempo-')) perHostQueueCalls++;
+      return table[`${taskQueueName}:${taskQueueType}`] ?? [];
+    };
+
+    const hosts = await listHosts(fakeClient, {
+      force: true,
+      deps: { now: () => NOW, describePollers: describe, fetchProfiles: async () => null },
+    });
+
+    expect(hosts).to.have.length(hostCount);
+    expect(hosts.map((h) => h.hostname).sort()).to.deep.equal(expectedHostnames.slice().sort());
+    expect(perHostQueueCalls).to.equal(hostCount, 'every host queue is described exactly once');
   });
 
   it('opaque third-party identities are skipped silently', async function () {

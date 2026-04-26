@@ -23,6 +23,7 @@
  */
 import type { Client } from '@temporalio/client';
 import { temporal } from '@temporalio/proto';
+import pLimit from 'p-limit';
 import { hostTaskQueue, GLOBAL_MAESTRO_WORKFLOW_ID } from '../config';
 import type { HostInfo, HostProfile, InstanceInfo } from '../types';
 
@@ -37,6 +38,16 @@ export const HOST_FRESHNESS_THRESHOLD_MS = 60_000;
 
 /** Read-through cache TTL for the join result. AC6h. */
 export const CACHE_TTL_MS = 3_000;
+
+/**
+ * #281 — concurrency cap for the per-host RPC fan-out.
+ *
+ * `Promise.all(hostnames.map(describe...))` is unbounded; at >20 hosts that
+ * thunder-herds the Temporal frontend's per-namespace RPS budget. 8 keeps
+ * the common case (≤8 hosts) at full parallelism while preventing the worst
+ * case from spiking the backend.
+ */
+export const HOST_FANOUT_CONCURRENCY = 8;
 
 // Module-level memo. Not exported — bypass via `listHosts(client, { force: true })`.
 interface CacheEntry {
@@ -285,18 +296,23 @@ export async function listHosts(client: Client, opts: ListHostsOpts = {}): Promi
   // Hostnames discovered from the shared queues drive the per-host RPC fan-out.
   const hostnames = Array.from(hostInstances.keys()).sort();
 
-  // RPC 3 — per-host activity queue. Parallel with the profile fetch.
+  // RPC 3 — per-host activity queue. Parallel with the profile fetch,
+  // but capped at HOST_FANOUT_CONCURRENCY so a deployment with many hosts
+  // doesn't thunder-herd the Temporal frontend (#281).
+  const limit = pLimit(HOST_FANOUT_CONCURRENCY);
   const [perHostActivityRows, profiles] = await Promise.all([
     Promise.all(
-      hostnames.map(async (hostname) => {
-        try {
-          const rows = await describe(client, namespace, hostTaskQueue(taskQueue, hostname), TASK_QUEUE_TYPE_ACTIVITY);
-          return [hostname, rows] as const;
-        } catch {
-          // Per-host-queue not registered yet → empty. Don't fail the whole call.
-          return [hostname, [] as RawPoller[]] as const;
-        }
-      }),
+      hostnames.map((hostname) =>
+        limit(async () => {
+          try {
+            const rows = await describe(client, namespace, hostTaskQueue(taskQueue, hostname), TASK_QUEUE_TYPE_ACTIVITY);
+            return [hostname, rows] as const;
+          } catch {
+            // Per-host-queue not registered yet → empty. Don't fail the whole call.
+            return [hostname, [] as RawPoller[]] as const;
+          }
+        }),
+      ),
     ),
     fetchProfiles(client).catch(() => null),
   ]);
