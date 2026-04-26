@@ -1031,7 +1031,10 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   }, [exit]);
 
   const handleHomeOpenNew = useCallback(() => {
-    dispatch({ type: 'OPEN_HOME_MODAL', modal: { type: 'new' } });
+    // #306: Use the full CreateEnsembleWizard (same as Splash's `+ Create new
+    // ensemble` row) so the user gets the multi-step name → dir → lineup
+    // flow instead of the bare single-prompt NewEnsembleModal.
+    dispatch({ type: 'ENTER_CREATE_ENSEMBLE' });
   }, []);
 
   const handleHomeOpenLineup = useCallback(() => {
