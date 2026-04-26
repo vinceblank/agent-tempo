@@ -51,16 +51,16 @@ Use `/players <name>` to open a scrollable message history for any player.
 | `/broadcast <message>` | Send a message to all active players in the current ensemble |
 | `/recruit [name] [--type <type>] [--dir <path>]` | Spawn a new player (launches wizard if args omitted) |
 | `/recruit-conductor` | Recruit a conductor for the current ensemble |
-| `/restart <player> [--fresh] [--force]` | Restart a player — detaches current adapter and re-spawns. Works from any non-`gone` phase. |
-| `/destroy <player\|ensemble> [reason]` | Terminate a player session (ordered shutdown) or the entire ensemble. Prompts for confirmation. |
-| `/migrate <player> --to <hostname>` | Move a session to a different host. Requires target host to have an active daemon. |
+| `/restart <player> [--fresh] [--no-force]` | Restart a player — detaches current adapter and re-spawns. Steals a live lease by default; pass `--no-force` to refuse if a lease is held. Works from any non-`gone` phase. |
+| `/destroy <player\|ensemble> [reason]` | Terminate a player session (ordered shutdown) or the entire ensemble. Prompts for confirmation. Cannot target the conductor — use `/shutdown` or `/restart conductor` instead. |
+| `/migrate <player> <host> [--fresh] [--force]` | Move a session to a different host. Requires target host to have an active daemon. |
 | `/pause [ensemble]` | Pause the ensemble — locks outbox dispatch and pauses the scheduler. |
 | `/play [ensemble]` | Resume a paused ensemble — unlocks outbox dispatch and restarts the scheduler. (#287) |
 | `/shutdown [ensemble]` | Gracefully shut down the entire ensemble — drains all players and stops the conductor. (#287) |
 | `/restore [ensemble]` | Restore orphaned sessions on this host for the given ensemble. (#287, #288) |
 | `/attachment-info <player>` | Show the current attachment phase, lease expiry, heartbeat age, and in-flight count for a player. Output matches CLI and MCP surfaces (shared formatter, #264). |
 | `/players [name]` | Show detailed player info; no args opens interactive picker |
-| `/ensemble [name]` | Switch active ensemble context; no args opens picker |
+| `/ensemble [name]` | Switch active ensemble context; no args navigates home |
 | `/status` | Show dismissible overlay with all players, status, type, and part |
 | `/recall [player]` | Query a player's inbox directly. Omit player to target the maestro session. Flags: `--limit N` (default 20, max 100), `--offset N` (paging), `--preview N` (truncate bodies; omit = full text), `--from X`, `--since ISO`, `--include-sent`. (#128: unified semantics with MCP `recall` and `claude-tempo recall` CLI.) |
 | `/hosts [--all]` | List daemons polling this Temporal namespace with their advertised capabilities. `--all` includes stale hosts. Output matches CLI and MCP surfaces (shared formatter, #274). |
@@ -74,6 +74,7 @@ Use `/players <name>` to open a scrollable message history for any player.
 | `/back` | Return to the previous view |
 | `/help [command]` | Show all commands; pass a command name for detailed usage (e.g. `/help recruit`) |
 | `/quit` | Exit the TUI |
+| `/exit` | Exit the TUI (alias for `/quit`) |
 
 Interactive overlays (`/schedule`, `/gates`, `/stages`, `/worktree`) support arrow-key navigation and action keys shown in the overlay hint bar (e.g. `n=new  d=delete  esc=close`).
 
@@ -109,8 +110,8 @@ The TUI's API layer (`src/tui/client.ts`) wraps these queries behind a `TempoCli
 
 - **Routing**: Bare text routes to the conductor via `sendCommand`. Prefix with `@player` to message a specific player directly (e.g. `@alice can you review this?`). When no conductor is present, bare text shows an error; use `@player` to message directly.
 - **Schedule management**: `/schedule` is the single entry point — no standalone `/unschedule`. Subcommands: `/schedule` (show overlay), `/schedule create` (wizard), `/schedule delete <name>` (cancel).
-- **Interactive overlays**: `/status`, `/schedule`, `/gates`, `/stages`, `/worktree` display dismissible overlays. `/player`, `/ensemble` open full-screen interactive pickers.
-- **Removed aliases**: `/maestro`, `/dashboard`, `/exit`, and `/unschedule` are **not** registered commands. Using them produces a "command not found" error. Use `/home`, `/back`, `/quit`, and `/schedule delete` respectively. Legacy commands (`/detach`, `/disband`, `/resume`, `/pause_ensemble`, `/resume_ensemble`) show migration hints instead of "command not found".
+- **Interactive overlays**: `/status`, `/schedule`, `/gates`, `/stages`, `/worktree` display dismissible overlays. `/players` opens a full-screen interactive picker. `/ensemble` with no args navigates home; with a name, switches ensemble context.
+- **Removed aliases**: `/maestro`, `/dashboard`, and `/unschedule` are **not** registered commands. Using them produces a "command not found" error. Use `/home`, `/back`, and `/schedule delete` respectively. `/exit` is a valid alias for `/quit`. Legacy commands (`/detach`, `/disband`, `/resume`, `/pause_ensemble`, `/resume_ensemble`) show migration hints instead of "command not found".
 - **`/help <command>`**: `/help` alone shows all commands; `/help recruit` (or `/help /recruit`) shows the usage and description for a specific command in an overlay.
 - **NO_COLOR**: Set `NO_COLOR=1` to disable all color output — respected in both the TUI theme (`src/tui/utils/theme.ts`) and CLI output helpers (`src/cli/output.ts`). Follows the https://no-color.org/ convention.
 - **Terminal size requirement**: The TUI requires a minimum terminal size of **80×24**. If the terminal is smaller at launch, the process exits with code 1. A soft in-app warning appears at 60×15 during resize.
