@@ -21,6 +21,7 @@
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
 import { Client, WorkflowHandle, WorkflowIdConflictPolicy } from '@temporalio/client';
+import { execFileSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
@@ -93,6 +94,95 @@ export {
   forceDetachUpdate,
   adapterExitedSignal,
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// Reap orphan temporal-sdk-typescript ephemeral servers from prior crashed
+// runs. Wired into Mocha as a global setup fixture from `root-hooks.ts`
+// (helpers.ts is `require`d before Mocha installs BDD globals, so the
+// hook itself can't live here — only the function it calls).
+//
+// Symptom: every `setupTestEnv` after the crash fails with
+//   `Failed to start ephemeral server: Access is denied. (os error 5)`
+// because the dead-but-still-running server still holds the spawn lock.
+// (Observed Apr 19 — two zombies sat for a week before anyone noticed.)
+//
+// Filter is keyed on the binary name (`temporal-sdk-typescript`) so we
+// never touch any other process. Failures are non-fatal — a cleanup hiccup
+// must not block the suite from starting.
+// ─────────────────────────────────────────────────────────────────────────
+function findOrphanTemporalServers(): number[] {
+  if (process.platform === 'win32') {
+    // tasklist /FO CSV /NH /FI "IMAGENAME eq temporal-sdk-typescript*"
+    const out = execFileSync(
+      'tasklist',
+      ['/FO', 'CSV', '/NH', '/FI', 'IMAGENAME eq temporal-sdk-typescript*'],
+      { encoding: 'utf-8' },
+    );
+    const pids: number[] = [];
+    for (const line of out.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      const cells = line.split(',').map((c) => c.replace(/^"|"$/g, ''));
+      if (cells.length < 2) continue;
+      const name = cells[0];
+      const pid = Number(cells[1]);
+      // Belt-and-suspenders: tasklist's filter is fuzzy on some Windows
+      // builds — re-check the binary name client-side.
+      if (Number.isFinite(pid) && name.startsWith('temporal-sdk-typescript')) {
+        pids.push(pid);
+      }
+    }
+    return pids;
+  }
+  // POSIX (macOS, Linux): pgrep returns exit 1 when no matches, which
+  // execFileSync surfaces as a thrown error. That's the no-orphans case,
+  // not a failure.
+  try {
+    const out = execFileSync('pgrep', ['-f', 'temporal-sdk-typescript'], { encoding: 'utf-8' });
+    return out
+      .split(/\r?\n/)
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Kill any pre-existing `temporal-sdk-typescript-*` processes that survived
+ * a prior crashed Mocha run. Called once at the start of `npm test` from
+ * the `mochaGlobalSetup` fixture in `root-hooks.ts`.
+ *
+ * Never throws — a failed reap must not block the test suite from starting.
+ */
+export async function reapOrphanTemporalServers(): Promise<void> {
+  try {
+    const pids = findOrphanTemporalServers();
+    if (pids.length === 0) return;
+    console.log(
+      `[test:cleanup] reaping ${pids.length} orphan temporal-sdk-typescript ` +
+      `process(es) from prior crashed runs: ${pids.join(', ')}`,
+    );
+    for (const pid of pids) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch (err) {
+        // Already dead, perms denied, etc. Try Windows taskkill /F as a
+        // last-resort fallback before giving up on this PID.
+        if (process.platform === 'win32') {
+          try {
+            execFileSync('taskkill', ['/PID', String(pid), '/F'], { stdio: 'ignore' });
+            continue;
+          } catch {
+            /* fall through to warn */
+          }
+        }
+        console.warn(`[test:cleanup] failed to kill PID ${pid}:`, err);
+      }
+    }
+  } catch (err) {
+    console.warn('[test:cleanup] orphan reap failed (non-fatal):', err);
+  }
+}
 
 let testEnv: TestWorkflowEnvironment | undefined;
 let workflowBundle: { code: string } | undefined;
