@@ -1207,6 +1207,46 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     // timer would leave the workflow in `draining` until that old timer fired.
     const epochAtWait = wakeEpoch;
     const deadlineMs = nextDeadlineMs();
+    // NOTE: This 5-min fallback wake is LOAD-BEARING despite an old "PR-C shim"
+    // framing that surfaced in researcher's tier-2 cleanup audit (2026-04-26).
+    // While #175 removed the legacy stale/blocked detection block this originally
+    // fed (see ~§1527 below), the wake itself remains essential as the loop's
+    // periodic re-evaluation tick for state changes from handlers that mutate
+    // `nextDeadlineMs()` inputs WITHOUT bumping `wakeEpoch`:
+    //
+    //   - `claimAttachmentUpdate` (renewal + fresh paths) — sets
+    //     `currentAttachment.expiresAt` → new lease-expiry deadline
+    //   - `processingStartUpdate` — sets `processingSince` → new
+    //     `PROCESSING_DEADLINE_MS` deadline
+    //   - `processingEndUpdate` — clears `processingSince` → cancels processing
+    //     deadline
+    //   - `destroyUpdate` (async hard-terminate-then-flip path)
+    //
+    // Without the fallback wake, a workflow waiting in `condition(predicate)` on
+    // an `Infinity` deadline (booting / detached, no draining, no processing)
+    // never re-evaluates `nextDeadlineMs()` after one of these handlers fires —
+    // the freshly-set lease-expiry timer is never picked up, lease expiry is
+    // never reaped, and the workflow stalls until external state forces the
+    // predicate true. Smoking-gun test that fails without the fallback:
+    // `test/session-phase-processing.test.ts:54` "attached -> processing ->
+    // awaiting via processingStart/End (#117 fix)" — times out at 10s because
+    // the loop never makes progress after `processingStart` lands on a fresh
+    // claim.
+    //
+    // Removing this fallback safely is a "main-loop wake-discipline cleanup"
+    // separate from the audit's framing — adds `wakeEpoch++` to each affected
+    // handler, gates with `patched()` markers for replay-determinism (live
+    // workflow histories already recorded the existing `Timer 5min` events),
+    // and adds a regression test covering the handler-induced-deadline pickup.
+    // Estimated 4–6 handler edits + tests, separate dedicated PR. See the
+    // 2026-04-26 forensics for the full mechanism walkthrough — link from this
+    // file's PR history.
+    //
+    // Until that cleanup happens, DO NOT remove this fallback. The
+    // `Math.min(deadlineMs, 5 * 60 * 1000)` cap is part of the same mechanism:
+    // it ensures every deadline (even hour-long lease-expiry timers) is
+    // re-evaluated at least every 5 min so handler-induced deadline shortenings
+    // can't be missed.
     const conditionPromise = condition(
       () =>
         destroyRequested ||
@@ -1214,8 +1254,6 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         hasPendingStop() ||
         phase === 'gone' ||
         wakeEpoch !== epochAtWait,
-      // Legacy shim: when no time-based deadline applies, still wake every 5 min so the
-      // legacy stale/blocked heuristics below run. Replaced with a no-op in PR-C.
       deadlineMs === Number.POSITIVE_INFINITY ? '5 minutes' : Math.min(deadlineMs, 5 * 60 * 1000),
     );
     await conditionPromise;
