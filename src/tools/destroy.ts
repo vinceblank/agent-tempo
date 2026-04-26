@@ -130,12 +130,15 @@ export function registerDestroyTool(
           if (v.outcome === 'destroyed') {
             details.push({ target: v.session.playerId, outcome: 'destroyed' });
             destroyed++;
-          } else if (v.outcome === 'skipped-self') {
-            details.push({ target: v.session.playerId, outcome: 'skipped-self' });
-          } else {
+          } else if (v.outcome === 'failed') {
             details.push({ target: v.session.playerId, outcome: 'failed', error: v.error });
             failed++;
           }
+          // #299: `'skipped-self'` is an internal control-flow tag for the
+          // caller's own session — intentionally NOT surfaced in `details`
+          // because `EnsembleDestroyDetail` is consumed publicly via
+          // `EnsembleDestroySummary` (TempoClient.destroy), which has no
+          // caller-self concept. The skip is a bookkeeping no-op here.
         }
 
         // Phase 2: scheduler + maestro terminate in parallel (non-session
@@ -155,9 +158,12 @@ export function registerDestroyTool(
         }
 
         // Phase 3: conductor last, so it observes peer teardown. Skipped if
-        // the caller IS the conductor (same self-destroy guard).
+        // the caller IS the conductor (same self-destroy guard). #299: the
+        // skip is a control-flow no-op — no `details` entry, mirroring the
+        // peer-self skip. `EnsembleDestroyDetail.outcome` no longer carries
+        // a self-skip member.
         if (callerId === 'conductor') {
-          details.push({ target: 'conductor', outcome: 'skipped-self' });
+          // self-skip; no recording
         } else if (conductorPresent) {
           try {
             await client.workflow.getHandle(conductorWfId).executeUpdate(destroyUpdate, {

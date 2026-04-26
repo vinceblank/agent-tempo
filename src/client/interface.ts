@@ -103,7 +103,15 @@ export interface RestartClientResult {
 /** Per-target outcome returned by `shutdown`. */
 export interface EnsembleShutdownDetail {
   playerId: string;
-  outcome: 'detaching' | 'skipped-self' | 'failed';
+  /**
+   * #299 sibling: removed `'skipped-self'`. The only public consumer of
+   * this type is `EnsembleShutdownSummary.details`, returned by
+   * `TempoClient.shutdown()`. The TempoClient implementation does not pass
+   * a `skip` predicate to `signalAllSessions`, so the fan-out never
+   * produces a `'skipped'` outcome and the `'skipped-self'` mapping was
+   * unreachable. Mirror cleanup of the destroy-detail change.
+   */
+  outcome: 'detaching' | 'failed';
   error?: string;
 }
 
@@ -119,7 +127,16 @@ export interface EnsembleShutdownSummary {
 /** Per-target outcome returned by ensemble-scope `destroy`. */
 export interface EnsembleDestroyDetail {
   target: string;
-  outcome: 'destroyed' | 'terminated' | 'skipped-self' | 'failed';
+  /**
+   * #299: removed `'skipped-self'`. The only public consumer of this type is
+   * `EnsembleDestroySummary.details`, returned by `TempoClient.destroy()`,
+   * and the TempoClient implementation has no caller-self concept (the
+   * client is a programmatic caller, not a player in the ensemble) — so it
+   * never produces a self-skip. The MCP-tool path (`src/tools/destroy.ts`)
+   * does internally branch on caller-self for control flow but never
+   * surfaces those entries to a public consumer.
+   */
+  outcome: 'destroyed' | 'terminated' | 'failed';
   error?: string;
 }
 
