@@ -23,3 +23,4 @@ Keep ADRs short. They're decision *records*, not design documents — link out t
 | [0002](0002-daemon-as-event-source.md) | Daemon owns the HTTP/SSE event source | Accepted |
 | [0003](0003-snapshot-then-stream-initial-state.md) | Snapshot-then-stream initial state | Accepted |
 | [0004](0004-in-memory-aggregate-vs-temporal-history.md) | In-memory aggregate vs Temporal history streaming | Accepted (v1) |
+| [0005](0005-ink-scroll-via-userland-package.md) | Use `ink-scroll-view`; don't fork Ink | Accepted |
