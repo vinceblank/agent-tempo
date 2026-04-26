@@ -60,7 +60,7 @@ Five open questions — locked answers:
   - **Slot cap of 4 may surprise multi-task players** — the rejection error lists existing keys to make the LLM's next move obvious, but the experience is still louder than silent eviction. Telemetry will show whether 4 is right; raising the cap is a v2 lever.
   - **`fetch_state` peer reads are unaudited at read time** — the `savedBy` field captures who wrote, but no record exists of who read a peer's state. Acceptable for v1 (consistent with `recall`/`attachment_info`); revisit if privacy concerns emerge.
   - **`from: 'self-restart'` is a new system identity** — adds one more stable identity (alongside `'maestro'`) the TUI/log filters need to know about. Documented; minor surface growth.
-  - **Workflow versioning marker required** — restart's `loadFromState` branch wraps in `patched('v0.27-loadFromState-on-restart')` so a rolling deploy stays safe. Standard practice.
+  - **Backward compatibility is structural, not `patched()`-marked** — old `restart` outbox entries omit `loadFromState`, so the new conditional branch evaluates to `false` for them and falls through to the existing replay block. No `workflow.patched()` marker is needed (and would be incorrect — restart's branching lives in activity code, where `patched()` is a runtime error). Engineer doc note in design §7.3 to prevent the false-friend trap.
 - **Neutral**:
   - **3 MCP tools, 2 updates, 2 queries** — within precedent for the schedule (`schedule`, `unschedule`, `schedules`) and pause/play/shutdown/restore tool families.
   - **~450 LoC implementation cost** matches #334's own estimate. Single PR, additive, low risk.

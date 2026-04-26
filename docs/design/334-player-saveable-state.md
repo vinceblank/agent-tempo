@@ -454,18 +454,19 @@ Add optional `loadFromState` and `transcript` to the Zod schema; pass through to
 
 ### 7.2 Activity-side change (`src/activities/outbox.ts:687-709`)
 
-Replace the existing replay block with a branch on `loadFromState`:
+Replace the existing replay block with a branch on `loadFromState`. Note `saved` is hoisted to the outer scope so the fall-through condition can reference it:
 
 ```ts
 // Step 5 — context seed (saved state and/or transcript replay).
 const wantsState = entry.loadFromState !== undefined;
-const wantsTranscript = !wantsState || entry.transcript === 'replay';
+const wantsTranscriptByFlag = entry.transcript === 'replay';
+let saved: { content: string; savedAt: string; savedBy: string } | null = null;
 
 if (wantsState) {
   const stateKey = typeof entry.loadFromState === 'string'
     ? entry.loadFromState
     : PLAYER_STATE_DEFAULT_KEY;
-  const saved = await priorHandle.query(playerStateQuery, { key: stateKey });
+  saved = await priorHandle.query(playerStateQuery, { key: stateKey });
   if (saved) {
     await newHandle.signal(receiveMessageSignal, {
       from: 'self-restart',
@@ -474,24 +475,32 @@ if (wantsState) {
     });
   } else {
     log(`Restart loadFromState requested for slot "${stateKey}" but slot is empty — falling back to transcript replay`);
-    // Force transcript replay since requested state was missing.
-    // Engineer note: this is a UX-friendly fallback — alternative is to fail
-    // the restart, but that's surprising when the slot just wasn't populated.
+    // UX-friendly fallback — alternative is to fail the restart, but that's
+    // surprising when the slot just wasn't populated. Falls through to the
+    // transcript-replay block below via the `!saved` clause.
   }
 }
 
-if (wantsTranscript || (wantsState && !saved)) {
+// Replay the transcript when (a) loadFromState was not requested, or
+// (b) caller opted into stacking via `transcript: 'replay'`, or
+// (c) loadFromState was requested but the slot was empty (fallback).
+const wantsTranscript = !wantsState || wantsTranscriptByFlag || (wantsState && !saved);
+if (wantsTranscript) {
   // Existing transcript-replay block from src/activities/outbox.ts:687-709
 }
 ```
 
 The `from: 'self-restart'` marker is a new constant identity (alongside existing `'maestro'` etc.). Players see it as a system-emitted message and treat it accordingly.
 
-### 7.3 `RestartOutboxEntry` is the version boundary
+### 7.3 `RestartOutboxEntry` is the version boundary — structural compatibility
 
-Old workflow runs that pre-date this PR will see entries without `loadFromState` / `transcript` — strictly additive, no migration. The new branch only fires when the new fields are present.
+Old workflow runs that pre-date this PR will see entries without `loadFromState` / `transcript`. Backward compatibility is **structural**, not patched():
 
-Workflow versioning marker: `patched('v0.27-loadFromState-on-restart')` wraps the new branch in the activity. This keeps the old behaviour reproducible if a worker rolls back during a deploy.
+- Old `restart` outbox entries omit `loadFromState`, so `wantsState` evaluates to `false` for them.
+- The new conditional branch is skipped entirely; execution falls through to the existing transcript-replay block — bit-for-bit identical to today's behaviour.
+- No `patched()` marker is needed (this is **activity** code, not workflow code; `workflow.patched()` requires the workflow context and would throw at runtime here anyway).
+
+The workflow-side additions (`savePlayerStateUpdate` / `clearPlayerStateUpdate` handlers, `playerStateQuery`, the `playerState` field on `SessionInput`) are likewise additive: an old workflow run won't have any saved state in its `playerState` map (the field is `undefined` after CAN until the first save), and `setHandler` registrations for the new updates/queries don't affect prior history events. No `patched()` marker needed on the workflow side either — there's no behavioural divergence in any pre-existing code path.
 
 ---
 
