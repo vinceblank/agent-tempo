@@ -19,6 +19,7 @@ import type { Config } from '../src/config';
 import { registerShutdownTool } from '../src/tools/shutdown';
 import { registerRestoreTool } from '../src/tools/restore';
 import { registerDestroyTool } from '../src/tools/destroy';
+import { registerPauseTool } from '../src/tools/pause';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 type ToolHandler = (args: Record<string, any>) => Promise<ToolResult>;
@@ -59,11 +60,14 @@ function makeClient(opts: {
   hasScheduler?: boolean;
   hasMaestroHub?: boolean;
   failOnUpdate?: Set<string>;
+  /** Workflow IDs whose `.signal()` should throw (simulates RPC failure). */
+  failOnSignal?: Set<string>;
 }) {
   const { ensemble, players, includeConductor = false } = opts;
   const hasScheduler = opts.hasScheduler ?? true;
   const hasMaestroHub = opts.hasMaestroHub ?? true;
   const failOnUpdate = opts.failOnUpdate ?? new Set<string>();
+  const failOnSignal = opts.failOnSignal ?? new Set<string>();
 
   const calls: Call[] = [];
   const sessionIds: Array<{ workflowId: string; playerId: string; isConductor: boolean }> =
@@ -101,6 +105,7 @@ function makeClient(opts: {
     },
     async signal(nameOrDef: unknown, payload?: unknown) {
       calls.push({ workflowId, kind: 'signal', name: asName(nameOrDef), payload });
+      if (failOnSignal.has(workflowId)) throw new Error(`signal to ${workflowId} failed`);
     },
     async executeUpdate(nameOrDef: unknown, updateOpts: { args: unknown[] }) {
       const name = asName(nameOrDef);
@@ -658,5 +663,98 @@ describe('destroy tool — ensemble scope (#287)', function () {
     const result = await call({});
     expect(result.isError).to.not.equal(true);
     expect(result.content[0].text).to.include('2 peers in indeterminate state');
+  });
+});
+
+// ── pause tool ──────────────────────────────────────────────────────────────
+//
+// `pause` is the sibling of `play`, `restore`, `shutdown`, and `destroy` in
+// the #287 ensemble-verb family. All four have direct coverage in this file;
+// `pause` was the odd one out. Risk is low (thin wrapper over `signalAllSessions`
+// + `pauseMaestroAndScheduler`) but omitting it left a gap flagged in the
+// #306 holistic review. These tests mirror the pattern of `restore tool` and
+// `shutdown tool` above.
+//
+describe('pause tool (#287)', function () {
+  it('signals setPaused=true on every session and pauses maestro + scheduler', async function () {
+    const ensemble = 'pause-basic';
+    const { client, calls } = makeClient({ ensemble, players: ['alice', 'bob'] });
+    const call = extractHandler((server) =>
+      registerPauseTool(server, client, testConfig(ensemble), () => 'conductor'),
+    );
+    const result = await call({});
+    expect(result.isError).to.not.equal(true);
+
+    // Every session receives setPaused=true.
+    const setPausedTrue = calls.filter(
+      (c) => c.kind === 'signal' && c.name === 'setPaused' && c.payload === true,
+    );
+    expect(setPausedTrue).to.have.lengthOf(2);
+
+    // Maestro + scheduler paused.
+    expect(calls.some((c) => c.name === 'maestroSetPaused' && c.payload === true)).to.equal(true);
+    expect(calls.some((c) => c.name === 'setSchedulerPaused' && c.payload === true)).to.equal(true);
+
+    // Response headline confirms the ensemble.
+    expect(result.content[0].text).to.include(`Ensemble **${ensemble}** paused.`);
+    expect(result.content[0].text).to.include('2 session(s) paused');
+  });
+
+  it('surfaces maestro + scheduler in the response when both are present', async function () {
+    const ensemble = 'pause-bits';
+    const { client } = makeClient({ ensemble, players: ['alice'] });
+    const call = extractHandler((server) =>
+      registerPauseTool(server, client, testConfig(ensemble), () => 'conductor'),
+    );
+    const result = await call({});
+    expect(result.isError).to.not.equal(true);
+    const text = result.content[0].text;
+    expect(text).to.include('maestro paused');
+    expect(text).to.include('scheduler paused');
+  });
+
+  it('is best-effort when scheduler or maestro are not running', async function () {
+    // Even when both infrastructure workflows are absent, the tool must not
+    // throw and the session signal must still fire.
+    const ensemble = 'pause-no-infra';
+    const { client, calls } = makeClient({
+      ensemble,
+      players: ['alice'],
+      hasScheduler: false,
+      hasMaestroHub: false,
+    });
+    const call = extractHandler((server) =>
+      registerPauseTool(server, client, testConfig(ensemble), () => 'conductor'),
+    );
+    const result = await call({});
+    expect(result.isError).to.not.equal(true);
+
+    // Session signal still dispatched.
+    expect(calls.filter((c) => c.name === 'setPaused' && c.payload === true)).to.have.lengthOf(1);
+    // Infra signals not present (both threw and were swallowed).
+    const text = result.content[0].text;
+    expect(text).to.not.include('maestro paused');
+    expect(text).to.not.include('scheduler paused');
+  });
+
+  it('reports session-level errors without throwing (best-effort fan-out)', async function () {
+    const ensemble = 'pause-session-fail';
+    const { client } = makeClient({
+      ensemble,
+      players: ['alice', 'bob'],
+      failOnSignal: new Set([`claude-session-${ensemble}-alice`]),
+    });
+    const call = extractHandler((server) =>
+      registerPauseTool(server, client, testConfig(ensemble), () => 'conductor'),
+    );
+    const result = await call({});
+    // Tool itself succeeds — allSettled absorbs individual failures.
+    expect(result.isError).to.not.equal(true);
+    // Errors block surfaces in the response text.
+    const text = result.content[0].text;
+    expect(text).to.include('Errors:');
+    expect(text).to.include('alice');
+    // Bob still got paused (1 session(s) paused).
+    expect(text).to.include('1 session(s) paused');
   });
 });
