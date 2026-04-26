@@ -323,6 +323,79 @@ describe('restore tool (#287)', function () {
       (orphansModule as any).restoreOrphansOnce = originalFn;
     }
   });
+
+  // INVARIANT (QA #306 review): `restore` always unpauses ALL sessions —
+  // including ones a user deliberately paused via `/pause` (or any other
+  // setPaused=true path). The "always unpause" contract is intentional UX:
+  // restoring a parked ensemble means waking it up wholesale, never
+  // partially. If a future change wants smarter logic — e.g. "remember
+  // which sessions were user-paused before shutdown and skip those on
+  // restore" — flip the behavior AND this test together. Don't loosen
+  // this assertion without explicitly updating the contract.
+  it('always unpauses ALL sessions, even ones previously paused by the user', async function () {
+    const ensemble = 'restore-unpause-invariant';
+    const orphansModule = require('../src/reconcile/orphans') as typeof import('../src/reconcile/orphans');
+    const originalFn = orphansModule.restoreOrphansOnce;
+    (orphansModule as any).restoreOrphansOnce = async () => ({
+      reattached: 0,
+      skipped: 0,
+      failed: 0,
+      details: [],
+    });
+
+    try {
+      const { client, calls } = makeClient({
+        ensemble,
+        players: ['alice', 'bob', 'charlie'],
+        includeConductor: true,
+      });
+
+      // Simulate a "user paused alice deliberately" setup: pre-record a
+      // setPaused=true signal for alice on the call log. The fake client
+      // doesn't track paused state across calls — what we're locking in is
+      // that `restore` ALWAYS sends setPaused=false to every session,
+      // regardless of whatever paused-true history precedes it.
+      const aliceWfId = `claude-session-${ensemble}-alice`;
+      await client.workflow.getHandle(aliceWfId).signal('setPaused', true);
+
+      // Sanity: the pre-pause was recorded.
+      expect(calls.filter((c) => c.name === 'setPaused' && c.payload === true)).to.have.lengthOf(1);
+
+      // Now restore.
+      const call = extractHandler((server) =>
+        registerRestoreTool(server, client, testConfig(ensemble), () => 'operator'),
+      );
+      const result = await call({});
+      expect(result.isError).to.not.equal(true);
+
+      // Every session — alice (deliberately paused) + bob + charlie +
+      // conductor = 4 — gets setPaused=false. The deliberately-paused
+      // alice is NOT exempted.
+      const setPausedFalse = calls.filter(
+        (c) => c.kind === 'signal' && c.name === 'setPaused' && c.payload === false,
+      );
+      expect(setPausedFalse).to.have.lengthOf(4);
+      expect(setPausedFalse.map((c) => c.workflowId)).to.have.members([
+        `claude-session-${ensemble}-alice`,
+        `claude-session-${ensemble}-bob`,
+        `claude-session-${ensemble}-charlie`,
+        `claude-session-${ensemble}-conductor`,
+      ]);
+
+      // Ordering invariant: the unpause to alice must come AFTER the
+      // user's deliberate pause — restore overrides, doesn't merge.
+      const idxPause = calls.findIndex(
+        (c) => c.workflowId === aliceWfId && c.name === 'setPaused' && c.payload === true,
+      );
+      const idxUnpause = calls.findIndex(
+        (c) => c.workflowId === aliceWfId && c.name === 'setPaused' && c.payload === false,
+      );
+      expect(idxPause).to.be.greaterThan(-1);
+      expect(idxUnpause).to.be.greaterThan(idxPause);
+    } finally {
+      (orphansModule as any).restoreOrphansOnce = originalFn;
+    }
+  });
 });
 
 // ── destroy (ensemble scope) ────────────────────────────────────────────
