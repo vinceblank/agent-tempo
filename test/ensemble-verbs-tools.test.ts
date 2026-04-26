@@ -280,6 +280,49 @@ describe('restore tool (#287)', function () {
       (orphansModule as any).restoreOrphansOnce = originalFn;
     }
   });
+
+  // #306: the maestro/scheduler hub unpause is necessary but not sufficient.
+  // Each session keeps its own `paused` flag, and the outbox dispatcher
+  // gates on it (`canDispatch = !outboxLocked && !paused && hasPendingOutbox()`).
+  // Without this fan-out the conductor accepts messages but never replies —
+  // matches the bug `e61e192` fixed on `TempoClient.restore`. The MCP tool
+  // path was missed in that PR; this test locks in parity.
+  it('fans out setPaused=false to every session in the ensemble', async function () {
+    const ensemble = 'restore-fanout';
+    const orphansModule = require('../src/reconcile/orphans') as typeof import('../src/reconcile/orphans');
+    const originalFn = orphansModule.restoreOrphansOnce;
+    (orphansModule as any).restoreOrphansOnce = async () => ({
+      reattached: 0,
+      skipped: 0,
+      failed: 0,
+      details: [],
+    });
+
+    try {
+      const { client, calls } = makeClient({
+        ensemble,
+        players: ['alice', 'bob'],
+        includeConductor: true,
+      });
+      const call = extractHandler((server) =>
+        registerRestoreTool(server, client, testConfig(ensemble), () => 'operator'),
+      );
+      const result = await call({});
+      expect(result.isError).to.not.equal(true);
+
+      // alice + bob + conductor = 3 session signals.
+      const setPausedFalse = calls.filter(
+        (c) => c.kind === 'signal' && c.name === 'setPaused' && c.payload === false,
+      );
+      expect(setPausedFalse).to.have.lengthOf(3);
+
+      // Maestro + scheduler unpause still fire alongside the session fan-out.
+      expect(calls.some((c) => c.name === 'maestroSetPaused' && c.payload === false)).to.equal(true);
+      expect(calls.some((c) => c.name === 'setSchedulerPaused' && c.payload === false)).to.equal(true);
+    } finally {
+      (orphansModule as any).restoreOrphansOnce = originalFn;
+    }
+  });
 });
 
 // ── destroy (ensemble scope) ────────────────────────────────────────────
