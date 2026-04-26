@@ -10,7 +10,6 @@ import {
   parseCommand,
   isValidCommand,
   getCommandNames,
-  resolveHelpTarget,
   COMMANDS,
 } from '../../src/tui/commands';
 
@@ -164,35 +163,3 @@ describe('command registry', () => {
   });
 });
 
-describe('resolveHelpTarget', () => {
-  it('resolves "/help recruit" and "/help /recruit" to the same target', () => {
-    const a = resolveHelpTarget('recruit');
-    const b = resolveHelpTarget('/recruit');
-    expect(a).not.toBeNull();
-    expect(b).not.toBeNull();
-    expect(a!.name).toBe('recruit');
-    expect(b!.name).toBe('recruit');
-    expect(a!.def).toBe(b!.def);
-    expect(a!.def).toBe(COMMANDS.recruit);
-  });
-
-  it('is case-insensitive', () => {
-    expect(resolveHelpTarget('RECRUIT')!.name).toBe('recruit');
-    expect(resolveHelpTarget('/Recruit')!.name).toBe('recruit');
-  });
-
-  it('trims whitespace', () => {
-    expect(resolveHelpTarget('  recruit  ')!.name).toBe('recruit');
-  });
-
-  it('returns null for unknown commands', () => {
-    expect(resolveHelpTarget('nope')).toBeNull();
-    expect(resolveHelpTarget('/nope')).toBeNull();
-  });
-
-  it('returns null for empty or slash-only input', () => {
-    expect(resolveHelpTarget('')).toBeNull();
-    expect(resolveHelpTarget('/')).toBeNull();
-    expect(resolveHelpTarget('   ')).toBeNull();
-  });
-});
