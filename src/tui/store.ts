@@ -235,6 +235,14 @@ export interface TuiState {
   ensembleChat: EnsembleChatMessage[];
   /** Whether the active ensemble has a conductor. */
   hasConductor: boolean;
+  /**
+   * Bug B: Whether the active ensemble's maestro hub is paused. Polled
+   * alongside players/chat. The conductor's session-level `paused` flag
+   * blocks outbox dispatch, so the TUI surfaces this in the status bar
+   * (`paused` segment) so users don't wonder why typed messages aren't
+   * getting a reply. Optimistically toggled by `/pause` and `/play`.
+   */
+  ensemblePaused: boolean;
   /** Currently highlighted player index (ensemble view). */
   selectedPlayerIndex: number;
 
@@ -358,6 +366,7 @@ export function initialState(ensemble?: string): TuiState {
     conversation: null,
     ensembleChat: [],
     hasConductor: false,
+    ensemblePaused: false,
     selectedPlayerIndex: 0,
 
     activePlayer: null,
@@ -414,6 +423,7 @@ export type TuiAction =
   | { type: 'CLEAR_NOTIFICATIONS' }
   | { type: 'NOTIFICATION_TICK' }
   | { type: 'SET_CONDUCTOR'; name?: string }
+  | { type: 'SET_ENSEMBLE_PAUSED'; paused: boolean }
   | { type: 'APPEND_SENT_MESSAGE'; to: string; text: string }
   | { type: 'HYDRATE_SENT_MESSAGES'; messages: Array<{ to: string; text: string; timestamp: string }> }
   | { type: 'ENTER_CHAT'; target: string }
@@ -519,6 +529,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         conversation: null,
         playerMetadata: null,
         playerMessages: [],
+        ensemblePaused: false,
         selectedPlayerIndex: 0,
       };
 
@@ -540,6 +551,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         conversation: null,
         playerMetadata: null,
         playerMessages: [],
+        ensemblePaused: false,
         selectedPlayerIndex: 0,
       };
 
@@ -755,6 +767,12 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'SET_CONDUCTOR':
       return { ...state, conductorName: action.name };
+
+    case 'SET_ENSEMBLE_PAUSED':
+      // Identity-preserving: skip the dispatch when value didn't change so
+      // the StatusBar tree doesn't re-render every poll tick.
+      if (state.ensemblePaused === action.paused) return state;
+      return { ...state, ensemblePaused: action.paused };
 
     case 'APPEND_SENT_MESSAGE': {
       const newSent = [...state.sentMessages, { to: action.to, text: action.text, timestamp: new Date().toISOString() }];

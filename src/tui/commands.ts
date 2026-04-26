@@ -1262,6 +1262,10 @@ async function handlePause(
   if (!ensemble) return;
   try {
     await api.pause(ensemble);
+    // Bug B: optimistically flip the StatusBar indicator so users don't
+    // wait for the next 2s poll tick to see "paused". The poll loop will
+    // sync the truth back if the call somehow lied.
+    dispatch({ type: 'SET_ENSEMBLE_PAUSED', paused: true });
     commitStatic(dispatch, 'info', `\u23F8 Paused ensemble "${ensemble}".`);
   } catch (err) {
     commitNotification(dispatch, 'error', `\u2717 Pause failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1279,6 +1283,9 @@ async function handlePlay(
   if (!ensemble) return;
   try {
     await api.play(ensemble);
+    // Bug B: optimistically clear the StatusBar `paused` segment so users
+    // get instant feedback that the resume took effect.
+    dispatch({ type: 'SET_ENSEMBLE_PAUSED', paused: false });
     commitStatic(dispatch, 'info', `\u25B6 Resumed ensemble "${ensemble}".`);
   } catch (err) {
     commitNotification(dispatch, 'error', `\u2717 Play failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1329,6 +1336,10 @@ async function handleRestore(
   commitStatic(dispatch, 'info', `\u2026 Restoring "${ensemble}" \u2026`);
   try {
     const summary = await api.restore(ensemble);
+    // Bug B: optimistically clear the `paused` indicator. /restore both
+    // unpauses maestro+scheduler AND fans setPaused=false to every session,
+    // so by the time the call resolves the ensemble is no longer paused.
+    dispatch({ type: 'SET_ENSEMBLE_PAUSED', paused: false });
     const { formatRestoreOutcome } = await import('../reconcile/orphans');
     // #306: per-player detail lines stay in scrollback as a record; the
     // aggregate summary below is pinned so it can't scroll above the fold.

@@ -277,6 +277,14 @@ export interface TempoClient {
   getWorktrees(ensemble: string): Promise<WorktreeEntry[]>;
   /** Get aggregated ensemble chat (maestro + conductor traffic). */
   getEnsembleChat(ensemble: string, offset?: number, limit?: number): Promise<EnsembleChatResult>;
+  /**
+   * Bug B: Read the maestro hub's `maestroPaused` flag for an ensemble.
+   * Returns `false` when the hub workflow doesn't exist (treat absence as
+   * "not paused" — the StatusBar renders nothing for the bare-ensemble case).
+   * The TUI polls this so a paused conductor swallowing messages becomes
+   * visible (status bar segment + tooltip-style hint to type `/play`).
+   */
+  isMaestroPaused(ensemble: string): Promise<boolean>;
   /** Disband an ensemble: terminate all sessions, scheduler, and maestro workflows. */
   disbandEnsemble(ensemble: string): Promise<{ terminated: number }>;
   /** Check if the Temporal connection is alive. */

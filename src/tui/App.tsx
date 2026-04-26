@@ -795,11 +795,18 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         } else {
           // Single source: maestro workflow for players, schedules, and ensemble chat
           const ens = s.activeEnsemble!;
-          const [players, schedules, chatResult] = await Promise.all([
+          const [players, schedules, chatResult, paused] = await Promise.all([
             api.getPlayers(ens),
             api.getSchedules(ens),
             api.getEnsembleChat(ens, 0, 50),
+            // Bug B: poll the maestro hub's paused flag so the StatusBar
+            // surfaces it immediately. Returns false on hub-not-running so
+            // bare ensembles don't render the indicator. Cheap RPC; runs
+            // alongside the existing poll batch with no extra wakeups.
+            api.isMaestroPaused(ens),
           ]);
+
+          dispatch({ type: 'SET_ENSEMBLE_PAUSED', paused });
 
           // Map ensemble chat to conversation format for ConversationStream
           const conversation = chatResult.messages.map(m => ({
@@ -1597,6 +1604,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       scheduleCount: state.schedules.length,
       connected: true,
       conductorName: state.conductorName,
+      ensemblePaused: state.ensemblePaused,
     }),
     // Bottom divider (1 Text node, no Box wrapper)
     React.createElement(Text, { color: THEME.border }, ` ${dividerLine} `),

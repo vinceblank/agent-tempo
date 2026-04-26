@@ -885,6 +885,19 @@ export function createTempoClient(client: Client): TempoClient {
       }
     },
 
+    async isMaestroPaused(ensemble: string): Promise<boolean> {
+      // Reads the same `maestroPaused` query that `listEnsembles` uses for
+      // the home-view classification. Treat hub-not-running as "not paused"
+      // — bare ensembles without a maestro hub aren't displaying any
+      // pause-related state in the chat view either.
+      try {
+        const paused = await handle(maestroWorkflowId(ensemble)).query(maestroPausedQuery);
+        return !!paused;
+      } catch {
+        return false;
+      }
+    },
+
     async getGates(ensemble: string): Promise<QualityGate[]> {
       // Gates are stored on the conductor's workflow
       try {

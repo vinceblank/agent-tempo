@@ -16,26 +16,50 @@ export interface StatusBarProps {
   scheduleCount: number;
   connected: boolean;
   conductorName?: string;
+  /**
+   * Bug B: Whether the active ensemble's maestro hub is paused. Drives a
+   * yellow "paused" segment so users see why a conductor is silently
+   * swallowing typed messages (the session-level `paused` flag gates the
+   * outbox dispatcher).
+   */
+  ensemblePaused?: boolean;
 }
 
-export function StatusBar({ ensemble, players, playersLoaded, scheduleCount, connected, conductorName }: StatusBarProps) {
-  const { Text } = useInk();
+/**
+ * One rendered text segment of the status bar. Returned by
+ * {@link buildStatusBarSegments} so tests can inspect the bar's contents
+ * without spinning up Ink. Each segment becomes a nested ink-virtual-text
+ * inside the single outer Text element.
+ */
+export interface StatusBarSegment {
+  key: string;
+  color: string;
+  text: string;
+}
+
+/**
+ * Pure helper: compute the StatusBar's segment list from props. Keeps the
+ * render-path logic testable without an Ink context. The component below
+ * just maps each segment to a `<Text>` element.
+ */
+export function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
+  const { ensemble, players, playersLoaded, scheduleCount, connected, conductorName, ensemblePaused } = props;
 
   const healthColor = connected ? THEME.success : THEME.error;
-  const healthDot = connected ? '\u25CF' : '\u25CB';
+  const healthDot = connected ? '●' : '○';
   const healthLabel = connected ? 'Connected' : 'Disconnected';
 
   const ensembleLabel = ensemble || 'no ensemble';
 
-  const children: React.ReactNode[] = [
-    ' ',
-    React.createElement(Text, { key: 'ens', color: ensemble ? THEME.accent : THEME.dim }, ensembleLabel),
-    React.createElement(Text, { key: 's1', color: THEME.dim }, ' \u00B7 '),
+  const segments: StatusBarSegment[] = [
+    { key: 'lead', color: THEME.dim, text: ' ' },
+    { key: 'ens', color: ensemble ? THEME.accent : THEME.dim, text: ensembleLabel },
+    { key: 's1', color: THEME.dim, text: ' · ' },
   ];
 
   if (ensemble && !playersLoaded) {
     // Still loading — don't show incorrect counts
-    children.push(React.createElement(Text, { key: 'pl', color: THEME.dim }, 'Loading...'));
+    segments.push({ key: 'pl', color: THEME.dim, text: 'Loading...' });
   } else {
     // Exclude the maestro session from headline counts — it is the TUI's own
     // dashboard attachment, not a peer agent. The full list (including the
@@ -68,29 +92,52 @@ export function StatusBar({ ensemble, players, playersLoaded, scheduleCount, con
     const breakdown = parts.length > 0 ? ` (${parts.join(', ')})` : '';
     const playerLabel = `${realPlayers.length} player${realPlayers.length !== 1 ? 's' : ''}${breakdown}`;
 
-    children.push(React.createElement(Text, { key: 'pl', color: THEME.dim }, playerLabel));
+    segments.push({ key: 'pl', color: THEME.dim, text: playerLabel });
 
     if (scheduleCount > 0) {
-      children.push(
-        React.createElement(Text, { key: 's2', color: THEME.dim }, ' \u00B7 '),
-        React.createElement(Text, { key: 'sc', color: THEME.dim }, `${scheduleCount} schedule${scheduleCount !== 1 ? 's' : ''}`),
+      segments.push(
+        { key: 's2', color: THEME.dim, text: ' · ' },
+        { key: 'sc', color: THEME.dim, text: `${scheduleCount} schedule${scheduleCount !== 1 ? 's' : ''}` },
+      );
+    }
+
+    // Bug B: yellow `paused` segment when the maestro hub is paused. Placed
+    // before the "No conductor" warning so the most actionable state
+    // (`/play` resumes) reads first when both apply. The same guard
+    // (`ensemble && …`) keeps the segment off the home view.
+    if (ensemble && ensemblePaused) {
+      segments.push(
+        { key: 'sp', color: THEME.dim, text: ' · ' },
+        // U+23F8 PAUSE SYMBOL — single glyph, mirrors the U+26A0 warning below.
+        { key: 'pa', color: THEME.warning, text: '⏸ paused' },
       );
     }
 
     if (ensemble && !conductorName) {
-      children.push(
-        React.createElement(Text, { key: 's3', color: THEME.dim }, ' \u00B7 '),
-        React.createElement(Text, { key: 'nc', color: THEME.warning }, '\u26A0 No conductor'),
+      segments.push(
+        { key: 's3', color: THEME.dim, text: ' · ' },
+        { key: 'nc', color: THEME.warning, text: '⚠ No conductor' },
       );
     }
   }
 
-  children.push(
-    React.createElement(Text, { key: 's4', color: THEME.dim }, ' \u00B7 '),
-    React.createElement(Text, { key: 'hd', color: healthColor }, healthDot),
-    React.createElement(Text, { key: 'hl', color: THEME.dim }, ` ${healthLabel}`),
+  segments.push(
+    { key: 's4', color: THEME.dim, text: ' · ' },
+    { key: 'hd', color: healthColor, text: healthDot },
+    { key: 'hl', color: THEME.dim, text: ` ${healthLabel}` },
   );
 
+  return segments;
+}
+
+export function StatusBar(props: StatusBarProps) {
+  const { Text } = useInk();
+  const segments = buildStatusBarSegments(props);
   // Single Text element — all children are ink-virtual-text (0 Yoga nodes)
+  const children = segments.map((s) =>
+    s.key === 'lead'
+      ? s.text
+      : React.createElement(Text, { key: s.key, color: s.color }, s.text),
+  );
   return React.createElement(Text, null, ...children);
 }
