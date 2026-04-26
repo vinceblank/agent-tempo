@@ -603,7 +603,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
 
     if (parsed) {
       // Slash command
-      if (parsed.name === 'quit') {
+      if (parsed.name === 'quit' || parsed.name === 'exit') {
         exit();
         return;
       }

@@ -1533,7 +1533,15 @@ export const COMMANDS: Record<string, CommandDef> = {
   },
   quit: {
     description: 'Exit the TUI',
-    usage: '/quit',
+    usage: '/quit (or /exit)',
+    handler: null, // Handled directly in App.tsx
+  },
+  // #306: /exit is an alias for /quit. Claude Code uses /exit, so users
+  // arriving from there expect it to work. Both go to the same App.tsx
+  // handler that calls Ink's exit().
+  exit: {
+    description: 'Exit the TUI (alias for /quit)',
+    usage: '/exit',
     handler: null, // Handled directly in App.tsx
   },
 };
