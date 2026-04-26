@@ -5,6 +5,7 @@
  * external integrations) can depend on the interface without pulling in Ink/React.
  */
 import type {
+  AgentType,
   MaestroPlayerInfo,
   MaestroRelayMessage,
   HistoryEntry,
@@ -35,6 +36,45 @@ export interface RecallClientResult {
 }
 
 // ── PR-D verb options ──
+
+// ── #306: Recruit (direct TempoClient path) ──
+
+/**
+ * Options for {@link TempoClient.recruit} — direct submit of a `recruit`
+ * outbox entry from the caller's maestro session. Mirrors the `recruit`
+ * MCP tool's parameters, minus the conductor-only bits handled by the
+ * `load_lineup` flow. The TUI uses this to bypass the conductor LLM hop
+ * for UI-initiated recruiting (the prior path routed through the
+ * maestro hub → conductor → MCP tool, which required a live conductor).
+ */
+export interface RecruitClientOpts {
+  name: string;
+  workDir: string;
+  agent?: AgentType;
+  /** Agent type name from the subagent registry (e.g. "tempo-soloist"). */
+  playerType?: string;
+  isConductor?: boolean;
+  initialMessage?: string;
+  systemPrompt?: string;
+  host?: string;
+  /** When true, spawn process but lock outbox until `release`. */
+  held?: boolean;
+}
+
+export interface RecruitClientResult {
+  playerId: string;
+  /** Outbox entry id submitted on the maestro session's workflow. */
+  entryId: string;
+}
+
+// ── #306: Release (direct TempoClient path) ──
+
+export interface ReleaseClientResult {
+  /** Names of players released, in scan order. */
+  released: string[];
+  /** Soft-failure diagnostics per player, if any. */
+  errors: Array<{ playerId: string; error: string }>;
+}
 
 export interface RestartClientOpts {
   /** Target host (defaults to session's preferredHost or last-known hostname). */
@@ -98,11 +138,17 @@ export interface EnsembleSummary {
   hasConductor: boolean;
   conductorStatus?: string;
   /**
-   * `'running'` when any session is in a live phase,
-   * `'parked'` when every session is `detached`. Populated by
-   * {@link TempoClient.listEnsembles}; absent on `discoverEnsembles` results.
+   * Lifecycle classification populated by {@link TempoClient.listEnsembles}
+   * (absent on `discoverEnsembles` results):
+   *
+   * - `'online'`  — maestro hub is unpaused (`maestroPaused === false`).
+   * - `'paused'`  — maestro hub is paused **and** at least one session is
+   *                 still in a live attachment phase. Operationally this is
+   *                 a `/pause` (resume in place via `/play`).
+   * - `'offline'` — maestro hub is paused **and** no live adapters remain.
+   *                 Operationally this is a `/shutdown` (requires `/restore`).
    */
-  state?: 'running' | 'parked';
+  state?: 'online' | 'paused' | 'offline';
 }
 
 /** Options for {@link TempoClient.createEnsemble}. */
@@ -152,6 +198,22 @@ export interface TempoClient {
   sendMessage(ensemble: string, to: string, text: string, source: string): Promise<string>;
   /** Terminate a player's workflow. */
   terminatePlayer(ensemble: string, playerId: string): Promise<void>;
+  /**
+   * #306: Recruit a player directly via the caller's maestro session outbox.
+   * Replaces the legacy TUI path of routing `/recruit …` through the
+   * conductor's Claude Code session. Structural-op parity with the `recruit`
+   * MCP tool — enqueues a `recruit` outbox entry; the dispatch loop spawns
+   * the process. The conductor's LLM is never in the critical path.
+   */
+  recruit(ensemble: string, opts: RecruitClientOpts): Promise<RecruitClientResult>;
+  /**
+   * #306: Release held players directly via the caller's maestro session
+   * outbox. Without `playerId`, scans the ensemble for sessions whose
+   * outbox is locked and enqueues a `release` entry for each. With
+   * `playerId`, releases just that session. Structural-op parity with
+   * the `release` MCP tool.
+   */
+  release(ensemble: string, playerId?: string): Promise<ReleaseClientResult>;
   /** PR-D: Restart a player — §8.2 algorithm. Works on any non-`gone` phase. */
   restart(ensemble: string, playerId: string, opts?: RestartClientOpts): Promise<RestartClientResult>;
   /** PR-D: Gracefully detach a player's adapter. Workflow survives in `detached`. */
@@ -215,6 +277,28 @@ export interface TempoClient {
   getWorktrees(ensemble: string): Promise<WorktreeEntry[]>;
   /** Get aggregated ensemble chat (maestro + conductor traffic). */
   getEnsembleChat(ensemble: string, offset?: number, limit?: number): Promise<EnsembleChatResult>;
+  /**
+   * Bug B: Read the maestro hub's `maestroPaused` flag for an ensemble.
+   * Returns `false` when the hub workflow doesn't exist (treat absence as
+   * "not paused" — the StatusBar renders nothing for the bare-ensemble case).
+   * The TUI polls this so a paused conductor swallowing messages becomes
+   * visible (status bar segment + tooltip-style hint to type `/play`).
+   */
+  isMaestroPaused(ensemble: string): Promise<boolean>;
+  /**
+   * #306 follow-up: True when at least one session in the ensemble has its
+   * outbox locked (i.e. is `held`). Companion to {@link isMaestroPaused};
+   * the two are orthogonal — `/load_lineup` flips both, `/pause` flips just
+   * paused, `/recruit --held` flips just held. The TUI polls this to surface
+   * a yellow `held` segment + a `Tip: /go` hint, so users don't sit paused
+   * watching held players that need releasing.
+   *
+   * Skips the maestro session (the TUI's own dashboard attachment) so a
+   * locked maestro outbox — never a real held-player state — doesn't
+   * trigger the indicator. Returns `false` when the scan or every per-
+   * session query fails (treat absence as "not held").
+   */
+  isAnySessionHeld(ensemble: string): Promise<boolean>;
   /** Disband an ensemble: terminate all sessions, scheduler, and maestro workflows. */
   disbandEnsemble(ensemble: string): Promise<{ terminated: number }>;
   /** Check if the Temporal connection is alive. */

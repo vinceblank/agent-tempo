@@ -29,6 +29,52 @@ describe('buildOrphanQuery', function () {
     expect(q).to.not.include('\n');
     expect(q).to.include('hostwithquotes');
   });
+
+  // #306: user-invoked `/restore` narrows the visibility query to
+  // `detached`-only so a healthy live session is never flagged as an
+  // orphan candidate.
+  describe('phases filter', function () {
+    it('with phases=["detached"] — emits only the detached clause, no live-phase IN clause', function () {
+      const q = buildOrphanQuery({ hostname: 'host-1', phases: ['detached'] });
+      expect(q).to.include('ClaudeTempoAttachmentState = "detached"');
+      expect(q).to.include('ClaudeTempoHostname = "host-1"');
+      // Live-phase clause must NOT appear — that's the whole point of the
+      // narrowing (live sessions are not orphan candidates for user /restore).
+      expect(q).to.not.include('ClaudeTempoAttachmentState IN (');
+      expect(q).to.not.include('ClaudeTempoAttachedHost = "host-1"');
+    });
+
+    it('with phases unset — defaults to the broad live-phase + detached set (daemon reconcile semantics)', function () {
+      const q = buildOrphanQuery({ hostname: 'host-1' });
+      expect(q).to.include('ClaudeTempoAttachmentState IN ("attached","processing","awaiting","draining")');
+      expect(q).to.include('ClaudeTempoAttachmentState = "detached"');
+    });
+
+    it('with phases=["attached"] — emits only the live-phase clause, no detached clause', function () {
+      const q = buildOrphanQuery({ hostname: 'host-1', phases: ['attached'] });
+      expect(q).to.include('ClaudeTempoAttachmentState IN ("attached")');
+      expect(q).to.include('ClaudeTempoAttachedHost = "host-1"');
+      // No `= "detached"` anywhere (the standalone detached clause is gone).
+      expect(q).to.not.include('ClaudeTempoAttachmentState = "detached"');
+    });
+
+    it('with phases=[] — falls back to the broad default (safety net against empty array)', function () {
+      const q = buildOrphanQuery({ hostname: 'host-1', phases: [] });
+      expect(q).to.include('ClaudeTempoAttachmentState IN ("attached","processing","awaiting","draining")');
+      expect(q).to.include('ClaudeTempoAttachmentState = "detached"');
+    });
+
+    it('opts-object form also accepts ensemble narrowing', function () {
+      const q = buildOrphanQuery({
+        hostname: 'host-1',
+        ensemble: 'band-a',
+        phases: ['detached'],
+      });
+      expect(q).to.include('ClaudeTempoAttachmentState = "detached"');
+      expect(q).to.include('ClaudeTempoEnsemble = "band-a"');
+      expect(q).to.not.include('ClaudeTempoAttachmentState IN (');
+    });
+  });
 });
 
 describe('isAdapterProcessAliveStub', function () {

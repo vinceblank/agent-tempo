@@ -299,4 +299,23 @@ describe('TempoClient.restore (#287)', () => {
       reattached: 2,
     });
   });
+
+  // Bug A: `/restore` must also fan out `setPaused=false` to every session.
+  // The maestro+scheduler unpause alone leaves session-level `paused=true`
+  // intact, which gates the outbox dispatcher (`canDispatch = … && !paused`).
+  // Without this fan-out, a restored conductor accepts messages but never
+  // dispatches them, so user input gets no reply.
+  it('fans out setPaused=false to every session in the ensemble', async () => {
+    const { client, calls } = makeClient({
+      ensemble: 'e1', players: ['alice', 'bob'], includeConductor: true,
+    });
+    await createTempoClient(client as any).restore('e1');
+
+    const setPausedFalse = calls.filter((c) => c.name === 'setPaused' && c.payload === false);
+    // alice + bob + conductor = 3 session signals.
+    expect(setPausedFalse).toHaveLength(3);
+    // Maestro + scheduler unpause still fire alongside the session fan-out.
+    expect(calls.some((c) => c.name === 'maestroSetPaused' && c.payload === false)).toBe(true);
+    expect(calls.some((c) => c.name === 'setSchedulerPaused' && c.payload === false)).toBe(true);
+  });
 });

@@ -1,5 +1,5 @@
 /**
- * Single-keypress y/N confirmation before restoring a parked ensemble.
+ * Single-keypress y/N confirmation before restoring an offline ensemble.
  * Restore is recoverable (operator can `shutdown` again), so no typed
  * confirmation — that's reserved for `destroy`.
  */
@@ -9,7 +9,7 @@ import { THEME } from '../utils/theme';
 
 export interface RestoreConfirmModalProps {
   ensemble: string;
-  /** Number of parked players in the ensemble (conductor excluded from the count). */
+  /** Number of offline players in the ensemble (conductor excluded from the count). */
   playerCount: number;
   /** Conductor name if known — falls back to the default "conductor" label. */
   conductorName?: string;
@@ -34,11 +34,11 @@ export function RestoreConfirmModal(props: RestoreConfirmModalProps): React.Reac
   const conductorLabel = conductorName ?? 'conductor';
 
   return React.createElement(Box, { flexDirection: 'column' },
-    React.createElement(Text, { bold: true, color: THEME.accent }, ' Restore parked ensemble'),
+    React.createElement(Text, { bold: true, color: THEME.accent }, ' Restore offline ensemble'),
     React.createElement(Box, { marginTop: 1, flexDirection: 'column' },
       React.createElement(Text, { color: THEME.text }, `  Ensemble: ${ensemble}`),
       React.createElement(Text, { color: THEME.text },
-        `  Parked players: ${playerCount}${playerCount === 0 ? ' (conductor only)' : ''}`),
+        `  Offline players: ${playerCount}${playerCount === 0 ? ' (conductor only)' : ''}`),
       React.createElement(Text, { color: THEME.text }, `  Conductor: ${conductorLabel}`),
     ),
     error

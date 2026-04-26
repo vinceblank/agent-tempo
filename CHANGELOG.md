@@ -51,12 +51,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   (preflight → MCP config → Temporal reachability → search attributes → daemon → conductor)
   runs on bare `claude-tempo` invocation and produces a `BootstrapResult` consumed by the
   home view as initial props.
+- **`/exit` alias** (#306): `/exit` is now a registered alias for `/quit` in the TUI.
+- **`/restart` defaults `force=true`** (#306): `/restart` steals a live lease by default;
+  pass `--no-force` to refuse if a lease is currently held.
+- **Home view ensemble classification** (#306): The home screen now classifies ensembles as
+  `online`, `paused`, or `offline` with distinct visual groupings.
+- **Paused-ensemble indicator in StatusBar** (#306): The TUI status bar shows a visual
+  indicator when the current ensemble is paused.
+- **Bottom-pinned notifications** (#306): Command summaries, confirmations, and errors are
+  pinned below the input field with configurable TTL (8 s errors, 5 s info/warn) so they
+  don't scroll away.
+- **Player-name autocomplete** (#306): The command palette autocompletes player names for
+  `/restart`, `/destroy`, `/attachment-info`, and `/worktree`.
 
 ### Fixed
 
 - **Orphan-recovery helper extracted to shared module** (#93): `reconcileOrphans` logic moved
   to `src/reconcile/orphans.ts` and reused by both daemon reconcile-on-boot and the new CLI
   `restore` command, eliminating the previous duplication.
+- **`/destroy conductor` blocked** (#306): Attempting to destroy the conductor via `/destroy`
+  now shows an error with a redirect hint to `/shutdown` or `/restart conductor`.
+- **`/ensemble` (no args) navigates home** (#306): Bare `/ensemble` used to open an
+  interactive picker; it now navigates to the home view. Use `/ensemble <name>` to switch.
+- **`stopDaemon` reaps zombie processes** (#306): `claude-tempo daemon stop` now also reaps
+  any zombie daemon processes left behind by a crash, preventing stale PID files from
+  blocking subsequent starts.
+- **`restore` treats 'conductor already running' as success** (#306): The restore flow no
+  longer errors when the conductor is already live — it records the session as `alreadyLive`
+  and continues.
+- **`restore` fans out `setPaused=false` to every session** (#306): Unpausing an ensemble
+  via restore now correctly signals every session, not just the maestro.
+- **Home view refresh on mount** (#306): The home screen now refreshes ensemble data on
+  mount and shows 'Loading…' instead of a blank flash before data arrives.
+- **Chat input hidden on home view** (#306): The message input area is no longer visible
+  on the home screen, where it has no function.
 
 ## [0.26.0] - 2026-04-20
 

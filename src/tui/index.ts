@@ -117,6 +117,8 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
     sendMessage: fail,
     terminatePlayer: fail,
     // PR-D verbs — all fail in offline dummy mode.
+    recruit: fail,
+    release: fail,
     restart: fail,
     detach: fail,
     destroy: fail,
@@ -135,6 +137,8 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
     getSchedules: async () => [],
     cancelSchedule: fail,
     getEnsembleChat: async () => ({ messages: [], total: 0, hasMore: false, hasConductor: false }),
+    isMaestroPaused: async () => false,
+    isAnySessionHeld: async () => false,
     getGates: async () => [],
     getStages: async () => [],
     getWorktrees: async () => [],

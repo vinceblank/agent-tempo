@@ -343,19 +343,33 @@ describe('outbox', function () {
       });
     });
 
-    it('#183 non-fresh restart preserves stored sessionId for --resume', async function () {
+    it('#183 non-fresh restart no longer special — also fresh after 17a7858 (#306)', async function () {
       this.timeout(30_000);
+      // Pre-#306 this case was the inverse of the test above: a non-fresh
+      // restart was supposed to preserve the stored sessionId and pass
+      // `resume: true` so Claude Code could `--resume <uuid>` against the
+      // existing transcript. Commit `17a7858` removed that branch — the
+      // prior spawn's `.jsonl` is not guaranteed to have flushed before the
+      // hard-terminate (Windows `taskkill /T /F` is synchronous), so resume
+      // was failing with "No conversation found with session ID" and
+      // dropping the new terminal to a shell.
+      //
+      // Now `deliverRestart` mints a fresh UUID and passes `resume: false`
+      // on EVERY call regardless of `fresh`. The `fresh` flag's only
+      // remaining effect is gating the Step 5 context-replay signal —
+      // spawn-side state is identical. This test pins that invariant so a
+      // future refactor can't silently re-introduce the `--resume` path.
       const spawnInputs: Array<Record<string, unknown>> = [];
       await withWorkerAndRecruitCapture(spawnInputs, async () => {
-        const ensemble = `resume-sid-${Date.now()}`;
-        const originalSessionId = 'stored-uuid-we-want-to-keep';
+        const ensemble = `non-fresh-sid-${Date.now()}`;
+        const originalSessionId = 'stored-uuid-pre-restart';
 
         const alice = await startSession({
-          metadata: playerMetadata({ playerId: 'alice-resume-sid', ensemble }),
+          metadata: playerMetadata({ playerId: 'alice-non-fresh-sid', ensemble }),
         });
         const bob = await startSession({
           metadata: playerMetadata({
-            playerId: 'bob-resume-sid',
+            playerId: 'bob-non-fresh-sid',
             ensemble,
             sessionId: originalSessionId,
           }),
@@ -364,9 +378,10 @@ describe('outbox', function () {
         await alice.executeUpdate(submitOutboxUpdate, {
           args: [{
             type: 'restart',
-            targetPlayerId: 'bob-resume-sid',
-            invokerPlayerId: 'alice-resume-sid',
-            // no `fresh` — default (context replay + resume)
+            targetPlayerId: 'bob-non-fresh-sid',
+            invokerPlayerId: 'alice-non-fresh-sid',
+            // no `fresh` — default (context replay still happens, but the
+            // spawn is fresh).
           }],
         });
 
@@ -376,15 +391,18 @@ describe('outbox', function () {
         const entry = aliceOutbox.find((e) => e.type === 'restart');
         expect(entry!.status).to.equal('delivered');
 
-        // Spawn should reuse the stored sessionId for deterministic --resume.
+        // Even without `fresh: true`, the spawn gets a NEW sessionId and
+        // resume=false — matches the fresh-restart test above.
         expect(spawnInputs).to.have.lengthOf.at.least(1);
         const spawn = spawnInputs[spawnInputs.length - 1];
-        expect(spawn.sessionId, 'non-fresh restart preserves sessionId').to.equal(originalSessionId);
-        expect(spawn.resume, 'non-fresh restart resumes').to.equal(true);
+        expect(spawn.sessionId, 'spawn sessionId set').to.be.a('string');
+        expect(spawn.sessionId, 'non-fresh restart also regenerates sessionId').to.not.equal(originalSessionId);
+        expect(spawn.resume, 'non-fresh restart no longer resumes').to.equal(false);
 
-        // Metadata sessionId unchanged.
+        // Metadata is updated to the new sessionId, same as the fresh case.
         const after = await bob.query(getMetadataQuery) as { sessionId?: string };
-        expect(after.sessionId).to.equal(originalSessionId);
+        expect(after.sessionId).to.equal(spawn.sessionId);
+        expect(after.sessionId).to.not.equal(originalSessionId);
 
         await alice.executeUpdate(destroyUpdate, { args: [{}] });
         await bob.executeUpdate(destroyUpdate, { args: [{}] });

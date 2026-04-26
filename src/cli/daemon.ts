@@ -477,28 +477,92 @@ function parseCsvMatches(csv: string): DaemonProcessInfo[] {
 }
 
 /**
- * Stop the daemon process by sending SIGTERM (or killing on Windows).
- * Returns true if the daemon was stopped, false if it wasn't running.
+ * Send the platform-appropriate stop signal to a single daemon PID.
+ * Swallows errors — the process may have already exited, or be UAC-isolated
+ * on Windows. Returns `true` if `process.kill` succeeded, `false` otherwise.
  */
-export function stopDaemon(): boolean {
-  const status = getDaemonStatus();
-  if (!status.running || !status.pid) {
+function killDaemonPid(
+  pid: number,
+  killer: (pid: number, signal?: NodeJS.Signals | number) => void = process.kill.bind(process),
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  try {
+    if (platform === 'win32') {
+      // Windows doesn't support SIGTERM — just kill the process.
+      killer(pid);
+    } else {
+      killer(pid, 'SIGTERM');
+    }
+    return true;
+  } catch {
     return false;
   }
+}
 
-  try {
-    if (process.platform === 'win32') {
-      // Windows doesn't support SIGTERM — just kill the process
-      process.kill(status.pid);
-    } else {
-      process.kill(status.pid, 'SIGTERM');
-    }
-  } catch {
-    // Process may have already exited
+/**
+ * Options for {@link stopDaemon} — exported for unit tests so we can inject
+ * a stub scanner and killer without spawning real processes. Production
+ * callers should pass no arguments and accept the defaults (real OS scan +
+ * `process.kill`).
+ *
+ * @internal
+ */
+export interface StopDaemonOpts {
+  /** Process scanner — defaults to {@link scanClaudeTempoDaemons}. */
+  scan?: () => DaemonProcessInfo[];
+  /** Signal sender — defaults to `process.kill`. */
+  killer?: (pid: number, signal?: NodeJS.Signals | number) => void;
+  /** Platform override — defaults to `process.platform`. */
+  platform?: NodeJS.Platform;
+}
+
+/**
+ * Stop the daemon process by sending SIGTERM (or killing on Windows). In
+ * addition to the daemon tracked by the PID file, this also reaps any
+ * **zombie** daemons — `node dist/daemon.js` processes detected by
+ * {@link scanClaudeTempoDaemons} that the PID file doesn't know about.
+ *
+ * Why reap zombies on every stop? When a prior daemon loses PID-file
+ * tracking (crashed `daemon stop`, manual PID-file delete, surviving across
+ * a `down --destroy` from before this fix), the orphan keeps polling
+ * Temporal task queues and executing activities — sometimes with stale code
+ * from before the most recent rebuild. That has caused real user-visible
+ * incidents where activities ran the pre-fix `resume: true` spawn path
+ * because a zombie daemon held the cached pre-rebuild code in memory.
+ *
+ * Returns `true` if at least one process (tracked or zombie) was stopped.
+ */
+export function stopDaemon(opts: StopDaemonOpts = {}): boolean {
+  const scan = opts.scan ?? scanClaudeTempoDaemons;
+  const killer = opts.killer ?? process.kill.bind(process);
+  const platform = opts.platform ?? process.platform;
+
+  const status = getDaemonStatus();
+  let stopped = false;
+
+  // Kill the tracked daemon first (if any). We do this even if `kill` fails —
+  // the PID file is invariant we own, so we always clean it up.
+  if (status.running && status.pid !== undefined) {
+    killDaemonPid(status.pid, killer, platform);
+    try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+    stopped = true;
   }
 
-  // Clean up PID file
-  try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+  // Now reap any zombies. `selectOrphans` filters the scan to "everything
+  // except the PID we already killed", so we don't double-signal the tracked
+  // daemon (which would be harmless, but the bookkeeping is clearer this way).
+  let zombies: DaemonProcessInfo[] = [];
+  try {
+    zombies = selectOrphans(scan(), status.pid);
+  } catch {
+    // Scanner failures are non-fatal — we already did the primary stop above.
+    zombies = [];
+  }
+  for (const z of zombies) {
+    if (killDaemonPid(z.pid, killer, platform)) {
+      stopped = true;
+    }
+  }
 
-  return true;
+  return stopped;
 }

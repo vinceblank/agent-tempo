@@ -181,7 +181,53 @@ describe('deliverRestart agent type propagation (#184)', function () {
     }
   });
 
-  // 3) Regression guard — sessions without a `playerType` (legacy / lineup-less
+  // 3) #306: `/restart` must ALWAYS spawn fresh — never `--resume <id>`. The
+  //    prior transcript `.jsonl` isn't guaranteed to have been flushed to disk
+  //    before the hard-terminate, so `claude --resume <uuid>` errors out with
+  //    "No conversation found with session ID" and drops to shell. Both the
+  //    `fresh: true` and the default (non-fresh) paths must mint a new UUID
+  //    and pass `resume: false` to `enqueueSpawn`.
+  it('/restart ALWAYS mints a new sessionId + passes resume: false (#306)', async function () {
+    const priorSessionId = '11111111-1111-1111-1111-111111111111';
+
+    for (const freshFlag of [true, false]) {
+      const { client, captured } = makeClient({
+        workflowId: 'claude-session-test-ensemble-fresh',
+        metadata: {
+          ensemble: 'test-ensemble-restart-agent-mock',
+          playerId: 'bob',
+          hostname: 'test-host',
+          workDir: tmpdir(),
+          isConductor: false,
+          agentType: 'claude',
+          sessionId: priorSessionId,
+        },
+      });
+
+      const activities = createOutboxActivities(client as any, testConfig);
+      await activities.deliverRestart({
+        ensemble: 'test-ensemble-restart-agent-mock',
+        targetPlayerId: 'bob',
+        invokerPlayerId: 'tempo-conductor',
+        fresh: freshFlag,
+      });
+
+      const enq = findEnqueue(captured);
+      expect(enq, `enqueueSpawn captured (fresh=${freshFlag})`).to.exist;
+      const args = enq!.args as any;
+      // Never `--resume` — the invariant.
+      expect(args.resume, `resume is false (fresh=${freshFlag})`).to.equal(false);
+      // Always a fresh UUID — never the stored one.
+      expect(args.sessionId, `sessionId present (fresh=${freshFlag})`).to.be.a('string');
+      expect(args.sessionId).to.not.equal(priorSessionId);
+      // Sanity — new UUID shape.
+      expect(args.sessionId).to.match(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+    }
+  });
+
+  // 4) Regression guard — sessions without a `playerType` (legacy / lineup-less
   //    recruits) must not gain spurious agent fields. The enqueueSpawn payload
   //    should omit all three fields.
   it('omits agent fields when metadata has no playerType', async function () {

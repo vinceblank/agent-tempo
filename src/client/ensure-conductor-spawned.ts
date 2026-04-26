@@ -1,8 +1,11 @@
 /**
  * Shared helper for restore-after-shutdown: make sure a conductor terminal
  * is attached to an ensemble before `/restore` completes. Called by the
- * TUI `/restore` slash command and the CLI `restore <ensemble>` path (when
- * the latter adopts it in a follow-up).
+ * TUI `/restore` slash command (`App.tsx`, `commands.ts`).
+ *
+ * NOTE: This file lives in `src/client/` because the CLI `restore` command
+ * was expected to adopt it. If no CLI consumer adopts within 2 PRs after
+ * #308 merges, move to `src/tui/utils/` — current consumers are TUI-only.
  *
  * Returns a structured outcome so callers can render a summary without
  * parsing strings. Never throws — callers should treat a missing conductor
@@ -40,10 +43,21 @@ export async function ensureConductorSpawned(
     await client.spawnConductor({ ensemble });
     return { spawned: true };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // #306: `/restore` runs two parallel paths that can both spawn the
+    // conductor — `restoreOrphansOnce` reattaches the orphan adapter via
+    // `deliverRestart`, and this helper falls through to a fresh spawn when
+    // the attachment-info query returns a non-live phase. If the orphan
+    // reattach wins the race, our spawn (`claude-tempo up <ensemble>`)
+    // throws "A conductor is already running for ensemble" — which is the
+    // success condition for THIS helper. Swallow the race and report alive.
+    if (/conductor is already running/i.test(message)) {
+      return { spawned: false, reason: 'alreadyLive' };
+    }
     return {
       spawned: false,
       reason: 'spawnFailed',
-      error: err instanceof Error ? err.message : String(err),
+      error: message,
     };
   }
 }

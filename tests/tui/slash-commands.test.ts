@@ -2,10 +2,11 @@
  * Unit tests for #291 slash-command surface changes — registry alignment,
  * migration hints, and the typed-name `/destroy <ensemble>` reducer path.
  */
-import { describe, it, expect } from 'vitest';
-import { COMMANDS, getCommandNames } from '../../src/tui/commands';
+import { describe, it, expect, vi } from 'vitest';
+import { COMMANDS, getCommandNames, type CommandContext } from '../../src/tui/commands';
 import { REMOVED_SLASH_COMMANDS, removedSlashCommandHelp } from '../../src/tui/removed-commands';
-import { tuiReducer, initialState, type TuiState } from '../../src/tui/store';
+import { tuiReducer, initialState, type TuiAction, type TuiState } from '../../src/tui/store';
+import type { TempoClient } from '../../src/client';
 
 describe('slash-command registry (#291)', () => {
   it('registers the new ensemble-scope verbs', () => {
@@ -110,5 +111,174 @@ describe('/destroy <ensemble> typed-name reducer actions', () => {
     expect(s.confirmingEnsembleDestroy).toBeUndefined();
     const out = tuiReducer(s, { type: 'ENSEMBLE_DESTROY_INPUT', input: 'x' });
     expect(out).toBe(s);
+  });
+});
+
+// ── #306: /destroy handler guards + visible prompt ──
+//
+// Three regression tests for the pre-merge smoke-test bugs:
+//  1. `/destroy conductor` must refuse — #294 established "conductor required"
+//     as an ensemble invariant. Before this fix it silently dispatched
+//     CONFIRM_STOP and the UI never rendered the prompt, wedging input.
+//  2. `/destroy <peer>` must emit a visible scrollback prompt alongside the
+//     CONFIRM_STOP dispatch. Before this fix the user saw input freeze with
+//     no feedback.
+//  3. The existing ensemble-typed-name path must still work (no regression).
+
+function makeNoopApi(): TempoClient {
+  const unused = vi.fn(() => {
+    throw new Error('TempoClient method not expected during /destroy handler');
+  });
+  return new Proxy({} as TempoClient, { get: () => unused });
+}
+
+describe('/destroy handler guards (#306)', () => {
+  const CTX: CommandContext = { activeEnsemble: 'myband' };
+
+  it('refuses /destroy conductor with an error + redirect (does NOT dispatch CONFIRM_STOP)', async () => {
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+    const handler = COMMANDS.destroy.handler!;
+    await handler(['conductor'], dispatch, makeNoopApi(), CTX);
+
+    // No confirmation dispatched — the whole point of the guard.
+    const confirmCalls = dispatch.mock.calls.filter(
+      ([a]) => (a as { type: string }).type === 'CONFIRM_STOP',
+    );
+    expect(confirmCalls.length).toBe(0);
+
+    // Exactly one bottom-pinned notification (#306 — errors moved off
+    // scroll-back so users can't miss guard-rail refusals).
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const action = dispatch.mock.calls[0][0] as {
+      type: string;
+      notification: { kind: string; content: string };
+    };
+    expect(action.type).toBe('ADD_NOTIFICATION');
+    expect(action.notification.kind).toBe('error');
+    expect(action.notification.content).toMatch(/Cannot destroy the conductor/);
+    // Redirects point at the real alternatives.
+    expect(action.notification.content).toMatch(/\/shutdown/);
+    expect(action.notification.content).toMatch(/\/restart conductor/);
+    // Active-ensemble name gets inlined for the whole-ensemble destroy hint.
+    expect(action.notification.content).toMatch(/\/destroy myband/);
+  });
+
+  it('refuses /destroy conductor even when activeEnsemble is null (falls back to <ensemble>)', async () => {
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+    const handler = COMMANDS.destroy.handler!;
+    await handler(['conductor'], dispatch, makeNoopApi(), { activeEnsemble: null });
+
+    const action = dispatch.mock.calls[0][0] as {
+      type: string;
+      notification: { kind: string; content: string };
+    };
+    expect(action.notification.content).toMatch(/\/destroy <ensemble>/);
+  });
+
+  it('/destroy <peer> dispatches only CONFIRM_STOP — the y/n prompt is a pinned render, not scrollback', async () => {
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+    const handler = COMMANDS.destroy.handler!;
+    await handler(['alice'], dispatch, makeNoopApi(), CTX);
+
+    // Exactly one dispatch: the confirmation state update. The visible
+    // prompt is rendered from `state.confirmingStop` by App.tsx's
+    // `renderPinnedConfirmations` (pinned below the input), so it can't
+    // scroll off-screen as new messages arrive — which is why we no
+    // longer emit a `COMMIT_STATIC` prompt line here.
+    expect(dispatch).toHaveBeenCalledTimes(1);
+
+    const action = dispatch.mock.calls[0][0] as {
+      type: string;
+      player: string;
+      reason?: string;
+    };
+    expect(action.type).toBe('CONFIRM_STOP');
+    expect(action.player).toBe('alice');
+    expect(action.reason).toBeUndefined();
+  });
+
+  it('/destroy <peer> <reason …> forwards the reason only on the CONFIRM_STOP action (rendered by the pinned prompt)', async () => {
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+    const handler = COMMANDS.destroy.handler!;
+    await handler(['alice', 'stuck', 'in', 'a', 'loop'], dispatch, makeNoopApi(), CTX);
+
+    // Still exactly one dispatch — reason lives on the state field and
+    // surfaces via the pinned render, not via scrollback.
+    expect(dispatch).toHaveBeenCalledTimes(1);
+
+    const confirm = dispatch.mock.calls[0][0] as {
+      type: string;
+      player: string;
+      reason?: string;
+    };
+    expect(confirm.type).toBe('CONFIRM_STOP');
+    expect(confirm.player).toBe('alice');
+    expect(confirm.reason).toBe('stuck in a loop');
+  });
+
+  it('ensemble-scope (/destroy matches activeEnsemble) still routes to typed-name confirmation', async () => {
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+    const handler = COMMANDS.destroy.handler!;
+    await handler(['myband'], dispatch, makeNoopApi(), CTX);
+
+    // Exactly one dispatch: the typed-name confirmation. No CONFIRM_STOP,
+    // no prompt line (the typed-name UI renders its own copy).
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const action = dispatch.mock.calls[0][0] as { type: string; ensemble: string };
+    expect(action.type).toBe('CONFIRM_ENSEMBLE_DESTROY');
+    expect(action.ensemble).toBe('myband');
+  });
+
+  it('usage error when no target provided (no dispatches beyond the usage line)', async () => {
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+    const handler = COMMANDS.destroy.handler!;
+    await handler([], dispatch, makeNoopApi(), CTX);
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const action = dispatch.mock.calls[0][0] as {
+      type: string;
+      notification: { kind: string; content: string };
+    };
+    expect(action.type).toBe('ADD_NOTIFICATION');
+    expect(action.notification.kind).toBe('error');
+    expect(action.notification.content).toMatch(/Usage:/);
+  });
+});
+
+// ── #306: /restart defaults force=true (commit e9e8359) ──
+//
+// /restart is nearly always invoked against a live-but-unresponsive session,
+// so the pre-#306 default of force=false made the common case fail with
+// "use force=true to steal the lease". Pin the new default so a future
+// refactor can't silently regress to force=false.
+
+describe('/restart force=true default (#306)', () => {
+  const CTX: CommandContext = { activeEnsemble: 'myband' };
+
+  /** Stubs only `restart`; everything else throws if accessed. */
+  function makeRestartApi(restart: TempoClient['restart']): TempoClient {
+    const unused = vi.fn(() => {
+      throw new Error('TempoClient method not expected during /restart handler');
+    });
+    return new Proxy({} as TempoClient, {
+      get: (_t, prop) => (prop === 'restart' ? restart : unused),
+    });
+  }
+
+  it('/restart <player> with no flags forwards force: true', async () => {
+    const restart = vi.fn(async () => ({
+      playerId: 'alice', host: 'main-laptop', entryId: 'entry-1',
+    }));
+    const handler = COMMANDS.restart.handler!;
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+
+    await handler(['alice'], dispatch, makeRestartApi(restart), CTX);
+
+    expect(restart).toHaveBeenCalledOnce();
+    expect(restart).toHaveBeenCalledWith('myband', 'alice', {
+      fresh: false,
+      force: true,
+      invokerPlayerId: 'tui',
+    });
   });
 });
