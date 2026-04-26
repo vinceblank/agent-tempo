@@ -155,8 +155,6 @@ Arrows point upward (Maestros aggregate from below); there are no downward contr
 
 **The API surface for external UIs.** `TempoClient` (`src/client/`) talks to Maestros as the primary data source. `getPlayers`, `getMessages`, `getConductorHistory`, `getEnsembleChat` all read from Maestro caches (ring buffer + periodic refresh via `fetchEnsembleChat` activity), not from individual session queries. External UIs read one pre-aggregated cache instead of fanning out across N workflows.
 
-**`src/tui/client.ts` is a thin re-export shim** that re-exports `createTempoClient` from `src/client/` for backward compatibility with the TUI. New consumers should import from `src/client/` directly, not from the shim.
-
 **Simpler lifecycles.** Ring buffer + `continueAsNew` periodically. No claim/heartbeat/detach/destroy. No V2 lifecycle concerns. Maestros and the Scheduler are structurally unchanged by the v0.25 revamp.
 
 ### Two orthogonal axes
