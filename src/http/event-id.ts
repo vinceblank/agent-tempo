@@ -78,6 +78,14 @@ export function compareEventIds(a: EventIdTuple, b: EventIdTuple): number {
  * `bootEpoch` is supplied by the caller — the daemon constructs one
  * value (`Date.now()`) and threads it through every bus instance so
  * every event in the same process lifetime shares the prefix.
+ *
+ * **Overflow**: `seq` is a JavaScript `number`, safe up to
+ * `Number.MAX_SAFE_INTEGER` (2^53 − 1). At a sustained 1 event/ms
+ * that's ~285,000 years before wrap, so practically unreachable.
+ * If a single bus ever did approach this limit, the bus would need
+ * to `continueAsNew`-style re-bootstrap with a fresh `bootEpoch` —
+ * documented here so the assumption is on the record rather than
+ * implicit in the type.
  */
 export class SeqAllocator {
   private nextSeq = 0;

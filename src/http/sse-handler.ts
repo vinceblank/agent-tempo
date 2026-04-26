@@ -181,7 +181,17 @@ export async function handleSseRequest(
     } else {
       const ringStart = opts.bus.oldestSeq();
       if (ringStart === null || requested.seq + 1 < ringStart) {
-        // Overflow → gap.
+        // Overflow → gap. `ringStart === null` happens when the bus
+        // has emitted nothing yet — semantically "I have no events
+        // to replay you" rather than the strict overflow case
+        // (client predates the ring's oldest entry). The wire spec
+        // §6 only defines two `gap` reasons (`epoch-mismatch` and
+        // `overflow`), so we use `overflow` for both flavors. The
+        // recovery path is identical: re-fetch `/v1/state` and
+        // reconnect with the snapshot's `lastEventId`. PR #324
+        // review nit — flagged for a possible §6 spec extension
+        // (`reason: 'empty-ring'`) if a future PR-3 consumer can use
+        // the distinction; for now collapsing keeps the wire stable.
         preludeEvents.push(synthEvent(opts.bus, 'gap', {
           from: lastEventIdRaw ?? '',
           to: makeIdToken(opts.bus, opts.bus.nextSeq()),

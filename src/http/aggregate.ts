@@ -335,7 +335,18 @@ export class AggregateRunner {
     });
   }
 
-  /** Begin polling on the configured cadence. */
+  /**
+   * Begin polling on the configured cadence.
+   *
+   * **One-shot by design**: a single `start()` schedules the first
+   * tick immediately and chains subsequent ticks via `setTimeout` —
+   * each tick reschedules the next as it completes. Repeated
+   * `start()` calls are no-ops once the chain is running (and after
+   * `stop()` flips `stopped = true`, future `start()` calls are
+   * also no-ops). Tests that want to drive ticks deterministically
+   * skip `start()` and call `tick()` directly. PR #324 review nit
+   * folded in.
+   */
   start(): void {
     if (this.timer || this.stopped) return;
     const tickAndSchedule = () => {

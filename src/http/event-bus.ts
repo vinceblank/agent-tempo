@@ -275,8 +275,33 @@ export class EnsembleEventBus implements EventBus {
 
   /** Last time `throttled` was emitted — at most once per `THROTTLE_SUPPRESS_MS` window. */
   private lastThrottledAt = 0;
-  /** Last time `chat.compressed` was emitted — at most once per `RATE_LIMIT_WINDOW_MS` window. */
-  private lastChatCompressedAt = 0;
+
+  /**
+   * `chat.compressed` deferred-emission state (PR #324 review followup).
+   *
+   * **Why deferred**: §6 says "excess collapses into a single
+   * `chat.compressed` event" — singular. If we emitted on the first
+   * drop, the `dropped` field would always read `1` even when 50+
+   * messages got dropped in the same burst. Misleading metadata —
+   * eng-4's PR-3 wrapper might surface the count as "N messages
+   * dropped" or use it for retry logic.
+   *
+   * **Resolution**: track every drop in `chatDropCount`; on first
+   * drop schedule a `chat.compressed` emission `RATE_LIMIT_WINDOW_MS`
+   * later. Subsequent drops in the same burst just increment the
+   * counter — no second timer, no second event. When the timer
+   * fires, emit `chat.compressed { dropped: <total>, since: <iso> }`
+   * and reset. A 150-message burst at rate 1/s now yields one
+   * `chat.compressed { dropped: 149 }` event, matching the spec
+   * intent.
+   *
+   * Note: "compression event fired" (timer ran, message went on the
+   * wire) is separate from "drop count accumulated" (drops have
+   * happened but the timer is still pending). Tests differentiate
+   * the two by advancing the fake timer and re-draining.
+   */
+  private chatDropCount = 0;
+  private chatCompressedTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(opts: EventBusOptions) {
     this.scope = opts.scope;
@@ -310,13 +335,18 @@ export class EnsembleEventBus implements EventBus {
     if (type === 'chat.appended') {
       this.trimWindow(this.recentChat, now);
       if (this.recentChat.length >= this.chatRateLimit) {
-        // Emit `chat.compressed` at most once per window.
-        if (now - this.lastChatCompressedAt >= RATE_LIMIT_WINDOW_MS) {
-          this.lastChatCompressedAt = now;
-          this.emitInternal('chat.compressed', {
-            dropped: 1,
-            since: new Date(now - RATE_LIMIT_WINDOW_MS).toISOString(),
-          }, now);
+        this.chatDropCount++;
+        if (!this.chatCompressedTimer) {
+          // Defer emission so a single `chat.compressed` can carry the
+          // total burst count, not just the first drop. See the
+          // `chatDropCount` field comment for the contract.
+          this.chatCompressedTimer = setTimeout(
+            () => this.flushChatCompressed(),
+            RATE_LIMIT_WINDOW_MS,
+          );
+          if (typeof this.chatCompressedTimer.unref === 'function') {
+            this.chatCompressedTimer.unref();
+          }
         }
         return null;
       }
@@ -363,6 +393,33 @@ export class EnsembleEventBus implements EventBus {
     return { eventId };
   }
 
+  /**
+   * Emit the deferred `chat.compressed` event with the accumulated
+   * drop count, then reset. Called by the `setTimeout` scheduled in
+   * the chat-rate-cap path; tests may invoke it directly to bypass
+   * `vi.advanceTimersByTime` plumbing.
+   */
+  private flushChatCompressed(): void {
+    this.chatCompressedTimer = null;
+    if (this.chatDropCount === 0) return;
+    const dropped = this.chatDropCount;
+    this.chatDropCount = 0;
+    const now = this.now();
+    this.emitInternal('chat.compressed', {
+      dropped,
+      since: new Date(now - RATE_LIMIT_WINDOW_MS).toISOString(),
+    }, now);
+  }
+
+  /** Test seam — force a deferred `chat.compressed` to flush synchronously. */
+  _flushChatCompressedForTest(): void {
+    if (this.chatCompressedTimer) {
+      clearTimeout(this.chatCompressedTimer);
+      this.chatCompressedTimer = null;
+    }
+    this.flushChatCompressed();
+  }
+
   replayFrom(afterSeq: number): BusEvent[] {
     return this.ring.sliceFrom(afterSeq + 1).map((b) => b.payload);
   }
@@ -390,6 +447,10 @@ export class EnsembleEventBus implements EventBus {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    if (this.chatCompressedTimer) {
+      clearTimeout(this.chatCompressedTimer);
+      this.chatCompressedTimer = null;
+    }
     for (const sub of [...this.subs]) sub.close();
     this.subs.clear();
   }
