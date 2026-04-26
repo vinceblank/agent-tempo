@@ -169,15 +169,43 @@ export function handleDashboardRequest(req: IncomingMessage, res: ServerResponse
 }
 ```
 
-Wired into `src/http/server.ts` route table **before** the `/v1/*` catch-all:
+Wired into `src/http/server.ts` route table around the existing **bearer-auth gate** — two-position wiring keeps static assets behind auth on non-loopback binds while letting the QR-pair token-exchange endpoint reach the SPA before any bearer is in hand:
+
+1. **Pre-auth exception** — `GET /dashboard/api/pair/:token` is placed **before** the auth gate, parallel to `/v1/health`. The token *is* the auth (single-use, 5-min TTL, opaque base64url) and exists specifically to bootstrap the pair-flow's bearer exchange.
+2. **Post-auth dispatch** — `/dashboard/*` static handler and `POST /dashboard/api/pair` are placed **after** the bearer-auth gate. On non-loopback binds (`0.0.0.0`, LAN, Tailscale) static SPA assets and pair-token minting require the existing bearer, identical to `/v1/*` endpoints.
+
+The dispatch uses the normalized `pathname` already parsed at the top of `handle()` — matching the surrounding code style (existing handler uses `new URL(req.url ?? '/', …).pathname`, NOT `req.url?.startsWith()`):
 
 ```ts
-// src/http/server.ts (existing dispatch — additive)
-if (req.url?.startsWith('/dashboard')) {
-  return handleDashboardRequest(req, res);
+// src/http/server.ts (excerpt — additive insertions around existing auth gate)
+
+// ---- pre-auth exceptions ----
+if (method === 'GET' && pathname === '/v1/health') {
+  return handleHealth(res, ctx);                            // existing
 }
-// ... existing /v1/* routing ...
+// GET /dashboard/api/pair/:token — token IS the auth, parallel to /v1/health.
+const pairConsume = pathname.match(/^\/dashboard\/api\/pair\/([^/]+)$/);
+if (method === 'GET' && pairConsume) {
+  return handlePairConsume(req, res, ctx, decodeURIComponent(pairConsume[1]));
+}
+
+// ---- existing bearer auth + CORS gate (UNCHANGED) ----
+// const reqBearer = bearerRequired(...); if (reqBearer && !valid) → 401
+// CORS allowlist evaluation
+// ... existing logic unchanged ...
+
+// ---- post-auth dispatch ----
+if (method === 'POST' && pathname === '/dashboard/api/pair') {
+  return handlePairCreate(req, res, ctx);                   // requires bearer
+}
+if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) {
+  return handleDashboardRequest(req, res);                  // static + SPA fallback
+}
+
+// ... existing /v1/ensembles, /v1/state, /v1/events, ... routing unchanged ...
 ```
+
+**Security rationale (qa-2):** Placing the static handler *before* the auth gate would let any client on a non-loopback bind (LAN, Tailscale) load the dashboard SPA without authentication. While `/v1/*` writes would still be blocked (the SPA's runtime requests still hit the auth gate), exposing the SPA shell — with embedded ensemble names visible in the bundle's data fetches, telemetry hooks, and SSE-subscription scaffolding — is a partial information leak we explicitly do not want. Treat the static SPA as the same trust boundary as the `/v1/*` API surface. The single carve-out is `GET /dashboard/api/pair/:token` because the token is itself a single-use, short-TTL bearer.
 
 ### 4.2 New endpoints: `POST /dashboard/api/pair` + `GET /dashboard/api/pair/:token`
 
@@ -272,11 +300,15 @@ PR #325 already shipped fetch-based AsyncIterable subscribe. The dashboard impor
 
 ```ts
 // dashboard/src/lib/client.ts
-import { createTempoClient } from 'claude-tempo/client/core';
+import { createTempoClientCore } from 'claude-tempo/client/core';
 import { getBearerFromStorage } from './auth';
 
+// NOTE: We use `createTempoClientCore` (no spawn capability) — the dashboard
+// is a browser, it cannot launch local processes. The full `createTempoClient`
+// is the CLI entry point; the Core variant is exactly the right fit for this
+// browser-mode integration. See ADR 0007 for the Core/WithSpawn split.
 export function buildClient() {
-  return createTempoClient({
+  return createTempoClientCore({
     baseUrl: window.location.origin,
     bearer: getBearerFromStorage(),  // null on loopback (no auth)
   });
@@ -421,6 +453,14 @@ The handoff bundle is **canonical** for design tokens (per HANDOFF-NOTE.md). Map
 | `--dim` | `#7D8090` | `--muted-foreground` |
 | `--muted` | `#4B5064` | (custom — keep as `--muted-2`; shadcn already uses `--muted`) |
 | `--rule` | `#262B3A` | `--border` |
+
+> **Source-vs-shadcn naming swap (`--bg-3` ↔ source `--muted`):** the two source vars look related but map to *different* shadcn slots. The soft tinted surface `--bg-3` (`#20253417`) lands on shadcn's `--muted` token, while the source `--muted` (`#4B5064`, an ink-tone for inactive controls) becomes a custom `--muted-2`. Implementer should add an inline comment to `dashboard/src/styles/tokens.css` documenting this split so future maintainers don't conflate the two. Example header comment near the `--muted` / `--muted-2` declarations:
+> ```css
+> /* IMPORTANT: shadcn's `--muted` corresponds to the SOURCE `--bg-3` (a
+>  * tinted surface). The SOURCE `--muted` is a separate ink tone — kept
+>  * here as `--muted-2`. Do NOT collapse them; they paint different roles
+>  * in the dashboard-handoff design. */
+> ```
 | `--rule-strong` | `#343A4F` | `--input` (matches shadcn semantic) |
 | `--ok` / `--warn` / `--err` / `--info` | `#8CC79A` / `#E9C888` / `#EF5C5C` / `#7FB3D5` | (custom — `--success` / `--warning` / `--destructive` / `--info`) |
 
