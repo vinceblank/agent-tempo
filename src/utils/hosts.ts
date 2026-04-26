@@ -171,13 +171,13 @@ async function fetchHostProfiles(client: Client): Promise<Record<string, HostPro
 // listHosts — the public join helper
 // ────────────────────────────────────────────────────────────────────────
 
-export interface ListHostsOpts {
-  /** Bypass the 3s TTL cache. CLI/TUI refresh handlers pass `true`. */
-  force?: boolean;
-  /** Default `'default'`. */
-  namespace?: string;
-  /** Default `'claude-tempo'`. */
-  taskQueue?: string;
+/**
+ * Dep-injection seam used by tests. Production callers OMIT this entirely —
+ * grouping it under `deps` (vs. mixing into the top level of `ListHostsOpts`)
+ * keeps the user-facing surface (`force`, `namespace`, `taskQueue`) cleanly
+ * separated from internal test wiring. See #283.
+ */
+export interface ListHostsDeps {
   /** `Date.now` replacement for deterministic tests. */
   now?: () => number;
   /**
@@ -195,16 +195,28 @@ export interface ListHostsOpts {
   fetchProfiles?: (client: Client) => Promise<Record<string, HostProfile> | null>;
 }
 
+export interface ListHostsOpts {
+  /** Bypass the 3s TTL cache. CLI/TUI refresh handlers pass `true`. */
+  force?: boolean;
+  /** Default `'default'`. */
+  namespace?: string;
+  /** Default `'claude-tempo'`. */
+  taskQueue?: string;
+  /** Test-only dep-injection seam. Production callers omit. */
+  deps?: ListHostsDeps;
+}
+
 export async function listHosts(client: Client, opts: ListHostsOpts = {}): Promise<HostInfo[]> {
-  const now = opts.now ? opts.now() : Date.now();
+  const deps = opts.deps ?? {};
+  const now = deps.now ? deps.now() : Date.now();
   if (!opts.force && cache && now - cache.timestamp < CACHE_TTL_MS) {
     return cache.hosts;
   }
 
   const namespace = opts.namespace ?? 'default';
   const taskQueue = opts.taskQueue ?? 'claude-tempo';
-  const describe = opts.describePollers ?? describeQueuePollers;
-  const fetchProfiles = opts.fetchProfiles ?? fetchHostProfiles;
+  const describe = deps.describePollers ?? describeQueuePollers;
+  const fetchProfiles = deps.fetchProfiles ?? fetchHostProfiles;
 
   const { TASK_QUEUE_TYPE_WORKFLOW, TASK_QUEUE_TYPE_ACTIVITY } = temporal.api.enums.v1.TaskQueueType;
 
