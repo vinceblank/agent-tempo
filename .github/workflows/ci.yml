@@ -102,6 +102,40 @@ jobs:
       - name: Run Vitest (TUI + client)
         run: npm run test:tui
 
+  build-and-test-windows:
+    # #150 — continuous Windows coverage for the EACCES regression on
+    # `TestWorkflowEnvironment.createLocal()`. Single OS × single Node version
+    # to keep the CI cost addition under ~17% (one extra job vs. the existing
+    # 6 ubuntu × node-version × shard combos). Runs the FULL Mocha suite
+    # (no shard split) — Windows runners are slow but the orphan-reaper +
+    # createLocal retry layer in `test/helpers.ts` should keep it reliable.
+    #
+    # Why a separate job rather than `os: [ubuntu-latest, windows-latest]` in
+    # the existing matrix: doubling 6 → 12 jobs on every PR is steep, and the
+    # Windows-specific failure mode (#150) doesn't need the cross-Node coverage
+    # that Linux already provides.
+    runs-on: windows-latest
+    needs: lint-test-ensemble
+    name: build-and-test-windows (node-22)
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run Mocha (full suite, no sharding)
+        run: npm test
+
   lint-commits:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'

@@ -40,6 +40,38 @@ npm run build
 npm test
 ```
 
+#### Windows: Defender exclusion (recommended)
+
+The Mocha integration suite spawns a per-process Temporal ephemeral server.
+The first run downloads and extracts a ~350 MB binary to
+`%TEMP%\temporal-sdk-typescript-<version>.exe`. **Windows Defender's
+real-time scan can lock that file for 100 ms – 2 s while it scans the
+freshly-extracted executable**, which surfaces as:
+
+```
+Failed to start ephemeral server: Access is denied. (os error 5)
+```
+
+The test suite ships with a retry layer (`createLocalWithRetry` in
+`test/helpers.ts`) that rides out most of these flakes — but the cleaner
+fix is to tell Defender not to scan the binary in the first place.
+
+In an **elevated** PowerShell:
+
+```powershell
+Add-MpPreference -ExclusionPath "$env:TEMP\temporal-sdk-typescript-1.15.0.exe"
+```
+
+Or exclude the broader pattern (any version):
+
+```powershell
+Add-MpPreference -ExclusionPath "$env:TEMP\temporal-sdk-typescript*"
+```
+
+This is **local-dev only**; CI runs on Linux + Windows and doesn't need it
+(GitHub-hosted runners aren't running Defender real-time scans against
+your test binaries). Issue #150 has the full diagnosis.
+
 ## Making Changes
 
 1. **Fork** the repository and create a feature branch from `main`.

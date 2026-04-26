@@ -361,6 +361,137 @@ function findWorkflowBundle(): string {
   );
 }
 
+// ── createLocal retry helper (#150) ─────────────────────────────────────
+//
+// On Windows, `TestWorkflowEnvironment.createLocal()` periodically fails with
+// `Failed to start ephemeral server: Access is denied. (os error 5)`. The
+// underlying causes are intermittent and out-of-process:
+//
+//   1. **Orphan PID from a crashed prior run** — the .exe at
+//      `%TEMP%\temporal-sdk-typescript-<version>.exe` is still memory-mapped,
+//      blocking re-spawn. #312's `mochaGlobalSetup` reap mostly handles this,
+//      but a force-killed-mid-extraction prior run can leave a fresh orphan
+//      between the reap and the create call.
+//   2. **Windows Defender real-time scan** — AV locks the freshly-extracted
+//      .exe for 100 ms – 2 s during scan; spawn during the lock window
+//      throws EACCES.
+//   3. **Stale OS file handle** — Windows holds the .exe open as a memory-
+//      mapped image until the kernel reclaims; another process trying to
+//      overwrite/spawn gets EACCES until that happens.
+//
+// All three are transient. Wrapping the create call with a retry loop +
+// EACCES-triggered orphan reap covers (1) and (2) cheaply, and lets (3)
+// resolve naturally during backoff. Defaults: 3 attempts, exponential
+// backoff (1 s / 2 s / 4 s) plus 0–200 ms jitter. The retry surfaces every
+// failed attempt as a `[test:setupTestEnv]` log line so flakes are
+// observable in CI.
+
+const RETRY_DEFAULT_ATTEMPTS = 3;
+const RETRY_DEFAULT_BASE_MS = 1_000;
+const RETRY_DEFAULT_FACTOR = 2;
+const RETRY_DEFAULT_JITTER_MS = 200;
+
+/**
+ * Errors that match this regex trigger an orphan reap before the retry.
+ * Specifically the Rust core bridge's "Failed to start ephemeral server:
+ * Access is denied. (os error 5)" — but tolerant to phrasing drift across
+ * `@temporalio/testing` versions.
+ */
+const ACCESS_DENIED_RE = /access is denied|os error 5\b/i;
+
+export interface CreateLocalRetryOpts {
+  attempts?: number;
+  baseDelayMs?: number;
+  factor?: number;
+  jitterMs?: number;
+  /** Dep injection — production passes `TestWorkflowEnvironment.createLocal`. */
+  create?: (
+    opts?: Parameters<typeof TestWorkflowEnvironment.createLocal>[0],
+  ) => Promise<TestWorkflowEnvironment>;
+  /** Dep injection — production passes `reapOrphanTemporalServers`. */
+  reapOrphans?: () => Promise<void>;
+  /** Dep injection — production uses `setTimeout`. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Dep injection — production uses `console.error`. */
+  log?: (msg: string) => void;
+  /** Deterministic jitter for tests; defaults to `Math.random`. */
+  random?: () => number;
+}
+
+function isAccessDeniedError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return ACCESS_DENIED_RE.test(msg);
+}
+
+/**
+ * Retry-wrapped `TestWorkflowEnvironment.createLocal`. Exported for unit
+ * testing (`test/setup-retry.test.ts`). Production callers use
+ * {@link setupTestEnv}.
+ *
+ * Resolves with the env on first success. Rejects with the last attempt's
+ * error if all attempts fail.
+ */
+export async function createLocalWithRetry(
+  envOpts: Parameters<typeof TestWorkflowEnvironment.createLocal>[0],
+  retryOpts: CreateLocalRetryOpts = {},
+): Promise<TestWorkflowEnvironment> {
+  const attempts = retryOpts.attempts ?? RETRY_DEFAULT_ATTEMPTS;
+  const baseMs = retryOpts.baseDelayMs ?? RETRY_DEFAULT_BASE_MS;
+  const factor = retryOpts.factor ?? RETRY_DEFAULT_FACTOR;
+  const jitterMs = retryOpts.jitterMs ?? RETRY_DEFAULT_JITTER_MS;
+  const create = retryOpts.create
+    ?? ((o) => TestWorkflowEnvironment.createLocal(o));
+  const reap = retryOpts.reapOrphans ?? reapOrphanTemporalServers;
+  const sleep = retryOpts.sleep
+    ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const log = retryOpts.log ?? ((m: string) => console.error(m));
+  const random = retryOpts.random ?? Math.random;
+
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const env = await create(envOpts);
+      if (i > 0) {
+        log(`[test:setupTestEnv] succeeded on attempt ${i + 1}/${attempts}`);
+      }
+      return env;
+    } catch (err) {
+      lastErr = err;
+      const isLast = i === attempts - 1;
+      const reason = err instanceof Error ? err.message : String(err);
+      const isEACCES = isAccessDeniedError(err);
+      log(
+        `[test:setupTestEnv] attempt ${i + 1}/${attempts} failed: ${reason}` +
+        (isLast ? '' : isEACCES ? '; reaping orphans + retrying' : '; retrying'),
+      );
+      if (isLast) break;
+
+      // EACCES — orphan PID is the most likely cause. Reap before sleeping
+      // so the next attempt sees a clean process table. Non-fatal: a reap
+      // failure shouldn't block the retry path.
+      if (isEACCES) {
+        try {
+          await reap();
+        } catch (reapErr) {
+          log(
+            `[test:setupTestEnv] reap during retry failed (non-fatal): ` +
+            (reapErr instanceof Error ? reapErr.message : String(reapErr)),
+          );
+        }
+      }
+
+      const backoff = baseMs * Math.pow(factor, i);
+      const jitter = jitterMs > 0 ? Math.floor(random() * jitterMs) : 0;
+      await sleep(backoff + jitter);
+    }
+  }
+  throw lastErr;
+}
+
+/** Test-only — exposed for the unit test's exhaustive failure-path coverage. */
+export const _ACCESS_DENIED_RE = ACCESS_DENIED_RE;
+export const _isAccessDeniedError = isAccessDeniedError;
+
 /**
  * Initialize the test environment. In shared mode (default), the first call
  * creates a process-wide `TestWorkflowEnvironment` that all subsequent test
@@ -370,6 +501,10 @@ function findWorkflowBundle(): string {
  *
  * Call from each test file's top-level `before()` hook — no change to the
  * existing calling convention.
+ *
+ * **#150 retry layer**: the underlying `createLocal` call is wrapped in
+ * `createLocalWithRetry` to ride out transient Windows EACCES from
+ * Defender scans + orphan PID locks. See {@link createLocalWithRetry}.
  */
 export async function setupTestEnv(): Promise<void> {
   if (ISOLATED_MODE && testEnv) {
@@ -378,7 +513,7 @@ export async function setupTestEnv(): Promise<void> {
     workflowBundle = undefined;
   }
   if (!testEnv) {
-    testEnv = await TestWorkflowEnvironment.createLocal({
+    testEnv = await createLocalWithRetry({
       server: {
         // Register custom search attributes at server startup.
         // `ClaudeTempoStatus` removed in v0.26 (#175 / #178).
