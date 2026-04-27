@@ -1,0 +1,33 @@
+name: two-player-conversation
+description: |
+  Exercises cross-player coordination through the mock adapter. When alice
+  receives a "discuss <topic>" cue, she fires a follow-up cue at "bob"
+  asking for input, then reports an update to the conductor. The dashboard
+  should render the `attached → processing → attached` transition for
+  alice, the inbound cue on bob's roster, and the outbox audit on the
+  conductor's report stream — all without a real LLM call.
+
+  Pair this scenario with another player named "bob" (any mode — `echo`
+  works fine). Drive with: `claude-tempo --dev cue alice "discuss caching"`.
+
+defaultDelayMs: 600
+
+rules:
+  - when: "discuss"
+    do:
+      - cue:
+          to: "bob"
+          message: "alice asks: do we have an opinion on $message?"
+      - report:
+          type: "update"
+          text: "delegated discussion of '$message' to bob"
+      - delayMs: 1500
+      - report:
+          type: "result"
+          text: "discussion thread launched; bob will respond when ready"
+
+  - when: "*"
+    do:
+      - cue:
+          to: "@sender"
+          message: "[no rule matched] try: 'discuss <topic>'"

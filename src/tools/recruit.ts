@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle } from '@temporalio/client';
-import { Config, conductorWorkflowId } from '../config';
+import { Config, conductorWorkflowId, isDevMode } from '../config';
 import { AgentType } from '../types';
 import { resolveSession } from './resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
@@ -55,8 +55,8 @@ export function registerRecruitTool(
         .describe('Whether this session is a conductor (default: false)'),
       initialMessage: z.string().max(MESSAGE_MAX).optional()
         .describe('Optional task or message for the new session (sent after it sets its name)'),
-      agent: z.enum(['claude', 'copilot']).optional()
-        .describe(`Which agent to use (default: "${ownAgentType}", same as this session)`),
+      agent: z.enum(['claude', 'copilot', 'mock']).optional()
+        .describe(`Which agent to use (default: "${ownAgentType}", same as this session). "mock" requires dev mode (--dev).`),
       type: z.string().optional()
         .describe('Agent type name — references a Claude Code agent definition (e.g., "tempo-soloist")'),
       systemPrompt: z.string().optional()
@@ -65,6 +65,10 @@ export function registerRecruitTool(
         .describe('Target hostname for cross-machine recruiting. Omit for local spawn.'),
       force: z.boolean().optional()
         .describe('Force-terminate any existing session with this name before recruiting. Use when a previous session is orphaned or stuck.'),
+      mockMode: z.enum(['echo', 'scripted']).optional()
+        .describe('Dev-mode only (agent: "mock"). Mock adapter mode. Default: "echo".'),
+      mockScenario: z.string().optional()
+        .describe('Dev-mode only (agent: "mock", mockMode: "scripted"). Bare scenario name (resolved against shipped scenarios/) or absolute path to a scenario YAML.'),
     },
     async (args) => {
       const { workDir, name, initialMessage } = args as {
@@ -77,6 +81,8 @@ export function registerRecruitTool(
         systemPrompt?: string;
         host?: string;
         force?: boolean;
+        mockMode?: 'echo' | 'scripted';
+        mockScenario?: string;
       };
       const isConductor = (args as any).conductor === true;
       const agent: AgentType = (args as any).agent || ownAgentType;
@@ -84,6 +90,30 @@ export function registerRecruitTool(
       const systemPrompt = (args as any).systemPrompt as string | undefined;
       const host = (args as any).host as string | undefined;
       const force = (args as any).force === true;
+      const mockMode = (args as any).mockMode as 'echo' | 'scripted' | undefined;
+      const mockScenario = (args as any).mockScenario as string | undefined;
+
+      // ADR 0014 §7 gate 3 — recruit-time rejection of `agent: 'mock'`
+      // outside dev mode. Defense-in-depth: even if a hand-edited install
+      // had `dist/adapters/mock/` present (gate 1 bypassed) AND somehow
+      // got the registry to register the descriptor (gate 2 bypassed),
+      // this rejects the request with a clear, actionable error.
+      if (agent === 'mock' && !isDevMode()) {
+        return fail(
+          `agent: "mock" is only available in dev mode. Restart claude-tempo with --dev (or set CLAUDE_TEMPO_DEV_MODE=1) to enable.`,
+        );
+      }
+      // mockMode / mockScenario are only meaningful with the mock adapter —
+      // reject silently-ignored params so users learn the right flag shape.
+      if (mockMode != null && agent !== 'mock') {
+        return fail(`mockMode is only valid when agent: "mock" (got agent: "${agent}").`);
+      }
+      if (mockScenario != null && agent !== 'mock') {
+        return fail(`mockScenario is only valid when agent: "mock" (got agent: "${agent}").`);
+      }
+      if (agent === 'mock' && mockMode === 'scripted' && !mockScenario) {
+        return fail(`mockMode: "scripted" requires mockScenario (a bare scenario name or path to a YAML file).`);
+      }
 
       // Resolve agent type if provided
       let agentDefinition: string | undefined;
@@ -195,6 +225,8 @@ export function registerRecruitTool(
           nativeResolvable,
           allowedTools,
           claudeBin: config.claudeBin,
+          ...(agent === 'mock' ? { mockMode: mockMode ?? 'echo' } : {}),
+          ...(agent === 'mock' && mockScenario ? { mockScenario } : {}),
         } as OutboxEntryInput;
         const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 

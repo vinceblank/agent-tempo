@@ -34,10 +34,11 @@ src/
 │   └── upgrade-command.ts # upgrade subcommand — crash-proof; dynamic-imports Temporal only for active-session warning
 ├── adapters/
 │   ├── README.md      # Adapter contract documentation
-│   ├── index.ts       # Adapter registry bootstrap + barrel exports
+│   ├── index.ts       # Adapter registry bootstrap + barrel exports (mock registered iff isDevMode())
 │   ├── base.ts        # BaseAttachment + SdkAttachment base classes (lifecycle skeleton)
 │   ├── claude-code/   # InteractiveAttachment — Claude Code CLI adapter
 │   ├── copilot/       # CopilotSdkAttachment — Copilot bridge adapter
+│   ├── mock/          # MockAttachment — dev-mode-only SDK adapter (ADR 0014 PR-2). prepack strips dist/adapters/mock from npm tarball.
 │   └── sdk/           # SDK-style adapter base (used by Copilot bridge)
 ├── client/
 │   ├── interface.ts   # TempoClient TypeScript interface and related types

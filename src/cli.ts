@@ -509,6 +509,20 @@ async function main() {
       });
       break;
 
+    case 'scenarios': {
+      // ADR 0014 PR-2 — mock-adapter scenario library discovery surface.
+      // Available regardless of `--dev` so users investigating a published
+      // claude-tempo can see the shipped library; but the actual recruit
+      // gate (`agent: 'mock'`) still rejects without dev mode.
+      const { scenariosCommand } = await import('./cli/scenarios-command');
+      await scenariosCommand({
+        subcommand: args.positional[1],
+        name: args.positional[2],
+        json: args.json,
+      });
+      break;
+    }
+
     case 'init':
       await init({ dir: args.dir, project: args.project });
       break;

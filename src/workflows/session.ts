@@ -1448,6 +1448,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               sessionId: recruitResult.sessionId,
               allowedTools: entry.allowedTools,
               claudeBin: entry.claudeBin,
+              mockMode: entry.mockMode,
+              mockScenario: entry.mockScenario,
             });
             break;
           }

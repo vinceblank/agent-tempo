@@ -86,6 +86,7 @@ Source: `src/cli/help-text.ts` Commands section and `src/cli.ts` switch statemen
 | `agent-types <sub>` | Manage player type definitions (`list` / `show` / `init`) |
 | `daemon <sub>` | Manage the worker daemon (`start` / `stop` / `status` / `logs` / `stats`) |
 | `dashboard` | Open the web dashboard in the default browser (`--no-open` / `--pair` / `--json`) |
+| `scenarios <sub>` | Discover mock-adapter scenarios shipped at `<package>/scenarios/` (`list` / `show <name>`). Available outside `--dev`; the recruit gate (`agent: 'mock'`) still requires it. |
 | `upgrade [version]` | Upgrade claude-tempo to latest or a specific version |
 | `config` | Configure Temporal connection settings (interactive or `set` / `show`) |
 | `init` | Register MCP server globally (`--project` for per-directory) |
@@ -93,7 +94,7 @@ Source: `src/cli/help-text.ts` Commands section and `src/cli.ts` switch statemen
 | `version` | Print the installed version |
 | `help` | Show help message |
 
-**Count:** 24 commands (including `down --destroy` as a distinct flag variant)  
+**Count:** 25 commands (including `down --destroy` as a distinct flag variant)  
 **Full reference:** [docs/cli.md](cli.md)  
 **Removed (v0.27 / #288):** `stop`, `restart`, `detach`, `migrate`, `conduct`, `start`, `recruit`, `disband`, `pause`, `resume` — see [docs/cli.md](cli.md) for migration hints.
 

@@ -228,6 +228,13 @@ export interface SpawnProcessInput {
   attachmentRunId?: string;
   /** Resolved adapter descriptor id (e.g. 'claude-code', 'copilot'); mirrors SessionMetadata.adapterId. */
   adapterId?: string;
+  /**
+   * Mock-adapter configuration (ADR 0014 PR-2). Only present when `agent === 'mock'`.
+   * Forwarded into the spawned subprocess as `CLAUDE_TEMPO_MOCK_MODE` /
+   * `CLAUDE_TEMPO_MOCK_SCENARIO` env vars.
+   */
+  mockMode?: 'echo' | 'scripted';
+  mockScenario?: string;
 }
 
 // ── Activity result type ──
@@ -425,11 +432,33 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
-      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId } = input;
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId, mockMode, mockScenario } = input;
       // Read secrets from the worker's config closure — never from workflow state
       const { temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = config;
       try {
-        if (agent === 'copilot') {
+        if (agent === 'mock') {
+          // ADR 0014 PR-2 — mock adapter spawns headless. No terminal,
+          // no Claude binary, no MCP server child. Talks to Temporal
+          // directly and posts every action through the standard outbox.
+          const { spawnMockAdapter } = await import('../spawn');
+          const { pid } = spawnMockAdapter({
+            name: targetName,
+            ensemble,
+            temporalAddress,
+            temporalNamespace,
+            temporalApiKey,
+            temporalTlsCertPath,
+            temporalTlsKeyPath,
+            isConductor,
+            workDir,
+            mockMode,
+            mockScenario,
+            attachmentId,
+            attachmentRunId,
+            adapterId,
+          });
+          log(`Spawned mock adapter (pid ${pid}) in ${workDir} as "${targetName}" (mode=${mockMode ?? 'echo'}${attachmentId ? `, attachmentId=${attachmentId}` : ''})`);
+        } else if (agent === 'copilot') {
           if (allowedTools && allowedTools.length > 0) {
             log(`Warning: allowedTools [${allowedTools.join(', ')}] specified for copilot agent "${targetName}" — copilot bridge does not support --allowedTools, skipping`);
           }
@@ -683,9 +712,16 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
 
         // Step 3 — metadata + adapter routing.
         const metadata = await handle.query(getMetadataQuery) as SessionMetadata;
-        const agentType = (metadata.agentType as string) === 'copilot' ? 'copilot' : 'claude';
-        const adapterId = metadata.adapterId || (agentType === 'copilot' ? 'copilot' : 'claude-code');
-        const adapterClass: AdapterClass = agentType === 'copilot' ? 'sdk' : 'interactive';
+        // ADR 0014 PR-2 — mock adapter restart path. `mock` is dev-mode only;
+        // a metadata.agentType='mock' here implies the dev daemon previously
+        // spawned this player and is now restarting it (encore / migrate).
+        // Prod restart never lands here for `mock` because gate 3 in
+        // src/tools/recruit.ts rejected the original recruit.
+        const rawAgent = metadata.agentType as string | undefined;
+        const agentType: AgentType = rawAgent === 'copilot' ? 'copilot' : rawAgent === 'mock' ? 'mock' : 'claude';
+        const adapterId = metadata.adapterId
+          || (agentType === 'copilot' ? 'copilot' : agentType === 'mock' ? 'mock' : 'claude-code');
+        const adapterClass: AdapterClass = agentType === 'claude' ? 'interactive' : 'sdk';
         const targetHost = host ?? info.preferredHost ?? metadata.hostname;
 
         // Step 4 — claim fresh attachment.

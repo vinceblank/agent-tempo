@@ -1,0 +1,15 @@
+name: echo-roundtrip
+description: |
+  Smallest possible scripted scenario — every inbound message comes back
+  as `[ECHO] <text>` to the sender. Equivalent to `mockMode: echo` but
+  expressed declaratively so the validation harness can pin it as a
+  baseline regression check.
+
+defaultDelayMs: 250
+
+rules:
+  - when: "*"
+    do:
+      - cue:
+          to: "@sender"
+          message: "[ECHO] $message"
