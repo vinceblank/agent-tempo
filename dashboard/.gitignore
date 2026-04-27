@@ -1,0 +1,10 @@
+node_modules/
+# `dist/` holds Vite build output. We gitignore everything in it but
+# keep the directory itself via `.gitkeep` so the tarball's
+# `files[]` entry has somewhere to ship from on a fresh checkout
+# before `npm run build:dashboard` populates real artifacts.
+dist/*
+!dist/.gitkeep
+.vite/
+*.log
+*.tsbuildinfo

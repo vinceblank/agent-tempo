@@ -34,6 +34,65 @@ jobs:
       - name: Check surface registry against source
         run: node scripts/check-surface-drift.js
 
+  dashboard-build:
+    # PR-2 of #340 — Vite + Tailwind 4 + AppShell scaffold.
+    # Independent install (`dashboard/` has its own package-lock.json) so the
+    # main TypeScript build doesn't pay the dashboard's npm-ci cost. Cache key
+    # on dashboard/package-lock.json avoids re-fetching node_modules on every
+    # PR that doesn't touch the dashboard.
+    runs-on: ubuntu-latest
+    needs: lint-test-ensemble
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Cache dashboard/node_modules
+        uses: actions/cache@v4
+        with:
+          path: dashboard/node_modules
+          key: dashboard-node-modules-${{ hashFiles('dashboard/package-lock.json') }}
+          restore-keys: |
+            dashboard-node-modules-
+
+      - name: Lockstep version check (root === dashboard)
+        # ADR 0013: dashboard pins in lockstep with claude-tempo. CI enforces
+        # `dashboard/package.json#version` matches root so a release never
+        # ships a stale dashboard against a new daemon.
+        run: |
+          ROOT_VER=$(node -p "require('./package.json').version")
+          DASH_VER=$(node -p "require('./dashboard/package.json').version")
+          if [ "$ROOT_VER" != "$DASH_VER" ]; then
+            echo "::error::Version drift: root=$ROOT_VER dashboard=$DASH_VER"
+            echo "Bump dashboard/package.json#version to match root."
+            exit 1
+          fi
+          echo "Lockstep OK: $ROOT_VER"
+
+      - name: Install dashboard dependencies
+        run: npm --prefix dashboard install
+
+      - name: Lint dashboard
+        run: npm --prefix dashboard run lint
+
+      - name: Test dashboard (Vitest)
+        run: npm --prefix dashboard run test
+
+      - name: Build dashboard
+        run: npm --prefix dashboard run build
+
+      - name: Install root size-limit
+        # Run size-limit at the repo root against `dashboard/dist/`.
+        # `npm ci` would also install the rest of the root devDeps; keep it
+        # narrow with `npm install size-limit` to stay snappy.
+        run: npm install --no-save size-limit
+
+      - name: Bundle budget (size-limit)
+        run: npx size-limit
+
   build-and-test:
     # Mocha integration suite, sharded 2-way per docs/design/191-test-parallelization.md §2
     # (#231). Rule: shard-1 pins the top-N heaviest files by CI wall-clock

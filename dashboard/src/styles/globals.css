@@ -1,0 +1,63 @@
+@import 'tailwindcss';
+@import './tokens.css';
+
+/* ─── Base reset + body styles ────────────────────────────────
+ * Ported from `dashboard-handoff/styles.css`. Density variables
+ * thread through `body` font-size + line-height so a single
+ * `dataset.density` flip on `<html>` cascades across the app
+ * without React re-renders.
+ * ───────────────────────────────────────────────────────────── */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--ff-ui);
+  font-size: var(--density-fs);
+  line-height: var(--density-line);
+  font-feature-settings: 'ss01';
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100%;
+}
+
+/* Utility classes ported verbatim from the handoff bundle. The
+ * dashboard renders zero shadcn primitives in PR-2 — these
+ * `.dim` / `.mono` / `.display` utilities are what AppShell uses
+ * for the brandmark + sidebar typography. */
+
+.mono {
+  font-family: var(--ff-mono);
+  font-variant-ligatures: none;
+  font-feature-settings: 'zero';
+}
+
+.display {
+  font-family: var(--ff-display);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.dim {
+  color: var(--dim);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.accent {
+  color: var(--accent);
+}

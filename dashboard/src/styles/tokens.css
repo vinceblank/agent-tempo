@@ -1,0 +1,161 @@
+/* ─────────────────────────────────────────────────────────────
+   claude-tempo · Maestro Dashboard — design tokens
+   Ported from `docs/design/dashboard-handoff/project/styles.css`.
+
+   Source canonicality: HANDOFF-NOTE.md names that bundle as the
+   source of truth for design tokens. Color values are copied
+   verbatim. The §8.1 `--bg-3` ↔ `--muted` swap noted in the
+   design doc is captured inline below.
+
+   Theme is selected by `documentElement.dataset.theme` (`'dark'` |
+   `'light'`); density by `documentElement.dataset.density`
+   (`'4'`-`'9'`, default `'6'`). Both attributes are set by the
+   Zustand prefs store at `src/store/prefs.ts`.
+   ───────────────────────────────────────────────────────────── */
+
+:root,
+[data-theme='dark'] {
+  --accent: #e07a5f;
+  --accent-soft: oklch(0.72 0.12 28 / 0.18);
+  --accent-ink: oklch(0.92 0.05 28);
+
+  --bg: #0f1117;
+  --bg-1: #141722;       /* raised surface */
+  --bg-2: #1a1e2b;       /* panel */
+
+  /*
+   * ── §8.1 `--bg-3` / `--muted` swap ──
+   *
+   * The handoff bundle defines two visually-related tokens that map to
+   * DIFFERENT slots in the (forthcoming) shadcn theme:
+   *
+   *   - `--bg-3` (here, `#20253417`) is a soft TINTED SURFACE — it
+   *     becomes shadcn's `--muted` when shadcn lands in PR-4.
+   *   - `--muted` (here, `#4b5064`) is an INK TONE for inactive
+   *     controls — it becomes a custom `--muted-2`.
+   *
+   * Do NOT collapse them; they paint different roles. This file keeps
+   * BOTH variables under their original handoff names so the design
+   * stays diff-faithful with the canonical source. The shadcn-side
+   * remap happens in the shadcn theme stub when PR-4 imports it.
+   */
+  --bg-3: #20253417;     /* tinted inset; → shadcn `--muted` later */
+  --bg-chat-out: #1b2030;
+
+  --text: #f5eee6;       /* warm cream */
+  --text-2: #c5c1b9;
+  --dim: #7d8090;
+  --muted: #4b5064;      /* ink tone for inactive controls — NOT a surface (see §8.1) */
+  --muted-2: var(--muted); /* alias reserved for future shadcn remap; same value today */
+  --rule: #262b3a;
+  --rule-strong: #343a4f;
+
+  --ok: #8cc79a;
+  --warn: #e9c888;
+  --err: #ef5c5c;
+  --info: #7fb3d5;
+
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.02) inset, 0 1px 0 rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 10px 30px -16px rgba(0, 0, 0, 0.6);
+
+  /*
+   * Typography — `Inter` + `Fraunces` + `JetBrains Mono`. The handoff
+   * `styles.css` declares `Instrument Sans/Serif` as the first family,
+   * but the rendered design used Inter/Fraunces fallbacks. Per the
+   * conductor's PR-2 brief we ship Inter/Fraunces directly so the
+   * built dashboard matches what was actually reviewed.
+   */
+  --ff-ui: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --ff-display: 'Fraunces', 'Times New Roman', serif;
+  --ff-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+[data-theme='light'] {
+  --accent: #c05a3d;
+  --accent-soft: oklch(0.72 0.12 28 / 0.14);
+  --accent-ink: oklch(0.38 0.12 28);
+
+  --bg: #f7f3ec;
+  --bg-1: #fffcf4;
+  --bg-2: #fbf6eb;
+  --bg-3: #efe9db;
+  --bg-chat-out: #f1eadc;
+
+  --text: #1b2838;
+  --text-2: #3d4758;
+  --dim: #6b7280;
+  --muted: #98a0ae;
+  --muted-2: var(--muted);
+  --rule: #e2d9c7;
+  --rule-strong: #c8bda7;
+
+  --ok: #4a8a5c;
+  --warn: #b5862a;
+  --err: #b9493f;
+  --info: #346389;
+}
+
+/* ─── Density variables ───────────────────────────────────────
+ * Six density steps (`data-density="4"` through `"9"`, default `"6"`).
+ * The Zustand prefs store sets `documentElement.dataset.density`;
+ * the rest is handled by these attribute selectors so React doesn't
+ * re-render every component on a density change.
+ * ───────────────────────────────────────────────────────────── */
+
+:root {
+  --density-pad: 14px;
+  --density-pad-y: 10px;
+  --density-gap: 14px;
+  --density-fs: 13px;
+  --density-fs-sm: 11.5px;
+  --density-line: 1.5;
+}
+
+html[data-density='4'] {
+  --density-pad: 22px;
+  --density-pad-y: 16px;
+  --density-gap: 22px;
+  --density-fs: 15px;
+  --density-fs-sm: 13px;
+  --density-line: 1.7;
+}
+html[data-density='5'] {
+  --density-pad: 18px;
+  --density-pad-y: 13px;
+  --density-gap: 18px;
+  --density-fs: 14px;
+  --density-fs-sm: 12px;
+  --density-line: 1.6;
+}
+html[data-density='6'] {
+  --density-pad: 14px;
+  --density-pad-y: 10px;
+  --density-gap: 14px;
+  --density-fs: 13px;
+  --density-fs-sm: 11.5px;
+  --density-line: 1.5;
+}
+html[data-density='7'] {
+  --density-pad: 11px;
+  --density-pad-y: 8px;
+  --density-gap: 11px;
+  --density-fs: 12.5px;
+  --density-fs-sm: 11px;
+  --density-line: 1.45;
+}
+html[data-density='8'] {
+  --density-pad: 9px;
+  --density-pad-y: 6px;
+  --density-gap: 9px;
+  --density-fs: 12px;
+  --density-fs-sm: 10.5px;
+  --density-line: 1.4;
+}
+html[data-density='9'] {
+  --density-pad: 7px;
+  --density-pad-y: 5px;
+  --density-gap: 7px;
+  --density-fs: 11.5px;
+  --density-fs-sm: 10px;
+  --density-line: 1.35;
+}
