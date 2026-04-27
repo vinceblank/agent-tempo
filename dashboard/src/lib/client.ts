@@ -29,10 +29,11 @@ import type {
   SubscribeOptions,
 } from 'claude-tempo/http/event-types';
 import type { EnsembleSummary } from 'claude-tempo/client/interface';
+import type { HostInfo } from 'claude-tempo/types';
 import { logEvent } from './log';
 import { getBearerToken } from './auth';
 
-export type { EnsembleStateV1, TempoEvent, EnsembleSummary };
+export type { EnsembleStateV1, TempoEvent, EnsembleSummary, HostInfo };
 
 /**
  * Surface the dashboard depends on. Strict subset of the daemon's HTTP
@@ -44,6 +45,8 @@ export interface DashboardTempoClient {
   listEnsembles(): Promise<EnsembleSummary[]>;
   /** GET `/v1/state/:ensemble` — full ensemble snapshot. */
   state(ensemble: string): Promise<EnsembleStateV1>;
+  /** GET `/v1/hosts` — host profiles + freshness/instance info. */
+  hosts(): Promise<HostInfo[]>;
   /**
    * Subscribe to per-ensemble SSE events. Yields `TempoEvent`s in order;
    * caller iterates with `for await`. Pass `opts.signal` to abort.
@@ -94,6 +97,9 @@ export function createDashboardClient(opts: DashboardClientOpts = {}): Dashboard
     async state(ensemble: string) {
       const path = `/v1/state/${encodeURIComponent(ensemble)}`;
       return getJson<EnsembleStateV1>(path);
+    },
+    async hosts() {
+      return getJson<HostInfo[]>('/v1/hosts');
     },
     subscribe(ensemble, subOpts = {}) {
       return makeSseIterable(baseUrl, ensemble, subOpts, authHeaders());
