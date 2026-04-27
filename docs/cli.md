@@ -27,6 +27,7 @@ claude-tempo <command> [options]
 | `ensemble <sub>` | Manage saved lineups (`save`, `list`, `show`) |
 | `agent-types <sub>` | Manage player types (`list`, `show <name>`, `init`) |
 | `daemon <sub>` | Manage the worker daemon (`start [--force]`, `stop`, `status`, `logs`, `stats`) |
+| `dashboard` | Open the web dashboard in the default browser. Flags: `--port`, `--bind`, `--no-open` (print URL, skip launch), `--pair` (mint a one-time QR-code pairing token for cross-device access), `--json` (machine-parseable output). Requires the daemon to be running. (#340) |
 | `upgrade [version]` | Graceful self-update — stops daemon, installs new version, restarts daemon |
 | `version` | Print the installed version |
 | `help` | Show usage info |

@@ -24,6 +24,7 @@ src/
 │   ├── config-command.ts # config subcommand (interactive + set/show) — crash-proof for show/set
 │   ├── daemon.ts      # Daemon management utilities (start, stop, status, heartbeat, isDaemonRunning)
 │   ├── daemon-command.ts # daemon subcommand handler — crash-proof, no Temporal deps
+│   ├── dashboard-command.ts # dashboard subcommand — crash-proof; opens the web dashboard, optionally minting a QR-code pairing token (#340)
 │   ├── help-text.ts   # help output — crash-proof, no Temporal deps
 │   ├── mcp.ts         # MCP server registration helpers (init, global vs project)
 │   ├── output.ts      # Shared CLI output formatting helpers
