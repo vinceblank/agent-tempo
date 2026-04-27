@@ -39,6 +39,12 @@ export default [
         getComputedStyle: 'readonly',
         HTMLElement: 'readonly',
         Element: 'readonly',
+        // Node globals — legitimately used by Vitest test files that
+        // need to read fixtures off disk (`oklch-tokens.test.tsx`
+        // injects `tokens.css` via `process.cwd()`). Source files
+        // don't reference these, but listing them globally keeps the
+        // config simple.
+        process: 'readonly',
         // Vitest globals — test files use `describe`, `it`, `expect`, etc.
         describe: 'readonly',
         it: 'readonly',
