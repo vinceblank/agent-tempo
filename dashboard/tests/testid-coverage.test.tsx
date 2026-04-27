@@ -1,0 +1,59 @@
+/**
+ * testid-coverage — architect's risk #12.
+ *
+ * Render the full AppShell + placeholder content, then crawl the DOM
+ * for every interactive element. Each must carry either:
+ *   - `data-testid="..."` (the stable test surface), or
+ *   - `data-testid-exempt="<reason>"` (explicit opt-out — forces the
+ *     author to think before omitting).
+ *
+ * The crawl targets `button`, `[role="button"]`, `input`, `select`,
+ * `textarea`. Decorative SVGs/spans are not interactive and don't
+ * need a testid.
+ *
+ * If this test fails, either tag the offending element or add an
+ * exempt attribute with a one-word reason (`"decorative-glyph"`,
+ * `"sr-only"`, etc.).
+ */
+import { describe, it, expect } from 'vitest';
+import { render } from '@testing-library/react';
+import { App } from '../src/App';
+
+const INTERACTIVE_SELECTOR = [
+  'button',
+  '[role="button"]',
+  'input',
+  'select',
+  'textarea',
+].join(', ');
+
+describe('testid coverage (architect risk #12)', () => {
+  it('every interactive element has data-testid or data-testid-exempt', () => {
+    const { container } = render(<App />);
+    const interactive = Array.from(container.querySelectorAll<HTMLElement>(INTERACTIVE_SELECTOR));
+    expect(interactive.length).toBeGreaterThan(0); // Sanity: AppShell isn't empty.
+    const missing = interactive.filter(
+      (el) => !el.hasAttribute('data-testid') && !el.hasAttribute('data-testid-exempt'),
+    );
+    if (missing.length > 0) {
+      const summary = missing
+        .map((el) => `<${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}>`)
+        .join(', ');
+      throw new Error(
+        `Found ${missing.length} interactive element(s) without data-testid: ${summary}. ` +
+          `Either tag them (see dashboard/README.md § Testability) or add data-testid-exempt="<reason>".`,
+      );
+    }
+    expect(missing).toHaveLength(0);
+  });
+
+  it('first-class shell elements expose stable testids', () => {
+    const { getByTestId } = render(<App />);
+    expect(getByTestId('app-shell')).toBeInTheDocument();
+    expect(getByTestId('sidebar')).toBeInTheDocument();
+    expect(getByTestId('page-header')).toBeInTheDocument();
+    expect(getByTestId('brandmark')).toBeInTheDocument();
+    expect(getByTestId('settings-theme-toggle')).toBeInTheDocument();
+    expect(getByTestId('settings-density-slider')).toBeInTheDocument();
+  });
+});

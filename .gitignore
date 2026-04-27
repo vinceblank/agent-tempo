@@ -23,6 +23,8 @@ dashboard/dist/*
 !scripts/lint-skip-reasons.js
 !scripts/gh-app-token.js
 !scripts/check-surface-drift.js
+# Dashboard ESLint flat config — JS module, intentionally committed.
+!dashboard/eslint.config.js
 temporal-data.db
 
 # Debug artifacts from `temporal workflow show > foo-history.json` (#207).

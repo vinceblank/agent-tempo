@@ -1,0 +1,12 @@
+[
+  {
+    "name": "dashboard JS bundle (gzip-on-wire)",
+    "path": "dashboard/dist/assets/*.js",
+    "limit": "1 MB"
+  },
+  {
+    "name": "dashboard CSS bundle",
+    "path": "dashboard/dist/assets/*.css",
+    "limit": "100 KB"
+  }
+]

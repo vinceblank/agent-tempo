@@ -51,8 +51,10 @@
     "claude-tempo-server": "dist/server.js"
   },
   "scripts": {
-    "build": "tsc && npm run build:scripts && node -e \"const{bundleWorkflowCode}=require('@temporalio/worker');const path=require('path');const fs=require('fs');bundleWorkflowCode({workflowsPath:path.resolve('dist/workflows/index.js')}).then(b=>{fs.writeFileSync('workflow-bundle.js',b.code);console.log('Workflow bundle created')})\"",
+    "build": "tsc && npm run build:scripts && npm run build:dashboard && node -e \"const{bundleWorkflowCode}=require('@temporalio/worker');const path=require('path');const fs=require('fs');bundleWorkflowCode({workflowsPath:path.resolve('dist/workflows/index.js')}).then(b=>{fs.writeFileSync('workflow-bundle.js',b.code);console.log('Workflow bundle created')})\"",
     "build:scripts": "tsc -p scripts/tsconfig.json",
+    "build:dashboard": "npm --prefix dashboard ci && npm --prefix dashboard run build",
+    "size-limit": "size-limit",
     "prepublishOnly": "npm run build && npm test",
     "dev": "ts-node src/server.ts",
     "copilot-bridge": "ts-node src/adapters/copilot/adapter.ts",
@@ -97,6 +99,7 @@
     "@types/semver": "^7.7.1",
     "chai": "^4.5.0",
     "mocha": "^11.7.5",
+    "size-limit": "^12.1.0",
     "ts-morph": "^28.0.0",
     "ts-node": "^10.9.0",
     "tsx": "^4.21.0",
@@ -128,6 +131,8 @@
     "assets",
     "examples",
     "packaging",
+    "dashboard/dist",
+    "dashboard/package.json",
     "CLAUDE.md",
     "README.md"
   ],
