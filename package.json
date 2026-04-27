@@ -90,6 +90,7 @@
     "zod": "~3.25.76"
   },
   "devDependencies": {
+    "@size-limit/preset-app": "^12.1.0",
     "@temporalio/common": "^1.15.0",
     "@temporalio/testing": "~1.15.0",
     "@types/chai": "^4.3.20",
