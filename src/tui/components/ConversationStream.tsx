@@ -41,9 +41,18 @@ export interface ConversationStreamProps {
     formatted: Array<{ sender: string; time: string; body: string; direction: 'in' | 'out'; thirdParty?: boolean; routeLabel?: string }>;
     startIdx: number;
   } | null>;
+  /**
+   * #360: playerId of the conductor in the active ensemble (derived from
+   * `state.players.find(p => p.isConductor)`). Used to suppress the
+   * `→ @<to>` recipient prefix on outbound messages addressed to the
+   * conductor — those route through the implicit "send to conductor"
+   * path and the prefix would be visually noisy. `undefined` when no
+   * conductor is in the ensemble.
+   */
+  conductorPlayerId?: string;
 }
 
-interface FormattedMsg {
+export interface FormattedMsg {
   sender: string;
   time: string;
   body: string;
@@ -52,6 +61,13 @@ interface FormattedMsg {
   thirdParty?: boolean;
   /** For conductor traffic: show routing (from → to). */
   routeLabel?: string;
+  /**
+   * #360: For directed `maestro-out` messages where the recipient is
+   * NOT the conductor — prepend `→ @<recipientLabel>` to the rendered
+   * body so the user can see who they actually messaged. Empty for
+   * inbound, conductor-bound, or third-party messages.
+   */
+  recipientLabel?: string;
 }
 
 function formatTime(timestamp: string): string {
@@ -71,15 +87,31 @@ function maxLines(msg: FormattedMsg): number {
   return msg.thirdParty ? MAX_DISPLAY_LINES_THIRD_PARTY : Infinity;
 }
 
+/**
+ * Compute the width of the `→ @<to>` recipient prefix added to outbound
+ * directed messages (#360). 0 when no recipientLabel is set. Used by
+ * both the line estimator and the renderer to keep wrap math in sync.
+ */
+function recipientPrefixLen(msg: FormattedMsg): number {
+  if (!msg.recipientLabel) return 0;
+  // `→ @<label> ` — arrow + space + @ + label + trailing space.
+  return msg.recipientLabel.length + 4;
+}
+
 function estimateLines(msg: FormattedMsg, termCols: number): number {
   const bodyWidth = Math.max(20, termCols - 4);
   const originalLines = msg.body.split('\n');
   const cap = maxLines(msg);
+  // #360: when a recipientLabel prefix is shown inline on the first
+  // line, the first source line wraps at a narrower width. Continuation
+  // source lines (and continuation wraps) use the full bodyWidth.
+  const firstLineWidth = Math.max(20, bodyWidth - recipientPrefixLen(msg));
 
   // Wrap ALL lines, then cap — matches rendering logic exactly
   let wrappedCount = 0;
-  for (const line of originalLines) {
-    wrappedCount += wordWrap(line, bodyWidth).length;
+  for (let li = 0; li < originalLines.length; li++) {
+    const w = li === 0 ? firstLineWidth : bodyWidth;
+    wrappedCount += wordWrap(originalLines[li], w).length;
   }
 
   let total = msg.direction === 'out' ? 0 : 1; // header line for inbound
@@ -89,11 +121,22 @@ function estimateLines(msg: FormattedMsg, termCols: number): number {
   return total;
 }
 
-export function ConversationStream({ conversation, sentMessages, contentHeight, overflowRef }: ConversationStreamProps) {
-  const { Text } = useInk();
-  const termCols = process.stdout.columns || 80;
-  const bodyWidth = Math.max(20, termCols - 4);
-
+/**
+ * Pure projection: merge server conversation with local-echo sent
+ * messages, sort by timestamp, and format each entry into the
+ * render-ready `FormattedMsg` shape. Exported so tests can assert on
+ * `recipientLabel` / `routeLabel` derivation without mounting Ink.
+ *
+ * `conductorPlayerId` is the active ensemble's conductor id (derived
+ * from `state.players.find(p => p.isConductor)`). Used to suppress the
+ * `recipientLabel` on conductor-bound `maestro-out` rows so the
+ * `\u2192 @<conductor>` prefix doesn't dominate every message.
+ */
+export function buildFormattedMessages(
+  conversation: ConversationMessage[],
+  sentMessages: SentMessage[],
+  conductorPlayerId?: string,
+): FormattedMsg[] {
   // Merge server conversation with local echo (optimistic sent not yet on server)
   const allConvoMsgs: ConversationMessage[] = [...conversation];
   for (const m of sentMessages) {
@@ -111,13 +154,21 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
   }
   const sorted = allConvoMsgs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-  // Format messages
-  const formatted: FormattedMsg[] = sorted.map(m => {
+  return sorted.map(m => {
     const role = m.role;
     const thirdParty = m.thirdParty;
     let routeLabel: string | undefined;
     if (role === 'conductor-out') routeLabel = `${m.from} \u2192 ${m.to}`;
     else if (role === 'conductor-in') routeLabel = `${m.from} \u2192 ${m.to}`;
+    // #360: only set recipientLabel for `maestro-out` messages where
+    // the recipient is neither the active conductor (whose role is the
+    // implicit default for bare-text input) nor the legacy `'conductor'`
+    // literal. `to` of `'maestro'` is also excluded \u2014 outbound to maestro
+    // is meaningless (the maestro is the user's own session).
+    let recipientLabel: string | undefined;
+    if (role === 'maestro-out' && m.to && m.to !== 'maestro' && m.to !== 'conductor' && m.to !== conductorPlayerId) {
+      recipientLabel = m.to;
+    }
     return {
       sender: m.from,
       time: formatTime(m.timestamp),
@@ -126,8 +177,17 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
       role,
       thirdParty,
       routeLabel,
+      recipientLabel,
     };
   });
+}
+
+export function ConversationStream({ conversation, sentMessages, contentHeight, overflowRef, conductorPlayerId }: ConversationStreamProps) {
+  const { Text } = useInk();
+  const termCols = process.stdout.columns || 80;
+  const bodyWidth = Math.max(20, termCols - 4);
+
+  const formatted: FormattedMsg[] = buildFormattedMessages(conversation, sentMessages, conductorPlayerId);
 
   // Work backwards from newest — include as many as fit in viewport
   let usedLines = 0;
@@ -155,24 +215,37 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
       const isOut = msg.direction === 'out';
       const bg = isOut ? THEME.inputBg : undefined;
 
-      // Word-wrap body
+      // Word-wrap body. #360: when a recipientLabel prefix is rendered
+      // inline on the first line, wrap the FIRST source line at a
+      // narrower width to leave room. Continuation source lines (and
+      // their wraps) use the full bodyWidth.
+      const prefixLen = recipientPrefixLen(msg);
+      const firstLineWidth = Math.max(20, bodyWidth - prefixLen);
       const originalLines = msg.body.split('\n');
       const wrappedLines: string[] = [];
-      for (const line of originalLines) {
-        wrappedLines.push(...wordWrap(line, bodyWidth));
+      for (let li = 0; li < originalLines.length; li++) {
+        const w = li === 0 ? firstLineWidth : bodyWidth;
+        wrappedLines.push(...wordWrap(originalLines[li], w));
       }
       const cap = maxLines(msg);
       const displayLines = wrappedLines.slice(0, cap);
 
       if (isOut) {
-        // Outbound: inline — ♩ first line, then wrapped continuation lines (no timestamp)
+        // Outbound: inline — ♩ first line, then wrapped continuation lines (no timestamp).
+        // #360: when recipientLabel is set, inject `→ @<to>` (dim) before
+        // the first body character. The wrap width above already reserves
+        // room so the rendered line still fits in termCols - 2.
+        const recipientPrefix = msg.recipientLabel ? `→ @${msg.recipientLabel} ` : '';
         for (let j = 0; j < displayLines.length; j++) {
           if (j > 0) children.push('\n');
           if (j === 0) {
             const firstText = displayLines[0];
-            const pad = ' '.repeat(Math.max(0, termCols - 2 - 3 - firstText.length));
+            const pad = ' '.repeat(Math.max(0, termCols - 2 - 3 - prefixLen - firstText.length));
             children.push(React.createElement(React.Fragment, { key: `bl-${i}-0` },
               React.createElement(Text, { backgroundColor: bg, color: THEME.accent, bold: true }, ' \u2669 '),
+              ...(recipientPrefix
+                ? [React.createElement(Text, { key: `pre-${i}`, backgroundColor: bg, color: THEME.dim }, recipientPrefix)]
+                : []),
               React.createElement(Text, { backgroundColor: bg, color: THEME.text }, firstText),
               React.createElement(Text, { backgroundColor: bg, color: THEME.dim }, pad),
             ));

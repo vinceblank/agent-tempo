@@ -1477,6 +1477,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         sentMessages: state.sentMessages,
         contentHeight,
         overflowRef,
+        conductorPlayerId,
       });
     }
 
