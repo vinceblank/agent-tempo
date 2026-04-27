@@ -58,6 +58,15 @@ src/
 │   ├── hard-terminate.ts # Per-host process kill activity (used by destroy when attached)
 │   ├── resolve.ts        # Session resolver shared by outbox + schedule-fire activities
 │   └── schedule-fire.ts
+├── http/              # Daemon HTTP/SSE event source (#94/#95)
+│   ├── server.ts      # Express-style HTTP server — snapshot + streaming endpoints
+│   ├── event-bus.ts   # In-process EnsembleEventBus (fanout to SSE clients)
+│   ├── event-types.ts # TempoEvent / ClusterEvent wire type definitions
+│   ├── sse-handler.ts # SSE response lifecycle (ring-buffer replay, gap detection, backpressure)
+│   ├── ring-buffer.ts # Fixed-size event ring buffer (256 events) for Last-Event-ID replay
+│   ├── snapshot.ts    # On-demand ensemble state snapshot (prelude + poll)
+│   ├── aggregate.ts   # AggregateRunner — wires bus + snapshot + HTTP server startup
+│   ├── auth.ts / cors.ts / responses.ts / event-id.ts / port-file.ts / index.ts
 ├── reconcile/
 │   └── orphans.ts     # Shared orphan-query helper (daemon reconcile-on-boot + CLI restore)
 ├── ensemble/
@@ -65,7 +74,7 @@ src/
 │   └── agent-types.ts # Agent type discovery, resolution, and lineup resolution
 ├── tools/             # One file per MCP tool — see docs/tools.md for full reference
 │   ├── ensemble.ts / cue.ts / recruit.ts / report.ts / broadcast.ts / recall.ts / listen.ts
-│   ├── restart.ts / detach.ts / destroy.ts / migrate.ts / attachment-info.ts
+│   ├── restart.ts / destroy.ts / migrate.ts / attachment-info.ts
 │   ├── schedule.ts / unschedule.ts / schedules.ts
 │   ├── quality-gate.ts / evaluate-gate.ts / gates.ts
 │   ├── worktree.ts / stage.ts / stages.ts / cancel-stage.ts
@@ -76,6 +85,7 @@ src/
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
 ├── tui/
 │   ├── App.tsx / store.ts / commands.ts   # TUI root, state, slash commands
+│   ├── sse-handler.ts # SSE event → TUI store dispatch mapping (PR-4a of #94/#95)
 │   ├── components/    # Ink components — see docs/tui.md for inventory
 │   └── utils/         # format, platform, theme, fullscreen, history
 ├── utils/
@@ -131,7 +141,7 @@ daemon worker notes, `npx ts-node` dev runner).
 - **Adapter heartbeat observability** (#249): After `claimAttachment`, the base adapter logs `first heartbeat scheduled in Xms` then `heartbeat#1 delivered` on the first tick. Every 10 ticks it emits `heartbeats-delivered=N / phase-ticks=N` breadcrumbs. Any silent guard trip in `tickHeartbeat` / `tickPhaseWatcher` now emits a structured `guard tripped: {stopped, reconnecting, …}` log instead of silently orphaning the timer. The phase-watcher emits `WARNING: heartbeat staleness` when `lastHeartbeatAt` falls more than 2× `heartbeatMs` behind `now`. Grep `[claude-tempo:adapter]` to confirm loop health without parsing Temporal history.
 - **Per-host task queues**: `host` param on `recruit`/`restart`/`migrate` routes to `claude-tempo-{hostname}` task queue. When `host` is set on `recruit`, a pre-flight check validates the target daemon is live and supports the requested agent type (`force: true` bypasses). Daemon boot profiles (hostname, platform, available player types) are advertised via the `hostProfile` signal and maintained in the global maestro's `hostProfiles` map — surfaced by the `hosts` MCP tool, `claude-tempo hosts` CLI, and `/hosts` TUI command (#274). See [docs/concepts.md](docs/concepts.md) for cross-machine recruiting details.
 - **Wire protocol**: All signal/query/update names are documented in [`docs/WIRE-PROTOCOL.md`](docs/WIRE-PROTOCOL.md) and are stable — renaming or removing any is a breaking change. **Process**: update `docs/WIRE-PROTOCOL.md` in the same commit as any new signal, query, or update.
-- **Daemon**: Standalone background process (`src/daemon.ts`) that runs all Temporal workers. Auto-started by any `claude-tempo` command. PID at `~/.claude-tempo/daemon.pid`; logs at `~/.claude-tempo/daemon.log`.
+- **Daemon**: Standalone background process (`src/daemon.ts`) that runs all Temporal workers and the HTTP/SSE event source (`src/http/`). Auto-started by any `claude-tempo` command. PID at `~/.claude-tempo/daemon.pid`; logs at `~/.claude-tempo/daemon.log`. Exposes local HTTP endpoints (`/v1/health`, `/v1/ensembles`, `/v1/state/:ensemble`, `/v1/events/:ensemble` SSE stream, etc.) consumed by the TUI and `TempoClient.subscribe()`. See [docs/SSE-PROTOCOL.md](docs/SSE-PROTOCOL.md).
 - **Player types**: Reusable agent definitions in Claude Code's subagent format (`.md` files with YAML frontmatter). Three-tier lookup: project `.claude/agents/` → user `~/.claude/agents/` → shipped `examples/agents/`. Discover via `agent_types` tool or `claude-tempo agent-types` CLI. Shipped types: tempo-conductor, tempo-composer, tempo-soloist, tempo-tuner, tempo-critic, tempo-roadie, tempo-improv, tempo-liner.
 - **Lineup examples**: Four pre-built ensemble YAML files in `examples/ensembles/` — `tempo-big-band`, `tempo-dev-team`, `tempo-review-squad`, `tempo-jam-session`. Load with `claude-tempo up --lineup <name>` or the `load_lineup` tool.
 - **GitHub App identity** (`claude-tempo[bot]`): When a player writes to GitHub — issue comments, PR creation/merge, commits, labels, check runs — **use `./scripts/ensemble-gh`** instead of `gh`. The wrapper mints a short-lived installation token so the action is attributed to `claude-tempo[bot]`, not to the human maintainer, making the AI authorship visible. Plain `gh` is still correct for read-only local dev (`gh pr view`, `gh repo clone`, `gh auth status`). Every bot-authored comment/PR body must include the AI attribution footer documented in [docs/github-app.md](docs/github-app.md).

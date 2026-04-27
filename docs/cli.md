@@ -18,7 +18,7 @@ claude-tempo <command> [options]
 | `preflight` | Run environment checks |
 | `broadcast <msg>` | Send a message to all active players. Use `--type` to filter by player type, `--include-stale` to include stale sessions. |
 | `destroy <ensemble> [-y]` | Terminate every workflow in an ensemble — ordered shutdown via outbox drain. Prompts for typed confirmation; `-y` skips. |
-| `attachment-info <name>` | Inspect a session's attachment phase, current holder, lease expiry, heartbeat age, and in-flight message count. |
+| `attachment-info <name>` (alias: `attachment`) | Inspect a session's attachment phase, current holder, lease expiry, heartbeat age, and in-flight message count. |
 | `recall <name>` | Read a player's message history (#128). Flags: `--limit N` (default 20, max 100), `--offset N` (paging, default 0), `--preview N` (truncate bodies to N chars; omit for full text), `--from X` (sender filter for received), `--since ISO` (time filter), `--include-sent` (include outbound too), `--json` (emit raw `{received, sent, total, shown, hasMore, text}`). |
 | `hosts` | **#274.** List daemons polling this Temporal namespace with their advertised capabilities. Flags: `--all` includes stale hosts; `--json` emits raw `HostInfo[]`. Output matches MCP `hosts` tool and TUI `/hosts` (shared formatter). |
 | `refresh-host-profile` | **#274.** Re-advertise this daemon's capability profile to the global Maestro. Useful after editing `~/.claude-tempo/config.json` or adding/removing player-type files without restarting the daemon. Exits 0 on confirmed refresh, 1 on signal failure or unconfirmed after the 10s poll. |
@@ -26,7 +26,7 @@ claude-tempo <command> [options]
 | `release [ensemble]` | Release all held players — unlocks outboxes and delivers deferred task messages. Use `-n <name>` to release one player. |
 | `ensemble <sub>` | Manage saved lineups (`save`, `list`, `show`) |
 | `agent-types <sub>` | Manage player types (`list`, `show <name>`, `init`) |
-| `daemon <sub>` | Manage the worker daemon (`start [--force]`, `stop`, `status`, `logs`) |
+| `daemon <sub>` | Manage the worker daemon (`start [--force]`, `stop`, `status`, `logs`, `stats`) |
 | `upgrade [version]` | Graceful self-update — stops daemon, installs new version, restarts daemon |
 | `version` | Print the installed version |
 | `help` | Show usage info |
