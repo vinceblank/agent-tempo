@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.6] - 2026-04-27
+
+### Added
+
+- **`--dev` profile** for isolated testing — flips home dir to `~/.claude-tempo-dev/`, HTTP port to 8474, Temporal namespace to `claude-tempo-dev`, task queue to `claude-tempo-dev`. Auto-creates the namespace on first dev-daemon boot. Cross-profile coexistence verified (dev + prod daemons run side-by-side without orphan-detector collateral damage). (#381)
+- **Mock adapter** (`agent: 'mock'`) — dev-only player adapter with 4 modes: `echo` (replies with `[ECHO] <input>`), `scripted` (replays YAML scenarios), `silent` (drains without dispatch — heartbeat-stale validation surface), `chaos` (probabilistic fail/crash injection with mulberry32 seeded PRNG). 4-layer production safety prevents accidental use outside dev mode. (#382, #385)
+- **Scenario library** at `scenarios/` — 5 reference YAMLs (echo-roundtrip, two-player-conversation, conductor-recruit-mock, multi-player-handoff, recruit-cascade). (#382, #385)
+- **`tempo-mock-jam` lineup** — example 4-mock ensemble with mixed modes for end-to-end mock testing. (#385)
+- **`--scenario <name>` CLI flag** on `up` — forces every mock in the lineup into scripted mode with the named scenario. (#385)
+- **`__MOCK__:` cue prefix** — drives mock players interactively from any other player (e.g., `cue mock-1 "__MOCK__:reply Hello"`). Inert in production adapters. (#382)
+- Daemon test-fixture mode regression-tested via mock-adapter integration suite. (#382)
+
+### Changed
+
+- **CI Windows mocha now sharded** (1 → 2 jobs, same shard-config as Linux). Per-shard wall-clock roughly halves; pre-existing heavy tests (`pause-resume`, `adapter-claude-code-lifecycle-v2`, `outbox`) get headroom. (#384)
+- **CI shard-drift-check gate** added — hard-fails PRs when shard-2/shard-1 wall-clock ratio exceeds 1.2× design limit. Forces rebalance at PR-time before flakes ship. (#384)
+- **`MockMode` literal union consolidated** to `src/types.ts` SSOT (was duplicated across 7 files). (#385)
+
+### Internal
+
+- Cross-profile orphan-detector coexistence — `selectOrphans` extended with cross-profile known-PIDs awareness; weak-evidence suppression on partial-state crashes. Documented as design lesson §5.7 in dev-mode-mock-adapter.md. (#381)
+- Architect's design + ADR 0014 published for dev-mode + mock adapter. (#379)
+
 ## [0.28.0-beta.5] - 2026-04-27
 
 ### Fixed
