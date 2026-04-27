@@ -7,12 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.1] - 2026-04-27
+
 ### Added
 
-- **Surface drift detector** (#305): `scripts/check-surface-drift.js` + `npm run lint:surface-drift`
-  — compares `docs/SURFACE-REGISTRY.md` against source for MCP tools, CLI commands, and TUI slash
-  commands. Exits non-zero on any undocumented or phantom entry. Wired into CI as the
-  `lint-surface-drift` job. See [docs/development.md](docs/development.md) for usage.
+- **Daemon HTTP/SSE event source** (#94, #95 — PRs #320 + #324): The daemon now exposes an HTTP
+  server on a local port with snapshot + streaming endpoints. New endpoints:
+  `GET /v1/health`, `GET /v1/ensembles`, `GET /v1/state/:ensemble`, `GET /v1/hosts`,
+  `GET /v1/events/:ensemble` (per-ensemble SSE stream), `GET /v1/events` (global cluster stream).
+  Per-ensemble streams deliver a snapshot prelude, replay from a 256-event ring buffer on
+  reconnect (`Last-Event-ID`), and a `gap` event on overflow. Bearer auth + CORS; loopback
+  connections skip auth. Token auto-generated to `~/.claude-tempo/config.json` on first
+  bearer-required boot. See [docs/SSE-PROTOCOL.md](docs/SSE-PROTOCOL.md).
+- **`TempoClient.subscribe()` AsyncIterable** (#94, #95 — PR #325): Programmatic SSE consumer
+  for dashboards and external integrations. Dual transport: native `EventSource` (browser /
+  loopback, free auto-reconnect) and `fetch`-based (Node / bearer, manual reconnect). Exposes
+  the full `ClusterEvent` type stream from the daemon event source.
+- **TUI live streaming** (#94, #95 — PR #348): The TUI now drives all ensemble/player state
+  from `client.subscribe()` instead of the previous 2-second poll loop. Sub-second event
+  latency; reconnect handled transparently.
+- **`claude-tempo daemon stats`** (#336 — PR #343): New CLI subcommand prints live memory usage,
+  uptime, active ensembles, and SSE subscriber count from the local daemon's `/v1/health`
+  endpoint. Defensive formatters return `n/a` for pre-#336 daemons.
+- **`/v1/health` memory field** (#336 — PR #343): Health endpoint now includes a `memory`
+  snapshot (`rss`, `heapUsed`, `heapTotal`, `external`, `arrayBuffers`). Optional field —
+  backward-compatible with older consumers.
+- **Adapter process-lifecycle telemetry** (#258 — PR #328): Structured log lines on all
+  process exit/signal/uncaught events (Hypothesis A coverage). Distinguishes process-death
+  from in-loop `fireTerminal` silence. Grep `[claude-tempo:adapter]` in daemon logs.
+- **`destroy` partial-failure UX hint** (#306): When an ensemble-scope destroy has any
+  failed peer, the response headline shifts to `"partially destroyed"` and adds a recovery
+  hint (`run /destroy <ensemble> again to clean up`).
+- **`restore` cross-host `hostname` arg** (#306): The `restore` MCP tool and `claude-tempo restore`
+  CLI now accept an optional `hostname` parameter to target orphaned sessions from a specific
+  remote host.
+- **Surface drift detector + CI** (#305 — PR #342): `scripts/check-surface-drift.js` +
+  `npm run lint:surface-drift` — diffs `docs/SURFACE-REGISTRY.md` against source (MCP tools,
+  CLI commands, TUI slash commands); exits non-zero on undocumented or phantom entries.
+  Wired into CI as the `lint-surface-drift` job.
+- **Windows test matrix + EACCES retry** (#150 — PR #335): New `build-and-test-windows` CI
+  job (Node 22). `TestWorkflowEnvironment.createLocal()` now retries up to 3 times with
+  back-off on `EACCES`, reaping orphan Temporal server PIDs between attempts. Handles
+  Windows Defender real-time scans and stale file handles from prior crashed runs.
+
+### Fixed
+
+- **Outbox silently broken after force-restart** (#347 — PR #349): Any player that was
+  force-restarted could not send outbox messages (cue, report, etc.) — all failed with
+  `workflow execution not found`. Root cause: `src/server.ts` used the handle returned by
+  `client.workflow.start()` for MCP tool registrations, pinning `firstExecutionRunId`. After
+  a continue-as-new or force-restart mint, `executeUpdate` on the stale run ID rejected
+  immediately. Fix: 2-line change — replace with `client.workflow.getHandle(workflowId)`
+  (unpinned, resolves to latest run). The `startedHandle` for chain-end watching is retained
+  with `followRuns: true`.
+- **Adapter post-CAN double-loop silence** (#258 — PR #322): Added a `describe()` tiebreaker
+  + structured `fireTerminal` log to prevent the post-continue-as-new double-loop from
+  silently reaping a healthy adapter attachment.
+- **Mocha zombie test-server cleanup** (PR #312): `mochaGlobalTeardown` + `process.on('exit')`
+  + signal handlers now reap orphan ephemeral Temporal server processes even when
+  `TestWorkflowEnvironment.teardown()` is skipped mid-suite (crash, signal).
+
+### Changed
+
+- **`TempoClient` split into `Core` + `WithSpawn`** (#308 — PR #329): `TempoClientCore`
+  exposes 38 pure-RPC methods (including `subscribe`); `TempoClientWithSpawn` extends it
+  with `createEnsemble` and `spawnConductor`. `type TempoClient = TempoClientWithSpawn`
+  preserves every existing import — no migration required.
+- **Tier-1 dead code removed (~408 LoC)**: `src/tools/detach.ts` (file removed; plumbing
+  stays internal to `shutdown`), `CommandOverlay.tsx`, `ScheduleOverlay.tsx` (superseded TUI
+  components), 7 dead utility exports, `buildOrphanQuery` positional overload,
+  `DEFAULT_RECRUIT_ANSWERS` constant.
+- **Hosts cluster cleanup** (#280–#283): DI grouping, combined `hostProfilesWithExistence`
+  query, concurrency cap, and ADR to document the design.
+
+### Docs
+
+- **5 design ADRs merged**: coat-check pattern for large cues (ADR 0008, #318), protobuf
+  payload migration strategy (ADR 0009, #319), player-saveable state primitive (ADR 0011,
+  #334), headless Claude API adapter scoping (ADR 0012, #131), web dashboard scoping
+  (ADR 0013, #340).
+- **Surface registry** (#305 — PR #333): `docs/SURFACE-REGISTRY.md` — canonical inventory
+  of all 33 MCP tools, 23 CLI commands, and 28 TUI slash commands for drift detection.
+- **Dashboard design handoff bundle** (#340 — PR #345): `docs/design/dashboard-handoff/`
+  includes the Claude Design export (HTML prototypes, JSX components, CSS design tokens,
+  SVG assets). Canonical source of truth for the #340 implementation phase.
+- **Doc archive sweep** (PR #311): Completed handoff notes, design spikes, and ops checklists
+  moved to `archive/` subdirectories; ghost `src/tui/client.ts` shim references removed.
 
 ## [0.27.0] - 2026-04-26
 
