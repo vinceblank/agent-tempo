@@ -46,6 +46,18 @@ describe('parseRecallFlags', () => {
     expect(parseRecallFlags(['--include-sent', '--limit', '3'])).toEqual({ includeSent: true, limit: 3 });
   });
 
+  it('--received-only is boolean, no value consumed (#361)', () => {
+    expect(parseRecallFlags(['--received-only', '--limit', '3'])).toEqual({ receivedOnly: true, limit: 3 });
+  });
+
+  it('parser leaves the default unset — handler applies the flip (#361)', () => {
+    // The post-#361 TUI default (received + sent) lives in the handler,
+    // not the parser. `parseRecallFlags([])` must still return `{}` so
+    // the parser stays a pure projection over argv and the default
+    // behavior is observable in one place (`handleRecall`).
+    expect(parseRecallFlags([])).toEqual({});
+  });
+
   it('flags-only (no player) leaves player undefined', () => {
     expect(parseRecallFlags(['--limit', '5'])).toEqual({ limit: 5 });
   });
@@ -123,6 +135,52 @@ describe('/recall TUI handler (#128)', () => {
     expect(worldIdx).toBeGreaterThan(-1);
     expect(helloIdx).toBeGreaterThan(-1);
     expect(worldIdx).toBeLessThan(helloIdx);
+  });
+
+  /**
+   * #361: TUI default flipped to received + sent. Sent messages must
+   * appear in the rendered overlay when the user types bare `/recall`.
+   * `--received-only` opts out. The MCP tool's default is unchanged
+   * (still received-only) so external callers see no contract drift.
+   */
+  it('default (no flag) includes sent messages in the timeline (#361)', async () => {
+    const sent: SentMessage[] = [
+      { to: 'bob', text: 'sent-msg', timestamp: '2026-04-19T12:00:02.000Z' },
+    ];
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+    const handler = COMMANDS['recall'].handler!;
+    await handler([], dispatch, makeApi(received, sent), CTX);
+    const action = dispatch.mock.calls[0][0] as { type: string; content: string };
+    expect(action.type).toBe('SHOW_COMMAND_OVERLAY');
+    expect(action.content).toContain('sent-msg');
+    // 2 received + 1 sent = 3 total.
+    expect(action.content).toContain('Showing 1-3 of 3 messages.');
+  });
+
+  it('--received-only suppresses sent messages (#361 opt-out)', async () => {
+    const sent: SentMessage[] = [
+      { to: 'bob', text: 'sent-msg', timestamp: '2026-04-19T12:00:02.000Z' },
+    ];
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+    const handler = COMMANDS['recall'].handler!;
+    await handler(['--received-only'], dispatch, makeApi(received, sent), CTX);
+    const action = dispatch.mock.calls[0][0] as { type: string; content: string };
+    expect(action.type).toBe('SHOW_COMMAND_OVERLAY');
+    expect(action.content).not.toContain('sent-msg');
+    // Only the 2 received messages.
+    expect(action.content).toContain('Showing 1-2 of 2 messages.');
+  });
+
+  it('--include-sent is still accepted as a no-op (#361 backward compat)', async () => {
+    const sent: SentMessage[] = [
+      { to: 'bob', text: 'sent-msg', timestamp: '2026-04-19T12:00:02.000Z' },
+    ];
+    const dispatch = vi.fn<(a: TuiAction) => void>();
+    const handler = COMMANDS['recall'].handler!;
+    await handler(['--include-sent'], dispatch, makeApi(received, sent), CTX);
+    const action = dispatch.mock.calls[0][0] as { type: string; content: string };
+    expect(action.type).toBe('SHOW_COMMAND_OVERLAY');
+    expect(action.content).toContain('sent-msg');
   });
 
   it('with a player positional, titles the overlay with that player', async () => {
