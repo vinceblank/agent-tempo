@@ -173,8 +173,12 @@ describe('Pre-auth pair-token carve-out (501 stub for PR-1)', () => {
 
   it('blocks path-traversal attempts (URL normaliser drops `..` segments)', async () => {
     const b = await boot();
-    // The fetch implementation normalises the URL client-side too, so use
-    // a raw HTTP request to ensure the daemon sees the literal `..` path.
+    // `fetch()` normalises the path client-side before the request leaves
+    // the runtime, so the daemon receives the already-normalised
+    // `/dashboard/api/v1/state`. The pair-token regex doesn't match it,
+    // and the defence-in-depth in `handleDashboardStatic` (the `/api/*`
+    // 404 plus `assertSafePath` containment check) would also reject a
+    // literal `..` if a non-normalising client ever delivered one.
     const res = await fetch(`${b.url}/dashboard/api/pair/../v1/state`);
     expect(res.status).toBe(404);
     const body = await res.json();

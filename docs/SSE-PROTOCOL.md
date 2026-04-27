@@ -402,6 +402,35 @@ If a future use case demands per-player streams (e.g. real-time co-pilot pairing
 
 ---
 
+## 11a. Fixture mode (PR-3 of #340)
+
+Two endpoints — `/v1/state/:ensemble` and `/v1/events/:ensemble` — accept an optional `?fixture=<name>` query param. When set to a known fixture name, the daemon returns canned data instead of running live Temporal queries / wiring the aggregate poll loop.
+
+**Why it exists**: dashboard UI work (PR-4 onwards) needs deterministic, reproducible scenarios — a conductor leaving, a broadcast fan-out, a chat-ring overflow, an SSE reconnect. Real ensemble events are flaky for UI-driven testing; fixtures aren't.
+
+**Fixtures shipped in PR-3** (registered in `src/http/fixtures/index.ts`):
+
+| Name | Description |
+|---|---|
+| `empty-ensemble` | No players, no chat, no schedules. Empty-state UI exercise. |
+| `single-conductor` | One conductor, no other players. Lobby state. |
+| `eight-player-broadcast` | Conductor + 8 receivers; 8 `chat.appended` share one `broadcastId` (#357 collapse). |
+| `conductor-leaving` | Conductor + 1 soloist; conductor `phase_changed → detached → removed` (#358 analog). |
+| `sse-reconnect` | Two chat events, then a `gap` event (overflow), then more chat. Tests the dashboard reconnect / re-fetch path. |
+| `chat-stress` | 100 `chat.appended` in rapid succession + a `chat.compressed` event. Tests chat virtualisation + ring-overflow banner. |
+
+**Wire shape**:
+
+- `GET /v1/state/:ensemble?fixture=empty-ensemble` → `200 application/json` with the fixture's `EnsembleStateV1` snapshot. The URL ensemble path segment is **ignored** in fixture mode — the snapshot's own `ensemble` field wins.
+- `GET /v1/events/:ensemble?fixture=eight-player-broadcast` → `200 text/event-stream` with a `snapshot` prelude followed by the fixture's events, walked at the fixture's `eventCadenceMs` cadence. Connection closes when events are exhausted.
+- Unknown `?fixture=<name>` → `404 application/json` `{ "error": "unknown-fixture", "fixture": "<name>" }`.
+
+**Auth posture**: fixture mode honours the existing bearer-auth gate (loopback no-auth, non-loopback bearer required). The fixture endpoint is **NOT a backdoor** — it's an alternate *projection* of an authorised request. A non-loopback caller without a bearer still sees `401 unauthorized` whether `?fixture=` is set or not.
+
+**Type safety**: every fixture file imports its types from `src/http/event-types.ts`. A wire-protocol change here breaks the `tsc` build of every fixture module — the `?fixture=` projection cannot drift from the live wire.
+
+---
+
 ## 12. Open questions (revisit after Phase 3 metrics)
 
 1. **Per-token rate limit on `/v1/events*`** — should reconnect frequency cap a runaway consumer? In v1 the connection cap is the only throttle.
