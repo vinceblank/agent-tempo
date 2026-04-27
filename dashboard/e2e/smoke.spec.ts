@@ -111,7 +111,14 @@ test('1. Overview renders the ensemble list with the right testids', async ({ pa
   await expect(page.getByTestId(`ensemble-card-${DEMO_ENSEMBLE}-link`)).toBeVisible();
 });
 
-test('2. Workspace placeholder send fires `chat.message.placeholder-send` log', async ({ page }) => {
+test('2. Workspace renders MessageInput + interacts with the cue mutation surface', async ({ page }) => {
+  // PR-7b wired the real cue mutation in MessageInput, so the
+  // placeholder-send log from PR-5/8 is gone. This test now verifies
+  // that the input + submit testids are reachable and that a typed
+  // message + click reaches eng's POST `/v1/ensembles/:e/cue`
+  // endpoint (route-mocked here so the test daemon doesn't need
+  // Temporal). Validates that the autonomous-validation surface is
+  // intact end-to-end across PR-7 + PR-8.
   await page.route(`${daemon.origin}/v1/state/${DEMO_ENSEMBLE}`, (route) =>
     route.fulfill({
       status: 200,
@@ -122,24 +129,30 @@ test('2. Workspace placeholder send fires `chat.message.placeholder-send` log', 
   await page.route(`${daemon.origin}/v1/events/${DEMO_ENSEMBLE}*`, (route) =>
     route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' }),
   );
-  // Capture the dashboard's structured console output. The conductor
-  // greps for these prefixes via `mcp__claude-in-chrome__read_console_messages`,
-  // so locking the format here protects the autonomous-validation surface.
-  const consoleLines: string[] = [];
-  page.on('console', (msg) => {
-    if (msg.text().includes('[claude-tempo:dashboard]')) consoleLines.push(msg.text());
+  // Mock the cue endpoint that PR-7b's mutation calls. Capture the
+  // request to assert the message body round-trips through the SPA's
+  // body builder.
+  let capturedCue: { to?: string; message?: string } | null = null;
+  await page.route(`${daemon.origin}/v1/ensembles/${DEMO_ENSEMBLE}/cue`, async (route) => {
+    const body = route.request().postDataJSON();
+    capturedCue = body as { to?: string; message?: string };
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true }),
+    });
   });
 
   await page.goto(`${daemon.origin}/dashboard/ensemble/${DEMO_ENSEMBLE}`);
   await expect(page.getByTestId(`workspace-${DEMO_ENSEMBLE}`)).toBeVisible();
+  await expect(page.getByTestId('message-input')).toBeVisible();
+  await expect(page.getByTestId('message-submit')).toBeVisible();
 
   await page.getByTestId('message-input').fill('hello from playwright');
   await page.getByTestId('message-submit').click();
 
-  // The placeholder log should land within ~1s of the click.
-  await expect.poll(() => consoleLines.some((l) => l.includes('chat.message.placeholder-send')), {
-    timeout: 2000,
-  }).toBe(true);
+  await expect.poll(() => capturedCue !== null, { timeout: 2000 }).toBe(true);
+  expect(capturedCue).toMatchObject({ message: 'hello from playwright' });
 });
 
 test('3. Mobile viewport renders the sidebar + roster (375x667)', async ({ page }) => {

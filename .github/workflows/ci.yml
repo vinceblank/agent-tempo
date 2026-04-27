@@ -40,6 +40,14 @@ jobs:
     # main TypeScript build doesn't pay the dashboard's npm-ci cost. Cache key
     # on dashboard/package-lock.json avoids re-fetching node_modules on every
     # PR that doesn't touch the dashboard.
+    #
+    # **Job cloning note**: if you copy this job for another dashboard-
+    # related CI step (e.g. `dashboard-e2e`, future `dashboard-perf`),
+    # copy ALL setup steps — especially "Install root dependencies".
+    # The dashboard's `claude-tempo/*` path alias drags `../src/*` into
+    # `tsc -b`, which fails to resolve `@temporalio/client` / `yaml` /
+    # `zod` without root `node_modules`. The fix is non-obvious unless
+    # you've debugged it once. Tracked in #368.
     runs-on: ubuntu-latest
     needs: lint-test-ensemble
     steps:
@@ -125,6 +133,11 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 22
+          # Root npm cache — same reason as `dashboard-build`: the
+          # dashboard's `claude-tempo/*` path alias drags `../src/*`
+          # into `tsc -b`, and parent files import @temporalio/* + yaml
+          # + zod from root `node_modules`.
+          cache: npm
 
       - name: Cache dashboard/node_modules
         uses: actions/cache@v4
@@ -143,6 +156,17 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ hashFiles('dashboard/package-lock.json') }}
+
+      - name: Install root dependencies (for path-alias type resolution)
+        # Mirrors the same step in `dashboard-build`. The dashboard's
+        # `claude-tempo/*` path alias resolves to `../src/*`, whose
+        # files import @temporalio/client / yaml / zod from root
+        # `node_modules`. `tsc -b` (run by `dashboard run build`) walks
+        # those imports during type checking; without root deps the
+        # build fails with "Cannot find module '@temporalio/client'".
+        # `--ignore-scripts` skips the parent's prepare/prepublishOnly
+        # hooks since we only need node_modules for module resolution.
+        run: npm ci --ignore-scripts
 
       - name: Install dashboard dependencies
         run: npm --prefix dashboard ci
