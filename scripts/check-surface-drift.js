@@ -100,7 +100,10 @@ function extractCliCommandsFromSource() {
   }
 
   // These are dispatched before the switch and are not case labels.
-  for (const c of ['version', 'help', 'daemon', 'upgrade', 'config']) {
+  // If you add a new pre-switch verb in src/cli.ts (e.g. an `if` branch before
+  // the main `switch (args.command)`), add it here too or the drift detector
+  // will report it as "in docs but not in source".
+  for (const c of ['version', 'help', 'daemon', 'upgrade', 'config', 'dashboard']) {
     commands.add(c);
   }
 
