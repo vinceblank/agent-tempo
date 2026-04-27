@@ -769,4 +769,46 @@ describe('createSubscribe — transport selection (ADR 0010)', () => {
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe('player.added');
   });
+
+  /**
+   * Regression — issue #351 fixup. `EventSource.lastEventId` is always
+   * a `string` (per the WHATWG spec) and is `''` when no `id:` line was
+   * sent. The earlier `liftEnvelope` used `??` to fall back to the
+   * envelope's own `eventId` field, but `?? ` only treats `null` /
+   * `undefined` as nullish — so an empty `lastEventId` would short-
+   * circuit to `''` instead of inheriting the envelope's id. Switching
+   * to `||` restores the pre-#351 EventSource behaviour where the
+   * fallback chain coerces empty strings.
+   */
+  it('EventSource path: empty `lastEventId` falls back to the envelope eventId', async () => {
+    MockEventSource.reset();
+    const subscribe = createSubscribe({
+      baseUrl: 'http://test:1234',
+      EventSourceImpl: MockEventSource as unknown as typeof EventSource,
+    });
+    const ctrl = new AbortController();
+    const events: TempoEvent[] = [];
+    const consume = (async () => {
+      for await (const ev of subscribe('demo', { signal: ctrl.signal })) {
+        events.push(ev);
+      }
+    })();
+
+    await new Promise((r) => setImmediate(r));
+    const es = MockEventSource.instances[0];
+    // Deliver a payload directly with `lastEventId: ''` — what the
+    // browser hands us when the server frame had no `id:` line. The
+    // envelope still carries the canonical eventId.
+    const listeners = (es as unknown as { listeners: Map<string, Set<(ev: MessageEvent) => void>> }).listeners;
+    const set = listeners.get('player.added');
+    expect(set).toBeDefined();
+    const data = JSON.stringify({ v: 1, eventId: '777:42', payload: { playerId: 'alice' } });
+    for (const l of set!) l({ type: 'player.added', data, lastEventId: '' } as MessageEvent);
+    await new Promise((r) => setImmediate(r));
+    ctrl.abort();
+    await consume;
+
+    expect(events).toHaveLength(1);
+    expect(events[0].eventId).toBe('777:42'); // not '' — the envelope's id wins
+  });
 });

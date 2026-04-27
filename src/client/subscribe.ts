@@ -630,8 +630,13 @@ function liftEnvelope(
   if (typeof envelope !== 'object' || envelope === null) return null;
   const env = envelope as { v?: unknown; eventId?: unknown; payload?: unknown };
   if (typeof env.payload !== 'object' || env.payload === null) return null;
-  const eventId =
-    rawId ?? (typeof env.eventId === 'string' ? env.eventId : '0:0');
+  // `||` (not `??`) — `EventSource.lastEventId` is always a `string` and
+  // is `''` when no `id:` line was sent, so we have to coerce the empty
+  // string to the envelope's `eventId` like the pre-#351 EventSource
+  // parser did. The fetch parser produces `string | undefined`; both
+  // paths share this fallback chain.
+  const fromEnv = typeof env.eventId === 'string' ? env.eventId : '';
+  const eventId = rawId || fromEnv || '0:0';
   return {
     v: 1,
     eventId,
