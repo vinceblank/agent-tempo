@@ -25,6 +25,7 @@ import { expect } from 'chai';
 import type { Attachment, AttachmentInfo, OrphanSummary } from '../src/types';
 import {
   setupTestEnv,
+  setupSharedEnv,
   teardownTestEnv,
   withWorker,
   startSession,
@@ -44,10 +45,7 @@ import {
 } from '../src/workflows/signals';
 
 describe('session phase machine — detach/destroy (v0.25 PR-A)', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();

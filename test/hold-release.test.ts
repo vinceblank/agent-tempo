@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import {
   setupTestEnv,
+  setupSharedEnv,
   teardownTestEnv,
   withWorkerAndRecruitActivities,
   withWorkerAndRecruitCapture,
@@ -25,10 +26,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 describe('hold and release (warm hold)', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();

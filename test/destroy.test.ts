@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import {
   setupTestEnv,
+  setupSharedEnv,
   teardownTestEnv,
   withWorker,
   startSession,
@@ -19,10 +20,7 @@ import {
 } from './helpers';
 
 describe('destroy verb — fixes #102 (graceful stop → resurrection loop)', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();
@@ -149,10 +147,7 @@ import {
 } from '../src/workflows/signals';
 
 describe('destroy verb — fixes #164 (destroy with live attachment)', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();
@@ -238,10 +233,7 @@ describe('destroy verb — fixes #164 (destroy with live attachment)', function 
 // `withWorker` stub) so we can assert the invocation happened, with the right args,
 // regardless of phase.
 describe('destroy verb — fixes #227 (orphan claude.exe on detached destroy)', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();

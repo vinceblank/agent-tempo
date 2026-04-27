@@ -14,6 +14,7 @@ import { expect } from 'chai';
 import type { AttachmentInfo, Attachment } from '../src/types';
 import {
   setupTestEnv,
+  setupSharedEnv,
   teardownTestEnv,
   withWorker,
   startSession,
@@ -26,10 +27,7 @@ import {
 } from '../src/workflows/signals';
 
 describe('attachment lease (v0.25 PR-A)', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();

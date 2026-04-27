@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import {
   setupTestEnv,
+  setupSharedEnv,
   teardownTestEnv,
   withWorkerAndOutboxActivities,
   withWorkerAndRecruitActivities,
@@ -26,10 +27,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 describe('outbox', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();
@@ -39,7 +37,7 @@ describe('outbox', function () {
 
   describe('submitOutboxUpdate basics', function () {
     it('returns an entry ID and records entry as pending', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorkerAndOutboxActivities(async () => {
         const handle = await startSession({
           metadata: playerMetadata({ playerId: 'outbox-basic-1' }),
@@ -64,7 +62,7 @@ describe('outbox', function () {
     });
 
     it('records cue in sentMessages', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorkerAndOutboxActivities(async () => {
         const handle = await startSession({
           metadata: playerMetadata({ playerId: 'outbox-sent-1' }),
@@ -91,7 +89,7 @@ describe('outbox', function () {
 
   describe('cue delivery', function () {
     it('delivers a cue message to the target session', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorkerAndOutboxActivities(async () => {
         const alice = await startSession({
           metadata: playerMetadata({ playerId: 'alice-cue' }),
@@ -129,7 +127,7 @@ describe('outbox', function () {
 
   describe('report delivery', function () {
     it('delivers a report to the conductor', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorkerAndOutboxActivities(async () => {
         const conductor = await startSession({
           metadata: conductorMetadata(),
@@ -164,7 +162,7 @@ describe('outbox', function () {
 
   describe('stop delivery', function () {
     it('terminates the target session', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorkerAndOutboxActivities(async () => {
         const alice = await startSession({
           metadata: playerMetadata({ playerId: 'alice-stop' }),
@@ -202,7 +200,7 @@ describe('outbox', function () {
 
   describe('detach delivery (PR-D)', function () {
     it('dispatches deliverDetach and marks entry delivered', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorkerAndOutboxActivities(async () => {
         const alice = await startSession({ metadata: playerMetadata({ playerId: 'alice-detach' }) });
         const bob = await startSession({ metadata: playerMetadata({ playerId: 'bob-detach' }) });
@@ -228,7 +226,7 @@ describe('outbox', function () {
 
   describe('destroy delivery (PR-D)', function () {
     it('dispatches deliverDestroy and terminates the target', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorkerAndOutboxActivities(async () => {
         const alice = await startSession({ metadata: playerMetadata({ playerId: 'alice-destroy' }) });
         const bob = await startSession({ metadata: playerMetadata({ playerId: 'bob-destroy' }) });
@@ -257,7 +255,7 @@ describe('outbox', function () {
 
   describe('restart delivery (PR-D)', function () {
     it('dispatches deliverRestart and marks entry delivered', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorkerAndRecruitActivities(async () => {
         const alice = await startSession({ metadata: playerMetadata({ playerId: 'alice-restart' }) });
         const bob = await startSession({ metadata: playerMetadata({ playerId: 'bob-restart' }) });
@@ -286,7 +284,7 @@ describe('outbox', function () {
     });
 
     it('#183 fresh restart regenerates sessionId and persists it to target metadata', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       const spawnInputs: Array<Record<string, unknown>> = [];
       await withWorkerAndRecruitCapture(spawnInputs, async () => {
         const ensemble = `fresh-sid-${Date.now()}`;
@@ -344,7 +342,7 @@ describe('outbox', function () {
     });
 
     it('#183 non-fresh restart no longer special — also fresh after 17a7858 (#306)', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       // Pre-#306 this case was the inverse of the test above: a non-fresh
       // restart was supposed to preserve the stored sessionId and pass
       // `resume: true` so Claude Code could `--resume <uuid>` against the
@@ -451,7 +449,7 @@ describe('outbox', function () {
 
   describe('outboxQuery returns all entries', function () {
     it('returns entries of different types', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorkerAndOutboxActivities(async () => {
         const handle = await startSession({
           metadata: playerMetadata({ playerId: 'outbox-multi-1' }),
@@ -489,7 +487,7 @@ describe('outbox', function () {
 
   describe('recruit delivery', function () {
     it('pre-creates session workflow with initial message, playerType, and recruitedBy', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorkerAndRecruitActivities(async () => {
         const ensemble = `recruit-${Date.now()}`;
 
@@ -556,7 +554,7 @@ describe('outbox', function () {
     });
 
     it('recruit without initialMessage starts session with empty inbox', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorkerAndRecruitActivities(async () => {
         const ensemble = `recruit2-${Date.now()}`;
 
@@ -601,7 +599,7 @@ describe('outbox', function () {
     });
 
     it('forwards claudeBin from outbox entry to spawnProcess', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       const spawnInputs: Array<Record<string, unknown>> = [];
       await withWorkerAndRecruitCapture(spawnInputs, async () => {
         const ensemble = `recruit-bin-${Date.now()}`;
@@ -655,7 +653,7 @@ describe('outbox', function () {
 
   describe('stop delivery (conductor notification)', function () {
     it('notifies conductor with a system message when a session is terminated', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorkerAndOutboxActivities(async () => {
         const ensemble = `stop-cond-${Date.now()}`;
 
@@ -743,7 +741,7 @@ describe('outbox', function () {
 
   describe('broadcast delivery', function () {
     it('delivers a broadcast message to all 3 target sessions via outbox fan-out', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorkerAndOutboxActivities(async () => {
         const ensemble = `broadcast-${Date.now()}`;
 

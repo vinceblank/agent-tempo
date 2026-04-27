@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import { QualityGate } from '../src/types';
 import {
   setupTestEnv,
+  setupSharedEnv,
   teardownTestEnv,
   withWorker,
   startSession,
@@ -16,10 +17,7 @@ import {
 } from './helpers';
 
 describe('quality gates', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();

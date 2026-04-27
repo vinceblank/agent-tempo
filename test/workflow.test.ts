@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import {
   setupTestEnv,
+  setupSharedEnv,
   teardownTestEnv,
   withWorker,
   startSession,
@@ -26,10 +27,7 @@ import {
 } from './helpers';
 
 describe('claudeSessionWorkflow', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();

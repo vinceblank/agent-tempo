@@ -6,6 +6,7 @@ import { expect } from 'chai';
 import { Client, WorkflowHandle, WorkflowUpdateFailedError } from '@temporalio/client';
 import {
   setupTestEnv,
+  setupSharedEnv,
   teardownTestEnv,
   getClient,
   TASK_QUEUE,
@@ -62,10 +63,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 describe('claudeGlobalMaestroWorkflow', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();

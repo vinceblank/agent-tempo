@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import { OutboxEntry, Message, SessionMetadata } from '../src/types';
 import {
   setupTestEnv,
+  setupSharedEnv,
   teardownTestEnv,
   withWorker,
   withWorkerAndOutboxActivities,
@@ -38,10 +39,7 @@ async function deliverAll(handle: any): Promise<void> {
 }
 
 describe('processing lifecycle — fixes #99 (long tool calls misclassified as stale)', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();

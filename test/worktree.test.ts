@@ -7,6 +7,7 @@ import { WorktreeEntry } from '../src/types';
 import { createWorktree, worktreeBasePath } from '../src/utils/worktree';
 import {
   setupTestEnv,
+  setupSharedEnv,
   teardownTestEnv,
   withWorker,
   startSession,
@@ -99,10 +100,7 @@ describe('worktree helpers', function () {
 });
 
 describe('worktree workflow state', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();
