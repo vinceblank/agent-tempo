@@ -8,7 +8,6 @@
  * `src/cli.ts` without breaking the #157 isolation guarantee.
  */
 import { homedir } from 'os';
-import { sep } from 'path';
 import {
   CLAUDE_TEMPO_HOME,
   DEV_DAEMON_PORT,
@@ -32,11 +31,12 @@ import { bold, yellow } from './output';
 export function prettyPath(absPath: string, home: string = homedir()): string {
   if (!home) return absPath;
   if (absPath === home) return '~';
-  // Match either `home/` or `home\` depending on platform separator. We
-  // tolerate the path being passed with the opposite separator (rare; happens
-  // when env vars are set with forward slashes on Windows) by also checking
-  // the POSIX form.
-  const trailers = new Set([sep, '/']);
+  // Always check both `/` and `\` separators regardless of the host OS.
+  // The function is sometimes called on POSIX with Windows-shaped path
+  // strings (e.g. unit tests that fix a fixture homedir of `C:\Users\alice`,
+  // or env-var values that escaped from a Windows shell). Using the
+  // platform's `path.sep` alone would leave half of those cases broken.
+  const trailers = ['/', '\\'];
   for (const trailer of trailers) {
     const prefix = home + trailer;
     if (absPath.startsWith(prefix)) {
