@@ -74,7 +74,7 @@ src/
 │   └── agent-types.ts # Agent type discovery, resolution, and lineup resolution
 ├── tools/             # One file per MCP tool — see docs/tools.md for full reference
 │   ├── ensemble.ts / cue.ts / recruit.ts / report.ts / broadcast.ts / recall.ts / listen.ts
-│   ├── restart.ts / detach.ts / destroy.ts / migrate.ts / attachment-info.ts
+│   ├── restart.ts / destroy.ts / migrate.ts / attachment-info.ts
 │   ├── schedule.ts / unschedule.ts / schedules.ts
 │   ├── quality-gate.ts / evaluate-gate.ts / gates.ts
 │   ├── worktree.ts / stage.ts / stages.ts / cancel-stage.ts
