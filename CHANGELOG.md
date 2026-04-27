@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.2] - 2026-04-27
+
+### Fixed
+
+- SSE event envelope was not unwrapped by client subscriber, causing TUI to stay in "Loading..." state and miss snapshots (#351)
+- `player.phase_changed` handler clobbered hostname/part/isConductor with empty strings via spread merge (#351)
+
 ## [0.28.0-beta.1] - 2026-04-27
 
 ### Added
