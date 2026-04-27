@@ -20,6 +20,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   with a real Vite + Tailwind 4 + shadcn/ui build. See
   [`docs/design/340-web-dashboard.md`](docs/design/340-web-dashboard.md).
 
+## [0.28.0-beta.3] - 2026-04-27
+
+### Added
+
+- `broadcastId` field on `EnsembleChatMessage` wire shape — additive optional field; all fan-out messages from a single broadcast share the same id (#357)
+- `--received-only` flag on TUI `/recall` command for opting out of the new default (#361)
+
+### Fixed
+
+- TUI status bar and chat-input footer no longer show "No conductor" when one exists — single source of truth via `state.players.find(p => p.isConductor)` (#358)
+- TUI broadcast messages collapse to one chat row with `📡 broadcast → N players` badge instead of N duplicate rows (#357)
+- TUI directed messages render with `→ @<player>` recipient prefix in chat history (#360)
+
+### Changed
+
+- TUI `/recall` defaults to showing both received and sent messages (was: received-only) — pass `--received-only` to restore old behavior. MCP tool default unchanged. (#361)
+
+### Internal
+
+- `ConversationEntry` type consolidation in TUI store (qa-1)
+- `UPSERT_PLAYER` action documented as requiring full `MaestroPlayerInfo` snapshot — for sparse updates use `PATCH_PLAYER_PHASE` pattern (qa-2)
+
 ## [0.28.0-beta.2] - 2026-04-27
 
 ### Fixed
