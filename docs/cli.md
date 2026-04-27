@@ -26,7 +26,7 @@ claude-tempo <command> [options]
 | `release [ensemble]` | Release all held players — unlocks outboxes and delivers deferred task messages. Use `-n <name>` to release one player. |
 | `ensemble <sub>` | Manage saved lineups (`save`, `list`, `show`) |
 | `agent-types <sub>` | Manage player types (`list`, `show <name>`, `init`) |
-| `daemon <sub>` | Manage the worker daemon (`start [--force]`, `stop`, `status`, `logs`) |
+| `daemon <sub>` | Manage the worker daemon (`start [--force]`, `stop`, `status`, `logs`, `stats`) |
 | `upgrade [version]` | Graceful self-update — stops daemon, installs new version, restarts daemon |
 | `version` | Print the installed version |
 | `help` | Show usage info |

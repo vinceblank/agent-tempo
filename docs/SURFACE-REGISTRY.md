@@ -84,7 +84,7 @@ Source: `src/cli/help-text.ts` Commands section and `src/cli.ts` switch statemen
 | `restore <ensemble>` | Restore orphaned sessions in one ensemble on this host |
 | `release [ensemble]` | Release all held players — unlock outboxes, deliver messages |
 | `agent-types <sub>` | Manage player type definitions (`list` / `show` / `init`) |
-| `daemon <sub>` | Manage the worker daemon (`start` / `stop` / `status` / `logs`) |
+| `daemon <sub>` | Manage the worker daemon (`start` / `stop` / `status` / `logs` / `stats`) |
 | `upgrade [version]` | Upgrade claude-tempo to latest or a specific version |
 | `config` | Configure Temporal connection settings (interactive or `set` / `show`) |
 | `init` | Register MCP server globally (`--project` for per-directory) |

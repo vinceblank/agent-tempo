@@ -10,7 +10,30 @@ claude-tempo daemon start --force   # bypass orphan check + clear stale pid file
 claude-tempo daemon stop            # stop the daemon
 claude-tempo daemon status          # show running state, PID, and heartbeat age
 claude-tempo daemon logs            # tail daemon logs
+claude-tempo daemon stats           # print live memory usage, uptime, ensembles, SSE subscriber count
 ```
+
+## Memory Diagnostics
+
+`claude-tempo daemon stats` prints a live snapshot from the daemon's `/v1/health` endpoint:
+
+```
+Daemon stats (pid 12345)
+  Uptime:           2h 14m
+  Memory (rss):     128 MB
+  Heap used/total:  64 / 80 MB
+  External:         4 MB
+  Ensembles:        2
+  SSE subscribers:  3
+```
+
+The daemon also logs a memory summary every 5 minutes to `~/.claude-tempo/daemon.log`:
+
+```
+memory: rss=128mb heapUsed=64 heapTotal=80 external=4 arrayBuffers=1
+```
+
+Pre-#336 daemons return `n/a` for memory fields — `daemon stats` handles this gracefully.
 
 ## How It Works
 
