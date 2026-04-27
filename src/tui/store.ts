@@ -457,7 +457,15 @@ export type TuiAction =
   // ── #94/#95 PR-4a: incremental updates from the SSE event stream ──
   /** Append one new chat message — used by `event: chat.appended`. Updates `ensembleChat` and `conversation` together. */
   | { type: 'APPEND_CHAT_MESSAGE'; message: EnsembleChatMessage }
-  /** Insert or update a player by `playerId` — used by `event: player.added`. */
+  /**
+   * Insert or update a player by `playerId` — used by `event: player.added`.
+   *
+   * **Invariant**: `player` MUST be a complete `MaestroPlayerInfo` snapshot.
+   * The reducer's `{...existing, ...incoming}` merge will clobber any fields
+   * omitted from `incoming` with `undefined`. For sparse updates (e.g.
+   * `phase`-only), use `PATCH_PLAYER_PHASE` (introduced for #351) — extend
+   * that pattern to other fields rather than passing partial payloads here.
+   */
   | { type: 'UPSERT_PLAYER'; player: MaestroPlayerInfo }
   /**
    * Patch only the `phase` field of an existing player — used by
