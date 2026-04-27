@@ -8,15 +8,16 @@
  * Boot lifecycle:
  *   1. Caller passes a {@link TempoClient}, namespace, and version to
  *      {@link startHttpServer}.
- *   2. Server binds to `127.0.0.1:8473` (defaults overridable via
- *      `CLAUDE_TEMPO_HTTP_BIND` / `CLAUDE_TEMPO_DAEMON_PORT`).
+ *   2. Server binds to `127.0.0.1:8473` in production / `:8474` in dev mode
+ *      (defaults overridable via `CLAUDE_TEMPO_HTTP_BIND` /
+ *      `CLAUDE_TEMPO_DAEMON_PORT`; dev profile per ADR 0014 §5.1).
  *   3. The bound port is written atomically to `~/.claude-tempo/daemon.port`.
  *   4. Caller `await`s {@link HttpServerHandle.close} on shutdown — drains
  *      in-flight requests, removes the port file, then resolves.
  */
 import * as http from 'http';
 import type { TempoClient } from '../client/interface';
-import { ENV } from '../config';
+import { DEV_DAEMON_PORT, ENV, PROD_DAEMON_PORT, isDevMode } from '../config';
 import type { AggregateRunner } from './aggregate';
 import {
   bearerRequired,
@@ -68,8 +69,17 @@ const log = (...args: unknown[]) =>
 
 /** Default bind addr per SSE-PROTOCOL.md §1. */
 export const DEFAULT_BIND_ADDR = '127.0.0.1';
-/** Default port — `t-e-m-p-o` mnemonic; not IANA-registered. */
-export const DEFAULT_PORT = 8473;
+/**
+ * Default port — `t-e-m-p-o` mnemonic for prod (8473), `+1` for dev (8474).
+ * ADR 0014 §5.1 flips this with the rest of the dev profile so prod and dev
+ * daemons can coexist on the same machine without binding the same port.
+ *
+ * Evaluated at module load time. The dev daemon child process inherits
+ * `CLAUDE_TEMPO_DEV_MODE=1` from its parent CLI (set by the
+ * `dev-mode-bootstrap` side-effect), so by the time this module loads,
+ * `isDevMode()` already returns the correct value.
+ */
+export const DEFAULT_PORT = isDevMode() ? DEV_DAEMON_PORT : PROD_DAEMON_PORT;
 
 export interface HttpServerOptions {
   client: TempoClient;
@@ -77,7 +87,11 @@ export interface HttpServerOptions {
   version: string;
   /** Defaults to `process.env[ENV.HTTP_BIND] || '127.0.0.1'`. */
   bindAddr?: string;
-  /** Defaults to `Number(process.env[ENV.DAEMON_PORT]) || 8473`. `0` → ephemeral. */
+  /**
+   * Defaults to `Number(process.env[ENV.DAEMON_PORT]) || DEFAULT_PORT` —
+   * where {@link DEFAULT_PORT} is `8473` in production and `8474` in dev
+   * mode (ADR 0014 §5.1). `0` → ephemeral.
+   */
   port?: number;
   /** Defaults to parsing `process.env[ENV.CORS_ORIGINS]`. */
   allowedOrigins?: string[];

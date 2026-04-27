@@ -29,9 +29,11 @@ import { CliOverrides, getConfig } from '../config';
 import { readPortFile } from '../http/port-file';
 import {
   isDaemonRunning,
+  isOtherProfileLikelyRunning,
   startDaemon,
   stopDaemon,
   getDaemonStatus,
+  getOtherProfilePid,
   scanClaudeTempoDaemons,
   selectOrphans,
   DAEMON_PID_PATH,
@@ -68,18 +70,25 @@ export type StartPreflight =
  * spawn. `force` bypasses the orphan check and signals that a stale pid file
  * (if any) should be cleared before the spawn.
  *
+ * `otherProfilePid` is the live PID (if any) of the opposite profile's
+ * daemon (dev's prod sibling, or prod's dev sibling). Including it in the
+ * known-PID set keeps cross-profile coexistence working (ADR 0014 §5.6) —
+ * starting the dev daemon must not flag the prod daemon as an orphan, and
+ * vice versa.
+ *
  * @internal — exported for unit tests in test/daemon-start-orphan-check.test.ts.
  */
 export function evaluateStartPreflight(
   scanned: DaemonProcessInfo[],
   status: DaemonStatus,
   force: boolean,
+  otherProfilePid?: number,
 ): StartPreflight {
   if (status.running && typeof status.pid === 'number') {
     return { action: 'already-running', pid: status.pid };
   }
   if (!force) {
-    const orphans = selectOrphans(scanned, status.pid);
+    const orphans = selectOrphans(scanned, [status.pid, otherProfilePid]);
     if (orphans.length > 0) return { action: 'abort', orphans };
   }
   return { action: 'spawn', cleanupStalePid: force };
@@ -110,12 +119,29 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
   switch (opts.subcommand) {
     case 'start': {
       const status = getDaemonStatus();
+      // ADR 0014 §5.6 — if the OPPOSITE profile's daemon is running on this
+      // machine, exclude its PID from the orphan set. Dev + prod daemons
+      // are designed to coexist (different home dir / port / namespace).
+      // When the other profile shows weak evidence of running (port file
+      // exists but PID file doesn't / PID is unparseable), skip the orphan
+      // scan entirely — see also `stopDaemon`'s mirroring behavior.
+      const otherPid = getOtherProfilePid();
+      const skipOrphanScan =
+        isOtherProfileLikelyRunning() && otherPid === undefined;
+      if (skipOrphanScan) {
+        out.warn(
+          'Skipping orphan-process scan — the other profile (dev/prod) appears to be running ' +
+          'without a PID file. Re-run with `daemon start --force` if you have already verified ' +
+          'no rogue daemon for THIS profile is present.',
+        );
+      }
       const preflight = evaluateStartPreflight(
-        // Skip the actual OS scan when we're already-running or force is set —
-        // the decision doesn't depend on it. Saves a shell-out on the happy path.
-        status.running || opts.force ? [] : scanClaudeTempoDaemons(),
+        // Skip the actual OS scan when we're already-running, force is set,
+        // or we're suppressing for cross-profile safety.
+        status.running || opts.force || skipOrphanScan ? [] : scanClaudeTempoDaemons(),
         status,
-        Boolean(opts.force),
+        Boolean(opts.force) || skipOrphanScan,
+        otherPid,
       );
 
       switch (preflight.action) {
@@ -187,7 +213,9 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
         // Warn if the scanner reports extras the pid file doesn't know about —
         // orphans from a prior crashed run that never removed its pid file, or
         // a second daemon started by a stale concurrent CLI invocation (#157).
-        const extras = selectOrphans(scanned, status.pid);
+        // The opposite profile's daemon (if running) also gets excluded so
+        // prod doesn't flag dev as an orphan / vice versa (ADR 0014 §5.6).
+        const extras = selectOrphans(scanned, [status.pid, getOtherProfilePid()]);
         if (extras.length > 0) {
           out.warn(`Found ${extras.length} additional claude-tempo daemon process${extras.length === 1 ? '' : 'es'} not tracked by the pid file:`);
           for (const p of extras) out.log(`  pid ${p.pid}: ${p.commandLine}`);

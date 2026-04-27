@@ -49,6 +49,21 @@ export const ENV = {
   DAEMON_PORT: 'CLAUDE_TEMPO_DAEMON_PORT',
   CORS_ORIGINS: 'CLAUDE_TEMPO_CORS_ORIGINS',
   SSE_MAX_CONNECTIONS: 'CLAUDE_TEMPO_SSE_MAX_CONNECTIONS',
+  /**
+   * Dev profile gate (ADR 0014 §5.2). One source of truth — every layer
+   * (paths, namespace, port, task queue, banner, registry gating) consults
+   * `isDevMode()` rather than reading the env var directly. The `--dev`
+   * top-level CLI flag in `src/cli.ts` sets this to `'1'` before any other
+   * module loads (see `src/cli/dev-mode-bootstrap.ts`).
+   */
+  DEV_MODE: 'CLAUDE_TEMPO_DEV_MODE',
+  /**
+   * Escape hatch for triple-isolated environments (ADR 0014 §5.3). When
+   * set, `resolveTempoHome()` returns this path verbatim — bypassing both
+   * the production default and the dev-mode default. Lets a power user
+   * coordinate three or more parallel claude-tempo profiles on one box.
+   */
+  DEV_HOME_OVERRIDE: 'CLAUDE_TEMPO_HOME_OVERRIDE',
 } as const;
 
 // PR-H (#132): `lifecycleV2Enabled()` removed. The V2 attachment-lease path
@@ -87,7 +102,67 @@ export interface PersistedConfig {
   httpToken?: string;
 }
 
-export const CLAUDE_TEMPO_HOME = join(homedir(), '.claude-tempo');
+// ── Dev profile (ADR 0014 §5) ──
+
+/**
+ * Dev profile defaults — one switch (`--dev` top-level flag, or
+ * `CLAUDE_TEMPO_DEV_MODE=1` env var) flips four isolation axes at once
+ * (ADR 0014 §5.1). Production stays on the existing defaults.
+ */
+export const DEV_HOME_DIR_NAME = '.claude-tempo-dev';
+export const PROD_HOME_DIR_NAME = '.claude-tempo';
+export const DEV_TEMPORAL_NAMESPACE = 'claude-tempo-dev';
+export const PROD_TEMPORAL_NAMESPACE = 'default';
+export const DEV_TASK_QUEUE = 'claude-tempo-dev';
+export const PROD_TASK_QUEUE = 'claude-tempo';
+export const DEV_DAEMON_PORT = 8474;
+export const PROD_DAEMON_PORT = 8473;
+
+/**
+ * Single source of truth for the dev profile gate (ADR 0014 §5.2).
+ * Every layer that needs to switch behaviour consults this helper; future
+ * staging/ci/demo profiles would follow the same `isStagingMode()` pattern.
+ *
+ * Recognises `'1'` and `'true'` (case-insensitive) so users can write
+ * either `CLAUDE_TEMPO_DEV_MODE=1` or `CLAUDE_TEMPO_DEV_MODE=true`. Any
+ * other value (including the empty string) is treated as production.
+ *
+ * **Important**: when the `--dev` CLI flag is used, the env var must be
+ * set BEFORE `src/config.ts` is first imported (see
+ * `src/cli/dev-mode-bootstrap.ts`) so the module-load-time `CLAUDE_TEMPO_HOME`
+ * constant resolves to the dev profile.
+ */
+export function isDevMode(): boolean {
+  const v = process.env[ENV.DEV_MODE];
+  if (!v) return false;
+  return v === '1' || v.toLowerCase() === 'true';
+}
+
+/**
+ * Resolve the claude-tempo home directory. Three-tier precedence:
+ *   1. `CLAUDE_TEMPO_HOME_OVERRIDE` env — explicit override (multi-isolation
+ *      escape hatch; ADR 0014 §5.3).
+ *   2. Dev mode (`CLAUDE_TEMPO_DEV_MODE=1`): `~/.claude-tempo-dev/`.
+ *   3. Production default: `~/.claude-tempo/`.
+ *
+ * Evaluated once at module load time; downstream callers consume the
+ * exported `CLAUDE_TEMPO_HOME` constant. The bootstrap module guarantees
+ * the env var is set before this function first runs.
+ *
+ * Exported (rather than file-private) so unit tests can exercise the
+ * three-tier precedence directly without resorting to `vi.resetModules()`
+ * gymnastics. Production code should consume {@link CLAUDE_TEMPO_HOME}
+ * — calling this helper per-request would re-read env on every call.
+ */
+export function resolveTempoHome(): string {
+  const override = process.env[ENV.DEV_HOME_OVERRIDE];
+  if (override) return override;
+  return isDevMode()
+    ? join(homedir(), DEV_HOME_DIR_NAME)
+    : join(homedir(), PROD_HOME_DIR_NAME);
+}
+
+export const CLAUDE_TEMPO_HOME = resolveTempoHome();
 export const CONFIG_FILE_PATH = join(CLAUDE_TEMPO_HOME, 'config.json');
 
 // ── Daemon config (PR-E design §10.2) ──
@@ -401,8 +476,17 @@ export function getConfig(overrides: CliOverrides = {}): Config {
     ),
     temporalNamespace: resolve(
       overrides.temporalNamespace, ENV.TEMPORAL_NAMESPACE,
-      configFile.temporalNamespace, temporalCli.temporalNamespace,
-      'default',
+      configFile.temporalNamespace,
+      // ADR 0014 §5.1: dev profile flips the namespace default. CLI flag,
+      // env var, and the dev profile's own claude-tempo config file
+      // (`~/.claude-tempo-dev/config.json`) still win — but `~/.config/temporalio/temporal.yaml`
+      // is intentionally ignored in dev mode. That file captures the user's
+      // *default* Temporal environment for ad-hoc CLI work; letting it bleed
+      // through would defeat the dev profile's isolation guarantee (a user
+      // with `namespace: default` in temporal.yaml would see the dev daemon
+      // connect to prod). Explicit per-claude-tempo overrides remain available.
+      isDevMode() ? undefined : temporalCli.temporalNamespace,
+      isDevMode() ? DEV_TEMPORAL_NAMESPACE : PROD_TEMPORAL_NAMESPACE,
     ),
     temporalApiKey: resolveOpt(
       overrides.temporalApiKey, ENV.TEMPORAL_API_KEY,
@@ -418,7 +502,9 @@ export function getConfig(overrides: CliOverrides = {}): Config {
     ),
     defaultAgent: resolveDefaultAgent(overrides.defaultAgent, configFile.defaultAgent),
     claudeBin: process.env[ENV.CLAUDE_BIN] || configFile.claudeBin || undefined,
-    taskQueue: process.env[ENV.TASK_QUEUE] ?? 'claude-tempo',
+    // ADR 0014 §5.1: dev profile shifts the default task queue. Explicit
+    // env-var override still wins.
+    taskQueue: process.env[ENV.TASK_QUEUE] ?? (isDevMode() ? DEV_TASK_QUEUE : PROD_TASK_QUEUE),
     ensemble: process.env[ENV.ENSEMBLE] ?? 'default',
   };
 
@@ -462,7 +548,16 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
   }
 
   const address = resolveWithSource('temporalAddress', overrides.temporalAddress, ENV.TEMPORAL_ADDRESS, configFile.temporalAddress, temporalCli.temporalAddress, 'localhost:7233');
-  const namespace = resolveWithSource('temporalNamespace', overrides.temporalNamespace, ENV.TEMPORAL_NAMESPACE, configFile.temporalNamespace, temporalCli.temporalNamespace, 'default');
+  const namespace = resolveWithSource(
+    'temporalNamespace',
+    overrides.temporalNamespace,
+    ENV.TEMPORAL_NAMESPACE,
+    configFile.temporalNamespace,
+    // ADR 0014 §5.1 — temporal-cli fallback is dropped in dev mode for the
+    // same isolation reason documented in `getConfig` above.
+    isDevMode() ? undefined : temporalCli.temporalNamespace,
+    isDevMode() ? DEV_TEMPORAL_NAMESPACE : PROD_TEMPORAL_NAMESPACE,
+  );
   const apiKey = resolveWithSource('temporalApiKey', overrides.temporalApiKey, ENV.TEMPORAL_API_KEY, configFile.temporalApiKey, temporalCli.temporalApiKey);
   const tlsCert = resolveWithSource('temporalTlsCertPath', overrides.temporalTlsCertPath, ENV.TEMPORAL_TLS_CERT_PATH, configFile.temporalTlsCertPath, temporalCli.temporalTlsCertPath);
   const tlsKey = resolveWithSource('temporalTlsKeyPath', overrides.temporalTlsKeyPath, ENV.TEMPORAL_TLS_KEY_PATH, configFile.temporalTlsKeyPath, temporalCli.temporalTlsKeyPath);
@@ -478,7 +573,7 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
       temporalTlsKeyPath: tlsKey.value,
       defaultAgent: parseAgent(defaultAgent.value, defaultAgent.source),
       claudeBin: claudeBin.value,
-      taskQueue: process.env[ENV.TASK_QUEUE] ?? 'claude-tempo',
+      taskQueue: process.env[ENV.TASK_QUEUE] ?? (isDevMode() ? DEV_TASK_QUEUE : PROD_TASK_QUEUE),
       ensemble: process.env[ENV.ENSEMBLE] ?? 'default',
     },
     sources: {
