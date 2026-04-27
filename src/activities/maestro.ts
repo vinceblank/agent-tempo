@@ -241,6 +241,12 @@ export function createMaestroActivities(client: Client): MaestroActivities {
 
         const newMessages: EnsembleChatMessage[] = [];
 
+        // #357: each push site forwards the source's broadcastId (when
+        // present) onto the projected EnsembleChatMessage so the TUI's
+        // ConversationStream can fold fan-out deliveries into one row.
+        const maybeBroadcast = (m: { broadcastId?: string }): { broadcastId?: string } =>
+          m.broadcastId !== undefined ? { broadcastId: m.broadcastId } : {};
+
         for (const m of maestroRecv.slice(hw.maestroRecv)) {
           newMessages.push({
             id: m.id,
@@ -249,6 +255,7 @@ export function createMaestroActivities(client: Client): MaestroActivities {
             text: m.text,
             timestamp: m.timestamp,
             role: 'maestro-in',
+            ...maybeBroadcast(m),
           });
         }
 
@@ -260,6 +267,7 @@ export function createMaestroActivities(client: Client): MaestroActivities {
             text: m.text,
             timestamp: m.timestamp,
             role: 'maestro-out',
+            ...maybeBroadcast(m),
           });
         }
 
@@ -272,6 +280,7 @@ export function createMaestroActivities(client: Client): MaestroActivities {
             text: truncate(m.text),
             timestamp: m.timestamp,
             role: 'conductor-in',
+            ...maybeBroadcast(m),
           });
         }
 
@@ -284,6 +293,7 @@ export function createMaestroActivities(client: Client): MaestroActivities {
             text: truncate(m.text),
             timestamp: m.timestamp,
             role: 'conductor-out',
+            ...maybeBroadcast(m),
           });
         }
 

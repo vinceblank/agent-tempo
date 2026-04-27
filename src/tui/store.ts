@@ -30,6 +30,12 @@ export interface ConversationEntry {
   direction: 'in' | 'out';
   role?: 'maestro-out' | 'maestro-in' | 'conductor-out' | 'conductor-in';
   thirdParty?: boolean;
+  /**
+   * #357: Mirrors `EnsembleChatMessage.broadcastId`. Threaded through
+   * `toConversationEntry` so the TUI's `ConversationStream.foldByBroadcastId`
+   * can collapse consecutive entries sharing the same id into one row.
+   */
+  broadcastId?: string;
 }
 
 /**
@@ -48,6 +54,8 @@ export function toConversationEntry(m: EnsembleChatMessage): ConversationEntry {
     direction: m.role === 'maestro-out' ? 'out' : 'in',
     role: m.role,
     thirdParty: m.role === 'conductor-out' || m.role === 'conductor-in',
+    // #357: forward broadcastId so the renderer can fold fan-out groups.
+    ...(m.broadcastId !== undefined ? { broadcastId: m.broadcastId } : {}),
   };
 }
 
@@ -259,7 +267,7 @@ export interface TuiState {
   /** Active schedules in the ensemble. */
   schedules: ScheduleEntry[];
   /** Maestro conversation (null = loading, [] = loaded but empty). */
-  conversation: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out'; role?: 'maestro-out' | 'maestro-in' | 'conductor-out' | 'conductor-in'; thirdParty?: boolean }> | null;
+  conversation: ConversationEntry[] | null;
   /** Aggregated ensemble chat feed (from maestroEnsembleChat query). */
   ensembleChat: EnsembleChatMessage[];
   /** Whether the active ensemble has a conductor. */
@@ -316,8 +324,6 @@ export interface TuiState {
   notificationTick: number;
   /** Player name when in chat mode (bare text sends message to this target). */
   chatTarget?: string;
-  /** Name of the conductor in the active ensemble. */
-  conductorName?: string;
   /** Locally tracked sent messages (TUI has no workflow to query). */
   sentMessages: Array<{ to: string; text: string; timestamp: string }>;
   /** ID of the last message seen (for detecting new arrivals in polling). */
@@ -452,12 +458,20 @@ export type TuiAction =
   // Data refresh
   | { type: 'REFRESH_ENSEMBLES'; ensembles: EnsembleSummary[] }
   | { type: 'REFRESH_ENSEMBLE_DATA'; players: MaestroPlayerInfo[]; messages: MaestroRelayMessage[]; history: HistoryEntry[]; schedules?: ScheduleEntry[] }
-  | { type: 'SET_CONVERSATION'; conversation: Array<{ id: string; from: string; to: string; text: string; timestamp: string; direction: 'in' | 'out'; role?: 'maestro-out' | 'maestro-in' | 'conductor-out' | 'conductor-in'; thirdParty?: boolean }> }
+  | { type: 'SET_CONVERSATION'; conversation: ConversationEntry[] }
   | { type: 'SET_ENSEMBLE_CHAT'; chat: EnsembleChatResult }
   // ── #94/#95 PR-4a: incremental updates from the SSE event stream ──
   /** Append one new chat message — used by `event: chat.appended`. Updates `ensembleChat` and `conversation` together. */
   | { type: 'APPEND_CHAT_MESSAGE'; message: EnsembleChatMessage }
-  /** Insert or update a player by `playerId` — used by `event: player.added`. */
+  /**
+   * Insert or update a player by `playerId` — used by `event: player.added`.
+   *
+   * **Invariant**: `player` MUST be a complete `MaestroPlayerInfo` snapshot.
+   * The reducer's `{...existing, ...incoming}` merge will clobber any fields
+   * omitted from `incoming` with `undefined`. For sparse updates (e.g.
+   * `phase`-only), use `PATCH_PLAYER_PHASE` (introduced for #351) — extend
+   * that pattern to other fields rather than passing partial payloads here.
+   */
   | { type: 'UPSERT_PLAYER'; player: MaestroPlayerInfo }
   /**
    * Patch only the `phase` field of an existing player — used by
@@ -485,7 +499,6 @@ export type TuiAction =
   | { type: 'DISMISS_OLDEST_NOTIFICATION' }
   | { type: 'CLEAR_NOTIFICATIONS' }
   | { type: 'NOTIFICATION_TICK' }
-  | { type: 'SET_CONDUCTOR'; name?: string }
   | { type: 'SET_ENSEMBLE_PAUSED'; paused: boolean }
   | { type: 'SET_ENSEMBLE_HELD'; held: boolean }
   | { type: 'APPEND_SENT_MESSAGE'; to: string; text: string }
@@ -582,7 +595,6 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         phase: 'main' as TuiPhase,
         activeEnsemble: null,
         activePlayer: null,
-        conductorName: undefined,
         chatTarget: undefined,
         players: [],
         playersLoaded: false,
@@ -605,7 +617,6 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         phase: 'main' as TuiPhase,
         activeEnsemble: action.ensemble,
         activePlayer: null,
-        conductorName: undefined,
         chatTarget: undefined,
         players: [],
         playersLoaded: false,
@@ -900,9 +911,6 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       if (state.pickerIndex >= maxIdx) return state;
       return { ...state, pickerIndex: state.pickerIndex + 1 };
     }
-
-    case 'SET_CONDUCTOR':
-      return { ...state, conductorName: action.name };
 
     case 'SET_ENSEMBLE_PAUSED':
       // Identity-preserving: skip the dispatch when value didn't change so

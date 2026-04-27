@@ -371,7 +371,7 @@ async function handleHosts(
 
 /**
  * /recall [player] [--limit N] [--offset N] [--preview N] [--from X]
- *         [--since ISO] [--include-sent]
+ *         [--since ISO] [--include-sent | --received-only]
  *
  * #128: unified per-session recall. Without a player positional, targets
  * the ensemble's maestro session (the TUI's natural context); with a
@@ -381,6 +381,14 @@ async function handleHosts(
  * The legacy pre-#128 behavior (aggregated maestro relay-log filtered
  * by player) is retired; that path was inconsistent with the other two
  * surfaces and the design doc on #128 explicitly chose parity.
+ *
+ * #361: The TUI default flipped to `includeSent: true` because the
+ * single-message view that `/recall` originally targeted was confusing
+ * when the user had just typed a message and wanted to see the dialog
+ * context. The MCP tool's default is unchanged (still received-only) so
+ * external callers see no contract drift. `--include-sent` is still
+ * accepted for backward compatibility (no-op when default is true);
+ * pass `--received-only` to opt out.
  */
 async function handleRecall(
   args: string[],
@@ -401,7 +409,10 @@ async function handleRecall(
 
   try {
     const { received, sent } = await api.recall(ensemble, targetPlayer);
-    const timeline = buildTimeline(received, sent, Boolean(parsed.includeSent));
+    // #361: TUI default → include sent. `--received-only` opts out;
+    // `--include-sent` remains accepted (no-op now) for backward compat.
+    const includeSent = parsed.receivedOnly === true ? false : (parsed.includeSent ?? true);
+    const timeline = buildTimeline(received, sent, includeSent);
     const rendered = formatRecall(timeline, {
       limit: parsed.limit,
       offset: parsed.offset,
@@ -424,6 +435,8 @@ interface ParsedRecallFlags {
   since?: string;
   from?: string;
   includeSent?: boolean;
+  /** #361: opt out of the post-flip TUI default (received + sent). */
+  receivedOnly?: boolean;
   error?: string;
 }
 
@@ -484,6 +497,8 @@ export function parseRecallFlags(args: string[]): ParsedRecallFlags {
       case '--since':   err = consumeString('--since', 'since'); break;
       case '--from':    err = consumeString('--from', 'from'); break;
       case '--include-sent': out.includeSent = true; i += 1; break;
+      // #361: opt out of the post-flip default (received + sent).
+      case '--received-only': out.receivedOnly = true; i += 1; break;
       default: err = `Unknown flag: ${flag}`;
     }
     if (err) return { error: err };
@@ -1441,8 +1456,8 @@ export const COMMANDS: Record<string, CommandDef> = {
     handler: handleHosts,
   },
   recall: {
-    description: "Read a player's message history",
-    usage: '/recall [player] [--limit N] [--offset N] [--preview N] [--from X] [--since ISO] [--include-sent]',
+    description: "Read a player's message history (received + sent by default; --received-only to opt out)",
+    usage: '/recall [player] [--limit N] [--offset N] [--preview N] [--from X] [--since ISO] [--received-only]',
     handler: handleRecall,
   },
   schedule: {

@@ -126,6 +126,13 @@ export interface DeliverCueInput {
   fromPlayerId: string;
   targetPlayerId: string;
   message: string;
+  /**
+   * #357: Stable id shared across every fan-out target of one
+   * `broadcast` invocation. Threaded through to the target's
+   * `receiveMessage` signal so the stored Message carries it for
+   * later TUI grouping. `undefined` for non-broadcast direct cues.
+   */
+  broadcastId?: string;
 }
 
 export interface DeliverReportInput {
@@ -262,13 +269,20 @@ export interface OutboxActivities {
 export function createOutboxActivities(client: Client, config: Config): OutboxActivities {
   return {
     async deliverCue(input: DeliverCueInput): Promise<OutboxActivityResult> {
-      const { ensemble, fromPlayerId, targetPlayerId, message } = input;
+      const { ensemble, fromPlayerId, targetPlayerId, message, broadcastId } = input;
       try {
         const handle = await resolveSession(client, ensemble, targetPlayerId);
         if (!handle) {
           throw ApplicationFailure.nonRetryable(`No active session found for "${targetPlayerId}"`);
         }
-        await handle.signal('receiveMessage', { from: fromPlayerId, text: message });
+        // #357: thread broadcastId (when present) onto the receiver's
+        // `receiveMessage` signal payload. Additive optional field —
+        // direct cues omit it.
+        await handle.signal('receiveMessage', {
+          from: fromPlayerId,
+          text: message,
+          ...(broadcastId !== undefined ? { broadcastId } : {}),
+        });
         return { success: true };
       } catch (err) {
         // #236: transient RPC errors (e.g. DEADLINE_EXCEEDED on the signal call)

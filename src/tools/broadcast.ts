@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { randomUUID } from 'crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { Config } from '../config';
@@ -69,13 +70,21 @@ export function registerBroadcastTool(
           return ok('No active players matched the broadcast filter.');
         }
 
-        // Fan out cue outbox entries for each target
+        // #357: stamp every fan-out cue with the same `broadcastId` so the
+        // TUI can fold the N deliveries into one chat row. Generated ONCE
+        // here in the MCP-tool process — not inside the workflow — so
+        // workflow determinism is preserved (the workflow only sees the id
+        // as an opaque string on `OutboxEntryInput`).
+        const broadcastId = randomUUID();
+
+        // Fan out cue outbox entries for each target.
         const entryIds: string[] = [];
         for (const target of targets) {
           const entry = {
             type: 'cue',
             targetPlayerId: target.playerId,
             message,
+            broadcastId,
           } as OutboxEntryInput;
           const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
           entryIds.push(entryId);

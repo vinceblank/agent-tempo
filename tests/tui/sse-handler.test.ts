@@ -143,18 +143,23 @@ describe('handleSseEvent — snapshot', () => {
     await handleSseEvent(ev('snapshot', snap), dispatch, 'demo', api);
 
     const types = actions.map((a) => a.type);
+    // #358: SET_CONDUCTOR removed — conductor identity derives from
+    // `players` (REFRESH_ENSEMBLE_DATA) at render time.
     expect(types).toEqual([
       'REFRESH_ENSEMBLE_DATA',
       'SET_ENSEMBLE_CHAT',
       'SET_ENSEMBLE_PAUSED',
       'SET_ENSEMBLE_HELD',
-      'SET_CONDUCTOR',
       'SET_CONVERSATION',
     ]);
 
     const refresh = actions[0] as Extract<TuiAction, { type: 'REFRESH_ENSEMBLE_DATA' }>;
     expect(refresh.players.map((p) => p.playerId)).toEqual(['alice', 'bob']);
     expect(refresh.schedules).toEqual([]);
+    // The conductor row is preserved with isConductor: true so derived
+    // views can identify it without a dedicated SET_CONDUCTOR action.
+    const conductorRow = refresh.players.find((p) => p.isConductor);
+    expect(conductorRow?.playerId).toBe('alice');
 
     const setChat = actions[1] as Extract<TuiAction, { type: 'SET_ENSEMBLE_CHAT' }>;
     expect(setChat.chat.hasConductor).toBe(true);
@@ -163,32 +168,48 @@ describe('handleSseEvent — snapshot', () => {
     const paused = actions[2] as Extract<TuiAction, { type: 'SET_ENSEMBLE_PAUSED' }>;
     expect(paused.paused).toBe(true);
 
-    const conductor = actions[4] as Extract<TuiAction, { type: 'SET_CONDUCTOR' }>;
-    expect(conductor.name).toBe('alice');
-
-    const conv = actions[5] as Extract<TuiAction, { type: 'SET_CONVERSATION' }>;
+    const conv = actions[4] as Extract<TuiAction, { type: 'SET_CONVERSATION' }>;
     expect(conv.conversation.map((c) => c.direction)).toEqual(['in', 'out']);
   });
 
-  it('omits SET_CONDUCTOR when no conductor is in the snapshot', async () => {
+  it('does not project a conductor when the snapshot has none (#358)', async () => {
+    // Pre-#358: handler dispatched SET_CONDUCTOR conditionally on
+    // `players.find(isConductor)`. Post-#358: the action is gone entirely;
+    // the snapshot just dispatches REFRESH_ENSEMBLE_DATA and the StatusBar
+    // derives the badge from `players.some(isConductor)`. This test
+    // verifies the dispatched action set is the steady-state snapshot
+    // sequence (no leftover conductor signal) and that the players slice
+    // contains no conductor.
     const { dispatch, actions } = makeRecorder();
     const api = makeStubClient();
     const snap = snapshot({ players: [playerSummary('bob')] });
     await handleSseEvent(ev('snapshot', snap), dispatch, 'demo', api);
     const types = actions.map((a) => a.type);
-    expect(types).not.toContain('SET_CONDUCTOR');
+    expect(types).toEqual([
+      'REFRESH_ENSEMBLE_DATA',
+      'SET_ENSEMBLE_CHAT',
+      'SET_ENSEMBLE_PAUSED',
+      'SET_ENSEMBLE_HELD',
+      'SET_CONVERSATION',
+    ]);
+    const refresh = actions[0] as Extract<TuiAction, { type: 'REFRESH_ENSEMBLE_DATA' }>;
+    expect(refresh.players.some((p) => p.isConductor)).toBe(false);
   });
 
   /**
    * Regression guard — issue #351. When a snapshot lands with a
    * conductor in `players[]` AND chat messages in `chat`, both must
-   * leak through to the store: the conductor name (so the StatusBar
+   * leak through to the store: the conductor identity (so the StatusBar
    * doesn't show "No conductor") and the chat messages projected into
    * a conversation (so ChatView doesn't stay on "Loading messages...").
    * The bug at #351 was upstream in the wire parser, but this test
    * locks the projection contract here so a future refactor can't drop
    * either dispatch silently. Companion to the wire-level regression
    * test in `tests/client/subscribe.test.ts`.
+   *
+   * #358 update: the conductor identity now flows through
+   * REFRESH_ENSEMBLE_DATA's `players[]` (each entry carries
+   * `isConductor`) instead of a dedicated SET_CONDUCTOR action.
    */
   it('preserves conductor identity AND chat content on snapshot (#351 regression guard)', async () => {
     const { dispatch, actions } = makeRecorder();
@@ -208,12 +229,15 @@ describe('handleSseEvent — snapshot', () => {
 
     await handleSseEvent(ev('snapshot', snap), dispatch, 'demo', api);
 
-    // Conductor name must be set so StatusBar does NOT render "⚠ No conductor".
-    const conductorAction = actions.find(
-      (a): a is Extract<TuiAction, { type: 'SET_CONDUCTOR' }> => a.type === 'SET_CONDUCTOR',
+    // The conductor must be present in REFRESH_ENSEMBLE_DATA's `players`
+    // with `isConductor: true` so StatusBar's derived check does NOT
+    // render "⚠ No conductor".
+    const refreshAction = actions.find(
+      (a): a is Extract<TuiAction, { type: 'REFRESH_ENSEMBLE_DATA' }> => a.type === 'REFRESH_ENSEMBLE_DATA',
     );
-    expect(conductorAction).toBeDefined();
-    expect(conductorAction!.name).toBe('boss');
+    expect(refreshAction).toBeDefined();
+    const conductorRow = refreshAction!.players.find((p) => p.isConductor);
+    expect(conductorRow?.playerId).toBe('boss');
 
     // SET_ENSEMBLE_CHAT must carry the messages and `hasConductor: true`.
     const chatAction = actions.find(
@@ -356,6 +380,29 @@ describe('handleSseEvent — chat + flags + schedules', () => {
     const m = chatMsg('m1');
     await handleSseEvent(ev('chat.appended', m), dispatch, 'demo', api);
     expect(actions).toEqual([{ type: 'APPEND_CHAT_MESSAGE', message: m }]);
+  });
+
+  /**
+   * #357: `chat.appended` must round-trip the `broadcastId` field
+   * intact so the TUI's `ConversationStream` can fold N consecutive
+   * fan-out deliveries into one chat row. The SSE handler is a pure
+   * projection — no field whitelist, no schema reshape — so the test
+   * here just locks the contract that the wire payload reaches the
+   * reducer unchanged.
+   */
+  it('chat.appended preserves broadcastId on the projected APPEND_CHAT_MESSAGE (#357)', async () => {
+    const { dispatch, actions } = makeRecorder();
+    const api = makeStubClient();
+    const m: EnsembleChatMessage = {
+      ...chatMsg('m-with-bcast'),
+      role: 'maestro-out',
+      broadcastId: 'bcast-aaaa',
+    };
+    await handleSseEvent(ev('chat.appended', m), dispatch, 'demo', api);
+    expect(actions).toHaveLength(1);
+    const action = actions[0] as Extract<TuiAction, { type: 'APPEND_CHAT_MESSAGE' }>;
+    expect(action.type).toBe('APPEND_CHAT_MESSAGE');
+    expect(action.message.broadcastId).toBe('bcast-aaaa');
   });
 
   it('flags.changed dispatches both SET_ENSEMBLE_PAUSED and SET_ENSEMBLE_HELD', async () => {

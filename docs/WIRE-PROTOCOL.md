@@ -329,6 +329,7 @@ Privacy contract: daemons MUST scrub absolute paths, env values, and user direct
 | `text` | `string` | Message content, truncated to 500 chars. Full text available via `maestroFetchPlayerMessages`. |
 | `timestamp` | `string` | ISO timestamp of the original message. |
 | `role` | `'maestro-out' \| 'maestro-in' \| 'conductor-out' \| 'conductor-in'` | Message perspective: `maestro-out` = maestro sent to a player; `maestro-in` = player sent to maestro; `conductor-out` = conductor sent to a non-maestro player; `conductor-in` = non-maestro player sent to conductor. Conductor↔maestro messages are deduplicated and excluded. |
+| `broadcastId` | `string?` | #357: Stable id shared across every fan-out target of a single `broadcast` invocation. Generated once in the broadcaster's MCP-tool process and threaded through `CueOutboxEntry` → `receiveMessage` signal → `Message.broadcastId` / `SentMessage.broadcastId` → this projection. The TUI uses it to fold N identical broadcast deliveries into a single chat row. `undefined` for non-broadcast direct cues. Additive optional field — pre-#357 readers ignore it transparently. |
 
 ### `EnsembleChatQuery`
 
