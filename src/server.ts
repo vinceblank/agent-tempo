@@ -149,7 +149,7 @@ async function main() {
     },
   };
 
-  const handle = await client.workflow.start('claudeSessionWorkflow', {
+  const startedHandle = await client.workflow.start('claudeSessionWorkflow', {
     workflowId,
     taskQueue: config.taskQueue,
     args: [sessionInput],
@@ -164,10 +164,29 @@ async function main() {
   });
   log(`Workflow ${workflowId} started (or reconnected)`);
 
+  // #347 — every tool that calls `executeUpdate` / `signal` / `query` on
+  // the session's own workflow MUST use an UNPINNED handle (no
+  // `firstExecutionRunId` field). The handle returned by
+  // `client.workflow.start()` carries `firstExecutionRunId` set to the
+  // run that was current when start() resolved; once the workflow does
+  // any `continueAsNew`, that run is no longer the FIRST of the chain
+  // and Temporal rejects update RPCs with `WorkflowNotFoundError`. The
+  // architect's outbox went silent because every force-restart reset
+  // the handle to a fresh-but-soon-stale `firstExecutionRunId`. Using
+  // `client.workflow.getHandle(workflowId)` (no runId) omits chain
+  // validation entirely and routes every operation to the latest open
+  // run regardless of CAN history. See
+  // `test/session-can-handle-staleness.test.ts` for the structural
+  // proof + stale-firstExecutionRunId reproducer.
+  const handle = client.workflow.getHandle(workflowId);
+
   // Watch for workflow completion — exit the process when the workflow ends
-  // (e.g., via stop tool setting status to 'terminated')
+  // (e.g., via stop tool setting status to 'terminated'). Use the
+  // started handle (`runIdForResult` = the started run's id) so
+  // `result()` follows the CAN chain via `followRuns: true` and resolves
+  // when the entire chain ends, not on a single CAN boundary.
   // Note: daemon is NOT stopped here — it serves all sessions, not just this one.
-  handle.result().then(() => {
+  startedHandle.result().then(() => {
     log('Workflow completed — shutting down');
     stopPoller();
     process.exit(0);
