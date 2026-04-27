@@ -330,7 +330,15 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
 
     // Record in sentMessages for history continuity
     if (entry.type === 'cue') {
-      sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: entry.message, timestamp: entry.createdAt });
+      // #357: forward broadcastId so the sender's view reflects the same
+      // grouping the receiver sees.
+      sentMessages.push({
+        id: entry.id,
+        to: entry.targetPlayerId,
+        text: entry.message,
+        timestamp: entry.createdAt,
+        ...(entry.broadcastId !== undefined ? { broadcastId: entry.broadcastId } : {}),
+      });
     } else if (entry.type === 'report') {
       sentMessages.push({ id: entry.id, to: 'conductor', text: `[${entry.reportType}] ${entry.text}`, timestamp: entry.createdAt });
     } else if (entry.type === 'stop') {
@@ -366,6 +374,10 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       timestamp: workflowNow().toISOString(),
       delivered: false,
       isMaestro: msg.isMaestro,
+      // #357: thread the broadcast id (if any) onto the stored Message
+      // so subsequent `allMessages`/`fetchEnsembleChat` queries surface
+      // it for TUI grouping.
+      ...(msg.broadcastId !== undefined ? { broadcastId: msg.broadcastId } : {}),
     });
     lastActivityTime = workflowNow().getTime();
     // Track inbound messages that expect a response (default: true for backward compat)
@@ -426,6 +438,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       to: msg.to,
       text: msg.text,
       timestamp: workflowNow().toISOString(),
+      // #357: mirror Message.broadcastId on the sender side so the
+      // TUI's local-side projection sees the same fold key.
+      ...(msg.broadcastId !== undefined ? { broadcastId: msg.broadcastId } : {}),
     });
   });
 
@@ -1376,6 +1391,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               fromPlayerId: input.metadata.playerId,
               targetPlayerId: entry.targetPlayerId,
               message: entry.message,
+              // #357: thread broadcast id so the target's `receiveMessage`
+              // signal carries it onto the stored Message.
+              ...(entry.broadcastId !== undefined ? { broadcastId: entry.broadcastId } : {}),
             });
             break;
           case 'report':

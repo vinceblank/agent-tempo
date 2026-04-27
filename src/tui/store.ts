@@ -30,6 +30,12 @@ export interface ConversationEntry {
   direction: 'in' | 'out';
   role?: 'maestro-out' | 'maestro-in' | 'conductor-out' | 'conductor-in';
   thirdParty?: boolean;
+  /**
+   * #357: Mirrors `EnsembleChatMessage.broadcastId`. Threaded through
+   * `toConversationEntry` so the TUI's `ConversationStream.foldByBroadcastId`
+   * can collapse consecutive entries sharing the same id into one row.
+   */
+  broadcastId?: string;
 }
 
 /**
@@ -48,6 +54,8 @@ export function toConversationEntry(m: EnsembleChatMessage): ConversationEntry {
     direction: m.role === 'maestro-out' ? 'out' : 'in',
     role: m.role,
     thirdParty: m.role === 'conductor-out' || m.role === 'conductor-in',
+    // #357: forward broadcastId so the renderer can fold fan-out groups.
+    ...(m.broadcastId !== undefined ? { broadcastId: m.broadcastId } : {}),
   };
 }
 

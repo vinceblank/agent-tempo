@@ -349,6 +349,15 @@ export interface Message {
   delivered: boolean;
   /** True when sent from the Maestro dashboard by a human. */
   isMaestro?: boolean;
+  /**
+   * #357: Stable id shared across every fan-out target of a single
+   * `broadcast` tool invocation. Generated once in the broadcaster's
+   * MCP-tool process and threaded through `CueOutboxEntry` →
+   * `receiveMessage` signal → this field. The TUI uses it to fold N
+   * identical broadcast deliveries into a single chat row. `undefined`
+   * for non-broadcast direct cues.
+   */
+  broadcastId?: string;
 }
 
 export interface SentMessage {
@@ -356,6 +365,8 @@ export interface SentMessage {
   to: string;
   text: string;
   timestamp: string;
+  /** #357: Mirrors {@link Message.broadcastId} on the sender side. */
+  broadcastId?: string;
 }
 
 export interface Command {
@@ -394,6 +405,16 @@ export interface CueOutboxEntry extends OutboxEntryBase {
   type: 'cue';
   targetPlayerId: string;
   message: string;
+  /**
+   * #357: Stable id shared across every fan-out target of a single
+   * `broadcast` tool invocation. Generated once in the MCP-tool process
+   * (NOT inside the workflow — workflow determinism is preserved
+   * because the workflow only sees the id as an opaque string on
+   * `OutboxEntryInput`). Threaded through to the target's `Message`
+   * and the sender's `SentMessage` so the TUI can fold the fan-out
+   * into a single chat row. `undefined` for non-broadcast cues.
+   */
+  broadcastId?: string;
 }
 
 export interface RecruitOutboxEntry extends OutboxEntryBase {
@@ -726,6 +747,13 @@ export interface EnsembleChatMessage {
    * - 'conductor-in': a non-maestro player sent to conductor
    */
   role: 'maestro-out' | 'maestro-in' | 'conductor-out' | 'conductor-in';
+  /**
+   * #357: Mirrors {@link Message.broadcastId} / {@link SentMessage.broadcastId}.
+   * Same value on every fan-out target of a single `broadcast` invocation;
+   * the TUI's `ConversationStream` collapses consecutive entries sharing
+   * a non-null `broadcastId` into one row. `undefined` for non-broadcast cues.
+   */
+  broadcastId?: string;
 }
 
 /** Input for the maestroEnsembleChat query. */

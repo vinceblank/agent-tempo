@@ -382,6 +382,29 @@ describe('handleSseEvent — chat + flags + schedules', () => {
     expect(actions).toEqual([{ type: 'APPEND_CHAT_MESSAGE', message: m }]);
   });
 
+  /**
+   * #357: `chat.appended` must round-trip the `broadcastId` field
+   * intact so the TUI's `ConversationStream` can fold N consecutive
+   * fan-out deliveries into one chat row. The SSE handler is a pure
+   * projection — no field whitelist, no schema reshape — so the test
+   * here just locks the contract that the wire payload reaches the
+   * reducer unchanged.
+   */
+  it('chat.appended preserves broadcastId on the projected APPEND_CHAT_MESSAGE (#357)', async () => {
+    const { dispatch, actions } = makeRecorder();
+    const api = makeStubClient();
+    const m: EnsembleChatMessage = {
+      ...chatMsg('m-with-bcast'),
+      role: 'maestro-out',
+      broadcastId: 'bcast-aaaa',
+    };
+    await handleSseEvent(ev('chat.appended', m), dispatch, 'demo', api);
+    expect(actions).toHaveLength(1);
+    const action = actions[0] as Extract<TuiAction, { type: 'APPEND_CHAT_MESSAGE' }>;
+    expect(action.type).toBe('APPEND_CHAT_MESSAGE');
+    expect(action.message.broadcastId).toBe('bcast-aaaa');
+  });
+
   it('flags.changed dispatches both SET_ENSEMBLE_PAUSED and SET_ENSEMBLE_HELD', async () => {
     const { dispatch, actions } = makeRecorder();
     const api = makeStubClient();

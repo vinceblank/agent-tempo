@@ -65,8 +65,11 @@ export type {
 // and consumers to distinguish scheduled fires from direct cues. Documented in
 // docs/WIRE-PROTOCOL.md; runtime senders have populated both fields since the
 // scheduler shipped, but the TS type drifted (#251). Optional everywhere.
-export const receiveMessageSignal = defineSignal<[{ from: string; text: string; isMaestro?: boolean; isScheduled?: boolean; scheduleName?: string; responseRequested?: boolean }]>('receiveMessage');
-export const recordSentMessageSignal = defineSignal<[{ to: string; text: string }]>('recordSentMessage');
+// `broadcastId` (#357) is an additive optional field — same id on every fan-out
+// target of one `broadcast` invocation. The TUI uses it to fold N deliveries
+// into one chat row.
+export const receiveMessageSignal = defineSignal<[{ from: string; text: string; isMaestro?: boolean; isScheduled?: boolean; scheduleName?: string; responseRequested?: boolean; broadcastId?: string }]>('receiveMessage');
+export const recordSentMessageSignal = defineSignal<[{ to: string; text: string; broadcastId?: string }]>('recordSentMessage');
 export const setPartSignal = defineSignal<[string]>('setPart');
 export const markDeliveredSignal = defineSignal<[string[]]>('markDelivered');
 export const setNameSignal = defineSignal<[string]>('setName');

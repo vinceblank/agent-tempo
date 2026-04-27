@@ -24,12 +24,20 @@ export interface ConversationMessage {
   role?: 'maestro-out' | 'maestro-in' | 'conductor-out' | 'conductor-in';
   /** True for conductor↔player traffic (rendered dimmed). */
   thirdParty?: boolean;
+  /**
+   * #357: Mirrors `EnsembleChatMessage.broadcastId`. When set, consecutive
+   * messages sharing the same id collapse into a single rendered row with
+   * a `📡 broadcast → N players` badge. `undefined` for direct cues.
+   */
+  broadcastId?: string;
 }
 
 export interface SentMessage {
   to: string;
   text: string;
   timestamp: string;
+  /** #357: Mirrors `Message.broadcastId` on the sender side. */
+  broadcastId?: string;
 }
 
 export interface ConversationStreamProps {
@@ -66,8 +74,20 @@ export interface FormattedMsg {
    * NOT the conductor — prepend `→ @<recipientLabel>` to the rendered
    * body so the user can see who they actually messaged. Empty for
    * inbound, conductor-bound, or third-party messages.
+   *
+   * Mutually exclusive with `broadcastBadge` — when a row represents a
+   * folded broadcast group, the badge enumerates recipients and the
+   * single-recipient prefix would duplicate that information.
    */
   recipientLabel?: string;
+  /**
+   * #357: When set, this `FormattedMsg` represents a folded group of
+   * consecutive messages sharing the same `broadcastId`. The renderer
+   * surfaces a `📡 broadcast → <count> players` segment in front of
+   * the body in place of the `→ @<to>` recipient prefix. The first
+   * `recipients.length` names are listed (cap = 3 + "+N more").
+   */
+  broadcastBadge?: { count: number; recipients: string[] };
 }
 
 function formatTime(timestamp: string): string {
@@ -87,15 +107,48 @@ function maxLines(msg: FormattedMsg): number {
   return msg.thirdParty ? MAX_DISPLAY_LINES_THIRD_PARTY : Infinity;
 }
 
+/** Maximum recipient names listed inline in the broadcast badge text. */
+const BROADCAST_BADGE_NAME_CAP = 3;
+
 /**
- * Compute the width of the `→ @<to>` recipient prefix added to outbound
- * directed messages (#360). 0 when no recipientLabel is set. Used by
- * both the line estimator and the renderer to keep wrap math in sync.
+ * Render the broadcast-badge inline text (#357). Format:
+ *   `📡 broadcast → 3 players (alice, bob, carol) `
+ *   `📡 broadcast → 8 players (alice, bob, carol +5 more) `
+ * Trailing space is intentional — the body text follows on the same line.
+ */
+function broadcastBadgeText(badge: { count: number; recipients: string[] }): string {
+  const head = `\u{1F4E1} broadcast → ${badge.count} player${badge.count === 1 ? '' : 's'}`;
+  const named = badge.recipients.slice(0, BROADCAST_BADGE_NAME_CAP);
+  const remainder = Math.max(0, badge.count - named.length);
+  if (named.length === 0) return `${head} `;
+  const list = remainder > 0 ? `${named.join(', ')} +${remainder} more` : named.join(', ');
+  return `${head} (${list}) `;
+}
+
+/**
+ * Compute the width of the inline first-line prefix added to outbound
+ * messages: either the broadcast badge (#357) — which dominates when
+ * present — or the directed-recipient prefix (#360). 0 when neither is
+ * set. Used by both the line estimator and the renderer so wrap math
+ * stays in sync.
+ */
+function firstLinePrefixLen(msg: FormattedMsg): number {
+  if (msg.broadcastBadge) return broadcastBadgeText(msg.broadcastBadge).length;
+  if (msg.recipientLabel) {
+    // `→ @<label> ` — arrow + space + @ + label + trailing space.
+    return msg.recipientLabel.length + 4;
+  }
+  return 0;
+}
+
+/**
+ * Back-compat alias retained so the patch from #360 keeps reading
+ * naturally — `recipientPrefixLen(msg)` is what the surrounding code
+ * comments call this concept. Now delegates to {@link firstLinePrefixLen}
+ * which understands the broadcastBadge case too.
  */
 function recipientPrefixLen(msg: FormattedMsg): number {
-  if (!msg.recipientLabel) return 0;
-  // `→ @<label> ` — arrow + space + @ + label + trailing space.
-  return msg.recipientLabel.length + 4;
+  return firstLinePrefixLen(msg);
 }
 
 function estimateLines(msg: FormattedMsg, termCols: number): number {
@@ -132,6 +185,40 @@ function estimateLines(msg: FormattedMsg, termCols: number): number {
  * `recipientLabel` on conductor-bound `maestro-out` rows so the
  * `\u2192 @<conductor>` prefix doesn't dominate every message.
  */
+/**
+ * #357: Fold consecutive `ConversationMessage`s sharing the same
+ * non-null `broadcastId` (and direction/role) into a single group. The
+ * fold runs BEFORE per-message line estimation so `usedLines` doesn't
+ * over-count the unfolded fan-out and shrink the viewport.
+ *
+ * Direction/role must match within a group \u2014 a `maestro-out` and a
+ * `conductor-out` carrying the same id (theoretical, won't happen in
+ * practice) would render as two distinct rows so the perspective stays
+ * accurate.
+ */
+function foldByBroadcastId(sorted: ConversationMessage[]): Array<ConversationMessage[]> {
+  const groups: Array<ConversationMessage[]> = [];
+  for (const m of sorted) {
+    const last = groups[groups.length - 1];
+    // Fold key is `broadcastId + direction`. Role is intentionally NOT
+    // part of the key because local-echo entries (`from: 'you'`, no
+    // role) need to fold with server-projected entries (`role:
+    // 'maestro-out'`) sharing the same id while a broadcast is in
+    // flight.
+    if (
+      m.broadcastId &&
+      last &&
+      last[0].broadcastId === m.broadcastId &&
+      last[0].direction === m.direction
+    ) {
+      last.push(m);
+    } else {
+      groups.push([m]);
+    }
+  }
+  return groups;
+}
+
 export function buildFormattedMessages(
   conversation: ConversationMessage[],
   sentMessages: SentMessage[],
@@ -149,24 +236,59 @@ export function buildFormattedMessages(
       c.text.slice(0, 60) === sentBody.slice(0, 60)
     );
     if (!alreadyOnServer) {
-      allConvoMsgs.push({ id: `local-${m.timestamp}`, from: 'you', to: m.to, text: m.text, timestamp: m.timestamp, direction: 'out' });
+      allConvoMsgs.push({
+        id: `local-${m.timestamp}`,
+        from: 'you',
+        to: m.to,
+        text: m.text,
+        timestamp: m.timestamp,
+        direction: 'out',
+        // Forward broadcastId from the local-echo SentMessage so a
+        // freshly-sent broadcast still folds before the server projection
+        // catches up. (#357)
+        ...(m.broadcastId !== undefined ? { broadcastId: m.broadcastId } : {}),
+      });
     }
   }
   const sorted = allConvoMsgs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-  return sorted.map(m => {
+  // #357: fold consecutive same-broadcastId entries into groups, then
+  // project each group as one FormattedMsg. The badge enumerates
+  // recipients; the first message's body/timestamp/sender stand in for
+  // the group's display fields.
+  const groups = foldByBroadcastId(sorted);
+
+  return groups.map(group => {
+    const m = group[0];
     const role = m.role;
     const thirdParty = m.thirdParty;
     let routeLabel: string | undefined;
     if (role === 'conductor-out') routeLabel = `${m.from} \u2192 ${m.to}`;
     else if (role === 'conductor-in') routeLabel = `${m.from} \u2192 ${m.to}`;
+
+    // #357: badge wins over recipientLabel \u2014 when the row represents a
+    // folded broadcast, recipients are already enumerated inside the
+    // badge text and the single-recipient prefix would duplicate that.
+    let broadcastBadge: { count: number; recipients: string[] } | undefined;
+    if (m.broadcastId) {
+      broadcastBadge = {
+        count: group.length,
+        recipients: group.map(g => g.to),
+      };
+    }
+
     // #360: only set recipientLabel for `maestro-out` messages where
     // the recipient is neither the active conductor (whose role is the
     // implicit default for bare-text input) nor the legacy `'conductor'`
     // literal. `to` of `'maestro'` is also excluded \u2014 outbound to maestro
-    // is meaningless (the maestro is the user's own session).
+    // is meaningless (the maestro is the user's own session). Suppressed
+    // when `broadcastBadge` is set (#357 \u2194 #360 composition).
     let recipientLabel: string | undefined;
-    if (role === 'maestro-out' && m.to && m.to !== 'maestro' && m.to !== 'conductor' && m.to !== conductorPlayerId) {
+    if (
+      !broadcastBadge &&
+      role === 'maestro-out' &&
+      m.to && m.to !== 'maestro' && m.to !== 'conductor' && m.to !== conductorPlayerId
+    ) {
       recipientLabel = m.to;
     }
     return {
@@ -178,6 +300,7 @@ export function buildFormattedMessages(
       thirdParty,
       routeLabel,
       recipientLabel,
+      broadcastBadge,
     };
   });
 }
@@ -232,10 +355,18 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
 
       if (isOut) {
         // Outbound: inline — ♩ first line, then wrapped continuation lines (no timestamp).
-        // #360: when recipientLabel is set, inject `→ @<to>` (dim) before
-        // the first body character. The wrap width above already reserves
-        // room so the rendered line still fits in termCols - 2.
-        const recipientPrefix = msg.recipientLabel ? `→ @${msg.recipientLabel} ` : '';
+        // #357 + #360: the first-line prefix is either the broadcast
+        // badge (`📡 broadcast → N players (a, b, c +M more) `,
+        // accent-coloured) or the directed-recipient label
+        // (`→ @<to> `, dim). They're mutually exclusive — the badge
+        // already enumerates recipients, so duplicating with the
+        // single-recipient prefix would be noisy. The wrap width above
+        // already reserves room for whichever is present.
+        const prefixEl = msg.broadcastBadge
+          ? React.createElement(Text, { key: `pre-${i}`, backgroundColor: bg, color: THEME.accent }, broadcastBadgeText(msg.broadcastBadge))
+          : msg.recipientLabel
+            ? React.createElement(Text, { key: `pre-${i}`, backgroundColor: bg, color: THEME.dim }, `→ @${msg.recipientLabel} `)
+            : null;
         for (let j = 0; j < displayLines.length; j++) {
           if (j > 0) children.push('\n');
           if (j === 0) {
@@ -243,9 +374,7 @@ export function ConversationStream({ conversation, sentMessages, contentHeight, 
             const pad = ' '.repeat(Math.max(0, termCols - 2 - 3 - prefixLen - firstText.length));
             children.push(React.createElement(React.Fragment, { key: `bl-${i}-0` },
               React.createElement(Text, { backgroundColor: bg, color: THEME.accent, bold: true }, ' \u2669 '),
-              ...(recipientPrefix
-                ? [React.createElement(Text, { key: `pre-${i}`, backgroundColor: bg, color: THEME.dim }, recipientPrefix)]
-                : []),
+              ...(prefixEl ? [prefixEl] : []),
               React.createElement(Text, { backgroundColor: bg, color: THEME.text }, firstText),
               React.createElement(Text, { backgroundColor: bg, color: THEME.dim }, pad),
             ));
