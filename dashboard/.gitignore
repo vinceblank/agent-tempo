@@ -8,3 +8,6 @@ dist/*
 .vite/
 *.log
 *.tsbuildinfo
+# Playwright runtime artifacts — traces, screenshots, video, run-marker.
+playwright-report/
+test-results/

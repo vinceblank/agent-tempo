@@ -1,0 +1,216 @@
+/**
+ * Dashboard e2e smoke pack — PR-8 of #340.
+ *
+ * Four scenarios, each driven against an isolated test daemon
+ * (see `./test-daemon.ts`):
+ *
+ *   1. **Overview renders + ensemble list shows up.** The dashboard
+ *      navigates to `/`, fetches `/v1/ensembles` (mocked), and the
+ *      Overview screen ships an EnsembleCard per row.
+ *   2. **Workspace + cue placeholder.** Navigate into an ensemble,
+ *      type into the message input, submit. The PR-5 placeholder
+ *      logs `chat.message.placeholder-send` (real wire-up lands in
+ *      PR-7 — the test asserts the placeholder is reachable + the
+ *      log fires, which is what the conductor's autonomous
+ *      validator can grep).
+ *   3. **Mobile viewport — sidebar collapses to a sheet.** 375x667
+ *      viewport. The PR-5 ResponsivePanel switches variant; the
+ *      sidebar layout still exposes the brandmark + roster.
+ *   4. **Pair-token flow — risk #16 ordering.** Mint via
+ *      `POST /dashboard/api/pair` against the real daemon, navigate
+ *      to `/dashboard/?pair=<token>`. Assert the token is dropped
+ *      from the URL BEFORE the bearer lands in localStorage —
+ *      lock the contract that `dashboard/src/lib/pair.ts` enforces.
+ */
+import { test, expect } from '@playwright/test';
+import { bootTestDaemon, type TestDaemonHandle } from './test-daemon';
+import type { EnsembleStateV1 } from '../../src/http/event-types';
+
+let daemon: TestDaemonHandle;
+
+test.beforeAll(async () => {
+  daemon = await bootTestDaemon();
+});
+
+test.afterAll(async () => {
+  await daemon.close();
+});
+
+const DEMO_ENSEMBLE = 'demo';
+
+function makeEnsembleSnapshot(): EnsembleStateV1 {
+  return {
+    v: 1,
+    ensemble: DEMO_ENSEMBLE,
+    capturedAt: new Date().toISOString(),
+    lastEventId: '1735000000000:0',
+    state: 'online',
+    hasConductor: true,
+    flags: { paused: false, held: false },
+    players: [
+      {
+        playerId: 'tempo-conductor',
+        ensemble: DEMO_ENSEMBLE,
+        hostname: 'host',
+        isConductor: true,
+        agentType: 'claude',
+        playerType: 'tempo-conductor',
+        phase: 'attached',
+        part: '',
+        workDir: '/work',
+      },
+      {
+        playerId: 'tempo-eng',
+        ensemble: DEMO_ENSEMBLE,
+        hostname: 'host',
+        isConductor: false,
+        agentType: 'claude',
+        playerType: 'my-tempo-engineer',
+        phase: 'attached',
+        part: '',
+        workDir: '/work',
+      },
+    ],
+    schedules: [],
+    chat: { messages: [], total: 0, hasMore: false },
+    hostProfiles: {},
+  };
+}
+
+test('1. Overview renders the ensemble list with the right testids', async ({ page }) => {
+  // Mock `/v1/ensembles` since the test daemon has no Temporal.
+  await page.route(`${daemon.origin}/v1/ensembles`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        { name: DEMO_ENSEMBLE, playerCount: 2, hasConductor: true, state: 'online' },
+      ]),
+    }),
+  );
+  await page.route(`${daemon.origin}/v1/state/${DEMO_ENSEMBLE}`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(makeEnsembleSnapshot()),
+    }),
+  );
+  // SSE endpoint — return an empty stream so the subscription hook
+  // gets a "connection-end" rather than a 503.
+  await page.route(`${daemon.origin}/v1/events/${DEMO_ENSEMBLE}*`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: '',
+    }),
+  );
+
+  await page.goto(`${daemon.origin}/dashboard/`);
+  await expect(page.getByTestId('screen-overview')).toBeVisible();
+  await expect(page.getByTestId(`ensemble-card-${DEMO_ENSEMBLE}`)).toBeVisible();
+  await expect(page.getByTestId(`ensemble-card-${DEMO_ENSEMBLE}-link`)).toBeVisible();
+});
+
+test('2. Workspace placeholder send fires `chat.message.placeholder-send` log', async ({ page }) => {
+  await page.route(`${daemon.origin}/v1/state/${DEMO_ENSEMBLE}`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(makeEnsembleSnapshot()),
+    }),
+  );
+  await page.route(`${daemon.origin}/v1/events/${DEMO_ENSEMBLE}*`, (route) =>
+    route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' }),
+  );
+  // Capture the dashboard's structured console output. The conductor
+  // greps for these prefixes via `mcp__claude-in-chrome__read_console_messages`,
+  // so locking the format here protects the autonomous-validation surface.
+  const consoleLines: string[] = [];
+  page.on('console', (msg) => {
+    if (msg.text().includes('[claude-tempo:dashboard]')) consoleLines.push(msg.text());
+  });
+
+  await page.goto(`${daemon.origin}/dashboard/ensemble/${DEMO_ENSEMBLE}`);
+  await expect(page.getByTestId(`workspace-${DEMO_ENSEMBLE}`)).toBeVisible();
+
+  await page.getByTestId('message-input').fill('hello from playwright');
+  await page.getByTestId('message-submit').click();
+
+  // The placeholder log should land within ~1s of the click.
+  await expect.poll(() => consoleLines.some((l) => l.includes('chat.message.placeholder-send')), {
+    timeout: 2000,
+  }).toBe(true);
+});
+
+test('3. Mobile viewport renders the sidebar + roster (375x667)', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.route(`${daemon.origin}/v1/state/${DEMO_ENSEMBLE}`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(makeEnsembleSnapshot()),
+    }),
+  );
+  await page.route(`${daemon.origin}/v1/events/${DEMO_ENSEMBLE}*`, (route) =>
+    route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' }),
+  );
+
+  await page.goto(`${daemon.origin}/dashboard/ensemble/${DEMO_ENSEMBLE}`);
+  // Both shell + workspace surfaces are reachable at this viewport.
+  // PR-5's ResponsivePanel only renders an open Sheet/Dialog when a
+  // PlayerDetail route is active, so the smoke just asserts roster
+  // visibility — the dialog-vs-sheet variant is locked by the unit
+  // tests in `responsive-panel.test.tsx`.
+  await expect(page.getByTestId('app-shell')).toBeVisible();
+  await expect(page.getByTestId('roster')).toBeVisible();
+});
+
+test('4. Pair-token flow drops ?pair= BEFORE the bearer lands (risk #16)', async ({ page }) => {
+  // The test daemon serves the real `/dashboard/api/pair` endpoints
+  // — no mock — so this test exercises mint + consume end-to-end.
+  // Mint via direct HTTP (bypasses the SPA so we don't need a UI
+  // for it; the operator-CLI is the production caller).
+  const mint = await page.request.post(`${daemon.origin}/dashboard/api/pair`, {
+    headers: { Authorization: 'Bearer e2e-bearer' },
+  });
+  expect(mint.status()).toBe(201);
+  const minted = (await mint.json()) as { token: string; expiresAt: number };
+  expect(minted.token).toMatch(/^[A-Za-z0-9_-]+$/);
+
+  // Capture the URL state at the moment the bearer write happens.
+  // The consume hook drops the token via `history.replaceState`
+  // BEFORE the daemon returns the bearer (it's the first thing in
+  // the useEffect). If the order is correct, by the time
+  // localStorage receives the bearer the URL should be clean.
+  await page.addInitScript(() => {
+    const realSetItem = window.localStorage.setItem.bind(window.localStorage);
+    const recorded: { search: string }[] = [];
+    Object.defineProperty(window, '__pairProbeRecord', { value: recorded });
+    window.localStorage.setItem = function (key: string, value: string) {
+      if (key === 'claude-tempo:bearer') recorded.push({ search: window.location.search });
+      return realSetItem(key, value);
+    };
+  });
+
+  await page.goto(`${daemon.origin}/dashboard/?pair=${minted.token}`);
+
+  // Wait for the bearer to land + the URL to settle.
+  await expect.poll(async () =>
+    await page.evaluate(() => window.localStorage.getItem('claude-tempo:bearer')),
+    { timeout: 5000 },
+  ).toBeTruthy();
+
+  // Risk #16 — the URL was empty at bearer-write time.
+  const recorded = await page.evaluate(
+    () => (window as unknown as { __pairProbeRecord: { search: string }[] }).__pairProbeRecord,
+  );
+  expect(recorded.length).toBeGreaterThan(0);
+  expect(recorded[0].search).toBe('');
+
+  // The URL stays clean after the flow settles.
+  await expect.poll(async () => new URL(page.url()).search).toBe('');
+
+  // Re-consuming the same token is a 410 — single-use is enforced.
+  const second = await page.request.get(`${daemon.origin}/dashboard/api/pair/${minted.token}`);
+  expect(second.status()).toBe(410);
+});

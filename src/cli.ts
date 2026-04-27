@@ -64,6 +64,16 @@ interface ParsedArgs {
   from?: string;
   includeSent: boolean;
   json: boolean;
+  /** `dashboard --port <N>` — override the daemon port discovery. */
+  port?: number;
+  /** `dashboard --bind <addr>` — override the bind address. */
+  bind?: string;
+  /** `dashboard --no-open` — print the URL without launching a browser. */
+  noOpen: boolean;
+  /** `dashboard --pair` — mint a single-use cross-device pairing token + QR. */
+  pair: boolean;
+  /** `dashboard --bearer <token>` — bearer to include on the pair-mint POST. */
+  bearer?: string;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -84,6 +94,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     force: false,
     includeSent: false,
     json: false,
+    noOpen: false,
+    pair: false,
   };
 
   let i = 0;
@@ -135,6 +147,23 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (arg === '--force') {
       // Only consumed by `daemon start --force` to bypass the stale-PID guard.
       result.force = true;
+    } else if (arg === '--no-open') {
+      // `dashboard --no-open` — print the URL without spawning a browser.
+      result.noOpen = true;
+    } else if (arg === '--pair') {
+      // `dashboard --pair` — mint a single-use cross-device pairing token.
+      result.pair = true;
+    } else if (arg === '--port' && i + 1 < argv.length) {
+      const n = Number(argv[++i]);
+      if (!Number.isInteger(n) || n < 1 || n > 65535) {
+        out.error(`Invalid --port: ${argv[i]} (expected 1-65535)`);
+        process.exit(1);
+      }
+      result.port = n;
+    } else if (arg === '--bind' && i + 1 < argv.length) {
+      result.bind = argv[++i];
+    } else if (arg === '--bearer' && i + 1 < argv.length) {
+      result.bearer = argv[++i];
     } else if (arg === '--limit' && i + 1 < argv.length) {
       const raw = argv[++i];
       const n = Number(raw);
@@ -269,6 +298,23 @@ async function main() {
   if (args.command === 'config') {
     const { configCommand } = await import('./cli/config-command');
     await configCommand(args.positional);
+    return;
+  }
+
+  if (args.command === 'dashboard') {
+    // PR-8 of #340. Crash-proof — stays out of `./cli/commands` so a
+    // broken Temporal SDK doesn't block operators from opening the
+    // dashboard against an already-running daemon.
+    const { dashboardCommand } = await import('./cli/dashboard-command');
+    await dashboardCommand({
+      port: args.port,
+      bind: args.bind,
+      noOpen: args.noOpen,
+      pair: args.pair,
+      bearer: args.bearer,
+      json: args.json,
+      ...overrides,
+    });
     return;
   }
 
