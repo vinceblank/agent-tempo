@@ -14,6 +14,20 @@
  */
 export type AgentType = 'claude' | 'copilot' | 'mock';
 
+/**
+ * Mock-adapter mode (ADR 0014 §4.2). Single source of truth shared by the
+ * adapter, the recruit tool's zod enum (`z.enum(MOCK_MODES)`), the spawn
+ * options, the recruit outbox entry, the lineup schema, and the lineup
+ * dispatcher. `'echo' | 'scripted'` shipped in PR-2; `'silent' | 'chaos'`
+ * landed in PR-3.
+ *
+ * Declared here rather than in `src/adapters/mock/` so non-dev-mode modules
+ * (recruit, spawn, schema) can reference the type without pulling the
+ * adapter source unit into their dep graph.
+ */
+export const MOCK_MODES = ['echo', 'scripted', 'silent', 'chaos'] as const;
+export type MockMode = typeof MOCK_MODES[number];
+
 // ── v0.25 Attachment Lifecycle Types ──
 // Source of truth: docs/design/session-lifecycle-rebuild-v2.md §§2.2–2.6, §8, §11.1
 
@@ -452,12 +466,13 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
   /** When true, spawn process but lock outbox and defer initial message until release (warm hold). */
   held?: boolean;
   /**
-   * Mock-adapter configuration (ADR 0014 PR-2). Only set when `agent === 'mock'`.
+   * Mock-adapter configuration (ADR 0014 §4.2). Only set when `agent === 'mock'`.
    * `mockMode` defaults to `'echo'` if absent. `mockScenario` is required when
    * `mockMode === 'scripted'` and accepts either a bare scenario name (resolved
    * against the package's shipped `scenarios/` dir) or an absolute YAML path.
+   * Neither `silent` nor `chaos` consume `mockScenario`.
    */
-  mockMode?: 'echo' | 'scripted';
+  mockMode?: MockMode;
   mockScenario?: string;
 }
 

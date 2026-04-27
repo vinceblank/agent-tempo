@@ -81,6 +81,13 @@ interface ParsedArgs {
   pair: boolean;
   /** `dashboard --bearer <token>` — bearer to include on the pair-mint POST. */
   bearer?: string;
+  /**
+   * `up --scenario <name>` (PR-3 of #340-followup). Forces every `agent: "mock"`
+   * player in the loaded lineup into `mockMode: "scripted"` with this
+   * scenario. Bare scenario name (resolved against the package's shipped
+   * `scenarios/` dir) or absolute path. Dev-mode only.
+   */
+  scenario?: string;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -171,6 +178,11 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.bind = argv[++i];
     } else if (arg === '--bearer' && i + 1 < argv.length) {
       result.bearer = argv[++i];
+    } else if (arg === '--scenario' && i + 1 < argv.length) {
+      // PR-3 of #340-followup. Threaded through to mock-player spawn envs by
+      // `up`'s `applyLineupPlayersAndSchedules`. Dev-mode only — silently
+      // no-ops outside dev mode because mock players can't exist there.
+      result.scenario = argv[++i];
     } else if (arg === '--limit' && i + 1 < argv.length) {
       const raw = argv[++i];
       const n = Number(raw);
@@ -384,6 +396,7 @@ async function main() {
         lineup: args.lineup,
         noHold: args.noHold,
         agent: resolvedAgent(),
+        ...(args.scenario ? { scenario: args.scenario } : {}),
         ...overrides,
       });
       break;

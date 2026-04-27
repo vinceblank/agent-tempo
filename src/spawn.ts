@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, openSync, closeSync, writeFileSync, readFileSync
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 import { ENV } from './config';
+import type { MockMode } from './types';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:spawn]', ...args);
 
@@ -544,7 +545,7 @@ export interface MockAdapterOpts {
   /** Directory for log + PID files. Defaults to `logs/` inside workDir. */
   logDir?: string;
   /** Mock mode (defaults to `echo` when omitted). */
-  mockMode?: 'echo' | 'scripted';
+  mockMode?: MockMode;
   /** Scenario reference — bare name, absolute path, or relative path. Required for `scripted` mode. */
   mockScenario?: string;
   /**

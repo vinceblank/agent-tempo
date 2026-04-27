@@ -30,3 +30,12 @@ export {
   type ScenarioRule,
 } from './scenario';
 export { parsePrefixDirectives, PREFIX } from './prefix';
+export {
+  CHAOS_ENV,
+  CHAOS_DEFAULTS,
+  type ChaosConfig,
+  type ChaosDecision,
+  chaosFromEnv,
+  decideChaosOutcome,
+  mulberry32,
+} from './chaos';

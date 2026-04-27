@@ -69,7 +69,7 @@ Source: `src/cli/help-text.ts` Commands section and `src/cli.ts` switch statemen
 | Command | Description |
 |---------|-------------|
 | `tui [ensemble]` | Launch the Terminal UI (auto-provisions on first run; default bare invocation) |
-| `up [ensemble]` | Start infrastructure — Temporal, daemon, MCP registration |
+| `up [ensemble]` | Start infrastructure — Temporal, daemon, MCP registration. Optional `--lineup <name>` loads an ensemble; `--scenario <name>` (dev-mode only, ADR 0014 §5.5) forces every `agent: "mock"` player in the lineup into `mockMode: scripted` with the named scenario. |
 | `down [ensemble]` | Stop infrastructure; workflows stay parked |
 | `down --destroy [-y]` | Terminate every workflow across every ensemble, then stop infrastructure |
 | `server` | Start Temporal dev server and register search attributes |

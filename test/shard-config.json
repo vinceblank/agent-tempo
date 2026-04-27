@@ -1,10 +1,11 @@
 {
-  "_comment": "2-way shard split for the Mocha suite (#231, docs/design/191-test-parallelization.md §2). Rule: shard-1 pins the top-N heaviest files by CI wall-clock, with N chosen to land ≤1.2× drift between shards; shard-2 is 'everything else' via Mocha --ignore. Currently N=5 after #233 split the old session-phase-machine monolith into three files: session-phase-detach (~48s) + outbox (~41.6s) + scheduler (~40.8s) + session-phase-claim (~22s) ≈ 152s, ~46% of total Mocha wall-clock. session-phase-processing (~18s) went to shard-2 because it's the lightest of the three split files. mock-adapter-claim-heartbeat (#382) added to shard-1 even though it's lightweight (~3s) — shard-2 is at the 1.17× drift limit and adding *anything* to shard-2 risks pushing pre-existing heavy tests (adapter-claude-code-lifecycle-v2, pause-resume) over their per-test timeouts under CI runner contention. Rebalance procedure + 20% drift bound lives in test/README.md; derivation + historical rationale in the design doc §2.",
+  "_comment": "2-way shard split for the Mocha suite (#231, docs/design/191-test-parallelization.md §2). Rule: shard-1 pins the top-N heaviest files by CI wall-clock, with N chosen to land ≤1.2× drift between shards; shard-2 is 'everything else' via Mocha --ignore. Currently N=6 after #233 split the old session-phase-machine monolith into three files: session-phase-detach (~48s) + outbox (~41.6s) + scheduler (~40.8s) + session-phase-claim (~22s) ≈ 152s, ~46% of total Mocha wall-clock. session-phase-processing (~18s) went to shard-2 because it's the lightest of the three split files. mock-adapter-claim-heartbeat (#382) added to shard-1 even though it's lightweight (~3s) — shard-2 is at the 1.17× drift limit and adding *anything* to shard-2 risks pushing pre-existing heavy tests (adapter-claude-code-lifecycle-v2, pause-resume) over their per-test timeouts under CI runner contention. mock-adapter-silent-chaos (PR-3 of #340-followup) is added here for the same reason — its three workflow-environment cases land in shard-1 to stay under the #384 drift gate. Rebalance procedure + 20% drift bound lives in test/README.md; derivation + historical rationale in the design doc §2.",
   "shard-1": [
     "test/session-phase-detach.test.ts",
     "test/outbox.test.ts",
     "test/scheduler.test.ts",
     "test/session-phase-claim.test.ts",
-    "test/mock-adapter-claim-heartbeat.test.ts"
+    "test/mock-adapter-claim-heartbeat.test.ts",
+    "test/mock-adapter-silent-chaos.test.ts"
   ]
 }

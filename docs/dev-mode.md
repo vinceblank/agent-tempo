@@ -68,12 +68,31 @@ windows, and SSE events look identical to a real Claude / Copilot session.
 $ claude-tempo --dev recruit alice --agent mock --mockMode scripted --mockScenario echo-roundtrip
 ```
 
-Two PR-2 modes:
+Four modes (PR-2 shipped `echo` + `scripted`; PR-3 added `silent` + `chaos`):
 
 - `mockMode: echo` (default) — replies `[ECHO] <text>` to the sender.
 - `mockMode: scripted` — loads a scenario YAML and dispatches matching rules.
+- `mockMode: silent` — drains `pendingMessages` (so the workflow doesn't
+  accumulate state) but never enqueues an outbox reply. Use it to validate
+  heartbeat-stale detection: the player should transition to `awaiting`
+  after the staleness threshold (#249) and the dashboard should render the
+  staleness indicator.
+- `mockMode: chaos` — probabilistic failure injection. Configurable via env
+  vars on the daemon process (inherited by every spawned mock subprocess):
 
-PR-3 will add `silent` and `chaos` modes.
+  ```
+  CLAUDE_TEMPO_MOCK_CHAOS_DELAY_MS=<n>     # fixed delay before each reply (ms)
+  CLAUDE_TEMPO_MOCK_CHAOS_FAIL_RATE=<0..1> # probability of throwing per message (default 0.05)
+  CLAUDE_TEMPO_MOCK_CHAOS_CRASH_RATE=<0..1> # probability of process.exit(1) per message (default 0.01)
+  CLAUDE_TEMPO_MOCK_CHAOS_SEED=<int>       # PRNG seed (default Date.now())
+  ```
+
+  Crash takes precedence over fail when both rates resolve true on the same
+  message. Each message consumes two PRNG draws regardless of outcome so a
+  pinned `CHAOS_SEED` produces the same fail/crash sequence run-over-run.
+  `chaos` mode echoes back as `[CHAOS-OK] <text>` (vs the plain
+  `[ECHO] <text>` from echo mode) so dashboards can distinguish the two
+  surfaces in a mixed-mode lineup.
 
 ### Scenario library
 
@@ -89,9 +108,38 @@ $ claude-tempo --dev scenarios show echo-roundtrip
 | `echo-roundtrip`             | Smallest possible scripted scenario — every inbound returns `[ECHO] $message`.      |
 | `two-player-conversation`    | Cross-player coordination — alice asks bob about a topic, reports an update.        |
 | `conductor-recruit-mock`     | Conductor-mock recruits a sub-player on demand. Validates recruit→spawn→claim.      |
+| `multi-player-handoff`       | Three-way handoff (alice → bob + carol). Exercises orchestration depth.             |
+| `recruit-cascade`            | Chain-recruit stress test — issues `recruit` outbox entries on demand.              |
 
 See [`src/adapters/mock/README.md`](../src/adapters/mock/README.md) for the
 full scenario format, action set, and `__MOCK__:` cue-prefix directive.
+
+### One-command stack-up — `tempo-mock-jam` lineup
+
+`examples/ensembles/tempo-mock-jam.yaml` ships a pre-baked all-mock ensemble
+that exercises every PR-3 mode. Spin it up with one command:
+
+```bash
+$ claude-tempo --dev up --lineup tempo-mock-jam
+```
+
+The lineup recruits four mock players with mixed modes — `alice` (scripted,
+multi-player-handoff), `bob` (echo), `silent-witness` (silent),
+`chaos-monkey` (chaos). The conductor stays on the default agent so a human
+or AI operator can drive the ensemble normally.
+
+**Override the scripted player's scenario per-run** with the top-level
+`--scenario` flag:
+
+```bash
+$ claude-tempo --dev up --lineup tempo-mock-jam --scenario echo-roundtrip
+```
+
+`--scenario` forces every `agent: "mock"` player in the loaded lineup into
+`mockMode: "scripted"` with the named scenario regardless of per-player
+`mockMode` declarations. Bare names (resolved against shipped `scenarios/`)
+or absolute paths both work. Dev-mode-only — silently no-ops outside dev
+mode because mock players can't exist there anyway (gate 3).
 
 ## Production safety
 

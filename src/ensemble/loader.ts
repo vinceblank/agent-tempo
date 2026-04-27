@@ -144,6 +144,11 @@ export function loadLineup(filePath: string): EnsembleLineup {
       ...(p.agent != null && { agent: p.agent }),
       ...(p.instructions != null && { instructions: p.instructions }),
       ...(Array.isArray(p.allowedTools) && { allowedTools: p.allowedTools.map(String) }),
+      // PR-3 mock fields. Pass through verbatim — schema validation is
+      // shape-only here; runtime rejection lives in `recruit.ts` (gates the
+      // dev-mode `agent: "mock"` requirement) and the spawn layer.
+      ...(p.mockMode != null && { mockMode: p.mockMode }),
+      ...(p.mockScenario != null && { mockScenario: p.mockScenario }),
     })),
     schedules: doc.schedules,
   };

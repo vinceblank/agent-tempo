@@ -1,5 +1,7 @@
 // Ensemble lineup types — defines the structure of a saved/loaded ensemble configuration.
 
+import type { MockMode } from '../types';
+
 export interface EnsembleLineup {
   name: string;
   description?: string;
@@ -19,9 +21,27 @@ export interface EnsembleLineup {
     name: string;
     type?: string;        // agent definition name (e.g., "tempo-soloist")
     workDir?: string;     // defaults to cwd if omitted
-    agent?: string;       // "default", "copilot", or path to agent .md file
+    /**
+     * "default", "copilot", path to agent .md file, or "mock" (dev-mode
+     * only — ADR 0014 §4 / PR-2). Mock players are headless subprocesses
+     * with no terminal window, suitable for autonomous validation
+     * harnesses (e.g. the `tempo-mock-jam` lineup).
+     */
+    agent?: string;
     instructions?: string;
     allowedTools?: string[]; // Tool restrictions (e.g., ["Read", "Glob", "Grep"])
+    /**
+     * Mock-adapter mode (only consulted when `agent: "mock"`). One of
+     * `echo` / `scripted` / `silent` / `chaos`. ADR 0014 §4.2. Defaults
+     * to `echo` when omitted. PR-3 added `silent` + `chaos`.
+     */
+    mockMode?: MockMode;
+    /**
+     * Scenario reference for `agent: "mock"` + `mockMode: "scripted"` —
+     * bare name (resolved against shipped `scenarios/`), absolute path,
+     * or relative path. CLI `--scenario` flag overrides this when set.
+     */
+    mockScenario?: string;
     /** Transient: resolved agent definition name (set by loadAndResolveLineup). */
     _agentDefinition?: string;
     /** Transient: resolved absolute path to .md file (set by loadAndResolveLineup). */

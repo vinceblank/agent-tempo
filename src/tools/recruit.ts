@@ -2,10 +2,10 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { Config, conductorWorkflowId, isDevMode } from '../config';
-import { AgentType } from '../types';
+import { AgentType, MOCK_MODES } from '../types';
 import { resolveSession } from './resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
-import type { OutboxEntryInput, HostInfo } from '../types';
+import type { OutboxEntryInput, HostInfo, MockMode } from '../types';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { resolveAgentType, listAgentTypes } from '../ensemble/agent-types';
 import { PLAYER_NAME_MAX, MESSAGE_MAX, PATH_MAX, validatePlayerName } from '../utils/validation';
@@ -65,8 +65,8 @@ export function registerRecruitTool(
         .describe('Target hostname for cross-machine recruiting. Omit for local spawn.'),
       force: z.boolean().optional()
         .describe('Force-terminate any existing session with this name before recruiting. Use when a previous session is orphaned or stuck.'),
-      mockMode: z.enum(['echo', 'scripted']).optional()
-        .describe('Dev-mode only (agent: "mock"). Mock adapter mode. Default: "echo".'),
+      mockMode: z.enum(MOCK_MODES).optional()
+        .describe('Dev-mode only (agent: "mock"). Mock adapter mode. Default: "echo". "silent" never replies (heartbeat-stale validation); "chaos" probabilistic fail/crash injection (env-tuned).'),
       mockScenario: z.string().optional()
         .describe('Dev-mode only (agent: "mock", mockMode: "scripted"). Bare scenario name (resolved against shipped scenarios/) or absolute path to a scenario YAML.'),
     },
@@ -81,7 +81,7 @@ export function registerRecruitTool(
         systemPrompt?: string;
         host?: string;
         force?: boolean;
-        mockMode?: 'echo' | 'scripted';
+        mockMode?: MockMode;
         mockScenario?: string;
       };
       const isConductor = (args as any).conductor === true;
@@ -90,7 +90,7 @@ export function registerRecruitTool(
       const systemPrompt = (args as any).systemPrompt as string | undefined;
       const host = (args as any).host as string | undefined;
       const force = (args as any).force === true;
-      const mockMode = (args as any).mockMode as 'echo' | 'scripted' | undefined;
+      const mockMode = (args as any).mockMode as MockMode | undefined;
       const mockScenario = (args as any).mockScenario as string | undefined;
 
       // ADR 0014 §7 gate 3 — recruit-time rejection of `agent: 'mock'`
@@ -113,6 +113,14 @@ export function registerRecruitTool(
       }
       if (agent === 'mock' && mockMode === 'scripted' && !mockScenario) {
         return fail(`mockMode: "scripted" requires mockScenario (a bare scenario name or path to a YAML file).`);
+      }
+      // PR-3: silent + chaos modes don't consult the scenario file. Reject
+      // explicitly rather than silently ignore so users learn the right
+      // shape and don't sit wondering why their scenario wasn't applied.
+      if (mockScenario && (mockMode === 'silent' || mockMode === 'chaos')) {
+        return fail(
+          `mockMode: "${mockMode}" does not use a scenario. Drop mockScenario or switch to mockMode: "scripted".`,
+        );
       }
 
       // Resolve agent type if provided

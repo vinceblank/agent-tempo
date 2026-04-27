@@ -1,0 +1,38 @@
+name: recruit-cascade
+description: |
+  Stress-tests orchestration depth by chaining recruits. When this conductor
+  mock receives a "cascade <depth> <name>" cue, it issues a `recruit` outbox
+  entry and (after a brief simulated thinking window) reports completion.
+  Drive recursively from the dashboard or via `cue` to exercise the full
+  recruit → spawn → claim → first-heartbeat cascade across multiple players.
+
+  Drive with: `claude-tempo --dev cue conductor "cascade 3 worker"`.
+  Each "worker" mock you recruit can re-cascade if pointed at this scenario,
+  letting validation harnesses observe the maestro's per-ensemble player
+  count tick up under load.
+
+defaultDelayMs: 600
+
+rules:
+  - when: "cascade "
+    do:
+      - report:
+          type: "update"
+          text: "received cascade request — issuing recruit"
+      - recruit:
+          name: cascade-worker
+          workDir: "/tmp/dev-scratch"
+          agent: mock
+      - delayMs: 1500
+      - cue:
+          to: "@sender"
+          message: "cascade recruit submitted; new worker should land within ~30s"
+      - report:
+          type: "result"
+          text: "cascade level complete; downstream workers should now be visible on the roster"
+
+  - when: "*"
+    do:
+      - cue:
+          to: "@sender"
+          message: "[cascade conductor] try: 'cascade <depth> <name>'"
