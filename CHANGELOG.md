@@ -7,38 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.4] - 2026-04-27
+
 ### Added
 
-- **Daemon HTTP write surface** (#340 — PR-7a of N): Five POST routes under
-  `/v1/ensembles/:ensemble/{cue,pause,play,release,recruit}` give the daemon a bidirectional
-  HTTP API for the first time. Each handler is a thin shim over the daemon's existing
-  `TempoClient` methods — **zero new Temporal signals/queries/updates**. Auth posture
-  matches reads (loopback no-auth, non-loopback bearer-required); body validation enforces
-  player-name regex, message-length cap, and a 1 MiB JSON body limit. Powers the
-  dashboard's safe-write wiring in PR-7b. See `docs/SSE-PROTOCOL.md` § 11b for the full
-  request/response contract.
+- **Web dashboard v1** (#340 — PRs #363, #365, #366, #367, #369, #370, #371, #372, #373):
+  React + Vite + Tailwind 4 SPA served at `/dashboard` from the existing daemon HTTP server.
+  Open via new CLI verb `claude-tempo dashboard`. Read-only Overview, Workspace, PlayerDetail,
+  and 5 secondary screens. Cross-device pairing via QR-code one-time-bearer token flow.
+- **Daemon test-fixture mode** (#340 — PR #365): `/v1/state/:ensemble` and `/v1/events/:ensemble`
+  accept `?fixture=<name>` to return canned scenarios instead of live Temporal queries. Six
+  fixtures: `empty-ensemble`, `single-conductor`, `eight-player-broadcast`, `conductor-leaving`,
+  `sse-reconnect`, `chat-stress`. Type-safe: every fixture imports from `src/http/event-types.ts`.
+  See `docs/SSE-PROTOCOL.md` § 11a.
+- **Daemon HTTP write endpoints** (#340 — PR #371): `POST /v1/ensembles/:ensemble/{cue,pause,play,release,recruit}` —
+  bearer-protected on non-loopback. Thin shims over existing `TempoClient` methods; zero new
+  Temporal signals/queries/updates. See `docs/SSE-PROTOCOL.md` § 11b.
+- **`claude-tempo dashboard` CLI verb** (#340 — PR #372): Opens the dashboard in the default
+  browser. Flags: `--port`, `--bind`, `--no-open`, `--pair` (prints/QR-codes a one-time pairing token).
 
-- **Daemon test-fixture mode** (#340 — PR-3 of N): `/v1/state/:ensemble` and
-  `/v1/events/:ensemble` now accept `?fixture=<name>` to return canned scenarios instead
-  of running live Temporal queries / wiring the aggregate poll loop. Six fixtures ship in
-  this PR: `empty-ensemble`, `single-conductor`, `eight-player-broadcast` (#357 collapse),
-  `conductor-leaving` (#358 analog), `sse-reconnect` (gap mid-stream), `chat-stress` (100
-  messages + `chat.compressed`). Fixture mode honours the existing bearer-auth gate —
-  not a backdoor, just an alternate projection of an authorised request. Type-safe:
-  every fixture imports from `src/http/event-types.ts`, so wire-protocol drift breaks the
-  TypeScript build. Powers PR-4 onwards' dashboard UI work without depending on real
-  ensemble events. See `docs/SSE-PROTOCOL.md` § 11a.
+### Changed
 
-- **Dashboard static handler + SPA fallback** (#340 — PR-1 of N): Daemon now serves the
-  prebuilt web dashboard SPA at `/dashboard/*` from `dashboard/dist/`. New
-  `src/http/dashboard.ts` module wires a static-asset handler (immutable cache for hashed
-  assets, `no-cache` on `index.html`) and a SPA fallback for React Router 7 client-side
-  routing. Reserved pre-auth carve-out at `GET /dashboard/api/pair/:token` returns `501`
-  for now (real cross-device pairing flow lands in PR-8). All other `/dashboard/*` requests
-  sit behind the existing bearer-auth gate so non-loopback binds (LAN, Tailscale) require
-  the same token as `/v1/*`. PR-2 will replace the placeholder `dashboard/dist/index.html`
-  with a real Vite + Tailwind 4 + shadcn/ui build. See
-  [`docs/design/340-web-dashboard.md`](docs/design/340-web-dashboard.md).
+- `docs/SSE-PROTOCOL.md` §2 updated: "Reads via GET, writes via POST under same auth model"
+  (was: "No write endpoints in v1")
+
+### Internal
+
+- Dashboard testability infrastructure (#340 — PR #366): ESLint custom rule blocks native
+  modals (`confirm`/`alert`/`prompt`/`<dialog>`); structured `logEvent('[claude-tempo:dashboard] ...', {...})`
+  wrapper; `data-testid` convention enforced via DOM-crawl test.
+- Optimistic update + SSE reconciliation for cue mutations (no duplicate chat rows)
+- Playwright e2e suite (4 smoke tests) wired into CI (#340 — PR #372)
 
 ## [0.28.0-beta.3] - 2026-04-27
 
