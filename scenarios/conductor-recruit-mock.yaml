@@ -1,0 +1,33 @@
+name: conductor-recruit-mock
+description: |
+  Stand-alone scenario for a conductor mock that recruits a sub-player on
+  demand. When the conductor receives a cue starting with "recruit ", it
+  fires a `recruit` outbox entry for a new mock player named after the
+  remainder of the cue, then reports completion. Useful for validating the
+  recruit → spawn → claim → first-heartbeat path end-to-end without a
+  real LLM in the loop.
+
+  Drive with: `claude-tempo --dev cue conductor "recruit alice"`.
+
+defaultDelayMs: 800
+
+rules:
+  - when: "recruit "
+    do:
+      - report:
+          type: "update"
+          text: "received recruit request — issuing recruit outbox entry"
+      - recruit:
+          name: alice
+          workDir: "/tmp/dev-scratch"
+          agent: mock
+      - delayMs: 2000
+      - cue:
+          to: "@sender"
+          message: "recruit submitted; alice should land on the dashboard within ~30s"
+
+  - when: "*"
+    do:
+      - cue:
+          to: "@sender"
+          message: "[conductor mock] try: 'recruit <name>'"

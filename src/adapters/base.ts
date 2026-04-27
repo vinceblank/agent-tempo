@@ -1353,6 +1353,12 @@ export class AdapterRegistry {
    */
   resolveFromAgentType(agent: string | undefined): string {
     if (agent === 'copilot') return 'copilot';
+    // ADR 0014 §4.1 — mock adapter resolves to its own descriptor. The
+    // descriptor is only registered when `isDevMode()` (gate 2); a stale
+    // metadata.agentType='mock' in a production build would land here and
+    // then `registry.get('mock')` would throw the documented "Unknown
+    // adapter" error — which is the correct safety behaviour.
+    if (agent === 'mock') return 'mock';
     return 'claude-code';
   }
 }

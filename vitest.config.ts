@@ -20,6 +20,10 @@ export default defineConfig({
       'tests/reconcile/**/*.test.ts',
       'tests/http/**/*.test.ts',
       'tests/utils/**/*.test.ts',
+      // ADR 0014 PR-2 — mock-adapter pure-logic unit tests (parser, prefix
+      // parser, build-exclusion script harness, source-level recruit gate
+      // + prefix-safety regressions).
+      'tests/adapters/**/*.test.ts',
     ],
     environment: 'node',
     globals: false,

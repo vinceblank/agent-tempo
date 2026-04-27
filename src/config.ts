@@ -5,6 +5,12 @@ import { z } from 'zod';
 import { AgentType } from './types';
 import { validateEnsembleName } from './utils/validation';
 
+// `'mock'` is a valid `AgentType` value but intentionally NOT in the resolved
+// `defaultAgent` set — recruit pre-flight rejects it outside dev mode anyway,
+// and it's never a sensible *default* (each mock spawn is configured per call
+// via the `agent: 'mock'` flag, not via the resolved chain). Listing it here
+// would only enable users to set `defaultAgent=mock` in `~/.claude-tempo/config.json`,
+// which the recruit gate would then turn around and reject in production.
 const VALID_AGENTS: readonly AgentType[] = ['claude', 'copilot'] as const;
 
 /** Environment variable name constants — use these instead of string literals. */

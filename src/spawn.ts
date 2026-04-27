@@ -518,3 +518,114 @@ export function spawnCopilotBridge(opts: CopilotBridgeOpts): CopilotBridgeResult
   log(`Spawned copilot-bridge (pid ${child.pid}) in ${opts.workDir} as "${opts.name}"`);
   return { pid: child.pid, logPath, pidPath };
 }
+
+// ── Mock adapter (ADR 0014 PR-2) ──────────────────────────────────────────
+
+/**
+ * Options for {@link spawnMockAdapter}. Mirrors {@link CopilotBridgeOpts} for
+ * the cross-machine fields (host queue, attachment handoff) and adds the two
+ * mock-specific env knobs (`mockMode`, `mockScenario`).
+ *
+ * The mock adapter has no notion of a Claude session ID, no auth token, and
+ * no MCP server child — it talks to Temporal directly and posts every action
+ * through the outbox like any other adapter would. So the option surface is
+ * deliberately narrow.
+ */
+export interface MockAdapterOpts {
+  name: string;
+  ensemble: string;
+  temporalAddress: string;
+  temporalNamespace?: string;
+  temporalApiKey?: string;
+  temporalTlsCertPath?: string;
+  temporalTlsKeyPath?: string;
+  isConductor?: boolean;
+  workDir: string;
+  /** Directory for log + PID files. Defaults to `logs/` inside workDir. */
+  logDir?: string;
+  /** Mock mode (defaults to `echo` when omitted). */
+  mockMode?: 'echo' | 'scripted';
+  /** Scenario reference — bare name, absolute path, or relative path. Required for `scripted` mode. */
+  mockScenario?: string;
+  /**
+   * PR-D attachment-lease handoff. When present, the workflow has already
+   * called `claimAttachment`; the mock adapter reads these from env and
+   * renews (rather than fresh-claims) the lease on boot.
+   */
+  attachmentId?: string;
+  attachmentRunId?: string;
+  adapterId?: string;
+}
+
+export interface MockAdapterResult {
+  pid: number | undefined;
+  logPath: string;
+  pidPath: string;
+}
+
+/**
+ * Resolve the path to the mock adapter entry point. Mirrors
+ * {@link resolveBridgePath} so dev (ts-node) and prod (compiled .js) both
+ * launch the same code through the same `require.main === module` gate.
+ */
+function resolveMockAdapterPath(): { cmd: string; args: string[] } {
+  const isDev = __filename.endsWith('.ts');
+  if (isDev) {
+    return { cmd: 'npx', args: ['ts-node', resolve(__dirname, 'adapters', 'mock', 'adapter.ts')] };
+  }
+  return { cmd: 'node', args: [resolve(__dirname, 'adapters', 'mock', 'adapter.js')] };
+}
+
+/**
+ * Spawn a mock adapter subprocess. Headless — no terminal window, no
+ * "trust this folder" prompt — which is the whole point of the mock for
+ * autonomous validation harnesses (ADR 0014 §4.7).
+ */
+export function spawnMockAdapter(opts: MockAdapterOpts): MockAdapterResult {
+  const { cmd, args } = resolveMockAdapterPath();
+  const logDirPath = opts.logDir || join(opts.workDir, 'logs');
+  const logName = opts.name || `mock-${Date.now()}`;
+  const logPath = join(logDirPath, `${logName}.log`);
+  const pidPath = join(logDirPath, `${logName}.pid`);
+
+  mkdirSync(logDirPath, { recursive: true });
+  const logFd = openSync(logPath, 'a');
+
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(cmd, args, {
+      cwd: opts.workDir,
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+      env: {
+        ...process.env,
+        [ENV.ENSEMBLE]: opts.ensemble,
+        [ENV.PLAYER_NAME]: opts.name,
+        [ENV.CONDUCTOR]: opts.isConductor ? 'true' : '',
+        [ENV.TEMPORAL_ADDRESS]: opts.temporalAddress,
+        // Forward Temporal connection settings so the subprocess can connect.
+        ...(opts.temporalNamespace ? { [ENV.TEMPORAL_NAMESPACE]: opts.temporalNamespace } : {}),
+        ...(opts.temporalApiKey ? { [ENV.TEMPORAL_API_KEY]: opts.temporalApiKey } : {}),
+        ...(opts.temporalTlsCertPath ? { [ENV.TEMPORAL_TLS_CERT_PATH]: opts.temporalTlsCertPath } : {}),
+        ...(opts.temporalTlsKeyPath ? { [ENV.TEMPORAL_TLS_KEY_PATH]: opts.temporalTlsKeyPath } : {}),
+        // Mock-specific knobs.
+        CLAUDE_TEMPO_MOCK_MODE: opts.mockMode ?? 'echo',
+        ...(opts.mockScenario ? { CLAUDE_TEMPO_MOCK_SCENARIO: opts.mockScenario } : {}),
+        // Attachment handoff — adapter renews via startV2Lifecycle.
+        ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
+        ...(opts.attachmentRunId ? { [ENV.ATTACHMENT_RUN_ID]: opts.attachmentRunId } : {}),
+        ...(opts.adapterId ? { [ENV.ADAPTER_ID]: opts.adapterId } : {}),
+      },
+    });
+    child.unref();
+  } finally {
+    closeSync(logFd);
+  }
+
+  if (child.pid != null) {
+    writeFileSync(pidPath, String(child.pid));
+  }
+
+  log(`Spawned mock adapter (pid ${child.pid}) in ${opts.workDir} as "${opts.name}" (mode=${opts.mockMode ?? 'echo'})`);
+  return { pid: child.pid, logPath, pidPath };
+}

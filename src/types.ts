@@ -1,7 +1,18 @@
 // Shared types used by both workflow code (V8 sandbox) and Node.js server code.
 // This file must NOT import from @temporalio/* — it's pure TypeScript types.
 
-export type AgentType = 'claude' | 'copilot';
+/**
+ * Agent runtime selector.
+ *
+ * - `'claude'` / `'copilot'` — production adapters; ship in the npm tarball.
+ * - `'mock'` — dev-mode-only adapter (ADR 0014 PR-2). Defense-in-depth gates
+ *   (build-time exclusion, registry gate behind `isDevMode()`, recruit-time
+ *   rejection, runtime banner) keep this off production paths. The string
+ *   value lives in the type union so workflow / outbox / recruit code can
+ *   discriminate without `any` casts even in production builds; the runtime
+ *   gates are what actually prevent execution.
+ */
+export type AgentType = 'claude' | 'copilot' | 'mock';
 
 // ── v0.25 Attachment Lifecycle Types ──
 // Source of truth: docs/design/session-lifecycle-rebuild-v2.md §§2.2–2.6, §8, §11.1
@@ -440,6 +451,14 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
   claudeBin?: string;
   /** When true, spawn process but lock outbox and defer initial message until release (warm hold). */
   held?: boolean;
+  /**
+   * Mock-adapter configuration (ADR 0014 PR-2). Only set when `agent === 'mock'`.
+   * `mockMode` defaults to `'echo'` if absent. `mockScenario` is required when
+   * `mockMode === 'scripted'` and accepts either a bare scenario name (resolved
+   * against the package's shipped `scenarios/` dir) or an absolute YAML path.
+   */
+  mockMode?: 'echo' | 'scripted';
+  mockScenario?: string;
 }
 
 export interface ReleaseOutboxEntry extends OutboxEntryBase {
