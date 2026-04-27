@@ -171,6 +171,16 @@ describe('MockAttachment silent + chaos modes (PR-3 of #340-followup)', function
         const outbox = await readOutbox(pinned);
         const replies = outbox.filter((e) => e.type === 'cue');
         expect(replies, 'chaos:fail must NOT post a cue').to.have.lengthOf(0);
+
+        // The actual contract chaos-mode is for: when deliver() throws
+        // inside the wrapped callback, markDelivered does NOT fire and
+        // the inbound message stays in `pendingMessages` for the
+        // supervisor's next poll. Without this assertion, the test
+        // would also pass for a no-op silent-mode-shaped path —
+        // mirrors the silent-mode test's drain check.
+        const after = await pinned.query('pendingMessages') as Message[];
+        const stillPending = after.find((m) => m.from === 'alice' && m.text === 'will-fail');
+        expect(stillPending, 'message should remain pending after chaos:fail throws').to.exist;
       } finally {
         await adapter.testStop();
       }
