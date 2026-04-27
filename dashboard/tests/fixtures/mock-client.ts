@@ -13,7 +13,13 @@ import type {
   TempoEvent,
 } from 'claude-tempo/http/event-types';
 import type { HostInfo } from 'claude-tempo/types';
-import type { DashboardTempoClient } from '../../src/lib/client';
+import type {
+  CueResult,
+  DashboardTempoClient,
+  RecruitOpts,
+  RecruitResult,
+  ReleaseResult,
+} from '../../src/lib/client';
 
 export interface MockBehavior {
   ensembles?: EnsembleSummary[];
@@ -22,6 +28,13 @@ export interface MockBehavior {
   snapshotError?: Error;
   hosts?: HostInfo[];
   hostsError?: Error;
+  /** Per-mutation error injection. Keyed by action name. */
+  mutationErrors?: Partial<Record<'cue' | 'pause' | 'play' | 'release' | 'recruit', Error>>;
+}
+
+export interface MutationCall {
+  method: 'cue' | 'pause' | 'play' | 'release' | 'recruit';
+  args: unknown[];
 }
 
 export class MockDashboardClient implements DashboardTempoClient {
@@ -31,6 +44,13 @@ export class MockDashboardClient implements DashboardTempoClient {
   public snapshotError: Error | null = null;
   public hostList: HostInfo[] = [];
   public hostsError: Error | null = null;
+  /** Records every mutation call so tests can assert. */
+  public mutationCalls: MutationCall[] = [];
+  /** Per-mutation error injection. Keyed by action name. */
+  public mutationErrors: NonNullable<MockBehavior['mutationErrors']> = {};
+  /** Per-mutation result override. */
+  public recruitResult: RecruitResult = { playerId: 'tempo-eng', entryId: 'entry-1' };
+  public releaseResult: ReleaseResult = { released: [], errors: [] };
   /** Pending push channels for live subscriptions, keyed by ensemble. */
   private pushers = new Map<string, ((ev: TempoEvent | null) => void)[]>();
 
@@ -41,6 +61,7 @@ export class MockDashboardClient implements DashboardTempoClient {
     if (initial.snapshotError) this.snapshotError = initial.snapshotError;
     if (initial.hosts) this.hostList = initial.hosts;
     if (initial.hostsError) this.hostsError = initial.hostsError;
+    if (initial.mutationErrors) this.mutationErrors = initial.mutationErrors;
   }
 
   async listEnsembles(): Promise<EnsembleSummary[]> {
@@ -102,6 +123,36 @@ export class MockDashboardClient implements DashboardTempoClient {
         };
       },
     };
+  }
+
+  // ── Mutations (PR-7b) ──────────────────────────────────────────
+
+  async cue(ensemble: string, to: string, message: string): Promise<CueResult> {
+    this.mutationCalls.push({ method: 'cue', args: [ensemble, to, message] });
+    if (this.mutationErrors.cue) throw this.mutationErrors.cue;
+    return { ok: true, ensemble, to };
+  }
+
+  async pause(ensemble: string): Promise<void> {
+    this.mutationCalls.push({ method: 'pause', args: [ensemble] });
+    if (this.mutationErrors.pause) throw this.mutationErrors.pause;
+  }
+
+  async play(ensemble: string, opts?: { release?: boolean }): Promise<void> {
+    this.mutationCalls.push({ method: 'play', args: [ensemble, opts] });
+    if (this.mutationErrors.play) throw this.mutationErrors.play;
+  }
+
+  async release(ensemble: string, playerId?: string): Promise<ReleaseResult> {
+    this.mutationCalls.push({ method: 'release', args: [ensemble, playerId] });
+    if (this.mutationErrors.release) throw this.mutationErrors.release;
+    return this.releaseResult;
+  }
+
+  async recruit(ensemble: string, opts: RecruitOpts): Promise<RecruitResult> {
+    this.mutationCalls.push({ method: 'recruit', args: [ensemble, opts] });
+    if (this.mutationErrors.recruit) throw this.mutationErrors.recruit;
+    return this.recruitResult;
   }
 
   /** Push a fake SSE event into every live subscription for `ensemble`. */

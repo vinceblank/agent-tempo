@@ -26,6 +26,7 @@ import { ChatLog } from '../components/chat/ChatLog';
 import { MessageInput } from '../components/chat/MessageInput';
 import { RosterItem } from '../components/RosterItem';
 import { TempoStrip } from '../components/tempo/TempoStrip';
+import { WorkspaceToolbar } from '../components/WorkspaceToolbar';
 
 /** Toy series for the TempoStrip — real bucketing lands in PR-6. */
 const PLACEHOLDER_TEMPO_SERIES = [
@@ -135,12 +136,23 @@ export function Workspace() {
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 12,
+          flexWrap: 'wrap',
         }}
       >
         <h1 style={{ margin: 0, fontFamily: 'var(--ff-display)', fontSize: 22, fontWeight: 400 }}>
           {ensemble}
         </h1>
-        <TempoStrip series={PLACEHOLDER_TEMPO_SERIES} bpm={snapshot.data?.players.length ? 96 : 0} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <WorkspaceToolbar
+            ensemble={ensemble}
+            paused={snapshot.data?.flags.paused ?? false}
+            held={snapshot.data?.flags.held ?? false}
+          />
+          <TempoStrip
+            series={PLACEHOLDER_TEMPO_SERIES}
+            bpm={snapshot.data?.players.length ? 96 : 0}
+          />
+        </div>
       </header>
 
       <aside

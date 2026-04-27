@@ -11,6 +11,7 @@
 import { useEffect, useMemo } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, type createBrowserRouter } from 'react-router-dom';
+import { Toaster } from 'sonner';
 import { createDashboardBrowserRouter } from './router';
 import { logEvent } from './lib/log';
 
@@ -36,6 +37,17 @@ export function App({ router }: AppProps = {}) {
   return (
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={activeRouter} />
+      {/*
+        Toaster — Sonner mount point, single instance at the root.
+        Custom toasts (`toast.custom`) carry their own `data-testid` +
+        `role="alert"` (see `lib/toast.tsx`). Sonner v1.x doesn't
+        forward arbitrary `data-*` props on its wrapper, so the
+        outer `<div data-testid="toaster">` gives the conductor's
+        autonomous validator a stable hook into "the toast layer".
+      */}
+      <div data-testid="toaster">
+        <Toaster position="bottom-right" toastOptions={{ unstyled: true }} />
+      </div>
     </QueryClientProvider>
   );
 }
