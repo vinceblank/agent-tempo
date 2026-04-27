@@ -5,6 +5,7 @@
  * Supports multi-ensemble navigation: home -> ensemble -> player views.
  */
 import type {
+  AttachmentPhase,
   MaestroPlayerInfo,
   MaestroRelayMessage,
   HistoryEntry,
@@ -456,8 +457,19 @@ export type TuiAction =
   // ── #94/#95 PR-4a: incremental updates from the SSE event stream ──
   /** Append one new chat message — used by `event: chat.appended`. Updates `ensembleChat` and `conversation` together. */
   | { type: 'APPEND_CHAT_MESSAGE'; message: EnsembleChatMessage }
-  /** Insert or update a player by `playerId` — used by `event: player.added` and `event: player.phase_changed`. */
+  /** Insert or update a player by `playerId` — used by `event: player.added`. */
   | { type: 'UPSERT_PLAYER'; player: MaestroPlayerInfo }
+  /**
+   * Patch only the `phase` field of an existing player — used by
+   * `event: player.phase_changed`. The wire payload for that event is
+   * deliberately sparse (only `playerId`, `ensemble`, `phase`, plus a
+   * couple of optional timestamps); routing through `UPSERT_PLAYER`
+   * would force the handler to fill `hostname`/`part`/`isConductor`
+   * with empty defaults, and the reducer's `{...existing, ...incoming}`
+   * spread would then clobber the real values cached from the snapshot.
+   * Phase-only patching keeps the rest of the row intact. See #351.
+   */
+  | { type: 'PATCH_PLAYER_PHASE'; playerId: string; phase: AttachmentPhase }
   /** Remove a player by `playerId` — used by `event: player.removed`. */
   | { type: 'REMOVE_PLAYER'; playerId: string }
   /** Replace the schedules slice — used by `event: schedules.changed`. */
@@ -697,6 +709,17 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       if (fieldsEqual) return state;
       const next = state.players.slice();
       next[idx] = merged;
+      return { ...state, players: next };
+    }
+
+    case 'PATCH_PLAYER_PHASE': {
+      // Rationale on the action type. Identity-preserving guard mirrors
+      // SET_ENSEMBLE_PAUSED — same StatusBar churn rationale.
+      const idx = state.players.findIndex((p) => p.playerId === action.playerId);
+      if (idx === -1) return state;
+      if (state.players[idx].phase === action.phase) return state;
+      const next = state.players.slice();
+      next[idx] = { ...state.players[idx], phase: action.phase };
       return { ...state, players: next };
     }
 

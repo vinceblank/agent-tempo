@@ -74,12 +74,19 @@ async function consumeBriefly(
   await done;
 }
 
-/** Quick SSE frame builder — `id\nevent\ndata\n\n`. */
+/**
+ * Quick SSE frame builder — `id\nevent\ndata\n\n`. Mirrors the daemon's
+ * on-wire envelope produced by `frameSseEvent` in `src/http/sse-handler.ts`
+ * (`{ v, eventId, payload }`) so the tests round-trip the actual format
+ * the production daemon emits — a previous version of this helper wrote
+ * the payload bare and let the bug at #351 slip through.
+ */
 function frame(event: string, payload: unknown, id?: string): string {
   const lines: string[] = [];
   if (id) lines.push(`id: ${id}`);
   lines.push(`event: ${event}`);
-  lines.push(`data: ${JSON.stringify(payload)}`);
+  const envelope = { v: 1, eventId: id ?? '0:0', payload };
+  lines.push(`data: ${JSON.stringify(envelope)}`);
   lines.push('');
   lines.push('');
   return lines.join('\n');
@@ -137,11 +144,17 @@ class MockEventSource {
     this.listeners.clear();
   }
 
-  /** Test helper: deliver an event to registered listeners. */
+  /**
+   * Test helper: deliver an event to registered listeners. Wraps the
+   * payload in the daemon's on-wire envelope (`frameSseEvent`,
+   * `src/http/sse-handler.ts`) so the EventSource transport is exercised
+   * against the same shape the production server emits.
+   */
   emit(kind: string, payload: unknown, eventId = '0:0'): void {
     const set = this.listeners.get(kind);
     if (!set) return;
-    const ev = { type: kind, data: JSON.stringify(payload), lastEventId: eventId } as MessageEvent;
+    const data = JSON.stringify({ v: 1, eventId, payload });
+    const ev = { type: kind, data, lastEventId: eventId } as MessageEvent;
     for (const l of set) l(ev);
   }
 }
@@ -259,6 +272,56 @@ describe('createSubscribe — event delivery', () => {
     ]);
     expect(events[0].eventId).toBe('100:1');
     expect(events[2].eventId).toBe('100:3');
+  });
+
+  /**
+   * Regression — issue #351. The daemon's `frameSseEvent` writes the
+   * on-wire envelope `{ v, eventId, payload }` (verified by
+   * `tests/http/sse-handler.test.ts`). Earlier client parsers passed the
+   * **whole envelope** through as `event.payload`, so consumers reading
+   * `event.payload.players` on a snapshot got `undefined` and the TUI
+   * subscribe loop crashed silently → the v0.28.0-beta.1 "Loading
+   * messages..." + "No conductor" stuck-state. This test reproduces the
+   * exact wire shape and asserts the consumer sees the unwrapped
+   * payload, so a future regression at the wire/client boundary is
+   * caught at the parser layer instead of leaking into a UI that has
+   * no way to recover.
+   */
+  it('unwraps the daemon envelope so consumer sees the inner payload (#351)', async () => {
+    const ctrl = new AbortController();
+    // Hand-built frame matching the *real* wire — `frameSseEvent` writes
+    // `data: {"v":1,"eventId":"...","payload":<actualPayload>}`.
+    const wireFrame =
+      'id: 100:1\n' +
+      'event: snapshot\n' +
+      'data: {"v":1,"eventId":"100:1","payload":{"v":1,"ensemble":"demo","capturedAt":"2026-04-26T12:00:00Z","lastEventId":"100:1","state":"online","hasConductor":true,"flags":{"paused":false,"held":false},"players":[{"playerId":"alice","ensemble":"demo","hostname":"h","isConductor":true,"agentType":"claude","part":"","workDir":"/w"}],"schedules":[],"chat":{"messages":[],"total":0,"hasMore":false},"hostProfiles":{}}}\n' +
+      '\n';
+    const body = streamFromChunks([wireFrame]);
+    const { fetchImpl } = makeScriptedFetch([() => okStream(body)]);
+    const subscribe = createSubscribe({ baseUrl: 'http://test:1234', fetchImpl, sleep: instantSleep });
+    const events: TempoEvent[] = [];
+
+    for await (const ev of subscribe('demo', { signal: ctrl.signal })) {
+      events.push(ev);
+      if (events.length === 1) ctrl.abort();
+    }
+    expect(events).toHaveLength(1);
+    const snap = events[0];
+    expect(snap.type).toBe('snapshot');
+    expect(snap.eventId).toBe('100:1');
+    if (snap.type !== 'snapshot') return; // narrowing for TS
+    // The bug: `snap.payload.players` was `undefined` because the
+    // entire envelope was being passed through as `payload`. Asserting
+    // both the conductor flag + the unwrapped fields catches both
+    // branches of the regression.
+    expect(snap.payload.hasConductor).toBe(true);
+    expect(snap.payload.players.map((p) => p.playerId)).toEqual(['alice']);
+    expect(snap.payload.players[0].isConductor).toBe(true);
+    expect(snap.payload.flags.paused).toBe(false);
+    // Importantly — the inner payload is NOT itself an envelope. A
+    // double-wrap regression would surface as a residual `eventId`
+    // field on the unwrapped payload.
+    expect((snap.payload as Record<string, unknown>).eventId).toBeUndefined();
   });
 
   it('gap event surfaces to consumer (not swallowed)', async () => {
@@ -705,5 +768,47 @@ describe('createSubscribe — transport selection (ADR 0010)', () => {
 
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe('player.added');
+  });
+
+  /**
+   * Regression — issue #351 fixup. `EventSource.lastEventId` is always
+   * a `string` (per the WHATWG spec) and is `''` when no `id:` line was
+   * sent. The earlier `liftEnvelope` used `??` to fall back to the
+   * envelope's own `eventId` field, but `?? ` only treats `null` /
+   * `undefined` as nullish — so an empty `lastEventId` would short-
+   * circuit to `''` instead of inheriting the envelope's id. Switching
+   * to `||` restores the pre-#351 EventSource behaviour where the
+   * fallback chain coerces empty strings.
+   */
+  it('EventSource path: empty `lastEventId` falls back to the envelope eventId', async () => {
+    MockEventSource.reset();
+    const subscribe = createSubscribe({
+      baseUrl: 'http://test:1234',
+      EventSourceImpl: MockEventSource as unknown as typeof EventSource,
+    });
+    const ctrl = new AbortController();
+    const events: TempoEvent[] = [];
+    const consume = (async () => {
+      for await (const ev of subscribe('demo', { signal: ctrl.signal })) {
+        events.push(ev);
+      }
+    })();
+
+    await new Promise((r) => setImmediate(r));
+    const es = MockEventSource.instances[0];
+    // Deliver a payload directly with `lastEventId: ''` — what the
+    // browser hands us when the server frame had no `id:` line. The
+    // envelope still carries the canonical eventId.
+    const listeners = (es as unknown as { listeners: Map<string, Set<(ev: MessageEvent) => void>> }).listeners;
+    const set = listeners.get('player.added');
+    expect(set).toBeDefined();
+    const data = JSON.stringify({ v: 1, eventId: '777:42', payload: { playerId: 'alice' } });
+    for (const l of set!) l({ type: 'player.added', data, lastEventId: '' } as MessageEvent);
+    await new Promise((r) => setImmediate(r));
+    ctrl.abort();
+    await consume;
+
+    expect(events).toHaveLength(1);
+    expect(events[0].eventId).toBe('777:42'); // not '' — the envelope's id wins
   });
 });

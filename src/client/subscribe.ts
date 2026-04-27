@@ -362,19 +362,13 @@ async function runEventSourceLoop(args: InternalRunArgs): Promise<void> {
 }
 
 function parseEventSourceMessage(kind: SseEventKind, ev: MessageEvent): TempoEvent | null {
-  let payload: unknown;
+  let envelope: unknown;
   try {
-    payload = JSON.parse(ev.data);
+    envelope = JSON.parse(ev.data);
   } catch {
     return null;
   }
-  if (typeof payload !== 'object' || payload === null) return null;
-  return {
-    v: 1,
-    eventId: ev.lastEventId || '0:0',
-    type: kind,
-    payload,
-  } as TempoEvent;
+  return liftEnvelope(envelope, kind, ev.lastEventId);
 }
 
 // ── Fetch transport ────────────────────────────────────────────────────────
@@ -613,23 +607,41 @@ async function* parseSseStream(
  */
 function parseTempoEvent(raw: RawSseEvent): TempoEvent | null {
   if (!raw.event || !SSE_KIND_SET.has(raw.event)) return null;
-  let payload: unknown;
+  let envelope: unknown;
   try {
-    payload = JSON.parse(raw.data);
+    envelope = JSON.parse(raw.data);
   } catch {
     return null;
   }
-  if (typeof payload !== 'object' || payload === null) return null;
+  return liftEnvelope(envelope, raw.event as SseEventKind, raw.id);
+}
 
-  // The discriminated union's `payload` field shape is enforced server-
-  // side; on the client we trust the wire contract and cast. The drift
-  // detector (test/sse/wire-protocol.test.ts, PR-2) cross-checks the
-  // event kind list against `SSE_EVENT_KINDS`.
+/**
+ * Unwrap the on-wire envelope `{ v, eventId, payload }` produced by
+ * `frameSseEvent` in `src/http/sse-handler.ts`. Returns `null` for
+ * structurally-invalid frames so a single bad event can't kill the
+ * stream (§6 spec — consumers MUST skip).
+ */
+function liftEnvelope(
+  envelope: unknown,
+  type: SseEventKind,
+  rawId: string | undefined,
+): TempoEvent | null {
+  if (typeof envelope !== 'object' || envelope === null) return null;
+  const env = envelope as { v?: unknown; eventId?: unknown; payload?: unknown };
+  if (typeof env.payload !== 'object' || env.payload === null) return null;
+  // `||` (not `??`) — `EventSource.lastEventId` is always a `string` and
+  // is `''` when no `id:` line was sent, so we have to coerce the empty
+  // string to the envelope's `eventId` like the pre-#351 EventSource
+  // parser did. The fetch parser produces `string | undefined`; both
+  // paths share this fallback chain.
+  const fromEnv = typeof env.eventId === 'string' ? env.eventId : '';
+  const eventId = rawId || fromEnv || '0:0';
   return {
     v: 1,
-    eventId: raw.id ?? '0:0',
-    type: raw.event as SseEventKind,
-    payload,
+    eventId,
+    type,
+    payload: env.payload,
   } as TempoEvent;
 }
 
