@@ -1,0 +1,16 @@
+# Intentionally minimal so that npm pack does NOT fall back to .gitignore.
+#
+# .gitignore excludes `dist/*` (Vite build output) so it stays out of git, but
+# `dashboard/dist` is REQUIRED in the published npm tarball — the daemon serves
+# it at /dashboard/* (see src/http/dashboard.ts). When .npmignore is missing,
+# npm uses .gitignore as a fallback and silently drops dashboard/dist from the
+# tarball, which is what shipped (broken) in v0.28.0-beta.4.
+#
+# Root package.json `files[]` is the authoritative whitelist for what gets
+# published from this directory:
+#   - dashboard/dist
+#   - dashboard/package.json
+# (dashboard/README.md is auto-included by npm's nested-readme rule.)
+#
+# DO NOT add `dist` or `dist/*` here. If you need to exclude something else
+# from the tarball, add it both to `.gitignore` (so git ignores it) and below.

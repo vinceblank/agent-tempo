@@ -113,6 +113,16 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Verify tarball contents
+        # The publish step below uses --ignore-scripts to skip prepublishOnly
+        # (which already ran `npm run build && npm test` in the matrix jobs).
+        # That also skips the verify-tarball check, so run it explicitly here.
+        # Confirms `dashboard/dist/index.html` is in the npm tarball — the daemon
+        # 404s with `{"error":"dashboard-not-built"}` if it isn't (regression
+        # guard for the v0.28.0-beta.4 bug where dashboard/.gitignore silently
+        # excluded the SPA build output from `npm publish`).
+        run: npm run verify-tarball
+
       - name: Determine npm dist-tag
         id: dist-tag
         shell: bash
