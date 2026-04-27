@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import {
   setupTestEnv,
+  setupSharedEnv,
   teardownTestEnv,
   withWorker,
   getClient,
@@ -29,10 +30,7 @@ import {
 } from './helpers';
 
 describe('multi-session integration', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();

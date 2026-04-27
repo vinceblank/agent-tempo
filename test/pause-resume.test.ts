@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import {
   setupTestEnv,
+  setupSharedEnv,
   teardownTestEnv,
   withWorkerAndOutboxActivities,
   withWorker,
@@ -9,10 +10,11 @@ import {
   submitOutboxUpdate,
   outboxQuery,
   updateMetadataSignal,
-
   destroyUpdate,
   getClient,
   TASK_QUEUE,
+  pollWithTimeout,
+  holdAssertion,
 } from './helpers';
 import { setPausedSignal, pausedQuery, outboxLockedQuery } from '../src/workflows/signals';
 
@@ -21,10 +23,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 describe('pause and resume', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();
@@ -32,7 +31,7 @@ describe('pause and resume', function () {
 
   describe('session pause behavior', function () {
     it('pause blocks outbox dispatch', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorkerAndOutboxActivities(async () => {
         const ensemble = `pause-block-${Date.now()}`;
 
@@ -40,20 +39,27 @@ describe('pause and resume', function () {
           metadata: playerMetadata({ playerId: 'paused-player', ensemble }),
         });
 
-        // Pause the session
+        // Pause the session — poll until the workflow flips its paused flag
+        // rather than racing the next signal-task on a single immediate query
+        // (issue #383 P2 — researcher's audit point #4).
         await handle.signal(setPausedSignal, true);
-
-        // Verify paused
-        expect(await handle.query(pausedQuery)).to.be.true;
+        await pollWithTimeout(async () => (await handle.query(pausedQuery)) === true, 5000);
 
         // Submit a cue — should buffer, not dispatch
         await handle.executeUpdate(submitOutboxUpdate, {
           args: [{ type: 'cue', targetPlayerId: 'nobody', message: 'paused msg' }],
         });
 
-        await sleep(1500);
+        // Hold-assert that the entry stays `pending` for the full 800ms
+        // window — proves dispatch is actually paused. Pre-#383 used
+        // `await sleep(1500); expect(status).to.equal('pending')` which on a
+        // contended runner could miss a leak that flipped status mid-sleep.
+        await holdAssertion(async () => {
+          const entries = await handle.query(outboxQuery);
+          const entry = entries.find((e) => e.type === 'cue' && (e as any).message === 'paused msg');
+          return entry?.status === 'pending';
+        }, 800);
 
-        // Entry should still be pending (paused blocks dispatch)
         const entries = await handle.query(outboxQuery);
         const entry = entries.find((e) => e.type === 'cue' && (e as any).message === 'paused msg');
         expect(entry).to.exist;
@@ -66,7 +72,7 @@ describe('pause and resume', function () {
     });
 
     it('resume unblocks dispatch and flushes buffered entries', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorkerAndOutboxActivities(async () => {
         const ensemble = `resume-flush-${Date.now()}`;
 
@@ -74,27 +80,35 @@ describe('pause and resume', function () {
           metadata: playerMetadata({ playerId: 'resume-player', ensemble }),
         });
 
-        // Pause
+        // Pause + wait for flag flip (#383 P2)
         await handle.signal(setPausedSignal, true);
+        await pollWithTimeout(async () => (await handle.query(pausedQuery)) === true, 5000);
 
         // Submit entry while paused
         await handle.executeUpdate(submitOutboxUpdate, {
           args: [{ type: 'cue', targetPlayerId: 'nobody', message: 'buffered' }],
         });
 
-        await sleep(1000);
-
-        // Verify still pending
-        let entries = await handle.query(outboxQuery);
-        expect(entries[0].status).to.equal('pending');
+        // Hold-assert: entry stays pending for the 800ms window — replaces
+        // `await sleep(1000)` + single-shot status check.
+        await holdAssertion(async () => {
+          const entries = await handle.query(outboxQuery);
+          return entries[0]?.status === 'pending';
+        }, 800);
 
         // Resume
         await handle.signal(setPausedSignal, false);
 
-        await sleep(2000);
+        // Poll for the entry's status to flip away from pending. Replaces
+        // `await sleep(2000)` — bounded wait that exits on first success.
+        // 5s budget covers Windows-shard worst-case scheduler latency.
+        await pollWithTimeout(async () => {
+          const entries = await handle.query(outboxQuery);
+          const entry = entries.find((e) => e.type === 'cue');
+          return entry !== undefined && entry.status !== 'pending';
+        }, 5000);
 
-        // After resume, entry should be dispatched (will fail since target doesn't exist, but status != pending)
-        entries = await handle.query(outboxQuery);
+        const entries = await handle.query(outboxQuery);
         const entry = entries.find((e) => e.type === 'cue');
         expect(entry).to.exist;
         expect(entry!.status).to.not.equal('pending');
@@ -106,7 +120,7 @@ describe('pause and resume', function () {
     });
 
     it('stop entries bypass pause', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorkerAndOutboxActivities(async () => {
         const ensemble = `stop-bypass-${Date.now()}`;
 
@@ -119,17 +133,23 @@ describe('pause and resume', function () {
           metadata: playerMetadata({ playerId: 'stopper', ensemble }),
         });
 
-        // Pause the stopper
+        // Pause the stopper + wait for flag flip (#383 P2)
         await handle.signal(setPausedSignal, true);
+        await pollWithTimeout(async () => (await handle.query(pausedQuery)) === true, 5000);
 
         // Submit a stop — should bypass pause
         await handle.executeUpdate(submitOutboxUpdate, {
           args: [{ type: 'stop', targetPlayerId: 'stop-target' }],
         });
 
-        await sleep(2000);
+        // Stop bypasses pause — poll for delivered status. Replaces
+        // `await sleep(2000)` — bounded wait that exits on first success.
+        await pollWithTimeout(async () => {
+          const entries = await handle.query(outboxQuery);
+          const stopEntry = entries.find((e) => e.type === 'stop');
+          return stopEntry?.status === 'delivered';
+        }, 5000);
 
-        // Stop entry should be delivered despite pause
         const entries = await handle.query(outboxQuery);
         const stopEntry = entries.find((e) => e.type === 'stop');
         expect(stopEntry).to.exist;
@@ -143,7 +163,7 @@ describe('pause and resume', function () {
     });
 
     it('pause and outboxLocked are independent', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       await withWorker(async () => {
         const ensemble = `independent-${Date.now()}`;
 
@@ -171,7 +191,7 @@ describe('pause and resume', function () {
 
   describe('maestro pause state', function () {
     it('maestro tracks paused state', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       const { withWorkerAndMaestroActivities } = await import('./helpers');
       await withWorkerAndMaestroActivities({}, async () => {
         const ensemble = `maestro-pause-${Date.now()}`;
@@ -203,7 +223,7 @@ describe('pause and resume', function () {
 
   describe('scheduler pause', function () {
     it('scheduler skips fires while paused', async function () {
-      this.timeout(30_000);
+      this.timeout(45_000);
       const { withWorkerAndActivities, skipTime } = await import('./helpers');
       await withWorkerAndActivities(async () => {
         const ensemble = `sched-pause-${Date.now()}`;

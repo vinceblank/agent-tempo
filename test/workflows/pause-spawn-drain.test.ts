@@ -24,13 +24,11 @@
  * §10 (spawn/daemon interplay).
  * Sequencing memo: §3 PR-G workflow invariants.
  */
-import { setupTestEnv, teardownTestEnv } from '../helpers';
+import { setupTestEnv,
+  setupSharedEnv, teardownTestEnv } from '../helpers';
 
 describe('workflow invariant: pause holds spawn outbox entries (§8, §10)', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();

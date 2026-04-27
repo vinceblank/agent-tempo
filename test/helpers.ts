@@ -539,6 +539,109 @@ export async function setupTestEnv(): Promise<void> {
 }
 
 /**
+ * Drop-in replacement for the standard `before(async function () {
+ * this.timeout(60_000); await setupTestEnv(); })` boilerplate that ~32 test
+ * files repeat verbatim. Bumps the hook timeout to **120 s** so contended
+ * runners (Windows shard, busy GH Actions windows) have headroom — the
+ * historical 60 s cap routinely tipped over on Windows under matrix
+ * contention even though `setupTestEnv()` itself is a cache hit after the
+ * first call. The retry budget added by #150's `createLocalWithRetry`
+ * machinery alone now eats the original 60 s when the first call has to
+ * boot a fresh `TestWorkflowEnvironment`.
+ *
+ * Centralising the timeout here means individual files can't drift back to
+ * a smaller value, and a future bump can be one-line.
+ *
+ * Usage (replace `before(async function () { this.timeout(60_000); await setupTestEnv(); })`):
+ *
+ *     before(setupSharedEnv);
+ *
+ * Filed under issue #383 P1.
+ */
+export async function setupSharedEnv(this: Mocha.Context): Promise<void> {
+  this.timeout(120_000);
+  await setupTestEnv();
+}
+
+/**
+ * Poll until `predicate()` returns truthy or `timeoutMs` elapses. Returns
+ * resolved when truthy; rejects with a documented error on timeout.
+ *
+ * Use for "wait for state X to become true" — e.g. assert a workflow
+ * signal landed by polling its query rather than racing a single
+ * `setTimeout` + assertion. The previous local `retry()` in
+ * `test/stages.test.ts` (#190) used the throw-based assertion shape;
+ * this is the predicate-returns-boolean shape, which is cleaner for
+ * "did the signal land yet?" patterns where the caller just wants to
+ * know when the workflow flipped.
+ *
+ * On timeout, the error message includes the `timeoutMs` and the
+ * `intervalMs` so a CI failure log immediately reveals whether the
+ * timeout was tight or the interval was coarse — same pattern as the
+ * `waitForPhase` helpers in `test/adapter-claude-code-lifecycle-v2.test.ts`.
+ *
+ * Filed under issue #383 P2.
+ */
+export async function pollWithTimeout(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs: number,
+  intervalMs = 50,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error(
+    `pollWithTimeout: predicate never returned true within ${timeoutMs}ms ` +
+    `(polling every ${intervalMs}ms)`,
+  );
+}
+
+/**
+ * Inverse of {@link pollWithTimeout}: assert `predicate()` stays truthy for
+ * the full `durationMs` window. Use for "confirm state X is stable" — e.g.
+ * after pausing the outbox, assert that an entry stays `pending` for ~1s
+ * (proving dispatch is actually paused), instead of `await sleep(1500)` +
+ * single-shot assertion.
+ *
+ * The `await sleep(1500)` pattern is brittle on contended runners — a
+ * scheduler hiccup can leave the test waiting longer than 1500 ms,
+ * during which the workflow can fully drain the outbox even though it's
+ * "supposed to be paused." `holdAssertion` polls the predicate at
+ * `intervalMs` cadence so the failure mode "predicate flipped to false
+ * mid-window" is observable, with a precise log of WHEN it flipped.
+ *
+ * Filed under issue #383 P2.
+ */
+export async function holdAssertion(
+  predicate: () => boolean | Promise<boolean>,
+  durationMs: number,
+  intervalMs = 50,
+): Promise<void> {
+  const start = Date.now();
+  const deadline = start + durationMs;
+  while (Date.now() < deadline) {
+    if (!(await predicate())) {
+      const elapsedMs = Date.now() - start;
+      throw new Error(
+        `holdAssertion: predicate became false at ${elapsedMs}ms into the ` +
+        `${durationMs}ms hold window (polling every ${intervalMs}ms)`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  // Final check at the deadline — covers the edge where the predicate
+  // happens to flip just after the last in-loop check.
+  if (!(await predicate())) {
+    throw new Error(
+      `holdAssertion: predicate flipped to false at the ${durationMs}ms ` +
+      `hold deadline (final post-loop check)`,
+    );
+  }
+}
+
+/**
  * Tear down the test environment. In isolated mode, tears down immediately.
  * In shared mode (default), this is a no-op — the real teardown runs once at
  * process exit via `mochaGlobalTeardown` in `test/root-hooks.ts`.

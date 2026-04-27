@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import { WorkflowIdConflictPolicy, WorkflowNotFoundError } from '@temporalio/client';
 import {
   setupTestEnv,
+  setupSharedEnv,
   teardownTestEnv,
   withWorker,
   playerMetadata,
@@ -14,10 +15,7 @@ import {
 } from './helpers';
 
 describe('runId pinning — prevents zombie-resurrection via unpinned handles', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();

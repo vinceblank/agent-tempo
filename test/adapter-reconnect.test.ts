@@ -20,6 +20,7 @@ import { expect } from 'chai';
 import type { WorkflowHandle } from '@temporalio/client';
 import {
   setupTestEnv,
+  setupSharedEnv,
   teardownTestEnv,
   withWorker,
   startSession,
@@ -106,10 +107,7 @@ async function waitForDelivered(
 }
 
 describe('adapter reconnect (#201)', function () {
-  before(async function () {
-    this.timeout(60_000);
-    await setupTestEnv();
-  });
+  before(setupSharedEnv);
 
   after(async function () {
     await teardownTestEnv();

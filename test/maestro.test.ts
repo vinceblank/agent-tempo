@@ -64,7 +64,11 @@ function sleep(ms: number): Promise<void> {
 
 describe('claudeMaestroWorkflow', function () {
   before(async function () {
-    this.timeout(60_000);
+    // 120s matches `setupSharedEnv()` in helpers.ts — see issue #383 P1
+    // for why 60s tipped over on contended runners. Inlined here (not
+    // delegated to `setupSharedEnv`) because this hook also captures the
+    // test ensemble after env boot.
+    this.timeout(120_000);
     await setupTestEnv();
     ENSEMBLE = getTestEnsemble();
   });
