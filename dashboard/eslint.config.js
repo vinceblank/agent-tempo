@@ -66,6 +66,10 @@ export default [
         MessageEvent: 'readonly',
         TextDecoder: 'readonly',
         globalThis: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
       },
     },
     plugins: {

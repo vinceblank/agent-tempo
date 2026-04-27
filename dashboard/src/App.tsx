@@ -14,6 +14,7 @@ import { RouterProvider, type createBrowserRouter } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { createDashboardBrowserRouter } from './router';
 import { logEvent } from './lib/log';
+import { usePairTokenConsume } from './lib/pair';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -31,8 +32,15 @@ export interface AppProps {
 
 export function App({ router }: AppProps = {}) {
   const activeRouter = useMemo(() => router ?? createDashboardBrowserRouter(), [router]);
+  // PR-8 of #340: the consume hook runs once on mount. When `?pair=`
+  // is present in the URL it strips the token (replaceState BEFORE
+  // bearer storage — risk #16) and exchanges it for a daemon bearer
+  // via `GET /dashboard/api/pair/:token`. Idle no-op when the URL
+  // has no token, so the call is safe to leave unconditionally
+  // mounted at the top of the tree.
+  usePairTokenConsume();
   useEffect(() => {
-    logEvent('app-mounted', { pr: 'pr-4', issue: '#340' });
+    logEvent('app-mounted', { pr: 'pr-8', issue: '#340' });
   }, []);
   return (
     <QueryClientProvider client={queryClient}>

@@ -23,6 +23,14 @@ import { fileURLToPath, URL } from 'node:url';
 const DAEMON_ORIGIN = 'http://127.0.0.1:8473';
 
 export default defineConfig({
+  // The daemon routes `/dashboard/*` to the static handler, so the
+  // built SPA's HTML must reference its assets at `/dashboard/assets/...`
+  // rather than `/assets/...`. Without this, the browser loads
+  // `index.html` from the daemon but every `<script src="/assets/...">`
+  // and `<link href="/assets/...">` 404s because the daemon's route
+  // table has no `/assets/*` handler. Caught surfacing in PR-8 of #340
+  // when Playwright e2e couldn't reach the SPA at all.
+  base: '/dashboard/',
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

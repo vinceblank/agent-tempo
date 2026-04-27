@@ -44,6 +44,7 @@ ${out.bold('Commands:')}
   ${out.cyan('release')} [ensemble]       Release all held players (unlock outbox, deliver messages)
   ${out.cyan('agent-types')} <sub>        Manage player type definitions (list/show/init)
   ${out.cyan('daemon')}    <sub>          Manage the worker daemon (start/stop/status/logs)
+  ${out.cyan('dashboard')}                Open the web dashboard (--no-open / --pair / --json)
   ${out.cyan('upgrade')}  [version]       Upgrade claude-tempo to latest (or specific version)
   ${out.cyan('config')}                   Configure Temporal connection settings
   ${out.cyan('init')}                     Register MCP server globally (or --project for .mcp.json)

@@ -33,8 +33,11 @@ import {
 } from './cors';
 import {
   handleDashboardStatic,
-  handlePairTokenStub,
 } from './dashboard';
+import {
+  handlePairConsume,
+  handlePairCreate,
+} from './dashboard-pair';
 import {
   handleFixtureSnapshot,
   handleFixtureSse,
@@ -294,14 +297,15 @@ export async function handle(
 
   // Pre-auth carve-out for the cross-device pairing-token consume endpoint
   // (see docs/design/340-web-dashboard.md §4.1). The token IS the auth —
-  // single-use, 5-min TTL, opaque base64url. PR-1 returns 501; the real
-  // pair flow lands in PR-8.
+  // single-use, 5-min TTL, opaque base64url. Real pair flow lands here
+  // in PR-8 of #340.
   //
   // Regex is intentionally tight — `[^/]+` rejects extra path segments and
   // (after URL-parser normalisation) traversal attempts; both fall through
   // to the post-auth `/dashboard/api/*` 404.
-  if (method === 'GET' && /^\/dashboard\/api\/pair\/[^/]+$/.test(pathname)) {
-    return handlePairTokenStub(req, res);
+  const pairConsumeMatch = pathname.match(/^\/dashboard\/api\/pair\/([^/]+)$/);
+  if (method === 'GET' && pairConsumeMatch) {
+    return handlePairConsume(req, res, pairConsumeMatch[1]);
   }
 
   // Authentication gate.
@@ -344,7 +348,18 @@ export async function handle(
     return errorResponse(res, 404, { error: 'not-found' });
   }
 
-  // Method gate — every other endpoint in the surface is GET-only.
+  // POST `/dashboard/api/pair` — mint a pairing for cross-device QR (PR-8
+  // of #340). Sits AFTER the bearer-auth gate so the operator on the host
+  // proves authority before issuing a token; the token's GET-side consume
+  // is the carve-out above the auth gate.
+  if (method === 'POST' && pathname === '/dashboard/api/pair') {
+    const provided = extractBearerToken(headerString(req.headers.authorization));
+    return handlePairCreate(req, res, provided);
+  }
+
+  // Method gate — read endpoints are GET-only. Both POST paths above
+  // (PR-7a writes, PR-8 pair-mint) handle their own method matching;
+  // everything else falls through here.
   if (method !== 'GET') {
     return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'GET, OPTIONS' });
   }

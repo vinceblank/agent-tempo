@@ -69,19 +69,6 @@ const MIME: Record<string, string> = {
 const ASSET_EXTENSIONS = new Set(Object.keys(MIME));
 
 /**
- * Pre-auth carve-out stub for `GET /dashboard/api/pair/:token`. The real
- * cross-device pairing flow lands in PR-8 of #340. Until then the carve-out
- * routing must be in place so the security boundary (token-IS-the-auth
- * parallel to `/v1/health`) is visible in the route table.
- */
-export function handlePairTokenStub(
-  _req: IncomingMessage,
-  res: ServerResponse,
-): void {
-  errorResponse(res, 501, { error: 'pair flow not yet implemented' });
-}
-
-/**
  * Serve a request under `/dashboard/*`. The caller in `server.ts` has
  * already URL-parsed the request and gated by prefix, and passes the
  * normalised `pathname` in to avoid a second parse on the hot path.

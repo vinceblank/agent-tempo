@@ -162,13 +162,16 @@ describe('Asset MIME + cache headers', () => {
   });
 });
 
-describe('Pre-auth pair-token carve-out (501 stub for PR-1)', () => {
-  it('GET /dashboard/api/pair/:token reaches the stub and returns 501', async () => {
+describe('Pre-auth pair-token carve-out (PR-8 — real flow)', () => {
+  it('GET /dashboard/api/pair/:token returns 410 Gone for unknown tokens', async () => {
+    // The real pair flow (PR-8) treats unknown / expired / consumed
+    // tokens uniformly as 410 Gone with `pair-token-invalid` so an
+    // attacker can't distinguish "never minted" from "already used".
     const b = await boot();
     const res = await fetch(`${b.url}/dashboard/api/pair/abc123`);
-    expect(res.status).toBe(501);
+    expect(res.status).toBe(410);
     const body = await res.json();
-    expect(body).toEqual({ error: 'pair flow not yet implemented' });
+    expect(body).toEqual({ error: 'pair-token-invalid' });
   });
 
   it('blocks path-traversal attempts (URL normaliser drops `..` segments)', async () => {
