@@ -50,6 +50,15 @@ export default [
         MessageEvent: 'readonly',
         TextDecoder: 'readonly',
         globalThis: 'readonly',
+        // DOM element types — referenced by tests/screens via `React.CSSProperties`,
+        // `HTMLInputElement`, etc. The modern React 19 JSX transform doesn't
+        // require a runtime `import React`; the namespace is type-only and
+        // ESLint just needs to know it exists.
+        React: 'readonly',
+        HTMLInputElement: 'readonly',
+        HTMLButtonElement: 'readonly',
+        HTMLAnchorElement: 'readonly',
+        HTMLDivElement: 'readonly',
         // Node globals — legitimately used by Vitest test files that
         // need to read fixtures off disk (`oklch-tokens.test.tsx`
         // injects `tokens.css` via `process.cwd()`). Source files

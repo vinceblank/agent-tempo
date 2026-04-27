@@ -12,6 +12,7 @@ import type {
   EnsembleSummary,
   TempoEvent,
 } from 'claude-tempo/http/event-types';
+import type { HostInfo } from 'claude-tempo/types';
 import type { DashboardTempoClient } from '../../src/lib/client';
 
 export interface MockBehavior {
@@ -19,6 +20,8 @@ export interface MockBehavior {
   ensemblesError?: Error;
   snapshot?: EnsembleStateV1;
   snapshotError?: Error;
+  hosts?: HostInfo[];
+  hostsError?: Error;
 }
 
 export class MockDashboardClient implements DashboardTempoClient {
@@ -26,6 +29,8 @@ export class MockDashboardClient implements DashboardTempoClient {
   public ensemblesError: Error | null = null;
   public snapshot: EnsembleStateV1 | null = null;
   public snapshotError: Error | null = null;
+  public hostList: HostInfo[] = [];
+  public hostsError: Error | null = null;
   /** Pending push channels for live subscriptions, keyed by ensemble. */
   private pushers = new Map<string, ((ev: TempoEvent | null) => void)[]>();
 
@@ -34,6 +39,8 @@ export class MockDashboardClient implements DashboardTempoClient {
     if (initial.ensemblesError) this.ensemblesError = initial.ensemblesError;
     if (initial.snapshot) this.snapshot = initial.snapshot;
     if (initial.snapshotError) this.snapshotError = initial.snapshotError;
+    if (initial.hosts) this.hostList = initial.hosts;
+    if (initial.hostsError) this.hostsError = initial.hostsError;
   }
 
   async listEnsembles(): Promise<EnsembleSummary[]> {
@@ -45,6 +52,11 @@ export class MockDashboardClient implements DashboardTempoClient {
     if (this.snapshotError) throw this.snapshotError;
     if (!this.snapshot) throw new Error(`mock client has no snapshot for ${_ensemble}`);
     return this.snapshot;
+  }
+
+  async hosts(): Promise<HostInfo[]> {
+    if (this.hostsError) throw this.hostsError;
+    return this.hostList;
   }
 
   subscribe(ensemble: string): AsyncIterable<TempoEvent> {
