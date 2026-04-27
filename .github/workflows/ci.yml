@@ -247,6 +247,110 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Rebalance when per-shard wall-clock drifts >20% between \`shard-1\` and \`shard-2\`. See \`test/README.md\`." >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Save shard wall-clock for drift gate
+        if: success() && steps.mocha.outputs.duration != ''
+        run: |
+          mkdir -p shard-walltime
+          echo "${{ steps.mocha.outputs.duration }}" > "shard-walltime/shard-${{ matrix.shard }}-node-${{ matrix.node-version }}.txt"
+
+      - name: Upload shard wall-clock artifact
+        if: success() && steps.mocha.outputs.duration != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-walltime-${{ matrix.shard }}-${{ matrix.node-version }}
+          path: shard-walltime/
+          retention-days: 1
+          if-no-files-found: error
+
+  shard-drift-check:
+    # ADR-style guard for the shard rebalance rule documented in
+    # `test/shard-config.json` and `test/README.md`. The rule says: when the
+    # ratio of `shard-2` to `shard-1` Mocha wall-clock exceeds 1.2× over 3+
+    # runs, rebalance shards. Today the rule is comment-only — a regression
+    # like the one that bit PR #382 (mock-adapter test landed in shard-2
+    # while drift was already at 1.17×, pushing pre-existing heavy tests
+    # over their per-test timeouts) only surfaces post-merge.
+    #
+    # This job hard-fails the PR when the ratio crosses 1.2×, forcing
+    # rebalance at PR-time. It runs after the Linux matrix completes,
+    # consumes the per-job wall-clock artifacts uploaded above, and computes
+    # avg(shard-2) / avg(shard-1) across the 3 Node versions. Linux-only
+    # (Windows has only 1 Node version → too few data points; same shard
+    # config drives both, so a Linux drift signal implies the same on
+    # Windows in absolute terms even if scale differs).
+    #
+    # Skipped when any matrix job failed — drift signal is meaningless if a
+    # shard exited early on a test failure rather than completing wall-clock.
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: ${{ success() }}
+    name: shard-drift-check
+    steps:
+      - name: Download all shard wall-clock artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: shard-walltime
+          pattern: shard-walltime-*
+          merge-multiple: true
+
+      - name: Compute drift ratio + hard-fail at 1.2×
+        run: |
+          set -euo pipefail
+          node <<'EOF'
+          const fs = require('fs');
+          const path = require('path');
+          const dir = 'shard-walltime';
+          if (!fs.existsSync(dir)) {
+            console.log('No wall-clock artifacts found — skipping drift check.');
+            process.exit(0);
+          }
+          const files = fs.readdirSync(dir).filter(f => f.endsWith('.txt'));
+          const buckets = { '1': [], '2': [] };
+          for (const f of files) {
+            // Filename shape: shard-<N>-node-<V>.txt
+            const m = f.match(/^shard-(\d+)-node-(\d+)\.txt$/);
+            if (!m) continue;
+            const shard = m[1];
+            if (!(shard in buckets)) continue;
+            const seconds = parseInt(fs.readFileSync(path.join(dir, f), 'utf8').trim(), 10);
+            if (Number.isFinite(seconds) && seconds > 0) buckets[shard].push(seconds);
+          }
+          const summary = ['## Shard wall-clock drift gate', ''];
+          if (buckets['1'].length === 0 || buckets['2'].length === 0) {
+            console.log(`Insufficient data — shard-1 runs: ${buckets['1'].length}, shard-2 runs: ${buckets['2'].length}. Skipping.`);
+            summary.push(`Insufficient data — shard-1 runs: ${buckets['1'].length}, shard-2 runs: ${buckets['2'].length}. Skipping drift check.`);
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary.join('\n') + '\n');
+            process.exit(0);
+          }
+          const avg = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+          const avg1 = avg(buckets['1']);
+          const avg2 = avg(buckets['2']);
+          const ratio = Math.max(avg1, avg2) / Math.min(avg1, avg2);
+          const heavier = avg2 > avg1 ? 'shard-2' : 'shard-1';
+          summary.push(`- shard-1 wall-clock avg: **${avg1.toFixed(1)}s** (${buckets['1'].length} run${buckets['1'].length === 1 ? '' : 's'})`);
+          summary.push(`- shard-2 wall-clock avg: **${avg2.toFixed(1)}s** (${buckets['2'].length} run${buckets['2'].length === 1 ? '' : 's'})`);
+          summary.push(`- drift ratio (max/min): **${ratio.toFixed(3)}×** (${heavier} heavier)`);
+          summary.push('');
+          console.log(`shard-1 avg: ${avg1.toFixed(1)}s (${buckets['1'].length} runs)`);
+          console.log(`shard-2 avg: ${avg2.toFixed(1)}s (${buckets['2'].length} runs)`);
+          console.log(`ratio: ${ratio.toFixed(3)}× (${heavier} heavier)`);
+          const LIMIT = 1.2;
+          if (ratio > LIMIT) {
+            const msg =
+              `Shard wall-clock drift ${ratio.toFixed(3)}× exceeds the ${LIMIT}× design limit. ` +
+              `The next CI runner-contention window will push pre-existing heavy tests over per-test timeouts ` +
+              `(this is exactly how PR #382's CI flake materialised). Rebalance shards by editing ` +
+              `\`test/shard-config.json\`; see \`test/README.md\` for the procedure.`;
+            console.error(msg);
+            summary.push(`> ❌ **Drift exceeds ${LIMIT}× — rebalance required.** See \`test/README.md\`.`);
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary.join('\n') + '\n');
+            process.stdout.write(`::error::${msg}\n`);
+            process.exit(1);
+          }
+          summary.push(`> ✅ Drift within ${LIMIT}× design limit.`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary.join('\n') + '\n');
+          EOF
+
   test-tui:
     # Vitest suite (tests/tui + tests/client). Independent of Mocha, so it runs
     # once across the Node matrix rather than per Mocha shard.
@@ -277,19 +381,34 @@ jobs:
 
   build-and-test-windows:
     # #150 — continuous Windows coverage for the EACCES regression on
-    # `TestWorkflowEnvironment.createLocal()`. Single OS × single Node version
-    # to keep the CI cost addition under ~17% (one extra job vs. the existing
-    # 6 ubuntu × node-version × shard combos). Runs the FULL Mocha suite
-    # (no shard split) — Windows runners are slow but the orphan-reaper +
-    # createLocal retry layer in `test/helpers.ts` should keep it reliable.
+    # `TestWorkflowEnvironment.createLocal()`. Single Node version to limit
+    # cost (the original tradeoff documented when this job was 1× full-suite),
+    # but now sharded 2-way per the same `test/shard-config.json` Linux uses.
     #
-    # Why a separate job rather than `os: [ubuntu-latest, windows-latest]` in
-    # the existing matrix: doubling 6 → 12 jobs on every PR is steep, and the
-    # Windows-specific failure mode (#150) doesn't need the cross-Node coverage
-    # that Linux already provides.
+    # Why this changed (#382 followup): the unsharded full-suite run hit
+    # rolling per-test timeouts on Windows under runner contention — different
+    # heavy test failed each rerun (`pause-resume`, `outbox >
+    # submitOutboxUpdate basics`, `adapter-claude-code-lifecycle-v2`). The
+    # `claude-tempo --dev daemon up` ramp-up + Temporal createLocal cost lands
+    # roughly 2× on Windows vs Linux; running the entire suite serially
+    # against a single 30s/60s per-test cap left no headroom. Sharding cuts
+    # per-job wall-clock roughly in half so the heaviest tests have margin.
+    #
+    # Cost: 1 → 2 Windows jobs (~14% bump in total CI surface, well under
+    # the 17% headroom budget the original 1-job design carved out).
+    #
+    # Single Node version (22) is intentional — Windows surfaces an
+    # OS-specific failure mode, not a Node-version-specific one. Linux
+    # provides cross-Node coverage; doubling Windows jobs by adding a Node
+    # dimension would push the CI surface past the budget without adding
+    # bug-detection power.
     runs-on: windows-latest
     needs: lint-test-ensemble
-    name: build-and-test-windows (node-22)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    name: build-and-test-windows (shard-${{ matrix.shard }}, node-22)
 
     steps:
       - uses: actions/checkout@v6
@@ -306,8 +425,25 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Run Mocha (full suite, no sharding)
-        run: npm test
+      - name: Run Mocha shard ${{ matrix.shard }}
+        # Force bash on Windows — the default shell is PowerShell, where the
+        # `start=$(date +%s)` syntax + `&&` semantics differ from POSIX. Git
+        # Bash ships with the windows-latest runner image so this is free.
+        shell: bash
+        id: mocha
+        run: |
+          start=$(date +%s)
+          npm run test:shard-${{ matrix.shard }}
+          end=$(date +%s)
+          echo "duration=$(( end - start ))" >> "$GITHUB_OUTPUT"
+
+      - name: Post shard wall-clock to job summary
+        if: always()
+        shell: bash
+        run: |
+          echo "### Windows shard ${{ matrix.shard }} (Node 22)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Mocha wall-clock: **${{ steps.mocha.outputs.duration }}s**" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
 
   lint-commits:
     runs-on: ubuntu-latest

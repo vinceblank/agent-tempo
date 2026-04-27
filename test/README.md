@@ -113,6 +113,27 @@ If CI consistently shows `max/min > 1.2` for per-shard wall-clock over 3+ runs,
 rebalance. The bound comes from design §2: beyond 20% drift the slower shard
 becomes the critical path and negates the speedup versus a 1-way run.
 
+#### `shard-drift-check` CI gate (#382 followup)
+
+Drift is now enforced automatically by the `shard-drift-check` job in
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml). After the Linux
+matrix completes, the job downloads each shard's wall-clock artifact, computes
+`avg(shard-2) / avg(shard-1)` across the 3 Node versions, and **hard-fails
+the PR** if the ratio exceeds 1.2× in either direction. The job summary
+records the actual numbers so you can see whether you're well clear or right
+at the edge.
+
+This closes the gap that bit PR #382: shard-2 was already at 1.17× when a
+new mocha test file landed there by default, pushing pre-existing heavy
+tests over their per-test timeouts under runner contention. The gate makes
+that load-bearing comment in `shard-config.json` actually load-bearing.
+
+If the gate fires and you're confident the rebalance is wrong (e.g., a
+specific test is unusually slow on a contended runner this hour), you can
+re-run the failed job from the GH Actions UI — drift is computed from
+average across 3 Node versions, so noise on one run washes out across the
+matrix. Persistent drift means the JSON needs editing, not a re-run.
+
 ### What NOT to do during a rebalance
 
 - **Don't edit any `*.test.ts` file.** A rebalance is a pure CI-topology change;
