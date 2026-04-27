@@ -112,29 +112,24 @@ export async function handleSseEvent(
     }
 
     case 'player.added':
-    case 'player.phase_changed': {
-      // `player.added` carries a full `PlayerSummaryV1`; `phase_changed`
-      // carries only the diff fields. The reducer's UPSERT_PLAYER path
-      // merges either shape onto the existing entry by `playerId`.
-      const payload = event.payload as Partial<PlayerSummaryV1> & {
-        playerId: string;
-        ensemble: string;
-      };
-      const player: MaestroPlayerInfo = {
-        playerId: payload.playerId,
-        ensemble: payload.ensemble,
-        hostname: payload.hostname ?? '',
-        isConductor: payload.isConductor ?? false,
-        agentType: payload.agentType ?? 'claude',
-        ...(payload.playerType !== undefined ? { playerType: payload.playerType } : {}),
-        ...(payload.phase !== undefined ? { phase: payload.phase } : {}),
-        part: payload.part ?? '',
-        workDir: payload.workDir ?? '',
-        ...(payload.gitBranch !== undefined ? { gitBranch: payload.gitBranch } : {}),
-      };
-      dispatch({ type: 'UPSERT_PLAYER', player });
+      // Carries a full `PlayerSummaryV1` — project to the in-memory
+      // shape and let the reducer merge by `playerId`.
+      dispatch({ type: 'UPSERT_PLAYER', player: toMaestroPlayerInfo(event.payload) });
       return;
-    }
+
+    case 'player.phase_changed':
+      // The wire payload here is sparse — `{ playerId, ensemble, phase,
+      // … timestamps }` per `src/http/event-types.ts`. Earlier this case
+      // fell through to the same projection as `player.added`, which
+      // synthesised empty `hostname` / `part` / `isConductor` defaults
+      // and clobbered the snapshot-cached values via the reducer's
+      // spread merge. Patching only `phase` keeps the rest intact. #351.
+      dispatch({
+        type: 'PATCH_PLAYER_PHASE',
+        playerId: event.payload.playerId,
+        phase: event.payload.phase,
+      });
+      return;
 
     case 'player.removed':
       dispatch({ type: 'REMOVE_PLAYER', playerId: event.payload.playerId });

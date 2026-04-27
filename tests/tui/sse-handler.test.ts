@@ -10,7 +10,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { handleSseEvent, toMaestroPlayerInfo } from '../../src/tui/sse-handler';
 import type { SseRefetchClient } from '../../src/tui/sse-handler';
-import type { TuiAction } from '../../src/tui/store';
+import { tuiReducer, initialState, type TuiAction } from '../../src/tui/store';
 import type { TempoEvent, EnsembleStateV1, PlayerSummaryV1 } from '../../src/http/event-types';
 import type { EnsembleChatMessage } from '../../src/types';
 
@@ -178,6 +178,61 @@ describe('handleSseEvent — snapshot', () => {
     const types = actions.map((a) => a.type);
     expect(types).not.toContain('SET_CONDUCTOR');
   });
+
+  /**
+   * Regression guard — issue #351. When a snapshot lands with a
+   * conductor in `players[]` AND chat messages in `chat`, both must
+   * leak through to the store: the conductor name (so the StatusBar
+   * doesn't show "No conductor") and the chat messages projected into
+   * a conversation (so ChatView doesn't stay on "Loading messages...").
+   * The bug at #351 was upstream in the wire parser, but this test
+   * locks the projection contract here so a future refactor can't drop
+   * either dispatch silently. Companion to the wire-level regression
+   * test in `tests/client/subscribe.test.ts`.
+   */
+  it('preserves conductor identity AND chat content on snapshot (#351 regression guard)', async () => {
+    const { dispatch, actions } = makeRecorder();
+    const api = makeStubClient();
+    const snap = snapshot({
+      hasConductor: true,
+      players: [
+        playerSummary('alice'), // non-conductor first to prove `find` works
+        playerSummary('boss', { isConductor: true }),
+      ],
+      chat: {
+        messages: [chatMsg('m1', 'maestro-in'), chatMsg('m2', 'conductor-out')],
+        total: 2,
+        hasMore: false,
+      },
+    });
+
+    await handleSseEvent(ev('snapshot', snap), dispatch, 'demo', api);
+
+    // Conductor name must be set so StatusBar does NOT render "⚠ No conductor".
+    const conductorAction = actions.find(
+      (a): a is Extract<TuiAction, { type: 'SET_CONDUCTOR' }> => a.type === 'SET_CONDUCTOR',
+    );
+    expect(conductorAction).toBeDefined();
+    expect(conductorAction!.name).toBe('boss');
+
+    // SET_ENSEMBLE_CHAT must carry the messages and `hasConductor: true`.
+    const chatAction = actions.find(
+      (a): a is Extract<TuiAction, { type: 'SET_ENSEMBLE_CHAT' }> => a.type === 'SET_ENSEMBLE_CHAT',
+    );
+    expect(chatAction).toBeDefined();
+    expect(chatAction!.chat.messages.map((m) => m.id)).toEqual(['m1', 'm2']);
+    expect(chatAction!.chat.hasConductor).toBe(true);
+
+    // SET_CONVERSATION must dispatch a non-null array so ChatView leaves
+    // its "Loading messages..." placeholder. Empty arrays count — only
+    // `null` keeps the loader on screen.
+    const convAction = actions.find(
+      (a): a is Extract<TuiAction, { type: 'SET_CONVERSATION' }> => a.type === 'SET_CONVERSATION',
+    );
+    expect(convAction).toBeDefined();
+    expect(Array.isArray(convAction!.conversation)).toBe(true);
+    expect(convAction!.conversation).toHaveLength(2);
+  });
 });
 
 describe('handleSseEvent — incremental player events', () => {
@@ -197,7 +252,7 @@ describe('handleSseEvent — incremental player events', () => {
     expect(a.player.phase).toBe('attached');
   });
 
-  it('player.phase_changed dispatches UPSERT_PLAYER (reducer merges by playerId)', async () => {
+  it('player.phase_changed dispatches PATCH_PLAYER_PHASE (phase-only patch)', async () => {
     const { dispatch, actions } = makeRecorder();
     const api = makeStubClient();
     await handleSseEvent(
@@ -211,10 +266,69 @@ describe('handleSseEvent — incremental player events', () => {
       'demo',
       api,
     );
-    const a = actions[0] as Extract<TuiAction, { type: 'UPSERT_PLAYER' }>;
-    expect(a.type).toBe('UPSERT_PLAYER');
-    expect(a.player.playerId).toBe('alice');
-    expect(a.player.phase).toBe('awaiting');
+    expect(actions).toHaveLength(1);
+    const a = actions[0] as Extract<TuiAction, { type: 'PATCH_PLAYER_PHASE' }>;
+    expect(a.type).toBe('PATCH_PLAYER_PHASE');
+    expect(a.playerId).toBe('alice');
+    expect(a.phase).toBe('awaiting');
+  });
+
+  /**
+   * Regression — issue #351 (bug 2). Verifies the phase-only patch
+   * pipeline (handler → reducer) preserves hostname/part/isConductor
+   * across a phase transition. Pre-fix: `player.phase_changed` ran the
+   * `player.added` projection which synthesised empty defaults that
+   * the reducer's spread merge then clobbered onto real values cached
+   * from the snapshot — first phase flicker would wipe the row.
+   */
+  it('player.phase_changed does NOT clobber hostname/part/isConductor on first transition (#351)', async () => {
+    // Seed the store with a fully-populated player from a snapshot.
+    let state = initialState();
+    state = tuiReducer(state, {
+      type: 'UPSERT_PLAYER',
+      player: {
+        playerId: 'alice',
+        ensemble: 'demo',
+        hostname: 'main-laptop',
+        isConductor: true,
+        agentType: 'claude',
+        playerType: 'tempo-conductor',
+        phase: 'attached',
+        part: 'leading the band',
+        workDir: '/work',
+        gitBranch: 'main',
+      },
+    });
+
+    // Now feed the sparse phase_changed event through the SSE handler
+    // and apply the dispatched action to the reducer.
+    const { dispatch, actions } = makeRecorder();
+    const api = makeStubClient();
+    await handleSseEvent(
+      ev('player.phase_changed', {
+        playerId: 'alice',
+        ensemble: 'demo',
+        phase: 'processing',
+        at: '2026-04-26T12:00:00Z',
+      }),
+      dispatch,
+      'demo',
+      api,
+    );
+    expect(actions).toHaveLength(1);
+    state = tuiReducer(state, actions[0]);
+
+    const after = state.players.find((p) => p.playerId === 'alice');
+    expect(after).toBeDefined();
+    // Phase advanced…
+    expect(after!.phase).toBe('processing');
+    // …but every other field that wasn't on the wire payload survives.
+    expect(after!.hostname).toBe('main-laptop');
+    expect(after!.part).toBe('leading the band');
+    expect(after!.isConductor).toBe(true);
+    expect(after!.playerType).toBe('tempo-conductor');
+    expect(after!.workDir).toBe('/work');
+    expect(after!.gitBranch).toBe('main');
   });
 
   it('player.removed dispatches REMOVE_PLAYER', async () => {

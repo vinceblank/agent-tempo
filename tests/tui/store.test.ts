@@ -306,6 +306,61 @@ describe('tuiReducer — SSE incremental actions', () => {
     expect(out).toBe(s);
   });
 
+  /**
+   * Issue #351 — `player.phase_changed` carries a sparse wire payload
+   * (only `phase` plus identifiers). Earlier the SSE handler inflated
+   * it to a full `MaestroPlayerInfo` with empty defaults and ran it
+   * through `UPSERT_PLAYER`, whose spread merge clobbered the cached
+   * `hostname` / `part` / `isConductor` values from the snapshot. The
+   * `PATCH_PLAYER_PHASE` action exists specifically to avoid that.
+   */
+  it('PATCH_PLAYER_PHASE preserves hostname/part/isConductor when only updating phase (#351)', () => {
+    const seed = makePlayer('alice', {
+      phase: 'attached',
+      hostname: 'main-laptop',
+      part: 'leading the band',
+      isConductor: true,
+    });
+    const s: TuiState = { ...s0(), players: [seed] };
+    const out = tuiReducer(s, {
+      type: 'PATCH_PLAYER_PHASE',
+      playerId: 'alice',
+      phase: 'processing',
+    });
+    expect(out.players).toHaveLength(1);
+    const after = out.players[0];
+    expect(after.phase).toBe('processing');
+    expect(after.hostname).toBe('main-laptop'); // not '' clobbered
+    expect(after.part).toBe('leading the band'); // not '' clobbered
+    expect(after.isConductor).toBe(true);        // not false clobbered
+  });
+
+  it('PATCH_PLAYER_PHASE returns same reference when phase is unchanged (no-op identity)', () => {
+    const s: TuiState = {
+      ...s0(),
+      players: [makePlayer('alice', { phase: 'attached' })],
+    };
+    const out = tuiReducer(s, {
+      type: 'PATCH_PLAYER_PHASE',
+      playerId: 'alice',
+      phase: 'attached',
+    });
+    expect(out).toBe(s);
+  });
+
+  it('PATCH_PLAYER_PHASE is a no-op when playerId is unknown', () => {
+    const s: TuiState = {
+      ...s0(),
+      players: [makePlayer('alice', { phase: 'attached' })],
+    };
+    const out = tuiReducer(s, {
+      type: 'PATCH_PLAYER_PHASE',
+      playerId: 'ghost',
+      phase: 'processing',
+    });
+    expect(out).toBe(s);
+  });
+
   it('REMOVE_PLAYER drops the matching player and clamps selectedPlayerIndex', () => {
     const s: TuiState = {
       ...s0(),
