@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.1] - 2026-04-27
+
 ### Added
 
 - **Surface drift detector** (#305): `scripts/check-surface-drift.js` + `npm run lint:surface-drift`
