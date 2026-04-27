@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.5] - 2026-04-27
+
+### Fixed
+
+- Published npm tarball was missing `dashboard/dist/` because `npm pack` fell back to `dashboard/.gitignore` (which excludes `dist/*`). Added `dashboard/.npmignore` (presence overrides the fallback) so `package.json#files` whitelist is honored. Added `verify-tarball` guard to both `release.yml` and `ci.yml` to catch regressions. (#378)
+- `claude-tempo dashboard` CLI verb missing from `docs/cli.md`, `docs/SURFACE-REGISTRY.md`, and `CLAUDE.md`. Added the entries + extended `scripts/check-surface-drift.js` to recognize pre-switch dispatch verbs (root cause: it had a hardcoded list missing `dashboard`). (#377)
+
 ## [0.28.0-beta.4] - 2026-04-27
 
 ### Added
