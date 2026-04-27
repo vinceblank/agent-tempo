@@ -59,6 +59,7 @@ Headline locked-in choices:
 | Mock adapter base class                                                                    | **`SdkAttachment`** — pull-delivery + `processingStart/End` pairing matches what dashboard renders for real sessions                                                                            |
 | Scenario library location                                                                  | **`scenarios/` at repo root**, parallel to `examples/ensembles/`; first-class artifacts, not illustrative samples                                                                                |
 | `__MOCK__:` directive safety in production                                                 | **Inert** — real adapters never inspect message bodies for the prefix; only the mock adapter (which can't exist in prod) interprets it                                                            |
+| **PR-1 implementation discovery**: dev + prod daemon zombie-reaper coexistence              | **`selectOrphans` extended with cross-profile known-PIDs set + weak-evidence suppression** on partial-state (port file present, PID file missing). Original design wrongly assumed "natural coexistence" at the host-process layer — the orphan detector matched the opposite profile's daemon as a zombie. Without the fix, `--dev daemon stop` would have SIGTERMed the user's prod daemon. Lesson folded into design doc §5.7 with explicit acceptance criteria. |
 
 ## Consequences
 
@@ -117,6 +118,7 @@ Headline locked-in choices:
 - **Phase 2 — Auto-discovery of `scenarios/` in user workspaces.** Currently bare-name resolution looks in the package's shipped `scenarios/` dir. A future `--scenario-path` flag could let users layer their own scenarios alongside shipped ones, with project-then-package precedence (mirrors player-types lookup).
 - **Phase 3 — `staging` profile** following the same template (`isStagingMode()`, `~/.claude-tempo-staging/`, port `8475`, namespace `claude-tempo-staging`). The dev profile design intentionally generalises.
 - **Wire-protocol additions post-v1.0** must register with the protobuf field-number plan in `protos/README.md` reservations log when #319 (protobuf migration) lands. **This design adds zero wire-protocol surface**, so the protobuf migration is unaffected by it.
+- **Generalised lesson from PR-1 — host-process-layer enumeration must be cross-profile-aware.** The orphan-detector bug §5.7 documents isn't a one-off — it's a structural concern any time a utility enumerates host-wide state and filters by "is mine". Future host-scoped utilities (log rotation across profiles, port-conflict detection, daemon health aggregation, multi-profile `claude-tempo daemons` listing) must consult the same cross-profile PID/port-file set or risk the same class of bug. When the Phase 3 `staging` profile lands, this generalises further to N-profile awareness.
 
 ## References
 

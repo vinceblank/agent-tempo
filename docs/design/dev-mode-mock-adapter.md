@@ -343,9 +343,39 @@ The existing daemon stop / status / heartbeat machinery applies as-is. `claude-t
 
 ### 5.6 Conflict avoidance
 
-- **Dev daemon vs prod daemon on the same machine:** different home dirs (so different PID files, different lock files), different ports, different namespaces. They naturally coexist.
+- **Dev daemon vs prod daemon on the same machine:** different home dirs (so different PID files, different lock files), different ports, different namespaces. They coexist — but **not as automatically as one might hope** — see §5.7 below for the orphan-detector caveat surfaced during PR-1 implementation.
 - **Two dev daemons on the same machine:** the existing `tryAcquireLockFile` mechanism in `src/cli/daemon.ts` prevents this — second starter sees the lock, waits, finds the first daemon's PID file, and connects to it. Same behavior as prod. v1 explicitly does **not** support multiple parallel dev daemons; users who need that set `CLAUDE_TEMPO_HOME_OVERRIDE` per environment.
 - **Dev daemon vs prod daemon talking to the same Temporal:** namespace-scoped. Dev workflows live in `claude-tempo-dev`; prod's `default` namespace can't see them via `workflow.list()` queries.
+
+### 5.7 Cross-profile orphan-detector coexistence
+
+> **Folded in from PR-1 implementation discovery.** The original §5.6 claim "they naturally coexist" was incomplete — true at the home-dir / port / namespace layers, but NOT at the orphan-detector layer. Documented here so future engineers don't re-discover it.
+
+The existing zombie-daemon reaper (`scanClaudeTempoDaemons` + `selectOrphans` in `src/cli/daemon.ts`, originally introduced in #157) matches **any** `node dist/daemon.js` process on the host via the `DAEMON_CMDLINE_RE` regex. It then calls `selectOrphans` to filter out the PID tracked by the *current* profile's PID file. **Without further changes, that filter doesn't know about the opposite profile's PID** — so the dev daemon sees the prod daemon as an "untracked zombie" and `--dev daemon stop` would SIGTERM the user's prod daemon. Same hazard in reverse.
+
+**The fix (extend `selectOrphans` to accept a known-PIDs array; thread the opposite profile's PID through every call site)** is required for cross-profile safety:
+
+```ts
+// Before:
+export function selectOrphans(scanned: DaemonProcessInfo[], trackedPid: number | undefined): DaemonProcessInfo[]
+
+// After:
+export function selectOrphans(scanned: DaemonProcessInfo[], knownPids: ReadonlySet<number>): DaemonProcessInfo[]
+//   where knownPids contains: own profile's tracked PID + opposite profile's tracked PID (best-effort read)
+```
+
+Call sites (`stopDaemon`, `daemon start` pre-flight scan) read both PID files at the start of their work and pass the combined set. Read failures (opposite profile's PID file missing or unreadable) are non-fatal; the union just shrinks.
+
+**Weak-evidence suppression for partial-state cases:** if the opposite profile shows mixed signals (port file present but PID file missing — typical post-crash state), the zombie reaper **suppresses entirely** rather than guess. Defensive bias: leaving one zombie beats wrongly killing the user's other daemon. `daemon start` similarly skips orphan scan in this state and prompts the operator with `--force` to override.
+
+This isn't a one-off patch — it's a structural lesson: **any host-wide enumeration that filters by "is mine" must also know "what isn't mine but isn't a zombie either"**. Future host-scoped utilities (e.g. log rotation, port-conflict detection) need to consult the same cross-profile PID set or risk the same class of bug.
+
+Acceptance criteria the implementation must meet:
+
+1. `--dev daemon stop` MUST NOT kill the prod daemon, ever.
+2. `claude-tempo daemon stop` MUST NOT kill the dev daemon, ever.
+3. Genuine zombies (matching the daemon cmdline regex but not in either profile's PID file) MUST still be reaped — except in the weak-evidence partial-state case described above.
+4. Unit tests must cover: (a) cross-profile coexistence, (b) genuine-zombie reap, (c) weak-evidence suppression, (d) opposite-profile PID file read failure (non-fatal).
 
 ## 6. Temporal namespace isolation
 
@@ -597,6 +627,7 @@ PR 3 adds `claude-tempo --dev up --lineup tempo-mock-jam` which collapses steps 
 | Scripted scenario YAML evolves into a configuration language ("just one more action type…")           | Medium     | Closed action set (cue / report / recruit / release / delayMs / crash) — anything fancier requires a Phase 2 design decision  |
 | `__MOCK__:` prefix accidentally typed by a real user                                                  | Low        | Real Claude Code adapters never see these messages because real users don't recruit mock players; the prefix is conspicuous   |
 | Two dev daemons on the same machine collide                                                           | Low        | Existing `tryAcquireLockFile` machinery prevents it; v1 explicitly doesn't support parallel dev environments                  |
+| **Cross-profile orphan-detector kills the wrong daemon** (`--dev daemon stop` SIGTERMs prod, or vice-versa) | **Medium → Mitigated in PR-1** | Surfaced during PR-1 implementation; original §5.6 wrong about "natural coexistence". Fix: `selectOrphans` extended with cross-profile known-PIDs set + weak-evidence suppression on partial state. See §5.7. |
 | Mock adapter heartbeat / phase semantics drift from real adapters → dashboard bugs caught here pass real-world | Medium-High | **By design**: mock extends `SdkAttachment` so it inherits 100% of the lifecycle. Adapter conformance suite (when it lands per `docs/design/session-lifecycle-rebuild-v2.md` §4.5) parameterizes over every registered descriptor and the mock will be in that suite |
 | Mock adapter accumulates testability hooks that production adapters then can't drop                   | Medium     | Mock is a **separate adapter**, not a flag on the real adapters. New methods land on `MockAttachment` only; the production adapter classes stay untouched |
 | Production safety gate 2 silently fails (mock fails to import in dev mode)                            | Low        | The dynamic import logs both success and failure; gate 4 banner reminds operators which mode they're in                       |
@@ -634,6 +665,7 @@ PR 3 adds `claude-tempo --dev up --lineup tempo-mock-jam` which collapses steps 
 | Should `--dev` change the wire protocol in any way?                                       | **No.** Wire protocol is identical between dev and prod. This is a hard invariant — bugs caught in dev must repro in prod.                   |
 | Where do scripted scenarios live in the repo?                                             | **`scenarios/` at the repo root**, parallel to `examples/ensembles/`. Shipped via `package.json#files`. Discoverable via `--dev scenarios list`. Not under `examples/` because they're first-class artifacts, not illustrative samples. |
 | What happens if a `__MOCK__:` directive crosses into a production message stream?         | **Inert.** Production adapters never inspect message bodies for the prefix; only the mock adapter does. Combined with §7 gates (mock can't exist in prod), the prefix is safe-by-default.                |
+| **Found during PR-1**: how do dev + prod daemon zombie-reapers avoid killing each other?  | **Cross-profile known-PIDs set in `selectOrphans`** + weak-evidence suppression on partial state (port file present, PID file missing). Original design was wrong to assume "natural coexistence" at the host-process layer. See §5.7. |
 
 ## 13. References
 
