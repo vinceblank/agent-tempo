@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { Config, conductorWorkflowId, sessionWorkflowId } from '../config';
-import { AgentType, SessionInput, AdapterClass, AttachmentInfo, SessionMetadata, Message, DetachReason } from '../types';
+import { AgentType, SessionInput, AdapterClass, AttachmentInfo, MockMode, SessionMetadata, Message, DetachReason } from '../types';
 import {
   PREVIEW_MAX_LENGTH,
   DEFAULT_RESTART_DETACH_DEADLINE_MS,
@@ -229,11 +229,12 @@ export interface SpawnProcessInput {
   /** Resolved adapter descriptor id (e.g. 'claude-code', 'copilot'); mirrors SessionMetadata.adapterId. */
   adapterId?: string;
   /**
-   * Mock-adapter configuration (ADR 0014 PR-2). Only present when `agent === 'mock'`.
+   * Mock-adapter configuration (ADR 0014 §4.2). Only present when `agent === 'mock'`.
    * Forwarded into the spawned subprocess as `CLAUDE_TEMPO_MOCK_MODE` /
-   * `CLAUDE_TEMPO_MOCK_SCENARIO` env vars.
+   * `CLAUDE_TEMPO_MOCK_SCENARIO` env vars. Chaos mode also reads
+   * `CLAUDE_TEMPO_MOCK_CHAOS_*` from the daemon's env (inherited via spawn).
    */
-  mockMode?: 'echo' | 'scripted';
+  mockMode?: MockMode;
   mockScenario?: string;
 }
 

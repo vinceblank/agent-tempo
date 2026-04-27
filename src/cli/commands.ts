@@ -5,14 +5,14 @@ import { execFileSync, spawn as cpSpawn } from 'child_process';
 import { homedir, hostname } from 'os';
 import { randomUUID } from 'crypto';
 import { Client, Connection, WorkflowIdConflictPolicy } from '@temporalio/client';
-import { spawnInTerminal, spawnCopilotBridge, resolveClaudePath } from '../spawn';
-import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
+import { spawnInTerminal, spawnCopilotBridge, spawnMockAdapter, resolveClaudePath } from '../spawn';
+import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, isDevMode, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
 import { getGitInfo } from '../git-info';
 import { createTemporalConnection } from '../connection';
 import { releaseHeldSignal, outboxLockedQuery, setPausedSignal, destroyUpdate } from '../workflows/signals';
 import { addScheduleSignal, setSchedulerPausedSignal } from '../workflows/scheduler-signals';
 import { maestroSetPausedSignal } from '../workflows/maestro-signals';
-import { AgentType, ScheduleEntry, SessionInput, SessionMetadata } from '../types';
+import { AgentType, MockMode, ScheduleEntry, SessionInput, SessionMetadata } from '../types';
 import { formatDurationMs } from '../utils/duration';
 import { formatAttachmentInfoForDisplay } from '../utils/attachment-format';
 import { runPreflight } from './preflight';
@@ -187,6 +187,14 @@ async function applyLineupPlayersAndSchedules(args: {
   conductorName: string;
   temporalEnvVars: Record<string, string>;
   conductorAgent: AgentType;
+  /**
+   * CLI `--scenario` override (PR-3 of #340-followup, ADR 0014 §5.5). When
+   * set, every mock player in the lineup gets `mockMode: 'scripted'` and
+   * `mockScenario: <this value>` regardless of what the lineup YAML
+   * specified. Lets the conductor one-command spin up an entire scripted
+   * ensemble: `claude-tempo --dev up --lineup tempo-mock-jam --scenario echo-roundtrip`.
+   */
+  scenarioOverride?: string;
 }): Promise<void> {
   const { client, config, ensemble, lineup, initialStartup, conductorName } = args;
 
@@ -196,7 +204,20 @@ async function applyLineupPlayersAndSchedules(args: {
     out.log(`Recruiting ${lineup.players.length} player${lineup.players.length !== 1 ? 's' : ''} from lineup...`);
   }
   for (const player of lineup.players) {
-    const playerAgent: AgentType = player.agent === 'copilot' ? 'copilot' : (player.agent === 'claude' ? 'claude' : args.conductorAgent);
+    // ADR 0014 §4 — `agent: "mock"` is dev-only. Reject up-front rather than
+    // letting the spawn fail downstream so operators get a clear hint.
+    if (player.agent === 'mock' && !isDevMode()) {
+      out.warn(
+        `Skipping player "${player.name}" — agent: "mock" requires dev mode. ` +
+        `Re-run with --dev to enable.`,
+      );
+      continue;
+    }
+    const playerAgent: AgentType =
+      player.agent === 'copilot' ? 'copilot' :
+      player.agent === 'claude' ? 'claude' :
+      player.agent === 'mock' ? 'mock' :
+      args.conductorAgent;
     const playerWorkDir = player.workDir || process.cwd();
     const resolvedPlayerType = player.type ? resolveAgentType(player.type) : null;
     const playerSessionId = randomUUID();
@@ -258,7 +279,28 @@ async function applyLineupPlayersAndSchedules(args: {
 
     // Spawn the player process.
     try {
-      if (playerAgent === 'copilot') {
+      if (playerAgent === 'mock') {
+        // PR-3 — `--scenario` CLI override wins over per-player lineup
+        // `mockScenario`. Forces `mockMode: scripted` because that's the
+        // only mode that consumes a scenario. Per-player `mockMode` (silent /
+        // chaos / echo) is preserved when no override is set.
+        const effectiveMode: MockMode =
+          args.scenarioOverride ? 'scripted' : (player.mockMode ?? 'echo');
+        const effectiveScenario = args.scenarioOverride ?? player.mockScenario;
+        spawnMockAdapter({
+          name: player.name,
+          ensemble,
+          temporalAddress: config.temporalAddress,
+          temporalNamespace: config.temporalNamespace,
+          temporalApiKey: config.temporalApiKey,
+          temporalTlsCertPath: config.temporalTlsCertPath,
+          temporalTlsKeyPath: config.temporalTlsKeyPath,
+          isConductor: false,
+          workDir: playerWorkDir,
+          mockMode: effectiveMode,
+          ...(effectiveScenario ? { mockScenario: effectiveScenario } : {}),
+        });
+      } else if (playerAgent === 'copilot') {
         spawnCopilotBridge({
           name: player.name,
           ensemble,
@@ -1039,6 +1081,16 @@ interface UpOpts extends CliOverrides {
    * immediate-start semantics. Ignored when `--lineup` is not set.
    */
   noHold?: boolean;
+  /**
+   * `--scenario <name>` (PR-3 of #340-followup, ADR 0014 §5.5). Forces
+   * every `agent: "mock"` player in the lineup into `mockMode: "scripted"`
+   * with this scenario. Bare name (resolved against shipped `scenarios/`)
+   * or absolute path. Ignored when no `--lineup` is given.
+   *
+   * Dev-mode-only — silently no-ops outside dev mode because mock players
+   * can't exist there anyway (gate 3 in recruit pre-flight).
+   */
+  scenario?: string;
 }
 
 export async function up(opts: UpOpts) {
@@ -1332,6 +1384,7 @@ export async function up(opts: UpOpts) {
       conductorName: sessionName,
       temporalEnvVars,
       conductorAgent,
+      ...(opts.scenario ? { scenarioOverride: opts.scenario } : {}),
     });
   }
 

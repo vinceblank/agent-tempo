@@ -28,7 +28,7 @@ import * as path from 'path';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { getConfig, ENV } from '../../config';
 import { createTemporalConnection } from '../../connection';
-import type { AdapterDescriptor, Message, OutboxEntryInput } from '../../types';
+import { MOCK_MODES, type AdapterDescriptor, type Message, type MockMode, type OutboxEntryInput } from '../../types';
 import { SdkAttachment } from '../sdk/base';
 import {
   pendingMessagesQuery,
@@ -47,16 +47,35 @@ import {
   type ScenarioAction,
 } from './scenario';
 import { parsePrefixDirectives } from './prefix';
+import {
+  CHAOS_ENV,
+  type ChaosConfig,
+  chaosFromEnv,
+  decideChaosOutcome,
+  mulberry32,
+} from './chaos';
 
 /** Env vars consumed by the mock adapter. Mirrors `ENV` constants in `src/config.ts`. */
 export const MOCK_ENV = {
   MODE: 'CLAUDE_TEMPO_MOCK_MODE',
   SCENARIO: 'CLAUDE_TEMPO_MOCK_SCENARIO',
-  // PR-3 reserves CHAOS_SEED / CHAOS_DELAY / CHAOS_THROW; PR-2 ignores them.
+  // PR-3 chaos config — see `src/adapters/mock/chaos.ts` for the fully-typed
+  // surface. Keys re-exported here so the spawn layer reads from one place.
+  CHAOS_DELAY_MS: CHAOS_ENV.DELAY_MS,
+  CHAOS_FAIL_RATE: CHAOS_ENV.FAIL_RATE,
+  CHAOS_CRASH_RATE: CHAOS_ENV.CRASH_RATE,
+  CHAOS_SEED: CHAOS_ENV.SEED,
 } as const;
 
-/** Modes shipped by PR-2. PR-3 adds `silent` + `chaos`. */
-export type MockMode = 'echo' | 'scripted';
+/**
+ * Re-export the shared `MockMode` so the existing
+ * `src/adapters/mock/index.ts` barrel keeps working without consumers
+ * needing to know the type was hoisted to `src/types.ts`.
+ */
+export type { MockMode };
+
+/** PR-3 mode set kept as a Set for O(1) validation in the subprocess entry point. */
+const VALID_MOCK_MODES: ReadonlySet<MockMode> = new Set(MOCK_MODES);
 
 const POLL_INTERVAL_MS = 2000;
 const PER_MESSAGE_TIMEOUT_MS = 60_000;
@@ -135,17 +154,28 @@ export class MockAttachment extends SdkAttachment {
 
   private readonly mode: MockMode;
   private readonly scenario?: Scenario;
+  private readonly chaosConfig?: ChaosConfig;
+  /**
+   * PRNG drawn at construction so chaos decisions are reproducible per-process
+   * given the same seed. Each message consumes two draws (see {@link decideChaosOutcome});
+   * the sequence is independent of the actual draw outcomes.
+   */
+  private readonly chaosPrng?: () => number;
   private polling = false;
 
   constructor(opts: {
     mode: MockMode;
     scenario?: Scenario;
+    /** Required when `mode === 'chaos'`. Ignored otherwise. */
+    chaosConfig?: ChaosConfig;
     client?: Client;
     host?: string;
   }) {
     super({ client: opts.client, host: opts.host });
     this.mode = opts.mode;
     this.scenario = opts.scenario;
+    this.chaosConfig = opts.chaosConfig;
+    this.chaosPrng = opts.chaosConfig ? mulberry32(opts.chaosConfig.seed) : undefined;
   }
 
   /**
@@ -309,12 +339,76 @@ export class MockAttachment extends SdkAttachment {
           await this.dispatchActions(pinned, rule.do, msg, this.scenario.defaultDelayMs);
           return null;
         }
+        if (this.mode === 'silent') {
+          // ADR 0014 §4.2 — silent mode never replies. Returning normally
+          // lets `deliver()` ack the message via `markDelivered`, so the
+          // workflow's `pendingMessages` queue actually drains. The dashboard
+          // observes the inbound message land, the heartbeat watcher fires
+          // its staleness warning, and the phase eventually transitions to
+          // `awaiting`. That heartbeat-stale path is what makes silent mode
+          // useful for validation harnesses (issue #249's surface).
+          log(`silent mode — drained "${msg.text.slice(0, 60)}" from ${msg.from} (no reply)`);
+          return null;
+        }
+        if (this.mode === 'chaos') {
+          await this.runChaosDispatch(pinned, msg);
+          return null;
+        }
         // Echo mode (default).
         await this.submitCue(pinned, msg.from, `[ECHO] ${msg.text}`);
         return null;
       },
       [msg.id],
     );
+  }
+
+  /**
+   * Chaos-mode dispatch (ADR 0014 §4.2). Rolls the PRNG twice per inbound
+   * message, applies the configured `delayMs` (deterministic), and either:
+   *
+   *   - `crash`: `process.exit(1)` after a log line. The supervisor restarts
+   *     the subprocess via the existing spawn machinery; the workflow phase
+   *     transitions through `gone → booting → attached` for dashboard
+   *     observability. Crash takes precedence over fail.
+   *   - `fail`: throw inside the deliver callback. `SdkAttachment.deliver`
+   *     catches the throw and surfaces it as a delivery failure, exercising
+   *     the existing supervisor-recovery path without taking the subprocess
+   *     down.
+   *   - `echo`: same shape as echo mode — reply with `[CHAOS-OK] <text>` so
+   *     dashboard logs distinguish chaos-mode echoes from real ones.
+   *
+   * If the constructor was missing `chaosConfig` we degrade to plain echo and
+   * log loudly — the subprocess entry point should always pass it, so this
+   * branch only fires for in-process tests that forget to wire it up.
+   */
+  private async runChaosDispatch(pinned: WorkflowHandle, msg: Message): Promise<void> {
+    if (!this.chaosConfig || !this.chaosPrng) {
+      log('chaos mode active but no chaosConfig wired — falling back to echo');
+      await this.submitCue(pinned, msg.from, `[ECHO] ${msg.text}`);
+      return;
+    }
+    const decision = decideChaosOutcome(this.chaosPrng, this.chaosConfig);
+    if (decision.delayMs > 0) {
+      try {
+        await this.abortableSleep(decision.delayMs);
+      } catch {
+        // Lease revoked mid-delay — bail without dispatching anything.
+        return;
+      }
+    }
+    switch (decision.action) {
+      case 'crash':
+        log(`chaos: crashing per CHAOS_CRASH_RATE on message from ${msg.from}`);
+        process.exit(1);
+        // eslint-disable-next-line no-fallthrough
+        return;
+      case 'fail':
+        log(`chaos: throwing per CHAOS_FAIL_RATE on message from ${msg.from}`);
+        throw new Error(`chaos: simulated failure for "${msg.text.slice(0, 80)}"`);
+      case 'echo':
+        await this.submitCue(pinned, msg.from, `[CHAOS-OK] ${msg.text}`);
+        return;
+    }
   }
 
   /**
@@ -418,8 +512,9 @@ export class MockAttachment extends SdkAttachment {
 // spawn target.
 if (require.main === module) {
   const modeEnv = (process.env[MOCK_ENV.MODE] ?? 'echo').toLowerCase();
-  if (modeEnv !== 'echo' && modeEnv !== 'scripted') {
-    log(`ERROR: unsupported ${MOCK_ENV.MODE}="${modeEnv}". PR-2 supports: echo, scripted.`);
+  if (!VALID_MOCK_MODES.has(modeEnv as MockMode)) {
+    const valid = Array.from(VALID_MOCK_MODES).join(', ');
+    log(`ERROR: unsupported ${MOCK_ENV.MODE}="${modeEnv}". Valid modes: ${valid}.`);
     process.exit(1);
   }
   const mode = modeEnv as MockMode;
@@ -434,7 +529,19 @@ if (require.main === module) {
     }
   }
 
-  new MockAttachment({ mode, scenario }).run().catch((err) => {
+  // Chaos config is read regardless of mode so a `--scenario` operator can
+  // toggle modes per spawn without restarting the daemon. The constructor
+  // only consults `chaosConfig` when `mode === 'chaos'`.
+  const chaosConfig = mode === 'chaos' ? chaosFromEnv() : undefined;
+  if (chaosConfig) {
+    log(
+      `chaos config: delayMs=${chaosConfig.delayMs}, ` +
+      `failRate=${chaosConfig.failRate}, crashRate=${chaosConfig.crashRate}, ` +
+      `seed=${chaosConfig.seed}`,
+    );
+  }
+
+  new MockAttachment({ mode, scenario, chaosConfig }).run().catch((err) => {
     log('Fatal:', err);
     process.exit(1);
   });

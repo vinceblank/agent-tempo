@@ -76,6 +76,7 @@ ${out.bold('Other options:')}
   --destroy                    Also terminate every workflow (down only)
   -y, --yes                    Skip confirmation prompt (down --destroy, destroy)
   --lineup <name|file>         Load ensemble lineup by name or file path (up)
+  --scenario <name|path>       Force every mock player in the lineup into mockMode:scripted with this scenario (dev-mode-only, up + --lineup)
   --no-hold                    Skip startup hold (requires --lineup on up)
   --ensemble <name>            Target a specific ensemble (broadcast, destroy, restore)
   -d, --dir <path>             Target directory (default: cwd)

@@ -1,0 +1,72 @@
+name: tempo-mock-jam
+description: >
+  All-mock ensemble for autonomous validation harnesses (ADR 0014 §5.5).
+  One-command spin-up of a multi-player dev environment with mixed modes —
+  no real LLM calls, no terminal windows, no "trust this folder" prompts.
+  Pair with `claude-tempo --dev up --lineup tempo-mock-jam` and drive via
+  Chrome MCP / dashboard / `cue`.
+
+  Mode mix exercises every PR-3 mock surface in one ensemble:
+    - alice          → scripted (multi-player-handoff scenario)
+    - bob            → echo (baseline round-trip; default mock behavior)
+    - silent-witness → silent (heartbeat-stale phase validation)
+    - chaos-monkey   → chaos (probabilistic fail/crash injection)
+
+  The conductor stays on the default real-LLM agent so a human or AI
+  operator can drive the ensemble via the dashboard / TUI / `cue` while
+  the mocks deterministically respond. To swap in a mock conductor, run
+  `claude-tempo --dev recruit conductor --conductor --agent mock
+  --mockMode scripted --mockScenario conductor-recruit-mock` separately.
+
+  Override the scripted player's scenario per-run via the CLI:
+    claude-tempo --dev up --lineup tempo-mock-jam --scenario echo-roundtrip
+  That forces EVERY mock player into `mockMode: scripted` with the named
+  scenario regardless of the per-player `mockMode` here. Useful for
+  one-command "all mocks reply via this scenario" runs.
+
+conductor:
+  type: tempo-conductor
+  instructions: >
+    You're driving a mock-only ensemble for autonomous validation. The
+    players reply deterministically — no real LLM calls, no terminal
+    windows, no human-in-the-loop. Cue them, watch the dashboard, capture
+    bugs as scenario YAMLs.
+
+players:
+  - name: alice
+    agent: mock
+    mockMode: scripted
+    mockScenario: multi-player-handoff
+    instructions: >
+      Scripted three-way handoff player. Try: `cue alice "ship feature
+      caching"`. Splits the task to bob + carol-shaped peers, reports
+      progress through the conductor's outbox.
+
+  - name: bob
+    agent: mock
+    mockMode: echo
+    instructions: >
+      Echo round-trip baseline. Used as the receiving end of multi-player
+      handoff scenarios; every inbound cue comes back as `[ECHO] <text>`.
+
+  - name: silent-witness
+    agent: mock
+    mockMode: silent
+    instructions: >
+      Drains messages without ever replying. The heartbeat watcher should
+      transition this player to `awaiting` after the staleness threshold;
+      the dashboard should render the staleness indicator. Useful for
+      validating timeout / encore / pause flows.
+
+  - name: chaos-monkey
+    agent: mock
+    mockMode: chaos
+    instructions: >
+      Probabilistic failure injection. Configure rates via env vars on the
+      daemon: `CLAUDE_TEMPO_MOCK_CHAOS_DELAY_MS`,
+      `CLAUDE_TEMPO_MOCK_CHAOS_FAIL_RATE`,
+      `CLAUDE_TEMPO_MOCK_CHAOS_CRASH_RATE`,
+      `CLAUDE_TEMPO_MOCK_CHAOS_SEED` (pin for reproducibility). Defaults
+      are conservative (5 % fail, 1 % crash, no delay) so an idle ensemble
+      doesn't churn — set higher rates explicitly to stress the
+      supervisor-restart + outbox-retry paths.
