@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Daemon test-fixture mode** (#340 — PR-3 of N): `/v1/state/:ensemble` and
+  `/v1/events/:ensemble` now accept `?fixture=<name>` to return canned scenarios instead
+  of running live Temporal queries / wiring the aggregate poll loop. Six fixtures ship in
+  this PR: `empty-ensemble`, `single-conductor`, `eight-player-broadcast` (#357 collapse),
+  `conductor-leaving` (#358 analog), `sse-reconnect` (gap mid-stream), `chat-stress` (100
+  messages + `chat.compressed`). Fixture mode honours the existing bearer-auth gate —
+  not a backdoor, just an alternate projection of an authorised request. Type-safe:
+  every fixture imports from `src/http/event-types.ts`, so wire-protocol drift breaks the
+  TypeScript build. Powers PR-4 onwards' dashboard UI work without depending on real
+  ensemble events. See `docs/SSE-PROTOCOL.md` § 11a.
+
 - **Dashboard static handler + SPA fallback** (#340 — PR-1 of N): Daemon now serves the
   prebuilt web dashboard SPA at `/dashboard/*` from `dashboard/dist/`. New
   `src/http/dashboard.ts` module wires a static-asset handler (immutable cache for hashed

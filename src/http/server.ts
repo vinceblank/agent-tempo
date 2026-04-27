@@ -36,6 +36,10 @@ import {
   handlePairTokenStub,
 } from './dashboard';
 import {
+  handleFixtureSnapshot,
+  handleFixtureSse,
+} from './fixtures';
+import {
   DAEMON_PORT_PATH,
   removePortFile,
   writePortFileAtomic,
@@ -342,6 +346,12 @@ export async function handle(
   const stateMatch = pathname.match(/^\/v1\/state\/([^/]+)$/);
   if (stateMatch) {
     const ensemble = decodeURIComponent(stateMatch[1]);
+    // Fixture mode (PR-3 of #340) — `?fixture=<name>` short-circuits the
+    // live snapshot with canned data. Sits behind the bearer-auth gate.
+    const fixtureName = url.searchParams.get('fixture');
+    if (fixtureName) {
+      return handleFixtureSnapshot(res, fixtureName);
+    }
     return handleState(res, ctx, ensemble);
   }
 
@@ -362,10 +372,17 @@ export async function handle(
   }
   const evtMatch = pathname.match(/^\/v1\/events\/([^/]+)$/);
   if (evtMatch) {
+    const ensemble = decodeURIComponent(evtMatch[1]);
+    // Fixture mode (PR-3 of #340) — `?fixture=<name>` short-circuits both
+    // the existence check and the aggregate poll loop with a canned event
+    // sequence. Sits behind the bearer-auth gate.
+    const fixtureName = url.searchParams.get('fixture');
+    if (fixtureName) {
+      return handleFixtureSse(req, res, fixtureName);
+    }
     if (!ctx.aggregate) {
       return errorResponse(res, 503, { error: 'streaming-not-implemented' }, { 'Retry-After': '60' });
     }
-    const ensemble = decodeURIComponent(evtMatch[1]);
     // Validate existence before opening the SSE stream — clean 404 when
     // the ensemble was never live, instead of an empty stream.
     const list = await ctx.client.listEnsembles().catch(() => []);

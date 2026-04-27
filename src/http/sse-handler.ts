@@ -64,10 +64,24 @@ export class ConnectionCap {
  * always emits single-line JSON, so this branch is defensive.
  */
 export function frameSseEvent(event: BusEvent): Buffer {
-  const lines: string[] = [];
-  lines.push(`id: ${event.eventId}`);
-  lines.push(`event: ${event.type}`);
-  const data = JSON.stringify({ v: 1, eventId: event.eventId, payload: event.payload });
+  return frameSseEventData(event.eventId, event.type, event.payload);
+}
+
+/**
+ * Same on-the-wire shape as {@link frameSseEvent} but takes the wire
+ * fields directly — for callers (e.g. fixture mode) that don't have a
+ * full `BusEvent` to project from.
+ */
+export function frameSseEventData(
+  eventId: string,
+  type: string,
+  payload: unknown,
+): Buffer {
+  const lines: string[] = [
+    `id: ${eventId}`,
+    `event: ${type}`,
+  ];
+  const data = JSON.stringify({ v: 1, eventId, payload });
   // Single-line JSON — but defend against line breaks in payloads.
   for (const piece of data.split('\n')) lines.push(`data: ${piece}`);
   return Buffer.from(lines.join('\n') + '\n\n', 'utf8');
@@ -80,6 +94,25 @@ export function frameSseEvent(event: BusEvent): Buffer {
  */
 export function frameSseComment(comment: string): Buffer {
   return Buffer.from(`: ${comment}\n\n`, 'utf8');
+}
+
+/**
+ * Write the §1 SSE response headers and the initial keepalive comment.
+ * Shared by {@link handleSseRequest} and the fixture-mode handler so
+ * the wire-level handshake stays in one place.
+ */
+export function openSseResponse(
+  res: ServerResponse,
+  comment: string = 'claude-tempo SSE',
+): void {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-store',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no', // disable buffering on nginx + friends
+  });
+  res.flushHeaders?.();
+  res.write(frameSseComment(comment));
 }
 
 /** Parse `?topics=phase,chat,...` query string into a Set, or `undefined`. */
@@ -146,16 +179,8 @@ export async function handleSseRequest(
     }
   };
 
-  // Open SSE response. Headers per §1 + §5.
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-store',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no', // disable buffering on nginx + friends
-  });
-  res.flushHeaders?.();
-  // Initial comment to nudge the connection through any intermediaries.
-  res.write(frameSseComment('claude-tempo SSE'));
+  // Open SSE response (headers per §1 + initial keepalive comment).
+  openSseResponse(res);
 
   // Determine §7.2 entry branch.
   const lastEventIdRaw = headerString(req.headers['last-event-id']);
