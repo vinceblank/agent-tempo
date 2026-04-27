@@ -67,6 +67,7 @@ ${out.bold('Connection options (all commands):')}
 ${out.bold('Other options:')}
   --name <name>                Set session window name (up only)
   --agent <claude|copilot>     Agent type to spawn (default: from config; up)
+  --dev                        Use the dev profile (~/.claude-tempo-dev, port 8474, namespace claude-tempo-dev)
   --skip-preflight             Skip preflight checks
   --background                 Run Temporal in background (server only)
   --project                    Use per-project .mcp.json instead of global (init only)
@@ -107,5 +108,7 @@ ${out.bold('Environment:')}
   TEMPORAL_TLS_CERT_PATH      Path to TLS client certificate
   TEMPORAL_TLS_KEY_PATH       Path to TLS client key
   CLAUDE_TEMPO_DEFAULT_AGENT  Default agent type: claude or copilot (fallback: claude)
+  CLAUDE_TEMPO_DEV_MODE       Set to "1" or "true" to enable the dev profile (alternative to --dev)
+  CLAUDE_TEMPO_HOME_OVERRIDE  Override the home dir entirely (escape hatch for triple-isolated envs)
 `);
 }

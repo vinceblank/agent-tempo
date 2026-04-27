@@ -12,9 +12,19 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { setTimeout as sleep } from 'timers/promises';
-import { Client } from '@temporalio/client';
+import { Client, Connection } from '@temporalio/client';
 import { WorkflowIdConflictPolicy } from '@temporalio/client';
-import { getConfig, type Config, CLAUDE_TEMPO_HOME, GLOBAL_MAESTRO_WORKFLOW_ID, loadDaemonConfig, type DaemonConfig } from './config';
+import {
+  getConfig,
+  type Config,
+  CLAUDE_TEMPO_HOME,
+  DEV_TEMPORAL_NAMESPACE,
+  GLOBAL_MAESTRO_WORKFLOW_ID,
+  isDevMode,
+  loadDaemonConfig,
+  type DaemonConfig,
+} from './config';
+import { emitDevBannerIfActive } from './cli/dev-banner';
 import { createWorkers } from './worker';
 import { createTemporalConnection } from './connection';
 import { DAEMON_PID_PATH, DAEMON_LOG_PATH, DAEMON_HEARTBEAT_PATH, HEARTBEAT_INTERVAL_MS } from './cli/daemon';
@@ -61,6 +71,90 @@ export async function writePidFileAtomic(pidFilePath: string, pid: number): Prom
   }
   // Unreachable — loop either returns or throws.
   throw lastErr;
+}
+
+// ── Dev profile (ADR 0014 §6.2) ──
+
+/**
+ * Outcome of {@link ensureDevNamespace} — exposed so unit tests can assert
+ * on which branch fired without having to inspect log output.
+ *
+ *   - `created`: registerNamespace succeeded (first dev daemon boot)
+ *   - `already-exists`: namespace already registered (every subsequent boot)
+ *   - `permission-denied`: server rejected; daemon continues, worker may fail
+ *   - `error`: any other failure
+ *
+ * @internal
+ */
+export interface EnsureDevNamespaceResult {
+  ok: boolean;
+  status: 'created' | 'already-exists' | 'permission-denied' | 'error';
+  message?: string;
+}
+
+/**
+ * Auto-create the dev profile's Temporal namespace on dev daemon boot
+ * (ADR 0014 §6.2). Idempotent — calling it on every boot is correct and
+ * cheap.
+ *
+ *   - `ALREADY_EXISTS`: the steady state after the first boot. Happy path.
+ *   - `PERMISSION_DENIED`: e.g. managed Temporal Cloud where `RegisterNamespace`
+ *     isn't granted. Log + return; the subsequent worker bootstrap fails
+ *     loudly with `Namespace not found` and the operator can run
+ *     `temporal operator namespace create -n claude-tempo-dev` themselves.
+ *   - any other error: same fall-through; daemon stays alive without
+ *     mutating state.
+ *
+ * Production daemons never call this — guarded by `isDevMode()` at the
+ * single callsite in `main()` below. Exported for direct unit testing
+ * with an injected stub workflow service.
+ */
+export async function ensureDevNamespace(
+  connection: Pick<Connection, 'workflowService'>,
+  namespace: string,
+  logFn: (...args: unknown[]) => void = log,
+): Promise<EnsureDevNamespaceResult> {
+  const wfService = connection.workflowService;
+  try {
+    await wfService.registerNamespace({
+      namespace,
+      // 1-day retention is generous for dev scratch state and keeps the
+      // namespace tidy without aggressive cleanup pressure. The proto's
+      // `seconds` field is typed as `Long` (int64), but the gRPC layer
+      // accepts a plain number and coerces internally — same shape used
+      // by Temporal's own examples. Cast keeps the call site readable
+      // without dragging `long.js` into our direct dep graph.
+      workflowExecutionRetentionPeriod: { seconds: 86_400 as unknown as import('long') },
+      description: 'claude-tempo dev profile — auto-created. Safe to drop.',
+    });
+    logFn(`[dev-mode] registered Temporal namespace "${namespace}"`);
+    return { ok: true, status: 'created' };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const code = (err as { code?: number | string; details?: { code?: number | string } })?.code
+      ?? (err as { details?: { code?: number | string } })?.details?.code;
+    // ALREADY_EXISTS — happy path on every boot after the first. The
+    // gRPC code is 6; the Temporal SDK also surfaces it as a string in
+    // some transports, so check both shapes plus a substring fallback.
+    if (code === 'ALREADY_EXISTS' || code === 6 || /already.?exists/i.test(message)) {
+      logFn(`[dev-mode] Temporal namespace "${namespace}" already registered`);
+      return { ok: true, status: 'already-exists' };
+    }
+    // PERMISSION_DENIED — e.g. managed Temporal Cloud without RegisterNamespace.
+    // Log a hint so operators know what to do.
+    if (code === 'PERMISSION_DENIED' || code === 7 || /permission/i.test(message)) {
+      logFn(
+        `[dev-mode] could not register namespace "${namespace}" — permission denied. ` +
+        `Run \`temporal operator namespace create -n ${namespace}\` (or grant RegisterNamespace) once.`,
+      );
+      return { ok: false, status: 'permission-denied', message };
+    }
+    logFn(
+      `[dev-mode] could not register namespace "${namespace}" (continuing; worker may fail with a clearer error):`,
+      message,
+    );
+    return { ok: false, status: 'error', message };
+  }
 }
 
 /**
@@ -545,7 +639,14 @@ export function startCleanupLoop(
 }
 
 async function main() {
-  // Ensure daemon directory exists
+  // ADR 0014 §5.4 / gate 4 — dev daemon log self-identifies. Banner fires
+  // first so it lands at the top of `~/.claude-tempo-dev/daemon.log` for
+  // grep-friendly identification regardless of subsequent log volume.
+  emitDevBannerIfActive();
+
+  // Ensure daemon directory exists. CLAUDE_TEMPO_HOME already resolves to
+  // `~/.claude-tempo-dev/` in dev mode (ADR 0014 §5.3), so this lands in
+  // the right place without a per-callsite branch.
   fs.mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
 
   // Write PID file — the parent polls for this to confirm startup.
@@ -579,6 +680,32 @@ async function main() {
 
   // Get config from env vars (passed by startDaemon via spawn env)
   const config = getConfig({});
+
+  // ADR 0014 §6.2 — dev daemon auto-creates its Temporal namespace before
+  // the worker bootstrap. Production daemons skip this; namespaces are
+  // operator-managed there.
+  //
+  // Idempotent on `ALREADY_EXISTS` (every boot after the first), non-fatal
+  // on `PERMISSION_DENIED`. If creation fails for an unexpected reason the
+  // worker bootstrap below fails loudly with `Namespace not found`, which
+  // is the clearer error from the operator's perspective.
+  if (isDevMode() && config.temporalNamespace === DEV_TEMPORAL_NAMESPACE) {
+    try {
+      const provisionConn = await createTemporalConnection(config);
+      try {
+        await ensureDevNamespace(provisionConn, config.temporalNamespace);
+      } finally {
+        await provisionConn.close();
+      }
+    } catch (err) {
+      // Connection itself failed — log + fall through. createWorkers() will
+      // surface the same error with its own context.
+      log(
+        '[dev-mode] namespace pre-create skipped — Temporal connection failed:',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
 
   // Use mutable refs so signal handlers can be registered before workers
   // are created — closes the narrow window where a SIGTERM during

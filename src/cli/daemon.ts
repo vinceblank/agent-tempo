@@ -7,7 +7,15 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, execFileSync } from 'child_process';
-import { CLAUDE_TEMPO_HOME, Config, ENV } from '../config';
+import { homedir } from 'os';
+import {
+  CLAUDE_TEMPO_HOME,
+  Config,
+  DEV_HOME_DIR_NAME,
+  ENV,
+  PROD_HOME_DIR_NAME,
+  isDevMode,
+} from '../config';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:daemon]', ...args);
 
@@ -119,15 +127,91 @@ function readHeartbeatAge(): number | null {
 /**
  * @internal — exported for unit testing {@link DAEMON_CMDLINE_RE} edge cases
  * without needing to spin up a real child process. Filters a scanner result
- * to the "orphan" subset: matching processes that aren't the one the pid
- * file is tracking. Used by `daemon start`'s pre-flight check (#157 PR B).
+ * to the "orphan" subset: matching processes that aren't tracked by any
+ * known PID file. Used by `daemon start`'s pre-flight check (#157 PR B).
+ *
+ * Accepts a single tracked PID (existing call shape) OR an array of known
+ * PIDs (ADR 0014 §5.6 — the dev profile passes the prod profile's PID
+ * here too so dev + prod daemons can coexist on the same machine without
+ * either misclassifying the other as an orphan).
  */
 export function selectOrphans(
   scanned: DaemonProcessInfo[],
-  trackedPid: number | undefined,
+  trackedPid: number | undefined | ReadonlyArray<number | undefined>,
 ): DaemonProcessInfo[] {
   if (trackedPid === undefined) return scanned;
+  if (Array.isArray(trackedPid)) {
+    const known = new Set(
+      (trackedPid as ReadonlyArray<number | undefined>).filter(
+        (p): p is number => typeof p === 'number',
+      ),
+    );
+    if (known.size === 0) return scanned;
+    return scanned.filter((p) => !known.has(p.pid));
+  }
   return scanned.filter((p) => p.pid !== trackedPid);
+}
+
+/**
+ * Resolve the OPPOSITE profile's home directory. Used by cross-profile
+ * coexistence checks (ADR 0014 §5.6). Returns the prod home in dev mode
+ * and the dev home in prod mode.
+ *
+ * Exported so tests can verify the swap logic without fixture homedirs.
+ */
+export function otherProfileHome(): string {
+  const base = isDevMode() ? PROD_HOME_DIR_NAME : DEV_HOME_DIR_NAME;
+  return path.join(homedir(), base);
+}
+
+/**
+ * Return the live PID (if any) of the OPPOSITE profile's daemon.
+ *
+ * In dev mode, this returns the prod daemon's PID; in prod mode, the dev
+ * daemon's PID. Used by orphan detection to keep dev and prod daemons
+ * from misclassifying each other (ADR 0014 §5.6 — "they naturally
+ * coexist"). Returns `undefined` when no PID file exists, the contents
+ * are unparseable, or the recorded process is dead.
+ *
+ * Exported for unit testing — can be stubbed alongside `getDaemonStatus`
+ * in `evaluateStartPreflight` tests.
+ */
+export function getOtherProfilePid(): number | undefined {
+  const otherPidPath = path.join(otherProfileHome(), 'daemon.pid');
+  if (!fs.existsSync(otherPidPath)) return undefined;
+  try {
+    const pid = parseInt(fs.readFileSync(otherPidPath, 'utf8').trim(), 10);
+    if (Number.isNaN(pid)) return undefined;
+    return isPidAlive(pid) ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Best-effort signal that the OPPOSITE profile may have a running daemon
+ * even if we couldn't pin a PID. Used by `stopDaemon` to suppress the
+ * zombie reaper when there's a non-trivial chance of cross-profile
+ * collateral damage (ADR 0014 §5.6).
+ *
+ * Returns true when either:
+ *   - `daemon.pid` exists in the other profile's home AND contains a
+ *     parseable, live PID (the strict case, also reported by
+ *     {@link getOtherProfilePid}).
+ *   - `daemon.port` exists in the other profile's home (weak signal:
+ *     the file is written on daemon HTTP listener startup; it may
+ *     linger across an uncleaned crash, but that's exactly the case
+ *     where conservative behaviour matters).
+ *
+ * The heuristic deliberately errs on the side of NOT reaping. A false
+ * positive (port file exists, daemon long dead) costs zombie cleanup;
+ * a false negative (process killed because we missed evidence) costs
+ * the user their other profile's daemon.
+ */
+export function isOtherProfileLikelyRunning(): boolean {
+  if (getOtherProfilePid() !== undefined) return true;
+  const otherPortPath = path.join(otherProfileHome(), 'daemon.port');
+  return fs.existsSync(otherPortPath);
 }
 
 /**
@@ -514,6 +598,18 @@ export interface StopDaemonOpts {
   killer?: (pid: number, signal?: NodeJS.Signals | number) => void;
   /** Platform override — defaults to `process.platform`. */
   platform?: NodeJS.Platform;
+  /**
+   * Cross-profile coexistence probe — defaults to
+   * {@link isOtherProfileLikelyRunning}. Tests stub this so the zombie
+   * reaper logic can be exercised without depending on disk state of the
+   * developer's home dir.
+   */
+  isOtherProfileLikelyRunning?: () => boolean;
+  /**
+   * Cross-profile PID lookup — defaults to {@link getOtherProfilePid}.
+   * Tests stub it for the same reason as `isOtherProfileLikelyRunning`.
+   */
+  getOtherProfilePid?: () => number | undefined;
 }
 
 /**
@@ -536,6 +632,8 @@ export function stopDaemon(opts: StopDaemonOpts = {}): boolean {
   const scan = opts.scan ?? scanClaudeTempoDaemons;
   const killer = opts.killer ?? process.kill.bind(process);
   const platform = opts.platform ?? process.platform;
+  const otherLikelyRunning = opts.isOtherProfileLikelyRunning ?? isOtherProfileLikelyRunning;
+  const otherPidLookup = opts.getOtherProfilePid ?? getOtherProfilePid;
 
   const status = getDaemonStatus();
   let stopped = false;
@@ -549,14 +647,32 @@ export function stopDaemon(opts: StopDaemonOpts = {}): boolean {
   }
 
   // Now reap any zombies. `selectOrphans` filters the scan to "everything
-  // except the PID we already killed", so we don't double-signal the tracked
-  // daemon (which would be harmless, but the bookkeeping is clearer this way).
+  // except the PIDs we know about", so we don't double-signal the tracked
+  // daemon (harmless but cleaner).
+  //
+  // ADR 0014 §5.6 — when cross-profile coexistence is plausible (the
+  // OPPOSITE profile shows any sign of running: PID file, port file),
+  // suppress the zombie reaper entirely. The reaper is a #157 safety
+  // net for the SINGLE-profile case where a crashed daemon left an
+  // untracked node process behind. With dev + prod coexisting on the
+  // same machine, the reaper would happily kill the other profile's
+  // daemon — losing the user's prod state because they ran
+  // `--dev daemon stop`. The trade-off is acceptable: an actual zombie
+  // can be reaped later (manual `kill <pid>` based on the printed
+  // command line), but a wrongly-killed prod daemon costs the user
+  // their state.
   let zombies: DaemonProcessInfo[] = [];
-  try {
-    zombies = selectOrphans(scan(), status.pid);
-  } catch {
-    // Scanner failures are non-fatal — we already did the primary stop above.
-    zombies = [];
+  if (otherLikelyRunning()) {
+    log(
+      'cross-profile coexistence detected — skipping zombie reaper to avoid touching the other profile (ADR 0014 §5.6)',
+    );
+  } else {
+    try {
+      zombies = selectOrphans(scan(), [status.pid, otherPidLookup()]);
+    } catch {
+      // Scanner failures are non-fatal — we already did the primary stop above.
+      zombies = [];
+    }
   }
   for (const z of zombies) {
     if (killDaemonPid(z.pid, killer, platform)) {

@@ -166,9 +166,14 @@ describe('daemon management', function () {
   describe('stopDaemon', function () {
     // Inject an empty scan + no-op killer so these tests don't accidentally
     // signal real daemon processes that happen to be running on the dev box.
+    // Also disable the cross-profile coexistence probe (ADR 0014 §5.6) —
+    // otherwise tests fail on dev machines where the developer happens to
+    // be running a prod daemon with a port file present.
     const noopOpts = {
       scan: () => [] as Array<{ pid: number; commandLine: string }>,
       killer: () => { /* no-op */ },
+      isOtherProfileLikelyRunning: () => false,
+      getOtherProfilePid: () => undefined,
     };
 
     it('returns false when daemon is not running', function () {
@@ -200,6 +205,17 @@ describe('daemon management', function () {
       try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
     });
 
+    /**
+     * Stable single-profile injection: zombie reaping should run as if no
+     * dev profile is active. ADR 0014 §5.6 zombie-suppression has its own
+     * dedicated tests; the legacy reaping suite is for the single-profile
+     * case the #157 PR established.
+     */
+    const singleProfileOverrides = {
+      isOtherProfileLikelyRunning: () => false,
+      getOtherProfilePid: () => undefined,
+    };
+
     it('kills tracked daemon AND zombies discovered by the scanner', function () {
       seedPidFile(DAEMON_PID_PATH, process.pid); // tracked = current process (alive)
       const killed: number[] = [];
@@ -209,7 +225,7 @@ describe('daemon management', function () {
       ];
       const killer = (pid: number) => { killed.push(pid); };
 
-      const result = stopDaemon({ scan, killer });
+      const result = stopDaemon({ scan, killer, ...singleProfileOverrides });
 
       expect(result).to.be.true;
       // Tracked PID + both zombies
@@ -226,7 +242,7 @@ describe('daemon management', function () {
       ];
       const killer = (pid: number) => { killed.push(pid); };
 
-      const result = stopDaemon({ scan, killer });
+      const result = stopDaemon({ scan, killer, ...singleProfileOverrides });
 
       expect(result).to.be.true;
       expect(killed).to.deep.equal([88001]);
@@ -244,7 +260,7 @@ describe('daemon management', function () {
       ];
       const killer = (pid: number) => { killed.push(pid); };
 
-      stopDaemon({ scan, killer });
+      stopDaemon({ scan, killer, ...singleProfileOverrides });
 
       // process.pid is killed exactly once (via the tracked path), 77001 once
       // (via the zombie path). No duplicate.
@@ -260,7 +276,7 @@ describe('daemon management', function () {
       try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
       const scan = () => [{ pid: 66001, commandLine: 'node x/dist/daemon.js' }];
       const killer = () => { /* succeeds */ };
-      expect(stopDaemon({ scan, killer })).to.be.true;
+      expect(stopDaemon({ scan, killer, ...singleProfileOverrides })).to.be.true;
     });
 
     it('survives scanner failures (returns true if tracked daemon was killed)', function () {
@@ -269,7 +285,7 @@ describe('daemon management', function () {
       const scan = () => { throw new Error('ps: not found'); };
       const killer = (pid: number) => { killed.push(pid); };
 
-      const result = stopDaemon({ scan, killer });
+      const result = stopDaemon({ scan, killer, ...singleProfileOverrides });
 
       expect(result).to.be.true;
       // Tracked PID was still killed despite scanner blowing up
@@ -289,7 +305,7 @@ describe('daemon management', function () {
         killed.push(pid);
       };
 
-      const result = stopDaemon({ scan, killer });
+      const result = stopDaemon({ scan, killer, ...singleProfileOverrides });
 
       // 55001 and 55003 got killed; 55002 threw and was swallowed
       expect(result).to.be.true;
@@ -304,12 +320,76 @@ describe('daemon management', function () {
         calls.push({ pid, signal });
       };
 
-      stopDaemon({ scan, killer, platform: 'linux' });
+      stopDaemon({ scan, killer, ...singleProfileOverrides, platform: 'linux' });
       expect(calls).to.deep.equal([{ pid: 44001, signal: 'SIGTERM' }]);
 
       calls.length = 0;
-      stopDaemon({ scan, killer, platform: 'win32' });
+      stopDaemon({ scan, killer, ...singleProfileOverrides, platform: 'win32' });
       expect(calls).to.deep.equal([{ pid: 44001, signal: undefined }]);
+    });
+  });
+
+  // ── Cross-profile coexistence (ADR 0014 §5.6) ──
+  //
+  // Dev + prod daemons on the same machine MUST coexist. `daemon stop`
+  // for one profile must never reap the other profile's daemon as a
+  // "zombie". Two paths:
+  //   - Strict: opposite profile has a parseable, live PID. We pass it
+  //     through `selectOrphans` exclusion list so the scanner never
+  //     reports it as a zombie.
+  //   - Weak: opposite profile shows weak evidence (port file but no
+  //     parseable PID file). The reaper is suppressed entirely — better
+  //     to leave a single zombie unkilled than to wrongly kill the
+  //     other profile's running daemon.
+  describe('stopDaemon — cross-profile coexistence (ADR 0014 §5.6)', function () {
+    afterEach(function () {
+      try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+    });
+
+    it('excludes the opposite profile PID from the zombie set when known', function () {
+      seedPidFile(DAEMON_PID_PATH, process.pid);
+      const killed: number[] = [];
+      const scan = () => [
+        { pid: 12345, commandLine: 'node /opposite/dist/daemon.js' },
+        { pid: 67890, commandLine: 'node /actual-zombie/dist/daemon.js' },
+      ];
+      const killer = (pid: number) => { killed.push(pid); };
+
+      stopDaemon({
+        scan,
+        killer,
+        // Opposite profile is running with a known PID — excluded from reap.
+        isOtherProfileLikelyRunning: () => true,
+        getOtherProfilePid: () => 12345,
+      });
+
+      // Tracked daemon (process.pid) was killed. `12345` is the opposite
+      // profile and survives. `67890` is suppressed too because the
+      // opposite-likely-running probe trips the weak-evidence skip path.
+      expect(killed).to.include(process.pid);
+      expect(killed).to.not.include(12345);
+    });
+
+    it('skips zombie reaper entirely when opposite profile shows weak evidence', function () {
+      seedPidFile(DAEMON_PID_PATH, process.pid);
+      const killed: number[] = [];
+      // Scanner returns an opposite-profile-shaped process AND a real zombie.
+      // With weak evidence, we'd rather miss the zombie than risk killing
+      // the opposite profile.
+      const scan = () => [
+        { pid: 22222, commandLine: 'node /opposite-untracked/dist/daemon.js' },
+      ];
+      const killer = (pid: number) => { killed.push(pid); };
+
+      stopDaemon({
+        scan,
+        killer,
+        isOtherProfileLikelyRunning: () => true,
+        getOtherProfilePid: () => undefined, // PID unknown — port file present
+      });
+
+      // Tracked daemon got killed; nothing else.
+      expect(killed).to.deep.equal([process.pid]);
     });
   });
 

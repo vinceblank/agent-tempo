@@ -16,9 +16,16 @@
 // The `test/cli-crash-proof-isolation.test.ts` suite asserts the crash-proof
 // modules carry no `@temporalio/*` / `rxjs` / `@grpc/*` leaks in their
 // `require.cache` after load.
+
+// MUST be the first import — promotes a top-level `--dev` flag into the
+// `CLAUDE_TEMPO_DEV_MODE=1` env var BEFORE `./config` evaluates its
+// module-load-time `CLAUDE_TEMPO_HOME` constant. ADR 0014 §5.4.
+import './cli/dev-mode-bootstrap';
+
 import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import * as out from './cli/output';
+import { emitDevBannerIfActive } from './cli/dev-banner';
 import { AgentType } from './types';
 import { ENV, CliOverrides, getConfig } from './config';
 
@@ -243,6 +250,12 @@ function cliOverrides(args: ParsedArgs): CliOverrides {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const overrides = cliOverrides(args);
+
+  // ADR 0014 §5.4 / gate 4: every dev-mode CLI invocation prints the
+  // `[DEV MODE]` banner so operators (and operators' daemon log files)
+  // self-identify as the dev profile. Banner emits to stderr — keeps
+  // `--json` stdout consumers clean.
+  emitDevBannerIfActive();
 
   // ── Crash-proof fast paths (#157 PR C) ────────────────────────────────
   // These handlers MUST NOT reach `./cli/commands`, `./cli/preflight`, or
