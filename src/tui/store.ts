@@ -316,8 +316,6 @@ export interface TuiState {
   notificationTick: number;
   /** Player name when in chat mode (bare text sends message to this target). */
   chatTarget?: string;
-  /** Name of the conductor in the active ensemble. */
-  conductorName?: string;
   /** Locally tracked sent messages (TUI has no workflow to query). */
   sentMessages: Array<{ to: string; text: string; timestamp: string }>;
   /** ID of the last message seen (for detecting new arrivals in polling). */
@@ -493,7 +491,6 @@ export type TuiAction =
   | { type: 'DISMISS_OLDEST_NOTIFICATION' }
   | { type: 'CLEAR_NOTIFICATIONS' }
   | { type: 'NOTIFICATION_TICK' }
-  | { type: 'SET_CONDUCTOR'; name?: string }
   | { type: 'SET_ENSEMBLE_PAUSED'; paused: boolean }
   | { type: 'SET_ENSEMBLE_HELD'; held: boolean }
   | { type: 'APPEND_SENT_MESSAGE'; to: string; text: string }
@@ -590,7 +587,6 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         phase: 'main' as TuiPhase,
         activeEnsemble: null,
         activePlayer: null,
-        conductorName: undefined,
         chatTarget: undefined,
         players: [],
         playersLoaded: false,
@@ -613,7 +609,6 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         phase: 'main' as TuiPhase,
         activeEnsemble: action.ensemble,
         activePlayer: null,
-        conductorName: undefined,
         chatTarget: undefined,
         players: [],
         playersLoaded: false,
@@ -908,9 +903,6 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       if (state.pickerIndex >= maxIdx) return state;
       return { ...state, pickerIndex: state.pickerIndex + 1 };
     }
-
-    case 'SET_CONDUCTOR':
-      return { ...state, conductorName: action.name };
 
     case 'SET_ENSEMBLE_PAUSED':
       // Identity-preserving: skip the dispatch when value didn't change so

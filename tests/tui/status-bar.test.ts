@@ -29,6 +29,7 @@ import { describe, it, expect } from 'vitest';
 import { initialState, tuiReducer, type TuiState } from '../../src/tui/store';
 import { buildStatusBarSegments, type StatusBarProps } from '../../src/tui/components/StatusBar';
 import { THEME } from '../../src/tui/utils/theme';
+import type { MaestroPlayerInfo } from '../../src/types';
 
 const PAUSED_LABEL = '⏸ paused';
 const HELD_LABEL = '⊕ held';
@@ -42,6 +43,24 @@ function defaultProps(overrides: Partial<StatusBarProps> = {}): StatusBarProps {
     scheduleCount: 0,
     connected: true,
     ...overrides,
+  };
+}
+
+/**
+ * #358: helper for tests that need a conductor in the `players` array. The
+ * StatusBar derives the badge from `players.some(p => p.isConductor)` rather
+ * than a separate cached field, so a player entry with `isConductor: true`
+ * is the new equivalent of the old `conductorName: 'conductor'` prop.
+ */
+function makeConductor(playerId = 'conductor'): MaestroPlayerInfo {
+  return {
+    playerId,
+    ensemble: 'demo',
+    part: 'Conductor',
+    hostname: 'host',
+    workDir: '/tmp',
+    isConductor: true,
+    agentType: 'claude',
   };
 }
 
@@ -172,9 +191,10 @@ describe('buildStatusBarSegments paused indicator (Bug B)', () => {
     // Most-actionable-first ordering: `/play` is the obvious next step;
     // dropping `/play` should also clear the No-conductor advisory if the
     // conductor was the lone session.
+    // #358: empty `players` array → no conductor → "⚠ No conductor" warning.
     const segments = buildStatusBarSegments(defaultProps({
       ensemblePaused: true,
-      conductorName: undefined, // no conductor
+      players: [],
     }));
     const pausedIdx = segments.findIndex((s) => s.text === PAUSED_LABEL);
     const noConductorIdx = segments.findIndex((s) => s.text.includes('No conductor'));
@@ -183,23 +203,24 @@ describe('buildStatusBarSegments paused indicator (Bug B)', () => {
     expect(pausedIdx).toBeLessThan(noConductorIdx);
   });
 
-  it('produces a status bar reading like `demo · 0 players · ⏸ paused · ● Connected`', () => {
+  it('produces a status bar reading like `demo · 1 player · ⏸ paused · ● Connected`', () => {
     // Sanity: the concatenated text matches the user-facing layout the
     // task description sketched out.
+    // #358: a conductor entry in `players` suppresses the No-conductor advisory.
     const segments = buildStatusBarSegments(defaultProps({
       ensemble: 'demo',
       ensemblePaused: true,
-      conductorName: 'conductor', // suppress No-conductor advisory
+      players: [makeConductor()],
     }));
     const concat = segments.map((s) => s.text).join('');
     expect(concat).toContain('demo');
-    expect(concat).toContain('0 players');
+    expect(concat).toContain('1 player');
     expect(concat).toContain(PAUSED_LABEL);
     expect(concat).toContain('Connected');
     // Order check: ensemble → players → paused → connected
     expect(concat.indexOf('demo'))
-      .toBeLessThan(concat.indexOf('0 players'));
-    expect(concat.indexOf('0 players'))
+      .toBeLessThan(concat.indexOf('1 player'));
+    expect(concat.indexOf('1 player'))
       .toBeLessThan(concat.indexOf(PAUSED_LABEL));
     expect(concat.indexOf(PAUSED_LABEL))
       .toBeLessThan(concat.indexOf('Connected'));
@@ -265,14 +286,69 @@ describe('buildStatusBarSegments held + combined indicators (#306 follow-up)', (
   });
 
   it('renders held BEFORE the "No conductor" warning when both apply', () => {
+    // #358: empty `players` array → no conductor → "⚠ No conductor" warning.
     const segments = buildStatusBarSegments(defaultProps({
       ensembleHeld: true,
-      conductorName: undefined,
+      players: [],
     }));
     const heldIdx = segments.findIndex((s) => s.text === HELD_LABEL);
     const noConductorIdx = segments.findIndex((s) => s.text.includes('No conductor'));
     expect(heldIdx).toBeGreaterThan(-1);
     expect(noConductorIdx).toBeGreaterThan(-1);
     expect(heldIdx).toBeLessThan(noConductorIdx);
+  });
+});
+
+describe('buildStatusBarSegments conductor derivation (#358)', () => {
+  it('shows "No conductor" warning when players array contains no conductor', () => {
+    // The active-ensemble guard requires `ensemble && playersLoaded`. With
+    // a non-empty players list and no `isConductor: true` entry, the badge
+    // must surface so users see the missing-conductor state.
+    const nonConductor: MaestroPlayerInfo = {
+      playerId: 'tempo-eng',
+      ensemble: 'demo',
+      part: 'Engineer',
+      hostname: 'host',
+      workDir: '/tmp',
+      isConductor: false,
+      agentType: 'claude',
+    };
+    const segments = buildStatusBarSegments(defaultProps({ players: [nonConductor] }));
+    expect(segments.some((s) => s.text.includes('No conductor'))).toBe(true);
+  });
+
+  it('suppresses the "No conductor" warning when a player has isConductor: true', () => {
+    const segments = buildStatusBarSegments(defaultProps({ players: [makeConductor()] }));
+    expect(segments.some((s) => s.text.includes('No conductor'))).toBe(false);
+  });
+
+  it('reacts to incremental UPSERT_PLAYER without a snapshot — pre-#358 regression', () => {
+    // Pre-#358: the StatusBar read a separate `state.conductorName` field
+    // populated only by the snapshot path. An incremental `player.added`
+    // event with `isConductor: true` (routed via UPSERT_PLAYER) would NOT
+    // update `conductorName`, so the badge stayed stuck on "No conductor"
+    // until the next snapshot intervened.
+    //
+    // Post-#358: the badge derives from `state.players`, which UPSERT_PLAYER
+    // updates directly. This test verifies the regression doesn't recur.
+    const s0: TuiState = { ...initialState('demo'), playersLoaded: true };
+    const before = buildStatusBarSegments({
+      ensemble: s0.activeEnsemble,
+      players: s0.players,
+      playersLoaded: s0.playersLoaded,
+      scheduleCount: 0,
+      connected: true,
+    });
+    expect(before.some((seg) => seg.text.includes('No conductor'))).toBe(true);
+
+    const s1 = tuiReducer(s0, { type: 'UPSERT_PLAYER', player: makeConductor() });
+    const after = buildStatusBarSegments({
+      ensemble: s1.activeEnsemble,
+      players: s1.players,
+      playersLoaded: s1.playersLoaded,
+      scheduleCount: 0,
+      connected: true,
+    });
+    expect(after.some((seg) => seg.text.includes('No conductor'))).toBe(false);
   });
 });

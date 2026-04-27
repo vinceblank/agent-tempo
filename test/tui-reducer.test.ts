@@ -102,12 +102,15 @@ describe('TUI reducer', function () {
       expect(s.playerMessages).to.have.lengthOf(0);
     });
 
-    it('clears chatTarget and conductorName', function () {
+    it('clears chatTarget', function () {
+      // #358: `conductorName` was removed in favor of deriving the conductor
+      // from the `players` array. NAVIGATE_HOME still resets `players: []`
+      // (covered by the existing players-reset test above), which is what
+      // the StatusBar's derived "No conductor" check now reads.
       let s = initialState('test');
-      s = { ...s, chatTarget: 'player1', conductorName: 'conductor' };
+      s = { ...s, chatTarget: 'player1' };
       s = tuiReducer(s, { type: 'NAVIGATE_HOME' });
       expect(s.chatTarget).to.be.undefined;
-      expect(s.conductorName).to.be.undefined;
     });
   });
 

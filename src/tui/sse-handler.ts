@@ -102,8 +102,10 @@ export async function handleSseEvent(
       });
       dispatch({ type: 'SET_ENSEMBLE_PAUSED', paused: snap.flags.paused });
       dispatch({ type: 'SET_ENSEMBLE_HELD', held: snap.flags.held });
-      const conductor = players.find((p) => p.isConductor);
-      if (conductor) dispatch({ type: 'SET_CONDUCTOR', name: conductor.playerId });
+      // #358: dropped the SET_CONDUCTOR dispatch — the conductor's playerId
+      // is now derived from the `players` array at render time. The snapshot
+      // already populates `players` via REFRESH_ENSEMBLE_DATA above, so the
+      // derived view picks it up without a dedicated action.
       dispatch({
         type: 'SET_CONVERSATION',
         conversation: snap.chat.messages.map(toConversationEntry),

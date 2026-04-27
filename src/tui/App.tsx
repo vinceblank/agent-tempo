@@ -406,12 +406,23 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
     }
   }, [exit, api])); // Stable deps only — reads stateRef.current for everything else
 
+  // ── Derived: conductor player id ──
+  // #358: single source of truth — derive the active conductor's playerId from
+  // the `players` array rather than caching it in a separate state field that
+  // only the snapshot path updated. Incremental SSE events (`player.added`,
+  // `player.removed`) update `players` directly, so the badge stays accurate
+  // between snapshots. `undefined` when no conductor is in the ensemble.
+  const conductorPlayerId = useMemo(
+    () => state.players.find(p => p.isConductor)?.playerId,
+    [state.players],
+  );
+
   // ── Context string for title bar ──
   const contextString = useMemo(() => {
     if (state.phase === 'splash') return 'Starting up...';
     if (state.phase === 'error') return 'Error';
     if (state.chatTarget) {
-      const isConductor = state.chatTarget === state.conductorName;
+      const isConductor = state.chatTarget === conductorPlayerId;
       const player = state.players.find(p => p.playerId === state.chatTarget);
       const status = phaseToLabel(player?.phase);
       const icon = isConductor ? '\u2605' : '\u2022';
@@ -422,12 +433,12 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       // attachment). The full list with the maestro is still available in
       // `/players` and the status overlay.
       const count = filterRealPlayers(state.players).length;
-      const conductorInfo = state.conductorName ? '' : ' \u00b7 No conductor';
+      const conductorInfo = conductorPlayerId ? '' : ' \u00b7 No conductor';
       return `${state.activeEnsemble} \u00b7 ${count} player${count !== 1 ? 's' : ''}${conductorInfo} \u00b7 Connected`;
     }
     const count = state.ensembles?.length ?? 0;
     return count > 0 ? `${count} ensemble${count !== 1 ? 's' : ''} \u00b7 Connected` : 'Discovering ensembles...';
-  }, [state.phase, state.chatTarget, state.activeEnsemble, state.players, state.ensembles, state.conductorName]);
+  }, [state.phase, state.chatTarget, state.activeEnsemble, state.players, state.ensembles, conductorPlayerId]);
 
   // ── Hint text for prompt area ──
   const promptHints = useMemo(() => {
@@ -450,7 +461,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       return 'Type a message, or @player to message directly. /players to list.';
     }
     return '/help /quit';
-  }, [state.phase, state.chatTarget, state.confirmingStop, state.confirmingDisband, state.activeEnsemble, state.conductorName]);
+  }, [state.phase, state.chatTarget, state.confirmingStop, state.confirmingDisband, state.activeEnsemble]);
 
   // ── Completion data for prompt ──
   const commandNamesList = useMemo(() => getCommandNames(), []);
@@ -703,16 +714,24 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
           api.sendAsMaestro(s.activeEnsemble!, targetPlayer, message).catch(err =>
             commitNotification(dispatch, 'error', `\u2717 Failed to deliver to @${targetPlayer}: ${err}`),
           );
-        } else if (s.conductorName || s.hasConductor) {
-          // No @prefix → send to conductor
-          const conductorTarget = s.conductorName || 'conductor';
+        } else {
+          // No @prefix → send to conductor.
+          // #358: derive from `players` (single source of truth) instead of
+          // a separate cached field. `hasConductor` is the snapshot-derived
+          // flag; we fall back to the legacy `'conductor'` literal when no
+          // playerId is yet known so a freshly-loaded ensemble with the
+          // hasConductor flag still routes correctly.
+          const conductorPid = s.players.find(p => p.isConductor)?.playerId;
+          if (!conductorPid && !s.hasConductor) {
+            // No conductor — show error
+            commitNotification(dispatch, 'error', 'No conductor. Use @player to message directly, or /recruit a conductor.');
+            return;
+          }
+          const conductorTarget = conductorPid || 'conductor';
           dispatch({ type: 'APPEND_SENT_MESSAGE', to: conductorTarget, text: trimmed });
           api.sendCommand(s.activeEnsemble!, trimmed, 'maestro').catch(err =>
             commitNotification(dispatch, 'error', `\u2717 Failed to deliver: ${err}`),
           );
-        } else {
-          // No conductor — show error
-          commitNotification(dispatch, 'error', 'No conductor. Use @player to message directly, or /recruit a conductor.');
         }
       } catch (err) {
         commitNotification(dispatch, 'error', `\u2717 Error: ${err}`);
@@ -1172,7 +1191,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
   // ── Memoize chat messages (must be before early return — Rules of Hooks) ──
   const memoizedChatData = useMemo(() => {
     if (!state.chatTarget) return null;
-    const isConductorChat = state.chatTarget === state.conductorName;
+    const isConductorChat = state.chatTarget === conductorPlayerId;
 
     let chatMessages: ChatMessage[];
     if (isConductorChat) {
@@ -1211,7 +1230,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       sent: chatMessages.filter(m => m.direction === 'sent').length,
       isConductor: isConductorChat,
     };
-  }, [state.chatTarget, state.conductorName, state.conductorHistory, state.messages, state.sentMessages]);
+  }, [state.chatTarget, conductorPlayerId, state.conductorHistory, state.messages, state.sentMessages]);
 
   // Note: relay messages are committed to staticItems directly in the poll loop.
   // Conductor history messages are committed when entering conductor chat mode.
@@ -1623,7 +1642,6 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
       playersLoaded: state.playersLoaded,
       scheduleCount: state.schedules.length,
       connected: true,
-      conductorName: state.conductorName,
       ensemblePaused: state.ensemblePaused,
       ensembleHeld: state.ensembleHeld,
     }),

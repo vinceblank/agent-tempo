@@ -15,7 +15,6 @@ export interface StatusBarProps {
   playersLoaded: boolean;
   scheduleCount: number;
   connected: boolean;
-  conductorName?: string;
   /**
    * Bug B: Whether the active ensemble's maestro hub is paused. Drives a
    * yellow "paused" segment so users see why a conductor is silently
@@ -52,7 +51,7 @@ export interface StatusBarSegment {
  * just maps each segment to a `<Text>` element.
  */
 export function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
-  const { ensemble, players, playersLoaded, scheduleCount, connected, conductorName, ensemblePaused, ensembleHeld } = props;
+  const { ensemble, players, playersLoaded, scheduleCount, connected, ensemblePaused, ensembleHeld } = props;
 
   const healthColor = connected ? THEME.success : THEME.error;
   const healthDot = connected ? '●' : '○';
@@ -138,7 +137,13 @@ export function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[
       );
     }
 
-    if (ensemble && !conductorName) {
+    // #358: derive from `players` (single source of truth) so the badge
+    // updates on incremental SSE events (`player.added`/`player.removed`)
+    // without waiting for the next snapshot. Pre-#358 this depended on a
+    // separate `conductorName` cache populated only by the snapshot path,
+    // so a `/destroy conductor` mid-session left "No conductor" stuck off
+    // until the next snapshot intervened.
+    if (ensemble && !players.some(p => p.isConductor)) {
       segments.push(
         { key: 's3', color: THEME.dim, text: ' · ' },
         { key: 'nc', color: THEME.warning, text: '⚠ No conductor' },
