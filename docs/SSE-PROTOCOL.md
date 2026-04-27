@@ -39,8 +39,13 @@ This document is the authoritative reference for the **HTTP/SSE event source** e
 | `GET` | `/v1/events/:ensemble` | `text/event-stream` | Per-ensemble SSE stream. Optional `?topics=phase,chat,flags,schedules,heartbeat` query filter. |
 | `GET` | `/v1/events` | `text/event-stream` | **Global stream** — strictly limited to cluster-shape events (`ensemble.created`, `ensemble.destroyed`, `host_profile.changed`, `heartbeat`). Never per-ensemble events; subscribers wanting those open `/v1/events/:ensemble`. |
 | `OPTIONS` | (any) | `204 No Content` | CORS preflight (see §3). |
+| `POST` | `/v1/ensembles/:ensemble/{cue,pause,play,release,recruit}` | `application/json` | Safe-write endpoints (PR-7a of #340). See § 11b for full request/response shapes. |
 
-**No write endpoints in v1.** Commands continue to flow over MCP/Temporal (the existing outbox path). The HTTP surface is read-only — making it cacheable, safe to expose to a future web dashboard, and free of durability concerns.
+**Reads via GET, writes via POST under the same auth model.** The
+read-side endpoints stay cacheable, durable, and replay-safe; the
+write-side endpoints (PR-7a) are explicitly non-cached, bearer-gated on
+non-loopback binds, and translate to the daemon's existing TempoClient
+calls (which carry their own Temporal-backed durability).
 
 **Deliberately out of scope** (keep on TempoClient → Temporal direct):
 
@@ -428,6 +433,53 @@ Two endpoints — `/v1/state/:ensemble` and `/v1/events/:ensemble` — accept an
 **Auth posture**: fixture mode honours the existing bearer-auth gate (loopback no-auth, non-loopback bearer required). The fixture endpoint is **NOT a backdoor** — it's an alternate *projection* of an authorised request. A non-loopback caller without a bearer still sees `401 unauthorized` whether `?fixture=` is set or not.
 
 **Type safety**: every fixture file imports its types from `src/http/event-types.ts`. A wire-protocol change here breaks the `tsc` build of every fixture module — the `?fixture=` projection cannot drift from the live wire.
+
+---
+
+## 11b. Write endpoints (PR-7a of #340)
+
+Five POST routes under `/v1/ensembles/:ensemble/<action>` give the dashboard a bidirectional surface. Each handler is a thin shim over the daemon's existing `TempoClient` method (the same client the daemon uses for snapshots) — **zero new Temporal signals/queries/updates**.
+
+### Routes
+
+| Action | Body shape | Success response | Notes |
+|---|---|---|---|
+| `cue` | `{ to: string, message: string }` | `202 { ok, ensemble, to }` | Routes through `ensureMaestroSession` + `sendAsMaestro` so the chat row shows `role: 'maestro-out'` (matches the dashboard's "you, the operator" semantic). |
+| `pause` | `{}` | `202 { ok, ensemble }` | Pauses the maestro hub + scheduler + every session in the ensemble. |
+| `play` | `{ release?: boolean }` | `202 { ok, ensemble, released }` | Unpauses. `release: true` also fans out `releaseHeld` to held sessions. |
+| `release` | `{ playerId?: string }` | `200 ReleaseClientResult` | Without `playerId`, fans out across the ensemble; with it, releases just that session. |
+| `recruit` | `{ name, workDir, agent?, playerType?, host?, isConductor?, initialMessage?, systemPrompt?, held? }` | `202 { playerId, entryId }` | Mirrors the `recruit` MCP tool. `name` and `workDir` required. |
+
+### Validation contract
+
+- `:ensemble` must match `ENSEMBLE_NAME_REGEX`; mismatch → `400 invalid-ensemble-name`.
+- `to` / `name` / `playerId` must match `PLAYER_NAME_REGEX` and be ≤ `PLAYER_NAME_MAX` (64) chars; mismatch → `400 invalid-player-name`.
+- `message` must be ≤ `MESSAGE_MAX` (102 400 chars); over → `413 message-too-long`.
+- `agent` if present must be `'claude' | 'copilot'`; otherwise → `400 invalid-agent`.
+- Body parse limit `1 MiB`; over → `413 body-too-large`.
+- Malformed JSON → `400 invalid-json`.
+- Unknown action under `/v1/ensembles/:e/<x>` → `404 not-found` (deliberately not 405 — the path simply isn't a known endpoint).
+
+### Method gates
+
+| Method | Path | Result |
+|---|---|---|
+| `POST` | known write path | dispatches to handler |
+| `GET` | known write path | `405 method-not-allowed`, `Allow: POST, OPTIONS` |
+| `POST` | known read path | `405 method-not-allowed`, `Allow: GET, OPTIONS` |
+
+### Auth posture (parity with reads)
+
+- Loopback bind + no `Origin` header → no auth (TUI/CLI parity; the TUI already writes via Temporal directly).
+- Non-loopback bind OR cross-origin browser → bearer required, identical to `/v1/state/:ensemble`.
+
+### Error mapping
+
+The daemon's TempoClient throws `Error('No session found …')` for missing sessions and `Error('Unknown agent type "x"')` for bad agent-type names. These map to:
+
+- `404 session-not-found` for the session miss
+- `400 unknown-agent-type` for the agent miss
+- `500 write-failed` for anything else (logged at the dispatcher with the underlying message in `detail`)
 
 ---
 

@@ -40,6 +40,10 @@ import {
   handleFixtureSse,
 } from './fixtures';
 import {
+  handleWriteRoute,
+  isWriteAction,
+} from './writes';
+import {
   DAEMON_PORT_PATH,
   removePortFile,
   writePortFileAtomic,
@@ -321,7 +325,26 @@ export async function handle(
     res.setHeader('Vary', 'Origin');
   }
 
-  // Method gate — every snapshot endpoint is GET-only.
+  // Write surface (PR-7a of #340) — POST `/v1/ensembles/:ensemble/<action>`
+  // Match BEFORE the GET-only method gate; everything else (POST to a
+  // read endpoint, GET to a write endpoint) flows into the 405 fallback
+  // below with the right `Allow` header.
+  const writeMatch = pathname.match(/^\/v1\/ensembles\/([^/]+)\/([^/]+)$/);
+  if (writeMatch) {
+    const ensemble = decodeURIComponent(writeMatch[1]);
+    const action = writeMatch[2];
+    if (isWriteAction(action)) {
+      if (method !== 'POST') {
+        return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'POST, OPTIONS' });
+      }
+      return handleWriteRoute(req, res, ctx.client, ensemble, action);
+    }
+    // Unknown action under /v1/ensembles/:e/<x> → 404 (don't 405; the
+    // path simply isn't a known endpoint).
+    return errorResponse(res, 404, { error: 'not-found' });
+  }
+
+  // Method gate — every other endpoint in the surface is GET-only.
   if (method !== 'GET') {
     return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'GET, OPTIONS' });
   }

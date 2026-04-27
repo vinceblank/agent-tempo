@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Daemon HTTP write surface** (#340 — PR-7a of N): Five POST routes under
+  `/v1/ensembles/:ensemble/{cue,pause,play,release,recruit}` give the daemon a bidirectional
+  HTTP API for the first time. Each handler is a thin shim over the daemon's existing
+  `TempoClient` methods — **zero new Temporal signals/queries/updates**. Auth posture
+  matches reads (loopback no-auth, non-loopback bearer-required); body validation enforces
+  player-name regex, message-length cap, and a 1 MiB JSON body limit. Powers the
+  dashboard's safe-write wiring in PR-7b. See `docs/SSE-PROTOCOL.md` § 11b for the full
+  request/response contract.
+
 - **Daemon test-fixture mode** (#340 — PR-3 of N): `/v1/state/:ensemble` and
   `/v1/events/:ensemble` now accept `?fixture=<name>` to return canned scenarios instead
   of running live Temporal queries / wiring the aggregate poll loop. Six fixtures ship in
