@@ -111,6 +111,15 @@ jobs:
       - name: Build dashboard
         run: npm --prefix dashboard run build
 
+      - name: Verify tarball includes dashboard/dist
+        # Defense-in-depth check at PR time. Catches the v0.28.0-beta.4
+        # regression where dashboard/.gitignore (used by `npm pack` as the
+        # .npmignore fallback) silently excluded dashboard/dist from the
+        # published tarball. release.yml runs the same check before publish,
+        # but failing here means a bad PR is rejected at review time instead
+        # of at tag-push time when devops cuts the next beta.
+        run: npm run verify-tarball
+
       - name: Install root size-limit
         # Run size-limit at the repo root against `dashboard/dist/`.
         # `npm ci` would also install the rest of the root devDeps; keep it
