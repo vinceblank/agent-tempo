@@ -1,0 +1,127 @@
+/**
+ * Mock {@link DashboardTempoClient} for the dashboard's vitest suite.
+ *
+ * Tests inject a `MockDashboardClient` via the per-hook `client` opt
+ * (queries.ts / sse.ts) so the production path stays untouched. Both
+ * `state` and `subscribe` are programmable from the test — set
+ * `mock.snapshot = ...` then call the hook, or call `mock.emit(event)`
+ * to push an SSE event into a live subscription.
+ */
+import type {
+  EnsembleStateV1,
+  EnsembleSummary,
+  TempoEvent,
+} from 'claude-tempo/http/event-types';
+import type { DashboardTempoClient } from '../../src/lib/client';
+
+export interface MockBehavior {
+  ensembles?: EnsembleSummary[];
+  ensemblesError?: Error;
+  snapshot?: EnsembleStateV1;
+  snapshotError?: Error;
+}
+
+export class MockDashboardClient implements DashboardTempoClient {
+  public ensembles: EnsembleSummary[] = [];
+  public ensemblesError: Error | null = null;
+  public snapshot: EnsembleStateV1 | null = null;
+  public snapshotError: Error | null = null;
+  /** Pending push channels for live subscriptions, keyed by ensemble. */
+  private pushers = new Map<string, ((ev: TempoEvent | null) => void)[]>();
+
+  constructor(initial: MockBehavior = {}) {
+    if (initial.ensembles) this.ensembles = initial.ensembles;
+    if (initial.ensemblesError) this.ensemblesError = initial.ensemblesError;
+    if (initial.snapshot) this.snapshot = initial.snapshot;
+    if (initial.snapshotError) this.snapshotError = initial.snapshotError;
+  }
+
+  async listEnsembles(): Promise<EnsembleSummary[]> {
+    if (this.ensemblesError) throw this.ensemblesError;
+    return this.ensembles;
+  }
+
+  async state(_ensemble: string): Promise<EnsembleStateV1> {
+    if (this.snapshotError) throw this.snapshotError;
+    if (!this.snapshot) throw new Error(`mock client has no snapshot for ${_ensemble}`);
+    return this.snapshot;
+  }
+
+  subscribe(ensemble: string): AsyncIterable<TempoEvent> {
+    const buffer: TempoEvent[] = [];
+    let resolveNext: ((v: IteratorResult<TempoEvent>) => void) | null = null;
+    let closed = false;
+    const pushers = this.pushers.get(ensemble) ?? [];
+    const push = (ev: TempoEvent | null) => {
+      if (closed) return;
+      if (ev === null) {
+        closed = true;
+        if (resolveNext) {
+          resolveNext({ value: undefined as never, done: true });
+          resolveNext = null;
+        }
+        return;
+      }
+      if (resolveNext) {
+        const r = resolveNext;
+        resolveNext = null;
+        r({ value: ev, done: false });
+      } else {
+        buffer.push(ev);
+      }
+    };
+    pushers.push(push);
+    this.pushers.set(ensemble, pushers);
+
+    return {
+      [Symbol.asyncIterator]() {
+        return {
+          next(): Promise<IteratorResult<TempoEvent>> {
+            if (buffer.length > 0) {
+              return Promise.resolve({ value: buffer.shift() as TempoEvent, done: false });
+            }
+            if (closed) return Promise.resolve({ value: undefined as never, done: true });
+            return new Promise((resolve) => { resolveNext = resolve; });
+          },
+          return(): Promise<IteratorResult<TempoEvent>> {
+            closed = true;
+            return Promise.resolve({ value: undefined as never, done: true });
+          },
+        };
+      },
+    };
+  }
+
+  /** Push a fake SSE event into every live subscription for `ensemble`. */
+  emit(ensemble: string, event: TempoEvent): void {
+    const pushers = this.pushers.get(ensemble);
+    if (!pushers) return;
+    for (const p of pushers) p(event);
+  }
+
+  /** Close every live subscription for `ensemble`. */
+  closeStream(ensemble: string): void {
+    const pushers = this.pushers.get(ensemble);
+    if (!pushers) return;
+    for (const p of pushers) p(null);
+    this.pushers.delete(ensemble);
+  }
+}
+
+/** Build a tiny but type-correct snapshot for tests. */
+export function makeSnapshot(overrides: Partial<EnsembleStateV1> = {}): EnsembleStateV1 {
+  return {
+    v: 1,
+    ensemble: 'demo',
+    capturedAt: '2026-04-27T00:00:00.000Z',
+    lastEventId: '1735000000000:0',
+    state: 'online',
+    hasConductor: false,
+    flags: { paused: false, held: false },
+    players: [],
+    schedules: [],
+    chat: { messages: [], total: 0, hasMore: false },
+    hostProfiles: {},
+    ...overrides,
+  };
+}

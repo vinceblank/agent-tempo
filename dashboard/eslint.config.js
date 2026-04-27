@@ -39,6 +39,17 @@ export default [
         getComputedStyle: 'readonly',
         HTMLElement: 'readonly',
         Element: 'readonly',
+        // Network + streaming primitives — used by `lib/client.ts`'s
+        // browser-mode TempoClient and `lib/sse.ts`'s subscription hook
+        // (PR-4 of #340). All are platform globals in evergreen browsers.
+        fetch: 'readonly',
+        Response: 'readonly',
+        AbortController: 'readonly',
+        AbortSignal: 'readonly',
+        EventSource: 'readonly',
+        MessageEvent: 'readonly',
+        TextDecoder: 'readonly',
+        globalThis: 'readonly',
         // Node globals — legitimately used by Vitest test files that
         // need to read fixtures off disk (`oklch-tokens.test.tsx`
         // injects `tokens.css` via `process.cwd()`). Source files

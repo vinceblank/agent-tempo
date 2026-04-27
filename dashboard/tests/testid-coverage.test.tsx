@@ -15,9 +15,26 @@
  * exempt attribute with a one-word reason (`"decorative-glyph"`,
  * `"sr-only"`, etc.).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render } from '@testing-library/react';
 import { App } from '../src/App';
+import { createDashboardMemoryRouter } from '../src/router';
+import { MockDashboardClient } from './fixtures/mock-client';
+import { __setDashboardClientForTests } from '../src/lib/client-singleton';
+
+// `App` mounts a router (PR-4); we inject a memory router so jsdom
+// doesn't need a real `window.location` matching `/dashboard/*`.
+function renderApp() {
+  const router = createDashboardMemoryRouter(['/']);
+  return render(<App router={router} />);
+}
+
+beforeEach(() => {
+  __setDashboardClientForTests(new MockDashboardClient({ ensembles: [] }));
+});
+afterEach(() => {
+  __setDashboardClientForTests(null);
+});
 
 const INTERACTIVE_SELECTOR = [
   'button',
@@ -29,7 +46,7 @@ const INTERACTIVE_SELECTOR = [
 
 describe('testid coverage (architect risk #12)', () => {
   it('every interactive element has data-testid or data-testid-exempt', () => {
-    const { container } = render(<App />);
+    const { container } = renderApp();
     const interactive = Array.from(container.querySelectorAll<HTMLElement>(INTERACTIVE_SELECTOR));
     expect(interactive.length).toBeGreaterThan(0); // Sanity: AppShell isn't empty.
     const missing = interactive.filter(
@@ -48,7 +65,7 @@ describe('testid coverage (architect risk #12)', () => {
   });
 
   it('first-class shell elements expose stable testids', () => {
-    const { getByTestId } = render(<App />);
+    const { getByTestId } = renderApp();
     expect(getByTestId('app-shell')).toBeInTheDocument();
     expect(getByTestId('sidebar')).toBeInTheDocument();
     expect(getByTestId('page-header')).toBeInTheDocument();
