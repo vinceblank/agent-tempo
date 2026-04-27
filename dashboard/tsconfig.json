@@ -6,12 +6,12 @@
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "strict": true,
-    // Disabled at the project level because the `claude-tempo/*` path alias
-    // pulls parent-repo source files into the type-check pass, and the
-    // parent's tsconfig doesn't enforce these. Dashboard-only unused-var
-    // checks would surface false-positives in `../src/*`. The `claude-tempo[bot]`
-    // tracker has been notified; flip these back on once the parent
-    // tightens its own `noUnusedLocals`/`noUnusedParameters`.
+    // TODO(#368): re-enable noUnusedLocals/noUnusedParameters once parent
+    // src/ is clean. Disabled at the project level because the
+    // `claude-tempo/*` path alias pulls parent-repo source files into the
+    // type-check pass, and the parent's tsconfig doesn't enforce these.
+    // Dashboard-only unused-var checks would surface false-positives in
+    // `../src/*` until #368 lands.
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
