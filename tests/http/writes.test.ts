@@ -17,7 +17,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { startHttpServer, type HttpServerHandle } from '../../src/http/server';
 import { WRITE_BODY_MAX } from '../../src/http/writes';
 import type { TempoClient } from '../../src/client/interface';
@@ -249,6 +249,64 @@ describe('POST /v1/ensembles/:ensemble/recruit', () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe('invalid-agent');
+  });
+
+  describe('agent allowlist + dev-mode gate (#388)', () => {
+    // Capture per-test (not per-block): a sibling test that mutates the env
+    // var would otherwise be captured as the "prior" value and restored
+    // incorrectly for the rest of this block.
+    let prevDevMode: string | undefined;
+    beforeEach(() => { prevDevMode = process.env.CLAUDE_TEMPO_DEV_MODE; });
+    afterEach(() => {
+      if (prevDevMode === undefined) delete process.env.CLAUDE_TEMPO_DEV_MODE;
+      else process.env.CLAUDE_TEMPO_DEV_MODE = prevDevMode;
+    });
+
+    it('prod mode: agent "mock" is rejected with allowed=[claude,copilot]', async () => {
+      delete process.env.CLAUDE_TEMPO_DEV_MODE;
+      const b = await boot();
+      const res = await postJson(`${b.url}/v1/ensembles/demo/recruit`, {
+        name: 'alice', workDir: '/repo', agent: 'mock',
+      });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe('invalid-agent');
+      expect(body.allowed).toEqual(['claude', 'copilot']);
+    });
+
+    it('dev mode: agent "mock" is accepted and forwarded to client.recruit', async () => {
+      process.env.CLAUDE_TEMPO_DEV_MODE = '1';
+      const b = await boot();
+      const res = await postJson(`${b.url}/v1/ensembles/demo/recruit`, {
+        name: 'alice', workDir: '/repo', agent: 'mock',
+      });
+      expect(res.status).toBe(202);
+      const recruitCall = b.calls.find((c) => c.method === 'recruit');
+      expect(recruitCall?.args[1]).toMatchObject({ name: 'alice', agent: 'mock' });
+    });
+
+    it('dev mode: agent "claude" still works (parity with prod)', async () => {
+      process.env.CLAUDE_TEMPO_DEV_MODE = '1';
+      const b = await boot();
+      const res = await postJson(`${b.url}/v1/ensembles/demo/recruit`, {
+        name: 'alice', workDir: '/repo', agent: 'claude',
+      });
+      expect(res.status).toBe(202);
+      const recruitCall = b.calls.find((c) => c.method === 'recruit');
+      expect(recruitCall?.args[1]).toMatchObject({ agent: 'claude' });
+    });
+
+    it('dev mode: unknown agent rejected with allowed=[claude,copilot,mock]', async () => {
+      process.env.CLAUDE_TEMPO_DEV_MODE = '1';
+      const b = await boot();
+      const res = await postJson(`${b.url}/v1/ensembles/demo/recruit`, {
+        name: 'alice', workDir: '/repo', agent: 'banana',
+      });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe('invalid-agent');
+      expect(body.allowed).toEqual(['claude', 'copilot', 'mock']);
+    });
   });
 });
 
