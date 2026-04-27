@@ -49,6 +49,12 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 22
+          # Root npm cache — needed because the dashboard's `claude-tempo/*`
+          # path alias drags `../src/*` into `tsc -b` (see PR-4 of #340), and
+          # those parent files import `@temporalio/client` / `yaml` / `zod`
+          # from root `node_modules`. Without root deps, lint + tests + build
+          # fail with "Cannot find module '@temporalio/client'". Tracked in #368.
+          cache: npm
 
       - name: Cache dashboard/node_modules
         uses: actions/cache@v4
@@ -71,6 +77,16 @@ jobs:
             exit 1
           fi
           echo "Lockstep OK: $ROOT_VER"
+
+      - name: Install root dependencies (for path-alias type resolution)
+        # The dashboard's `claude-tempo/*` path alias resolves to `../src/*`,
+        # whose files import `@temporalio/client`, `yaml`, and `zod` from
+        # root `node_modules`. `tsc -b` walks those imports during type
+        # checking; without root deps the build fails with "Cannot find
+        # module '@temporalio/client'". `--ignore-scripts` skips the
+        # parent's `prepare` / `prepublishOnly` hooks since we only need
+        # node_modules for module resolution, not the parent's build.
+        run: npm ci --ignore-scripts
 
       - name: Install dashboard dependencies
         run: npm --prefix dashboard install
