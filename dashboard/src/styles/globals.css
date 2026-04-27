@@ -61,3 +61,21 @@ body {
 .accent {
   color: var(--accent);
 }
+
+/* ─── Tempo motif animations ─────────────────────────────────
+ * Hoisted to globals so a multi-player roster doesn't inject the
+ * same keyframes once per `<PhaseDot>` / `<TempoStrip>` instance.
+ * Honours `prefers-reduced-motion` at the component level — these
+ * keyframes are only triggered when the component sets
+ * `style.animation` (i.e. when the user hasn't asked us to stop).
+ * ───────────────────────────────────────────────────────────── */
+
+@keyframes phase-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+
+@keyframes tempo-strip-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.6; }
+}

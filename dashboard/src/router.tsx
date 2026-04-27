@@ -42,6 +42,8 @@ import { CreateEnsemble } from './screens/CreateEnsemble';
 import { Hosts } from './screens/Hosts';
 import { Loadouts } from './screens/Loadouts';
 import { Overview } from './screens/Overview';
+import { Workspace } from './screens/Workspace';
+import { PlayerDetail } from './screens/PlayerDetail';
 import { PlaceholderScreen } from './screens/Placeholder';
 import { PlayerTypes } from './screens/PlayerTypes';
 import { Recruit } from './screens/Recruit';
@@ -64,20 +66,18 @@ export const DASHBOARD_ROUTES: RouteObject[] = [
     children: [
       { index: true, element: <Overview /> },
       {
+        // Workspace renders the chat + roster as a parent route. The
+        // nested `/player/:playerId` segment overlays the PlayerDetail
+        // panel via React Router's `<Outlet />` so deep-linking
+        // straight to the panel still mounts the workspace under it.
         path: 'ensemble/:id',
-        element: (
-          <PlaceholderScreen testId="screen-workspace" title="Workspace" arrivingIn="PR-5" />
-        ),
-      },
-      {
-        path: 'ensemble/:id/player/:playerId',
-        element: (
-          <PlaceholderScreen
-            testId="screen-player-detail"
-            title="Player Detail"
-            arrivingIn="PR-5"
-          />
-        ),
+        element: <Workspace />,
+        children: [
+          {
+            path: 'player/:playerId',
+            element: <PlayerDetail />,
+          },
+        ],
       },
       { path: 'create-ensemble', element: <CreateEnsemble /> },
       { path: 'recruit', element: <Recruit /> },
@@ -100,4 +100,21 @@ export function createDashboardBrowserRouter() {
 /** Test router — used by component tests that don't have a real `window.location`. */
 export function createDashboardMemoryRouter(initialEntries: string[] = ['/']) {
   return createMemoryRouter(DASHBOARD_ROUTES, { initialEntries });
+}
+
+/**
+ * Pull `playerId` out of a workspace pathname like
+ * `/ensemble/:id/player/:playerId`. Centralised so the route shape
+ * lives in one place — `<Workspace>` reads its own `useLocation()`
+ * pathname and runs this helper to surface the selected row in the
+ * sidebar. Returns `undefined` when the path isn't a player drilldown.
+ */
+export function selectedPlayerIdFromPath(pathname: string): string | undefined {
+  const m = /\/ensemble\/[^/]+\/player\/([^/]+)/.exec(pathname);
+  if (!m) return undefined;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return m[1];
+  }
 }
