@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Dashboard static handler + SPA fallback** (#340 — PR-1 of N): Daemon now serves the
+  prebuilt web dashboard SPA at `/dashboard/*` from `dashboard/dist/`. New
+  `src/http/dashboard.ts` module wires a static-asset handler (immutable cache for hashed
+  assets, `no-cache` on `index.html`) and a SPA fallback for React Router 7 client-side
+  routing. Reserved pre-auth carve-out at `GET /dashboard/api/pair/:token` returns `501`
+  for now (real cross-device pairing flow lands in PR-8). All other `/dashboard/*` requests
+  sit behind the existing bearer-auth gate so non-loopback binds (LAN, Tailscale) require
+  the same token as `/v1/*`. PR-2 will replace the placeholder `dashboard/dist/index.html`
+  with a real Vite + Tailwind 4 + shadcn/ui build. See
+  [`docs/design/340-web-dashboard.md`](docs/design/340-web-dashboard.md).
+
 ## [0.28.0-beta.2] - 2026-04-27
 
 ### Fixed

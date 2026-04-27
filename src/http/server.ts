@@ -32,6 +32,10 @@ import {
   type CorsConfig,
 } from './cors';
 import {
+  handleDashboardStatic,
+  handlePairTokenStub,
+} from './dashboard';
+import {
   DAEMON_PORT_PATH,
   removePortFile,
   writePortFileAtomic,
@@ -280,6 +284,18 @@ export async function handle(
     return handleHealth(res, ctx);
   }
 
+  // Pre-auth carve-out for the cross-device pairing-token consume endpoint
+  // (see docs/design/340-web-dashboard.md §4.1). The token IS the auth —
+  // single-use, 5-min TTL, opaque base64url. PR-1 returns 501; the real
+  // pair flow lands in PR-8.
+  //
+  // Regex is intentionally tight — `[^/]+` rejects extra path segments and
+  // (after URL-parser normalisation) traversal attempts; both fall through
+  // to the post-auth `/dashboard/api/*` 404.
+  if (method === 'GET' && /^\/dashboard\/api\/pair\/[^/]+$/.test(pathname)) {
+    return handlePairTokenStub(req, res);
+  }
+
   // Authentication gate.
   const originHeader = headerString(req.headers.origin);
   const reqBearer = bearerRequired(ctx.bindAddr, originHeader);
@@ -304,6 +320,14 @@ export async function handle(
   // Method gate — every snapshot endpoint is GET-only.
   if (method !== 'GET') {
     return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'GET, OPTIONS' });
+  }
+
+  // Static dashboard SPA (PR-1 of #340). Sits behind the bearer-auth gate
+  // so non-loopback binds (LAN, Tailscale) require the same bearer the
+  // `/v1/*` API uses. The pre-auth pair-token carve-out above is the
+  // single exception that bootstraps cross-device pairing.
+  if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) {
+    return handleDashboardStatic(req, res, pathname);
   }
 
   if (pathname === '/v1/ensembles') {
