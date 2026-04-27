@@ -50,28 +50,16 @@ export default [
         MessageEvent: 'readonly',
         TextDecoder: 'readonly',
         globalThis: 'readonly',
-        // DOM element types — referenced by tests/screens via `React.CSSProperties`,
-        // `HTMLInputElement`, etc. The modern React 19 JSX transform doesn't
-        // require a runtime `import React`; the namespace is type-only and
-        // ESLint just needs to know it exists.
+        // DOM element types — referenced by tests/screens via
+        // `React.CSSProperties`, `HTMLInputElement`, etc. The modern
+        // React 19 JSX transform doesn't require a runtime
+        // `import React`; the namespace is type-only and ESLint just
+        // needs to know it exists.
         React: 'readonly',
         HTMLInputElement: 'readonly',
         HTMLButtonElement: 'readonly',
         HTMLAnchorElement: 'readonly',
         HTMLDivElement: 'readonly',
-        // Node globals — legitimately used by Vitest test files that
-        // need to read fixtures off disk (`oklch-tokens.test.tsx`
-        // injects `tokens.css` via `process.cwd()`). Source files
-        // don't reference these, but listing them globally keeps the
-        // config simple.
-        process: 'readonly',
-        // Vitest globals — test files use `describe`, `it`, `expect`, etc.
-        describe: 'readonly',
-        it: 'readonly',
-        expect: 'readonly',
-        beforeEach: 'readonly',
-        afterEach: 'readonly',
-        vi: 'readonly',
       },
     },
     plugins: {
@@ -106,6 +94,27 @@ export default [
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
       'no-unused-vars': 'off',
+    },
+  },
+  // qa follow-up from PR-2 review: scope Node + Vitest globals to test
+  // files only so accidental `process.X` usage in `src/` files isn't
+  // lint-silent. `process.cwd()` in `oklch-tokens.test.tsx` is the
+  // legitimate use that keeps these declared at all.
+  {
+    files: ['tests/**/*.{ts,tsx}'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        // Vitest globals — test files use `describe`, `it`, `expect`, etc.
+        describe: 'readonly',
+        it: 'readonly',
+        expect: 'readonly',
+        beforeEach: 'readonly',
+        afterEach: 'readonly',
+        beforeAll: 'readonly',
+        afterAll: 'readonly',
+        vi: 'readonly',
+      },
     },
   },
   {

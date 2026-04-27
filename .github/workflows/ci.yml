@@ -89,7 +89,10 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Install dashboard dependencies
-        run: npm --prefix dashboard install
+        # Strict-mode install — fails fast on `dashboard/package-lock.json`
+        # drift so a forgotten `npm install` (qa's PR-2 follow-up) can't
+        # leak into a release.
+        run: npm --prefix dashboard ci
 
       - name: Lint dashboard
         run: npm --prefix dashboard run lint
