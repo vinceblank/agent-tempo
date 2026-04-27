@@ -39,6 +39,9 @@ export type { EnsembleStateV1, TempoEvent, EnsembleSummary, HostInfo };
  * Surface the dashboard depends on. Strict subset of the daemon's HTTP
  * API; intentionally smaller than `TempoClientCore` because the
  * dashboard never needs Temporal-direct queries.
+ *
+ * Reads (PR-4) ride GET; writes (PR-7a) ride POST under the same
+ * auth model. See `docs/SSE-PROTOCOL.md` § 11b for the wire contract.
  */
 export interface DashboardTempoClient {
   /** GET `/v1/ensembles` — list every live ensemble. */
@@ -52,6 +55,47 @@ export interface DashboardTempoClient {
    * caller iterates with `for await`. Pass `opts.signal` to abort.
    */
   subscribe(ensemble: string, opts?: SubscribeOptions): AsyncIterable<TempoEvent>;
+
+  // ── Mutations (PR-7b of #340) ────────────────────────────────────
+
+  /** POST `/v1/ensembles/:ensemble/cue` — send a message to a player. */
+  cue(ensemble: string, to: string, message: string): Promise<CueResult>;
+  /** POST `/v1/ensembles/:ensemble/pause` — pause maestro + scheduler + every session. */
+  pause(ensemble: string): Promise<void>;
+  /** POST `/v1/ensembles/:ensemble/play` — unpause; `release: true` also fans out releaseHeld. */
+  play(ensemble: string, opts?: { release?: boolean }): Promise<void>;
+  /** POST `/v1/ensembles/:ensemble/release` — release held sessions in the ensemble. */
+  release(ensemble: string, playerId?: string): Promise<ReleaseResult>;
+  /** POST `/v1/ensembles/:ensemble/recruit` — spawn a new player. */
+  recruit(ensemble: string, opts: RecruitOpts): Promise<RecruitResult>;
+}
+
+export interface CueResult {
+  ok: true;
+  ensemble: string;
+  to: string;
+}
+
+export interface ReleaseResult {
+  released: string[];
+  errors: Array<{ playerId: string; error: string }>;
+}
+
+export interface RecruitOpts {
+  name: string;
+  workDir: string;
+  agent?: 'claude' | 'copilot';
+  playerType?: string;
+  host?: string;
+  isConductor?: boolean;
+  initialMessage?: string;
+  systemPrompt?: string;
+  held?: boolean;
+}
+
+export interface RecruitResult {
+  playerId: string;
+  entryId: string;
 }
 
 export interface DashboardClientOpts {
@@ -90,6 +134,31 @@ export function createDashboardClient(opts: DashboardClientOpts = {}): Dashboard
     return res.json() as Promise<T>;
   }
 
+  async function postJson<T>(path: string, body: unknown = {}): Promise<T> {
+    const res = await fetchImpl(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...authHeaders(),
+      },
+      credentials: 'same-origin',
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const errBody = await safeReadText(res);
+      throw new HttpError(res.status, errBody || res.statusText, path);
+    }
+    // 202 / 200 with JSON body. Some endpoints return shape-bearing JSON
+    // (release, recruit); others return `{ ok, ensemble, ... }` ack
+    // shapes. Both are valid `T`.
+    return res.json() as Promise<T>;
+  }
+
+  function ensemblePath(ensemble: string, action: string): string {
+    return `/v1/ensembles/${encodeURIComponent(ensemble)}/${action}`;
+  }
+
   return {
     async listEnsembles() {
       return getJson<EnsembleSummary[]>('/v1/ensembles');
@@ -103,6 +172,26 @@ export function createDashboardClient(opts: DashboardClientOpts = {}): Dashboard
     },
     subscribe(ensemble, subOpts = {}) {
       return makeSseIterable(baseUrl, ensemble, subOpts, authHeaders());
+    },
+
+    // ── Mutations (PR-7b) ─────────────────────────────────────────
+
+    async cue(ensemble, to, message) {
+      return postJson<CueResult>(ensemblePath(ensemble, 'cue'), { to, message });
+    },
+    async pause(ensemble) {
+      await postJson(ensemblePath(ensemble, 'pause'));
+    },
+    async play(ensemble, opts) {
+      const body = opts?.release === true ? { release: true } : {};
+      await postJson(ensemblePath(ensemble, 'play'), body);
+    },
+    async release(ensemble, playerId) {
+      const body = playerId !== undefined ? { playerId } : {};
+      return postJson<ReleaseResult>(ensemblePath(ensemble, 'release'), body);
+    },
+    async recruit(ensemble, opts) {
+      return postJson<RecruitResult>(ensemblePath(ensemble, 'recruit'), opts);
     },
   };
 }

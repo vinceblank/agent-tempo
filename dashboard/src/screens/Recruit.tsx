@@ -22,8 +22,9 @@
  *   - `data-testid="recruit-summary-${field}"` on each review row
  */
 import { useEffect, useState } from 'react';
-import { DisabledWithTooltip } from '../components/DisabledWithTooltip';
+import { useSearchParams } from 'react-router-dom';
 import { FormField } from '../components/FormField';
+import { useRecruitMutation } from '../lib/mutations';
 import { logEvent } from '../lib/log';
 
 type AgentType = 'claude' | 'copilot';
@@ -56,11 +57,41 @@ const STEP_LABELS: Record<StepIndex, string> = {
 
 export function Recruit() {
   useEffect(() => { logEvent('screen.opened', { screen: 'recruit' }); }, []);
+  const [searchParams] = useSearchParams();
+  const ensemble = searchParams.get('ensemble') ?? '';
   const [step, setStep] = useState<StepIndex>(1);
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const errors = validate(form);
   const stepErrors = errorsForStep(step, errors);
   const stepValid = stepErrors.length === 0;
+  const recruit = useRecruitMutation(ensemble);
+
+  // No `?ensemble=…` — render an empty-state pointing back to Overview.
+  // Recruit needs an ensemble to target; without one we'd be cueing a
+  // mutation against the empty string. The user typically reaches this
+  // screen from a Workspace "Recruit" button (PR-7b adds that link).
+  if (!ensemble) {
+    return (
+      <section
+        data-testid="screen-recruit"
+        data-state="missing-ensemble"
+        style={containerStyle}
+      >
+        <h1 style={{ margin: 0, fontFamily: 'var(--ff-display)', fontSize: 22, fontWeight: 400 }}>
+          Recruit
+        </h1>
+        <p
+          data-testid="recruit-missing-ensemble"
+          role="alert"
+          className="dim"
+          style={{ marginBottom: 0 }}
+        >
+          Pick an ensemble first. Append <code>?ensemble=&lt;name&gt;</code> to the URL,
+          or click "Recruit" from a Workspace.
+        </p>
+      </section>
+    );
+  }
 
   const update = <K extends keyof FormState>(key: K, value: FormState[K]): void => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -201,13 +232,36 @@ export function Recruit() {
             Next →
           </button>
         ) : (
-          <DisabledWithTooltip
-            testId="recruit-submit"
-            action="recruit-submit"
-            reason="Submit available in PR-7 of #340 once safe-write wiring lands"
+          <button
+            type="button"
+            data-testid="recruit-submit"
+            disabled={recruit.isPending || errors.name !== null || errors.workDir !== null}
+            aria-disabled={recruit.isPending || errors.name !== null || errors.workDir !== null}
+            onClick={() => {
+              recruit.mutate(
+                {
+                  name: form.name,
+                  workDir: form.workDir,
+                  agent: form.agent,
+                  ...(form.initialMessage ? { initialMessage: form.initialMessage } : {}),
+                },
+                {
+                  onSuccess: () => {
+                    setForm(INITIAL_FORM);
+                    setStep(1);
+                  },
+                },
+              );
+            }}
+            style={{
+              ...buttonStyle,
+              background: 'var(--accent)',
+              color: 'var(--accent-ink)',
+              opacity: recruit.isPending ? 0.6 : 1,
+            }}
           >
-            Recruit player
-          </DisabledWithTooltip>
+            {recruit.isPending ? 'Recruiting…' : 'Recruit player'}
+          </button>
         )}
       </footer>
     </section>

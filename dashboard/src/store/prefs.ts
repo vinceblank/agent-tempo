@@ -20,8 +20,10 @@ export type Density = 4 | 5 | 6 | 7 | 8 | 9;
 export type Accent = 'terracotta' | 'sage' | 'plum';
 
 const STORAGE_KEY = 'claude-tempo:prefs';
-const DEFAULT_DENSITY: Density = 6;
-const DEFAULT_ACCENT: Accent = 'terracotta';
+/** Default values — exported so consumers (e.g. SettingsSheet's Reset button) reuse them. */
+export const DEFAULT_THEME: Theme = 'dark';
+export const DEFAULT_DENSITY: Density = 6;
+export const DEFAULT_ACCENT: Accent = 'terracotta';
 
 interface PrefsSnapshot {
   theme: Theme;
@@ -38,7 +40,7 @@ interface PrefsState extends PrefsSnapshot {
 
 function loadInitial(): PrefsSnapshot {
   if (typeof window === 'undefined' || !window.localStorage) {
-    return { theme: 'dark', density: DEFAULT_DENSITY, accent: DEFAULT_ACCENT };
+    return { theme: DEFAULT_THEME, density: DEFAULT_DENSITY, accent: DEFAULT_ACCENT };
   }
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -53,7 +55,7 @@ function loadInitial(): PrefsSnapshot {
   } catch {
     /* localStorage may be disabled / quota-exceeded — fall through to defaults */
   }
-  return { theme: 'dark', density: DEFAULT_DENSITY, accent: DEFAULT_ACCENT };
+  return { theme: DEFAULT_THEME, density: DEFAULT_DENSITY, accent: DEFAULT_ACCENT };
 }
 
 function isValidDensity(v: unknown): v is Density {
@@ -148,7 +150,7 @@ export function __resetPrefsForTests(): void {
     }
   }
   const defaults: PrefsSnapshot = {
-    theme: 'dark',
+    theme: DEFAULT_THEME,
     density: DEFAULT_DENSITY,
     accent: DEFAULT_ACCENT,
   };

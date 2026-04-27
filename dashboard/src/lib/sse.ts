@@ -135,17 +135,50 @@ export function applyEvent(
 
     case 'chat.appended': {
       const msg: EnsembleChatMessage = event.payload;
-      const messages = [...prev.chat.messages, msg];
+      // Reconcile with any in-flight optimistic entry from
+      // `useCueMutation` (PR-7b). Optimistic ids are prefixed
+      // `optimistic-` (see `lib/mutations.ts#OPTIMISTIC_ID_PREFIX`);
+      // when an SSE-arrived message matches one by `from` / `to` /
+      // `text`, drop the optimistic so the chat doesn't render
+      // duplicate rows. The first match wins — a user firing
+      // identical cues twice will leave one optimistic in place
+      // until the next SSE event lands, which is correct behaviour
+      // (each canonical message replaces exactly one pending cue).
+      const existing = prev.chat.messages;
+      let withoutOptimistic: EnsembleChatMessage[] = existing;
+      if (msg.role === 'maestro-out') {
+        const optIdx = existing.findIndex(
+          (m) =>
+            m.id.startsWith('optimistic-') &&
+            m.from === msg.from &&
+            m.to === msg.to &&
+            m.text === msg.text,
+        );
+        if (optIdx !== -1) {
+          withoutOptimistic = [
+            ...existing.slice(0, optIdx),
+            ...existing.slice(optIdx + 1),
+          ];
+        }
+      }
+
+      const messages = [...withoutOptimistic, msg];
       // Drop oldest entries past the dashboard cap. The wire's `total`
       // tracks the maestro hub's count, not our window — just bump it.
       const trimmed = messages.length > DASHBOARD_CHAT_LIMIT
         ? messages.slice(messages.length - DASHBOARD_CHAT_LIMIT)
         : messages;
+      // `total`: bump only if the SSE entry is genuinely new. When we
+      // dropped a matching optimistic, the canonical message is a
+      // replacement — net total stays the same as before the SSE
+      // event (the optimistic had already incremented `total` in
+      // `useCueMutation.onMutate`).
+      const totalDelta = withoutOptimistic === existing ? 1 : 0;
       return {
         ...prev,
         chat: {
           messages: trimmed,
-          total: prev.chat.total + 1,
+          total: prev.chat.total + totalDelta,
           hasMore: prev.chat.hasMore || trimmed.length < messages.length,
         },
       };

@@ -1,35 +1,46 @@
 /**
  * MessageInput — text input + send button at the bottom of the chat log.
  *
- * **Placeholder semantics for PR-5**: actual cue/broadcast wires up in
- * PR-7 (safe-write paths). Today the submit button logs
- * `chat.message.placeholder-send` and surfaces a "Coming in v2"
- * tooltip per design §9.2 — no real network call. The form is
- * disabled but visible so the conductor's autonomous validator can
- * still find the testid surface and verify the eventual wiring.
+ * **PR-7b**: wired to {@link useCueMutation} with optimistic updates.
+ * Submit appends an `optimistic-${nonce}` message to the cached
+ * snapshot's chat list before the network call resolves; the SSE
+ * `chat.appended` event ~50ms later replaces it with the canonical
+ * one. Network errors roll back + surface a Sonner toast.
+ *
+ * The submit button is disabled when there's no target (rare — only
+ * when the ensemble has zero non-maestro players) or the message is
+ * empty.
  */
 import { useState, type FormEvent } from 'react';
+import { useCueMutation } from '../../lib/mutations';
 import { logEvent } from '../../lib/log';
 
 interface MessageInputProps {
   ensemble: string;
-  /** Optional default target for the placeholder submit log. */
+  /** Default target (typically the conductor's playerId). */
   target?: string;
 }
 
 export function MessageInput({ ensemble, target }: MessageInputProps) {
   const [value, setValue] = useState('');
+  const cue = useCueMutation(ensemble);
+
+  const trimmed = value.trim();
+  const canSubmit = trimmed.length > 0 && !!target && !cue.isPending;
+  const submitTitle = describeSubmitState(target, cue.isPending, trimmed.length);
 
   const onSubmit = (ev: FormEvent<HTMLFormElement>) => {
     ev.preventDefault();
-    const trimmed = value.trim();
-    if (!trimmed) return;
-    logEvent('chat.message.placeholder-send', {
-      ensemble,
-      target: target ?? 'conductor',
-      length: trimmed.length,
-    });
-    setValue('');
+    if (!canSubmit || !target) {
+      logEvent('chat.message.skipped', {
+        ensemble, hasTarget: !!target, length: trimmed.length,
+      });
+      return;
+    }
+    cue.mutate(
+      { to: target, message: trimmed },
+      { onSuccess: () => setValue('') },
+    );
   };
 
   return (
@@ -49,8 +60,9 @@ export function MessageInput({ ensemble, target }: MessageInputProps) {
         type="text"
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        placeholder="Type a message — sending lands in PR-7 of #340"
+        placeholder={target ? `Message ${target}…` : 'Recruit a player to start chatting'}
         aria-label="Message text"
+        disabled={!target || cue.isPending}
         style={{
           flex: 1,
           padding: '8px 12px',
@@ -65,21 +77,30 @@ export function MessageInput({ ensemble, target }: MessageInputProps) {
       <button
         type="submit"
         data-testid="message-submit"
-        title="Coming in PR-7 of #340 — safe-write paths"
-        disabled={value.trim().length === 0}
+        disabled={!canSubmit}
+        aria-disabled={!canSubmit}
+        title={submitTitle}
         style={{
           padding: '8px 16px',
-          background: value.trim() ? 'var(--accent)' : 'var(--bg-3)',
-          color: value.trim() ? 'var(--accent-ink)' : 'var(--dim)',
+          background: canSubmit ? 'var(--accent)' : 'var(--bg-3)',
+          color: canSubmit ? 'var(--accent-ink)' : 'var(--dim)',
           border: '1px solid var(--rule)',
           borderRadius: 6,
-          cursor: value.trim() ? 'pointer' : 'not-allowed',
+          cursor: canSubmit ? 'pointer' : 'not-allowed',
           fontFamily: 'var(--ff-ui)',
           fontWeight: 500,
         }}
       >
-        Send
+        {cue.isPending ? 'Sending…' : 'Send'}
       </button>
     </form>
   );
+}
+
+/** Lookup-table flat replacement for what was a 4-branch nested ternary. */
+function describeSubmitState(target: string | undefined, pending: boolean, length: number): string {
+  if (!target) return 'No target — recruit a player first';
+  if (pending) return 'Sending…';
+  if (length === 0) return 'Type a message to send';
+  return 'Send';
 }
