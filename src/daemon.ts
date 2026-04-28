@@ -965,7 +965,13 @@ async function main() {
       const { startHttpServer } = await import('./http');
       const { createTempoClient } = await import('./client');
       const { AggregateRunner } = await import('./http/aggregate');
-      const httpClient = createTempoClient(reconcileClient);
+      // #437 — pass the daemon's polling task queue through. `listHosts`
+      // (called by `/v1/hosts`, snapshot.hostProfiles, dashboard, TUI,
+      // AggregateRunner) defaults to `'claude-tempo'` and silently
+      // returns `[]` in dev mode without this. Both `namespace` (already
+      // baked into `reconcileClient.options.namespace`) and `taskQueue`
+      // must match the daemon for poller discovery to find this host.
+      const httpClient = createTempoClient(reconcileClient, { taskQueue: config.taskQueue });
       // Single shared bootEpoch — every bus the daemon constructs uses
       // this same value, frozen for the process lifetime per §5.
       const bootEpoch = Date.now();
