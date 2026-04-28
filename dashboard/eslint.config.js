@@ -51,6 +51,7 @@ export default [
         HTMLFormElement: 'readonly',
         HTMLInputElement: 'readonly',
         HTMLTextAreaElement: 'readonly',
+        HTMLTableRowElement: 'readonly',
         SVGElement: 'readonly',
         SVGRectElement: 'readonly',
         Event: 'readonly',
