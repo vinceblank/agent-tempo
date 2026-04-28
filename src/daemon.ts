@@ -980,6 +980,7 @@ async function main() {
       httpServerHandle = await startHttpServer({
         client: httpClient,
         namespace: config.temporalNamespace,
+        taskQueue: config.taskQueue,
         version: daemonVersion(),
         aggregate: aggregateRunner,
       });

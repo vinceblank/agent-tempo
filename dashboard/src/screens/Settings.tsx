@@ -96,10 +96,10 @@ function ConnectionPanel() {
 
   // Derive display values from live health data; fall back to "…" while
   // loading and "?" on error so the panel never shows stale hard-coded
-  // defaults. namespace and version are the only fields /v1/health
-  // exposes — address and task queue remain static until the daemon adds
-  // them to the health response.
+  // defaults. `address` is the last static KV — pending a daemon-side
+  // bind-address surface in `/v1/health`.
   const namespace = isLoading ? '…' : isError ? '?' : (health?.namespace ?? '?');
+  const taskQueue = isLoading ? '…' : isError ? '?' : (health?.taskQueue ?? '?');
   const version = isLoading ? '…' : isError ? '?' : (health?.version ?? '?');
 
   return (
@@ -118,7 +118,7 @@ function ConnectionPanel() {
       <div className="panel-body">
         <KV k="namespace" v={namespace} mono />
         <KV k="address" v="localhost:7233" mono />
-        <KV k="task queue" v="claude-tempo" mono />
+        <KV k="task queue" v={taskQueue} mono />
         <KV k="version" v={version} mono />
         <KV k="tls" v="off" mono />
         <KV k="auth" v="—" mono />
