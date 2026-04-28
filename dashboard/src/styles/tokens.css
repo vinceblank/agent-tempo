@@ -59,14 +59,17 @@
   --shadow-2: 0 10px 30px -16px rgba(0, 0, 0, 0.6);
 
   /*
-   * Typography — `Inter` + `Fraunces` + `JetBrains Mono`. The handoff
-   * `styles.css` declares `Instrument Sans/Serif` as the first family,
-   * but the rendered design used Inter/Fraunces fallbacks. Per the
-   * conductor's PR-2 brief we ship Inter/Fraunces directly so the
-   * built dashboard matches what was actually reviewed.
+   * Typography — `Instrument Sans` + `Instrument Serif` + `JetBrains Mono`,
+   * per the canonical `web-design-system.html` line 9 + `styles.css` line 33-35
+   * in `docs/design/dashboard-handoff/project/`. vinceblank confirmed in #389:
+   * "use the font from the provided design." The earlier Inter/Fraunces choice
+   * (PR-2) was based on incomplete bundle data and was corrected per #389
+   * (PR-0). Italic discipline: `Instrument Serif` ships with an italic axis
+   * (`Instrument+Serif:ital@0;1`) — reserve italics for editorial display
+   * moments (e.g. `MaestroMark`, headline accents), not body copy.
    */
-  --ff-ui: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --ff-display: 'Fraunces', 'Times New Roman', serif;
+  --ff-ui: 'Instrument Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --ff-display: 'Instrument Serif', 'Times New Roman', serif;
   --ff-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
