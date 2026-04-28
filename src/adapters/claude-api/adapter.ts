@@ -447,7 +447,13 @@ export class DirectApiAttachment extends SdkAttachment {
       handle.query(allMessagesQuery) as Promise<TempoMessage[]>,
       handle.query(allSentMessagesQuery) as Promise<SentMessage[]>,
     ]);
-    const messages = buildAnthropicMessages(received, sent);
+    // The history rebuild yields plain string content; in-loop turns push
+    // structured content arrays (assistant: thinking + tool_use blocks per
+    // §2.1; user: tool_result blocks). Widen the local variable explicitly
+    // so the tool-use-loop pushes typecheck without relaxing the helper's
+    // contract.
+    const messages: Array<{ role: 'user' | 'assistant'; content: string | unknown[] }> =
+      buildAnthropicMessages(received, sent);
 
     // System + tools both carry an ephemeral cache_control breakpoint at
     // their tail (verification §2.3). 2 of 4 breakpoints used; commit-5
@@ -698,7 +704,7 @@ export function handleStreamEvent(event: AnthropicStreamEvent, blocks: Assistant
 export function buildAnthropicMessages(
   received: TempoMessage[],
   sent: SentMessage[],
-): Array<{ role: 'user' | 'assistant'; content: string | unknown[] }> {
+): Array<{ role: 'user' | 'assistant'; content: string }> {
   type Row = { role: 'user' | 'assistant'; text: string; ts: string };
   const rows: Row[] = [];
   for (const m of received) rows.push({ role: 'user', text: `[from ${m.from}]: ${m.text}`, ts: m.timestamp });

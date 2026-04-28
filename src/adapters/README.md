@@ -23,10 +23,22 @@ src/adapters/
 ├── claude-code/
 │   ├── adapter.ts    # InteractiveAttachment extends BaseAttachment
 │   └── index.ts      # exports `claudeCodeDescriptor`
-└── copilot/
-    ├── adapter.ts    # CopilotSdkAttachment extends SdkAttachment (dual entry point)
-    └── index.ts      # exports `copilotDescriptor`
+├── copilot/
+│   ├── adapter.ts    # CopilotSdkAttachment extends SdkAttachment (dual entry point)
+│   └── index.ts      # exports `copilotDescriptor`
+└── claude-api/
+    ├── adapter.ts    # DirectApiAttachment extends SdkAttachment (#131 Phase C — headless API)
+    ├── mcp-bridge.ts # in-process MCP server + InMemoryTransport-paired client
+    └── index.ts      # exports `claudeApiDescriptor`
 ```
+
+## Adapter capability matrix
+
+| Adapter | Class | TTY required | Tempo MCP tools | File-edit / shell tools | Web tools | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `claude-code` | interactive | Yes (Ghostty / iTerm2 / WT / …) | ✅ | ✅ (Bash/Read/Write/Edit/Glob/Grep) | ✅ (WebSearch/WebFetch) | Default. Push-delivery via MCP `claude/channel`. |
+| `copilot` | sdk | No (subprocess) | ✅ (via stdio MCP server) | ✅ (Copilot CLI built-ins) | ✅ | Pull-delivery; `@github/copilot-sdk` optional dep. |
+| `claude-api` | sdk | No (subprocess) | ✅ (via in-process MCP) | ❌ Phase 2 deferred | ❌ Phase 2 deferred | Headless. `@anthropic-ai/sdk` optional dep + `ANTHROPIC_API_KEY`. Recruit-arg `model` defaults to `claude-opus-4-7`. See `docs/design/131-claude-api-adapter.md`. |
 
 ## Adapter classes
 
@@ -114,6 +126,7 @@ Adapter authors should only opt in if the adapter can meaningfully re-establish 
 - **Never** add public methods to an adapter that `src/server.ts`, the workflow, or the MCP tools call directly. All cross-layer communication goes through the attachment wire protocol (PR-C) or — until PR-C — through the PR-A compat shim.
 - **Never** resolve a workflow handle by ID alone — always pin `runId` (prevents the #102 zombie-resurrection hazard). PR-C centralizes this in `BaseAttachment`; until then, follow the pattern in `src/adapters/copilot/adapter.ts` (grep `pinnedRunId`).
 - **Never** hardcode `'claude-code'` or `'copilot'` outside this directory. Callers resolve via `registry.get(metadata.adapterId ?? registry.resolveFromAgentType(metadata.agentType))`.
+- **PID files** are written via plain `fs.writeFileSync` in adapter spawn paths (copilot + claude-api today). Subprocess PID file contention is rare enough that the daemon's `writePidFileAtomic` retry+rename utility (`src/daemon.ts`) hasn't been needed; if antivirus / EBUSY churn ever bites, both adapters should adopt it together.
 
 ## What still sits outside this directory (and why)
 
