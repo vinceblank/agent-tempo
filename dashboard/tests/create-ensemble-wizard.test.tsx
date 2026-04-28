@@ -14,6 +14,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
+import { Toaster } from 'sonner';
 import type { ReactNode } from 'react';
 import { CreateEnsemble } from '../src/screens/CreateEnsemble';
 import { MockDashboardClient } from './fixtures/mock-client';
@@ -25,16 +26,23 @@ function newQc() {
   });
 }
 
-function renderCreate(opts: { mock?: MockDashboardClient } = {}) {
-  const mock = opts.mock ?? new MockDashboardClient();
-  __setDashboardClientForTests(mock);
+interface RenderOpts {
+  mock?: MockDashboardClient;
+  /** When true, mounts a `<Toaster />` so toast assertions can resolve. */
+  withToaster?: boolean;
+}
+
+function renderCreate({ mock, withToaster = false }: RenderOpts = {}) {
+  const client = mock ?? new MockDashboardClient();
+  __setDashboardClientForTests(client);
   const qc = newQc();
   return {
-    mock,
+    mock: client,
     ...render(
       <QueryClientProvider client={qc}>
         <MemoryRouter initialEntries={['/create-ensemble']}>
           <CreateEnsemble />
+          {withToaster && <Toaster toastOptions={{ unstyled: true }} />}
         </MemoryRouter>
       </QueryClientProvider> as ReactNode,
     ),
@@ -164,5 +172,30 @@ describe('CreateEnsemble wizard (PR-E)', () => {
     });
     const call = mock.mutationCalls.find((c) => c.method === 'createEnsemble')!;
     expect(call.args[0]).not.toHaveProperty('lineup');
+  });
+
+  it('shows the wire-gap toast when POST /v1/ensembles 404s', async () => {
+    // Mutation hook detects "404" or "not found" in the error message
+    // and swaps the generic failure toast for the wire-gap copy that
+    // points users at the CLI fallback (`claude-tempo up <name>`).
+    // This test pins that path — the toast wording is the one bit of
+    // user-facing UX the headline feature promised.
+    const mock = new MockDashboardClient({
+      mutationErrors: { createEnsemble: new Error('not found') },
+    });
+    renderCreate({ mock, withToaster: true });
+    fireEvent.change(screen.getByTestId('create-ensemble-input-name'), {
+      target: { value: 'frontend-squad' },
+    });
+    fireEvent.click(screen.getByTestId('create-ensemble-next'));
+    fireEvent.click(screen.getByTestId('create-ensemble-next'));
+    fireEvent.click(screen.getByTestId('create-ensemble-submit'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('toast-error')).toBeInTheDocument();
+    });
+    const toast = screen.getByTestId('toast-error');
+    expect(toast.textContent).toMatch(/not yet available/i);
+    expect(toast.textContent).toMatch(/claude-tempo up/);
   });
 });
