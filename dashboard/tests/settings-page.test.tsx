@@ -12,7 +12,7 @@
  *     NavLink lands cleanly)
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { RouterProvider } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
@@ -65,6 +65,24 @@ describe('Settings page', () => {
     renderStandalone();
     const status = screen.getByTestId('settings-connection-status');
     expect(status.textContent).toMatch(/connected/);
+  });
+
+  // Connection panel KVs (#436 + #444) — namespace and taskQueue must
+  // reflect the live `/v1/health` response, not hard-coded defaults.
+  // Mock advertises namespace=`default` + taskQueue=`claude-tempo`; pinning
+  // both prevents another KV from silently regressing to a static string.
+  it('Connection panel renders namespace + task queue from /v1/health', async () => {
+    renderStandalone();
+    const panel = screen.getByTestId('settings-panel-connection');
+    // useHealth resolves async — wait on the *values* (not the static
+    // labels) so we don't assert against the loading-state `…` placeholder.
+    // Both literals are unique enough inside the panel to disambiguate
+    // from other KV rows. Awaited in parallel — the two paints are
+    // independent and React Query settles them in the same tick.
+    await Promise.all([
+      within(panel).findByText('default'),
+      within(panel).findByText('claude-tempo'),
+    ]);
   });
 
   it('the Danger zone panel spans both grid columns', () => {

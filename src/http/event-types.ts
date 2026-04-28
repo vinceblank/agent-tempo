@@ -32,6 +32,13 @@ export interface HealthV1 {
   ok: true;
   /** Temporal namespace the daemon is connected to. */
   namespace: string;
+  /**
+   * Shared task queue the daemon's workers poll. Mirrors `config.taskQueue`
+   * (e.g. `claude-tempo` in production, `claude-tempo-dev` in dev mode).
+   * Surfaced for the dashboard's Settings → Connection panel so the displayed
+   * value reflects the live runtime instead of a hard-coded default. (#444)
+   */
+  taskQueue: string;
   /** Daemon package version. */
   version: string;
   uptimeMs: number;

@@ -89,6 +89,12 @@ export const DEFAULT_PORT = isDevMode() ? DEV_DAEMON_PORT : PROD_DAEMON_PORT;
 export interface HttpServerOptions {
   client: TempoClient;
   namespace: string;
+  /**
+   * Shared task queue the daemon's workers poll. Surfaced verbatim on
+   * `GET /v1/health` so the dashboard's Settings → Connection panel
+   * reflects the runtime queue (#444).
+   */
+  taskQueue: string;
   version: string;
   /** Defaults to `process.env[ENV.HTTP_BIND] || '127.0.0.1'`. */
   bindAddr?: string;
@@ -191,6 +197,7 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
     handle(req, res, {
       client: opts.client,
       namespace: opts.namespace,
+      taskQueue: opts.taskQueue,
       version: opts.version,
       bindAddr,
       corsConfig,
@@ -276,6 +283,7 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
 interface HandleContext {
   client: TempoClient;
   namespace: string;
+  taskQueue: string;
   version: string;
   bindAddr: string;
   corsConfig: CorsConfig;
@@ -529,6 +537,7 @@ function handleHealth(res: http.ServerResponse, ctx: HandleContext): void {
   const body: HealthV1 = {
     ok: true,
     namespace: ctx.namespace,
+    taskQueue: ctx.taskQueue,
     version: ctx.version,
     uptimeMs: Math.max(0, Date.now() - ctx.startedAt),
     ensembleCount: 0, // populated below

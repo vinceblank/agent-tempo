@@ -108,6 +108,7 @@ async function boot(opts: {
   const handle = await startHttpServer({
     client: opts.client ?? makeFakeClient(),
     namespace: 'default',
+    taskQueue: 'claude-tempo-test',
     version: '0.27.0-test',
     bindAddr: opts.bindAddr ?? '127.0.0.1',
     port: 0, // ephemeral
@@ -145,6 +146,9 @@ describe('GET /v1/health', () => {
     const body = await res.json() as HealthV1;
     expect(body.ok).toBe(true);
     expect(body.namespace).toBe('default');
+    // #444 — taskQueue surfaced so the dashboard can reflect the live runtime
+    // queue (e.g. `claude-tempo` vs `claude-tempo-dev`) instead of a default.
+    expect(body.taskQueue).toBe('claude-tempo-test');
     expect(body.version).toBe('0.27.0-test');
     expect(body.subscriberCount).toBe(0);
     expect(body.ensembleCount).toBe(1);
