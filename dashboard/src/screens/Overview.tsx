@@ -191,7 +191,10 @@ export function Overview() {
 
 function RecentActivity() {
   return (
-    <div style={{ marginTop: 28 }} data-testid="overview-recent-activity">
+    <div
+      style={{ marginTop: 'calc(var(--density-gap) * 1.5)' }}
+      data-testid="overview-recent-activity"
+    >
       <SectionHead
         kicker="II / RECENT"
         title="Recent activity"
