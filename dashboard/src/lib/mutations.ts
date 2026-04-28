@@ -22,9 +22,17 @@ import type {
   CreateEnsembleResult,
   CueResult,
   DashboardTempoClient,
+  DestroyOpts,
+  DestroyResult,
+  DetachOpts,
+  DetachResult,
+  RecallOpts,
+  RecallResult,
   RecruitOpts,
   RecruitResult,
   ReleaseResult,
+  RestartOpts,
+  RestartResult,
 } from './client';
 import { HttpError } from './client';
 import { getDashboardClient } from './client-singleton';
@@ -334,4 +342,116 @@ export function useEnsembleCreateMutation(
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+// ── PR-7 destructive actions (mutation skeletons) ───────────────────
+//
+// Each hook follows the existing pattern: log started/succeeded/failed,
+// toast on success/error, invalidate the per-ensemble snapshot so the
+// dashboard refreshes once the workflow side-effect lands. The
+// underlying client methods POST to the speculated `/v1/ensembles/:e/
+// <action>` routes; until tempo-eng's daemon-side PR adds those routes,
+// every call resolves to a 404 + toasts a wire-gap message. No
+// dashboard change needed when the daemon catches up.
+
+export function useRestartMutation(
+  ensemble: string,
+  opts: MutationOptions = {},
+): UseMutationResult<RestartResult, Error, RestartOpts> {
+  const qc = useQueryClient();
+  const client = opts.client ?? getDashboardClient();
+  return useMutation<RestartResult, Error, RestartOpts>({
+    mutationFn: (vars) => client.restart(ensemble, vars),
+    onMutate: (vars) => {
+      logEvent('mutation.restart.started', { ensemble, playerId: vars.playerId });
+    },
+    onSuccess: (_result, vars) => {
+      logEvent('mutation.restart.succeeded', { ensemble, playerId: vars.playerId });
+      toastSuccess(`Restart queued for ${vars.playerId}`);
+      void qc.invalidateQueries({ queryKey: ensembleQueryKey(ensemble) });
+    },
+    onError: (err, vars) => {
+      logEvent('mutation.restart.failed', {
+        ensemble, playerId: vars.playerId, error: errMsg(err),
+      }, 'warn');
+      toastError(`Failed to restart ${vars.playerId}`, { description: errMsg(err) });
+    },
+  });
+}
+
+export function useDestroyMutation(
+  ensemble: string,
+  opts: MutationOptions = {},
+): UseMutationResult<DestroyResult, Error, DestroyOpts> {
+  const qc = useQueryClient();
+  const client = opts.client ?? getDashboardClient();
+  return useMutation<DestroyResult, Error, DestroyOpts>({
+    mutationFn: (vars) => client.destroy(ensemble, vars),
+    onMutate: (vars) => {
+      logEvent('mutation.destroy.started', { ensemble, playerId: vars.playerId });
+    },
+    onSuccess: (_result, vars) => {
+      logEvent('mutation.destroy.succeeded', { ensemble, playerId: vars.playerId });
+      toastSuccess(`Destroyed ${vars.playerId}`);
+      void qc.invalidateQueries({ queryKey: ensembleQueryKey(ensemble) });
+    },
+    onError: (err, vars) => {
+      logEvent('mutation.destroy.failed', {
+        ensemble, playerId: vars.playerId, error: errMsg(err),
+      }, 'warn');
+      toastError(`Failed to destroy ${vars.playerId}`, { description: errMsg(err) });
+    },
+  });
+}
+
+export function useDetachMutation(
+  ensemble: string,
+  opts: MutationOptions = {},
+): UseMutationResult<DetachResult, Error, DetachOpts> {
+  const qc = useQueryClient();
+  const client = opts.client ?? getDashboardClient();
+  return useMutation<DetachResult, Error, DetachOpts>({
+    mutationFn: (vars) => client.detach(ensemble, vars),
+    onMutate: (vars) => {
+      logEvent('mutation.detach.started', { ensemble, playerId: vars.playerId });
+    },
+    onSuccess: (_result, vars) => {
+      logEvent('mutation.detach.succeeded', { ensemble, playerId: vars.playerId });
+      toastSuccess(`Detached ${vars.playerId}`);
+      void qc.invalidateQueries({ queryKey: ensembleQueryKey(ensemble) });
+    },
+    onError: (err, vars) => {
+      logEvent('mutation.detach.failed', {
+        ensemble, playerId: vars.playerId, error: errMsg(err),
+      }, 'warn');
+      toastError(`Failed to detach ${vars.playerId}`, { description: errMsg(err) });
+    },
+  });
+}
+
+export function useRecallMutation(
+  ensemble: string,
+  opts: MutationOptions = {},
+): UseMutationResult<RecallResult, Error, RecallOpts> {
+  const client = opts.client ?? getDashboardClient();
+  return useMutation<RecallResult, Error, RecallOpts>({
+    mutationFn: (vars) => client.recall(ensemble, vars),
+    onMutate: (vars) => {
+      logEvent('mutation.recall.started', { ensemble, playerId: vars.playerId });
+    },
+    onSuccess: (result, vars) => {
+      logEvent('mutation.recall.succeeded', {
+        ensemble, playerId: vars.playerId, messages: result.messages,
+      });
+      toastSuccess(`Recall sent to ${vars.playerId}`, {
+        description: `${result.messages} message(s) surfaced.`,
+      });
+    },
+    onError: (err, vars) => {
+      logEvent('mutation.recall.failed', {
+        ensemble, playerId: vars.playerId, error: errMsg(err),
+      }, 'warn');
+      toastError(`Failed to recall ${vars.playerId}`, { description: errMsg(err) });
+    },
+  });
 }

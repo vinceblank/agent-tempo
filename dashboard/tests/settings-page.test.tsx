@@ -112,9 +112,7 @@ describe('Settings page', () => {
       const disband = screen.getByTestId('settings-disband-all');
       expect(disband).toHaveAttribute('aria-disabled', 'true');
       expect(disband).toHaveAttribute('data-disabled-reason');
-      // The reason should mention PR-7 / safe-write so the user knows
-      // when to expect the action to wire up.
-      expect(disband.getAttribute('data-disabled-reason')).toMatch(/PR-7/);
+      expect(disband.getAttribute('data-disabled-reason')).toMatch(/daemon endpoint/);
     });
 
     it('Reset button restores defaults via the public store actions', () => {

@@ -91,3 +91,20 @@ export function formatRunId(runId: string | undefined): string {
   if (s.length <= 8) return s;
   return `${s.slice(0, 4)}·${s.slice(-4)}`;
 }
+
+/**
+ * Snapshot `startedAt` ISO → uptime display string (`"1h 14m"`) or
+ * `null` when the field is missing / unparseable. Used by both the
+ * EnsembleCard uptime stat and the Workspace uptime page-pill — keeps
+ * the parse + delta + formatDuration sequence in one place.
+ */
+export function formatUptimeFromIso(
+  startedAt: string | undefined,
+  now: number = Date.now(),
+): string | null {
+  if (!startedAt) return null;
+  const startMs = Date.parse(startedAt);
+  if (!Number.isFinite(startMs)) return null;
+  const out = formatDuration(now - startMs);
+  return out === '—' ? null : out;
+}

@@ -16,14 +16,21 @@
  * counters, runId, lease.expiresAt, adapter version) render as `"—"`
  * placeholders. The wire extension lands post-beta.7.
  */
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { EnsembleChatMessage } from 'claude-tempo/types';
 import type { PlayerSummaryV1 } from 'claude-tempo/http/event-types';
 import { useEnsembleSnapshot, useHosts } from '../lib/queries';
+import {
+  useDestroyMutation,
+  useDetachMutation,
+  useRecallMutation,
+  useRestartMutation,
+} from '../lib/mutations';
 import { ResponsivePanel } from '../components/ResponsivePanel';
 import { SectionHead } from '../components/SectionHead';
-import { DisabledWithTooltip } from '../components/DisabledWithTooltip';
+import { Btn } from '../components/Btn';
+import { ConfirmDialog } from '../components/wizard/ConfirmDialog';
 import { PlayerAvatar } from '../components/tempo/PlayerAvatar';
 import { PhaseDot } from '../components/tempo/PhaseDot';
 import { TypeBadge } from '../components/tempo/TypeBadge';
@@ -38,21 +45,6 @@ import {
 } from '../lib/time-format';
 
 const TRANSCRIPT_LIMIT = 6;
-
-interface ActionSpec {
-  /** testid suffix; full id is `player-detail-${playerId}-action-${key}`. */
-  key: 'dm' | 'recall' | 'restart' | 'detach' | 'destroy';
-  label: string;
-  reason: string;
-}
-
-const ACTIONS: readonly ActionSpec[] = [
-  { key: 'dm',       label: '@DM',     reason: 'Direct message wires up in PR-7 of #389.' },
-  { key: 'recall',   label: 'Recall',  reason: 'Recall wires up in PR-7 of #389.' },
-  { key: 'restart',  label: 'Restart', reason: 'Restart wires up in PR-7 of #389.' },
-  { key: 'detach',   label: 'Detach',  reason: 'Detach wires up in PR-7 of #389.' },
-  { key: 'destroy',  label: 'Destroy', reason: 'Destroy wires up in PR-7 of #389.' },
-];
 
 export function PlayerDetail() {
   const { id, playerId } = useParams<{ id: string; playerId: string }>();
@@ -84,7 +76,12 @@ export function PlayerDetail() {
         <NotFound testId={baseTestId} loading={snapshot.isLoading} ensemble={id} playerId={playerId} onClose={close} />
       ) : (
         <>
-          <SheetHead player={player} testIdPrefix={baseTestId} onClose={close} />
+          <SheetHead
+            ensemble={id ?? ''}
+            player={player}
+            testIdPrefix={baseTestId}
+            onClose={close}
+          />
           <div className="player-sheet-body">
             <SheetMain player={player} transcript={transcript} testIdPrefix={baseTestId} />
             <SheetSide
@@ -100,15 +97,32 @@ export function PlayerDetail() {
 }
 
 function SheetHead({
+  ensemble,
   player,
   testIdPrefix,
   onClose,
 }: {
+  ensemble: string;
   player: PlayerSummaryV1;
   testIdPrefix: string;
   onClose: () => void;
 }) {
   const branch = player.gitBranch ?? '—';
+  const recall = useRecallMutation(ensemble);
+  const restart = useRestartMutation(ensemble);
+  const detach = useDetachMutation(ensemble);
+  const destroy = useDestroyMutation(ensemble);
+  const [confirmingDestroy, setConfirmingDestroy] = useState(false);
+
+  const onDestroyConfirmed = () => {
+    destroy.mutate(
+      { playerId: player.playerId },
+      {
+        onSettled: () => setConfirmingDestroy(false),
+      },
+    );
+  };
+
   return (
     <div className="panel-head player-sheet-head">
       <div className="panel-head-title" style={{ alignItems: 'center', gap: 12 }}>
@@ -138,16 +152,53 @@ function SheetHead({
         </div>
       </div>
       <div className="row" data-testid={`${testIdPrefix}-actions`}>
-        {ACTIONS.map((a) => (
-          <DisabledWithTooltip
-            key={a.key}
-            testId={`${testIdPrefix}-action-${a.key}`}
-            action={`player-detail.${a.key}`}
-            reason={a.reason}
-          >
-            {a.label}
-          </DisabledWithTooltip>
-        ))}
+        {/* @DM — closes the sheet to return the operator to the
+            workspace where they can compose. The workspace's composer
+            already routes by player target; pre-fill is a follow-up. */}
+        <Btn
+          variant="ghost"
+          size="sm"
+          data-testid={`${testIdPrefix}-action-dm`}
+          onClick={onClose}
+        >
+          @DM
+        </Btn>
+        <Btn
+          variant="ghost"
+          size="sm"
+          data-testid={`${testIdPrefix}-action-recall`}
+          disabled={recall.isPending}
+          onClick={() => recall.mutate({ playerId: player.playerId })}
+        >
+          Recall
+        </Btn>
+        <Btn
+          variant="ghost"
+          size="sm"
+          data-testid={`${testIdPrefix}-action-restart`}
+          disabled={restart.isPending}
+          onClick={() => restart.mutate({ playerId: player.playerId })}
+        >
+          Restart
+        </Btn>
+        <Btn
+          variant="ghost"
+          size="sm"
+          data-testid={`${testIdPrefix}-action-detach`}
+          disabled={detach.isPending}
+          onClick={() => detach.mutate({ playerId: player.playerId })}
+        >
+          Detach
+        </Btn>
+        <Btn
+          variant="danger"
+          size="sm"
+          data-testid={`${testIdPrefix}-action-destroy`}
+          disabled={destroy.isPending}
+          onClick={() => setConfirmingDestroy(true)}
+        >
+          Destroy
+        </Btn>
         <button
           type="button"
           className="btn btn-ghost btn-sm"
@@ -158,6 +209,27 @@ function SheetHead({
           ✕
         </button>
       </div>
+      {confirmingDestroy && (
+        <ConfirmDialog
+          title={`Destroy ${player.playerId}?`}
+          confirmLabel="Destroy"
+          pending={destroy.isPending}
+          onCancel={() => setConfirmingDestroy(false)}
+          onConfirm={onDestroyConfirmed}
+          testIdPrefix={`${testIdPrefix}-destroy-confirm`}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <p style={{ margin: 0 }}>
+              This terminates the player workflow. The session enters{' '}
+              <code className="mono">gone</code> phase and cannot be revived.
+            </p>
+            <p style={{ margin: 0, color: 'var(--dim)', fontSize: 12.5 }}>
+              Use <code className="mono">Detach</code> instead if you intend to
+              restart the player later.
+            </p>
+          </div>
+        </ConfirmDialog>
+      )}
     </div>
   );
 }

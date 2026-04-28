@@ -33,7 +33,7 @@ describe('Schedules screen — header', () => {
     expect(screen.getByTestId('page-header').textContent).toContain('Schedules');
     const action = screen.getByTestId('schedules-action-new');
     expect(action).toHaveAttribute('aria-disabled', 'true');
-    expect(action.getAttribute('title')).toMatch(/PR-7/);
+    expect(action.getAttribute('title')).toMatch(/daemon endpoint/);
   });
 });
 

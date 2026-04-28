@@ -22,7 +22,7 @@ import { logEvent } from '../lib/log';
 import { SHIPPED_LINEUPS, type LoadoutEntry } from '../lib/lineups-catalog';
 
 const COL_HEADERS = ['Name', 'Summary', 'Players', 'Source', 'Last used'] as const;
-const PR7_REASON = 'Loadout writes wire up in PR-7 of #389.';
+const PR7_REASON = 'Editing lineup files requires a daemon endpoint that hasn’t shipped yet.';
 
 export function Loadouts() {
   useEffect(() => {
