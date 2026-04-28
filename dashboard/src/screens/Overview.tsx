@@ -211,7 +211,7 @@ function RecentActivity() {
             data-testid="overview-recent-activity-empty"
             style={{ display: 'flex', justifyContent: 'center', color: 'var(--dim)' }}
           >
-            <span>No recent activity. Cross-ensemble event stream lands in beta.8.</span>
+            <span>No recent activity. Cross-ensemble event stream coming soon.</span>
           </div>
         </div>
       </div>

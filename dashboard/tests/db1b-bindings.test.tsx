@@ -52,8 +52,8 @@ describe('formatDuration', () => {
   });
 
   it.each([
-    [0, '0s'],
-    [45_000, '45s'],
+    [0, '<1m'],
+    [45_000, '<1m'],
     [60_000, '1m'],
     [90_000, '1m'],
     [60 * 60_000, '1h'],
@@ -130,12 +130,12 @@ describe('EnsembleCard — DB1a binding', () => {
     });
   });
 
-  it('falls back to the conductor sentinel when description is empty', async () => {
+  it('renders empty .ec-desc when description is absent (Q5.1 — no fallback sentinel)', async () => {
     renderCard(extSnapshot({ description: '', hasConductor: true }));
     await waitFor(() => {
-      expect(screen.getByTestId('ensemble-card-demo-desc').textContent).toContain(
-        'Conductor active.',
-      );
+      // Q5.1: no fallback text — the .ec-desc div exists (preserves grid
+      // min-height) but must be empty when no description has been set.
+      expect(screen.getByTestId('ensemble-card-demo-desc').textContent).toBe('');
     });
   });
 

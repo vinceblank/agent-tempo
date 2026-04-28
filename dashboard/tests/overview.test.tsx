@@ -226,8 +226,8 @@ describe('Overview screen', () => {
     await waitFor(() => {
       expect(screen.getByTestId('overview-recent-activity')).toBeInTheDocument();
     });
-    // Empty-state row is wire-pending per Q5 (cross-ensemble stream lands beta.8).
+    // Empty-state row is wire-pending per Q5 (#438 removed version reference).
     expect(screen.getByTestId('overview-recent-activity-empty')).toBeInTheDocument();
-    expect(screen.getByTestId('overview-recent-activity-empty').textContent).toMatch(/beta\.8/);
+    expect(screen.getByTestId('overview-recent-activity-empty').textContent).toMatch(/coming soon/);
   });
 });

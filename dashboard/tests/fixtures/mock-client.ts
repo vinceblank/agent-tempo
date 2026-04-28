@@ -10,6 +10,7 @@
 import type {
   EnsembleStateV1,
   EnsembleSummary,
+  HealthV1,
   TempoEvent,
 } from 'claude-tempo/http/event-types';
 import type { HostInfo } from 'claude-tempo/types';
@@ -106,6 +107,17 @@ export class MockDashboardClient implements DashboardTempoClient {
     if (initial.lineups) this.lineupList = initial.lineups;
     if (initial.lineupsError) this.lineupsError = initial.lineupsError;
     if (initial.mutationErrors) this.mutationErrors = initial.mutationErrors;
+  }
+
+  async health(): Promise<HealthV1> {
+    return {
+      ok: true,
+      namespace: 'default',
+      version: '0.0.0-test',
+      uptimeMs: 0,
+      ensembleCount: 0,
+      subscriberCount: 0,
+    };
   }
 
   async listEnsembles(): Promise<EnsembleSummary[]> {

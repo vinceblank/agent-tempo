@@ -37,7 +37,9 @@ export function formatRelativeAge(iso: string | undefined, now: number = Date.no
  * (`now - HostProfile.daemonStartedAt`).
  *
  * Returns `"—"` for `undefined`, negative values (clock skew), and
- * non-finite inputs.
+ * non-finite inputs. Sub-minute durations return `"<1m"` rather than a
+ * raw seconds value — the card grid is not wide enough to make raw
+ * seconds meaningful, and fresh ensembles showing "0s" reads as broken.
  *
  * Note: parent repo's `src/utils/duration.ts` exports `formatDurationMs`
  * which returns single-unit (`"5h"`); this dashboard helper returns
@@ -47,7 +49,7 @@ export function formatRelativeAge(iso: string | undefined, now: number = Date.no
 export function formatDuration(ms: number | undefined): string {
   if (ms === undefined || !Number.isFinite(ms) || ms < 0) return '—';
   const sec = Math.floor(ms / 1000);
-  if (sec < 60) return `${sec}s`;
+  if (sec < 60) return '<1m';
   const min = Math.floor(sec / 60);
   if (min < 60) return `${min}m`;
   const hr = Math.floor(min / 60);

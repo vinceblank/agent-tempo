@@ -26,6 +26,7 @@
  * (lines 536-645) + audit §6 PR-G (lines 1052-1071).
  */
 import { useCallback, useState } from 'react';
+import { useHealth } from '../lib/queries';
 import {
   DEFAULT_ACCENT,
   DEFAULT_DENSITY,
@@ -91,6 +92,16 @@ export function Settings() {
 // ── Panels ────────────────────────────────────────────────────────────
 
 function ConnectionPanel() {
+  const { data: health, isLoading, isError } = useHealth();
+
+  // Derive display values from live health data; fall back to "…" while
+  // loading and "?" on error so the panel never shows stale hard-coded
+  // defaults. namespace and version are the only fields /v1/health
+  // exposes — address and task queue remain static until the daemon adds
+  // them to the health response.
+  const namespace = isLoading ? '…' : isError ? '?' : (health?.namespace ?? '?');
+  const version = isLoading ? '…' : isError ? '?' : (health?.version ?? '?');
+
   return (
     <div className="panel settings-panel" data-testid="settings-panel-connection">
       <div className="panel-head">
@@ -105,9 +116,10 @@ function ConnectionPanel() {
         </span>
       </div>
       <div className="panel-body">
-        <KV k="namespace" v="default" mono />
+        <KV k="namespace" v={namespace} mono />
         <KV k="address" v="localhost:7233" mono />
         <KV k="task queue" v="claude-tempo" mono />
+        <KV k="version" v={version} mono />
         <KV k="tls" v="off" mono />
         <KV k="auth" v="—" mono />
       </div>
