@@ -95,10 +95,21 @@ export function PhoneAppBar({
           <span className="phone-appbar-kicker">
             {lineup ? `lineup · ${lineup}` : 'ensemble'}
           </span>
-          <span className="phone-appbar-name">
-            <span className="at">@</span>
-            {activeEnsemble || '—'}
-          </span>
+          {/* On routes outside any ensemble (e.g. `/dashboard`,
+            * `/dashboard/loadouts`) the selector falls back to `@—`
+            * which reads as a placeholder bug rather than an empty
+            * state. Suppress the chunk entirely there — kicker +
+            * hamburger conveys the empty-context state without the
+            * em-dash sentinel. */}
+          {activeEnsemble && (
+            <span
+              className="phone-appbar-name"
+              data-testid="phone-appbar-ensemble-name"
+            >
+              <span className="at">@</span>
+              {activeEnsemble}
+            </span>
+          )}
         </div>
         <button
           type="button"

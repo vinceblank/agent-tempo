@@ -159,7 +159,7 @@ interface PlayerSummaryV1 {
   ensemble: string;
   hostname: string;
   isConductor: boolean;
-  agentType: 'claude' | 'copilot';
+  agentType: 'claude' | 'copilot' | 'mock';
   playerType?: string;
   phase?: AttachmentPhase;     // from WIRE-PROTOCOL §Type Reference
   part: string;

@@ -463,15 +463,14 @@ function formatCount(n: number | undefined): string {
 
 /**
  * `agentType` (wire) → adapter key (host's `adapterVersions` map).
- * The wire surface uses the short `'claude' | 'copilot'` union; the
- * daemon's `HostProfile.adapterVersions` is keyed by the upstream tool
- * name (`'claude-code' | 'copilot'`). Centralised so this convention
- * shows up exactly once.
+ * The wire surface uses the short agent name; the daemon's
+ * `HostProfile.adapterVersions` is keyed by upstream tool name. Only
+ * `'claude'` needs translation — `'copilot'` and `'mock'` already match
+ * their adapter keys.
  */
-const ADAPTER_KEY_BY_AGENT: Record<string, string> = {
-  claude: 'claude-code',
-  copilot: 'copilot',
-};
+function adapterKeyForAgent(agent: PlayerSummaryV1['agentType']): string {
+  return agent === 'claude' ? 'claude-code' : agent;
+}
 
 /**
  * Resolve the adapter row's display string (Q5.4 W3). Renders
@@ -485,7 +484,7 @@ function resolveAdapterVersion(
 ): string {
   const agent = player.agentType;
   if (!agent) return '—';
-  const adapterKey = ADAPTER_KEY_BY_AGENT[agent] ?? agent;
+  const adapterKey = adapterKeyForAgent(agent);
   const hostInfo = hosts?.find((h) => h.hostname === player.hostname);
   const version = hostInfo?.profile?.adapterVersions?.[adapterKey];
   return version ? `${adapterKey} · v${version}` : adapterKey;

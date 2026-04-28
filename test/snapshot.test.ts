@@ -101,12 +101,31 @@ describe('toPlayerSummaryV1 projection (#399 W2 + Q5.6)', function () {
     expect(out).to.not.have.property('lease');
   });
 
-  it('coerces unknown agentType to claude per v1 contract', function () {
+  it('preserves agentType="mock" through the projection (#434)', function () {
+    // #434 widened the v1 wire union from `'claude' | 'copilot'` to
+    // `'claude' | 'copilot' | 'mock'`. The dashboard's PlayerDetail now
+    // shows `adapter: mock` for mock players instead of the misleading
+    // `claude-code` coercion the closed union forced.
     const out = toPlayerSummaryV1({
       ...baseInfo,
-      // open-string MaestroPlayerInfo can carry future adapters; v1
-      // wire contract doesn't expose them yet.
-      agentType: 'mock' as unknown as MaestroPlayerInfo['agentType'],
+      agentType: 'mock',
+    });
+    expect(out.agentType).to.equal('mock');
+  });
+
+  it('preserves agentType="copilot" through the projection', function () {
+    const out = toPlayerSummaryV1({ ...baseInfo, agentType: 'copilot' });
+    expect(out.agentType).to.equal('copilot');
+  });
+
+  it('coerces unknown agentType to claude per v1 contract', function () {
+    // The wire union is closed at `'claude' | 'copilot' | 'mock'`. Anything
+    // outside that set (e.g. a future `'gemini'` recruited from a forked
+    // build connecting to this snapshot) defaults to `'claude'` so the
+    // dashboard never sees a value the consumer isn't typed to handle.
+    const out = toPlayerSummaryV1({
+      ...baseInfo,
+      agentType: 'gemini' as unknown as MaestroPlayerInfo['agentType'],
     });
     expect(out.agentType).to.equal('claude');
   });

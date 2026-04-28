@@ -1,6 +1,5 @@
 /**
- * TempoStrip — sparkline of recent message activity with a BPM overlay
- * (PR-A2 of #389, rev 4 C6).
+ * TempoStrip — sparkline of recent message activity with a BPM overlay.
  *
  * Ports the canonical handoff primitive (`primitives.jsx:101-144` +
  * `web-design-system.html` ".tempo-strip · 60 bars · 92 bpm" block) so
@@ -9,8 +8,10 @@
  *   - `.tempo-strip` wrapper with absolute-positioned `.tempo-strip-label`
  *     and an SVG below — color tokens, padding, label typography all live
  *     in `components.css`.
- *   - 60 buckets typical (caller decides; the component just renders
- *     whatever array it receives).
+ *   - Always renders {@link TARGET_BARS} bars. Shorter series left-pad
+ *     with zeros so a fresh ensemble still draws the canonical full-width
+ *     sparkline instead of a stunted few-bar nub. Longer series clip to
+ *     the most recent N.
  *   - Last 10 bars render in `var(--accent)`; older bars render in
  *     `var(--rule-strong)` at 0.75 opacity.
  *   - Every 10th column gets a dashed `var(--rule)` ruler line.
@@ -20,19 +21,38 @@
  */
 import { useReducedMotion } from '../../lib/use-reduced-motion';
 
+/** Canonical sparkline width — `web-design-system.html` calls it "60 bars". */
+const TARGET_BARS = 60;
+
+/**
+ * Left-pad a series to `target` length with zeros, OR slice to the most
+ * recent `target` entries when longer. Exported for unit testing and for
+ * any future caller that wants to feed a non-default `targetBars` count.
+ */
+export function padTempoSeries(series: number[], target: number = TARGET_BARS): number[] {
+  if (series.length === target) return series;
+  if (series.length > target) return series.slice(-target);
+  return [...Array(target - series.length).fill(0), ...series];
+}
+
 interface TempoStripProps {
   /** Per-bucket activity counts (typically messages/min, last N minutes). */
   series: number[];
   height?: number;
   bpm?: number;
+  /** Target bar count; defaults to {@link TARGET_BARS} (60). */
+  targetBars?: number;
 }
 
-export function TempoStrip({ series, height = 44, bpm = 92 }: TempoStripProps) {
+export function TempoStrip({ series, height = 44, bpm = 92, targetBars = TARGET_BARS }: TempoStripProps) {
   const reduceMotion = useReducedMotion();
-  const max = Math.max(...series, 1);
+  const padded = padTempoSeries(series, targetBars);
+  const max = Math.max(...padded, 1);
   const w = 4;
   const gap = 2;
-  const total = Math.max(series.length, 1) * (w + gap);
+  const total = Math.max(padded.length, 1) * (w + gap);
+  // Use the original `series` (not the padded one) for "last bar active"
+  // — leading zeros from the pad shouldn't pulse.
   const lastBarActive = series.length > 0 && series[series.length - 1] > 0;
   return (
     <div
@@ -55,7 +75,7 @@ export function TempoStrip({ series, height = 44, bpm = 92 }: TempoStripProps) {
         preserveAspectRatio="none"
         aria-hidden="true"
       >
-        {series.map((_, i) =>
+        {padded.map((_, i) =>
           i % 10 === 0 ? (
             <line
               key={`g${i}`}
@@ -68,12 +88,12 @@ export function TempoStrip({ series, height = 44, bpm = 92 }: TempoStripProps) {
             />
           ) : null,
         )}
-        {series.map((v, i) => {
+        {padded.map((v, i) => {
           const h = (v / max) * (height - 8);
           const x = i * (w + gap);
           const y = height - h - 2;
-          const recent = i > series.length - 10;
-          const isLast = i === series.length - 1;
+          const recent = i > padded.length - 10;
+          const isLast = i === padded.length - 1;
           return (
             <rect
               key={i}
