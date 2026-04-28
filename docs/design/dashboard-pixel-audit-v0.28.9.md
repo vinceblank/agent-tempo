@@ -20,8 +20,8 @@ finding is a **partial-port event**, not a wholesale styling miss — some
 HEAD-canonical changes are present in impl, others aren't, and the
 LAST-SYNC marker in components.css is misleading about which.
 
-**Severity distribution**: **10 P1, 10 P2, 20 P3 = 40 findings total** (lead
-pre-locked 10; recruits added 30 new + corroborated 14 lead findings on
+**Severity distribution**: **10 P1, 7 P2, 20 P3 = 37 findings total** (lead
+pre-locked 10; recruits added 27 new + corroborated 14 lead findings on
 specific screens/viewports). The P1 cluster is dominated by port-drift; P2
 findings are predominantly visible at the phone breakpoint where the
 unported `@container artboard (max-width: 520px)` rules live; P3 findings
@@ -216,7 +216,7 @@ All breakpoints byte-identical. **No drift in responsive boundaries.**
 
 ## 4. Findings catalog
 
-40 findings total (10 lead pre-locked + 30 from recruits). Grouped by source.
+37 findings total (10 lead pre-locked + 27 from recruits). Grouped by source.
 
 ### 4.1 Lead pre-locked (F-LEAD-1..10)
 
@@ -286,20 +286,35 @@ All four are P3 with the "no-canonical-reference" tag (canonical is mock-only; d
 
 ## 5. Severity summary
 
+Counts regenerated directly from §4 catalog enumeration. Each `F-LEAD-N`,
+`F-A-N`, `L-N`, `S-N`, `H-N`, `T-N`, `ST-N` row in §4 = one finding (some
+findings encompass multiple sub-deltas, e.g. L-4 covers three CSS
+property deltas in the same rule — these stay as one finding).
+
 | Severity | Lead | Batch A | Batch B | Total |
 |---|---|---|---|---|
-| **P1** | 4 | 1 | 5 | **10** |
-| **P2** | 0 | 3 | 7 | **10** |
-| **P3** | 6 | 3 | 11 | **20** |
-| **Total** | 10 | 7 | 23 | **40** |
+| **P1** | 4 | 2 | 4 | **10** |
+| **P2** | 0 | 3 | 4 | **7** |
+| **P3** | 6 | 2 | 12 | **20** |
+| **Total** | 10 | 7 | 20 | **37** |
+
+**Batch A breakdown** (F-A-2 was retiered from P2 to P1 during consolidation per the rubric's "port drift = auto-P1" rule, then §5 was updated to match):
+- P1: F-A-1, F-A-2 (2)
+- P2: F-A-3, F-A-4, F-A-6 (3)
+- P3: F-A-5, F-A-7 (2)
+
+**Batch B breakdown**:
+- P1: L-2, L-3, T-1, T-2 (4)
+- P2: L-4, L-5, L-6, L-7 (4)
+- P3: L-1, L-8, L-9, S-1, H-1, H-2, H-3, T-3, ST-1, ST-2, ST-3, ST-4 (12)
 
 **Disposition breakdown** (orthogonal to severity):
-- 14 findings are **port drift** (inside the 144-line zone): F-LEAD-1, 2, 3, 4 + F-A-2 + L-2..L-7
-- 4 findings are **deferred pending PR-7** (safe-write endpoints): L-1, S-1, plus mirrors in CreateEnsemble/Schedules/Settings
+- 13 findings are **port drift** (inside the 144-line zone): F-LEAD-1, F-LEAD-2, F-LEAD-3, F-LEAD-4 (4) + F-A-2 (1) + L-2..L-9 (8)
+- ~4 findings are **deferred pending PR-7** (safe-write endpoints): L-1, S-1, plus mirrors in CreateEnsemble/Schedules/Settings Disband-all (mirrors aren't separately catalogued; counted as ~4)
 - 1 finding is **deferred pending Radix**: F-A-1
 - 4 findings are **no-canonical-reference** (Settings ratification): ST-1..ST-4
-- 2 findings need **design-owner decisions**: T-1 (column rule), ST-2 (live controls)
-- The remainder (~15) are JSX/CSS micro-fixes shippable now
+- 2 findings need **design-owner decisions**: T-1 (column rule), ST-2 (live controls — overlaps with no-canonical-reference)
+- The remainder (~15) are JSX/CSS micro-fixes shippable now (some overlap; e.g. T-1 is both port-drift and design-owner-decision)
 
 ---
 
