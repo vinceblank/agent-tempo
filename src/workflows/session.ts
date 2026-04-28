@@ -53,6 +53,11 @@ import {
   historyQuery,
   submitOutboxUpdate,
   outboxQuery,
+  // #399 W2 — session wire extensions (Q5.2/Q5.5/Q5.6/Q5.7)
+  getRunIdQuery,
+  getMessagingStateQuery,
+  getActivityStateQuery,
+  getLeaseStateQuery,
   setQualityGateSignal,
   evaluateGateCriteriaSignal,
   qualityGatesQuery,
@@ -211,6 +216,15 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   let lastOutboundTime = input.lastOutboundTime ?? workflowNow().getTime();
   let lastInboundRRTime = input.lastInboundRRTime ?? 0;
 
+  // ── #399 W2 — wire-extension counters (carried across continueAsNew) ──
+  // `activityCount` mirrors the ~20 `lastActivityTime` mutation sites;
+  // `receivedCount` / `sentCount` track inbound cues + outbox submissions.
+  // All three feed dashboard surfaces via the new `getActivityStateQuery`
+  // and `getMessagingStateQuery` queries.
+  let activityCount = input.activityCount ?? 0;
+  let receivedCount = input.receivedCount ?? 0;
+  let sentCount = input.sentCount ?? 0;
+
   // ── Warm Hold + Pause State ──
   let outboxLocked = input.outboxLocked ?? false;
   let heldMessage: string | undefined = input.heldMessage;
@@ -280,12 +294,44 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
 
   // ── Helpers ──
 
+  /**
+   * Reduce the outbox state list to a short status string for the
+   * dashboard's `Messages` KV row (Q5.5 of #399 W2). Returns:
+   *
+   *   - `"empty"`               — no pending entries
+   *   - `"N pending"`           — pending entries, oldest within `STALE_MS`
+   *   - `"N pending (oldest 2m)"` — pending entries, oldest beyond
+   *     the stale threshold; the magnitude (m / s) is human-rounded so
+   *     the dashboard reads cleanly without further parsing.
+   *
+   * `STALE_MS = 30_000` per the brief — anything older than 30s pending
+   * is the "outbox is backing up" signal we want to surface.
+   */
+  function outboxStatus(): string {
+    const STALE_MS = 30_000;
+    const nowMs = workflowNow().getTime();
+    let count = 0;
+    let oldestAge = 0;
+    for (const e of outbox) {
+      if (e.status !== 'pending') continue;
+      count++;
+      const age = nowMs - Date.parse(e.createdAt);
+      if (age > oldestAge) oldestAge = age;
+    }
+    if (count === 0) return 'empty';
+    if (oldestAge < STALE_MS) return `${count} pending`;
+    const minutes = Math.floor(oldestAge / 60_000);
+    const ageLabel = minutes >= 1 ? `${minutes}m` : `${Math.floor(oldestAge / 1000)}s`;
+    return `${count} pending (oldest ${ageLabel})`;
+  }
+
   /** Transition to a new phase, syncing the attachment search attribute. */
   function setPhase(next: AttachmentPhase): void {
     if (phase === next) return;
     phase = next;
     upsertSearchAttributes({ ClaudeTempoAttachmentState: [next] });
     lastActivityTime = workflowNow().getTime();
+    activityCount++;
   }
 
   /** Build the token returned from `claimAttachment`. `leaseMs` is the value the caller
@@ -327,6 +373,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       status: 'pending',
     } as OutboxEntry;
     outbox.push(entry);
+    // #399 W2 — every outbox submission counts as outbound traffic.
+    sentCount++;
 
     // Record in sentMessages for history continuity
     if (entry.type === 'cue') {
@@ -354,6 +402,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     }
 
     lastActivityTime = workflowNow().getTime();
+    activityCount++;
     lastOutboundTime = workflowNow().getTime();
     return entry.id;
   }, {
@@ -380,6 +429,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       ...(msg.broadcastId !== undefined ? { broadcastId: msg.broadcastId } : {}),
     });
     lastActivityTime = workflowNow().getTime();
+    activityCount++;
+    // #399 W2 — every inbound cue counts as received traffic.
+    receivedCount++;
     // Track inbound messages that expect a response (default: true for backward compat)
     if (patched('v0.20-response-requested-blocked') && msg.responseRequested !== false) {
       lastInboundRRTime = workflowNow().getTime();
@@ -389,6 +441,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   setHandler(setPartSignal, (newPart) => {
     part = newPart;
     lastActivityTime = workflowNow().getTime();
+    activityCount++;
     lastOutboundTime = workflowNow().getTime();
   });
 
@@ -396,6 +449,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     input.metadata.playerId = newName;
     upsertSearchAttributes({ ClaudeTempoPlayerId: [newName] });
     lastActivityTime = workflowNow().getTime();
+    activityCount++;
   });
 
   setHandler(markDeliveredSignal, (ids) => {
@@ -406,6 +460,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     }
     // Any delivery proves the session is alive
     lastActivityTime = workflowNow().getTime();
+    activityCount++;
   });
 
   setHandler(updateMetadataSignal, (update) => {
@@ -430,6 +485,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       ClaudeTempoIsConductor: [input.metadata.isConductor === true],
     });
     lastActivityTime = workflowNow().getTime();
+    activityCount++;
   });
 
   setHandler(recordSentMessageSignal, (msg) => {
@@ -451,6 +507,29 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   setHandler(pendingMessagesQuery, () => messages.filter((m) => !m.delivered));
   setHandler(allMessagesQuery, () => messages);
   setHandler(allSentMessagesQuery, () => sentMessages);
+
+  // ── #399 W2 — Wire extension queries (Q5.2 / Q5.5 / Q5.6 / Q5.7) ──
+
+  setHandler(getRunIdQuery, () => workflowInfo().runId);
+
+  setHandler(getMessagingStateQuery, () => ({
+    received: receivedCount,
+    sent: sentCount,
+    outbox: outboxStatus(),
+  }));
+
+  setHandler(getActivityStateQuery, () => ({
+    activityCount,
+    lastActivityAt: new Date(lastActivityTime).toISOString(),
+  }));
+
+  setHandler(getLeaseStateQuery, () => {
+    if (!currentAttachment) return { expiresAt: null, leaseMs: null };
+    return {
+      expiresAt: Date.parse(currentAttachment.expiresAt),
+      leaseMs: currentAttachment.leaseMs,
+    };
+  });
 
   // ── Hold / Release Handlers ──
 
@@ -498,6 +577,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       if (phase === 'attached' || phase === 'awaiting') setPhase('processing');
     }
     lastActivityTime = workflowNow().getTime();
+    activityCount++;
     return { inFlightCount: inFlightMessages.size };
   }, {
     validator: ({ messageId }) => {
@@ -539,6 +619,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       }
     }
     lastActivityTime = workflowNow().getTime();
+    activityCount++;
     return { inFlightCount: inFlightMessages.size };
   }, {
     validator: ({ messageId }) => {
@@ -651,6 +732,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       delivered: false,
     });
     lastActivityTime = workflowNow().getTime();
+    activityCount++;
   });
 
   setHandler(isDestroyedQuery, () => destroyed || destroyRequested);
@@ -671,6 +753,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     forceContinueAsNew = true;
     wakeEpoch++;
     lastActivityTime = workflowNow().getTime();
+    activityCount++;
   });
 
   // ── v0.25 Attachment Lifecycle Handlers (design §§8, §9.2, §9.5) ──
@@ -702,6 +785,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       // the lease by the current negotiated value (not the claim-time value).
       currentAttachment.leaseMs = leaseMs;
       lastActivityTime = nowMs;
+      activityCount++;
       return attachmentTokenFrom(currentAttachment, leaseMs);
     }
 
@@ -742,6 +826,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       ClaudeTempoAttachmentId: [newAttachment.attachmentId],
     });
     lastActivityTime = nowMs;
+    activityCount++;
     return attachmentTokenFrom(newAttachment, leaseMs);
   }, {
     validator: ({ leaseMs }) => {
@@ -860,6 +945,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     };
     outbox.push(entry);
     lastActivityTime = workflowNow().getTime();
+    activityCount++;
     lastOutboundTime = workflowNow().getTime();
     return { spawnEntryId };
   });
@@ -868,6 +954,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   setHandler(setPreferredHostUpdate, ({ host }) => {
     preferredHost = host;
     lastActivityTime = workflowNow().getTime();
+    activityCount++;
   });
 
   /**
@@ -883,6 +970,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     // (e.g. test harnesses running accelerated clocks) get the lease duration they asked for.
     currentAttachment.expiresAt = new Date(now.getTime() + currentAttachment.leaseMs).toISOString();
     lastActivityTime = now.getTime();
+    activityCount++;
   });
 
   /**
@@ -911,6 +999,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     lastDetachReason = reason;
     setPhase('draining');
     lastActivityTime = workflowNow().getTime();
+    activityCount++;
     wakeEpoch++;
   });
 
@@ -934,6 +1023,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       ClaudeTempoAttachmentId: [''],
     });
     lastActivityTime = workflowNow().getTime();
+    activityCount++;
     // Wake main loop; the pre-existing condition timer was sized for the old lease
     // window which no longer applies.
     wakeEpoch++;
@@ -985,6 +1075,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       });
       // Command processing counts as implicit outbound for blocked detection
       lastActivityTime = workflowNow().getTime();
+      activityCount++;
       lastOutboundTime = workflowNow().getTime();
     });
 
@@ -1642,6 +1733,11 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         outbox: outbox.filter((e) => e.status === 'pending' || e.status === 'processing'),
         lastInboundRRTime,
         lastOutboundTime,
+        // #399 W2 — counters carried across continueAsNew so the
+        // dashboard's "Messages" + "tempo" surfaces stay monotonic.
+        receivedCount,
+        sentCount,
+        activityCount,
         outboxLocked,
         heldMessage,
         paused,

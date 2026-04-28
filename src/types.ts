@@ -341,6 +341,23 @@ export interface SessionInput {
   lastInboundRRTime?: number;
   /** Restored from continue-as-new: last outbound activity timestamp */
   lastOutboundTime?: number;
+  /**
+   * #399 W2 — counters carried across continueAsNew. Each is monotonic
+   * across the workflow's lifetime; the dashboard surfaces them via
+   * `getMessagingStateQuery` and `getActivityStateQuery`.
+   *
+   * - `receivedCount`: bumped per inbound `receiveMessage` cue.
+   * - `sentCount`: bumped per `submitOutboxUpdate` (every entry the
+   *   session pushes to its outbox). The dashboard's "Messages" KV
+   *   row reads this as outbound volume.
+   * - `activityCount`: bumped at every "work" event — cue, outbox
+   *   submit, schedule fire, report, recruit, restart, destroy,
+   *   migrate. Mirrors the existing `lastActivityTime` mutation
+   *   sites (~20 of them) and feeds W1's tempo bucket projection.
+   */
+  receivedCount?: number;
+  sentCount?: number;
+  activityCount?: number;
   /** Restored from continue-as-new (conductor only) */
   qualityGates?: QualityGate[];
   /** Restored from continue-as-new (conductor only) */

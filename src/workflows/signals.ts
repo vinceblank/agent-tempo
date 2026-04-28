@@ -239,6 +239,69 @@ export const orphanSummaryQuery = defineQuery<OrphanSummary>('orphanSummary');
 export const submitOutboxUpdate = defineUpdate<string, [OutboxEntryInput]>('submitOutbox');
 export const outboxQuery = defineQuery<OutboxEntry[]>('outbox');
 
+// ── #399 W2 — Session wire extensions (Q5.2 / Q5.5 / Q5.6 / Q5.7) ──
+//
+// Additive queries that surface session-level fields the dashboard
+// renders as `"—"` placeholders today. All counters live on the session
+// workflow + carry across continueAsNew via SessionInput.
+
+/**
+ * Q5.2 — runId of the current workflow execution. Returned as the raw
+ * UUID string from `workflowInfo().runId`; the dashboard truncates to
+ * `XXXX·XXXX` (first 4 + last 4 + middle dot) client-side so this query
+ * stays a thin pass-through.
+ */
+export const getRunIdQuery = defineQuery<string>('getRunId');
+
+/**
+ * Q5.5 — messaging counters + outbox status summary. The dashboard
+ * renders three KV rows under `Messages`. Counters are monotonic
+ * across the workflow's lifetime (preserved across continueAsNew via
+ * SessionInput).
+ *
+ * `outbox` is a reduce-helper string: `"empty"` / `"N pending"` /
+ * `"N pending (oldest 2m)"` once the oldest pending entry is older than
+ * the stale threshold. Computing this server-side keeps the wire shape
+ * tight.
+ */
+export const getMessagingStateQuery = defineQuery<{
+  received: number;
+  sent: number;
+  outbox: string;
+}>('getMessagingState');
+
+/**
+ * Q5.6 — activity counter + last-activity timestamp. Critical-path for
+ * W1's tempo computation: the maestro fan-queries this from each
+ * session to compute msgs/min buckets. `activityCount` increments at
+ * the same ~20 sites that already update `lastActivityTime` (cue,
+ * outbox push, schedule fire, report, recruit, restart, destroy,
+ * migrate, etc.). Heartbeats and lifecycle plumbing don't bump it.
+ *
+ * `lastActivityAt` is ISO so the maestro can compute clock-relative
+ * deltas without re-parsing.
+ */
+export const getActivityStateQuery = defineQuery<{
+  activityCount: number;
+  lastActivityAt: string;
+}>('getActivityState');
+
+/**
+ * Q5.7 — current attachment lease window. Returns `{ expiresAt,
+ * leaseMs }` as numbers (epoch ms / ms) so the dashboard can compute
+ * "expires in 54s" without parsing ISO strings every render. Both
+ * fields are `null` when no active lease (phase ∈ booting / detached /
+ * gone).
+ *
+ * The underlying `Attachment.expiresAt` is stored as an ISO string for
+ * historical reasons; the query handler parses to epoch ms at the
+ * boundary.
+ */
+export const getLeaseStateQuery = defineQuery<{
+  expiresAt: number | null;
+  leaseMs: number | null;
+}>('getLeaseState');
+
 // ── Test-only Signals ──
 //
 // **Test-only.** Forces the session workflow's main loop to take the
