@@ -31,7 +31,9 @@ import {
   advertiseHostProfile,
   runDaemonBoot,
   scrubHostProfile,
+  warnIfDevNamespaceDrift,
 } from '../src/daemon';
+import { DEV_TEMPORAL_NAMESPACE, ENV } from '../src/config';
 
 // Empty proxy stands in for a Client: reaching into it would throw, which
 // makes "dep not actually swapped" failures loud instead of silent.
@@ -414,5 +416,84 @@ describe('scrubHostProfile #399 pass-through (daemonStartedAt + adapterVersions)
     const out = scrubHostProfile({ hostname: 'h' });
     expect(out).to.not.have.property('daemonStartedAt');
     expect(out).to.not.have.property('adapterVersions');
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// warnIfDevNamespaceDrift — #423 PR-A Fix 3 runtime drift detector
+// ────────────────────────────────────────────────────────────────────────
+
+describe('warnIfDevNamespaceDrift (#423 PR-A Fix 3)', function () {
+  let savedDevMode: string | undefined;
+
+  beforeEach(function () {
+    savedDevMode = process.env[ENV.DEV_MODE];
+    delete process.env[ENV.DEV_MODE];
+  });
+
+  afterEach(function () {
+    if (savedDevMode == null) delete process.env[ENV.DEV_MODE];
+    else process.env[ENV.DEV_MODE] = savedDevMode;
+  });
+
+  it('does NOT warn when dev mode is off (production daemons are unaffected)', function () {
+    // The drift detector is dev-only. Production daemons connect to whatever
+    // namespace the operator configured — that's not "drift", that's the
+    // happy path.
+    const calls: unknown[][] = [];
+    const fired = warnIfDevNamespaceDrift(
+      { temporalNamespace: 'whatever-prod-ns' },
+      (...args) => calls.push(args),
+    );
+    expect(fired).to.equal(false);
+    expect(calls).to.have.lengthOf(0);
+  });
+
+  it('does NOT warn when dev mode is on AND namespace matches the dev default', function () {
+    // Happy path — `[DEV MODE]` banner says `claude-tempo-dev`, daemon
+    // connects to `claude-tempo-dev`, no log noise.
+    process.env[ENV.DEV_MODE] = '1';
+    const calls: unknown[][] = [];
+    const fired = warnIfDevNamespaceDrift(
+      { temporalNamespace: DEV_TEMPORAL_NAMESPACE },
+      (...args) => calls.push(args),
+    );
+    expect(fired).to.equal(false);
+    expect(calls).to.have.lengthOf(0);
+  });
+
+  it('WARNS when dev mode is on but the namespace is NOT the dev default', function () {
+    // Load-bearing diagnostic. The detector's whole reason for existing is
+    // to catch this case — an operator with a typo'd `config.json` or
+    // a regression in the env-var carve-out (Fix 1) would otherwise see
+    // the dev banner cheerfully announce isolation while the daemon
+    // connects somewhere else.
+    process.env[ENV.DEV_MODE] = '1';
+    const calls: unknown[][] = [];
+    const fired = warnIfDevNamespaceDrift(
+      { temporalNamespace: 'default' },
+      (...args) => calls.push(args),
+    );
+    expect(fired).to.equal(true);
+    expect(calls).to.have.lengthOf(1);
+    // The message must be greppable enough that an operator scanning
+    // `daemon.log` for "WARNING" sees it. The `[dev-mode]` prefix matches
+    // the existing dev-mode log convention.
+    const message = String(calls[0][0]);
+    expect(message).to.include('[dev-mode]');
+    expect(message).to.include('WARNING');
+    expect(message).to.include('namespace drift');
+    expect(message).to.include('default'); // the actual resolved value
+    expect(message).to.include(DEV_TEMPORAL_NAMESPACE); // the expected default
+  });
+
+  it('uses the default `log` sink when no log fn is passed (smoke check)', function () {
+    // Production callers omit the log arg. The function must not throw
+    // when defaulting to the module-level `log`. We can't easily capture
+    // its output without monkey-patching console — settle for a no-throw
+    // assertion plus the `fired` return value.
+    process.env[ENV.DEV_MODE] = '1';
+    const fired = warnIfDevNamespaceDrift({ temporalNamespace: 'something-else' });
+    expect(fired).to.equal(true);
   });
 });

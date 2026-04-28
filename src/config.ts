@@ -448,8 +448,39 @@ export interface CliOverrides {
 }
 
 /**
+ * Env vars that bleed a user's shell-wide Temporal config into the dev
+ * profile, defeating its isolation guarantee. In dev mode, reads of these
+ * keys via {@link readEnvWithDevCarveOut} return `undefined` — same shape
+ * the existing temporal-cli yaml drop already uses for namespace.
+ *
+ * Carve-out is per architect Q1 in `docs/design/dev-mode-isolation-fix-423.md`:
+ * NAMESPACE + ADDRESS are leaks; `TEMPORAL_API_KEY` + `TEMPORAL_TLS_*`
+ * are per-credential and stay honored in both modes.
+ *
+ * Module-level constant so neither `getConfig` nor `getConfigWithSources`
+ * allocates a Set on every call.
+ */
+const DEV_ENV_CARVE_OUT: ReadonlySet<string> = new Set([
+  ENV.TEMPORAL_NAMESPACE,
+  ENV.TEMPORAL_ADDRESS,
+]);
+
+/**
+ * Read `process.env[key]` honoring the dev-mode carve-out. Returns
+ * `undefined` for carved-out keys when dev mode is active so the
+ * resolution chain falls through to the next source.
+ */
+function readEnvWithDevCarveOut(key: string): string | undefined {
+  if (isDevMode() && DEV_ENV_CARVE_OUT.has(key)) return undefined;
+  return process.env[key];
+}
+
+/**
  * Build a resolved Config using the priority chain:
  *   CLI flag > env var > claude-tempo config file > temporal CLI config > defaults
+ *
+ * In dev mode, `TEMPORAL_NAMESPACE` and `TEMPORAL_ADDRESS` env vars are
+ * dropped from the chain — see {@link DEV_ENV_CARVE_OUT}.
  */
 export function getConfig(overrides: CliOverrides = {}): Config {
   const temporalCli = loadTemporalCliConfig();
@@ -462,7 +493,7 @@ export function getConfig(overrides: CliOverrides = {}): Config {
     temporalCliVal: string | undefined,
     defaultVal: string,
   ): string => {
-    return cliVal || process.env[envKey] || fileVal || temporalCliVal || defaultVal;
+    return cliVal || readEnvWithDevCarveOut(envKey) || fileVal || temporalCliVal || defaultVal;
   };
 
   const resolveOpt = (
@@ -471,7 +502,7 @@ export function getConfig(overrides: CliOverrides = {}): Config {
     fileVal: string | undefined,
     temporalCliVal: string | undefined,
   ): string | undefined => {
-    return cliVal || process.env[envKey] || fileVal || temporalCliVal || undefined;
+    return cliVal || readEnvWithDevCarveOut(envKey) || fileVal || temporalCliVal || undefined;
   };
 
   const config: Config = {
@@ -483,14 +514,16 @@ export function getConfig(overrides: CliOverrides = {}): Config {
     temporalNamespace: resolve(
       overrides.temporalNamespace, ENV.TEMPORAL_NAMESPACE,
       configFile.temporalNamespace,
-      // ADR 0014 §5.1: dev profile flips the namespace default. CLI flag,
-      // env var, and the dev profile's own claude-tempo config file
-      // (`~/.claude-tempo-dev/config.json`) still win — but `~/.config/temporalio/temporal.yaml`
-      // is intentionally ignored in dev mode. That file captures the user's
-      // *default* Temporal environment for ad-hoc CLI work; letting it bleed
-      // through would defeat the dev profile's isolation guarantee (a user
-      // with `namespace: default` in temporal.yaml would see the dev daemon
-      // connect to prod). Explicit per-claude-tempo overrides remain available.
+      // ADR 0014 §5.1: dev profile flips the namespace default. CLI flag and
+      // the dev profile's own claude-tempo config file
+      // (`~/.claude-tempo-dev/config.json`) still win — but the
+      // `TEMPORAL_NAMESPACE` env var (carved out above) and
+      // `~/.config/temporalio/temporal.yaml` are intentionally ignored in
+      // dev mode. Both capture the user's *default* Temporal environment
+      // for ad-hoc CLI work; letting either bleed through would defeat the
+      // dev profile's isolation guarantee (a user with `namespace: default`
+      // would see the dev daemon connect to prod). Explicit per-invocation
+      // overrides (CLI flag, dev config.json) remain available.
       isDevMode() ? undefined : temporalCli.temporalNamespace,
       isDevMode() ? DEV_TEMPORAL_NAMESPACE : PROD_TEMPORAL_NAMESPACE,
     ),
@@ -532,6 +565,10 @@ export interface ConfigWithSources {
 /**
  * Like getConfig(), but also returns which source each value came from.
  * Used by `claude-tempo config show` to help users debug.
+ *
+ * Mirrors {@link getConfig}'s dev-mode env-var carve-out — without this
+ * parity the user would see `env: TEMPORAL_NAMESPACE=default` in
+ * `config show` while the daemon happily ignores it.
  */
 export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSources {
   const temporalCli = loadTemporalCliConfig();
@@ -546,14 +583,22 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
     defaultVal?: string,
   ): { value: string | undefined; source: ConfigSource } {
     if (cliVal) return { value: cliVal, source: 'flag' };
-    if (process.env[envKey]) return { value: process.env[envKey], source: 'env' };
+    const envVal = readEnvWithDevCarveOut(envKey);
+    if (envVal) return { value: envVal, source: 'env' };
     if (fileVal) return { value: fileVal, source: 'config' };
     if (temporalCliVal) return { value: temporalCliVal, source: 'temporal-cli' };
     if (defaultVal) return { value: defaultVal, source: 'default' };
     return { value: undefined, source: 'none' };
   }
 
-  const address = resolveWithSource('temporalAddress', overrides.temporalAddress, ENV.TEMPORAL_ADDRESS, configFile.temporalAddress, temporalCli.temporalAddress, 'localhost:7233');
+  const address = resolveWithSource(
+    'temporalAddress',
+    overrides.temporalAddress,
+    ENV.TEMPORAL_ADDRESS,
+    configFile.temporalAddress,
+    temporalCli.temporalAddress,
+    'localhost:7233',
+  );
   const namespace = resolveWithSource(
     'temporalNamespace',
     overrides.temporalNamespace,
