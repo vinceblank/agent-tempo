@@ -24,80 +24,43 @@
  *   - `data-testid="player-types-rescan"` / `player-types-new` on header actions
  */
 import { useCallback, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import type { AgentTypeRow } from '../lib/client';
 import { Btn } from '../components/Btn';
 import { PageHeader } from '../components/PageHeader';
 import { useScreenPageHeader } from '../components/AppShell';
 import { TypeBadge } from '../components/tempo/TypeBadge';
 import { glyphFor, hueForType } from '../lib/tempo-helpers';
+import { useAgentTypes, AGENT_TYPES_QUERY_KEY } from '../lib/queries';
 import { logEvent } from '../lib/log';
-
-interface PlayerType {
-  /** Stable id matching the markdown filename (sans `.md`). */
-  name: string;
-  /** One-line summary surfaced in the card body. */
-  summary: string;
-}
-
-/**
- * Hardcoded fallback for the 8 player types shipped under
- * `examples/agents/`. PR-E (#403) introduces a shared
- * `lib/static-catalog.ts` with the same constant; when both PRs land,
- * this module switches to importing from there. Kept inline so PR-F2
- * stays independent of PR-E's merge order.
- *
- * Matches `examples/agents/*.md` `description:` frontmatter verbatim.
- */
-const SHIPPED_PLAYER_TYPES: ReadonlyArray<PlayerType> = [
-  {
-    name: 'tempo-conductor',
-    summary: 'Orchestrates the ensemble — breaks down tasks, delegates, synthesizes.',
-  },
-  {
-    name: 'tempo-composer',
-    summary: 'Software architect — designs system structure, defines interfaces.',
-  },
-  {
-    name: 'tempo-critic',
-    summary: 'Code reviewer — evaluates changes for correctness and quality.',
-  },
-  {
-    name: 'tempo-improv',
-    summary: 'Researcher and explorer — investigates unknowns, runs spikes.',
-  },
-  {
-    name: 'tempo-liner',
-    summary: 'Documentation specialist — README, CHANGELOG, PR descriptions.',
-  },
-  {
-    name: 'tempo-roadie',
-    summary: 'DevOps engineer — CI/CD, deployments, infrastructure.',
-  },
-  {
-    name: 'tempo-soloist',
-    summary: 'Senior engineer — implements features, fixes bugs, writes tests.',
-  },
-  {
-    name: 'tempo-tuner',
-    summary: 'QA engineer — designs test strategies, finds bugs, validates edges.',
-  },
-];
+import { SHIPPED_PLAYER_TYPES } from '../lib/static-catalog';
 
 export function PlayerTypes() {
   useEffect(() => {
     logEvent('screen.opened', { screen: 'player-types' });
   }, []);
+  const agentTypesQuery = useAgentTypes();
+  const qc = useQueryClient();
+
+  // Live wire from `/v1/agent-types`; eagerly falls back to the
+  // bundled SHIPPED_PLAYER_TYPES while the query loads (and on error)
+  // so the catalog grid is always populated. Wire data swaps in
+  // when it resolves and the user sees their project/user types too.
+  const types: ReadonlyArray<AgentTypeRow> = agentTypesQuery.data
+    ?? SHIPPED_PLAYER_TYPES;
 
   const onRescan = useCallback(() => {
     logEvent('player-types.rescan', {});
-    // Wire-pending: triggers daemon-side filesystem rescan once
-    // /v1/agent-types ships. For now a no-op + log line lets the
-    // conductor's autonomous validator confirm the click registered.
-  }, []);
+    // Daemon scans on every request (no cache yet — see #400 followup);
+    // invalidating the cache + refetch gives the user a fresh read
+    // covering filesystem changes (new `.md` under `~/.claude/agents/`).
+    void qc.invalidateQueries({ queryKey: AGENT_TYPES_QUERY_KEY });
+  }, [qc]);
 
   const onNewType = useCallback(() => {
     logEvent('player-types.new', {});
     // Wire-pending: would open a "create new player type" wizard +
-    // write to ~/.claude/agents/. Out of scope for PR-F2.
+    // write to ~/.claude/agents/. Out of scope.
   }, []);
 
   const renderHeader = useCallback(
@@ -141,7 +104,7 @@ export function PlayerTypes() {
   return (
     <section data-testid="screen-player-types">
       <div className="types-grid" data-testid="player-types-grid">
-        {SHIPPED_PLAYER_TYPES.map((t) => (
+        {types.map((t) => (
           <PlayerTypeCard key={t.name} type={t} />
         ))}
       </div>
@@ -150,7 +113,7 @@ export function PlayerTypes() {
 }
 
 interface PlayerTypeCardProps {
-  type: PlayerType;
+  type: AgentTypeRow;
 }
 function PlayerTypeCard({ type }: PlayerTypeCardProps) {
   const hue = hueForType(type.name);
@@ -174,7 +137,7 @@ function PlayerTypeCard({ type }: PlayerTypeCardProps) {
           data-testid={`${testRoot}-source`}
           style={{ fontSize: 10.5 }}
         >
-          SHIPPED
+          {type.source.toUpperCase()}
         </span>
       </div>
       <div style={{ fontFamily: 'var(--ff-display)', fontSize: 20, lineHeight: 1.1 }}>
@@ -195,7 +158,7 @@ function PlayerTypeCard({ type }: PlayerTypeCardProps) {
         style={{ color: 'var(--text-2)', fontSize: 13, lineHeight: 1.5 }}
         data-testid={`${testRoot}-summary`}
       >
-        {type.summary}
+        {type.description ?? '—'}
       </div>
       <div
         style={{

@@ -28,6 +28,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import type { LineupRow } from '../lib/client';
 import { Btn } from '../components/Btn';
 import { ModalShell } from '../components/wizard/ModalShell';
 import { Dialog } from '../components/wizard/Dialog';
@@ -36,12 +37,11 @@ import { Chipset } from '../components/wizard/Chipset';
 import { Field } from '../components/wizard/Field';
 import { SummaryRow } from '../components/wizard/SummaryRow';
 import { useEnsembleCreateMutation } from '../lib/mutations';
-import { useHosts } from '../lib/queries';
+import { useHosts, useLineups } from '../lib/queries';
 import { logEvent } from '../lib/log';
 import {
   BLANK_LINEUP_SENTINEL,
   SHIPPED_LINEUPS,
-  type Lineup,
 } from '../lib/static-catalog';
 
 type Step = 1 | 2 | 3;
@@ -75,11 +75,23 @@ export function CreateEnsemble() {
   }, []);
   const navigate = useNavigate();
   const hostsQuery = useHosts();
+  const lineupsQuery = useLineups();
   const create = useEnsembleCreateMutation();
+
+  // Live wire from `/v1/lineups` (#400). Eagerly falls back to the
+  // bundled SHIPPED_LINEUPS while the query loads (and on error) so
+  // the picker is always populated. The wire data swaps in once it
+  // resolves; the user sees any saved lineups they have on disk.
+  const lineups: ReadonlyArray<LineupRow> = lineupsQuery.data ?? SHIPPED_LINEUPS;
 
   const [step, setStep] = useState<Step>(1);
   const [form, setForm] = useState<FormState>(() => ({
     name: '',
+    // Default to the first shipped lineup — eager fallback means the
+    // picker is always valid on initial render. The wire-loaded
+    // catalog (which may include saved lineups) swaps in via the
+    // `lineups` derivation; the form value stays sticky once the
+    // user has interacted.
     lineup: SHIPPED_LINEUPS[0]?.name ?? BLANK_LINEUP_SENTINEL,
     host: '',
     startMode: 'hold',
@@ -116,33 +128,44 @@ export function CreateEnsemble() {
   const onSubmit = () => {
     if (!step1Valid) return;
     const lineupArg = form.lineup === BLANK_LINEUP_SENTINEL ? undefined : form.lineup;
+    // The mutation payload's `startMode` uses the daemon's vocabulary
+    // (`'hold' | 'release'`). Local form-state uses
+    // `'release-immediately'` to match the design's chip label; map at
+    // the boundary.
+    const startMode = form.startMode === 'hold' ? 'hold' : 'release';
     create.mutate(
       {
         name: form.name,
         ...(lineupArg ? { lineup: lineupArg } : {}),
         ...(form.host ? { host: form.host } : {}),
-        startMode: form.startMode,
+        startMode,
         ...(form.conductorInstructions
           ? { conductorInstructions: form.conductorInstructions }
           : {}),
       },
-      { onSuccess: () => navigate('/') },
+      {
+        // Land directly in the new ensemble's workspace so the user
+        // can see the conductor coming online + cue from there.
+        onSuccess: (result) =>
+          navigate(`/ensemble/${encodeURIComponent(result.ensemble)}`),
+      },
     );
   };
 
-  // SHIPPED_LINEUPS is module-constant + the blank sentinel row never
-  // changes — useMemo with `[]` deps avoids rebuilding 6 PickerOption
-  // JSX nodes per render.
+  // Picker rows are derived from the live wire `useLineups()` data
+  // (or its SHIPPED_LINEUPS fallback). Memoised on the array identity
+  // so the picker doesn't churn on TanStack refetches that return the
+  // same content.
   const lineupOptions = useMemo<PickerOption[]>(
     () => [
-      ...SHIPPED_LINEUPS.map(lineupToOption),
+      ...lineups.map(lineupToOption),
       {
         value: BLANK_LINEUP_SENTINEL,
         name: 'Blank ensemble (recruit manually)',
         desc: 'Start with no players — use Recruit later from the Workspace.',
       },
     ],
-    [],
+    [lineups],
   );
 
   return (
@@ -222,7 +245,18 @@ export function CreateEnsemble() {
                 onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
               />
             </Field>
-            <Field id="create-ensemble-lineup" label="Starting lineup">
+            <Field
+              id="create-ensemble-lineup"
+              label="Starting lineup"
+              hint={
+                // Eager fallback means the picker is always populated;
+                // only surface the wire status when something's wrong
+                // so the user knows their saved lineups aren't there.
+                lineupsQuery.isError
+                  ? 'showing local catalog (daemon unreachable)'
+                  : undefined
+              }
+            >
               <PickerList
                 testId="create-ensemble-lineup"
                 options={lineupOptions}
@@ -316,21 +350,21 @@ export function CreateEnsemble() {
   );
 }
 
-function lineupToOption(l: Lineup): PickerOption {
+function lineupToOption(l: LineupRow): PickerOption {
   return {
     value: l.name,
     name: (
       <>
         {l.name}{' '}
         <span className="mono dim" style={{ fontWeight: 400, fontSize: 11 }}>
-          · {l.players} players
+          · {l.players} player{l.players === 1 ? '' : 's'}
         </span>
       </>
     ),
-    desc: l.summary,
+    ...(l.description !== undefined && { desc: l.description }),
     right: (
       <span className="mono dim" style={{ fontSize: 10 }}>
-        SHIPPED
+        {l.source.toUpperCase()}
       </span>
     ),
   };

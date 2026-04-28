@@ -28,6 +28,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import type { AgentTypeRow } from '../lib/client';
 import { Btn } from '../components/Btn';
 import { ModalShell } from '../components/wizard/ModalShell';
 import { Dialog } from '../components/wizard/Dialog';
@@ -35,7 +36,7 @@ import { PickerList, type PickerOption } from '../components/wizard/PickerList';
 import { Chipset } from '../components/wizard/Chipset';
 import { Field } from '../components/wizard/Field';
 import { SummaryRow } from '../components/wizard/SummaryRow';
-import { useHosts } from '../lib/queries';
+import { useAgentTypes, useHosts } from '../lib/queries';
 import { useRecruitMutation } from '../lib/mutations';
 import { logEvent } from '../lib/log';
 import { SHIPPED_PLAYER_TYPES } from '../lib/static-catalog';
@@ -83,12 +84,26 @@ export function Recruit() {
   const [searchParams] = useSearchParams();
   const ensemble = searchParams.get('ensemble') ?? '';
   const hostsQuery = useHosts();
+  const agentTypesQuery = useAgentTypes();
   const recruit = useRecruitMutation(ensemble);
+
+  // Live wire from `/v1/agent-types` (#400). Eagerly falls back to the
+  // bundled SHIPPED_PLAYER_TYPES while the query loads (and on error)
+  // so the picker is always populated — no skeleton state, no
+  // empty-default-then-flash. The wire data swaps in once it resolves
+  // and the user sees any project/user types they have on disk.
+  const playerTypes: ReadonlyArray<AgentTypeRow> = agentTypesQuery.data
+    ?? SHIPPED_PLAYER_TYPES;
 
   const [step, setStep] = useState<Step>(1);
   const [form, setForm] = useState<FormState>(() => ({
     name: '',
     part: '',
+    // Default to the first shipped player-type — eager fallback means
+    // the picker is always valid on initial render. The wire-loaded
+    // catalog (which may include project/user types) swaps in via the
+    // `playerTypes` derivation; the form value stays sticky once the
+    // user has interacted.
     playerType: SHIPPED_PLAYER_TYPES[0]?.name ?? '',
     agent: 'claude',
     workDir: '',
@@ -156,17 +171,23 @@ export function Recruit() {
     );
   };
 
-  // SHIPPED_PLAYER_TYPES is module-constant — useMemo with `[]` deps
-  // skips rebuilding 8 PickerOption nodes per render. Lifted above the
-  // missing-ensemble early-return to keep hook order stable.
+  // Picker rows derived from the live wire `useAgentTypes()` data (or
+  // its SHIPPED_PLAYER_TYPES fallback). Memoised on the array identity
+  // so the picker doesn't churn on TanStack refetches. Lifted above
+  // the missing-ensemble early-return to keep hook order stable.
   const playerTypeOptions = useMemo<PickerOption[]>(
     () =>
-      SHIPPED_PLAYER_TYPES.map((t) => ({
+      playerTypes.map((t) => ({
         value: t.name,
         name: t.name,
-        desc: t.summary,
+        ...(t.description !== undefined && { desc: t.description }),
+        right: (
+          <span className="mono dim" style={{ fontSize: 10 }}>
+            {t.source.toUpperCase()}
+          </span>
+        ),
       })),
-    [],
+    [playerTypes],
   );
 
   // Without an ensemble we can't recruit — render an inline alert
@@ -290,7 +311,11 @@ export function Recruit() {
             <Field
               id="recruit-input-player-type"
               label="Player type"
-              hint={`${SHIPPED_PLAYER_TYPES.length} available`}
+              hint={
+                agentTypesQuery.isError
+                  ? 'showing local catalog (daemon unreachable)'
+                  : `${playerTypes.length} available`
+              }
             >
               <PickerList
                 testId="recruit-input-player-type"
