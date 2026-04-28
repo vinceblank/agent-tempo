@@ -64,6 +64,7 @@ import {
 import type { ScheduleEntry } from 'claude-tempo/types';
 import { useEnsembleSnapshot } from '../lib/queries';
 import { useSseSubscription } from '../lib/sse';
+import { formatUptimeFromIso } from '../lib/time-format';
 import { selectedPlayerIdFromPath } from '../router';
 import { logEvent } from '../lib/log';
 import {
@@ -119,9 +120,11 @@ export function Workspace() {
   const navigate = useNavigate();
   const location = useLocation();
   const snapshot = useEnsembleSnapshot(ensemble);
-  // #399 W1 (Q5.6) — bpm + sparkline are on the snapshot via DB1a (#413).
+  // #399 W1 (Q5.3a / Q5.6) — uptime / bpm / sparkline land on the
+  // snapshot via DB1a (#413).
   const bpm = snapshot.data?.currentBpm ?? 0;
   const tempoSeries = snapshot.data?.tempoSeries ?? [];
+  const uptime = formatUptimeFromIso(snapshot.data?.startedAt);
   useSseSubscription(ensemble);
 
   useEffect(() => {
@@ -301,6 +304,17 @@ export function Workspace() {
             <span className="page-pill">
               {paused ? 'paused' : held ? 'held' : 'live'}
             </span>
+            {/* P1.6 — uptime pill (Q5.3a snapshot field). Hidden when
+                startedAt isn't on the wire yet so the pill row stays
+                tidy on a fresh ensemble. */}
+            {uptime && (
+              <span
+                className="page-pill"
+                data-testid="workspace-uptime-pill"
+              >
+                up <span className="pill-num">{uptime}</span>
+              </span>
+            )}
           </>
         }
         actions={

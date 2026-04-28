@@ -19,10 +19,18 @@ import type {
   CreateEnsembleResult,
   CueResult,
   DashboardTempoClient,
+  DestroyOpts,
+  DestroyResult,
+  DetachOpts,
+  DetachResult,
   LineupRow,
+  RecallOpts,
+  RecallResult,
   RecruitOpts,
   RecruitResult,
   ReleaseResult,
+  RestartOpts,
+  RestartResult,
 } from '../../src/lib/client';
 
 // Default catalog rows seeded into every `MockDashboardClient` so the
@@ -43,11 +51,21 @@ export interface MockBehavior {
   lineups?: LineupRow[];
   lineupsError?: Error;
   /** Per-mutation error injection. Keyed by action name. */
-  mutationErrors?: Partial<Record<'cue' | 'pause' | 'play' | 'release' | 'recruit' | 'createEnsemble', Error>>;
+  mutationErrors?: Partial<Record<MutationCall['method'], Error>>;
 }
 
 export interface MutationCall {
-  method: 'cue' | 'pause' | 'play' | 'release' | 'recruit' | 'createEnsemble';
+  method:
+    | 'cue'
+    | 'pause'
+    | 'play'
+    | 'release'
+    | 'recruit'
+    | 'createEnsemble'
+    | 'restart'
+    | 'destroy'
+    | 'detach'
+    | 'recall';
   args: unknown[];
 }
 
@@ -195,6 +213,42 @@ export class MockDashboardClient implements DashboardTempoClient {
     this.mutationCalls.push({ method: 'createEnsemble', args: [opts] });
     if (this.mutationErrors.createEnsemble) throw this.mutationErrors.createEnsemble;
     return { ...this.createEnsembleResult, ensemble: opts.name };
+  }
+
+  // ── PR-7 destructive actions ────────────────────────────────────
+  // Each method records the call + honours the `mutationErrors`
+  // injection lane, mirroring the cue/recruit/createEnsemble pattern.
+  // The default success result is a minimal `{ ok: true, playerId }`
+  // shape — tests asserting on richer fields override the result via
+  // the public mutation-result props.
+
+  public restartResult: RestartResult = { ok: true, playerId: 'tempo-eng' };
+  public destroyResult: DestroyResult = { ok: true, playerId: 'tempo-eng' };
+  public detachResult: DetachResult = { ok: true, playerId: 'tempo-eng' };
+  public recallResult: RecallResult = { ok: true, playerId: 'tempo-eng', messages: 0 };
+
+  async restart(ensemble: string, opts: RestartOpts): Promise<RestartResult> {
+    this.mutationCalls.push({ method: 'restart', args: [ensemble, opts] });
+    if (this.mutationErrors.restart) throw this.mutationErrors.restart;
+    return this.restartResult;
+  }
+
+  async destroy(ensemble: string, opts: DestroyOpts): Promise<DestroyResult> {
+    this.mutationCalls.push({ method: 'destroy', args: [ensemble, opts] });
+    if (this.mutationErrors.destroy) throw this.mutationErrors.destroy;
+    return this.destroyResult;
+  }
+
+  async detach(ensemble: string, opts: DetachOpts): Promise<DetachResult> {
+    this.mutationCalls.push({ method: 'detach', args: [ensemble, opts] });
+    if (this.mutationErrors.detach) throw this.mutationErrors.detach;
+    return this.detachResult;
+  }
+
+  async recall(ensemble: string, opts: RecallOpts): Promise<RecallResult> {
+    this.mutationCalls.push({ method: 'recall', args: [ensemble, opts] });
+    if (this.mutationErrors.recall) throw this.mutationErrors.recall;
+    return this.recallResult;
   }
 
   /** Push a fake SSE event into every live subscription for `ensemble`. */

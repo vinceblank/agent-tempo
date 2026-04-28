@@ -41,7 +41,7 @@ import { useEnsembleSnapshot } from '../lib/queries';
 import { useSseSubscription } from '../lib/sse';
 import type { EnsembleSummary } from '../lib/client';
 import { logEvent } from '../lib/log';
-import { formatDuration } from '../lib/time-format';
+import { formatUptimeFromIso } from '../lib/time-format';
 import { PlayerAvatar } from './tempo/PlayerAvatar';
 
 interface EnsembleCardProps {
@@ -72,10 +72,7 @@ export function EnsembleCard({ ensemble }: EnsembleCardProps) {
   // #399 W1 (Q5.3a / Q5.6 / Q5.1) — uptime, BPM, and description bind
   // to the new snapshot projections from DB1a. Each falls back to "—"
   // when missing so the card stays grid-aligned.
-  const startedAtMs = data?.startedAt ? Date.parse(data.startedAt) : NaN;
-  const uptime = Number.isFinite(startedAtMs)
-    ? formatDuration(Date.now() - startedAtMs)
-    : '—';
+  const uptime = formatUptimeFromIso(data?.startedAt) ?? '—';
   const bpm = data?.currentBpm;
   const description = data?.description?.trim() ?? '';
 

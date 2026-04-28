@@ -26,7 +26,7 @@ import { formatRelativeAge } from '../lib/time-format';
 import { errorPanelStyle, emptyCardStyle } from '../lib/screen-styles';
 
 const COL_HEADERS = ['Name', 'Target', 'Cadence', 'Kind', 'Next fire'] as const;
-const PR7_REASON = 'Schedule writes wire up in PR-7 of #389.';
+const PR7_REASON = 'Schedule writes require daemon endpoints that haven’t shipped yet.';
 
 export function Schedules() {
   useEffect(() => {

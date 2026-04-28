@@ -27,6 +27,7 @@ import { useCallback, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { AgentTypeRow } from '../lib/client';
 import { Btn } from '../components/Btn';
+import { DisabledWithTooltip } from '../components/DisabledWithTooltip';
 import { PageHeader } from '../components/PageHeader';
 import { useScreenPageHeader } from '../components/AppShell';
 import { TypeBadge } from '../components/tempo/TypeBadge';
@@ -173,12 +174,20 @@ function PlayerTypeCard({ type }: PlayerTypeCardProps) {
           — tools
         </span>
         <div style={{ display: 'flex', gap: 4 }}>
-          <Btn variant="ghost" size="sm" data-testid={`${testRoot}-edit`}>
+          <DisabledWithTooltip
+            testId={`${testRoot}-edit`}
+            action="player-types.edit"
+            reason="Editing player-type files requires a daemon endpoint that hasn't shipped yet."
+          >
             Edit
-          </Btn>
-          <Btn variant="ghost" size="sm" data-testid={`${testRoot}-duplicate`}>
+          </DisabledWithTooltip>
+          <DisabledWithTooltip
+            testId={`${testRoot}-duplicate`}
+            action="player-types.duplicate"
+            reason="Duplicating player-type files requires a daemon endpoint that hasn't shipped yet."
+          >
             Duplicate
-          </Btn>
+          </DisabledWithTooltip>
         </div>
       </div>
     </article>

@@ -79,6 +79,24 @@ export interface DashboardTempoClient {
    * lands callers should expect a 404 and surface it gracefully.
    */
   createEnsemble(opts: CreateEnsembleOpts): Promise<CreateEnsembleResult>;
+
+  // ── PR-7 destructive actions (skeletons; daemon endpoints pending) ──
+  //
+  // The daemon's HTTP write surface (`src/http/writes.ts`) currently
+  // exposes only `cue / pause / play / release / recruit`. The four
+  // methods below stand in for the dashboard's PR-7 action row so the
+  // mutation hooks + confirm-dialog UX wires end-to-end. Each method
+  // throws "endpoint pending" until tempo-eng's parallel daemon PR
+  // adds the matching `/v1/ensembles/:ensemble/<action>` route.
+
+  /** POST `/v1/ensembles/:ensemble/restart` — workflow-level restart. */
+  restart(ensemble: string, opts: RestartOpts): Promise<RestartResult>;
+  /** POST `/v1/ensembles/:ensemble/destroy` — terminate the workflow. */
+  destroy(ensemble: string, opts: DestroyOpts): Promise<DestroyResult>;
+  /** POST `/v1/ensembles/:ensemble/detach` — force-detach the adapter. */
+  detach(ensemble: string, opts: DetachOpts): Promise<DetachResult>;
+  /** POST `/v1/ensembles/:ensemble/recall` — bring a player back into focus. */
+  recall(ensemble: string, opts: RecallOpts): Promise<RecallResult>;
 }
 
 export interface CueResult {
@@ -146,6 +164,51 @@ export interface LineupRow {
   description?: string;
   players: number;
   source: 'saved' | 'shipped';
+}
+
+// ── PR-7 destructive-action shapes (daemon endpoints pending) ───────
+
+export interface RestartOpts {
+  /** Player to restart. Required — there is no "restart the whole ensemble" affordance. */
+  playerId: string;
+  /** Optional cross-host migration target. */
+  host?: string;
+}
+export interface RestartResult {
+  ok: true;
+  playerId: string;
+}
+
+export interface DestroyOpts {
+  /** Player to destroy. */
+  playerId: string;
+  /** Audit reason surfaced on the workflow's `terminatedBy` field. */
+  reason?: string;
+}
+export interface DestroyResult {
+  ok: true;
+  playerId: string;
+}
+
+export interface DetachOpts {
+  playerId: string;
+  /** Audit reason — propagates to the adapter's `requestDetach` payload. */
+  reason?: string;
+}
+export interface DetachResult {
+  ok: true;
+  playerId: string;
+}
+
+export interface RecallOpts {
+  playerId: string;
+  /** Optional cap on the number of historical messages to surface. */
+  limit?: number;
+}
+export interface RecallResult {
+  ok: true;
+  playerId: string;
+  messages: number;
 }
 
 export interface DashboardClientOpts {
@@ -256,6 +319,29 @@ export function createDashboardClient(opts: DashboardClientOpts = {}): Dashboard
       // postJson surfaces the 404 to the mutation hook, which toasts a
       // wire-gap message rather than a generic failure.
       return postJson<CreateEnsembleResult>('/v1/ensembles', opts);
+    },
+
+    // ── PR-7 destructive actions (skeletons) ──────────────────────
+    //
+    // Daemon endpoints don't exist yet — `src/http/writes.ts` only
+    // routes the five collaborative actions. Each method below posts to
+    // the speculated route in anticipation of tempo-eng's parallel
+    // daemon PR; the call surfaces a 404 to the mutation hook, which
+    // toasts a "wire-gap" message identical to `createEnsemble`'s
+    // pattern. When the daemon route lands, no client-side change is
+    // needed beyond removing this comment.
+
+    async restart(ensemble, opts) {
+      return postJson<RestartResult>(ensemblePath(ensemble, 'restart'), opts);
+    },
+    async destroy(ensemble, opts) {
+      return postJson<DestroyResult>(ensemblePath(ensemble, 'destroy'), opts);
+    },
+    async detach(ensemble, opts) {
+      return postJson<DetachResult>(ensemblePath(ensemble, 'detach'), opts);
+    },
+    async recall(ensemble, opts) {
+      return postJson<RecallResult>(ensemblePath(ensemble, 'recall'), opts);
     },
   };
 }

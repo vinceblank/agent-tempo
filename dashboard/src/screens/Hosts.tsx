@@ -32,6 +32,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { HostInfo } from 'claude-tempo/types';
 import { Btn } from '../components/Btn';
+import { DisabledWithTooltip } from '../components/DisabledWithTooltip';
 import { PageHeader } from '../components/PageHeader';
 import { useScreenPageHeader } from '../components/AppShell';
 import { useHosts, HOSTS_QUERY_KEY } from '../lib/queries';
@@ -232,9 +233,13 @@ function HostRow({ host }: HostRowProps) {
         {heartbeat}
       </td>
       <td>
-        <Btn variant="ghost" size="sm" data-testid={`host-row-${id}-logs`}>
+        <DisabledWithTooltip
+          testId={`host-row-${id}-logs`}
+          action="hosts.logs"
+          reason="Streaming daemon logs into the dashboard requires a daemon endpoint that hasn't shipped yet."
+        >
           Logs
-        </Btn>
+        </DisabledWithTooltip>
       </td>
       {/* Test-only mirrors so existing tests asserting `-version` and
         * `-freshness` keep passing across the column rename. The

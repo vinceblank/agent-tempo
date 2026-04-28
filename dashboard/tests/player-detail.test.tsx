@@ -132,7 +132,7 @@ describe('PlayerDetail panel — base contract', () => {
 });
 
 describe('PlayerDetail — action row (audit §PR-D)', () => {
-  it('renders 5 disabled-with-tooltip CTAs + ✕ close', async () => {
+  it('renders 5 live action CTAs + ✕ close', async () => {
     const mock = new MockDashboardClient({
       snapshot: makeSnapshot({
         ensemble: 'demo',
@@ -146,8 +146,11 @@ describe('PlayerDetail — action row (audit §PR-D)', () => {
     for (const key of ['dm', 'recall', 'restart', 'detach', 'destroy']) {
       const btn = screen.getByTestId(`player-detail-tempo-eng-action-${key}`);
       expect(btn).toBeInTheDocument();
-      expect(btn).toHaveAttribute('aria-disabled', 'true');
-      expect(btn.getAttribute('title')).toMatch(/PR-7/);
+      // PR-7: actions are live `<Btn>` elements (not aria-disabled). The
+      // mutation hooks toast a wire-gap message until tempo-eng's
+      // daemon-side endpoints land.
+      expect(btn).not.toHaveAttribute('aria-disabled');
+      expect(btn.tagName.toLowerCase()).toBe('button');
     }
     expect(screen.getByTestId('player-detail-tempo-eng-close')).toBeInTheDocument();
   });

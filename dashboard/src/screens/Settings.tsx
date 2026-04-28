@@ -248,7 +248,7 @@ function DangerZonePanel() {
           <DisabledWithTooltip
             testId="settings-disband-all"
             action="settings.disband-all"
-            reason="Wires in PR-7 (#389) — safe-write confirmations land first."
+            reason="Disbanding every ensemble at once requires a daemon endpoint that hasn't shipped yet. Use `claude-tempo down --destroy` from the CLI for now."
           >
             Disband all
           </DisabledWithTooltip>

@@ -81,7 +81,7 @@ describe('Loadouts screen — table', () => {
       const load = screen.getByTestId(`loadouts-row-${l.name}-load`);
       expect(edit).toHaveAttribute('aria-disabled', 'true');
       expect(load).toHaveAttribute('aria-disabled', 'true');
-      expect(edit.getAttribute('title')).toMatch(/PR-7/);
+      expect(edit.getAttribute('title')).toMatch(/daemon endpoint/);
     }
   });
 });
