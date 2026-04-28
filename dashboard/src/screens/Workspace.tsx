@@ -62,7 +62,6 @@ import {
   useLocation,
 } from 'react-router-dom';
 import { useEnsembleSnapshot } from '../lib/queries';
-import { asExtended } from '../lib/wire-shape';
 import { useSseSubscription } from '../lib/sse';
 import { selectedPlayerIdFromPath } from '../router';
 import { logEvent } from '../lib/log';
@@ -119,11 +118,9 @@ export function Workspace() {
   const navigate = useNavigate();
   const location = useLocation();
   const snapshot = useEnsembleSnapshot(ensemble);
-  // #399 W1 (Q5.6) — bpm + sparkline land on the snapshot via DB1a.
-  // Fall back to neutral values until DB1a's projection ships.
-  const extData = asExtended(snapshot.data);
-  const bpm = extData?.currentBpm ?? 0;
-  const tempoSeries = extData?.tempoSeries ?? [];
+  // #399 W1 (Q5.6) — bpm + sparkline are on the snapshot via DB1a (#413).
+  const bpm = snapshot.data?.currentBpm ?? 0;
+  const tempoSeries = snapshot.data?.tempoSeries ?? [];
   useSseSubscription(ensemble);
 
   useEffect(() => {

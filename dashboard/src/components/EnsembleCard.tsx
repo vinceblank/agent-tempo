@@ -40,7 +40,6 @@ import { Link } from 'react-router-dom';
 import { useEnsembleSnapshot } from '../lib/queries';
 import { useSseSubscription } from '../lib/sse';
 import type { EnsembleSummary } from '../lib/client';
-import { asExtended } from '../lib/wire-shape';
 import { logEvent } from '../lib/log';
 import { formatDuration } from '../lib/time-format';
 import { PlayerAvatar } from './tempo/PlayerAvatar';
@@ -59,7 +58,7 @@ export function EnsembleCard({ ensemble }: EnsembleCardProps) {
   // `/v1/events` stream + per-card snapshot only.
   useSseSubscription(ensemble.name);
 
-  const data = asExtended(snapshot.data);
+  const data = snapshot.data;
   const players = data?.players ?? [];
   const playerCount = players.length || ensemble.playerCount;
   const hasConductor = data?.hasConductor ?? ensemble.hasConductor;
