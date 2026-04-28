@@ -101,6 +101,10 @@ export function createMaestroActivities(client: Client): MaestroActivities {
           agentType: s.agentType,
           playerType: s.playerType,
           phase: s.phase,
+          // #399 W1 — forward the activity-counter pair so the maestro's
+          // tempo bucket can diff across refreshes.
+          activityCount: s.activityCount,
+          lastActivityAt: s.lastActivityAt,
         }));
       } catch (err) {
         log('refreshEnsembleState failed:', err);

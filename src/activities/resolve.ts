@@ -1,6 +1,7 @@
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { SessionMetadata, AttachmentPhase } from '../types';
 import { getAttachmentPhase } from '../utils/search-attributes';
+import { getActivityStateQuery } from '../workflows/signals';
 
 /** Shared query for listing running session workflows. */
 const SESSION_LIST_QUERY = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
@@ -50,6 +51,17 @@ export interface EnsembleSessionInfo {
    * or transiently while search attributes propagate.
    */
   phase?: AttachmentPhase;
+  /**
+   * #399 W1+W2 — monotonic message-activity counter from the session's
+   * `getActivityState` query (introduced in W2). Undefined when the
+   * session predates W2 or the query failed.
+   */
+  activityCount?: number;
+  /**
+   * #399 W1+W2 — ISO timestamp of the last activity-counter bump on the
+   * session. Undefined when the session predates W2 or the query failed.
+   */
+  lastActivityAt?: string;
 }
 
 /**
@@ -76,6 +88,22 @@ export async function scanEnsembleSessions(
       // attribute (written by the workflow on every phase transition).
       const phase = getAttachmentPhase(workflow);
 
+      // #399 W1+W2 — best-effort fetch of the session's monotonic
+      // activity counter. Wrapped in its own try/catch so a session
+      // predating W2 (no `getActivityState` query handler) doesn't
+      // disqualify the whole row.
+      let activityCount: number | undefined;
+      let lastActivityAt: string | undefined;
+      try {
+        const activity = await handle.query(getActivityStateQuery);
+        activityCount = activity.activityCount;
+        lastActivityAt = activity.lastActivityAt;
+      } catch {
+        // Session predates W2 or the query is otherwise unavailable —
+        // leave both fields undefined so the maestro contributes zero
+        // to the tempo bucket for this player this cycle.
+      }
+
       sessions.push({
         workflowId: workflow.workflowId,
         playerId: metadata.playerId,
@@ -88,6 +116,8 @@ export async function scanEnsembleSessions(
         agentType: metadata.agentType || 'claude',
         playerType: metadata.playerType,
         phase,
+        activityCount,
+        lastActivityAt,
       });
     } catch {
       // Workflow may have just completed — skip it

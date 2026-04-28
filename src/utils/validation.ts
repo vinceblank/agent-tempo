@@ -25,6 +25,14 @@ export const MESSAGE_MAX = 102400;
 /** Maximum part (status) length. */
 export const PART_MAX = 500;
 
+/**
+ * Maximum length of the ensemble description set via
+ * `set_ensemble_description` (#399 W1, Q5.1). Soft cap — the MCP tool
+ * boundary rejects oversized inputs; the maestro workflow clamps as a
+ * defence-in-depth measure.
+ */
+export const ENSEMBLE_DESCRIPTION_MAX = 100;
+
 /** Maximum file path length. */
 export const PATH_MAX = 1024;
 
