@@ -237,6 +237,12 @@ function fakeClient(over: Partial<TempoClient> = {}): TempoClient {
     async isMaestroPaused() { return false; },
     async isAnySessionHeld() { return false; },
     async listHosts() { return [sampleHost]; },
+    // Issue #399 DB1a wire-extension methods — sentinel defaults; tests
+    // exercising W1/W2 projection override these on a per-test basis.
+    async getEnsembleMeta() {
+      return { description: '', startedAt: '', currentBpm: 0, tempoSeries: [] };
+    },
+    async getPlayerWireMeta() { return null; },
   };
   return new Proxy({ ...base, ...over }, {
     get(target: Record<string, unknown>, prop: string) {

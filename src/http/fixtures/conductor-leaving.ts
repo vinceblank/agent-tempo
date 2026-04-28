@@ -53,6 +53,10 @@ export const conductorLeaving: FixtureScenario = {
         defaultAgent: 'claude', platform: 'linux', capabilities: [],
       },
     },
+    description: '',
+    startedAt: '',
+    currentBpm: 0,
+    tempoSeries: [],
   },
   events: [
     {

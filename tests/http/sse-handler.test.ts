@@ -113,6 +113,12 @@ async function bootSseServer(opts: {
     async isMaestroPaused() { return false; },
     async isAnySessionHeld() { return false; },
     async listHosts() { return []; },
+    // Issue #399 DB1a wire-extension methods — sentinel defaults
+    // matching the soft-fail shape the snapshot builder expects.
+    async getEnsembleMeta() {
+      return { description: '', startedAt: '', currentBpm: 0, tempoSeries: [] as number[] };
+    },
+    async getPlayerWireMeta() { return null; },
   } as unknown as import('../../src/client/interface').TempoClient;
   const server = http.createServer((req, res) => {
     handleSseRequest(req, res, {

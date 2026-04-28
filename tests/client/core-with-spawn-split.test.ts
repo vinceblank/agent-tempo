@@ -40,6 +40,7 @@ const CORE_METHOD_NAMES = [
   'isConnected',
   // Per-ensemble reads
   'getPlayers',
+  'getEnsembleMeta', // Issue #399 W1 — description / startedAt / currentBpm / tempoSeries fan-out
   'getMessages',
   'getConductorHistory',
   'getEnsembleChat',
@@ -52,6 +53,7 @@ const CORE_METHOD_NAMES = [
   // Per-player reads
   'getPlayerMessages',
   'getPlayerMetadata',
+  'getPlayerWireMeta', // Issue #399 W2 — runId / messaging / lease fan-out
   'attachmentInfo',
   'recall',
   // Outbox-routed mutations

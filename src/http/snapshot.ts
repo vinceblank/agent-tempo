@@ -64,13 +64,39 @@ async function fanOut<T extends Record<string, () => Promise<unknown>>>(
 }
 
 /**
+ * Per-player wire-extension fields layered on top of `toPlayerSummaryV1`.
+ * Issue #399 W2 — `getPlayerWireMeta` fans out 3 session queries; the
+ * resulting object is merged into the projection here. `null` (session
+ * unreachable) drops the whole wire-meta block rather than emitting
+ * half-populated fields.
+ */
+export interface PlayerWireMeta {
+  runId?: string;
+  messaging?: { received: number; sent: number; outbox: string };
+  lease?: { expiresAt: number | null; leaseMs: number | null };
+}
+
+/**
  * Project a `MaestroPlayerInfo` into the wire-stable `PlayerSummaryV1`.
  * Drops fields that aren't part of the v1 contract; coerces `agentType`
  * from the open-string MaestroPlayerInfo to the `'claude' | 'copilot'`
  * union (anything unknown defaults to `'claude'` — the v1 contract
  * doesn't expose third-party adapters yet).
+ *
+ * `wireMeta` is the session-level projection from
+ * `TempoClient.getPlayerWireMeta` (Issue #399 W2). Pass `null` (or omit)
+ * when the session workflow couldn't be queried — the projection then
+ * carries no `runId` / `messaging` / `lease` fields and the dashboard
+ * renders `—` placeholders.
+ *
+ * `activityCount` and `lastActivityAt` come straight from
+ * `MaestroPlayerInfo` (the maestro hub already populates them per
+ * Issue #399 Q5.6). They're passed through verbatim — no extra round-trip.
  */
-export function toPlayerSummaryV1(p: MaestroPlayerInfo): PlayerSummaryV1 {
+export function toPlayerSummaryV1(
+  p: MaestroPlayerInfo,
+  wireMeta: PlayerWireMeta | null = null,
+): PlayerSummaryV1 {
   const agentType: 'claude' | 'copilot' =
     p.agentType === 'copilot' ? 'copilot' : 'claude';
   return {
@@ -84,6 +110,13 @@ export function toPlayerSummaryV1(p: MaestroPlayerInfo): PlayerSummaryV1 {
     part: p.part ?? '',
     workDir: p.workDir ?? '',
     ...(p.gitBranch !== undefined ? { gitBranch: p.gitBranch } : {}),
+    // Issue #399 Q5.6 — pass-through from MaestroPlayerInfo.
+    ...(p.activityCount !== undefined ? { activityCount: p.activityCount } : {}),
+    ...(p.lastActivityAt !== undefined ? { lastActivityAt: p.lastActivityAt } : {}),
+    // Issue #399 W2 — session-query fan-out merged in when reachable.
+    ...(wireMeta?.runId !== undefined ? { runId: wireMeta.runId } : {}),
+    ...(wireMeta?.messaging !== undefined ? { messaging: wireMeta.messaging } : {}),
+    ...(wireMeta?.lease !== undefined ? { lease: wireMeta.lease } : {}),
   };
 }
 
@@ -105,6 +138,9 @@ export async function buildEnsembleSnapshot(
 
   // Fan-out the rest in parallel. Each soft-fails to a sane default — the
   // PR-1 snapshot must NEVER 500 just because one downstream query glitched.
+  // Issue #399 DB1a adds `meta` (4 maestro queries) to the ensemble-level
+  // fan-out; per-player wire-meta is fanned out below once `players`
+  // resolves so we know which session ids to query.
   const fanned = await fanOut({
     players: () => client.getPlayers(ensemble),
     chat: () => client.getEnsembleChat(ensemble, 0, SNAPSHOT_CHAT_LIMIT),
@@ -112,9 +148,23 @@ export async function buildEnsembleSnapshot(
     paused: () => client.isMaestroPaused(ensemble),
     held: () => client.isAnySessionHeld(ensemble),
     hosts: () => client.listHosts(),
+    meta: () => client.getEnsembleMeta(ensemble),
   });
 
-  const players = (fanned.players ?? []).map(toPlayerSummaryV1);
+  // Issue #399 W2 — fan-out 3 session queries per player in parallel.
+  // For a 12-player ensemble that's 36 queries; running them concurrently
+  // keeps total snapshot latency bounded by the slowest single session
+  // query, not the sum. `getPlayerWireMeta` returns `null` when the
+  // session workflow can't be reached — `toPlayerSummaryV1` gracefully
+  // omits the wire-meta fields in that case.
+  const playerInfos = fanned.players ?? [];
+  const wireMetas = await Promise.all(
+    playerInfos.map((p) =>
+      client.getPlayerWireMeta(ensemble, p.playerId).catch(() => null),
+    ),
+  );
+  const players = playerInfos.map((p, i) => toPlayerSummaryV1(p, wireMetas[i]));
+
   const chat = fanned.chat ?? { messages: [], total: 0, hasMore: false, hasConductor: false };
   const schedules = fanned.schedules ?? [];
   const paused = fanned.paused === true;
@@ -123,6 +173,16 @@ export async function buildEnsembleSnapshot(
   for (const h of fanned.hosts ?? []) {
     if (h.profile) hostProfiles[h.hostname] = h.profile;
   }
+  // Issue #399 W1 — sentinel defaults when the maestro fan-out soft-failed
+  // entirely. `getEnsembleMeta` already soft-fails individual queries to
+  // their sentinels; this branch covers the outer `fanOut` swallow when
+  // the whole call rejected.
+  const meta = fanned.meta ?? {
+    description: '',
+    startedAt: '',
+    currentBpm: 0,
+    tempoSeries: [],
+  };
 
   const capturedAt = (opts.now?.() ?? new Date()).toISOString();
 
@@ -142,5 +202,9 @@ export async function buildEnsembleSnapshot(
       hasMore: chat.hasMore,
     },
     hostProfiles,
+    description: meta.description,
+    startedAt: meta.startedAt,
+    currentBpm: meta.currentBpm,
+    tempoSeries: meta.tempoSeries,
   };
 }

@@ -78,6 +78,10 @@ export const eightPlayerBroadcast: FixtureScenario = {
         capabilities: [],
       },
     },
+    description: '',
+    startedAt: '',
+    currentBpm: 0,
+    tempoSeries: [],
   },
   events: broadcastChatEvents.map((msg, i) => ({
     v: 1,

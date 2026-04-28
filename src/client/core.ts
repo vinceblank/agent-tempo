@@ -39,8 +39,17 @@ import {
   requestDetachSignal,
   releaseHeldSignal,
   setPausedSignal,
+  getRunIdQuery,
+  getMessagingStateQuery,
+  getLeaseStateQuery,
 } from '../workflows/signals';
-import { maestroPausedQuery } from '../workflows/maestro-signals';
+import {
+  maestroPausedQuery,
+  getEnsembleDescriptionQuery,
+  getEnsembleStartTimeQuery,
+  getCurrentBpmQuery,
+  getTempoSeriesQuery,
+} from '../workflows/maestro-signals';
 import { resolveSession, scanEnsembleSessions } from '../activities/resolve';
 import { restoreOrphansOnce, type RestoreOrphansSummary } from '../reconcile/orphans';
 import {
@@ -334,6 +343,62 @@ export function createTempoClientCore(
       } catch {
         return [];
       }
+    },
+
+    async getEnsembleMeta(ensemble: string): Promise<{
+      description: string;
+      startedAt: string;
+      currentBpm: number;
+      tempoSeries: number[];
+    }> {
+      // Issue #399 W1 — fan-out four queries against the per-ensemble
+      // maestro hub. Each query soft-fails to its sentinel default so
+      // a single transient failure can't block the snapshot endpoint.
+      const h = handle(maestroWorkflowId(ensemble));
+      const [description, startedAt, currentBpm, tempoSeries] = await Promise.all([
+        h.query(getEnsembleDescriptionQuery).catch(() => '' as string),
+        h.query(getEnsembleStartTimeQuery).catch(() => '' as string),
+        h.query(getCurrentBpmQuery).catch(() => 0 as number),
+        h.query(getTempoSeriesQuery).catch(() => [] as number[]),
+      ]);
+      return { description, startedAt, currentBpm, tempoSeries };
+    },
+
+    async getPlayerWireMeta(ensemble: string, playerId: string): Promise<{
+      runId?: string;
+      messaging?: { received: number; sent: number; outbox: string };
+      lease?: { expiresAt: number | null; leaseMs: number | null };
+    } | null> {
+      // Issue #399 W2 — fan-out three queries against the session
+      // workflow. The handle is opened by workflow ID directly; if the
+      // workflow can't be resolved (just-recruited, just-destroyed,
+      // transient lookup failure) every query rejects together and
+      // we return `null` so the caller's projection drops the whole
+      // wire-meta block rather than emitting half-populated fields.
+      const h = handle(sessionWorkflowId(ensemble, playerId));
+      const [runIdR, messagingR, leaseR] = await Promise.allSettled([
+        h.query(getRunIdQuery),
+        h.query(getMessagingStateQuery),
+        h.query(getLeaseStateQuery),
+      ]);
+      // If every query rejected, treat this as "session unreachable" —
+      // the caller renders no wire-meta rather than partial sentinels.
+      if (
+        runIdR.status === 'rejected' &&
+        messagingR.status === 'rejected' &&
+        leaseR.status === 'rejected'
+      ) {
+        return null;
+      }
+      const out: {
+        runId?: string;
+        messaging?: { received: number; sent: number; outbox: string };
+        lease?: { expiresAt: number | null; leaseMs: number | null };
+      } = {};
+      if (runIdR.status === 'fulfilled') out.runId = runIdR.value;
+      if (messagingR.status === 'fulfilled') out.messaging = messagingR.value;
+      if (leaseR.status === 'fulfilled') out.lease = leaseR.value;
+      return out;
     },
 
     async getMessages(ensemble: string, limit?: number): Promise<MaestroRelayMessage[]> {

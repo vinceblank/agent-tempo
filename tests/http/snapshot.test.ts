@@ -20,8 +20,23 @@ import type { MaestroPlayerInfo, HostInfo } from '../../src/types';
  * Plain object + Proxy fallback avoids `Object.assign` introspecting the
  * proxy and tripping the throw on its own keys traversal.
  */
+/**
+ * Issue #399 DB1a default stubs — `getEnsembleMeta` and `getPlayerWireMeta`
+ * are called unconditionally by `buildEnsembleSnapshot` for every
+ * snapshot. Default them to sentinel-result shapes so tests not exercising
+ * W1/W2 projection don't have to stub them. Tests that DO exercise
+ * those paths override via `over`.
+ */
+const DB1A_DEFAULTS: Partial<TempoClient> = {
+  async getEnsembleMeta() {
+    return { description: '', startedAt: '', currentBpm: 0, tempoSeries: [] };
+  },
+  async getPlayerWireMeta() { return null; },
+};
+
 function stubClient(over: Partial<TempoClient>): TempoClient {
-  return new Proxy(over as Record<string, unknown>, {
+  const merged = { ...DB1A_DEFAULTS, ...over } as Record<string, unknown>;
+  return new Proxy(merged, {
     get(target, prop: string | symbol) {
       if (prop in target) return target[prop as string];
       return () => {

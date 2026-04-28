@@ -61,6 +61,10 @@ export const chatStress: FixtureScenario = {
     schedules: [],
     chat: { messages: [], total: 0, hasMore: false },
     hostProfiles: {},
+    description: '',
+    startedAt: '',
+    currentBpm: 0,
+    tempoSeries: [],
   },
   events: [...stressEvents, compressedEvent],
   // Tight cadence to actually stress the consumer; not zero so timing is observable.

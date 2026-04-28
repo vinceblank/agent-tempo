@@ -227,6 +227,13 @@ export function makeSnapshot(overrides: Partial<EnsembleStateV1> = {}): Ensemble
     schedules: [],
     chat: { messages: [], total: 0, hasMore: false },
     hostProfiles: {},
+    // Issue #399 wire extensions — sentinel defaults matching the
+    // soft-fail shape of `buildEnsembleSnapshot`. Override per-test
+    // when a scenario needs a populated description / bpm / etc.
+    description: '',
+    startedAt: '',
+    currentBpm: 0,
+    tempoSeries: [],
     ...overrides,
   };
 }
