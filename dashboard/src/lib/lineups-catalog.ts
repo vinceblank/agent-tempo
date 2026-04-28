@@ -1,59 +1,56 @@
 /**
- * Static catalog of shipped lineups (PR-F1 of #389).
+ * Static fallback catalog of shipped lineups (PR-F1 of #389).
  *
- * The daemon doesn't expose `/v1/loadouts` yet — once it does (or once
- * PR-E adds the dynamic `useLineups()` hook), the Loadouts screen
- * should swap to that data source. Until then this catalog mirrors the
- * five YAML files under `examples/ensembles/` so the screen has a
- * representative table to render.
+ * The daemon's `/v1/lineups` endpoint (#400) is now canonical; the
+ * Loadouts screen consumes it via `useLineups()`. This module ships a
+ * hardcoded mirror used as the **eager-fallback** so the table stays
+ * populated when the daemon is unreachable or while the query loads.
  *
- * Counts are kept in sync with the YAML by hand. If they drift, update
- * here when adding/removing players from a shipped lineup.
+ * Conforms to the wire-row shape (`LineupRow`) — no shape adapter
+ * needed at the consumer boundary. Refresh manually when shipped
+ * lineup rows change in `examples/ensembles/`.
+ *
+ * **Consolidation note**: PR-DB2 #415 added a parallel
+ * `lib/static-catalog.SHIPPED_LINEUPS` that mirrors the same data.
+ * Two fallback modules will coexist until the architect harmonises
+ * them; the audit doc tracks the consolidation.
  */
+import type { LineupRow } from './client';
 
-export interface LoadoutEntry {
-  /** YAML basename without the `.yaml` suffix. Stable testid key. */
-  name: string;
-  /** One-line summary surfaced in the Summary column. */
-  summary: string;
-  /** Total players (excluding the conductor). */
-  players: number;
-  /** Where this lineup ships from — "shipped" (in the npm tarball)
-   *  vs "custom" (project- or user-scoped overrides). */
-  source: 'shipped' | 'custom';
-  /** Last-used display string. `'—'` when unknown / never used. */
-  lastUsed?: string;
-}
-
-export const SHIPPED_LINEUPS: readonly LoadoutEntry[] = [
+export const SHIPPED_LINEUPS: ReadonlyArray<LineupRow> = [
   {
     name: 'tempo-big-band',
-    summary: 'Full-lifecycle development ensemble — design, implement, test, review, and ship.',
+    description:
+      'Full-lifecycle development ensemble — design, implement, test, review, and ship.',
     players: 9,
     source: 'shipped',
   },
   {
     name: 'tempo-dev-team',
-    summary: 'Development team — conductor, composer, two soloists, and a tuner for feature work.',
+    description:
+      'Development team — conductor, composer, two soloists, and a tuner for feature work.',
     players: 5,
     source: 'shipped',
   },
   {
     name: 'tempo-jam-session',
-    summary: 'Exploratory ensemble for spikes, research, and problems where the path forward is unclear.',
+    description:
+      'Exploratory ensemble for spikes, research, and problems where the path forward is unclear.',
     players: 4,
     source: 'shipped',
   },
   {
     name: 'tempo-mock-jam',
-    summary: 'All-mock ensemble for autonomous validation harnesses (dev mode only).',
+    description:
+      'All-mock ensemble for autonomous validation harnesses (dev mode only).',
     players: 4,
     source: 'shipped',
   },
   {
     name: 'tempo-review-squad',
-    summary: 'Three critics with different focus areas for thorough parallel code review.',
+    description:
+      'Three critics with different focus areas for thorough parallel code review.',
     players: 3,
     source: 'shipped',
   },
-] as const;
+];

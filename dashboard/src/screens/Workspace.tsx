@@ -61,6 +61,7 @@ import {
   useNavigate,
   useLocation,
 } from 'react-router-dom';
+import type { ScheduleEntry } from 'claude-tempo/types';
 import { useEnsembleSnapshot } from '../lib/queries';
 import { useSseSubscription } from '../lib/sse';
 import { selectedPlayerIdFromPath } from '../router';
@@ -131,10 +132,13 @@ export function Workspace() {
     () => snapshot.data?.players ?? [],
     [snapshot.data?.players],
   );
-  const conductorPlayerId = useMemo(
-    () => players.find((p) => p.isConductor)?.playerId,
+  const conductorPlayer = useMemo(
+    () => players.find((p) => p.isConductor),
     [players],
   );
+  const conductorPlayerId = conductorPlayer?.playerId;
+  const conductorHostname = conductorPlayer?.hostname;
+  const schedules = snapshot.data?.schedules ?? [];
   const messages = snapshot.data?.chat?.messages ?? [];
   const hasCompressedGap =
     !!snapshot.data && messages.length === 0 && snapshot.data.chat.hasMore;
@@ -202,14 +206,17 @@ export function Workspace() {
   const toggleSide = useCallback(() => setShowSide((s) => !s), []);
   const phoneAppBarOverride = useMemo<PhoneAppBarOverride>(
     () => ({
-      lineup: 'tempo-dev-team',
+      // Lineup name is wire-pending — degrade to the ensemble name as
+      // the kicker label (it's already in the URL, so the user has
+      // context). Replace once the snapshot surfaces a `lineup` field.
+      lineup: ensemble ?? '',
       status: { active, idle, detached, uptime: '—' },
       onAction: toggleSide,
       actionIcon: <PeopleGlyph />,
       actionLabel: showSide ? 'Hide roster' : 'Show roster, events, schedules',
       actionActive: showSide,
     }),
-    [active, idle, detached, showSide, toggleSide],
+    [ensemble, active, idle, detached, showSide, toggleSide],
   );
   useScreenPhoneAppBar(phoneAppBarOverride);
 
@@ -326,15 +333,25 @@ export function Workspace() {
           </>
         }
         subtitle={
-          <>
-            Lineup <span className="mono">tempo-dev-team</span>
-            {conductorPlayerId && (
-              <>
-                {' · conducted by '}
-                <span className="mono accent">{conductorPlayerId}</span>
-              </>
-            )}
-          </>
+          // Lineup name isn't on the wire today — the snapshot doesn't
+          // surface which lineup booted the ensemble. Drop the design's
+          // "Lineup <name>" segment until the wire ships it (architect
+          // tracked); show the conductor + host instead, which IS
+          // derivable from `players.find(p => p.isConductor)`.
+          conductorPlayerId ? (
+            <>
+              Conducted by{' '}
+              <span className="mono accent">{conductorPlayerId}</span>
+              {conductorHostname && (
+                <>
+                  {' on '}
+                  <span className="mono">{conductorHostname}</span>
+                </>
+              )}
+            </>
+          ) : (
+            <span className="dim">No conductor yet</span>
+          )
         }
       />
 
@@ -508,20 +525,53 @@ export function Workspace() {
               </div>
             </div>
 
-            <div className="panel">
+            <div className="panel" data-testid="workspace-schedules-panel">
               <div className="panel-head">
                 <div className="panel-head-title">
                   <span className="h">Schedules</span>
-                  <span className="subj display">—</span>
+                  <span className="subj display">
+                    {schedules.length === 0
+                      ? 'no scheduled actions'
+                      : `${schedules.length} active`}
+                  </span>
                 </div>
               </div>
               <div className="panel-body" style={{ paddingTop: 6 }}>
-                {/* PR-C1 stub: schedules wire-up lands in PR-F. The panel
-                  * shell + header sit here so the side-stack visually
-                  * matches the canonical workspace layout. */}
-                <div className="dim" style={{ fontSize: 11 }}>
-                  Schedules wire-up lands in PR-F (#389).
-                </div>
+                {schedules.length === 0 ? (
+                  <div
+                    data-testid="workspace-schedules-empty"
+                    className="dim"
+                    style={{ fontSize: 11 }}
+                  >
+                    No scheduled actions. Set one up via{' '}
+                    <span className="mono">/schedule</span> in the conductor
+                    chat.
+                  </div>
+                ) : (
+                  <ul
+                    data-testid="workspace-schedules-list"
+                    style={{
+                      listStyle: 'none',
+                      margin: 0,
+                      padding: 0,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                    }}
+                  >
+                    {schedules.slice(0, 3).map((s) => (
+                      <ScheduleSummaryRow key={s.name} entry={s} />
+                    ))}
+                    {schedules.length > 3 && (
+                      <li
+                        className="mono dim"
+                        style={{ fontSize: 11, paddingTop: 2 }}
+                      >
+                        + {schedules.length - 3} more
+                      </li>
+                    )}
+                  </ul>
+                )}
               </div>
             </div>
           </aside>
@@ -646,4 +696,58 @@ function eventKindForPhase(phase: string | undefined): string {
 
 function phaseLabel(phase: string | undefined): string {
   return (phase ?? 'unknown').toUpperCase();
+}
+
+// ─── Schedules side-panel row ────────────────────────────────────────
+//
+// Compact `name → target` row with a relative "next-fire" stamp on the
+// right. Mirrors `Schedules.tsx`'s row shape but trimmed for the
+// side-panel's narrow width — name + target only; cron / kind / actions
+// live on the full screen, reachable via the Schedules nav.
+
+function ScheduleSummaryRow({ entry }: { entry: ScheduleEntry }) {
+  return (
+    <li
+      data-testid={`workspace-schedule-${entry.name}`}
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'baseline',
+        gap: 8,
+        fontSize: 12,
+      }}
+    >
+      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span className="mono accent">⧗</span>{' '}
+        <span className="mono">{entry.name}</span>
+        <span className="mono dim" style={{ marginLeft: 6 }}>
+          → {entry.target}
+        </span>
+      </span>
+      <span className="mono dim" style={{ fontSize: 11, flexShrink: 0 }}>
+        {formatNextFire(entry.nextFireAt)}
+      </span>
+    </li>
+  );
+}
+
+/**
+ * Compact next-fire formatter — duplicates `Schedules.tsx`'s helper to
+ * keep this PR focused. If/when a third caller appears, extract to
+ * `lib/time-format.ts` next to `formatRelativeAge`.
+ */
+function formatNextFire(iso: string | undefined): string {
+  if (!iso) return '—';
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return '—';
+  const deltaMs = t - Date.now();
+  if (deltaMs <= 0) return 'now';
+  const sec = Math.floor(deltaMs / 1000);
+  if (sec < 60) return `in ${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `in ${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `in ${hr}h`;
+  const day = Math.floor(hr / 24);
+  return `in ${day}d`;
 }
