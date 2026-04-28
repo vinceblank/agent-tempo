@@ -37,7 +37,7 @@ import { useScreenPageHeader } from '../components/AppShell';
 import { useHosts, HOSTS_QUERY_KEY } from '../lib/queries';
 import { logEvent } from '../lib/log';
 import { emptyCardStyle, errorPanelStyle, monoStyle } from '../lib/screen-styles';
-import { formatRelativeAge } from '../lib/time-format';
+import { formatRelativeAge, formatDuration } from '../lib/time-format';
 
 export function Hosts() {
   useEffect(() => {
@@ -189,6 +189,11 @@ function HostRow({ host }: HostRowProps) {
   const playerTypeCount = host.profile?.availablePlayerTypes?.length ?? 0;
   const heartbeat = formatRelativeAge(freshest?.lastAccessTime);
   const isLive = host.freshness === 'live';
+  // Q5.3b — daemon uptime renders only for live hosts; stale ones may
+  // have a stale `daemonStartedAt` that would mislead.
+  const uptime = isLive && host.profile?.daemonStartedAt !== undefined
+    ? formatDuration(Date.now() - host.profile.daemonStartedAt)
+    : '—';
 
   return (
     <tr data-testid={`host-row-${id}`} data-freshness={host.freshness}>
@@ -216,7 +221,7 @@ function HostRow({ host }: HostRowProps) {
         {daemonVersion}
       </td>
       <td data-label="Uptime" data-testid={`host-row-${id}-uptime`} className="mono dim">
-        —
+        {uptime}
       </td>
       <td
         data-label="Heartbeat"

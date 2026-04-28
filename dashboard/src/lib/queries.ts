@@ -121,3 +121,4 @@ export function useEnsembleSnapshot(
     refetchOnWindowFocus: false, // SSE keeps the cache fresh
   });
 }
+

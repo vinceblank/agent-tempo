@@ -18,9 +18,12 @@
  */
 import { useMemo, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { PlayerSummaryV1 } from 'claude-tempo/http/event-types';
 import type { EnsembleChatMessage } from 'claude-tempo/types';
-import { useEnsembleSnapshot } from '../lib/queries';
+import { useEnsembleSnapshot, useHosts } from '../lib/queries';
+import {
+  asExtended,
+  type ExtendedPlayerSummaryV1,
+} from '../lib/wire-shape';
 import { ResponsivePanel } from '../components/ResponsivePanel';
 import { SectionHead } from '../components/SectionHead';
 import { DisabledWithTooltip } from '../components/DisabledWithTooltip';
@@ -30,7 +33,12 @@ import { TypeBadge } from '../components/tempo/TypeBadge';
 import { FeedMessage } from '../components/chat/FeedMessage';
 import type { FeedMessageData } from '../components/chat/FeedMessage';
 import { MAESTRO_PLAYER_ID, LEGACY_CONDUCTOR_NAME } from '../lib/chat-format';
-import { formatHHMM, formatRelativeAge } from '../lib/time-format';
+import {
+  formatHHMM,
+  formatRelativeAge,
+  formatLeaseRemaining,
+  formatRunId,
+} from '../lib/time-format';
 
 const TRANSCRIPT_LIMIT = 6;
 
@@ -53,7 +61,10 @@ export function PlayerDetail() {
   const { id, playerId } = useParams<{ id: string; playerId: string }>();
   const navigate = useNavigate();
   const snapshot = useEnsembleSnapshot(id ?? null);
-  const player = snapshot.data?.players.find((p) => p.playerId === playerId);
+  const player = asExtended(snapshot.data)?.players.find(
+    (p) => p.playerId === playerId,
+  );
+  const hosts = useHosts();
 
   const transcript = useMemo(
     () => buildTranscript(snapshot.data?.chat?.messages, playerId),
@@ -81,7 +92,11 @@ export function PlayerDetail() {
           <SheetHead player={player} testIdPrefix={baseTestId} onClose={close} />
           <div className="player-sheet-body">
             <SheetMain player={player} transcript={transcript} testIdPrefix={baseTestId} />
-            <SheetSide player={player} testIdPrefix={baseTestId} />
+            <SheetSide
+              player={player}
+              testIdPrefix={baseTestId}
+              adapterVersion={resolveAdapterVersion(player, hosts.data)}
+            />
           </div>
         </>
       )}
@@ -94,7 +109,7 @@ function SheetHead({
   testIdPrefix,
   onClose,
 }: {
-  player: PlayerSummaryV1;
+  player: ExtendedPlayerSummaryV1;
   testIdPrefix: string;
   onClose: () => void;
 }) {
@@ -157,7 +172,7 @@ function SheetMain({
   transcript,
   testIdPrefix,
 }: {
-  player: PlayerSummaryV1;
+  player: ExtendedPlayerSummaryV1;
   transcript: FeedMessageData[];
   testIdPrefix: string;
 }) {
@@ -189,13 +204,17 @@ function SheetMain({
 function SheetSide({
   player,
   testIdPrefix,
+  adapterVersion,
 }: {
-  player: PlayerSummaryV1;
+  player: ExtendedPlayerSummaryV1;
   testIdPrefix: string;
+  adapterVersion: string;
 }) {
   const phaseValue = (
     <PhaseDot phase={player.phase} playerId={player.playerId} showLabel />
   );
+  const messaging = player.messaging;
+  const lease = player.lease;
   return (
     <div className="player-sheet-side" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <KvSection
@@ -204,11 +223,11 @@ function SheetSide({
         sectionTestId={`${testIdPrefix}-section-phase-lease`}
       >
         <KvRow testId={`${testIdPrefix}-kv-phase`}     k="phase"     v={phaseValue} mono={false} />
-        <KvRow testId={`${testIdPrefix}-kv-adapter`}   k="adapter"   v="—" />
+        <KvRow testId={`${testIdPrefix}-kv-adapter`}   k="adapter"   v={adapterVersion} />
         <KvRow testId={`${testIdPrefix}-kv-host`}      k="host"      v={player.hostname} />
         <KvRow testId={`${testIdPrefix}-kv-heartbeat`} k="heartbeat" v={formatRelativeAge(player.lastHeartbeatAt)} />
-        <KvRow testId={`${testIdPrefix}-kv-lease`}     k="lease"     v="—" />
-        <KvRow testId={`${testIdPrefix}-kv-run-id`}    k="run id"    v="—" />
+        <KvRow testId={`${testIdPrefix}-kv-lease`}     k="lease"     v={formatLeaseRemaining(lease?.expiresAt)} />
+        <KvRow testId={`${testIdPrefix}-kv-run-id`}    k="run id"    v={formatRunId(player.runId)} />
       </KvSection>
 
       <KvSection
@@ -227,9 +246,12 @@ function SheetSide({
         title="Messages"
         sectionTestId={`${testIdPrefix}-section-messages`}
       >
-        <KvRow testId={`${testIdPrefix}-kv-received`} k="received" v="—" />
-        <KvRow testId={`${testIdPrefix}-kv-sent`}     k="sent"     v="—" />
-        <KvRow testId={`${testIdPrefix}-kv-outbox`}   k="outbox"   v="—" />
+        {/* Q5.5 — three counters from the session's getMessagingState
+            query. `outbox` arrives pre-formatted ("empty" / "N pending" /
+            "N pending (oldest 2m)") so the dashboard renders it verbatim. */}
+        <KvRow testId={`${testIdPrefix}-kv-received`} k="received" v={formatCount(messaging?.received)} />
+        <KvRow testId={`${testIdPrefix}-kv-sent`}     k="sent"     v={formatCount(messaging?.sent)} />
+        <KvRow testId={`${testIdPrefix}-kv-outbox`}   k="outbox"   v={messaging?.outbox ?? '—'} />
       </KvSection>
 
       {/* Compatibility shim for v0.27 testid surface (`-id`/`-type`/`-phase`).
@@ -365,4 +387,39 @@ function toFeedMessage(m: EnsembleChatMessage, _playerId: string): FeedMessageDa
     body: m.text,
     fromIsConductor: !fromMaestro && !toMaestro && m.role === 'conductor-out',
   } satisfies FeedMessageData;
+}
+
+/** "—" when undefined; numeric value otherwise. Used by the Messages KV. */
+function formatCount(n: number | undefined): string {
+  return n === undefined ? '—' : String(n);
+}
+
+/**
+ * `agentType` (wire) → adapter key (host's `adapterVersions` map).
+ * The wire surface uses the short `'claude' | 'copilot'` union; the
+ * daemon's `HostProfile.adapterVersions` is keyed by the upstream tool
+ * name (`'claude-code' | 'copilot'`). Centralised so this convention
+ * shows up exactly once.
+ */
+const ADAPTER_KEY_BY_AGENT: Record<string, string> = {
+  claude: 'claude-code',
+  copilot: 'copilot',
+};
+
+/**
+ * Resolve the adapter row's display string (Q5.4 W3). Renders
+ * `"<adapter> · v<version>"` when both the host profile and the
+ * adapterVersions probe succeeded; the adapter name alone when the
+ * version is unknown; `"—"` when the player has no agent type.
+ */
+function resolveAdapterVersion(
+  player: ExtendedPlayerSummaryV1,
+  hosts: ReturnType<typeof useHosts>['data'],
+): string {
+  const agent = player.agentType;
+  if (!agent) return '—';
+  const adapterKey = ADAPTER_KEY_BY_AGENT[agent] ?? agent;
+  const hostInfo = hosts?.find((h) => h.hostname === player.hostname);
+  const version = hostInfo?.profile?.adapterVersions?.[adapterKey];
+  return version ? `${adapterKey} · v${version}` : adapterKey;
 }
