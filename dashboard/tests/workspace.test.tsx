@@ -137,6 +137,84 @@ describe('Workspace screen', () => {
     expect(screen.getByTestId('error-workspace-demo').textContent).toMatch(/snapshot-down/);
   });
 
+  // ── Audit rev2 fidelity polish (P1.2 + P1.5) ──
+
+  it('binds the page-subtitle to conductor + host (drops hardcoded lineup)', async () => {
+    const mock = new MockDashboardClient({
+      snapshot: makeSnapshot({
+        ensemble: 'demo',
+        hasConductor: true,
+        players: [
+          makePlayer({
+            playerId: 'tempo-conductor',
+            isConductor: true,
+            hostname: 'studio.local',
+          }),
+        ],
+      }),
+    });
+    renderWorkspace(mock);
+    // Wait for the snapshot-resolved render — the subtitle binding
+    // only appears once `players` is populated.
+    await waitFor(() => {
+      expect(screen.getByText(/Conducted by/)).toBeInTheDocument();
+    });
+    // The "Conducted by" text node sits in the subtitle div with the
+    // host + conductor mono spans as siblings. Walk up to the
+    // subtitle container and assert its content includes both fields.
+    const subtitle = screen.getByText(/Conducted by/).closest('.page-subtitle');
+    expect(subtitle).toBeTruthy();
+    expect(subtitle!.textContent).toMatch(/tempo-conductor/);
+    expect(subtitle!.textContent).toMatch(/studio\.local/);
+    // Hardcoded lineup is gone.
+    expect(screen.queryByText(/tempo-dev-team/)).toBeNull();
+  });
+
+  it('renders schedules in the side-panel when the snapshot has any', async () => {
+    const mock = new MockDashboardClient({
+      snapshot: makeSnapshot({
+        ensemble: 'demo',
+        hasConductor: true,
+        players: [makePlayer({ playerId: 'tempo-conductor', isConductor: true })],
+        schedules: [
+          {
+            name: 'status-check',
+            message: 'status?',
+            target: 'tempo-conductor',
+            createdBy: 'maestro',
+            type: 'interval',
+            interval: 600_000,
+            nextFireAt: new Date(Date.now() + 60_000).toISOString(),
+            firedCount: 0,
+          },
+        ],
+      }),
+    });
+    renderWorkspace(mock);
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-schedules-panel')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('workspace-schedules-list')).toBeInTheDocument();
+    expect(screen.getByTestId('workspace-schedule-status-check')).toBeInTheDocument();
+    expect(screen.queryByTestId('workspace-schedules-empty')).toBeNull();
+  });
+
+  it('schedules side-panel falls back to empty-state when no schedules', async () => {
+    const mock = new MockDashboardClient({
+      snapshot: makeSnapshot({
+        ensemble: 'demo',
+        hasConductor: true,
+        players: [makePlayer({ playerId: 'tempo-conductor', isConductor: true })],
+        schedules: [],
+      }),
+    });
+    renderWorkspace(mock);
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-schedules-panel')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('workspace-schedules-empty')).toBeInTheDocument();
+  });
+
   // ── PR-C3 mobile shell wiring ───────────────────────────────────────
 
   describe('mobile shell (PR-C3)', () => {

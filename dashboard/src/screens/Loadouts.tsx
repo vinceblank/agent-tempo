@@ -6,20 +6,22 @@
  * a `.panel`. Mobile (≤520px) collapses to stacked cards via the
  * `data-label` rule in `components.css`.
  *
- * **Data source**: `SHIPPED_LINEUPS` from `lib/lineups-catalog.ts` —
- * the daemon's `/v1/loadouts` endpoint isn't shipped yet. PR-E or a
- * follow-up will swap to a live `useLineups()` hook; until then the
- * static list lets the table render with realistic content.
+ * **Data source**: `useLineups()` against `/v1/lineups` (#400). Eager
+ * fallback to `lineups-catalog.SHIPPED_LINEUPS` while the query loads
+ * (and on error) so the table is always populated — same pattern the
+ * Recruit / CreateEnsemble / PlayerTypes wizards use post-DB2.
  *
  * Action buttons (`Edit`, `Load`, `Import YAML`, `New loadout`) all
  * surface `disabled-with-tooltip` until PR-7 wires the safe-write
  * paths.
  */
 import { useEffect } from 'react';
+import type { LineupRow } from '../lib/client';
 import { PageHeader } from '../components/PageHeader';
 import { DisabledWithTooltip } from '../components/DisabledWithTooltip';
 import { logEvent } from '../lib/log';
-import { SHIPPED_LINEUPS, type LoadoutEntry } from '../lib/lineups-catalog';
+import { useLineups } from '../lib/queries';
+import { SHIPPED_LINEUPS } from '../lib/lineups-catalog';
 
 const COL_HEADERS = ['Name', 'Summary', 'Players', 'Source', 'Last used'] as const;
 const PR7_REASON = 'Loadout writes wire up in PR-7 of #389.';
@@ -29,7 +31,14 @@ export function Loadouts() {
     logEvent('screen.opened', { screen: 'loadouts' });
   }, []);
 
-  const lineups = SHIPPED_LINEUPS;
+  const lineupsQuery = useLineups();
+  // Eager fallback — table is populated immediately from the bundled
+  // catalog while the wire loads, then swaps to wire data once the
+  // query resolves. The shapes diverge slightly: the local
+  // `LoadoutEntry` carries a `summary` + `lastUsed`; the wire
+  // `LineupRow` exposes `description` + no last-used. Adapter logic
+  // in `LoadoutRow` handles both.
+  const lineups: ReadonlyArray<LineupRow> = lineupsQuery.data ?? SHIPPED_LINEUPS;
 
   return (
     <main className="main" data-testid="screen-loadouts">
@@ -91,7 +100,7 @@ export function Loadouts() {
   );
 }
 
-function LoadoutRow({ l }: { l: LoadoutEntry }) {
+function LoadoutRow({ l }: { l: LineupRow }) {
   return (
     <tr data-testid={`loadouts-row-${l.name}`}>
       <td className="mono">
@@ -101,7 +110,7 @@ function LoadoutRow({ l }: { l: LoadoutEntry }) {
         data-label="Summary"
         style={{ color: 'var(--text-2)', fontSize: 12.5, maxWidth: 320 }}
       >
-        {l.summary}
+        {l.description ?? '—'}
       </td>
       <td data-label="Players" className="num">
         {l.players}
@@ -111,8 +120,11 @@ function LoadoutRow({ l }: { l: LoadoutEntry }) {
           {l.source}
         </span>
       </td>
+      {/* `Last used` is wire-pending — no daemon-side timestamp ships
+        * with `/v1/lineups` today, so degrade to `—` per the audit's
+        * graceful-degrade rule. */}
       <td data-label="Last used" className="mono dim" style={{ fontSize: 11.5 }}>
-        {l.lastUsed ?? '—'}
+        —
       </td>
       <td style={{ textAlign: 'right' }}>
         <DisabledWithTooltip
