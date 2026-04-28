@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **Dashboard alignment certified (#389)** — Final 100% structural-fidelity pass across all screens. Audit doc and rev3-cert addendum land in `docs/design/`. (#440, #442, #443)
+- **Dashboard alignment certified (#389)** — Final 100% structural-fidelity pass across all screens. Audit doc, polish bundle, final cleanup, and rev3-cert addendum land in `docs/design/`. (#435, #440, #442, #443)
 
 ### Fixed
 
@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - `claude-tempo down` no longer sends a Temporal kill signal that could terminate production workers when invoked in dev mode. (#426)
   - `tempo-mock-jam` lineup: conductor slot was inadvertently set to `claude-code`; corrected to `mock`, making the lineup fully all-mock as advertised. (#429)
 - **HostProfile `taskQueue` threading** — `TempoClient.listHosts()` now threads `taskQueue` through correctly in dev mode, fixing host enumeration against the dev Temporal namespace. (#441)
-- **Dashboard rev3 follow-up sweep** — Closed 4 residual audit items (#430/#431/#436/#438): TempoStrip binding, Schedules screen fidelity, Settings layout, mobile shell edge cases. (#439)
+- **Dashboard rev3 follow-up sweep** — Closed 4 residual audit items: empty-description fallback (#430), sub-minute uptime formatting (#431), Settings panel reads live `/v1/health` instead of static config (#436), stale beta.8 copy on Overview (#438). (#439)
 
 ### Changed
 
