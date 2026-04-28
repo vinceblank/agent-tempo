@@ -21,10 +21,12 @@
  * embedding scenarios (split-pane dev tooling, picture-in-picture)
  * flow correctly.
  *
- * Mobile primitives (PhoneAppBar / PhoneTabBar) are stubbed in PR-A1 —
- * they render their className wrappers so the grid template
- * `auto 1fr 64px` lays out correctly when the ≤520px breakpoint fires.
- * PR-A1m fills in the actual content (switcher, status row, tabs).
+ * Mobile shell (PhoneAppBar / PhoneTabBar / EnsembleSwitcher) lit up
+ * in PR-A1m. AppShell threads `activeEnsemble` from `useParams<{ id }>()`
+ * into PhoneAppBar's title + EnsembleSwitcher's active-row treatment, and
+ * owns the switcher open/close state. Outside `/ensemble/:id` the param
+ * is `undefined`, which leaves both surfaces in their no-ensemble state
+ * (em-dash title, no row highlighted).
  *
  * **Header policy** (PR-C1 + PR-B of #389 — two complementary mechanisms):
  *
@@ -56,11 +58,12 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { PageHeader } from './PageHeader';
 import { PhoneAppBar } from './PhoneAppBar';
 import { PhoneTabBar } from './PhoneTabBar';
+import { EnsembleSwitcher } from './EnsembleSwitcher';
 
 interface AppShellProps {
   children?: ReactNode;
@@ -115,6 +118,11 @@ export function useScreenPageHeader(render: PageHeaderRender): void {
 export function AppShell({ children }: AppShellProps) {
   const location = useLocation();
   const isWorkspace = location.pathname.startsWith('/ensemble/');
+  // Active ensemble for the mobile chrome — `useParams` resolves the
+  // matched `:id` param when AppShell sits inside an `/ensemble/:id`
+  // route, and returns `{}` everywhere else (em-dash title fallback).
+  const { id: activeEnsemble } = useParams<{ id?: string }>();
+  const [switcherOpen, setSwitcherOpen] = useState(false);
 
   const [override, setOverride] = useState<PageHeaderSlotState>(null);
   // Identity-gate the wrapper rebuild so a redundant `setRender(sameFn)`
@@ -137,7 +145,10 @@ export function AppShell({ children }: AppShellProps) {
           data-testid="app-shell"
         >
           <Sidebar />
-          <PhoneAppBar />
+          <PhoneAppBar
+            activeEnsemble={activeEnsemble}
+            onMenu={() => setSwitcherOpen(true)}
+          />
           <main className="main" data-testid="app-shell-main">
             {isWorkspace ? (
               // Workspace owns its full main column — header, tempo
@@ -165,6 +176,11 @@ export function AppShell({ children }: AppShellProps) {
             )}
           </main>
           <PhoneTabBar />
+          <EnsembleSwitcher
+            open={switcherOpen}
+            onClose={() => setSwitcherOpen(false)}
+            activeEnsemble={activeEnsemble}
+          />
         </div>
       </div>
     </PageHeaderSlotContext.Provider>
