@@ -25,11 +25,14 @@ src/
 │   ├── daemon.ts      # Daemon management utilities (start, stop, status, heartbeat, isDaemonRunning)
 │   ├── daemon-command.ts # daemon subcommand handler — crash-proof, no Temporal deps
 │   ├── dashboard-command.ts # dashboard subcommand — crash-proof; opens the web dashboard, optionally minting a QR-code pairing token (#340)
+│   ├── dev-banner.ts  # [DEV MODE] banner formatter (ADR 0014 §5.4) — gate 4 production-safety line
+│   ├── dev-mode-bootstrap.ts # pre-import side-effect: promotes top-level `--dev` flag to `CLAUDE_TEMPO_DEV_MODE=1` before any other module loads
 │   ├── help-text.ts   # help output — crash-proof, no Temporal deps
 │   ├── mcp.ts         # MCP server registration helpers (init, global vs project)
 │   ├── output.ts      # Shared CLI output formatting helpers
 │   ├── preflight.ts   # Environment preflight checks
 │   ├── removed-verbs.ts # lookup table for the 10 CLI verbs removed in #288 — dispatches migration hints before loading Temporal surface
+│   ├── scenarios-command.ts # scenarios subcommand (dev mode only) — list/show shipped YAML scenario library (ADR 0014 §4.8)
 │   ├── startup.ts     # auto-provisioning bootstrap state machine (#289) — six-step idempotent sequence used by bare `claude-tempo` invocation
 │   └── upgrade-command.ts # upgrade subcommand — crash-proof; dynamic-imports Temporal only for active-session warning
 ├── adapters/
@@ -145,7 +148,9 @@ daemon worker notes, `npx ts-node` dev runner).
 - **Wire protocol**: All signal/query/update names are documented in [`docs/WIRE-PROTOCOL.md`](docs/WIRE-PROTOCOL.md) and are stable — renaming or removing any is a breaking change. **Process**: update `docs/WIRE-PROTOCOL.md` in the same commit as any new signal, query, or update.
 - **Daemon**: Standalone background process (`src/daemon.ts`) that runs all Temporal workers and the HTTP/SSE event source (`src/http/`). Auto-started by any `claude-tempo` command. PID at `~/.claude-tempo/daemon.pid`; logs at `~/.claude-tempo/daemon.log`. Exposes local HTTP endpoints (`/v1/health`, `/v1/ensembles`, `/v1/state/:ensemble`, `/v1/events/:ensemble` SSE stream, etc.) consumed by the TUI and `TempoClient.subscribe()`. See [docs/SSE-PROTOCOL.md](docs/SSE-PROTOCOL.md).
 - **Player types**: Reusable agent definitions in Claude Code's subagent format (`.md` files with YAML frontmatter). Three-tier lookup: project `.claude/agents/` → user `~/.claude/agents/` → shipped `examples/agents/`. Discover via `agent_types` tool or `claude-tempo agent-types` CLI. Shipped types: tempo-conductor, tempo-composer, tempo-soloist, tempo-tuner, tempo-critic, tempo-roadie, tempo-improv, tempo-liner.
-- **Lineup examples**: Four pre-built ensemble YAML files in `examples/ensembles/` — `tempo-big-band`, `tempo-dev-team`, `tempo-review-squad`, `tempo-jam-session`. Load with `claude-tempo up --lineup <name>` or the `load_lineup` tool.
+- **Dev mode** (`--dev` flag or `CLAUDE_TEMPO_DEV_MODE=1`): Isolated testing profile — flips home dir to `~/.claude-tempo-dev/`, HTTP port to 8474, Temporal namespace to `claude-tempo-dev`, task queue to `claude-tempo-dev`. Required to use the mock adapter. See `src/config.ts` for `isDevMode()` and the `DEV_*` constants.
+- **Mock adapter** (`agent: 'mock'`, dev mode only): Four modes: `echo` (echoes input), `scripted` (replays YAML scenario rules), `silent` (drains messages without replying — heartbeat-stale validation), `chaos` (probabilistic fail/crash injection via seeded PRNG). Only registered when `isDevMode()` is true; stripped from the npm tarball by `prepack`. See `src/adapters/mock/`.
+- **Lineup examples**: Five pre-built ensemble YAML files in `examples/ensembles/` — `tempo-big-band`, `tempo-dev-team`, `tempo-review-squad`, `tempo-jam-session`, `tempo-mock-jam` (dev-mode all-mock ensemble). Load with `claude-tempo up --lineup <name>` or the `load_lineup` tool.
 - **GitHub App identity** (`claude-tempo[bot]`): When a player writes to GitHub — issue comments, PR creation/merge, commits, labels, check runs — **use `./scripts/ensemble-gh`** instead of `gh`. The wrapper mints a short-lived installation token so the action is attributed to `claude-tempo[bot]`, not to the human maintainer, making the AI authorship visible. Plain `gh` is still correct for read-only local dev (`gh pr view`, `gh repo clone`, `gh auth status`). Every bot-authored comment/PR body must include the AI attribution footer documented in [docs/github-app.md](docs/github-app.md).
 
 See [docs/concepts.md](docs/concepts.md) for the full glossary (Adapter, Attachment phases, Restart, Detach/Destroy, Migrate, Broadcast, Recall, Schedule, Lineup, Quality Gate, Worktree, Stage, Hold/Release, Pause/Resume, Maestro, TempoClient, and more).

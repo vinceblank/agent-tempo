@@ -142,6 +142,7 @@ Project and user types are resolved natively by Claude Code via `--agent <name>`
 | `tempo-dev-team` | Feature development — conductor, composer, two soloists, and a tuner |
 | `tempo-review-squad` | Three critics with different focus areas for thorough parallel code review |
 | `tempo-jam-session` | Exploratory ensemble for spikes, research, and problems where the path is unclear |
+| `tempo-mock-jam` | All-mock ensemble (dev mode only) — mixes all four mock modes (`echo`, `scripted`, `silent`, `chaos`) for end-to-end adapter testing |
 
 ## Agent Type Discovery
 

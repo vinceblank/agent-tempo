@@ -9,7 +9,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `set_name` | Set a human-readable name for this session. |
 | `set_part` | Describe what you're working on. Visible to others via `ensemble`. |
 | `listen` | Manually check for pending messages. |
-| `recruit` | Spawn a new Claude Code session in a directory. Can recruit a conductor with `conductor: true`. When `host` is set, validates the target daemon is live and supports the requested agent before spawning; pass `force: true` to bypass pre-flight (#274). |
+| `recruit` | Spawn a new Claude Code session in a directory. Can recruit a conductor with `conductor: true`. When `host` is set, validates the target daemon is live and supports the requested agent before spawning; pass `force: true` to bypass pre-flight (#274). Dev mode only: `agent: 'mock'` with optional `mockMode` (`echo` \| `scripted` \| `silent` \| `chaos`) and `mockScenario` (bare name or YAML path, required for `scripted`). |
 | `report` | Send updates to the conductor. No-op if no conductor exists. |
 | `schedule` | Create a one-shot or recurring schedule to cue a player. |
 | `unschedule` | Cancel a named schedule. |
@@ -39,6 +39,10 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `restore` | Restore orphaned sessions in one ensemble — re-attaches a fresh adapter to every `detached` session whose preferred host matches. Defaults to scanning the local OS hostname. Pass `hostname: "<other-host>"` for cross-host setups (per-host task queues, #274) where the operator's daemon runs on a different machine than the parked sessions. (#287, #288, #306 follow-up) |
 
 ## Version History
+
+### v0.28 Changes (#382, #385)
+
+- **`recruit` mock params added** — `agent: 'mock'` (dev mode only) with `mockMode` and `mockScenario`. Gates reject mock outside dev mode and validate mode/scenario combinations.
 
 ### v0.27 Changes (#285–#291)
 

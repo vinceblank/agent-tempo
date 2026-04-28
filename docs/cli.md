@@ -28,6 +28,7 @@ claude-tempo <command> [options]
 | `agent-types <sub>` | Manage player types (`list`, `show <name>`, `init`) |
 | `daemon <sub>` | Manage the worker daemon (`start [--force]`, `stop`, `status`, `logs`, `stats`) |
 | `dashboard` | Open the web dashboard in the default browser. Flags: `--port`, `--bind`, `--no-open` (print URL, skip launch), `--pair` (mint a one-time QR-code pairing token for cross-device access), `--json` (machine-parseable output). Requires the daemon to be running. (#340) |
+| `scenarios <sub>` | **Dev mode only.** Browse the shipped scenario library (`list`, `show <name>`). Requires `--dev`. See [dev-mode.md](dev-mode.md). |
 | `upgrade [version]` | Graceful self-update — stops daemon, installs new version, restarts daemon |
 | `version` | Print the installed version |
 | `help` | Show usage info |
@@ -56,6 +57,8 @@ claude-tempo <command> [options]
 --destroy                     Also terminate every workflow (down only)
 --lineup <name|file>          Load an ensemble lineup by name or file path (up)
 --no-hold                     Skip hold-on-startup: deliver lineup instructions immediately (up --lineup)
+--scenario <name>             Force every mock player in the lineup into scripted mode with this scenario (up --dev, dev mode only)
+--dev                         Run in dev-mode isolated profile (home: ~/.claude-tempo-dev/, port: 8474, namespace: claude-tempo-dev). See dev-mode.md.
 -v, --version                 Print version and exit
 ```
 
