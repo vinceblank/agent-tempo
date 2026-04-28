@@ -50,7 +50,10 @@ async function waitForPhase(
   while (Date.now() < deadline) {
     last = await handle.query(attachmentInfoQuery);
     if (last.phase === expected) return last;
-    await new Promise((r) => setTimeout(r, 50));
+    // 150ms tick (was 50ms) — defensive against slow CI runners. Same 5s
+    // budget; the bump just lowers the polling pressure when this hook
+    // runs alongside the heaviest test in the suite (#383 P3.2).
+    await new Promise((r) => setTimeout(r, 150));
   }
   throw new Error(
     `Timed out waiting for phase="${expected}"; last=${JSON.stringify(last)}`,
@@ -68,7 +71,8 @@ async function waitForDelivered(
     const all: Message[] = await handle.query(allMessagesQuery);
     const delivered = all.filter((m) => m.delivered);
     if (delivered.length >= atLeast) return delivered;
-    await new Promise((r) => setTimeout(r, 50));
+    // 150ms tick (was 50ms) — see waitForPhase comment. #383 P3.2.
+    await new Promise((r) => setTimeout(r, 150));
   }
   const snapshot: Message[] = await handle.query(allMessagesQuery);
   throw new Error(

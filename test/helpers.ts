@@ -1079,6 +1079,109 @@ export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): P
 }
 
 /**
+ * Describe-level companion to {@link withWorkerAndOutboxActivities} and
+ * {@link withWorkerAndRecruitActivities}. Starts a main + per-host worker
+ * pair, returns an async teardown function. A `describe` of N tests pays
+ * spin-up once instead of N times — the heaviest cost #383 P3 audit
+ * identified.
+ *
+ * The two callers are kept in lockstep with the existing wrappers; any
+ * drift in the activity stub sets would surface as a "works under wrapper,
+ * fails under shared worker" anomaly — see also {@link useSharedWorker}.
+ *
+ * Filed under issue #383 P3.1.
+ */
+async function startWorkerPair(
+  opts: { includeHardTerminateOnMain: boolean },
+): Promise<() => Promise<void>> {
+  const { createScheduleActivities } = await import('../src/activities/schedule-fire');
+  const { createOutboxActivities } = await import('../src/activities/outbox');
+
+  const scheduleActivities = createScheduleActivities(requireTestEnv().client);
+  const outboxActivities = createOutboxActivities(requireTestEnv().client, {
+    temporalAddress: '',
+    temporalNamespace: 'default',
+    taskQueue: TASK_QUEUE,
+    ensemble: currentEnsemblePrefix,
+    defaultAgent: 'claude',
+  });
+
+  const hardTerminateStub = async () => ({
+    killedPids: [],
+    strategy: 'none' as const,
+    notes: ['test stub'],
+  });
+
+  const mainWorker = await Worker.create({
+    connection: requireTestEnv().nativeConnection,
+    taskQueue: TASK_QUEUE,
+    workflowBundle,
+    activities: {
+      ...scheduleActivities,
+      ...outboxActivities,
+      spawnProcess: async () => ({ success: true }),
+      ...(opts.includeHardTerminateOnMain ? { hardTerminateAttachment: hardTerminateStub } : {}),
+    },
+  });
+  const hostWorker = await Worker.create({
+    connection: requireTestEnv().nativeConnection,
+    taskQueue: HOST_TASK_QUEUE,
+    activities: {
+      spawnProcess: async () => ({ success: true }),
+      hardTerminateAttachment: hardTerminateStub,
+    },
+  });
+
+  const mainRun = mainWorker.run();
+  const hostRun = hostWorker.run();
+
+  return async () => {
+    mainWorker.shutdown();
+    hostWorker.shutdown();
+    await Promise.allSettled([mainRun, hostRun]);
+  };
+}
+
+/** Outbox-flavor variant — main worker stubs `hardTerminateAttachment`. */
+export function startOutboxWorker(): Promise<() => Promise<void>> {
+  return startWorkerPair({ includeHardTerminateOnMain: true });
+}
+
+/** Recruit-flavor variant — main worker omits `hardTerminateAttachment` (matches `withWorkerAndRecruitActivities`). */
+export function startRecruitWorker(): Promise<() => Promise<void>> {
+  return startWorkerPair({ includeHardTerminateOnMain: false });
+}
+
+/**
+ * Mocha hook helper: registers `before` / `after` for a describe-level
+ * shared worker. Call inside a `describe` block:
+ *
+ * ```ts
+ * describe('outbox-activities flavor', function () {
+ *   useSharedWorker(startOutboxWorker);
+ *   // its with bodies un-wrapped
+ * });
+ * ```
+ *
+ * Eliminates the `let stopWorker; before(...); after(...);` boilerplate
+ * the flavor describes would otherwise repeat. Mocha's BDD `before` /
+ * `after` globals attach to the lexically active describe at call time,
+ * so this works regardless of which describe invokes it.
+ *
+ * Filed under issue #383 P3.1.
+ */
+export function useSharedWorker(starter: () => Promise<() => Promise<void>>): void {
+  let stop: (() => Promise<void>) | undefined;
+  before(async function () {
+    this.timeout(60_000);
+    stop = await starter();
+  });
+  after(async function () {
+    if (stop) await stop();
+  });
+}
+
+/**
  * Like withWorkerAndRecruitActivities, but captures spawnProcess inputs
  * so tests can verify arguments passed through the recruit pipeline.
  */
