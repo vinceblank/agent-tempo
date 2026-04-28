@@ -1295,7 +1295,18 @@
 .page-pad { padding: 18px 26px 26px; flex: 1; min-height: 0; }
 .page-pad.scroll { overflow: auto; }
 .field-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.types-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 18px 26px 26px; flex: 1; overflow: auto; }
+/* `auto-fill` + `minmax(min, max)` keeps cards a stable size as the
+ * grid widens — they don't stretch to fill leftover space, so 8
+ * tempo-* cards never squish into 4 fat columns. `grid-auto-rows:
+ * max-content` + `align-content: start` lets card height follow
+ * content (no row-stretch). Per audit § PR-F + chat2.md fix. */
+.types-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(155px, 175px));
+  grid-auto-rows: max-content;
+  align-content: start;
+  gap: 14px;
+}
 
 /* Player detail sheet */
 .player-sheet {
@@ -1351,9 +1362,47 @@
   .page-pad { padding: 10px 12px 14px; }
   .types-grid { padding: 10px 12px 14px; gap: 10px; }
 
-  /* Tables: horizontal scroll instead of squishing */
-  .panel:has(> .table) { overflow-x: auto; }
-  .table { min-width: 560px; }
+  /* Tables collapse to stacked cards via `data-label` attrs on cells.
+   * Each row becomes a card; each cell renders its label (from
+   * `data-label`) above the value. Cells without `data-label` (e.g.
+   * the leading hostname/name cell, the trailing actions cell) flow
+   * naturally without a label prefix.  Per audit § PR-F + chat2.md fix. */
+  .panel:has(> .table) { overflow-x: visible; }
+  .table { min-width: 0; }
+  .table thead { display: none; }
+  .table tr {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 4px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .table td {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 8px;
+    padding: 2px 0;
+    border: none;
+    align-items: baseline;
+  }
+  .table td[data-label]::before {
+    content: attr(data-label);
+    font-family: var(--ff-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--dim);
+  }
+  /* Leading + actions cells stretch full width with no label prefix. */
+  .table td:not([data-label]) {
+    grid-template-columns: 1fr;
+  }
+  .table td:not([data-label]):last-child {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--rule);
+    text-align: right;
+  }
 
   /* Dialog wizards: full-screen-ish */
   .dialog {

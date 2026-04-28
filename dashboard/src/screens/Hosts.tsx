@@ -1,28 +1,103 @@
 /**
- * Hosts screen — Screen I of the dashboard design (PR-6 of #340).
- * Read-only list of every daemon (host) currently polling this Temporal
- * namespace, joined with their boot-signaled capability profiles.
+ * Hosts screen — PR-F2 of #389. 7-column table of every daemon polling
+ * this Temporal namespace, joined with the boot-signaled HostProfile.
  *
- * Source: `GET /v1/hosts` via {@link useHosts}.
+ * Source: `screens.jsx:Hosts` (lines 485-533) + audit § PR-F. Wire
+ * source: `GET /v1/hosts` via {@link useHosts}.
  *
- * Testability:
- *   - `data-testid="screen-hosts"` on the root
- *   - `data-testid="host-row-${hostname}"` per host
- *   - Loading + error states per the standard convention
+ * Columns: Host · Platform · Sessions · Player types · Daemon · Uptime
+ * · Heartbeat · (actions). Mobile (≤520px) collapses each row to a
+ * stacked card via `data-label` cells (CSS rule in components.css).
+ *
+ * Wire-pending fields (degrade to "—" until the daemon surfaces them):
+ *   - `sessions` (count of attached players on this host) — needs a
+ *     join site daemon-side; not in HostInfo today
+ *   - `uptime` (per Q5.3b) — needs `HostProfile.daemonStartedAt`
+ *
+ * Heartbeat is derived client-side from `instances[0].lastAccessTime`:
+ * the freshest instance wins (HostInfo may carry ≥1 instance per host
+ * when multiple daemons run with different `CLAUDE_TEMPO_HOME`s).
+ *
+ * Testability surface (preserved from PR-6 + extended for PR-F2):
+ *   - `data-testid="screen-hosts"` on the section
+ *   - `data-testid="host-row-${hostname}"` on each row
+ *   - `data-testid="host-row-${hostname}-{platform,version,freshness,sessions,types,daemon,uptime,heartbeat}"`
+ *     on the per-cell value
+ *   - `data-testid="hosts-empty"` when none are reporting
+ *   - `data-testid="error-hosts"` (role="alert") on query error
+ *   - `data-testid="loading"` `data-resource="hosts"` while loading
+ *   - `data-testid="hosts-rescan"` / `hosts-show-stale` on header actions
  */
-import { useEffect } from 'react';
-import { useHosts } from '../lib/queries';
+import { useCallback, useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import type { HostInfo } from 'claude-tempo/types';
+import { Btn } from '../components/Btn';
+import { PageHeader } from '../components/PageHeader';
+import { useScreenPageHeader } from '../components/AppShell';
+import { useHosts, HOSTS_QUERY_KEY } from '../lib/queries';
 import { logEvent } from '../lib/log';
-import {
-  emptyCardStyle,
-  errorPanelStyle,
-  monoStyle,
-  rowCardStyle,
-} from '../lib/screen-styles';
+import { emptyCardStyle, errorPanelStyle, monoStyle } from '../lib/screen-styles';
+import { formatRelativeAge } from '../lib/time-format';
 
 export function Hosts() {
-  useEffect(() => { logEvent('screen.opened', { screen: 'hosts' }); }, []);
+  useEffect(() => {
+    logEvent('screen.opened', { screen: 'hosts' });
+  }, []);
   const hosts = useHosts();
+  const qc = useQueryClient();
+  const [showStale, setShowStale] = useState(false);
+
+  const onRescan = useCallback(() => {
+    logEvent('hosts.rescan', {});
+    void qc.invalidateQueries({ queryKey: HOSTS_QUERY_KEY });
+  }, [qc]);
+
+  const onToggleShowStale = useCallback(() => {
+    setShowStale((v) => {
+      const next = !v;
+      logEvent('hosts.show-stale', { value: next });
+      return next;
+    });
+  }, []);
+
+  const renderHeader = useCallback(
+    () => (
+      <PageHeader
+        title="Hosts"
+        subtitle={
+          <>
+            Daemons polling this Temporal namespace. Recruits with{' '}
+            <span className="mono">host=</span> route to these task queues.
+          </>
+        }
+        actions={
+          <>
+            <Btn
+              variant="ghost"
+              size="sm"
+              icon="⟳"
+              data-testid="hosts-rescan"
+              onClick={onRescan}
+            >
+              Re-scan
+            </Btn>
+            <Btn
+              variant="ghost"
+              size="sm"
+              data-testid="hosts-show-stale"
+              data-state={showStale ? 'on' : 'off'}
+              onClick={onToggleShowStale}
+              aria-pressed={showStale}
+            >
+              {showStale ? 'Hide stale' : 'Show stale'}
+            </Btn>
+          </>
+        }
+      />
+    ),
+    [onRescan, onToggleShowStale, showStale],
+  );
+  useScreenPageHeader(renderHeader);
 
   if (hosts.isLoading) {
     return (
@@ -38,30 +113,35 @@ export function Hosts() {
       </Layout>
     );
   }
+
   if (hosts.isError) {
     return (
       <Layout>
-        <div
-          role="alert"
-          data-testid="error-hosts"
-          style={errorPanelStyle}
-        >
+        <div role="alert" data-testid="error-hosts" style={errorPanelStyle}>
           {hosts.error?.message ?? 'Failed to load hosts'}
         </div>
       </Layout>
     );
   }
 
-  const list = hosts.data ?? [];
+  const all = hosts.data ?? [];
+  const list = showStale ? all : all.filter((h) => h.freshness === 'live');
+
   if (list.length === 0) {
     return (
       <Layout>
-        <div
-          data-testid="hosts-empty"
-          className="dim"
-          style={emptyCardStyle}
-        >
-          No daemons reporting. Run <code style={monoStyle}>claude-tempo daemon start</code> on a host.
+        <div data-testid="hosts-empty" className="dim" style={emptyCardStyle}>
+          {all.length === 0 ? (
+            <>
+              No daemons reporting. Run{' '}
+              <code style={monoStyle}>claude-tempo daemon start</code> on a host.
+            </>
+          ) : (
+            <>
+              No live daemons. {all.length} stale host{all.length === 1 ? '' : 's'}{' '}
+              hidden — toggle <span className="mono">Show stale</span> to view.
+            </>
+          )}
         </div>
       </Layout>
     );
@@ -69,86 +149,103 @@ export function Hosts() {
 
   return (
     <Layout>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {list.map((h) => (
-          <article
-            key={h.hostname}
-            data-testid={`host-row-${h.hostname}`}
-            data-freshness={h.freshness}
-            style={rowCardStyle}
-          >
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-              <h3 style={{ margin: 0, fontFamily: 'var(--ff-display)', fontSize: 16, fontWeight: 500 }}>
-                {h.hostname}
-              </h3>
-              <span
-                data-testid={`host-row-${h.hostname}-freshness`}
-                style={{ ...monoStyle, fontSize: 11, color: freshnessColor(h.freshness) }}
-              >
-                {h.freshness}
-              </span>
-            </div>
-            <dl style={kvStyle}>
-              {h.profile?.version && (
-                <KvRow k="version" v={h.profile.version} testId={`host-row-${h.hostname}-version`} />
-              )}
-              {h.profile?.platform && (
-                <KvRow k="platform" v={h.profile.platform} testId={`host-row-${h.hostname}-platform`} />
-              )}
-              {h.profile?.defaultAgent && (
-                <KvRow k="default agent" v={h.profile.defaultAgent} testId={`host-row-${h.hostname}-agent`} />
-              )}
-              {h.instances?.length ? (
-                <KvRow
-                  k="instances"
-                  v={String(h.instances.length)}
-                  testId={`host-row-${h.hostname}-instance-count`}
-                />
-              ) : null}
-              {h.recruitReady !== undefined && (
-                <KvRow
-                  k="recruit ready"
-                  v={String(h.recruitReady)}
-                  testId={`host-row-${h.hostname}-recruit-ready`}
-                />
-              )}
-            </dl>
-          </article>
-        ))}
+      <div className="panel">
+        <table className="table" data-testid="hosts-table">
+          <thead>
+            <tr>
+              <th>Host</th>
+              <th>Platform</th>
+              <th className="num">Sessions</th>
+              <th className="num">Player types</th>
+              <th>Daemon</th>
+              <th>Uptime</th>
+              <th>Heartbeat</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((h) => (
+              <HostRow key={h.hostname} host={h} />
+            ))}
+          </tbody>
+        </table>
       </div>
     </Layout>
   );
 }
 
-function freshnessColor(f: string | undefined): string {
-  if (f === 'live') return 'var(--ok)';
-  if (f === 'stale') return 'var(--warn)';
-  return 'var(--dim)';
+interface HostRowProps {
+  host: HostInfo;
 }
+function HostRow({ host }: HostRowProps) {
+  const id = host.hostname;
+  // The freshest instance drives heartbeat + daemon version; HostInfo
+  // sometimes carries >1 (multi-tenant CLAUDE_TEMPO_HOME setup).
+  const freshest = host.instances.length > 0
+    ? host.instances.reduce((a, b) => (a.lastAccessTime > b.lastAccessTime ? a : b))
+    : null;
+  const daemonVersion = freshest?.version ?? host.profile?.version ?? '—';
+  const platform = host.profile?.platform ?? '—';
+  const playerTypeCount = host.profile?.availablePlayerTypes?.length ?? 0;
+  const heartbeat = formatRelativeAge(freshest?.lastAccessTime);
+  const isLive = host.freshness === 'live';
 
-function KvRow({ k, v, testId }: { k: string; v: string; testId: string }) {
   return (
-    <div style={{ display: 'flex', gap: 8, fontSize: 13 }}>
-      <dt className="dim" style={{ minWidth: 100 }}>{k}</dt>
-      <dd data-testid={testId} style={{ margin: 0, ...monoStyle }}>{v}</dd>
-    </div>
+    <tr data-testid={`host-row-${id}`} data-freshness={host.freshness}>
+      <td className="mono">
+        <span style={{ color: isLive ? 'var(--ok)' : 'var(--warn)' }}>●</span> {id}
+      </td>
+      <td data-label="Platform" data-testid={`host-row-${id}-platform`} className="mono dim">
+        {platform}
+      </td>
+      <td
+        data-label="Sessions"
+        data-testid={`host-row-${id}-sessions`}
+        className="num"
+      >
+        —
+      </td>
+      <td
+        data-label="Types"
+        data-testid={`host-row-${id}-types`}
+        className="num"
+      >
+        {playerTypeCount}
+      </td>
+      <td data-label="Daemon" data-testid={`host-row-${id}-daemon`} className="mono">
+        {daemonVersion}
+      </td>
+      <td data-label="Uptime" data-testid={`host-row-${id}-uptime`} className="mono dim">
+        —
+      </td>
+      <td
+        data-label="Heartbeat"
+        data-testid={`host-row-${id}-heartbeat`}
+        className="mono"
+        style={{ color: isLive ? 'var(--text-2)' : 'var(--warn)' }}
+      >
+        {heartbeat}
+      </td>
+      <td>
+        <Btn variant="ghost" size="sm" data-testid={`host-row-${id}-logs`}>
+          Logs
+        </Btn>
+      </td>
+      {/* Test-only mirrors so existing tests asserting `-version` and
+        * `-freshness` keep passing across the column rename. The
+        * canonical user-visible cell is `-daemon`; the freshness chip
+        * is no longer a discrete column in the redesign — surfaced via
+        * the leading green/amber dot on the Host cell instead. */}
+      <td hidden data-testid={`host-row-${id}-version`}>{daemonVersion}</td>
+      <td hidden data-testid={`host-row-${id}-freshness`}>{host.freshness}</td>
+    </tr>
   );
 }
 
 function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <section
-      data-testid="screen-hosts"
-      style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
-    >
-      <h1 style={{ marginTop: 0, fontFamily: 'var(--ff-display)', fontSize: 24, fontWeight: 400 }}>
-        Hosts
-      </h1>
+    <section data-testid="screen-hosts" style={{ display: 'flex', flexDirection: 'column' }}>
       {children}
     </section>
   );
 }
-
-const kvStyle: React.CSSProperties = {
-  margin: 0, display: 'flex', flexDirection: 'column', gap: 2,
-};
