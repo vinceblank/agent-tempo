@@ -29,6 +29,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { TempoClient } from '../client/interface';
 import type { AgentType } from '../types';
+import { isDevMode } from '../config';
 import { errorResponse, jsonResponse } from './responses';
 import {
   MESSAGE_MAX,
@@ -168,8 +169,13 @@ async function handleRecruit(
   }
 
   const agent = stringField(body, 'agent');
-  if (agent !== undefined && !isAgentType(agent)) {
-    return errorResponse(res, 400, { error: 'invalid-agent', allowed: ['claude', 'copilot'] });
+  // Dev-mode parity with the MCP `recruit` tool: `'mock'` is only valid when
+  // `CLAUDE_TEMPO_DEV_MODE=1`. The mock adapter's registry registration is
+  // also dev-gated (ADR 0014 §7 gate 2); rejecting here gives a clearer 400
+  // than the registry's downstream "Unknown adapter" error.
+  const allowed = allowedAgentsForCurrentMode();
+  if (agent !== undefined && !isAllowedAgent(agent, allowed)) {
+    return errorResponse(res, 400, { error: 'invalid-agent', allowed });
   }
 
   // Pluck each optional field once so the spread below doesn't run
@@ -182,7 +188,7 @@ async function handleRecruit(
   const result = await client.recruit(ensemble, {
     name,
     workDir,
-    ...(agent !== undefined ? { agent } : {}),
+    ...(agent !== undefined && isAllowedAgent(agent, allowed) ? { agent } : {}),
     ...(playerType !== undefined ? { playerType } : {}),
     ...(host !== undefined ? { host } : {}),
     ...(initialMessage !== undefined ? { initialMessage } : {}),
@@ -193,9 +199,20 @@ async function handleRecruit(
   jsonResponse(res, 202, result);
 }
 
-/** Type guard for `AgentType` — narrows from `string` to `'claude' | 'copilot'`. */
-function isAgentType(s: string): s is AgentType {
-  return s === 'claude' || s === 'copilot';
+/**
+ * Agent allowlists. `'mock'` is dev-mode-only — see ADR 0014 §7. Read at
+ * request time so toggling `CLAUDE_TEMPO_DEV_MODE` between requests is
+ * picked up without restart (parity with `src/tools/recruit.ts`).
+ */
+const ALLOWED_AGENTS_PROD: readonly AgentType[] = ['claude', 'copilot'];
+const ALLOWED_AGENTS_DEV: readonly AgentType[] = ['claude', 'copilot', 'mock'];
+
+function allowedAgentsForCurrentMode(): readonly AgentType[] {
+  return isDevMode() ? ALLOWED_AGENTS_DEV : ALLOWED_AGENTS_PROD;
+}
+
+function isAllowedAgent(s: string, allowed: readonly AgentType[]): s is AgentType {
+  return (allowed as readonly string[]).includes(s);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
