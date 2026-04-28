@@ -15,12 +15,22 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { RouterProvider } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import { Settings } from '../src/screens/Settings';
 import { createDashboardMemoryRouter } from '../src/router';
 import { __resetPrefsForTests } from '../src/store/prefs';
+import { __setDashboardClientForTests } from '../src/lib/client-singleton';
+import { MockDashboardClient } from './fixtures/mock-client';
 
-beforeEach(() => __resetPrefsForTests());
+beforeEach(() => {
+  __resetPrefsForTests();
+  // ConnectionPanel (#436) calls useHealth() which needs both a
+  // QueryClientProvider and a client that implements health(). Inject the
+  // MockDashboardClient so the hook resolves cleanly without a live daemon.
+  __setDashboardClientForTests(new MockDashboardClient());
+});
 afterEach(() => {
+  __setDashboardClientForTests(null);
   __resetPrefsForTests();
   vi.restoreAllMocks();
 });
@@ -30,9 +40,14 @@ function newQc() {
 }
 
 /** Render the Settings page directly (no router) — fastest for the
- *  panel + control cases that don't depend on route resolution. */
+ *  panel + control cases that don't depend on route resolution.
+ *  Wraps in QueryClientProvider so ConnectionPanel's useHealth() resolves. */
 function renderStandalone() {
-  return render(<Settings />);
+  return render(
+    <QueryClientProvider client={newQc()}>
+      <Settings />
+    </QueryClientProvider> as ReactNode,
+  );
 }
 
 describe('Settings page', () => {
