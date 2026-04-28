@@ -72,16 +72,18 @@ describe('testid coverage (architect risk #12)', () => {
     expect(getByTestId('brandmark')).toBeInTheDocument();
   });
 
-  it('operator chrome (theme + density) is reachable on shell-only routes', () => {
-    // PR-B Overview pushes its own PageHeader (Refresh + New ensemble),
-    // so the AppShell's default operator chrome is hidden on `/`. The
-    // chrome still renders on placeholder routes that don't override —
-    // pick `/loadouts` since it's a stable PR-6 placeholder. PR-G will
-    // migrate the chrome into `/settings` and this assertion can move
-    // along with it (or retire entirely once SettingsSheet exposes the
-    // same testids).
-    const { getByTestId } = renderApp('/loadouts');
-    expect(getByTestId('settings-theme-toggle')).toBeInTheDocument();
-    expect(getByTestId('settings-density-slider')).toBeInTheDocument();
+  it('operator chrome (theme + density) is reachable in Settings', () => {
+    // The AppShell's `DefaultActions` (theme toggle + density slider) is
+    // a fallback that renders only when no screen pushes a PageHeader
+    // override. Post-#389 R3.P1.3, every Library route (Loadouts /
+    // Schedules / PlayerTypes / Hosts) pushes its own header and Settings
+    // owns the canonical theme/density controls — so the fallback chrome
+    // is no longer the canonical surface. The assertion now points at
+    // Settings's own controls (`settings-theme-select` /
+    // `settings-density-range`) which are the user-facing canonical home
+    // for theme/density per PR-G of #389.
+    const { getByTestId } = renderApp('/settings');
+    expect(getByTestId('settings-theme-select')).toBeInTheDocument();
+    expect(getByTestId('settings-density-range')).toBeInTheDocument();
   });
 });

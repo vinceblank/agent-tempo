@@ -15,9 +15,10 @@
  * Action buttons (`Edit`, `Cancel`, `New schedule`) all surface
  * `disabled-with-tooltip` until PR-7 wires the safe-write paths.
  */
-import { useEffect, type ReactNode } from 'react';
+import { useCallback, useEffect, type ReactNode } from 'react';
 import type { ScheduleEntry } from 'claude-tempo/types';
 import { PageHeader } from '../components/PageHeader';
+import { useScreenPageHeader } from '../components/AppShell';
 import { DisabledWithTooltip } from '../components/DisabledWithTooltip';
 import { useEnsembleList, useEnsembleSnapshot } from '../lib/queries';
 import { useSseSubscription } from '../lib/sse';
@@ -35,8 +36,10 @@ export function Schedules() {
   const list = useEnsembleList();
   const ensembles = list.data ?? [];
 
-  return (
-    <main className="main" data-testid="screen-schedules">
+  // Push into AppShell's PageHeader slot — see Loadouts.tsx for the
+  // stacked-header rationale.
+  const renderHeader = useCallback(
+    () => (
       <PageHeader
         title="Schedules"
         subtitle={
@@ -55,8 +58,15 @@ export function Schedules() {
           </DisabledWithTooltip>
         }
       />
-      <div className="page-pad scroll">{renderBody(list, ensembles)}</div>
-    </main>
+    ),
+    [],
+  );
+  useScreenPageHeader(renderHeader);
+
+  return (
+    <section data-testid="screen-schedules">
+      {renderBody(list, ensembles)}
+    </section>
   );
 }
 

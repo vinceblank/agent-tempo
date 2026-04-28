@@ -15,9 +15,10 @@
  * surface `disabled-with-tooltip` until PR-7 wires the safe-write
  * paths.
  */
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import type { LineupRow } from '../lib/client';
 import { PageHeader } from '../components/PageHeader';
+import { useScreenPageHeader } from '../components/AppShell';
 import { DisabledWithTooltip } from '../components/DisabledWithTooltip';
 import { logEvent } from '../lib/log';
 import { useLineups } from '../lib/queries';
@@ -40,8 +41,10 @@ export function Loadouts() {
   // in `LoadoutRow` handles both.
   const lineups: ReadonlyArray<LineupRow> = lineupsQuery.data ?? SHIPPED_LINEUPS;
 
-  return (
-    <main className="main" data-testid="screen-loadouts">
+  // Push into AppShell's PageHeader slot. Rendering inline would stack
+  // under AppShell's default `<PageHeader title="Maestro" />` fallback.
+  const renderHeader = useCallback(
+    () => (
       <PageHeader
         title="Loadouts"
         subtitle={
@@ -69,34 +72,39 @@ export function Loadouts() {
           </>
         }
       />
-      <div className="page-pad scroll">
-        <div className="panel">
-          <table className="table" data-testid="loadouts-table">
-            <thead>
-              <tr>
-                {COL_HEADERS.map((c) => (
-                  <th key={c} className={c === 'Players' ? 'num' : undefined}>
-                    {c}
-                  </th>
-                ))}
-                <th aria-label="Actions" />
+    ),
+    [],
+  );
+  useScreenPageHeader(renderHeader);
+
+  return (
+    <section data-testid="screen-loadouts">
+      <div className="panel">
+        <table className="table" data-testid="loadouts-table">
+          <thead>
+            <tr>
+              {COL_HEADERS.map((c) => (
+                <th key={c} className={c === 'Players' ? 'num' : undefined}>
+                  {c}
+                </th>
+              ))}
+              <th aria-label="Actions" />
+            </tr>
+          </thead>
+          <tbody>
+            {lineups.length === 0 ? (
+              <tr data-testid="loadouts-empty">
+                <td colSpan={COL_HEADERS.length + 1} className="dim" style={{ textAlign: 'center', padding: 18 }}>
+                  No loadouts available yet.
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {lineups.length === 0 ? (
-                <tr data-testid="loadouts-empty">
-                  <td colSpan={COL_HEADERS.length + 1} className="dim" style={{ textAlign: 'center', padding: 18 }}>
-                    No loadouts available yet.
-                  </td>
-                </tr>
-              ) : (
-                lineups.map((l) => <LoadoutRow key={l.name} l={l} />)
-              )}
-            </tbody>
-          </table>
-        </div>
+            ) : (
+              lineups.map((l) => <LoadoutRow key={l.name} l={l} />)
+            )}
+          </tbody>
+        </table>
       </div>
-    </main>
+    </section>
   );
 }
 

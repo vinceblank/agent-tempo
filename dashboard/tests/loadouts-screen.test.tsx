@@ -31,13 +31,16 @@ function renderLoadouts(client: MockDashboardClient = new MockDashboardClient())
 afterEach(() => __setDashboardClientForTests(null));
 
 describe('Loadouts screen — header', () => {
-  it('renders the PageHeader title + subtitle + two action CTAs', () => {
+  it('mounts cleanly and exposes the screen testid', () => {
+    // #389 R3.P1.3 — the PageHeader is now pushed via
+    // `useScreenPageHeader`, which no-ops outside an AppShell. The
+    // standalone render here therefore can't see the header DOM. The
+    // full `header → action CTA → AppShell slot` wiring is covered by
+    // `app-shell-slot.test.tsx`; the smoke check here just confirms
+    // the screen mounts without throwing. Same pattern as
+    // `player-types-screen.test.tsx`.
     renderLoadouts();
     expect(screen.getByTestId('screen-loadouts')).toBeInTheDocument();
-    expect(screen.getByTestId('page-header').textContent).toContain('Loadouts');
-    expect(screen.getByText(/Reusable ensemble lineups/)).toBeInTheDocument();
-    expect(screen.getByTestId('loadouts-action-import')).toHaveAttribute('aria-disabled', 'true');
-    expect(screen.getByTestId('loadouts-action-new')).toHaveAttribute('aria-disabled', 'true');
   });
 });
 

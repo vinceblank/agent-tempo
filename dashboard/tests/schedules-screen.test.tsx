@@ -28,12 +28,15 @@ function renderScreen(client: MockDashboardClient) {
 afterEach(() => __setDashboardClientForTests(null));
 
 describe('Schedules screen — header', () => {
-  it('renders PageHeader + the New schedule action (disabled-with-tooltip)', () => {
+  it('mounts cleanly and exposes the screen testid', () => {
+    // #389 R3.P1.3 — the PageHeader is now pushed via
+    // `useScreenPageHeader`, which no-ops outside an AppShell. The
+    // standalone render here therefore can't see the header DOM. The
+    // full `header → action CTA → AppShell slot` wiring is covered by
+    // `app-shell-slot.test.tsx`. Same pattern as
+    // `player-types-screen.test.tsx`.
     renderScreen(new MockDashboardClient({ ensembles: [] }));
-    expect(screen.getByTestId('page-header').textContent).toContain('Schedules');
-    const action = screen.getByTestId('schedules-action-new');
-    expect(action).toHaveAttribute('aria-disabled', 'true');
-    expect(action.getAttribute('title')).toMatch(/daemon endpoint/);
+    expect(screen.getByTestId('screen-schedules')).toBeInTheDocument();
   });
 });
 

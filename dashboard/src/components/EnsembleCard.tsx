@@ -164,30 +164,22 @@ export function EnsembleCard({ ensemble }: EnsembleCardProps) {
               </div>
             </div>
 
-            <div
-              className="mono dim"
-              style={{ fontSize: 11, display: 'flex', justifyContent: 'space-between' }}
-            >
-              <span>
-                {lineup}
-                {hasConductor && (
-                  <>
-                    {' · '}
-                    <span data-testid={`ensemble-card-${ensemble.name}-conductor`}>
-                      conductor
-                    </span>
-                  </>
-                )}
-              </span>
-              <span>{host}</span>
+            {/* Canonical footer is `lineup · host`; conductor lives in
+              * `.ec-roster`. Matches `screens.jsx:49-52`. */}
+            <div className="ec-meta mono dim">
+              <span data-testid={`ensemble-card-${ensemble.name}-lineup`}>{lineup}</span>
+              <span data-testid={`ensemble-card-${ensemble.name}-host`}>{host}</span>
             </div>
 
-            {flags && (flags.paused || flags.held) && (
-              <div style={{ display: 'flex', gap: 6, fontSize: 12 }}>
-                {flags.paused && (
+            {/* `state==='paused'` is authoritative; `flags.paused` is the
+              * SSE projection and can stale-disagree. `flags.held` has no
+              * `state` equivalent — read it directly. */}
+            {(state === 'paused' || flags?.held) && (
+              <div className="ec-flags">
+                {state === 'paused' && (
                   <FlagPill testId={`ensemble-card-${ensemble.name}-flag-paused`} label="paused" />
                 )}
-                {flags.held && (
+                {flags?.held && (
                   <FlagPill testId={`ensemble-card-${ensemble.name}-flag-held`} label="held" />
                 )}
               </div>
@@ -221,21 +213,14 @@ export function EnsembleCard({ ensemble }: EnsembleCardProps) {
   );
 }
 
+/**
+ * Indicator chip rendered inside `.ec-flags`. Style lives in
+ * `components.css` (`.ec-flag` rule) so the chips render uniformly with
+ * the rest of the card chrome instead of as inline-styled outliers.
+ */
 function FlagPill({ testId, label }: { testId: string; label: string }) {
   return (
-    <span
-      data-testid={testId}
-      style={{
-        background: 'var(--bg-2)',
-        border: '1px solid var(--rule)',
-        borderRadius: 4,
-        padding: '1px 6px',
-        fontFamily: 'var(--ff-mono)',
-        textTransform: 'uppercase',
-        letterSpacing: '0.04em',
-        fontSize: 11,
-      }}
-    >
+    <span data-testid={testId} className="ec-flag">
       {label}
     </span>
   );

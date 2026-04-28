@@ -139,7 +139,7 @@ describe('Workspace screen', () => {
 
   // ── Audit rev2 fidelity polish (P1.2 + P1.5) ──
 
-  it('binds the page-subtitle to conductor + host (drops hardcoded lineup)', async () => {
+  it('binds the page-subtitle to lineup placeholder + conductor + host (#389 R3.P1.5)', async () => {
     const mock = new MockDashboardClient({
       snapshot: makeSnapshot({
         ensemble: 'demo',
@@ -157,16 +157,18 @@ describe('Workspace screen', () => {
     // Wait for the snapshot-resolved render — the subtitle binding
     // only appears once `players` is populated.
     await waitFor(() => {
-      expect(screen.getByText(/Conducted by/)).toBeInTheDocument();
+      expect(screen.getByText(/conducted by/i)).toBeInTheDocument();
     });
-    // The "Conducted by" text node sits in the subtitle div with the
-    // host + conductor mono spans as siblings. Walk up to the
-    // subtitle container and assert its content includes both fields.
-    const subtitle = screen.getByText(/Conducted by/).closest('.page-subtitle');
+    // Subtitle now matches design's `Lineup X · conducted by Y on Z`
+    // shape. Lineup half degrades to `Lineup —` until the wire ships
+    // an explicit lineup field on `EnsembleStateV1` (architect-tracked).
+    const subtitle = screen.getByText(/conducted by/i).closest('.page-subtitle');
     expect(subtitle).toBeTruthy();
+    expect(subtitle!.textContent).toMatch(/Lineup\s*—/);
+    expect(subtitle!.textContent).toMatch(/conducted by/i);
     expect(subtitle!.textContent).toMatch(/tempo-conductor/);
     expect(subtitle!.textContent).toMatch(/studio\.local/);
-    // Hardcoded lineup is gone.
+    // Hardcoded lineup is gone (we render `—` placeholder, not a name).
     expect(screen.queryByText(/tempo-dev-team/)).toBeNull();
   });
 
