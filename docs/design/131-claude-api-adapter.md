@@ -21,7 +21,7 @@ The new adapter is selected via `recruit({ adapter: 'claude-api', ... })`. Tool 
 | 1. Tool surface scope | **MCP-tools-only in v1**. File ops deferred to Phase 2. Document the limitation in `recruit`'s tool description and `src/adapters/README.md`. |
 | 2. MCP transport | **In-process MCP server + `InMemoryTransport` paired client**. Avoids subprocess; preserves the abstraction. |
 | 3. Per-turn usage telemetry | **Structured stderr log line** in v1 (`[claude-tempo:claude-api] turn-usage …`). Wire-protocol signal deferred until a consumer (cost dashboard / per-session cap) lands. |
-| 4. Model selection | **Recruit-arg precedence** → `CLAUDE_TEMPO_API_MODEL` env → constants-pinned default (`claude-opus-4-7-20250115` at impl time; reviewable at the next minor bump). |
+| 4. Model selection | **Recruit-arg precedence** → `CLAUDE_TEMPO_API_MODEL` env → constants-pinned default (`claude-opus-4-7` at impl time; reviewable at the next minor bump). |
 | 5. Prompt cache opt-out | **Always-on in v1**, no flag. The cache is strict-prefix; cost of re-validation is trivial. |
 | 6. Context-overflow UX | **Emit workflow message** ("context window exhausted; recommend `save_state(...)` then `restart({ loadFromState: true })`"). Auto-compact via #334 deferred to Phase 2. |
 | 7. AgentType naming | **`'claude-api'`**. Matches issue title; pairs with existing `'claude'` (CLI) and `'copilot'` cleanly. |
@@ -32,6 +32,28 @@ The new adapter is selected via `recruit({ adapter: 'claude-api', ... })`. Tool 
 **Estimated implementation cost**: ~825–1,125 LoC per researcher's refined estimate (issue's 600–1,000 was light if the MCP-client glue bites). Single PR, additive, no breaking changes.
 
 **Phase 2 explicitly out of scope** — advisor strategy, file-op tools, server-side `bash_20250124` / `text_editor_20250124` integration, cost caps, usage aggregation. All listed in §11 as forward-work hooks.
+
+---
+
+## Verification addendum (2026-04-28)
+
+> Surfaced during pre-Phase-C verification spike — see also [`docs/research/131-claude-api-adapter-spike-verify.md`](../research/131-claude-api-adapter-spike-verify.md).
+>
+> Five impl-time landmines that this design doesn't surface but the implementing engineer must handle. The locked decisions in §0 above are unchanged; these notes adjust the worked skeleton (§8) and clarify operational behaviour against the mid-2026 Anthropic Messages API state.
+
+1. **Model id** — use `'claude-opus-4-7'` (no date suffix) as the constants-pinned default. Anthropic dropped the `-YYYYMMDD` suffix convention in 2026 for direct-API model ids; the GA announcement (2026-04-16) ships the model as plain `claude-opus-4-7`. The `recruit.model` regex `^claude-[a-z0-9-]+$` already permits both forms — no schema change needed.
+
+2. **Opus 4.7 parameter rejections** — do NOT pass `temperature`, `top_p`, `top_k`, or `thinking.budget_tokens` to `messages.create()` on Opus 4.7; each returns 400 `invalid_request_error`. Use `thinking: { type: 'adaptive' }` only — Opus 4.7 is adaptive-thinking-only (the legacy `{type: 'enabled', budget_tokens: N}` shape was removed). Default `thinking.display` is `'omitted'` — empty `thinking_delta` events stream by default. If the adapter ever wants reasoning visible in stderr telemetry, set `thinking: { type: 'adaptive', display: 'summarized' }`. (v1's stderr-log shape doesn't surface reasoning, so this is forward-friendliness only.)
+
+3. **Adaptive thinking + tool use interleaving** — when pushing the assistant turn back into `messages` for the next iteration of the tool-use loop, include `thinking` content blocks (with their `signature`) verbatim alongside `tool_use`. As of mid-2026 adaptive thinking auto-interleaves between tool calls (what was previously gated behind `interleaved-thinking-2025-05-14` is now baseline on Opus 4.7 / Sonnet 4.6); stripping `thinking` blocks breaks reasoning continuity and may 400. The §8 skeleton's line `messages.push({ role: 'assistant', content: /* tool_use blocks */ })` should read `messages.push({ role: 'assistant', content: assistantMessage.content })` — push the full assistant content array, not just the tool_use subset.
+
+4. **`input_json_delta` partials** — accumulate `partial_json` strings; do NOT `JSON.parse` until `content_block_stop` fires for the tool_use block. The model streams tool-call arguments as fragmentary string chunks (`{"loc`, `ation":"Pa`, `ris"}`); intermediate states are not parseable JSON. The Anthropic SDK's `MessageStream.on('inputJson', …)` event handles this; manual async-iteration over `MessageStreamEvent` requires the engineer to do it themselves.
+
+5. **Mid-stream error events** — wrap the streaming `for await` loop in `try { … } catch { … }`. The SDK throws `Anthropic.APIError` (or a subclass — typically `OverloadedError` for 529 mid-generation, `APIError` for 500 api_error) from the iterator when Anthropic emits an SSE `error` event mid-flight. On throw, fail the turn cleanly — `processingEnd` fires in the inherited `finally` per `SdkAttachment.deliver()` (§6.1), and the workflow's outbox retry on next deliver re-attempts the turn. No turn-level retry inside the adapter for v1.
+
+**Cache breakpoint budget** — separate from the five landmines, two prompt-caching facts to keep in mind: max **4** `cache_control` breakpoints per request (we use 2 — system + tools — leaving 2 spare for any Phase 2 conversation-segment caching), and the minimum cacheable prefix is **4096 tokens** on Opus 4.7 / Haiku 4.5 but **2048 tokens** on Sonnet 4.6 (our default model is Opus 4.7, so 4096 is operationally correct for v1; only relevant if a recruit-arg switches the player to Sonnet 4.6).
+
+The §0 locked decisions are unchanged. Proceed against the design as-written, applying these notes at impl time.
 
 ---
 
@@ -104,7 +126,7 @@ Extends the existing recruit Zod schema additively:
     .describe(`Which adapter to use (default: "${ownAgentType}", same as this session). "claude-api" runs headless via the Anthropic Messages API; requires ANTHROPIC_API_KEY env var.`),
   // NEW — only meaningful for adapter='claude-api'
   model: z.string().optional()
-    .describe('Model id for claude-api adapter (e.g. "claude-opus-4-7-20250115"). Falls back to CLAUDE_TEMPO_API_MODEL env, then a constants-pinned default. Ignored for claude / copilot adapters.'),
+    .describe('Model id for claude-api adapter (e.g. "claude-opus-4-7"). Falls back to CLAUDE_TEMPO_API_MODEL env, then a constants-pinned default. Ignored for claude / copilot adapters.'),
 }
 ```
 
@@ -279,7 +301,7 @@ The Messages API is stateless; the workflow is durable. Per `deliver()`, the ada
 
 1. Reads cumulative message history from the workflow via `allMessagesQuery` + `allSentMessagesQuery`.
 2. Formats as `[{role: 'user' | 'assistant', content: ...}, ...]` — `from: 'maestro' | 'self' | <other-player>` maps to `'user'`; the player's own previous responses map to `'assistant'`.
-3. Sends with `cache_control: { type: 'ephemeral' }` on the system prompt + tools head — the cached prefix amortizes cost; only the conversation tail is uncached.
+3. Sends with `cache_control: { type: 'ephemeral' }` on the **last system content block** and the **last tool** in the `tools` array — the breakpoint marks where the cached prefix *ends*, so placing it on the last element caches the entire tools array + system prompt as one prefix block. The cached prefix amortizes cost; only the conversation tail is uncached.
 
 This mirrors restart's transcript-replay framing (`src/activities/outbox.ts:687-709`) — same data source, different consumer.
 
@@ -445,7 +467,7 @@ export const claudeApiDescriptor: AdapterDescriptor = {
   heartbeatMs: 30_000,
 };
 
-const DEFAULT_MODEL = 'claude-opus-4-7-20250115';   // pin reviewable at next minor
+const DEFAULT_MODEL = 'claude-opus-4-7';   // pin reviewable at next minor
 
 export class DirectApiAttachment extends SdkAttachment {
   readonly descriptor = claudeApiDescriptor;
