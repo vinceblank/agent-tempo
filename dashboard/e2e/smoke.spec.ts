@@ -176,6 +176,23 @@ test('3. Mobile viewport renders the sidebar + roster (375x667)', async ({ page 
   // tests in `responsive-panel.test.tsx`.
   await expect(page.getByTestId('app-shell')).toBeVisible();
   await expect(page.getByTestId('roster')).toBeVisible();
+
+  // PR-A1m mobile shell: at this viewport the container-query rules
+  // expose PhoneAppBar + PhoneTabBar; sidebar is hidden.
+  await expect(page.getByTestId('phone-appbar')).toBeVisible();
+  await expect(page.getByTestId('phone-tabbar')).toBeVisible();
+  await expect(page.getByTestId('sidebar')).toBeHidden();
+
+  // The "Now" tab is active inside `/ensemble/:id` per the navToTab map.
+  await expect(page.getByTestId('phone-tab-workspace')).toHaveClass(/\bis-active\b/);
+
+  // Tapping the hamburger opens the EnsembleSwitcher; clicking the
+  // scrim closes it again. (Container-query mode renders the bottom-
+  // sheet variant at this viewport.)
+  await page.getByTestId('phone-appbar-menu').click();
+  await expect(page.getByTestId('ensemble-switcher')).toBeVisible();
+  await page.getByTestId('ensemble-switcher-close').click();
+  await expect(page.getByTestId('ensemble-switcher')).toBeHidden();
 });
 
 test('4. Pair-token flow drops ?pair= BEFORE the bearer lands (risk #16)', async ({ page }) => {

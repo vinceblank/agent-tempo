@@ -1,46 +1,130 @@
 /**
- * PhoneAppBar — top app bar shown at viewports ≤520px. STUBBED in PR-A1.
+ * PhoneAppBar — top app bar shown at viewports ≤520px. PR-A1m of #389.
  *
- * The full mobile shell mechanics (switch-ensemble menu, status row,
- * action button toggling roster slide-in) ship in PR-A1m (eng's PR).
- * This stub renders the className wrapper so the AppShell layout grid
- * places it correctly when components.css's phone-breakpoint rules
- * fire. Until A1m fills it in, the bar shows the brandmark only.
+ * Layout (matches the `.phone-appbar*` rules in components.css):
  *
- * Hidden by default on desktop/tablet (components.css line 1070-1071):
- *   `.phone-appbar, .phone-tabbar { display: none; }`
- * — so this stub is an inert no-op above 520px.
+ *   ┌─────────────────────────────────────────────────────────┐ ← .phone-appbar
+ *   │ [☰] [kicker · lineup]              [⋯] │ ← .phone-appbar-row (52px)
+ *   │     [@ensemble]                          │
+ *   │ ─ optional .phone-appbar-status row ─ │
+ *   └─────────────────────────────────────────────────────────┘
  *
- * Source: `workspace.jsx:43-76` (full PhoneAppBar to be implemented in A1m).
+ * The hamburger (☰) opens the EnsembleSwitcher; the right button is a
+ * caller-controlled action slot (defaults to a 3-dot overflow icon).
+ * `status` is an optional 4-pill row (active / idle / detached / uptime)
+ * — screens that don't have status data omit the prop.
+ *
+ * Hidden by default; only shown when the artboard container query at
+ * `(max-width: 520px)` fires. Above that breakpoint the Sidebar takes over.
  */
+import type { ReactNode } from 'react';
 
-interface PhoneAppBarProps {
-  /** Active ensemble name (used as the centered title). PR-A1m wires the
-   * full kicker + status row + menu/action buttons. */
-  ensemble?: string;
+export interface PhoneAppBarStatus {
+  active?: number;
+  idle?: number;
+  detached?: number;
+  uptime?: string;
 }
 
-export function PhoneAppBar({ ensemble }: PhoneAppBarProps) {
+interface PhoneAppBarProps {
+  /** Active ensemble name — rendered after `@`. Falls back to `—`. */
+  activeEnsemble?: string;
+  /** Lineup label for the mono kicker (`lineup · {lineup}`). When omitted,
+   *  kicker reads `ensemble` so the row never collapses. */
+  lineup?: string;
+  /** Hamburger handler. Wired to EnsembleSwitcher.open by AppShell. */
+  onMenu?: () => void;
+  /** Optional secondary-action handler for the right button. Workspace
+   *  uses this for a roster slide-in toggle; other screens leave it
+   *  pointing at the 3-dot overflow stub. */
+  onAction?: () => void;
+  /** Custom icon for the right button — defaults to the 3-dot overflow. */
+  actionIcon?: ReactNode;
+  /** Aria-label for the right button. Defaults to `More`. */
+  actionLabel?: string;
+  /** Adds the `is-active` modifier to the right button (terracotta tint)
+   *  so toggle-style actions reflect their open state. */
+  actionActive?: boolean;
+  /** Optional 4-pill status row. Rendered only when truthy. */
+  status?: PhoneAppBarStatus;
+}
+
+/** Hamburger icon — three horizontal lines. */
+function MenuIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+      <path d="M4 7h16M4 12h16M4 17h16" />
+    </svg>
+  );
+}
+
+/** 3-dot overflow icon — the default `actionIcon`. */
+function OverflowIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="5" cy="12" r="1.5" />
+      <circle cx="12" cy="12" r="1.5" />
+      <circle cx="19" cy="12" r="1.5" />
+    </svg>
+  );
+}
+
+export function PhoneAppBar({
+  activeEnsemble,
+  lineup,
+  onMenu,
+  onAction,
+  actionIcon,
+  actionLabel = 'More',
+  actionActive = false,
+  status,
+}: PhoneAppBarProps) {
   return (
     <header className="phone-appbar" data-testid="phone-appbar" aria-label="Mobile top bar">
       <div className="phone-appbar-row">
+        <button
+          type="button"
+          className="phone-appbar-btn"
+          aria-label="Switch ensemble"
+          onClick={onMenu}
+          data-testid="phone-appbar-menu"
+        >
+          <MenuIcon />
+        </button>
         <div className="phone-appbar-title">
-          {ensemble ? (
-            <span className="phone-appbar-name">
-              <span className="at">@</span>
-              {ensemble}
-            </span>
-          ) : (
-            // No-op title slot until PR-A1m wires the switcher menu +
-            // ensemble kicker. We deliberately don't render Brandmark
-            // here — the canonical brandmark placement is in Sidebar
-            // and the testid-coverage test asserts a single instance.
-            <span className="phone-appbar-name dim" aria-hidden="true">
-              &nbsp;
+          <span className="phone-appbar-kicker">
+            {lineup ? `lineup · ${lineup}` : 'ensemble'}
+          </span>
+          <span className="phone-appbar-name">
+            <span className="at">@</span>
+            {activeEnsemble || '—'}
+          </span>
+        </div>
+        <button
+          type="button"
+          className={'phone-appbar-btn' + (actionActive ? ' is-active' : '')}
+          aria-label={actionLabel}
+          aria-pressed={actionActive || undefined}
+          onClick={onAction}
+          data-testid="phone-appbar-action"
+        >
+          {actionIcon ?? <OverflowIcon />}
+        </button>
+      </div>
+      {status && (
+        <div className="phone-appbar-status mono" data-testid="phone-appbar-status">
+          {status.active != null && (
+            <span className="phone-stat ok">
+              <span className="phone-stat-dot" /> {status.active} active
             </span>
           )}
+          {status.idle != null && <span className="phone-stat dim">{status.idle} idle</span>}
+          {status.detached != null && status.detached > 0 && (
+            <span className="phone-stat warn">◐ {status.detached} detached</span>
+          )}
+          {status.uptime && <span className="phone-stat dim">up {status.uptime}</span>}
         </div>
-      </div>
+      )}
     </header>
   );
 }
