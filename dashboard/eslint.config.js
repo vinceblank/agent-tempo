@@ -50,6 +50,7 @@ export default [
         HTMLDivElement: 'readonly',
         HTMLFormElement: 'readonly',
         HTMLInputElement: 'readonly',
+        HTMLTextAreaElement: 'readonly',
         SVGElement: 'readonly',
         SVGRectElement: 'readonly',
         Event: 'readonly',
@@ -70,6 +71,11 @@ export default [
         clearTimeout: 'readonly',
         setInterval: 'readonly',
         clearInterval: 'readonly',
+        // Composer primitive (PR-A2 of #389) consults `navigator` for
+        // the OS-conditional ⌘↩ / Ctrl ↩ hint and uses
+        // `requestAnimationFrame` to defer height-reset after submit.
+        navigator: 'readonly',
+        requestAnimationFrame: 'readonly',
       },
     },
     plugins: {
