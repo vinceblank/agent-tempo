@@ -219,9 +219,9 @@ That addendum + the existing design + ADR is sufficient for engineer pickup. **N
 - ❌ Re-running Phase A — full SDK + Messages API research forks landed during this verification and confirm the existing docs are 80–90% accurate.
 - ❌ Waiting on #334 implementation — the design proves they're independent.
 
-### 4.3 Single concrete pre-dispatch ask
+### 4.3 Pre-dispatch ask — done in this PR
 
-Before Phase C kicks off, an engineer (or tempo-architect if available) should cherry-pick the 5-bullet addendum from §4.1 above into the top of `docs/design/131-claude-api-adapter.md` as a "Verification addendum (2026-04-28)" section. ~30 LoC of markdown, ~5 minutes work, captured in this doc's §4.1 verbatim. After that, engineer pickup proceeds against the design as-written.
+✅ **Done in this PR.** The 5-bullet addendum from §4.1 above is inlined as a `## Verification addendum (2026-04-28)` section in `docs/design/131-claude-api-adapter.md`, immediately preceding `§1. Why now`. Engineer pickup proceeds against the design as-written.
 
 ---
 
