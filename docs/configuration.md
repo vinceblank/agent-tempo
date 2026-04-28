@@ -50,6 +50,18 @@ Settings are resolved in this order (first match wins):
 | `CLAUDE_TEMPO_PLAYER_NAME` | *(random hex)* | Player name on startup |
 | `CLAUDE_TEMPO_DEFAULT_AGENT` | `claude` | Default agent type (`claude` or `copilot`) |
 | `CLAUDE_TEMPO_CLAUDE_BIN` | *(auto-detected)* | Path to a custom `claude` executable. Takes precedence over the config file setting and `which`/`where` auto-detection. Useful when multiple Claude versions are installed or the binary is not on `PATH`. |
+| `CLAUDE_TEMPO_DEV_MODE` | `false` | Enable dev profile (`1` or `true`). Flips home dir to `~/.claude-tempo-dev/`, HTTP port to 8474, Temporal namespace to `claude-tempo-dev`, task queue to `claude-tempo-dev`. Also enables the mock adapter (`agent: 'mock'`). Same effect as the `--dev` CLI flag. |
+
+**Dev-mode mock adapter** (requires `CLAUDE_TEMPO_DEV_MODE=1`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLAUDE_TEMPO_MOCK_MODE` | `echo` | Mock adapter mode: `echo`, `scripted`, `silent`, or `chaos`. |
+| `CLAUDE_TEMPO_MOCK_SCENARIO` | *(none)* | Bare scenario name or absolute path to a YAML scenario file. Required when `mockMode: scripted`. |
+| `CLAUDE_TEMPO_MOCK_CHAOS_DELAY_MS` | `0` | Fixed pre-reply delay in ms injected by chaos mode. |
+| `CLAUDE_TEMPO_MOCK_CHAOS_FAIL_RATE` | `0.05` | Per-message probability (0–1) of throwing an error in chaos mode. |
+| `CLAUDE_TEMPO_MOCK_CHAOS_CRASH_RATE` | `0.01` | Per-message probability (0–1) of `process.exit(1)` in chaos mode. |
+| `CLAUDE_TEMPO_MOCK_CHAOS_SEED` | *(random)* | 32-bit integer seed for the chaos PRNG (mulberry32). Set for reproducible failure injection. |
 
 ## Custom Claude Executable
 
@@ -81,3 +93,4 @@ export TEMPORAL_API_KEY=tcl_...
 
 - [cli.md](cli.md) — full list of CLI flags including `--temporal-address`, `--temporal-namespace`, etc.
 - [daemon.md](daemon.md) — daemon configuration and log paths
+- [dev-mode.md](dev-mode.md) — full dev-mode reference (mock adapter, scenario library, `--dev` flag)

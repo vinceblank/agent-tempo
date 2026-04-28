@@ -202,7 +202,7 @@ players:
     type: tempo-soloist
 ```
 
-Eight types ship out of the box: `tempo-conductor`, `tempo-composer`, `tempo-soloist`, `tempo-tuner`, `tempo-critic`, `tempo-roadie`, `tempo-improv`, `tempo-liner`. Four lineup presets are included: `tempo-big-band`, `tempo-dev-team`, `tempo-review-squad`, `tempo-jam-session`.
+Eight types ship out of the box: `tempo-conductor`, `tempo-composer`, `tempo-soloist`, `tempo-tuner`, `tempo-critic`, `tempo-roadie`, `tempo-improv`, `tempo-liner`. Five lineup presets are included: `tempo-big-band`, `tempo-dev-team`, `tempo-review-squad`, `tempo-jam-session`, `tempo-mock-jam`.
 
 ```bash
 claude-tempo agent-types list   # discover available types

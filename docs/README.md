@@ -14,6 +14,7 @@ Reference documentation for claude-tempo. See the main [README](../README.md) fo
 | [orchestration.md](orchestration.md) | Orchestration — Quality Gates, Pipeline Stages, Git Worktrees |
 | [ensembles.md](ensembles.md) | Ensembles — Lineups, Player Types, Agent Type Discovery |
 | [configuration.md](configuration.md) | Configuration — env vars, config file, Temporal Cloud |
+| [dev-mode.md](dev-mode.md) | Dev mode — isolated `--dev` profile, mock adapter, scenario library |
 | [copilot.md](copilot.md) | Copilot CLI integration (experimental) |
 | [tui.md](tui.md) | Interactive TUI — slash commands, messaging, scheduling, ensemble management |
 | [tui-performance.md](tui-performance.md) | TUI performance — Ink/React lessons for `src/tui/` contributors |
