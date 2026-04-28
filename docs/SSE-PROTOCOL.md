@@ -40,6 +40,9 @@ This document is the authoritative reference for the **HTTP/SSE event source** e
 | `GET` | `/v1/events` | `text/event-stream` | **Global stream** — strictly limited to cluster-shape events (`ensemble.created`, `ensemble.destroyed`, `host_profile.changed`, `heartbeat`). Never per-ensemble events; subscribers wanting those open `/v1/events/:ensemble`. |
 | `OPTIONS` | (any) | `204 No Content` | CORS preflight (see §3). |
 | `POST` | `/v1/ensembles/:ensemble/{cue,pause,play,release,recruit}` | `application/json` | Safe-write endpoints (PR-7a of #340). See § 11b for full request/response shapes. |
+| `POST` | `/v1/ensembles` | `application/json` | Create a fresh ensemble (issue #400) — recruits the conductor + lineup players. See § 11c. |
+| `GET` | `/v1/agent-types` | `application/json` | Available player-type catalog (project + user + shipped, three-tier dedup). See § 11c. |
+| `GET` | `/v1/lineups` | `application/json` | Available lineup catalog (saved + shipped). See § 11c. |
 
 **Reads via GET, writes via POST under the same auth model.** The
 read-side endpoints stay cacheable, durable, and replay-safe; the
@@ -480,6 +483,46 @@ The daemon's TempoClient throws `Error('No session found …')` for missing sess
 - `404 session-not-found` for the session miss
 - `400 unknown-agent-type` for the agent miss
 - `500 write-failed` for anything else (logged at the dispatcher with the underlying message in `detail`)
+
+---
+
+## 11c. Catalog endpoints (issue #400)
+
+Three endpoints surface on-disk catalog data so the dashboard's CreateEnsemble + Recruit + Loadouts + PlayerTypes wizards can drop the hardcoded fallbacks shipped during PR-E + PR-F. The two GETs read the local filesystem only (no Temporal calls); the POST is a thin orchestration over the existing recruit endpoint.
+
+### Routes
+
+| Method | Path | Body shape | Success response | Notes |
+|---|---|---|---|---|
+| `GET` | `/v1/agent-types` | — | `200 { agentTypes: [{ name, description?, source }] }` | `source: 'project' \| 'user' \| 'shipped'`. Three-tier dedup (project > user > shipped). On-disk `path` and `nativeResolvable` fields are stripped — privacy contract parity with `HostProfile`. |
+| `GET` | `/v1/lineups` | — | `200 { lineups: [{ name, description?, players, source }] }` | `source: 'saved' \| 'shipped'`. Saved (`~/.claude-tempo/ensembles/`) wins over shipped (`<package-root>/examples/ensembles/`). Malformed YAML rows are silently skipped — `loadLineup`'s strict validation runs at recruit time, so the picker only surfaces well-formed entries. |
+| `POST` | `/v1/ensembles` | `{ name, lineup?, host?, startMode?, conductorInstructions? }` | `201 { ensemble, conductorPlayerId, lineup, recruitedPlayers, playerErrors? }` | Recruits the conductor (`isConductor: true`), then fans out lineup players if a lineup was supplied. |
+
+### POST `/v1/ensembles` semantics
+
+`startMode` ∈ `{ 'hold', 'release' }`. `hold` passes `held: true` to every recruit; `release` is the default (immediate run). `conductorInstructions` is forwarded as the conductor's `initialMessage`.
+
+**Skipped vs CLI `claude-tempo up` (intentional)**:
+
+- No Temporal-server start: the daemon serving this request already proves Temporal is up.
+- No daemon-start / agent-type-install / MCP-register: a browser caller doesn't go through that pre-flight.
+- No interactive "ensemble already exists" choice tree: HTTP is stateless; we 409 and let the dashboard surface a useful error.
+
+**Per-player error handling**: errors recruiting individual lineup players are non-fatal — the conductor is already alive, so we collect failures into `playerErrors[]` (each entry `{ player, error }`) and return them in the 201 body. The dashboard surfaces a partial-success toast; the user can re-recruit specific players from the workspace without rolling back the whole ensemble.
+
+### Validation contract
+
+- `name` required, must match `ENSEMBLE_NAME_REGEX`; mismatch → `400 invalid-ensemble-name` or `400 missing-field`.
+- `lineup` if specified must resolve via `resolveLineupPath()` (saved → shipped → file path); unknown → `400 invalid-lineup` with the underlying parse error in `message`.
+- `host` if specified must match `PLAYER_NAME_REGEX`; mismatch → `400 invalid-host`.
+- `startMode` if specified must be `'hold' | 'release'`; mismatch → `400 invalid-start-mode`.
+- Body cap `1 MiB`; over → `413 body-too-large`. Malformed JSON → `400 invalid-json`.
+- Ensemble already running → `409 ensemble-exists`.
+- Conductor recruit fails → `500 conductor-recruit-failed` with the underlying message in `message`.
+
+### Method gates + auth
+
+Same as §11b — POST/GET method-not-allowed surfaces fall through to the standard 405 with `Allow:` header. Loopback bind no-auth; non-loopback or cross-origin → bearer required.
 
 ---
 
