@@ -5,6 +5,7 @@ import {
   withWorkerAndRecruitCapture,
   startOutboxWorker,
   startRecruitWorker,
+  useSharedWorker,
   startSession,
   playerMetadata,
   conductorMetadata,
@@ -20,6 +21,15 @@ import {
   pollWithTimeout,
   TASK_QUEUE,
 } from './helpers';
+
+// Timeout budgets for the migrated `pollWithTimeout` sites. Predicates flip
+// true on the happy path in 100s of ms; the budgets only kick in on slow
+// CI runners. Sized at ~5× the prior `sleep()` they replace, except where
+// the prior code used a longer manual poll loop (FAILURE_RETRIES sites).
+const POLL_DELIVERY_MS = 10_000;          // was sleep(2000) — cue/report/stop/detach/destroy/notification
+const POLL_RECRUIT_MS = 15_000;           // was sleep(3000) — recruit/restart/broadcast
+const POLL_FAILURE_RETRIES_CUE_MS = 30_000;    // was 30×sleep(1000) — failure handling
+const POLL_FAILURE_RETRIES_REPORT_MS = 40_000; // was 40×sleep(1000) — report delivery failure
 
 describe('outbox', function () {
   before(setupSharedEnv);
@@ -38,14 +48,7 @@ describe('outbox', function () {
   // ────────────────────────────────────────────────────────────────────────
 
   describe('outbox-activities flavor', function () {
-    let stopWorker: () => Promise<void>;
-    before(async function () {
-      this.timeout(60_000);
-      stopWorker = await startOutboxWorker();
-    });
-    after(async function () {
-      await stopWorker();
-    });
+    useSharedWorker(startOutboxWorker);
 
     // ── submitOutboxUpdate basics ──
 
@@ -116,7 +119,7 @@ describe('outbox', function () {
           const ob = await alice.query(outboxQuery);
           return msgs.some((m) => m.from === 'alice-cue' && m.text === 'hi bob')
             && ob.find((e) => e.type === 'cue')?.status === 'delivered';
-        }, 10_000);
+        }, POLL_DELIVERY_MS);
 
         const bobMessages = await bob.query(pendingMessagesQuery);
         expect(bobMessages.some((m) => m.from === 'alice-cue' && m.text === 'hi bob')).to.be.true;
@@ -159,7 +162,7 @@ describe('outbox', function () {
               && m.text.includes('[result]')
               && m.text.includes('task done'),
           ) && ob[0]?.status === 'delivered';
-        }, 10_000);
+        }, POLL_DELIVERY_MS);
 
         const conductorMessages = await conductor.query(allMessagesQuery);
         expect(conductorMessages.some(
@@ -199,7 +202,7 @@ describe('outbox', function () {
           const phase = (desc.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined)?.[0];
           const ob = await alice.query(outboxQuery);
           return phase === 'gone' && ob[0]?.status === 'delivered';
-        }, 10_000);
+        }, POLL_DELIVERY_MS);
 
         // Bob's attachment phase transitions to `gone` via the `stop` outbox entry
         // triggering `destroyUpdate` on the target. Read the phase from the
@@ -234,7 +237,7 @@ describe('outbox', function () {
         await pollWithTimeout(async () => {
           const ob = await alice.query(outboxQuery);
           return ob.find((e) => e.type === 'detach')?.status === 'delivered';
-        }, 10_000);
+        }, POLL_DELIVERY_MS);
 
         const aliceOutbox = await alice.query(outboxQuery);
         const entry = aliceOutbox.find((e) => e.type === 'detach');
@@ -267,7 +270,7 @@ describe('outbox', function () {
           } catch {
             return true; // workflow gone is also a valid "destroyed" signal
           }
-        }, 10_000);
+        }, POLL_DELIVERY_MS);
 
         const aliceOutbox = await alice.query(outboxQuery);
         const entry = aliceOutbox.find((e) => e.type === 'destroy');
@@ -302,7 +305,7 @@ describe('outbox', function () {
         await pollWithTimeout(async () => {
           const entries = await handle.query(outboxQuery);
           return entries.find((e) => e.type === 'cue')?.status === 'failed';
-        }, 30_000);
+        }, POLL_FAILURE_RETRIES_CUE_MS);
 
         const entries = await handle.query(outboxQuery);
         const entry = entries.find((e) => e.type === 'cue');
@@ -385,7 +388,7 @@ describe('outbox', function () {
               && m.text.includes('stop-target')
               && m.text.includes('terminated'),
           );
-        }, 10_000);
+        }, POLL_DELIVERY_MS);
 
         // Target's phase transitions to `gone` via the stop-delivery's destroyUpdate.
         // Read from the `ClaudeTempoAttachmentState` search attribute — survives completion.
@@ -433,7 +436,7 @@ describe('outbox', function () {
         await pollWithTimeout(async () => {
           const entries = await handle.query(outboxQuery);
           return entries.find((e) => e.type === 'report')?.status === 'failed';
-        }, 40_000);
+        }, POLL_FAILURE_RETRIES_REPORT_MS);
 
         const entries = await handle.query(outboxQuery);
         const entry = entries.find((e) => e.type === 'report');
@@ -486,7 +489,7 @@ describe('outbox', function () {
           const ob = await sender.query(outboxQuery);
           const cueEntries = ob.filter((e) => e.type === 'cue');
           return cueEntries.length === 3 && cueEntries.every((e) => e.status === 'delivered');
-        }, 15_000);
+        }, POLL_RECRUIT_MS);
 
         // Verify all 3 recipients received the message
         for (const [name, handle] of [['alice-bc', alice], ['bob-bc', bob], ['carol-bc', carol]] as const) {
@@ -525,16 +528,9 @@ describe('outbox', function () {
   // ────────────────────────────────────────────────────────────────────────
 
   describe('recruit-activities flavor', function () {
-    let stopWorker: () => Promise<void>;
-    before(async function () {
-      this.timeout(60_000);
-      stopWorker = await startRecruitWorker();
-    });
-    after(async function () {
-      await stopWorker();
-    });
+    useSharedWorker(startRecruitWorker);
 
-    describe('restart delivery (PR-D)', function () {
+    describe('restart delivery (PR-D, shared)', function () {
       it('dispatches deliverRestart and marks entry delivered', async function () {
         this.timeout(45_000);
         const alice = await startSession({ metadata: playerMetadata({ playerId: 'alice-restart' }) });
@@ -552,7 +548,7 @@ describe('outbox', function () {
         await pollWithTimeout(async () => {
           const ob = await alice.query(outboxQuery);
           return ob.find((e) => e.type === 'restart')?.status === 'delivered';
-        }, 15_000);
+        }, POLL_RECRUIT_MS);
 
         const aliceOutbox = await alice.query(outboxQuery);
         const entry = aliceOutbox.find((e) => e.type === 'restart');
@@ -566,7 +562,7 @@ describe('outbox', function () {
       });
     });
 
-    describe('recruit delivery', function () {
+    describe('recruit delivery (shared)', function () {
       it('pre-creates session workflow with initial message, playerType, and recruitedBy', async function () {
         this.timeout(45_000);
         const ensemble = `recruit-${Date.now()}`;
@@ -612,7 +608,7 @@ describe('outbox', function () {
             // Recruited workflow may not be queryable yet
             return false;
           }
-        }, 15_000);
+        }, POLL_RECRUIT_MS);
 
         // Outbox entry should be delivered
         const outboxEntries = await handle.query(outboxQuery);
@@ -671,7 +667,7 @@ describe('outbox', function () {
         await pollWithTimeout(async () => {
           const ob = await handle.query(outboxQuery);
           return ob.find((e) => e.type === 'recruit')?.status === 'delivered';
-        }, 15_000);
+        }, POLL_RECRUIT_MS);
 
         const outboxEntries = await handle.query(outboxQuery);
         const recruitEntry = outboxEntries.find((e) => e.type === 'recruit');
@@ -705,7 +701,7 @@ describe('outbox', function () {
   // ────────────────────────────────────────────────────────────────────────
 
   describe('recruit-capture flavor', function () {
-    describe('restart delivery (PR-D)', function () {
+    describe('restart delivery (PR-D, capture)', function () {
       it('#183 fresh restart regenerates sessionId and persists it to target metadata', async function () {
         this.timeout(45_000);
         const spawnInputs: Array<Record<string, unknown>> = [];
@@ -741,7 +737,7 @@ describe('outbox', function () {
             const ob = await alice.query(outboxQuery);
             return ob.find((e) => e.type === 'restart')?.status === 'delivered'
               && spawnInputs.length >= 1;
-          }, 15_000);
+          }, POLL_RECRUIT_MS);
 
           const aliceOutbox = await alice.query(outboxQuery);
           const entry = aliceOutbox.find((e) => e.type === 'restart');
@@ -814,7 +810,7 @@ describe('outbox', function () {
             const ob = await alice.query(outboxQuery);
             return ob.find((e) => e.type === 'restart')?.status === 'delivered'
               && spawnInputs.length >= 1;
-          }, 15_000);
+          }, POLL_RECRUIT_MS);
 
           const aliceOutbox = await alice.query(outboxQuery);
           const entry = aliceOutbox.find((e) => e.type === 'restart');
@@ -841,7 +837,7 @@ describe('outbox', function () {
       });
     });
 
-    describe('recruit delivery', function () {
+    describe('recruit delivery (capture)', function () {
       it('forwards claudeBin from outbox entry to spawnProcess', async function () {
         this.timeout(45_000);
         const spawnInputs: Array<Record<string, unknown>> = [];
@@ -873,7 +869,7 @@ describe('outbox', function () {
             const ob = await handle.query(outboxQuery);
             return ob.find((e) => e.type === 'recruit')?.status === 'delivered'
               && spawnInputs.length === 1;
-          }, 15_000);
+          }, POLL_RECRUIT_MS);
 
           // Outbox entry should be delivered
           const outboxEntries = await handle.query(outboxQuery);
