@@ -12,41 +12,14 @@ import { createTemporalConnection } from './connection';
 import { isDaemonRunning, startDaemon } from './cli/daemon';
 import { SessionInput } from './types';
 import { getGitInfo } from './git-info';
+// #450 self-bootstrap path uses the typed default-part helper for the
+// player-type-aware fallback string. Lives here (not in server-tools) because
+// it's invoked at MCP-server boot time before the tool surface lands.
 import { defaultPart } from './utils/default-part';
-import { registerEnsembleTool } from './tools/ensemble';
-import { registerCueTool } from './tools/cue';
-import { registerSetPartTool } from './tools/set-part';
-import { registerListenTool } from './tools/listen';
-import { registerRecruitTool } from './tools/recruit';
-import { registerReportTool } from './tools/report';
-import { registerSetNameTool } from './tools/set-name';
-import { registerScheduleTool } from './tools/schedule';
-import { registerUnscheduleTool } from './tools/unschedule';
-import { registerSchedulesTool } from './tools/schedules';
-import { registerSaveLineupTool } from './tools/save-lineup';
-import { registerLoadLineupTool } from './tools/load-lineup';
-import { registerAgentTypesTool } from './tools/agent-types';
-import { registerWhoAmITool } from './tools/who-am-i';
-import { registerBroadcastTool } from './tools/broadcast';
-import { registerRecallTool } from './tools/recall';
-import { registerReleaseTool } from './tools/release';
-import { registerPauseTool } from './tools/pause';
-import { registerPlayTool } from './tools/play';
-import { registerShutdownTool } from './tools/shutdown';
-import { registerRestoreTool } from './tools/restore';
-import { registerQualityGateTool } from './tools/quality-gate';
-import { registerEvaluateGateTool } from './tools/evaluate-gate';
-import { registerGatesTool } from './tools/gates';
-import { registerWorktreeTool } from './tools/worktree';
-import { registerStageTool } from './tools/stage';
-import { registerStagesTool } from './tools/stages';
-import { registerCancelStageTool } from './tools/cancel-stage';
-import { registerRestartTool } from './tools/restart';
-import { registerDestroyTool } from './tools/destroy';
-import { registerMigrateTool } from './tools/migrate';
-import { registerAttachmentInfoTool } from './tools/attachment-info';
-import { registerHostsTool } from './tools/hosts';
-import { registerSetEnsembleDescriptionTool } from './tools/set-ensemble-description';
+// #131 Phase C — every tool registration now lives in `server-tools.ts` so
+// the claude-api adapter's in-process MCP server registers the same surface
+// without per-tool drift between the two callsites.
+import { buildServerInstructions, registerAllTempoTools } from './server-tools';
 import { registry, InteractiveAttachment } from './adapters';
 import { resolveAgentType } from './ensemble/agent-types';
 
@@ -261,26 +234,15 @@ async function main() {
 
   // Create MCP server
   const hasRequestedName = isConductor || Boolean(requestedName && requestedName !== 'conductor');
-  const playerTypeLine = playerType
-    ? `Your player type is "${playerType}"${playerTypeDescription ? ` (${playerTypeDescription})` : ''}. `
-    : '';
-  const serverInstructions = `You are part of the "${config.ensemble}" ensemble of Claude Code sessions coordinated via Temporal. ` +
-    `Your player name is "${playerId}". ` +
-    playerTypeLine +
-    (hasRequestedName
-      ? `This name was assigned at startup — do NOT call \`set_name\` unless explicitly asked to rename. `
-      : `IMPORTANT: If you receive a message instructing you to call \`set_name\`, do so immediately before anything else. Use \`set_name\` to give yourself a human-readable name. `) +
-    `When you receive a message from another session, treat it like a coworker asking for help — respond promptly, then resume your work. ` +
-    `Use \`ensemble\` to see who else is active. ` +
-    `Use \`cue\` to reply directly to the player who messaged you, or to ask others for help. ` +
-    `Use \`recruit\` if you need a session in a directory where none exists. ` +
-    `Use \`report\` to notify the conductor of task completion, blockers, or questions — always report when you finish a recruited task.` +
-    (isConductor
-      ? `\n\nOperational rules:\n` +
-        `- Before assigning parallel work on different branches, provision git worktrees via the \`worktree\` tool so each player has an isolated checkout.\n` +
-        `- No player should switch branches without your approval — if a player needs a different branch, provision a worktree for them.\n` +
-        `- Before shipping, verify the branch diff scope matches the assigned task (no unrelated changes).`
-      : `\n\nDo not switch git branches without the conductor's approval. If no conductor exists, broadcast your intent to the ensemble first. Prefer using the \`worktree\` tool for branch isolation.`);
+  const ownAgentType = isBridgeMode ? 'copilot' : 'claude';
+  const serverInstructions = buildServerInstructions({
+    ensemble: config.ensemble,
+    playerId,
+    playerType,
+    playerTypeDescription,
+    isConductor,
+    hasRequestedName,
+  });
 
   const mcpServer = new McpServer({
     name: 'claude-tempo',
@@ -292,49 +254,13 @@ async function main() {
     instructions: serverInstructions,
   });
 
-  // Register tools
-  registerEnsembleTool(mcpServer, client, config, getPlayerId, workflowId);
-  registerCueTool(mcpServer, client, config, getPlayerId, handle);
-  registerSetPartTool(mcpServer, handle);
-  registerSetNameTool(mcpServer, client, config, handle, getPlayerId, setPlayerId);
-  registerListenTool(mcpServer, handle);
-  registerRecruitTool(mcpServer, client, config, getPlayerId, handle, isBridgeMode ? 'copilot' : 'claude');
-  registerReportTool(mcpServer, handle);
-  registerScheduleTool(mcpServer, client, config, getPlayerId);
-  registerUnscheduleTool(mcpServer, client, config);
-  registerSchedulesTool(mcpServer, client, config);
-  registerSaveLineupTool(mcpServer, client, config, getPlayerId, isConductor);
-  registerLoadLineupTool(mcpServer, client, config, getPlayerId, isBridgeMode ? 'copilot' : 'claude', handle, setPlayerId, isConductor);
-  registerAgentTypesTool(mcpServer);
-  registerWhoAmITool(mcpServer, handle, getPlayerId);
-  registerBroadcastTool(mcpServer, client, config, getPlayerId, handle);
-  registerRecallTool(mcpServer, handle, getPlayerId);
-  registerReleaseTool(mcpServer, client, config, getPlayerId, handle);
-  registerPauseTool(mcpServer, client, config, getPlayerId);
-  registerPlayTool(mcpServer, client, config, getPlayerId);
-  registerShutdownTool(mcpServer, client, config, getPlayerId);
-  registerRestoreTool(mcpServer, client, config, getPlayerId);
-  // PR-D new verbs — enqueue outbox entries on the caller's workflow; the
-  // session dispatch loop runs the `deliverDestroy` / `deliverRestart`
-  // activities against the target. `detach` is no longer on the public MCP
-  // surface (#287); `shutdown` owns ensemble-scope detach.
-  registerRestartTool(mcpServer, client, config, getPlayerId, handle);
-  registerDestroyTool(mcpServer, client, config, getPlayerId, handle);
-  registerMigrateTool(mcpServer, client, config, getPlayerId, handle);
-  registerAttachmentInfoTool(mcpServer, client, config);
-  registerHostsTool(mcpServer, client, config);
-  registerSetEnsembleDescriptionTool(mcpServer, client, config);
-
-  // Conductor-only tools
-  if (isConductor) {
-    registerQualityGateTool(mcpServer, handle, getPlayerId);
-    registerEvaluateGateTool(mcpServer, handle, getPlayerId);
-    registerGatesTool(mcpServer, handle);
-    registerWorktreeTool(mcpServer, client, config, handle, getPlayerId);
-    registerStageTool(mcpServer, handle, getPlayerId);
-    registerStagesTool(mcpServer, handle);
-    registerCancelStageTool(mcpServer, handle);
-  }
+  // Register every tempo tool via the shared helper. The claude-api adapter
+  // (#131) builds the same surface against an in-process MCP server using
+  // the same call. Adding a new tool? Add it once in `server-tools.ts`.
+  registerAllTempoTools(mcpServer, {
+    client, config, getPlayerId, setPlayerId, handle, workflowId,
+    ownAgentType, isConductor,
+  });
 
   const MAESTRO_ACK = '\n\n[IMPORTANT: This message is from a human (Maestro). Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
 

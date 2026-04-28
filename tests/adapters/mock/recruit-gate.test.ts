@@ -34,7 +34,9 @@ describe('recruit tool — gate 3 wiring', () => {
   });
 
   it('extends the agent enum to accept "mock"', () => {
-    expect(RECRUIT_SRC).toMatch(/z\.enum\(\[['"]claude['"],\s*['"]copilot['"],\s*['"]mock['"]\]\)/);
+    // Enum may carry additional non-mock entries (e.g. "claude-api" added
+    // in #131 Phase C) — assert "mock" is present, not the exact shape.
+    expect(RECRUIT_SRC).toMatch(/z\.enum\(\[[^\]]*['"]mock['"][^\]]*\]\)/);
   });
 
   it('rejects agent: "mock" outside dev mode with an actionable error', () => {
