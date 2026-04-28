@@ -2,11 +2,13 @@
  * Overview screen tests — rendered inside a mocked router so the
  * EnsembleCard's `<Link>` resolves cleanly.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import type { ReactNode } from 'react';
+import type { HostInfo } from 'claude-tempo/types';
+import { AppShell } from '../src/components/AppShell';
 import { Overview } from '../src/screens/Overview';
 import { MockDashboardClient, makeSnapshot } from './fixtures/mock-client';
 import { __setDashboardClientForTests } from '../src/lib/client-singleton';
@@ -15,15 +17,69 @@ function newQc() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
 }
 
-function renderOverview(client: MockDashboardClient, qc = newQc()) {
+interface RenderOpts {
+  client: MockDashboardClient;
+  qc?: QueryClient;
+  initialPath?: string;
+  /**
+   * When true, wraps Overview in AppShell so the PageHeader pushed via
+   * `useScreenPageHeader` actually renders (its testids — pills, refresh,
+   * new-ensemble — only show inside the slot). Most tests need this; only
+   * the snapshot-error logging test renders bare since AppShell isn't
+   * relevant to its assertion.
+   */
+  withShell?: boolean;
+}
+
+function renderOverview({
+  client,
+  qc = newQc(),
+  initialPath = '/',
+  withShell = true,
+}: RenderOpts) {
   __setDashboardClientForTests(client);
+  const overview = withShell ? (
+    <AppShell>
+      <Overview />
+    </AppShell>
+  ) : (
+    <Overview />
+  );
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/']}>
-        <Overview />
+      <MemoryRouter initialEntries={[initialPath]}>
+        <Routes>
+          <Route path="/" element={overview} />
+          <Route
+            path="/create-ensemble"
+            element={<div data-testid="probe-create-ensemble">create</div>}
+          />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider> as ReactNode,
   );
+}
+
+/**
+ * Minimal HostInfo factory — Overview only reads `hosts.length`, so the
+ * inner profile/instance fields can be cheap stubs without losing
+ * coverage of the count logic.
+ */
+function host(hostname: string): HostInfo {
+  return {
+    hostname,
+    instances: [],
+    recruitReady: true,
+    freshness: 'live',
+    profile: {
+      hostname,
+      version: '0.28.0',
+      defaultAgent: 'claude',
+      platform: 'linux',
+      capabilities: [],
+    },
+    profileStaleness: 'fresh',
+  };
 }
 
 afterEach(() => {
@@ -34,7 +90,7 @@ afterEach(() => {
 describe('Overview screen', () => {
   it('renders an empty-state when no ensembles are running', async () => {
     const mock = new MockDashboardClient({ ensembles: [] });
-    renderOverview(mock);
+    renderOverview({ client: mock });
     await waitFor(() => {
       expect(screen.getByTestId('overview-empty')).toBeInTheDocument();
     });
@@ -63,7 +119,7 @@ describe('Overview screen', () => {
         ],
       }),
     });
-    renderOverview(mock);
+    renderOverview({ client: mock });
     await waitFor(() => {
       expect(screen.getByTestId('ensemble-card-demo')).toBeInTheDocument();
       expect(screen.getByTestId('ensemble-card-other')).toBeInTheDocument();
@@ -78,7 +134,7 @@ describe('Overview screen', () => {
     const mock = new MockDashboardClient({
       ensemblesError: new Error('boom'),
     });
-    renderOverview(mock);
+    renderOverview({ client: mock });
     await waitFor(() => {
       const alert = screen.getByRole('alert');
       expect(alert).toHaveAttribute('data-testid', 'error-ensemble-list');
@@ -92,10 +148,86 @@ describe('Overview screen', () => {
       snapshotError: new Error('snapshot-fail'),
     });
     const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    renderOverview(mock);
+    renderOverview({ client: mock });
     await waitFor(() => {
       const messages = consoleWarn.mock.calls.flat().map(String);
       expect(messages.some((m) => m.includes('[claude-tempo:dashboard]') && m.includes('snapshot.error'))).toBe(true);
     });
+  });
+
+  it('quick-stat pills render the rolled-up counts (with singular/plural)', async () => {
+    const mock = new MockDashboardClient({
+      ensembles: [
+        { name: 'a', playerCount: 4, hasConductor: true, state: 'online' },
+        { name: 'b', playerCount: 9, hasConductor: false, state: 'online' },
+      ],
+      hosts: [host('h1'), host('h2'), host('h3')],
+    });
+    renderOverview({ client: mock });
+    await waitFor(() => {
+      // Plural form (2 ensembles).
+      expect(screen.getByTestId('overview-stat-ensembles').textContent).toContain('2');
+      expect(screen.getByTestId('overview-stat-ensembles').textContent).toMatch(/ensembles$/);
+      // Sum across ensembles (4 + 9).
+      expect(screen.getByTestId('overview-stat-players').textContent).toContain('13');
+      expect(screen.getByTestId('overview-stat-players').textContent).toMatch(/players$/);
+      expect(screen.getByTestId('overview-stat-hosts').textContent).toContain('3');
+      expect(screen.getByTestId('overview-stat-hosts').textContent).toMatch(/hosts$/);
+    });
+  });
+
+  it('quick-stat pills singularize on count=1', async () => {
+    const mock = new MockDashboardClient({
+      ensembles: [{ name: 'solo', playerCount: 1, hasConductor: false, state: 'online' }],
+      hosts: [host('only')],
+    });
+    renderOverview({ client: mock });
+    await waitFor(() => {
+      expect(screen.getByTestId('overview-stat-ensembles').textContent).toMatch(/1\s*ensemble$/);
+      expect(screen.getByTestId('overview-stat-players').textContent).toMatch(/1\s*player$/);
+      expect(screen.getByTestId('overview-stat-hosts').textContent).toMatch(/1\s*host$/);
+    });
+  });
+
+  it('Refresh button invalidates the ensembles + hosts queries', async () => {
+    const mock = new MockDashboardClient({ ensembles: [], hosts: [] });
+    const qc = newQc();
+    const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
+    renderOverview({ client: mock, qc });
+    // Wait for the header to mount before clicking.
+    await waitFor(() => {
+      expect(screen.getByTestId('overview-refresh')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('overview-refresh'));
+    // Two invalidations (ensembles + hosts), in either order.
+    const invalidatedKeys = invalidateSpy.mock.calls.map(
+      ([opts]) => (opts as { queryKey?: unknown[] } | undefined)?.queryKey,
+    );
+    expect(invalidatedKeys).toEqual(
+      expect.arrayContaining([['ensembles'], ['hosts']]),
+    );
+  });
+
+  it('+ New ensemble navigates to /create-ensemble', async () => {
+    const mock = new MockDashboardClient({ ensembles: [], hosts: [] });
+    renderOverview({ client: mock });
+    await waitFor(() => {
+      expect(screen.getByTestId('overview-new-ensemble')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('overview-new-ensemble'));
+    await waitFor(() => {
+      expect(screen.getByTestId('probe-create-ensemble')).toBeInTheDocument();
+    });
+  });
+
+  it('renders the recent-activity panel + empty-state placeholder', async () => {
+    const mock = new MockDashboardClient({ ensembles: [], hosts: [] });
+    renderOverview({ client: mock });
+    await waitFor(() => {
+      expect(screen.getByTestId('overview-recent-activity')).toBeInTheDocument();
+    });
+    // Empty-state row is wire-pending per Q5 (cross-ensemble stream lands beta.8).
+    expect(screen.getByTestId('overview-recent-activity-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('overview-recent-activity-empty').textContent).toMatch(/beta\.8/);
   });
 });

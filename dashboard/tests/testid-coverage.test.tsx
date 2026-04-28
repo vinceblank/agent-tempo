@@ -24,8 +24,8 @@ import { __setDashboardClientForTests } from '../src/lib/client-singleton';
 
 // `App` mounts a router (PR-4); we inject a memory router so jsdom
 // doesn't need a real `window.location` matching `/dashboard/*`.
-function renderApp() {
-  const router = createDashboardMemoryRouter(['/']);
+function renderApp(initialPath = '/') {
+  const router = createDashboardMemoryRouter([initialPath]);
   return render(<App router={router} />);
 }
 
@@ -70,6 +70,17 @@ describe('testid coverage (architect risk #12)', () => {
     expect(getByTestId('sidebar')).toBeInTheDocument();
     expect(getByTestId('page-header')).toBeInTheDocument();
     expect(getByTestId('brandmark')).toBeInTheDocument();
+  });
+
+  it('operator chrome (theme + density) is reachable on shell-only routes', () => {
+    // PR-B Overview pushes its own PageHeader (Refresh + New ensemble),
+    // so the AppShell's default operator chrome is hidden on `/`. The
+    // chrome still renders on placeholder routes that don't override —
+    // pick `/loadouts` since it's a stable PR-6 placeholder. PR-G will
+    // migrate the chrome into `/settings` and this assertion can move
+    // along with it (or retire entirely once SettingsSheet exposes the
+    // same testids).
+    const { getByTestId } = renderApp('/loadouts');
     expect(getByTestId('settings-theme-toggle')).toBeInTheDocument();
     expect(getByTestId('settings-density-slider')).toBeInTheDocument();
   });
