@@ -232,9 +232,11 @@ describe('routing edges', () => {
     const r2 = await fetch(`${b.url}/v1/events/demo`);
     expect(r2.status).toBe(503);
   });
-  it('returns 405 method-not-allowed on a POST', async () => {
+  it('returns 405 method-not-allowed on a POST to a still-GET-only path', async () => {
+    // POST /v1/ensembles is the create-ensemble route as of issue #400.
+    // /v1/hosts is still GET-only, so it pins the method-gate behaviour.
     const b = await boot();
-    const res = await fetch(`${b.url}/v1/ensembles`, { method: 'POST' });
+    const res = await fetch(`${b.url}/v1/hosts`, { method: 'POST' });
     expect(res.status).toBe(405);
     expect(res.headers.get('allow')).toBe('GET, OPTIONS');
   });

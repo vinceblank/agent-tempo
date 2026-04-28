@@ -1,0 +1,90 @@
+/**
+ * Shared HTTP body-reading helpers.
+ *
+ * Extracted from `writes.ts` so catalog/write/dashboard handlers all
+ * use the same JSON parser + size cap. The cap is enforced before
+ * parsing so a 1 GiB upload can't OOM the daemon.
+ *
+ * Sentinels (rather than thrown errors) keep the parse path branch-free
+ * — handlers compare against `BODY_TOO_LARGE` / `BODY_INVALID_JSON` and
+ * map to the appropriate 4xx response.
+ */
+import type { IncomingMessage } from 'http';
+import type { AgentType } from '../types';
+import { isDevMode } from '../config';
+
+/** Hard cap on incoming JSON body size (1 MiB). */
+export const WRITE_BODY_MAX = 1024 * 1024;
+
+export const BODY_TOO_LARGE = Symbol('body-too-large');
+export const BODY_INVALID_JSON = Symbol('body-invalid-json');
+
+export type ReadJsonBodyResult =
+  | Record<string, unknown>
+  | typeof BODY_TOO_LARGE
+  | typeof BODY_INVALID_JSON;
+
+/**
+ * Read the request body up to {@link WRITE_BODY_MAX} bytes and parse
+ * as JSON. Returns the parsed object, an empty object for empty
+ * bodies, or one of the sentinel symbols for cap / parse failures.
+ *
+ * Note on the cap path: returning early from this function ends body
+ * consumption; Node's HTTP server tears down the upload when the
+ * handler ends. Explicit `req.destroy()` would race the response
+ * write — left alone.
+ */
+export async function readJsonBody(req: IncomingMessage): Promise<ReadJsonBodyResult> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of req) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
+    total += buf.length;
+    if (total > WRITE_BODY_MAX) return BODY_TOO_LARGE;
+    chunks.push(buf);
+  }
+  if (total === 0) return {};
+  try {
+    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return BODY_INVALID_JSON;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return BODY_INVALID_JSON;
+  }
+}
+
+/**
+ * Pluck a string field from a parsed JSON body. Returns `undefined`
+ * for absent or non-string values; with `requireNonEmpty: true`, also
+ * filters empty strings (used by routes that accept optional fields
+ * — empty strings shouldn't propagate to downstream Temporal calls
+ * as if the user typed something).
+ */
+export function stringField(
+  body: Record<string, unknown>,
+  key: string,
+  opts: { requireNonEmpty?: boolean } = {},
+): string | undefined {
+  const v = body[key];
+  if (typeof v !== 'string') return undefined;
+  if (opts.requireNonEmpty && v.length === 0) return undefined;
+  return v;
+}
+
+/**
+ * Agent allowlists. `'mock'` is dev-mode-only — see ADR 0014 §7. Read
+ * at request time so toggling `CLAUDE_TEMPO_DEV_MODE` between requests
+ * is picked up without restart (parity with `src/tools/recruit.ts`).
+ */
+export const ALLOWED_AGENTS_PROD: readonly AgentType[] = ['claude', 'copilot'];
+export const ALLOWED_AGENTS_DEV: readonly AgentType[] = ['claude', 'copilot', 'mock'];
+
+export function allowedAgentsForCurrentMode(): readonly AgentType[] {
+  return isDevMode() ? ALLOWED_AGENTS_DEV : ALLOWED_AGENTS_PROD;
+}
+
+export function isAllowedAgent(s: string, allowed: readonly AgentType[]): s is AgentType {
+  return (allowed as readonly string[]).includes(s);
+}

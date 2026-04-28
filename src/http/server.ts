@@ -48,6 +48,11 @@ import {
   isWriteAction,
 } from './writes';
 import {
+  handleCreateEnsemble,
+  handleListAgentTypes,
+  handleListLineups,
+} from './catalog';
+import {
   DAEMON_PORT_PATH,
   removePortFile,
   writePortFileAtomic,
@@ -362,6 +367,13 @@ export async function handle(
     return errorResponse(res, 404, { error: 'not-found' });
   }
 
+  // Create-ensemble route (issue #400) — POST `/v1/ensembles`. Sits
+  // alongside the writeMatch above so it's reached before the GET-only
+  // gate; the GET on the same path (list ensembles) is handled below.
+  if (pathname === '/v1/ensembles' && method === 'POST') {
+    return handleCreateEnsemble(req, res, ctx.client);
+  }
+
   // POST `/dashboard/api/pair` — mint a pairing for cross-device QR (PR-8
   // of #340). Sits AFTER the bearer-auth gate so the operator on the host
   // proves authority before issuing a token; the token's GET-side consume
@@ -392,6 +404,15 @@ export async function handle(
 
   if (pathname === '/v1/hosts') {
     return handleHosts(res, ctx);
+  }
+
+  // Catalog reads (issue #400) — `listAgentTypes` / `listLineups`
+  // touch local fs only, no Temporal calls; cheap to serve per-request.
+  if (pathname === '/v1/agent-types') {
+    return handleListAgentTypes(res);
+  }
+  if (pathname === '/v1/lineups') {
+    return handleListLineups(res);
   }
 
   // /v1/state/:ensemble — single capture group.

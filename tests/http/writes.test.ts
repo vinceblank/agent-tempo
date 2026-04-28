@@ -348,9 +348,12 @@ describe('Body parsing edge cases', () => {
 });
 
 describe('Method-not-allowed regression suite', () => {
-  it('POST to a known read endpoint (e.g. /v1/ensembles) → 405', async () => {
+  // POST `/v1/ensembles` is the create-ensemble route (issue #400) —
+  // no longer 405. POST to a still-GET-only endpoint (`/v1/hosts`)
+  // pins the gate's behaviour.
+  it('POST to a known read endpoint (e.g. /v1/hosts) → 405', async () => {
     const b = await boot();
-    const res = await fetch(`${b.url}/v1/ensembles`, { method: 'POST' });
+    const res = await fetch(`${b.url}/v1/hosts`, { method: 'POST' });
     expect(res.status).toBe(405);
     expect(res.headers.get('allow')).toBe('GET, OPTIONS');
   });

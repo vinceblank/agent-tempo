@@ -4,6 +4,7 @@ import { Client } from '@temporalio/client';
 import { stringify as yamlStringify } from 'yaml';
 import { CLAUDE_TEMPO_HOME, schedulerWorkflowId } from '../config';
 import { EnsembleLineup } from './schema';
+import { loadLineup } from './loader';
 
 const ENSEMBLES_DIR = join(CLAUDE_TEMPO_HOME, 'ensembles');
 
@@ -148,32 +149,75 @@ function findPackageRoot(dir: string): string {
 }
 
 /**
- * List all available lineups — saved (~/.claude-tempo/ensembles/) + shipped (examples/ensembles/).
+ * Lineup catalog entry — each row in `listAllLineups()` output. Used by
+ * the TUI's CreateEnsembleWizard, the dashboard's `/v1/lineups`
+ * endpoint, and the `claude-tempo up --lineup` resolver.
+ *
+ * `players` and `description` come from a YAML parse — best-effort: a
+ * malformed lineup file silently degrades to `players: 0` /
+ * `description: undefined` rather than skipping the row entirely. The
+ * row stays clickable so the picker can still surface it; downstream
+ * `loadLineup()` runs strict validation at use time.
+ *
+ * `path` is the absolute on-disk path. Local callers use it to seed
+ * the resolver; HTTP catchments must NOT serve this field over the
+ * wire (privacy contract — strip in the route handler).
  */
-export function listAllLineups(): Array<{ name: string; source: 'saved' | 'shipped' }> {
-  const results: Array<{ name: string; source: 'saved' | 'shipped' }> = [];
+export interface LineupCatalogEntry {
+  name: string;
+  description?: string;
+  players: number;
+  source: 'saved' | 'shipped';
+  path: string;
+}
 
-  // Saved lineups
-  for (const l of listLineups()) {
-    results.push({ name: l.name, source: 'saved' });
-  }
+/**
+ * List all available lineups — saved (`~/.claude-tempo/ensembles/`)
+ * plus shipped (`<package-root>/examples/ensembles/`). Saved takes
+ * precedence over shipped when names collide.
+ *
+ * Each row carries `description` + `players` count so pickers can
+ * render rich rows without re-parsing the YAML themselves. Parse
+ * failures are tolerated (zero count, no description).
+ */
+export function listAllLineups(): LineupCatalogEntry[] {
+  const seen = new Map<string, LineupCatalogEntry>();
 
-  // Shipped examples
+  const append = (name: string, path: string, source: 'saved' | 'shipped') => {
+    if (seen.has(name)) return;
+    let description: string | undefined;
+    let players = 0;
+    try {
+      const lineup = loadLineup(path);
+      description = lineup.description;
+      players = lineup.players.length;
+    } catch {
+      // Malformed YAML — keep the row but with zero count.
+    }
+    seen.set(name, {
+      name,
+      ...(description !== undefined && { description }),
+      players,
+      source,
+      path,
+    });
+  };
+
+  // Saved (higher priority).
+  for (const l of listLineups()) append(l.name, l.path, 'saved');
+
+  // Shipped fallback.
   const pkgRoot = findPackageRoot(resolve(__dirname));
   const shippedDir = join(pkgRoot, 'examples', 'ensembles');
   if (existsSync(shippedDir)) {
     for (const f of readdirSync(shippedDir)) {
-      if (f.endsWith('.yaml') || f.endsWith('.yml')) {
-        const name = f.replace(/\.ya?ml$/, '');
-        // Skip if already in saved (saved takes precedence)
-        if (!results.some(r => r.name === name)) {
-          results.push({ name, source: 'shipped' });
-        }
-      }
+      if (!f.endsWith('.yaml') && !f.endsWith('.yml')) continue;
+      const name = f.replace(/\.ya?ml$/, '');
+      append(name, join(shippedDir, f), 'shipped');
     }
   }
 
-  return results;
+  return Array.from(seen.values());
 }
 
 function formatDurationMs(ms: number): string {
