@@ -68,6 +68,13 @@ export interface DashboardTempoClient {
   release(ensemble: string, playerId?: string): Promise<ReleaseResult>;
   /** POST `/v1/ensembles/:ensemble/recruit` — spawn a new player. */
   recruit(ensemble: string, opts: RecruitOpts): Promise<RecruitResult>;
+  /**
+   * POST `/v1/ensembles` — create a fresh ensemble. Wire-pending: the
+   * daemon endpoint isn't shipped yet (architect-tracked follow-up).
+   * The client method posts in anticipation of that endpoint; until it
+   * lands callers should expect a 404 and surface it gracefully.
+   */
+  createEnsemble(opts: CreateEnsembleOpts): Promise<CreateEnsembleResult>;
 }
 
 export interface CueResult {
@@ -96,6 +103,24 @@ export interface RecruitOpts {
 export interface RecruitResult {
   playerId: string;
   entryId: string;
+}
+
+export interface CreateEnsembleOpts {
+  /** Ensemble name — must satisfy the wire's name regex. */
+  name: string;
+  /** Optional lineup name from `examples/ensembles/`; omit for blank ensemble. */
+  lineup?: string;
+  /** Default host for recruits inside the ensemble. */
+  host?: string;
+  /** Whether new recruits start in `held` mode (`hold`) or run immediately. */
+  startMode?: 'hold' | 'release-immediately';
+  /** Conductor system-prompt override sent on the first recruit. */
+  conductorInstructions?: string;
+}
+
+export interface CreateEnsembleResult {
+  ensemble: string;
+  conductorPlayerId?: string;
 }
 
 export interface DashboardClientOpts {
@@ -192,6 +217,12 @@ export function createDashboardClient(opts: DashboardClientOpts = {}): Dashboard
     },
     async recruit(ensemble, opts) {
       return postJson<RecruitResult>(ensemblePath(ensemble, 'recruit'), opts);
+    },
+    async createEnsemble(opts) {
+      // Wire-pending — daemon doesn't expose POST /v1/ensembles yet.
+      // postJson surfaces the 404 to the mutation hook, which toasts a
+      // wire-gap message rather than a generic failure.
+      return postJson<CreateEnsembleResult>('/v1/ensembles', opts);
     },
   };
 }

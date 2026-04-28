@@ -14,6 +14,8 @@ import type {
 } from 'claude-tempo/http/event-types';
 import type { HostInfo } from 'claude-tempo/types';
 import type {
+  CreateEnsembleOpts,
+  CreateEnsembleResult,
   CueResult,
   DashboardTempoClient,
   RecruitOpts,
@@ -29,11 +31,11 @@ export interface MockBehavior {
   hosts?: HostInfo[];
   hostsError?: Error;
   /** Per-mutation error injection. Keyed by action name. */
-  mutationErrors?: Partial<Record<'cue' | 'pause' | 'play' | 'release' | 'recruit', Error>>;
+  mutationErrors?: Partial<Record<'cue' | 'pause' | 'play' | 'release' | 'recruit' | 'createEnsemble', Error>>;
 }
 
 export interface MutationCall {
-  method: 'cue' | 'pause' | 'play' | 'release' | 'recruit';
+  method: 'cue' | 'pause' | 'play' | 'release' | 'recruit' | 'createEnsemble';
   args: unknown[];
 }
 
@@ -51,6 +53,7 @@ export class MockDashboardClient implements DashboardTempoClient {
   /** Per-mutation result override. */
   public recruitResult: RecruitResult = { playerId: 'tempo-eng', entryId: 'entry-1' };
   public releaseResult: ReleaseResult = { released: [], errors: [] };
+  public createEnsembleResult: CreateEnsembleResult = { ensemble: 'new-ensemble' };
   /** Pending push channels for live subscriptions, keyed by ensemble. */
   private pushers = new Map<string, ((ev: TempoEvent | null) => void)[]>();
 
@@ -153,6 +156,12 @@ export class MockDashboardClient implements DashboardTempoClient {
     this.mutationCalls.push({ method: 'recruit', args: [ensemble, opts] });
     if (this.mutationErrors.recruit) throw this.mutationErrors.recruit;
     return this.recruitResult;
+  }
+
+  async createEnsemble(opts: CreateEnsembleOpts): Promise<CreateEnsembleResult> {
+    this.mutationCalls.push({ method: 'createEnsemble', args: [opts] });
+    if (this.mutationErrors.createEnsemble) throw this.mutationErrors.createEnsemble;
+    return { ...this.createEnsembleResult, ensemble: opts.name };
   }
 
   /** Push a fake SSE event into every live subscription for `ensemble`. */
