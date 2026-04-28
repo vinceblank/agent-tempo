@@ -16,10 +16,15 @@ describe('PhoneAppBar', () => {
     expect(screen.getByText('@')).toBeInTheDocument();
   });
 
-  it('falls back to em-dash when no ensemble is set', () => {
+  it('suppresses the ensemble selector entirely when no ensemble context (#389 final)', () => {
+    // On routes outside any ensemble (e.g. `/dashboard`,
+    // `/dashboard/loadouts`) the previous fallback rendered `@—` which
+    // read as a placeholder bug. The selector chunk is now suppressed —
+    // kicker + hamburger convey the empty-context state.
     render(<PhoneAppBar />);
-    expect(screen.getByText('—')).toBeInTheDocument();
-    // No lineup → kicker reads "ensemble" so the row never collapses.
+    expect(screen.queryByTestId('phone-appbar-ensemble-name')).toBeNull();
+    expect(screen.queryByText('—')).toBeNull();
+    // No lineup → kicker still reads "ensemble" so the row never collapses.
     expect(screen.getByText('ensemble')).toBeInTheDocument();
   });
 

@@ -98,8 +98,14 @@ export function toPlayerSummaryV1(
   p: MaestroPlayerInfo,
   wireMeta: PlayerWireMeta | null = null,
 ): PlayerSummaryV1 {
-  const agentType: 'claude' | 'copilot' =
-    p.agentType === 'copilot' ? 'copilot' : 'claude';
+  // `MaestroPlayerInfo.agentType` is open (string); the wire contract is
+  // closed at `'claude' | 'copilot' | 'mock'`. Unknown values default to
+  // `'claude'` so a forked daemon advertising a new adapter can't poison
+  // the wire shape consumers are typed against.
+  const agentType: PlayerSummaryV1['agentType'] =
+    p.agentType === 'copilot' || p.agentType === 'mock'
+      ? p.agentType
+      : 'claude';
   return {
     playerId: p.playerId,
     ensemble: p.ensemble,

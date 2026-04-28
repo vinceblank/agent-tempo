@@ -8,7 +8,7 @@
 - Canonical design: `docs/design/dashboard-handoff/project/{screens.jsx, workspace.jsx, web-design-system.html, dashboard.html, styles.css}`
 - Binding spec: `docs/design/dashboard-audit-389.md` rev 4
 - Prior audit: `docs/design/dashboard-audit-389-followup-rev2.md` (code-only, pre-wire-data)
-- Implementation HEAD: `a5fd8320` (post-#385, beta.8 published, #423 PR-A in flight)
+- Implementation HEAD: `fdb891f6` (beta.8 release on `main`; #423 PR-A in flight)
 
 ## Method
 

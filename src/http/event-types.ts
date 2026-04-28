@@ -140,7 +140,13 @@ export interface PlayerSummaryV1 {
   ensemble: string;
   hostname: string;
   isConductor: boolean;
-  agentType: 'claude' | 'copilot';
+  /**
+   * Adapter family the player runs on. `'mock'` is dev-mode-only (recruit
+   * gate rejects it in production); the wire union exposes it so dashboards
+   * can render mock-jam ensembles without coercing the actual adapter to
+   * `'claude'`. Mirrors {@link AgentType} from `src/types.ts`.
+   */
+  agentType: 'claude' | 'copilot' | 'mock';
   playerType?: string;
   /** Authoritative attachment phase (post-v0.26 — see WIRE-PROTOCOL.md). */
   phase?: AttachmentPhase;

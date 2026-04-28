@@ -82,14 +82,6 @@ import { TempoStrip } from '../components/tempo/TempoStrip';
 import { PageHeader } from '../components/PageHeader';
 import { useScreenPhoneAppBar, type PhoneAppBarOverride } from '../components/AppShell';
 
-/**
- * Empty fallback for the TempoStrip when the snapshot hasn't yet
- * surfaced the maestro's `tempoSeries`. The 60-bucket window is filled
- * with zeros so the sparkline renders as a flat baseline rather than
- * a degenerate `viewBox=0 0 0 N` SVG that browsers refuse to draw.
- */
-const EMPTY_TEMPO_SERIES = Array<number>(60).fill(0);
-
 /** People / roster glyph used by the side-toggle button. Inline SVG to
  * stay design-faithful (audit Q7: no lucide-react dependency). */
 function PeopleGlyph() {
@@ -374,10 +366,10 @@ export function Workspace() {
       />
 
       <div className="page-tempo">
-        <TempoStrip
-          series={tempoSeries.length > 0 ? tempoSeries : EMPTY_TEMPO_SERIES}
-          bpm={bpm}
-        />
+        {/* TempoStrip pads short series to its canonical 60-bar width,
+          * so an empty `tempoSeries` renders a flat baseline rather
+          * than a degenerate empty SVG. No caller-side fallback needed. */}
+        <TempoStrip series={tempoSeries} bpm={bpm} />
       </div>
 
       <div className={'workspace' + (showSide ? '' : ' workspace-collapsed')}>
