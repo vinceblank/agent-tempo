@@ -20,7 +20,7 @@ export type Density = 4 | 5 | 6 | 7 | 8 | 9;
 export type Accent = 'terracotta' | 'sage' | 'plum';
 
 const STORAGE_KEY = 'claude-tempo:prefs';
-/** Default values — exported so consumers (e.g. SettingsSheet's Reset button) reuse them. */
+/** Default values — exported so consumers (e.g. the Settings page's Reset button) reuse them. */
 export const DEFAULT_THEME: Theme = 'dark';
 export const DEFAULT_DENSITY: Density = 6;
 export const DEFAULT_ACCENT: Accent = 'terracotta';

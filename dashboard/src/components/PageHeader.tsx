@@ -20,7 +20,7 @@
  *     density controls) so the testid-coverage test (which expects
  *     `settings-density-slider` + `settings-theme-toggle` in the AppShell
  *     render) keeps passing. Screens that supply their own `actions`
- *     get those instead — the operator chrome moves to the SettingsSheet
+ *     get those instead — the operator chrome moves to the Settings page
  *     route in PR-G.
  *
  * Source: `workspace.jsx:273-314` (Workspace's PageHeader composition) +
@@ -88,7 +88,7 @@ export function PageHeader({
  * test (`tests/testid-coverage.test.tsx:73-74`) expects both to be
  * findable in the AppShell render. Screens that supply their own
  * `actions` prop replace this slot and the operator controls move
- * to the SettingsSheet route — which is the destination per Q5
+ * to the Settings page route — which is the destination per Q5
  * (Settings = sidebar route in PR-G).
  */
 function DefaultActions() {
