@@ -10,7 +10,7 @@ claude-tempo <command> [options]
 |---------|-------------|
 | `tui [ensemble]` | Launch the Terminal UI. Omit `ensemble` for the multi-ensemble home view; pass a name to open directly in that ensemble. (Auto-provisions on first run.) |
 | `up [ensemble]` | First-time setup: start Temporal, configure MCP, launch conductor. Use `--lineup` to load a lineup. |
-| `down [ensemble]` | Full teardown — stop all sessions, daemon, and Temporal. Use `--all` to stop all ensembles and Temporal, `--keep-mcp` to preserve MCP config, `--keep-daemon` to leave the daemon running, `-y`/`--yes` to skip confirmation. Add `--destroy` to also terminate every workflow before tearing down. |
+| `down [ensemble]` | Full teardown — stop all sessions, daemon, and Temporal. Use `--all` to stop all ensembles and Temporal, `--keep-mcp` to preserve MCP config, `--keep-daemon` to leave the daemon running, `-y`/`--yes` to skip confirmation. Add `--destroy` to also terminate every workflow. `--kill-shared-temporal` overrides the cross-profile guard and kills the Temporal server even if the other profile is active (#423). |
 | `server` | Start the Temporal dev server and register search attributes |
 | `status [ensemble]` | Show active sessions and Temporal health |
 | `config` | Configure Temporal connection settings (interactive or `set`/`show`) |
@@ -55,6 +55,7 @@ claude-tempo <command> [options]
 --background                  Run Temporal in background (server only)
 --keep-mcp                    Preserve MCP config when tearing down (down only)
 --destroy                     Also terminate every workflow (down only)
+--kill-shared-temporal        Kill Temporal dev server even if the other profile (dev/prod) is active (down only, #423)
 --lineup <name|file>          Load an ensemble lineup by name or file path (up)
 --no-hold                     Skip hold-on-startup: deliver lineup instructions immediately (up --lineup)
 --scenario <name>             Force every mock player in the lineup into scripted mode with this scenario (up --dev, dev mode only)

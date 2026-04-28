@@ -151,6 +151,46 @@ names. Filter sessions in the Temporal UI via `ClaudeTempoAttachmentState = "det
 > stale | blocked | terminated`) was removed in v0.26. See
 > [`docs/ops/v0.26-migration.md`](ops/v0.26-migration.md) for the operator upgrade path.
 
+## Dev mode
+
+### Dev daemon connects to wrong namespace
+
+**Symptom**: The dev banner prints `namespace claude-tempo-dev` but the daemon log says `Connecting to Temporal at localhost:7233 (namespace: default)`. Workflows and workers end up on the wrong namespace.
+
+**Diagnosis**: Run `node dist/cli.js --dev config show` to see resolved values with source annotations. The banner now reads from the same resolved config, so a disagreement is immediately visible — look for `(env)` next to any field:
+
+```
+[DEV MODE] using ~/.claude-tempo-dev · port 8474 · namespace default (env) · queue claude-tempo-dev (default)
+```
+
+`(env)` means a shell environment variable overrode the dev default.
+
+**Common causes and fixes**:
+
+| Cause | Fix |
+|-------|-----|
+| `TEMPORAL_NAMESPACE=default` set in shell rc (`.bashrc`, `.zshrc`, PowerShell profile) | Post-#423, dev mode ignores this var automatically. If you're on an older build, `unset TEMPORAL_NAMESPACE` before running dev commands. |
+| `~/.claude-tempo-dev/config.json` has `temporalNamespace` set to prod value | Edit or delete the file: `rm ~/.claude-tempo-dev/config.json`. |
+| Explicit `--temporal-namespace` CLI flag pointing at wrong namespace | Omit the flag; the dev default fills in. |
+
+The daemon also emits a boot-time warning to `~/.claude-tempo-dev/daemon.log` if the resolved namespace differs from `claude-tempo-dev` — grep `[dev-mode] WARNING` for it.
+
+### `down` command refuses to kill Temporal server
+
+**Symptom**: `claude-tempo --dev down` finishes but prints:
+
+```
+⚠ Temporal server kept running — the prod profile appears active. Pass --kill-shared-temporal to override.
+```
+
+**Explanation**: Dev and prod share the same Temporal dev server process (both connect to `localhost:7233` on different namespaces). `--dev down` detects the prod profile is alive (via PID file or port file) and skips the Temporal kill to avoid disconnecting the prod daemon. This is intentional — the isolation guarantee per ADR 0014 §5.6.
+
+**Remedies**:
+
+- **Normal teardown**: leave it. The dev daemon and its workers are stopped; the shared Temporal server keeps running for prod. This is correct.
+- **Hard reset** (you want to kill everything, including prod): `node dist/cli.js --dev down --kill-shared-temporal`. ⚠️ This will disconnect the prod daemon from Temporal.
+- **Prod-only teardown of Temporal**: `claude-tempo down` (prod mode, no `--dev`) — this has the same cross-profile guard and will skip the kill if dev is alive.
+
 ## Known Limitations
 
 - **`recruit` requires manual acknowledgment** — Recruited sessions use `--dangerously-load-development-channels`. Claude Code shows a confirmation prompt that must be manually acknowledged in the spawned terminal. This will be resolved once claude-tempo is published as an approved channel plugin. Copilot bridge sessions do not have this limitation.
