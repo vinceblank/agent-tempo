@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.9] - 2026-04-28
+
+### Added
+
+- **Dashboard alignment certified (#389)** — Final 100% structural-fidelity pass across all screens. Audit doc and rev3-cert addendum land in `docs/design/`. (#440, #442, #443)
+
+### Fixed
+
+- **Dev-mode isolation trilogy (#423)** — Dev profile is now fully isolated from production:
+  - `TEMPORAL_NAMESPACE` / `TEMPORAL_ADDRESS` env vars are dropped in dev mode so global env can't bleed into the dev profile. (#427)
+  - `claude-tempo down` no longer sends a Temporal kill signal that could terminate production workers when invoked in dev mode. (#426)
+  - `tempo-mock-jam` lineup: conductor slot was inadvertently set to `claude-code`; corrected to `mock`, making the lineup fully all-mock as advertised. (#429)
+- **HostProfile `taskQueue` threading** — `TempoClient.listHosts()` now threads `taskQueue` through correctly in dev mode, fixing host enumeration against the dev Temporal namespace. (#441)
+- **Dashboard rev3 follow-up sweep** — Closed 4 residual audit items (#430/#431/#436/#438): TempoStrip binding, Schedules screen fidelity, Settings layout, mobile shell edge cases. (#439)
+
+### Changed
+
+- Dev-mode isolation design spec added at `docs/design/dev-mode-isolation-fix-423.md`. (#425)
+- Dev-mode isolation docs merged into `docs/dev-mode.md`, `docs/configuration.md`, `docs/troubleshooting.md`, and `docs/development.md`. (#428)
+- Dashboard rev3 follow-up audit doc at `docs/design/dashboard-audit-389-followup-rev3.md`. (#435)
+
+### Docs
+
+- Post-PR sweep: `CLAUDE.md`, `README.md`, and docs aligned with PRs #382/#385 changes. (#424)
+
 ## [0.28.0-beta.8] - 2026-04-28
 
 ### Added
