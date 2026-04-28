@@ -65,4 +65,88 @@ describe('Hosts screen', () => {
       expect(alert.textContent).toMatch(/hosts-down/);
     });
   });
+
+  it('renders all 7 columns + actions per host (PR-F2 table layout)', async () => {
+    const hostA: HostInfo = {
+      hostname: 'rosalind',
+      instances: [{
+        pid: 42, version: '0.28.0', identity: 'rosalind:42:0.28.0',
+        lastAccessTime: '2026-04-27T00:00:00.000Z',
+        hasWorkflowWorker: true, hasActivityWorker: true, hasHostQueueWorker: true,
+      }],
+      recruitReady: true,
+      freshness: 'live',
+      profile: {
+        hostname: 'rosalind', version: '0.28.0', defaultAgent: 'claude',
+        platform: 'darwin', capabilities: [],
+        availablePlayerTypes: ['tempo-conductor', 'tempo-soloist', 'tempo-tuner'],
+      },
+      profileStaleness: 'fresh',
+    };
+    renderHosts(new MockDashboardClient({ hosts: [hostA] }));
+    await waitFor(() => {
+      expect(screen.getByTestId('hosts-table')).toBeInTheDocument();
+    });
+    // Per-cell testids — every column the design lists has one.
+    expect(screen.getByTestId('host-row-rosalind-platform').textContent).toBe('darwin');
+    expect(screen.getByTestId('host-row-rosalind-sessions').textContent).toBe('—');
+    expect(screen.getByTestId('host-row-rosalind-types').textContent).toBe('3');
+    expect(screen.getByTestId('host-row-rosalind-daemon').textContent).toBe('0.28.0');
+    expect(screen.getByTestId('host-row-rosalind-uptime').textContent).toBe('—');
+    expect(screen.getByTestId('host-row-rosalind-heartbeat').textContent).toMatch(/ago$/);
+    expect(screen.getByTestId('host-row-rosalind-logs')).toBeInTheDocument();
+  });
+
+  it('hides stale hosts by default; "Show stale" toggle reveals them', async () => {
+    const live: HostInfo = {
+      hostname: 'live-1',
+      instances: [{
+        pid: 1, version: '0.28.0', identity: 'live-1:1:0.28.0',
+        lastAccessTime: new Date().toISOString(),
+        hasWorkflowWorker: true, hasActivityWorker: true, hasHostQueueWorker: true,
+      }],
+      recruitReady: true, freshness: 'live',
+      profile: { hostname: 'live-1', version: '0.28.0', defaultAgent: 'claude',
+        platform: 'linux', capabilities: [] },
+      profileStaleness: 'fresh',
+    };
+    const stale: HostInfo = {
+      hostname: 'stale-1',
+      instances: [{
+        pid: 2, version: '0.27.0', identity: 'stale-1:2:0.27.0',
+        lastAccessTime: '2026-01-01T00:00:00.000Z',
+        hasWorkflowWorker: true, hasActivityWorker: true, hasHostQueueWorker: true,
+      }],
+      recruitReady: false, freshness: 'stale',
+      profile: { hostname: 'stale-1', version: '0.27.0', defaultAgent: 'claude',
+        platform: 'linux', capabilities: [] },
+      profileStaleness: 'stale',
+    };
+    renderHosts(new MockDashboardClient({ hosts: [live, stale] }));
+    await waitFor(() => {
+      expect(screen.getByTestId('host-row-live-1')).toBeInTheDocument();
+    });
+    // Stale hidden by default.
+    expect(screen.queryByTestId('host-row-stale-1')).toBeNull();
+  });
+
+  it('empty-state copy shifts when stale hosts exist but are filtered out', async () => {
+    const stale: HostInfo = {
+      hostname: 'stale-only',
+      instances: [{
+        pid: 1, version: '0.27.0', identity: 'stale-only:1:0.27.0',
+        lastAccessTime: '2026-01-01T00:00:00.000Z',
+        hasWorkflowWorker: false, hasActivityWorker: false, hasHostQueueWorker: false,
+      }],
+      recruitReady: false, freshness: 'stale',
+      profile: { hostname: 'stale-only', version: '0.27.0', defaultAgent: 'claude',
+        platform: 'linux', capabilities: [] },
+      profileStaleness: 'stale',
+    };
+    renderHosts(new MockDashboardClient({ hosts: [stale] }));
+    await waitFor(() => {
+      expect(screen.getByTestId('hosts-empty')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('hosts-empty').textContent).toMatch(/Show stale/);
+  });
 });

@@ -1,13 +1,11 @@
 /**
- * Smoke tests for the placeholder screens (Loadouts, PlayerTypes,
- * CreateEnsemble) — verifies the testid + endpoint-missing copy land
- * cleanly. Real screens replace these once the daemon endpoints + safe
- * writes ship.
+ * Smoke tests for the remaining placeholder screens. PlayerTypes was
+ * promoted to a full screen in PR-F2; its tests live in
+ * `player-types-screen.test.tsx`.
  */
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { Loadouts } from '../src/screens/Loadouts';
-import { PlayerTypes } from '../src/screens/PlayerTypes';
 import { CreateEnsemble } from '../src/screens/CreateEnsemble';
 
 describe('Loadouts screen', () => {
@@ -15,14 +13,6 @@ describe('Loadouts screen', () => {
     render(<Loadouts />);
     expect(screen.getByTestId('screen-loadouts')).toBeInTheDocument();
     expect(screen.getByTestId('loadouts-endpoint-missing')).toBeInTheDocument();
-  });
-});
-
-describe('PlayerTypes screen', () => {
-  it('renders the endpoint-missing placeholder with a stable testid', () => {
-    render(<PlayerTypes />);
-    expect(screen.getByTestId('screen-player-types')).toBeInTheDocument();
-    expect(screen.getByTestId('player-types-endpoint-missing')).toBeInTheDocument();
   });
 });
 
