@@ -56,6 +56,9 @@ interface ParsedArgs {
   /** When set with `down`, terminate every live workflow across all
    *  ensembles before stopping infra. */
   destroy: boolean;
+  /** `down --kill-shared-temporal` (#423): bypass the cross-profile guard
+   *  and tear down the shared Temporal dev server unconditionally. */
+  killSharedTemporal: boolean;
   ensemble?: string;
   agent?: AgentType;
   type?: string;
@@ -104,6 +107,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     project: false,
     noHold: false,
     destroy: false,
+    killSharedTemporal: false,
     includeStale: false,
     force: false,
     includeSent: false,
@@ -150,6 +154,12 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.noHold = true;
     } else if (arg === '--destroy') {
       result.destroy = true;
+    } else if (arg === '--kill-shared-temporal') {
+      // #423 (down only): bypass the cross-profile coexistence guard and
+      // tear down the shared Temporal dev server even when the OPPOSITE
+      // profile is likely active. Without it, `--dev down` skips the
+      // Temporal kill to avoid collateral damage to the prod profile.
+      result.killSharedTemporal = true;
     } else if (arg === '--ensemble' && i + 1 < argv.length) {
       result.ensemble = argv[++i];
     } else if (arg === '--type' && i + 1 < argv.length) {
@@ -382,6 +392,7 @@ async function main() {
       await down({
         removeMcp: !args.keepMcp,
         keepDaemon: args.keepDaemon,
+        killSharedTemporal: args.killSharedTemporal,
         yes: args.yes,
         destroy: args.destroy,
         dir: args.dir,

@@ -22,7 +22,7 @@ import { saveLineup, listLineups, readSavedLineup } from '../ensemble/saver';
 import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
 import { shouldIncludeInBroadcast, validateEnsembleName } from '../utils/validation';
 import { getAttachmentPhase, getEnsembleName } from '../utils/search-attributes';
-import { isDaemonRunning, startDaemon, stopDaemon, getDaemonStatus, DAEMON_LOG_PATH } from './daemon';
+import { isDaemonRunning, startDaemon, stopDaemon, getDaemonStatus, isOtherProfileLikelyRunning, DAEMON_LOG_PATH } from './daemon';
 import { createTempoClient } from '../client';
 import { ENSEMBLE_SENTINEL_FLAG, ensembleReadyBanner, ensembleReadyDirective } from '../constants';
 import { buildTimeline, formatRecall } from '../utils/recall-format';
@@ -1505,7 +1505,81 @@ interface DownOpts extends CliOverrides {
    *  stopping infra. Without it, workflows stay on the Temporal server and
    *  resume on the next `up`. */
   destroy: boolean;
+  /**
+   * `--kill-shared-temporal` (#423): bypass the cross-profile coexistence
+   * guard and kill the shared Temporal dev server unconditionally. Without
+   * it, `down` skips the Temporal kill when the OPPOSITE profile shows any
+   * sign of life (PID file, port file) — see ADR 0014 §5.6 for the same
+   * guard `stopDaemon`'s zombie reaper applies. The flag is the explicit
+   * opt-in for the hard-reset case.
+   */
+  killSharedTemporal: boolean;
   dir: string;
+}
+
+/**
+ * Options for {@link stopTemporalServer} — exported for unit tests so we
+ * can inject stubs without spawning real processes or touching the
+ * developer's home dir. Production callers should pass only
+ * `killSharedTemporal` and accept the defaults.
+ *
+ * @internal
+ */
+export interface StopTemporalServerOpts {
+  /** When true, bypass the cross-profile coexistence guard. Maps to the
+   *  `--kill-shared-temporal` CLI flag (#423). */
+  killSharedTemporal: boolean;
+  /** Cross-profile coexistence probe — defaults to {@link isOtherProfileLikelyRunning}. */
+  isOtherProfileLikelyRunning?: () => boolean;
+  /** Process exec hook — defaults to `execFileSync` with stdio ignored. */
+  exec?: (command: string, args: string[]) => void;
+  /** Platform override — defaults to `process.platform`. */
+  platform?: NodeJS.Platform;
+}
+
+/** Outcome of {@link stopTemporalServer}, surfaced so callers (and tests)
+ *  can shape user-facing messages. */
+export type StopTemporalResult =
+  | { action: 'killed' }
+  | { action: 'failed'; error: unknown }
+  | { action: 'skipped-cross-profile' };
+
+/**
+ * Stop the shared Temporal dev server, with the same cross-profile guard
+ * that `stopDaemon`'s zombie reaper already applies (ADR 0014 §5.6).
+ *
+ * The Temporal dev server is a single OS-wide process — `pkill -f` on
+ * POSIX and `taskkill /IM temporal.exe` on Windows kill it by name and
+ * cannot distinguish dev-profile vs prod-profile ownership. So when
+ * `claude-tempo --dev down` runs while the prod profile is also active,
+ * the unconditional kill takes down the prod profile's Temporal as
+ * collateral damage. This is exactly the bug `isOtherProfileLikelyRunning`
+ * was introduced to prevent on the daemon side; the missing piece was
+ * `down`'s own Temporal kill (#423).
+ *
+ * `--kill-shared-temporal` (passed as `killSharedTemporal: true`) is the
+ * explicit opt-in for the hard-reset case where the user accepts cross-
+ * profile collateral damage.
+ */
+export function stopTemporalServer(opts: StopTemporalServerOpts): StopTemporalResult {
+  const otherLikelyRunning = opts.isOtherProfileLikelyRunning ?? isOtherProfileLikelyRunning;
+  const exec = opts.exec ?? ((cmd, args) => { execFileSync(cmd, args, { stdio: 'ignore' }); });
+  const platform = opts.platform ?? process.platform;
+
+  if (!opts.killSharedTemporal && otherLikelyRunning()) {
+    return { action: 'skipped-cross-profile' };
+  }
+
+  try {
+    if (platform === 'win32') {
+      exec('taskkill', ['/F', '/IM', 'temporal.exe']);
+    } else {
+      exec('pkill', ['-f', 'temporal server start-dev']);
+    }
+    return { action: 'killed' };
+  } catch (err) {
+    return { action: 'failed', error: err };
+  }
 }
 
 export async function down(opts: DownOpts) {
@@ -1598,16 +1672,30 @@ export async function down(opts: DownOpts) {
   }
 
   // Step 4: Stop Temporal dev server.
+  //
+  // Cross-profile coexistence (ADR 0014 §5.6, #423): the dev-server is one
+  // OS-wide process and `pkill`/`taskkill` cannot distinguish profile
+  // ownership. Without the guard, `--dev down` kills the prod profile's
+  // Temporal as collateral damage (and vice versa). `stopTemporalServer`
+  // skips the kill when the OPPOSITE profile is likely active;
+  // `--kill-shared-temporal` is the explicit opt-in to override.
   if (temporalUp) {
-    try {
-      if (process.platform === 'win32') {
-        execFileSync('taskkill', ['/F', '/IM', 'temporal.exe'], { stdio: 'ignore' });
-      } else {
-        execFileSync('pkill', ['-f', 'temporal server start-dev'], { stdio: 'ignore' });
+    const result = stopTemporalServer({ killSharedTemporal: opts.killSharedTemporal });
+    switch (result.action) {
+      case 'killed':
+        out.success('Temporal server stopped');
+        break;
+      case 'failed':
+        out.warn('Could not stop Temporal server (may need to stop it manually)');
+        break;
+      case 'skipped-cross-profile': {
+        const otherProfile = isDevMode() ? 'prod' : 'dev';
+        out.warn(
+          `Temporal server kept running — the ${otherProfile} profile appears active. ` +
+            `Pass --kill-shared-temporal to override.`,
+        );
+        break;
       }
-      out.success('Temporal server stopped');
-    } catch {
-      out.warn('Could not stop Temporal server (may need to stop it manually)');
     }
   } else {
     out.log(`  ${out.dim('Temporal not running')}`);
