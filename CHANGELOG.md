@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.7] - 2026-04-28
+
+### Added
+
+- **Dashboard refresh (#389)** — Comprehensive rebuild of the web dashboard to align with the canonical Claude design handoff. Closes the ~70% content gap reported in #389. 13 PRs landed across two days:
+  - **Layout & shell**: Layout primitives (PR-A1), mobile shell with PhoneAppBar/TabBar/Switcher (PR-A1m), audit binding spec landed in repo
+  - **Chat & tempo primitives**: FeedMessage, Composer, TempoStrip, PopoutWindow (PR-A2)
+  - **Screens**: Overview rebuild (PR-B), Workspace desktop+tablet (PR-C1), Workspace mobile (PR-C3), Workspace chat polish + artboard-body containing-block fix (PR-C2), PlayerDetail (PR-D), Loadouts+Schedules (PR-F1), PlayerTypes+Hosts (PR-F2), CreateEnsemble+Recruit wizards (PR-E), Settings sidebar route retiring SettingsSheet (PR-G)
+  - Wire-extension fields (#399) render `"—"` placeholders pending follow-up
+- **Test infrastructure hardening (#383)** — `setupSharedEnv()` helper centralizes 120 s before-all timeout across all 20 test files; `pollWithTimeout` + `holdAssertion` helpers replace racy `sleep`+assert patterns. Eliminates the class of `before-all` setup-cost timeouts (P1+P2). (#387)
+- **Outbox worker sharing + sleep-to-poll migration** — `outbox.test.ts` refactored to shared-worker pattern; sleep-to-poll sweep across the suite; adapter-lifecycle tick bump (P3 of #383). (#391)
+
+### Changed
+
+- **`allow agent="mock"` in dev mode** for `POST /v1/ensembles/:e/recruit` — previously rejected; now gated on `isDevMode()` check. (#388, #390)
+
 ## [0.28.0-beta.6] - 2026-04-27
 
 ### Added
