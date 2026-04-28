@@ -307,11 +307,25 @@ describe('PlayerDetail — transcript', () => {
       'feed-message-6',
       'feed-message-7',
     ]);
+    // Scope per-id assertions to the transcript element. PR-C2's
+    // ChatLog also renders <FeedMessage> with `feed-message-${id}`
+    // testids, so the underlying Workspace's chat panel shows the
+    // same ids when this test mounts the full router (Workspace +
+    // nested PlayerDetail). Without scoping, `screen.getByTestId`
+    // sees both renders and fails with multiple-matches.
+    const within = (root: HTMLElement) => ({
+      getByTestId: (id: string) => {
+        const el = root.querySelector(`[data-testid="${id}"]`);
+        if (!el) throw new Error(`testid "${id}" not found inside transcript`);
+        return el as HTMLElement;
+      },
+    });
+    const t = within(transcript);
     // Conductor-side overheard messages render as `route`.
-    expect(screen.getByTestId('feed-message-5')).toHaveAttribute('data-direction', 'route');
+    expect(t.getByTestId('feed-message-5')).toHaveAttribute('data-direction', 'route');
     // Maestro-out renders as `out`, maestro-in renders as `in`.
-    expect(screen.getByTestId('feed-message-7')).toHaveAttribute('data-direction', 'out');
-    expect(screen.getByTestId('feed-message-6')).toHaveAttribute('data-direction', 'in');
+    expect(t.getByTestId('feed-message-7')).toHaveAttribute('data-direction', 'out');
+    expect(t.getByTestId('feed-message-6')).toHaveAttribute('data-direction', 'in');
   });
 
   it('shows an empty placeholder when no messages match the player', async () => {

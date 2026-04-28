@@ -30,6 +30,31 @@ body {
   min-height: 100%;
 }
 
+/* ─── .artboard-body bound to viewport height (PR-C2 fix, #389) ────
+ * components.css ports the canonical `.artboard-body { height: 100% }`
+ * verbatim. In the design canvas, every artboard had a hardcoded
+ * fixed size, so the rule never had to fight content overflow. In
+ * production the artboard-body sits inside `#root` (`min-height: 100%`)
+ * which can grow past the viewport when content overflows, making
+ * `.artboard-body` itself taller than the viewport. That breaks
+ * `position: absolute` descendants that anchor against the
+ * artboard-body — notably `.workspace-side` on phone, which uses
+ * `bottom: 64px; max-height: 78%` and ends up covering the
+ * `phone-appbar` because 78% of an oversized containing block is
+ * larger than the visible viewport. (Caught by the dashboard-e2e
+ * Mobile Workspace smoke when run alongside the desktop Workspace
+ * cue test that grew the chat-log content height.)
+ *
+ * Bounding `.artboard-body` to `100vh` constrains the containing
+ * block to the viewport, so the bottom-sheet positioning resolves
+ * to the visible region. The `100%` declaration in `components.css`
+ * still wins for narrower contexts (e.g. embedded artboards), but
+ * gets overridden here for the production root.
+ * ───────────────────────────────────────────────────────────── */
+.artboard-body {
+  height: 100vh;
+}
+
 /* Utility classes ported verbatim from the handoff bundle. The
  * dashboard renders zero shadcn primitives in PR-2 — these
  * `.dim` / `.mono` / `.display` utilities are what AppShell uses

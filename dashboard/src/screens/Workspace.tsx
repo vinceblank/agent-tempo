@@ -1,7 +1,8 @@
 /**
- * Workspace screen — the 90% surface. PR-C1 of #389.
+ * Workspace screen — the 90% surface. PR-C1 + PR-C2 of #389.
  *
- * Per audit rev 4 §6 PR-C1 (lines 966-976) + canonical workspace.jsx:
+ * Per audit rev 4 §6 PR-C1 (lines 966-976) + PR-C2 (lines 978-987) +
+ * canonical workspace.jsx:
  *
  *   ┌──────────────────────────────────────────────────────────────┐
  *   │ ensemble / @name   ●N active  M idle  ◐K detached  up Xh    │ page-header
@@ -30,16 +31,20 @@
  * presentation via `@container artboard (max-width: 520px)` — that
  * mobile path is wired in PR-C3.
  *
- * PR-C2 will polish the chat panel (FeedMessage 3-variant, TempoStrip
- * sparkline, Composer toolbar with @ + / + ⌘↩, pop-out window). PR-C1
- * leaves the existing `<ChatLog>` + `<MessageInput>` in place inside
- * the new chat panel chrome so the wire stays functional; the chat
- * panel-head + composer wrapper are rendered now so PR-C2 only swaps
- * internals.
+ * PR-C2 polished the chat panel: ChatLog now adapts to the FeedMessage
+ * 3-variant (in / out / route) via `rowToFeedMessage`, the legacy
+ * MessageInput is replaced by `<Composer>` (auto-grow textarea + @ + /
+ * toolbar buttons + ⌘↩ submit / Ctrl ↩ on non-Mac), and the disabled
+ * "Pop out" stub now flips a `popped` state machine that swaps the
+ * docked chat for `<ChatStub>` while a `<PopoutWindow>` mounts at the
+ * artboard root with the same chat surface. The red traffic-light dot
+ * docks the chat back; the scrim does too.
  *
  * Behaviour ported from the TUI's beta.3 sweep:
  *   - #357 broadcast collapse — handled in `lib/chat-format.ts`
- *   - #360 directed `→ @<player>` prefix — handled in `ChatMessage`
+ *   - #360 directed `→ @<player>` prefix — preserved through the
+ *     `rowToFeedMessage` adapter (the FeedMessage body carries a
+ *     `chat-message-${id}-recipient` shim span when set)
  *   - #358 conductor single-source-of-truth — derived in this screen
  *
  * Source: `workspace.jsx:200-493` (canonical EnsembleWorkspace) +
@@ -61,12 +66,15 @@ import { useSseSubscription } from '../lib/sse';
 import { selectedPlayerIdFromPath } from '../router';
 import { logEvent } from '../lib/log';
 import {
+  useCueMutation,
   usePauseMutation,
   usePlayMutation,
   useReleaseMutation,
 } from '../lib/mutations';
 import { ChatLog } from '../components/chat/ChatLog';
-import { MessageInput } from '../components/chat/MessageInput';
+import { Composer } from '../components/chat/Composer';
+import { ChatStub } from '../components/chat/ChatStub';
+import { PopoutWindow } from '../components/chat/PopoutWindow';
 import { RosterItem } from '../components/RosterItem';
 import { TempoStrip } from '../components/tempo/TempoStrip';
 import { PageHeader } from '../components/PageHeader';
@@ -141,6 +149,29 @@ export function Workspace() {
   // breakpoint's CSS turns this into a bottom-sheet via `@container
   // artboard (max-width: 520px)` rules.
   const [showSide, setShowSide] = useState(true);
+  // Pop-out state: when true, the chat surface moves to a floating
+  // PopoutWindow + the docked panel renders a ChatStub placeholder. The
+  // `.workspace-dimmed` class on the artboard wrapper desaturates the
+  // workspace beneath via the components.css `.workspace-dimmed > .app-shell`
+  // rule (line 1413-1416).
+  const [popped, setPopped] = useState(false);
+
+  // Cue mutation drives the Composer's onSubmit. The optimistic update
+  // is owned by `useCueMutation` (PR-7b) — the Composer just hands off
+  // the trimmed message; success / error rollback rides the existing
+  // mutation surface.
+  const cueM = useCueMutation(ensemble ?? '');
+  const sendMessage = (text: string) => {
+    if (!conductorPlayerId) {
+      logEvent('chat.message.skipped', {
+        ensemble,
+        hasTarget: false,
+        length: text.length,
+      });
+      return;
+    }
+    cueM.mutate({ to: conductorPlayerId, message: text });
+  };
 
   // Status pill counts. Mapping mirrors the audit's PHASES bucket
   // categories — `attached`+`processing` count as "active", `awaiting`
@@ -324,39 +355,54 @@ export function Workspace() {
           />
         )}
         <section className="workspace-main">
-          <div className="panel chat" style={{ flex: 1, minHeight: 0 }}>
-            <div className="panel-head">
-              <div className="panel-head-title">
-                <span className="h">Maestro chat</span>
-                <span className="subj display">Conductor + ensemble feed</span>
+          {popped ? (
+            // Docked stub when the chat is floating in a PopoutWindow.
+            // Click anywhere on the stub to dock the chat back.
+            <ChatStub onClick={() => setPopped(false)} testId="workspace-chat-stub" />
+          ) : (
+            <div className="panel chat" style={{ flex: 1, minHeight: 0 }}>
+              <div className="panel-head">
+                <div className="panel-head-title">
+                  <span className="h">Maestro chat</span>
+                  <span className="subj display">Conductor + ensemble feed</span>
+                </div>
+                <div className="row">
+                  <ChatPauseButton ensemble={ensemble} paused={paused} held={held} />
+                  <ChatReleaseButton ensemble={ensemble} held={held} />
+                  <button
+                    type="button"
+                    data-testid="workspace-popout"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setPopped(true)}
+                    aria-pressed={popped}
+                    title="Pop out the chat into a floating window"
+                    aria-label="Pop out chat"
+                  >
+                    <span className="btn-icon">↗</span>
+                    <span>Pop out</span>
+                  </button>
+                </div>
               </div>
-              <div className="row">
-                <ChatPauseButton ensemble={ensemble} paused={paused} held={held} />
-                <ChatReleaseButton ensemble={ensemble} held={held} />
-                {/* Pop out is PR-C2 territory — render the button so the
-                  * design vocabulary is in place; click is a no-op until
-                  * the floating window primitive lands. */}
-                <button
-                  type="button"
-                  data-testid="workspace-popout"
-                  className="btn btn-ghost btn-sm"
-                  disabled
-                  title="Pop out (PR-C2)"
-                  aria-label="Pop out chat (PR-C2)"
-                >
-                  <span className="btn-icon">↗</span>
-                  <span>Pop out</span>
-                </button>
-              </div>
+              <ChatLog
+                ensemble={ensemble}
+                messages={messages}
+                conductorPlayerId={conductorPlayerId}
+                players={players}
+                hasCompressedGap={hasCompressedGap}
+              />
+              <Composer
+                placeholder={
+                  conductorPlayerId
+                    ? `Message ${conductorPlayerId}`
+                    : 'Recruit a player to start chatting'
+                }
+                disabled={!conductorPlayerId || cueM.isPending}
+                onSubmit={sendMessage}
+                sendLabel={cueM.isPending ? 'Sending…' : 'Send'}
+                testIdPrefix="composer"
+              />
             </div>
-            <ChatLog
-              ensemble={ensemble}
-              messages={messages}
-              conductorPlayerId={conductorPlayerId}
-              hasCompressedGap={hasCompressedGap}
-            />
-            <MessageInput ensemble={ensemble} target={conductorPlayerId} />
-          </div>
+          )}
         </section>
 
         {showSide && (
@@ -476,6 +522,34 @@ export function Workspace() {
           </aside>
         )}
       </div>
+
+      {popped && (
+        <PopoutWindow
+          titlePrefix="claude-tempo · maestro chat ·"
+          titleAccent={`@${ensemble}`}
+          onClose={() => setPopped(false)}
+          testId="workspace-popout-window"
+        >
+          <ChatLog
+            ensemble={ensemble}
+            messages={messages}
+            conductorPlayerId={conductorPlayerId}
+            players={players}
+            hasCompressedGap={hasCompressedGap}
+          />
+          <Composer
+            placeholder={
+              conductorPlayerId
+                ? `Message ${conductorPlayerId}`
+                : 'Recruit a player to start chatting'
+            }
+            disabled={!conductorPlayerId || cueM.isPending}
+            onSubmit={sendMessage}
+            sendLabel={cueM.isPending ? 'Sending…' : 'Send'}
+            testIdPrefix="popout-composer"
+          />
+        </PopoutWindow>
+      )}
 
       {/* PlayerDetail mounts here when the URL nests `/player/:playerId` */}
       <Outlet />

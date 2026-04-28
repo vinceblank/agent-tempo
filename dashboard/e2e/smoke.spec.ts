@@ -145,11 +145,16 @@ test('2. Workspace renders MessageInput + interacts with the cue mutation surfac
 
   await page.goto(`${daemon.origin}/dashboard/ensemble/${DEMO_ENSEMBLE}`);
   await expect(page.getByTestId(`workspace-${DEMO_ENSEMBLE}`)).toBeVisible();
-  await expect(page.getByTestId('message-input')).toBeVisible();
-  await expect(page.getByTestId('message-submit')).toBeVisible();
+  // PR-C2 (#389) replaced MessageInput with the Composer primitive —
+  // the testid surface moved from `message-input` / `message-submit`
+  // to `composer-input` / `composer-send`. The mutation contract is
+  // identical (useCueMutation underneath), so the round-trip
+  // assertions below work the same way.
+  await expect(page.getByTestId('composer-input')).toBeVisible();
+  await expect(page.getByTestId('composer-send')).toBeVisible();
 
-  await page.getByTestId('message-input').fill('hello from playwright');
-  await page.getByTestId('message-submit').click();
+  await page.getByTestId('composer-input').fill('hello from playwright');
+  await page.getByTestId('composer-send').click();
 
   await expect.poll(() => capturedCue !== null, { timeout: 2000 }).toBe(true);
   expect(capturedCue).toMatchObject({ message: 'hello from playwright' });
