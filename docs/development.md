@@ -88,6 +88,34 @@ CI enforces this via the `lint-surface-drift` job in `.github/workflows/ci.yml`.
 The lint script exits non-zero if any entry is missing or if a removed surface still
 appears in the registry. Run it locally before pushing to catch drift early.
 
+## Running an isolated dev environment
+
+Dev mode provides a fully isolated profile for E2E testing with zero impact on any installed prod claude-tempo. No global install required — `node dist/cli.js` is the canonical entry point.
+
+```bash
+# 1. Build from source (required before first run and after any src/ change)
+npm run build
+
+# 2. Start the dev daemon — isolated namespace (claude-tempo-dev), port 8474,
+#    home dir ~/.claude-tempo-dev/. Leaves prod daemon and shared Temporal server alone.
+node dist/cli.js --dev daemon start
+
+# 3. Run the all-mock E2E lineup (no real Claude sessions, no trust prompts)
+node dist/cli.js --dev up --lineup tempo-mock-jam
+
+# 4. Tear down — prod profile and shared Temporal server are left running
+node dist/cli.js --dev down
+```
+
+**Key points:**
+
+- `node dist/cli.js --dev <verb>` works for every command (`daemon`, `up`, `down`, `status`, `cue`, `scenarios`, …). The `claude-tempo` shell command is a convenience shim — never required.
+- Do NOT set `TEMPORAL_NAMESPACE` or `TEMPORAL_ADDRESS` shell-wide for dev work. Post-#423, dev mode ignores these env vars to prevent namespace leaks; use `--temporal-namespace` / `--temporal-address` CLI flags or `~/.claude-tempo-dev/config.json` if you need to override.
+- Dev profile data lives in `~/.claude-tempo-dev/`. Delete it for a clean slate: `rm -rf ~/.claude-tempo-dev/` (leaves prod at `~/.claude-tempo/` untouched).
+- `--dev down` skips the Temporal server kill if the prod profile appears active (ADR 0014 §5.6). Add `--kill-shared-temporal` to override — **this will disconnect the prod daemon** from Temporal.
+
+See [dev-mode.md](dev-mode.md) for the mock adapter, scenario library, and chaos mode reference.
+
 ## Run in development
 
 ```bash
