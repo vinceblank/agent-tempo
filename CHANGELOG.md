@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.8] - 2026-04-28
+
+### Added
+
+- **Wire-extension epic (closes #399)** — 7 new fields surface across the MCP + dashboard layers:
+  - **Session**: `runId`, received/sent/outbox message counts, lease expiration (`session.ts` extensions + `claimAttachment` tracking). (#410)
+  - **Maestro**: ensemble `description`, `uptime`, `tempo` BPM + 30-min sparkline. New `set_ensemble_description` MCP tool for conductors to maintain mission summaries. (#411)
+  - **HostProfile**: `daemonStartedAt` (for Hosts table uptime) and `adapterVersions` (probed at daemon boot via `claude --version` + Copilot SDK `package.json`). (#409)
+- **Daemon catalog endpoints (closes #400)** — 3 new HTTP routes: `POST /v1/ensembles`, `GET /v1/agent-types`, `GET /v1/lineups`. CreateEnsemble + Recruit wizards now use live data instead of hardcoded fallbacks. (#412)
+- **Destructive action endpoints** — 4 new daemon HTTP routes: `POST /v1/ensembles/:e/{restart,destroy,detach,recall}`. Bearer-protected on non-loopback, thin shims over existing `TempoClient` methods. (#418)
+- **Dashboard action wiring** — Player actions (Recall, Restart, Detach, Destroy) now trigger real workflow operations from the dashboard. `ConfirmDialog` gates all destructive actions. Audit P1.3/P1.4/P1.6 fidelity polish folded in. (#420)
+- **Dashboard data binding (DB1a/DB1b)** — Q5 wire fields projected into `EnsembleStateV1` + `PlayerSummaryV1`; `EnsembleCard`, `PlayerDetail`, `Hosts`, `Workspace` components consume live data. (#413, #414)
+- **Wizard live data (DB2)** — CreateEnsemble + Recruit + PlayerTypes screens use live catalog endpoints instead of static fallbacks. (#415)
+
+### Fixed
+
+- `recall` HTTP response now projects into `{ ok, playerId, messages: number }` for dashboard parity (was returning raw workflow result). (#421)
+- `wire-shape.ts` retired — resolved a DB1a/DB1b import race that caused stale type definitions to shadow live ones. (#417)
+
+### Changed
+
+- Audit rev-2 follow-up: Loadouts wire, Workspace schedules side-panel, page-subtitle fidelity. Audit doc landed at `docs/design/dashboard-audit-389-followup-rev2.md`. (#416, #419)
+
 ## [0.28.0-beta.7] - 2026-04-28
 
 ### Added
