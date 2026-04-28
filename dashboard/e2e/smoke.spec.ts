@@ -193,6 +193,37 @@ test('3. Mobile viewport renders the sidebar + roster (375x667)', async ({ page 
   await expect(page.getByTestId('ensemble-switcher')).toBeVisible();
   await page.getByTestId('ensemble-switcher-close').click();
   await expect(page.getByTestId('ensemble-switcher')).toBeHidden();
+
+  // PR-C3: Workspace pushes a PhoneAppBar override — the action button
+  // (right-side icon) toggles the side-panel slide-in. Default state
+  // `showSide=true`, so the action button lands `is-active`. Tapping
+  // hides the side panel; tapping again reopens it.
+  const action = page.getByTestId('phone-appbar-action');
+  await expect(action).toHaveClass(/\bis-active\b/);
+  await expect(page.getByTestId('workspace-side')).toBeVisible();
+  await action.click();
+  await expect(action).not.toHaveClass(/\bis-active\b/);
+  await expect(page.getByTestId('workspace-side')).toBeHidden();
+  await action.click();
+  await expect(page.getByTestId('workspace-side')).toBeVisible();
+
+  // The scrim element is rendered (its onClick → setShowSide(false) is
+  // unit-tested in `tests/workspace.test.tsx`); skipping the click here
+  // because Playwright's actionability is brittle when the bottom-sheet
+  // overlaps the scrim's centre point.
+  await expect(page.getByTestId('workspace-side-scrim')).toBeVisible();
+
+  // Re-open the side via the action button so the next assertion sees
+  // the in-active state of the right button.
+  if (!(await page.getByTestId('workspace-side').isVisible())) {
+    await page.getByTestId('phone-appbar-action').click();
+  }
+
+  // Status row shows the lineup kicker + 4-pill row. Two mock-snapshot
+  // players are both `attached` → "2 active". Idle/detached zero.
+  const status = page.getByTestId('phone-appbar-status');
+  await expect(status).toBeVisible();
+  await expect(status).toContainText('2 active');
 });
 
 test('4. Pair-token flow drops ?pair= BEFORE the bearer lands (risk #16)', async ({ page }) => {
