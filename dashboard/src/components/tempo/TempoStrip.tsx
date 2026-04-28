@@ -1,10 +1,22 @@
 /**
- * TempoStrip — sparkline of recent message activity with beat bars.
- * Ported from `primitives.jsx:101-144`. Recent activity (last 10 buckets)
- * highlights with the accent colour; older bars use a muted rule tone.
+ * TempoStrip — sparkline of recent message activity with a BPM overlay
+ * (PR-A2 of #389, rev 4 C6).
  *
- * Renders an animated pulse on the most recent bar when activity is
- * above zero. The pulse is suppressed under `prefers-reduced-motion`.
+ * Ports the canonical handoff primitive (`primitives.jsx:101-144` +
+ * `web-design-system.html` ".tempo-strip · 60 bars · 92 bpm" block) so
+ * the rendered dashboard matches the design bundle byte-for-byte:
+ *
+ *   - `.tempo-strip` wrapper with absolute-positioned `.tempo-strip-label`
+ *     and an SVG below — color tokens, padding, label typography all live
+ *     in `components.css`.
+ *   - 60 buckets typical (caller decides; the component just renders
+ *     whatever array it receives).
+ *   - Last 10 bars render in `var(--accent)`; older bars render in
+ *     `var(--rule-strong)` at 0.75 opacity.
+ *   - Every 10th column gets a dashed `var(--rule)` ruler line.
+ *   - The most-recent bar pulses via `tempo-strip-pulse` keyframes when
+ *     activity > 0; the pulse is suppressed under
+ *     `prefers-reduced-motion: reduce`.
  */
 import { useReducedMotion } from '../../lib/use-reduced-motion';
 
@@ -24,33 +36,22 @@ export function TempoStrip({ series, height = 44, bpm = 92 }: TempoStripProps) {
   const lastBarActive = series.length > 0 && series[series.length - 1] > 0;
   return (
     <div
+      className="tempo-strip"
       data-testid="tempo-strip"
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 4,
-        height,
-        minWidth: 120,
-      }}
+      style={{ height }}
     >
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'baseline',
-          fontSize: 'var(--density-fs-sm)',
-        }}
-      >
+      <div className="tempo-strip-label">
         <span className="mono dim">tempo</span>
-        <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 4 }}>
+        <span className="tempo-bpm">
           <span className="mono num" data-testid="tempo-strip-bpm">{bpm}</span>
           <span className="mono dim">bpm</span>
         </span>
       </div>
       <svg
-        viewBox={`0 0 ${total} ${height - 16}`}
+        className="tempo-strip-svg"
+        viewBox={`0 0 ${total} ${height}`}
         width="100%"
-        height={height - 16}
+        height={height}
         preserveAspectRatio="none"
         aria-hidden="true"
       >
@@ -61,16 +62,16 @@ export function TempoStrip({ series, height = 44, bpm = 92 }: TempoStripProps) {
               x1={i * (w + gap)}
               x2={i * (w + gap)}
               y1={0}
-              y2={height - 16}
+              y2={height}
               stroke="var(--rule)"
               strokeDasharray="2 3"
             />
           ) : null,
         )}
         {series.map((v, i) => {
-          const h = (v / max) * (height - 24);
+          const h = (v / max) * (height - 8);
           const x = i * (w + gap);
-          const y = (height - 16) - h - 2;
+          const y = height - h - 2;
           const recent = i > series.length - 10;
           const isLast = i === series.length - 1;
           return (
