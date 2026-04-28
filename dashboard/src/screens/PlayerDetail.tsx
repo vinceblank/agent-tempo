@@ -19,11 +19,8 @@
 import { useMemo, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { EnsembleChatMessage } from 'claude-tempo/types';
+import type { PlayerSummaryV1 } from 'claude-tempo/http/event-types';
 import { useEnsembleSnapshot, useHosts } from '../lib/queries';
-import {
-  asExtended,
-  type ExtendedPlayerSummaryV1,
-} from '../lib/wire-shape';
 import { ResponsivePanel } from '../components/ResponsivePanel';
 import { SectionHead } from '../components/SectionHead';
 import { DisabledWithTooltip } from '../components/DisabledWithTooltip';
@@ -61,9 +58,7 @@ export function PlayerDetail() {
   const { id, playerId } = useParams<{ id: string; playerId: string }>();
   const navigate = useNavigate();
   const snapshot = useEnsembleSnapshot(id ?? null);
-  const player = asExtended(snapshot.data)?.players.find(
-    (p) => p.playerId === playerId,
-  );
+  const player = snapshot.data?.players.find((p) => p.playerId === playerId);
   const hosts = useHosts();
 
   const transcript = useMemo(
@@ -109,7 +104,7 @@ function SheetHead({
   testIdPrefix,
   onClose,
 }: {
-  player: ExtendedPlayerSummaryV1;
+  player: PlayerSummaryV1;
   testIdPrefix: string;
   onClose: () => void;
 }) {
@@ -172,7 +167,7 @@ function SheetMain({
   transcript,
   testIdPrefix,
 }: {
-  player: ExtendedPlayerSummaryV1;
+  player: PlayerSummaryV1;
   transcript: FeedMessageData[];
   testIdPrefix: string;
 }) {
@@ -206,7 +201,7 @@ function SheetSide({
   testIdPrefix,
   adapterVersion,
 }: {
-  player: ExtendedPlayerSummaryV1;
+  player: PlayerSummaryV1;
   testIdPrefix: string;
   adapterVersion: string;
 }) {
@@ -413,7 +408,7 @@ const ADAPTER_KEY_BY_AGENT: Record<string, string> = {
  * version is unknown; `"—"` when the player has no agent type.
  */
 function resolveAdapterVersion(
-  player: ExtendedPlayerSummaryV1,
+  player: PlayerSummaryV1,
   hosts: ReturnType<typeof useHosts>['data'],
 ): string {
   const agent = player.agentType;

@@ -1,11 +1,10 @@
 /**
  * DB1b — dashboard bindings for the #399 W1/W2/W3 wire extensions.
  *
- * Each test pumps a snapshot mock that already carries the
- * DB1a-projected fields (description, startedAt, currentBpm,
- * tempoSeries, runId, messaging, lease) and asserts the corresponding
- * dashboard surface reads them. Pre-DB1a-merge runs degrade gracefully
- * via `asExtended` casts; the tests fix the cast contract.
+ * Each test pumps a snapshot mock that carries the W1/W2 projected
+ * fields (description, startedAt, currentBpm, tempoSeries, runId,
+ * messaging, lease) and asserts the corresponding dashboard surface
+ * reads them.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
@@ -23,18 +22,15 @@ import {
   formatLeaseRemaining,
   formatRunId,
 } from '../src/lib/time-format';
-import type { ExtendedEnsembleStateV1, ExtendedPlayerSummaryV1 } from '../src/lib/wire-shape';
-import type { EnsembleStateV1 } from 'claude-tempo/http/event-types';
+import type { EnsembleStateV1, PlayerSummaryV1 } from 'claude-tempo/http/event-types';
 import type { HostInfo } from 'claude-tempo/types';
 
 function newQc() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
 }
 
-function extSnapshot(over: Partial<ExtendedEnsembleStateV1>): EnsembleStateV1 {
-  // Build via the standard helper, then layer the DB1a projection on top.
-  // The cast is sound at runtime because every new field is optional.
-  return { ...makeSnapshot({ ensemble: 'demo' }), ...over } as EnsembleStateV1;
+function extSnapshot(over: Partial<EnsembleStateV1>): EnsembleStateV1 {
+  return { ...makeSnapshot({ ensemble: 'demo' }), ...over };
 }
 
 beforeEach(() => {
@@ -176,7 +172,7 @@ describe('EnsembleCard — DB1a binding', () => {
 });
 
 describe('PlayerDetail — DB1a binding for KV rows', () => {
-  function renderPlayerDetail(player: ExtendedPlayerSummaryV1) {
+  function renderPlayerDetail(player: PlayerSummaryV1) {
     const mock = new MockDashboardClient({
       ensembles: [{ name: 'demo', playerCount: 1, hasConductor: true, state: 'online' }],
       snapshot: extSnapshot({
@@ -199,7 +195,7 @@ describe('PlayerDetail — DB1a binding for KV rows', () => {
     renderPlayerDetail({
       ...makePlayer({ playerId: 'tempo-eng' }),
       runId: 'a3f2b8e0-1234-5678-9abc-def012345678',
-    } as ExtendedPlayerSummaryV1);
+    } as PlayerSummaryV1);
     await waitFor(() => {
       expect(
         screen.getByTestId('player-detail-tempo-eng-kv-run-id').textContent,
@@ -211,7 +207,7 @@ describe('PlayerDetail — DB1a binding for KV rows', () => {
     renderPlayerDetail({
       ...makePlayer({ playerId: 'tempo-eng' }),
       lease: { expiresAt: Date.now() + 45_000, leaseMs: 60_000 },
-    } as ExtendedPlayerSummaryV1);
+    } as PlayerSummaryV1);
     await waitFor(() => {
       expect(
         screen.getByTestId('player-detail-tempo-eng-kv-lease').textContent,
@@ -223,7 +219,7 @@ describe('PlayerDetail — DB1a binding for KV rows', () => {
     renderPlayerDetail({
       ...makePlayer({ playerId: 'tempo-eng' }),
       messaging: { received: 7, sent: 4, outbox: '2 pending' },
-    } as ExtendedPlayerSummaryV1);
+    } as PlayerSummaryV1);
     await waitFor(() => {
       expect(
         screen.getByTestId('player-detail-tempo-eng-kv-received').textContent,
@@ -240,7 +236,7 @@ describe('PlayerDetail — DB1a binding for KV rows', () => {
   it('falls back to "—" for messaging counters when DB1a hasn\'t projected', async () => {
     renderPlayerDetail({
       ...makePlayer({ playerId: 'tempo-eng' }),
-    } as ExtendedPlayerSummaryV1);
+    } as PlayerSummaryV1);
     await waitFor(() => {
       expect(
         screen.getByTestId('player-detail-tempo-eng-kv-received').textContent,
