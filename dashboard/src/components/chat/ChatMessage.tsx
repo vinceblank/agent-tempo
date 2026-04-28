@@ -15,18 +15,10 @@
  */
 import type { FormattedChatRow } from '../../lib/chat-format';
 import { broadcastBadgeText } from '../../lib/chat-format';
+import { formatHHMM } from '../../lib/time-format';
 
 interface ChatMessageProps {
   row: FormattedChatRow;
-}
-
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  } catch {
-    return '??:??';
-  }
 }
 
 export function ChatMessage({ row }: ChatMessageProps) {
@@ -65,7 +57,7 @@ export function ChatMessage({ row }: ChatMessageProps) {
           >
             {thirdParty ? `${msg.from} → ${msg.to}` : msg.from}
           </span>
-          <span className="dim mono">{formatTime(msg.timestamp)}</span>
+          <span className="dim mono">{formatHHMM(msg.timestamp)}</span>
         </header>
       )}
 
