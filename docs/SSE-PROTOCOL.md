@@ -479,7 +479,7 @@ Nine POST routes under `/v1/ensembles/:ensemble/<action>` give the dashboard a b
 | `recruit` | `{ name, workDir, agent?, playerType?, host?, isConductor?, initialMessage?, systemPrompt?, held? }` | `202 { playerId, entryId }` | Mirrors the `recruit` MCP tool. `name` and `workDir` required. |
 | `restart` | `{ playerId, reason? }` | `202 RestartClientResult` | Per-player verb (`PR-D` algorithm §8.2). `playerId` required. `reason` accepted for body parity but the underlying `TempoClient.restart` doesn't carry it; safe future-compatible field. |
 | `destroy` | `{ playerId, reason? }` | `202 { ok, ensemble, playerId }` | Per-player terminal destroy. `playerId` required (the ensemble-scope form lives on the `destroy` MCP tool, not this surface). `reason` is forwarded to the client method. |
-| `detach` | `{ playerId, deadlineMs?, reason? }` | `202 { ok, ensemble, playerId }` | Graceful detach — workflow survives in `detached`. `deadlineMs` optional; non-numeric values are dropped (the client default applies). |
+| `detach` | `{ playerId, deadlineMs?, reason? }` | `202 { ok, ensemble, playerId }` | Graceful detach — workflow survives in `detached`. `deadlineMs` optional but strictly typed: non-numeric (or non-finite) values fast-fail with `400 invalid-field` instead of falling through to the client default — silent drops are the kind of thing that bites future debugging. |
 | `recall` | `{ playerId }` | `200 RecallClientResult` | Read-shaped (returns the player's message timeline) but lives on this route group because the dashboard surfaces it on the same PlayerDetail action row. Hence `200` not `202`. |
 
 ### Validation contract
@@ -487,6 +487,7 @@ Nine POST routes under `/v1/ensembles/:ensemble/<action>` give the dashboard a b
 - `:ensemble` must match `ENSEMBLE_NAME_REGEX`; mismatch → `400 invalid-ensemble-name`.
 - `to` / `name` / `playerId` must match `PLAYER_NAME_REGEX` and be ≤ `PLAYER_NAME_MAX` (64) chars; mismatch → `400 invalid-player-name`.
 - `playerId` is **required** on `restart` / `destroy` / `detach` / `recall`; absent → `400 missing-field` (`field: 'playerId'`).
+- `deadlineMs` on `detach` if present must be a finite `number`; mismatch → `400 invalid-field` (`field: 'deadlineMs'`).
 - `message` must be ≤ `MESSAGE_MAX` (102 400 chars); over → `413 message-too-long`.
 - `agent` if present must be `'claude' | 'copilot'` (or `'mock'` in dev mode); otherwise → `400 invalid-agent`.
 - Body parse limit `1 MiB`; over → `413 body-too-large`.

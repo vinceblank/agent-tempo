@@ -281,6 +281,10 @@ async function handleDetach(
 ): Promise<void> {
   const playerId = requirePlayerId(res, body);
   if (!playerId) return;
+  // `reason` is accepted on the body for shape parity with the other
+  // per-player actions but the client method doesn't carry it (matches
+  // `restart`'s posture — future-compatible if the signature gains it).
+  //
   // `detach` accepts `deadlineMs` (graceful drain window). Optional —
   // TempoClient defaults when omitted. Strict-validate the type so
   // proxy-stringified JSON values like `"8000"` fast-fail with a clean
