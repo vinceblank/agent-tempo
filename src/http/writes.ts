@@ -42,14 +42,36 @@ import {
   stringField,
   allowedAgentsForCurrentMode,
   isAllowedAgent,
+  requirePlayerId,
 } from './body';
 
 // Re-exported so existing importers (`server.ts` reads this for the
 // 413 response cap) keep their import path stable.
 export { WRITE_BODY_MAX };
 
-/** Names of the write actions exposed under `/v1/ensembles/:ensemble/<action>`. */
-export const WRITE_ACTIONS = ['cue', 'pause', 'play', 'release', 'recruit'] as const;
+/**
+ * Names of the write actions exposed under `/v1/ensembles/:ensemble/<action>`.
+ *
+ * Two semantic groups, kept in this order so the table reads top-to-bottom
+ * by surface intent:
+ * - **Ensemble-scoped** (cue / pause / play / release / recruit) — the
+ *   original PR-7a #340 surface; bodies don't carry `playerId`.
+ * - **Per-player destructive** (restart / destroy / detach / recall) —
+ *   added so the dashboard's PlayerDetail action row can wire to live
+ *   mutations. Bodies are uniform `{ playerId, reason? }` (plus per-action
+ *   extras); the ensemble lives in the URL.
+ */
+export const WRITE_ACTIONS = [
+  'cue',
+  'pause',
+  'play',
+  'release',
+  'recruit',
+  'restart',
+  'destroy',
+  'detach',
+  'recall',
+] as const;
 export type WriteAction = (typeof WRITE_ACTIONS)[number];
 
 /** Type guard — narrows an arbitrary string to a known `WriteAction`. */
@@ -92,6 +114,10 @@ export async function handleWriteRoute(
       case 'play':    return await handlePlay(res, client, ensemble, body);
       case 'release': return await handleRelease(res, client, ensemble, body);
       case 'recruit': return await handleRecruit(res, client, ensemble, body);
+      case 'restart': return await handleRestart(res, client, ensemble, body);
+      case 'destroy': return await handleDestroy(res, client, ensemble, body);
+      case 'detach':  return await handleDetach(res, client, ensemble, body);
+      case 'recall':  return await handleRecall(res, client, ensemble, body);
     }
   } catch (err) {
     return mapWriteError(res, action, ensemble, err);
@@ -205,6 +231,90 @@ async function handleRecruit(
     ...(body.held === true ? { held: true } : {}),
   });
   jsonResponse(res, 202, result);
+}
+
+// ── Per-player destructive actions ──────────────────────────────────────
+//
+// Each handler validates `playerId` (required) + optional `reason` and
+// shims to the matching TempoClient method. Body shape is uniform:
+// `{ playerId: string; reason?: string }`. Errors flow through
+// `mapWriteError` so a missing player surfaces as 404.
+
+async function handleRestart(
+  res: ServerResponse,
+  client: TempoClient,
+  ensemble: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const playerId = requirePlayerId(res, body);
+  if (!playerId) return;
+  // `reason` isn't part of `RestartClientOpts` (the client carries audit
+  // strings via `invokerPlayerId`); accepted in the body for consistency
+  // with the other player actions but currently a no-op pass-through.
+  // Surface remains future-compatible — if `reason` lands in
+  // RestartClientOpts later, the field is already accepted.
+  const result = await client.restart(ensemble, playerId);
+  jsonResponse(res, 202, result);
+}
+
+async function handleDestroy(
+  res: ServerResponse,
+  client: TempoClient,
+  ensemble: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const playerId = requirePlayerId(res, body);
+  if (!playerId) return;
+  const reason = stringField(body, 'reason');
+  // Single-player destroy returns void — give the dashboard a stable
+  // shape to read (`{ ok: true, ensemble, playerId }`) so action-row
+  // mutations can confirm success without sniffing for `undefined`.
+  await client.destroy(ensemble, playerId, reason);
+  jsonResponse(res, 202, { ok: true, ensemble, playerId });
+}
+
+async function handleDetach(
+  res: ServerResponse,
+  client: TempoClient,
+  ensemble: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const playerId = requirePlayerId(res, body);
+  if (!playerId) return;
+  // `reason` is accepted on the body for shape parity with the other
+  // per-player actions but the client method doesn't carry it (matches
+  // `restart`'s posture — future-compatible if the signature gains it).
+  //
+  // `detach` accepts `deadlineMs` (graceful drain window). Optional —
+  // TempoClient defaults when omitted. Strict-validate the type so
+  // proxy-stringified JSON values like `"8000"` fast-fail with a clean
+  // 400 instead of silently dropping into the default. Matches the
+  // strict body-validation philosophy at the file header.
+  let deadlineMs: number | undefined;
+  if (body.deadlineMs !== undefined) {
+    if (typeof body.deadlineMs !== 'number' || !Number.isFinite(body.deadlineMs)) {
+      return errorResponse(res, 400, { error: 'invalid-field', field: 'deadlineMs' });
+    }
+    deadlineMs = body.deadlineMs;
+  }
+  await client.detach(ensemble, playerId, deadlineMs);
+  jsonResponse(res, 202, { ok: true, ensemble, playerId });
+}
+
+async function handleRecall(
+  res: ServerResponse,
+  client: TempoClient,
+  ensemble: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const playerId = requirePlayerId(res, body);
+  if (!playerId) return;
+  // Recall is read-only (it returns the player's message timeline) but
+  // groups with the destructive actions for routing because the dashboard
+  // surfaces it on the same PlayerDetail action row. 200 (not 202)
+  // because the result is the operation, not a queued effect.
+  const result = await client.recall(ensemble, playerId);
+  jsonResponse(res, 200, result);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────

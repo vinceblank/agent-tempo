@@ -53,6 +53,10 @@ function makeMockClient(opts: MockOptions = {}): { client: TempoClient; calls: C
     play: handler('play', undefined),
     release: handler('release', { released: ['p1'], errors: [] }),
     recruit: handler('recruit', { playerId: 'tempo-eng', entryId: 'entry-1' }),
+    restart: handler('restart', { playerId: 'tempo-eng', entryId: 'restart-1' }),
+    destroy: handler('destroy', undefined),
+    detach: handler('detach', undefined),
+    recall: handler('recall', { messages: [] }),
     listEnsembles: handler('listEnsembles', []),
     getPlayers: handler('getPlayers', []),
     getEnsembleChat: handler('getEnsembleChat', { messages: [], total: 0, hasMore: false, hasConductor: false }),
@@ -310,6 +314,162 @@ describe('POST /v1/ensembles/:ensemble/recruit', () => {
   });
 });
 
+// ── Per-player destructive actions (restart / destroy / detach / recall) ──
+//
+// Each route lives under `/v1/ensembles/:ensemble/<action>` and takes
+// `{ playerId, reason? }` (plus per-action extras). Bodies are validated
+// upfront; missing/invalid playerId fast-fails 400 without touching the
+// client. The 404 mapping is a single `mapWriteError` path so we only
+// re-prove it once per file (already covered for `release`).
+
+describe('POST /v1/ensembles/:ensemble/restart', () => {
+  it('routes to client.restart with (ensemble, playerId) and returns 202', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/restart`, {
+      playerId: 'tempo-eng',
+    });
+    expect(res.status).toBe(202);
+    expect(b.calls.find((c) => c.method === 'restart')?.args).toEqual(['demo', 'tempo-eng']);
+    expect(await res.json()).toEqual({ playerId: 'tempo-eng', entryId: 'restart-1' });
+  });
+
+  it('400 missing-field on absent playerId', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/restart`, {});
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'missing-field', field: 'playerId' });
+  });
+
+  it('400 invalid-player-name on bad playerId', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/restart`, {
+      playerId: 'has spaces',
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('invalid-player-name');
+  });
+
+  it('404 session-not-found when client throws "No session found"', async () => {
+    const b = await boot({
+      mock: { throws: { restart: new Error('No session found with name "ghost" in ensemble "demo".') } },
+    });
+    const res = await postJson(`${b.url}/v1/ensembles/demo/restart`, { playerId: 'ghost' });
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('session-not-found');
+  });
+});
+
+describe('POST /v1/ensembles/:ensemble/destroy', () => {
+  it('routes to client.destroy with (ensemble, playerId, reason?) and returns 202', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/destroy`, {
+      playerId: 'tempo-eng',
+      reason: 'qa cleanup',
+    });
+    expect(res.status).toBe(202);
+    expect(b.calls.find((c) => c.method === 'destroy')?.args).toEqual([
+      'demo', 'tempo-eng', 'qa cleanup',
+    ]);
+    expect(await res.json()).toEqual({ ok: true, ensemble: 'demo', playerId: 'tempo-eng' });
+  });
+
+  it('forwards undefined reason when the body omits it', async () => {
+    const b = await boot();
+    await postJson(`${b.url}/v1/ensembles/demo/destroy`, { playerId: 'tempo-eng' });
+    expect(b.calls.find((c) => c.method === 'destroy')?.args).toEqual([
+      'demo', 'tempo-eng', undefined,
+    ]);
+  });
+
+  it('400 missing-field on absent playerId', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/destroy`, { reason: 'x' });
+    expect(res.status).toBe(400);
+    expect((await res.json()).field).toBe('playerId');
+  });
+
+  it('404 session-not-found when client throws', async () => {
+    const b = await boot({
+      mock: { throws: { destroy: new Error('No session found with name "ghost".') } },
+    });
+    const res = await postJson(`${b.url}/v1/ensembles/demo/destroy`, { playerId: 'ghost' });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /v1/ensembles/:ensemble/detach', () => {
+  it('routes to client.detach with (ensemble, playerId) and returns 202', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/detach`, {
+      playerId: 'tempo-eng',
+    });
+    expect(res.status).toBe(202);
+    expect(b.calls.find((c) => c.method === 'detach')?.args).toEqual([
+      'demo', 'tempo-eng', undefined,
+    ]);
+    expect(await res.json()).toEqual({ ok: true, ensemble: 'demo', playerId: 'tempo-eng' });
+  });
+
+  it('forwards numeric deadlineMs when supplied', async () => {
+    const b = await boot();
+    await postJson(`${b.url}/v1/ensembles/demo/detach`, {
+      playerId: 'tempo-eng',
+      deadlineMs: 8000,
+    });
+    expect(b.calls.find((c) => c.method === 'detach')?.args).toEqual([
+      'demo', 'tempo-eng', 8000,
+    ]);
+  });
+
+  it('400 invalid-field on non-numeric deadlineMs', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/detach`, {
+      playerId: 'tempo-eng',
+      deadlineMs: 'soon',
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid-field', field: 'deadlineMs' });
+    // Strict-validate means the client must NOT have been called.
+    expect(b.calls.find((c) => c.method === 'detach')).toBeUndefined();
+  });
+
+  it('400 missing-field on absent playerId', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/detach`, {});
+    expect(res.status).toBe(400);
+    expect((await res.json()).field).toBe('playerId');
+  });
+});
+
+describe('POST /v1/ensembles/:ensemble/recall', () => {
+  it('routes to client.recall and returns 200 with the result', async () => {
+    const b = await boot({ mock: { returns: { recall: { messages: [{ id: 'm1' }] } } } });
+    const res = await postJson(`${b.url}/v1/ensembles/demo/recall`, {
+      playerId: 'tempo-eng',
+    });
+    // Recall is read-shaped (returns the timeline), so 200 not 202 —
+    // documented in the writes.ts handler.
+    expect(res.status).toBe(200);
+    expect(b.calls.find((c) => c.method === 'recall')?.args).toEqual(['demo', 'tempo-eng']);
+    expect(await res.json()).toEqual({ messages: [{ id: 'm1' }] });
+  });
+
+  it('400 missing-field on absent playerId', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/recall`, {});
+    expect(res.status).toBe(400);
+    expect((await res.json()).field).toBe('playerId');
+  });
+
+  it('404 session-not-found when client throws', async () => {
+    const b = await boot({
+      mock: { throws: { recall: new Error('No session found with name "ghost".') } },
+    });
+    const res = await postJson(`${b.url}/v1/ensembles/demo/recall`, { playerId: 'ghost' });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('Body parsing edge cases', () => {
   it('413 body-too-large rejects bodies over 1 MiB', async () => {
     const b = await boot();
@@ -367,7 +527,10 @@ describe('Method-not-allowed regression suite', () => {
 
   it('unknown action under /v1/ensembles/:e/<x> → 404, not 405', async () => {
     const b = await boot();
-    const res = await fetch(`${b.url}/v1/ensembles/demo/destroy`, { method: 'POST' });
+    // Use an obviously-non-action verb — `destroy` was the previous
+    // probe but landed as a real action in this PR, so pick something
+    // structurally unlikely to ship as a route.
+    const res = await fetch(`${b.url}/v1/ensembles/demo/notarealaction`, { method: 'POST' });
     expect(res.status).toBe(404);
   });
 });
