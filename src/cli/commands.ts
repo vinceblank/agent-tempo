@@ -1213,8 +1213,14 @@ export async function up(opts: UpOpts) {
   // lineup ⇒ the flag is a no-op (nothing to defer).
   const initialStartup = Boolean(lineup) && !opts.noHold;
 
-  // Resolve conductor agent from lineup or CLI flags
-  const conductorAgent: AgentType = lineup?.conductor?.agent === 'copilot' ? 'copilot' : opts.agent;
+  // Resolve conductor agent from lineup or CLI flags.
+  // `agent: "mock"` is dev-only — silently fall back to the CLI default
+  // outside dev mode so a mis-configured lineup doesn't spawn a real session
+  // unexpectedly (mirrors the player-level guard at ~line 209).
+  const conductorAgent: AgentType =
+    lineup?.conductor?.agent === 'copilot' ? 'copilot' :
+    lineup?.conductor?.agent === 'mock' && isDevMode() ? 'mock' :
+    opts.agent;
 
   // Step 5: Connect to Temporal and check for existing conductor
   console.log();
@@ -1326,7 +1332,26 @@ export async function up(opts: UpOpts) {
 
   // Spawn the conductor process
   let pid: number | undefined;
-  if (conductorAgent === 'copilot') {
+  if (conductorAgent === 'mock') {
+    // Dev-mode mock conductor — mirrors the player mock-spawn path in
+    // applyLineupPlayersAndSchedules. isConductor: true so the mock
+    // adapter registers the session as the ensemble conductor.
+    const effectiveMode: MockMode = lineup?.conductor?.mockMode ?? 'echo';
+    const effectiveScenario = lineup?.conductor?.mockScenario;
+    ({ pid } = spawnMockAdapter({
+      name: sessionName,
+      ensemble: opts.ensemble,
+      temporalAddress: config.temporalAddress,
+      temporalNamespace: config.temporalNamespace,
+      temporalApiKey: config.temporalApiKey,
+      temporalTlsCertPath: config.temporalTlsCertPath,
+      temporalTlsKeyPath: config.temporalTlsKeyPath,
+      isConductor: true,
+      workDir: process.cwd(),
+      mockMode: effectiveMode,
+      ...(effectiveScenario ? { mockScenario: effectiveScenario } : {}),
+    }));
+  } else if (conductorAgent === 'copilot') {
     ({ pid } = spawnCopilotBridge({
       name: sessionName,
       ensemble: opts.ensemble,

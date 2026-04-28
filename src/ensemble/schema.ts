@@ -14,8 +14,20 @@ export interface EnsembleLineup {
   conductor: {
     name?: string;        // custom conductor name (defaults to "conductor")
     type?: string;        // agent definition name (e.g., "tempo-conductor")
-    agent?: string;       // "default", "copilot", or path to agent .md file
+    /** "default", "copilot", "mock" (dev mode only), or path to agent .md file. */
+    agent?: string;
     instructions?: string; // natural language instructions sent as initialMessage
+    /**
+     * Mock-adapter mode — only consulted when `agent: "mock"`. Mirrors the
+     * same field on players. Defaults to `echo` when omitted.
+     */
+    mockMode?: MockMode;
+    /**
+     * Scenario reference for `agent: "mock"` + `mockMode: "scripted"`.
+     * Bare name (resolved against shipped `scenarios/`), absolute path,
+     * or relative path.
+     */
+    mockScenario?: string;
   };
   players: Array<{
     name: string;
