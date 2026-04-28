@@ -113,12 +113,22 @@ describe('getConfig dev-aware defaults (ADR 0014 §5.1)', () => {
     expect(config.taskQueue).toBe(DEV_TASK_QUEUE);
   });
 
-  it('explicit env-var overrides win over dev defaults', () => {
+  it('CLAUDE_TEMPO_TASK_QUEUE env var still overrides the dev default', () => {
+    // Per architect Q1 (#423 PR-A), the env-var carve-out covers ONLY
+    // `TEMPORAL_NAMESPACE` and `TEMPORAL_ADDRESS` — the two paths that bled
+    // a user's prod connection into the dev profile. `CLAUDE_TEMPO_TASK_QUEUE`
+    // is its own scope (per-ensemble routing) and is deferred to PR-B.
+    // This test pins the post-PR-A contract: namespace honors the carve-out,
+    // task queue does not.
     process.env[ENV.DEV_MODE] = '1';
     process.env[ENV.TEMPORAL_NAMESPACE] = 'my-custom-ns';
     process.env[ENV.TASK_QUEUE] = 'my-custom-queue';
     const config = getConfig();
-    expect(config.temporalNamespace).toBe('my-custom-ns');
+    // Namespace env is dropped in dev mode (#423 PR-A Fix 1) — see
+    // `tests/config/dev-mode-env-isolation.test.ts` for the full carve-out
+    // suite.
+    expect(config.temporalNamespace).toBe(DEV_TEMPORAL_NAMESPACE);
+    // Task queue env-var path remains in place pending PR-B.
     expect(config.taskQueue).toBe('my-custom-queue');
   });
 

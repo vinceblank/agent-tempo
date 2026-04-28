@@ -90,6 +90,40 @@ export async function writePidFileAtomic(pidFilePath: string, pid: number): Prom
 // ── Dev profile (ADR 0014 §6.2) ──
 
 /**
+ * Runtime drift detector — #423 PR-A Fix 3. When dev mode is active but
+ * the resolved namespace is NOT the dev default, an explicit override is
+ * in play (CLI `--namespace`, `~/.claude-tempo-dev/config.json`, or — if
+ * the env-var carve-out from Fix 1 ever regressed — a leaked shell var).
+ * Either way, the operator deserves a load-bearing diagnostic so the
+ * "banner says X, daemon connects to Y" drift doesn't recur silently.
+ *
+ * Pure function over the resolved Config + an injected log sink so the
+ * unit test can capture the message without a live daemon process.
+ * Returns whether a warning fired so callers (and tests) can assert on
+ * the branch directly.
+ *
+ * The check is intentionally loose: any namespace mismatch in dev mode
+ * triggers the warning, even for intentional overrides. We can't tell
+ * a typo'd `config.json` entry from a deliberate one — the warning is
+ * cheap, and an operator who overrode the namespace on purpose can
+ * grep-skip a single line.
+ */
+export function warnIfDevNamespaceDrift(
+  config: Pick<Config, 'temporalNamespace'>,
+  logFn: (...args: unknown[]) => void = log,
+): boolean {
+  if (!isDevMode()) return false;
+  if (config.temporalNamespace === DEV_TEMPORAL_NAMESPACE) return false;
+  logFn(
+    `[dev-mode] WARNING: namespace drift — connecting to "${config.temporalNamespace}" ` +
+    `instead of dev default "${DEV_TEMPORAL_NAMESPACE}". An explicit override is in ` +
+    `play (CLI flag, dev config.json). Drop the override to restore dev profile isolation ` +
+    `(ADR 0014 §5.1).`,
+  );
+  return true;
+}
+
+/**
  * Outcome of {@link ensureDevNamespace} — exposed so unit tests can assert
  * on which branch fired without having to inspect log output.
  *
@@ -754,6 +788,17 @@ async function main() {
 
   // Get config from env vars (passed by startDaemon via spawn env)
   const config = getConfig({});
+
+  // #423 PR-A Fix 3 — load-bearing drift detector. The `[DEV MODE]` banner
+  // (gate 4) and the daemon's actual Temporal connection MUST agree on the
+  // namespace. Fix 1's env-var carve-out plus Fix 2's source-annotated
+  // banner make a silent disagreement impossible at the resolution layer,
+  // but a future regression — or an operator who hand-edits
+  // `~/.claude-tempo-dev/config.json` to a non-dev namespace by mistake —
+  // would still slip through. The warning fires once at boot and lands at
+  // the top of `daemon.log` so an operator chasing weird coordination bugs
+  // sees the override on first inspection.
+  warnIfDevNamespaceDrift(config);
 
   // ADR 0014 §6.2 — dev daemon auto-creates its Temporal namespace before
   // the worker bootstrap. Production daemons skip this; namespaces are
