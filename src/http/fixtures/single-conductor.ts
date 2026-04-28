@@ -41,6 +41,10 @@ export const singleConductor: FixtureScenario = {
         capabilities: [],
       },
     },
+    description: '',
+    startedAt: '',
+    currentBpm: 0,
+    tempoSeries: [],
   },
   events: [],
 };

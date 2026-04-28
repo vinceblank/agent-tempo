@@ -114,6 +114,11 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
     createEnsemble: fail,
     spawnConductor: fail,
     getPlayers: async () => [],
+    // Issue #399 W1/W2 wire-extension methods — return sentinel defaults
+    // matching `getEnsembleMeta` / `getPlayerWireMeta` soft-fail shapes
+    // so the dashboard renders `—` placeholders without crashing.
+    getEnsembleMeta: async () => ({ description: '', startedAt: '', currentBpm: 0, tempoSeries: [] }),
+    getPlayerWireMeta: async () => null,
     getMessages: async () => [],
     getConductorHistory: async () => [],
     getPlayerMessages: async () => [],

@@ -20,6 +20,10 @@ export const emptyEnsemble: FixtureScenario = {
     schedules: [],
     chat: { messages: [], total: 0, hasMore: false },
     hostProfiles: {},
+    description: '',
+    startedAt: '',
+    currentBpm: 0,
+    tempoSeries: [],
   },
   events: [],
 };

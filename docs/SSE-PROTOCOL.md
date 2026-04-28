@@ -144,6 +144,14 @@ interface EnsembleStateV1 {
   schedules: ScheduleEntry[];   // shape from WIRE-PROTOCOL §Type Reference
   chat: { messages: EnsembleChatMessage[]; total: number; hasMore: boolean };
   hostProfiles: Record<string, HostProfile>;
+  // Issue #399 W1 wire extensions — projected from the per-ensemble
+  // maestro hub. Sentinel defaults (`''`, `0`, `[]`) when the maestro
+  // workflow soft-fails any individual query — the snapshot endpoint
+  // never 500s on a transient query glitch.
+  description: string;          // from getEnsembleDescriptionQuery; '' when unset
+  startedAt: string;            // ISO from getEnsembleStartTimeQuery; '' when hub absent
+  currentBpm: number;           // from getCurrentBpmQuery; 0 baseline
+  tempoSeries: number[];        // 60-element ring from getTempoSeriesQuery
 }
 
 interface PlayerSummaryV1 {
@@ -159,6 +167,23 @@ interface PlayerSummaryV1 {
   gitBranch?: string;
   lastHeartbeatAt?: string;    // ISO; absent on detached/gone
   processingSince?: string;    // ISO; present only when phase === 'processing'
+  // Issue #399 W2 wire extensions — projected from per-session queries
+  // during snapshot fan-out. Optional everywhere; absent fields render
+  // as `—` placeholders client-side.
+  runId?: string;              // Q5.2 — from getRunIdQuery
+  messaging?: {                // Q5.5 — from getMessagingStateQuery
+    received: number;
+    sent: number;
+    outbox: string;            // 'empty' / 'N pending' / 'N pending (oldest 2m)'
+  };
+  lease?: {                    // Q5.7 — from getLeaseStateQuery
+    expiresAt: number | null;
+    leaseMs: number | null;
+  };
+  // Issue #399 Q5.6 — pass-through from MaestroPlayerInfo (no extra
+  // round-trip; the maestro hub already populates these fields).
+  activityCount?: number;
+  lastActivityAt?: string;     // ISO
 }
 ```
 

@@ -204,6 +204,38 @@ export interface TempoClientCore {
   listEnsembles(): Promise<EnsembleSummary[]>;
   /** Get current player snapshot for an ensemble. */
   getPlayers(ensemble: string): Promise<MaestroPlayerInfo[]>;
+  /**
+   * Issue #399 W1 — read the per-ensemble maestro hub's wire-extension
+   * fields (description / startedAt / currentBpm / tempoSeries) in a
+   * single fan-out. The four queries run in parallel against the same
+   * maestro workflow handle so total latency is bounded by the slowest
+   * query, not the sum.
+   *
+   * Returns an object with sentinel defaults (`description: ''`,
+   * `startedAt: ''`, `currentBpm: 0`, `tempoSeries: []`) when individual
+   * queries soft-fail — the snapshot endpoint must NEVER 500 because of
+   * a transient maestro query glitch.
+   */
+  getEnsembleMeta(ensemble: string): Promise<{
+    description: string;
+    startedAt: string;
+    currentBpm: number;
+    tempoSeries: number[];
+  }>;
+  /**
+   * Issue #399 W2 — read a session workflow's wire-extension fields
+   * (runId / messaging / lease) in a single fan-out. The three queries
+   * run in parallel against the same session handle. Returns `null`
+   * when the session workflow can't be resolved (just-recruited,
+   * just-destroyed, or transient lookup failure); soft-fails individual
+   * fields to `undefined` in the returned shape so partial results
+   * still surface.
+   */
+  getPlayerWireMeta(ensemble: string, playerId: string): Promise<{
+    runId?: string;
+    messaging?: { received: number; sent: number; outbox: string };
+    lease?: { expiresAt: number | null; leaseMs: number | null };
+  } | null>;
   /** Get recent messages for an ensemble. */
   getMessages(ensemble: string, limit?: number): Promise<MaestroRelayMessage[]>;
   /** Get conductor command/report history for an ensemble. */

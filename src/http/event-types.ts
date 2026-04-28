@@ -109,6 +109,26 @@ export interface EnsembleStateV1 {
    * map; daemons do not partition by ensemble.
    */
   hostProfiles: Record<string, HostProfile>;
+  /**
+   * Issue #399 W1 wire extensions — projected from the per-ensemble maestro
+   * hub's `getEnsembleDescriptionQuery` / `getEnsembleStartTimeQuery` /
+   * `getCurrentBpmQuery` / `getTempoSeriesQuery`. Consumers (Hosts/Workspace
+   * dashboard) render these without further round-trips.
+   */
+  /** Free-form description of what the ensemble is working on. `''` when the
+   * conductor hasn't set one. */
+  description: string;
+  /** ISO timestamp of when the maestro hub workflow first started. Used by
+   * the dashboard to compute uptime client-side. `''` when the hub isn't
+   * reachable. */
+  startedAt: string;
+  /** Current beats-per-minute (msgs/min activity rate). `0` baseline when
+   * activity hasn't accrued yet or the hub is unreachable. */
+  currentBpm: number;
+  /** 60-element ring of recent activity counts (one per minute, most recent
+   * last). Powers the `<TempoStrip>` sparkline. Empty array when the hub
+   * isn't reachable. */
+  tempoSeries: number[];
 }
 
 /**
@@ -131,6 +151,37 @@ export interface PlayerSummaryV1 {
   lastHeartbeatAt?: string;
   /** Present only when `phase === 'processing'`. ISO timestamp. */
   processingSince?: string;
+  /**
+   * Issue #399 W2 wire extensions — projected from per-session queries
+   * (`getRunIdQuery` / `getMessagingStateQuery` / `getLeaseStateQuery`)
+   * during snapshot fan-out. Optional everywhere — when the session
+   * workflow is unreachable or a query soft-fails the field is absent
+   * (or set to a sentinel for objects), and the dashboard renders `—`.
+   */
+  /** Q5.2 — current execution's runId. UUID; dashboard truncates client-side. */
+  runId?: string;
+  /** Q5.5 — messaging counters + outbox status string. */
+  messaging?: {
+    received: number;
+    sent: number;
+    /** `'empty'` / `'N pending'` / `'N pending (oldest 2m)'`. Server-rendered. */
+    outbox: string;
+  };
+  /** Q5.7 — current attachment lease window. `null` when no active lease
+   * (phase ∈ booting / detached / gone). */
+  lease?: {
+    /** Epoch ms when the lease expires, or `null` when no active lease. */
+    expiresAt: number | null;
+    /** Lease window length in ms, or `null` when no active lease. */
+    leaseMs: number | null;
+  };
+  /** Q5.6 — monotonic activity counter (cue + outbox push + report + recruit
+   * + restart + destroy + migrate). Already on `MaestroPlayerInfo`; passed
+   * through verbatim by `toPlayerSummaryV1`. */
+  activityCount?: number;
+  /** Q5.6 — ISO timestamp of the most recent activity. Already on
+   * `MaestroPlayerInfo`; passed through verbatim by `toPlayerSummaryV1`. */
+  lastActivityAt?: string;
 }
 
 // ── §5. SSE framing — event-id token format ─────────────────────────────
