@@ -17,12 +17,9 @@ import {
   attachmentInfoQuery,
   destroyUpdate,
   getClient,
+  pollWithTimeout,
   TASK_QUEUE,
 } from './helpers';
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 describe('outbox', function () {
   before(setupSharedEnv);
@@ -113,8 +110,13 @@ describe('outbox', function () {
           args: [{ type: 'cue', targetPlayerId: 'bob-cue', message: 'hi bob' }],
         });
 
-        // Wait for dispatch loop to process
-        await sleep(2000);
+        // Wait for dispatch loop to deliver the cue + flip outbox status.
+        await pollWithTimeout(async () => {
+          const msgs = await bob.query(pendingMessagesQuery);
+          const ob = await alice.query(outboxQuery);
+          return msgs.some((m) => m.from === 'alice-cue' && m.text === 'hi bob')
+            && ob.find((e) => e.type === 'cue')?.status === 'delivered';
+        }, 10_000);
 
         const bobMessages = await bob.query(pendingMessagesQuery);
         expect(bobMessages.some((m) => m.from === 'alice-cue' && m.text === 'hi bob')).to.be.true;
@@ -149,7 +151,15 @@ describe('outbox', function () {
           args: [{ type: 'report', text: 'task done', reportType: 'result' }],
         });
 
-        await sleep(2000);
+        await pollWithTimeout(async () => {
+          const msgs = await conductor.query(allMessagesQuery);
+          const ob = await player.query(outboxQuery);
+          return msgs.some(
+            (m) => m.from === 'reporter-1'
+              && m.text.includes('[result]')
+              && m.text.includes('task done'),
+          ) && ob[0]?.status === 'delivered';
+        }, 10_000);
 
         const conductorMessages = await conductor.query(allMessagesQuery);
         expect(conductorMessages.some(
@@ -182,7 +192,14 @@ describe('outbox', function () {
           args: [{ type: 'stop', targetPlayerId: 'bob-stop' }],
         });
 
-        await sleep(2000);
+        // Wait for stop delivery to terminate bob (phase=gone) AND flip the
+        // outbox entry to `delivered`.
+        await pollWithTimeout(async () => {
+          const desc = await bob.describe();
+          const phase = (desc.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined)?.[0];
+          const ob = await alice.query(outboxQuery);
+          return phase === 'gone' && ob[0]?.status === 'delivered';
+        }, 10_000);
 
         // Bob's attachment phase transitions to `gone` via the `stop` outbox entry
         // triggering `destroyUpdate` on the target. Read the phase from the
@@ -214,7 +231,10 @@ describe('outbox', function () {
           args: [{ type: 'detach', targetPlayerId: 'bob-detach', deadlineMs: 1000 }],
         });
 
-        await sleep(2000);
+        await pollWithTimeout(async () => {
+          const ob = await alice.query(outboxQuery);
+          return ob.find((e) => e.type === 'detach')?.status === 'delivered';
+        }, 10_000);
 
         const aliceOutbox = await alice.query(outboxQuery);
         const entry = aliceOutbox.find((e) => e.type === 'detach');
@@ -238,7 +258,16 @@ describe('outbox', function () {
           args: [{ type: 'destroy', targetPlayerId: 'bob-destroy', reason: 'test', notifyConductor: false }],
         });
 
-        await sleep(2000);
+        await pollWithTimeout(async () => {
+          const ob = await alice.query(outboxQuery);
+          if (ob.find((e) => e.type === 'destroy')?.status !== 'delivered') return false;
+          // Bob may already be terminated; query may throw. Treat throw as not-yet-destroyed.
+          try {
+            return (await bob.query('isDestroyed')) === true;
+          } catch {
+            return true; // workflow gone is also a valid "destroyed" signal
+          }
+        }, 10_000);
 
         const aliceOutbox = await alice.query(outboxQuery);
         const entry = aliceOutbox.find((e) => e.type === 'destroy');
@@ -269,12 +298,11 @@ describe('outbox', function () {
         });
 
         // Wait for dispatch + retries (activity retries up to 3 times with backoff)
-        for (let i = 0; i < 30; i++) {
-          await sleep(1000);
+        // — replaces a 30×sleep(1000) manual poll loop.
+        await pollWithTimeout(async () => {
           const entries = await handle.query(outboxQuery);
-          const entry = entries.find((e) => e.type === 'cue');
-          if (entry && entry.status === 'failed') break;
-        }
+          return entries.find((e) => e.type === 'cue')?.status === 'failed';
+        }, 30_000);
 
         const entries = await handle.query(outboxQuery);
         const entry = entries.find((e) => e.type === 'cue');
@@ -345,7 +373,19 @@ describe('outbox', function () {
           args: [{ type: 'stop', targetPlayerId: 'stop-target' }],
         });
 
-        await sleep(2000);
+        // Wait for stop delivery to mark target `gone` AND post the system
+        // notification to the conductor.
+        await pollWithTimeout(async () => {
+          const desc = await target.describe();
+          const phase = (desc.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined)?.[0];
+          if (phase !== 'gone') return false;
+          const msgs = await conductor.query(allMessagesQuery);
+          return msgs.some(
+            (m) => m.from === 'system'
+              && m.text.includes('stop-target')
+              && m.text.includes('terminated'),
+          );
+        }, 10_000);
 
         // Target's phase transitions to `gone` via the stop-delivery's destroyUpdate.
         // Read from the `ClaudeTempoAttachmentState` search attribute — survives completion.
@@ -387,14 +427,13 @@ describe('outbox', function () {
           args: [{ type: 'report', text: 'orphan report', reportType: 'result' }],
         });
 
-        // Poll until the outbox entry transitions to 'failed'.
-        // deliverReport retries up to 3 times (~4s total) before giving up.
-        for (let i = 0; i < 40; i++) {
-          await sleep(1000);
+        // Poll until the outbox entry transitions to 'failed' — deliverReport
+        // retries up to 3 times (~4s total) before giving up. Replaces a
+        // 40×sleep(1000) manual poll loop.
+        await pollWithTimeout(async () => {
           const entries = await handle.query(outboxQuery);
-          const entry = entries.find((e) => e.type === 'report');
-          if (entry && entry.status === 'failed') break;
-        }
+          return entries.find((e) => e.type === 'report')?.status === 'failed';
+        }, 40_000);
 
         const entries = await handle.query(outboxQuery);
         const entry = entries.find((e) => e.type === 'report');
@@ -435,8 +474,19 @@ describe('outbox', function () {
           });
         }
 
-        // Wait for dispatch loop to deliver all
-        await sleep(3000);
+        // Wait for dispatch fan-out — all 3 recipients receive the message
+        // AND all 3 cue entries flip to `delivered` on the sender's outbox.
+        await pollWithTimeout(async () => {
+          for (const handle of [alice, bob, carol]) {
+            const msgs = await handle.query(pendingMessagesQuery);
+            if (!msgs.some((m) => m.from === 'broadcaster' && m.text === 'broadcast hello')) {
+              return false;
+            }
+          }
+          const ob = await sender.query(outboxQuery);
+          const cueEntries = ob.filter((e) => e.type === 'cue');
+          return cueEntries.length === 3 && cueEntries.every((e) => e.status === 'delivered');
+        }, 15_000);
 
         // Verify all 3 recipients received the message
         for (const [name, handle] of [['alice-bc', alice], ['bob-bc', bob], ['carol-bc', carol]] as const) {
@@ -499,7 +549,10 @@ describe('outbox', function () {
           }],
         });
 
-        await sleep(3000);
+        await pollWithTimeout(async () => {
+          const ob = await alice.query(outboxQuery);
+          return ob.find((e) => e.type === 'restart')?.status === 'delivered';
+        }, 15_000);
 
         const aliceOutbox = await alice.query(outboxQuery);
         const entry = aliceOutbox.find((e) => e.type === 'restart');
@@ -542,8 +595,24 @@ describe('outbox', function () {
           }],
         });
 
-        // Wait for dispatch loop to run both startRecruitedSession + spawnProcess
-        await sleep(3000);
+        // Wait for dispatch to run both startRecruitedSession + spawnProcess,
+        // and for the recruited workflow's pendingMessages to land.
+        const recruitedHandle = getClient().workflow.getHandle(
+          `claude-session-${ensemble}-new-player`,
+        );
+        await pollWithTimeout(async () => {
+          const ob = await handle.query(outboxQuery);
+          if (ob.find((e) => e.type === 'recruit')?.status !== 'delivered') return false;
+          try {
+            const pending = await recruitedHandle.query(pendingMessagesQuery);
+            return pending.length === 1
+              && pending[0].from === 'recruiter'
+              && pending[0].text === 'Welcome to the team';
+          } catch {
+            // Recruited workflow may not be queryable yet
+            return false;
+          }
+        }, 15_000);
 
         // Outbox entry should be delivered
         const outboxEntries = await handle.query(outboxQuery);
@@ -552,9 +621,6 @@ describe('outbox', function () {
         expect(recruitEntry!.status).to.equal('delivered');
 
         // Pre-created workflow should have the initial message pending
-        const recruitedHandle = getClient().workflow.getHandle(
-          `claude-session-${ensemble}-new-player`,
-        );
         const pending = await recruitedHandle.query(pendingMessagesQuery);
         expect(pending).to.have.lengthOf(1);
         expect(pending[0].from).to.equal('recruiter');
@@ -602,7 +668,10 @@ describe('outbox', function () {
           }],
         });
 
-        await sleep(3000);
+        await pollWithTimeout(async () => {
+          const ob = await handle.query(outboxQuery);
+          return ob.find((e) => e.type === 'recruit')?.status === 'delivered';
+        }, 15_000);
 
         const outboxEntries = await handle.query(outboxQuery);
         const recruitEntry = outboxEntries.find((e) => e.type === 'recruit');
@@ -668,7 +737,11 @@ describe('outbox', function () {
             }],
           });
 
-          await sleep(3000);
+          await pollWithTimeout(async () => {
+            const ob = await alice.query(outboxQuery);
+            return ob.find((e) => e.type === 'restart')?.status === 'delivered'
+              && spawnInputs.length >= 1;
+          }, 15_000);
 
           const aliceOutbox = await alice.query(outboxQuery);
           const entry = aliceOutbox.find((e) => e.type === 'restart');
@@ -737,7 +810,11 @@ describe('outbox', function () {
             }],
           });
 
-          await sleep(3000);
+          await pollWithTimeout(async () => {
+            const ob = await alice.query(outboxQuery);
+            return ob.find((e) => e.type === 'restart')?.status === 'delivered'
+              && spawnInputs.length >= 1;
+          }, 15_000);
 
           const aliceOutbox = await alice.query(outboxQuery);
           const entry = aliceOutbox.find((e) => e.type === 'restart');
@@ -791,8 +868,12 @@ describe('outbox', function () {
             }],
           });
 
-          // Wait for dispatch loop to process the recruit entry
-          await sleep(3000);
+          // Wait for dispatch to deliver the recruit AND fan out to spawnProcess.
+          await pollWithTimeout(async () => {
+            const ob = await handle.query(outboxQuery);
+            return ob.find((e) => e.type === 'recruit')?.status === 'delivered'
+              && spawnInputs.length === 1;
+          }, 15_000);
 
           // Outbox entry should be delivered
           const outboxEntries = await handle.query(outboxQuery);
