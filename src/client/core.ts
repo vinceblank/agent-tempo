@@ -78,9 +78,18 @@ import { createSubscribe, type SubscribeDeps } from './subscribe';
  * the SSE wrapper at `src/client/subscribe.ts` — pass overrides for
  * `baseUrl`, `token`, `fetchImpl`, or `sleep` from tests / non-default
  * environments.
+ *
+ * `taskQueue` is the daemon's polling task queue name (e.g.
+ * `claude-tempo` in prod, `claude-tempo-dev` in dev mode). It's used by
+ * `listHosts` to discover daemons polling the right queue — without it,
+ * `listHosts` defaults to `claude-tempo` and silently returns `[]` in dev
+ * mode even though the dev daemon is healthy on `claude-tempo-dev` (#437).
+ * Headless construction sites (daemon HTTP server, MCP server) MUST pass
+ * `taskQueue: config.taskQueue` so dev/prod isolation flows through.
  */
 export interface CreateTempoClientOpts {
   subscribeDeps?: SubscribeDeps;
+  taskQueue?: string;
 }
 
 // ── Helpers (module-private; shared with `with-spawn.ts` if needed via re-export) ──
@@ -114,6 +123,10 @@ export function createTempoClientCore(
 ): TempoClientCore {
   const globalMaestroId = GLOBAL_MAESTRO_WORKFLOW_ID;
   const subscribe = createSubscribe(opts.subscribeDeps);
+  // Closed over by `listHosts` below — see #437. Daemon HTTP/MCP/aggregate
+  // construction sites must pass `taskQueue: config.taskQueue` for dev-mode
+  // host discovery to find the right pollers.
+  const taskQueue = opts.taskQueue;
 
   /** Helper: get a workflow handle by ID. */
   function handle(workflowId: string) {
@@ -856,9 +869,16 @@ export function createTempoClientCore(
       // Lazy import so this doesn't drag utils/hosts into every
       // consumer of TempoClient at module-load time.
       const { listHosts } = await import('../utils/hosts');
+      // #437 — both `namespace` and `taskQueue` must match the daemon's
+      // config or poller discovery silently returns `[]` (dev mode hits
+      // `'claude-tempo-dev'`, prod hits `'claude-tempo'`). Passing
+      // `taskQueue: undefined` is harmless — `listHosts` defaults via
+      // `?? 'claude-tempo'` and unconditional pass-through avoids
+      // per-call object allocation on this hot path.
       return listHosts(client, {
         force: Boolean(opts.force),
         namespace: client.options.namespace,
+        taskQueue,
       });
     },
 

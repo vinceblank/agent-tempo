@@ -77,7 +77,11 @@ export async function run(opts: TuiOpts): Promise<void> {
     let api;
     if (connection) {
       const client = new Client({ connection, namespace: opts.config.temporalNamespace });
-      api = createTempoClient(client);
+      // #437 — pass the resolved task queue so the TUI's `/hosts` slash
+      // command (and any future `listHosts` consumer) finds the right
+      // pollers in dev mode. Without it, dev-mode TUI silently shows zero
+      // hosts even with a healthy dev daemon.
+      api = createTempoClient(client, { taskQueue: opts.config.taskQueue });
     } else {
       // Create a dummy client that returns empty/false for everything
       // The splash will transition to ErrorView
