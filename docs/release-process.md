@@ -6,12 +6,17 @@
 
 2. **Bump version and update CHANGELOG on `main`**:
    - Increment `version` in `package.json`
+   - Increment `version` in `dashboard/package.json` to the **same value** in the same commit.
+     CI's `dashboard-build` step ("Lockstep version check (root === dashboard)") hard-fails
+     if the two files diverge — missing this was the root cause of the beta.9 CI failure (#445).
    - Add a `## [x.y.z] - YYYY-MM-DD` entry in `CHANGELOG.md` with Added/Changed/Fixed sections
    - CHANGELOG entries should be user-facing — what changed, why it matters, what to do
      differently. Not internal refactoring details.
 
 3. **Commit the bump**:
    ```bash
+   # Both package.json files must be included in the same commit
+   git add package.json dashboard/package.json CHANGELOG.md
    git commit -m "chore: bump version to vX.Y.Z"
    ```
 
