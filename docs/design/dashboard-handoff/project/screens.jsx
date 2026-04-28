@@ -360,10 +360,10 @@ function Loadouts({ activeNav = "loadouts", onNav, activeEnsemble = "my-band", o
                   {window.LOADOUTS.map((l, i) => (
                     <tr key={l.name} className={i === 0 ? "is-active" : ""}>
                       <td className="mono"><span className="accent">≡</span> {l.name}</td>
-                      <td style={{color:"var(--text-2)", fontSize: 12.5, maxWidth: 320}}>{l.summary}</td>
-                      <td className="num">{l.players}</td>
-                      <td><span className="mono dim" style={{fontSize: 11}}>{l.shipped ? "shipped" : "custom"}</span></td>
-                      <td className="mono dim" style={{fontSize: 11.5}}>{l.recent}</td>
+                      <td data-label="Summary" style={{color:"var(--text-2)", fontSize: 12.5, maxWidth: 320}}>{l.summary}</td>
+                      <td data-label="Players" className="num">{l.players}</td>
+                      <td data-label="Source"><span className="mono dim" style={{fontSize: 11}}>{l.shipped ? "shipped" : "custom"}</span></td>
+                      <td data-label="Last used" className="mono dim" style={{fontSize: 11.5}}>{l.recent}</td>
                       <td style={{textAlign: "right"}}>
                         <window.Btn variant="ghost" size="sm">Edit</window.Btn>
                         <window.Btn variant="primary" size="sm" icon="▶">Load</window.Btn>
@@ -459,10 +459,10 @@ function Schedules({ activeNav = "schedules", onNav, activeEnsemble = "my-band",
                   {window.SCHEDULES.map((s, i) => (
                     <tr key={s.name} className={i === 0 ? "is-active" : ""}>
                       <td className="mono"><span className="accent">⧗</span> {s.name}</td>
-                      <td><span className="mono">{s.target}</span></td>
-                      <td className="mono" style={{color:"var(--text-2)"}}>{s.cadence}</td>
-                      <td><span className="type-badge" style={{color: s.kind === "recurring" ? "var(--info)" : "var(--warn)", borderColor:"var(--rule-strong)", background:"transparent"}}>{s.kind}</span></td>
-                      <td className="mono" style={{color: "var(--accent)"}}>{s.next}</td>
+                      <td data-label="Target"><span className="mono">{s.target}</span></td>
+                      <td data-label="Cadence" className="mono" style={{color:"var(--text-2)"}}>{s.cadence}</td>
+                      <td data-label="Kind"><span className="type-badge" style={{color: s.kind === "recurring" ? "var(--info)" : "var(--warn)", borderColor:"var(--rule-strong)", background:"transparent"}}>{s.kind}</span></td>
+                      <td data-label="Next fire" className="mono" style={{color: "var(--accent)"}}>{s.next}</td>
                       <td style={{textAlign:"right"}}>
                         <window.Btn variant="ghost" size="sm">Edit</window.Btn>
                         <window.Btn variant="danger" size="sm">Cancel</window.Btn>
@@ -509,12 +509,12 @@ function Hosts({ activeNav = "hosts", onNav, activeEnsemble = "my-band", onSelec
                   {window.HOSTS.map((h, i) => (
                     <tr key={h.host}>
                       <td className="mono"><span style={{color: h.status === "online" ? "var(--ok)" : "var(--warn)"}}>●</span> {h.host}</td>
-                      <td className="mono" style={{color:"var(--text-2)"}}>{h.platform}</td>
-                      <td className="num">{h.sessions}</td>
-                      <td className="num">{h.playerTypes}</td>
-                      <td className="mono">{h.daemon}</td>
-                      <td className="mono dim">{h.uptime}</td>
-                      <td className="mono" style={{color: h.status === "online" ? "var(--text-2)" : "var(--warn)"}}>{h.heartbeat} ago</td>
+                      <td data-label="Platform" className="mono" style={{color:"var(--text-2)"}}>{h.platform}</td>
+                      <td data-label="Sessions" className="num">{h.sessions}</td>
+                      <td data-label="Types" className="num">{h.playerTypes}</td>
+                      <td data-label="Daemon" className="mono">{h.daemon}</td>
+                      <td data-label="Uptime" className="mono dim">{h.uptime}</td>
+                      <td data-label="Heartbeat" className="mono" style={{color: h.status === "online" ? "var(--text-2)" : "var(--warn)"}}>{h.heartbeat} ago</td>
                       <td style={{textAlign:"right"}}>
                         <window.Btn variant="ghost" size="sm">Logs</window.Btn>
                       </td>

@@ -395,6 +395,7 @@ html, body {
 .ensemble-row.has-active .er-dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in oklch, var(--ok), transparent 78%); }
 .ensemble-row .er-name { font-weight: 500; letter-spacing: -0.005em; }
 .ensemble-row .er-meta { font-family: var(--ff-mono); font-size: 10.5px; color: var(--dim); }
+.ensemble-row .er-initial { display: none; }
 
 .nav-row {
   display: flex;
@@ -1048,9 +1049,55 @@ body { font-family: var(--ff-ui); }
   .ensemble-row .er-meta,
   .ensemble-row .col,
   .ensemble-row > span:last-child,
+  .ensemble-row--new .er-name,
   .nav-row > span:not(.nav-icon) { display: none; }
-  .ensemble-row { grid-template-columns: 1fr; justify-items: center; padding: 10px 6px; }
-  .ensemble-row .er-dot { display: inline-block; }
+  .ensemble-row {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    padding: 8px 6px;
+    position: relative;
+  }
+  .ensemble-row .er-dot { display: none; }
+  .ensemble-row .er-initial {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: var(--surface-2);
+    color: var(--text-1);
+    font-family: var(--ff-mono);
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid var(--rule);
+  }
+  .ensemble-row.has-active .er-initial::after {
+    content: "";
+    position: absolute;
+    top: 6px;
+    right: 12px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 0 2px var(--surface-1);
+  }
+  .ensemble-row.is-active .er-initial {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .ensemble-row--new .icon-g {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px dashed var(--rule-strong);
+    color: var(--accent);
+    font-size: 18px;
+    line-height: 1;
+  }
   .nav-row { justify-content: center; padding: 10px 6px; }
   .nav-row .nav-icon { font-size: 16px; }
   .sidebar-section { padding: 10px 6px 6px; }
@@ -1415,6 +1462,19 @@ body { font-family: var(--ff-ui); }
   pointer-events: none;
 }
 
+/* Phone: pop-out chat fills the viewport instead of floating */
+@container artboard (max-width: 520px) {
+  .popout-window {
+    bottom: 0; right: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    border-radius: 0;
+    border: none;
+  }
+  .popout-scrim { display: none; }
+}
+
 /* Sidebar maestro identity row */
 .sidebar-maestro {
   border-top: 1px solid var(--rule);
@@ -1464,12 +1524,12 @@ body { font-family: var(--ff-ui); }
 .page-pad { padding: 18px 26px 26px; flex: 1; min-height: 0; }
 .page-pad.scroll { overflow: auto; }
 .field-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.types-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 18px 26px 26px; flex: 1; overflow: auto; }
+.types-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 18px 26px 26px; flex: 1; overflow: auto; grid-auto-rows: max-content; align-content: start; }
 
 /* Player detail sheet */
 .player-sheet {
   width: 1080px;
-  max-width: 92%;
+  max-width: 100%;
   max-height: 82%;
   border-radius: 14px;
   overflow: hidden;
@@ -1519,9 +1579,67 @@ body { font-family: var(--ff-ui); }
   .page-pad { padding: 10px 12px 14px; }
   .types-grid { padding: 10px 12px 14px; gap: 10px; }
 
-  /* Tables: horizontal scroll instead of squishing */
-  .panel:has(> .table) { overflow-x: auto; }
-  .table { min-width: 560px; }
+  /* Tables: convert to stacked cards on phone instead of horizontal scroll */
+  .panel:has(> .table) { overflow-x: visible; }
+  .table, .table thead, .table tbody, .table tr, .table th, .table td {
+    display: block;
+    width: auto;
+    min-width: 0;
+  }
+  .table { min-width: 0; width: 100%; border-collapse: separate; border-spacing: 0; }
+  .table thead { display: none; }
+  .table tr {
+    border-top: 1px solid var(--rule);
+    padding: 14px 14px 12px;
+    display: grid;
+    grid-template-columns: 1fr;
+    row-gap: 6px;
+  }
+  .table tr:first-child { border-top: none; }
+  .table tr.is-active { background: var(--accent-soft); }
+  .table td {
+    padding: 0;
+    border: none;
+    white-space: normal;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  /* First cell (name) is the card heading */
+  .table td:first-child {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 2px;
+  }
+  /* Last cell (action buttons) */
+  .table td:last-child {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--rule);
+    display: flex !important;
+    gap: 8px;
+    text-align: left !important;
+  }
+  /* Middle cells render as label · value rows */
+  .table tbody tr td:not(:first-child):not(:last-child) {
+    display: grid !important;
+    grid-template-columns: 84px 1fr;
+    column-gap: 12px;
+    align-items: baseline;
+    font-size: 12.5px;
+  }
+  .table tbody tr td:not(:first-child):not(:last-child)::before {
+    content: attr(data-label);
+    font-family: var(--ff-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-2);
+    line-height: 1.6;
+  }
+  /* Chips inside cells stay nowrap */
+  .table .type-badge, .table .mono.dim { white-space: nowrap; display: inline-block; }
+  /* Buttons in actions row size sensibly */
+  .table td:last-child .btn { flex: 1; justify-content: center; }
 
   /* Dialog wizards: full-screen-ish */
   .dialog {
@@ -1574,6 +1692,18 @@ body { font-family: var(--ff-ui); }
 
   /* Player types: ensure single column with tight padding */
   .types-grid > .panel { padding: 12px !important; }
+  /* Phone: stack the meta row + actions row so long labels don't collide */
+  .types-grid > .panel > .row:first-child {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .types-grid > .panel > .row:last-child {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .types-grid > .panel > .row:last-child > .row {
+    flex-wrap: wrap;
+  }
 
   /* Section heads + page subtitles */
   .section-head .title { font-size: 14px; }
