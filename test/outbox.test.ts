@@ -1,11 +1,10 @@
 import { expect } from 'chai';
 import {
-  setupTestEnv,
   setupSharedEnv,
   teardownTestEnv,
-  withWorkerAndOutboxActivities,
-  withWorkerAndRecruitActivities,
   withWorkerAndRecruitCapture,
+  startOutboxWorker,
+  startRecruitWorker,
   startSession,
   playerMetadata,
   conductorMetadata,
@@ -15,7 +14,6 @@ import {
   allSentMessagesQuery,
   submitOutboxUpdate,
   outboxQuery,
-  updateMetadataSignal,
   attachmentInfoQuery,
   destroyUpdate,
   getClient,
@@ -33,12 +31,30 @@ describe('outbox', function () {
     await teardownTestEnv();
   });
 
-  // ── submitOutboxUpdate basics ──
+  // ────────────────────────────────────────────────────────────────────────
+  // Flavor A — outbox-activities (12 tests share one worker)
+  //
+  // Every test in this block exercises the outbox-dispatch loop without
+  // needing the recruit-side per-host stub set. Sharing one worker across
+  // the whole describe drops 11×~2s of repeat spin-up under contended CI
+  // runners — the heaviest cost #383 P3 audit identified.
+  // ────────────────────────────────────────────────────────────────────────
 
-  describe('submitOutboxUpdate basics', function () {
-    it('returns an entry ID and records entry as pending', async function () {
-      this.timeout(45_000);
-      await withWorkerAndOutboxActivities(async () => {
+  describe('outbox-activities flavor', function () {
+    let stopWorker: () => Promise<void>;
+    before(async function () {
+      this.timeout(60_000);
+      stopWorker = await startOutboxWorker();
+    });
+    after(async function () {
+      await stopWorker();
+    });
+
+    // ── submitOutboxUpdate basics ──
+
+    describe('submitOutboxUpdate basics', function () {
+      it('returns an entry ID and records entry as pending', async function () {
+        this.timeout(45_000);
         const handle = await startSession({
           metadata: playerMetadata({ playerId: 'outbox-basic-1' }),
         });
@@ -59,11 +75,9 @@ describe('outbox', function () {
         await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
-    });
 
-    it('records cue in sentMessages', async function () {
-      this.timeout(45_000);
-      await withWorkerAndOutboxActivities(async () => {
+      it('records cue in sentMessages', async function () {
+        this.timeout(45_000);
         const handle = await startSession({
           metadata: playerMetadata({ playerId: 'outbox-sent-1' }),
         });
@@ -83,14 +97,11 @@ describe('outbox', function () {
       });
     });
 
-  });
+    // ── Outbox cue delivery ──
 
-  // ── Outbox cue delivery ──
-
-  describe('cue delivery', function () {
-    it('delivers a cue message to the target session', async function () {
-      this.timeout(45_000);
-      await withWorkerAndOutboxActivities(async () => {
+    describe('cue delivery', function () {
+      it('delivers a cue message to the target session', async function () {
+        this.timeout(45_000);
         const alice = await startSession({
           metadata: playerMetadata({ playerId: 'alice-cue' }),
         });
@@ -121,14 +132,12 @@ describe('outbox', function () {
         await bob.result();
       });
     });
-  });
 
-  // ── Outbox report delivery ──
+    // ── Outbox report delivery ──
 
-  describe('report delivery', function () {
-    it('delivers a report to the conductor', async function () {
-      this.timeout(45_000);
-      await withWorkerAndOutboxActivities(async () => {
+    describe('report delivery', function () {
+      it('delivers a report to the conductor', async function () {
+        this.timeout(45_000);
         const conductor = await startSession({
           metadata: conductorMetadata(),
         });
@@ -156,14 +165,12 @@ describe('outbox', function () {
         await conductor.result();
       });
     });
-  });
 
-  // ── Outbox stop delivery ──
+    // ── Outbox stop delivery ──
 
-  describe('stop delivery', function () {
-    it('terminates the target session', async function () {
-      this.timeout(45_000);
-      await withWorkerAndOutboxActivities(async () => {
+    describe('stop delivery', function () {
+      it('terminates the target session', async function () {
+        this.timeout(45_000);
         const alice = await startSession({
           metadata: playerMetadata({ playerId: 'alice-stop' }),
         });
@@ -194,14 +201,12 @@ describe('outbox', function () {
         await bob.result();
       });
     });
-  });
 
-  // ── PR-D verb delivery (QA B1/B2/B3) ──
+    // ── PR-D verb delivery (QA B1/B2/B3) ──
 
-  describe('detach delivery (PR-D)', function () {
-    it('dispatches deliverDetach and marks entry delivered', async function () {
-      this.timeout(45_000);
-      await withWorkerAndOutboxActivities(async () => {
+    describe('detach delivery (PR-D)', function () {
+      it('dispatches deliverDetach and marks entry delivered', async function () {
+        this.timeout(45_000);
         const alice = await startSession({ metadata: playerMetadata({ playerId: 'alice-detach' }) });
         const bob = await startSession({ metadata: playerMetadata({ playerId: 'bob-detach' }) });
 
@@ -222,12 +227,10 @@ describe('outbox', function () {
         await bob.result();
       });
     });
-  });
 
-  describe('destroy delivery (PR-D)', function () {
-    it('dispatches deliverDestroy and terminates the target', async function () {
-      this.timeout(45_000);
-      await withWorkerAndOutboxActivities(async () => {
+    describe('destroy delivery (PR-D)', function () {
+      it('dispatches deliverDestroy and terminates the target', async function () {
+        this.timeout(45_000);
         const alice = await startSession({ metadata: playerMetadata({ playerId: 'alice-destroy' }) });
         const bob = await startSession({ metadata: playerMetadata({ playerId: 'bob-destroy' }) });
 
@@ -251,171 +254,12 @@ describe('outbox', function () {
         await bob.result();
       });
     });
-  });
 
-  describe('restart delivery (PR-D)', function () {
-    it('dispatches deliverRestart and marks entry delivered', async function () {
-      this.timeout(45_000);
-      await withWorkerAndRecruitActivities(async () => {
-        const alice = await startSession({ metadata: playerMetadata({ playerId: 'alice-restart' }) });
-        const bob = await startSession({ metadata: playerMetadata({ playerId: 'bob-restart' }) });
+    // ── Failure handling ──
 
-        await alice.executeUpdate(submitOutboxUpdate, {
-          args: [{
-            type: 'restart',
-            targetPlayerId: 'bob-restart',
-            invokerPlayerId: 'alice-restart',
-            fresh: true,
-          }],
-        });
-
-        await sleep(3000);
-
-        const aliceOutbox = await alice.query(outboxQuery);
-        const entry = aliceOutbox.find((e) => e.type === 'restart');
-        expect(entry, 'restart entry exists').to.exist;
-        expect(entry!.status).to.equal('delivered');
-
-        await alice.executeUpdate(destroyUpdate, { args: [{}] });
-        await bob.executeUpdate(destroyUpdate, { args: [{}] });
-        await alice.result();
-        await bob.result();
-      });
-    });
-
-    it('#183 fresh restart regenerates sessionId and persists it to target metadata', async function () {
-      this.timeout(45_000);
-      const spawnInputs: Array<Record<string, unknown>> = [];
-      await withWorkerAndRecruitCapture(spawnInputs, async () => {
-        const ensemble = `fresh-sid-${Date.now()}`;
-        const originalSessionId = 'original-uuid-from-a-failed-spawn';
-
-        const alice = await startSession({
-          metadata: playerMetadata({ playerId: 'alice-fresh-sid', ensemble }),
-        });
-        const bob = await startSession({
-          metadata: playerMetadata({
-            playerId: 'bob-fresh-sid',
-            ensemble,
-            sessionId: originalSessionId,
-          }),
-        });
-
-        // Sanity: bob starts with the original sessionId.
-        const before = await bob.query(getMetadataQuery) as { sessionId?: string };
-        expect(before.sessionId).to.equal(originalSessionId);
-
-        await alice.executeUpdate(submitOutboxUpdate, {
-          args: [{
-            type: 'restart',
-            targetPlayerId: 'bob-fresh-sid',
-            invokerPlayerId: 'alice-fresh-sid',
-            fresh: true,
-          }],
-        });
-
-        await sleep(3000);
-
-        const aliceOutbox = await alice.query(outboxQuery);
-        const entry = aliceOutbox.find((e) => e.type === 'restart');
-        expect(entry, 'restart entry exists').to.exist;
-        expect(entry!.status).to.equal('delivered');
-
-        // The spawn should have received a NEW sessionId, not the collided one.
-        expect(spawnInputs, 'spawnProcess was called').to.have.lengthOf.at.least(1);
-        const spawn = spawnInputs[spawnInputs.length - 1];
-        expect(spawn.sessionId, 'spawn sessionId set').to.be.a('string');
-        expect(spawn.sessionId, 'spawn sessionId regenerated').to.not.equal(originalSessionId);
-        expect(spawn.resume, 'fresh restart does not resume').to.equal(false);
-
-        // Target's metadata should now reflect the new sessionId so future
-        // (non-fresh) restarts resume against the new transcript.
-        const after = await bob.query(getMetadataQuery) as { sessionId?: string };
-        expect(after.sessionId).to.equal(spawn.sessionId);
-        expect(after.sessionId).to.not.equal(originalSessionId);
-
-        await alice.executeUpdate(destroyUpdate, { args: [{}] });
-        await bob.executeUpdate(destroyUpdate, { args: [{}] });
-        await alice.result();
-        await bob.result();
-      });
-    });
-
-    it('#183 non-fresh restart no longer special — also fresh after 17a7858 (#306)', async function () {
-      this.timeout(45_000);
-      // Pre-#306 this case was the inverse of the test above: a non-fresh
-      // restart was supposed to preserve the stored sessionId and pass
-      // `resume: true` so Claude Code could `--resume <uuid>` against the
-      // existing transcript. Commit `17a7858` removed that branch — the
-      // prior spawn's `.jsonl` is not guaranteed to have flushed before the
-      // hard-terminate (Windows `taskkill /T /F` is synchronous), so resume
-      // was failing with "No conversation found with session ID" and
-      // dropping the new terminal to a shell.
-      //
-      // Now `deliverRestart` mints a fresh UUID and passes `resume: false`
-      // on EVERY call regardless of `fresh`. The `fresh` flag's only
-      // remaining effect is gating the Step 5 context-replay signal —
-      // spawn-side state is identical. This test pins that invariant so a
-      // future refactor can't silently re-introduce the `--resume` path.
-      const spawnInputs: Array<Record<string, unknown>> = [];
-      await withWorkerAndRecruitCapture(spawnInputs, async () => {
-        const ensemble = `non-fresh-sid-${Date.now()}`;
-        const originalSessionId = 'stored-uuid-pre-restart';
-
-        const alice = await startSession({
-          metadata: playerMetadata({ playerId: 'alice-non-fresh-sid', ensemble }),
-        });
-        const bob = await startSession({
-          metadata: playerMetadata({
-            playerId: 'bob-non-fresh-sid',
-            ensemble,
-            sessionId: originalSessionId,
-          }),
-        });
-
-        await alice.executeUpdate(submitOutboxUpdate, {
-          args: [{
-            type: 'restart',
-            targetPlayerId: 'bob-non-fresh-sid',
-            invokerPlayerId: 'alice-non-fresh-sid',
-            // no `fresh` — default (context replay still happens, but the
-            // spawn is fresh).
-          }],
-        });
-
-        await sleep(3000);
-
-        const aliceOutbox = await alice.query(outboxQuery);
-        const entry = aliceOutbox.find((e) => e.type === 'restart');
-        expect(entry!.status).to.equal('delivered');
-
-        // Even without `fresh: true`, the spawn gets a NEW sessionId and
-        // resume=false — matches the fresh-restart test above.
-        expect(spawnInputs).to.have.lengthOf.at.least(1);
-        const spawn = spawnInputs[spawnInputs.length - 1];
-        expect(spawn.sessionId, 'spawn sessionId set').to.be.a('string');
-        expect(spawn.sessionId, 'non-fresh restart also regenerates sessionId').to.not.equal(originalSessionId);
-        expect(spawn.resume, 'non-fresh restart no longer resumes').to.equal(false);
-
-        // Metadata is updated to the new sessionId, same as the fresh case.
-        const after = await bob.query(getMetadataQuery) as { sessionId?: string };
-        expect(after.sessionId).to.equal(spawn.sessionId);
-        expect(after.sessionId).to.not.equal(originalSessionId);
-
-        await alice.executeUpdate(destroyUpdate, { args: [{}] });
-        await bob.executeUpdate(destroyUpdate, { args: [{}] });
-        await alice.result();
-        await bob.result();
-      });
-    });
-  });
-
-  // ── Failure handling ──
-
-  describe('failure handling', function () {
-    it('marks entry as failed when target does not exist', async function () {
-      this.timeout(60_000);
-      await withWorkerAndOutboxActivities(async () => {
+    describe('failure handling', function () {
+      it('marks entry as failed when target does not exist', async function () {
+        this.timeout(60_000);
         const handle = await startSession({
           metadata: playerMetadata({ playerId: 'outbox-fail-1' }),
         });
@@ -443,14 +287,12 @@ describe('outbox', function () {
         await handle.result();
       });
     });
-  });
 
-  // ── Multiple entries ──
+    // ── Multiple entries ──
 
-  describe('outboxQuery returns all entries', function () {
-    it('returns entries of different types', async function () {
-      this.timeout(45_000);
-      await withWorkerAndOutboxActivities(async () => {
+    describe('outboxQuery returns all entries', function () {
+      it('returns entries of different types', async function () {
+        this.timeout(45_000);
         const handle = await startSession({
           metadata: playerMetadata({ playerId: 'outbox-multi-1' }),
         });
@@ -481,14 +323,199 @@ describe('outbox', function () {
         await handle.result();
       });
     });
+
+    // ── Stop delivery with conductor notification ──
+
+    describe('stop delivery (conductor notification)', function () {
+      it('notifies conductor with a system message when a session is terminated', async function () {
+        this.timeout(45_000);
+        const ensemble = `stop-cond-${Date.now()}`;
+
+        const conductor = await startSession({
+          metadata: conductorMetadata({ ensemble }),
+        });
+        const target = await startSession({
+          metadata: playerMetadata({ playerId: 'stop-target', ensemble }),
+        });
+        const stopper = await startSession({
+          metadata: playerMetadata({ playerId: 'the-stopper', ensemble }),
+        });
+
+        await stopper.executeUpdate(submitOutboxUpdate, {
+          args: [{ type: 'stop', targetPlayerId: 'stop-target' }],
+        });
+
+        await sleep(2000);
+
+        // Target's phase transitions to `gone` via the stop-delivery's destroyUpdate.
+        // Read from the `ClaudeTempoAttachmentState` search attribute — survives completion.
+        const targetDesc = await target.describe();
+        const targetPhase = (targetDesc.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined)?.[0];
+        expect(targetPhase).to.equal('gone');
+
+        // Conductor should receive the system notification about the termination
+        const conductorMessages = await conductor.query(allMessagesQuery);
+        const notification = conductorMessages.find(
+          (m) => m.from === 'system'
+            && m.text.includes('stop-target')
+            && m.text.includes('terminated'),
+        );
+        expect(notification).to.exist;
+
+        await stopper.executeUpdate(destroyUpdate, { args: [{}] });
+        await conductor.executeUpdate(destroyUpdate, { args: [{}] });
+        await stopper.result();
+        await conductor.result();
+        // target already terminated — just await completion
+        await target.result();
+      });
+    });
+
+    // ── Report delivery failure (no conductor) ──
+
+    describe('report delivery failure', function () {
+      it('marks report entry as failed when no conductor is running', async function () {
+        this.timeout(60_000);
+        // Use a unique ensemble with no conductor
+        const ensemble = `no-cond-${Date.now()}`;
+
+        const handle = await startSession({
+          metadata: playerMetadata({ playerId: 'lonely-reporter', ensemble }),
+        });
+
+        await handle.executeUpdate(submitOutboxUpdate, {
+          args: [{ type: 'report', text: 'orphan report', reportType: 'result' }],
+        });
+
+        // Poll until the outbox entry transitions to 'failed'.
+        // deliverReport retries up to 3 times (~4s total) before giving up.
+        for (let i = 0; i < 40; i++) {
+          await sleep(1000);
+          const entries = await handle.query(outboxQuery);
+          const entry = entries.find((e) => e.type === 'report');
+          if (entry && entry.status === 'failed') break;
+        }
+
+        const entries = await handle.query(outboxQuery);
+        const entry = entries.find((e) => e.type === 'report');
+        expect(entry).to.exist;
+        expect(entry!.status).to.equal('failed');
+        expect(entry!.error).to.be.a('string');
+        expect(entry!.error!.length).to.be.greaterThan(0);
+
+        await handle.executeUpdate(destroyUpdate, { args: [{}] });
+        await handle.result();
+      });
+    });
+
+    // ── broadcast delivery (fan-out) ──
+
+    describe('broadcast delivery', function () {
+      it('delivers a broadcast message to all 3 target sessions via outbox fan-out', async function () {
+        this.timeout(45_000);
+        const ensemble = `broadcast-${Date.now()}`;
+
+        const sender = await startSession({
+          metadata: playerMetadata({ playerId: 'broadcaster', ensemble }),
+        });
+        const alice = await startSession({
+          metadata: playerMetadata({ playerId: 'alice-bc', ensemble }),
+        });
+        const bob = await startSession({
+          metadata: playerMetadata({ playerId: 'bob-bc', ensemble }),
+        });
+        const carol = await startSession({
+          metadata: playerMetadata({ playerId: 'carol-bc', ensemble }),
+        });
+
+        // Submit 3 cue outbox entries (simulating what the broadcast tool does)
+        for (const target of ['alice-bc', 'bob-bc', 'carol-bc']) {
+          await sender.executeUpdate(submitOutboxUpdate, {
+            args: [{ type: 'cue', targetPlayerId: target, message: 'broadcast hello' }],
+          });
+        }
+
+        // Wait for dispatch loop to deliver all
+        await sleep(3000);
+
+        // Verify all 3 recipients received the message
+        for (const [name, handle] of [['alice-bc', alice], ['bob-bc', bob], ['carol-bc', carol]] as const) {
+          const msgs = await handle.query(pendingMessagesQuery);
+          const match = msgs.find((m) => m.from === 'broadcaster' && m.text === 'broadcast hello');
+          expect(match, `${name} should have received broadcast`).to.exist;
+        }
+
+        // Verify all outbox entries are delivered
+        const outbox = await sender.query(outboxQuery);
+        const cueEntries = outbox.filter((e) => e.type === 'cue');
+        expect(cueEntries).to.have.length(3);
+        for (const entry of cueEntries) {
+          expect(entry.status).to.equal('delivered');
+        }
+
+        // Clean up
+        await sender.executeUpdate(destroyUpdate, { args: [{}] });
+        await alice.executeUpdate(destroyUpdate, { args: [{}] });
+        await bob.executeUpdate(destroyUpdate, { args: [{}] });
+        await carol.executeUpdate(destroyUpdate, { args: [{}] });
+        await sender.result();
+        await alice.result();
+        await bob.result();
+        await carol.result();
+      });
+    });
   });
 
-  // ── Recruit delivery ──
+  // ────────────────────────────────────────────────────────────────────────
+  // Flavor B — recruit-activities (3 tests share one worker)
+  //
+  // These tests need the per-host stub for `spawnProcess` (recruit pipeline
+  // routes activities to `claude-tempo-{hostname}`). They share a single
+  // recruit-stub worker the same way Flavor A shares its outbox-stub one.
+  // ────────────────────────────────────────────────────────────────────────
 
-  describe('recruit delivery', function () {
-    it('pre-creates session workflow with initial message, playerType, and recruitedBy', async function () {
-      this.timeout(45_000);
-      await withWorkerAndRecruitActivities(async () => {
+  describe('recruit-activities flavor', function () {
+    let stopWorker: () => Promise<void>;
+    before(async function () {
+      this.timeout(60_000);
+      stopWorker = await startRecruitWorker();
+    });
+    after(async function () {
+      await stopWorker();
+    });
+
+    describe('restart delivery (PR-D)', function () {
+      it('dispatches deliverRestart and marks entry delivered', async function () {
+        this.timeout(45_000);
+        const alice = await startSession({ metadata: playerMetadata({ playerId: 'alice-restart' }) });
+        const bob = await startSession({ metadata: playerMetadata({ playerId: 'bob-restart' }) });
+
+        await alice.executeUpdate(submitOutboxUpdate, {
+          args: [{
+            type: 'restart',
+            targetPlayerId: 'bob-restart',
+            invokerPlayerId: 'alice-restart',
+            fresh: true,
+          }],
+        });
+
+        await sleep(3000);
+
+        const aliceOutbox = await alice.query(outboxQuery);
+        const entry = aliceOutbox.find((e) => e.type === 'restart');
+        expect(entry, 'restart entry exists').to.exist;
+        expect(entry!.status).to.equal('delivered');
+
+        await alice.executeUpdate(destroyUpdate, { args: [{}] });
+        await bob.executeUpdate(destroyUpdate, { args: [{}] });
+        await alice.result();
+        await bob.result();
+      });
+    });
+
+    describe('recruit delivery', function () {
+      it('pre-creates session workflow with initial message, playerType, and recruitedBy', async function () {
+        this.timeout(45_000);
         const ensemble = `recruit-${Date.now()}`;
 
         // Pass temporalConfig so startRecruitedSession creates the recruited workflow
@@ -551,11 +578,9 @@ describe('outbox', function () {
         await recruitedHandle.executeUpdate(destroyUpdate, { args: [{}] });
         try { await recruitedHandle.result(); } catch { /* cleanup */ }
       });
-    });
 
-    it('recruit without initialMessage starts session with empty inbox', async function () {
-      this.timeout(45_000);
-      await withWorkerAndRecruitActivities(async () => {
+      it('recruit without initialMessage starts session with empty inbox', async function () {
+        this.timeout(45_000);
         const ensemble = `recruit2-${Date.now()}`;
 
         const handle = await startSession({
@@ -597,201 +622,197 @@ describe('outbox', function () {
         try { await recruitedHandle.result(); } catch { /* cleanup */ }
       });
     });
-
-    it('forwards claudeBin from outbox entry to spawnProcess', async function () {
-      this.timeout(45_000);
-      const spawnInputs: Array<Record<string, unknown>> = [];
-      await withWorkerAndRecruitCapture(spawnInputs, async () => {
-        const ensemble = `recruit-bin-${Date.now()}`;
-
-        const handle = await startSession({
-          metadata: playerMetadata({ playerId: 'recruiter-bin', ensemble }),
-          temporalConfig: {
-            temporalAddress: '',
-            temporalNamespace: 'default',
-            taskQueue: TASK_QUEUE,
-          },
-        });
-
-        await handle.executeUpdate(submitOutboxUpdate, {
-          args: [{
-            type: 'recruit',
-            targetName: 'bin-player',
-            workDir: '/tmp/test',
-            isConductor: false,
-            agent: 'claude',
-            claudeBin: '/custom/path/to/claude',
-          }],
-        });
-
-        // Wait for dispatch loop to process the recruit entry
-        await sleep(3000);
-
-        // Outbox entry should be delivered
-        const outboxEntries = await handle.query(outboxQuery);
-        const recruitEntry = outboxEntries.find((e) => e.type === 'recruit');
-        expect(recruitEntry).to.exist;
-        expect(recruitEntry!.status).to.equal('delivered');
-
-        // spawnProcess should have been called with claudeBin
-        expect(spawnInputs).to.have.lengthOf(1);
-        expect(spawnInputs[0].claudeBin).to.equal('/custom/path/to/claude');
-
-        // Cleanup
-        await handle.executeUpdate(destroyUpdate, { args: [{}] });
-        await handle.result();
-        const recruitedHandle = getClient().workflow.getHandle(
-          `claude-session-${ensemble}-bin-player`,
-        );
-        await recruitedHandle.executeUpdate(destroyUpdate, { args: [{}] });
-        try { await recruitedHandle.result(); } catch { /* cleanup */ }
-      });
-    });
   });
 
-  // ── Stop delivery with conductor notification ──
+  // ────────────────────────────────────────────────────────────────────────
+  // Flavor C — recruit-capture (3 tests stay per-it)
+  //
+  // Each of these tests needs a per-test `spawnInputs[]` closure passed
+  // through `withWorkerAndRecruitCapture` so the test can assert on the
+  // exact arguments passed to `spawnProcess`. Promoting to a shared worker
+  // would require sharing the closure — which loses isolation between
+  // tests and risks cross-test contamination — for ~6s residual savings.
+  // Worth keeping per-it.
+  // ────────────────────────────────────────────────────────────────────────
 
-  describe('stop delivery (conductor notification)', function () {
-    it('notifies conductor with a system message when a session is terminated', async function () {
-      this.timeout(45_000);
-      await withWorkerAndOutboxActivities(async () => {
-        const ensemble = `stop-cond-${Date.now()}`;
+  describe('recruit-capture flavor', function () {
+    describe('restart delivery (PR-D)', function () {
+      it('#183 fresh restart regenerates sessionId and persists it to target metadata', async function () {
+        this.timeout(45_000);
+        const spawnInputs: Array<Record<string, unknown>> = [];
+        await withWorkerAndRecruitCapture(spawnInputs, async () => {
+          const ensemble = `fresh-sid-${Date.now()}`;
+          const originalSessionId = 'original-uuid-from-a-failed-spawn';
 
-        const conductor = await startSession({
-          metadata: conductorMetadata({ ensemble }),
-        });
-        const target = await startSession({
-          metadata: playerMetadata({ playerId: 'stop-target', ensemble }),
-        });
-        const stopper = await startSession({
-          metadata: playerMetadata({ playerId: 'the-stopper', ensemble }),
-        });
-
-        await stopper.executeUpdate(submitOutboxUpdate, {
-          args: [{ type: 'stop', targetPlayerId: 'stop-target' }],
-        });
-
-        await sleep(2000);
-
-        // Target's phase transitions to `gone` via the stop-delivery's destroyUpdate.
-        // Read from the `ClaudeTempoAttachmentState` search attribute — survives completion.
-        const targetDesc = await target.describe();
-        const targetPhase = (targetDesc.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined)?.[0];
-        expect(targetPhase).to.equal('gone');
-
-        // Conductor should receive the system notification about the termination
-        const conductorMessages = await conductor.query(allMessagesQuery);
-        const notification = conductorMessages.find(
-          (m) => m.from === 'system'
-            && m.text.includes('stop-target')
-            && m.text.includes('terminated'),
-        );
-        expect(notification).to.exist;
-
-        await stopper.executeUpdate(destroyUpdate, { args: [{}] });
-        await conductor.executeUpdate(destroyUpdate, { args: [{}] });
-        await stopper.result();
-        await conductor.result();
-        // target already terminated — just await completion
-        await target.result();
-      });
-    });
-  });
-
-  // ── Report delivery failure (no conductor) ──
-
-  describe('report delivery failure', function () {
-    it('marks report entry as failed when no conductor is running', async function () {
-      this.timeout(60_000);
-      await withWorkerAndOutboxActivities(async () => {
-        // Use a unique ensemble with no conductor
-        const ensemble = `no-cond-${Date.now()}`;
-
-        const handle = await startSession({
-          metadata: playerMetadata({ playerId: 'lonely-reporter', ensemble }),
-        });
-
-        await handle.executeUpdate(submitOutboxUpdate, {
-          args: [{ type: 'report', text: 'orphan report', reportType: 'result' }],
-        });
-
-        // Poll until the outbox entry transitions to 'failed'.
-        // deliverReport retries up to 3 times (~4s total) before giving up.
-        for (let i = 0; i < 40; i++) {
-          await sleep(1000);
-          const entries = await handle.query(outboxQuery);
-          const entry = entries.find((e) => e.type === 'report');
-          if (entry && entry.status === 'failed') break;
-        }
-
-        const entries = await handle.query(outboxQuery);
-        const entry = entries.find((e) => e.type === 'report');
-        expect(entry).to.exist;
-        expect(entry!.status).to.equal('failed');
-        expect(entry!.error).to.be.a('string');
-        expect(entry!.error!.length).to.be.greaterThan(0);
-
-        await handle.executeUpdate(destroyUpdate, { args: [{}] });
-        await handle.result();
-      });
-    });
-  });
-
-  // ── broadcast delivery (fan-out) ──
-
-  describe('broadcast delivery', function () {
-    it('delivers a broadcast message to all 3 target sessions via outbox fan-out', async function () {
-      this.timeout(45_000);
-      await withWorkerAndOutboxActivities(async () => {
-        const ensemble = `broadcast-${Date.now()}`;
-
-        const sender = await startSession({
-          metadata: playerMetadata({ playerId: 'broadcaster', ensemble }),
-        });
-        const alice = await startSession({
-          metadata: playerMetadata({ playerId: 'alice-bc', ensemble }),
-        });
-        const bob = await startSession({
-          metadata: playerMetadata({ playerId: 'bob-bc', ensemble }),
-        });
-        const carol = await startSession({
-          metadata: playerMetadata({ playerId: 'carol-bc', ensemble }),
-        });
-
-        // Submit 3 cue outbox entries (simulating what the broadcast tool does)
-        for (const target of ['alice-bc', 'bob-bc', 'carol-bc']) {
-          await sender.executeUpdate(submitOutboxUpdate, {
-            args: [{ type: 'cue', targetPlayerId: target, message: 'broadcast hello' }],
+          const alice = await startSession({
+            metadata: playerMetadata({ playerId: 'alice-fresh-sid', ensemble }),
           });
-        }
+          const bob = await startSession({
+            metadata: playerMetadata({
+              playerId: 'bob-fresh-sid',
+              ensemble,
+              sessionId: originalSessionId,
+            }),
+          });
 
-        // Wait for dispatch loop to deliver all
-        await sleep(3000);
+          // Sanity: bob starts with the original sessionId.
+          const before = await bob.query(getMetadataQuery) as { sessionId?: string };
+          expect(before.sessionId).to.equal(originalSessionId);
 
-        // Verify all 3 recipients received the message
-        for (const [name, handle] of [['alice-bc', alice], ['bob-bc', bob], ['carol-bc', carol]] as const) {
-          const msgs = await handle.query(pendingMessagesQuery);
-          const match = msgs.find((m) => m.from === 'broadcaster' && m.text === 'broadcast hello');
-          expect(match, `${name} should have received broadcast`).to.exist;
-        }
+          await alice.executeUpdate(submitOutboxUpdate, {
+            args: [{
+              type: 'restart',
+              targetPlayerId: 'bob-fresh-sid',
+              invokerPlayerId: 'alice-fresh-sid',
+              fresh: true,
+            }],
+          });
 
-        // Verify all outbox entries are delivered
-        const outbox = await sender.query(outboxQuery);
-        const cueEntries = outbox.filter((e) => e.type === 'cue');
-        expect(cueEntries).to.have.length(3);
-        for (const entry of cueEntries) {
-          expect(entry.status).to.equal('delivered');
-        }
+          await sleep(3000);
 
-        // Clean up
-        await sender.executeUpdate(destroyUpdate, { args: [{}] });
-        await alice.executeUpdate(destroyUpdate, { args: [{}] });
-        await bob.executeUpdate(destroyUpdate, { args: [{}] });
-        await carol.executeUpdate(destroyUpdate, { args: [{}] });
-        await sender.result();
-        await alice.result();
-        await bob.result();
-        await carol.result();
+          const aliceOutbox = await alice.query(outboxQuery);
+          const entry = aliceOutbox.find((e) => e.type === 'restart');
+          expect(entry, 'restart entry exists').to.exist;
+          expect(entry!.status).to.equal('delivered');
+
+          // The spawn should have received a NEW sessionId, not the collided one.
+          expect(spawnInputs, 'spawnProcess was called').to.have.lengthOf.at.least(1);
+          const spawn = spawnInputs[spawnInputs.length - 1];
+          expect(spawn.sessionId, 'spawn sessionId set').to.be.a('string');
+          expect(spawn.sessionId, 'spawn sessionId regenerated').to.not.equal(originalSessionId);
+          expect(spawn.resume, 'fresh restart does not resume').to.equal(false);
+
+          // Target's metadata should now reflect the new sessionId so future
+          // (non-fresh) restarts resume against the new transcript.
+          const after = await bob.query(getMetadataQuery) as { sessionId?: string };
+          expect(after.sessionId).to.equal(spawn.sessionId);
+          expect(after.sessionId).to.not.equal(originalSessionId);
+
+          await alice.executeUpdate(destroyUpdate, { args: [{}] });
+          await bob.executeUpdate(destroyUpdate, { args: [{}] });
+          await alice.result();
+          await bob.result();
+        });
+      });
+
+      it('#183 non-fresh restart no longer special — also fresh after 17a7858 (#306)', async function () {
+        this.timeout(45_000);
+        // Pre-#306 this case was the inverse of the test above: a non-fresh
+        // restart was supposed to preserve the stored sessionId and pass
+        // `resume: true` so Claude Code could `--resume <uuid>` against the
+        // existing transcript. Commit `17a7858` removed that branch — the
+        // prior spawn's `.jsonl` is not guaranteed to have flushed before the
+        // hard-terminate (Windows `taskkill /T /F` is synchronous), so resume
+        // was failing with "No conversation found with session ID" and
+        // dropping the new terminal to a shell.
+        //
+        // Now `deliverRestart` mints a fresh UUID and passes `resume: false`
+        // on EVERY call regardless of `fresh`. The `fresh` flag's only
+        // remaining effect is gating the Step 5 context-replay signal —
+        // spawn-side state is identical. This test pins that invariant so a
+        // future refactor can't silently re-introduce the `--resume` path.
+        const spawnInputs: Array<Record<string, unknown>> = [];
+        await withWorkerAndRecruitCapture(spawnInputs, async () => {
+          const ensemble = `non-fresh-sid-${Date.now()}`;
+          const originalSessionId = 'stored-uuid-pre-restart';
+
+          const alice = await startSession({
+            metadata: playerMetadata({ playerId: 'alice-non-fresh-sid', ensemble }),
+          });
+          const bob = await startSession({
+            metadata: playerMetadata({
+              playerId: 'bob-non-fresh-sid',
+              ensemble,
+              sessionId: originalSessionId,
+            }),
+          });
+
+          await alice.executeUpdate(submitOutboxUpdate, {
+            args: [{
+              type: 'restart',
+              targetPlayerId: 'bob-non-fresh-sid',
+              invokerPlayerId: 'alice-non-fresh-sid',
+              // no `fresh` — default (context replay still happens, but the
+              // spawn is fresh).
+            }],
+          });
+
+          await sleep(3000);
+
+          const aliceOutbox = await alice.query(outboxQuery);
+          const entry = aliceOutbox.find((e) => e.type === 'restart');
+          expect(entry!.status).to.equal('delivered');
+
+          // Even without `fresh: true`, the spawn gets a NEW sessionId and
+          // resume=false — matches the fresh-restart test above.
+          expect(spawnInputs).to.have.lengthOf.at.least(1);
+          const spawn = spawnInputs[spawnInputs.length - 1];
+          expect(spawn.sessionId, 'spawn sessionId set').to.be.a('string');
+          expect(spawn.sessionId, 'non-fresh restart also regenerates sessionId').to.not.equal(originalSessionId);
+          expect(spawn.resume, 'non-fresh restart no longer resumes').to.equal(false);
+
+          // Metadata is updated to the new sessionId, same as the fresh case.
+          const after = await bob.query(getMetadataQuery) as { sessionId?: string };
+          expect(after.sessionId).to.equal(spawn.sessionId);
+          expect(after.sessionId).to.not.equal(originalSessionId);
+
+          await alice.executeUpdate(destroyUpdate, { args: [{}] });
+          await bob.executeUpdate(destroyUpdate, { args: [{}] });
+          await alice.result();
+          await bob.result();
+        });
+      });
+    });
+
+    describe('recruit delivery', function () {
+      it('forwards claudeBin from outbox entry to spawnProcess', async function () {
+        this.timeout(45_000);
+        const spawnInputs: Array<Record<string, unknown>> = [];
+        await withWorkerAndRecruitCapture(spawnInputs, async () => {
+          const ensemble = `recruit-bin-${Date.now()}`;
+
+          const handle = await startSession({
+            metadata: playerMetadata({ playerId: 'recruiter-bin', ensemble }),
+            temporalConfig: {
+              temporalAddress: '',
+              temporalNamespace: 'default',
+              taskQueue: TASK_QUEUE,
+            },
+          });
+
+          await handle.executeUpdate(submitOutboxUpdate, {
+            args: [{
+              type: 'recruit',
+              targetName: 'bin-player',
+              workDir: '/tmp/test',
+              isConductor: false,
+              agent: 'claude',
+              claudeBin: '/custom/path/to/claude',
+            }],
+          });
+
+          // Wait for dispatch loop to process the recruit entry
+          await sleep(3000);
+
+          // Outbox entry should be delivered
+          const outboxEntries = await handle.query(outboxQuery);
+          const recruitEntry = outboxEntries.find((e) => e.type === 'recruit');
+          expect(recruitEntry).to.exist;
+          expect(recruitEntry!.status).to.equal('delivered');
+
+          // spawnProcess should have been called with claudeBin
+          expect(spawnInputs).to.have.lengthOf(1);
+          expect(spawnInputs[0].claudeBin).to.equal('/custom/path/to/claude');
+
+          // Cleanup
+          await handle.executeUpdate(destroyUpdate, { args: [{}] });
+          await handle.result();
+          const recruitedHandle = getClient().workflow.getHandle(
+            `claude-session-${ensemble}-bin-player`,
+          );
+          await recruitedHandle.executeUpdate(destroyUpdate, { args: [{}] });
+          try { await recruitedHandle.result(); } catch { /* cleanup */ }
+        });
       });
     });
   });
