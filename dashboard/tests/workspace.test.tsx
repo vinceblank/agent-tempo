@@ -4,7 +4,7 @@
  * conductor-derivation contract (#358).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from 'react-router-dom';
 import { createDashboardMemoryRouter } from '../src/router';
@@ -135,5 +135,72 @@ describe('Workspace screen', () => {
       expect(screen.getByRole('alert')).toBeInTheDocument();
     });
     expect(screen.getByTestId('error-workspace-demo').textContent).toMatch(/snapshot-down/);
+  });
+
+  // ── PR-C3 mobile shell wiring ───────────────────────────────────────
+
+  describe('mobile shell (PR-C3)', () => {
+    function makeMobileMock() {
+      return new MockDashboardClient({
+        snapshot: makeSnapshot({
+          ensemble: 'demo',
+          players: [
+            makePlayer({ playerId: 'tempo-conductor', isConductor: true, phase: 'attached' }),
+            makePlayer({ playerId: 'tempo-eng', phase: 'attached' }),
+            makePlayer({ playerId: 'tempo-qa', phase: 'awaiting' }),
+          ],
+        }),
+      });
+    }
+
+    it('pushes lineup + 4-pill status into PhoneAppBar via useScreenPhoneAppBar', async () => {
+      renderWorkspace(makeMobileMock());
+      await screen.findByTestId('roster');
+
+      // PhoneAppBar's status row reflects Workspace's derived counts:
+      // 2 attached → "2 active", 1 awaiting → "1 idle", 0 detached.
+      const status = await screen.findByTestId('phone-appbar-status');
+      expect(status.textContent).toMatch(/2 active/);
+      expect(status.textContent).toMatch(/1 idle/);
+      // Detached zero → pill omitted (PhoneAppBar's status-row behaviour).
+      expect(status.textContent).not.toMatch(/detached/);
+    });
+
+    it('the PhoneAppBar action button shares state with the desktop side-toggle', async () => {
+      renderWorkspace(makeMobileMock());
+      await screen.findByTestId('roster');
+
+      // showSide defaults true, so the action button lands `is-active`.
+      const action = screen.getByTestId('phone-appbar-action');
+      const desktopToggle = screen.getByTestId('workspace-side-toggle');
+      expect(action.className).toMatch(/\bis-active\b/);
+      expect(desktopToggle.className).toMatch(/\bis-active\b/);
+      expect(screen.getByTestId('workspace-side')).toBeInTheDocument();
+
+      // Tapping the phone action button hides the side panel + flips
+      // BOTH buttons' is-active class (they read the same React state).
+      fireEvent.click(action);
+      expect(action.className).not.toMatch(/\bis-active\b/);
+      expect(desktopToggle.className).not.toMatch(/\bis-active\b/);
+      expect(screen.queryByTestId('workspace-side')).not.toBeInTheDocument();
+
+      // And the desktop toggle reopens it for both surfaces.
+      fireEvent.click(desktopToggle);
+      expect(action.className).toMatch(/\bis-active\b/);
+      expect(screen.getByTestId('workspace-side')).toBeInTheDocument();
+    });
+
+    it('the bottom-sheet scrim closes the side panel when tapped', async () => {
+      renderWorkspace(makeMobileMock());
+      await screen.findByTestId('roster');
+
+      // Scrim renders alongside the side panel — `.ws-side-scrim` is
+      // `display: none` on desktop via components.css line 389, but the
+      // element is in the DOM so the click handler is testable here
+      // (jsdom doesn't honour container queries either way).
+      const scrim = screen.getByTestId('workspace-side-scrim');
+      fireEvent.click(scrim);
+      expect(screen.queryByTestId('workspace-side')).not.toBeInTheDocument();
+    });
   });
 });

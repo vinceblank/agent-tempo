@@ -61,7 +61,7 @@ import {
 import { useLocation, useParams } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { PageHeader } from './PageHeader';
-import { PhoneAppBar } from './PhoneAppBar';
+import { PhoneAppBar, type PhoneAppBarStatus } from './PhoneAppBar';
 import { PhoneTabBar } from './PhoneTabBar';
 import { EnsembleSwitcher } from './EnsembleSwitcher';
 
@@ -115,6 +115,62 @@ export function useScreenPageHeader(render: PageHeaderRender): void {
   }, [render, setRender]);
 }
 
+/**
+ * Per-screen PhoneAppBar configuration the Workspace screen pushes via
+ * {@link useScreenPhoneAppBar}. AppShell merges the override on top of
+ * its own `activeEnsemble` + `onMenu` (the hamburger always opens the
+ * EnsembleSwitcher) and passes the result to PhoneAppBar.
+ *
+ * Excludes `activeEnsemble` (AppShell owns it from `useParams`) and
+ * `onMenu` (AppShell owns the switcher state). All other PhoneAppBar
+ * props are forwardable so screens can light up the lineup kicker, the
+ * 4-pill status row, and the right-button action toggle.
+ */
+export interface PhoneAppBarOverride {
+  lineup?: string;
+  status?: PhoneAppBarStatus;
+  onAction?: () => void;
+  actionIcon?: ReactNode;
+  actionLabel?: string;
+  actionActive?: boolean;
+}
+
+type PhoneAppBarSlotState = PhoneAppBarOverride | null;
+interface PhoneAppBarSlotApi {
+  setOverride: (override: PhoneAppBarOverride | null) => void;
+}
+const PhoneAppBarSlotContext = createContext<PhoneAppBarSlotApi>({
+  setOverride: () => {},
+});
+
+/**
+ * Push per-screen props into the AppShell's PhoneAppBar (the bar
+ * AppShell renders for the ≤520px viewport). Workspace uses this to
+ * light up the lineup kicker + status row + roster-toggle action button.
+ *
+ * Wrap the override object in `useMemo` — the slot does identity-gated
+ * updates so a stable reference avoids re-renders when the parent
+ * re-renders for unrelated reasons.
+ *
+ * No-ops outside an AppShell (component tests rendering screens
+ * standalone).
+ *
+ * Note: takes the override object directly (not a render-fn closure
+ * like {@link useScreenPageHeader}). The asymmetry is deliberate —
+ * PhoneAppBar is AppShell-only (not screen-swappable like PageHeader,
+ * which Workspace replaces inline), so the slot's value is always a
+ * small config bag rather than a render fn. Sticking to a plain object
+ * keeps the call site simpler at the cost of consistency with the
+ * sibling slot.
+ */
+export function useScreenPhoneAppBar(override: PhoneAppBarOverride): void {
+  const { setOverride } = useContext(PhoneAppBarSlotContext);
+  useEffect(() => {
+    setOverride(override);
+    return () => setOverride(null);
+  }, [override, setOverride]);
+}
+
 export function AppShell({ children }: AppShellProps) {
   const location = useLocation();
   const isWorkspace = location.pathname.startsWith('/ensemble/');
@@ -135,10 +191,29 @@ export function AppShell({ children }: AppShellProps) {
       return { render };
     });
   }, []);
-  const api = useMemo(() => ({ setRender }), [setRender]);
+  const headerApi = useMemo(() => ({ setRender }), [setRender]);
+
+  // Phone-app-bar override slot — same identity-gated pattern as the
+  // header slot so a redundant `setOverride(sameObj)` doesn't churn.
+  const [phoneOverride, setPhoneOverride] = useState<PhoneAppBarSlotState>(null);
+  const setPhoneOverrideStable = useCallback(
+    (next: PhoneAppBarOverride | null) => {
+      setPhoneOverride((prev) => {
+        if (next === null) return prev === null ? prev : null;
+        if (prev === next) return prev;
+        return next;
+      });
+    },
+    [],
+  );
+  const phoneApi = useMemo(
+    () => ({ setOverride: setPhoneOverrideStable }),
+    [setPhoneOverrideStable],
+  );
 
   return (
-    <PageHeaderSlotContext.Provider value={api}>
+    <PageHeaderSlotContext.Provider value={headerApi}>
+     <PhoneAppBarSlotContext.Provider value={phoneApi}>
       <div className="artboard-body">
         <div
           className={'app-shell' + (isWorkspace ? ' app-shell--workspace' : '')}
@@ -148,6 +223,12 @@ export function AppShell({ children }: AppShellProps) {
           <PhoneAppBar
             activeEnsemble={activeEnsemble}
             onMenu={() => setSwitcherOpen(true)}
+            lineup={phoneOverride?.lineup}
+            status={phoneOverride?.status}
+            onAction={phoneOverride?.onAction}
+            actionIcon={phoneOverride?.actionIcon}
+            actionLabel={phoneOverride?.actionLabel}
+            actionActive={phoneOverride?.actionActive}
           />
           <main className="main" data-testid="app-shell-main">
             {isWorkspace ? (
@@ -183,6 +264,7 @@ export function AppShell({ children }: AppShellProps) {
           />
         </div>
       </div>
+     </PhoneAppBarSlotContext.Provider>
     </PageHeaderSlotContext.Provider>
   );
 }

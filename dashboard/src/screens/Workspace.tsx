@@ -48,7 +48,7 @@
  *         `.page-tempo` / `.panel.chat` / `.panel-head` / `.event-row` /
  *         `.kv` / `.side-toggle` / `.composer*`.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Outlet,
   Link,
@@ -70,6 +70,7 @@ import { MessageInput } from '../components/chat/MessageInput';
 import { RosterItem } from '../components/RosterItem';
 import { TempoStrip } from '../components/tempo/TempoStrip';
 import { PageHeader } from '../components/PageHeader';
+import { useScreenPhoneAppBar, type PhoneAppBarOverride } from '../components/AppShell';
 
 /**
  * Toy series for the TempoStrip while real bucketing isn't on the wire.
@@ -151,6 +152,33 @@ export function Workspace() {
   const detached = players.filter(
     (p) => p.phase === 'draining' || p.phase === 'detached',
   ).length;
+
+  // ── Mobile shell (PR-C3 of #389) ──
+  //
+  // Push a PhoneAppBar override into AppShell's slot so the ≤520px bar
+  // shows the workspace's lineup kicker + 4-pill status row, and routes
+  // the right-button tap to the same `setShowSide` toggle the desktop
+  // side-toggle uses. The action button mirrors the desktop people-glyph
+  // visually and shares the `is-active` treatment, so the same React
+  // state drives both surfaces in lockstep.
+  //
+  // Uptime is `'—'` until Task #15 lands per-ensemble msgs/minute
+  // aggregation (matching the audit's "graceful-degrade" rule for
+  // tempo/uptime/description). Once the wire ships, swap to a derived
+  // value here.
+  const toggleSide = useCallback(() => setShowSide((s) => !s), []);
+  const phoneAppBarOverride = useMemo<PhoneAppBarOverride>(
+    () => ({
+      lineup: 'tempo-dev-team',
+      status: { active, idle, detached, uptime: '—' },
+      onAction: toggleSide,
+      actionIcon: <PeopleGlyph />,
+      actionLabel: showSide ? 'Hide roster' : 'Show roster, events, schedules',
+      actionActive: showSide,
+    }),
+    [active, idle, detached, showSide, toggleSide],
+  );
+  useScreenPhoneAppBar(phoneAppBarOverride);
 
   if (!ensemble) {
     return (
@@ -282,6 +310,19 @@ export function Workspace() {
       </div>
 
       <div className={'workspace' + (showSide ? '' : ' workspace-collapsed')}>
+        {/* Phone-only scrim behind the bottom-sheet variant of
+          * `.workspace-side`. CSS hides this on desktop (`display: none`
+          * in components.css line 389) and shows it on ≤520px (line 1111)
+          * — the `onClick` is wired regardless so the scrim is dismissible
+          * the moment the @container query flips it visible. */}
+        {showSide && (
+          <div
+            className="ws-side-scrim"
+            data-testid="workspace-side-scrim"
+            onClick={() => setShowSide(false)}
+            aria-hidden="true"
+          />
+        )}
         <section className="workspace-main">
           <div className="panel chat" style={{ flex: 1, minHeight: 0 }}>
             <div className="panel-head">
