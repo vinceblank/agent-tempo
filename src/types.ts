@@ -739,6 +739,21 @@ export interface MaestroPlayerInfo {
   playerType?: string;
   /** Attachment phase (post-#177 — replaced legacy `status` field). */
   phase?: AttachmentPhase;
+  /**
+   * #399 W1 (Q5.6 Flavor B) — monotonic message-activity counter from
+   * the session's `getActivityState` query. Maestro diffs the value
+   * across refreshes to compute per-player deltas for the tempo strip.
+   * Optional so older sessions (or query failures) degrade silently to
+   * zero contribution.
+   */
+  activityCount?: number;
+  /**
+   * #399 W1 (Q5.6 Flavor B) — ISO timestamp of the most recent
+   * activity-counter bump on the session. Currently unused by the tempo
+   * computation (count deltas are sufficient) but exposed for future
+   * surfaces that want to show "last active 12s ago" per player.
+   */
+  lastActivityAt?: string;
 }
 
 /** A message relayed through the global Maestro for dashboard visibility. */
@@ -873,4 +888,28 @@ export interface MaestroInput {
   chatHighWater?: ChatHighWater;
   /** Restored from continue-as-new: ensemble-wide paused state. */
   paused?: boolean;
+  /**
+   * #399 W1 (Q5.1) — ensemble description, restored across CAN.
+   * Empty string when unset. Updated via `setEnsembleDescriptionSignal`.
+   */
+  description?: string;
+  /**
+   * #399 W1 (Q5.3a) — ISO timestamp of the maestro's *original* first
+   * start. The first execution writes `workflowInfo().startTime`; every
+   * subsequent CAN forwards the same value so dashboard uptime stays
+   * monotonic across continue-as-new. Absent on the first execution.
+   */
+  startTimeIso?: string;
+  /**
+   * #399 W1 (Q5.6 Flavor B) — finished 30s activity buckets (oldest
+   * first, max 60). Restored across CAN so the sparkline doesn't reset
+   * on workflow boundary.
+   */
+  tempoHistoryBuckets?: number[];
+  /**
+   * #399 W1 (Q5.6 Flavor B) — current in-progress 30s bucket. Carried
+   * across CAN so a continue-as-new boundary mid-bucket doesn't lose
+   * accumulated activity.
+   */
+  tempoCurrentBucket?: { startMs: number; count: number };
 }

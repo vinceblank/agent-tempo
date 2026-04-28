@@ -21,6 +21,12 @@ import {
   maestroEventsQuery,
   maestroPendingCommandsQuery,
   maestroSendCommandUpdate,
+  // #399 W1
+  setEnsembleDescriptionSignal,
+  getEnsembleDescriptionQuery,
+  getEnsembleStartTimeQuery,
+  getCurrentBpmQuery,
+  getTempoSeriesQuery,
 } from '../src/workflows/maestro-signals';
 import type { MaestroPlayerInfo } from '../src/types';
 
@@ -339,6 +345,173 @@ describe('claudeMaestroWorkflow', function () {
           // Workflow should still be running despite activity failures
           const desc = await handle.describe();
           expect(desc.status.name).to.equal('RUNNING');
+
+          await handle.signal(maestroShutdownSignal);
+          await handle.result();
+        },
+      );
+    });
+  });
+
+  // #399 W1 — ensemble description, uptime, tempo
+  describe('Q5.1 — ensemble description', function () {
+    it('starts with empty description and accepts updates via signal', async function () {
+      this.timeout(10_000);
+      await withWorkerAndMaestroActivities({}, async () => {
+        const handle = await startMaestro(getClient());
+
+        const initial = await handle.query(getEnsembleDescriptionQuery);
+        expect(initial).to.equal('');
+
+        await handle.signal(setEnsembleDescriptionSignal, 'shipping the dashboard');
+        const after = await handle.query(getEnsembleDescriptionQuery);
+        expect(after).to.equal('shipping the dashboard');
+
+        await handle.signal(setEnsembleDescriptionSignal, '');
+        const cleared = await handle.query(getEnsembleDescriptionQuery);
+        expect(cleared).to.equal('');
+
+        await handle.signal(maestroShutdownSignal);
+        await handle.result();
+      });
+    });
+
+    it('stores whatever the wire delivers — length validation is the tool boundary', async function () {
+      // The MCP tool's Zod schema enforces the 100-char cap. The
+      // workflow trusts the payload like any other signal, so a
+      // hand-crafted Temporal CLI message bypassing the tool can store
+      // an oversized description; the dashboard still displays it.
+      this.timeout(10_000);
+      await withWorkerAndMaestroActivities({}, async () => {
+        const handle = await startMaestro(getClient());
+
+        const verbatim = 'x'.repeat(200);
+        await handle.signal(setEnsembleDescriptionSignal, verbatim);
+        const stored = await handle.query(getEnsembleDescriptionQuery);
+        expect(stored).to.equal(verbatim);
+
+        await handle.signal(maestroShutdownSignal);
+        await handle.result();
+      });
+    });
+  });
+
+  describe('Q5.3a — ensemble start time', function () {
+    it('returns an ISO timestamp at or before "now" on a fresh maestro', async function () {
+      this.timeout(10_000);
+      await withWorkerAndMaestroActivities({}, async () => {
+        const handle = await startMaestro(getClient());
+
+        const start = await handle.query(getEnsembleStartTimeQuery);
+        expect(start).to.be.a('string');
+        const startMs = Date.parse(start);
+        expect(Number.isNaN(startMs)).to.equal(false);
+        // Within the last minute; conservative slack for slow CI runners.
+        expect(Date.now() - startMs).to.be.lessThan(60_000);
+
+        await handle.signal(maestroShutdownSignal);
+        await handle.result();
+      });
+    });
+  });
+
+  describe('Q5.6 — tempo BPM + sparkline', function () {
+    it('exposes empty initial state (bpm = 0, series = [])', async function () {
+      this.timeout(10_000);
+      await withWorkerAndMaestroActivities({}, async () => {
+        const handle = await startMaestro(getClient());
+
+        const bpm = await handle.query(getCurrentBpmQuery);
+        expect(bpm).to.equal(0);
+
+        const series = await handle.query(getTempoSeriesQuery);
+        expect(series).to.deep.equal([]);
+
+        await handle.signal(maestroShutdownSignal);
+        await handle.result();
+      });
+    });
+
+    it('accumulates activity-counter deltas into the current bucket', async function () {
+      this.timeout(15_000);
+      let counter = 0;
+      const playerId = 'tempo-eng';
+      // Each refresh tick bumps the counter by 3, simulating new activity.
+      await withWorkerAndMaestroActivities(
+        {
+          mockPlayers: () => {
+            counter += 3;
+            return [{
+              playerId,
+              ensemble: ENSEMBLE,
+              part: '',
+              hostname: 'h',
+              workDir: '/w',
+              isConductor: false,
+              agentType: 'claude',
+              phase: 'attached',
+              activityCount: counter,
+              lastActivityAt: new Date().toISOString(),
+            } as MaestroPlayerInfo];
+          },
+        },
+        async () => {
+          const handle = await startMaestro(getClient());
+
+          // Let several refresh cycles run — first cycle establishes the
+          // baseline (no delta), subsequent ticks contribute +3 each.
+          await sleep(FAST_POLL_MS * 4 + 200);
+
+          const bpm = await handle.query(getCurrentBpmQuery);
+          // At minimum we should have observed some delta. With 4
+          // cycles after baseline at +3 each, the in-progress bucket
+          // accumulates ≥9. Assert non-zero (loose) so test isn't flaky
+          // under a contended runner that drops a poll.
+          expect(bpm).to.be.greaterThan(0);
+
+          await handle.signal(maestroShutdownSignal);
+          await handle.result();
+        },
+      );
+    });
+
+    it('does not spike the bucket when a player joins mid-flight (baseline first)', async function () {
+      this.timeout(10_000);
+      let cycle = 0;
+      // Cycle 0: empty.
+      // Cycle 1+: a single player with a HUGE counter (1000) — its
+      // first sighting must NOT contribute 1000 to the bucket.
+      await withWorkerAndMaestroActivities(
+        {
+          mockPlayers: () => {
+            cycle++;
+            if (cycle === 1) return [];
+            return [{
+              playerId: 'tempo-eng',
+              ensemble: ENSEMBLE,
+              part: '',
+              hostname: 'h',
+              workDir: '/w',
+              isConductor: false,
+              agentType: 'claude',
+              phase: 'attached',
+              activityCount: 1000,
+              lastActivityAt: new Date().toISOString(),
+            } as MaestroPlayerInfo];
+          },
+        },
+        async () => {
+          const handle = await startMaestro(getClient());
+
+          // Two refresh cycles: the player appears on cycle 2 with
+          // counter=1000 (first sighting baseline), then stays at 1000.
+          await sleep(FAST_POLL_MS * 3 + 200);
+
+          const bpm = await handle.query(getCurrentBpmQuery);
+          // First-sighting baseline rule: bpm should NOT include the
+          // 1000 lifetime activity. Allow a small (<5) accumulation in
+          // case timing pulls in another bucket boundary.
+          expect(bpm).to.be.lessThan(5);
 
           await handle.signal(maestroShutdownSignal);
           await handle.result();

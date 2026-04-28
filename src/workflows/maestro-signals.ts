@@ -34,6 +34,16 @@ export const maestroShutdownSignal = defineSignal('maestroShutdown');
 /** Set the ensemble-wide paused state. */
 export const maestroSetPausedSignal = defineSignal<[boolean]>('maestroSetPaused');
 
+/**
+ * #399 W1 (Q5.1) — set the ensemble's mission-flavor description.
+ *
+ * Surfaced on the dashboard EnsembleCard. Conductors are encouraged to
+ * keep this short (~80 chars, soft cap 100) and refresh at milestone
+ * boundaries — see the conductor agent definition for the responsibility
+ * note. Empty string clears the description.
+ */
+export const setEnsembleDescriptionSignal = defineSignal<[string]>('setEnsembleDescription');
+
 // ── Per-Ensemble Maestro Queries (existing) ──
 
 /** Get the current snapshot of all players in the ensemble. */
@@ -53,6 +63,34 @@ export const maestroEnsembleChatQuery = defineQuery<
   EnsembleChatResult,
   [EnsembleChatQuery]
 >('maestroEnsembleChat');
+
+/**
+ * #399 W1 (Q5.1) — current ensemble description (mission-flavor text).
+ * Empty string when no description has been set.
+ */
+export const getEnsembleDescriptionQuery = defineQuery<string>('getEnsembleDescription');
+
+/**
+ * #399 W1 (Q5.3a) — ISO timestamp of the maestro's first start
+ * (`workflowInfo().startTime`, preserved across continueAsNew via
+ * `MaestroInput.startTimeIso`). Dashboard derives uptime client-side.
+ */
+export const getEnsembleStartTimeQuery = defineQuery<string>('getEnsembleStartTime');
+
+/**
+ * #399 W1 (Q5.6 Flavor B) — current ensemble BPM derived from the last
+ * minute of activity (the two most recent 30-second buckets). Returns
+ * `0` when activity hasn't yet accumulated a bucket.
+ */
+export const getCurrentBpmQuery = defineQuery<number>('getCurrentBpm');
+
+/**
+ * #399 W1 (Q5.6 Flavor B) — most recent 60 finished 30-second activity
+ * buckets (oldest-first). Each entry is a count of player-activity
+ * deltas accumulated during that window. Used by the dashboard's
+ * `TempoStrip` sparkline.
+ */
+export const getTempoSeriesQuery = defineQuery<number[]>('getTempoSeries');
 
 // ── Per-Ensemble Maestro Updates (existing) ──
 

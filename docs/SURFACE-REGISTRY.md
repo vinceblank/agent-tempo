@@ -47,6 +47,7 @@ Source: `src/tools/*.ts` — each file calls `defineTool(server, '<name>', '<des
 | `save_lineup` | `save-lineup.ts` | Save current ensemble state as a YAML lineup (conductor only) |
 | `schedule` | `schedule.ts` | Schedule a message to a player: one-shot, recurring, delay, or cron |
 | `schedules` | `schedules.ts` | List all active schedules in this ensemble |
+| `set_ensemble_description` | `set-ensemble-description.ts` | Update the ensemble's mission-flavor description (≤100 chars). Surfaces on the dashboard EnsembleCard |
 | `set_name` | `set-name.ts` | Set a human-readable name for this session |
 | `set_part` | `set-part.ts` | Update your description of what you are currently working on |
 | `shutdown` | `shutdown.ts` | Graceful ensemble teardown — detach adapters, pause maestro + scheduler |
@@ -56,7 +57,7 @@ Source: `src/tools/*.ts` — each file calls `defineTool(server, '<name>', '<des
 | `who_am_i` | `who-am-i.ts` | Get your identity, role, player type, and session details |
 | `worktree` | `worktree.ts` | Manage git worktrees for player isolation (conductor only) |
 
-**Count:** 33 tools  
+**Count:** 34 tools  
 **Full reference:** [docs/tools.md](tools.md)  
 **Note:** `detach` was removed from the MCP surface in v0.27 (#287) — its plumbing is used internally by `shutdown`.
 

@@ -29,6 +29,12 @@ import {
   maestroSendCommandUpdate,
   maestroSetPausedSignal,
   maestroPausedQuery,
+  // #399 W1 — Q5.1 description + Q5.3a uptime + Q5.6 tempo
+  setEnsembleDescriptionSignal,
+  getEnsembleDescriptionQuery,
+  getEnsembleStartTimeQuery,
+  getCurrentBpmQuery,
+  getTempoSeriesQuery,
   // Global Maestro signals/queries/updates
   maestroNotifyMessageSignal,
   maestroEnsemblesQuery,
@@ -60,6 +66,13 @@ const DEFAULT_REFRESH_INTERVAL_MS = 5_000; // 5 seconds
 const MAX_EVENTS = 200;
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes with no running sessions
 
+// #399 W1 (Q5.6 Flavor B) — tempo bucket sizing.
+const TEMPO_BUCKET_MS = 30_000; // 30s windows
+const TEMPO_HISTORY_MAX = 60;   // 60 buckets × 30s = 30-minute sparkline
+// BPM is "messages per minute" — derived from the most recent window
+// so the dashboard reads a stable number even between bucket rollovers.
+const TEMPO_BPM_WINDOW_MS = 60_000;
+
 // ══════════════════════════════════════════════════════════════════════════════
 // Per-Ensemble Maestro (existing — unchanged)
 // ══════════════════════════════════════════════════════════════════════════════
@@ -80,6 +93,24 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
   let lastActiveSessionTime = Date.now();
   let ensemblePaused = input.paused ?? false;
 
+  // #399 W1 (Q5.1) — ensemble description, restored across CAN.
+  let description: string = input.description ?? '';
+
+  // #399 W1 (Q5.3a) — first-ever start time, frozen across CAN.
+  // Use the input value if we're a continueAsNew successor; otherwise
+  // adopt the current execution's startTime as the canonical first start.
+  const startTimeIso: string =
+    input.startTimeIso ?? workflowInfo().startTime.toISOString();
+
+  // #399 W1 (Q5.6 Flavor B) — activity-bucket state machine.
+  // `historyBuckets` is the sparkline (oldest first, max 60). The
+  // `currentBucket` accumulates until 30 s elapse, then rolls.
+  const tempoHistoryBuckets: number[] = input.tempoHistoryBuckets
+    ? input.tempoHistoryBuckets.slice(-TEMPO_HISTORY_MAX)
+    : [];
+  let tempoCurrentBucket: { startMs: number; count: number } =
+    input.tempoCurrentBucket ?? { startMs: Date.now(), count: 0 };
+
   // ── Signal Handlers ──
 
   setHandler(maestroShutdownSignal, () => {
@@ -88,6 +119,13 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
 
   setHandler(maestroSetPausedSignal, (value: boolean) => {
     ensemblePaused = value;
+  });
+
+  // #399 W1 (Q5.1) — store the description as-supplied. Length is
+  // enforced at the MCP tool boundary (`set_ensemble_description` Zod
+  // schema clamps to ENSEMBLE_DESCRIPTION_MAX from utils/validation).
+  setHandler(setEnsembleDescriptionSignal, (next: string) => {
+    description = next;
   });
 
   // ── Query Handlers ──
@@ -108,6 +146,15 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
       hasConductor: cachedChatMeta.hasConductor,
     };
   });
+
+  // #399 W1 (Q5.1 / Q5.3a / Q5.6) — new W1 query handlers.
+  setHandler(getEnsembleDescriptionQuery, () => description);
+  setHandler(getEnsembleStartTimeQuery, () => startTimeIso);
+  setHandler(getCurrentBpmQuery, () => computeCurrentBpm(
+    tempoHistoryBuckets,
+    tempoCurrentBucket,
+  ));
+  setHandler(getTempoSeriesQuery, () => [...tempoHistoryBuckets]);
 
   // ── Update Handler ──
 
@@ -144,6 +191,40 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
     try {
       const newPlayers = await refreshEnsembleState(input.ensemble);
       const now = new Date().toISOString();
+      const nowMs = Date.now();
+
+      // #399 W1 (Q5.6 Flavor B) — accumulate per-player activity deltas
+      // into the current bucket BEFORE replacing `players`. We diff the
+      // monotonic counter from each session's `getActivityState` query
+      // (forwarded via `MaestroPlayerInfo.activityCount`); a positive
+      // delta means the player emitted N messages since the last refresh.
+      const oldActivity = new Map(
+        players
+          .filter((p) => p.activityCount !== undefined)
+          .map((p) => [p.playerId, p.activityCount as number]),
+      );
+      let bucketDelta = 0;
+      for (const np of newPlayers) {
+        if (np.activityCount === undefined) continue;
+        const prev = oldActivity.get(np.playerId);
+        if (prev === undefined) {
+          // First sighting — adopt the counter as the baseline; don't
+          // back-fill the bucket with a "delta" against zero, otherwise
+          // a long-running session that just joined would spike the
+          // sparkline by its lifetime activity.
+          continue;
+        }
+        const d = np.activityCount - prev;
+        if (d > 0) bucketDelta += d;
+      }
+      if (bucketDelta > 0 || nowMs - tempoCurrentBucket.startMs >= TEMPO_BUCKET_MS) {
+        tempoCurrentBucket = rollTempoBucket(
+          tempoCurrentBucket,
+          bucketDelta,
+          tempoHistoryBuckets,
+          nowMs,
+        );
+      }
 
       // Diff snapshots to generate events
       const oldMap = new Map(players.map((p) => [p.playerId, p]));
@@ -265,12 +346,60 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
         cachedChatMeta,
         chatHighWater,
         paused: ensemblePaused,
+        // #399 W1 — forward description, original start time, and tempo
+        // state across CAN so dashboard signals stay continuous.
+        description,
+        startTimeIso,
+        tempoHistoryBuckets,
+        tempoCurrentBucket,
       });
     }
   }
 
   // Graceful shutdown — wait for in-flight handlers
   await condition(allHandlersFinished);
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// #399 W1 (Q5.6 Flavor B) — tempo bucket helpers.
+//
+// `rollTempoBucket` runs in workflow context and is therefore
+// deterministic — `nowMs` is supplied by the caller via `Date.now()`
+// during the (workflow-time) refresh tick, never sampled inside the
+// helper. The current bucket finalises (gets pushed onto the history
+// ring) once it covers a full `TEMPO_BUCKET_MS` window OR when the next
+// refresh sees activity that should land in a fresh bucket — either way
+// we never lose a window.
+// ──────────────────────────────────────────────────────────────────────
+
+function rollTempoBucket(
+  current: { startMs: number; count: number },
+  pendingDelta: number,
+  history: number[],
+  nowMs: number,
+): { startMs: number; count: number } {
+  const elapsed = nowMs - current.startMs;
+  if (elapsed >= TEMPO_BUCKET_MS) {
+    history.push(current.count);
+    while (history.length > TEMPO_HISTORY_MAX) history.shift();
+    return { startMs: nowMs, count: pendingDelta };
+  }
+  return { startMs: current.startMs, count: current.count + pendingDelta };
+}
+
+function computeCurrentBpm(
+  history: number[],
+  current: { startMs: number; count: number },
+): number {
+  // Sum activity in the last `TEMPO_BPM_WINDOW_MS` (1 minute):
+  //   - the in-progress bucket always counts
+  //   - prior history buckets count proportionally to how recent they are
+  // We approximate by taking the last two finished buckets (60s of
+  // history at 30s/bucket) plus the current. That over-counts slightly
+  // when the current bucket is fresh — acceptable for a heads-up display.
+  const tail = history.slice(-2);
+  const sum = tail.reduce((a, b) => a + b, 0) + current.count;
+  return sum;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

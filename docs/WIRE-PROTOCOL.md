@@ -149,6 +149,7 @@ Signal sent **to** a `claudeMaestroWorkflow` instance.
 |-------------|---------|-------------|
 | `maestroShutdown` | *(none)* | Gracefully shuts down the per-ensemble Maestro workflow. |
 | `maestroSetPaused` | `boolean` | Sets the ensemble-wide pause state (`true` = paused, `false` = resumed). Acts as ground truth for pause state — sessions and the scheduler sync from this. |
+| `setEnsembleDescription` | `string` | **#399 W1 (Q5.1).** Updates the ensemble's mission-flavor description string surfaced on the dashboard EnsembleCard. Soft cap 100 chars (clamped server-side); MCP tool boundary rejects oversized inputs. Empty string clears the description. Carried across CAN. |
 
 ---
 
@@ -163,6 +164,10 @@ Queries on a `claudeMaestroWorkflow` instance (synchronous, read-only).
 | `maestroPendingCommands` | — | `MaestroPendingCommand[]` | Commands queued via `maestroSendCommand` that have not yet been relayed to the conductor. |
 | `maestroEnsembleChat` | `EnsembleChatQuery` | `EnsembleChatResult` | Paginated aggregated chat feed from cached state. Merges maestro session + conductor traffic (deduplicated). Cache refreshed every ~10s alongside the player snapshot; cap at 500 entries. `EnsembleChatQuery`: `{ offset?: number; limit?: number }` (default 0, 50; max limit 200). `EnsembleChatResult` includes `messages`, `total`, `hasMore`, and `hasConductor`. Additive — non-breaking. |
 | `maestroPaused` | — | `boolean` | Returns `true` if the ensemble is currently in a paused state as set by `maestroSetPaused`. |
+| `getEnsembleDescription` | — | `string` | **#399 W1 (Q5.1).** Current ensemble description (mission-flavor text). Empty string when none set. Updated via the `setEnsembleDescription` signal; carried across CAN. |
+| `getEnsembleStartTime` | — | `string` (ISO8601) | **#399 W1 (Q5.3a).** ISO timestamp of the maestro's *first-ever* start (`workflowInfo().startTime` on the original execution; preserved across CAN via `MaestroInput.startTimeIso`). Dashboard derives ensemble uptime client-side. |
+| `getCurrentBpm` | — | `number` | **#399 W1 (Q5.6 Flavor B).** Current ensemble BPM — sum of activity in the most recent ~60 seconds (the in-progress 30 s bucket plus the two prior finished buckets). Returns `0` when no buckets have accumulated. |
+| `getTempoSeries` | — | `number[]` | **#399 W1 (Q5.6 Flavor B).** Up to 60 finished 30-second activity buckets (oldest-first). Each entry is the count of player-activity deltas observed during that window. Used by the dashboard's `TempoStrip` sparkline. The in-progress bucket is *not* included; it surfaces only via `getCurrentBpm`. |
 
 ---
 

@@ -45,6 +45,7 @@ import { registerDestroyTool } from './tools/destroy';
 import { registerMigrateTool } from './tools/migrate';
 import { registerAttachmentInfoTool } from './tools/attachment-info';
 import { registerHostsTool } from './tools/hosts';
+import { registerSetEnsembleDescriptionTool } from './tools/set-ensemble-description';
 import { registry, InteractiveAttachment } from './adapters';
 import { resolveAgentType } from './ensemble/agent-types';
 
@@ -316,6 +317,7 @@ async function main() {
   registerMigrateTool(mcpServer, client, config, getPlayerId, handle);
   registerAttachmentInfoTool(mcpServer, client, config);
   registerHostsTool(mcpServer, client, config);
+  registerSetEnsembleDescriptionTool(mcpServer, client, config);
 
   // Conductor-only tools
   if (isConductor) {
