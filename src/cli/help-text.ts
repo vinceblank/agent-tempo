@@ -74,6 +74,7 @@ ${out.bold('Other options:')}
   --keep-mcp                   Don't remove MCP config (down only)
   --keep-daemon                Don't stop the worker daemon (down only)
   --destroy                    Also terminate every workflow (down only)
+  --kill-shared-temporal       Tear down the Temporal dev server even if the other profile is active (down only, #423)
   -y, --yes                    Skip confirmation prompt (down --destroy, destroy)
   --lineup <name|file>         Load ensemble lineup by name or file path (up)
   --scenario <name|path>       Force every mock player in the lineup into mockMode:scripted with this scenario (dev-mode-only, up + --lineup)
