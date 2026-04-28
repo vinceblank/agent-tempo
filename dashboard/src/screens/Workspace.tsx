@@ -347,14 +347,18 @@ export function Workspace() {
           </>
         }
         subtitle={
-          // Lineup name isn't on the wire today — the snapshot doesn't
-          // surface which lineup booted the ensemble. Drop the design's
-          // "Lineup <name>" segment until the wire ships it (architect
-          // tracked); show the conductor + host instead, which IS
-          // derivable from `players.find(p => p.isConductor)`.
+          // #389 R3.P1.5 — design's full subtitle is `Lineup X · conducted
+          // by Y on Z`. The lineup name isn't yet on the snapshot wire
+          // (architect-tracked carry-over of rev-2 P1.5), so the lineup
+          // half degrades to `Lineup — ·` symmetric with how the host
+          // half already degrades when `conductorHostname` is missing.
+          // Once the wire ships a lineup field on `EnsembleStateV1`,
+          // swap the `lineupName` const for `data?.lineup ?? '—'`.
           conductorPlayerId ? (
             <>
-              Conducted by{' '}
+              {'Lineup '}
+              <span className="mono">—</span>
+              {' · conducted by '}
               <span className="mono accent">{conductorPlayerId}</span>
               {conductorHostname && (
                 <>

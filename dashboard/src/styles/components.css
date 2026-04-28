@@ -859,6 +859,29 @@
   gap: 4px;
   margin-top: 2px;
 }
+/* Canonical `lineup · host` footer (matches Overview design). */
+.ec-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+}
+/* Card-chrome flag chips. Tighter than `.page-pill` so they read as
+ * indicators, not status pills. */
+.ec-flags {
+  display: flex;
+  gap: 6px;
+}
+.ec-flag {
+  background: var(--bg-2);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: var(--ff-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+}
 
 
 /* ─── Artboard container (anchors @container queries) ───────── */

@@ -89,9 +89,10 @@ export interface PlayerWireMeta {
  * carries no `runId` / `messaging` / `lease` fields and the dashboard
  * renders `—` placeholders.
  *
- * `activityCount` and `lastActivityAt` come straight from
- * `MaestroPlayerInfo` (the maestro hub already populates them per
- * Issue #399 Q5.6). They're passed through verbatim — no extra round-trip.
+ * `activityCount` passes through from `MaestroPlayerInfo` (Q5.6).
+ * `MaestroPlayerInfo.lastActivityAt` maps to the wire field
+ * `PlayerSummaryV1.lastHeartbeatAt` — same data, rename happens at the
+ * wire boundary so consumers read one canonical name.
  */
 export function toPlayerSummaryV1(
   p: MaestroPlayerInfo,
@@ -112,7 +113,9 @@ export function toPlayerSummaryV1(
     ...(p.gitBranch !== undefined ? { gitBranch: p.gitBranch } : {}),
     // Issue #399 Q5.6 — pass-through from MaestroPlayerInfo.
     ...(p.activityCount !== undefined ? { activityCount: p.activityCount } : {}),
-    ...(p.lastActivityAt !== undefined ? { lastActivityAt: p.lastActivityAt } : {}),
+    // Wire-name rename: source `lastActivityAt` → contract `lastHeartbeatAt`
+    // (#389 R3.P1.4). Aggregate's phase-change diff reads the wire name.
+    ...(p.lastActivityAt !== undefined ? { lastHeartbeatAt: p.lastActivityAt } : {}),
     // Issue #399 W2 — session-query fan-out merged in when reachable.
     ...(wireMeta?.runId !== undefined ? { runId: wireMeta.runId } : {}),
     ...(wireMeta?.messaging !== undefined ? { messaging: wireMeta.messaging } : {}),

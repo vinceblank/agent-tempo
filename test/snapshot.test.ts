@@ -18,8 +18,9 @@
  *        come straight from `client.getEnsembleMeta` (W1)
  *      - per-player `runId` / `messaging` / `lease` are merged from
  *        `client.getPlayerWireMeta` (W2)
- *      - per-player `activityCount` / `lastActivityAt` pass through
- *        from `MaestroPlayerInfo` (Q5.6)
+ *      - per-player `activityCount` passes through from
+ *        `MaestroPlayerInfo`; `lastActivityAt` projects to the wire-
+ *        contract `lastHeartbeatAt` field (#389 R3.P1.4)
  *      - sentinel fallbacks when individual fan-out branches reject
  *      - `EnsembleNotFoundError` thrown when the ensemble isn't in
  *        `listEnsembles`
@@ -52,19 +53,25 @@ describe('toPlayerSummaryV1 projection (#399 W2 + Q5.6)', function () {
     gitBranch: 'feat/snapshot-wire-extension-projection',
   };
 
-  it('passes activityCount + lastActivityAt through from MaestroPlayerInfo (Q5.6)', function () {
+  it('passes activityCount through and projects lastActivityAt → lastHeartbeatAt (Q5.6 + #389 R3.P1.4)', function () {
     const out = toPlayerSummaryV1({
       ...baseInfo,
       activityCount: 42,
       lastActivityAt: '2026-04-28T12:30:00.000Z',
     });
     expect(out.activityCount).to.equal(42);
-    expect(out.lastActivityAt).to.equal('2026-04-28T12:30:00.000Z');
+    // The wire-contract field is `lastHeartbeatAt`; the source field on
+    // `MaestroPlayerInfo` is `lastActivityAt`. The mapper renames at the
+    // wire boundary so the dashboard's `heartbeat` KvRow + aggregate
+    // diff both find the field under one canonical name (#389 R3.P1.4).
+    expect(out.lastHeartbeatAt).to.equal('2026-04-28T12:30:00.000Z');
+    expect(out).to.not.have.property('lastActivityAt');
   });
 
-  it('omits activityCount + lastActivityAt when absent on input', function () {
+  it('omits activityCount + lastHeartbeatAt when absent on input', function () {
     const out = toPlayerSummaryV1(baseInfo);
     expect(out).to.not.have.property('activityCount');
+    expect(out).to.not.have.property('lastHeartbeatAt');
     expect(out).to.not.have.property('lastActivityAt');
   });
 
@@ -231,12 +238,13 @@ describe('buildEnsembleSnapshot fan-out (#399 DB1a)', function () {
     const snap = await buildEnsembleSnapshot(client, 'demo');
     expect(snap.players).to.have.length(2);
 
-    // p1 — has wireMeta; activityCount/lastActivityAt also passed through.
+    // p1 — has wireMeta; activityCount + lastActivityAt source field
+    // projects through the mapper as `lastHeartbeatAt` (#389 R3.P1.4).
     expect(snap.players[0].runId).to.equal('run-p1');
     expect(snap.players[0].messaging).to.deep.equal({ received: 1, sent: 2, outbox: 'empty' });
     expect(snap.players[0].lease).to.deep.equal({ expiresAt: 1, leaseMs: 60000 });
     expect(snap.players[0].activityCount).to.equal(5);
-    expect(snap.players[0].lastActivityAt).to.equal('2026-04-28T12:00:00.000Z');
+    expect(snap.players[0].lastHeartbeatAt).to.equal('2026-04-28T12:00:00.000Z');
 
     // p2 — wireMeta null → no runId/messaging/lease keys.
     expect(snap.players[1]).to.not.have.property('runId');
