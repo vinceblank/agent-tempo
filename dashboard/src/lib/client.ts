@@ -25,6 +25,7 @@
  */
 import type {
   EnsembleStateV1,
+  HealthV1,
   TempoEvent,
   SubscribeOptions,
 } from 'claude-tempo/http/event-types';
@@ -33,7 +34,7 @@ import type { HostInfo } from 'claude-tempo/types';
 import { logEvent } from './log';
 import { getBearerToken } from './auth';
 
-export type { EnsembleStateV1, TempoEvent, EnsembleSummary, HostInfo };
+export type { EnsembleStateV1, HealthV1, TempoEvent, EnsembleSummary, HostInfo };
 
 /**
  * Surface the dashboard depends on. Strict subset of the daemon's HTTP
@@ -44,6 +45,8 @@ export type { EnsembleStateV1, TempoEvent, EnsembleSummary, HostInfo };
  * auth model. See `docs/SSE-PROTOCOL.md` § 11b for the wire contract.
  */
 export interface DashboardTempoClient {
+  /** GET `/v1/health` — daemon health + namespace/version metadata. Never authenticated. */
+  health(): Promise<HealthV1>;
   /** GET `/v1/ensembles` — list every live ensemble. */
   listEnsembles(): Promise<EnsembleSummary[]>;
   /** GET `/v1/state/:ensemble` — full ensemble snapshot. */
@@ -273,6 +276,9 @@ export function createDashboardClient(opts: DashboardClientOpts = {}): Dashboard
   }
 
   return {
+    async health() {
+      return getJson<HealthV1>('/v1/health');
+    },
     async listEnsembles() {
       return getJson<EnsembleSummary[]>('/v1/ensembles');
     },

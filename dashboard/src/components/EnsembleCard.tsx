@@ -131,12 +131,12 @@ export function EnsembleCard({ ensemble }: EnsembleCardProps) {
         ) : (
           <>
             {/* `.ec-desc` reserves a 40px min-height so cards with no
-              * description still align in the grid. The conductor agent
-              * keeps this populated via `set_ensemble_description`
-              * (#399 Q5.1); fresh ensembles without a description fall
-              * back to a presence sentinel so the row never collapses. */}
+              * description still align in the grid. Q5.1: only render
+              * description text when the conductor has explicitly set one
+              * via `set_ensemble_description`. No fallback sentinel —
+              * the CSS min-height preserves grid alignment either way. */}
             <div className="ec-desc" data-testid={`ensemble-card-${ensemble.name}-desc`}>
-              {description || (hasConductor ? 'Conductor active.' : 'No conductor yet.')}
+              {description || null}
             </div>
 
             <div className="ec-stats" data-testid={`ensemble-card-${ensemble.name}-stats`}>

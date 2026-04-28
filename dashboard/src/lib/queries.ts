@@ -9,11 +9,16 @@ import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type {
   EnsembleStateV1,
   EnsembleSummary,
+  HealthV1,
 } from 'claude-tempo/http/event-types';
 import type { HostInfo } from 'claude-tempo/types';
 import { logEvent } from './log';
 import type { AgentTypeRow, DashboardTempoClient, LineupRow } from './client';
 import { getDashboardClient } from './client-singleton';
+
+/** Stable query key for the daemon health snapshot. */
+export const HEALTH_QUERY_KEY = ['health'] as const;
+export type HealthQueryKey = typeof HEALTH_QUERY_KEY;
 
 /** Stable query key for the ensemble list. Exported for cache invalidation. */
 export const ENSEMBLES_QUERY_KEY = ['ensembles'] as const;
@@ -79,6 +84,18 @@ function useCatalogQuery<TData>(
     refetchOnWindowFocus,
     ...(enabled !== undefined && { enabled }),
   });
+}
+
+/**
+ * `GET /v1/health` — daemon health and connection metadata.
+ * Used by the Settings Connection panel to surface the live
+ * namespace and version without hard-coding defaults. Polled at
+ * 30 s; stale-while-revalidate. The endpoint is never authenticated
+ * so it always responds even when the bearer token is absent.
+ */
+export function useHealth(opts: QueriesOptions = {}): UseQueryResult<HealthV1, Error> {
+  const client = opts.client ?? getDashboardClient();
+  return useCatalogQuery(HEALTH_QUERY_KEY, () => client.health(), 'health');
 }
 
 /**
