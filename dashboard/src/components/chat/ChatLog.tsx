@@ -13,12 +13,16 @@
  * explaining the gap (the `getEnsembleChat` re-fetch lands in PR-7).
  *
  * Adapter notes:
- *   - `direction: 'out'` rows always become `kind: 'out'` (right-aligned
- *     bubble; FeedMessage shows MaestroMark on outbound per audit C2).
- *   - `direction: 'in'` rows where `role === 'conductor-out'` are
- *     "overheard" routes (player → player) — they map to `kind: 'route'`
+ *   - Rows with `from === MAESTRO_PLAYER_ID` map to `kind: 'out'`
+ *     (right-aligned bubble; FeedMessage shows MaestroMark on outbound
+ *     per audit C2).
+ *   - Rows with `to === MAESTRO_PLAYER_ID` map to `kind: 'in'`
+ *     (left-aligned with PlayerAvatar + `← maestro` arrow).
+ *   - Rows where neither end is the maestro — conductor↔player
+ *     side-chatter, player↔player routes — map to `kind: 'route'`
  *     and pick up `.msg.route` styling (italic body, indented rail).
- *   - All other inbound rows map to `kind: 'in'`.
+ *     The conductor is just another player from the dashboard's POV
+ *     (#446).
  *   - Broadcast badge (`row.broadcastBadge`) and directed-recipient
  *     prefix (`row.recipientLabel`) prepend into FeedMessage's `body`
  *     slot as inline shim spans, preserving the legacy
