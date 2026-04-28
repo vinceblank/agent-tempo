@@ -123,10 +123,9 @@ that exercises every PR-3 mode. Spin it up with one command:
 $ claude-tempo --dev up --lineup tempo-mock-jam
 ```
 
-The lineup recruits four mock players with mixed modes — `alice` (scripted,
-multi-player-handoff), `bob` (echo), `silent-witness` (silent),
-`chaos-monkey` (chaos). The conductor stays on the default agent so a human
-or AI operator can drive the ensemble normally.
+All five slots are mock: `conductor` (scripted, conductor-recruit-mock),
+`alice` (scripted, multi-player-handoff), `bob` (echo), `silent-witness`
+(silent), `chaos-monkey` (chaos). Zero real LLM calls, zero terminal windows.
 
 **Override the scripted player's scenario per-run** with the top-level
 `--scenario` flag:

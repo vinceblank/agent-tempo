@@ -109,4 +109,23 @@ describe('loadLineup — conductor required', () => {
     expect(lineup.conductor.agent).toBe('copilot');
     expect(lineup.conductor.instructions).toBe('Lead the ensemble.');
   });
+
+  it('accepts conductor with agent: mock + mockMode + mockScenario (#fix/tempo-mock-jam)', () => {
+    const filePath = writeLineup('mock-conductor', [
+      'name: mock-conductor',
+      'conductor:',
+      '  type: tempo-conductor',
+      '  agent: mock',
+      '  mockMode: scripted',
+      '  mockScenario: conductor-recruit-mock',
+      'players:',
+      '  - name: p1',
+      '',
+    ].join('\n'));
+
+    const lineup = loadLineup(filePath);
+    expect(lineup.conductor.agent).toBe('mock');
+    expect(lineup.conductor.mockMode).toBe('scripted');
+    expect(lineup.conductor.mockScenario).toBe('conductor-recruit-mock');
+  });
 });

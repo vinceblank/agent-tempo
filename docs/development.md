@@ -100,11 +100,8 @@ npm run build
 #    home dir ~/.claude-tempo-dev/. Leaves prod daemon and shared Temporal server alone.
 node dist/cli.js --dev daemon start
 
-# 3. Run the mock-jam lineup (4 mock players; conductor uses real Claude by default)
+# 3. Run the all-mock lineup (conductor + 4 players are all mock — zero real LLM calls)
 node dist/cli.js --dev up --lineup tempo-mock-jam
-
-# Optional: replace the conductor with a mock too (fully autonomous — zero real Claude sessions)
-node dist/cli.js --dev recruit conductor --conductor --agent mock --mockMode scripted --mockScenario conductor-recruit-mock
 
 # 4. Tear down — prod profile and shared Temporal server are left running
 node dist/cli.js --dev down
