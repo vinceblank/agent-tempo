@@ -14,14 +14,22 @@ import type {
 } from 'claude-tempo/http/event-types';
 import type { HostInfo } from 'claude-tempo/types';
 import type {
+  AgentTypeRow,
   CreateEnsembleOpts,
   CreateEnsembleResult,
   CueResult,
   DashboardTempoClient,
+  LineupRow,
   RecruitOpts,
   RecruitResult,
   ReleaseResult,
 } from '../../src/lib/client';
+
+// Default catalog rows seeded into every `MockDashboardClient` so the
+// wizard tests don't have to reach into `static-catalog.ts` themselves.
+// Re-exported from production rather than duplicated — drift between
+// production fallback and test fixture would be a bug, not a feature.
+import { SHIPPED_PLAYER_TYPES, SHIPPED_LINEUPS } from '../../src/lib/static-catalog';
 
 export interface MockBehavior {
   ensembles?: EnsembleSummary[];
@@ -30,6 +38,10 @@ export interface MockBehavior {
   snapshotError?: Error;
   hosts?: HostInfo[];
   hostsError?: Error;
+  agentTypes?: AgentTypeRow[];
+  agentTypesError?: Error;
+  lineups?: LineupRow[];
+  lineupsError?: Error;
   /** Per-mutation error injection. Keyed by action name. */
   mutationErrors?: Partial<Record<'cue' | 'pause' | 'play' | 'release' | 'recruit' | 'createEnsemble', Error>>;
 }
@@ -46,6 +58,13 @@ export class MockDashboardClient implements DashboardTempoClient {
   public snapshotError: Error | null = null;
   public hostList: HostInfo[] = [];
   public hostsError: Error | null = null;
+  // Default to the shipped catalog so wizard tests don't need to seed
+  // every mock by hand. Tests that specifically exercise empty /
+  // error / sparse catalogs override via the constructor opts.
+  public agentTypeList: ReadonlyArray<AgentTypeRow> = SHIPPED_PLAYER_TYPES;
+  public agentTypesError: Error | null = null;
+  public lineupList: ReadonlyArray<LineupRow> = SHIPPED_LINEUPS;
+  public lineupsError: Error | null = null;
   /** Records every mutation call so tests can assert. */
   public mutationCalls: MutationCall[] = [];
   /** Per-mutation error injection. Keyed by action name. */
@@ -64,6 +83,10 @@ export class MockDashboardClient implements DashboardTempoClient {
     if (initial.snapshotError) this.snapshotError = initial.snapshotError;
     if (initial.hosts) this.hostList = initial.hosts;
     if (initial.hostsError) this.hostsError = initial.hostsError;
+    if (initial.agentTypes) this.agentTypeList = initial.agentTypes;
+    if (initial.agentTypesError) this.agentTypesError = initial.agentTypesError;
+    if (initial.lineups) this.lineupList = initial.lineups;
+    if (initial.lineupsError) this.lineupsError = initial.lineupsError;
     if (initial.mutationErrors) this.mutationErrors = initial.mutationErrors;
   }
 
@@ -81,6 +104,16 @@ export class MockDashboardClient implements DashboardTempoClient {
   async hosts(): Promise<HostInfo[]> {
     if (this.hostsError) throw this.hostsError;
     return this.hostList;
+  }
+
+  async agentTypes(): Promise<AgentTypeRow[]> {
+    if (this.agentTypesError) throw this.agentTypesError;
+    return [...this.agentTypeList];
+  }
+
+  async lineups(): Promise<LineupRow[]> {
+    if (this.lineupsError) throw this.lineupsError;
+    return [...this.lineupList];
   }
 
   subscribe(ensemble: string): AsyncIterable<TempoEvent> {

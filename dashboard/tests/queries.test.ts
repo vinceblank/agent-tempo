@@ -7,7 +7,12 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { createElement } from 'react';
-import { useEnsembleList, useEnsembleSnapshot } from '../src/lib/queries';
+import {
+  useAgentTypes,
+  useEnsembleList,
+  useEnsembleSnapshot,
+  useLineups,
+} from '../src/lib/queries';
 import { MockDashboardClient, makeSnapshot } from './fixtures/mock-client';
 
 function wrap(client: QueryClient) {
@@ -84,5 +89,66 @@ describe('useEnsembleSnapshot', () => {
     });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error?.message).toBe('ensemble-not-found');
+  });
+});
+
+describe('useAgentTypes (#400)', () => {
+  it('returns the wire catalog from the mock client', async () => {
+    const mock = new MockDashboardClient({
+      agentTypes: [
+        { name: 'tempo-conductor', description: 'Lead.', source: 'shipped' },
+        { name: 'project-special', description: 'Project-only.', source: 'project' },
+      ],
+    });
+    const qc = newClient();
+    const { result } = renderHook(() => useAgentTypes({ client: mock }), {
+      wrapper: wrap(qc),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toHaveLength(2);
+    expect(result.current.data?.[1].source).toBe('project');
+  });
+
+  it('surfaces fetch errors as Error', async () => {
+    const mock = new MockDashboardClient({
+      agentTypesError: new Error('catalog-down'),
+    });
+    const qc = newClient();
+    const { result } = renderHook(() => useAgentTypes({ client: mock }), {
+      wrapper: wrap(qc),
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error?.message).toBe('catalog-down');
+  });
+});
+
+describe('useLineups (#400)', () => {
+  it('returns the wire catalog from the mock client', async () => {
+    const mock = new MockDashboardClient({
+      lineups: [
+        { name: 'tempo-dev-team', description: 'Full cycle.', players: 5, source: 'shipped' },
+        { name: 'my-saved', description: 'A saved one.', players: 2, source: 'saved' },
+      ],
+    });
+    const qc = newClient();
+    const { result } = renderHook(() => useLineups({ client: mock }), {
+      wrapper: wrap(qc),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toHaveLength(2);
+    expect(result.current.data?.[1].source).toBe('saved');
+    expect(result.current.data?.[1].players).toBe(2);
+  });
+
+  it('surfaces fetch errors as Error', async () => {
+    const mock = new MockDashboardClient({
+      lineupsError: new Error('lineups-down'),
+    });
+    const qc = newClient();
+    const { result } = renderHook(() => useLineups({ client: mock }), {
+      wrapper: wrap(qc),
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error?.message).toBe('lineups-down');
   });
 });

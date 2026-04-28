@@ -17,6 +17,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import type { ReactNode } from 'react';
 import { CreateEnsemble } from '../src/screens/CreateEnsemble';
+import { HttpError } from '../src/lib/client';
 import { MockDashboardClient } from './fixtures/mock-client';
 import { __setDashboardClientForTests } from '../src/lib/client-singleton';
 
@@ -174,14 +175,26 @@ describe('CreateEnsemble wizard (PR-E)', () => {
     expect(call.args[0]).not.toHaveProperty('lineup');
   });
 
-  it('shows the wire-gap toast when POST /v1/ensembles 404s', async () => {
-    // Mutation hook detects "404" or "not found" in the error message
-    // and swaps the generic failure toast for the wire-gap copy that
-    // points users at the CLI fallback (`claude-tempo up <name>`).
-    // This test pins that path — the toast wording is the one bit of
-    // user-facing UX the headline feature promised.
+  it('falls back to the local catalog hint when /v1/lineups errors', async () => {
     const mock = new MockDashboardClient({
-      mutationErrors: { createEnsemble: new Error('not found') },
+      lineupsError: new Error('catalog unreachable'),
+    });
+    renderCreate({ mock });
+    // Eager fallback means the picker is populated immediately; we
+    // wait for the error-state hint to appear once the query settles.
+    await waitFor(() => {
+      const lineupField = screen.getByText(/showing local catalog/i);
+      expect(lineupField).toBeInTheDocument();
+    });
+    // Picker still has the shipped rows (eager fallback) — sanity.
+    expect(
+      screen.getByTestId('create-ensemble-lineup-option-tempo-dev-team'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows 409 toast when ensemble already exists', async () => {
+    const mock = new MockDashboardClient({
+      mutationErrors: { createEnsemble: new HttpError(409, 'ensemble-exists', '/v1/ensembles') },
     });
     renderCreate({ mock, withToaster: true });
     fireEvent.change(screen.getByTestId('create-ensemble-input-name'), {
@@ -195,7 +208,32 @@ describe('CreateEnsemble wizard (PR-E)', () => {
       expect(screen.getByTestId('toast-error')).toBeInTheDocument();
     });
     const toast = screen.getByTestId('toast-error');
-    expect(toast.textContent).toMatch(/not yet available/i);
-    expect(toast.textContent).toMatch(/claude-tempo up/);
+    expect(toast.textContent).toMatch(/already exists/i);
+  });
+
+  it('surfaces the underlying error message when createEnsemble fails', async () => {
+    // The original wire-gap toast for 404s retired with #400 — the
+    // POST /v1/ensembles endpoint exists now, so the dashboard maps
+    // 409 and 400 to targeted copy and shows the underlying message
+    // for everything else. Pin the generic-failure path; the 409 +
+    // 400 branches are exercised separately in the daemon-side tests
+    // that verify the HTTP shapes.
+    const mock = new MockDashboardClient({
+      mutationErrors: { createEnsemble: new Error('temporal unreachable') },
+    });
+    renderCreate({ mock, withToaster: true });
+    fireEvent.change(screen.getByTestId('create-ensemble-input-name'), {
+      target: { value: 'frontend-squad' },
+    });
+    fireEvent.click(screen.getByTestId('create-ensemble-next'));
+    fireEvent.click(screen.getByTestId('create-ensemble-next'));
+    fireEvent.click(screen.getByTestId('create-ensemble-submit'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('toast-error')).toBeInTheDocument();
+    });
+    const toast = screen.getByTestId('toast-error');
+    expect(toast.textContent).toMatch(/Failed to create frontend-squad/);
+    expect(toast.textContent).toMatch(/temporal unreachable/);
   });
 });

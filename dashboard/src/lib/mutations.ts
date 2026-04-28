@@ -26,6 +26,7 @@ import type {
   RecruitResult,
   ReleaseResult,
 } from './client';
+import { HttpError } from './client';
 import { getDashboardClient } from './client-singleton';
 import { logEvent } from './log';
 import { ENSEMBLES_QUERY_KEY, ensembleQueryKey } from './queries';
@@ -264,15 +265,21 @@ export function useRecruitMutation(
 // ── createEnsemble (wire-pending) ────────────────────────────────────────
 
 /**
- * Create a fresh ensemble. The daemon doesn't expose POST `/v1/ensembles`
- * yet; the mutation rides on top of the new client method and surfaces
- * the wire-gap clearly when the underlying request 404s. Toast wording
- * tells the user what's happening rather than blaming them for a bad
- * input. Once the endpoint lands, this hook stays the same — only the
- * toast copy needs to change.
+ * Create a fresh ensemble — POST `/v1/ensembles` (#400). The daemon
+ * recruits the conductor + fans out lineup players (parallel). Per-
+ * player errors are non-fatal — surfaced via the result's
+ * `playerErrors[]` and shown as a partial-success toast so the user
+ * can re-recruit specific players from the workspace without rolling
+ * back the whole ensemble.
  *
- * On success: invalidates the ensembles list so the new ensemble shows
- * up on Overview without a manual refresh.
+ * Error mapping: 409 (ensemble exists) and 400 (validation) get
+ * targeted toast copy so the user can fix the input. Generic 5xx
+ * shows the underlying message. The hook does NOT navigate on
+ * success — the wizard does that, since only it knows whether the
+ * modal should close + where the user came from.
+ *
+ * On success: invalidates the ensembles list so the new ensemble
+ * shows up on Overview without a manual refresh.
  */
 export function useEnsembleCreateMutation(
   opts: MutationOptions = {},
@@ -288,27 +295,39 @@ export function useEnsembleCreateMutation(
     },
     onSuccess: (result, vars) => {
       logEvent('mutation.createEnsemble.succeeded', {
-        ensemble: result.ensemble, conductorPlayerId: result.conductorPlayerId,
+        ensemble: result.ensemble,
+        conductorPlayerId: result.conductorPlayerId,
+        recruitedPlayers: result.recruitedPlayers,
+        playerErrors: result.playerErrors?.length ?? 0,
       });
-      toastSuccess(`Created ${result.ensemble}`, {
-        description: vars.lineup
+      const failed = result.playerErrors?.length ?? 0;
+      const description = failed > 0
+        ? `Conductor active. ${failed} player${failed === 1 ? '' : 's'} failed — re-recruit from Workspace.`
+        : vars.lineup
           ? `Lineup: ${vars.lineup}`
-          : 'Blank ensemble — recruit players from Workspace.',
-      });
+          : 'Blank ensemble — recruit players from Workspace.';
+      toastSuccess(`Created ${result.ensemble}`, { description });
       void qc.invalidateQueries({ queryKey: ENSEMBLES_QUERY_KEY });
     },
     onError: (err, vars) => {
       const msg = errMsg(err);
       logEvent('mutation.createEnsemble.failed', { name: vars.name, error: msg }, 'warn');
-      // Wire-gap awareness — POST /v1/ensembles is on the daemon backlog.
-      // The 404 path is the common one until the endpoint ships.
-      const wirePending = msg.includes('404') || msg.toLowerCase().includes('not found');
-      toastError(
-        wirePending ? 'Create ensemble endpoint not yet available' : `Failed to create ${vars.name}`,
-        { description: wirePending
-          ? 'Daemon-side POST /v1/ensembles ships in a follow-up. Use the CLI for now: claude-tempo up <name>.'
-          : msg },
-      );
+      // 409 / 400 get targeted copy so the user can fix the input;
+      // anything else shows the underlying message.
+      const status = err instanceof HttpError ? err.status : null;
+      if (status === 409) {
+        toastError(`Ensemble "${vars.name}" already exists`, {
+          description: 'Pick a different name or open the existing one from Overview.',
+        });
+        return;
+      }
+      if (status === 400) {
+        toastError(`Couldn't create ${vars.name}`, {
+          description: `Validation failed: ${msg}`,
+        });
+        return;
+      }
+      toastError(`Failed to create ${vars.name}`, { description: msg });
     },
   });
 }

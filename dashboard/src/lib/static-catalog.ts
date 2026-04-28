@@ -1,106 +1,103 @@
 /**
- * Static fallback catalog for player-types + lineups. PR-E of #389.
+ * Static fallback catalog for player-types + lineups.
  *
- * The wizards (Recruit, CreateEnsemble) need pickable lists, but the
- * daemon doesn't yet expose `/v1/agent-types` or `/v1/lineups`
- * endpoints. Until those land we hardcode the shipped catalog from
- * `examples/agents/` and `examples/ensembles/` so the UI works end-to-end.
+ * The wire endpoints `/v1/agent-types` and `/v1/lineups` (#400) ARE
+ * the canonical source — the wizards consume them via
+ * `useAgentTypes()` / `useLineups()`. This module ships a hardcoded
+ * mirror used only as the **error-state fallback** so the pickers
+ * stay usable when the daemon is unreachable (network blip,
+ * pre-startup, etc.).
  *
- * Wire-gap follow-up (architect-tracked): replace the constants with
- * TanStack queries once daemon endpoints exist:
- *   - GET /v1/agent-types  → replaces SHIPPED_PLAYER_TYPES
- *   - GET /v1/lineups      → replaces SHIPPED_LINEUPS
- * Mock-client fixtures will need a hostList-style stub at the same
- * time. Each consumer reads from this module — flip it to query
- * results in one place when the wire arrives.
+ * Both arrays conform to the wire-row shapes (`AgentTypeRow` /
+ * `LineupRow`) — no shape adaptation needed at the picker boundary.
+ * Refresh manually when shipped catalog rows change in
+ * `examples/agents/` or `examples/ensembles/`.
  */
-
-export interface PlayerType {
-  /** Stable id matching the markdown filename (sans `.md`). */
-  name: string;
-  /** One-line summary surfaced in the picker `desc` slot. */
-  summary: string;
-}
+import type { AgentTypeRow, LineupRow } from './client';
 
 /**
  * Shipped player types (`examples/agents/*.md`). Order intentional —
  * tempo-conductor first because the create-ensemble flow most often
  * needs it; remaining types in alphabetical order.
  */
-export const SHIPPED_PLAYER_TYPES: ReadonlyArray<PlayerType> = [
+export const SHIPPED_PLAYER_TYPES: ReadonlyArray<AgentTypeRow> = [
   {
     name: 'tempo-conductor',
-    summary: 'Orchestrates the ensemble — breaks down tasks, delegates, synthesizes.',
+    description: 'Orchestrates the ensemble — breaks down tasks, delegates, synthesizes.',
+    source: 'shipped',
   },
   {
     name: 'tempo-composer',
-    summary: 'Software architect — designs system structure, defines interfaces.',
+    description: 'Software architect — designs system structure, defines interfaces.',
+    source: 'shipped',
   },
   {
     name: 'tempo-critic',
-    summary: 'Code reviewer — evaluates changes for correctness and quality.',
+    description: 'Code reviewer — evaluates changes for correctness and quality.',
+    source: 'shipped',
   },
   {
     name: 'tempo-improv',
-    summary: 'Researcher and explorer — investigates unknowns, runs spikes.',
+    description: 'Researcher and explorer — investigates unknowns, runs spikes.',
+    source: 'shipped',
   },
   {
     name: 'tempo-liner',
-    summary: 'Documentation specialist — README, CHANGELOG, PR descriptions.',
+    description: 'Documentation specialist — README, CHANGELOG, PR descriptions.',
+    source: 'shipped',
   },
   {
     name: 'tempo-roadie',
-    summary: 'DevOps engineer — CI/CD, deployments, infrastructure.',
+    description: 'DevOps engineer — CI/CD, deployments, infrastructure.',
+    source: 'shipped',
   },
   {
     name: 'tempo-soloist',
-    summary: 'Senior engineer — implements features, fixes bugs, writes tests.',
+    description: 'Senior engineer — implements features, fixes bugs, writes tests.',
+    source: 'shipped',
   },
   {
     name: 'tempo-tuner',
-    summary: 'QA engineer — designs test strategies, finds bugs, validates edges.',
+    description: 'QA engineer — designs test strategies, finds bugs, validates edges.',
+    source: 'shipped',
   },
 ];
-
-export interface Lineup {
-  /** Filename stem (e.g. "tempo-dev-team"). */
-  name: string;
-  /** One-line summary shown under the lineup name in the picker. */
-  summary: string;
-  /** Approximate player count — wizards use this for the `· N players` qualifier. */
-  players: number;
-}
 
 /**
  * Shipped lineups (`examples/ensembles/*.yaml`). Player counts are
  * approximate (drawn from each YAML's `players` array length); refresh
  * them when the YAML changes.
  */
-export const SHIPPED_LINEUPS: ReadonlyArray<Lineup> = [
+export const SHIPPED_LINEUPS: ReadonlyArray<LineupRow> = [
   {
     name: 'tempo-dev-team',
-    summary: 'Conductor + composer + soloist + tuner + critic — full dev cycle.',
+    description: 'Conductor + composer + soloist + tuner + critic — full dev cycle.',
     players: 5,
+    source: 'shipped',
   },
   {
     name: 'tempo-big-band',
-    summary: 'Every shipped player type — the maximum ensemble.',
+    description: 'Every shipped player type — the maximum ensemble.',
     players: 8,
+    source: 'shipped',
   },
   {
     name: 'tempo-review-squad',
-    summary: 'Conductor + critic + tuner — focused on code review and QA.',
+    description: 'Conductor + critic + tuner — focused on code review and QA.',
     players: 3,
+    source: 'shipped',
   },
   {
     name: 'tempo-jam-session',
-    summary: 'Conductor + 2 soloists + critic — quick exploratory work.',
+    description: 'Conductor + 2 soloists + critic — quick exploratory work.',
     players: 4,
+    source: 'shipped',
   },
   {
     name: 'tempo-mock-jam',
-    summary: 'Dev-mode all-mock ensemble for adapter testing.',
+    description: 'Dev-mode all-mock ensemble for adapter testing.',
     players: 4,
+    source: 'shipped',
   },
 ];
 

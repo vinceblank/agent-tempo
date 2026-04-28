@@ -50,6 +50,10 @@ export interface DashboardTempoClient {
   state(ensemble: string): Promise<EnsembleStateV1>;
   /** GET `/v1/hosts` — host profiles + freshness/instance info. */
   hosts(): Promise<HostInfo[]>;
+  /** GET `/v1/agent-types` — available player-type catalog (#400). */
+  agentTypes(): Promise<AgentTypeRow[]>;
+  /** GET `/v1/lineups` — available lineup catalog (#400). */
+  lineups(): Promise<LineupRow[]>;
   /**
    * Subscribe to per-ensemble SSE events. Yields `TempoEvent`s in order;
    * caller iterates with `for await`. Pass `opts.signal` to abort.
@@ -112,8 +116,8 @@ export interface CreateEnsembleOpts {
   lineup?: string;
   /** Default host for recruits inside the ensemble. */
   host?: string;
-  /** Whether new recruits start in `held` mode (`hold`) or run immediately. */
-  startMode?: 'hold' | 'release-immediately';
+  /** `'hold'` boots all recruits paused; `'release'` runs immediately. Daemon vocabulary per `docs/SSE-PROTOCOL.md` § 11c. */
+  startMode?: 'hold' | 'release';
   /** Conductor system-prompt override sent on the first recruit. */
   conductorInstructions?: string;
 }
@@ -121,6 +125,27 @@ export interface CreateEnsembleOpts {
 export interface CreateEnsembleResult {
   ensemble: string;
   conductorPlayerId?: string;
+  /** Lineup name when the create call resolved one (echoed back from `lineup` opt). `null` for blank ensembles. */
+  lineup?: string | null;
+  /** Number of lineup players that were recruited successfully (excludes the conductor). */
+  recruitedPlayers?: number;
+  /** Per-player recruit failures — non-fatal, the conductor is alive even when this is non-empty. */
+  playerErrors?: Array<{ player: string; error: string }>;
+}
+
+/** GET `/v1/agent-types` row shape (#400). Mirrors the daemon's `AgentTypeRow`. */
+export interface AgentTypeRow {
+  name: string;
+  description?: string;
+  source: 'project' | 'user' | 'shipped';
+}
+
+/** GET `/v1/lineups` row shape (#400). Mirrors the daemon's `LineupRow`. */
+export interface LineupRow {
+  name: string;
+  description?: string;
+  players: number;
+  source: 'saved' | 'shipped';
 }
 
 export interface DashboardClientOpts {
@@ -194,6 +219,14 @@ export function createDashboardClient(opts: DashboardClientOpts = {}): Dashboard
     },
     async hosts() {
       return getJson<HostInfo[]>('/v1/hosts');
+    },
+    async agentTypes() {
+      const body = await getJson<{ agentTypes: AgentTypeRow[] }>('/v1/agent-types');
+      return body.agentTypes;
+    },
+    async lineups() {
+      const body = await getJson<{ lineups: LineupRow[] }>('/v1/lineups');
+      return body.lineups;
     },
     subscribe(ensemble, subOpts = {}) {
       return makeSseIterable(baseUrl, ensemble, subOpts, authHeaders());
