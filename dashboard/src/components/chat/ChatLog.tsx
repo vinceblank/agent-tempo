@@ -1,28 +1,55 @@
 /**
  * ChatLog — scrollable list of chat messages for the active ensemble.
+ * PR-C2 of #389: rebuilt to render `<FeedMessage>` (PR-A2) via an
+ * adapter that maps `FormattedChatRow` → `FeedMessageData`.
  *
- * Auto-scrolls to bottom on new messages so the user always sees the
- * latest conversation. Logs `chat.rendered` after each render pass so
- * the conductor's autonomous validator can watch for SSE-driven
- * re-render churn via `mcp__claude-in-chrome__read_console_messages`.
+ * Auto-scrolls to bottom on new messages. Logs `chat.rendered` after
+ * each render pass so the conductor's autonomous validator can watch
+ * for SSE-driven re-render churn via `mcp__claude-in-chrome__read_console_messages`.
  *
  * Compressed-stream UX (#3 risk): when the daemon emits
  * `chat.compressed`, the SSE projection in `lib/sse.ts` empties the
- * messages array and sets `hasMore: true`. We surface that as a
- * banner explaining the gap and offering a placeholder reload (the
- * actual `getEnsembleChat` re-fetch wires up in PR-7).
+ * messages array and sets `hasMore: true`. We surface that as a banner
+ * explaining the gap (the `getEnsembleChat` re-fetch lands in PR-7).
+ *
+ * Adapter notes:
+ *   - `direction: 'out'` rows always become `kind: 'out'` (right-aligned
+ *     bubble; FeedMessage shows MaestroMark on outbound per audit C2).
+ *   - `direction: 'in'` rows where `role === 'conductor-out'` are
+ *     "overheard" routes (player → player) — they map to `kind: 'route'`
+ *     and pick up `.msg.route` styling (italic body, indented rail).
+ *   - All other inbound rows map to `kind: 'in'`.
+ *   - Broadcast badge (`row.broadcastBadge`) and directed-recipient
+ *     prefix (`row.recipientLabel`) prepend into FeedMessage's `body`
+ *     slot as inline shim spans, preserving the legacy
+ *     `broadcast-badge-${id}` and `chat-message-${id}-recipient`
+ *     testids that #357 / #360 contract tests rely on.
+ *   - Sender's player type / phase / conductor flag come from a
+ *     `playersByName` lookup the caller passes in. When unknown, the
+ *     FeedMessage renders without a phase dot or hue-tint and the
+ *     PlayerAvatar falls back to the deterministic glyph palette.
  */
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import type { EnsembleChatMessage } from 'claude-tempo/types';
+import type { PlayerSummaryV1 } from 'claude-tempo/http/event-types';
 import { logEvent } from '../../lib/log';
-import { buildFormattedRows } from '../../lib/chat-format';
-import { ChatMessage } from './ChatMessage';
+import {
+  buildFormattedRows,
+  broadcastBadgeText,
+  type FormattedChatRow,
+} from '../../lib/chat-format';
+import { formatHHMM } from '../../lib/time-format';
+import { FeedMessage, type FeedMessageData, type FeedMessageKind } from './FeedMessage';
 
 interface ChatLogProps {
   ensemble: string;
   messages: EnsembleChatMessage[];
   conductorPlayerId?: string;
-  /** True when chat.compressed dropped the local window; surfaces the banner. */
+  /** Sender lookup. Drives type-hue + phase-dot + conductor star on
+   * inbound rows. The Workspace passes its `players` array as this
+   * map; absent senders gracefully degrade to default colouring. */
+  players?: PlayerSummaryV1[];
+  /** True when chat.compressed dropped the local window; shows a banner. */
   hasCompressedGap?: boolean;
 }
 
@@ -30,17 +57,25 @@ export function ChatLog({
   ensemble,
   messages,
   conductorPlayerId,
+  players,
   hasCompressedGap = false,
 }: ChatLogProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  // Memoize the projection — it walks the full chat slice (capped at
-  // 200 by the SSE projection) and folds broadcast groups, so re-running
-  // on every Workspace render burned cycles unnecessarily. SSE events
-  // produce a new `messages` reference each tick, which is the only
-  // case we need to re-derive on.
+  // Index players by playerId so the adapter can look up type/phase
+  // without a linear scan per row.
+  const playerIndex = useMemo(() => {
+    const m = new Map<string, PlayerSummaryV1>();
+    for (const p of players ?? []) m.set(p.playerId, p);
+    return m;
+  }, [players]);
+
   const rows = useMemo(
     () => buildFormattedRows(messages, conductorPlayerId),
     [messages, conductorPlayerId],
+  );
+  const feedItems = useMemo(
+    () => rows.map((row) => rowToFeedMessage(row, playerIndex)),
+    [rows, playerIndex],
   );
 
   useEffect(() => {
@@ -52,14 +87,8 @@ export function ChatLog({
       broadcasts,
     });
     if (scrollRef.current) {
-      // Snap to bottom — chronological order means latest is the last row.
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-    // `messages.length` is the relevant trigger because SSE feeds the
-    // chat append-only — no in-place edits in PR-5. The same-length
-    // sentinel keeps the conductor's `[claude-tempo:dashboard] chat.rendered`
-    // log clean (one line per real append) instead of one line per
-    // identity-only re-render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ensemble, messages.length, hasCompressedGap]);
 
@@ -68,12 +97,15 @@ export function ChatLog({
       <div
         data-testid={`chat-log-${ensemble}`}
         data-empty="true"
-        className="dim"
+        className="dim chat-log"
         style={{
-          padding: 'var(--density-pad)',
+          // Match the .panel.chat content box: empty state should still
+          // sit inside the chat panel cleanly. The .chat-log class gives
+          // the right padding/density.
           background: 'var(--bg-1)',
           border: '1px dashed var(--rule)',
           borderRadius: 8,
+          minHeight: 0,
         }}
       >
         No messages yet. The conductor's first dispatch will land here.
@@ -85,15 +117,7 @@ export function ChatLog({
     <div
       ref={scrollRef}
       data-testid={`chat-log-${ensemble}`}
-      style={{
-        flex: 1,
-        minHeight: 0,
-        overflowY: 'auto',
-        padding: 'var(--density-pad)',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 4,
-      }}
+      className="chat-log"
     >
       {hasCompressedGap && (
         <div
@@ -113,9 +137,74 @@ export function ChatLog({
           Reload to fetch them (full reload UX lands in PR-7 of #340).
         </div>
       )}
-      {rows.map((row) => (
-        <ChatMessage key={row.source.id} row={row} />
+      {feedItems.map((m) => (
+        <FeedMessage key={m.id} m={m} />
       ))}
     </div>
+  );
+}
+
+/**
+ * Map a single `FormattedChatRow` to `FeedMessageData`. Public so the
+ * #357 / #360 contract tests can render against `<FeedMessage>` via
+ * the same adapter the live ChatLog uses.
+ */
+export function rowToFeedMessage(
+  row: FormattedChatRow,
+  playerIndex: Map<string, PlayerSummaryV1>,
+): FeedMessageData {
+  const m = row.source;
+  const sender = m.from ? playerIndex.get(m.from) : undefined;
+  const kind: FeedMessageKind =
+    row.direction === 'out'
+      ? 'out'
+      : m.role === 'conductor-out'
+        ? 'route'
+        : 'in';
+
+  return {
+    id: m.id,
+    kind,
+    from: m.from,
+    to: m.to,
+    time: formatHHMM(m.timestamp),
+    body: renderBody(row),
+    fromType: sender?.playerType,
+    fromIsConductor: sender?.isConductor,
+    fromPhase: sender?.phase,
+  };
+}
+
+/** Body content with optional broadcast badge + recipient prefix shims.
+ * Both shim spans carry their legacy testids (`broadcast-badge-${id}` and
+ * `chat-message-${id}-recipient`) so the #357 / #360 contract tests
+ * remain green without rewriting their assertions. */
+function renderBody(row: FormattedChatRow): ReactNode {
+  const m = row.source;
+  return (
+    <>
+      {row.broadcastBadge && (
+        <span
+          data-testid={`broadcast-badge-${m.broadcastId}`}
+          data-broadcast-count={row.broadcastBadge.count}
+          className="dim"
+          style={{ marginRight: 6 }}
+        >
+          {broadcastBadgeText(row.broadcastBadge)}
+        </span>
+      )}
+      {row.recipientLabel && !row.broadcastBadge && (
+        <span
+          data-testid={`chat-message-${m.id}-recipient`}
+          className="dim"
+          style={{ marginRight: 6 }}
+        >
+          → @{row.recipientLabel}
+        </span>
+      )}
+      <span style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+        {m.text}
+      </span>
+    </>
   );
 }

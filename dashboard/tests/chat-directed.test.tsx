@@ -10,8 +10,17 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import type { EnsembleChatMessage } from 'claude-tempo/types';
-import { buildFormattedRows } from '../src/lib/chat-format';
-import { ChatMessage } from '../src/components/chat/ChatMessage';
+import type { PlayerSummaryV1 } from 'claude-tempo/http/event-types';
+import { buildFormattedRows, type FormattedChatRow } from '../src/lib/chat-format';
+import { rowToFeedMessage } from '../src/components/chat/ChatLog';
+import { FeedMessage } from '../src/components/chat/FeedMessage';
+
+/** Render a `FormattedChatRow` through the live PR-C2 adapter +
+ * FeedMessage primitive. */
+function renderRow(row: FormattedChatRow) {
+  const players = new Map<string, PlayerSummaryV1>();
+  return render(<FeedMessage m={rowToFeedMessage(row, players)} />);
+}
 
 function makeOut(to: string, role: EnsembleChatMessage['role'] = 'maestro-out'): EnsembleChatMessage {
   return {
@@ -72,17 +81,17 @@ describe('buildFormattedRows — recipientLabel (#360 contract)', () => {
   });
 });
 
-describe('ChatMessage — recipient prefix render', () => {
+describe('ChatLog adapter + FeedMessage — recipient prefix render', () => {
   it('renders `→ @<to>` for directed maestro-out', () => {
     const rows = buildFormattedRows([makeOut('tempo-eng')], 'tempo-conductor');
-    const { getByTestId } = render(<ChatMessage row={rows[0]} />);
+    const { getByTestId } = renderRow(rows[0]);
     const prefix = getByTestId(`chat-message-m-tempo-eng-recipient`);
     expect(prefix.textContent).toContain('→ @tempo-eng');
   });
 
   it('does NOT render the prefix for conductor-bound maestro-out', () => {
     const rows = buildFormattedRows([makeOut('tempo-conductor')], 'tempo-conductor');
-    const { queryByTestId } = render(<ChatMessage row={rows[0]} />);
+    const { queryByTestId } = renderRow(rows[0]);
     expect(queryByTestId(`chat-message-m-tempo-conductor-recipient`)).toBeNull();
   });
 });

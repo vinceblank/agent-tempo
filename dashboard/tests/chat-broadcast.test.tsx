@@ -13,8 +13,18 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import type { EnsembleChatMessage } from 'claude-tempo/types';
-import { buildFormattedRows } from '../src/lib/chat-format';
-import { ChatMessage } from '../src/components/chat/ChatMessage';
+import type { PlayerSummaryV1 } from 'claude-tempo/http/event-types';
+import { buildFormattedRows, type FormattedChatRow } from '../src/lib/chat-format';
+import { rowToFeedMessage } from '../src/components/chat/ChatLog';
+import { FeedMessage } from '../src/components/chat/FeedMessage';
+
+/** Render a `FormattedChatRow` through the live PR-C2 adapter +
+ * FeedMessage primitive. Mirrors ChatLog's render path so the
+ * contract assertions match what the live workspace shows. */
+function renderRow(row: FormattedChatRow) {
+  const players = new Map<string, PlayerSummaryV1>();
+  return render(<FeedMessage m={rowToFeedMessage(row, players)} />);
+}
 
 const BCAST_A = 'bcast-aaaa';
 const BCAST_B = 'bcast-bbbb';
@@ -114,14 +124,14 @@ describe('buildFormattedRows — broadcast fold (#357 contract)', () => {
   });
 });
 
-describe('ChatMessage — broadcast badge render', () => {
+describe('ChatLog adapter + FeedMessage — broadcast badge render', () => {
   it('renders the broadcast-badge testid when row has broadcastBadge', () => {
     const rows = buildFormattedRows([
       makeMsg('1', 'alice', 'maestro-out', BCAST_A),
       makeMsg('2', 'bob', 'maestro-out', BCAST_A),
       makeMsg('3', 'carol', 'maestro-out', BCAST_A),
     ]);
-    const { getByTestId } = render(<ChatMessage row={rows[0]} />);
+    const { getByTestId } = renderRow(rows[0]);
     const badge = getByTestId(`broadcast-badge-${BCAST_A}`);
     expect(badge).toBeInTheDocument();
     expect(badge).toHaveAttribute('data-broadcast-count', '3');
@@ -134,7 +144,7 @@ describe('ChatMessage — broadcast badge render', () => {
     const rows = buildFormattedRows(
       ['a', 'b', 'c', 'd', 'e'].map((to, i) => makeMsg(`${i}`, to, 'maestro-out', BCAST_A)),
     );
-    const { getByTestId } = render(<ChatMessage row={rows[0]} />);
+    const { getByTestId } = renderRow(rows[0]);
     const badge = getByTestId(`broadcast-badge-${BCAST_A}`);
     expect(badge.textContent).toContain('5 players');
     expect(badge.textContent).toContain('+2 more');
@@ -145,7 +155,7 @@ describe('ChatMessage — broadcast badge render', () => {
       makeMsg('1', 'alice', 'maestro-out', BCAST_A),
       makeMsg('2', 'bob', 'maestro-out', BCAST_A),
     ]);
-    const { queryByTestId } = render(<ChatMessage row={rows[0]} />);
+    const { queryByTestId } = renderRow(rows[0]);
     expect(queryByTestId(`chat-message-1-recipient`)).toBeNull();
   });
 });
