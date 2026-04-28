@@ -13,12 +13,16 @@
  * explaining the gap (the `getEnsembleChat` re-fetch lands in PR-7).
  *
  * Adapter notes:
- *   - `direction: 'out'` rows always become `kind: 'out'` (right-aligned
- *     bubble; FeedMessage shows MaestroMark on outbound per audit C2).
- *   - `direction: 'in'` rows where `role === 'conductor-out'` are
- *     "overheard" routes (player → player) — they map to `kind: 'route'`
+ *   - Rows with `from === MAESTRO_PLAYER_ID` map to `kind: 'out'`
+ *     (right-aligned bubble; FeedMessage shows MaestroMark on outbound
+ *     per audit C2).
+ *   - Rows with `to === MAESTRO_PLAYER_ID` map to `kind: 'in'`
+ *     (left-aligned with PlayerAvatar + `← maestro` arrow).
+ *   - Rows where neither end is the maestro — conductor↔player
+ *     side-chatter, player↔player routes — map to `kind: 'route'`
  *     and pick up `.msg.route` styling (italic body, indented rail).
- *   - All other inbound rows map to `kind: 'in'`.
+ *     The conductor is just another player from the dashboard's POV
+ *     (#446).
  *   - Broadcast badge (`row.broadcastBadge`) and directed-recipient
  *     prefix (`row.recipientLabel`) prepend into FeedMessage's `body`
  *     slot as inline shim spans, preserving the legacy
@@ -36,6 +40,7 @@ import { logEvent } from '../../lib/log';
 import {
   buildFormattedRows,
   broadcastBadgeText,
+  MAESTRO_PLAYER_ID,
   type FormattedChatRow,
 } from '../../lib/chat-format';
 import { formatHHMM } from '../../lib/time-format';
@@ -148,6 +153,15 @@ export function ChatLog({
  * Map a single `FormattedChatRow` to `FeedMessageData`. Public so the
  * #357 / #360 contract tests can render against `<FeedMessage>` via
  * the same adapter the live ChatLog uses.
+ *
+ * **Variant rule (#446)**: maestro on either end → primary (`out` if
+ * sending, `in` if receiving). Otherwise → `route` (overheard
+ * side-chatter; dimmed + italic per `.msg.route` in `components.css`).
+ * The conductor is just another player from the dashboard's POV — its
+ * chat with other players is overheard, not primary. The previous
+ * role-based classifier was direction-asymmetric: outbound conductor
+ * messages were dimmed but inbound `conductor-in` rows fell through
+ * to primary.
  */
 export function rowToFeedMessage(
   row: FormattedChatRow,
@@ -155,12 +169,10 @@ export function rowToFeedMessage(
 ): FeedMessageData {
   const m = row.source;
   const sender = m.from ? playerIndex.get(m.from) : undefined;
-  const kind: FeedMessageKind =
-    row.direction === 'out'
-      ? 'out'
-      : m.role === 'conductor-out'
-        ? 'route'
-        : 'in';
+  let kind: FeedMessageKind;
+  if (m.from === MAESTRO_PLAYER_ID) kind = 'out';
+  else if (m.to === MAESTRO_PLAYER_ID) kind = 'in';
+  else kind = 'route';
 
   return {
     id: m.id,
