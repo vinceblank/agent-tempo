@@ -18,6 +18,8 @@ import { useMutation, useQueryClient, type UseMutationResult } from '@tanstack/r
 import type { EnsembleStateV1 } from 'claude-tempo/http/event-types';
 import type { EnsembleChatMessage } from 'claude-tempo/types';
 import type {
+  CreateEnsembleOpts,
+  CreateEnsembleResult,
   CueResult,
   DashboardTempoClient,
   RecruitOpts,
@@ -26,7 +28,7 @@ import type {
 } from './client';
 import { getDashboardClient } from './client-singleton';
 import { logEvent } from './log';
-import { ensembleQueryKey } from './queries';
+import { ENSEMBLES_QUERY_KEY, ensembleQueryKey } from './queries';
 import { toastError, toastSuccess } from './toast';
 
 /** Prefix used on optimistic message ids. */
@@ -255,6 +257,58 @@ export function useRecruitMutation(
         ensemble, name: vars.name, error: errMsg(err),
       }, 'warn');
       toastError(`Failed to recruit ${vars.name}`, { description: errMsg(err) });
+    },
+  });
+}
+
+// ── createEnsemble (wire-pending) ────────────────────────────────────────
+
+/**
+ * Create a fresh ensemble. The daemon doesn't expose POST `/v1/ensembles`
+ * yet; the mutation rides on top of the new client method and surfaces
+ * the wire-gap clearly when the underlying request 404s. Toast wording
+ * tells the user what's happening rather than blaming them for a bad
+ * input. Once the endpoint lands, this hook stays the same — only the
+ * toast copy needs to change.
+ *
+ * On success: invalidates the ensembles list so the new ensemble shows
+ * up on Overview without a manual refresh.
+ */
+export function useEnsembleCreateMutation(
+  opts: MutationOptions = {},
+): UseMutationResult<CreateEnsembleResult, Error, CreateEnsembleOpts> {
+  const qc = useQueryClient();
+  const client = opts.client ?? getDashboardClient();
+  return useMutation<CreateEnsembleResult, Error, CreateEnsembleOpts>({
+    mutationFn: (vars) => client.createEnsemble(vars),
+    onMutate: (vars) => {
+      logEvent('mutation.createEnsemble.started', {
+        name: vars.name, lineup: vars.lineup, startMode: vars.startMode,
+      });
+    },
+    onSuccess: (result, vars) => {
+      logEvent('mutation.createEnsemble.succeeded', {
+        ensemble: result.ensemble, conductorPlayerId: result.conductorPlayerId,
+      });
+      toastSuccess(`Created ${result.ensemble}`, {
+        description: vars.lineup
+          ? `Lineup: ${vars.lineup}`
+          : 'Blank ensemble — recruit players from Workspace.',
+      });
+      void qc.invalidateQueries({ queryKey: ENSEMBLES_QUERY_KEY });
+    },
+    onError: (err, vars) => {
+      const msg = errMsg(err);
+      logEvent('mutation.createEnsemble.failed', { name: vars.name, error: msg }, 'warn');
+      // Wire-gap awareness — POST /v1/ensembles is on the daemon backlog.
+      // The 404 path is the common one until the endpoint ships.
+      const wirePending = msg.includes('404') || msg.toLowerCase().includes('not found');
+      toastError(
+        wirePending ? 'Create ensemble endpoint not yet available' : `Failed to create ${vars.name}`,
+        { description: wirePending
+          ? 'Daemon-side POST /v1/ensembles ships in a follow-up. Use the CLI for now: claude-tempo up <name>.'
+          : msg },
+      );
     },
   });
 }
