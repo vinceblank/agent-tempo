@@ -31,9 +31,23 @@ import { DAEMON_PID_PATH, DAEMON_LOG_PATH, DAEMON_HEARTBEAT_PATH, HEARTBEAT_INTE
 import { createTempoClient } from './client';
 import { queryOrphanedSessions, restoreOrphansOnce, type OrphanCandidate } from './reconcile/orphans';
 import { listAgentTypes } from './ensemble/agent-types';
+import { probeAdapterVersions } from './daemon-adapter-versions';
 import type { GlobalMaestroInput, HostProfile } from './types';
 
 const log = (...args: unknown[]) => console.error(`[claude-tempo:daemon ${new Date().toISOString()}]`, ...args);
+
+/**
+ * Daemon process start time, captured at module load. Issue #399 Q5.3b
+ * advertises this on every `hostProfile` signal as
+ * {@link HostProfile.daemonStartedAt} so the dashboard's Hosts table
+ * can render `now - daemonStartedAt` as the daemon-process uptime.
+ *
+ * Captured here (top-of-module) rather than inside `computeHostProfile`
+ * so a refresh-host-profile invocation later in the daemon's lifetime
+ * still advertises the original boot time. Module load happens once
+ * per daemon process; the value is effectively the daemon's birth time.
+ */
+const DAEMON_STARTED_AT = Date.now();
 
 /**
  * Atomically write the daemon PID file via `writeFile(tmp) + rename(tmp, final)`.
@@ -232,6 +246,10 @@ export function computeHostProfile(config: Config): HostProfile {
     claudeBin: config.claudeBin,
     platform: process.platform,
     capabilities: [],
+    daemonStartedAt: DAEMON_STARTED_AT,
+    // adapterVersions is populated at runDaemonBoot time after the
+    // parallel probe (see runDaemonBoot below). computeHostProfile
+    // intentionally returns the immediate fields only.
   };
 }
 
@@ -277,7 +295,16 @@ export function scrubHostProfile(raw: HostProfile): HostProfile {
   const scrubList = (list: string[] | undefined): string[] | undefined =>
     list?.map(stripPath);
 
-  return {
+  // Issue #399 — pass-through fields with no privacy concern.
+  // `daemonStartedAt` is a number; `adapterVersions` keys are adapter
+  // NAMES and values are version strings. Neither carries paths,
+  // env vars, or user-home directories, so the AC5c scrub doesn't
+  // need to touch them. We conditionally splice them in only when
+  // they're defined on the input, so the scrub output stays
+  // shape-equivalent to a clean input that omits them — the
+  // already-clean round-trip test (`scrubHostProfile(clean) === clean`)
+  // continues to hold.
+  const out: HostProfile = {
     hostname: raw.hostname,
     version: raw.version,
     defaultAgent: raw.defaultAgent,
@@ -287,6 +314,9 @@ export function scrubHostProfile(raw: HostProfile): HostProfile {
     platform: raw.platform,
     capabilities: raw.capabilities,
   };
+  if (raw.daemonStartedAt !== undefined) out.daemonStartedAt = raw.daemonStartedAt;
+  if (raw.adapterVersions !== undefined) out.adapterVersions = raw.adapterVersions;
+  return out;
 }
 
 /** Production default: signal the global maestro with the profile. */
@@ -357,6 +387,20 @@ export interface DaemonBootDeps {
    */
   computeHostProfile: () => HostProfile;
   /**
+   * Probe upstream tool versions for each adapter. Issue #399 Q5.4 —
+   * the result is merged into the profile as
+   * {@link HostProfile.adapterVersions} before the first signal. Runs
+   * in parallel with `ensureGlobalMaestro`, so a slow probe doesn't
+   * extend the boot. Probe failures yield an empty / partial map; the
+   * caller never throws. Tests stub this to return canned maps.
+   *
+   * Optional — when omitted (existing tests, embedded callers), the
+   * profile is signaled without an `adapterVersions` field. The
+   * production daemon entry-point passes the real `probeAdapterVersions`
+   * from `daemon-adapter-versions.ts`.
+   */
+  probeAdapterVersions?: () => Promise<Record<string, string>>;
+  /**
    * Retry backoffs for the `hostProfile` signal (ms). Production uses
    * `[0, 5000, 15000]`; tests override to `[0, 0, 0]` for speed.
    */
@@ -388,17 +432,47 @@ export interface DaemonBootDeps {
 export async function runDaemonBoot(client: Client, deps: DaemonBootDeps): Promise<void> {
   const logFn = deps.log ?? log;
   const raw = deps.computeHostProfile();
-  const profile = scrubHostProfile(raw);
 
-  try {
-    await deps.ensureGlobalMaestro();
-  } catch (err) {
+  // Issue #399 Q5.4 — probe adapter versions in parallel with the
+  // global-maestro ensure. The probe is best-effort and never throws;
+  // settled-result handling makes the boot path tolerant of either
+  // succeeding without the other. Ordering invariant (AC5a / M11) —
+  // the host-profile signal still gates on `ensureGlobalMaestro`
+  // resolving — is preserved by awaiting both before signaling.
+  const probeFn = deps.probeAdapterVersions ?? (() => Promise.resolve({}));
+  const [ensureResult, probeResult] = await Promise.allSettled([
+    deps.ensureGlobalMaestro(),
+    probeFn(),
+  ]);
+
+  if (ensureResult.status === 'rejected') {
     logFn(
       'ensureGlobalMaestro failed (non-fatal); host profile not advertised this boot:',
-      err instanceof Error ? err.message : err,
+      ensureResult.reason instanceof Error ? ensureResult.reason.message : ensureResult.reason,
     );
     return;
   }
+
+  const adapterVersions =
+    probeResult.status === 'fulfilled' ? probeResult.value : {};
+  if (probeResult.status === 'rejected') {
+    // probeAdapterVersions is contracted to never throw, but guard the
+    // fallthrough for defense-in-depth — a thrown probe shouldn't
+    // block profile advertisement.
+    logFn(
+      'probeAdapterVersions threw (non-fatal); advertising profile without adapter versions:',
+      probeResult.reason instanceof Error ? probeResult.reason.message : probeResult.reason,
+    );
+  }
+
+  // Merge probe result into the profile. We mutate `raw` rather than
+  // re-call computeHostProfile because the probe and compute are
+  // logically two halves of the same boot snapshot.
+  const profile = scrubHostProfile({
+    ...raw,
+    adapterVersions:
+      Object.keys(adapterVersions).length > 0 ? adapterVersions : undefined,
+  });
 
   await advertiseHostProfile(client, profile, {
     retryBackoffsMs: deps.retryBackoffsMs,
@@ -802,6 +876,11 @@ async function main() {
         ensureGlobalMaestro: () => ensureGlobalMaestro(config),
         sendHostProfileSignal: realSendHostProfileSignal,
         computeHostProfile: () => computeHostProfile(config),
+        // Issue #399 Q5.4 — probe upstream tool versions in parallel
+        // with the global-maestro ensure. Production uses real spawns
+        // / package.json reads; tests inject canned maps via
+        // `DaemonBootDeps.probeAdapterVersions`.
+        probeAdapterVersions: () => probeAdapterVersions(),
       });
     } catch (err) {
       log('runDaemonBoot background error:', err);

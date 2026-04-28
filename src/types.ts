@@ -256,6 +256,21 @@ export interface HostProfile {
   platform?: NodeJS.Platform;
   capabilities?: string[];
   /**
+   * Daemon process start time (epoch ms, `Date.now()` at module load).
+   * Resets on every daemon restart; semantics are
+   * **daemon-process uptime**, not host-first-seen. Issue #399 Q5.3b.
+   * The Hosts table renders `now - daemonStartedAt` client-side.
+   */
+  daemonStartedAt?: number;
+  /**
+   * Adapter name → upstream tool version (e.g.
+   * `{ "claude-code": "1.2.4", "copilot": "0.5.2" }`).
+   * Probed once at daemon boot in parallel with the global-maestro ensure;
+   * adapters whose probe fails or whose output can't be parsed are
+   * omitted entirely (the dashboard shows `—`). Issue #399 Q5.4.
+   */
+  adapterVersions?: Record<string, string>;
+  /**
    * Open-schema escape hatch: unknown fields carried opaquely across
    * daemon-version skew. Consumers MUST NOT rely on specific keys here
    * without a Zod guard at read time.

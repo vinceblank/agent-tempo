@@ -293,9 +293,11 @@ Advertised by daemons via the `hostProfile` signal. **Open schema** — consumer
 | `claudeBin` | `string?` | Basename only (e.g. `"claude"`). **Never** absolute — privacy scrub. |
 | `platform` | `NodeJS.Platform?` | Reported from `process.platform`. |
 | `capabilities` | `string[]?` | Free-form capability flags (future extension). |
+| `daemonStartedAt` | `number?` | Daemon process start time (epoch ms, captured at module load). Resets on every daemon restart; semantics are **daemon-process uptime**, not host-first-seen. Issue #399 Q5.3b. |
+| `adapterVersions` | `Record<string, string>?` | Adapter name → upstream tool version (e.g. `{ "claude-code": "1.2.4", "copilot": "0.5.2" }`). Probed once at daemon boot in parallel with the global-maestro ensure; adapters whose probe fails or output can't be parsed are omitted. Issue #399 Q5.4. |
 | `[extraField]` | `unknown` | Additive open-schema escape hatch for forward compatibility. |
 
-Privacy contract: daemons MUST scrub absolute paths, env values, and user directories before signaling. See `src/daemon.ts` `scrubHostProfile` + `test/daemon-boot.test.ts` scrub invariant.
+Privacy contract: daemons MUST scrub absolute paths, env values, and user directories before signaling. See `src/daemon.ts` `scrubHostProfile` + `test/daemon-boot.test.ts` scrub invariant. (`daemonStartedAt` and `adapterVersions` carry no path / env data; they pass through the scrub unchanged.)
 
 ### `RecruitOutboxEntry` (selected fields)
 
