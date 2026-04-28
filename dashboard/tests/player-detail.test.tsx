@@ -188,8 +188,13 @@ describe('PlayerDetail — KV sections (audit Q2 lock-in)', () => {
     const section = await screen.findByTestId('player-detail-tempo-eng-section-phase-lease');
     expect(within(section).getByTestId('player-detail-tempo-eng-kv-host').textContent).toContain('main-laptop');
     expect(within(section).getByTestId('player-detail-tempo-eng-kv-heartbeat').textContent).toMatch(/\d+s ago/);
-    // Wire-extension placeholders.
-    expect(within(section).getByTestId('player-detail-tempo-eng-kv-adapter').textContent).toContain('—');
+    // Adapter binds the player.agentType + host.adapterVersions[adapter]
+    // join (DB1b). With no host data in the test, version falls back to
+    // the bare adapter name — `claude-code` for `agentType: 'claude'`.
+    expect(within(section).getByTestId('player-detail-tempo-eng-kv-adapter').textContent).toContain('claude-code');
+    // Lease + run-id still need DB1a's session-side projection — until
+    // then the snapshot leaves the fields unset and the row falls back
+    // to `—`.
     expect(within(section).getByTestId('player-detail-tempo-eng-kv-lease').textContent).toContain('—');
     expect(within(section).getByTestId('player-detail-tempo-eng-kv-run-id').textContent).toContain('—');
     // Phase row hosts the PhaseDot (one instance scoped to this section).

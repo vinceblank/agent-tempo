@@ -62,6 +62,7 @@ import {
   useLocation,
 } from 'react-router-dom';
 import { useEnsembleSnapshot } from '../lib/queries';
+import { asExtended } from '../lib/wire-shape';
 import { useSseSubscription } from '../lib/sse';
 import { selectedPlayerIdFromPath } from '../router';
 import { logEvent } from '../lib/log';
@@ -81,13 +82,12 @@ import { PageHeader } from '../components/PageHeader';
 import { useScreenPhoneAppBar, type PhoneAppBarOverride } from '../components/AppShell';
 
 /**
- * Toy series for the TempoStrip while real bucketing isn't on the wire.
- * Task #15 lands per-ensemble msgs/minute aggregation; PR-A2 swaps in
- * the real sparkline.
+ * Empty fallback for the TempoStrip when the snapshot hasn't yet
+ * surfaced the maestro's `tempoSeries`. The 60-bucket window is filled
+ * with zeros so the sparkline renders as a flat baseline rather than
+ * a degenerate `viewBox=0 0 0 N` SVG that browsers refuse to draw.
  */
-const PLACEHOLDER_TEMPO_SERIES = [
-  1, 0, 0, 2, 1, 3, 2, 4, 1, 0, 1, 2, 0, 3, 4, 5, 6, 4, 3, 2,
-];
+const EMPTY_TEMPO_SERIES = Array<number>(60).fill(0);
 
 /** People / roster glyph used by the side-toggle button. Inline SVG to
  * stay design-faithful (audit Q7: no lucide-react dependency). */
@@ -119,6 +119,11 @@ export function Workspace() {
   const navigate = useNavigate();
   const location = useLocation();
   const snapshot = useEnsembleSnapshot(ensemble);
+  // #399 W1 (Q5.6) — bpm + sparkline land on the snapshot via DB1a.
+  // Fall back to neutral values until DB1a's projection ships.
+  const extData = asExtended(snapshot.data);
+  const bpm = extData?.currentBpm ?? 0;
+  const tempoSeries = extData?.tempoSeries ?? [];
   useSseSubscription(ensemble);
 
   useEffect(() => {
@@ -337,7 +342,10 @@ export function Workspace() {
       />
 
       <div className="page-tempo">
-        <TempoStrip series={PLACEHOLDER_TEMPO_SERIES} bpm={players.length ? 92 : 0} />
+        <TempoStrip
+          series={tempoSeries.length > 0 ? tempoSeries : EMPTY_TEMPO_SERIES}
+          bpm={bpm}
+        />
       </div>
 
       <div className={'workspace' + (showSide ? '' : ' workspace-collapsed')}>

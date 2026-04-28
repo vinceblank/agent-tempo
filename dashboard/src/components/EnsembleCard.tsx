@@ -40,7 +40,9 @@ import { Link } from 'react-router-dom';
 import { useEnsembleSnapshot } from '../lib/queries';
 import { useSseSubscription } from '../lib/sse';
 import type { EnsembleSummary } from '../lib/client';
+import { asExtended } from '../lib/wire-shape';
 import { logEvent } from '../lib/log';
+import { formatDuration } from '../lib/time-format';
 import { PlayerAvatar } from './tempo/PlayerAvatar';
 
 interface EnsembleCardProps {
@@ -57,18 +59,26 @@ export function EnsembleCard({ ensemble }: EnsembleCardProps) {
   // `/v1/events` stream + per-card snapshot only.
   useSseSubscription(ensemble.name);
 
-  const players = snapshot.data?.players ?? [];
+  const data = asExtended(snapshot.data);
+  const players = data?.players ?? [];
   const playerCount = players.length || ensemble.playerCount;
-  const hasConductor = snapshot.data?.hasConductor ?? ensemble.hasConductor;
-  const state = snapshot.data?.state ?? ensemble.state ?? 'online';
-  const flags = snapshot.data?.flags;
+  const hasConductor = data?.hasConductor ?? ensemble.hasConductor;
+  const state = data?.state ?? ensemble.state ?? 'online';
+  const flags = data?.flags;
   const isEmpty = playerCount === 0;
   const activeCount = players.filter((p) => p.phase === 'attached' || p.phase === 'processing').length;
-  // Tempo / lineup / host / uptime aren't on the wire yet (Task #15
-  // adds them in beta.8). Placeholder dashes until then.
+  // Lineup / host still require dedicated wire fields (out of #399 scope).
   const lineup = '—';
   const host = '—';
-  const uptime = '—';
+  // #399 W1 (Q5.3a / Q5.6 / Q5.1) — uptime, BPM, and description bind
+  // to the new snapshot projections from DB1a. Each falls back to "—"
+  // when missing so the card stays grid-aligned.
+  const startedAtMs = data?.startedAt ? Date.parse(data.startedAt) : NaN;
+  const uptime = Number.isFinite(startedAtMs)
+    ? formatDuration(Date.now() - startedAtMs)
+    : '—';
+  const bpm = data?.currentBpm;
+  const description = data?.description?.trim() ?? '';
 
   return (
     <article
@@ -98,7 +108,9 @@ export function EnsembleCard({ ensemble }: EnsembleCardProps) {
             {ensemble.name}
           </div>
           <div className="ec-tempo">
-            <span className="bpm">—</span>
+            <span className="bpm" data-testid={`ensemble-card-${ensemble.name}-bpm`}>
+              {bpm !== undefined ? bpm : '—'}
+            </span>
             <span>bpm</span>
           </div>
         </div>
@@ -123,11 +135,12 @@ export function EnsembleCard({ ensemble }: EnsembleCardProps) {
         ) : (
           <>
             {/* `.ec-desc` reserves a 40px min-height so cards with no
-              * description still align in the grid. Task #15 will surface
-              * a real `description` field; until then we show a neutral
-              * placeholder rather than collapsing the row. */}
-            <div className="ec-desc">
-              {hasConductor ? 'Conductor active.' : 'No conductor yet.'}
+              * description still align in the grid. The conductor agent
+              * keeps this populated via `set_ensemble_description`
+              * (#399 Q5.1); fresh ensembles without a description fall
+              * back to a presence sentinel so the row never collapses. */}
+            <div className="ec-desc" data-testid={`ensemble-card-${ensemble.name}-desc`}>
+              {description || (hasConductor ? 'Conductor active.' : 'No conductor yet.')}
             </div>
 
             <div className="ec-stats" data-testid={`ensemble-card-${ensemble.name}-stats`}>
@@ -144,7 +157,11 @@ export function EnsembleCard({ ensemble }: EnsembleCardProps) {
                 <div className="l">active</div>
               </div>
               <div className="ec-stat">
-                <div className="n" style={{ fontFamily: 'var(--ff-mono)', fontSize: 12 }}>
+                <div
+                  className="n"
+                  data-testid={`ensemble-card-${ensemble.name}-uptime`}
+                  style={{ fontFamily: 'var(--ff-mono)', fontSize: 12 }}
+                >
                   {uptime}
                 </div>
                 <div className="l">uptime</div>
