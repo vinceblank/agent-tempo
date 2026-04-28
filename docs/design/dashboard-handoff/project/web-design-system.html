@@ -1,0 +1,1658 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<title>claude-tempo · Web Design System</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css?v=3" />
+<style>
+  /* ─── doc-only styles ─────────────────────────────────────────── */
+  body {
+    font-family: var(--ff-ui);
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+  .ds-shell {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    min-height: 100vh;
+  }
+  .ds-nav {
+    position: sticky; top: 0; align-self: start;
+    height: 100vh;
+    border-right: 1px solid var(--rule);
+    background: var(--bg-1);
+    padding: 28px 20px;
+    display: flex; flex-direction: column; gap: 4px;
+    overflow-y: auto;
+  }
+  .ds-nav .brand {
+    font-family: var(--ff-mono);
+    font-weight: 600;
+    font-size: 16px;
+    line-height: 1;
+    margin-bottom: 4px;
+    letter-spacing: -0.02em;
+  }
+  .ds-nav .brand em { color: var(--accent); font-style: normal; }
+  .ds-nav .sub {
+    font-size: 11px; color: var(--dim);
+    text-transform: uppercase; letter-spacing: 0.12em;
+    margin-bottom: 24px;
+  }
+  .ds-nav .group-label {
+    font-size: 10px; color: var(--dim);
+    text-transform: uppercase; letter-spacing: 0.14em;
+    margin: 18px 0 6px;
+    padding: 0 6px;
+  }
+  .ds-nav a {
+    display: block;
+    padding: 6px 10px;
+    border-radius: 6px;
+    color: var(--text-2);
+    text-decoration: none;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  .ds-nav a:hover { background: var(--bg-2); color: var(--text); }
+  .ds-nav a.active { background: var(--accent-soft); color: var(--accent-ink); }
+
+  .ds-main { padding: 56px 64px 120px; max-width: 1100px; }
+  .ds-section { margin-bottom: 96px; scroll-margin-top: 24px; }
+  .ds-section > h2 {
+    font-family: var(--ff-display);
+    font-size: 38px;
+    font-weight: 400;
+    letter-spacing: -0.015em;
+    margin: 0 0 6px;
+    line-height: 1.1;
+  }
+  .ds-section > h2 em { color: var(--accent); font-style: italic; }
+  .ds-section > .lede {
+    font-size: 15px;
+    color: var(--text-2);
+    max-width: 64ch;
+    margin: 0 0 36px;
+    line-height: 1.55;
+  }
+
+  .ds-card {
+    border: 1px solid var(--rule);
+    background: var(--bg-1);
+    border-radius: 10px;
+    margin-bottom: 24px;
+    overflow: hidden;
+  }
+  .ds-card .head {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--rule);
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 12px;
+  }
+  .ds-card .head h3 {
+    font-family: var(--ff-ui);
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.01em;
+  }
+  .ds-card .head .meta {
+    font-family: var(--ff-mono);
+    font-size: 11px;
+    color: var(--dim);
+  }
+  .ds-card .body { padding: 24px; }
+  .ds-card .body.tight { padding: 18px 24px; }
+  .ds-card .body.flush { padding: 0; }
+
+  .ds-card .notes {
+    background: var(--bg-2);
+    border-top: 1px solid var(--rule);
+    padding: 14px 18px;
+    font-size: 12.5px;
+    color: var(--text-2);
+    line-height: 1.55;
+  }
+  .ds-card .notes code {
+    font-family: var(--ff-mono);
+    background: var(--bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11.5px;
+    color: var(--text);
+  }
+  .ds-card .notes strong { color: var(--text); font-weight: 600; }
+
+  .ds-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .ds-row.three { grid-template-columns: repeat(3, 1fr); }
+
+  /* swatch */
+  .swatch {
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg);
+    display: flex; flex-direction: column;
+  }
+  .swatch .chip {
+    height: 64px;
+  }
+  .swatch .meta {
+    padding: 10px 12px;
+    border-top: 1px solid var(--rule);
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 8px;
+  }
+  .swatch .name {
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .swatch .val {
+    font-family: var(--ff-mono);
+    font-size: 11px;
+    color: var(--dim);
+  }
+
+  /* type spec */
+  .type-spec {
+    display: grid;
+    grid-template-columns: 100px 1fr 200px;
+    gap: 16px;
+    align-items: baseline;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .type-spec:last-child { border-bottom: none; }
+  .type-spec .label {
+    font-family: var(--ff-mono);
+    font-size: 11px;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .type-spec .specs {
+    font-family: var(--ff-mono);
+    font-size: 11px;
+    color: var(--dim);
+    text-align: right;
+  }
+
+  /* code block */
+  pre.code {
+    background: var(--bg);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 14px 16px;
+    font-family: var(--ff-mono);
+    font-size: 11.5px;
+    color: var(--text-2);
+    overflow-x: auto;
+    line-height: 1.55;
+    margin: 0;
+  }
+  pre.code .k { color: var(--accent); }
+  pre.code .s { color: var(--ok); }
+  pre.code .c { color: var(--dim); font-style: italic; }
+  pre.code .n { color: var(--info); }
+
+  /* doc-only pendulum keyframe (styles.css's `pendulum` is selector-scoped) */
+  @keyframes ds-pendulum {
+    0%   { transform: rotate(-28deg); }
+    100% { transform: rotate(28deg); }
+  }
+
+  /* misc */
+  .ds-hr { border: none; border-top: 1px solid var(--rule); margin: 48px 0; }
+
+  /* component preview frame */
+  .preview {
+    background: var(--bg-2);
+    padding: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--rule);
+    display: flex; flex-direction: column; gap: 14px;
+    align-items: flex-start;
+  }
+  .preview.center { align-items: center; }
+  .preview.row { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .preview.dark-on-light { background: #FBF6EB; }
+
+  /* token table */
+  .token-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+  .token-table th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--dim);
+    text-transform: uppercase;
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .token-table td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  .token-table td.token { font-family: var(--ff-mono); font-size: 11.5px; color: var(--accent); }
+  .token-table td.val { font-family: var(--ff-mono); font-size: 11.5px; color: var(--text-2); }
+  .token-table tr:last-child td { border-bottom: none; }
+
+  /* density demo */
+  .density-rail {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 10px;
+  }
+  .density-rail .cell {
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 10px;
+    font-family: var(--ff-mono);
+    font-size: 10.5px;
+    color: var(--dim);
+    background: var(--bg-2);
+  }
+  .density-rail .cell .level {
+    font-family: var(--ff-display);
+    font-size: 28px;
+    color: var(--accent);
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+
+  /* shape sample */
+  .shape-sample {
+    background: var(--bg-2);
+    border: 1px solid var(--rule);
+    width: 100%;
+    height: 80px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--dim);
+    font-family: var(--ff-mono);
+    font-size: 11px;
+  }
+
+  /* badge for grouping items */
+  .ds-tag {
+    display: inline-flex; align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-family: var(--ff-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    background: var(--bg-2);
+    border: 1px solid var(--rule);
+    color: var(--dim);
+  }
+  .ds-tag.shadcn { color: var(--info); border-color: oklch(0.55 0.06 240 / 0.4); }
+
+  /* mark glyph (mini) */
+  .mark-mini {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    background: var(--accent);
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--bg); font-family: var(--ff-display); font-size: 18px; line-height: 1;
+    flex-shrink: 0;
+  }
+
+  /* theme toggle */
+  .ds-theme-toggle {
+    position: fixed; top: 18px; right: 24px;
+    z-index: 50;
+    display: flex; gap: 4px;
+    background: var(--bg-1);
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    padding: 3px;
+  }
+  .ds-theme-toggle button {
+    background: none; border: none;
+    color: var(--dim);
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-family: var(--ff-ui);
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .ds-theme-toggle button.active {
+    background: var(--accent);
+    color: var(--bg);
+  }
+</style>
+</head>
+<body>
+
+<!-- theme toggle -->
+<div class="ds-theme-toggle">
+  <button data-th="dark" class="active" onclick="setTheme('dark', this)">Dark</button>
+  <button data-th="light" onclick="setTheme('light', this)">Light</button>
+</div>
+
+<div class="ds-shell">
+
+  <!-- side nav -->
+  <aside class="ds-nav">
+    <div class="brand">claude<em>-</em>tempo</div>
+    <div class="sub">Web · Design System</div>
+
+    <div class="group-label">Foundations</div>
+    <a href="#intro">Introduction</a>
+    <a href="#brand">Brand &amp; voice</a>
+    <a href="#color">Color tokens</a>
+    <a href="#type">Typography</a>
+    <a href="#density">Density scale</a>
+    <a href="#layout">Layout &amp; grid</a>
+    <a href="#shape">Shape, elevation, motion</a>
+
+    <div class="group-label">Components</div>
+    <a href="#button">Button</a>
+    <a href="#chip">Pill / Chip / Tag</a>
+    <a href="#panel">Panel</a>
+    <a href="#composer">Composer</a>
+    <a href="#chat">Chat row</a>
+    <a href="#roster">Roster row</a>
+    <a href="#event">Event row</a>
+    <a href="#tempo">Tempo strip</a>
+    <a href="#kv">Key/value table</a>
+    <a href="#modal">Modal &amp; sheet</a>
+    <a href="#wizard">Wizard</a>
+
+    <div class="group-label">Patterns</div>
+    <a href="#status">Status colors</a>
+    <a href="#scroll">Scroll &amp; focus</a>
+    <a href="#stack">Tech stack</a>
+  </aside>
+
+  <main class="ds-main">
+
+    <!-- ─── intro ─── -->
+    <section class="ds-section" id="intro">
+      <h2>Web <em>design</em> system</h2>
+      <p class="lede">
+        The visual language for <strong>claude-tempo</strong> — a calm,
+        document-leaning operations tool where one human (the <em>maestro</em>)
+        conducts ensembles of long-running coding agents (<em>players</em>).
+        This spec is generated from the live prototype: every component below is
+        rendered with the same CSS the dashboard uses, so what you see is the
+        truth. The TUI has its own system; the two share the metronome motif
+        and the terracotta accent, but otherwise speak different visual
+        languages by design.
+      </p>
+
+      <div class="ds-card">
+        <div class="head">
+          <h3>Principles</h3>
+          <span class="meta">how we make decisions</span>
+        </div>
+        <div class="body">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 28px;">
+            <div>
+              <h4 style="font-family: var(--ff-display); font-size: 18px; font-weight: 400; margin: 0 0 6px;">Document, not dashboard</h4>
+              <p style="margin: 0; color: var(--text-2); font-size: 13px; line-height: 1.55;">
+                Avoid HUD-y data slop. Prefer reading-grade type, generous whitespace,
+                and quiet panels over neon stat tiles and gradient cards.
+              </p>
+            </div>
+            <div>
+              <h4 style="font-family: var(--ff-display); font-size: 18px; font-weight: 400; margin: 0 0 6px;">Warm, not corporate</h4>
+              <p style="margin: 0; color: var(--text-2); font-size: 13px; line-height: 1.55;">
+                Cream-on-charcoal with terracotta. The serif italic is the brand —
+                use it for moments, not chrome.
+              </p>
+            </div>
+            <div>
+              <h4 style="font-family: var(--ff-display); font-size: 18px; font-weight: 400; margin: 0 0 6px;">Operator-grade density</h4>
+              <p style="margin: 0; color: var(--text-2); font-size: 13px; line-height: 1.55;">
+                Power users will run this all day. Density is a first-class token,
+                not an afterthought — every spacing rule scales from one variable.
+              </p>
+            </div>
+            <div>
+              <h4 style="font-family: var(--ff-display); font-size: 18px; font-weight: 400; margin: 0 0 6px;">Status earns color</h4>
+              <p style="margin: 0; color: var(--text-2); font-size: 13px; line-height: 1.55;">
+                Five semantic colors total. Anything that isn't <em>ok / warn /
+                err / info / accent</em> is neutral. Resist decorative color.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── brand ─── -->
+    <section class="ds-section" id="brand">
+      <h2>Brand &amp; <em>voice</em></h2>
+      <p class="lede">
+        The metronome is the brand. A pendulum that swings on the actual tempo
+        of the ensemble — not a logo, an instrument. The wordmark is mono with
+        a terracotta hyphen. Italic serif is reserved for the maestro (the
+        human operator) and one-word headline accents.
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>Mark + wordmark</h3><span class="meta">primary lockup · Metronome + claude-tempo</span></div>
+        <div class="body">
+          <div class="preview center" style="padding: 56px;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <span class="metronome-demo" style="display: inline-flex; color: var(--text);">
+                <svg viewBox="0 0 64 64" width="40" height="40" fill="none" style="overflow: visible;">
+                  <path d="M32 8 L14 54 L50 54 Z" stroke="currentColor" stroke-width="3" stroke-linejoin="round" />
+                  <g style="transform-origin: 32px 46px; animation: ds-pendulum 0.65s ease-in-out infinite alternate;">
+                    <line x1="32" y1="46" x2="32" y2="14" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" />
+                    <circle cx="32" cy="46" r="3" fill="var(--accent)" />
+                  </g>
+                </svg>
+              </span>
+              <span style="font-family: var(--ff-mono); font-weight: 600; font-size: 26px; letter-spacing: -0.02em;">
+                claude<span style="color: var(--accent);">-</span>tempo
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="notes">
+          <strong>Mark:</strong> stroked-triangle metronome with a terracotta
+          pendulum. The pendulum is animated when the ensemble is playing
+          (<code>animation-duration: 60/bpm s</code>) and frozen when paused —
+          the only continuous animation in the chrome.
+          <strong>Wordmark:</strong> JetBrains Mono 600, lowercase, with a
+          terracotta hyphen (<code>-</code>) as the only color accent. Use the
+          full lockup for primary brand moments; mark-only for app chrome
+          (favicon, sidebar at sub-tablet widths).
+        </div>
+      </div>
+
+      <div class="ds-card">
+        <div class="head"><h3>Maestro mark</h3><span class="meta">the human operator's avatar</span></div>
+        <div class="body">
+          <div class="preview center" style="padding: 40px; gap: 24px; flex-direction: row;">
+            <span style="display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid color-mix(in oklch, #F5EBDD, transparent 70%); border-radius: 6px; background: color-mix(in oklch, #F5EBDD, transparent 92%);">
+              <span style="font-family: 'Fraunces', 'Instrument Serif', serif; font-style: italic; font-weight: 500; font-size: 17px; color: #F5EBDD; letter-spacing: -0.02em; line-height: 1;">M</span>
+            </span>
+            <span style="font-size: 13px; color: var(--text-2); font-style: italic;">— that's you, the operator.</span>
+          </div>
+        </div>
+        <div class="notes">
+          <strong>What it represents:</strong> the human conductor — the person
+          on the other side of the screen, distinct from the
+          <code>conductor</code> player (a software agent). It appears in the
+          composer header, on outbound chat messages, and as the sidebar
+          identity badge. <strong>Glyph:</strong> bare italic
+          <code>M</code> in Fraunces (with Instrument Serif as fallback) at the
+          weight/letter-spacing of a hand-set initial. Bone color
+          (<code>#F5EBDD</code>) on a faintly tinted square, so it reads as
+          <em>quill on parchment</em> rather than a UI badge.
+        </div>
+      </div>
+
+      <div class="ds-card">
+        <div class="head"><h3>Voice samples</h3><span class="meta">copywriting</span></div>
+        <div class="body" style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+          <div>
+            <div style="font-size: 11px; color: var(--ok); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px;">✓ Yes</div>
+            <ul style="margin: 0; padding-left: 18px; color: var(--text-2); font-size: 13px; line-height: 1.7;">
+              <li>"Conductor is processing"</li>
+              <li>"3 active · 1 detached · ready to dispatch"</li>
+              <li>"@my-band · 23 msgs/min"</li>
+              <li>"critic's adapter detached ~2 min ago"</li>
+              <li>"PR #287 is up — needs a review when you have a moment"</li>
+            </ul>
+          </div>
+          <div>
+            <div style="font-size: 11px; color: var(--err); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px;">✗ No</div>
+            <ul style="margin: 0; padding-left: 18px; color: var(--text-2); font-size: 13px; line-height: 1.7;">
+              <li>"🚀 Let's get your AI agents working!"</li>
+              <li>"Your AI workforce is ready"</li>
+              <li>"Powerful. Intuitive. Orchestration."</li>
+              <li>"Crushing it: 12 tasks completed"</li>
+              <li>"Player_4f3a (Researcher Bot) is now active"</li>
+            </ul>
+          </div>
+        </div>
+        <div class="notes">
+          The voice is a senior engineer pairing with you. Player names
+          (<code>conductor</code>, <code>lead</code>, <code>tuner</code>,
+          <code>critic</code>) read like teammates, not bots. Ensembles are
+          @-mentioned (<code>@my-band</code>). Status sentences are observational,
+          not breathless — the dashboard reports, it doesn't sell.
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── color ─── -->
+    <section class="ds-section" id="color">
+      <h2>Color <em>tokens</em></h2>
+      <p class="lede">
+        All color is token-driven. Tokens are CSS custom properties on
+        <code style="font-family: var(--ff-mono); font-size: 12px;">:root</code> with a <code style="font-family: var(--ff-mono); font-size: 12px;">[data-theme="light"]</code> override.
+        Tailwind reads them via <code style="font-family: var(--ff-mono); font-size: 12px;">theme.extend.colors</code> — never hardcode hex in components.
+      </p>
+
+      <div class="ds-card">
+        <div class="head">
+          <h3>Surfaces &amp; ink</h3>
+          <span class="meta">neutrals</span>
+        </div>
+        <div class="body">
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;" id="surfaces"></div>
+        </div>
+      </div>
+
+      <div class="ds-card">
+        <div class="head"><h3>Accent</h3><span class="meta">terracotta · the only brand color</span></div>
+        <div class="body">
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;" id="accents"></div>
+        </div>
+        <div class="notes">
+          <strong>Use accent sparingly</strong> — primary CTA, brand mark, active nav,
+          maestro's own chat bubbles, the metronome tick. Never as a section background
+          or decorative gradient. <code>--accent-soft</code> is the only acceptable accent fill.
+        </div>
+      </div>
+
+      <div class="ds-card">
+        <div class="head"><h3>Status</h3><span class="meta">semantic · 4 only</span></div>
+        <div class="body">
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;" id="statuses"></div>
+        </div>
+      </div>
+
+      <div class="ds-card">
+        <div class="head"><h3>shadcn token mapping</h3><span class="meta">tailwind.config.ts → :root</span></div>
+        <div class="body flush">
+          <pre class="code"><span class="c">/* globals.css */</span>
+<span class="k">@layer</span> base {
+  :root {
+    <span class="c">/* shadcn tokens — point to ours */</span>
+    <span class="n">--background</span>: <span class="s">var(--bg)</span>;
+    <span class="n">--foreground</span>: <span class="s">var(--text)</span>;
+    <span class="n">--card</span>: <span class="s">var(--bg-1)</span>;
+    <span class="n">--card-foreground</span>: <span class="s">var(--text)</span>;
+    <span class="n">--popover</span>: <span class="s">var(--bg-2)</span>;
+    <span class="n">--popover-foreground</span>: <span class="s">var(--text)</span>;
+    <span class="n">--primary</span>: <span class="s">var(--accent)</span>;
+    <span class="n">--primary-foreground</span>: <span class="s">var(--bg)</span>;
+    <span class="n">--secondary</span>: <span class="s">var(--bg-2)</span>;
+    <span class="n">--secondary-foreground</span>: <span class="s">var(--text)</span>;
+    <span class="n">--muted</span>: <span class="s">var(--bg-2)</span>;
+    <span class="n">--muted-foreground</span>: <span class="s">var(--dim)</span>;
+    <span class="n">--accent</span>: <span class="s">var(--accent-soft)</span>;
+    <span class="n">--accent-foreground</span>: <span class="s">var(--accent-ink)</span>;
+    <span class="n">--destructive</span>: <span class="s">var(--err)</span>;
+    <span class="n">--destructive-foreground</span>: <span class="s">#fff</span>;
+    <span class="n">--border</span>: <span class="s">var(--rule)</span>;
+    <span class="n">--input</span>: <span class="s">var(--rule)</span>;
+    <span class="n">--ring</span>: <span class="s">var(--accent)</span>;
+    <span class="n">--radius</span>: <span class="s">8px</span>;
+  }
+}</pre>
+        </div>
+        <div class="notes">
+          shadcn components like <code>&lt;Button&gt;</code>, <code>&lt;Input&gt;</code>,
+          <code>&lt;Dialog&gt;</code> read these standard names. By aliasing them to
+          our brand tokens, every shadcn primitive becomes Maestro-themed for free.
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── typography ─── -->
+    <section class="ds-section" id="type">
+      <h2>Type <em>system</em></h2>
+      <p class="lede">
+        Three families. Instrument Sans for everything you read or click.
+        Instrument Serif (upright) is the <em>display</em> face for headings,
+        page titles, ensemble names, and the dialog title — anything that
+        wants to read as composed rather than chrome. JetBrains Mono for IDs,
+        timestamps, code, the wordmark, and numerics that need to align.
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>Family pairing</h3><span class="meta">3 families · 7 roles</span></div>
+        <div class="body">
+          <div class="type-spec">
+            <span class="label">Display</span>
+            <span style="font-family: var(--ff-display); font-size: 44px; line-height: 1.05; letter-spacing: -0.02em;">@my-band is <em style="color: var(--accent); font-style: italic;">listening</em></span>
+            <span class="specs">Instrument Serif · 44/48 · italic accent</span>
+          </div>
+          <div class="type-spec">
+            <span class="label">Page title</span>
+            <span style="font-family: var(--ff-display); font-size: 34px; line-height: 1; letter-spacing: -0.02em;">@my-band</span>
+            <span class="specs">Instrument Serif · 34/34 · upright</span>
+          </div>
+          <div class="type-spec">
+            <span class="label">Section</span>
+            <span style="font-family: var(--ff-display); font-size: 22px; letter-spacing: -0.01em;">Active players</span>
+            <span class="specs">Instrument Serif · 22 · upright</span>
+          </div>
+          <div class="type-spec">
+            <span class="label">Body</span>
+            <span style="font-family: var(--ff-ui); font-size: 13.5px; line-height: 1.55; max-width: 50ch;">critic's adapter detached ~2 min ago — reconnect budget still has 13m. I'll hold reviews until it's back.</span>
+            <span class="specs">Instrument Sans · 13.5/21</span>
+          </div>
+          <div class="type-spec">
+            <span class="label">UI / label</span>
+            <span style="font-family: var(--ff-ui); font-size: 13px; font-weight: 500;">Recruit player</span>
+            <span class="specs">Instrument Sans · 13/20 · 500</span>
+          </div>
+          <div class="type-spec">
+            <span class="label">Kicker</span>
+            <span style="font-family: var(--ff-mono); font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.12em; font-weight: 600;">roster · 6 players</span>
+            <span class="specs">JetBrains Mono · 11 · uppercase · 0.12em</span>
+          </div>
+          <div class="type-spec">
+            <span class="label">Mono</span>
+            <span style="font-family: var(--ff-mono); font-size: 12px; color: var(--text-2);">player_4f3a · 14:32:08 · @my-band</span>
+            <span class="specs">JetBrains Mono · 12 · IDs &amp; numerics</span>
+          </div>
+        </div>
+        <div class="notes">
+          <strong>Why two display sizes?</strong> Page titles read as the name
+          of the thing in front of you (an ensemble, a host); section titles
+          name a region within. Both are serif so the page reads as a
+          <em>document</em>, not a console. <strong>Tailwind:</strong>
+          <code>font-display</code>, <code>font-sans</code>, <code>font-mono</code>
+          point at the three CSS variables.
+        </div>
+      </div>
+
+      <div class="ds-card">
+        <div class="head"><h3>Italic discipline</h3><span class="meta">italic ≠ display</span></div>
+        <div class="body">
+          <div class="ds-row">
+            <div>
+              <div style="font-size: 11px; color: var(--ok); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 10px;">✓ Italic for</div>
+              <ul style="margin: 0; padding-left: 18px; color: var(--text-2); font-size: 13px; line-height: 1.85;">
+                <li>The maestro mark (Fraunces italic <code>M</code>)</li>
+                <li>One <code>&lt;em&gt;</code> accent inside a display heading (e.g. <em style="color: var(--accent); font-style: italic;">listening</em>)</li>
+                <li>Routed messages in the chat log (visually demoted, "overhearing" voice)</li>
+                <li>Empty-state hero text</li>
+              </ul>
+            </div>
+            <div>
+              <div style="font-size: 11px; color: var(--err); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 10px;">✗ Never italic for</div>
+              <ul style="margin: 0; padding-left: 18px; color: var(--text-2); font-size: 13px; line-height: 1.85;">
+                <li>Body copy (illegible at length)</li>
+                <li>Buttons or labels</li>
+                <li>Tables or data</li>
+                <li>The page title or section title (those are upright serif)</li>
+                <li>Player or ensemble names (those are mono or upright serif)</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+        <div class="notes">
+          The serif is doing two jobs: <strong>upright serif</strong> = "this is
+          a name worth reading" (ensemble, page title, dialog header).
+          <strong>Italic serif</strong> = "this is a moment" (a verb, an
+          accent, the operator). Don't conflate them.
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── density ─── -->
+    <section class="ds-section" id="density">
+      <h2>Density <em>scale</em></h2>
+      <p class="lede">
+        Density is a single integer token (4–9) on
+        <code style="font-family: var(--ff-mono); font-size: 12px;">html[data-density="..."]</code>.
+        It drives <em>all</em> spacing and type sizes in lockstep. Components don't
+        set padding directly — they consume <code style="font-family: var(--ff-mono); font-size: 12px;">--density-*</code> vars.
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>The scale</h3><span class="meta">6 = default</span></div>
+        <div class="body">
+          <div class="density-rail" id="density-rail"></div>
+        </div>
+        <div class="notes">
+          <strong>Token consumers:</strong> <code>--density-pad</code>,
+          <code>--density-pad-y</code>, <code>--density-gap</code>,
+          <code>--density-fs</code>, <code>--density-fs-sm</code>,
+          <code>--density-line</code>. Set them once at level; every panel,
+          row, button, and chat bubble updates automatically.
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── layout ─── -->
+    <section class="ds-section" id="layout">
+      <h2>Layout &amp; <em>grid</em></h2>
+      <p class="lede">
+        Three layered grids. The app shell is permanent. Page content is
+        flexible. The workspace inside an ensemble is its own 2-column rhythm.
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>App shell</h3><span class="meta">244px · 1fr</span></div>
+        <div class="body">
+          <svg viewBox="0 0 600 280" width="100%" style="display: block; border-radius: 6px;">
+            <rect x="0" y="0" width="600" height="280" fill="var(--bg-2)" stroke="var(--rule)" />
+            <rect x="0" y="0" width="184" height="280" fill="var(--bg-1)" stroke="var(--rule)" />
+            <text x="92" y="22" text-anchor="middle" font-family="var(--ff-mono)" font-size="10" fill="var(--dim)">sidebar · 244px</text>
+            <text x="92" y="42" text-anchor="middle" font-family="var(--ff-mono)" font-size="13" font-weight="600" fill="var(--text)">claude<tspan fill="var(--accent)">-</tspan>tempo</text>
+            <line x1="14" y1="58" x2="170" y2="58" stroke="var(--rule)" />
+            <text x="22" y="78" font-family="var(--ff-mono)" font-size="9" fill="var(--dim)" letter-spacing="1.2">ENSEMBLES</text>
+            <rect x="14" y="86" width="156" height="22" fill="var(--accent-soft)" rx="4" />
+            <text x="22" y="100" font-family="var(--ff-ui)" font-size="11" fill="var(--text)">@my-band</text>
+            <text x="22" y="124" font-family="var(--ff-ui)" font-size="11" fill="var(--text-2)">@backend-team</text>
+            <text x="22" y="144" font-family="var(--ff-ui)" font-size="11" fill="var(--text-2)">@release-crew</text>
+            <text x="22" y="180" font-family="var(--ff-mono)" font-size="9" fill="var(--dim)" letter-spacing="1.2">NAVIGATE</text>
+            <text x="22" y="198" font-family="var(--ff-ui)" font-size="11" fill="var(--text-2)">Hosts</text>
+            <text x="22" y="216" font-family="var(--ff-ui)" font-size="11" fill="var(--text-2)">Player types</text>
+            <text x="22" y="234" font-family="var(--ff-ui)" font-size="11" fill="var(--text-2)">Schedules</text>
+
+            <text x="200" y="24" font-family="var(--ff-display)" font-size="14" fill="var(--text)">@my-band</text>
+            <text x="200" y="40" font-family="var(--ff-mono)" font-size="9" fill="var(--dim)">6 players · 4 active · 23 msgs/min</text>
+            <rect x="196" y="56" width="384" height="2" fill="var(--rule)" />
+            <text x="200" y="78" font-family="var(--ff-mono)" font-size="9" fill="var(--dim)">main · workspace fills 1fr</text>
+            <rect x="200" y="88" width="380" height="174" fill="var(--bg-1)" stroke="var(--rule)" rx="6" />
+          </svg>
+        </div>
+        <div class="notes">
+          Two-column grid: <code>244px 1fr</code>. Sidebar is full-height,
+          scrollable independently. <strong>Sidebar sections:</strong> brand
+          + metronome at top, ensembles list, navigation (hosts, types,
+          schedules, settings), and a maestro identity row at the bottom.
+          At ≤900px the sidebar collapses to 64px icon-only; at ≤520px it
+          becomes a top app bar + bottom tab bar (mobile).
+        </div>
+      </div>
+
+      <div class="ds-card">
+        <div class="head"><h3>Ensemble workspace</h3><span class="meta">1fr · 340px</span></div>
+        <div class="body">
+          <svg viewBox="0 0 600 280" width="100%" style="display: block; border-radius: 6px;">
+            <rect x="0" y="0" width="600" height="280" fill="var(--bg-2)" stroke="var(--rule)" />
+            <rect x="0" y="0" width="600" height="64" fill="var(--bg-1)" stroke="var(--rule)" />
+            <text x="20" y="32" font-family="var(--ff-display)" font-size="22" fill="var(--text)">@my-band</text>
+            <text x="20" y="50" font-family="var(--ff-mono)" font-size="9" fill="var(--dim)">Building v0.27 · 6 players · 23 msgs/min · ▶ active</text>
+            <rect x="500" y="20" width="84" height="28" fill="var(--bg-2)" stroke="var(--rule)" rx="6" />
+            <text x="542" y="38" text-anchor="middle" font-family="var(--ff-ui)" font-size="10" fill="var(--text-2)">Details</text>
+
+            <rect x="14" y="80" width="364" height="184" fill="var(--bg-1)" stroke="var(--rule)" rx="8" />
+            <text x="28" y="100" font-family="var(--ff-mono)" font-size="9" fill="var(--dim)" letter-spacing="1.2">CONDUCTOR · CHAT</text>
+            <line x1="28" y1="108" x2="368" y2="108" stroke="var(--rule)" stroke-dasharray="2 3" />
+            <rect x="28" y="120" width="180" height="14" fill="var(--bg-2)" rx="3" />
+            <rect x="200" y="142" width="160" height="14" fill="var(--bg-chat-out)" rx="3" />
+            <rect x="28" y="164" width="200" height="14" fill="var(--bg-2)" rx="3" />
+            <rect x="28" y="220" width="340" height="36" fill="var(--bg-2)" stroke="var(--rule)" rx="6" />
+            <text x="38" y="242" font-family="var(--ff-ui)" font-size="9" fill="var(--dim)">composer · @ players · / commands</text>
+
+            <rect x="394" y="80" width="190" height="84" fill="var(--bg-1)" stroke="var(--rule)" rx="8" />
+            <text x="408" y="100" font-family="var(--ff-mono)" font-size="9" fill="var(--dim)" letter-spacing="1.2">ROSTER · 6</text>
+            <line x1="408" y1="108" x2="572" y2="108" stroke="var(--rule)" stroke-dasharray="2 3" />
+            <circle cx="416" cy="124" r="5" fill="var(--accent-soft)" />
+            <text x="428" y="128" font-family="var(--ff-ui)" font-size="9" fill="var(--text-2)">conductor · processing</text>
+            <circle cx="416" cy="142" r="5" fill="var(--bg-2)" stroke="var(--text-2)" />
+            <text x="428" y="146" font-family="var(--ff-ui)" font-size="9" fill="var(--text-2)">composer · awaiting</text>
+
+            <rect x="394" y="180" width="190" height="84" fill="var(--bg-1)" stroke="var(--rule)" rx="8" />
+            <text x="408" y="200" font-family="var(--ff-mono)" font-size="9" fill="var(--dim)" letter-spacing="1.2">EVENTS · TEMPO</text>
+          </svg>
+        </div>
+        <div class="notes">
+          The workspace is a single 2-column grid:
+          <code>grid-template-columns: 1fr 340px</code>. <strong>Left:</strong>
+          conductor chat (scrollable log + composer pinned to bottom), with
+          the roster either stacked beneath or popped into the side column via
+          the "Details" toggle. <strong>Right (340px):</strong> stacked panels
+          (Roster, Tempo, Events) at natural height; the column scrolls if
+          total height exceeds viewport. At ≤1200px tightens to 300px;
+          at ≤900px collapses to single-column with the side panel becoming
+          a pop-out drawer; at ≤520px the side panel is a bottom sheet.
+        </div>
+      </div>
+
+      <div class="ds-card">
+        <div class="head"><h3>Spacing scale</h3><span class="meta">all from density tokens</span></div>
+        <div class="body flush">
+          <table class="token-table">
+            <thead><tr><th>Token</th><th>Maps to</th><th>Used for</th></tr></thead>
+            <tbody>
+              <tr><td class="token">--density-pad</td><td class="val">14px @ d6</td><td>Panel body padding · main horizontal rhythm</td></tr>
+              <tr><td class="token">--density-pad-y</td><td class="val">10px @ d6</td><td>Vertical padding for rows, headers, buttons</td></tr>
+              <tr><td class="token">--density-gap</td><td class="val">14px @ d6</td><td>Gap between siblings (panel grid, rows)</td></tr>
+              <tr><td class="token">--density-pad × 1.6</td><td class="val">22px @ d6</td><td>Page-level padding (header, workspace)</td></tr>
+              <tr><td class="token">--density-pad-y × 0.5</td><td class="val">5px @ d6</td><td>KV row padding · chat-log gap</td></tr>
+              <tr><td class="token">--density-fs</td><td class="val">13px @ d6</td><td>Body font-size · table cell text</td></tr>
+              <tr><td class="token">--density-fs-sm</td><td class="val">11.5px @ d6</td><td>Event row · table headers · captions</td></tr>
+              <tr><td class="token">--density-line</td><td class="val">1.5 @ d6</td><td>Body line-height</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="notes">
+          <strong>Density is a single integer</strong> (4–9) on
+          <code>html[data-density="..."]</code>. The seven tokens above scale
+          together; components don't set padding, font-size, or line-height
+          directly — they consume these vars. Set the density once at the root
+          and everything reflows: panels, rows, buttons, chat bubbles, tables.
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── shape ─── -->
+    <section class="ds-section" id="shape">
+      <h2>Shape, <em>elevation</em>, motion</h2>
+      <p class="lede">
+        Restrained. Two radii, two shadows, two motion timings. If you find
+        yourself reaching for a third, simplify.
+      </p>
+
+      <div class="ds-row">
+        <div class="ds-card">
+          <div class="head"><h3>Radius</h3><span class="meta">2 values</span></div>
+          <div class="body" style="display: flex; gap: 16px;">
+            <div style="flex: 1;">
+              <div class="shape-sample" style="border-radius: 6px;">6px · controls, rows, chips</div>
+            </div>
+            <div style="flex: 1;">
+              <div class="shape-sample" style="border-radius: 10px;">10px · panels, modals</div>
+            </div>
+          </div>
+        </div>
+        <div class="ds-card">
+          <div class="head"><h3>Elevation</h3><span class="meta">2 shadows</span></div>
+          <div class="body" style="display: flex; gap: 16px;">
+            <div style="flex: 1;">
+              <div class="shape-sample" style="background: var(--bg-1); box-shadow: var(--shadow-1);">shadow-1 · panels</div>
+            </div>
+            <div style="flex: 1;">
+              <div class="shape-sample" style="background: var(--bg-1); box-shadow: var(--shadow-2);">shadow-2 · modals, popovers</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ds-card">
+        <div class="head"><h3>Motion</h3><span class="meta">2 timings · 1 easing</span></div>
+        <div class="body flush">
+          <table class="token-table">
+            <thead><tr><th>Token</th><th>Value</th><th>Used for</th></tr></thead>
+            <tbody>
+              <tr><td class="token">duration-fast</td><td class="val">120ms · ease-out</td><td>Hover, focus, button press</td></tr>
+              <tr><td class="token">duration-base</td><td class="val">220ms · ease-out</td><td>Modal in, sheet slide, tab change</td></tr>
+              <tr><td class="token">tempo-pulse</td><td class="val">on-beat · scale 1 → 1.06</td><td>The metronome tick (only)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="notes">
+          <strong>No bouncy easings.</strong> No spring. The metronome pulse is
+          the only animation that loops; everything else is one-shot transitional.
+        </div>
+      </div>
+    </section>
+
+    <hr class="ds-hr" />
+
+    <!-- ─── BUTTON ─── -->
+    <section class="ds-section" id="button">
+      <h2>Button <span class="ds-tag shadcn">shadcn: Button</span></h2>
+      <p class="lede">
+        Three variants. Primary is terracotta — exactly one per page region.
+        Secondary is the workhorse. Ghost is for low-priority chrome actions.
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>Variants</h3><span class="meta">primary · secondary · ghost · destructive</span></div>
+        <div class="body">
+          <div class="preview row">
+            <button class="btn btn-primary">Recruit player</button>
+            <button class="btn">Pause ensemble</button>
+            <button class="btn btn-ghost">Cancel</button>
+            <button class="btn" style="color: var(--err); border-color: oklch(0.55 0.16 28 / 0.4);">Disband</button>
+          </div>
+        </div>
+        <div class="notes">
+          <strong>Implementation:</strong> shadcn <code>&lt;Button&gt;</code> with our
+          <code>--primary</code> &amp; <code>--secondary</code> tokens. Add a custom
+          <code>variant="ghost"</code> mapping to transparent + <code>--text-2</code>.
+          Min height 32px @ d6, scales with <code>--density-pad-y</code>.
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── CHIP ─── -->
+    <section class="ds-section" id="chip">
+      <h2>Phase chips, type badges, mentions <span class="ds-tag shadcn">shadcn: Badge</span></h2>
+      <p class="lede">
+        Pill-shaped metadata. Three flavors that look similar but mean
+        different things: <strong>phase chips</strong> for player state
+        (drawn as <code>.phase-dot</code> — icon + optional label),
+        <strong>type badges</strong> for player types (drawn as
+        <code>.type-badge</code> — colored by type hue), and
+        <strong>generic chips</strong> for everything else (filter, tag,
+        cadence label).
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>Phase chips</h3><span class="meta">7 phases · TUI parity</span></div>
+        <div class="body">
+          <div class="preview row" style="gap: 24px;">
+            <span class="phase-dot" style="color: var(--ok);"><span class="phase-dot-icon">●</span><span>active</span></span>
+            <span class="phase-dot is-pulse" style="color: var(--ok);"><span class="phase-dot-icon">●</span><span>processing</span></span>
+            <span class="phase-dot" style="color: var(--text);"><span class="phase-dot-icon">○</span><span>idle</span></span>
+            <span class="phase-dot" style="color: var(--warn);"><span class="phase-dot-icon">◐</span><span>draining</span></span>
+            <span class="phase-dot" style="color: var(--warn);"><span class="phase-dot-icon">◐</span><span>detached</span></span>
+            <span class="phase-dot" style="color: var(--dim);"><span class="phase-dot-icon">◔</span><span>booting</span></span>
+            <span class="phase-dot" style="color: var(--dim);"><span class="phase-dot-icon">✕</span><span>gone</span></span>
+          </div>
+        </div>
+        <div class="notes">
+          <strong>Glyphs are inherited from the TUI</strong> verbatim
+          (<code>● ○ ◐ ◔ ✕</code>) so a single mental model works across web
+          and terminal. <strong>Pulse</strong>: <code>processing</code> is the
+          only phase that animates — a subtle opacity blink on the icon, so
+          you can tell at a glance which players are doing work right now.
+          Phase data + colors live in <code>window.PHASES</code> and the
+          <code>&lt;PhaseDot&gt;</code> component reads from it.
+        </div>
+      </div>
+
+      <div class="ds-card">
+        <div class="head"><h3>Type badges</h3><span class="meta">colored by type hue</span></div>
+        <div class="body">
+          <div class="preview row" style="gap: 8px;">
+            <span class="type-badge" style="color: oklch(0.82 0.11 32); border-color: oklch(0.38 0.07 32); background: oklch(0.2 0.035 32 / 0.5);">tempo-conductor</span>
+            <span class="type-badge" style="color: oklch(0.82 0.11 210); border-color: oklch(0.38 0.07 210); background: oklch(0.2 0.035 210 / 0.5);">tempo-composer</span>
+            <span class="type-badge" style="color: oklch(0.82 0.11 18); border-color: oklch(0.38 0.07 18); background: oklch(0.2 0.035 18 / 0.5);">tempo-soloist</span>
+            <span class="type-badge" style="color: oklch(0.82 0.11 150); border-color: oklch(0.38 0.07 150); background: oklch(0.2 0.035 150 / 0.5);">tempo-tuner</span>
+            <span class="type-badge" style="color: oklch(0.82 0.11 340); border-color: oklch(0.38 0.07 340); background: oklch(0.2 0.035 340 / 0.5);">tempo-critic</span>
+            <span class="type-badge" style="color: oklch(0.82 0.11 260); border-color: oklch(0.38 0.07 260); background: oklch(0.2 0.035 260 / 0.5);">tempo-roadie</span>
+            <span class="type-badge" style="color: oklch(0.82 0.11 48); border-color: oklch(0.38 0.07 48); background: oklch(0.2 0.035 48 / 0.5);">tempo-improv</span>
+            <span class="type-badge" style="color: oklch(0.82 0.11 190); border-color: oklch(0.38 0.07 190); background: oklch(0.2 0.035 190 / 0.5);">tempo-liner</span>
+          </div>
+        </div>
+        <div class="notes">
+          Each type maps to a stable hue (see <code>window.TYPE_HUES</code>).
+          The badge derives <code>color</code>, <code>border</code>, and
+          <code>background</code> from that one hue at fixed L/C — so adding a
+          new type only requires picking a hue. This is also how
+          <code>&lt;PlayerAvatar&gt;</code> tints itself.
+        </div>
+      </div>
+
+      <div class="ds-card">
+        <div class="head"><h3>Generic chips</h3><span class="meta">filter · tag · cadence</span></div>
+        <div class="body">
+          <div class="preview row">
+            <span class="chip">all</span>
+            <span class="chip is-active">active</span>
+            <span class="chip">@my-band</span>
+            <span class="chip">every 20m</span>
+            <span class="chip">cron 09:00</span>
+          </div>
+        </div>
+        <div class="notes">
+          Generic chips are clickable filters (form picker, type selector). The
+          active state uses <code>--accent-soft</code> background + accent ink.
+          Don't use these for status — use phase chips. Don't use these for
+          types — use type badges.
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── PANEL ─── -->
+    <section class="ds-section" id="panel">
+      <h2>Panel</h2>
+      <p class="lede">
+        The fundamental container. A panel has a head (label + meta + actions)
+        and a body. Panels never nest more than one level — if you need to,
+        the inner thing is a card, not a panel.
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>Anatomy</h3><span class="meta">head · body · (footer)</span></div>
+        <div class="body">
+          <div class="preview">
+            <div class="panel" style="width: 100%;">
+              <div class="panel-head">
+                <span class="panel-title">Roster</span>
+                <span class="panel-meta">3 players · 1 idle</span>
+              </div>
+              <div class="panel-body" style="padding: 14px;">
+                <div style="color: var(--text-2); font-size: 13px;">Panel body content goes here. Spacing is driven by <code style="font-family: var(--ff-mono); font-size: 11px; color: var(--accent);">--density-pad</code>.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="notes">
+          <strong>Tailwind:</strong> <code>rounded-[10px] border border-rule
+          bg-bg-1</code>. <strong>Head:</strong> <code>border-b</code>,
+          <code>px-[var(--density-pad)] py-[var(--density-pad-y)]</code>.
+          Headline is uppercase 11px tracked-wide; meta is mono 10.5px dim.
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── COMPOSER ─── -->
+    <section class="ds-section" id="composer">
+      <h2>Composer <span class="ds-tag shadcn">shadcn: Textarea</span></h2>
+      <p class="lede">
+        The text input where the operator addresses the conductor. Auto-grows
+        to ~6 lines, then scrolls. Slash-commands and @-mentions are the only
+        adornments.
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>Default</h3><span class="meta">empty &amp; filled</span></div>
+        <div class="body">
+          <div class="preview">
+            <div class="composer" style="width: 100%;">
+              <div class="composer-input" contenteditable="true" style="min-height: 60px; outline: none; padding: 12px 14px; font-family: var(--ff-ui); font-size: 14px; color: var(--text); line-height: 1.55;" data-placeholder="Tell the conductor what to do…">Tell the conductor what to do…</div>
+              <div class="composer-foot" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; border-top: 1px solid var(--rule); font-size: 11px; color: var(--dim);">
+                <span><span style="font-family: var(--ff-mono); color: var(--accent);">/</span> commands · <span style="font-family: var(--ff-mono); color: var(--accent);">@</span> mention a player</span>
+                <button class="btn btn-primary" style="padding: 4px 14px; font-size: 12px;">Send</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="notes">
+          <strong>Built on:</strong> shadcn <code>&lt;Textarea&gt;</code> wrapped in
+          a styled container. The footer is a peer flex row, not part of the
+          textarea. Send button is primary; <kbd style="font-family: var(--ff-mono); font-size: 11px; padding: 1px 5px; border: 1px solid var(--rule); border-radius: 3px;">⌘↵</kbd> shortcut.
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── CHAT ─── -->
+    <section class="ds-section" id="chat">
+      <h2>Chat row</h2>
+      <p class="lede">
+        The conversation between the maestro (you) and the conductor player.
+        Three voices: the conductor talks back to you in plain rows;
+        <strong>your</strong> messages are right-aligned cards with a
+        terracotta edge; routed messages between the conductor and other
+        players are visually demoted (smaller avatar, italic body, "overhearing"
+        rail) — present but not loud, because they're not addressed to you.
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>Three voices</h3><span class="meta">conductor (in) · maestro (out) · route</span></div>
+        <div class="body">
+          <div class="preview" style="background: var(--bg-1); padding: 18px 22px; align-items: stretch;">
+            <div class="chat-log" style="padding: 0; gap: 14px; width: 100%; flex: 0 0 auto; height: auto; min-height: 0; overflow: visible;">
+              <!-- conductor message: in -->
+              <div class="msg">
+                <span class="msg-avatar">
+                  <span class="player-avatar" style="width: 28px; height: 28px; background: oklch(0.26 0.06 75); color: oklch(0.86 0.14 75); font-size: 18px; border-color: oklch(0.55 0.13 75); line-height: 1;">𝄞</span>
+                </span>
+                <div>
+                  <div class="msg-head">
+                    <span class="sender">conductor</span>
+                    <span class="time">14:02</span>
+                  </div>
+                  <div class="msg-body">Acknowledged. I'll split this into two parallel tracks. lead takes the state machine, eng takes the hosts tool. tuner will run the conformance suite after each merge.</div>
+                </div>
+              </div>
+
+              <!-- routed message: conductor → lead -->
+              <div class="msg route">
+                <span class="msg-avatar">
+                  <span class="player-avatar" style="width: 20px; height: 20px; background: oklch(0.24 0.045 32); color: oklch(0.82 0.13 32); font-size: 11px; border-color: oklch(0.35 0.05 32); line-height: 1;">♪</span>
+                </span>
+                <div>
+                  <div class="msg-head">
+                    <span class="sender">conductor</span>
+                    <span class="arrow">→</span>
+                    <span class="target">lead</span>
+                    <span class="time">14:03</span>
+                  </div>
+                  <div class="msg-body">start on attachment-math.ts — unify the lease-extension helper with the CAN-boundary path. Keep it pure; no Temporal imports.</div>
+                </div>
+              </div>
+
+              <!-- maestro outbound -->
+              <div class="msg out">
+                <div class="msg-head">
+                  <span class="sender">maestro</span>
+                  <span class="arrow">→</span>
+                  <span class="target">conductor</span>
+                  <span class="time">14:18</span>
+                </div>
+                <div class="msg-body">how's critic doing? last I saw it was reviewing PR #284</div>
+              </div>
+
+              <!-- conductor reply -->
+              <div class="msg">
+                <span class="msg-avatar">
+                  <span class="player-avatar" style="width: 28px; height: 28px; background: oklch(0.26 0.06 75); color: oklch(0.86 0.14 75); font-size: 18px; border-color: oklch(0.55 0.13 75); line-height: 1;">𝄞</span>
+                </span>
+                <div>
+                  <div class="msg-head">
+                    <span class="sender">conductor</span>
+                    <span class="time">14:18</span>
+                  </div>
+                  <div class="msg-body">critic's adapter detached ~2 min ago — reconnect budget still has 13m. I'll hold reviews until it's back.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="notes">
+          <strong>Conductor (<code>.msg</code>):</strong> grid
+          <code>28px 1fr</code>, treble-clef avatar in conductor gold, body in
+          plain text up to 72ch wide. <strong>Maestro
+          (<code>.msg.out</code>):</strong> right-aligned card,
+          <code>--bg-chat-out</code> background, 3px terracotta right border,
+          78% max-width, no avatar — the right-edge accent <em>is</em> the
+          identity. <strong>Route (<code>.msg.route</code>):</strong> indented,
+          shrunk avatar (20px), italic body in <code>--text-2</code>, and a
+          2px rail on the left to convey "overhearing." This is critical: in a
+          dashboard with hundreds of inter-agent messages, you must instantly
+          tell which ones are <em>for you</em>.
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── ROSTER ─── -->
+    <section class="ds-section" id="roster">
+      <h2>Roster row</h2>
+      <p class="lede">
+        A single player, condensed. Avatar, name, phase chip, last-event
+        snippet, host. Dense — operator scans this list often.
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>Anatomy</h3><span class="meta">avatar · name · phase · last · host</span></div>
+        <div class="body flush">
+          <div style="border-radius: 0; overflow: hidden;">
+            <div class="roster-item" style="display: grid; grid-template-columns: 32px 1fr auto; gap: 14px; padding: 12px 16px; align-items: center; border-bottom: 1px solid var(--rule);">
+              <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--bg-2); border: 1px solid var(--rule); display: flex; align-items: center; justify-content: center; font-family: var(--ff-display); font-size: 14px; color: var(--text-2); font-style: italic;">R</div>
+              <div style="min-width: 0;">
+                <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px;">
+                  <span style="font-size: 13px; font-weight: 500;">researcher</span>
+                  <span style="font-family: var(--ff-mono); font-size: 10.5px; color: var(--dim);">player_4f3a</span>
+                </div>
+                <div style="font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Reviewed 3 RFCs · summary in progress</div>
+              </div>
+              <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+                <span class="chip" style="color: var(--ok); border-color: oklch(0.72 0.1 145 / 0.4); font-size: 10.5px; padding: 1px 8px;">▶ playing</span>
+                <span style="font-family: var(--ff-mono); font-size: 10.5px; color: var(--dim);">claude-code</span>
+              </div>
+            </div>
+            <div class="roster-item" style="display: grid; grid-template-columns: 32px 1fr auto; gap: 14px; padding: 12px 16px; align-items: center; border-bottom: 1px solid var(--rule);">
+              <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--bg-2); border: 1px solid var(--rule); display: flex; align-items: center; justify-content: center; font-family: var(--ff-display); font-size: 14px; color: var(--text-2); font-style: italic;">W</div>
+              <div style="min-width: 0;">
+                <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px;">
+                  <span style="font-size: 13px; font-weight: 500;">writer</span>
+                  <span style="font-family: var(--ff-mono); font-size: 10.5px; color: var(--dim);">player_2b91</span>
+                </div>
+                <div style="font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Awaiting researcher's summary</div>
+              </div>
+              <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+                <span class="chip" style="font-size: 10.5px; padding: 1px 8px;">idle</span>
+                <span style="font-family: var(--ff-mono); font-size: 10.5px; color: var(--dim);">staging-2</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="notes">
+          <strong>Click target:</strong> the entire row → opens player detail
+          sheet. <strong>Hover:</strong> bg lifts to <code>--bg-2</code>. Avatar
+          is a serif italic letter from the player type name — no images.
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── EVENT ─── -->
+    <section class="ds-section" id="event">
+      <h2>Event row</h2>
+      <p class="lede">
+        The audit trail. Mono, dense, no avatars. Time on the left, actor in
+        accent, action in neutral. Filterable but never decorated.
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>Stream</h3><span class="meta">ring · max 200 · messages elided</span></div>
+        <div class="body flush">
+          <div style="font-family: var(--ff-mono); font-size: 11.5px; line-height: 1.7;">
+            <div style="display: grid; grid-template-columns: 80px 1fr; gap: 14px; padding: 6px 16px; border-bottom: 1px solid var(--rule);">
+              <span style="color: var(--dim);">14:32:08</span>
+              <span><span style="color: var(--accent);">conductor</span> <span style="color: var(--text-2);">recruited</span> <span style="color: var(--text);">player_4f3a</span> <span style="color: var(--dim);">· researcher</span></span>
+            </div>
+            <div style="display: grid; grid-template-columns: 80px 1fr; gap: 14px; padding: 6px 16px; border-bottom: 1px solid var(--rule);">
+              <span style="color: var(--dim);">14:32:14</span>
+              <span><span style="color: var(--accent);">player_4f3a</span> <span style="color: var(--text-2);">phase →</span> <span style="color: var(--ok);">playing</span></span>
+            </div>
+            <div style="display: grid; grid-template-columns: 80px 1fr; gap: 14px; padding: 6px 16px; border-bottom: 1px solid var(--rule);">
+              <span style="color: var(--dim);">14:33:01</span>
+              <span><span style="color: var(--accent);">@my-band</span> <span style="color: var(--text-2);">heartbeat ✓</span> <span style="color: var(--dim);">· 3 players · 4 bpm</span></span>
+            </div>
+            <div style="display: grid; grid-template-columns: 80px 1fr; gap: 14px; padding: 6px 16px;">
+              <span style="color: var(--dim);">14:33:42</span>
+              <span><span style="color: var(--accent);">conductor</span> <span style="color: var(--text-2);">routed task →</span> <span style="color: var(--text);">player_2b91</span></span>
+            </div>
+          </div>
+        </div>
+        <div class="notes">
+          <strong>What lives here:</strong> phase transitions, heartbeats,
+          recruits, ensemble lifecycle, conductor route decisions.
+          <strong>What doesn't:</strong> message content (it's already in the
+          chat — never duplicate).
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── TEMPO ─── -->
+    <section class="ds-section" id="tempo">
+      <h2>Tempo strip</h2>
+      <p class="lede">
+        A horizontal sparkline of message activity over the session window —
+        one bar per minute, recent bars in <code>--accent</code>, older bars
+        in neutral. Current bpm sits in the top-right as an overlay. There's
+        no ticking dot, no beat grid in the visible sense — the sparkline
+        <em>is</em> the tempo. It tells you "how loud is this ensemble right
+        now, and is it speeding up or slowing down."
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>Default</h3><span class="meta">.tempo-strip · 60 bars · 92 bpm</span></div>
+        <div class="body">
+          <div class="preview" style="padding: 22px; background: var(--bg-2);">
+            <div class="tempo-strip" style="height: 44px; width: 100%;">
+              <div class="tempo-strip-label">
+                <span class="mono dim">tempo</span>
+                <span class="tempo-bpm">
+                  <span class="mono num">92</span>
+                  <span class="mono dim">bpm</span>
+                </span>
+              </div>
+              <svg viewBox="0 0 360 44" width="100%" height="44" preserveAspectRatio="none" class="tempo-strip-svg">
+                <line x1="0"   x2="0"   y1="0" y2="44" stroke="var(--rule)" stroke-dasharray="2 3" />
+                <line x1="60"  x2="60"  y1="0" y2="44" stroke="var(--rule)" stroke-dasharray="2 3" />
+                <line x1="120" x2="120" y1="0" y2="44" stroke="var(--rule)" stroke-dasharray="2 3" />
+                <line x1="180" x2="180" y1="0" y2="44" stroke="var(--rule)" stroke-dasharray="2 3" />
+                <line x1="240" x2="240" y1="0" y2="44" stroke="var(--rule)" stroke-dasharray="2 3" />
+                <line x1="300" x2="300" y1="0" y2="44" stroke="var(--rule)" stroke-dasharray="2 3" />
+                <!-- older neutral bars -->
+                <g fill="var(--rule-strong)" opacity="0.75">
+                  <rect x="0"   y="32" width="4" height="10" rx="1"/><rect x="6"   y="28" width="4" height="14" rx="1"/>
+                  <rect x="12"  y="22" width="4" height="20" rx="1"/><rect x="18"  y="18" width="4" height="24" rx="1"/>
+                  <rect x="24"  y="20" width="4" height="22" rx="1"/><rect x="30"  y="14" width="4" height="28" rx="1"/>
+                  <rect x="36"  y="10" width="4" height="32" rx="1"/><rect x="42"  y="16" width="4" height="26" rx="1"/>
+                  <rect x="48"  y="24" width="4" height="18" rx="1"/><rect x="54"  y="30" width="4" height="12" rx="1"/>
+                  <rect x="60"  y="34" width="4" height="8"  rx="1"/><rect x="66"  y="26" width="4" height="16" rx="1"/>
+                  <rect x="72"  y="20" width="4" height="22" rx="1"/><rect x="78"  y="14" width="4" height="28" rx="1"/>
+                  <rect x="84"  y="8"  width="4" height="34" rx="1"/><rect x="90"  y="6"  width="4" height="36" rx="1"/>
+                  <rect x="96"  y="12" width="4" height="30" rx="1"/><rect x="102" y="18" width="4" height="24" rx="1"/>
+                  <rect x="108" y="22" width="4" height="20" rx="1"/><rect x="114" y="28" width="4" height="14" rx="1"/>
+                  <rect x="120" y="32" width="4" height="10" rx="1"/><rect x="126" y="26" width="4" height="16" rx="1"/>
+                  <rect x="132" y="20" width="4" height="22" rx="1"/><rect x="138" y="16" width="4" height="26" rx="1"/>
+                  <rect x="144" y="12" width="4" height="30" rx="1"/><rect x="150" y="18" width="4" height="24" rx="1"/>
+                  <rect x="156" y="22" width="4" height="20" rx="1"/><rect x="162" y="28" width="4" height="14" rx="1"/>
+                  <rect x="168" y="34" width="4" height="8"  rx="1"/><rect x="174" y="36" width="4" height="6"  rx="1"/>
+                  <rect x="180" y="32" width="4" height="10" rx="1"/><rect x="186" y="28" width="4" height="14" rx="1"/>
+                  <rect x="192" y="22" width="4" height="20" rx="1"/><rect x="198" y="16" width="4" height="26" rx="1"/>
+                  <rect x="204" y="14" width="4" height="28" rx="1"/><rect x="210" y="10" width="4" height="32" rx="1"/>
+                  <rect x="216" y="14" width="4" height="28" rx="1"/><rect x="222" y="20" width="4" height="22" rx="1"/>
+                  <rect x="228" y="24" width="4" height="18" rx="1"/><rect x="234" y="28" width="4" height="14" rx="1"/>
+                  <rect x="240" y="22" width="4" height="20" rx="1"/><rect x="246" y="18" width="4" height="24" rx="1"/>
+                  <rect x="252" y="14" width="4" height="28" rx="1"/><rect x="258" y="10" width="4" height="32" rx="1"/>
+                  <rect x="264" y="6"  width="4" height="36" rx="1"/><rect x="270" y="8"  width="4" height="34" rx="1"/>
+                  <rect x="276" y="12" width="4" height="30" rx="1"/><rect x="282" y="18" width="4" height="24" rx="1"/>
+                  <rect x="288" y="20" width="4" height="22" rx="1"/><rect x="294" y="16" width="4" height="26" rx="1"/>
+                </g>
+                <!-- last 10 bars in accent -->
+                <g fill="var(--accent)">
+                  <rect x="300" y="14" width="4" height="28" rx="1"/><rect x="306" y="10" width="4" height="32" rx="1"/>
+                  <rect x="312" y="6"  width="4" height="36" rx="1"/><rect x="318" y="4"  width="4" height="38" rx="1"/>
+                  <rect x="324" y="2"  width="4" height="40" rx="1"/><rect x="330" y="6"  width="4" height="36" rx="1"/>
+                  <rect x="336" y="10" width="4" height="32" rx="1"/><rect x="342" y="14" width="4" height="28" rx="1"/>
+                  <rect x="348" y="8"  width="4" height="34" rx="1"/><rect x="354" y="4"  width="4" height="38" rx="1"/>
+                </g>
+              </svg>
+            </div>
+          </div>
+        </div>
+        <div class="notes">
+          <strong>Markup:</strong> a positioned wrapper with a label overlay
+          (<code>.tempo-strip-label</code>) and an SVG that fills 100% width
+          via <code>preserveAspectRatio="none"</code> — bars stretch to the
+          viewport. Bar width 4px + 2px gap; every 10th column gets a dashed
+          ruler line so the eye can chunk time. <strong>Color rule:</strong>
+          last 10 bars (the most recent ~10 minutes of activity) render in
+          <code>--accent</code>; older bars render in <code>--rule-strong</code>
+          at 0.75 opacity. <strong>bpm overlay</strong> is computed
+          server-side from the rolling-window message count, not from a fake
+          metronome — it's a real signal. Sits in the page header above the
+          workspace, full-width.
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── KV ─── -->
+    <section class="ds-section" id="kv">
+      <h2>Key/value table</h2>
+      <p class="lede">
+        Player metadata, ensemble settings, host configuration. Two columns:
+        label dim/uppercase, value default. Mono for IDs, sans for everything
+        else.
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>Player metadata</h3><span class="meta">5 fields</span></div>
+        <div class="body">
+          <div style="display: grid; grid-template-columns: 140px 1fr; gap: 0; row-gap: 0;">
+            <div style="font-size: 10.5px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.1em; padding: 8px 0; border-bottom: 1px solid var(--rule);">id</div>
+            <div style="font-family: var(--ff-mono); font-size: 12px; padding: 8px 0; border-bottom: 1px solid var(--rule);">player_4f3a-9c2e</div>
+            <div style="font-size: 10.5px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.1em; padding: 8px 0; border-bottom: 1px solid var(--rule);">type</div>
+            <div style="font-size: 13px; padding: 8px 0; border-bottom: 1px solid var(--rule);">researcher</div>
+            <div style="font-size: 10.5px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.1em; padding: 8px 0; border-bottom: 1px solid var(--rule);">host</div>
+            <div style="font-size: 13px; padding: 8px 0; border-bottom: 1px solid var(--rule);">claude-code · staging-2</div>
+            <div style="font-size: 10.5px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.1em; padding: 8px 0; border-bottom: 1px solid var(--rule);">ensemble</div>
+            <div style="font-size: 13px; padding: 8px 0; border-bottom: 1px solid var(--rule);">@my-band</div>
+            <div style="font-size: 10.5px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.1em; padding: 8px 0;">recruited</div>
+            <div style="font-family: var(--ff-mono); font-size: 12px; padding: 8px 0;">2025-04-25 14:32:08</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── MODAL ─── -->
+    <section class="ds-section" id="modal">
+      <h2>Modal &amp; sheet <span class="ds-tag shadcn">shadcn: Dialog · Sheet</span></h2>
+      <p class="lede">
+        Modals interrupt; sheets reveal. Use a modal for confirmations and quick
+        forms (≤ 4 fields). Use a sheet for player detail, longer forms, and
+        anything with its own scroll.
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>Modal · confirmation</h3><span class="meta">centered · max-w 480</span></div>
+        <div class="body">
+          <div class="preview center" style="background: rgba(0,0,0,0.4); padding: 56px;">
+            <div style="background: var(--bg-1); border: 1px solid var(--rule-strong); border-radius: 10px; box-shadow: var(--shadow-2); width: 420px; overflow: hidden;">
+              <div style="padding: 22px 24px 18px;">
+                <h4 style="font-family: var(--ff-display); font-size: 22px; font-weight: 400; margin: 0 0 6px; line-height: 1.2;">Disband <em style="color: var(--accent); font-style: italic;">@my-band</em>?</h4>
+                <p style="margin: 0; font-size: 13px; color: var(--text-2); line-height: 1.55;">3 players will be released. Pending tasks will be cancelled. This cannot be undone.</p>
+              </div>
+              <div style="padding: 14px 24px; background: var(--bg-2); border-top: 1px solid var(--rule); display: flex; gap: 8px; justify-content: flex-end;">
+                <button class="btn btn-ghost">Cancel</button>
+                <button class="btn" style="color: #fff; background: var(--err); border-color: var(--err);">Disband</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="notes">
+          <strong>Pattern:</strong> serif italic in the title carries the
+          ensemble or player name being acted on — the only place the italic
+          shows up in modals. Destructive primary uses <code>--err</code>.
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── WIZARD ─── -->
+    <section class="ds-section" id="wizard">
+      <h2>Wizard</h2>
+      <p class="lede">
+        Multi-step flows: create ensemble, recruit player, add host. Steps
+        listed at the top, current step bold + accented, completed steps muted
+        with a check, future steps dim.
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>Stepper</h3><span class="meta">3 steps · step 2 active</span></div>
+        <div class="body">
+          <div class="preview">
+            <div style="display: flex; align-items: center; gap: 16px; width: 100%;">
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <div style="width: 22px; height: 22px; border-radius: 50%; background: var(--bg-2); border: 1px solid var(--rule); display: flex; align-items: center; justify-content: center; color: var(--ok); font-size: 12px;">✓</div>
+                <span style="font-size: 12px; color: var(--text-2);">Pick a player type</span>
+              </div>
+              <div style="flex: 0 0 32px; height: 1px; background: var(--rule);"></div>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <div style="width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--bg); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; font-family: var(--ff-mono);">2</div>
+                <span style="font-size: 12px; color: var(--text); font-weight: 500;">Choose host</span>
+              </div>
+              <div style="flex: 0 0 32px; height: 1px; background: var(--rule);"></div>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <div style="width: 22px; height: 22px; border-radius: 50%; background: var(--bg-2); border: 1px solid var(--rule); display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 11px; font-family: var(--ff-mono);">3</div>
+                <span style="font-size: 12px; color: var(--dim);">Loadout</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <hr class="ds-hr" />
+
+    <!-- ─── status ─── -->
+    <section class="ds-section" id="status">
+      <h2>Status <em>colors</em></h2>
+      <p class="lede">
+        Five total. Each has a single canonical use and a single canonical
+        soft-fill. Don't tint backgrounds with status colors — use them for
+        ink, borders, or 1-pixel accents only.
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>Status semantics</h3><span class="meta">never decorative</span></div>
+        <div class="body flush">
+          <table class="token-table">
+            <thead><tr><th>Token</th><th>Meaning</th><th>Used for</th></tr></thead>
+            <tbody>
+              <tr><td class="token" style="color: var(--ok);">--ok</td><td>Healthy, active, succeeded</td><td>▶ playing chip · tempo heartbeat ✓ · stepper checkmark</td></tr>
+              <tr><td class="token" style="color: var(--warn);">--warn</td><td>Paused, stale, attention</td><td>⏸ paused chip · slow-host indicator · "1 player idle"</td></tr>
+              <tr><td class="token" style="color: var(--err);">--err</td><td>Failed, missed, destructive</td><td>● error chip · disband button · failed heartbeat</td></tr>
+              <tr><td class="token" style="color: var(--info);">--info</td><td>Neutral notice, route hint</td><td>conductor route arrow · system info banners</td></tr>
+              <tr><td class="token" style="color: var(--accent);">--accent</td><td>Brand, primary action, mention</td><td>primary CTA · brand mark · conductor name · @mention</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── scroll ─── -->
+    <section class="ds-section" id="scroll">
+      <h2>Scroll &amp; <em>focus</em></h2>
+      <p class="lede">
+        Scrollbars are quiet. Focus rings are unmistakable. The dashboard is a
+        keyboard-first tool — every interactive element must show a clear
+        focus state.
+      </p>
+
+      <div class="ds-row">
+        <div class="ds-card">
+          <div class="head"><h3>Focus ring</h3><span class="meta">2px accent · 2px offset</span></div>
+          <div class="body">
+            <div class="preview">
+              <button class="btn btn-primary" style="outline: 2px solid var(--accent); outline-offset: 2px;">Focused button</button>
+              <input type="text" value="Focused input" style="background: var(--bg-2); border: 1px solid var(--rule); padding: 8px 12px; border-radius: 6px; font-family: var(--ff-ui); color: var(--text); font-size: 13px; outline: 2px solid var(--accent); outline-offset: 2px; width: 220px;" />
+            </div>
+          </div>
+          <div class="notes">
+            <strong>Tailwind:</strong> <code>focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2</code>.
+            shadcn's <code>focus-visible:ring</code> is rebound to our accent
+            via <code>--ring</code>.
+          </div>
+        </div>
+        <div class="ds-card">
+          <div class="head"><h3>Scrollbar</h3><span class="meta">webkit · 8px</span></div>
+          <div class="body">
+            <div class="preview" style="height: 140px; overflow: auto;">
+              <div style="height: 400px; color: var(--dim); font-size: 12px;">Scrollable area · 8px webkit scrollbar · track is bg-1, thumb is rule-strong, on hover bumps to dim. No arrows. No background pattern. Quiet.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── stack ─── -->
+    <section class="ds-section" id="stack">
+      <h2>Tech <em>stack</em></h2>
+      <p class="lede">
+        How the design lands in code.
+      </p>
+
+      <div class="ds-card">
+        <div class="head"><h3>Stack</h3><span class="meta">React · shadcn/ui · Tailwind</span></div>
+        <div class="body flush">
+          <table class="token-table">
+            <thead><tr><th>Layer</th><th>Choice</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td>Framework</td><td class="val">React 18 · Vite or Next</td><td>SPA-style; SSR optional, not required</td></tr>
+              <tr><td>Styling</td><td class="val">Tailwind 3 + CSS vars</td><td>Tokens live as CSS vars; tailwind.config maps to them</td></tr>
+              <tr><td>Components</td><td class="val">shadcn/ui</td><td>Button, Dialog, Sheet, Textarea, Badge, Input, Select, Tabs, Tooltip</td></tr>
+              <tr><td>Icons</td><td class="val">lucide-react</td><td>1.5px stroke · 16px default · accent only when state-bearing</td></tr>
+              <tr><td>State</td><td class="val">Zustand or React Query</td><td>Server state via Query; UI state local or Zustand</td></tr>
+              <tr><td>Routing</td><td class="val">react-router or Next app router</td><td>Routes mirror sidebar: /ensembles/:id, /hosts, /settings</td></tr>
+              <tr><td>Realtime</td><td class="val">SSE or WebSocket</td><td>Tempo + event log are streamed; chat is request/response</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="ds-card">
+        <div class="head"><h3>tailwind.config.ts</h3><span class="meta">font + color extensions</span></div>
+        <div class="body flush">
+          <pre class="code"><span class="k">export default</span> {
+  content: [<span class="s">'./src/**/*.{ts,tsx}'</span>],
+  theme: {
+    extend: {
+      colors: {
+        bg: <span class="s">'var(--bg)'</span>,
+        <span class="s">'bg-1'</span>: <span class="s">'var(--bg-1)'</span>,
+        <span class="s">'bg-2'</span>: <span class="s">'var(--bg-2)'</span>,
+        text: <span class="s">'var(--text)'</span>,
+        <span class="s">'text-2'</span>: <span class="s">'var(--text-2)'</span>,
+        dim: <span class="s">'var(--dim)'</span>,
+        rule: <span class="s">'var(--rule)'</span>,
+        accent: <span class="s">'var(--accent)'</span>,
+        ok: <span class="s">'var(--ok)'</span>,
+        warn: <span class="s">'var(--warn)'</span>,
+        err: <span class="s">'var(--err)'</span>,
+        info: <span class="s">'var(--info)'</span>,
+      },
+      fontFamily: {
+        sans: [<span class="s">'Instrument Sans'</span>, <span class="s">'ui-sans-serif'</span>, <span class="s">'system-ui'</span>],
+        display: [<span class="s">'Instrument Serif'</span>, <span class="s">'serif'</span>],
+        mono: [<span class="s">'JetBrains Mono'</span>, <span class="s">'ui-monospace'</span>],
+      },
+      borderRadius: { md: <span class="s">'6px'</span>, lg: <span class="s">'10px'</span> },
+    },
+  },
+}</pre>
+        </div>
+      </div>
+
+      <div class="ds-card">
+        <div class="head"><h3>File layout suggestion</h3><span class="meta">react app</span></div>
+        <div class="body flush">
+          <pre class="code">src/
+  styles/
+    globals.css        <span class="c">// tokens + density + base</span>
+  components/
+    ui/                <span class="c">// shadcn primitives (Button, Dialog, …)</span>
+    Panel.tsx          <span class="c">// Maestro panel wrapper</span>
+    Composer.tsx
+    ChatRow.tsx
+    RosterRow.tsx
+    EventRow.tsx
+    TempoStrip.tsx
+    Wizard.tsx
+  pages/
+    Overview.tsx
+    Ensemble.tsx       <span class="c">// the workspace</span>
+    Host.tsx
+    Settings.tsx
+  lib/
+    bus.ts             <span class="c">// SSE / WS client</span>
+    tokens.ts          <span class="c">// density level setter</span></pre>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  // ─── data ──────────────────────────────────────────────────────
+  const SURFACES = [
+    { name: 'bg',           token: '--bg' },
+    { name: 'bg-1',         token: '--bg-1' },
+    { name: 'bg-2',         token: '--bg-2' },
+    { name: 'bg-chat-out',  token: '--bg-chat-out' },
+    { name: 'text',         token: '--text' },
+    { name: 'text-2',       token: '--text-2' },
+    { name: 'dim',          token: '--dim' },
+    { name: 'muted',        token: '--muted' },
+    { name: 'rule',         token: '--rule' },
+    { name: 'rule-strong',  token: '--rule-strong' },
+  ];
+  const ACCENTS = [
+    { name: 'accent',       token: '--accent' },
+    { name: 'accent-soft',  token: '--accent-soft' },
+    { name: 'accent-ink',   token: '--accent-ink' },
+  ];
+  const STATUSES = [
+    { name: 'ok',   token: '--ok' },
+    { name: 'warn', token: '--warn' },
+    { name: 'err',  token: '--err' },
+    { name: 'info', token: '--info' },
+  ];
+
+  function swatchHTML({ name, token }) {
+    return `
+      <div class="swatch">
+        <div class="chip" style="background: var(${token});"></div>
+        <div class="meta">
+          <span class="name">${name}</span>
+          <span class="val">${token}</span>
+        </div>
+      </div>`;
+  }
+  function fill(id, items) {
+    document.getElementById(id).innerHTML = items.map(swatchHTML).join('');
+  }
+  fill('surfaces', SURFACES);
+  fill('accents', ACCENTS);
+  fill('statuses', STATUSES);
+
+  // density rail
+  const densityHTML = [4,5,6,7,8,9].map(n => `
+    <div class="cell">
+      <div class="level">${n}</div>
+      <div>pad ${({4:22,5:18,6:14,7:11,8:9,9:7}[n])}px</div>
+      <div>fs ${({4:15,5:14,6:13,7:12.5,8:12,9:11.5}[n])}px</div>
+      <div>${n===6 ? 'default' : (n<6 ? 'roomy' : 'tight')}</div>
+    </div>
+  `).join('');
+  document.getElementById('density-rail').innerHTML = densityHTML;
+
+  // theme toggle
+  function setTheme(theme, btn) {
+    document.documentElement.dataset.theme = theme;
+    document.querySelectorAll('.ds-theme-toggle button').forEach(b => b.classList.toggle('active', b === btn));
+  }
+
+  // active nav link via scroll
+  const navLinks = document.querySelectorAll('.ds-nav a');
+  const sections = [...document.querySelectorAll('.ds-section')];
+  function updateActive() {
+    const y = window.scrollY + 80;
+    let active = sections[0]?.id;
+    for (const s of sections) { if (s.offsetTop <= y) active = s.id; }
+    navLinks.forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#' + active));
+  }
+  window.addEventListener('scroll', updateActive, { passive: true });
+  updateActive();
+</script>
+</body>
+</html>
