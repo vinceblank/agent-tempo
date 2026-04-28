@@ -15,6 +15,7 @@ import { maestroSetPausedSignal } from '../workflows/maestro-signals';
 import { AgentType, MockMode, ScheduleEntry, SessionInput, SessionMetadata } from '../types';
 import { formatDurationMs } from '../utils/duration';
 import { formatAttachmentInfoForDisplay } from '../utils/attachment-format';
+import { defaultPart } from '../utils/default-part';
 import { runPreflight } from './preflight';
 import { isGlobalMcpRegistered, addGlobalMcp, removeGlobalMcp, isMcpConfigured } from './mcp';
 import { loadLineup, resolveLineupPath } from '../ensemble/loader';
@@ -147,7 +148,14 @@ async function seedConductorWorkflow(args: {
       sessionId: conductorSessionId,
       ...(resolvedConductorType ? { playerType: resolvedConductorType.name, playerTypeDescription: resolvedConductorType.description || '' } : {}),
     },
-    autoSummary: `Conductor session`,
+    // Issue #450 — derive default `part` from the resolved player type so
+    // a typed conductor reads as `'<Role> session'` (still falls back to
+    // `'Conductor session'` when no type is resolved).
+    autoSummary: defaultPart({
+      playerType: resolvedConductorType?.name,
+      isConductor: true,
+      workDir: process.cwd(),
+    }),
     disableStaleDetection: true,
     temporalConfig: {
       temporalAddress: config.temporalAddress,
@@ -237,7 +245,15 @@ async function applyLineupPlayersAndSchedules(args: {
         recruitedBy: conductorName,
         ...(resolvedPlayerType ? { playerType: resolvedPlayerType.name, playerTypeDescription: resolvedPlayerType.description || '' } : {}),
       },
-      autoSummary: `Session in ${basename(resolve(playerWorkDir))}`,
+      // Issue #450 — derive default `part` from the resolved player type
+      // so a freshly recruited lineup player reads as e.g.
+      // `'Engineer session'` instead of the role-agnostic
+      // `'Session in <basename>'` placeholder.
+      autoSummary: defaultPart({
+        playerType: resolvedPlayerType?.name,
+        isConductor: false,
+        workDir: resolve(playerWorkDir),
+      }),
       disableStaleDetection: true,
       temporalConfig: {
         temporalAddress: config.temporalAddress,
