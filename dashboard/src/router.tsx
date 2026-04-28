@@ -14,7 +14,7 @@
  *   /schedules                                 → Schedules        (PR-6)
  *   /loadouts                                  → Loadouts         (PR-6, endpoint stub)
  *   /player-types                              → PlayerTypes      (PR-6, endpoint stub)
- *   /settings                                  → SettingsSheet    (PR-6)
+ *   /settings                                  → Settings         (PR-G of #389)
  *
  * Architect's deep-linking principle (testability addendum): every URL
  * directly addresses a screen so the conductor's autonomous validation
@@ -37,7 +37,6 @@ import {
   type RouteObject,
 } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
-import { SettingsSheet } from './components/SettingsSheet';
 import { CreateEnsemble } from './screens/CreateEnsemble';
 import { Hosts } from './screens/Hosts';
 import { Loadouts } from './screens/Loadouts';
@@ -48,6 +47,7 @@ import { PlaceholderScreen } from './screens/Placeholder';
 import { PlayerTypes } from './screens/PlayerTypes';
 import { Recruit } from './screens/Recruit';
 import { Schedules } from './screens/Schedules';
+import { Settings } from './screens/Settings';
 
 /** Layout shell that hosts the routed content via `<Outlet />`. */
 function ShellLayout() {
@@ -85,7 +85,7 @@ export const DASHBOARD_ROUTES: RouteObject[] = [
       { path: 'schedules', element: <Schedules /> },
       { path: 'loadouts', element: <Loadouts /> },
       { path: 'player-types', element: <PlayerTypes /> },
-      { path: 'settings', element: <SettingsSheet /> },
+      { path: 'settings', element: <Settings /> },
       // Catch-all: redirect to overview for unknown paths inside the dashboard.
       { path: '*', element: <Navigate to="/" replace /> },
     ],

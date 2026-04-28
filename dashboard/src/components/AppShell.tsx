@@ -43,7 +43,9 @@
  *    it via {@link useScreenPageHeader} — when the slot is set the
  *    override replaces the default operator chrome (density slider +
  *    theme toggle). When no override is pushed, the default keeps the
- *    chrome reachable until SettingsSheet absorbs it in PR-G.
+ *    chrome reachable. PR-G's Settings page (sibling route) now owns
+ *    the canonical theme/density/accent UI; this fallback is mostly a
+ *    bridge for routes without a screen-pushed header.
  *
  * The slot Provider wraps the whole shell so `useScreenPageHeader`
  * resolves cleanly even on Workspace routes (it just no-ops there since
