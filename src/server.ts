@@ -12,6 +12,7 @@ import { createTemporalConnection } from './connection';
 import { isDaemonRunning, startDaemon } from './cli/daemon';
 import { SessionInput } from './types';
 import { getGitInfo } from './git-info';
+import { defaultPart } from './utils/default-part';
 import { registerEnsembleTool } from './tools/ensemble';
 import { registerCueTool } from './tools/cue';
 import { registerSetPartTool } from './tools/set-part';
@@ -142,7 +143,12 @@ async function main() {
       agentType: isBridgeMode ? 'copilot' : 'claude',
       adapterId,
     },
-    autoSummary: `Session in ${path.basename(workDir)}`,
+    // Issue #450 — self-bootstrap path has no resolved player type, so
+    // this falls through to `'Conductor session'` for conductors and
+    // `'Session in <basename>'` otherwise. Routed through the helper so
+    // any future server-side player-type discovery picks up the typed
+    // default automatically.
+    autoSummary: defaultPart({ isConductor, workDir }),
     temporalConfig: {
       temporalAddress: config.temporalAddress,
       temporalNamespace: config.temporalNamespace,

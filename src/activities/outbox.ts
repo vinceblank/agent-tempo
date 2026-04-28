@@ -16,6 +16,7 @@ import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
 import { ENV } from '../config';
 import { resolveSession } from './resolve';
 import { resolveAgentType } from '../ensemble/agent-types';
+import { defaultPart } from '../utils/default-part';
 import { registry } from '../adapters';
 import { hardTerminateAttachment, type HardTerminateInput, type HardTerminateResult } from './hard-terminate';
 import {
@@ -387,7 +388,15 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             ...(agentDefinitionDescription ? { playerTypeDescription: agentDefinitionDescription } : {}),
             recruitedBy: fromPlayerId,
           },
-          autoSummary: `Session in ${path.basename(workDir)}`,
+          // Issue #450 — derive default `part` from the recruited
+          // player type so a freshly recruited session reads as e.g.
+          // `'Engineer session'` instead of the role-agnostic
+          // `'Session in <basename>'` placeholder.
+          autoSummary: defaultPart({
+            playerType: agentDefinition,
+            isConductor,
+            workDir,
+          }),
           disableStaleDetection: true,
           // When held: store the initial message for delivery on release, inject standby message instead
           ...(held ? { outboxLocked: true, heldMessage: initialMessage } : {}),
