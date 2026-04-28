@@ -298,3 +298,121 @@ describe('runDaemonBoot ordering (#274 AC5a / M11)', function () {
     expect(captured!.availablePlayerTypes).to.deep.equal(['tempo-soloist']);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────
+// Issue #399 Q5.3b / Q5.4 — daemonStartedAt + adapterVersions wiring
+// ────────────────────────────────────────────────────────────────────────
+
+describe('runDaemonBoot adapter-versions probe (#399 Q5.4)', function () {
+  const baseProfile: HostProfile = {
+    hostname: 'test-host',
+    version: '0.28.0-beta.7',
+    defaultAgent: 'claude',
+  };
+
+  it('merges probeAdapterVersions result into the signaled profile', async function () {
+    let captured: HostProfile | undefined;
+    await runDaemonBoot(fakeClient, {
+      ensureGlobalMaestro: async () => { /* ok */ },
+      sendHostProfileSignal: async (_c, p) => { captured = p; },
+      computeHostProfile: () => baseProfile,
+      probeAdapterVersions: async () => ({
+        'claude-code': '1.2.4',
+        copilot: '0.5.2',
+      }),
+      retryBackoffsMs: [0],
+      log: () => {},
+    });
+    expect(captured!.adapterVersions).to.deep.equal({
+      'claude-code': '1.2.4',
+      copilot: '0.5.2',
+    });
+  });
+
+  it('omits adapterVersions when the probe returns an empty map (no probable adapters)', async function () {
+    let captured: HostProfile | undefined;
+    await runDaemonBoot(fakeClient, {
+      ensureGlobalMaestro: async () => { /* ok */ },
+      sendHostProfileSignal: async (_c, p) => { captured = p; },
+      computeHostProfile: () => baseProfile,
+      probeAdapterVersions: async () => ({}),
+      retryBackoffsMs: [0],
+      log: () => {},
+    });
+    expect(captured!.adapterVersions).to.equal(undefined);
+  });
+
+  it('runs the probe in parallel with ensureGlobalMaestro (probe finishes while ensure is pending)', async function () {
+    // Block `ensure` until both promises have started; `probe` finishes
+    // first. If they were sequential the probe couldn't observe ensure
+    // pending. Asserting the parallel-start invariant.
+    const ensure = makeDeferred<void>();
+    let probeStartedWhileEnsurePending = false;
+
+    await runDaemonBoot(fakeClient, {
+      ensureGlobalMaestro: async () => {
+        // Yield so the parent can observe pending state
+        await new Promise((r) => setImmediate(r));
+        await ensure.promise;
+      },
+      sendHostProfileSignal: async () => { /* ok */ },
+      computeHostProfile: () => baseProfile,
+      probeAdapterVersions: async () => {
+        probeStartedWhileEnsurePending = true;
+        // Resolve `ensure` from inside the probe so the boot can finish.
+        ensure.resolve();
+        return { 'claude-code': '9.9.9' };
+      },
+      retryBackoffsMs: [0],
+      log: () => {},
+    });
+
+    expect(probeStartedWhileEnsurePending).to.equal(true);
+  });
+
+  it('probeAdapterVersions throwing does NOT block profile advertisement (defense-in-depth)', async function () {
+    let captured: HostProfile | undefined;
+    const logs: unknown[][] = [];
+    await runDaemonBoot(fakeClient, {
+      ensureGlobalMaestro: async () => { /* ok */ },
+      sendHostProfileSignal: async (_c, p) => { captured = p; },
+      computeHostProfile: () => baseProfile,
+      // Despite the helper's "never-throws" contract, exercise the
+      // defense-in-depth catch in runDaemonBoot.
+      probeAdapterVersions: async () => { throw new Error('probe-blew-up'); },
+      retryBackoffsMs: [0],
+      log: (...args) => logs.push(args),
+    });
+    expect(captured).to.exist;
+    expect(captured!.adapterVersions).to.equal(undefined);
+    const logged = JSON.stringify(logs);
+    expect(logged).to.include('probeAdapterVersions threw');
+  });
+});
+
+describe('scrubHostProfile #399 pass-through (daemonStartedAt + adapterVersions)', function () {
+  it('passes daemonStartedAt through unchanged when present', function () {
+    const out = scrubHostProfile({
+      hostname: 'h',
+      daemonStartedAt: 1700000000000,
+    });
+    expect(out.daemonStartedAt).to.equal(1700000000000);
+  });
+
+  it('passes adapterVersions through unchanged when present', function () {
+    const out = scrubHostProfile({
+      hostname: 'h',
+      adapterVersions: { 'claude-code': '1.2.4', copilot: '0.5.2' },
+    });
+    expect(out.adapterVersions).to.deep.equal({
+      'claude-code': '1.2.4',
+      copilot: '0.5.2',
+    });
+  });
+
+  it('omits both fields from the output when absent on input (round-trip stays clean)', function () {
+    const out = scrubHostProfile({ hostname: 'h' });
+    expect(out).to.not.have.property('daemonStartedAt');
+    expect(out).to.not.have.property('adapterVersions');
+  });
+});
