@@ -54,6 +54,32 @@
 .workspace { gap: var(--density-gap); padding: 0 calc(var(--density-pad) * 1.6) calc(var(--density-pad) * 1.6); }
 
 
+/* ─── Brandmark + metronome ──────────────────────────────── */
+/* Appended for PR-A1 (brandmark/metronome are React primitives, but the
+ * new BrandMark component uses className-driven CSS — see audit lines
+ * 836-838 on appending sections as primitives need them). */
+.brandmark { display: inline-flex; align-items: center; gap: 10px; color: var(--text); }
+.brandmark-word {
+  font-family: var(--ff-mono);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+.brandmark-dash { color: var(--accent); }
+
+.tempo-metronome { display: inline-flex; color: var(--text); }
+.tempo-metronome svg { display: block; overflow: visible; }
+.tempo-metronome .pendulum {
+  transform-origin: 32px 46px;
+  animation: pendulum var(--bpm-dur, 0.65s) ease-in-out infinite alternate;
+}
+.tempo-metronome:not(.is-running) .pendulum { animation: none; }
+@keyframes pendulum {
+  0%   { transform: rotate(-28deg); }
+  100% { transform: rotate(28deg); }
+}
+
+
 /* ─── Tempo strip ─── */
 .tempo-strip {
   position: relative;

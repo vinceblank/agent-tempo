@@ -1,53 +1,95 @@
 /**
- * Brandmark — the smallest tempo motif: a static metronome glyph + the
- * `claude-tempo` wordmark. Ported from the canonical handoff bundle's
- * `primitives.jsx:30-41`.
+ * BrandMark — the metronome motif + `claude-tempo` mono wordmark.
  *
- * PR-2 ships a STATIC metronome (no animation, no `bpm` prop) so the
- * scaffold stays minimal. The animated `<Metronome>` primitive (and its
- * `--bpm-dur` CSS-variable plumbing) lands in PR-4 alongside the rest
- * of `src/components/tempo/`.
+ * Per audit rev 4 C1: the brand identity is the metronome icon (triangle
+ * shell with terracotta pendulum) paired with the lowercase `claude-tempo`
+ * wordmark, terracotta hyphen between the two halves. Distinct from
+ * `MaestroMark` (the operator's italic-M identity, see C2).
+ *
+ * Animation: pendulum swings at one period per beat — `animation-duration`
+ * is `60 / bpm` seconds, plumbed via the `--bpm-dur` CSS variable. Set
+ * `running={false}` to freeze (used when the ensemble is paused). When the
+ * user prefers reduced motion, the running pendulum is suppressed at
+ * the React layer so the `<span>` carries `is-running` only when both
+ * `running` and motion preference allow it.
+ *
+ * Source: `docs/design/dashboard-handoff/project/primitives.jsx:6-26`
+ * (BrandMark + Metronome) + components.css `.brandmark*` / `.tempo-metronome*`.
  */
 import type { CSSProperties } from 'react';
+import { useReducedMotion } from '../lib/use-reduced-motion';
 
 interface BrandmarkProps {
   size?: 'sm' | 'md' | 'lg';
+  /** Beats per minute. Drives the pendulum's animation period. */
+  bpm?: number;
+  /** When false, freezes the pendulum (e.g. paused ensemble). */
+  running?: boolean;
 }
 
-export function Brandmark({ size = 'md' }: BrandmarkProps) {
-  const iconSize = size === 'lg' ? 40 : size === 'sm' ? 20 : 28;
-  const fontSize = size === 'lg' ? 26 : size === 'sm' ? 13 : 17;
-  const wordStyle: CSSProperties = {
-    fontFamily: 'var(--ff-mono)',
-    fontWeight: 600,
-    letterSpacing: '-0.02em',
-    fontSize,
+const ICON_SIZES: Record<NonNullable<BrandmarkProps['size']>, number> = {
+  sm: 20,
+  md: 28,
+  lg: 40,
+};
+
+const FONT_SIZES: Record<NonNullable<BrandmarkProps['size']>, number> = {
+  sm: 13,
+  md: 17,
+  lg: 26,
+};
+
+export function Brandmark({ size = 'md', bpm = 92, running = true }: BrandmarkProps) {
+  const iconSize = ICON_SIZES[size];
+  const fontSize = FONT_SIZES[size];
+  const reduceMotion = useReducedMotion();
+  const animate = running && !reduceMotion;
+  // Period of one beat in seconds. Floor at 20 bpm so a stalled feed
+  // can't divide-by-zero or produce a comically slow swing.
+  const dur = 60 / Math.max(20, bpm);
+
+  // `--bpm-dur` is consumed by the `.pendulum` rule in components.css.
+  // The size prop is plumbed through inline `style` because the SVG
+  // viewBox and wordmark font-size are runtime-computed.
+  const rootStyle: CSSProperties = {
+    ['--bpm-dur' as string]: `${dur}s`,
+    width: undefined, // metronome span sizes itself via inline width
+    height: undefined,
   };
+
   return (
     <span
       className={`brandmark brandmark-${size}`}
       data-testid="brandmark"
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 10, color: 'var(--text)' }}
+      data-running={animate || undefined}
+      style={rootStyle}
     >
-      <svg
-        viewBox="0 0 64 64"
-        width={iconSize}
-        height={iconSize}
-        fill="none"
-        aria-hidden="true"
-        data-testid-exempt="decorative-glyph"
+      <span
+        className={`tempo-metronome${animate ? ' is-running' : ''}`}
+        aria-label="metronome"
       >
-        <path
-          d="M32 8 L14 54 L50 54 Z"
-          stroke="currentColor"
-          strokeWidth={3}
-          strokeLinejoin="round"
-        />
-        <line x1={32} y1={46} x2={32} y2={14} stroke="var(--accent)" strokeWidth={3} strokeLinecap="round" />
-        <circle cx={32} cy={46} r={3} fill="var(--accent)" />
-      </svg>
-      <span style={wordStyle}>
-        claude<span style={{ color: 'var(--dim)' }}>-</span>tempo
+        <svg
+          viewBox="0 0 64 64"
+          width={iconSize}
+          height={iconSize}
+          fill="none"
+          aria-hidden="true"
+          data-testid-exempt="decorative-glyph"
+        >
+          <path
+            d="M32 8 L14 54 L50 54 Z"
+            stroke="currentColor"
+            strokeWidth={3}
+            strokeLinejoin="round"
+          />
+          <g className="pendulum">
+            <line x1={32} y1={46} x2={32} y2={14} stroke="var(--accent)" strokeWidth={3} strokeLinecap="round" />
+            <circle cx={32} cy={46} r={3} fill="var(--accent)" />
+          </g>
+        </svg>
+      </span>
+      <span className="brandmark-word" style={{ fontSize }}>
+        claude<span className="brandmark-dash">-</span>tempo
       </span>
     </span>
   );
