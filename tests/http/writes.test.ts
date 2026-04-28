@@ -56,7 +56,7 @@ function makeMockClient(opts: MockOptions = {}): { client: TempoClient; calls: C
     restart: handler('restart', { playerId: 'tempo-eng', entryId: 'restart-1' }),
     destroy: handler('destroy', undefined),
     detach: handler('detach', undefined),
-    recall: handler('recall', { messages: [] }),
+    recall: handler('recall', { received: [], sent: [] }),
     listEnsembles: handler('listEnsembles', []),
     getPlayers: handler('getPlayers', []),
     getEnsembleChat: handler('getEnsembleChat', { messages: [], total: 0, hasMore: false, hasConductor: false }),
@@ -442,8 +442,20 @@ describe('POST /v1/ensembles/:ensemble/detach', () => {
 });
 
 describe('POST /v1/ensembles/:ensemble/recall', () => {
-  it('routes to client.recall and returns 200 with the result', async () => {
-    const b = await boot({ mock: { returns: { recall: { messages: [{ id: 'm1' }] } } } });
+  it('routes to client.recall and projects received+sent lengths into a count', async () => {
+    const b = await boot({
+      mock: {
+        returns: {
+          // Mirror the real `RecallClientResult` shape: { received, sent }.
+          // The handler projects `received.length + sent.length` into a
+          // single `messages` count for the dashboard.
+          recall: {
+            received: [{ id: 'r1' }, { id: 'r2' }, { id: 'r3' }],
+            sent: [{ id: 's1' }, { id: 's2' }],
+          },
+        },
+      },
+    });
     const res = await postJson(`${b.url}/v1/ensembles/demo/recall`, {
       playerId: 'tempo-eng',
     });
@@ -451,7 +463,27 @@ describe('POST /v1/ensembles/:ensemble/recall', () => {
     // documented in the writes.ts handler.
     expect(res.status).toBe(200);
     expect(b.calls.find((c) => c.method === 'recall')?.args).toEqual(['demo', 'tempo-eng']);
-    expect(await res.json()).toEqual({ messages: [{ id: 'm1' }] });
+    // 3 received + 2 sent = 5.
+    expect(await res.json()).toEqual({
+      ok: true,
+      ensemble: 'demo',
+      playerId: 'tempo-eng',
+      messages: 5,
+    });
+  });
+
+  it('returns messages=0 for the empty-timeline default', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/recall`, {
+      playerId: 'tempo-eng',
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ok: true,
+      ensemble: 'demo',
+      playerId: 'tempo-eng',
+      messages: 0,
+    });
   });
 
   it('400 missing-field on absent playerId', async () => {

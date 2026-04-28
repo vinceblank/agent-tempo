@@ -313,8 +313,15 @@ async function handleRecall(
   // groups with the destructive actions for routing because the dashboard
   // surfaces it on the same PlayerDetail action row. 200 (not 202)
   // because the result is the operation, not a queued effect.
+  //
+  // The dashboard's `RecallResult` consumer expects a count, not the raw
+  // arrays — projecting `received` + `sent` lengths here keeps the wire
+  // payload tight and avoids leaking inbox + sent-history shape into the
+  // browser-side type. Callers wanting the full timeline use the MCP
+  // `recall` tool / TempoClient method directly.
   const result = await client.recall(ensemble, playerId);
-  jsonResponse(res, 200, result);
+  const messages = result.received.length + result.sent.length;
+  jsonResponse(res, 200, { ok: true, ensemble, playerId, messages });
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
