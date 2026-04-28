@@ -9,9 +9,11 @@
  * — handlers compare against `BODY_TOO_LARGE` / `BODY_INVALID_JSON` and
  * map to the appropriate 4xx response.
  */
-import type { IncomingMessage } from 'http';
+import type { IncomingMessage, ServerResponse } from 'http';
 import type { AgentType } from '../types';
 import { isDevMode } from '../config';
+import { errorResponse } from './responses';
+import { validatePlayerName } from '../utils/validation';
 
 /** Hard cap on incoming JSON body size (1 MiB). */
 export const WRITE_BODY_MAX = 1024 * 1024;
@@ -87,4 +89,33 @@ export function allowedAgentsForCurrentMode(): readonly AgentType[] {
 
 export function isAllowedAgent(s: string, allowed: readonly AgentType[]): s is AgentType {
   return (allowed as readonly string[]).includes(s);
+}
+
+/**
+ * Pluck a required `playerId` from a parsed body, validating shape.
+ *
+ * Returns the `playerId` string on success. On any failure (missing or
+ * malformed) writes the appropriate 400 response via `errorResponse` and
+ * returns `undefined`. **Callers MUST check the return value and bail
+ * out** — a missing `if (!playerId) return;` would silently skip the
+ * downstream client call and double-send to the response stream.
+ *
+ * Shared by every per-player route under `/v1/ensembles/:ensemble/<action>`
+ * (restart / destroy / detach / recall — `release` keeps an inline check
+ * because its `playerId` field is optional, not required).
+ */
+export function requirePlayerId(
+  res: ServerResponse,
+  body: Record<string, unknown>,
+): string | undefined {
+  const playerId = stringField(body, 'playerId');
+  if (!playerId) {
+    errorResponse(res, 400, { error: 'missing-field', field: 'playerId' });
+    return undefined;
+  }
+  if (validatePlayerName(playerId) !== null) {
+    errorResponse(res, 400, { error: 'invalid-player-name', field: 'playerId' });
+    return undefined;
+  }
+  return playerId;
 }

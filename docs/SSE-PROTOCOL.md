@@ -39,7 +39,7 @@ This document is the authoritative reference for the **HTTP/SSE event source** e
 | `GET` | `/v1/events/:ensemble` | `text/event-stream` | Per-ensemble SSE stream. Optional `?topics=phase,chat,flags,schedules,heartbeat` query filter. |
 | `GET` | `/v1/events` | `text/event-stream` | **Global stream** — strictly limited to cluster-shape events (`ensemble.created`, `ensemble.destroyed`, `host_profile.changed`, `heartbeat`). Never per-ensemble events; subscribers wanting those open `/v1/events/:ensemble`. |
 | `OPTIONS` | (any) | `204 No Content` | CORS preflight (see §3). |
-| `POST` | `/v1/ensembles/:ensemble/{cue,pause,play,release,recruit}` | `application/json` | Safe-write endpoints (PR-7a of #340). See § 11b for full request/response shapes. |
+| `POST` | `/v1/ensembles/:ensemble/{cue,pause,play,release,recruit,restart,destroy,detach,recall}` | `application/json` | Safe-write endpoints (PR-7a of #340; per-player destructive verbs added by `feat/daemon-action-http-endpoints`). See § 11b for full request/response shapes. |
 | `POST` | `/v1/ensembles` | `application/json` | Create a fresh ensemble (issue #400) — recruits the conductor + lineup players. See § 11c. |
 | `GET` | `/v1/agent-types` | `application/json` | Available player-type catalog (project + user + shipped, three-tier dedup). See § 11c. |
 | `GET` | `/v1/lineups` | `application/json` | Available lineup catalog (saved + shipped). See § 11c. |
@@ -466,7 +466,7 @@ Two endpoints — `/v1/state/:ensemble` and `/v1/events/:ensemble` — accept an
 
 ## 11b. Write endpoints (PR-7a of #340)
 
-Five POST routes under `/v1/ensembles/:ensemble/<action>` give the dashboard a bidirectional surface. Each handler is a thin shim over the daemon's existing `TempoClient` method (the same client the daemon uses for snapshots) — **zero new Temporal signals/queries/updates**.
+Nine POST routes under `/v1/ensembles/:ensemble/<action>` give the dashboard a bidirectional surface. Each handler is a thin shim over the daemon's existing `TempoClient` method (the same client the daemon uses for snapshots) — **zero new Temporal signals/queries/updates**.
 
 ### Routes
 
@@ -477,13 +477,18 @@ Five POST routes under `/v1/ensembles/:ensemble/<action>` give the dashboard a b
 | `play` | `{ release?: boolean }` | `202 { ok, ensemble, released }` | Unpauses. `release: true` also fans out `releaseHeld` to held sessions. |
 | `release` | `{ playerId?: string }` | `200 ReleaseClientResult` | Without `playerId`, fans out across the ensemble; with it, releases just that session. |
 | `recruit` | `{ name, workDir, agent?, playerType?, host?, isConductor?, initialMessage?, systemPrompt?, held? }` | `202 { playerId, entryId }` | Mirrors the `recruit` MCP tool. `name` and `workDir` required. |
+| `restart` | `{ playerId, reason? }` | `202 RestartClientResult` | Per-player verb (`PR-D` algorithm §8.2). `playerId` required. `reason` accepted for body parity but the underlying `TempoClient.restart` doesn't carry it; safe future-compatible field. |
+| `destroy` | `{ playerId, reason? }` | `202 { ok, ensemble, playerId }` | Per-player terminal destroy. `playerId` required (the ensemble-scope form lives on the `destroy` MCP tool, not this surface). `reason` is forwarded to the client method. |
+| `detach` | `{ playerId, deadlineMs?, reason? }` | `202 { ok, ensemble, playerId }` | Graceful detach — workflow survives in `detached`. `deadlineMs` optional; non-numeric values are dropped (the client default applies). |
+| `recall` | `{ playerId }` | `200 RecallClientResult` | Read-shaped (returns the player's message timeline) but lives on this route group because the dashboard surfaces it on the same PlayerDetail action row. Hence `200` not `202`. |
 
 ### Validation contract
 
 - `:ensemble` must match `ENSEMBLE_NAME_REGEX`; mismatch → `400 invalid-ensemble-name`.
 - `to` / `name` / `playerId` must match `PLAYER_NAME_REGEX` and be ≤ `PLAYER_NAME_MAX` (64) chars; mismatch → `400 invalid-player-name`.
+- `playerId` is **required** on `restart` / `destroy` / `detach` / `recall`; absent → `400 missing-field` (`field: 'playerId'`).
 - `message` must be ≤ `MESSAGE_MAX` (102 400 chars); over → `413 message-too-long`.
-- `agent` if present must be `'claude' | 'copilot'`; otherwise → `400 invalid-agent`.
+- `agent` if present must be `'claude' | 'copilot'` (or `'mock'` in dev mode); otherwise → `400 invalid-agent`.
 - Body parse limit `1 MiB`; over → `413 body-too-large`.
 - Malformed JSON → `400 invalid-json`.
 - Unknown action under `/v1/ensembles/:e/<x>` → `404 not-found` (deliberately not 405 — the path simply isn't a known endpoint).
