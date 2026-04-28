@@ -56,6 +56,12 @@ function makeFakeClient(over: Partial<TempoClient> = {}): TempoClient {
     async isMaestroPaused() { return false; },
     async isAnySessionHeld() { return false; },
     async listHosts() { return [sampleHost]; },
+    // Issue #399 DB1a — sentinel defaults so server tests don't need
+    // to stub the new fan-out methods unless they exercise them.
+    async getEnsembleMeta() {
+      return { description: '', startedAt: '', currentBpm: 0, tempoSeries: [] };
+    },
+    async getPlayerWireMeta() { return null; },
   };
   // Cast through unknown — fields not in `over` and not in `base` will throw
   // if any handler reaches them, which is the right behaviour: PR-1 must
