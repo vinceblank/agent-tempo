@@ -38,8 +38,10 @@ import type { Message, AdapterDescriptor } from '../../types';
 import { SdkAttachment, type SdkDeliverResult } from '../sdk/base';
 import { ENV, getConfig } from '../../config';
 import { createTemporalConnection } from '../../connection';
-import { pendingMessagesQuery, allMessagesQuery, allSentMessagesQuery, isDestroyedQuery } from '../../workflows/signals';
+import { pendingMessagesQuery, allMessagesQuery, allSentMessagesQuery, isDestroyedQuery, receiveMessageSignal } from '../../workflows/signals';
+import { buildServerInstructions } from '../../server-tools';
 import { bootMcpBridge, type McpBridge } from './mcp-bridge';
+import type { Message as TempoMessage, SentMessage } from '../../types';
 
 /**
  * Descriptor for the claude-api adapter. Kept colocated with the class so
@@ -99,6 +101,16 @@ const WORKFLOW_REGISTER_INTERVAL_MS = 1000;
 const WORKFLOW_STATUS_CHECK_INTERVAL = 15;
 /** Per-turn timeout passed to invokeSdk. Anthropic streams can run minutes for long tool-use chains. */
 const TURN_TIMEOUT_MS = 5 * 60 * 1000;
+/** Max tokens per assistant turn. Sized for tool-use chains; bounded to prevent runaway billing. */
+const MAX_TOKENS_PER_TURN = 8192;
+/** Headless-identity addendum appended to the shared instructions per design §10. */
+const HEADLESS_ADDENDUM =
+  '\n\nYou are a **headless** claude-api player — you have access to the claude-tempo MCP tools ' +
+  '(cue, report, recall, ensemble, broadcast, recruit, set_part, …) but **NOT** the file-edit, shell, ' +
+  'or web tools that a `claude-code` player would have (no Bash, Read, Write, Edit, Glob, Grep, ' +
+  'WebSearch, WebFetch). For tasks requiring file edits or shell commands, ask the conductor to ' +
+  'recruit a `claude-code` player and hand off via cue. (File-op tool support is planned for a Phase 2 ' +
+  'enhancement.)';
 
 /**
  * SDK-class adapter for the Anthropic Messages API.
@@ -112,7 +124,7 @@ const TURN_TIMEOUT_MS = 5 * 60 * 1000;
 export class DirectApiAttachment extends SdkAttachment {
   readonly descriptor: AdapterDescriptor = claudeApiDescriptor;
 
-  /** AbortController stashed during invokeSdk so onSuperseded can abort the in-flight stream (commit 4). */
+  /** AbortController stashed during invokeSdk so onSuperseded can abort the in-flight stream. */
   private abortController: AbortController | null = null;
   /** In-process MCP bridge — server + client + cached tool list. Populated by run(). */
   private mcp: McpBridge | null = null;
@@ -120,6 +132,10 @@ export class DirectApiAttachment extends SdkAttachment {
   private apiClient: unknown = null;
   /** Resolved model id (recruit-arg → env → DEFAULT_MODEL). */
   private model: string;
+  /** Cached system prompt — built once at session start, stays in the cached prefix every turn. */
+  private systemPrompt = '';
+  /** Player id stashed for the per-turn telemetry log. */
+  private playerName = '';
 
   constructor(opts: { model?: string } = {}) {
     super();
@@ -212,6 +228,20 @@ export class DirectApiAttachment extends SdkAttachment {
       isConductor,
     });
     log(`MCP bridge ready — ${this.mcp.tools.length} tools available`);
+
+    // Build the cached system prompt once at session start. Lives under the
+    // `cache_control` ephemeral block on every turn (verification addendum
+    // §2 + design §5.2) so we pay the cache-create cost on the first turn
+    // and ride the cache-read price on every subsequent one. Recruited
+    // players have hasRequestedName=true (the spawn activity always passes
+    // PLAYER_NAME) so the addendum's `set_name` directive is suppressed.
+    this.systemPrompt = buildServerInstructions({
+      ensemble: config.ensemble,
+      playerId: playerIdForWorkflow,
+      isConductor,
+      hasRequestedName: true,
+    }) + HEADLESS_ADDENDUM;
+    this.playerName = playerIdForWorkflow;
 
     // Construct the Anthropic SDK client. SDK retry is disabled inside the
     // tool-use loop so a 5xx mid-turn doesn't double-execute the previous
@@ -381,27 +411,310 @@ export class DirectApiAttachment extends SdkAttachment {
   }
 
   /**
-   * Concrete LLM-turn invocation — wires `messages.create({ stream: true })`
-   * + the tool-use loop. **Stub in commit 3**; commit 4 fills in:
-   *   - Conversation rebuild from `allMessagesQuery` + `allSentMessagesQuery`
-   *   - AsyncIterable streaming consumer (text_delta, tool_use, thinking, usage)
-   *   - Tool dispatch via `this.mcp.callTool(...)`
-   *   - Verification-addendum landmines: thinking-block round-trip,
-   *     Opus 4.7 parameter discipline (no temperature/top_p/top_k/budget),
-   *     `input_json_delta` deferred-parse, mid-stream error try/catch
-   *   - Cache-control breakpoints (last system + last tool, 2/4 used)
-   *   - Per-turn stderr usage log
-   *   - Context-overflow message + clean exit
+   * Concrete LLM-turn invocation. Rebuilds conversation state from workflow
+   * queries, calls `messages.create({ stream: true })` in a tool-use loop,
+   * dispatches tool calls through the in-process MCP bridge, and exits when
+   * the model signals `end_turn` / `max_tokens` / context overflow.
+   *
+   * Verification-addendum landmines applied here:
+   *   - **§2.1 thinking-block round-trip**: assistant turns push the FULL
+   *     content array (thinking + tool_use blocks together) so the
+   *     signature chain stays intact between sub-turns of the loop.
+   *   - **§2.2 Opus 4.7 param discipline**: no `temperature`, `top_p`,
+   *     `top_k`, or `thinking.budget_tokens` on the request body. We don't
+   *     set `thinking` at all — Opus 4.7 defaults to adaptive-omitted.
+   *   - **§2.3 cache breakpoints**: `cache_control: { type: 'ephemeral' }`
+   *     on the LAST system block and the LAST tool definition (2 of 4
+   *     breakpoints used; the marker tells the server where the cached
+   *     prefix ENDS, not where it starts).
+   *   - **§2.4 input_json_delta**: tool_use input accumulates as a string
+   *     and is only `JSON.parse`'d at `content_block_stop`.
+   *   - **§2.5 mid-stream errors**: the `for await` loop is wrapped in
+   *     try/catch; thrown errors propagate up so `SdkAttachment.deliver`'s
+   *     `finally` fires `processingEnd` and the message stays PENDING for
+   *     the next poll's retry. No turn-level retry inside the adapter
+   *     (avoids double-execution of side-effecting tool calls).
    */
   protected async invokeSdk(_prompt: string, _timeoutMs: number): Promise<SdkDeliverResult> {
-    // Commit 3 stub — fail loudly if the poll loop ever drives through.
-    // Commit 4 replaces with the real loop. Reference the pull queries
-    // here so static analysis confirms the imports survive the stub.
-    void allMessagesQuery; void allSentMessagesQuery; void this.mcp;
-    throw new Error(
-      'DirectApiAttachment.invokeSdk() not yet implemented — commit 4 of #131 Phase C wires the tool-use loop.',
+    if (!this.mcp || !this.apiClient || !this.pinnedHandle) {
+      throw new Error('DirectApiAttachment invokeSdk called before run() finished initialization');
+    }
+    const handle = this.pinnedHandle;
+
+    // Build the Anthropic message array from workflow history. Parallel
+    // queries keep the per-turn latency tight.
+    const [received, sent] = await Promise.all([
+      handle.query(allMessagesQuery) as Promise<TempoMessage[]>,
+      handle.query(allSentMessagesQuery) as Promise<SentMessage[]>,
+    ]);
+    const messages = buildAnthropicMessages(received, sent);
+
+    // System + tools both carry an ephemeral cache_control breakpoint at
+    // their tail (verification §2.3). 2 of 4 breakpoints used; commit-5
+    // could add a third if the conversation tail grows past the cache
+    // threshold, but v1 leaves it implicit.
+    const system = [{ type: 'text', text: this.systemPrompt, cache_control: { type: 'ephemeral' } }];
+    const tools = this.mcp.tools.map((t, i) =>
+      i === this.mcp!.tools.length - 1
+        ? { ...t, cache_control: { type: 'ephemeral' } }
+        : t,
     );
+
+    this.abortController = new AbortController();
+    let assistantText = '';
+    const t0 = Date.now();
+    let stopReason: string | null = null;
+    let lastUsage: Record<string, number> | null = null;
+
+    try {
+      // Tool-use loop. Each pass is one streaming `messages.create` call;
+      // when `stop_reason === 'tool_use'` we dispatch the tools and loop.
+      while (true) {
+        const apiClient = this.apiClient as { messages: { create: (body: unknown, opts?: unknown) => Promise<AsyncIterable<AnthropicStreamEvent>> } };
+        const stream = await apiClient.messages.create({
+          model: this.model,
+          max_tokens: MAX_TOKENS_PER_TURN,
+          system,
+          tools,
+          messages,
+        }, { signal: this.abortController.signal, stream: true });
+
+        // Streaming consumer state — accumulate by content_block index so
+        // interleaved tool_use + text + thinking deltas land in the right
+        // bucket. Anthropic's stream emits `content_block_start` with an
+        // `index`, then deltas tagged with the same index, then `_stop`.
+        const blocks: AssistantContentBlock[] = [];
+        let turnUsage: Record<string, number> | null = null;
+        let turnStopReason: string | null = null;
+        try {
+          for await (const event of stream) {
+            handleStreamEvent(event, blocks);
+            if (event.type === 'message_delta') {
+              if (event.delta?.stop_reason) turnStopReason = event.delta.stop_reason;
+              if (event.usage) turnUsage = { ...(turnUsage ?? {}), ...event.usage };
+            } else if (event.type === 'message_start' && event.message?.usage) {
+              turnUsage = { ...(turnUsage ?? {}), ...event.message.usage };
+            }
+          }
+        } catch (err) {
+          // Verification §2.5 — mid-stream APIError. processingEnd will
+          // fire in SdkAttachment.deliver()'s finally; markDelivered will
+          // NOT fire (we threw); message stays PENDING; next poll retries.
+          log(`stream error mid-turn: ${(err as Error)?.message ?? err}`);
+          throw err;
+        }
+
+        stopReason = turnStopReason;
+        lastUsage = turnUsage ?? lastUsage;
+
+        // Accumulate the assistant's user-facing text from this sub-turn
+        // for the markDelivered return value (the workflow doesn't store
+        // it — it's just diagnostic — but operators see it in adapter logs).
+        for (const b of blocks) {
+          if (b.type === 'text') assistantText += b.text;
+        }
+
+        // Per-turn telemetry — design §5.6 stderr-only shape. No wire signal in v1.
+        if (turnUsage) {
+          log(`turn-usage model=${this.model} input=${turnUsage.input_tokens ?? 0} output=${turnUsage.output_tokens ?? 0} cache_create=${turnUsage.cache_creation_input_tokens ?? 0} cache_read=${turnUsage.cache_read_input_tokens ?? 0} elapsed_ms=${Date.now() - t0} player=${this.playerName} stop_reason=${stopReason ?? 'none'}`);
+        }
+
+        // Stop conditions.
+        if (stopReason === 'end_turn' || stopReason === 'max_tokens') break;
+        if (stopReason === 'model_context_window_exceeded') {
+          await this.deliverContextOverflowMessage(handle);
+          break;
+        }
+        if (stopReason !== 'tool_use') {
+          log(`unexpected stop_reason "${stopReason}" — exiting turn`);
+          break;
+        }
+
+        // tool_use loop — push the FULL assistant content array (thinking
+        // + tool_use blocks per verification §2.1) and dispatch each tool.
+        const toolUses = blocks.filter((b): b is AssistantToolUseBlock => b.type === 'tool_use');
+        if (toolUses.length === 0) {
+          log('stop_reason=tool_use but no tool_use blocks parsed — exiting turn');
+          break;
+        }
+
+        // Push the assistant message with full content (thinking + tool_use).
+        messages.push({ role: 'assistant', content: blocks });
+
+        // Dispatch tools in parallel — they may run side effects (cue,
+        // recruit, …) but each is independent within a single turn.
+        const toolResults = await Promise.all(toolUses.map(async (tu) => {
+          let parsedInput: Record<string, unknown> = {};
+          try {
+            parsedInput = tu.input ? (JSON.parse(tu.input) as Record<string, unknown>) : {};
+          } catch (err) {
+            log(`tool_use ${tu.id} (${tu.name}) input JSON.parse failed: ${(err as Error)?.message ?? err}`);
+            return {
+              type: 'tool_result' as const,
+              tool_use_id: tu.id,
+              content: `Error: tool input JSON was malformed (${(err as Error)?.message ?? err})`,
+              is_error: true,
+            };
+          }
+          try {
+            const result = await this.mcp!.callTool(tu.name, parsedInput);
+            return {
+              type: 'tool_result' as const,
+              tool_use_id: tu.id,
+              content: result.content,
+              is_error: result.isError ?? false,
+            };
+          } catch (err) {
+            log(`tool ${tu.name} dispatch threw: ${(err as Error)?.message ?? err}`);
+            return {
+              type: 'tool_result' as const,
+              tool_use_id: tu.id,
+              content: `Error: ${(err as Error)?.message ?? err}`,
+              is_error: true,
+            };
+          }
+        }));
+        messages.push({ role: 'user', content: toolResults });
+      }
+    } finally {
+      this.abortController = null;
+    }
+
+    return {
+      sdkResult: { assistantText, stopReason, usage: lastUsage },
+      elapsedMs: Date.now() - t0,
+    };
   }
+
+  /**
+   * Emit a workflow-side message recommending `save_state` + `restart`
+   * when Anthropic returns `stop_reason: 'model_context_window_exceeded'`.
+   * Design §5.5 — auto-compact via #334 deferred to Phase 2.
+   */
+  private async deliverContextOverflowMessage(handle: WorkflowHandle): Promise<void> {
+    const overflowMessage = [
+      '⚠️ **Context window exhausted.**',
+      '',
+      'The conversation has grown beyond this model\'s context. Recommended actions:',
+      '1. `save_state(content: "<curated summary of where you are>")`',
+      '2. `restart({ loadFromState: true })` — new session resumes from your saved state',
+      '',
+      'Alternatively, ask the conductor to recruit a fresh player and hand off via cue.',
+    ].join('\n');
+    try {
+      await handle.signal(receiveMessageSignal, {
+        from: 'system',
+        text: overflowMessage,
+        responseRequested: false,
+      });
+    } catch (err) {
+      log(`context-overflow message signal failed: ${(err as Error)?.message ?? err}`);
+    }
+  }
+}
+
+// ── Anthropic streaming type shims ─────────────────────────────────────
+//
+// The SDK is an optional dependency, so the adapter can't import its
+// types at compile time. These shims model just the fields the streaming
+// loop reads — narrow, deliberately permissive (everything not enumerated
+// is `unknown`). Drift between these and the SDK is bounded by what the
+// loop actually inspects.
+
+interface AnthropicStreamEvent {
+  type: string;
+  index?: number;
+  delta?: { type?: string; text?: string; partial_json?: string; thinking?: string; signature?: string; stop_reason?: string };
+  content_block?: { type: string; text?: string; id?: string; name?: string; input?: unknown; thinking?: string };
+  message?: { usage?: Record<string, number> };
+  usage?: Record<string, number>;
+}
+
+interface AssistantTextBlock { type: 'text'; text: string }
+interface AssistantToolUseBlock { type: 'tool_use'; id: string; name: string; input: string }
+interface AssistantThinkingBlock { type: 'thinking'; thinking: string; signature?: string }
+type AssistantContentBlock = AssistantTextBlock | AssistantToolUseBlock | AssistantThinkingBlock;
+
+/**
+ * Reduce one `MessageStreamEvent` into the assistant content-block array.
+ * Mutates `blocks` in place; same `index` slots map to the same block so
+ * interleaved deltas land in the right bucket. Tool input accumulates as
+ * a string per verification §2.4 (parsed only by the caller, after
+ * `content_block_stop`).
+ */
+export function handleStreamEvent(event: AnthropicStreamEvent, blocks: AssistantContentBlock[]): void {
+  switch (event.type) {
+    case 'content_block_start': {
+      const idx = event.index ?? blocks.length;
+      const cb = event.content_block;
+      if (!cb) return;
+      if (cb.type === 'text') {
+        blocks[idx] = { type: 'text', text: cb.text ?? '' };
+      } else if (cb.type === 'tool_use') {
+        blocks[idx] = { type: 'tool_use', id: cb.id ?? '', name: cb.name ?? '', input: '' };
+      } else if (cb.type === 'thinking') {
+        blocks[idx] = { type: 'thinking', thinking: cb.thinking ?? '' };
+      }
+      // Other block types (e.g. server_tool_use) silently ignored — Phase 2.
+      return;
+    }
+    case 'content_block_delta': {
+      const idx = event.index ?? -1;
+      const block = blocks[idx];
+      const d = event.delta;
+      if (!block || !d) return;
+      if (d.type === 'text_delta' && block.type === 'text' && d.text) {
+        block.text += d.text;
+      } else if (d.type === 'input_json_delta' && block.type === 'tool_use' && d.partial_json) {
+        // Verification §2.4 — append raw chunks; do NOT JSON.parse here.
+        block.input += d.partial_json;
+      } else if (d.type === 'thinking_delta' && block.type === 'thinking' && d.thinking) {
+        block.thinking += d.thinking;
+      } else if (d.type === 'signature_delta' && block.type === 'thinking' && d.signature) {
+        // Verification §2.1 — preserve the signature so the next turn's
+        // assistant message can replay it for reasoning continuity.
+        block.signature = (block.signature ?? '') + d.signature;
+      }
+      return;
+    }
+    // content_block_stop / message_start / message_delta / message_stop — handled by caller.
+  }
+}
+
+/**
+ * Merge workflow `Message[]` (received from others) + `SentMessage[]`
+ * (sent by this player) into the Anthropic Messages API array.
+ *
+ *   - Sort chronologically by `timestamp`
+ *   - `received` → `role: 'user'`, `sent` → `role: 'assistant'`
+ *   - Fold consecutive same-role rows into one message (Anthropic requires
+ *     strict user/assistant alternation; multiple cues stacking into the
+ *     player's queue must collapse to a single user turn)
+ *   - Tag each row with the originator (`[from: <name>]`) on user side so
+ *     the model can disambiguate when several players are talking
+ *
+ * Exported for unit testing (commit 5).
+ */
+export function buildAnthropicMessages(
+  received: TempoMessage[],
+  sent: SentMessage[],
+): Array<{ role: 'user' | 'assistant'; content: string | unknown[] }> {
+  type Row = { role: 'user' | 'assistant'; text: string; ts: string };
+  const rows: Row[] = [];
+  for (const m of received) rows.push({ role: 'user', text: `[from ${m.from}]: ${m.text}`, ts: m.timestamp });
+  for (const m of sent) rows.push({ role: 'assistant', text: m.text, ts: m.timestamp });
+  rows.sort((a, b) => a.ts.localeCompare(b.ts));
+
+  const out: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  for (const r of rows) {
+    const last = out[out.length - 1];
+    if (last && last.role === r.role) {
+      last.content += '\n\n' + r.text;
+    } else {
+      out.push({ role: r.role, content: r.text });
+    }
+  }
+  return out;
 }
 
 if (require.main === module) {
