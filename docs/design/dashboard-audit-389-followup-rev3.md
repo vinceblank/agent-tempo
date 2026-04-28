@@ -375,3 +375,129 @@ Specific findings cross-attributed:
 - Workspace "Conducted by [empty]": conductor saw a loading window; rev 3's stable read shows the wire works ✅ (false alarm — recommend conductor re-verify with delay)
 
 — tempo-architect, 2026-04-28
+
+---
+
+## rev3-cert — certification pass after #440 + #442
+
+**Author**: tempo-architect
+**Date**: 2026-04-28 (cert pass at ~21:03Z)
+**HEAD certified**: `6b85880e` (`feat(dashboard): #389 final 100% cleanup — 4 fixes for canonical alignment (#442)`)
+**Daemon**: post-#442 build from worktree `cert/389-rev3`, dev profile, `localhost:8474/dashboard/`
+**Live data**: `design-audit` ensemble (5 mock players, BPM ticking at 15) + `verify-mock-fix` (5 mock players, BPM 0)
+
+### Method
+
+Worktree from `origin/main` → `npm install + npm run build + npm --prefix dashboard run build` →
+`node dist/cli.js --dev daemon stop` (released the pre-#442 dev daemon) → `daemon start` from
+worktree (post-#442 binary) → re-walked all 11 screens against canonical via Chrome MCP +
+DOM-shape inspection. Targeted verification of rev3 P1.1–P1.5 closures + #442 cleanup items.
+
+> **Audit doc SHA correction (rev 3 → rev3-cert)**: rev 3's header listed Implementation HEAD
+> as `a5fd8320`; the correct SHA at the time of rev 3's authoring was `fdb891f6` per #442's
+> brief. Recorded here for the historical record; rev 3's substantive findings are unaffected.
+
+### Items confirmed closed
+
+| ID | Finding | Verification |
+|---|---|---|
+| **R3.P1.1** | EnsembleCard `paused`/`held` chips render unconditionally | ✅ Now conditional via new `ec-flags` class. design-audit (state=paused, 5 held players) shows `paused`+`held`; verify-mock-fix (state=offline, 1 held player) shows only `held`. State-driven, no longer dead-rendered. |
+| **R3.P1.2** | EnsembleCard footer 3 spans instead of design's 2 | ✅ New `ec-meta mono dim` class with `childCount: 2`. Two-span design (`lineup · host`, both `—` while wire-pending) restored. Conductor name no longer leaks into footer. |
+| **R3.P1.3** | Workspace subtitle drops `Lineup X · ` prefix entirely | ✅ Live HTML: `Lineup <span class="mono">—</span> · conducted by <span class="mono accent">conductor</span> on <span class="mono">main-laptop</span>`. Symmetric degrade with host half — both render with `—` placeholder while wire-pending. |
+| **R3.P1.4** | PlayerDetail `heartbeat —` regression (`lastActivityAt` wire-name drift) | ✅ Live: `heartbeat 4s ago`. Wire-rename or alias landed; live tick visible. |
+| **R3.P1.5** | Stacked `<header class="page-header">` × 2 on Loadouts + Schedules | ✅ Both screens now render `headerCount: 1`. Maestro/Density/Theme strip refactored away. Single-page-header per screen as design intends. |
+| **R3.P2.3** | TempoStrip partial bar-fill (16/60 on fresh ensemble) | ✅ Live SVG renders 60 `<rect>` elements regardless of sample count. Left-pad with placeholder bars at 0 height — strip always full-width per #442. |
+| **#434** | `AgentType` union missing `'mock'` (mock players reported `claude-code`) | ✅ Live PlayerDetail conductor row: `adapter mock`. Architectural union widened. |
+| **#430** | EnsembleCard `description: ""` paraphrases as `"Conductor active."` | ✅ Live: `desc_present: true, desc_text: ""`. Element renders empty (or hidden) — no paraphrase. Closed in #439. |
+| **#431** | Sub-minute uptime renders as `"—"` | ✅ Live: design-audit shows `2h 50m uptime` (and earlier in cert pass `5m uptime` was visible). `formatDuration` no longer drops sub-minute durations. Closed in #439. |
+| **R3.P1.7** | Hosts table empty in dev mode (`hostProfiles: {}` wire bug) | ✅ Live: 7-column table with 1 row populating — `● main-laptop · win32 · — · 16 · 0.28.0-beta.8 · 2m0s ago · live`. Closed in #437/#441. |
+| **PhoneAppBar empty-state** | On `/dashboard` showed `ensemble · @—` placeholder | ✅ Live: PhoneAppBar text on root is just `ensemble` (kicker label without selector + `@—` leak). Selector suppressed when no ensemble context. |
+
+### My rev3 false positive — corrected in cert
+
+**R3.P1.6 (button-disabled state on PlayerTypes Edit/Duplicate/+ New / Hosts Logs)** — my rev3 audit
+flagged this as a regression because my DOM probe used `b.disabled` (the HTML attribute) and saw
+`disabled: false`. The conductor's parallel-browse note ("DisabledWithTooltip with explanation tooltip")
+was correct: the implementation uses `aria-disabled="true"` + `title="…"` (the semantically-correct
+disabled state that still allows tooltip-on-hover). Verified live this cert pass:
+
+```
+{ txt: "Edit", disabled: false, ariaDisabled: "true",
+  title: "Editing player-type files requires a daemon endpoint that hasn't shipped yet." }
+```
+
+**Verdict on R3.P1.6**: ✅ never broken — `DisabledWithTooltip` was implemented correctly all along.
+Rev 3's flag is a probe-side false positive. **Future audits**: probe `aria-disabled` first when
+checking `DisabledWithTooltip` patterns; HTML `disabled` would prevent the tooltip from firing
+on hover, so the impl pattern correctly uses `aria-disabled`.
+
+### Net new finding under cert pass
+
+**Settings task-queue field still shows prod default in dev mode.** R3.P1.8 (Settings static-config)
+was largely closed in #436 — the namespace KV now correctly shows `claude-tempo-dev` from the
+running daemon. But the task-queue KV still reads `claude-tempo` (prod default), while the dev
+daemon's actual queue is `claude-tempo-dev` (per `[DEV MODE] using ~/.claude-tempo-dev · port 8474
+· namespace claude-tempo-dev (default) · queue claude-tempo-dev (default)` banner).
+
+| KV | Live value | Expected (dev mode) |
+|---|---|---|
+| `namespace` | `claude-tempo-dev` | ✅ |
+| `address` | `localhost:7233` | ✅ |
+| `task queue` | `claude-tempo` | 🔴 should be `claude-tempo-dev` |
+| `tls` | `off` | ✅ |
+| `auth` | `—` | ✅ |
+
+**Severity**: P2 nit. Same root cause as the namespace-half of #436 (read-from-runtime missed
+this field). 2-line fix likely. **Filing as follow-up after conductor sign-off** per the
+"approved label only after I sign off" rule.
+
+### Other still-open items from rev 3 (deferred to beta.9 by design)
+
+| ID | Status |
+|---|---|
+| R3.P2.1 | sub-minute uptime → closed by #431/#439 ✅ |
+| R3.P2.2 | "lands in beta.8" stale copy → closed by #438/#439 ✅ |
+| R3.P2.3 | TempoStrip 60-bar fill → closed by #442 ✅ |
+| R3.P2.4 | `branch: HEAD` UX (detached HEAD) | open — beta.9 |
+| R3.P2.5 | `part: "Conductor session"` generic default | open — beta.9 (wire-side autopopulate) |
+| R3.P2.6 | PhoneAppBar empty-state on /dashboard | closed by #442 ✅ |
+| R3.P2.7 | EnsembleCard wire fields for per-ensemble lineup + host | open — beta.9 wire epic |
+| R3 P1.1–P1.5 | structural | all closed ✅ |
+| R3 P1.6 | button-disabled state | not actually broken — rev3 false positive |
+| R3 P1.7 | Hosts hostProfile wire bug | closed by #437/#441 ✅ |
+| R3 P1.8 | Settings runtime-config | namespace closed by #436 ✅; task-queue residual ↑ |
+| R3 P1.9 | #434 `'mock'` agentType union | closed by #442 ✅ |
+
+### C1–C7 markers — re-verified post-#442
+
+All seven still honored. No regressions vs rev 3.
+
+| Marker | Status |
+|---|---|
+| **C1** BrandMark = wordmark + Metronome SVG | ✅ |
+| **C2** MaestroMark italic serif, distinct from BrandMark | ✅ |
+| **C3** PhaseDot real PHASES vocab; `attached → "active"` bucket | ✅ |
+| **C4** Italic discipline | ✅ |
+| **C5** Sidebar 244px | ✅ |
+| **C6** TempoStrip = sparkline + bpm overlay | ✅ now full 60-bar width |
+| **C7** No `@theme` block; hand-rolled CSS | ✅ |
+
+### Verdict
+
+**🎯 100% structural fidelity confirmed.**
+
+The dashboard at `6b85880e` matches `docs/design/dashboard-handoff/project/{screens.jsx,
+workspace.jsx, dashboard.html, web-design-system.html}` for every screen audited. All R3.P1
+items closed. All rev-4 binding spec markers (C1–C7) honored. Live wire data — BPM ticking,
+heartbeat live, runId pinned, lease counting down, mock adapters resolving as `mock` — all
+populating cleanly.
+
+The only post-cert residual is a single P2 nit (Settings task-queue KV reads stale prod default
+in dev mode) — a 2-line fix scoped for a small follow-up PR after sign-off.
+
+Beta.8 dashboard is **fit-for-internal-validation, fit-for-design-review, and fit-for-public-demo**
+in dev mode. The autonomous E2E validation harness using mock-jam ensembles is now end-to-end
+verified across the entire dashboard surface.
+
+— tempo-architect, 2026-04-28 (rev3-cert)
+
