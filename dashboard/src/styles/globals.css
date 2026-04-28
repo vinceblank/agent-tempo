@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import './tokens.css';
+@import './components.css';
 
 /* ─── Base reset + body styles ────────────────────────────────
  * Ported from `dashboard-handoff/styles.css`. Density variables
