@@ -1079,6 +1079,135 @@ export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): P
 }
 
 /**
+ * Describe-level companion to {@link withWorkerAndOutboxActivities}. Starts
+ * the workers once, returns an async teardown function the suite invokes in
+ * `after`. Pair-extracted so a `describe` block of N tests pays the worker
+ * spin-up cost once instead of N times — the heaviest cost in `outbox.test.ts`
+ * under contended CI runners.
+ *
+ * Usage:
+ * ```ts
+ * describe('outbox-activities flavor', function () {
+ *   let stopWorker: () => Promise<void>;
+ *   before(async function () { this.timeout(60_000); stopWorker = await startOutboxWorker(); });
+ *   after(async function () { await stopWorker(); });
+ *   // its with bodies un-wrapped (no withWorkerAndOutboxActivities call)
+ * });
+ * ```
+ *
+ * Activity stub set is identical to {@link withWorkerAndOutboxActivities} —
+ * any drift between the two would surface as a "works under wrapper, fails
+ * under shared worker" anomaly, so they are kept in lockstep deliberately.
+ *
+ * Filed under issue #383 P3.1.
+ */
+export async function startOutboxWorker(): Promise<() => Promise<void>> {
+  const { createScheduleActivities } = await import('../src/activities/schedule-fire');
+  const { createOutboxActivities } = await import('../src/activities/outbox');
+
+  const scheduleActivities = createScheduleActivities(requireTestEnv().client);
+  const outboxActivities = createOutboxActivities(requireTestEnv().client, {
+    temporalAddress: '',
+    temporalNamespace: 'default',
+    taskQueue: TASK_QUEUE,
+    ensemble: currentEnsemblePrefix,
+    defaultAgent: 'claude',
+  });
+
+  const mainWorker = await Worker.create({
+    connection: requireTestEnv().nativeConnection,
+    taskQueue: TASK_QUEUE,
+    workflowBundle,
+    activities: {
+      ...scheduleActivities,
+      ...outboxActivities,
+      spawnProcess: async () => ({ success: true }),
+      hardTerminateAttachment: async () => ({
+        killedPids: [],
+        strategy: 'none' as const,
+        notes: ['test stub'],
+      }),
+    },
+  });
+  const hostWorker = await Worker.create({
+    connection: requireTestEnv().nativeConnection,
+    taskQueue: HOST_TASK_QUEUE,
+    activities: {
+      spawnProcess: async () => ({ success: true }),
+      hardTerminateAttachment: async () => ({
+        killedPids: [],
+        strategy: 'none' as const,
+        notes: ['test stub'],
+      }),
+    },
+  });
+
+  const mainRun = mainWorker.run();
+  const hostRun = hostWorker.run();
+
+  return async () => {
+    mainWorker.shutdown();
+    hostWorker.shutdown();
+    await Promise.allSettled([mainRun, hostRun]);
+  };
+}
+
+/**
+ * Describe-level companion to {@link withWorkerAndRecruitActivities}. Same
+ * pattern as {@link startOutboxWorker} — see its doc-comment for the usage
+ * pattern. The only difference is the activity stub set on the main worker
+ * (no `hardTerminateAttachment` stub there, matching the wrapper).
+ *
+ * Filed under issue #383 P3.1.
+ */
+export async function startRecruitWorker(): Promise<() => Promise<void>> {
+  const { createScheduleActivities } = await import('../src/activities/schedule-fire');
+  const { createOutboxActivities } = await import('../src/activities/outbox');
+
+  const scheduleActivities = createScheduleActivities(requireTestEnv().client);
+  const outboxActivities = createOutboxActivities(requireTestEnv().client, {
+    temporalAddress: '',
+    temporalNamespace: 'default',
+    taskQueue: TASK_QUEUE,
+    ensemble: currentEnsemblePrefix,
+    defaultAgent: 'claude',
+  });
+
+  const mainWorker = await Worker.create({
+    connection: requireTestEnv().nativeConnection,
+    taskQueue: TASK_QUEUE,
+    workflowBundle,
+    activities: {
+      ...scheduleActivities,
+      ...outboxActivities,
+      spawnProcess: async () => ({ success: true }),
+    },
+  });
+
+  const hostWorker = await Worker.create({
+    connection: requireTestEnv().nativeConnection,
+    taskQueue: HOST_TASK_QUEUE,
+    activities: {
+      spawnProcess: async () => ({ success: true }),
+      hardTerminateAttachment: async () => ({
+        killedPids: [],
+        strategy: 'none' as const,
+        notes: ['test stub'],
+      }),
+    },
+  });
+
+  const mainRun = mainWorker.run();
+  const hostRun = hostWorker.run();
+
+  return async () => {
+    mainWorker.shutdown();
+    hostWorker.shutdown();
+    await Promise.allSettled([mainRun, hostRun]);
+  };
+}
+
+/**
  * Like withWorkerAndRecruitActivities, but captures spawnProcess inputs
  * so tests can verify arguments passed through the recruit pipeline.
  */
