@@ -55,8 +55,10 @@ export function registerRecruitTool(
         .describe('Whether this session is a conductor (default: false)'),
       initialMessage: z.string().max(MESSAGE_MAX).optional()
         .describe('Optional task or message for the new session (sent after it sets its name)'),
-      agent: z.enum(['claude', 'copilot', 'mock']).optional()
-        .describe(`Which agent to use (default: "${ownAgentType}", same as this session). "mock" requires dev mode (--dev).`),
+      agent: z.enum(['claude', 'copilot', 'mock', 'claude-api']).optional()
+        .describe(`Which agent to use (default: "${ownAgentType}", same as this session). "mock" requires dev mode (--dev). "claude-api" runs headless via the Anthropic Messages API — requires ANTHROPIC_API_KEY env var and the @anthropic-ai/sdk optional dependency installed; has access to claude-tempo MCP tools (cue, report, recall, ensemble, …) but NOT file-edit or shell tools (use "claude" for those).`),
+      model: z.string().regex(/^claude-[a-z0-9-]+$/).optional()
+        .describe('Model id for the claude-api adapter (e.g. "claude-opus-4-7"). Falls back to CLAUDE_TEMPO_API_MODEL env, then a constants-pinned default. Ignored when agent !== "claude-api".'),
       type: z.string().optional()
         .describe('Agent type name — references a Claude Code agent definition (e.g., "tempo-soloist")'),
       systemPrompt: z.string().optional()
@@ -77,6 +79,7 @@ export function registerRecruitTool(
         conductor?: boolean;
         initialMessage?: string;
         agent?: AgentType;
+        model?: string;
         type?: string;
         systemPrompt?: string;
         host?: string;
@@ -86,6 +89,7 @@ export function registerRecruitTool(
       };
       const isConductor = (args as any).conductor === true;
       const agent: AgentType = (args as any).agent || ownAgentType;
+      const model = (args as any).model as string | undefined;
       const agentTypeName = (args as any).type as string | undefined;
       const systemPrompt = (args as any).systemPrompt as string | undefined;
       const host = (args as any).host as string | undefined;
@@ -121,6 +125,30 @@ export function registerRecruitTool(
         return fail(
           `mockMode: "${mockMode}" does not use a scenario. Drop mockScenario or switch to mockMode: "scripted".`,
         );
+      }
+      // #131 Phase C — claude-api pre-flight. `model` is a claude-api-only
+      // knob — reject silently-ignored params so users learn the right shape.
+      // Local-spawn pre-flight checks (`ANTHROPIC_API_KEY` + SDK install)
+      // run only when `host` is unset; cross-host recruits delegate to the
+      // target daemon's `availableAgentTypes` advertisement (the existing
+      // `checkHostPreflight` path), which already gates on whether the
+      // remote daemon resolved the SDK at boot.
+      if (model != null && agent !== 'claude-api') {
+        return fail(`model is only valid when agent: "claude-api" (got agent: "${agent}").`);
+      }
+      if (agent === 'claude-api' && !host && !force) {
+        if (!process.env.ANTHROPIC_API_KEY) {
+          return fail(
+            `agent: "claude-api" requires the ANTHROPIC_API_KEY environment variable on the spawn host. Set it before recruiting (export ANTHROPIC_API_KEY=sk-...) or use \`force: true\` to bypass this check.`,
+          );
+        }
+        try {
+          require.resolve('@anthropic-ai/sdk');
+        } catch {
+          return fail(
+            `agent: "claude-api" requires the @anthropic-ai/sdk optional dependency. Install with \`npm install @anthropic-ai/sdk\` and retry, or use \`force: true\` to bypass this check.`,
+          );
+        }
       }
 
       // Resolve agent type if provided
@@ -235,6 +263,7 @@ export function registerRecruitTool(
           claudeBin: config.claudeBin,
           ...(agent === 'mock' ? { mockMode: mockMode ?? 'echo' } : {}),
           ...(agent === 'mock' && mockScenario ? { mockScenario } : {}),
+          ...(agent === 'claude-api' && model ? { model } : {}),
         } as OutboxEntryInput;
         const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 

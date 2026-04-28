@@ -12,7 +12,7 @@
  *   discriminate without `any` casts even in production builds; the runtime
  *   gates are what actually prevent execution.
  */
-export type AgentType = 'claude' | 'copilot' | 'mock';
+export type AgentType = 'claude' | 'copilot' | 'mock' | 'claude-api';
 
 /**
  * Mock-adapter mode (ADR 0014 §4.2). Single source of truth shared by the
@@ -506,6 +506,12 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
    */
   mockMode?: MockMode;
   mockScenario?: string;
+  /**
+   * Optional model id for the claude-api adapter (#131 Phase C). Falls back
+   * to `CLAUDE_TEMPO_API_MODEL` env then a constants-pinned default at the
+   * adapter's spawn time. Ignored when `agent !== 'claude-api'`.
+   */
+  model?: string;
 }
 
 export interface ReleaseOutboxEntry extends OutboxEntryBase {

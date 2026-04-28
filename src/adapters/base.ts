@@ -1359,6 +1359,9 @@ export class AdapterRegistry {
     // then `registry.get('mock')` would throw the documented "Unknown
     // adapter" error — which is the correct safety behaviour.
     if (agent === 'mock') return 'mock';
+    // #131 Phase C — headless Claude API adapter. Descriptor lives in
+    // src/adapters/claude-api; opt-in via `recruit({ agent: 'claude-api' })`.
+    if (agent === 'claude-api') return 'claude-api';
     return 'claude-code';
   }
 }
