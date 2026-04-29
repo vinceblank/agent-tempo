@@ -74,6 +74,10 @@ import {
   useReleaseMutation,
 } from '../lib/mutations';
 import { sortConductorFirst } from '../lib/player-sort';
+import { parseChatInput } from '../lib/parse-chat-input';
+import { useSlashDispatcher } from '../lib/use-slash-dispatcher';
+import { DASHBOARD_COMMANDS } from '../lib/dashboard-commands';
+import { toastError } from '../lib/toast';
 import { ChatLog } from '../components/chat/ChatLog';
 import { Composer } from '../components/chat/Composer';
 import { ChatStub } from '../components/chat/ChatStub';
@@ -167,16 +171,68 @@ export function Workspace() {
   // the trimmed message; success / error rollback rides the existing
   // mutation surface.
   const cueM = useCueMutation(ensemble ?? '');
+  const slashDispatch = useSlashDispatcher(ensemble ?? '');
+
+  // #471/#472 — player names list for `@` autofill. Memoized off the
+  // sorted players so the Composer prop ref is stable across renders
+  // when the snapshot doesn't change.
+  const playerNames = useMemo(() => players.map((p) => p.playerId), [players]);
+
+  /**
+   * #471/#472 — submit-time routing.
+   *
+   * Three branches based on `parseChatInput`:
+   *   - `slash`: dispatch locally (clear / help / pause / play / release /
+   *     recall). Anything else → "delegate to conductor" toast.
+   *   - `cue` (with `@<player>` prefix): route directly to that player,
+   *     not the conductor. Fixes #471 — the dashboard previously routed
+   *     EVERY chat row through the conductor regardless of `@` prefix.
+   *   - `plain`: route to the conductor (legacy behaviour).
+   *
+   * The mention path validates the target against `playerNames` so a
+   * typo (`@conducter`) doesn't silently send a cue to a non-existent
+   * player. Unknown targets fall through to a toast — the user can
+   * decide whether to retry or address the conductor.
+   */
   const sendMessage = (text: string) => {
+    const parsed = parseChatInput(text);
+
+    if (parsed.kind === 'slash') {
+      slashDispatch(parsed);
+      return;
+    }
+
+    if (parsed.kind === 'cue') {
+      // Mention without a body: don't fire a no-op cue — toast and let
+      // the user decide. (Pinned by parse-chat-input tests.)
+      if (parsed.text === '') {
+        toastError(`No message after @${parsed.target}`, {
+          description: 'Type something after the mention to send a directed cue.',
+        });
+        return;
+      }
+      // Validate target against the live roster — typos shouldn't
+      // silently misroute.
+      if (!playerNames.includes(parsed.target)) {
+        toastError(`No player named "${parsed.target}" in this ensemble`, {
+          description: 'Check spelling, or use @ autocomplete (Tab to accept).',
+        });
+        return;
+      }
+      cueM.mutate({ to: parsed.target, message: parsed.text });
+      return;
+    }
+
+    // Plain text → conductor (existing behaviour).
     if (!conductorPlayerId) {
       logEvent('chat.message.skipped', {
         ensemble,
         hasTarget: false,
-        length: text.length,
+        length: parsed.text.length,
       });
       return;
     }
-    cueM.mutate({ to: conductorPlayerId, message: text });
+    cueM.mutate({ to: conductorPlayerId, message: parsed.text });
   };
 
   // Status pill counts. Mapping mirrors the audit's PHASES bucket
@@ -441,6 +497,8 @@ export function Workspace() {
                 onSubmit={sendMessage}
                 sendLabel={cueM.isPending ? 'Sending…' : 'Send'}
                 testIdPrefix="composer"
+                commands={DASHBOARD_COMMANDS}
+                players={playerNames}
               />
             </div>
           )}
@@ -635,6 +693,8 @@ export function Workspace() {
             onSubmit={sendMessage}
             sendLabel={cueM.isPending ? 'Sending…' : 'Send'}
             testIdPrefix="popout-composer"
+            commands={DASHBOARD_COMMANDS}
+            players={playerNames}
           />
         </PopoutWindow>
       )}
