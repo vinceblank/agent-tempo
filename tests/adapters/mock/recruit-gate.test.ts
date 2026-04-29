@@ -21,6 +21,12 @@ import * as path from 'path';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const RECRUIT_SRC = fs.readFileSync(path.join(REPO_ROOT, 'src/tools/recruit.ts'), 'utf8');
+// Post-#476 the agent enum's allowlist lives in `src/types.ts` as the
+// `AGENT_TYPES` const tuple — single source of truth shared with the
+// CLI argv parser. Read both files so the tripwire still asserts that
+// `'mock'` is reachable from the recruit tool, just via the canonical
+// constant rather than a literal in recruit.ts.
+const TYPES_SRC = fs.readFileSync(path.join(REPO_ROOT, 'src/types.ts'), 'utf8');
 
 describe('recruit tool — gate 3 wiring', () => {
   it('imports isDevMode from src/config', () => {
@@ -34,9 +40,14 @@ describe('recruit tool — gate 3 wiring', () => {
   });
 
   it('extends the agent enum to accept "mock"', () => {
-    // Enum may carry additional non-mock entries (e.g. "claude-api" added
-    // in #131 Phase C) — assert "mock" is present, not the exact shape.
-    expect(RECRUIT_SRC).toMatch(/z\.enum\(\[[^\]]*['"]mock['"][^\]]*\]\)/);
+    // Post-#476 the recruit tool sources its enum allowlist from the
+    // canonical `AGENT_TYPES` tuple in `src/types.ts` instead of an
+    // inline literal — keeps CLI parser + MCP enum in lockstep when
+    // a new adapter lands. Two-step assertion:
+    //   1. recruit.ts uses `z.enum(AGENT_TYPES)` (no inline drift)
+    //   2. AGENT_TYPES in types.ts contains 'mock'
+    expect(RECRUIT_SRC).toMatch(/z\.enum\(AGENT_TYPES\)/);
+    expect(TYPES_SRC).toMatch(/AGENT_TYPES\s*=\s*\[[^\]]*['"]mock['"][^\]]*\]\s*as\s*const/);
   });
 
   it('rejects agent: "mock" outside dev mode with an actionable error', () => {

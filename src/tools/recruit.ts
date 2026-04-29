@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { Config, conductorWorkflowId, isDevMode } from '../config';
-import { AgentType, MOCK_MODES } from '../types';
+import { AGENT_TYPES, AgentType, MOCK_MODES } from '../types';
 import { resolveSession } from './resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput, HostInfo, MockMode } from '../types';
@@ -55,7 +55,7 @@ export function registerRecruitTool(
         .describe('Whether this session is a conductor (default: false)'),
       initialMessage: z.string().max(MESSAGE_MAX).optional()
         .describe('Optional task or message for the new session (sent after it sets its name)'),
-      agent: z.enum(['claude', 'copilot', 'mock', 'claude-api']).optional()
+      agent: z.enum(AGENT_TYPES).optional()
         .describe(`Which agent to use (default: "${ownAgentType}", same as this session). "mock" requires dev mode (--dev). "claude-api" runs headless via the Anthropic Messages API — requires ANTHROPIC_API_KEY env var and the @anthropic-ai/sdk optional dependency installed; has access to claude-tempo MCP tools (cue, report, recall, ensemble, …) but NOT file-edit or shell tools (use "claude" for those).`),
       model: z.string().regex(/^claude-[a-z0-9-]+$/).optional()
         .describe('Model id for the claude-api adapter (e.g. "claude-opus-4-7"). Falls back to CLAUDE_TEMPO_API_MODEL env, then a constants-pinned default. Ignored when agent !== "claude-api".'),

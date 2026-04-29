@@ -11,8 +11,15 @@
  *   value lives in the type union so workflow / outbox / recruit code can
  *   discriminate without `any` casts even in production builds; the runtime
  *   gates are what actually prevent execution.
+ *
+ * Single source of truth: {@link AGENT_TYPES}. The CLI argv parser
+ * (`src/cli.ts`'s `--agent` validation) and the recruit MCP tool's
+ * `z.enum` import this tuple so adding a new adapter only requires
+ * editing one line — see #476 (the `claude-api` allowlist drift bug
+ * that motivated centralising this).
  */
-export type AgentType = 'claude' | 'copilot' | 'mock' | 'claude-api';
+export const AGENT_TYPES = ['claude', 'copilot', 'mock', 'claude-api'] as const;
+export type AgentType = typeof AGENT_TYPES[number];
 
 /**
  * Mock-adapter mode (ADR 0014 §4.2). Single source of truth shared by the
