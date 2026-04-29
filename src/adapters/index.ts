@@ -19,6 +19,7 @@ import { AdapterRegistry } from './base';
 import { claudeCodeDescriptor } from './claude-code';
 import { copilotDescriptor } from './copilot';
 import { claudeApiDescriptor } from './claude-api';
+import { opencodeDescriptor } from './opencode';
 import { isDevMode } from '../config';
 
 export const registry = new AdapterRegistry();
@@ -30,6 +31,11 @@ registry.register(copilotDescriptor);
 // descriptor itself has no SDK dependency, so the registry can list and
 // resolve it even on hosts that haven't installed the SDK).
 registry.register(claudeApiDescriptor);
+// #449 Phase C — headless multi-provider OpenCode adapter. Always-registered
+// for the same reason as claude-api: the optional `@opencode-ai/sdk` and the
+// `opencode` binary only matter at adapter spawn time. The recruit pre-flight
+// gates on both being available (or `force: true` to bypass).
+registry.register(opencodeDescriptor);
 
 // ADR 0014 §7 gate 2 — import-time registration gate. The mock adapter's
 // descriptor only enters the registry when `isDevMode()` is true.
@@ -71,4 +77,5 @@ export { SdkAttachment } from './sdk/base';
 export { InteractiveAttachment } from './claude-code';
 export { CopilotSdkAttachment } from './copilot';
 export { DirectApiAttachment } from './claude-api';
+export { OpenCodeAttachment } from './opencode';
 export type { AdapterClass, AdapterDescriptor } from '../types';

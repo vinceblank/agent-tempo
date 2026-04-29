@@ -746,3 +746,117 @@ export function spawnClaudeApiAdapter(opts: ClaudeApiAdapterOpts): ClaudeApiAdap
   log(`Spawned claude-api adapter (pid ${child.pid}) in ${opts.workDir} as "${opts.name}"${opts.model ? ` (model=${opts.model})` : ''}${opts.attachmentId ? ` (attachmentId=${opts.attachmentId})` : ''}`);
   return { pid: child.pid, logPath, pidPath };
 }
+
+// ── opencode adapter (#449 Phase C) ────────────────────────────────────────
+
+/**
+ * Options for {@link spawnOpenCodeAdapter}. Mirrors {@link ClaudeApiAdapterOpts}
+ * with one shape difference: the model id carries a `provider/...` prefix
+ * (`anthropic/claude-opus-4-7`, `openai/gpt-4o`, …) and is forwarded via
+ * `CLAUDE_TEMPO_OPENCODE_MODEL` so it doesn't collide with claude-api's
+ * `CLAUDE_TEMPO_API_MODEL` namespace.
+ *
+ * The adapter manages its own `opencode serve` subprocess internally — the
+ * spawn helper here only launches the headless adapter Node process; the
+ * adapter then probes a free port and spawns opencode itself.
+ */
+export interface OpenCodeAdapterOpts {
+  name: string;
+  ensemble: string;
+  temporalAddress: string;
+  temporalNamespace?: string;
+  temporalApiKey?: string;
+  temporalTlsCertPath?: string;
+  temporalTlsKeyPath?: string;
+  isConductor?: boolean;
+  workDir: string;
+  /** Directory for log + PID files. Defaults to `logs/` inside workDir. */
+  logDir?: string;
+  /** Model id (e.g. `anthropic/claude-opus-4-7`). Forwarded via `CLAUDE_TEMPO_OPENCODE_MODEL`. */
+  model?: string;
+  /**
+   * PR-D attachment-lease handoff. When present, the workflow has already
+   * called `claimAttachment`; the adapter reads these from env and renews
+   * (rather than fresh-claims) the lease on boot.
+   */
+  attachmentId?: string;
+  attachmentRunId?: string;
+  adapterId?: string;
+}
+
+export interface OpenCodeAdapterResult {
+  pid: number | undefined;
+  logPath: string;
+  pidPath: string;
+}
+
+/**
+ * Resolve the path to the opencode adapter entry point. Mirrors
+ * {@link resolveClaudeApiPath} so dev (ts-node) and prod (compiled .js)
+ * both launch the same code through the same `require.main === module` gate.
+ */
+function resolveOpenCodePath(): { cmd: string; args: string[] } {
+  const isDev = __filename.endsWith('.ts');
+  if (isDev) {
+    return { cmd: 'npx', args: ['ts-node', resolve(__dirname, 'adapters', 'opencode', 'adapter.ts')] };
+  }
+  return { cmd: 'node', args: [resolve(__dirname, 'adapters', 'opencode', 'adapter.js')] };
+}
+
+/**
+ * Spawn the opencode adapter as a detached headless subprocess.
+ *
+ * Pattern matches {@link spawnClaudeApiAdapter} — no TTY, log + PID files
+ * in `logs/<name>.log` and `logs/<name>.pid`, env vars carry identity +
+ * Temporal connection settings + optional attachment-handoff. Provider
+ * env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …) are inherited
+ * from the parent's env unchanged — OpenCode reads whichever ones the
+ * `model`'s prefix maps to (recruit pre-flight does NOT validate any
+ * specific provider key since the model is opaque pass-through).
+ */
+export function spawnOpenCodeAdapter(opts: OpenCodeAdapterOpts): OpenCodeAdapterResult {
+  const { cmd, args } = resolveOpenCodePath();
+  const logDirPath = opts.logDir || join(opts.workDir, 'logs');
+  const logName = opts.name || `opencode-${Date.now()}`;
+  const logPath = join(logDirPath, `${logName}.log`);
+  const pidPath = join(logDirPath, `${logName}.pid`);
+
+  mkdirSync(logDirPath, { recursive: true });
+  const logFd = openSync(logPath, 'a');
+
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(cmd, args, {
+      cwd: opts.workDir,
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+      env: {
+        ...process.env,
+        [ENV.ENSEMBLE]: opts.ensemble,
+        [ENV.PLAYER_NAME]: opts.name,
+        [ENV.CONDUCTOR]: opts.isConductor ? 'true' : '',
+        [ENV.TEMPORAL_ADDRESS]: opts.temporalAddress,
+        ...(opts.temporalNamespace ? { [ENV.TEMPORAL_NAMESPACE]: opts.temporalNamespace } : {}),
+        ...(opts.temporalApiKey ? { [ENV.TEMPORAL_API_KEY]: opts.temporalApiKey } : {}),
+        ...(opts.temporalTlsCertPath ? { [ENV.TEMPORAL_TLS_CERT_PATH]: opts.temporalTlsCertPath } : {}),
+        ...(opts.temporalTlsKeyPath ? { [ENV.TEMPORAL_TLS_KEY_PATH]: opts.temporalTlsKeyPath } : {}),
+        // Model selection: recruit-arg → CLAUDE_TEMPO_OPENCODE_MODEL → in-adapter default.
+        ...(opts.model ? { [ENV.OPENCODE_MODEL]: opts.model } : {}),
+        // Attachment handoff — adapter renews via startV2Lifecycle.
+        ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
+        ...(opts.attachmentRunId ? { [ENV.ATTACHMENT_RUN_ID]: opts.attachmentRunId } : {}),
+        ...(opts.adapterId ? { [ENV.ADAPTER_ID]: opts.adapterId } : {}),
+      },
+    });
+    child.unref();
+  } finally {
+    closeSync(logFd);
+  }
+
+  if (child.pid != null) {
+    writeFileSync(pidPath, String(child.pid));
+  }
+
+  log(`Spawned opencode adapter (pid ${child.pid}) in ${opts.workDir} as "${opts.name}"${opts.model ? ` (model=${opts.model})` : ''}${opts.attachmentId ? ` (attachmentId=${opts.attachmentId})` : ''}`);
+  return { pid: child.pid, logPath, pidPath };
+}

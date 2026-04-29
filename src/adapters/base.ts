@@ -1362,6 +1362,9 @@ export class AdapterRegistry {
     // #131 Phase C — headless Claude API adapter. Descriptor lives in
     // src/adapters/claude-api; opt-in via `recruit({ agent: 'claude-api' })`.
     if (agent === 'claude-api') return 'claude-api';
+    // #449 Phase C — headless multi-provider OpenCode adapter. Descriptor
+    // lives in src/adapters/opencode; opt-in via `recruit({ agent: 'opencode' })`.
+    if (agent === 'opencode') return 'opencode';
     return 'claude-code';
   }
 }

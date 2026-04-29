@@ -38,6 +38,15 @@ export const ENV = {
    */
   API_MODEL: 'CLAUDE_TEMPO_API_MODEL',
   /**
+   * #449 Phase C — opencode adapter model override. Distinct from
+   * `API_MODEL` to keep namespaces clean: claude-api is Anthropic-only
+   * with bare model ids (`claude-opus-4-7`); opencode takes combined
+   * `provider/model` strings (`anthropic/claude-opus-4-7`,
+   * `openai/gpt-4o`, `ollama/llama3`, …). Recruit-arg precedence:
+   * recruit `model` arg → this env var → `DEFAULT_MODEL` constant.
+   */
+  OPENCODE_MODEL: 'CLAUDE_TEMPO_OPENCODE_MODEL',
+  /**
    * v0.25 PR-D attachment resume plumbing. When `restart` / `migrate`
    * enqueues a spawn outbox entry, the workflow passes the pre-claimed
    * `attachmentId` + pinned `runId` + resolved `adapterId` through the spawn

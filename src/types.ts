@@ -18,7 +18,7 @@
  * editing one line — see #476 (the `claude-api` allowlist drift bug
  * that motivated centralising this).
  */
-export const AGENT_TYPES = ['claude', 'copilot', 'mock', 'claude-api'] as const;
+export const AGENT_TYPES = ['claude', 'copilot', 'mock', 'claude-api', 'opencode'] as const;
 export type AgentType = typeof AGENT_TYPES[number];
 
 /**

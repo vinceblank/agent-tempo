@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle } from '@temporalio/client';
+import { spawnSync } from 'child_process';
 import { Config, conductorWorkflowId, isDevMode } from '../config';
 import { AGENT_TYPES, AgentType, MOCK_MODES } from '../types';
 import { resolveSession } from './resolve';
@@ -9,8 +10,31 @@ import type { OutboxEntryInput, HostInfo, MockMode } from '../types';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { resolveAgentType, listAgentTypes } from '../ensemble/agent-types';
 import { PLAYER_NAME_MAX, MESSAGE_MAX, PATH_MAX, validatePlayerName } from '../utils/validation';
+import { probeSdkInstall } from '../utils/sdk-probe';
 
 const toolLog = (...args: unknown[]) => console.error('[claude-tempo:recruit]', ...args);
+
+/**
+ * #449 Phase C — check whether the `opencode` binary is on PATH. Used by
+ * the recruit pre-flight to fail fast with an actionable error before the
+ * adapter spawn activity runs and hits ENOENT mid-flight.
+ *
+ * Cross-platform: `where` on Windows, `command -v` on POSIX. Both exit 0
+ * when found, non-zero otherwise; stdout/stderr captured silently.
+ */
+function hasOpencodeOnPath(): boolean {
+  try {
+    const cmd = process.platform === 'win32' ? 'where' : 'command';
+    const args = process.platform === 'win32' ? ['opencode'] : ['-v', 'opencode'];
+    const result = spawnSync(cmd, args, {
+      stdio: ['ignore', 'ignore', 'ignore'],
+      shell: process.platform !== 'win32',  // POSIX needs the shell built-in
+    });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * #274 M15 — dep-injection surface on the recruit tool registrar.
@@ -56,9 +80,9 @@ export function registerRecruitTool(
       initialMessage: z.string().max(MESSAGE_MAX).optional()
         .describe('Optional task or message for the new session (sent after it sets its name)'),
       agent: z.enum(AGENT_TYPES).optional()
-        .describe(`Which agent to use (default: "${ownAgentType}", same as this session). "mock" requires dev mode (--dev). "claude-api" runs headless via the Anthropic Messages API — requires ANTHROPIC_API_KEY env var and the @anthropic-ai/sdk optional dependency installed; has access to claude-tempo MCP tools (cue, report, recall, ensemble, …) but NOT file-edit or shell tools (use "claude" for those).`),
-      model: z.string().regex(/^claude-[a-z0-9-]+$/).optional()
-        .describe('Model id for the claude-api adapter (e.g. "claude-opus-4-7"). Falls back to CLAUDE_TEMPO_API_MODEL env, then a constants-pinned default. Ignored when agent !== "claude-api".'),
+        .describe(`Which agent to use (default: "${ownAgentType}", same as this session). "mock" requires dev mode (--dev). "claude-api" runs headless via the Anthropic Messages API — requires ANTHROPIC_API_KEY env var and the @anthropic-ai/sdk optional dependency installed; has access to claude-tempo MCP tools (cue, report, recall, ensemble, …) but NOT file-edit or shell tools (use "claude" for those). "opencode" runs headless via a local opencode serve subprocess; multi-provider (Anthropic, OpenAI, Bedrock, Ollama, …) — requires the @opencode-ai/sdk optional dep and an opencode binary on PATH. opencode players ARE file-op-capable (file edits / shell / web search via OpenCode's built-in tools).`),
+      model: z.string().regex(/^[a-z0-9][a-z0-9-/.:_]*$/).optional()
+        .describe('Model id. For "claude-api": bare Anthropic id (e.g. "claude-opus-4-7"). For "opencode": combined "provider/model" (e.g. "anthropic/claude-opus-4-7", "openai/gpt-4o", "ollama/llama3"). Falls back to CLAUDE_TEMPO_API_MODEL (claude-api) or CLAUDE_TEMPO_OPENCODE_MODEL (opencode), then a constants-pinned default. Ignored for claude / copilot / mock adapters.'),
       type: z.string().optional()
         .describe('Agent type name — references a Claude Code agent definition (e.g., "tempo-soloist")'),
       systemPrompt: z.string().optional()
@@ -126,15 +150,17 @@ export function registerRecruitTool(
           `mockMode: "${mockMode}" does not use a scenario. Drop mockScenario or switch to mockMode: "scripted".`,
         );
       }
-      // #131 Phase C — claude-api pre-flight. `model` is a claude-api-only
-      // knob — reject silently-ignored params so users learn the right shape.
-      // Local-spawn pre-flight checks (`ANTHROPIC_API_KEY` + SDK install)
+      // #131 / #449 Phase C — model knob is meaningful for claude-api AND
+      // opencode (different shapes — bare vs `provider/model` — both flow
+      // through the same recruit field). Reject silently-ignored params for
+      // the other adapters so users learn the right shape.
+      // Local-spawn pre-flight checks (env vars + SDK install + binaries)
       // run only when `host` is unset; cross-host recruits delegate to the
       // target daemon's `availableAgentTypes` advertisement (the existing
       // `checkHostPreflight` path), which already gates on whether the
       // remote daemon resolved the SDK at boot.
-      if (model != null && agent !== 'claude-api') {
-        return fail(`model is only valid when agent: "claude-api" (got agent: "${agent}").`);
+      if (model != null && agent !== 'claude-api' && agent !== 'opencode') {
+        return fail(`model is only valid when agent: "claude-api" or agent: "opencode" (got agent: "${agent}").`);
       }
       if (agent === 'claude-api' && !host && !force) {
         if (!process.env.ANTHROPIC_API_KEY) {
@@ -147,6 +173,23 @@ export function registerRecruitTool(
         } catch {
           return fail(
             `agent: "claude-api" requires the @anthropic-ai/sdk optional dependency. Install with \`npm install @anthropic-ai/sdk\` and retry, or use \`force: true\` to bypass this check.`,
+          );
+        }
+      }
+      // #449 Phase C — opencode pre-flight. Two checks: the optional SDK
+      // (signal that opencode integration is intended on this host) AND
+      // the `opencode` binary on PATH (the adapter spawns `opencode serve`
+      // as a subprocess). Cross-host recruits skip both — the target
+      // daemon's `availableAgentTypes` is the gate there.
+      if (agent === 'opencode' && !host && !force) {
+        if (!probeSdkInstall('@opencode-ai/sdk')) {
+          return fail(
+            `agent: "opencode" requires the @opencode-ai/sdk optional dependency. Install with \`npm install @opencode-ai/sdk\` and retry, or use \`force: true\` to bypass this check.`,
+          );
+        }
+        if (!hasOpencodeOnPath()) {
+          return fail(
+            `agent: "opencode" requires the \`opencode\` binary on PATH. Install with \`npm install -g opencode-ai\` and retry, or use \`force: true\` to bypass this check.`,
           );
         }
       }

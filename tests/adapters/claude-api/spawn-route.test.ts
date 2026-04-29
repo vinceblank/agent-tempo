@@ -101,6 +101,32 @@ describe('spawnProcess — adapter routing switch (#131 PR-fixup)', () => {
     expect(copilotSpy).not.toHaveBeenCalled();
   });
 
+  it('agent: "opencode" routes to spawnOpenCodeAdapter (NOT spawnInTerminal) — #449 Phase C', async () => {
+    // Same regression class as the claude-api PR-fixup test above: without
+    // a dedicated branch in `spawnProcess`, `agent: 'opencode'` would fall
+    // through to spawnInTerminal and silently launch a Claude Code session.
+    // Pin the routing decision at the boundary.
+    const openCodeSpy = vi.spyOn(spawnModule, 'spawnOpenCodeAdapter').mockReturnValue({ pid: 9999, logPath: '/tmp/oc.log', pidPath: '/tmp/oc.pid' });
+    const terminalSpy = vi.spyOn(spawnModule, 'spawnInTerminal').mockReturnValue({ pid: 8888 } as ReturnType<typeof spawnModule.spawnInTerminal>);
+    const claudeApiSpy = vi.spyOn(spawnModule, 'spawnClaudeApiAdapter').mockReturnValue({ pid: 0, logPath: '', pidPath: '' });
+    const copilotSpy = vi.spyOn(spawnModule, 'spawnCopilotBridge').mockReturnValue({ pid: 0, logPath: '', pidPath: '' });
+
+    const activities = createOutboxActivities(client, config);
+    const result = await activities.spawnProcess(spawnInput({ agent: 'opencode', model: 'anthropic/claude-opus-4-7' }));
+
+    expect(result.success).toBe(true);
+    expect(openCodeSpy).toHaveBeenCalledTimes(1);
+    expect(terminalSpy).not.toHaveBeenCalled();
+    expect(claudeApiSpy).not.toHaveBeenCalled();
+    expect(copilotSpy).not.toHaveBeenCalled();
+    // Forward the model into the helper so CLAUDE_TEMPO_OPENCODE_MODEL gets set.
+    expect(openCodeSpy.mock.calls[0][0]).toMatchObject({
+      name: 'tempo-test',
+      ensemble: 'test-ensemble',
+      model: 'anthropic/claude-opus-4-7',
+    });
+  });
+
   it('forwards attachmentId/runId/adapterId to spawnClaudeApiAdapter for restart handoff', async () => {
     // PR-D attachment renewal path — restart pre-claims and threads the
     // token through to the spawn so the adapter `startV2Lifecycle`s with
