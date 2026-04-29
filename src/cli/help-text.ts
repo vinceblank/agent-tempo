@@ -61,7 +61,7 @@ ${out.bold('Commands:')}
 ${out.bold('Removed — use the TUI:')}
   ${out.dim('stop / restart / detach / migrate')}   → ${out.dim('/destroy · /restart · /shutdown')}
   ${out.dim('conduct / start / recruit / disband')} → ${out.dim('launch `claude-tempo` · /recruit · /destroy')}
-  ${out.dim('pause / resume')}                     → ${out.dim('/pause · /play')}
+  ${out.dim('resume')}                              → ${out.dim('/play')}
   See https://github.com/vinceblank/claude-tempo/issues/285 for the full migration table.
 
 ${out.bold('Connection options (all commands):')}

@@ -2026,8 +2026,13 @@ interface DestroyCliOpts extends CliOverrides {
   yes: boolean;
 }
 
-/** Shared connection + client helper for verb commands. */
-async function verbClient(opts: CliOverrides): Promise<{ config: Config; connection: Connection; client: Client }> {
+/**
+ * Shared connection + client helper for verb commands. Exported so the
+ * dev-mode verb dispatcher (`./dev-verbs.ts`) can use the same connection
+ * idiom — single source of truth for the 3-second timeout + error-exit
+ * behavior across all CLI verbs.
+ */
+export async function verbClient(opts: CliOverrides): Promise<{ config: Config; connection: Connection; client: Client }> {
   const config = getConfig(opts);
   let connection: Connection;
   try {

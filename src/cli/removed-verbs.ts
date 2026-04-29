@@ -1,13 +1,17 @@
 /**
- * Lookup table + helper for the ten CLI verbs removed in #288 (design #285).
+ * Lookup table + helper for the CLI verbs removed in #288 (design #285).
  *
- * Kept in its own module so the CLI entrypoint (`src/cli.ts`) can dispatch
- * removed-verb errors BEFORE loading the Temporal-touching command surface —
- * the same crash-proof pattern as `help-text.ts` — and so the mapping can be
- * unit-tested without spinning up the parser or dispatch loop.
+ * Kept in its own module so `src/cli.ts` can dispatch removed-verb errors
+ * BEFORE loading the Temporal-touching command surface (crash-proof
+ * pattern, same as `help-text.ts`) and so the mapping can be unit-tested
+ * without spinning up the dispatch loop.
  *
- * Any change to this table should ship alongside a matching edit in
- * `src/cli/help-text.ts` under the "Removed in v0.27 (use the TUI)" block.
+ * Any change to this table should ship alongside matching edits in
+ * `src/cli/help-text.ts` and `src/cli.ts` (no `case` for any key here).
+ *
+ * Dev-mode verbs (#432) are intercepted before this table — a verb is
+ * either dev-mode-live or removed-with-a-hint, never both. The
+ * mechanical test in `test/cli-dev-verbs.test.ts` enforces this.
  */
 import * as out from './output';
 
@@ -24,7 +28,6 @@ export const REMOVED_VERBS: Record<string, string> = {
   restart: '/restart <player>',
   recruit: '/recruit <name>',
   migrate: '/restart <player> --host <hostname>',
-  pause: '/pause',
   resume: '/play',
 };
 
