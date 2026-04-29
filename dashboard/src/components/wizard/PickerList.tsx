@@ -18,6 +18,8 @@ export interface PickerOption<T extends string = string> {
   desc?: ReactNode;
   /** Right-side decoration (TypeBadge, status pill, …). */
   right?: ReactNode;
+  /** Terracotta tint + `+` marker glyph for "create new" rows. */
+  accent?: boolean;
 }
 
 interface PickerListProps<T extends string = string> {
@@ -51,16 +53,15 @@ export function PickerList<T extends string>({
             aria-checked={active}
             className={'picker-row' + (active ? ' is-active' : '')}
             onClick={() => onChange(opt.value)}
-            // The `.picker-row` selector targets a `<div>` in the design
-            // CSS, but we render `<button>` so keyboard activation works
-            // out of the box. Reset the inherited button chrome so the
-            // grid layout from `.picker-row` survives.
+            // `.picker-row` targets a <div> in the design CSS; we render
+            // <button> for kbd-activation, so reset UA chrome here.
+            // Padding is intentionally not inlined — inline padding would
+            // beat the `@container` phone rule by specificity.
             style={{
               all: 'unset',
               display: 'grid',
               gridTemplateColumns: '18px 1fr auto',
               gap: 10,
-              padding: '7px 10px',
               alignItems: 'center',
               borderRadius: 6,
               cursor: 'pointer',
@@ -70,7 +71,9 @@ export function PickerList<T extends string>({
                     background: 'var(--accent-soft)',
                     color: 'var(--text)',
                   }
-                : null),
+                : opt.accent
+                  ? { color: 'var(--accent)' }
+                  : null),
             }}
           >
             <span
@@ -82,7 +85,7 @@ export function PickerList<T extends string>({
                 fontSize: 11,
               }}
             >
-              {active ? '▸' : ''}
+              {opt.accent ? '+' : active ? '▸' : ''}
             </span>
             <span style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
               <span className="name" style={{ fontWeight: 500 }}>

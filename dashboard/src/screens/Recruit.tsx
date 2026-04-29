@@ -36,6 +36,7 @@ import { PickerList, type PickerOption } from '../components/wizard/PickerList';
 import { Chipset } from '../components/wizard/Chipset';
 import { Field } from '../components/wizard/Field';
 import { SummaryRow } from '../components/wizard/SummaryRow';
+import { TypeBadge } from '../components/tempo/TypeBadge';
 import { useAgentTypes, useHosts } from '../lib/queries';
 import { useRecruitMutation } from '../lib/mutations';
 import { logEvent } from '../lib/log';
@@ -181,11 +182,8 @@ export function Recruit() {
         value: t.name,
         name: t.name,
         ...(t.description !== undefined && { desc: t.description }),
-        right: (
-          <span className="mono dim" style={{ fontSize: 10 }}>
-            {t.source.toUpperCase()}
-          </span>
-        ),
+        // Badge encodes the player role; source-tier is in the hint line.
+        right: <TypeBadge type={t.name} />,
       })),
     [playerTypes],
   );

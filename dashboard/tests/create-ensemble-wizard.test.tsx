@@ -113,6 +113,23 @@ describe('CreateEnsemble wizard (PR-E)', () => {
     expect(screen.getByTestId('create-ensemble-summary-lineup').textContent).toContain('blank');
   });
 
+  // PR-E F-A-5: blank-ensemble option carries the accent treatment —
+  // terracotta-tinted text + a `+` glyph in the marker. Mirrors canonical
+  // screens.jsx:288-292's `<div className="picker-row"
+  // style={{color:"var(--accent)"}}><span className="marker">+</span>…`.
+  it('blank-ensemble row gets the accent treatment (terracotta + `+` marker) (F-A-5)', () => {
+    renderCreate();
+    const row = screen.getByTestId('create-ensemble-lineup-option-__blank__');
+    // Terracotta tint applied to the row.
+    expect((row as HTMLElement).style.color).toBe('var(--accent)');
+    // Marker glyph is `+` even when the row isn't active. Find the
+    // marker as the first `aria-hidden` span — that's PickerList's
+    // `.marker` slot.
+    const marker = row.querySelector('.marker');
+    expect(marker).not.toBeNull();
+    expect(marker!.textContent).toBe('+');
+  });
+
   it('start-mode chipset is single-select (hold ↔ release)', () => {
     renderCreate();
     fireEvent.change(screen.getByTestId('create-ensemble-input-name'), {

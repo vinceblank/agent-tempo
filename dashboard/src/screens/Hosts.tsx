@@ -201,7 +201,13 @@ function HostRow({ host }: HostRowProps) {
       <td className="mono">
         <span style={{ color: isLive ? 'var(--ok)' : 'var(--warn)' }}>●</span> {id}
       </td>
-      <td data-label="Platform" data-testid={`host-row-${id}-platform`} className="mono dim">
+      {/* Same secondary ink tier as Heartbeat below — not --dim. */}
+      <td
+        data-label="Platform"
+        data-testid={`host-row-${id}-platform`}
+        className="mono"
+        style={{ color: 'var(--text-2)' }}
+      >
         {platform}
       </td>
       <td

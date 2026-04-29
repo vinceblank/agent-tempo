@@ -163,6 +163,8 @@ export function CreateEnsemble() {
         value: BLANK_LINEUP_SENTINEL,
         name: 'Blank ensemble (recruit manually)',
         desc: 'Start with no players — use Recruit later from the Workspace.',
+        // "Create new" affordance — distinguish from the existing-lineup rows.
+        accent: true,
       },
     ],
     [lineups],

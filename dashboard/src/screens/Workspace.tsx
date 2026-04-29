@@ -401,18 +401,22 @@ export function Workspace() {
                 <div className="row">
                   <ChatPauseButton ensemble={ensemble} paused={paused} held={held} />
                   <ChatReleaseButton ensemble={ensemble} held={held} />
-                  <button
-                    type="button"
-                    data-testid="workspace-popout"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => setPopped(true)}
-                    aria-pressed={popped}
-                    title="Pop out the chat into a floating window"
-                    aria-label="Pop out chat"
-                  >
-                    <span className="btn-icon">↗</span>
-                    <span>Pop out</span>
-                  </button>
+                  {/* `.popout-btn` wrapper — phone @container rule hides
+                    * the popout affordance via this selector. */}
+                  <span className="popout-btn">
+                    <button
+                      type="button"
+                      data-testid="workspace-popout"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setPopped(true)}
+                      aria-pressed={popped}
+                      title="Pop out the chat into a floating window"
+                      aria-label="Pop out chat"
+                    >
+                      <span className="btn-icon">↗</span>
+                      <span>Pop out</span>
+                    </button>
+                  </span>
                 </div>
               </div>
               <ChatLog
@@ -505,8 +509,10 @@ export function Workspace() {
                   <span className="h">Event log</span>
                   <span className="subj display">System audit trail</span>
                 </div>
+                {/* "messages elided" signals the audit trail filters out
+                  * chat-style messages (kind !== "message"). */}
                 <span className="mono dim" style={{ fontSize: 10 }}>
-                  ring · max 200
+                  ring · max 200 · messages elided
                 </span>
               </div>
               <div className="panel-body flush event-log" data-testid="workspace-event-log">
@@ -545,6 +551,18 @@ export function Workspace() {
                       : `${schedules.length} active`}
                   </span>
                 </div>
+                {/* Navigates to the Schedules screen — full authoring
+                  * flow lives there. Mirrors the Roster "+ Recruit" Link. */}
+                <Link
+                  to="/schedules"
+                  data-testid="workspace-schedules-new"
+                  className="btn btn-ghost btn-sm"
+                  style={{ textDecoration: 'none' }}
+                  title="Open the Schedules screen to add one"
+                >
+                  <span className="btn-icon">+</span>
+                  <span>New</span>
+                </Link>
               </div>
               <div className="panel-body" style={{ paddingTop: 6 }}>
                 {schedules.length === 0 ? (

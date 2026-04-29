@@ -98,6 +98,20 @@ describe('Recruit wizard (PR-E)', () => {
     expect(screen.getByTestId('recruit-wizard-step-1')).toBeInTheDocument();
   });
 
+  // PR-E F-A-6: the player-type picker right-slot renders a color-coded
+  // TypeBadge (one hue per type), not the gray source-tier label that
+  // shipped pre-audit. The badge is `data-testid="type-badge-<name>"`.
+  it('player-type picker right-slot renders a color-coded TypeBadge (F-A-6)', () => {
+    renderRecruit();
+    advanceStep1();
+    // Each picker row carries a TypeBadge with a deterministic testid.
+    expect(screen.getByTestId('type-badge-tempo-conductor')).toBeInTheDocument();
+    expect(screen.getByTestId('type-badge-tempo-soloist')).toBeInTheDocument();
+    // The pre-audit gray uppercase source label should no longer leak
+    // out of the picker row.
+    expect(screen.queryByText('SHIPPED', { selector: '.mono.dim' })).toBeNull();
+  });
+
   it('player-type picker is single-select and updates the review summary', () => {
     renderRecruit();
     advanceStep1();

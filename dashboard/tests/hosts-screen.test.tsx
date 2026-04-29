@@ -95,6 +95,13 @@ describe('Hosts screen', () => {
     expect(screen.getByTestId('host-row-rosalind-uptime').textContent).toBe('—');
     expect(screen.getByTestId('host-row-rosalind-heartbeat').textContent).toMatch(/ago$/);
     expect(screen.getByTestId('host-row-rosalind-logs')).toBeInTheDocument();
+
+    // PR-E H-1: Platform cell uses the canonical `var(--text-2)` ink
+    // tier (same as Heartbeat below), not `dim` / `--dim` (which is one
+    // tier dimmer). Mirrors canonical screens.jsx:512.
+    const platformCell = screen.getByTestId('host-row-rosalind-platform') as HTMLElement;
+    expect(platformCell.style.color).toBe('var(--text-2)');
+    expect(platformCell.className).not.toMatch(/\bdim\b/);
   });
 
   it('hides stale hosts by default; "Show stale" toggle reveals them', async () => {

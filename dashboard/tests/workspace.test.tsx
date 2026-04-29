@@ -217,6 +217,53 @@ describe('Workspace screen', () => {
     expect(screen.getByTestId('workspace-schedules-empty')).toBeInTheDocument();
   });
 
+  // ── Pixel-audit PR-E (#454 §4.2 F-A-3, F-A-7) ────────────────────────
+  //
+  // The chat panel's "Pop out" button must be wrapped in a `.popout-btn`
+  // span so the canonical `@container artboard (max-width: 520px) {
+  // .popout-btn { display: none } }` rule binds and the button hides at
+  // the phone breakpoint. JSDOM doesn't evaluate container queries, so
+  // we assert the wrapper *exists* — the static class-application is
+  // what was missing pre-PR-E, not the rule itself.
+
+  it('wraps the workspace-popout button in a .popout-btn span (F-A-3)', async () => {
+    const mock = new MockDashboardClient({
+      snapshot: makeSnapshot({ ensemble: 'demo', players: [makePlayer()] }),
+    });
+    renderWorkspace(mock);
+    const popout = await screen.findByTestId('workspace-popout');
+    const wrapper = popout.closest('.popout-btn');
+    expect(wrapper).not.toBeNull();
+  });
+
+  // F-A-7: Event log meta line should match canonical workspace.jsx:414
+  // verbatim — `ring · max 200 · messages elided`.
+  it('event-log meta line includes the canonical "messages elided" copy (F-A-7)', async () => {
+    const mock = new MockDashboardClient({
+      snapshot: makeSnapshot({ ensemble: 'demo', players: [makePlayer()] }),
+    });
+    renderWorkspace(mock);
+    await screen.findByTestId('workspace-event-log');
+    expect(screen.getByText(/ring · max 200 · messages elided/)).toBeInTheDocument();
+  });
+
+  // F-A-7: Schedules side-panel head right-slot has a `+ New` link to
+  // the Schedules screen (canonical workspace.jsx:433).
+  it('schedules side-panel exposes a + New link to the Schedules screen (F-A-7)', async () => {
+    const mock = new MockDashboardClient({
+      snapshot: makeSnapshot({
+        ensemble: 'demo',
+        hasConductor: true,
+        players: [makePlayer({ playerId: 'tempo-conductor', isConductor: true })],
+        schedules: [],
+      }),
+    });
+    renderWorkspace(mock);
+    const newLink = await screen.findByTestId('workspace-schedules-new');
+    expect(newLink).toHaveAttribute('href', '/schedules');
+    expect(newLink.textContent).toMatch(/New/);
+  });
+
   // ── PR-C3 mobile shell wiring ───────────────────────────────────────
 
   describe('mobile shell (PR-C3)', () => {
