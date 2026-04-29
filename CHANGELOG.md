@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.11] - 2026-04-29
+
+### Added
+
+- **Dashboard chat-input TUI parity** — `@` player-picker and `/` command-picker autofill now
+  work in the dashboard chat input, matching the TUI experience. Direct-cue routing sends
+  messages straight to the addressed player without the conductor relay. (#477)
+- **Dev-mode scriptable CLI verbs** — new CLI verbs available in dev mode for E2E validation
+  scripts: deterministic ensemble setup, scenario replay triggers, and teardown hooks.
+  Enables fully automated end-to-end test runs without manual orchestration. (#479)
+
+### Fixed
+
+- **CLI `--agent` parser allowlist** — `--agent` flag now sources its allowlist from
+  `AGENT_TYPES` instead of a hard-coded list, so newly registered adapter types (e.g.
+  `claude-api`) are accepted without a code change. Closes #476. (#478)
+- **Dashboard sidebar maestro avatar tile-frame** — maestro avatar in the sidebar was missing
+  its tile-frame border; now rendered consistently with other player tiles. Closes #473. (#480)
+
+### Docs
+
+- Post-beta.10 cleanup — adapter listing updated to include `claude-api`, tools-row table
+  corrected, WIRE-PROTOCOL model field documented. (#470)
+- `docs/research/` — #461 overflow-audit CI tooling spike: Hybrid v0→v1 lean evaluation,
+  gap analysis, recommended integration path. (#474)
+- `docs/design/` — #449 Phase B: OpenCode adapter ADR + design doc covering protocol
+  mapping, session lifecycle, and integration architecture. (#475)
+- `docs/design/` — #449 Phase C sequencing note added to OpenCode adapter design. (#481)
+
 ## [0.28.0-beta.10] - 2026-04-29
 
 ### Added
