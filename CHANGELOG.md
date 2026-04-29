@@ -33,8 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   primitive (focus trap, `aria-modal`, `Escape` to close), replacing the ad-hoc overlay.
   Fixes F-A-1 and F-LEAD-2 from the pixel-alignment audit. (#465)
 - **Conductor-first sort** — player lists in all dashboard views now place the conductor at
-  the top regardless of join order; latent dropout players (detached/gone) sort to the bottom.
-  Closes #462. (#467)
+  position 0 regardless of join order or alphabetical name. Fixes a latent bug where a
+  7+ player ensemble whose conductor sorted late alphabetically could silently drop the
+  conductor from `EnsembleCard`'s 5-row preview slice. Closes #462. (#467)
 - **Drift CI guard for `components.css`** — new CI step hard-fails if
   `dashboard/src/components.css` diverges from the canonical port snapshot, preventing silent
   token drift between releases. (#460)
@@ -48,8 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Generic part default** — players recruited without an explicit `part` now receive a
   player-type-aware default ("Conductor session", "Session in …") instead of a blank string.
   Closes #450. (#453)
-- **Dashboard JSX micro-fixes** — corrected class-application in 4 components where `className`
-  was being set incorrectly, fixing visual regressions from the PR-D migration. (#466)
+- **Dashboard JSX micro-fixes** — closed 6 pixel-audit findings (F-A-3..F-A-7 + H-1) by
+  fixing JSX class-application drift across Workspace, PickerList, PickerOption,
+  CreateEnsemble, Recruit, and Hosts. The canonical CSS rules were already shipped via
+  PR-B (#460); this PR makes them live by applying the classes the rules select. (#466)
 
 ### Changed
 
