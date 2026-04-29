@@ -35,7 +35,7 @@ describe('adapter conformance suite (§4.5)', function () {
     it('has at least one adapter registered', function () {
       throw new Error(
         'No adapter descriptors registered with the singleton registry. ' +
-        'Import `src/adapters` should auto-register claude-code and copilot at module load.',
+        'Import `src/adapters` should auto-register claude-code, copilot, and claude-api at module load.',
       );
     });
     return;

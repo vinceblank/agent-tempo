@@ -3,8 +3,9 @@
  *
  * Covers the registry surface introduced in PR-B (`src/adapters/base.ts`):
  * register / get / has / all / resolveFromAgentType. Also asserts that the
- * shipped descriptors (`claude-code`, `copilot`) match the fields designed
- * in §4.2–4.3 — `adapterId`, `adapterClass`, `blocksOnLLMTurn`, `heartbeatMs`.
+ * shipped descriptors (`claude-code`, `copilot`, `claude-api`) match the
+ * fields designed in §4.2–4.3 — `adapterId`, `adapterClass`,
+ * `blocksOnLLMTurn`, `heartbeatMs`.
  *
  * Addresses PR-B QA finding **C2** ("no registry unit tests"). The descriptor-
  * validation layer architect-2 named as the implicit +1 on §4.5 lives here.
@@ -149,11 +150,23 @@ describe('shipped descriptors (registry singleton)', function () {
     expect(desc.heartbeatMs).to.equal(30_000);
   });
 
-  it('registry.all() contains exactly the two shipped descriptors', function () {
-    // Will break deliberately when a third adapter (e.g. headless-claude) ships —
-    // forces a conscious acknowledgment in the same commit that registers it.
+  it('claude-api is registered and matches the §4.3 sdk shape (#131 Phase C)', function () {
+    expect(registry.has('claude-api')).to.equal(true);
+    const desc = registry.get('claude-api');
+    expect(desc.adapterId).to.equal('claude-api');
+    expect(desc.adapterClass).to.equal('sdk');
+    expect(desc.blocksOnLLMTurn).to.equal(true);
+    // SDK class — 30s cadence per design §4.3.
+    expect(desc.heartbeatMs).to.equal(30_000);
+  });
+
+  it('registry.all() contains exactly the three shipped descriptors', function () {
+    // Will break deliberately when a fourth production adapter ships — forces
+    // a conscious acknowledgment in the same commit that registers it.
+    // (Mock adapter is dev-mode-only and prepack-stripped; not in this list.)
+    // #131 Phase C added `claude-api` as the third production adapter.
     const ids = registry.all().map((d) => d.adapterId).sort();
-    expect(ids).to.deep.equal(['claude-code', 'copilot']);
+    expect(ids).to.deep.equal(['claude-api', 'claude-code', 'copilot']);
   });
 
   it('every shipped descriptor has a plausible heartbeatMs in range [10s, 300s]', function () {
