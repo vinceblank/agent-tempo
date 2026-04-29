@@ -31,13 +31,18 @@ export type ParsedChatInput =
   | { kind: 'plain'; text: string };
 
 /**
- * Match a leading `@<token>` followed by either end-of-string or a
- * single space. The token uses the same character set as
- * `PLAYER_NAME_REGEX` (src/utils/validation.ts) — letters, digits,
- * dash, underscore. Hyphens may appear inside the name but not as the
- * first or last character (matches existing player-name validation).
+ * Match a leading `@<token>` (followed by end-of-string or whitespace +
+ * body). The character class MUST stay aligned with `PLAYER_NAME_REGEX`
+ * in `src/utils/validation.ts` so dashboard mention parsing and TUI/CLI
+ * player-name validation never silently diverge. The Workspace then
+ * validates the captured target against the live roster — a mention
+ * shaped like a name but unknown to the ensemble toasts a useful error.
+ *
+ * Pinned by `tests/parse-chat-input.test.ts` (the `@-bad` and
+ * `@bob.smith` cases lock in the exact char set). If `PLAYER_NAME_REGEX`
+ * changes, those tests break — fix this regex in the same commit.
  */
-const MENTION_RE = /^@([A-Za-z0-9_][A-Za-z0-9_-]*)(?:\s+([\s\S]*))?$/;
+const MENTION_RE = /^@([a-zA-Z0-9_-]+)(?:\s+([\s\S]*))?$/;
 
 export function parseChatInput(raw: string): ParsedChatInput {
   const trimmed = raw.trim();

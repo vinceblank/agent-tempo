@@ -212,6 +212,21 @@ export function classifyPaletteInput(raw: string): PaletteContext | null {
 }
 
 /**
+ * Map a palette mode to the glyph prefix used when displaying or
+ * inserting an autofill selection.
+ *
+ *   `command` / `player-arg`  → `/`
+ *   `player`                  → `@`
+ *
+ * Centralising the mapping here means renderers (TUI's CommandPalette,
+ * dashboard's AutofillPopup) can't drift from the classifier. If a new
+ * mode lands, the compiler flags every consumer at once.
+ */
+export function modeToPrefix(mode: PaletteMode): '/' | '@' {
+  return mode === 'player' ? '@' : '/';
+}
+
+/**
  * Filter palette command entries by a typed prefix.
  * Prefix may optionally include a leading '/' — it's stripped before matching.
  * An empty prefix returns all commands in order.

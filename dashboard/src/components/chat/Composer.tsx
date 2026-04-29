@@ -33,6 +33,7 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
 } from 'react';
+import { modeToPrefix } from 'claude-tempo/palette';
 import { Btn } from '../Btn';
 import { AutofillPopup } from './AutofillPopup';
 import { useAutofill } from '../../lib/use-autofill';
@@ -243,7 +244,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   const hint = IS_MAC ? '⌘↩' : 'Ctrl ↩';
   const hintTitle = IS_MAC ? 'Cmd + Return to send' : 'Ctrl + Enter to send';
-  const popupPrefix: '/' | '@' = autofill.mode === 'command' ? '/' : '@';
+  const popupPrefix = autofill.mode ? modeToPrefix(autofill.mode) : '/';
 
   return (
     <div className="composer" data-testid={testIdPrefix}>
