@@ -8,6 +8,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `cue` | Send a message to a player by name. Delivered instantly via Temporal signal. |
 | `set_name` | Set a human-readable name for this session. |
 | `set_part` | Describe what you're working on. Visible to others via `ensemble`. |
+| `set_ensemble_description` | Update the ensemble's mission-flavor description (≤100 chars). Surfaces on the dashboard EnsembleCard. Empty string clears it. Conductors should refresh at milestone boundaries. |
 | `listen` | Manually check for pending messages. |
 | `recruit` | Spawn a new Claude Code session in a directory. Can recruit a conductor with `conductor: true`. When `host` is set, validates the target daemon is live and supports the requested agent before spawning; pass `force: true` to bypass pre-flight (#274). Dev mode only: `agent: 'mock'` with optional `mockMode` (`echo` \| `scripted` \| `silent` \| `chaos`) and `mockScenario` (bare name or YAML path, required for `scripted`). #131 Phase C — `agent: 'claude-api'` runs headless via the Anthropic Messages API; requires `ANTHROPIC_API_KEY` env var + the `@anthropic-ai/sdk` optional dependency installed. Optional `model` arg overrides the default (`claude-opus-4-7`); falls back to `CLAUDE_TEMPO_API_MODEL` env. claude-api players have access to claude-tempo MCP tools (cue, report, recall, ensemble, …) but NOT file-edit / shell / web tools — use `agent: 'claude'` for tasks requiring those. |
 | `report` | Send updates to the conductor. No-op if no conductor exists. |
