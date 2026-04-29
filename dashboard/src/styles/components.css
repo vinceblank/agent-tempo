@@ -1409,47 +1409,67 @@
   .page-pad { padding: 10px 12px 14px; }
   .types-grid { padding: 10px 12px 14px; gap: 10px; }
 
-  /* Tables collapse to stacked cards via `data-label` attrs on cells.
-   * Each row becomes a card; each cell renders its label (from
-   * `data-label`) above the value. Cells without `data-label` (e.g.
-   * the leading hostname/name cell, the trailing actions cell) flow
-   * naturally without a label prefix.  Per audit § PR-F + chat2.md fix. */
+  /* Tables: convert to stacked cards on phone instead of horizontal scroll */
   .panel:has(> .table) { overflow-x: visible; }
-  .table { min-width: 0; }
+  .table, .table thead, .table tbody, .table tr, .table th, .table td {
+    display: block;
+    width: auto;
+    min-width: 0;
+  }
+  .table { min-width: 0; width: 100%; border-collapse: separate; border-spacing: 0; }
   .table thead { display: none; }
   .table tr {
+    border-top: 1px solid var(--rule);
+    padding: 14px 14px 12px;
     display: grid;
     grid-template-columns: 1fr;
-    gap: 4px;
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--rule);
+    row-gap: 6px;
   }
+  .table tr:first-child { border-top: none; }
+  .table tr.is-active { background: var(--accent-soft); }
   .table td {
-    display: grid;
-    grid-template-columns: 110px 1fr;
-    gap: 8px;
-    padding: 2px 0;
+    padding: 0;
     border: none;
-    align-items: baseline;
+    white-space: normal;
+    font-size: 13px;
+    line-height: 1.4;
   }
-  .table td[data-label]::before {
+  /* First cell (name) is the card heading */
+  .table td:first-child {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 2px;
+  }
+  /* Last cell (action buttons) */
+  .table td:last-child {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--rule);
+    display: flex !important;
+    gap: 8px;
+    text-align: left !important;
+  }
+  /* Middle cells render as label · value rows */
+  .table tbody tr td:not(:first-child):not(:last-child) {
+    display: grid !important;
+    grid-template-columns: 84px 1fr;
+    column-gap: 12px;
+    align-items: baseline;
+    font-size: 12.5px;
+  }
+  .table tbody tr td:not(:first-child):not(:last-child)::before {
     content: attr(data-label);
     font-family: var(--ff-mono);
     font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--dim);
+    letter-spacing: 0.06em;
+    color: var(--text-2);
+    line-height: 1.6;
   }
-  /* Leading + actions cells stretch full width with no label prefix. */
-  .table td:not([data-label]) {
-    grid-template-columns: 1fr;
-  }
-  .table td:not([data-label]):last-child {
-    margin-top: 6px;
-    padding-top: 6px;
-    border-top: 1px dashed var(--rule);
-    text-align: right;
-  }
+  /* Chips inside cells stay nowrap */
+  .table .type-badge, .table .mono.dim { white-space: nowrap; display: inline-block; }
+  /* Buttons in actions row size sensibly */
+  .table td:last-child .btn { flex: 1; justify-content: center; }
 
   /* Dialog wizards: full-screen-ish */
   .dialog {
