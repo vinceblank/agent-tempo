@@ -15,6 +15,8 @@ A short operational checklist that orders the Phase C work into a sane commit se
 
 If the design doc and this note ever disagree, the design doc wins.
 
+> **Authorship context**: this note was authored ~5 minutes after PR #478 (`AGENT_TYPES` centralization, `6dd7ed1f`) merged. Steps 1.2 + 4.1 + gotchas 4.2/4.5 reflect the **post-#478** single-source-of-truth shape — adding `'opencode'` to the `AGENT_TYPES` tuple in `src/types.ts` propagates automatically to the `AgentType` derived union, `recruit.ts`'s `z.enum(AGENT_TYPES)`, the CLI `--agent` validator (`src/cli.ts`), and `help-text.ts`'s `--agent <name>` description string. **Do not make redundant edits at those call sites** — the tuple is the only edit needed.
+
 ---
 
 ## 1. PR shape — locked: **single PR**
@@ -47,8 +49,10 @@ Land in this order (or fold all into a single squash-merged commit on the PR —
 These three add symbols/dependencies that downstream code references. They MUST land before or in the same commit as Step 2.
 
 1. **`src/config.ts`** — add `OPENCODE_MODEL: 'CLAUDE_TEMPO_OPENCODE_MODEL'` to the `ENV` constant (next to the existing `API_MODEL: 'CLAUDE_TEMPO_API_MODEL'`).
-2. **`src/types.ts`** — extend the `AgentType` union to include `'opencode'`. Pre-existing values: `'claude' | 'copilot' | 'mock' | 'claude-api'`. New: `'claude' | 'copilot' | 'mock' | 'claude-api' | 'opencode'`.
+2. **`src/types.ts`** — add `'opencode'` to the `AGENT_TYPES` `readonly` const tuple. Post-#478 (`6dd7ed1f`) this is **the single source of truth** — `AgentType` is derived via `typeof AGENT_TYPES[number]`, so the union extends automatically. Same edit propagates to: `recruit.ts`'s `z.enum(AGENT_TYPES)` (Step 4 — no separate Zod edit), the CLI `--agent` validator in `src/cli.ts` (`AGENT_TYPES.includes(val)`), and `src/cli/help-text.ts`'s `--agent <name>` description (interpolates `AGENT_TYPES.join('|')`). One tuple edit, four call sites updated.
 3. **`package.json`** — add `@opencode-ai/sdk` to `optionalDependencies` at version `~1.14.29` (tilde, NOT caret — see §4 gotcha 4). Run `npm install` to refresh `package-lock.json` in the same commit.
+
+> **Multi-commit ordering note**: Items 1.1 (config.ts ENV) and 1.3 (package.json dep) are pure additions — safe to land first; nothing else compiles against them yet. Item 1.2 (`AGENT_TYPES` tuple) is **NOT** safe to land alone — post-#478 it lights up the recruit Zod surface immediately, so a recruit call would accept `agent: 'opencode'` then crash at adapter resolution if Steps 2-3 aren't in place yet. **In a single-commit / single-PR shape, this is moot — all four items land atomically.** If splitting commits for review readability, sequence as: 1.1 + 1.3 → Step 2 → Step 3 → 1.2 + Step 4 (or fold 1.2 into the same commit as Step 3 — that's the natural pairing).
 
 ### Step 2 — Adapter implementation
 
@@ -71,7 +75,7 @@ These two depend on Step 2 (the `OpenCodeAttachment` class must exist before the
 
 Depends on Steps 2 + 3 being in place — otherwise `recruit` would accept `agent: 'opencode'` and crash at adapter resolution.
 
-1. **`src/tools/recruit.ts`** — extend the `agent` Zod enum to include `'opencode'`; relax the `model` regex from `^claude-[a-z0-9-]+$` to `^[a-z0-9][a-z0-9-/.:_]*$` so `provider/model` strings flow through. Update the `.describe()` text per design §3.1.
+1. **`src/tools/recruit.ts`** — **NO Zod enum edit needed.** Post-#478 (`6dd7ed1f`), `agent` is declared as `z.enum(AGENT_TYPES)` and auto-extends from Step 1.2. The Phase C edits to recruit.ts are: (a) relax the `model` regex from `^claude-[a-z0-9-]+$` to `^[a-z0-9][a-z0-9-/.:_]*$` so `provider/model` strings flow through, (b) update the `agent` `.describe()` text per design §3.1 to document the new value's provider semantics, (c) loosen the existing `if (model != null && agent !== 'claude-api')` guard to also allow `agent === 'opencode'` (the design says `model` is now meaningful for both adapters).
 2. **Optional-dep pre-flight** — extend the existing recruit pre-flight pattern (the one that catches missing `@anthropic-ai/sdk` for claude-api) to catch missing `@opencode-ai/sdk` AND missing `opencode` binary on PATH for the OpenCode case. Actionable error message per ADR 0015 §85.
 
 ### Step 5 — Q6 verify-at-impl experiment + Path selection
@@ -88,7 +92,8 @@ Depends on Steps 2 + 3 being in place — otherwise `recruit` would accept `agen
 ### Step 6 — Tests
 
 1. **`test/adapter-opencode-lifecycle-v2.test.ts`** — adapter conformance test. Follows the per-adapter naming convention. Mirror the structure of the existing `test/adapter-sdk-lifecycle-v2.test.ts` (or whatever the SDK-class baseline test is named at impl time — verify the exact filename in `test/`).
-2. **Wire-protocol drift detector** — already a no-op for this PR (no new wire surface). The detector validates that `claimAttachment` / `heartbeat` / `processingStart` / `processingEnd` / `markDelivered` / `updateMetadata` are referenced — they will be, via `SdkAttachment` inheritance + the §8.1 skeleton's `updateMetadataSignal` usage. No detector change needed.
+2. **`test/cli-agent-parser.test.ts`** — **inherited free** from #478. It iterates over `AGENT_TYPES` and subprocess-spawns the real CLI for each value, asserting `--agent <name>` accepts and `--agent unknown` rejects. Adding `'opencode'` to the tuple in Step 1.2 means this test auto-exercises a new case on next run — no edit needed. **If it fails, it's diagnostic**: check that `cli.ts`'s validator and `help-text.ts`'s description string are still tuple-derived (i.e. nothing in #478's wiring regressed). Free drift-detector for the AGENT_TYPES single-source-of-truth.
+3. **Wire-protocol drift detector** — already a no-op for this PR (no new wire surface). The detector validates that `claimAttachment` / `heartbeat` / `processingStart` / `processingEnd` / `markDelivered` / `updateMetadata` are referenced — they will be, via `SdkAttachment` inheritance + the §8.1 skeleton's `updateMetadataSignal` usage. No detector change needed.
 
 ### Step 7 — Wire-protocol doc + this sequencing note cleanup
 
@@ -105,9 +110,9 @@ Listed in priority order (highest-likelihood-to-trip first).
 
 The `OpenCodeAttachment` constructor literally references `process.env[ENV.OPENCODE_MODEL]` (design §8.1 line ~601). If `ENV.OPENCODE_MODEL` isn't in `src/config.ts` first (or in the same commit), TypeScript will fail with `Property 'OPENCODE_MODEL' does not exist on type ...`. **Land Step 1's config.ts edit before or together with Step 2's adapter implementation.** Splitting is fine; ordering is not.
 
-### 4.2 `AgentType` extension must precede the registry case clause
+### 4.2 `AGENT_TYPES` tuple extension must precede the registry case clause
 
-`AdapterRegistry.resolveFromAgentType` (Step 3 item 2) switches on the `AgentType` union. Adding the `'opencode'` case before extending the union in `src/types.ts` will TS-error: `Type '"opencode"' is not assignable to type 'AgentType'`. **Land Step 1's types.ts extension before or together with Step 3's registry case.** Same-commit is fine.
+`AdapterRegistry.resolveFromAgentType` (Step 3 item 2) switches on the `AgentType` union, which is derived from `AGENT_TYPES` via `typeof AGENT_TYPES[number]` (post-#478). Adding the `'opencode'` case in the registry before extending the tuple in `src/types.ts` will TS-error: `Type '"opencode"' is not assignable to type 'AgentType'`. **Land Step 1.2's `AGENT_TYPES` tuple extension before or together with Step 3's registry case.** Same-commit is fine. (Note: this is a single tuple edit, not two parallel edits to types + recruit — see Step 1.2.)
 
 ### 4.3 Optional dep must land in package.json before tests run
 
@@ -117,9 +122,9 @@ The adapter imports `@opencode-ai/sdk` via `try { require(...) } catch {}` (desi
 
 ADR 0015 locks `@opencode-ai/sdk@~1.14.29`. OpenCode ships breaking changes under SemVer minor (per Phase A spike: `parts` data model, `userMessage.variant`). Caret would let `^1.14.29 → 1.15.0` flow through and silently break the adapter. **Code review red flag**: if anyone PRs `"^"`, push back; the rationale is in ADR 0015 §82 ("Negative consequences") and §105 ("Alternatives considered, rejected").
 
-### 4.5 Recruit pre-flight depends on adapter being registered
+### 4.5 Recruit acceptance depends on adapter being registered
 
-Don't ship the recruit Zod extension (Step 4 item 1) in a commit where the adapter registration (Step 3) is still missing — `recruit` would accept `agent: 'opencode'`, pass validation, then crash at adapter resolution time with a confusing error. **In a single-commit / single-PR shape, this is moot. If splitting commits, Steps 2-3 must land before Step 4.**
+Post-#478, the moment Step 1.2 lands (`'opencode'` added to `AGENT_TYPES`), `recruit`'s Zod schema starts accepting `agent: 'opencode'` automatically — the tuple IS the enum. If the adapter registration (Step 3) hasn't landed yet, that recruit call passes validation and then crashes at adapter resolution time with a confusing error. **In a single-commit / single-PR shape, this is moot. If splitting commits, Steps 2-3 must land before or with Step 1.2 — *not after* — to avoid an intermediate window where recruit is broken on the new value.** This reverses the pre-#478 ordering: with hand-written `z.enum([...])`, you could safely land the type union before extending the Zod enum; post-#478, the tuple update lights up both surfaces simultaneously.
 
 ### 4.6 `--hostname 127.0.0.1` is hardcoded; do NOT make it configurable
 
