@@ -55,12 +55,18 @@ export function PickerList<T extends string>({
             // CSS, but we render `<button>` so keyboard activation works
             // out of the box. Reset the inherited button chrome so the
             // grid layout from `.picker-row` survives.
+            //
+            // Padding is intentionally NOT inlined here — the canonical
+            // `.picker-row` rule sets `padding: 7px 10px` (default) and
+            // the `@container artboard (max-width: 520px) .picker-row {
+            // padding: 8px 10px }` phone rule must win at narrow widths.
+            // An inline `padding` would beat the @container rule via
+            // inline-style specificity. PR-E F-A-4.
             style={{
               all: 'unset',
               display: 'grid',
               gridTemplateColumns: '18px 1fr auto',
               gap: 10,
-              padding: '7px 10px',
               alignItems: 'center',
               borderRadius: 6,
               cursor: 'pointer',
