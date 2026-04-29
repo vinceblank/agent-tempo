@@ -944,7 +944,13 @@
   .sidebar-brand .brandmark-word,
   .sidebar-kicker,
   .sidebar-footer,
-  .sidebar-maestro span:not(.maestro-mark):not(.maestro-mark *),
+  /*
+   * #473: tablet collapse keeps both the legacy `.maestro-mark` (in case
+   * a surface still uses the bare-M primitive) AND the new `.maestro-avatar`
+   * tile-shell visible. The four `:not()` clauses cover both elements
+   * themselves and any descendants (e.g. `.maestro-avatar > .maestro-mark`).
+   */
+  .sidebar-maestro span:not(.maestro-mark):not(.maestro-mark *):not(.maestro-avatar):not(.maestro-avatar *),
   .ensemble-row .er-meta,
   .ensemble-row .col,
   .ensemble-row > span:last-child,
@@ -1015,7 +1021,9 @@
 
   /* Hide the on-page sidebar maestro identity on tablet */
   .sidebar-maestro { padding: 8px 4px; justify-content: center; }
-  .sidebar-maestro > :not(.maestro-mark) { display: none; }
+  /* #473: keep both legacy `.maestro-mark` and the new tile-shell
+     `.maestro-avatar` visible at tablet width — only the labels collapse. */
+  .sidebar-maestro > :not(.maestro-mark):not(.maestro-avatar) { display: none; }
 }
 
 /* ─── Phone-only chrome — hidden by default, shown via container query ─── */
@@ -1391,14 +1399,15 @@
   padding: 12px 16px 10px;
   display: flex; align-items: center; justify-content: space-between;
 }
-.sidebar-maestro .maestro-mark {
-  width: 28px; height: 28px;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid color-mix(in oklch, var(--bone, #F5EBDD), transparent 70%);
-  border-radius: 6px;
-  background: color-mix(in oklch, var(--bone, #F5EBDD), transparent 92%);
-  font-size: 17px !important;
-}
+/*
+ * #473: the previous chrome rule that boxed `.maestro-mark` (28×28 with
+ * border + bone-tinted background) has been removed. That treatment now
+ * lives in the `MaestroAvatar` component (`./components/MaestroAvatar.tsx`)
+ * as inline styles on a 32×32 outer span. Keeping a CSS rule here would
+ * create nested-box weirdness (outer tile from the component + inner
+ * tile from CSS) and reintroduce the inline-style-vs-CSS specificity
+ * collision that #473 originally surfaced.
+ */
 
 /* Stub left behind in workspace when chat is popped */
 .chat-stub {
