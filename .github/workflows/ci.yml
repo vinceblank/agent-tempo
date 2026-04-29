@@ -52,6 +52,16 @@ jobs:
     needs: lint-test-ensemble
     steps:
       - uses: actions/checkout@v6
+        with:
+          # `check-components-css-sync.ts` (PR-B of #454) reads the LAST-SYNC
+          # commit out of components.css and runs `git diff` against the
+          # canonical CSS. With the default shallow checkout (depth=1) the
+          # LAST-SYNC commit isn't in the local object DB and the diff fails.
+          # `fetch-depth: 0` pulls full history; the script's own self-heal
+          # falls back to `git fetch origin <sha>` for safety, but full
+          # history is the cheapest fix and matches GitHub's documented
+          # pattern for jobs that touch git history.
+          fetch-depth: 0
 
       - name: Use Node.js 22
         uses: actions/setup-node@v6
@@ -110,6 +120,14 @@ jobs:
 
       - name: Build dashboard
         run: npm --prefix dashboard run build
+
+      - name: components.css canonical-port drift report (F-LEAD-1, PR-B of #454)
+        # Reads the LAST-SYNC marker out of dashboard/src/styles/components.css
+        # and reports drift against the canonical hand-off bundle at
+        # docs/design/dashboard-handoff/project/styles.css. WARN at 50 lines,
+        # FAIL at 150 lines. Re-sync procedure lives at
+        # docs/design/components-css-port-procedure.md.
+        run: npm run build:scripts && node dist/scripts/check-components-css-sync.js
 
       - name: Verify tarball includes dashboard/dist
         # Defense-in-depth check at PR time. Catches the v0.28.0-beta.4
