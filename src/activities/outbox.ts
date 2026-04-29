@@ -12,7 +12,7 @@ import {
 } from '../utils/validation';
 import { ENSEMBLE_SENTINEL_FLAG } from '../constants';
 import { getGitInfo } from '../git-info';
-import { spawnInTerminal, spawnCopilotBridge } from '../spawn';
+import { spawnInTerminal, spawnCopilotBridge, spawnClaudeApiAdapter } from '../spawn';
 import { ENV } from '../config';
 import { resolveSession } from './resolve';
 import { resolveAgentType } from '../ensemble/agent-types';
@@ -166,6 +166,12 @@ export interface StartRecruitedSessionInput {
   claudeBin?: string;
   /** When true, spawn process but lock outbox and defer initial message until release (warm hold). */
   held?: boolean;
+  /**
+   * #131 Phase C — model id for the claude-api adapter (e.g.
+   * `claude-opus-4-7`). Persisted onto `SessionMetadata.model` so restart
+   * can recover the original choice. Ignored when `agent !== 'claude-api'`.
+   */
+  model?: string;
 }
 
 export interface ReleasePlayerInput {
@@ -237,6 +243,14 @@ export interface SpawnProcessInput {
    */
   mockMode?: MockMode;
   mockScenario?: string;
+  /**
+   * #131 Phase C — claude-api adapter model id (e.g. `claude-opus-4-7`).
+   * Forwarded into the spawned subprocess as `CLAUDE_TEMPO_API_MODEL`. Only
+   * meaningful when `agent === 'claude-api'`; ignored otherwise. Falls back
+   * inside the adapter to `CLAUDE_TEMPO_API_MODEL` env (set by spawner) →
+   * constants-pinned default (`claude-opus-4-7`).
+   */
+  model?: string;
 }
 
 // ── Activity result type ──
@@ -352,7 +366,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async startRecruitedSession(input: StartRecruitedSessionInput): Promise<RecruitResult> {
-      const { ensemble, targetName, workDir, isConductor, initialMessage, fromPlayerId, agent, systemPrompt, taskQueue, agentDefinition, agentDefinitionDescription, held } = input;
+      const { ensemble, targetName, workDir, isConductor, initialMessage, fromPlayerId, agent, systemPrompt, taskQueue, agentDefinition, agentDefinitionDescription, held, model } = input;
       try {
         const workflowId = isConductor
           ? conductorWorkflowId(ensemble)
@@ -384,6 +398,9 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             // from the registry without falling back to the legacy agentType field.
             adapterId: registry.resolveFromAgentType(agent),
             sessionId,
+            // #131 Phase C — persist the claude-api model on durable metadata
+            // so restart can recover the original choice across CAN.
+            ...(agent === 'claude-api' && model ? { model } : {}),
             ...(agentDefinition ? { playerType: agentDefinition } : {}),
             ...(agentDefinitionDescription ? { playerTypeDescription: agentDefinitionDescription } : {}),
             recruitedBy: fromPlayerId,
@@ -442,7 +459,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
-      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId, mockMode, mockScenario } = input;
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId, mockMode, mockScenario, model } = input;
       // Read secrets from the worker's config closure — never from workflow state
       const { temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = config;
       try {
@@ -488,6 +505,31 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             adapterId,
           });
           log(`Spawned copilot-bridge (pid ${pid}) in ${workDir} as "${targetName}"${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
+        } else if (agent === 'claude-api') {
+          // #131 Phase C — headless Anthropic Messages API adapter. No
+          // terminal, no Claude binary, no MCP-server child process. The
+          // adapter boots an in-process MCP server + paired client and
+          // talks to Anthropic via @anthropic-ai/sdk. Tool surface is
+          // MCP-only in v1; file-edit/shell/web tools deferred to Phase 2.
+          if (allowedTools && allowedTools.length > 0) {
+            log(`Warning: allowedTools [${allowedTools.join(', ')}] specified for claude-api agent "${targetName}" — claude-api adapter does not gate tools per recruit, skipping`);
+          }
+          const { pid } = spawnClaudeApiAdapter({
+            name: targetName,
+            ensemble,
+            temporalAddress,
+            temporalNamespace,
+            temporalApiKey,
+            temporalTlsCertPath,
+            temporalTlsKeyPath,
+            isConductor,
+            workDir,
+            model,
+            attachmentId,
+            attachmentRunId,
+            adapterId,
+          });
+          log(`Spawned claude-api adapter (pid ${pid}) in ${workDir} as "${targetName}"${model ? ` (model=${model})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else {
           // Resolve agent flags: --agent (native) > --system-prompt (shipped/legacy)
           let agentFlags: string[] = [];
@@ -728,9 +770,26 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         // Prod restart never lands here for `mock` because gate 3 in
         // src/tools/recruit.ts rejected the original recruit.
         const rawAgent = metadata.agentType as string | undefined;
-        const agentType: AgentType = rawAgent === 'copilot' ? 'copilot' : rawAgent === 'mock' ? 'mock' : 'claude';
+        // #131 Phase C — claude-api joins copilot/mock as a recognized
+        // sdk-class agent here so restart/encore/migrate of a claude-api
+        // player resolves to the right adapterId + class. Without this
+        // branch, restart falls through to 'claude' → 'interactive' and
+        // the spawn path picks the terminal Claude Code path.
+        const agentType: AgentType = rawAgent === 'copilot'
+          ? 'copilot'
+          : rawAgent === 'mock'
+            ? 'mock'
+            : rawAgent === 'claude-api'
+              ? 'claude-api'
+              : 'claude';
         const adapterId = metadata.adapterId
-          || (agentType === 'copilot' ? 'copilot' : agentType === 'mock' ? 'mock' : 'claude-code');
+          || (agentType === 'copilot'
+            ? 'copilot'
+            : agentType === 'mock'
+              ? 'mock'
+              : agentType === 'claude-api'
+                ? 'claude-api'
+                : 'claude-code');
         const adapterClass: AdapterClass = agentType === 'claude' ? 'interactive' : 'sdk';
         const targetHost = host ?? info.preferredHost ?? metadata.hostname;
 
@@ -811,6 +870,13 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             resume: false,
             sessionId: spawnSessionId,
             adapterId,
+            // #131 Phase C — claude-api adapter model carried across restart.
+            // Read from durable session metadata so the restarted player runs
+            // the same model the original recruit chose. Absent for non-claude-api
+            // sessions and for legacy claude-api sessions recruited before the
+            // metadata.model field landed (which fall back to the env / default
+            // chain inside the adapter).
+            ...(metadata.model !== undefined ? { model: metadata.model } : {}),
             ...(resolved ? {
               agentDefinition: resolved.name,
               agentDefinitionPath: resolved.path,

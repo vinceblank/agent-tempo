@@ -922,7 +922,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
    * `sessionId`/`adapterId` into the activity signature so the adapter boots
    * into the pre-claimed attachment.
    */
-  setHandler(enqueueSpawnUpdate, ({ host, attachmentId, runId, resume, sessionId, adapterId, agentDefinition, agentDefinitionPath, nativeResolvable }) => {
+  setHandler(enqueueSpawnUpdate, ({ host, attachmentId, runId, resume, sessionId, adapterId, agentDefinition, agentDefinitionPath, nativeResolvable, model }) => {
     const spawnEntryId = uuid4();
     const entry: SpawnOutboxEntry = {
       id: spawnEntryId,
@@ -940,6 +940,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       agentDefinition,
       agentDefinitionPath,
       nativeResolvable,
+      // #131 Phase C — claude-api model id carried across restart.
+      ...(model !== undefined ? { model } : {}),
       createdAt: workflowNow().toISOString(),
       status: 'pending',
     };
@@ -1519,6 +1521,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               allowedTools: entry.allowedTools,
               claudeBin: entry.claudeBin,
               held: entry.held,
+              // #131 Phase C — claude-api model id; activity persists it onto
+              // SessionMetadata.model so restart/encore/migrate can recover it.
+              ...(entry.model !== undefined ? { model: entry.model } : {}),
             });
             // Warm hold: process always spawns. When held, the workflow's outbox
             // is locked and the initial message is deferred until release.
@@ -1541,6 +1546,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               claudeBin: entry.claudeBin,
               mockMode: entry.mockMode,
               mockScenario: entry.mockScenario,
+              // #131 Phase C — forward to spawnProcess so spawnClaudeApiAdapter
+              // can plumb it into the subprocess env (CLAUDE_TEMPO_API_MODEL).
+              ...(entry.model !== undefined ? { model: entry.model } : {}),
             });
             break;
           }
@@ -1615,6 +1623,10 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               agentDefinition: entry.agentDefinition,
               agentDefinitionPath: entry.agentDefinitionPath,
               nativeResolvable: entry.nativeResolvable,
+              // #131 Phase C — claude-api model carried across restart via the
+              // spawn outbox entry (sourced from durable SessionMetadata.model
+              // by deliverRestart).
+              ...(entry.model !== undefined ? { model: entry.model } : {}),
             });
             break;
           }

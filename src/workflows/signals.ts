@@ -196,6 +196,8 @@ export const enqueueSpawnUpdate = defineUpdate<
     agentDefinition?: string;
     agentDefinitionPath?: string;
     nativeResolvable?: boolean;
+    /** #131 Phase C — claude-api model id carried across restart. */
+    model?: string;
   }]
 >('enqueueSpawn');
 

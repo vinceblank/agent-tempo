@@ -206,6 +206,16 @@ export interface SessionMetadata {
   worktreePath?: string;
   /** Session UUID — used for Copilot SDK sessionId and Claude Code --resume/--session-id. */
   sessionId?: string;
+  /**
+   * #131 Phase C — model id for the claude-api adapter (e.g.
+   * `claude-opus-4-7`). Lives on durable session metadata so restart /
+   * encore / migrate of a claude-api player can recover the original
+   * model selection across `continueAsNew` boundaries (the recruit-arg
+   * lives only in `RecruitOutboxEntry` which is dropped after dispatch).
+   * Absent for non-claude-api sessions; absent for pre-#131 sessions
+   * (the spawn falls back to `CLAUDE_TEMPO_API_MODEL` env / pinned default).
+   */
+  model?: string;
 }
 
 export interface AgentTypeInfo {
@@ -619,6 +629,13 @@ export interface SpawnOutboxEntry extends OutboxEntryBase {
    *  (project/user tier) so the spawn can use `--agent <name>` instead of
    *  `--system-prompt <path>`. */
   nativeResolvable?: boolean;
+  /**
+   * #131 Phase C — claude-api model id carried across restart / encore /
+   * migrate. Read from durable {@link SessionMetadata.model} by
+   * `deliverRestart` and forwarded into the spawn so the restarted
+   * subprocess runs the same model the original recruit chose.
+   */
+  model?: string;
 }
 
 export type OutboxEntry =
