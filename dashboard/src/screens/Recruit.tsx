@@ -182,12 +182,7 @@ export function Recruit() {
         value: t.name,
         name: t.name,
         ...(t.description !== undefined && { desc: t.description }),
-        // PR-E F-A-6: right-slot uses the color-coded TypeBadge (one
-        // hue per player-type) instead of a gray source-tier label.
-        // The source-tier (SHIPPED/USER/PROJECT) is already implied by
-        // the picker's `hint` line ("N available · showing local
-        // catalog…"); the badge encodes the *role* the player plays,
-        // which is the more useful signal at picker time.
+        // Badge encodes the player role; source-tier is in the hint line.
         right: <TypeBadge type={t.name} />,
       })),
     [playerTypes],

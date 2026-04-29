@@ -18,13 +18,7 @@ export interface PickerOption<T extends string = string> {
   desc?: ReactNode;
   /** Right-side decoration (TypeBadge, status pill, …). */
   right?: ReactNode;
-  /**
-   * Accent treatment — terracotta-tinted text + a `+` glyph in the marker.
-   * Used for special "create new" rows like CreateEnsemble's blank-ensemble
-   * option (canonical screens.jsx:288-292:
-   * `<div className="picker-row" style={{color:"var(--accent)"}}><span
-   * className="marker">+</span>…`). PR-E F-A-5.
-   */
+  /** Terracotta tint + `+` marker glyph for "create new" rows. */
   accent?: boolean;
 }
 
@@ -59,17 +53,10 @@ export function PickerList<T extends string>({
             aria-checked={active}
             className={'picker-row' + (active ? ' is-active' : '')}
             onClick={() => onChange(opt.value)}
-            // The `.picker-row` selector targets a `<div>` in the design
-            // CSS, but we render `<button>` so keyboard activation works
-            // out of the box. Reset the inherited button chrome so the
-            // grid layout from `.picker-row` survives.
-            //
-            // Padding is intentionally NOT inlined here — the canonical
-            // `.picker-row` rule sets `padding: 7px 10px` (default) and
-            // the `@container artboard (max-width: 520px) .picker-row {
-            // padding: 8px 10px }` phone rule must win at narrow widths.
-            // An inline `padding` would beat the @container rule via
-            // inline-style specificity. PR-E F-A-4.
+            // `.picker-row` targets a <div> in the design CSS; we render
+            // <button> for kbd-activation, so reset UA chrome here.
+            // Padding is intentionally not inlined — inline padding would
+            // beat the `@container` phone rule by specificity.
             style={{
               all: 'unset',
               display: 'grid',

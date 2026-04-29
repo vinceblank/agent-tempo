@@ -201,10 +201,7 @@ function HostRow({ host }: HostRowProps) {
       <td className="mono">
         <span style={{ color: isLive ? 'var(--ok)' : 'var(--warn)' }}>●</span> {id}
       </td>
-      {/* Canonical Hosts Platform cell uses `var(--text-2)` (the
-        * second-tier ink), not `--dim` (the third-tier mono dim).
-        * Matches canonical screens.jsx:512 — same ink tier the
-        * Heartbeat cell already uses below. PR-E H-1. */}
+      {/* Same secondary ink tier as Heartbeat below — not --dim. */}
       <td
         data-label="Platform"
         data-testid={`host-row-${id}-platform`}
