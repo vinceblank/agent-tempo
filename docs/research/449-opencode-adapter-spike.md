@@ -16,9 +16,9 @@
 
 1. **`opencode serve` is real, mature, and well-suited.** First-class HTTP server mode (default `127.0.0.1:4096`), OpenAPI 3.1 spec at `/doc`, auto-generated `@opencode-ai/sdk` TypeScript client. SSE streaming via `GET /event`. The protocol shape is friendly and structurally simpler than the Anthropic Messages API (server-side conversation history, normalized cross-provider event stream, dedicated abort endpoint).
 2. **🔑 Lead finding — OpenCode supports MCP natively as a first-class tool transport.** Adapter config block: `mcp: { "claude-tempo": { type: "local", command: [...], environment: {...} } }`. **No custom tool-bridge translation layer needed** — fundamentally different from the `claude-api` adapter where we implemented `mcp-bridge.ts` to translate MCP shapes to Anthropic API shapes. OpenCode owns tool-call resolution server-side and translates to whichever provider the user picks.
-3. **Closest existing precedent: a hybrid of `copilot` and `claude-api`.** Subprocess-spawn lifecycle (copilot pattern), HTTP-bridge runtime (new — neither existing adapter has this exactly), `SdkAttachment` lifecycle reuse (both patterns). Estimated ~700–950 LoC for Phase 1, less than claude-api because no MCP-bridge translation layer.
+3. **Closest existing precedent: a hybrid of `copilot` and `claude-api`.** Subprocess-spawn lifecycle (copilot pattern), HTTP-bridge runtime (new — neither existing adapter has this exactly), `SdkAttachment` lifecycle reuse (both patterns). Estimated **~805–1,175 LoC** for Phase 1 (bottom-up sum of §8 row ranges; see §8 for reconciliation against the top-down analogy from #131's actual 911 LoC).
 4. **Dependency-stability verdict: proceed with caution.** OpenCode is a top-tier OSS project (151k ⭐, daily releases, YC-funded, primary product of SST), so **abandonment risk is LOW**. But the HTTP API is still labeled "experimental" and minor bumps have shipped breaking changes recently (diff format, `userMessage.variant`). **Tilde-pin (`~1.14.29`)** discipline is mandatory; loopback-only bind and a `/global/health` version probe are the operational mitigations.
-5. **Six open design decisions for the architect** — subprocess-per-player vs subprocess-shared, config-delivery mechanism, MCP transport choice, port-allocation strategy, recruit-arg surface, session-persistence-across-restart. None of them block; all have lean recommendations in §6 below.
+5. **Seven open design decisions for the architect** — subprocess-per-player vs subprocess-shared, config-delivery mechanism, MCP transport choice, port-allocation strategy, provider/model recruit-arg shape, session-persistence-across-restart, version-probe-gate strictness. None of them block; all have lean recommendations in §6 below.
 
 ---
 
@@ -298,7 +298,7 @@ OpenCode's adapter is **a hybrid of the `copilot` subprocess pattern and the `cl
 | History rebuild | Workflow-side via env-var hand-off | Per-turn pull-poll model | **Per-turn `buildAnthropicMessages()`** | **None — OpenCode persists server-side** |
 | Subprocess managed by adapter | No (Claude Code is the subprocess; the `node dist/...` is the adapter) | Yes (`@github/copilot-sdk` spawns Copilot CLI internally) | No (HTTP to Anthropic) | **Yes (`opencode serve` spawned by adapter on claim)** |
 | Abort mechanism | Exit subprocess | `session.disconnect()` | `AbortController` on `messages.create` | **`POST /session/:id/abort`** |
-| Optional dep | `@github/copilot-sdk` | `@anthropic-ai/sdk` | `@opencode-ai/sdk` (auto-generated TS client) — or raw fetch | |
+| Optional dep | (none — bundled `claude` CLI) | `@github/copilot-sdk` | `@anthropic-ai/sdk` | `@opencode-ai/sdk` (auto-generated TS client) — or raw fetch |
 
 ### 3.2 SdkAttachment lifecycle reuse
 
@@ -450,7 +450,7 @@ The OpenCode SSE `/event` stream emits `usage` data on `assistant.message` finis
 
 ## 6. Open design decisions for architect
 
-Six questions. Each has a "lean" recommendation but is the architect's call.
+Seven questions. Each has a "lean" recommendation but is the architect's call.
 
 | # | Question | Lean | Rationale |
 |---|---|---|---|
@@ -518,9 +518,9 @@ Bun runtime on Windows handles SIGINT/SIGTERM differently from POSIX. Adapter's 
 | `src/server-tools.ts` — no change required (existing `registerAllTempoTools` works) | 0 | OpenCode consumes via stdio MCP subprocess |
 | Tests (vitest unit + mocha integration covering spawn → claim → turn → detach lifecycle, with `opencode serve` mocked via in-process http server) | 200–300 | Mock OpenCode's `/global/health`, `/session/*`, `/event` SSE; conformance with the existing SDK-class lifecycle suite |
 | Docs (`src/adapters/README.md`, `docs/concepts.md`, recruit tool description) | 50 | Four adapter types now |
-| **Total** | **~700–950 LoC** | Smaller than #131's ~825–1,125 estimate (and much smaller than #131's actual 911 LoC final) — no MCP-bridge layer, no per-turn history rebuild, OpenCode handles tool dispatch. |
+| **Total (bottom-up)** | **~805–1,175 LoC** | Sum of the row ranges above. Larger than the top-down analogy (#131's 911 actual − 158 mcp-bridge − 80 history-rebuild → ~673, scaled to a 700–950 range) because the row-level adapter.ts (350–500) and tests (200–300) ranges reflect the actual scope of new HTTP/SSE consumption + subprocess management code, which is NOT strictly "claude-api minus the bridge." Bottom-up is the truth; top-down was a heuristic. |
 
-Issue #449's body cites 600–1,000 LoC; my refined estimate is consistent.
+Issue #449's body cites 600–1,000 LoC. The bottom-up high (1,175) exceeds the issue's ceiling — recommend Phase B explicitly scope `adapter.ts` and the test surface before locking the LoC budget. If the final design tightens those rows (e.g., narrower test surface via shared SDK-class conformance helper), the total can land back inside the issue's stated range.
 
 ---
 
