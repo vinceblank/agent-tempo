@@ -630,3 +630,119 @@ export function spawnMockAdapter(opts: MockAdapterOpts): MockAdapterResult {
   log(`Spawned mock adapter (pid ${child.pid}) in ${opts.workDir} as "${opts.name}" (mode=${opts.mockMode ?? 'echo'})`);
   return { pid: child.pid, logPath, pidPath };
 }
+
+// ── claude-api adapter (#131 Phase C) ──────────────────────────────────────
+
+/**
+ * Options for {@link spawnClaudeApiAdapter}. Mirrors {@link CopilotBridgeOpts}
+ * for the cross-machine fields (host queue, attachment handoff) and adds the
+ * `model` knob (resolved from recruit-arg → env → constants-pinned default
+ * upstream; the spawn helper just forwards whatever is set).
+ *
+ * The claude-api adapter is headless — no terminal, no Claude binary, no
+ * MCP-server child process. It runs an in-process MCP server paired with a
+ * client via `InMemoryTransport` and talks to Anthropic via the optional
+ * `@anthropic-ai/sdk`. So the option surface is narrow: identity, Temporal
+ * connection settings, attachment handoff, and the optional model id.
+ */
+export interface ClaudeApiAdapterOpts {
+  name: string;
+  ensemble: string;
+  temporalAddress: string;
+  temporalNamespace?: string;
+  temporalApiKey?: string;
+  temporalTlsCertPath?: string;
+  temporalTlsKeyPath?: string;
+  isConductor?: boolean;
+  workDir: string;
+  /** Directory for log + PID files. Defaults to `logs/` inside workDir. */
+  logDir?: string;
+  /** Model id (e.g. `claude-opus-4-7`). Forwarded via `CLAUDE_TEMPO_API_MODEL`. */
+  model?: string;
+  /**
+   * PR-D attachment-lease handoff. When present, the workflow has already
+   * called `claimAttachment`; the adapter reads these from env and renews
+   * (rather than fresh-claims) the lease on boot.
+   */
+  attachmentId?: string;
+  attachmentRunId?: string;
+  adapterId?: string;
+}
+
+export interface ClaudeApiAdapterResult {
+  pid: number | undefined;
+  logPath: string;
+  pidPath: string;
+}
+
+/**
+ * Resolve the path to the claude-api adapter entry point. Mirrors
+ * {@link resolveBridgePath} so dev (ts-node) and prod (compiled .js) both
+ * launch the same code through the same `require.main === module` gate.
+ */
+function resolveClaudeApiPath(): { cmd: string; args: string[] } {
+  const isDev = __filename.endsWith('.ts');
+  if (isDev) {
+    return { cmd: 'npx', args: ['ts-node', resolve(__dirname, 'adapters', 'claude-api', 'adapter.ts')] };
+  }
+  return { cmd: 'node', args: [resolve(__dirname, 'adapters', 'claude-api', 'adapter.js')] };
+}
+
+/**
+ * Spawn the claude-api adapter as a detached headless subprocess.
+ *
+ * Mirrors {@link spawnCopilotBridge} — no TTY, log + PID files in
+ * `logs/<name>.log` and `logs/<name>.pid`, env vars carry identity +
+ * Temporal connection settings + optional attachment-handoff. The adapter
+ * resolves the LLM model from `CLAUDE_TEMPO_API_MODEL` (set here when
+ * `opts.model` is provided) or falls back to the constants-pinned default
+ * (`claude-opus-4-7`) inside the adapter's `run()`. `ANTHROPIC_API_KEY`
+ * is inherited from the parent's env (recruit pre-flight checks it).
+ */
+export function spawnClaudeApiAdapter(opts: ClaudeApiAdapterOpts): ClaudeApiAdapterResult {
+  const { cmd, args } = resolveClaudeApiPath();
+  const logDirPath = opts.logDir || join(opts.workDir, 'logs');
+  const logName = opts.name || `claude-api-${Date.now()}`;
+  const logPath = join(logDirPath, `${logName}.log`);
+  const pidPath = join(logDirPath, `${logName}.pid`);
+
+  mkdirSync(logDirPath, { recursive: true });
+  const logFd = openSync(logPath, 'a');
+
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(cmd, args, {
+      cwd: opts.workDir,
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+      env: {
+        ...process.env,
+        [ENV.ENSEMBLE]: opts.ensemble,
+        [ENV.PLAYER_NAME]: opts.name,
+        [ENV.CONDUCTOR]: opts.isConductor ? 'true' : '',
+        [ENV.TEMPORAL_ADDRESS]: opts.temporalAddress,
+        // Forward Temporal connection settings so the subprocess can connect.
+        ...(opts.temporalNamespace ? { [ENV.TEMPORAL_NAMESPACE]: opts.temporalNamespace } : {}),
+        ...(opts.temporalApiKey ? { [ENV.TEMPORAL_API_KEY]: opts.temporalApiKey } : {}),
+        ...(opts.temporalTlsCertPath ? { [ENV.TEMPORAL_TLS_CERT_PATH]: opts.temporalTlsCertPath } : {}),
+        ...(opts.temporalTlsKeyPath ? { [ENV.TEMPORAL_TLS_KEY_PATH]: opts.temporalTlsKeyPath } : {}),
+        // Model selection: recruit-arg → CLAUDE_TEMPO_API_MODEL → in-adapter default.
+        ...(opts.model ? { [ENV.API_MODEL]: opts.model } : {}),
+        // Attachment handoff — adapter renews via startV2Lifecycle.
+        ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
+        ...(opts.attachmentRunId ? { [ENV.ATTACHMENT_RUN_ID]: opts.attachmentRunId } : {}),
+        ...(opts.adapterId ? { [ENV.ADAPTER_ID]: opts.adapterId } : {}),
+      },
+    });
+    child.unref();
+  } finally {
+    closeSync(logFd);
+  }
+
+  if (child.pid != null) {
+    writeFileSync(pidPath, String(child.pid));
+  }
+
+  log(`Spawned claude-api adapter (pid ${child.pid}) in ${opts.workDir} as "${opts.name}"${opts.model ? ` (model=${opts.model})` : ''}${opts.attachmentId ? ` (attachmentId=${opts.attachmentId})` : ''}`);
+  return { pid: child.pid, logPath, pidPath };
+}

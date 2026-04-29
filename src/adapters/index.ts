@@ -18,12 +18,18 @@
 import { AdapterRegistry } from './base';
 import { claudeCodeDescriptor } from './claude-code';
 import { copilotDescriptor } from './copilot';
+import { claudeApiDescriptor } from './claude-api';
 import { isDevMode } from '../config';
 
 export const registry = new AdapterRegistry();
 
 registry.register(claudeCodeDescriptor);
 registry.register(copilotDescriptor);
+// #131 Phase C — headless Claude API adapter. Always-registered (the optional
+// `@anthropic-ai/sdk` dependency only matters at adapter spawn time; the
+// descriptor itself has no SDK dependency, so the registry can list and
+// resolve it even on hosts that haven't installed the SDK).
+registry.register(claudeApiDescriptor);
 
 // ADR 0014 §7 gate 2 — import-time registration gate. The mock adapter's
 // descriptor only enters the registry when `isDevMode()` is true.
@@ -64,4 +70,5 @@ export { BaseAttachment, AdapterRegistry } from './base';
 export { SdkAttachment } from './sdk/base';
 export { InteractiveAttachment } from './claude-code';
 export { CopilotSdkAttachment } from './copilot';
+export { DirectApiAttachment } from './claude-api';
 export type { AdapterClass, AdapterDescriptor } from '../types';

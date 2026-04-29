@@ -32,6 +32,12 @@ export const ENV = {
   PLAYER_TYPE: 'CLAUDE_TEMPO_PLAYER_TYPE',
   CLAUDE_BIN: 'CLAUDE_TEMPO_CLAUDE_BIN',
   /**
+   * #131 Phase C — claude-api adapter model override. Recruit-arg takes
+   * precedence; this env var is the next fallback before the constants-pinned
+   * default (`claude-opus-4-7`). Ignored by other adapters.
+   */
+  API_MODEL: 'CLAUDE_TEMPO_API_MODEL',
+  /**
    * v0.25 PR-D attachment resume plumbing. When `restart` / `migrate`
    * enqueues a spawn outbox entry, the workflow passes the pre-claimed
    * `attachmentId` + pinned `runId` + resolved `adapterId` through the spawn

@@ -90,12 +90,13 @@ export async function run(opts: TuiOpts): Promise<void> {
 
     // Render the TUI
     const app = ink.render(
-      // The TUI recruit wizard only offers production agents — `mock` is a
-      // dev-mode CLI-only path (ADR 0014 §7 gate 3). If the user's resolved
-      // default is `mock` (e.g. they set it via env), fall back to `claude`
-      // for the TUI default; the user can still recruit mock players via
-      // `claude-tempo --dev recruit ... --agent mock` from the CLI.
-      React.createElement(InkProvider, { ink, children: React.createElement(App, { api, ensemble: opts.ensemble, defaultAgent: opts.config.defaultAgent === 'mock' ? 'claude' : opts.config.defaultAgent }) }),
+      // The TUI recruit wizard only offers `claude` / `copilot` — `mock` is
+      // a dev-mode CLI-only path (ADR 0014 §7 gate 3) and `claude-api` is a
+      // CLI/MCP-only path (#131 Phase C). If the user's resolved default
+      // is one of those, fall back to `claude` for the TUI default; they
+      // can still recruit those agents via the CLI (e.g. `claude-tempo
+      // recruit ... --agent claude-api`) or the MCP `recruit` tool.
+      React.createElement(InkProvider, { ink, children: React.createElement(App, { api, ensemble: opts.ensemble, defaultAgent: (opts.config.defaultAgent === 'mock' || opts.config.defaultAgent === 'claude-api') ? 'claude' : opts.config.defaultAgent }) }),
     );
 
     await app.waitUntilExit();

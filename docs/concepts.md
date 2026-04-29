@@ -66,11 +66,16 @@ UX clarity when moving sessions across physical hosts.
 ## Adapter and attachment phases
 
 **Adapter** — The runtime binding between a player's Temporal workflow and its agent process.
-Two shipped classes:
+Three shipped adapters:
 - `InteractiveAttachment` (`src/adapters/claude-code/`) — Claude Code CLI adapter. Push-based
   MCP notification delivery, 60s heartbeat lease.
 - `CopilotSdkAttachment` (`src/adapters/copilot/`) — Copilot bridge adapter. Blocking
   `sendAndWait` delivery, 30s heartbeat lease.
+- `DirectApiAttachment` (`src/adapters/claude-api/`) — headless Anthropic Messages API adapter
+  (#131 Phase C). No TTY, no Claude Code CLI; runs in any cloud / CI / scheduled-work
+  environment. Tool surface limited to claude-tempo MCP tools (cue, report, recall, …) — file-edit
+  / shell / web tools deferred to Phase 2. Requires `ANTHROPIC_API_KEY` + the
+  `@anthropic-ai/sdk` optional dependency. Recruit via `recruit({ agent: 'claude-api', model? })`.
 
 Adapters are registered with the `AdapterRegistry` (`src/adapters/index.ts`) and resolved at
 spawn time via `SessionMetadata.adapterId`. The base class (`src/adapters/base.ts`) owns the

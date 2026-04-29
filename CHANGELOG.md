@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Headless Claude API adapter (#131 Phase C)** — New third adapter `claude-api` runs entirely
+  headless via the Anthropic Messages API: no terminal, no Claude Code CLI, suitable for cloud /
+  CI / scheduled-work / advisor-precursor environments. `DirectApiAttachment extends SdkAttachment`
+  inherits the V2 attachment lifecycle (claim, heartbeat, phase watcher, processingStart/End
+  pairing) and adds an in-process MCP server + paired in-memory client so every existing tempo MCP
+  tool (cue, report, recall, ensemble, broadcast, recruit, …) works automatically with no per-tool
+  integration code. Tool surface is MCP-tools-only in v1; file-edit / shell / web tools deferred
+  to Phase 2. Recruit via `recruit({ agent: 'claude-api', model? })`; requires `ANTHROPIC_API_KEY`
+  env var and the new `@anthropic-ai/sdk` optional dependency. Default model is `claude-opus-4-7`
+  (overridable via recruit-arg or `CLAUDE_TEMPO_API_MODEL` env); model selection is durable on
+  `SessionMetadata.model` so restart / encore / migrate recover the original choice across
+  `continueAsNew`. Per-turn cost telemetry via structured stderr log
+  (`[claude-tempo:claude-api] turn-usage …`); wire-protocol signal deferred until a consumer
+  lands. Verification-addendum landmines all wired: thinking-block round-trip, Opus 4.7 parameter
+  discipline, `input_json_delta` deferred parse, mid-stream error try/catch, cache-control
+  breakpoints (last system + last tool, 2/4 used). Design + ADR + research docs landed in #339,
+  #344, #452. Implementation spans `src/adapters/claude-api/` + `src/spawn.ts`
+  (`spawnClaudeApiAdapter`) + the shared `src/server-tools.ts` extraction.
+
 ## [0.28.0-beta.9] - 2026-04-28
 
 ### Added
