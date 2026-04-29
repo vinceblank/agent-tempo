@@ -11,15 +11,24 @@
  * tier and the `tools count` / `usedBy` numerics aren't surfaced —
  * they degrade to placeholder values per Q5 graceful-degrade pattern.
  *
- * Layout: `.types-grid` is `auto-fill / minmax(155px, 175px)` per
- * audit C5.5 / chat2.md fix — cards size to content (no `1fr` squish).
+ * Layout: `.types-grid` is canonical `1fr 1fr` (2-up grid) per audit
+ * T-1 (PR-D of #454). Tablet (≤900px) collapses to `1fr`; phone
+ * (≤520px) inherits the single-column shape. Card row containers
+ * use the canonical `.row` utility (T-2) so F-LEAD-4's phone-wrap
+ * rules (`.types-grid > .panel > .row:first-child` etc.) actually
+ * select the impl JSX. Card heading uses `.display` (T-3) for the
+ * `font-family: var(--ff-display); letter-spacing: -0.01em` shape.
  *
  * Triggered from: Sidebar "Player types" Library nav item (PR-A1).
  *
  * Testability surface:
  *   - `data-testid="screen-player-types"` on the section
  *   - `data-testid="player-type-card-${name}"` on each card
+ *   - `data-testid="player-type-card-${name}-meta-row"` on the meta `.row`
  *   - `data-testid="player-type-card-${name}-source"` on the source label
+ *   - `data-testid="player-type-card-${name}-name"` on the `.display` heading
+ *   - `data-testid="player-type-card-${name}-summary"` on the summary
+ *   - `data-testid="player-type-card-${name}-actions-row"` on the actions `.row`
  *   - `data-testid="player-type-card-${name}-edit"` / `-duplicate` on actions
  *   - `data-testid="player-types-rescan"` / `player-types-new` on header actions
  */
@@ -131,7 +140,11 @@ function PlayerTypeCard({ type }: PlayerTypeCardProps) {
         flexDirection: 'column',
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div
+        className="row"
+        data-testid={`${testRoot}-meta-row`}
+        style={{ justifyContent: 'space-between' }}
+      >
         <TypeBadge type={type.name} />
         <span
           className="mono dim"
@@ -141,7 +154,11 @@ function PlayerTypeCard({ type }: PlayerTypeCardProps) {
           {type.source.toUpperCase()}
         </span>
       </div>
-      <div style={{ fontFamily: 'var(--ff-display)', fontSize: 20, lineHeight: 1.1 }}>
+      <div
+        className="display"
+        data-testid={`${testRoot}-name`}
+        style={{ fontSize: 20 }}
+      >
         <span
           aria-hidden="true"
           style={{
@@ -162,18 +179,14 @@ function PlayerTypeCard({ type }: PlayerTypeCardProps) {
         {type.description ?? '—'}
       </div>
       <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginTop: 'auto',
-          gap: 8,
-        }}
+        className="row"
+        data-testid={`${testRoot}-actions-row`}
+        style={{ justifyContent: 'space-between', marginTop: 'auto' }}
       >
         <span className="mono dim" style={{ fontSize: 11 }}>
           — tools
         </span>
-        <div style={{ display: 'flex', gap: 4 }}>
+        <div className="row">
           <DisabledWithTooltip
             testId={`${testRoot}-edit`}
             action="player-types.edit"
