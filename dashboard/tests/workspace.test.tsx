@@ -88,6 +88,33 @@ describe('Workspace screen', () => {
     expect(ownerRow).toHaveAttribute('data-testid', 'player-row-boss');
   });
 
+  it('renders the conductor first in the roster regardless of name (#462)', async () => {
+    // Tripwire: the conductor is named to sort LAST alphabetically,
+    // and the snapshot delivers it LAST in input order. The render
+    // must put it at index 0 anyway (conductor-first) and preserve
+    // alphabetical secondary order among the non-conductors.
+    const mock = new MockDashboardClient({
+      snapshot: makeSnapshot({
+        ensemble: 'demo',
+        hasConductor: true,
+        players: [
+          makePlayer({ playerId: 'bob' }),
+          makePlayer({ playerId: 'alice' }),
+          makePlayer({ playerId: 'z-conductor', isConductor: true, playerType: 'tempo-conductor' }),
+        ],
+      }),
+    });
+    renderWorkspace(mock);
+
+    const roster = await screen.findByTestId('roster');
+    const rows = Array.from(roster.querySelectorAll<HTMLElement>('[data-testid^="player-row-"]'));
+    expect(rows.map((r) => r.getAttribute('data-testid'))).toEqual([
+      'player-row-z-conductor',
+      'player-row-alice',
+      'player-row-bob',
+    ]);
+  });
+
   it('emits workspace.opened logEvent on mount', async () => {
     const mock = new MockDashboardClient({
       snapshot: makeSnapshot({ ensemble: 'demo', players: [makePlayer()] }),

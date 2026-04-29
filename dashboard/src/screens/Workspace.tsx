@@ -73,6 +73,7 @@ import {
   usePlayMutation,
   useReleaseMutation,
 } from '../lib/mutations';
+import { sortConductorFirst } from '../lib/player-sort';
 import { ChatLog } from '../components/chat/ChatLog';
 import { Composer } from '../components/chat/Composer';
 import { ChatStub } from '../components/chat/ChatStub';
@@ -123,8 +124,12 @@ export function Workspace() {
     if (ensemble) logEvent('workspace.opened', { ensemble });
   }, [ensemble]);
 
+  // #462 — sort once at the snapshot boundary so every downstream render
+  // (roster, event-log slice, conductor lookup) sees the same conductor-first
+  // ordering. Critical for the event-log `.slice(0, 6)` below — without this
+  // the conductor can fall off the preview entirely on a 7+ player ensemble.
   const players = useMemo(
-    () => snapshot.data?.players ?? [],
+    () => sortConductorFirst(snapshot.data?.players ?? []),
     [snapshot.data?.players],
   );
   const conductorPlayer = useMemo(
