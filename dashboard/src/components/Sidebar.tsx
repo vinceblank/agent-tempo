@@ -32,7 +32,7 @@
  */
 import { Link, NavLink, useLocation, useParams } from 'react-router-dom';
 import { Brandmark } from './Brandmark';
-import { MaestroMark } from './MaestroMark';
+import { MaestroAvatar } from './MaestroAvatar';
 import { useEnsembleList } from '../lib/queries';
 
 interface NavItem {
@@ -171,7 +171,16 @@ export function Sidebar() {
       </div>
 
       <div className="sidebar-maestro" title="You — the maestro">
-        <MaestroMark size={18} />
+        {/*
+         * #473: tile-framed maestro identity. MaestroAvatar composes the
+         * MaestroMark italic-M primitive inside a 32×32 neutral tile so
+         * the sidebar identity row reads as an intentional avatar
+         * (matching PlayerAvatar's visual weight in the workspace
+         * roster) rather than a wordmark fragment. The neutral chrome —
+         * `color-mix` over `--bone` — preserves the C2 maestro-vs-player
+         * distinction without demoting to a hue-rotated player treatment.
+         */}
+        <MaestroAvatar size={32} />
         <span
           style={{
             display: 'flex',
