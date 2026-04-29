@@ -36,12 +36,14 @@
  * Source: `screens.jsx:32-62` (Overview's EnsembleCard render) +
  * components.css `.ensemble-card` / `.ec-*`.
  */
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useEnsembleSnapshot } from '../lib/queries';
 import { useSseSubscription } from '../lib/sse';
 import type { EnsembleSummary } from '../lib/client';
 import { logEvent } from '../lib/log';
 import { formatUptimeFromIso } from '../lib/time-format';
+import { sortConductorFirst } from '../lib/player-sort';
 import { PlayerAvatar } from './tempo/PlayerAvatar';
 
 interface EnsembleCardProps {
@@ -59,7 +61,13 @@ export function EnsembleCard({ ensemble }: EnsembleCardProps) {
   useSseSubscription(ensemble.name);
 
   const data = snapshot.data;
-  const players = data?.players ?? [];
+  // #462 — sort conductor-first BEFORE the `.slice(0, 5)` preview below
+  // (line ~191) so the conductor never falls off the card on a 6+ player
+  // ensemble. Stable secondary alphabetical by playerId.
+  const players = useMemo(
+    () => sortConductorFirst(data?.players ?? []),
+    [data?.players],
+  );
   const playerCount = players.length || ensemble.playerCount;
   const hasConductor = data?.hasConductor ?? ensemble.hasConductor;
   const state = data?.state ?? ensemble.state ?? 'online';

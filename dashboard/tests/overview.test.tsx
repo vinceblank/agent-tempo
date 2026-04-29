@@ -130,6 +130,48 @@ describe('Overview screen', () => {
     });
   });
 
+  it('EnsembleCard preview puts the conductor first AND keeps it in a 7-player slice (#462)', async () => {
+    // The latent dropout case the conductor-first sort exists to prevent:
+    // EnsembleCard previews the first 5 players via `players.slice(0, 5)`.
+    // A 7-player ensemble whose conductor sorts late alphabetically would
+    // push the conductor past the slice and silently drop it from the
+    // card. With the sort, the conductor lands at index 0 regardless.
+    const mock = new MockDashboardClient({
+      ensembles: [{ name: 'big', playerCount: 7, hasConductor: true, state: 'online' }],
+      snapshot: makeSnapshot({
+        ensemble: 'big',
+        hasConductor: true,
+        players: [
+          { playerId: 'alpha', ensemble: 'big', hostname: 'h', isConductor: false, agentType: 'claude', phase: 'attached', part: '', workDir: '/r' },
+          { playerId: 'bravo', ensemble: 'big', hostname: 'h', isConductor: false, agentType: 'claude', phase: 'attached', part: '', workDir: '/r' },
+          { playerId: 'charlie', ensemble: 'big', hostname: 'h', isConductor: false, agentType: 'claude', phase: 'attached', part: '', workDir: '/r' },
+          { playerId: 'delta', ensemble: 'big', hostname: 'h', isConductor: false, agentType: 'claude', phase: 'attached', part: '', workDir: '/r' },
+          { playerId: 'echo', ensemble: 'big', hostname: 'h', isConductor: false, agentType: 'claude', phase: 'attached', part: '', workDir: '/r' },
+          { playerId: 'foxtrot', ensemble: 'big', hostname: 'h', isConductor: false, agentType: 'claude', phase: 'attached', part: '', workDir: '/r' },
+          { playerId: 'zulu-conductor', ensemble: 'big', hostname: 'h', isConductor: true, agentType: 'claude', phase: 'attached', part: '', workDir: '/r' },
+        ],
+      }),
+    });
+    renderOverview({ client: mock });
+
+    // The card mounts immediately; the player avatars only appear after
+    // the card's own snapshot fetch resolves. Use `findBy` for the first
+    // avatar (the conductor) which acts as a paint-after-snapshot fence.
+    await screen.findByTestId('player-avatar-zulu-conductor');
+    const card = screen.getByTestId('ensemble-card-big');
+    const avatars = Array.from(card.querySelectorAll<HTMLElement>('[data-testid^="player-avatar-"]'));
+    // Card previews 5; assert the conductor is in there AND it's first.
+    expect(avatars).toHaveLength(5);
+    expect(avatars[0].getAttribute('data-testid')).toBe('player-avatar-zulu-conductor');
+    // The remaining 4 slots are the alphabetically earliest non-conductors.
+    expect(avatars.slice(1).map((a) => a.getAttribute('data-testid'))).toEqual([
+      'player-avatar-alpha',
+      'player-avatar-bravo',
+      'player-avatar-charlie',
+      'player-avatar-delta',
+    ]);
+  });
+
   it('shows role=alert error when ensemble list query fails', async () => {
     const mock = new MockDashboardClient({
       ensemblesError: new Error('boom'),
