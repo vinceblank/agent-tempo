@@ -109,6 +109,16 @@ export function Sidebar() {
               style={{ textDecoration: 'none' }}
             >
               <span className="er-dot" />
+              {/*
+               * F-LEAD-3 (PR-B of #454): the `.er-initial` 32×32 letter-tile
+               * is `display: none` at desktop+laptop; the tablet `@container
+               * artboard (max-width: 900px)` rule promotes it to the
+               * collapsed-sidebar avatar. CSS-only swap — no rendering cost
+               * at the wider breakpoints.
+               */}
+              <span className="er-initial" aria-hidden="true">
+                {e.name.charAt(0).toUpperCase()}
+              </span>
               <span className="col" style={{ gap: 0 }}>
                 <span className="er-name">{e.name}</span>
                 <span className="er-meta mono">
