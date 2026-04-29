@@ -43,6 +43,10 @@
       "types": "./dist/connection.d.ts",
       "default": "./dist/connection.js"
     },
+    "./palette": {
+      "types": "./dist/palette/index.d.ts",
+      "default": "./dist/palette/index.js"
+    },
     "./workflow-bundle": "./workflow-bundle.js",
     "./package.json": "./package.json"
   },
@@ -127,6 +131,9 @@
       ],
       "connection": [
         "dist/connection.d.ts"
+      ],
+      "palette": [
+        "dist/palette/index.d.ts"
       ]
     }
   },
