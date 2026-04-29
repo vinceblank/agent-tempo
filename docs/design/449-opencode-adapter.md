@@ -90,11 +90,11 @@ The OpenCode adapter is unambiguously **`sdk`** — `POST /session/:id/prompt_as
 - **Dual abort path** — graceful `POST /session/:id/abort` first, subprocess SIGTERM/SIGKILL only if HTTP abort hangs.
 - **Version-drift gate** — `/global/health` probe at boot; warn-only on minor drift from tested-pinned `~1.14.29`.
 
-**What `OpenCodeAttachment` overrides**:
+**What `OpenCodeAttachment` adds beyond `SdkAttachment`** — true overrides plus the `invokeSdk` callback-method pattern:
 
-- `invokeSdk(prompt, timeoutMs)` — wraps `POST /session/:id/prompt_async` + SSE consumption + finish-reason wait + assembled-text return.
-- `onSuperseded()` — `POST /session/:id/abort` first; subprocess SIGTERM as fallback after timeout.
-- `descriptor` — `{ adapterId: 'opencode', adapterClass: 'sdk', blocksOnLLMTurn: true, heartbeatMs: 30_000 }`.
+- `invokeSdk(prompt, timeoutMs)` — **subclass-defined class method, NOT a base-class override.** `SdkAttachment.deliver()` accepts `invokeSdk` as a callback parameter (`src/adapters/sdk/base.ts:111-116`); `pollLoop` calls `this.deliver(..., this.invokeSdk.bind(this), ...)` (mirrors `DirectApiAttachment` at `src/adapters/claude-api/adapter.ts:385`). The concrete adapter implements `invokeSdk` as a `protected` method on the class so `.bind(this)` resolves cleanly. Wraps `POST /session/:id/prompt_async` + SSE consumption + finish-reason wait + assembled-text return.
+- `onSuperseded()` — **true abstract override** (`SdkAttachment` declares `protected abstract onSuperseded(): void`). `POST /session/:id/abort` first; subprocess SIGTERM as fallback after timeout.
+- `descriptor` — true override of the abstract field. `{ adapterId: 'opencode', adapterClass: 'sdk', blocksOnLLMTurn: true, heartbeatMs: 30_000 }`.
 - `shouldReconnect()` — **NOT** opted in (matches claude-api, copilot). Lease loss exits the process; daemon's `reconcile-on-boot` path or operator `restart` recovers. Worth revisiting in Phase 2 since OpenCode's server-side persistence makes reconnect more attractive than for claude-api.
 
 ---
@@ -499,7 +499,7 @@ Two-line file at `logs/{playerId}.pid`. Operators can grep / kill either or both
 | `processingStartUpdate` / `processingEndUpdate` | Inherited from `SdkAttachment.deliver()` |
 | `markDeliveredSignal` | Inherited from `SdkAttachment.deliver()` |
 | `attachmentInfoQuery` | Inherited from `BaseAttachment` phase watcher |
-| `updateMetadataSignal` | Used to stash OpenCode session id (matches Copilot's `sessionId` pattern) |
+| `updateMetadataSignal` | OpenCode `Session.id` stashed via the **existing `sessionId` field** on the signal payload — same field Copilot already uses for its session id. OpenCode joins as the second consumer; **no new field on the signal**. The skeleton at §8.1 emits `signal(updateMetadataSignal, { sessionId: session.id })`. |
 | `requestDetachSignal` / `adapterExitedSignal` | Inherited from `SdkAttachment.detachGracefully` |
 
 **Not used by this adapter** (different from claude-api):
@@ -511,6 +511,15 @@ Two-line file at `logs/{playerId}.pid`. Operators can grep / kill either or both
 The only wire-protocol-doc touchpoint is the `agentType: 'opencode'` extension. `docs/WIRE-PROTOCOL.md` doesn't enumerate AgentType values today — no doc change required there.
 
 `SessionMetadata.agentType` accepts the new value via the AgentType type extension (§3.2). Old workflow runs that pre-date this PR have `agentType` as `'claude' | 'copilot' | 'mock' | 'claude-api'` only; the new value appears only on freshly-recruited opencode players. Strictly additive.
+
+### 7.1 Phase C implementation steps that touch shared surface
+
+Two small, additive changes the Phase C engineer must land **in the implementation PR** (not retroactively in this design PR):
+
+1. **`docs/WIRE-PROTOCOL.md`** — extend the `sessionId` field description on `updateMetadata` to note that OpenCode joins Copilot as a consumer (the field stores the OpenCode `Session.id` returned by `POST /session`). Same field, second use; no schema change. This keeps the wire-protocol doc honest about which adapters write the field — surfaces the reuse to anyone auditing the surface later.
+2. **`src/config.ts`** — add `OPENCODE_MODEL: 'CLAUDE_TEMPO_OPENCODE_MODEL'` to the `ENV` constant (declared next to the existing `API_MODEL: 'CLAUDE_TEMPO_API_MODEL'`). The skeleton at §8.1 references `process.env[ENV.OPENCODE_MODEL]` in the constructor; the constant must be declared before the adapter compiles. The env var is also referenced in §3.4's spawn-env table — both call-sites resolve to the same constant once added.
+
+Neither is a wire-protocol break; both are bookkeeping that lives alongside the adapter code.
 
 ---
 
@@ -754,12 +763,14 @@ export class OpenCodeAttachment extends SdkAttachment {
   protected async invokeSdk(_prompt: string, _timeoutMs: number): Promise<SdkDeliverResult> {
     if (!this.bridge) throw new Error('OpenCodeAttachment invokeSdk called before run() finished initialization');
 
-    // 1. Ensure OpenCode session exists. First turn: POST /session, stash id via updateMetadataSignal.
+    // 1. Ensure OpenCode session exists. First turn: POST /session, stash the OpenCode
+    //    Session.id on workflow metadata via updateMetadataSignal's existing `sessionId`
+    //    field (reused — same field copilot uses; see §7 wire-protocol note).
     //    Subsequent turns: re-use stashed id. Restart path: see §5.2 (Q6 verify-at-impl).
     if (!this.openCodeSessionId) {
       const session = await this.bridge.createSession();
       this.openCodeSessionId = session.id;
-      await this.pinnedHandle!.signal(updateMetadataSignal, { openCodeSessionId: session.id });
+      await this.pinnedHandle!.signal(updateMetadataSignal, { sessionId: session.id });
       log(`Created OpenCode session ${session.id}`);
     }
 
