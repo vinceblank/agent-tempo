@@ -21,13 +21,51 @@
  * Design reference: `docs/design/131-claude-api-adapter.md` §4 (in-process
  * MCP).
  */
+import * as fs from 'fs';
+import { dirname, join } from 'path';
 import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { registerAllTempoTools, type RegisterAllTempoToolsOpts } from '../../server-tools';
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { version: PKG_VERSION } = require('../../../package.json');
+
+/**
+ * Resolve claude-tempo's `version` from its own `package.json`. Walks up
+ * from `__dirname` searching for a `package.json` whose `name` matches —
+ * robust across all build contexts:
+ *   - `src/adapters/claude-api/mcp-bridge.ts` (ts-node dev)
+ *   - `dist/adapters/claude-api/mcp-bridge.js` (production)
+ *   - `dist-test/src/adapters/claude-api/mcp-bridge.js` (mocha integration build)
+ *
+ * The naive `require('../../../package.json')` worked for the first two
+ * but hit ENOENT in the third because `dist-test/` adds an extra `src/`
+ * layer that shifts the relative anchor (caught by CI on PR #455).
+ *
+ * Cached after first resolve so repeated `bootMcpBridge` calls don't re-walk.
+ * Falls back to `'0.0.0-unknown'` if the walk fails — only used as a
+ * diagnostic-grade `version` field on the MCP server/client identity, not
+ * for any version-gating behaviour.
+ */
+let cachedPackageVersion: string | null = null;
+function packageVersion(): string {
+  if (cachedPackageVersion !== null) return cachedPackageVersion;
+  let resolved = '0.0.0-unknown';
+  let dir = __dirname;
+  for (let i = 0; i < 8; i++) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(join(dir, 'package.json'), 'utf8'));
+      if (pkg && pkg.name === 'claude-tempo' && typeof pkg.version === 'string') {
+        resolved = pkg.version;
+        break;
+      }
+    } catch { /* not here, walk up */ }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  cachedPackageVersion = resolved;
+  return resolved;
+}
 
 /**
  * Anthropic Messages API tool shape — the JSON contract `messages.create`
@@ -80,7 +118,7 @@ export interface McpBridge {
 export async function bootMcpBridge(opts: RegisterAllTempoToolsOpts): Promise<McpBridge> {
   const server = new McpServer({
     name: 'claude-tempo',
-    version: PKG_VERSION,
+    version: packageVersion(),
   });
 
   registerAllTempoTools(server, opts);
@@ -90,7 +128,7 @@ export async function bootMcpBridge(opts: RegisterAllTempoToolsOpts): Promise<Mc
 
   const client = new McpClient({
     name: 'claude-api-adapter',
-    version: PKG_VERSION,
+    version: packageVersion(),
   });
   await client.connect(clientTransport);
 
