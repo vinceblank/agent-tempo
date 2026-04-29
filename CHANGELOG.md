@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.10] - 2026-04-29
+
 ### Added
 
 - **Headless Claude API adapter (#131 Phase C)** — New third adapter `claude-api` runs entirely
@@ -26,7 +28,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   discipline, `input_json_delta` deferred parse, mid-stream error try/catch, cache-control
   breakpoints (last system + last tool, 2/4 used). Design + ADR + research docs landed in #339,
   #344, #452. Implementation spans `src/adapters/claude-api/` + `src/spawn.ts`
-  (`spawnClaudeApiAdapter`) + the shared `src/server-tools.ts` extraction.
+  (`spawnClaudeApiAdapter`) + the shared `src/server-tools.ts` extraction. (#455)
+- **PlayerDetail Radix Dialog** — player-detail overlay now uses a proper Radix `Dialog`
+  primitive (focus trap, `aria-modal`, `Escape` to close), replacing the ad-hoc overlay.
+  Fixes F-A-1 and F-LEAD-2 from the pixel-alignment audit. (#465)
+- **Conductor-first sort** — player lists in all dashboard views now place the conductor at
+  the top regardless of join order; latent dropout players (detached/gone) sort to the bottom.
+  Closes #462. (#467)
+- **Drift CI guard for `components.css`** — new CI step hard-fails if
+  `dashboard/src/components.css` diverges from the canonical port snapshot, preventing silent
+  token drift between releases. (#460)
+
+### Fixed
+
+- **Chat-row classifier** — maestro-relative rule now correctly identifies the local player's
+  rows when the chat log contains sessions from multiple ensembles. Closes #446. (#448)
+- **Settings panel `taskQueue`** — `/v1/health` now surfaces `taskQueue` so the Settings panel
+  shows the correct queue name in both production and dev mode. Closes #444. (#451)
+- **Generic part default** — players recruited without an explicit `part` now receive a
+  player-type-aware default ("Conductor session", "Session in …") instead of a blank string.
+  Closes #450. (#453)
+- **Dashboard JSX micro-fixes** — corrected class-application in 4 components where `className`
+  was being set incorrectly, fixing visual regressions from the PR-D migration. (#466)
+
+### Changed
+
+- **Phone `.table` collapse parity** — dashboard phone breakpoint now fully collapses `.table`
+  wrappers to match the pixel-alignment audit target (PR-A of #454). (#456)
+- **PlayerTypes column rule** — canonical `.row`/`.display` migration applied to the PlayerTypes
+  column; stale class names removed. (#463)
+- **Settings test pinning** — ST-1, ST-3, ST-4 design-canvas verdicts pinned; Settings panel
+  tests no longer fail on render variance. (#464)
+- **Dashboard token hygiene** — hex colour values normalised to lowercase; redundant `rgba`
+  whitespace removed from shadow tokens (PR-F of #454). (#457)
+
+### Docs
+
+- `docs/release-process.md` — lockstep call-out: both `package.json` and
+  `dashboard/package.json` must be bumped in the same commit; CI hard-fails if they
+  diverge. (#447)
+- `docs/design/` — pixel-alignment audit for beta.9 baseline (37 findings across 7 PR
+  clusters). (#454)
+- Settings panel ST-2 live-controls direction ratified in design doc. (#458)
+- `docs/research/` — #131 Phase C verification addendum (thinking-block + Opus 4.7
+  discipline confirmed). (#452)
+- `docs/research/` — #449 OpenCode adapter Phase A spike: architecture mapping, gap
+  analysis, integration patterns for future Phase B/C. (#468)
 
 ## [0.28.0-beta.9] - 2026-04-28
 
