@@ -24,6 +24,23 @@
  *
  * Source: docs/design/dashboard-handoff/project/screens.jsx Settings
  * (lines 536-645) + audit §6 PR-G (lines 1052-1071).
+ *
+ * Pixel-audit v0.28.9 — PR-G design-canvas decisions (ST-1/2/3/4):
+ *   - ST-1: Connection panel KEEPS the impl-added `version` row
+ *     (wired to `/v1/health` per #436/#444) — useful for support/debug.
+ *   - ST-2: Appearance panel KEEPS impl's live editing controls; the
+ *     canonical static-KV mock is scaffolding. Ratified in PR-G-docs
+ *     (#458) — see the comment block in screens.jsx:Settings().
+ *   - ST-3: Appearance panel does NOT render the canonical mock's
+ *     `metronome = on` row — `metronome` isn't a real Settings semantic
+ *     in claude-tempo; the canvas mock is design-time scaffolding.
+ *   - ST-4: Profile + Notifications panels intentionally show `—`
+ *     placeholders — the underlying account-mgmt / notif-prefs surfaces
+ *     are wire-pending; blank placeholders are honest until they ship.
+ *
+ * The corresponding pin tests live in
+ * `dashboard/tests/settings-page.test.tsx` so the next pixel audit
+ * doesn't re-flag these intentional divergences as drift.
  */
 import { useCallback, useState } from 'react';
 import { useHealth } from '../lib/queries';

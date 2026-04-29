@@ -174,4 +174,74 @@ describe('Settings page', () => {
       expect(await screen.findByTestId('settings-page')).toBeInTheDocument();
     });
   });
+
+  // ── PR-G design-canvas decisions (ST-1/3/4) ────────────────────────
+  //
+  // Pixel-audit v0.28.9 PR-G ratified three intentional impl-vs-canvas
+  // divergences in Settings. ST-2 (live controls) is already covered by
+  // the Appearance describe-block above. These pins keep the next audit
+  // from re-flagging:
+  //
+  //   ST-1 — KEEP impl's `version` KV row (canonical lacks it).
+  //   ST-3 — DON'T ADD canonical's `metronome = on` mock row.
+  //   ST-4 — Profile/Notifications panels show `—` placeholder shape.
+  //
+  // Canonical reconciliation: #458. See Settings.tsx file-header for
+  // the verdict trail.
+  describe('PR-G design-canvas decisions', () => {
+    /** Find the `<div class="kv">` row whose `kv-k` label matches `label`,
+     *  scoped to `panel`. Lets ST-4 pin per-row label↔value pairing
+     *  instead of just counting placeholder dashes (which would survive
+     *  a row reorder that put `—` on the wrong field). */
+    function kvRow(panel: HTMLElement, label: string) {
+      const row = within(panel).getByText(label).closest('.kv');
+      if (!row) throw new Error(`kv row "${label}" not found in panel`);
+      return within(row as HTMLElement);
+    }
+
+    it('ST-1: Connection panel renders the version row from /v1/health', async () => {
+      // MockDashboardClient advertises version='0.0.0-test'. Asserting
+      // both label + value pins the row stays paired — a regression
+      // that drops the label but keeps the value (or vice versa)
+      // would still slip past a value-only assertion.
+      renderStandalone();
+      const panel = screen.getByTestId('settings-panel-connection');
+      await within(panel).findByText('0.0.0-test');
+      expect(within(panel).getByText('version')).toBeInTheDocument();
+    });
+
+    it('ST-3: Appearance panel does not render a metronome row', () => {
+      // Canonical mock has `<KV k="metronome" v="on" />`; impl skips
+      // it. Panel-scoped so an unrelated string elsewhere on the page
+      // (none today) wouldn't silently mask a regression.
+      renderStandalone();
+      const panel = screen.getByTestId('settings-panel-appearance');
+      expect(within(panel).queryByText(/metronome/i)).toBeNull();
+    });
+
+    it('ST-4 (Profile): four KV rows, three `—` placeholders + the default lineup', () => {
+      // Profile is wire-pending. Three rows show `—`; only
+      // `default lineup` carries a real default. Per-row pairing
+      // prevents a future "hard-code a name" regression that
+      // technically keeps the dash count at 3.
+      renderStandalone();
+      const panel = screen.getByTestId('settings-panel-profile');
+      expect(kvRow(panel, 'display name').getByText('—')).toBeInTheDocument();
+      expect(kvRow(panel, 'email').getByText('—')).toBeInTheDocument();
+      expect(kvRow(panel, 'default host').getByText('—')).toBeInTheDocument();
+      expect(kvRow(panel, 'default lineup').getByText('tempo-dev-team')).toBeInTheDocument();
+    });
+
+    it('ST-4 (Notifications): four canonical KV rows render', () => {
+      // Notifications is also wire-pending. Canvas mock and impl
+      // agree on the row shape (4 KVs); pin it so a future
+      // feature collapse doesn't silently drop one.
+      renderStandalone();
+      const panel = screen.getByTestId('settings-panel-notifications');
+      expect(within(panel).getByText('player detached')).toBeInTheDocument();
+      expect(within(panel).getByText('conductor handoff')).toBeInTheDocument();
+      expect(within(panel).getByText('schedule fired')).toBeInTheDocument();
+      expect(within(panel).getByText('recruit failed')).toBeInTheDocument();
+    });
+  });
 });
