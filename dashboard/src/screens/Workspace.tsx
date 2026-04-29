@@ -514,8 +514,14 @@ export function Workspace() {
                   <span className="h">Event log</span>
                   <span className="subj display">System audit trail</span>
                 </div>
+                {/* Canonical Event-log meta line — `ring · max 200 ·
+                  * messages elided` (workspace.jsx:414). The "messages
+                  * elided" suffix signals to the user that chat-style
+                  * messages are filtered out of this audit trail (the
+                  * canonical mock filters by `e.kind !== "message"`).
+                  * PR-E F-A-7. */}
                 <span className="mono dim" style={{ fontSize: 10 }}>
-                  ring · max 200
+                  ring · max 200 · messages elided
                 </span>
               </div>
               <div className="panel-body flush event-log" data-testid="workspace-event-log">
@@ -554,6 +560,21 @@ export function Workspace() {
                       : `${schedules.length} active`}
                   </span>
                 </div>
+                {/* Canonical workspace.jsx:433 has a `+ New` button in
+                  * the Schedules panel-head right slot. The full schedule
+                  * authoring flow lives on the Schedules screen, so this
+                  * is a navigation Link mirroring the Roster panel-head's
+                  * "+ Recruit" pattern. PR-E F-A-7. */}
+                <Link
+                  to="/schedules"
+                  data-testid="workspace-schedules-new"
+                  className="btn btn-ghost btn-sm"
+                  style={{ textDecoration: 'none' }}
+                  title="Open the Schedules screen to add one"
+                >
+                  <span className="btn-icon">+</span>
+                  <span>New</span>
+                </Link>
               </div>
               <div className="panel-body" style={{ paddingTop: 6 }}>
                 {schedules.length === 0 ? (
