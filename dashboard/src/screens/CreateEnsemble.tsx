@@ -163,6 +163,11 @@ export function CreateEnsemble() {
         value: BLANK_LINEUP_SENTINEL,
         name: 'Blank ensemble (recruit manually)',
         desc: 'Start with no players — use Recruit later from the Workspace.',
+        // Accent flag → terracotta text + `+` marker glyph. Mirrors the
+        // canonical CreateEnsemble blank row (screens.jsx:288-292:
+        // `<div className="picker-row" style={{color:"var(--accent)"}}>
+        // <span className="marker">+</span>…`). PR-E F-A-5.
+        accent: true,
       },
     ],
     [lineups],

@@ -18,6 +18,14 @@ export interface PickerOption<T extends string = string> {
   desc?: ReactNode;
   /** Right-side decoration (TypeBadge, status pill, …). */
   right?: ReactNode;
+  /**
+   * Accent treatment — terracotta-tinted text + a `+` glyph in the marker.
+   * Used for special "create new" rows like CreateEnsemble's blank-ensemble
+   * option (canonical screens.jsx:288-292:
+   * `<div className="picker-row" style={{color:"var(--accent)"}}><span
+   * className="marker">+</span>…`). PR-E F-A-5.
+   */
+  accent?: boolean;
 }
 
 interface PickerListProps<T extends string = string> {
@@ -76,7 +84,9 @@ export function PickerList<T extends string>({
                     background: 'var(--accent-soft)',
                     color: 'var(--text)',
                   }
-                : null),
+                : opt.accent
+                  ? { color: 'var(--accent)' }
+                  : null),
             }}
           >
             <span
@@ -88,7 +98,7 @@ export function PickerList<T extends string>({
                 fontSize: 11,
               }}
             >
-              {active ? '▸' : ''}
+              {opt.accent ? '+' : active ? '▸' : ''}
             </span>
             <span style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
               <span className="name" style={{ fontWeight: 500 }}>
