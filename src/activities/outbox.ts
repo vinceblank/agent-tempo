@@ -12,7 +12,7 @@ import {
 } from '../utils/validation';
 import { ENSEMBLE_SENTINEL_FLAG } from '../constants';
 import { getGitInfo } from '../git-info';
-import { spawnInTerminal, spawnCopilotBridge, spawnClaudeApiAdapter } from '../spawn';
+import { spawnInTerminal, spawnCopilotBridge, spawnClaudeApiAdapter, spawnOpenCodeAdapter } from '../spawn';
 import { ENV } from '../config';
 import { resolveSession } from './resolve';
 import { resolveAgentType } from '../ensemble/agent-types';
@@ -244,11 +244,14 @@ export interface SpawnProcessInput {
   mockMode?: MockMode;
   mockScenario?: string;
   /**
-   * #131 Phase C — claude-api adapter model id (e.g. `claude-opus-4-7`).
-   * Forwarded into the spawned subprocess as `CLAUDE_TEMPO_API_MODEL`. Only
-   * meaningful when `agent === 'claude-api'`; ignored otherwise. Falls back
-   * inside the adapter to `CLAUDE_TEMPO_API_MODEL` env (set by spawner) →
-   * constants-pinned default (`claude-opus-4-7`).
+   * #131 / #449 Phase C — model id for the headless adapters.
+   *   - `claude-api`: bare Anthropic id (e.g. `claude-opus-4-7`); forwarded
+   *     as `CLAUDE_TEMPO_API_MODEL`.
+   *   - `opencode`: combined provider/model (e.g. `anthropic/claude-opus-4-7`,
+   *     `openai/gpt-4o`); forwarded as `CLAUDE_TEMPO_OPENCODE_MODEL`.
+   * The spawn dispatcher inspects `agent` to pick the right env var. Only
+   * meaningful for those two adapters; ignored otherwise. Falls back inside
+   * the adapter to its respective env var → constants-pinned default.
    */
   model?: string;
 }
@@ -398,9 +401,12 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             // from the registry without falling back to the legacy agentType field.
             adapterId: registry.resolveFromAgentType(agent),
             sessionId,
-            // #131 Phase C — persist the claude-api model on durable metadata
-            // so restart can recover the original choice across CAN.
-            ...(agent === 'claude-api' && model ? { model } : {}),
+            // #131 / #449 Phase C — persist the claude-api / opencode model
+            // on durable metadata so restart can recover the original choice
+            // across CAN. Both adapters use the same `model` metadata field
+            // (different value shapes — bare vs `provider/model`) — the spawn
+            // path inspects `metadata.agentType` to know which env var to set.
+            ...((agent === 'claude-api' || agent === 'opencode') && model ? { model } : {}),
             ...(agentDefinition ? { playerType: agentDefinition } : {}),
             ...(agentDefinitionDescription ? { playerTypeDescription: agentDefinitionDescription } : {}),
             recruitedBy: fromPlayerId,
@@ -530,6 +536,33 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             adapterId,
           });
           log(`Spawned claude-api adapter (pid ${pid}) in ${workDir} as "${targetName}"${model ? ` (model=${model})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
+        } else if (agent === 'opencode') {
+          // #449 Phase C — headless multi-provider adapter via OpenCode.
+          // No terminal, no Claude binary. The adapter manages its own
+          // `opencode serve` subprocess (probed-free port, hardcoded
+          // loopback bind); tools dispatch via OpenCode's MCP-native config
+          // block (it spawns dist/server.js as its own MCP child). Per-tool
+          // allowlists don't apply — opencode players have full file/shell/
+          // web access via OpenCode's built-in tool registry.
+          if (allowedTools && allowedTools.length > 0) {
+            log(`Warning: allowedTools [${allowedTools.join(', ')}] specified for opencode agent "${targetName}" — opencode adapter does not gate tools per recruit, skipping`);
+          }
+          const { pid } = spawnOpenCodeAdapter({
+            name: targetName,
+            ensemble,
+            temporalAddress,
+            temporalNamespace,
+            temporalApiKey,
+            temporalTlsCertPath,
+            temporalTlsKeyPath,
+            isConductor,
+            workDir,
+            model,
+            attachmentId,
+            attachmentRunId,
+            adapterId,
+          });
+          log(`Spawned opencode adapter (pid ${pid}) in ${workDir} as "${targetName}"${model ? ` (model=${model})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else {
           // Resolve agent flags: --agent (native) > --system-prompt (shipped/legacy)
           let agentFlags: string[] = [];
@@ -770,18 +803,20 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         // Prod restart never lands here for `mock` because gate 3 in
         // src/tools/recruit.ts rejected the original recruit.
         const rawAgent = metadata.agentType as string | undefined;
-        // #131 Phase C — claude-api joins copilot/mock as a recognized
-        // sdk-class agent here so restart/encore/migrate of a claude-api
-        // player resolves to the right adapterId + class. Without this
-        // branch, restart falls through to 'claude' → 'interactive' and
-        // the spawn path picks the terminal Claude Code path.
+        // #131 / #449 Phase C — claude-api / opencode join copilot / mock
+        // as recognized sdk-class agents here so restart/encore/migrate of
+        // a headless player resolves to the right adapterId + class. Without
+        // this branch, restart falls through to 'claude' → 'interactive'
+        // and the spawn path picks the terminal Claude Code path.
         const agentType: AgentType = rawAgent === 'copilot'
           ? 'copilot'
           : rawAgent === 'mock'
             ? 'mock'
             : rawAgent === 'claude-api'
               ? 'claude-api'
-              : 'claude';
+              : rawAgent === 'opencode'
+                ? 'opencode'
+                : 'claude';
         const adapterId = metadata.adapterId
           || (agentType === 'copilot'
             ? 'copilot'
@@ -789,7 +824,9 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
               ? 'mock'
               : agentType === 'claude-api'
                 ? 'claude-api'
-                : 'claude-code');
+                : agentType === 'opencode'
+                  ? 'opencode'
+                  : 'claude-code');
         const adapterClass: AdapterClass = agentType === 'claude' ? 'interactive' : 'sdk';
         const targetHost = host ?? info.preferredHost ?? metadata.hostname;
 

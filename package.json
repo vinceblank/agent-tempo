@@ -78,7 +78,8 @@
   },
   "optionalDependencies": {
     "@github/copilot-sdk": "^0.2.0",
-    "@anthropic-ai/sdk": "~0.91.1"
+    "@anthropic-ai/sdk": "~0.91.1",
+    "@opencode-ai/sdk": "~1.14.29"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "~1.28.0",

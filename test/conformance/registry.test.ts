@@ -160,13 +160,24 @@ describe('shipped descriptors (registry singleton)', function () {
     expect(desc.heartbeatMs).to.equal(30_000);
   });
 
-  it('registry.all() contains exactly the three shipped descriptors', function () {
-    // Will break deliberately when a fourth production adapter ships — forces
+  it('opencode is registered and matches the §4.3 sdk shape (#449 Phase C)', function () {
+    expect(registry.has('opencode')).to.equal(true);
+    const desc = registry.get('opencode');
+    expect(desc.adapterId).to.equal('opencode');
+    expect(desc.adapterClass).to.equal('sdk');
+    expect(desc.blocksOnLLMTurn).to.equal(true);
+    // SDK class — 30s cadence per design §4.3.
+    expect(desc.heartbeatMs).to.equal(30_000);
+  });
+
+  it('registry.all() contains exactly the four shipped descriptors', function () {
+    // Will break deliberately when a fifth production adapter ships — forces
     // a conscious acknowledgment in the same commit that registers it.
     // (Mock adapter is dev-mode-only and prepack-stripped; not in this list.)
-    // #131 Phase C added `claude-api` as the third production adapter.
+    // #131 Phase C added `claude-api` as the third production adapter;
+    // #449 Phase C added `opencode` as the fourth.
     const ids = registry.all().map((d) => d.adapterId).sort();
-    expect(ids).to.deep.equal(['claude-api', 'claude-code', 'copilot']);
+    expect(ids).to.deep.equal(['claude-api', 'claude-code', 'copilot', 'opencode']);
   });
 
   it('every shipped descriptor has a plausible heartbeatMs in range [10s, 300s]', function () {
