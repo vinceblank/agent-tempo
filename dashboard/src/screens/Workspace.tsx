@@ -401,18 +401,27 @@ export function Workspace() {
                 <div className="row">
                   <ChatPauseButton ensemble={ensemble} paused={paused} held={held} />
                   <ChatReleaseButton ensemble={ensemble} held={held} />
-                  <button
-                    type="button"
-                    data-testid="workspace-popout"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => setPopped(true)}
-                    aria-pressed={popped}
-                    title="Pop out the chat into a floating window"
-                    aria-label="Pop out chat"
-                  >
-                    <span className="btn-icon">↗</span>
-                    <span>Pop out</span>
-                  </button>
+                  {/* `.popout-btn` wrapper is the selector the canonical
+                    * `@container artboard (max-width: 520px) { .popout-btn
+                    * { display: none } }` rule binds to (components.css
+                    * line 1023 / canonical workspace.jsx:341). Without
+                    * this wrapper the button stays visible at the phone
+                    * breakpoint despite the rule being correct. PR-E
+                    * F-A-3. */}
+                  <span className="popout-btn">
+                    <button
+                      type="button"
+                      data-testid="workspace-popout"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setPopped(true)}
+                      aria-pressed={popped}
+                      title="Pop out the chat into a floating window"
+                      aria-label="Pop out chat"
+                    >
+                      <span className="btn-icon">↗</span>
+                      <span>Pop out</span>
+                    </button>
+                  </span>
                 </div>
               </div>
               <ChatLog

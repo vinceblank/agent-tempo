@@ -217,6 +217,25 @@ describe('Workspace screen', () => {
     expect(screen.getByTestId('workspace-schedules-empty')).toBeInTheDocument();
   });
 
+  // ── Pixel-audit PR-E (#454 §4.2 F-A-3) ──────────────────────────────
+  //
+  // The chat panel's "Pop out" button must be wrapped in a `.popout-btn`
+  // span so the canonical `@container artboard (max-width: 520px) {
+  // .popout-btn { display: none } }` rule binds and the button hides at
+  // the phone breakpoint. JSDOM doesn't evaluate container queries, so
+  // we assert the wrapper *exists* — the static class-application is
+  // what was missing pre-PR-E, not the rule itself.
+
+  it('wraps the workspace-popout button in a .popout-btn span (F-A-3)', async () => {
+    const mock = new MockDashboardClient({
+      snapshot: makeSnapshot({ ensemble: 'demo', players: [makePlayer()] }),
+    });
+    renderWorkspace(mock);
+    const popout = await screen.findByTestId('workspace-popout');
+    const wrapper = popout.closest('.popout-btn');
+    expect(wrapper).not.toBeNull();
+  });
+
   // ── PR-C3 mobile shell wiring ───────────────────────────────────────
 
   describe('mobile shell (PR-C3)', () => {
