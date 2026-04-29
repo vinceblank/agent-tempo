@@ -533,6 +533,26 @@ function Hosts({ activeNav = "hosts", onNav, activeEnsemble = "my-band", onSelec
 window.Hosts = Hosts;
 
 // ─── Settings ───────────────────────────────────────────────
+//
+// ┌─ DESIGN RATIFICATION — ST-2 (pixel-audit v0.28.9, PR-G) ──────────────────┐
+// │                                                                             │
+// │  The Connection panel below renders STATIC placeholder KVs                 │
+// │  (namespace="default", address="localhost:7233", …). This is design-canvas │
+// │  scaffolding only and does NOT reflect the shipped implementation.          │
+// │                                                                             │
+// │  CANONICAL DIRECTION (ratified by conductor, 2026-04-29):                  │
+// │  The impl renders LIVE runtime config fetched from the daemon's             │
+// │  /v1/health endpoint. Fields: namespace, address, task queue, tls, auth.   │
+// │                                                                             │
+// │  Implementation references:                                                 │
+// │    dashboard/src/screens/Settings.tsx  — Connection panel JSX               │
+// │    dashboard/src/lib/use-health.ts     — /v1/health hook                   │
+// │  Landed in: #436 (PR #439) and #444 (PR #451)                              │
+// │                                                                             │
+// │  Future audits: treat the live-controls direction as canonical for the      │
+// │  Connection panel. Do not re-flag static-vs-live as drift.                 │
+// └─────────────────────────────────────────────────────────────────────────────┘
+//
 function Settings({ activeNav = "settings", onNav, activeEnsemble = "my-band", onSelectEnsemble, onOpenSwitcher } = {}) {
   return (
     <div className="artboard-body">
