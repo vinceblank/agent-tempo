@@ -14,6 +14,13 @@
  * its `require.cache` has no Temporal-adjacent leaks.
  */
 import * as out from './output';
+import { AGENT_TYPES } from '../types';
+
+// `AGENT_TYPES` lives in `src/types.ts`, which the crash-proof contract
+// (#157) explicitly permits — it's pure-types-only with no `@temporalio/*`
+// imports. Composing the help string from the canonical tuple means
+// adding a new adapter automatically updates this surface.
+const AGENT_OPTIONS = AGENT_TYPES.join('|');
 
 export function printHelp(): void {
   console.log(`
@@ -66,7 +73,7 @@ ${out.bold('Connection options (all commands):')}
 
 ${out.bold('Other options:')}
   --name <name>                Set session window name (up only)
-  --agent <claude|copilot>     Agent type to spawn (default: from config; up)
+  --agent <name>               Agent type to spawn — ${AGENT_OPTIONS} (default: from config; up)
   --dev                        Use the dev profile (~/.claude-tempo-dev, port 8474, namespace claude-tempo-dev)
   --skip-preflight             Skip preflight checks
   --background                 Run Temporal in background (server only)

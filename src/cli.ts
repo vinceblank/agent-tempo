@@ -26,7 +26,7 @@ import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import * as out from './cli/output';
 import { emitDevBannerIfActive } from './cli/dev-banner';
-import { AgentType } from './types';
+import { AGENT_TYPES, AgentType } from './types';
 import { ENV, CliOverrides, getConfig } from './config';
 
 /** Package root — cli.js compiles to dist/cli.js, so one level up. Used by the inline `version` handler. */
@@ -232,11 +232,19 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.json = true;
     } else if (arg === '--agent' && i + 1 < argv.length) {
       const val = argv[++i];
-      if (val !== 'claude' && val !== 'copilot') {
-        out.error(`Invalid agent type: "${val}". Must be "claude" or "copilot".`);
+      // #476: source the allowlist from the canonical `AGENT_TYPES` tuple in
+      // `src/types.ts` so the CLI surface tracks the union automatically when
+      // a new adapter lands. Pre-#476 this was a hardcoded `'claude'|'copilot'`
+      // pair that fell out of sync when `'mock'` (#220) and `'claude-api'`
+      // (#131) were added — `claude-tempo recruit --agent claude-api` errored
+      // out here even though the recruit MCP tool accepted it. Dev-mode gating
+      // for `'mock'` lives downstream at the recruit boundary (`src/tools/
+      // recruit.ts`, ADR 0014 §7 gate 3); we don't double-gate it here.
+      if (!(AGENT_TYPES as readonly string[]).includes(val)) {
+        out.error(`Invalid agent type: "${val}". Must be one of: ${AGENT_TYPES.join(', ')}.`);
         process.exit(1);
       }
-      result.agent = val;
+      result.agent = val as AgentType;
     } else if (arg === '--help' || arg === '-h') {
       result.command = 'help';
     } else if (arg === '--version' || arg === '-v') {
