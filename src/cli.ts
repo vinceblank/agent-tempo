@@ -27,7 +27,7 @@ import { join, resolve } from 'path';
 import * as out from './cli/output';
 import { emitDevBannerIfActive } from './cli/dev-banner';
 import { AGENT_TYPES, AgentType } from './types';
-import { ENV, CliOverrides, getConfig } from './config';
+import { ENV, CliOverrides, getConfig, isDevMode } from './config';
 
 /** Package root — cli.js compiles to dist/cli.js, so one level up. Used by the inline `version` handler. */
 const PACKAGE_ROOT = resolve(__dirname, '..');
@@ -359,6 +359,26 @@ async function main() {
       ...overrides,
     });
     return;
+  }
+
+  // Dev-mode scriptable verbs (#432). Gated on `isDevMode()` AND an explicit
+  // allowlist (`DEV_VERBS`); intercepts BEFORE the removed-verbs check so
+  // verbs like `pause` (collapsed by #288) can act on the live ensemble in
+  // dev mode. NOT crash-proof — dev mode requires Temporal anyway, and the
+  // dynamic-import keeps `cli.ts` itself out of `dev-verbs.ts`'s module
+  // graph at the top level. The DEV_VERBS ↔ REMOVED_VERBS ↔ cli.ts switch
+  // invariants are mechanically asserted by `test/cli-dev-verbs.test.ts`.
+  if (isDevMode()) {
+    const { DEV_VERBS, dispatchDevVerb } = await import('./cli/dev-verbs');
+    if (DEV_VERBS.has(args.command)) {
+      const ensemble = args.ensemble || process.env[ENV.ENSEMBLE] || 'default';
+      await dispatchDevVerb(args.command, {
+        positional: args.positional,
+        ensemble,
+        ...overrides,
+      });
+      return;
+    }
   }
 
   // Removed-verb fast path (#288). Intercepted BEFORE the Temporal-touching

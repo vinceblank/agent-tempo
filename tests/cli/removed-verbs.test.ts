@@ -1,10 +1,15 @@
 /**
  * Unit tests for the removed-verb lookup table (#288 / design #285).
  *
- * The breaking-change posture of #285 removes ten CLI verbs with no alias
+ * The breaking-change posture of #285 removed ten CLI verbs with no alias
  * period. Each removed verb should produce a friendly error pointing at
  * the TUI equivalent instead of silently hitting the default "Unknown
  * command" branch.
+ *
+ * #432 promoted `pause` from a removed verb to a dev-mode-live verb (see
+ * `src/cli/dev-verbs.ts`). The row was deleted from REMOVED_VERBS in the
+ * same PR so the verb's "live in dev mode" status is single-sourced —
+ * the table now enumerates nine verbs.
  */
 import { describe, it, expect } from 'vitest';
 import { REMOVED_VERBS, removedVerbMessage } from '../../src/cli/removed-verbs';
@@ -18,12 +23,12 @@ const EXPECTED_VERBS = [
   'restart',
   'recruit',
   'migrate',
-  'pause',
+  // `pause` removed from this list by #432 — promoted to a dev-mode verb.
   'resume',
 ];
 
 describe('REMOVED_VERBS', () => {
-  it('enumerates all ten verbs removed in #288', () => {
+  it('enumerates the nine verbs still removed (post-#432: pause promoted to dev-mode)', () => {
     expect(Object.keys(REMOVED_VERBS).sort()).toEqual([...EXPECTED_VERBS].sort());
   });
 
@@ -31,6 +36,13 @@ describe('REMOVED_VERBS', () => {
     for (const verb of EXPECTED_VERBS) {
       expect(REMOVED_VERBS[verb], `verb "${verb}" missing hint`).toBeTruthy();
     }
+  });
+
+  it('does NOT include `pause` (promoted to dev-mode-live in #432)', () => {
+    // Mirrors the cross-surface invariant tested in
+    // `test/cli-dev-verbs.test.ts` (DEV_VERBS ↔ REMOVED_VERBS) — `pause`
+    // is now in `DEV_VERBS`, so it must be absent from this table.
+    expect(REMOVED_VERBS).not.toHaveProperty('pause');
   });
 });
 

@@ -140,6 +140,69 @@ $ claude-tempo --dev up --lineup tempo-mock-jam --scenario echo-roundtrip
 or absolute paths both work. Dev-mode-only — silently no-ops outside dev
 mode because mock players can't exist there anyway (gate 3).
 
+## Scriptable verbs (#432)
+
+Dev mode unlocks five thin shell-scriptable wrappers over the MCP tool
+surface, intended for autonomous E2E validation harnesses + mock-jam
+integration testing. The production CLI was collapsed to a minimal
+posture in #288 (TUI/MCP-only); these verbs restore programmatic access
+without re-introducing the public surface that #288 retired.
+
+| Verb | Effect | Notes |
+|---|---|---|
+| `claude-tempo --dev cue <player> <message>` | Direct cue to a named session | Uses `from: 'cli'`. Mirrors the MCP `cue` tool. |
+| `claude-tempo --dev pause` | Fan-out pause across the ensemble | Pauses maestro + scheduler + every session. Mirrors the MCP `pause` tool. |
+| `claude-tempo --dev play` | Fan-out resume across the ensemble | Resumes maestro + scheduler + every session. Held sessions are NOT released — call `release` separately. |
+| `claude-tempo --dev release [<player>]` | Release held sessions | With `<player>`, releases that one. Without, ensemble-wide scan releases every locked session. |
+| `claude-tempo --dev set-ensemble-description "<text>"` | Update maestro mission description | Surfaces on dashboard EnsembleCard. Use `""` to clear. |
+
+All five verbs:
+
+- **Require `--dev` (or `CLAUDE_TEMPO_DEV_MODE=1`)** — production CLI
+  treats them as unknown commands, by design.
+- **Resolve the ensemble** via `--ensemble <name>` flag → `CLAUDE_TEMPO_ENSEMBLE`
+  env var → `'default'`.
+- **Exit non-zero on Temporal connection failure** with `Cannot connect to
+  Temporal at <addr>` on stderr.
+
+### Boundary / precedence
+
+In `src/cli.ts` the dispatch order is:
+
+1. crash-proof inline fast-paths (`version`, `help`, `daemon`, `config`,
+   `dashboard`)
+2. **dev-mode gate** — fires only when `isDevMode()` is true and the verb
+   is in `DEV_VERBS` (`src/cli/dev-verbs.ts`)
+3. removed-verbs hint (`src/cli/removed-verbs.ts`)
+4. lazy-loaded production command surface (`src/cli/commands.ts`)
+
+The dev-mode gate sits BEFORE the removed-verbs check, so `pause` works
+in dev mode even though it's not in production. The mechanical-enforcement
+test in `test/cli-dev-verbs.test.ts` pins this precedence and rejects
+overlap between `DEV_VERBS` and `REMOVED_VERBS` keys to keep "live" /
+"removed" status single-sourced.
+
+`src/cli/dev-verbs.ts` is **not** crash-proof — it touches Temporal
+directly. It is intentionally excluded from the
+`test/cli-crash-proof-isolation.test.ts` `CRASH_PROOF_MODULES` allowlist;
+dev mode requires Temporal anyway, so there's no recovery-lever
+justification for crash-proofing it.
+
+### Example: scripted mock-jam run
+
+```bash
+# Spin up a fully-mock ensemble in dev mode
+claude-tempo --dev up --lineup tempo-mock-jam
+
+# Drive it from a script
+claude-tempo --dev cue mock-alice "echo this back"
+claude-tempo --dev set-ensemble-description "Phase 1 — exploratory cues"
+claude-tempo --dev pause
+# (... investigate state ...)
+claude-tempo --dev play
+claude-tempo --dev release             # release any held sessions
+```
+
 ## Production safety
 
 ADR 0014 §7 specifies four independent gates. **All four must fail** for
