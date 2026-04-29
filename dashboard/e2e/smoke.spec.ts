@@ -14,8 +14,9 @@
  *      log fires, which is what the conductor's autonomous
  *      validator can grep).
  *   3. **Mobile viewport — sidebar collapses to a sheet.** 375x667
- *      viewport. The PR-5 ResponsivePanel switches variant; the
- *      sidebar layout still exposes the brandmark + roster.
+ *      viewport. The artboard's `@container artboard (max-width: 520px)`
+ *      rules collapse the sidebar; the layout still exposes the
+ *      brandmark + roster.
  *   4. **Pair-token flow — risk #16 ordering.** Mint via
  *      `POST /dashboard/api/pair` against the real daemon, navigate
  *      to `/dashboard/?pair=<token>`. Assert the token is dropped
@@ -175,10 +176,9 @@ test('3. Mobile viewport renders the sidebar + roster (375x667)', async ({ page 
 
   await page.goto(`${daemon.origin}/dashboard/ensemble/${DEMO_ENSEMBLE}`);
   // Both shell + workspace surfaces are reachable at this viewport.
-  // PR-5's ResponsivePanel only renders an open Sheet/Dialog when a
-  // PlayerDetail route is active, so the smoke just asserts roster
-  // visibility — the dialog-vs-sheet variant is locked by the unit
-  // tests in `responsive-panel.test.tsx`.
+  // PlayerDetail's Radix Dialog only renders when its nested route is
+  // active, so the smoke just asserts roster visibility — the dialog
+  // contract is locked by the unit tests in `player-detail.test.tsx`.
   await expect(page.getByTestId('app-shell')).toBeVisible();
   await expect(page.getByTestId('roster')).toBeVisible();
 
