@@ -1,0 +1,147 @@
+{
+  "$schema": "internal — fixture matrix for #461 overflow audit",
+  "_comment": "Working artifact (deleted before PR; promoted to dashboard/test-fixtures/overflow.json if §10 CI work proceeds). Used by recruit walkers to seed dashboard with consistent stress content across walks.",
+  "_version": "v0.28.0-beta.10",
+  "_audit": "docs/design/dashboard-overflow-audit-v0.28.10.md",
+
+  "playerTypeSlugs": {
+    "canonical": [
+      "tempo-conductor",
+      "tempo-composer",
+      "tempo-soloist",
+      "tempo-tuner",
+      "tempo-critic",
+      "tempo-roadie",
+      "tempo-improv",
+      "tempo-liner"
+    ],
+    "longTail": [
+      "la-tempo-advisor",
+      "my-tempo-architect",
+      "my-tempo-engineer",
+      "my-tempo-researcher",
+      "my-tempo-devops"
+    ],
+    "stress": [
+      "this-is-a-very-long-player-type-slug-that-no-one-would-actually-create-but-we-need-to-test-overflow-behavior-at-300-characters-or-so-thiswordhasnospacesatallandshouldforcethelayouttodecidewhethertoclipwithellipsishorizontallyorwraporcollideintosiblingaffordances",
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "tempo-tempo-tempo-tempo-tempo-tempo-tempo-tempo-tempo-tempo-tempo-tempo-tempo-tempo-tempo"
+    ]
+  },
+
+  "ensembleNames": {
+    "canonical": [
+      "tempo-jam",
+      "tempo-dev-team",
+      "tempo-big-band",
+      "tempo-mock-jam",
+      "tempo-review-squad"
+    ],
+    "longTail": [
+      "tempo-impl-feature-flag-rollout-q3",
+      "tempo-design-handoff-v3-overhaul",
+      "tempo-mock-jam-session-coordinator",
+      "tempo-cross-machine-recruiting-spike",
+      "tempo-runtime-observability-redesign"
+    ],
+    "stress": [
+      "this-is-a-very-long-ensemble-name-with-many-hyphens-and-should-stress-test-the-er-name-truncation-behavior-and-the-ec-name-display-on-overview-cards-at-various-viewports",
+      "ENSEMBLE_NAME_NO_HYPHENS_OR_SPACES_AT_ALL_300_CHARS_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "アンサンブル-多文字-テスト-の-ながい-名前-だ-けど-非ラテン-では-どうなる"
+    ]
+  },
+
+  "descriptions": {
+    "canonical": [
+      "Implementation ensemble — six engineers, one PO.",
+      "Design handoff and dashboard polish.",
+      "QA and CI guardrails.",
+      "Mock validation harness.",
+      "Cross-platform spawn paths."
+    ],
+    "longTail": [
+      "Implementation ensemble for the v0.28 release: six engineers, one PO, two architects, one designer, three QA. Coordinates dashboard design handoff plus Temporal worker rollout. Daily sync at 09:30 PT.",
+      "Cross-machine recruiting + per-host task queue work, pairing with the Temporal workflow team to validate signal latency across hosts. Ongoing spike, may extend into next release.",
+      "Mock adapter validation harness running scripted scenarios against a synthetic ensemble. Catches regressions in adapter heartbeat / phase-watcher / outbox dispatch.",
+      "Pre-launch dashboard polish: design fidelity, overflow robustness, accessibility audit. Three concurrent audits with shared rubric methodology.",
+      "Long-running release coordination ensemble. Owns CHANGELOG, version bump cadence, npm publishing, GitHub release notes, and the post-release retrospective."
+    ],
+    "stress": [
+      "Loremipsumdolorsitametconsecteturadipiscingelitseddoeiusmodtemporincididuntutlaboreetdoloremagnaaliquautenimadminimveniamquisnostrudexercitationullamcolaborisnisiutaliquipexeacommodoconsequatduisauteiruredolorinreprehenderitinvoluptatevelitessecillumdoloreeufugiatnullapariaturexcepteursintoccaecatcupidatatnonproidentsuntinculpaquiofficiadeseruntmollitanimidestlaborumandtheresnoendingtothisstringbecausethereisnopunctuationoranyspacestobreakitup",
+      "A very long description with many natural language words and proper spaces and punctuation, stretching to about five hundred characters total. The intent is to verify that the impl wraps long-but-natural content without truncating at an awkward point. This is the realistic upper bound — most descriptions won't exceed two hundred characters but design must still hold when they do. Filler. Filler. Filler. Filler. Filler. Filler. Filler. Filler. The end.",
+      "word-with-hyphens-but-no-spaces-or-line-break-opportunity-and-stretching-very-long-to-stress-the-overflow-handler-of-line-breaking-algorithms-which-may-or-may-not-treat-hyphens-as-line-break-opportunities-depending-on-the-CSS-overflow-wrap-and-word-break-properties"
+    ]
+  },
+
+  "hostnames": {
+    "short": ["main-laptop", "dev-mac", "ci-runner-1"],
+    "fqdn": [
+      "main-laptop.lan.example.com",
+      "ci-runner-prod-us-west-2.internal.example.com",
+      "ci-runner-prod-cluster-pod-7-replica-3.eks.internal.example.com"
+    ],
+    "stress": [
+      "this-is-a-pathological-hostname-that-should-not-exist-in-production-but-tests-overflow-of-host-cells-in-the-hosts-table-and-the-host-meta-on-ensemble-cards.example.com",
+      "host................................................................................"
+    ]
+  },
+
+  "playerNames": {
+    "canonical": ["alice", "bob", "carol", "tempo-eng", "tempo-conductor"],
+    "longTail": [
+      "tempo-overflow-lead",
+      "tempo-pixel-audit-recruit-batch-a",
+      "tempo-cross-machine-recruit-host-2",
+      "tempo-design-handoff-rev-4-engineer",
+      "tempo-mock-jam-scripted-conductor"
+    ],
+    "stress": [
+      "thisisaverylongplayernamewithoutanyspacesorhyphensthatshouldforcethelayouttodecideabouttruncationintheplayerheaderandintherosteritemavatarstack",
+      "tempo-tempo-tempo-tempo-tempo-tempo-tempo-tempo-tempo-tempo-tempo-tempo-tempo-tempo"
+    ]
+  },
+
+  "ensembleSizeProfiles": {
+    "canonical": {
+      "name": "5-player",
+      "playerCount": 5,
+      "purpose": "Design hand-off baseline; ec-roster shows all 5 avatars, no +N indicator."
+    },
+    "longTail": {
+      "name": "15-player",
+      "playerCount": 15,
+      "purpose": "Production-realistic for an active dev ensemble; ec-roster shows 5 + (+10) indicator."
+    },
+    "stress": {
+      "name": "50-player",
+      "playerCount": 50,
+      "purpose": "Pathological size; tests sidebar render + ec-roster +N width + Hosts table row count."
+    }
+  },
+
+  "viewports": {
+    "canonical": [
+      {"label": "Desktop",  "w": 1440, "h": 900},
+      {"label": "Laptop",   "w": 1180, "h": 820},
+      {"label": "Tablet",   "w": 834,  "h": 1100},
+      {"label": "Phone",    "w": 390,  "h": 780}
+    ],
+    "boundary": [
+      {"label": "1201 (just above 1200 CQ)", "w": 1201, "h": 820},
+      {"label": "1199 (just below 1200 CQ)", "w": 1199, "h": 820},
+      {"label": "901  (just above 900 CQ)",  "w": 901,  "h": 820},
+      {"label": "899  (just below 900 CQ)",  "w": 899,  "h": 820},
+      {"label": "521  (just above 520 CQ)",  "w": 521,  "h": 780},
+      {"label": "519  (just below 520 CQ)",  "w": 519,  "h": 780}
+    ]
+  },
+
+  "_loaderHint": {
+    "_comment": "How recruits seed the dashboard with each fixture. Daemon URL TBD with conductor; the tempo-mock-jam ensemble is the canonical seed surface for stress data.",
+    "step1_baseline": "Start the daemon with `claude-tempo --dev daemon start` and bring up the mock ensemble: `claude-tempo --dev up --lineup tempo-mock-jam`. This gives a 5-player baseline ensemble with deterministic mock players (no real Claude calls).",
+    "step2_seed_long_tail": "For long-tail content: use the dashboard's CreateEnsemble wizard manually with names from `ensembleNames.longTail`, OR `cue` mock players to inject long descriptions via `set_ensemble_description`.",
+    "step3_seed_stress": "For stress content: same mechanism but with values from `*.stress` arrays. Note: claude-tempo enforces ENSEMBLE_NAME_REGEX + a max-length on names — synthetic stress strings may be rejected at the validation layer (good — flag as a finding if validation is missing). Use the dashboard's React DevTools or `__seedFixturesForTests` hook (TBD with eng team) to bypass server validation for layout-only testing.",
+    "step4_seed_50_player": "For 50-player ensembleSizeProfile.stress: mock-recruit 50 players against a single ensemble. Conductor can dispatch this via a one-shot script.",
+    "_alternative": "If wire-seeding is too slow, recruits may use the dashboard's React DevTools to override props on a target component manually. The fixtures above are the source of truth for content values regardless of injection method."
+  }
+}
