@@ -36,6 +36,7 @@ import { PickerList, type PickerOption } from '../components/wizard/PickerList';
 import { Chipset } from '../components/wizard/Chipset';
 import { Field } from '../components/wizard/Field';
 import { SummaryRow } from '../components/wizard/SummaryRow';
+import { TypeBadge } from '../components/tempo/TypeBadge';
 import { useAgentTypes, useHosts } from '../lib/queries';
 import { useRecruitMutation } from '../lib/mutations';
 import { logEvent } from '../lib/log';
@@ -181,11 +182,13 @@ export function Recruit() {
         value: t.name,
         name: t.name,
         ...(t.description !== undefined && { desc: t.description }),
-        right: (
-          <span className="mono dim" style={{ fontSize: 10 }}>
-            {t.source.toUpperCase()}
-          </span>
-        ),
+        // PR-E F-A-6: right-slot uses the color-coded TypeBadge (one
+        // hue per player-type) instead of a gray source-tier label.
+        // The source-tier (SHIPPED/USER/PROJECT) is already implied by
+        // the picker's `hint` line ("N available · showing local
+        // catalog…"); the badge encodes the *role* the player plays,
+        // which is the more useful signal at picker time.
+        right: <TypeBadge type={t.name} />,
       })),
     [playerTypes],
   );
