@@ -15,13 +15,13 @@
 
 :root,
 [data-theme='dark'] {
-  --accent: #e07a5f;
+  --accent: #E07A5F;
   --accent-soft: oklch(0.72 0.12 28 / 0.18);
   --accent-ink: oklch(0.92 0.05 28);
 
-  --bg: #0f1117;
+  --bg: #0F1117;
   --bg-1: #141722;       /* raised surface */
-  --bg-2: #1a1e2b;       /* panel */
+  --bg-2: #1A1E2B;       /* panel */
 
   /*
    * ── §8.1 `--bg-3` / `--muted` swap ──
@@ -31,7 +31,7 @@
    *
    *   - `--bg-3` (here, `#20253417`) is a soft TINTED SURFACE — it
    *     becomes shadcn's `--muted` when shadcn lands in PR-4.
-   *   - `--muted` (here, `#4b5064`) is an INK TONE for inactive
+   *   - `--muted` (here, `#4B5064`) is an INK TONE for inactive
    *     controls — it becomes a custom `--muted-2`.
    *
    * Do NOT collapse them; they paint different roles. This file keeps
@@ -40,23 +40,23 @@
    * remap happens in the shadcn theme stub when PR-4 imports it.
    */
   --bg-3: #20253417;     /* tinted inset; → shadcn `--muted` later */
-  --bg-chat-out: #1b2030;
+  --bg-chat-out: #1B2030;
 
-  --text: #f5eee6;       /* warm cream */
-  --text-2: #c5c1b9;
-  --dim: #7d8090;
-  --muted: #4b5064;      /* ink tone for inactive controls — NOT a surface (see §8.1) */
+  --text: #F5EEE6;       /* warm cream */
+  --text-2: #C5C1B9;
+  --dim: #7D8090;
+  --muted: #4B5064;      /* ink tone for inactive controls — NOT a surface (see §8.1) */
   --muted-2: var(--muted); /* alias reserved for future shadcn remap; same value today */
-  --rule: #262b3a;
-  --rule-strong: #343a4f;
+  --rule: #262B3A;
+  --rule-strong: #343A4F;
 
-  --ok: #8cc79a;
-  --warn: #e9c888;
-  --err: #ef5c5c;
-  --info: #7fb3d5;
+  --ok: #8CC79A;
+  --warn: #E9C888;
+  --err: #EF5C5C;
+  --info: #7FB3D5;
 
-  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.02) inset, 0 1px 0 rgba(0, 0, 0, 0.3);
-  --shadow-2: 0 10px 30px -16px rgba(0, 0, 0, 0.6);
+  --shadow-1: 0 1px 0 rgba(255,255,255,0.02) inset, 0 1px 0 rgba(0,0,0,0.3);
+  --shadow-2: 0 10px 30px -16px rgba(0,0,0,0.6);
 
   /*
    * Typography — `Instrument Sans` + `Instrument Serif` + `JetBrains Mono`,
@@ -74,27 +74,27 @@
 }
 
 [data-theme='light'] {
-  --accent: #c05a3d;
+  --accent: #C05A3D;
   --accent-soft: oklch(0.72 0.12 28 / 0.14);
   --accent-ink: oklch(0.38 0.12 28);
 
-  --bg: #f7f3ec;
-  --bg-1: #fffcf4;
-  --bg-2: #fbf6eb;
-  --bg-3: #efe9db;
-  --bg-chat-out: #f1eadc;
+  --bg: #F7F3EC;
+  --bg-1: #FFFCF4;
+  --bg-2: #FBF6EB;
+  --bg-3: #EFE9DB;
+  --bg-chat-out: #F1EADC;
 
-  --text: #1b2838;
-  --text-2: #3d4758;
-  --dim: #6b7280;
-  --muted: #98a0ae;
+  --text: #1B2838;
+  --text-2: #3D4758;
+  --dim: #6B7280;
+  --muted: #98A0AE;
   --muted-2: var(--muted);
-  --rule: #e2d9c7;
-  --rule-strong: #c8bda7;
+  --rule: #E2D9C7;
+  --rule-strong: #C8BDA7;
 
-  --ok: #4a8a5c;
-  --warn: #b5862a;
-  --err: #b9493f;
+  --ok: #4A8A5C;
+  --warn: #B5862A;
+  --err: #B9493F;
   --info: #346389;
 }
 
