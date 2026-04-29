@@ -1,22 +1,17 @@
 /**
- * PlayerDetail — drilldown sheet for a single player (PR-D of #389).
+ * PlayerDetail — drilldown sheet for a single player.
  *
- * Mounts inside a {@link ResponsivePanel} so mobile gets a bottom-sheet
- * automatically; on desktop the inner `.player-sheet` structure mirrors
- * the canonical `screens.jsx:PlayerDetail` (lines 97-167).
- *
- * Action buttons render disabled-with-tooltip until PR-7 wires the
- * destructive-write paths. Close (`✕`) navigates back to the parent
- * Workspace route.
- *
- * Phase rendering (rev 4 C3): `PhaseDot` consumes the real codebase
- * phase vocabulary — never generic playing/paused/error.
+ * F-A-1 (PR-C of #454, dashboard pixel-alignment audit v0.28.9): the
+ * outer frame is a centered `.sheet.player-sheet` modal-on-backdrop
+ * built on `@radix-ui/react-dialog`, matching canonical
+ * `screens.jsx:PlayerDetail` (lines 97-167).
  *
  * Wire-fields not yet exposed on the snapshot (received/sent/outbox
  * counters, runId, lease.expiresAt, adapter version) render as `"—"`
  * placeholders. The wire extension lands post-beta.7.
  */
 import { useMemo, useState, type ReactNode } from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { EnsembleChatMessage } from 'claude-tempo/types';
 import type { PlayerSummaryV1 } from 'claude-tempo/http/event-types';
@@ -27,7 +22,6 @@ import {
   useRecallMutation,
   useRestartMutation,
 } from '../lib/mutations';
-import { ResponsivePanel } from '../components/ResponsivePanel';
 import { SectionHead } from '../components/SectionHead';
 import { Btn } from '../components/Btn';
 import { ConfirmDialog } from '../components/wizard/ConfirmDialog';
@@ -65,34 +59,59 @@ export function PlayerDetail() {
 
   const baseTestId = `player-detail-${playerId}`;
 
+  // The route owns visibility (`open={true}` while PlayerDetail is
+  // mounted); ESC + overlay-click + Dialog.Close all funnel through
+  // `onOpenChange(false)` → `close()` → nav-back. We intentionally do
+  // NOT use `Dialog.Portal`: Radix's portal defaults to `document.body`,
+  // which escapes `.artboard-body`'s `@container artboard` context and
+  // stops the phone-breakpoint collapse from firing. Rendering inline
+  // keeps the dialog a descendant of the artboard.
   return (
-    <ResponsivePanel
+    <Dialog.Root
       open={true}
-      onClose={close}
-      testId={baseTestId}
-      ariaLabel={`Player ${playerId}`}
+      onOpenChange={(open) => {
+        if (!open) close();
+      }}
     >
-      {!player ? (
-        <NotFound testId={baseTestId} loading={snapshot.isLoading} ensemble={id} playerId={playerId} onClose={close} />
-      ) : (
-        <>
-          <SheetHead
-            ensemble={id ?? ''}
-            player={player}
-            testIdPrefix={baseTestId}
-            onClose={close}
+      <Dialog.Overlay
+        className="sheet-overlay"
+        data-testid={`${baseTestId}-backdrop`}
+      />
+      <Dialog.Content
+        className="sheet player-sheet"
+        data-testid={baseTestId}
+        // Radix 1.1.x stopped emitting `aria-modal` automatically; we
+        // re-add it for assistive-tech that still keys off the attribute.
+        aria-modal="true"
+        aria-describedby={undefined}
+      >
+        {!player ? (
+          <NotFound
+            testId={baseTestId}
+            loading={snapshot.isLoading}
+            ensemble={id}
+            playerId={playerId}
           />
-          <div className="player-sheet-body">
-            <SheetMain player={player} transcript={transcript} testIdPrefix={baseTestId} />
-            <SheetSide
+        ) : (
+          <>
+            <SheetHead
+              ensemble={id ?? ''}
               player={player}
               testIdPrefix={baseTestId}
-              adapterVersion={resolveAdapterVersion(player, hosts.data)}
+              onClose={close}
             />
-          </div>
-        </>
-      )}
-    </ResponsivePanel>
+            <div className="player-sheet-body">
+              <SheetMain player={player} transcript={transcript} testIdPrefix={baseTestId} />
+              <SheetSide
+                player={player}
+                testIdPrefix={baseTestId}
+                adapterVersion={resolveAdapterVersion(player, hosts.data)}
+              />
+            </div>
+          </>
+        )}
+      </Dialog.Content>
+    </Dialog.Root>
   );
 }
 
@@ -134,13 +153,15 @@ function SheetHead({
         />
         <div className="col" style={{ gap: 2, minWidth: 0 }}>
           <div className="row">
-            <span
-              className="subj display"
-              style={{ fontSize: 22 }}
-              data-testid={`${testIdPrefix}-name`}
-            >
-              {player.playerId}
-            </span>
+            <Dialog.Title asChild>
+              <span
+                className="subj display"
+                style={{ fontSize: 22 }}
+                data-testid={`${testIdPrefix}-name`}
+              >
+                {player.playerId}
+              </span>
+            </Dialog.Title>
             <PhaseDot phase={player.phase} playerId={player.playerId} showLabel />
           </div>
           <div className="row">
@@ -199,15 +220,16 @@ function SheetHead({
         >
           Destroy
         </Btn>
-        <button
-          type="button"
-          className="btn btn-ghost btn-sm"
-          aria-label="Close player detail"
-          data-testid={`${testIdPrefix}-close`}
-          onClick={onClose}
-        >
-          ✕
-        </button>
+        <Dialog.Close asChild>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            aria-label="Close player detail"
+            data-testid={`${testIdPrefix}-close`}
+          >
+            ✕
+          </button>
+        </Dialog.Close>
       </div>
       {confirmingDestroy && (
         <ConfirmDialog
@@ -337,31 +359,32 @@ function NotFound({
   loading,
   ensemble,
   playerId,
-  onClose,
 }: {
   testId: string;
   loading: boolean;
   ensemble?: string;
   playerId?: string;
-  onClose: () => void;
 }) {
   return (
     <>
       <div className="panel-head player-sheet-head">
         <div className="panel-head-title">
-          <span className="subj display" style={{ fontSize: 18 }}>
-            {playerId ?? 'Unknown player'}
-          </span>
+          <Dialog.Title asChild>
+            <span className="subj display" style={{ fontSize: 18 }}>
+              {playerId ?? 'Unknown player'}
+            </span>
+          </Dialog.Title>
         </div>
-        <button
-          type="button"
-          className="btn btn-ghost btn-sm"
-          aria-label="Close player detail"
-          data-testid={`${testId}-close`}
-          onClick={onClose}
-        >
-          ✕
-        </button>
+        <Dialog.Close asChild>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            aria-label="Close player detail"
+            data-testid={`${testId}-close`}
+          >
+            ✕
+          </button>
+        </Dialog.Close>
       </div>
       <div className="player-sheet-body" style={{ gridTemplateColumns: '1fr' }}>
         <div className="player-sheet-main">

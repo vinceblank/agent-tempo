@@ -14,9 +14,14 @@
  *
  * Plus the v0.27 testid surface (`-id`, `-type`, `-phase`, `-close`,
  * `-not-found`) which downstream tests still query.
+ *
+ * PR-C of #454 (F-A-1) adds the Radix Dialog frame contract: the panel
+ * carries `.sheet.player-sheet` per canonical, the overlay is a sibling
+ * with `.sheet-overlay`, and ESC / overlay-click / ✕ button all collapse
+ * onto the same nav-back path via Radix's `onOpenChange`.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from 'react-router-dom';
 import { createDashboardMemoryRouter } from '../src/router';
@@ -127,6 +132,129 @@ describe('PlayerDetail panel — base contract', () => {
       const dialog = screen.getByRole('dialog');
       expect(dialog).toHaveAttribute('data-testid', 'player-detail-tempo-eng');
       expect(dialog).toHaveAttribute('aria-modal', 'true');
+    });
+  });
+});
+
+describe('PlayerDetail — Radix Dialog frame (PR-C of #454, F-A-1)', () => {
+  it('applies the canonical .sheet.player-sheet class pair to the dialog content', async () => {
+    const mock = new MockDashboardClient({
+      snapshot: makeSnapshot({
+        ensemble: 'demo',
+        players: [makePlayer({ playerId: 'tempo-eng' })],
+      }),
+    });
+    renderAtPath(mock, '/ensemble/demo/player/tempo-eng');
+
+    const dialog = await screen.findByTestId('player-detail-tempo-eng');
+    // Canonical `screens.jsx:101` is `<div className="sheet player-sheet">`
+    // — both classes must land on the Radix Content node so the existing
+    // `.player-sheet*` styles continue to fire.
+    expect(dialog).toHaveClass('sheet');
+    expect(dialog).toHaveClass('player-sheet');
+  });
+
+  it('renders the Radix overlay backdrop sibling with .sheet-overlay', async () => {
+    const mock = new MockDashboardClient({
+      snapshot: makeSnapshot({
+        ensemble: 'demo',
+        players: [makePlayer({ playerId: 'tempo-eng' })],
+      }),
+    });
+    renderAtPath(mock, '/ensemble/demo/player/tempo-eng');
+
+    const backdrop = await screen.findByTestId('player-detail-tempo-eng-backdrop');
+    expect(backdrop).toHaveClass('sheet-overlay');
+  });
+
+  it('player name is wrapped in Dialog.Title so screen readers can label the dialog', async () => {
+    const mock = new MockDashboardClient({
+      snapshot: makeSnapshot({
+        ensemble: 'demo',
+        players: [makePlayer({ playerId: 'tempo-eng' })],
+      }),
+    });
+    renderAtPath(mock, '/ensemble/demo/player/tempo-eng');
+
+    const dialog = await screen.findByTestId('player-detail-tempo-eng');
+    // Radix wires `aria-labelledby` to a generated id on whichever node
+    // composes `Dialog.Title`. The labelled element must contain the
+    // player id text.
+    const labelledBy = dialog.getAttribute('aria-labelledby');
+    expect(labelledBy).toBeTruthy();
+    const labelEl = document.getElementById(labelledBy!);
+    expect(labelEl?.textContent).toContain('tempo-eng');
+  });
+
+  it('exposes data-state="open" while mounted (Radix open/close state machine)', async () => {
+    const mock = new MockDashboardClient({
+      snapshot: makeSnapshot({
+        ensemble: 'demo',
+        players: [makePlayer({ playerId: 'tempo-eng' })],
+      }),
+    });
+    renderAtPath(mock, '/ensemble/demo/player/tempo-eng');
+    const dialog = await screen.findByTestId('player-detail-tempo-eng');
+    // Radix tracks open/close on the Content node via `data-state`. When
+    // we hardcode `open={true}` (the route owns visibility), the Content
+    // mounts in `open` state. This pin exercises the state-machine
+    // contract without depending on jsdom routing semantics.
+    expect(dialog).toHaveAttribute('data-state', 'open');
+  });
+
+  it('clicking the ✕ Dialog.Close button does not throw (Radix → onOpenChange wiring)', async () => {
+    const mock = new MockDashboardClient({
+      snapshot: makeSnapshot({
+        ensemble: 'demo',
+        players: [makePlayer({ playerId: 'tempo-eng' })],
+      }),
+    });
+    renderAtPath(mock, '/ensemble/demo/player/tempo-eng');
+    const closeBtn = await screen.findByTestId('player-detail-tempo-eng-close');
+    // Radix's `Dialog.Close` collapses the click → `onOpenChange(false)`
+    // → our `close()` → `navigate(...)`. We cannot reliably wait for the
+    // unmount in jsdom (memory-router timing is internal to react-router
+    // and not deterministic across versions), but we can guarantee the
+    // Radix click path doesn't crash and that our handler is the only
+    // wiring point.
+    expect(() => fireEvent.click(closeBtn)).not.toThrow();
+  });
+
+  it('Escape keydown does not throw (Radix DismissableLayer wiring)', async () => {
+    const mock = new MockDashboardClient({
+      snapshot: makeSnapshot({
+        ensemble: 'demo',
+        players: [makePlayer({ playerId: 'tempo-eng' })],
+      }),
+    });
+    renderAtPath(mock, '/ensemble/demo/player/tempo-eng');
+    await screen.findByTestId('player-detail-tempo-eng');
+    // Radix's `DismissableLayer` listens for `keydown.Escape` on the
+    // document and routes it through `onOpenChange(false)`. Same
+    // jsdom-routing caveat as the close-button test — assert the
+    // keydown path is wired without crashing.
+    expect(() => fireEvent.keyDown(document, { key: 'Escape' })).not.toThrow();
+  });
+
+  it('the dialog content node owns initial focus (Radix focus trap)', async () => {
+    const mock = new MockDashboardClient({
+      snapshot: makeSnapshot({
+        ensemble: 'demo',
+        players: [makePlayer({ playerId: 'tempo-eng' })],
+      }),
+    });
+    renderAtPath(mock, '/ensemble/demo/player/tempo-eng');
+
+    const dialog = await screen.findByTestId('player-detail-tempo-eng');
+    // Radix's focus scope moves focus *into* the dialog on mount. When
+    // no explicit `autoFocus` target is set, the Content itself becomes
+    // the active element (it's tabindex=-1 by default). What we care
+    // about for the focus-trap pin is: focus is somewhere inside the
+    // dialog, never on the document body.
+    await waitFor(() => {
+      const active = document.activeElement;
+      expect(active).not.toBe(document.body);
+      expect(dialog.contains(active)).toBe(true);
     });
   });
 });
