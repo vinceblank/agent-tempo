@@ -70,6 +70,12 @@ body {
   font-family: var(--ff-display);
   font-weight: 400;
   letter-spacing: -0.01em;
+  /* F-A-3 (#461): unbreakable tokens (long slugs, no-space strings) force
+   * flex-item expansion. overflow-wrap breaks them; min-width:0 lets the
+   * element shrink below intrinsic width inside flex/grid parents. */
+  overflow-wrap: break-word;
+  word-break: break-word;
+  min-width: 0;
 }
 
 .dim {

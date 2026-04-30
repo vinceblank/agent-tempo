@@ -198,7 +198,8 @@ function HostRow({ host }: HostRowProps) {
 
   return (
     <tr data-testid={`host-row-${id}`} data-freshness={host.freshness}>
-      <td className="mono">
+      {/* F-B-2 (#461): title exposes full FQDN when the cell is ellipsis-truncated */}
+      <td className="mono" title={id}>
         <span style={{ color: isLive ? 'var(--ok)' : 'var(--warn)' }}>●</span> {id}
       </td>
       {/* Same secondary ink tier as Heartbeat below — not --dim. */}

@@ -162,10 +162,13 @@
   padding: 5px 0;
   border-bottom: 1px dashed var(--rule);
   font-size: 12px;
+  min-width: 0; /* F-B-5 (#461): allow row to shrink inside flex parent */
 }
 .kv:last-child { border-bottom: 0; }
 .kv-k { color: var(--dim); letter-spacing: 0.02em; }
-.kv-v { color: var(--text); font-variant-numeric: tabular-nums; }
+/* F-B-5 (#461): long env-var values overflow kv-v with no ellipsis.
+ * min-width:0 lets the value cell shrink; nowrap+ellipsis truncates gracefully. */
+.kv-v { color: var(--text); font-variant-numeric: tabular-nums; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 
 /* ─── Button ─── */
@@ -294,8 +297,11 @@
   margin-left: 4px;
 }
 .ensemble-row.has-active .er-dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in oklch, var(--ok), transparent 78%); }
-.ensemble-row .er-name { font-weight: 500; letter-spacing: -0.005em; }
-.ensemble-row .er-meta { font-family: var(--ff-mono); font-size: 10.5px; color: var(--dim); }
+/* F-B-1 (#461): long ensemble names + FQDN meta overflow the 1fr grid column.
+ * .col needs min-width:0 to shrink below intrinsic; children get nowrap+ellipsis. */
+.ensemble-row .col { min-width: 0; }
+.ensemble-row .er-name { font-weight: 500; letter-spacing: -0.005em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ensemble-row .er-meta { font-family: var(--ff-mono); font-size: 10.5px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ensemble-row .er-initial { display: none; }
 
 .nav-row {
@@ -356,6 +362,7 @@
   letter-spacing: -0.02em;
   color: var(--text);
   margin: 0;
+  overflow-wrap: break-word; /* F-A-4 (#461): no-space ensemble names force container expansion */
 }
 .page-title .at { color: var(--accent); }
 .page-title .prefix { font-family: var(--ff-mono); font-size: 14px; color: var(--dim); letter-spacing: 0; vertical-align: 4px; margin-right: 6px; font-weight: 500;}
@@ -463,11 +470,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap; /* F-B-3 (#461): action buttons escape the panel at boundary viewports */
 }
 .panel-head-title {
   display: inline-flex;
   align-items: baseline;
   gap: 10px;
+  min-width: 0; /* F-B-3 (#461): shrink title below intrinsic width */
 }
 .panel-head-title .h {
   font-family: var(--ff-mono);
@@ -481,6 +490,7 @@
   font-family: var(--ff-display);
   font-size: 18px;
   color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; /* F-B-3 (#461) */
 }
 .panel-body { padding: 14px 16px; }
 .panel-body.tight { padding: 10px 14px; }
@@ -532,6 +542,12 @@
   max-width: 72ch;
   text-wrap: pretty;
 }
+/* F-B-4 (#461): code blocks in chat messages escape the msg-body max-width,
+ * causing horizontal scroll leakage into the workspace layout.
+ * pre (verbatim blocks) gets overflow-x scroll so it scrolls independently.
+ * code (inline tokens) breaks anywhere so it doesn't force the block wider. */
+.msg-body pre { display: block; overflow-x: auto; max-width: 100%; white-space: pre; }
+.msg-body code { overflow-wrap: anywhere; }
 .msg.route .msg-body { color: var(--text-2); font-style: italic; font-size: 12.5px; }
 .msg.route {
   /* Visually demote: indent, smaller avatar — but keep text readable */
@@ -731,6 +747,10 @@
 .table tr.is-active { background: var(--accent-soft); }
 .table td.mono, .table td .mono { font-family: var(--ff-mono); font-size: 12.5px; }
 .table td.num { font-variant-numeric: tabular-nums; }
+/* F-B-2 + F-B-NEW-1 (#461): first-column cells in Hosts (FQDN) and Loadouts
+ * (lineup name) overflow with no ellipsis. max-width + nowrap + ellipsis truncates;
+ * title attr on the <td> (JSX) exposes the full value on hover. */
+.table td:first-child.mono { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 
 /* ─── Dialog (wizard) ─── */
@@ -835,7 +855,9 @@
 }
 .picker-row .marker { color: var(--accent); font-family: var(--ff-mono); }
 .picker-row.is-active .marker::before { content: "▸"; }
-.picker-row .name { font-weight: 500; }
+/* F-A-2 (#461): long player-type slugs overflow the 1fr name cell with no truncation.
+ * min-width:0 shrinks the flex column; nowrap+ellipsis truncates gracefully. */
+.picker-row .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .picker-row .desc { font-size: 11.5px; color: var(--dim); font-family: var(--ff-mono); }
 
 
@@ -858,8 +880,11 @@
 }
 .ensemble-card:hover { border-color: var(--accent); transform: translateY(-1px); }
 .ensemble-card.is-empty { opacity: 0.6; }
-.ec-head { display: flex; justify-content: space-between; align-items: baseline; }
-.ec-name { font-family: var(--ff-display); font-size: 22px; color: var(--text); letter-spacing: -0.01em; }
+.ec-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; overflow: hidden; }
+/* F-A-5 (#461): P1 auto-P1 — long ensemble names push .ec-tempo bbox outside
+ * the card, overlapping adjacent cards. .ec-name gets flex:1 1 0 + min-width:0
+ * so it shrinks; .ec-tempo gets flex-shrink:0 so the BPM stays anchored. */
+.ec-name { font-family: var(--ff-display); font-size: 22px; color: var(--text); letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 0; }
 .ec-name .at { color: var(--accent); }
 .ec-tempo {
   font-family: var(--ff-mono);
@@ -868,9 +893,12 @@
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
+  flex-shrink: 0; /* F-A-5 (#461): keep BPM from wrapping off-card */
 }
 .ec-tempo .bpm { color: var(--accent); font-weight: 700; font-size: 13px; }
-.ec-desc { color: var(--text-2); font-size: 13px; line-height: 1.5; min-height: 40px; }
+/* F-A-6 (#461): no-space synthetic-stress descriptions expand the card vertically.
+ * overflow-wrap breaks unbreakable tokens without hiding content. */
+.ec-desc { color: var(--text-2); font-size: 13px; line-height: 1.5; min-height: 40px; overflow-wrap: break-word; word-break: break-word; }
 .ec-stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -891,6 +919,12 @@
   justify-content: space-between;
   font-size: 11px;
 }
+/* F-A-1 (#461): long lineup names + FQDN hosts overflow .ec-meta with no truncation.
+ * Both spans need min-width:0; lineup (first) takes remaining space with flex:1 1 0;
+ * host (last) shrinks to nothing rather than overflowing the card. */
+.ec-meta > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ec-meta > span:first-child { flex: 1 1 0; }
+.ec-meta > span:last-child  { flex-shrink: 0; }
 /* Card-chrome flag chips. Tighter than `.page-pill` so they read as
  * indicators, not status pills. */
 .ec-flags {
@@ -1294,7 +1328,10 @@
 }
 
 /* Utility */
-.row { display: flex; align-items: center; gap: 8px; }
+/* F-B-NEW-2 (#461): button rows (wizards, actions) collapse to a horizontal
+ * overflow at narrow viewports. flex-wrap lets them reflow onto a second line.
+ * All surveyed .row callsites are wrap-tolerant (no nowrap dependents found). */
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .col { display: flex; flex-direction: column; gap: 8px; }
 .spacer { flex: 1; }
 
@@ -1444,6 +1481,11 @@
   align-content: start;
   gap: 14px;
 }
+
+/* F-A-4-B (#461): PlayerDetail sheet head — player ID with no spaces silently clips
+ * without ellipsis because the parent .row has no overflow control. Apply nowrap
+ * + ellipsis to the combined selector so SheetHead IDs truncate gracefully. */
+.subj.display { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ─── Player detail sheet (Radix Dialog) ─── */
 /* PR-C of #454 (F-A-1, F-LEAD-2): the PlayerDetail screen renders a
