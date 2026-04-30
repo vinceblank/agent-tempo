@@ -161,9 +161,9 @@ export function Workspace() {
   const [showSide, setShowSide] = useState(true);
   // Pop-out state: when true, the chat surface moves to a floating
   // PopoutWindow + the docked panel renders a ChatStub placeholder. The
-  // `.workspace-dimmed` class on the artboard wrapper desaturates the
-  // workspace beneath via the components.css `.workspace-dimmed > .app-shell`
-  // rule (line 1413-1416).
+  // popout is a true always-on-top floating window — workspace beneath
+  // stays fully interactive (canvas v=49 sync removed the dim/scrim;
+  // see PopoutWindow.tsx for the matching role="region" ARIA).
   const [popped, setPopped] = useState(false);
 
   // Cue mutation drives the Composer's onSubmit. The optimistic update
