@@ -112,7 +112,7 @@ test.describe('F-A-1 / H2 — ec-meta host span overflow (class A)', () => {
       return;
     }
 
-    // EXPECTATION: span should NOT overflow. Currently fails until F-A-1 fix.
+    // EXPECTATION: span should NOT overflow. Pre-PR-α this failed until F-A-1 fix.
     expect(
       injected.overflowing,
       `host span scrollWidth=${injected.scrollWidth} > clientWidth=${injected.clientWidth}: confirms F-A-1`,
@@ -207,7 +207,7 @@ test.describe('F-A-5 / NEW — ec-name long ensemble name, BPM bbox escape (clas
     }
 
     // EXPECTATION: BPM should remain inside the card boundary.
-    // Currently fails until F-A-5 fix lands (PR-α).
+    // Pre-PR-α this failed until F-A-5 fix lands (PR-α).
     expect(
       result.bpmEscapedCard,
       `BPM tempoRight=${result.tempoRight} > cardRight=${result.cardRight}: BPM escaped card — auto-P1 (F-A-5)`,
@@ -320,7 +320,7 @@ test.describe('F-A-6 / NEW — ec-desc unbreakable stress token, card boundary e
       return;
     }
 
-    // EXPECTATION: card must NOT widen or overlap neighbour. Currently fails until F-A-6 fix.
+    // EXPECTATION: card must NOT widen or overlap neighbour. Pre-PR-α this failed until F-A-6 fix.
     expect(
       result.cardOverlapsNeighbour,
       `card0 right=${result.card0RightAfter} > card1 left=${result.card1LeftAfter}: card escaped grid track — class B (F-A-6)`,
@@ -378,7 +378,7 @@ test.describe('F-A-2 / H3 — picker-row name overflow (class A)', () => {
     ).toBe(false);
   });
 
-  test('picker-row name overflows at synthetic-stress slug (H3 stress confirmed)', async ({
+  test('picker-row name does NOT overflow at synthetic-stress slug (F-A-2 fixed in PR-α)', async ({
     page,
   }) => {
     await page.goto(`${DASHBOARD_URL}/dashboard/create`);
@@ -404,12 +404,13 @@ test.describe('F-A-2 / H3 — picker-row name overflow (class A)', () => {
       return;
     }
 
-    // EXPECTATION: documents the known synthetic-stress failure (F-A-2).
-    // Flip to .toBe(false) after PR-α fix prevents regression.
+    // POST-FIX REGRESSION LOCK: PR-α (#489) added `min-width: 0` to
+    // `.picker-row .name` so even synthetic-stress slugs truncate.
+    // Locks against accidental removal of the min-width:0 rule.
     expect(
       result.overflowing,
-      `name scrollWidth=${result.scrollWidth} > clientWidth=${result.clientWidth}: synthetic-stress overflow expected — F-A-2`,
-    ).toBe(true);
+      `name scrollWidth=${result.scrollWidth} > clientWidth=${result.clientWidth}: F-A-2 stress overflow regressed`,
+    ).toBe(false);
   });
 });
 
@@ -453,7 +454,7 @@ test.describe('F-A-3 / H4 — PlayerTypes .display overflow (class A)', () => {
     ).toBe(false);
   });
 
-  test('.display overflows grid cell at synthetic-stress shortName (H4B confirmed)', async ({
+  test('.display does NOT overflow grid cell at synthetic-stress shortName (F-A-3 fixed in PR-α)', async ({
     page,
   }) => {
     await gotoPlayerTypes(page);
@@ -485,11 +486,18 @@ test.describe('F-A-3 / H4 — PlayerTypes .display overflow (class A)', () => {
       return;
     }
 
-    // EXPECTATION: documents confirmed stress failure. Flip to .toBe(false) after fix.
+    // POST-FIX REGRESSION LOCK: PR-α (#489) Cluster 2 added
+    // `overflow-wrap: break-word` to the `.display` utility class so
+    // synthetic-stress unbreakable tokens wrap to multiple lines instead
+    // of overflowing horizontally. Locks against removal of break-word.
     expect(
       result.overflowingOwn,
-      `display scrollWidth=${result.scrollWidth} > clientWidth=${result.clientWidth}: class-A escape at stress slug — F-A-3`,
-    ).toBe(true);
+      `display scrollWidth=${result.scrollWidth} > clientWidth=${result.clientWidth}: F-A-3 stress overflow regressed`,
+    ).toBe(false);
+    expect(
+      result.escapedIntoEl1,
+      `display escaped into adjacent grid cell — class-B regression of F-A-3`,
+    ).toBe(false);
   });
 });
 
@@ -544,7 +552,7 @@ test.describe('F-A-4 / H6-B — SheetHead player ID silent clip (class A + visua
       return;
     }
 
-    // EXPECTATION: should truncate with ellipsis. Currently fails (F-A-4 / H6-B).
+    // EXPECTATION: should truncate with ellipsis. Pre-PR-α this failed (F-A-4 / H6-B).
     expect(
       result.textOverflow,
       `text-overflow is '${result.textOverflow}' instead of 'ellipsis' — H6-B missing ellipsis`,

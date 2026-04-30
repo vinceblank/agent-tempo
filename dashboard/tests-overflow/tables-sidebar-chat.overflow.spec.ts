@@ -47,12 +47,10 @@
  *
  * ## CI status
  *
- * Some assertions document the failure shape today (pre-fix); they
- * will pass once PR-α (the CSS cluster fix) lands. The `dashboard-overflow`
- * CI job uses `continue-on-error: true` on the test step so transient
- * red status during the fix cycle doesn't block merges; once PR-α lands,
- * this guardrail flips fully green and the `continue-on-error` flag can
- * be removed (see `tests-overflow/README.md`).
+ * PR-α (#489) is on main; this branch is rebased onto it, so confirmed-
+ * finding assertions assert the post-fix state and pass. The
+ * `dashboard-overflow` CI job uses strict gating (no `continue-on-error`).
+ * See `tests-overflow/README.md` for the rollout history.
  */
 import { test, expect, type Page } from '@playwright/test';
 import {
@@ -132,7 +130,7 @@ async function setShellContent(page: Page): Promise<void> {
 // ────────────────────────────────────────────────────────────────────────
 
 test.describe('F-B-1 / H1 — Sidebar `.er-name` long ensemble name overflow (class A)', () => {
-  test('long ensemble name fits the row without overflow (currently fails — F-B-1)', async ({
+  test('long ensemble name fits the row without overflow (post-PR-α regression lock — F-B-1)', async ({
     page,
   }) => {
     await setShellContent(page);
@@ -159,7 +157,7 @@ test.describe('F-B-1 / H1 — Sidebar `.er-name` long ensemble name overflow (cl
 
     expect(result.text).toBe(LONG_TAIL_ENSEMBLE_NAME);
     // EXPECTATION: the .er-name should NOT overflow at production-realistic
-    // ensemble names. Currently fails (no `min-width: 0` on `.col`, no
+    // ensemble names. Pre-PR-α this failed (no `min-width: 0` on `.col`, no
     // `text-overflow: ellipsis` on `.er-name`). PR-α fix landings:
     // `.ensemble-row .col { min-width: 0 }` + ellipsis on `.er-name`.
     expect(
@@ -174,7 +172,7 @@ test.describe('F-B-1 / H1 — Sidebar `.er-name` long ensemble name overflow (cl
 // ────────────────────────────────────────────────────────────────────────
 
 test.describe('F-B-2 / H5 — Hosts table FQDN cell overflow (class A)', () => {
-  test('Host column with FQDN does NOT expand past sane width (currently fails — F-B-2)', async ({
+  test('Host column with FQDN does NOT expand past sane width (post-PR-α regression lock — F-B-2)', async ({
     page,
   }) => {
     await setShellContent(page);
@@ -206,7 +204,7 @@ test.describe('F-B-2 / H5 — Hosts table FQDN cell overflow (class A)', () => {
 
     expect(cell.text).toContain('eks.internal.example.com');
     // EXPECTATION: the Host column should be capped (audit recommends ~240px
-    // with ellipsis + title attribute). Currently fails — cell auto-expands
+    // with ellipsis + title attribute). Pre-PR-α this failed — cell auto-expands
     // to fit the FQDN. PR-α fix lands `max-width: 240px` + ellipsis on
     // `.table td:first-child`.
     expect(
@@ -226,7 +224,7 @@ test.describe('F-B-3 / H7 — `.panel-head` subj+actions collision at boundary (
     { label: '901 (just above 900 CQ)', w: 901, h: 820 },
     { label: '521 (just above 520 CQ)', w: 521, h: 780 },
   ]) {
-    test(`panel-head fits content without overflow at ${viewport.label} (currently fails — F-B-3)`, async ({
+    test(`panel-head fits content without overflow at ${viewport.label} (post-PR-α regression lock — F-B-3)`, async ({
       page,
     }) => {
       await setShellContent(page);
@@ -253,7 +251,7 @@ test.describe('F-B-3 / H7 — `.panel-head` subj+actions collision at boundary (
       const head = await measureOverflow(page, '.panel-head');
 
       // EXPECTATION: panel-head should not overflow at boundary viewports.
-      // Currently fails — no `flex-wrap: wrap`. PR-α fix lands `flex-wrap: wrap`
+      // Pre-PR-α this failed — no `flex-wrap: wrap`. PR-α fix lands `flex-wrap: wrap`
       // on `.panel-head` + `min-width: 0` + ellipsis on `.panel-head-title .subj`.
       expect(
         head.overflowing,
@@ -268,7 +266,7 @@ test.describe('F-B-3 / H7 — `.panel-head` subj+actions collision at boundary (
 // ────────────────────────────────────────────────────────────────────────
 
 test.describe('F-B-4 / H8 — `.msg-body` code-block overflow (P1 prod-realistic, ratified)', () => {
-  test('long code line stays inside `.msg.out` 78% bubble cap (currently fails — F-B-4)', async ({
+  test('long code line stays inside `.msg.out` 78% bubble cap (post-PR-α regression lock — F-B-4)', async ({
     page,
   }) => {
     await setShellContent(page);
@@ -333,7 +331,7 @@ test.describe('F-B-4 / H8 — `.msg-body` code-block overflow (P1 prod-realistic
 // ────────────────────────────────────────────────────────────────────────
 
 test.describe('F-B-5 / H9 — Settings `.kv` long-value overflow (class A)', () => {
-  test('long version string does NOT overflow `.kv-v` (currently fails — F-B-5)', async ({
+  test('long version string does NOT overflow `.kv-v` (post-PR-α regression lock — F-B-5)', async ({
     page,
   }) => {
     await setShellContent(page);
@@ -376,7 +374,7 @@ test.describe('F-B-5 / H9 — Settings `.kv` long-value overflow (class A)', () 
 // ────────────────────────────────────────────────────────────────────────
 
 test.describe('F-B-NEW-1 — Loadouts Name column unbounded (class A)', () => {
-  test('long lineup name does NOT expand the Name column past sane width (currently fails)', async ({
+  test('long lineup name does NOT expand the Name column past sane width (post-PR-α regression lock)', async ({
     page,
   }) => {
     await setShellContent(page);
@@ -417,7 +415,7 @@ test.describe('F-B-NEW-1 — Loadouts Name column unbounded (class A)', () => {
 // ────────────────────────────────────────────────────────────────────────
 
 test.describe('F-B-NEW-2 — Generic `.row` no flex-wrap (class A + C)', () => {
-  test('multi-button row in narrow container wraps gracefully (currently fails)', async ({
+  test('multi-button row in narrow container wraps gracefully (post-PR-α regression lock)', async ({
     page,
   }) => {
     await setShellContent(page);

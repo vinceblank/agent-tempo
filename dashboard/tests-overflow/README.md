@@ -52,6 +52,9 @@ This is the **v0** of the audit's recommended hybrid v0+v1 path (audit
   EnsembleCard auto-P1)
 - ✅ Refutation regression locks (H4A, H10, H11, H13)
 - ✅ P3-adjusted monitors (H12, H14)
+- ✅ Post-fix regression locks for stress-only confirmations (F-A-2 stress,
+  F-A-3 stress) — PR-α (#489) shipped the fixes; these tests assert the
+  fix didn't regress
 - ✅ Playwright `toHaveScreenshot` defaults configured (audit §10.3 step 2)
 
 What v0 defers — see follow-up issues filed on PR-merge:
@@ -66,11 +69,10 @@ What v0 defers — see follow-up issues filed on PR-merge:
 - ⏳ **v1 `toHaveScreenshot()` calls** — layered onto F-A-5, F-A-6, F-B-3,
   F-B-NEW-2 specs once baselines exist (audit §10.3 step 3).
 
-Until PR-α merges, some `expect(...overflowing).toBe(false)` assertions
-will fail by design (they assert the post-fix state). The
-`dashboard-overflow` CI job runs with `continue-on-error: true` so transient
-red doesn't block merges. After PR-α lands the assertions flip green and
-the `continue-on-error` flag should be removed.
+**PR-α (#489) is on main**: all 13 confirmed-finding assertions assert the
+post-fix state and pass. The `dashboard-overflow` CI job has strict gating
+(no `continue-on-error`). Refutation regression locks (H4A, H10, H11, H13,
+H12, H14) protect proven-safe patterns against future regression.
 
 ## Folder structure
 
