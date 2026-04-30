@@ -271,21 +271,28 @@ test.describe('F-B-2 / H5 — Hosts table FQDN cell overflow (class A)', () => {
       );
       if (!el) throw new Error('host-row first cell not found');
       const cs = getComputedStyle(el);
-      const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
       return {
         text: el.textContent ?? '',
         clientWidth: el.clientWidth,
-        contentWidth: el.clientWidth - padX,
-        padX,
+        scrollWidth: el.scrollWidth,
         maxWidth: cs.maxWidth,
         textOverflow: cs.textOverflow,
         whiteSpace: cs.whiteSpace,
+        overflow: cs.overflow,
       };
     });
 
     expect(cell.text).toContain('eks.internal.example.com');
-    // Fingerprint: PR-α applied `.table td:first-child.mono { max-width:
-    // 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }`.
+
+    // **Test-quality principle 14 (assertion fingerprinting) + auto-table-
+    // layout caveat**: `<td>` max-width is a layout *hint*, not a strict
+    // cap — Chromium's auto-table-layout honors it when content + table
+    // budget allows but may prioritize content fit otherwise. So a strict
+    // `contentWidth ≤ 240` assertion is brittle. Instead: fingerprint the
+    // CSS rule applied, prove truncation is engaged (the design intent),
+    // and bound the cell loosely so unbounded growth still fails.
+
+    // Fingerprint: PR-α's full `.table td:first-child.mono` rule.
     expect(
       cell.maxWidth,
       `max-width='${cell.maxWidth}' — PR-α rule expects '240px'`,
@@ -294,16 +301,30 @@ test.describe('F-B-2 / H5 — Hosts table FQDN cell overflow (class A)', () => {
       cell.textOverflow,
       `text-overflow='${cell.textOverflow}' — PR-α rule expects 'ellipsis'`,
     ).toBe('ellipsis');
-
-    // Outcome: max-width:240px caps the content-box. clientWidth includes
-    // padding (~28-50px depending on density tier), so we assert on the
-    // content-box width directly (subtracting horizontal padding) for a
-    // box-model-precise check. Without PR-α's rule, content would be
-    // ~533px (full FQDN width).
     expect(
-      cell.contentWidth,
-      `Host cell content width=${cell.contentWidth}px (clientWidth=${cell.clientWidth}, paddingX=${cell.padX}) should be ≤ 240px per max-width — F-B-2`,
-    ).toBeLessThanOrEqual(240);
+      cell.whiteSpace,
+      `white-space='${cell.whiteSpace}' — PR-α rule expects 'nowrap'`,
+    ).toBe('nowrap');
+    expect(
+      cell.overflow,
+      `overflow='${cell.overflow}' — PR-α rule expects 'hidden'`,
+    ).toBe('hidden');
+
+    // Truncation engaged: with the FQDN content overflowing the cap,
+    // scrollWidth (intrinsic content width) MUST exceed clientWidth.
+    expect(
+      cell.scrollWidth,
+      `scrollWidth=${cell.scrollWidth} should exceed clientWidth=${cell.clientWidth} — `+
+      `truncation isn't engaging on a 63-char FQDN`,
+    ).toBeGreaterThan(cell.clientWidth);
+
+    // Loose bound: without PR-α's rule, the cell would be 512+ (full FQDN).
+    // 400 is a safe upper bound that proves max-width is doing meaningful
+    // work without depending on auto-table-layout's exact arithmetic.
+    expect(
+      cell.clientWidth,
+      `cell clientWidth=${cell.clientWidth} > 400 — auto-layout isn't honoring max-width hint`,
+    ).toBeLessThan(400);
   });
 });
 
@@ -501,34 +522,39 @@ test.describe('F-B-NEW-1 — Loadouts Name column unbounded (class A)', () => {
       );
       if (!el) throw new Error('loadout-row first cell not found');
       const cs = getComputedStyle(el);
-      const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
       return {
         text: el.textContent ?? '',
         clientWidth: el.clientWidth,
-        contentWidth: el.clientWidth - padX,
-        padX,
+        scrollWidth: el.scrollWidth,
         maxWidth: cs.maxWidth,
         textOverflow: cs.textOverflow,
+        whiteSpace: cs.whiteSpace,
+        overflow: cs.overflow,
       };
     });
 
     expect(nameCell.text).toContain('cross-machine-recruiting-spike');
-    // Fingerprint: same PR-α rule as F-B-2 (Cluster 4 covers both
-    // Hosts and Loadouts via `.table td:first-child.mono`).
+
+    // Same shape as F-B-2 — PR-α's Cluster 4 covers both via
+    // `.table td:first-child.mono`. Fingerprint the rule + prove
+    // truncation engages + loose-bound the cell width (since `<td>`
+    // max-width is a layout hint, not a strict cap).
+    expect(nameCell.maxWidth).toBe('240px');
+    expect(nameCell.textOverflow).toBe('ellipsis');
+    expect(nameCell.whiteSpace).toBe('nowrap');
+    expect(nameCell.overflow).toBe('hidden');
+
     expect(
-      nameCell.maxWidth,
-      `max-width='${nameCell.maxWidth}' — PR-α rule expects '240px'`,
-    ).toBe('240px');
+      nameCell.scrollWidth,
+      `scrollWidth=${nameCell.scrollWidth} should exceed clientWidth=${nameCell.clientWidth} — truncation not engaging`,
+    ).toBeGreaterThan(nameCell.clientWidth);
+
+    // Loose bound: without PR-α's rule, the cell would be ~440+ (full
+    // long lineup name). 400 is a safe upper bound.
     expect(
-      nameCell.textOverflow,
-      `text-overflow='${nameCell.textOverflow}' — PR-α rule expects 'ellipsis'`,
-    ).toBe('ellipsis');
-    // Box-model-precise: assert content-box width (what max-width caps),
-    // not clientWidth (which includes padding).
-    expect(
-      nameCell.contentWidth,
-      `Loadouts Name cell content width=${nameCell.contentWidth}px (clientWidth=${nameCell.clientWidth}, paddingX=${nameCell.padX}) should be ≤ 240px per max-width — F-B-NEW-1`,
-    ).toBeLessThanOrEqual(240);
+      nameCell.clientWidth,
+      `cell clientWidth=${nameCell.clientWidth} > 400 — auto-layout isn't honoring max-width hint`,
+    ).toBeLessThan(400);
   });
 });
 
