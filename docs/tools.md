@@ -10,7 +10,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `set_part` | Describe what you're working on. Visible to others via `ensemble`. |
 | `set_ensemble_description` | Update the ensemble's mission-flavor description (≤100 chars). Surfaces on the dashboard EnsembleCard. Empty string clears it. Conductors should refresh at milestone boundaries. |
 | `listen` | Manually check for pending messages. |
-| `recruit` | Spawn a new Claude Code session in a directory. Can recruit a conductor with `conductor: true`. When `host` is set, validates the target daemon is live and supports the requested agent before spawning; pass `force: true` to bypass pre-flight (#274). Dev mode only: `agent: 'mock'` with optional `mockMode` (`echo` \| `scripted` \| `silent` \| `chaos`) and `mockScenario` (bare name or YAML path, required for `scripted`). #131 Phase C — `agent: 'claude-api'` runs headless via the Anthropic Messages API; requires `ANTHROPIC_API_KEY` env var + the `@anthropic-ai/sdk` optional dependency installed. Optional `model` arg overrides the default (`claude-opus-4-7`); falls back to `CLAUDE_TEMPO_API_MODEL` env. claude-api players have access to claude-tempo MCP tools (cue, report, recall, ensemble, …) but NOT file-edit / shell / web tools — use `agent: 'claude'` for tasks requiring those. |
+| `recruit` | Spawn a new Claude Code session in a directory. Can recruit a conductor with `conductor: true`. When `host` is set, validates the target daemon is live and supports the requested agent before spawning; pass `force: true` to bypass pre-flight (#274). Dev mode only: `agent: 'mock'` with optional `mockMode` (`echo` \| `scripted` \| `silent` \| `chaos`) and `mockScenario` (bare name or YAML path, required for `scripted`). #131 Phase C — `agent: 'claude-api'` runs headless via the Anthropic Messages API; requires `ANTHROPIC_API_KEY` env var + the `@anthropic-ai/sdk` optional dependency installed. Optional `model` arg overrides the default (`claude-opus-4-7`); falls back to `CLAUDE_TEMPO_API_MODEL` env. claude-api players have access to claude-tempo MCP tools (cue, report, recall, ensemble, …) but NOT file-edit / shell / web tools — use `agent: 'claude'` for tasks requiring those. #449 Phase C — `agent: 'opencode'` runs headless via [SST OpenCode](https://opencode.ai); requires OpenCode CLI (`npm install -g opencode-ai`) + `@opencode-ai/sdk` optional dependency. Pass `model: 'provider/name'` (e.g. `'anthropic/claude-opus-4-7'`, `'openai/gpt-4o'`, `'ollama/llama3'`). OpenCode has MCP-native tool access and persists session history server-side across restarts. |
 | `report` | Send updates to the conductor. No-op if no conductor exists. |
 | `schedule` | Create a one-shot or recurring schedule to cue a player. |
 | `unschedule` | Cancel a named schedule. |
@@ -41,9 +41,10 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 
 ## Version History
 
-### v0.28 Changes (#382, #385)
+### v0.28 Changes (#382, #385, #449, #485)
 
 - **`recruit` mock params added** — `agent: 'mock'` (dev mode only) with `mockMode` and `mockScenario`. Gates reject mock outside dev mode and validate mode/scenario combinations.
+- **`recruit` OpenCode support** — `agent: 'opencode'` with `model: 'provider/name'` for multi-provider headless sessions via SST OpenCode (#449/#485).
 
 ### v0.27 Changes (#285–#291)
 
