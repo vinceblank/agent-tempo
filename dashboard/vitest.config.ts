@@ -25,9 +25,11 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./tests/setup.ts'],
     css: true,
-    // Exclude Playwright specs (`e2e/*.spec.ts`) — they boot a real
-    // HTTP server + spawn chromium and don't run under jsdom. The
-    // `test:e2e` script runs them via `playwright test` directly.
-    exclude: ['node_modules/**', 'dist/**', 'e2e/**'],
+    // Exclude Playwright specs — they boot a real HTTP server + spawn
+    // chromium and don't run under jsdom. Two suites:
+    //   - `e2e/*.spec.ts` runs via `npm run test:e2e`
+    //   - `tests-overflow/*.overflow.spec.ts` runs via `npm run test:overflow`
+    //     (PR-v0 of #461 — see `dashboard/tests-overflow/README.md`)
+    exclude: ['node_modules/**', 'dist/**', 'e2e/**', 'tests-overflow/**'],
   },
 });
