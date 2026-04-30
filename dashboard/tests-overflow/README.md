@@ -74,6 +74,28 @@ post-fix state and pass. The `dashboard-overflow` CI job has strict gating
 (no `continue-on-error`). Refutation regression locks (H4A, H10, H11, H13,
 H12, H14) protect proven-safe patterns against future regression.
 
+## Daemon-availability behavior
+
+CI runs `vite preview` to serve `dashboard/dist/` but does **not** start a
+Temporal worker daemon. Two test methodologies cope differently with the
+missing daemon:
+
+- **Walk B specs** (`tables-sidebar-chat.overflow.spec.ts`) use
+  `about:blank` + `page.setContent()` with an absolute CSS URL —
+  truly daemon-independent. Run regardless.
+- **Walk A specs** (`cards-headers-wizards.overflow.spec.ts`) navigate to
+  the live SPA; the SPA's `useEnsembleList()` query fires `/v1/*` which
+  vite proxies to `127.0.0.1:8473` (the daemon). When no daemon is
+  running, those tests `test.skip()` via the `ensureDaemonOrSkip()`
+  guard. PlayerTypes-only tests (F-A-3, H12) tolerate missing daemon
+  because the page derives content from the bundled `SHIPPED_LINEUPS`
+  catalog and doesn't require wire data.
+
+Once the v1 follow-up lands the `/__overflow/<Component>?regime=…` route
+shim (audit §10.3 step 4), Walk A's daemon-bound tests can switch to the
+shim's no-wire-required route and the `ensureDaemonOrSkip()` guard
+becomes obsolete.
+
 ## Folder structure
 
 ```

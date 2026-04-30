@@ -67,10 +67,48 @@ import {
 
 const DASHBOARD_URL = process.env.DASHBOARD_URL ?? 'http://localhost:5174';
 
+// ── Daemon-availability guard ─────────────────────────────────────────
+
+/**
+ * Walk A's specs navigate to the live SPA and rely on it loading real
+ * ensemble data (so test selectors like `[data-testid^="ensemble-card-"]`
+ * resolve). The SPA fetches `/v1/*` which vite preview proxies to the
+ * daemon at `http://127.0.0.1:8473`. When the daemon isn't running (CI
+ * default — `dashboard-overflow` doesn't spawn one), those calls
+ * produce ECONNREFUSED and the tests fail in confusing ways before
+ * they even reach an assertion.
+ *
+ * The right CI signal is **skip**, not fail: the deferred v1 work
+ * (audit §10.3 step 4 — `/__overflow/<Component>?regime=…` route shim)
+ * removes this dependency entirely. Until then, skip when no daemon.
+ */
+let daemonAvailable: boolean | undefined;
+async function ensureDaemonOrSkip(): Promise<void> {
+  if (daemonAvailable === undefined) {
+    try {
+      const probe = await fetch('http://127.0.0.1:8473/v1/health', { signal: AbortSignal.timeout(1000) });
+      daemonAvailable = probe.ok;
+    } catch {
+      daemonAvailable = false;
+    }
+  }
+  if (!daemonAvailable) {
+    test.skip(true, 'live-dashboard tests require a running daemon at 127.0.0.1:8473 — deferred to v1 (route shim, audit §10.3 step 4)');
+  }
+}
+
 // ── Navigation helpers ────────────────────────────────────────────────
 
-/** Navigate to Overview page and wait for content. */
+/**
+ * Navigate to Overview page and wait for content.
+ *
+ * Probes daemon availability first — Overview boots the SPA's
+ * ensemble-list query, which fetches `/v1/ensembles` and `/v1/state/*`.
+ * Without a daemon those proxy through to ECONNREFUSED before
+ * `[data-testid^="ensemble-card-"]` ever resolves.
+ */
 async function gotoOverview(page: Page): Promise<void> {
+  await ensureDaemonOrSkip();
   await page.goto(`${DASHBOARD_URL}/dashboard`);
   await page.waitForSelector(
     '[data-testid^="ensemble-card-"], [data-testid="overview-empty"]',
@@ -78,12 +116,24 @@ async function gotoOverview(page: Page): Promise<void> {
   );
 }
 
-/** Navigate to the PlayerTypes screen. */
+/**
+ * Navigate to the PlayerTypes screen. PlayerTypes' content is mostly
+ * derived from the bundled SHIPPED catalog — it tolerates a missing
+ * daemon (the page renders without the wire-augmented overlay), so the
+ * daemon-probe is NOT applied here.
+ */
 async function gotoPlayerTypes(page: Page): Promise<void> {
   await page.goto(`${DASHBOARD_URL}/dashboard/player-types`);
   await page.waitForSelector('.types-grid, [data-testid="player-types-empty"]', {
     timeout: 10_000,
   });
+}
+
+/** Navigate to the Create-ensemble wizard (PickerList). Daemon-bound. */
+async function gotoCreateEnsemble(page: Page): Promise<void> {
+  await ensureDaemonOrSkip();
+  await page.goto(`${DASHBOARD_URL}/dashboard/create`);
+  await page.waitForSelector('.picker-row', { timeout: 10_000 });
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -342,8 +392,7 @@ test.describe('F-A-2 / H3 — picker-row name overflow (class A)', () => {
   test('picker-row name does NOT overflow at production-realistic slug (H3 prod-realistic refuted)', async ({
     page,
   }) => {
-    await page.goto(`${DASHBOARD_URL}/dashboard/create`);
-    await page.waitForSelector('.picker-row', { timeout: 10_000 });
+    await gotoCreateEnsemble(page);
 
     const result = await page.evaluate((slug: string) => {
       const nameSpan = document.querySelector<HTMLElement>('.picker-row .name');
@@ -381,8 +430,7 @@ test.describe('F-A-2 / H3 — picker-row name overflow (class A)', () => {
   test('picker-row name does NOT overflow at synthetic-stress slug (F-A-2 fixed in PR-α)', async ({
     page,
   }) => {
-    await page.goto(`${DASHBOARD_URL}/dashboard/create`);
-    await page.waitForSelector('.picker-row', { timeout: 10_000 });
+    await gotoCreateEnsemble(page);
 
     const result = await page.evaluate((slug: string) => {
       const nameSpan = document.querySelector<HTMLElement>('.picker-row .name');

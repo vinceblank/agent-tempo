@@ -91,18 +91,27 @@ async function measureOverflow(page: Page, selector: string): Promise<OverflowRe
   }, selector);
 }
 
+const DASHBOARD_URL = process.env.DASHBOARD_URL ?? 'http://localhost:5174';
+
 /**
- * Minimal page shell — links to the served dashboard's `components.css`
- * via the Playwright config's `baseURL`. The CI job spawns
- * `vite preview --outDir dashboard/dist` so `/dashboard/assets/components.css`
- * resolves; locally, run `npm --prefix dashboard run preview` first.
+ * Minimal page shell — pulls `components.css` from the running vite
+ * preview via an **absolute** URL. Critical: do NOT navigate to
+ * `${DASHBOARD_URL}/dashboard/` first — that boots the dashboard SPA,
+ * which fires `/v1/health` and other API calls. Vite proxies `/v1/*` to
+ * the daemon (`http://127.0.0.1:8473`); when the daemon isn't running
+ * (CI default) those calls produce `ECONNREFUSED` errors that race
+ * against `setContent` and surface as test failures.
+ *
+ * Using `about:blank` + absolute CSS URL keeps these tests truly
+ * daemon-independent — they only need vite preview's static asset
+ * handler, which the Playwright config's `webServer` block guarantees.
  */
 const SHELL_HTML = `
 <!doctype html>
 <html data-theme="dark">
 <head>
   <meta charset="UTF-8" />
-  <link rel="stylesheet" href="/dashboard/assets/components.css" />
+  <link rel="stylesheet" href="${DASHBOARD_URL}/dashboard/assets/components.css" />
   <style>
     body { margin: 0; font-family: system-ui, sans-serif; }
   </style>
@@ -113,16 +122,18 @@ const SHELL_HTML = `
 </html>
 `;
 
-const DASHBOARD_URL = process.env.DASHBOARD_URL ?? 'http://localhost:5174';
-
-/** Loads SHELL_HTML against the dashboard's preview server so CSS imports resolve. */
+/** Loads SHELL_HTML against `about:blank` so the dashboard SPA never boots. */
 async function setShellContent(page: Page): Promise<void> {
-  // Navigate to the dashboard origin first so relative URLs resolve, then
-  // overwrite the document with our isolated shell. setContent with a
-  // baseURL (Playwright config) makes the link[rel=stylesheet] href
-  // resolve correctly.
-  await page.goto(`${DASHBOARD_URL}/dashboard/`, { waitUntil: 'domcontentloaded' });
+  await page.goto('about:blank');
   await page.setContent(SHELL_HTML);
+  // Wait for the stylesheet to land — without this, measurements may
+  // sample the unstyled DOM and report wrong widths.
+  await page.waitForFunction(
+    () => document.styleSheets.length > 0 && Array.from(document.styleSheets).some((s) => {
+      try { return (s.cssRules?.length ?? 0) > 0; } catch { return false; }
+    }),
+    { timeout: 5_000 },
+  );
 }
 
 // ────────────────────────────────────────────────────────────────────────
