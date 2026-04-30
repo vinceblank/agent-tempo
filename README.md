@@ -37,7 +37,7 @@ Each session registers as a **player** in Temporal. Players discover each other 
 | 🖥️ **Terminal UI** | Chat-focused TUI with slash commands, overlays, and interactive wizards |
 | 🌐 **Cross-machine** | Any session that can reach your Temporal server can join the ensemble |
 | ⏸️ **Hold / Pause / Resume** | Pre-warm a full team before delivering tasks; pause and resume mid-session |
-| 🤖 **Copilot bridge** | Mix Claude Code and GitHub Copilot CLI sessions in the same ensemble |
+| 🤖 **Headless adapters** | Copilot bridge, Claude API, and OpenCode — mix providers and headless agents in the same ensemble |
 
 ## Installation
 
