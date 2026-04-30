@@ -271,10 +271,12 @@ test.describe('F-B-2 / H5 — Hosts table FQDN cell overflow (class A)', () => {
       );
       if (!el) throw new Error('host-row first cell not found');
       const cs = getComputedStyle(el);
+      const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
       return {
         text: el.textContent ?? '',
         clientWidth: el.clientWidth,
-        scrollWidth: el.scrollWidth,
+        contentWidth: el.clientWidth - padX,
+        padX,
         maxWidth: cs.maxWidth,
         textOverflow: cs.textOverflow,
         whiteSpace: cs.whiteSpace,
@@ -293,12 +295,15 @@ test.describe('F-B-2 / H5 — Hosts table FQDN cell overflow (class A)', () => {
       `text-overflow='${cell.textOverflow}' — PR-α rule expects 'ellipsis'`,
     ).toBe('ellipsis');
 
-    // Outcome: the Host column should be capped at ≤240px with content
-    // overflowing (scrollWidth > clientWidth = ellipsis truncation).
+    // Outcome: max-width:240px caps the content-box. clientWidth includes
+    // padding (~28-50px depending on density tier), so we assert on the
+    // content-box width directly (subtracting horizontal padding) for a
+    // box-model-precise check. Without PR-α's rule, content would be
+    // ~533px (full FQDN width).
     expect(
-      cell.clientWidth,
-      `Host cell clientWidth=${cell.clientWidth} should be ≤ 280px — F-B-2`,
-    ).toBeLessThanOrEqual(280);
+      cell.contentWidth,
+      `Host cell content width=${cell.contentWidth}px (clientWidth=${cell.clientWidth}, paddingX=${cell.padX}) should be ≤ 240px per max-width — F-B-2`,
+    ).toBeLessThanOrEqual(240);
   });
 });
 
@@ -496,9 +501,12 @@ test.describe('F-B-NEW-1 — Loadouts Name column unbounded (class A)', () => {
       );
       if (!el) throw new Error('loadout-row first cell not found');
       const cs = getComputedStyle(el);
+      const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
       return {
         text: el.textContent ?? '',
         clientWidth: el.clientWidth,
+        contentWidth: el.clientWidth - padX,
+        padX,
         maxWidth: cs.maxWidth,
         textOverflow: cs.textOverflow,
       };
@@ -515,10 +523,12 @@ test.describe('F-B-NEW-1 — Loadouts Name column unbounded (class A)', () => {
       nameCell.textOverflow,
       `text-overflow='${nameCell.textOverflow}' — PR-α rule expects 'ellipsis'`,
     ).toBe('ellipsis');
+    // Box-model-precise: assert content-box width (what max-width caps),
+    // not clientWidth (which includes padding).
     expect(
-      nameCell.clientWidth,
-      `Loadouts Name cell clientWidth=${nameCell.clientWidth} should be ≤ 280px — F-B-NEW-1`,
-    ).toBeLessThanOrEqual(280);
+      nameCell.contentWidth,
+      `Loadouts Name cell content width=${nameCell.contentWidth}px (clientWidth=${nameCell.clientWidth}, paddingX=${nameCell.padX}) should be ≤ 240px per max-width — F-B-NEW-1`,
+    ).toBeLessThanOrEqual(240);
   });
 });
 
