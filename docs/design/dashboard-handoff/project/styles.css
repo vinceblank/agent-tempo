@@ -15,7 +15,25 @@
   --bg-3:         #20253417; /* inset, subtle */
   --bg-chat-out:  #1B2030;   /* maestro's own messages */
 
+  /*
+   * #459 — `--surface-*` / `--text-1` aliases for the `.ensemble-row
+   * .er-initial` block (lines 1067-1083). Declared as `var()` aliases
+   * (NOT duplicated literals) so light-theme overrides on `--bg-1` /
+   * `--bg-2` / `--text` propagate automatically. Future-proofs the
+   * design system: if surface tokens ever need to diverge from bg
+   * tokens, the alias decouples without touching call sites.
+   *
+   * Source mapping pinned in issue #459 / dashboard-impl substitution
+   * table (`dashboard/src/styles/components.css` header):
+   *   --surface-1 → raised surface (sidebar)  ⇒ --bg-1
+   *   --surface-2 → panel background          ⇒ --bg-2
+   *   --text-1    → primary ink               ⇒ --text
+   */
+  --surface-1:    var(--bg-1);
+  --surface-2:    var(--bg-2);
+
   --text:         #F5EEE6;   /* warm cream */
+  --text-1:       var(--text);
   --text-2:       #C5C1B9;
   --dim:          #7D8090;
   --muted:        #4B5064;
