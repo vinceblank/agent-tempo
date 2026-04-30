@@ -12,6 +12,10 @@ source files below rather than grepping multiple directories.
 > grep -E "^\s+\\\$\{out\.cyan\('[a-z]" src/cli/help-text.ts
 > # TUI slash commands
 > grep "usage:" src/tui/commands.ts
+> # Adapter types
+> grep "AGENT_TYPES" src/types.ts
+> # HTTP endpoints
+> grep -E "GET|POST|OPTIONS" src/http/server.ts | grep "v1\|dashboard"
 > ```
 
 ---
@@ -142,7 +146,64 @@ Source: `src/tui/commands.ts` — `COMMANDS` record, `description:` + `usage:` f
 
 ---
 
-## 4. Temporal Wire Protocol (signals / queries / updates)
+## 4. Adapter Types
+
+Source: `src/types.ts` — `AGENT_TYPES` tuple; registration in `src/adapters/index.ts`.
+
+| Key | Adapter class | Notes |
+|-----|---------------|-------|
+| `claude` | `InteractiveAttachment` (`src/adapters/claude-code/`) | Default — interactive Claude Code CLI subprocess |
+| `copilot` | `CopilotSdkAttachment` (`src/adapters/copilot/`) | GitHub Copilot bridge |
+| `claude-api` | `ClaudeApiAttachment` (`src/adapters/claude-api/`) | Headless via Anthropic Messages API (#131) |
+| `opencode` | `OpenCodeAttachment` (`src/adapters/opencode/`) | OpenCode CLI adapter (#449) |
+| `mock` | `MockAttachment` (`src/adapters/mock/`) | Dev-mode only — stripped from npm tarball. Modes: `echo`, `scripted`, `silent`, `chaos` |
+
+The `mock` adapter is only registered when `isDevMode()` is true (`src/adapters/index.ts`).
+
+**Count:** 5 adapter types (4 production, 1 dev-mode only)
+
+---
+
+## 5. HTTP Endpoints (daemon)
+
+Source: `src/http/server.ts` — request dispatcher.
+
+**Full reference:** [`docs/SSE-PROTOCOL.md`](SSE-PROTOCOL.md) (SSE streams), [`docs/daemon.md`](daemon.md)
+
+### Read endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/health` | Health check — no auth required |
+| `GET` | `/v1/ensembles` | List ensembles |
+| `GET` | `/v1/hosts` | List registered daemons |
+| `GET` | `/v1/agent-types` | Catalog available agent types |
+| `GET` | `/v1/lineups` | Catalog saved lineups |
+| `GET` | `/v1/state/:ensemble` | Ensemble snapshot (`?fixture=<name>` in dev mode) |
+| `GET` | `/v1/events` | SSE global event stream |
+| `GET` | `/v1/events/:ensemble` | SSE per-ensemble event stream (`?fixture=<name>` in dev mode) |
+| `GET` | `/dashboard/*` | Static SPA dashboard |
+
+### Write endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/ensembles` | Create ensemble |
+| `POST` | `/v1/ensembles/:ensemble/<action>` | Ensemble write actions |
+| `POST` | `/dashboard/api/pair` | Mint a QR-code pairing token (bearer required) |
+
+### Auth-exempt endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/dashboard/api/pair/:token` | Consume a single-use pairing token |
+| `OPTIONS` | `*` | CORS preflight — always allowed |
+
+**Auth rule:** Bearer token required when bind address is non-loopback or `Origin` is non-loopback (DNS-rebinding defense). No auth in default loopback mode. Exempt regardless of mode: `/v1/health`, `OPTIONS`, `GET /dashboard/api/pair/:token`.
+
+---
+
+## 6. Temporal Wire Protocol (signals / queries / updates)
 
 Documented in full in [`docs/WIRE-PROTOCOL.md`](WIRE-PROTOCOL.md). Not duplicated here.
 
@@ -154,8 +215,8 @@ Summary counts (as of v0.27):
 
 ---
 
-## 5. HTTP/SSE Event Types (daemon event source)
+## 7. SSE Event Types (daemon event source)
 
 Documented in full in [`docs/SSE-PROTOCOL.md`](SSE-PROTOCOL.md). Not duplicated here.
 
-The daemon exposes an HTTP event source on a local port. Event types, endpoint paths, and payload schemas are the stable contract between the daemon and consumers (TUI, CLI follower, third-party integrations).
+Event types, payload schemas, and ring-buffer replay semantics are the stable contract between the daemon and consumers (TUI, CLI follower, third-party integrations).
