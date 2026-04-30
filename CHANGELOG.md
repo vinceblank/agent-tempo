@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.12] - 2026-04-30
+
+### Added
+
+- **OpenCode headless adapter (Phase C)** — fourth adapter `opencode` brings multi-provider
+  LLM access (OpenAI, Anthropic, Gemini, Bedrock, etc.) via OpenCode's headless mode.
+  `OpenCodeAttachment extends SdkAttachment` inherits the V2 attachment lifecycle (claim,
+  heartbeat, phase watcher, processingStart/End pairing) and integrates with the full MCP
+  tool surface. Recruit via `recruit({ agent: 'opencode', model? })`; requires OpenCode CLI
+  installed. Completes the #449 OpenCode adapter trilogy (Phase A spike → Phase B ADR →
+  Phase C implementation). (#485)
+
+### Fixed
+
+- **Dashboard CSS surface tokens** — `--surface-1`, `--surface-2`, and `--text-1` tokens
+  are now declared in the canonical CSS, resolving silent token-miss fallbacks introduced
+  when the token layer was split in #459. (#487)
+- **Dashboard CSS overflow cluster** — 13 audit findings from #461 resolved: `min-width:0`
+  guards on flex children, `overflow-wrap: break-word` on text containers, and `flex-wrap`
+  discipline across card and list layouts. Prevents content-length-driven layout breaks at
+  all tested breakpoints. (#489)
+
+### Tests
+
+- **Dashboard overflow CI guardrail** — 35 new Playwright assertions graduate the #461 audit
+  walkers to a canonical CI check; refutation-as-regression locks prevent silent regressions
+  on the 13 fixed findings. (#491)
+
+### Docs
+
+- `docs/design/` — #461 dashboard overflow + content-length robustness audit: 13 findings,
+  1 auto-P1, v0.28.10 baseline. (#484)
+- Surface registry updated to include adapter types and HTTP endpoints (daemon `/v1/*`
+  routes), completing #305 coverage. (#488)
+
 ## [0.28.0-beta.11] - 2026-04-29
 
 ### Added
