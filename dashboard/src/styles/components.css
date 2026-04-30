@@ -2,8 +2,9 @@
    claude-tempo · Maestro Dashboard — component styles
 
    SOURCE: docs/design/dashboard-handoff/project/styles.css
-   LAST-SYNC COMMIT: 829f67d39088ce6f8553cd35b41e2041533c9eed
-   PORT DATE: 2026-04-29 (PR-B of #454, components.css 137-line re-sync)
+   LAST-SYNC COMMIT: 6535ebf5
+   PORT DATE: 2026-04-30 (canvas v=49 sync — page-header typography +
+              popout non-modal + sidebar maestro mark cleanup)
 
    This file is a SELECTIVE port of the canonical handoff stylesheet.
    Sections included: layout primitives the dashboard renders directly
@@ -349,11 +350,21 @@
   padding: 16px 26px 0;
   align-items: start;
 }
+/* canvas v=49 sync: actions sit on the right, optically centered to the
+   title row's visual band (not the H1 ascender). */
+.page-header > .page-actions {
+  align-self: start;
+  margin-top: 2px;
+}
 .page-title-row {
   display: flex;
-  align-items: baseline;
-  gap: 14px;
+  align-items: center;     /* canvas v=49 sync: was baseline */
+  gap: 16px;               /* canvas v=49 sync: was 14px */
   flex-wrap: wrap;
+  /* canvas v=49 sync: align pills to the cap-height band of the title so
+     they feel optically paired with the headline rather than dropping into
+     its descender. */
+  min-height: 34px;
 }
 .page-title {
   font-family: var(--ff-display);
@@ -363,9 +374,14 @@
   color: var(--text);
   margin: 0;
   overflow-wrap: break-word; /* F-A-4 (#461): no-space ensemble names force container expansion */
+  /* canvas v=49 sync: trim the body's leading whitespace so visual centering
+     matches geometric. */
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
 }
 .page-title .at { color: var(--accent); }
-.page-title .prefix { font-family: var(--ff-mono); font-size: 14px; color: var(--dim); letter-spacing: 0; vertical-align: 4px; margin-right: 6px; font-weight: 500;}
+.page-title .prefix { font-family: var(--ff-mono); font-size: 14px; color: var(--dim); letter-spacing: 0; margin-right: 8px; font-weight: 500; align-self: center; transform: translateY(1px); /* canvas v=49 sync: was vertical-align: 4px; margin-right: 6px */ }
 .page-subtitle {
   color: var(--dim);
   font-size: 13px;
@@ -1340,14 +1356,10 @@
 [data-theme="light"] .page-pill { background: var(--bg-1); }
 
 
-/* ─── Pop-out chat window — floats over dimmed workspace ─── */
-.popout-scrim {
-  position: absolute; inset: 0;
-  background: rgba(8, 6, 5, 0.55);
-  backdrop-filter: blur(3px) saturate(0.6);
-  z-index: 50;
-  cursor: zoom-out;
-}
+/* ─── Pop-out chat window — true floating, non-modal ─── */
+/* canvas v=49 sync: popout-scrim removed — the window is now a true
+   floating peer (always on top, workspace stays interactive), not a
+   modal. See PopoutWindow.tsx role="region" for the matching ARIA. */
 .popout-window {
   position: absolute;
   bottom: 28px; right: 28px;
@@ -1404,20 +1416,19 @@
 }
 .popout-composer { padding: 10px 12px; border-top: 1px solid var(--rule); background: var(--bg-2); }
 
-/* When popped, dim and slightly desaturate the workspace beneath */
-.workspace-dimmed > .app-shell {
-  filter: saturate(0.7) brightness(0.85);
-  pointer-events: none;
-}
+/* canvas v=49 sync: popout is a true floating window — workspace beneath
+   stays fully interactive (true to the "pop out / always on top" metaphor).
+   The .workspace-dimmed > .app-shell rule (filter + pointer-events lock)
+   was removed in canvas v=49; the className was never applied in JSX. */
 
 /* Phone (≤520px): the popped chat fills the viewport instead of floating
  * as a macOS-chrome window. Border + radius drop so the chrome reads as
- * a takeover surface; the scrim is hidden because the chat owns the
- * whole screen. PR-C3 of #389 — paired with the workspace bottom-sheet
- * roster so phone users have a single screen of chat OR roster, never
- * the floating-window-on-top-of-roster shape that desktop affords.
+ * a takeover surface. PR-C3 of #389 — paired with the workspace
+ * bottom-sheet roster so phone users have a single screen of chat OR
+ * roster, never the floating-window-on-top-of-roster shape that desktop
+ * affords.
  *
- * Source: handoff styles.css lines 1465-1476. */
+ * Source: handoff styles.css lines 1453-1462 (canvas v=49). */
 @container artboard (max-width: 520px) {
   .popout-window {
     bottom: 0; right: 0; left: 0; top: 0;
@@ -1427,7 +1438,6 @@
     border-radius: 0;
     border: none;
   }
-  .popout-scrim { display: none; }
 }
 
 /* Sidebar maestro identity row */

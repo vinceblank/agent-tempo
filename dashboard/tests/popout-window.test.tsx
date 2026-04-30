@@ -1,6 +1,11 @@
 /**
- * PopoutWindow + ChatStub primitives — chrome rendering, close-on-scrim,
- * close-on-traffic-light-red, and the dock-back affordance on the stub.
+ * PopoutWindow + ChatStub primitives — chrome rendering, close-on-traffic-
+ * light-red, non-modal ARIA semantics, and the dock-back affordance on the
+ * stub.
+ *
+ * Canvas v=49 sync: the dimmed scrim is gone; the window is a true
+ * always-on-top floating peer. ARIA role flipped from `dialog` to
+ * `region` to reflect the non-modal metaphor.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
@@ -15,7 +20,6 @@ describe('PopoutWindow primitive', () => {
       </PopoutWindow>,
     );
     expect(screen.getByTestId('popout-window')).toBeInTheDocument();
-    expect(screen.getByTestId('popout-window-scrim')).toBeInTheDocument();
     expect(screen.getByTestId('popout-window-close')).toBeInTheDocument();
     expect(container.querySelectorAll('.popout-dot').length).toBe(3);
     const title = container.querySelector('.popout-title');
@@ -26,11 +30,18 @@ describe('PopoutWindow primitive', () => {
     expect(screen.getByTestId('popout-body')).toBeInTheDocument();
   });
 
-  it('calls onClose when the scrim is clicked', () => {
-    const onClose = vi.fn();
-    render(<PopoutWindow onClose={onClose} />);
-    fireEvent.click(screen.getByTestId('popout-window-scrim'));
-    expect(onClose).toHaveBeenCalledOnce();
+  it('exposes role="region" with an accessible label (non-modal floating)', () => {
+    render(<PopoutWindow />);
+    const region = screen.getByRole('region', { name: /popped-out maestro chat/i });
+    expect(region).toBeInTheDocument();
+    expect(region).toHaveAttribute('data-testid', 'popout-window');
+    // Canvas v=49 sync: must NOT be role="dialog" — popout is non-modal.
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('does not render a scrim element (canvas v=49 sync)', () => {
+    render(<PopoutWindow />);
+    expect(screen.queryByTestId('popout-window-scrim')).toBeNull();
   });
 
   it('calls onClose when the red traffic-light dot is clicked', () => {
@@ -40,7 +51,7 @@ describe('PopoutWindow primitive', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it('does not propagate clicks from inside the window to the scrim', () => {
+  it('does not propagate clicks from inside the window to the workspace beneath', () => {
     const onClose = vi.fn();
     render(
       <PopoutWindow onClose={onClose}>
