@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.13] - 2026-04-30
+
+### Changed
+
+- **Dashboard page-header typography (canvas v=49)** — page-actions optical alignment,
+  title-row cap-height alignment, and prefix transform refinement from the Claude Design
+  bundle. Popout chat is now non-modal (`role="dialog"` → `role="region"`): the workspace
+  stays fully interactive when the popout is open. (#497)
+
+### Docs
+
+- OpenCode adapter coverage added across CLAUDE.md, `docs/tools.md`, and README.md:
+  `opencode/` directory entry, `agent: 'opencode'` recruit example, Phase A→B→C trilogy
+  summary. (#496)
+
 ## [0.28.0-beta.12] - 2026-04-30
 
 ### Added
