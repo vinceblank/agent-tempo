@@ -156,7 +156,7 @@ async function setShellContent(page: Page): Promise<void> {
 // ────────────────────────────────────────────────────────────────────────
 
 test.describe('F-B-1 / H1 — Sidebar `.er-name` long ensemble name overflow (class A)', () => {
-  test('long ensemble name fits the row without overflow (post-PR-α regression lock — F-B-1)', async ({
+  test('long ensemble name truncates with ellipsis (post-PR-α regression lock — F-B-1)', async ({
     page,
   }) => {
     await setShellContent(page);
@@ -179,17 +179,52 @@ test.describe('F-B-1 / H1 — Sidebar `.er-name` long ensemble name overflow (cl
     }, LONG_TAIL_ENSEMBLE_NAME);
 
     await page.setViewportSize({ width: 1440, height: 900 });
-    const result = await measureOverflow(page, '.er-name');
+
+    // **Test-quality principle 14 (assertion fingerprinting)**: this test
+    // initially asserted `overflowing === false`, which was correct
+    // pre-PR-α (no truncation, no ellipsis) but became wrong once the
+    // fix landed — with `text-overflow: ellipsis`, the element IS
+    // overflowing (scrollWidth > clientWidth) and that's the design
+    // intent. Asserting only `overflowing` conflates "no overflow" with
+    // "overflows but graceful". Fingerprint the CSS rule directly.
+    const result = await page.evaluate(() => {
+      const el = document.querySelector<HTMLElement>('.er-name');
+      if (!el) throw new Error('.er-name not found');
+      const cs = getComputedStyle(el);
+      return {
+        text: el.textContent ?? '',
+        scrollWidth: el.scrollWidth,
+        clientWidth: el.clientWidth,
+        textOverflow: cs.textOverflow,
+        whiteSpace: cs.whiteSpace,
+        overflow: cs.overflow,
+      };
+    });
 
     expect(result.text).toBe(LONG_TAIL_ENSEMBLE_NAME);
-    // EXPECTATION: the .er-name should NOT overflow at production-realistic
-    // ensemble names. Pre-PR-α this failed (no `min-width: 0` on `.col`, no
-    // `text-overflow: ellipsis` on `.er-name`). PR-α fix landings:
-    // `.ensemble-row .col { min-width: 0 }` + ellipsis on `.er-name`.
+
+    // Fingerprint: PR-α applied `overflow: hidden + text-overflow: ellipsis +
+    // white-space: nowrap` to `.er-name`. Without these, the test passes
+    // for the wrong reason (no constraint = no overflow).
     expect(
-      result.overflowing,
-      `er-name scrollWidth=${result.scrollWidth} > clientWidth=${result.clientWidth} at viewport 1440 — F-B-1`,
-    ).toBe(false);
+      result.textOverflow,
+      `text-overflow='${result.textOverflow}' — PR-α rule `+
+      `\`.ensemble-row .er-name { text-overflow: ellipsis }\` is missing`,
+    ).toBe('ellipsis');
+    expect(
+      result.whiteSpace,
+      `white-space='${result.whiteSpace}' — PR-α rule expects 'nowrap'`,
+    ).toBe('nowrap');
+
+    // Truncation outcome: with ellipsis applied, scrollWidth (intrinsic
+    // content width) MUST exceed clientWidth (visible box) for the long
+    // ensemble name. If they're equal, either content fits trivially
+    // (defeats the test setup) or constraints aren't applied.
+    expect(
+      result.scrollWidth,
+      `scrollWidth=${result.scrollWidth} should exceed clientWidth=${result.clientWidth} `+
+      `for a 34-char ensemble name in a ~195px column — fixture or constraint regressed`,
+    ).toBeGreaterThan(result.clientWidth);
   });
 });
 
@@ -205,9 +240,13 @@ test.describe('F-B-2 / H5 — Hosts table FQDN cell overflow (class A)', () => {
     await page.evaluate((fqdn: string) => {
       const root = document.getElementById('root')!;
       // Faithful Hosts.tsx:154-176 + 199-258 markup, distilled.
+      // Panel constrained to 800px to mirror the artboard's bounded
+      // width budget — auto-table-layout only honors `max-width` on
+      // cells when the table itself has a width budget; in the real
+      // dashboard the artboard provides this budget.
       root.innerHTML = `
-        <div class="panel" style="margin: 14px;">
-          <table class="table">
+        <div class="panel" style="margin: 14px; width: 800px;">
+          <table class="table" style="width: 100%;">
             <thead>
               <tr><th>Host</th><th>Platform</th><th class="num">Sessions</th><th>Daemon</th><th>Heartbeat</th></tr>
             </thead>
@@ -226,13 +265,36 @@ test.describe('F-B-2 / H5 — Hosts table FQDN cell overflow (class A)', () => {
     }, FQDN_HOSTNAME);
 
     await page.setViewportSize({ width: 1440, height: 900 });
-    const cell = await measureOverflow(page, '[data-testid="host-row-fqdn"] td:first-child');
+    const cell = await page.evaluate(() => {
+      const el = document.querySelector<HTMLElement>(
+        '[data-testid="host-row-fqdn"] td:first-child',
+      );
+      if (!el) throw new Error('host-row first cell not found');
+      const cs = getComputedStyle(el);
+      return {
+        text: el.textContent ?? '',
+        clientWidth: el.clientWidth,
+        scrollWidth: el.scrollWidth,
+        maxWidth: cs.maxWidth,
+        textOverflow: cs.textOverflow,
+        whiteSpace: cs.whiteSpace,
+      };
+    });
 
     expect(cell.text).toContain('eks.internal.example.com');
-    // EXPECTATION: the Host column should be capped (audit recommends ~240px
-    // with ellipsis + title attribute). Pre-PR-α this failed — cell auto-expands
-    // to fit the FQDN. PR-α fix lands `max-width: 240px` + ellipsis on
-    // `.table td:first-child`.
+    // Fingerprint: PR-α applied `.table td:first-child.mono { max-width:
+    // 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }`.
+    expect(
+      cell.maxWidth,
+      `max-width='${cell.maxWidth}' — PR-α rule expects '240px'`,
+    ).toBe('240px');
+    expect(
+      cell.textOverflow,
+      `text-overflow='${cell.textOverflow}' — PR-α rule expects 'ellipsis'`,
+    ).toBe('ellipsis');
+
+    // Outcome: the Host column should be capped at ≤240px with content
+    // overflowing (scrollWidth > clientWidth = ellipsis truncation).
     expect(
       cell.clientWidth,
       `Host cell clientWidth=${cell.clientWidth} should be ≤ 280px — F-B-2`,
@@ -407,9 +469,12 @@ test.describe('F-B-NEW-1 — Loadouts Name column unbounded (class A)', () => {
     await page.evaluate(() => {
       const root = document.getElementById('root')!;
       const longName = 'tempo-cross-machine-recruiting-spike-handoff-rev-3';
+      // Panel constrained to 800px to mirror the artboard's bounded
+      // width budget — auto-table-layout only honors `max-width` on
+      // cells when the table itself has a width budget.
       root.innerHTML = `
-        <div class="panel" style="margin: 14px;">
-          <table class="table">
+        <div class="panel" style="margin: 14px; width: 800px;">
+          <table class="table" style="width: 100%;">
             <thead><tr><th>Name</th><th>Summary</th><th class="num">Players</th><th>Source</th></tr></thead>
             <tbody>
               <tr data-testid="loadout-row-long">
@@ -425,10 +490,31 @@ test.describe('F-B-NEW-1 — Loadouts Name column unbounded (class A)', () => {
     });
 
     await page.setViewportSize({ width: 1440, height: 900 });
-    const nameCell = await measureOverflow(page, '[data-testid="loadout-row-long"] td:first-child');
+    const nameCell = await page.evaluate(() => {
+      const el = document.querySelector<HTMLElement>(
+        '[data-testid="loadout-row-long"] td:first-child',
+      );
+      if (!el) throw new Error('loadout-row first cell not found');
+      const cs = getComputedStyle(el);
+      return {
+        text: el.textContent ?? '',
+        clientWidth: el.clientWidth,
+        maxWidth: cs.maxWidth,
+        textOverflow: cs.textOverflow,
+      };
+    });
 
     expect(nameCell.text).toContain('cross-machine-recruiting-spike');
-    // EXPECTATION: Name cell capped at ~240px, mirroring F-B-2's Hosts table fix.
+    // Fingerprint: same PR-α rule as F-B-2 (Cluster 4 covers both
+    // Hosts and Loadouts via `.table td:first-child.mono`).
+    expect(
+      nameCell.maxWidth,
+      `max-width='${nameCell.maxWidth}' — PR-α rule expects '240px'`,
+    ).toBe('240px');
+    expect(
+      nameCell.textOverflow,
+      `text-overflow='${nameCell.textOverflow}' — PR-α rule expects 'ellipsis'`,
+    ).toBe('ellipsis');
     expect(
       nameCell.clientWidth,
       `Loadouts Name cell clientWidth=${nameCell.clientWidth} should be ≤ 280px — F-B-NEW-1`,
