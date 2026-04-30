@@ -1,0 +1,500 @@
+/**
+ * Dashboard overflow guardrail — tables / sidebar / chat / buttons
+ * (Batch B coverage from #461 audit).
+ *
+ * Audit: `docs/design/dashboard-overflow-audit-v0.28.10.md`
+ * Walker: tempo-researcher
+ * Promoted from: `audit/461-walk-b:dashboard/tests-overflow/_walk-b-measurement.spec.ts`
+ *
+ * ## What this spec catches
+ *
+ * Per audit §4 (findings catalog) + §4.3 (refutations):
+ *
+ *   - **F-B-1 / H1**     — Sidebar `.er-name` long ensemble name overflow (class A self-overflow, conditional auto-P1)
+ *   - **F-B-2 / H5**     — Hosts table FQDN cell overflow (class A, conditional auto-P1)
+ *   - **F-B-3 / H7**     — `.panel-head` no flex-wrap, subj+actions collision at boundary viewports (class A + class C)
+ *   - **F-B-4 / H8**     — `.msg-body` code-block overflow (class A, P1 prod-realistic, ratified)
+ *   - **F-B-5 / H9**     — Settings `.kv` long-value overflow (class A)
+ *   - **F-B-NEW-1**      — Loadouts Name column unbounded (class A)
+ *   - **F-B-NEW-2**      — Generic `.row` button-row missing flex-wrap (class A + class C)
+ *
+ * Plus refutation-as-regression coverage:
+ *
+ *   - **H11** — TempoStrip narrow-viewport rendering — refuted (no overflow at 320×240, 390×780, 1440×900)
+ *
+ * ## Methodology
+ *
+ * **Self-contained `page.setContent()` injection** — each test injects
+ * minimal HTML that faithfully mirrors the production component shape
+ * (Sidebar.tsx, Hosts.tsx, FeedMessage.tsx, etc.) and applies the live
+ * `components.css` via `<link rel="stylesheet" href="/dashboard/assets/components.css" />`.
+ * No daemon, no SPA, no fixture wire-up — the suite runs against any
+ * served dashboard build.
+ *
+ * Walk B was conducted statically (Chrome MCP + dev daemon HTTP API
+ * both unavailable mid-walk); this spec is the deferred-measurement
+ * surface for those static-confirmed findings, per audit §1.4 (b)
+ * concurrent-failure resilience.
+ *
+ * ## Two measurement classes (per researcher #474 §1.1 taxonomy)
+ *
+ * **Class A — overflow own container**
+ *   `el.scrollWidth > el.clientWidth + 1` — element wider than its box.
+ *
+ * **Class B — escape into adjacent sibling**
+ *   `getBoundingClientRect()` math comparing element edges across
+ *   adjacent components.
+ *
+ * ## CI status
+ *
+ * Some assertions document the failure shape today (pre-fix); they
+ * will pass once PR-α (the CSS cluster fix) lands. The `dashboard-overflow`
+ * CI job uses `continue-on-error: true` on the test step so transient
+ * red status during the fix cycle doesn't block merges; once PR-α lands,
+ * this guardrail flips fully green and the `continue-on-error` flag can
+ * be removed (see `tests-overflow/README.md`).
+ */
+import { test, expect, type Page } from '@playwright/test';
+import {
+  LONG_TAIL_ENSEMBLE_NAME,
+  FQDN_HOSTNAME,
+} from './fixtures';
+
+// ── Helpers ───────────────────────────────────────────────────────────
+
+interface OverflowReport {
+  text: string;
+  scrollWidth: number;
+  clientWidth: number;
+  overflowing: boolean;
+  hasEllipsis: boolean;
+}
+
+/**
+ * Measure overflow on a single element — the canonical "is the content
+ * wider than the box" check, plus a "did the layout actually clip with
+ * ellipsis" hint via `.textContent.endsWith('…')` (note: `text-overflow:
+ * ellipsis` does NOT alter textContent in DOM — the ellipsis is a
+ * render-time visual, so this hint is unreliable and kept here only as
+ * a debug field; the real signal is `overflowing`).
+ */
+async function measureOverflow(page: Page, selector: string): Promise<OverflowReport> {
+  return page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) throw new Error(`Selector not found: ${sel}`);
+    const text = el.textContent ?? '';
+    return {
+      text: text.trim(),
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+      overflowing: el.scrollWidth > el.clientWidth + 1,
+      hasEllipsis: text.trim().endsWith('…'),
+    };
+  }, selector);
+}
+
+/**
+ * Minimal page shell — links to the served dashboard's `components.css`
+ * via the Playwright config's `baseURL`. The CI job spawns
+ * `vite preview --outDir dashboard/dist` so `/dashboard/assets/components.css`
+ * resolves; locally, run `npm --prefix dashboard run preview` first.
+ */
+const SHELL_HTML = `
+<!doctype html>
+<html data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="/dashboard/assets/components.css" />
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; }
+  </style>
+</head>
+<body>
+  <main id="root"></main>
+</body>
+</html>
+`;
+
+const DASHBOARD_URL = process.env.DASHBOARD_URL ?? 'http://localhost:5174';
+
+/** Loads SHELL_HTML against the dashboard's preview server so CSS imports resolve. */
+async function setShellContent(page: Page): Promise<void> {
+  // Navigate to the dashboard origin first so relative URLs resolve, then
+  // overwrite the document with our isolated shell. setContent with a
+  // baseURL (Playwright config) makes the link[rel=stylesheet] href
+  // resolve correctly.
+  await page.goto(`${DASHBOARD_URL}/dashboard/`, { waitUntil: 'domcontentloaded' });
+  await page.setContent(SHELL_HTML);
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// F-B-1 — Sidebar `.er-name` long ensemble name overflow (class A)
+// ────────────────────────────────────────────────────────────────────────
+
+test.describe('F-B-1 / H1 — Sidebar `.er-name` long ensemble name overflow (class A)', () => {
+  test('long ensemble name fits the row without overflow (currently fails — F-B-1)', async ({
+    page,
+  }) => {
+    await setShellContent(page);
+    await page.evaluate((longName: string) => {
+      const root = document.getElementById('root')!;
+      // Faithful Sidebar.tsx:97-132 markup, in isolation.
+      root.innerHTML = `
+        <aside style="width: 244px; border-right: 1px solid #444; padding: 14px 0; overflow: hidden;">
+          <a href="#" class="ensemble-row">
+            <span class="er-dot"></span>
+            <span class="er-initial" aria-hidden="true">T</span>
+            <span class="col" style="gap: 0;">
+              <span class="er-name">${longName}</span>
+              <span class="er-meta mono">5 players</span>
+            </span>
+            <span class="mono dim" style="font-size: 10px;">↵</span>
+          </a>
+        </aside>
+      `;
+    }, LONG_TAIL_ENSEMBLE_NAME);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const result = await measureOverflow(page, '.er-name');
+
+    expect(result.text).toBe(LONG_TAIL_ENSEMBLE_NAME);
+    // EXPECTATION: the .er-name should NOT overflow at production-realistic
+    // ensemble names. Currently fails (no `min-width: 0` on `.col`, no
+    // `text-overflow: ellipsis` on `.er-name`). PR-α fix landings:
+    // `.ensemble-row .col { min-width: 0 }` + ellipsis on `.er-name`.
+    expect(
+      result.overflowing,
+      `er-name scrollWidth=${result.scrollWidth} > clientWidth=${result.clientWidth} at viewport 1440 — F-B-1`,
+    ).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// F-B-2 — Hosts table FQDN cell overflow (class A)
+// ────────────────────────────────────────────────────────────────────────
+
+test.describe('F-B-2 / H5 — Hosts table FQDN cell overflow (class A)', () => {
+  test('Host column with FQDN does NOT expand past sane width (currently fails — F-B-2)', async ({
+    page,
+  }) => {
+    await setShellContent(page);
+    await page.evaluate((fqdn: string) => {
+      const root = document.getElementById('root')!;
+      // Faithful Hosts.tsx:154-176 + 199-258 markup, distilled.
+      root.innerHTML = `
+        <div class="panel" style="margin: 14px;">
+          <table class="table">
+            <thead>
+              <tr><th>Host</th><th>Platform</th><th class="num">Sessions</th><th>Daemon</th><th>Heartbeat</th></tr>
+            </thead>
+            <tbody>
+              <tr data-testid="host-row-fqdn">
+                <td class="mono"><span style="color: green">●</span> ${fqdn}</td>
+                <td class="mono">linux-x64</td>
+                <td class="num">5</td>
+                <td class="mono">v0.28.0-beta.10</td>
+                <td class="mono">3s ago</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      `;
+    }, FQDN_HOSTNAME);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const cell = await measureOverflow(page, '[data-testid="host-row-fqdn"] td:first-child');
+
+    expect(cell.text).toContain('eks.internal.example.com');
+    // EXPECTATION: the Host column should be capped (audit recommends ~240px
+    // with ellipsis + title attribute). Currently fails — cell auto-expands
+    // to fit the FQDN. PR-α fix lands `max-width: 240px` + ellipsis on
+    // `.table td:first-child`.
+    expect(
+      cell.clientWidth,
+      `Host cell clientWidth=${cell.clientWidth} should be ≤ 280px — F-B-2`,
+    ).toBeLessThanOrEqual(280);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// F-B-3 — `.panel-head` no flex-wrap (class A + class C boundary)
+// ────────────────────────────────────────────────────────────────────────
+
+test.describe('F-B-3 / H7 — `.panel-head` subj+actions collision at boundary (class A + C)', () => {
+  for (const viewport of [
+    { label: '1199 (just below 1200 CQ)', w: 1199, h: 820 },
+    { label: '901 (just above 900 CQ)', w: 901, h: 820 },
+    { label: '521 (just above 520 CQ)', w: 521, h: 780 },
+  ]) {
+    test(`panel-head fits content without overflow at ${viewport.label} (currently fails — F-B-3)`, async ({
+      page,
+    }) => {
+      await setShellContent(page);
+      await page.evaluate(() => {
+        const root = document.getElementById('root')!;
+        root.innerHTML = `
+          <div class="panel" style="width: 100%;">
+            <div class="panel-head">
+              <div class="panel-head-title">
+                <span class="h">Maestro chat</span>
+                <span class="subj display">@tempo-impl-feature-flag-rollout-q3</span>
+              </div>
+              <div class="row">
+                <button class="btn btn-ghost btn-sm" data-testid="pause">⏸ Pause</button>
+                <button class="btn btn-ghost btn-sm" data-testid="release">Release</button>
+                <button class="btn btn-ghost btn-sm" data-testid="popout">↗ Pop out</button>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+
+      await page.setViewportSize({ width: viewport.w, height: viewport.h });
+      const head = await measureOverflow(page, '.panel-head');
+
+      // EXPECTATION: panel-head should not overflow at boundary viewports.
+      // Currently fails — no `flex-wrap: wrap`. PR-α fix lands `flex-wrap: wrap`
+      // on `.panel-head` + `min-width: 0` + ellipsis on `.panel-head-title .subj`.
+      expect(
+        head.overflowing,
+        `panel-head overflowing at ${viewport.label}: scrollWidth=${head.scrollWidth} > clientWidth=${head.clientWidth} — F-B-3`,
+      ).toBe(false);
+    });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// F-B-4 — `.msg-body` code-block overflow (class A, P1 ratified)
+// ────────────────────────────────────────────────────────────────────────
+
+test.describe('F-B-4 / H8 — `.msg-body` code-block overflow (P1 prod-realistic, ratified)', () => {
+  test('long code line stays inside `.msg.out` 78% bubble cap (currently fails — F-B-4)', async ({
+    page,
+  }) => {
+    await setShellContent(page);
+    await page.evaluate(() => {
+      const root = document.getElementById('root')!;
+      root.innerHTML = `
+        <div class="chat" style="width: 800px;">
+          <div class="chat-log">
+            <div class="msg out" data-testid="msg-out-1">
+              <div class="msg-head">
+                <span class="sender mono">you</span>
+                <span class="arrow">→</span>
+                <span class="target">conductor</span>
+                <span class="time">14:02</span>
+              </div>
+              <div class="msg-body" data-testid="msg-body-1">
+                <pre><code>npm install --save-dev @some/very-long-unbreakable-package-name-that-will-not-wrap@1.2.3-build-metadata-foo-bar-baz</code></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    const bubble = await measureOverflow(page, '[data-testid="msg-out-1"]');
+    const pre = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="msg-body-1"] pre');
+      if (!el) throw new Error('pre not found');
+      return {
+        scrollWidth: el.scrollWidth,
+        clientWidth: el.clientWidth,
+        overflowing: el.scrollWidth > el.clientWidth + 1,
+      };
+    });
+
+    // The bubble's `clientWidth <= 78% × 800 = 624` is the design contract
+    // (`.msg.out { max-width: 78% }`). Today the inner `<pre>` has no
+    // overflow-x rule, so its content can extend past `.msg-body` and
+    // visually bleed past the bubble border.
+    //
+    // PR-α fix: `.msg-body pre { display: block; overflow-x: auto;
+    // max-width: 100%; white-space: pre; }`. Post-fix the bubble width is
+    // honored AND the inner `<pre>` produces an internal horizontal
+    // scrollbar.
+    expect(
+      bubble.clientWidth,
+      `bubble clientWidth=${bubble.clientWidth} should be ≤ 624 (78% of 800) — F-B-4`,
+    ).toBeLessThanOrEqual(624 + 4); // 4px tolerance for sub-pixel rounding
+
+    // After fix: pre's `overflowing === true` (scrollbar inside bubble).
+    // Today: pre's clientWidth equals scrollWidth (no clip), and pre's
+    // scrollWidth exceeds .msg-body clientWidth.
+    expect(
+      pre.overflowing,
+      `pre clientWidth=${pre.clientWidth} should be bounded by .msg-body, with scrollWidth=${pre.scrollWidth} > clientWidth → internal scroll — F-B-4`,
+    ).toBe(true);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// F-B-5 — Settings `.kv` long-value overflow (class A)
+// ────────────────────────────────────────────────────────────────────────
+
+test.describe('F-B-5 / H9 — Settings `.kv` long-value overflow (class A)', () => {
+  test('long version string does NOT overflow `.kv-v` (currently fails — F-B-5)', async ({
+    page,
+  }) => {
+    await setShellContent(page);
+    await page.evaluate(() => {
+      const root = document.getElementById('root')!;
+      const longVersion = 'v0.28.0-beta.10+main.a1b2c3d4e5f6.dirty.local-build-metadata';
+      root.innerHTML = `
+        <div class="panel settings-panel" style="width: 360px;">
+          <div class="panel-head">
+            <div class="panel-head-title">
+              <span class="h">Connection</span>
+              <span class="subj display">Temporal namespace</span>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="kv"><span class="kv-k">namespace</span><span class="kv-v mono">claude-tempo-dev</span></div>
+            <div class="kv" data-testid="kv-row-version"><span class="kv-k">version</span><span class="kv-v mono" data-testid="kv-version">${longVersion}</span></div>
+          </div>
+        </div>
+      `;
+    });
+
+    const value = await measureOverflow(page, '[data-testid="kv-version"]');
+    const row = await measureOverflow(page, '[data-testid="kv-row-version"]');
+
+    expect(value.text).toContain('beta.10');
+    // EXPECTATION: kv-v should be capped + truncate with ellipsis. Today
+    // the row expands horizontally because `.kv` has no `min-width: 0` and
+    // `.kv-v` has no overflow rule. PR-α fix: `min-width: 0` on `.kv` +
+    // ellipsis on `.kv-v`.
+    expect(
+      row.overflowing,
+      `kv row overflowing: row.scrollWidth=${row.scrollWidth} > row.clientWidth=${row.clientWidth} — F-B-5`,
+    ).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// F-B-NEW-1 — Loadouts table Name column unbounded (class A)
+// ────────────────────────────────────────────────────────────────────────
+
+test.describe('F-B-NEW-1 — Loadouts Name column unbounded (class A)', () => {
+  test('long lineup name does NOT expand the Name column past sane width (currently fails)', async ({
+    page,
+  }) => {
+    await setShellContent(page);
+    await page.evaluate(() => {
+      const root = document.getElementById('root')!;
+      const longName = 'tempo-cross-machine-recruiting-spike-handoff-rev-3';
+      root.innerHTML = `
+        <div class="panel" style="margin: 14px;">
+          <table class="table">
+            <thead><tr><th>Name</th><th>Summary</th><th class="num">Players</th><th>Source</th></tr></thead>
+            <tbody>
+              <tr data-testid="loadout-row-long">
+                <td class="mono"><span class="accent">≡</span> ${longName}</td>
+                <td data-label="Summary" style="color: var(--text-2); font-size: 12.5px; max-width: 320px;">A long-running release coordination ensemble.</td>
+                <td data-label="Players" class="num">12</td>
+                <td data-label="Source"><span class="mono dim" style="font-size: 11px;">user</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      `;
+    });
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const nameCell = await measureOverflow(page, '[data-testid="loadout-row-long"] td:first-child');
+
+    expect(nameCell.text).toContain('cross-machine-recruiting-spike');
+    // EXPECTATION: Name cell capped at ~240px, mirroring F-B-2's Hosts table fix.
+    expect(
+      nameCell.clientWidth,
+      `Loadouts Name cell clientWidth=${nameCell.clientWidth} should be ≤ 280px — F-B-NEW-1`,
+    ).toBeLessThanOrEqual(280);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// F-B-NEW-2 — Generic `.row` button-row missing flex-wrap (class A + class C)
+// ────────────────────────────────────────────────────────────────────────
+
+test.describe('F-B-NEW-2 — Generic `.row` no flex-wrap (class A + C)', () => {
+  test('multi-button row in narrow container wraps gracefully (currently fails)', async ({
+    page,
+  }) => {
+    await setShellContent(page);
+    await page.evaluate(() => {
+      const root = document.getElementById('root')!;
+      root.innerHTML = `
+        <div style="width: 240px; border: 1px solid #444; padding: 8px;">
+          <div class="row" data-testid="row-narrow">
+            <button class="btn btn-ghost btn-sm">Edit</button>
+            <button class="btn btn-ghost btn-sm">Cancel</button>
+            <button class="btn btn-ghost btn-sm">Pop out</button>
+            <button class="btn btn-ghost btn-sm">Pause longer label</button>
+          </div>
+        </div>
+      `;
+    });
+
+    const row = await measureOverflow(page, '[data-testid="row-narrow"]');
+
+    // EXPECTATION: row should wrap onto multiple lines, not extend past
+    // its 240px container. Today `.row` has no `flex-wrap: wrap` default.
+    // PR-α fix: `.row { flex-wrap: wrap; }` (with audit-recommended grep
+    // of nowrap call sites first; opt-out class for any holdouts).
+    expect(
+      row.overflowing,
+      `row overflowing in 240px container: scrollWidth=${row.scrollWidth} > clientWidth=${row.clientWidth} — F-B-NEW-2`,
+    ).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// REFUTATION-AS-REGRESSION (§4.3) — H11 must always pass
+//
+// Per audit §1.4 (c) "refutation-as-regression-detector" pattern: the
+// patterns we proved currently safe could regress under future code
+// changes. Locking the proof in CI prevents the regression.
+// ────────────────────────────────────────────────────────────────────────
+
+test.describe('H11 — TempoStrip narrow viewport (refuted; regression lock)', () => {
+  for (const viewport of [
+    { w: 320, h: 240, label: 'synthetic-narrow' },
+    { w: 390, h: 780, label: 'phone' },
+    { w: 1440, h: 900, label: 'desktop' },
+  ]) {
+    test(`TempoStrip renders without overflow at ${viewport.label} (${viewport.w}×${viewport.h})`, async ({
+      page,
+    }) => {
+      await setShellContent(page);
+      await page.evaluate(() => {
+        const root = document.getElementById('root')!;
+        // Faithful TempoStrip.tsx + components.css:109-128 shape.
+        const bars = Array.from({ length: 60 }, (_, i) =>
+          `<rect x="${i * 6}" y="20" width="4" height="${20 + (i % 7) * 2}" fill="#888" />`,
+        ).join('');
+        root.innerHTML = `
+          <div class="tempo-strip" data-testid="tempo-strip" style="height: 44px;">
+            <div class="tempo-strip-label">
+              <span class="mono dim">tempo</span>
+              <span class="tempo-bpm"><span class="mono num">92</span><span class="mono dim">bpm</span></span>
+            </div>
+            <svg class="tempo-strip-svg" viewBox="0 0 360 44" width="100%" height="44" preserveAspectRatio="none">${bars}</svg>
+          </div>
+        `;
+      });
+
+      await page.setViewportSize({ width: viewport.w, height: viewport.h });
+      const strip = await measureOverflow(page, '[data-testid="tempo-strip"]');
+
+      // REFUTATION: H11 was static-refuted because (a) `viewBox` + 100% width
+      // + `preserveAspectRatio: none` deforms bars elastically rather than
+      // clipping, and (b) `Math.max(1.5, h)` floor on bar heights keeps
+      // bars visible at any compression ratio. If this fails, H11 needs
+      // re-opening as a real finding.
+      expect(
+        strip.overflowing,
+        `TempoStrip overflowing at ${viewport.label}: scrollWidth=${strip.scrollWidth} > clientWidth=${strip.clientWidth}`,
+      ).toBe(false);
+    });
+  }
+});
