@@ -53,10 +53,38 @@
  * See `tests-overflow/README.md` for the rollout history.
  */
 import { test, expect, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   LONG_TAIL_ENSEMBLE_NAME,
   FQDN_HOSTNAME,
 } from './fixtures';
+
+// ── Source-CSS loader ────────────────────────────────────────────────
+//
+// Load the dashboard's source CSS files at test-runtime and inject via
+// `page.addStyleTag()`. Initially this spec linked to the built bundle
+// at `/dashboard/assets/components.css`, but vite hashes that filename
+// (`index-{hash}.css`) so the link silently 404'd — most tests then
+// passed spuriously (no CSS constraint = no overflow), and three
+// assertions that depended on specific PR-α width caps (F-B-2 240px,
+// F-B-NEW-1 240px, F-B-4 78% bubble) failed honestly.
+//
+// Reading source files keeps the spec self-contained against any vite
+// build output naming and avoids a pre-test build step. The `@import`
+// lines in `globals.css` are stripped because they reference
+// `tailwindcss` + relative paths that only resolve under vite's
+// build-time graph, not at browser runtime.
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const STYLES_DIR = join(HERE, '..', 'src', 'styles');
+
+const DASHBOARD_CSS = [
+  readFileSync(join(STYLES_DIR, 'tokens.css'), 'utf-8'),
+  readFileSync(join(STYLES_DIR, 'globals.css'), 'utf-8').replace(/^\s*@import\b.*$/gm, ''),
+  readFileSync(join(STYLES_DIR, 'components.css'), 'utf-8'),
+].join('\n\n');
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -91,27 +119,18 @@ async function measureOverflow(page: Page, selector: string): Promise<OverflowRe
   }, selector);
 }
 
-const DASHBOARD_URL = process.env.DASHBOARD_URL ?? 'http://localhost:5174';
-
 /**
- * Minimal page shell — pulls `components.css` from the running vite
- * preview via an **absolute** URL. Critical: do NOT navigate to
- * `${DASHBOARD_URL}/dashboard/` first — that boots the dashboard SPA,
- * which fires `/v1/health` and other API calls. Vite proxies `/v1/*` to
- * the daemon (`http://127.0.0.1:8473`); when the daemon isn't running
- * (CI default) those calls produce `ECONNREFUSED` errors that race
- * against `setContent` and surface as test failures.
- *
- * Using `about:blank` + absolute CSS URL keeps these tests truly
- * daemon-independent — they only need vite preview's static asset
- * handler, which the Playwright config's `webServer` block guarantees.
+ * Minimal page shell. CSS is injected via `page.addStyleTag({ content })`
+ * after `setContent` so the source CSS files (read at module load) are
+ * applied without depending on any vite-built asset filename. About:blank
+ * keeps the dashboard SPA from booting — no `/v1/*` calls, no daemon
+ * dependency, no race condition on `setContent`.
  */
 const SHELL_HTML = `
 <!doctype html>
 <html data-theme="dark">
 <head>
   <meta charset="UTF-8" />
-  <link rel="stylesheet" href="${DASHBOARD_URL}/dashboard/assets/components.css" />
   <style>
     body { margin: 0; font-family: system-ui, sans-serif; }
   </style>
@@ -122,18 +141,14 @@ const SHELL_HTML = `
 </html>
 `;
 
-/** Loads SHELL_HTML against `about:blank` so the dashboard SPA never boots. */
+/**
+ * Loads SHELL_HTML against `about:blank` and injects the source CSS so
+ * the dashboard SPA never boots.
+ */
 async function setShellContent(page: Page): Promise<void> {
   await page.goto('about:blank');
   await page.setContent(SHELL_HTML);
-  // Wait for the stylesheet to land — without this, measurements may
-  // sample the unstyled DOM and report wrong widths.
-  await page.waitForFunction(
-    () => document.styleSheets.length > 0 && Array.from(document.styleSheets).some((s) => {
-      try { return (s.cssRules?.length ?? 0) > 0; } catch { return false; }
-    }),
-    { timeout: 5_000 },
-  );
+  await page.addStyleTag({ content: DASHBOARD_CSS });
 }
 
 // ────────────────────────────────────────────────────────────────────────
