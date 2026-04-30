@@ -358,7 +358,8 @@ function KV({ k, v, mono = false }: KVProps) {
   return (
     <div className="kv">
       <span className="kv-k">{k}</span>
-      <span className={'kv-v' + (mono ? ' mono' : '')}>{v}</span>
+      {/* F-B-5 (#461): title exposes full value when kv-v is ellipsis-truncated */}
+      <span className={'kv-v' + (mono ? ' mono' : '')} title={String(v)}>{v}</span>
     </div>
   );
 }
