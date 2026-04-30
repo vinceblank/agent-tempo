@@ -199,7 +199,7 @@ Source: `src/http/server.ts` — request dispatcher.
 | `GET` | `/dashboard/api/pair/:token` | Consume a single-use pairing token |
 | `OPTIONS` | `*` | CORS preflight — always allowed |
 
-**Auth rule:** Bearer token required on all routes except `/v1/health`, `OPTIONS`, and `/dashboard/api/pair/:token`.
+**Auth rule:** Bearer token required when bind address is non-loopback or `Origin` is non-loopback (DNS-rebinding defense). No auth in default loopback mode. Exempt regardless of mode: `/v1/health`, `OPTIONS`, `GET /dashboard/api/pair/:token`.
 
 ---
 
