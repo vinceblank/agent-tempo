@@ -39,6 +39,7 @@ src/
 │   ├── README.md      # Adapter contract documentation
 │   ├── index.ts       # Adapter registry bootstrap + barrel exports (mock registered iff isDevMode())
 │   ├── base.ts        # BaseAttachment + SdkAttachment base classes (lifecycle skeleton)
+│   ├── terminal-error.ts # Shared terminal-class error classifier for signal/query failures (#249)
 │   ├── claude-code/   # InteractiveAttachment — Claude Code CLI adapter
 │   ├── copilot/       # CopilotSdkAttachment — Copilot bridge adapter
 │   ├── claude-api/    # ClaudeApiAttachment — headless adapter via Anthropic Messages API (#131)
@@ -99,6 +100,7 @@ src/
 │   ├── validation.ts / worktree.ts / safe-path.ts / duration.ts / search-attributes.ts
 │   ├── attachment-format.ts / recall-format.ts   # Shared display formatters (attachment-info, recall)
 │   ├── hosts.ts / format-hosts.ts                # Host enumeration + shared hosts display formatter (#274)
+│   └── sdk-probe.ts   # Filesystem-walk probe for installed optional npm deps (used by opencode adapter + recruit preflight, #449)
 ├── types.ts           # Shared type definitions
 ├── git-info.ts        # Git repository detection helper
 └── config.ts          # Env var handling
