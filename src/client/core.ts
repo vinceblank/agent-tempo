@@ -140,6 +140,12 @@ export function createTempoClientCore(
       // Strategy 1: Global Maestro playersByEnsemble query
       try {
         const h = handle(globalMaestroId);
+        // #433: unbounded — justified because `discoverEnsembles` is not
+        // reachable from `buildEnsembleSnapshot` (it's a CLI / TUI
+        // discovery surface, separate from the snapshot existence gate
+        // which uses `listEnsembles`). A hung global maestro here only
+        // affects the CLI lister, which has its own user-facing
+        // cancellability via Ctrl-C.
         const byEnsemble: Record<string, MaestroPlayerInfo[]> = await h.query('maestroPlayersByEnsemble');
         const results = Object.entries(byEnsemble).map(([name, players]) => {
           const conductor = players.find(p => p.isConductor);
@@ -267,11 +273,20 @@ export function createTempoClientCore(
       await Promise.all(
         [...byEnsemble.keys()].map(async (name) => {
           try {
-            const paused = await handle(maestroWorkflowId(name)).query(maestroPausedQuery);
+            // Issue #433 — bound per-ensemble maestro query so a wedged
+            // maestro can't hang `listEnsembles` (the snapshot existence
+            // gate at snapshot.ts:144). Existing catch maps any failure
+            // to "leave paused undefined" and the downstream phase
+            // heuristic classifies the ensemble.
+            const paused = await queryHandleWithTimeout(
+              handle(maestroWorkflowId(name)),
+              maestroPausedQuery,
+            );
             pausedByEnsemble.set(name, !!paused);
           } catch {
-            // Hub workflow not running — leave undefined so the phase
-            // heuristic below decides classification.
+            // Hub workflow not running, or worker wedged (#433) — leave
+            // undefined so the phase heuristic below decides
+            // classification.
           }
         }),
       );
@@ -313,7 +328,12 @@ export function createTempoClientCore(
       // Strategy 1: Global Maestro — filter by ensemble
       try {
         const h = handle(globalMaestroId);
-        const byEnsemble: Record<string, MaestroPlayerInfo[]> = await h.query('maestroPlayersByEnsemble');
+        // Issue #433 — bound the global-maestro query so a wedged
+        // global maestro can't hang `getPlayers` (called from the
+        // snapshot fan-out and many other paths). Existing catch falls
+        // through to Strategy 2 → Strategy 3 on any failure.
+        const byEnsemble: Record<string, MaestroPlayerInfo[]> =
+          await queryHandleWithTimeout(h, 'maestroPlayersByEnsemble');
         if (byEnsemble[ensemble]) return byEnsemble[ensemble];
       } catch {
         // Fall through
@@ -322,7 +342,8 @@ export function createTempoClientCore(
       // Strategy 2: Per-ensemble Maestro
       try {
         const h = handle(maestroWorkflowId(ensemble));
-        return await h.query('maestroPlayers');
+        // Issue #433 — same reasoning, applied to the per-ensemble maestro.
+        return await queryHandleWithTimeout<MaestroPlayerInfo[]>(h, 'maestroPlayers');
       } catch {
         // Fall through
       }
@@ -431,6 +452,10 @@ export function createTempoClientCore(
     async getMessages(ensemble: string, limit?: number): Promise<MaestroRelayMessage[]> {
       try {
         const h = handle(globalMaestroId);
+        // #433: unbounded — justified, `getMessages` is not reachable from
+        // `buildEnsembleSnapshot` (snapshot uses `getEnsembleChat`).
+        // Called by the recall MCP tool / TUI on user demand; user can
+        // Ctrl-C if it hangs.
         const all: MaestroRelayMessage[] = await h.query('maestroRecentMessages');
         const filtered = all.filter(m => m.ensemble === ensemble);
         return limit ? filtered.slice(-limit) : filtered;
@@ -469,6 +494,11 @@ export function createTempoClientCore(
         const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND ClaudeTempoPlayerId = "${sanitizeQueryValue(playerId)}"`;
         for await (const wf of client.workflow.list({ query })) {
           const h = handle(wf.workflowId);
+          // #433: unbounded — justified, `getPlayerMetadata` is not
+          // reachable from `buildEnsembleSnapshot` (snapshot reads
+          // metadata via `getPlayers` → maestro fan-out, not per-player
+          // direct query). Used by ad-hoc tools / debug surfaces on
+          // user demand.
           return await h.query('getMetadata');
         }
         return null;
@@ -621,6 +651,11 @@ export function createTempoClientCore(
         }
         let isLocked = false;
         try {
+          // #433: unbounded — justified, the single-player `release()`
+          // path is an explicit MCP tool action triggered by the user
+          // ("release X"), not the snapshot fan-out. `isAnySessionHeld`
+          // (also called `outboxLockedQuery` per-session, but in the
+          // snapshot path) IS wrapped — see line ~1020.
           isLocked = await target.query(outboxLockedQuery);
         } catch {
           // Query may fail for old workflows — treat as "not held" to avoid
@@ -880,6 +915,11 @@ export function createTempoClientCore(
       // Read-only query — resolve + query directly (no outbox needed).
       const target = await resolveSession(client, ensemble, playerId);
       if (!target) throw new Error(`No session found with name "${playerId}" in ensemble "${ensemble}".`);
+      // #433: unbounded — justified, `attachmentInfo()` is the
+      // user-facing MCP tool that returns one player's lease/phase to
+      // the operator. Not reachable from `buildEnsembleSnapshot`
+      // (snapshot reads attachment info via the `phase` search
+      // attribute and `getPlayerWireMeta`'s lease query, both bounded).
       return target.query(attachmentInfoQuery);
     },
 
@@ -907,6 +947,11 @@ export function createTempoClientCore(
       // empty timeline that looks indistinguishable from "no messages yet."
       const target = await resolveSession(client, ensemble, playerId);
       if (!target) throw new Error(`No session found with name "${playerId}" in ensemble "${ensemble}".`);
+      // #433: unbounded — justified, `recall()` is an explicit MCP tool
+      // action invoked on user demand ("recall messages for X"). Not
+      // reachable from `buildEnsembleSnapshot` (snapshot's per-player
+      // wire-meta uses bounded `getMessagingStateQuery` for counters
+      // only, never the full message list).
       const [received, sent] = await Promise.all([
         target.query<Message[]>('allMessages'),
         target.query<SentMessage[]>('allSentMessages'),
@@ -960,7 +1005,10 @@ export function createTempoClientCore(
     async getSchedules(ensemble: string): Promise<ScheduleEntry[]> {
       try {
         const h = handle(schedulerWorkflowId(ensemble));
-        return await h.query('getSchedules');
+        // Issue #433 — bound the scheduler query so a wedged scheduler
+        // worker can't hang `getSchedules` (called from snapshot fan-out
+        // and aggregate poll). Existing catch maps any failure to `[]`.
+        return await queryHandleWithTimeout<ScheduleEntry[]>(h, 'getSchedules');
       } catch {
         return [];
       }
@@ -974,7 +1022,18 @@ export function createTempoClientCore(
     async getEnsembleChat(ensemble: string, offset?: number, limit?: number): Promise<EnsembleChatResult> {
       try {
         const h = handle(maestroWorkflowId(ensemble));
-        return await h.query('maestroEnsembleChat', { offset, limit });
+        // Issue #433 — bound the maestro chat query so a wedged maestro
+        // worker can't hang `getEnsembleChat` (called from snapshot
+        // fan-out and aggregate poll). Existing catch maps any failure
+        // to an empty chat result. Note: dedup keys on workflowId+name
+        // only, so concurrent snapshot+aggregate calls with different
+        // (offset, limit) pairs share a result — the wider window is a
+        // superset of the narrower so this is safe (see helper JSDoc).
+        return await queryHandleWithTimeout<EnsembleChatResult, [{ offset?: number; limit?: number }]>(
+          h,
+          'maestroEnsembleChat',
+          { args: [{ offset, limit }] },
+        );
       } catch {
         return { messages: [], total: 0, hasMore: false, hasConductor: false };
       }
@@ -1036,6 +1095,10 @@ export function createTempoClientCore(
       // Gates are stored on the conductor's workflow
       try {
         const h = handle(conductorWorkflowId(ensemble));
+        // #433: unbounded — justified, `getGates` is not reachable from
+        // `buildEnsembleSnapshot` (snapshot doesn't surface gates).
+        // Called by `gates` MCP tool / dashboard quality-gate panel on
+        // explicit fetch.
         return await h.query('qualityGates');
       } catch {
         return [];
@@ -1045,6 +1108,9 @@ export function createTempoClientCore(
     async getStages(ensemble: string): Promise<StageEntry[]> {
       try {
         const h = handle(conductorWorkflowId(ensemble));
+        // #433: unbounded — justified, `getStages` is not reachable from
+        // `buildEnsembleSnapshot` (snapshot doesn't surface stages).
+        // Called by `stages` MCP tool on explicit fetch.
         return await h.query('stages');
       } catch {
         return [];
@@ -1054,6 +1120,9 @@ export function createTempoClientCore(
     async getWorktrees(ensemble: string): Promise<WorktreeEntry[]> {
       try {
         const h = handle(conductorWorkflowId(ensemble));
+        // #433: unbounded — justified, `getWorktrees` is not reachable
+        // from `buildEnsembleSnapshot` (snapshot doesn't surface
+        // worktrees). Called by `worktree` MCP tool on explicit fetch.
         return await h.query('worktrees');
       } catch {
         return [];
@@ -1162,6 +1231,12 @@ export function createTempoClientCore(
       const maestroId = sessionWorkflowId(ensemble, 'maestro');
       try {
         const h = handle(maestroId);
+
+        // #433: unbounded (3× below) — justified, `getMaestroMessages`
+        // is not reachable from `buildEnsembleSnapshot` (snapshot
+        // surfaces ensemble-level chat via the bounded `getEnsembleChat`,
+        // not the maestro session's per-message log). Called on explicit
+        // operator fetch from the MCP `recall`/CLI inspect surfaces.
 
         // Query received messages (allMessages preferred, pendingMessages fallback)
         let received: Message[];
