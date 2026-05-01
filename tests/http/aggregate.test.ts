@@ -297,6 +297,96 @@ describe('AggregateRunner', () => {
     runner.close();
   });
 
+  // ── Issue #433 — tick watchdog ────────────────────────────────────
+
+  describe('tick watchdog (#433)', () => {
+    it('clears inFlight after tickWatchdogMs so the next tick can run', async () => {
+      // Mimics the production wedge: `listEnsembles` hangs forever. Without
+      // the watchdog, `inFlight=true` would never reset and every
+      // subsequent tick would skip indefinitely (the symptom in #433).
+      const client = fakeClient({
+        async listEnsembles() {
+          return new Promise(() => {}); // never resolves
+        },
+      });
+      const runner = new AggregateRunner({
+        client,
+        bootEpoch: 1,
+        pollIntervalMs: 60_000,
+        tickWatchdogMs: 50,
+      });
+
+      // Start the wedged tick — don't await it; it'll never finish.
+      void runner.tick();
+
+      // Wait past the watchdog ceiling.
+      await new Promise((res) => setTimeout(res, 80));
+
+      // A new tick — would have skipped pre-fix because `inFlight=true`.
+      // Post-fix: watchdog already cleared `inFlight`, so this tick runs.
+      // The fakeClient default returns from listEnsembles fast for the
+      // second tick, so we override only the first call.
+      let callCount = 0;
+      const recoveringClient = fakeClient({
+        async listEnsembles() {
+          callCount++;
+          if (callCount === 1) return new Promise(() => {});
+          return [];
+        },
+      });
+      const r2 = new AggregateRunner({
+        client: recoveringClient,
+        bootEpoch: 1,
+        pollIntervalMs: 60_000,
+        tickWatchdogMs: 50,
+      });
+      void r2.tick(); // wedges
+      await new Promise((res) => setTimeout(res, 80)); // watchdog fires
+      // Second tick proceeds — `inFlight` was cleared by the watchdog.
+      await r2.tick();
+      // No skip recorded — the second tick ran (didn't see inFlight=true).
+      expect(r2._skipCount).toBe(0);
+      r2.close();
+      runner.close();
+    });
+
+    it('late completion does not double-clear inFlight after watchdog fired', async () => {
+      // Race scenario: hung tick eventually completes after watchdog
+      // already advanced the loop. The late completion must not
+      // reset `inFlight` — a fresh tick may be using that flag now.
+      let release: (() => void) | undefined;
+      const stall = new Promise<void>((res) => { release = res; });
+      let listCalls = 0;
+      const client = fakeClient({
+        async listEnsembles() {
+          listCalls++;
+          if (listCalls === 1) {
+            await stall;
+            return [];
+          }
+          return [];
+        },
+      });
+      const runner = new AggregateRunner({
+        client,
+        bootEpoch: 1,
+        pollIntervalMs: 60_000,
+        tickWatchdogMs: 30,
+      });
+      const t1 = runner.tick(); // wedges on stall
+      await new Promise((res) => setTimeout(res, 60)); // watchdog fires
+      // Start a fresh tick — since watchdog cleared inFlight, this runs.
+      const t2 = runner.tick();
+      // Now release the original wedged tick — its finally should NOT
+      // touch inFlight (its generation is stale).
+      release!();
+      await Promise.all([t1, t2]);
+      // Sanity: a third tick still runs — no flag wedged.
+      await runner.tick();
+      runner.close();
+    });
+  });
+
   it('tears down per-ensemble buses when the ensemble disappears', async () => {
     let names = ['demo', 'other'];
     const client = fakeClient({

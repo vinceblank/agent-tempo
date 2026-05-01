@@ -52,6 +52,7 @@ import {
 } from '../workflows/maestro-signals';
 import { resolveSession, scanEnsembleSessions } from '../activities/resolve';
 import { restoreOrphansOnce, type RestoreOrphansSummary } from '../reconcile/orphans';
+import { queryHandleWithTimeout } from '../utils/query-timeout';
 import {
   pauseMaestroAndScheduler,
   unpauseMaestroAndScheduler,
@@ -368,11 +369,16 @@ export function createTempoClientCore(
       // maestro hub. Each query soft-fails to its sentinel default so
       // a single transient failure can't block the snapshot endpoint.
       const h = handle(maestroWorkflowId(ensemble));
+      // Issue #433 — bound each per-maestro query so a wedged maestro
+      // worker can't hang `getEnsembleMeta` (called from snapshot fan-out
+      // on every `/v1/state/:ensemble` request and every aggregate tick).
+      // Each query already soft-fails to its sentinel; `QueryTimeoutError`
+      // falls into the same `.catch(() => sentinel)` path.
       const [description, startedAt, currentBpm, tempoSeries] = await Promise.all([
-        h.query(getEnsembleDescriptionQuery).catch(() => '' as string),
-        h.query(getEnsembleStartTimeQuery).catch(() => '' as string),
-        h.query(getCurrentBpmQuery).catch(() => 0 as number),
-        h.query(getTempoSeriesQuery).catch(() => [] as number[]),
+        queryHandleWithTimeout(h, getEnsembleDescriptionQuery).catch(() => '' as string),
+        queryHandleWithTimeout(h, getEnsembleStartTimeQuery).catch(() => '' as string),
+        queryHandleWithTimeout(h, getCurrentBpmQuery).catch(() => 0 as number),
+        queryHandleWithTimeout(h, getTempoSeriesQuery).catch(() => [] as number[]),
       ]);
       return { description, startedAt, currentBpm, tempoSeries };
     },
@@ -389,10 +395,18 @@ export function createTempoClientCore(
       // we return `null` so the caller's projection drops the whole
       // wire-meta block rather than emitting half-populated fields.
       const h = handle(sessionWorkflowId(ensemble, playerId));
+      // Issue #433 — bound each per-session query. Without a timeout,
+      // `Promise.allSettled` waits for the slowest query to settle (or
+      // never, if the session worker is wedged), so a single hung session
+      // would block the entire snapshot fan-out for `/v1/state/:ensemble`
+      // and the AggregateRunner's 750ms poll loop. With timeouts, hung
+      // queries reject as `QueryTimeoutError`, `Promise.allSettled` sees
+      // three rejections and the existing all-rejected branch returns
+      // `null` — caller treats this player's wireMeta as missing.
       const [runIdR, messagingR, leaseR] = await Promise.allSettled([
-        h.query(getRunIdQuery),
-        h.query(getMessagingStateQuery),
-        h.query(getLeaseStateQuery),
+        queryHandleWithTimeout(h, getRunIdQuery),
+        queryHandleWithTimeout(h, getMessagingStateQuery),
+        queryHandleWithTimeout(h, getLeaseStateQuery),
       ]);
       // If every query rejected, treat this as "session unreachable" —
       // the caller renders no wire-meta rather than partial sentinels.

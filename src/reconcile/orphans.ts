@@ -30,6 +30,7 @@ import type { AttachmentInfo, AttachmentPhase, OrphanSummary } from '../types';
 import { attachmentInfoQuery, orphanSummaryQuery } from '../workflows/signals';
 import { isEnsembleAllowed } from '../config';
 import { createTempoClient } from '../client';
+import { queryHandleWithTimeout } from '../utils/query-timeout';
 
 /**
  * Default broad phase set used by daemon reconcile-on-boot and CLI
@@ -198,7 +199,11 @@ export async function queryOrphanedSessions(
   for await (const wf of client.workflow.list({ query })) {
     const handle = client.workflow.getHandle(wf.workflowId);
     try {
-      const info = await handle.query(attachmentInfoQuery) as AttachmentInfo;
+      // Issue #433 — bound each per-workflow query so a hung session
+      // (workflow `Running` but worker dead) can't block the orphan scan
+      // forever. The `try/catch` already treats query failure as "skip
+      // this candidate"; `QueryTimeoutError` falls into the same path.
+      const info = await queryHandleWithTimeout(handle, attachmentInfoQuery) as AttachmentInfo;
 
       // Phase allowlist re-check (see above).
       if (phaseAllowlist && info.phase && !phaseAllowlist.has(info.phase)) {
@@ -210,12 +215,13 @@ export async function queryOrphanedSessions(
         continue;
       }
 
-      const summary = await handle.query(orphanSummaryQuery) as OrphanSummary;
+      const summary = await queryHandleWithTimeout(handle, orphanSummaryQuery) as OrphanSummary;
       orphans.push({ workflowId: wf.workflowId, info, summary });
     } catch (err) {
-      // Workflow may have completed between list + query, or a query handler
-      // threw. Skip — not every candidate will be reachable, and partial
-      // results are acceptable for reconcile (next tick will retry).
+      // Workflow may have completed between list + query, a query handler
+      // threw, or the per-query timeout fired (#433 — wedged worker).
+      // Skip — not every candidate will be reachable, and partial results
+      // are acceptable for reconcile (next tick will retry).
       log(`orphan-query skip ${wf.workflowId}:`, err instanceof Error ? err.message : String(err));
     }
   }

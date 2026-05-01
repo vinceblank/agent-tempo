@@ -287,6 +287,14 @@ export interface AggregateRunnerOptions {
   now?: () => number;
   /** Per-ensemble bus override (mainly tests). Default constructs `EnsembleEventBus`. */
   busFactory?: (ensemble: string, allocator: SeqAllocator) => EnsembleEventBus;
+  /**
+   * Issue #433 — watchdog ceiling for an in-flight tick. If a tick exceeds
+   * this without finishing, the watchdog force-clears `inFlight` so the
+   * next scheduled tick can run. Defaults to `20 × pollIntervalMs` (15s
+   * at the production default). Tests pin a small value to assert the
+   * unwedge behavior.
+   */
+  tickWatchdogMs?: number;
 }
 
 /**
@@ -320,11 +328,30 @@ export class AggregateRunner {
   private lastSkipWarn = 0;
   private stopped = false;
 
+  /**
+   * Issue #433 — tick generation counter. Incremented each time a tick
+   * starts. The watchdog stamps the current generation when it force-clears
+   * `inFlight`; a late-arriving completion checks `myGen === currentGen`
+   * before resetting state so it doesn't clobber a fresh tick that the
+   * watchdog already handed to the loop.
+   */
+  private tickGen = 0;
+  /**
+   * Watchdog ceiling — if a tick exceeds this without finishing, the
+   * watchdog force-clears `inFlight` so the next scheduled tick can run.
+   * Default: 20 × poll interval (15s at the 750ms default). Should be
+   * comfortably larger than `pollIntervalMs × DEFAULT_QUERY_TIMEOUT_MS /
+   * pollInterval` so `queryHandleWithTimeout`-bounded ticks finish well
+   * inside the watchdog window in normal operation.
+   */
+  private readonly tickWatchdogMs: number;
+
   constructor(opts: AggregateRunnerOptions) {
     this.client = opts.client;
     this.bootEpoch = opts.bootEpoch;
     this.pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.now = opts.now ?? Date.now;
+    this.tickWatchdogMs = opts.tickWatchdogMs ?? this.pollIntervalMs * 20;
     this.busFactory = opts.busFactory
       ?? ((ensemble, allocator) => new EnsembleEventBus({
         scope: `ensemble:${ensemble}`, allocator, now: this.now,
@@ -418,6 +445,14 @@ export class AggregateRunner {
    * Run one diff pass. Production schedules this on a timer; tests
    * call it directly. Serial-with-skip per §8 — if a previous tick
    * is still in flight, this one skips with a warn-log.
+   *
+   * **Watchdog (#433)**. Each tick takes a generation stamp. After
+   * `tickWatchdogMs` elapses without completion, the watchdog bumps
+   * the generation and clears `inFlight` so the next scheduled tick
+   * can run. The hung tick's eventual completion checks its own
+   * generation against the current one; if it's stale (watchdog
+   * already advanced past it), it returns without touching `inFlight`
+   * — the new tick owns that flag now.
    */
   async tick(): Promise<void> {
     if (this.inFlight) {
@@ -431,13 +466,40 @@ export class AggregateRunner {
       return;
     }
     this.inFlight = true;
+    const myGen = ++this.tickGen;
+
+    // Watchdog — if we don't complete within `tickWatchdogMs`, force-clear
+    // `inFlight` so the next tick can run. Bumping `tickGen` ensures our
+    // own (eventually-arriving) finally clause sees a stale generation
+    // and skips the second `inFlight = false`.
+    let watchdogFired = false;
+    const watchdog = setTimeout(() => {
+      if (this.tickGen === myGen) {
+        watchdogFired = true;
+        this.tickGen++;
+        this.inFlight = false;
+        log(
+          `tick watchdog fired after ${this.tickWatchdogMs}ms — ` +
+          `clearing inFlight so the loop can advance ` +
+          `(prior tick may still be pending in memory; see #433)`,
+        );
+      }
+    }, this.tickWatchdogMs);
+    watchdog.unref?.();
+
     try {
       const snapshot = await this.collect();
       this.applyDiff(snapshot);
     } catch (err) {
       log('tick error (non-fatal):', err instanceof Error ? err.message : err);
     } finally {
-      this.inFlight = false;
+      clearTimeout(watchdog);
+      // Only release `inFlight` if the watchdog hasn't already done so —
+      // otherwise we'd clobber a fresh tick that the loop is in the
+      // middle of running on the next scheduled boundary.
+      if (!watchdogFired && this.tickGen === myGen) {
+        this.inFlight = false;
+      }
     }
   }
 
