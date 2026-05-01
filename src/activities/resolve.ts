@@ -2,6 +2,7 @@ import { Client, WorkflowHandle } from '@temporalio/client';
 import { SessionMetadata, AttachmentPhase } from '../types';
 import { getAttachmentPhase } from '../utils/search-attributes';
 import { getActivityStateQuery } from '../workflows/signals';
+import { queryHandleWithTimeout } from '../utils/query-timeout';
 
 /** Shared query for listing running session workflows. */
 const SESSION_LIST_QUERY = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
@@ -22,12 +23,15 @@ export async function resolveSession(
   for await (const wf of client.workflow.list({ query: SESSION_LIST_QUERY })) {
     try {
       const handle = client.workflow.getHandle(wf.workflowId);
-      const metadata: SessionMetadata = await handle.query('getMetadata');
+      // Issue #433 — bound the per-session metadata query so a wedged
+      // session worker can't hang the entire `resolveSession` lookup.
+      // The catch already treats failure as "skip this candidate".
+      const metadata: SessionMetadata = await queryHandleWithTimeout<SessionMetadata>(handle, 'getMetadata');
       if (metadata.ensemble === ensemble && metadata.playerId === playerName) {
         return handle;
       }
     } catch {
-      // Workflow may have just completed — skip
+      // Workflow may have just completed, or worker is wedged (#433) — skip
     }
   }
   return null;
@@ -78,11 +82,15 @@ export async function scanEnsembleSessions(
   for await (const workflow of client.workflow.list({ query: SESSION_LIST_QUERY })) {
     try {
       const handle = client.workflow.getHandle(workflow.workflowId);
-      const metadata: SessionMetadata = await handle.query('getMetadata');
+      // Issue #433 — bound the metadata + part queries so a single wedged
+      // session worker can't hang the entire ensemble scan. Outer
+      // try/catch treats any failure as "skip this row", so timeouts
+      // produce a partial-but-progressing scan instead of a stalled one.
+      const metadata: SessionMetadata = await queryHandleWithTimeout<SessionMetadata>(handle, 'getMetadata');
 
       if (metadata.ensemble !== ensemble) continue;
 
-      const part: string = await handle.query('getPart');
+      const part: string = await queryHandleWithTimeout<string>(handle, 'getPart');
 
       // Attachment phase lives in the `ClaudeTempoAttachmentState` search
       // attribute (written by the workflow on every phase transition).
@@ -91,11 +99,12 @@ export async function scanEnsembleSessions(
       // #399 W1+W2 — best-effort fetch of the session's monotonic
       // activity counter. Wrapped in its own try/catch so a session
       // predating W2 (no `getActivityState` query handler) doesn't
-      // disqualify the whole row.
+      // disqualify the whole row. #433 — also timeout-bounded so a
+      // wedged W2 query handler doesn't stall the scan.
       let activityCount: number | undefined;
       let lastActivityAt: string | undefined;
       try {
-        const activity = await handle.query(getActivityStateQuery);
+        const activity = await queryHandleWithTimeout(handle, getActivityStateQuery);
         activityCount = activity.activityCount;
         lastActivityAt = activity.lastActivityAt;
       } catch {
