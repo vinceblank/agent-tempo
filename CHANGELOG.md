@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.14] - 2026-05-01
+
+### Added
+
+- **Player saveable state** — `save_state`, `fetch_state`, `clear_state` MCP tools let
+  players persist curated context to named slots (max 4, 32 KiB each). Owner-write /
+  peer-read by structure; refuses on saturation with `PlayerStateSlotsFull`. Implements
+  ADR 0011. (#502)
+- **`loadFromState` restart integration** — `restart` now accepts `loadFromState` to seed
+  the next session from a saved-state slot instead of (or stacked with) transcript replay.
+  Six flag combinations supported including graceful empty-slot fallback and
+  `transcript: 'replay'` stack mode. Closes #334. (#503)
+
+### Fixed
+
+- **Daemon snapshot responsiveness under orphaned workflows** — `handle.query()` calls in
+  `buildEnsembleSnapshot` and the aggregate poll loop are now bounded with a 2s per-call
+  timeout via `queryHandleWithTimeout`. An aggregate tick watchdog (15s) provides
+  defense-in-depth. Eliminates unbounded `tick skipped` accumulation when sessions have
+  wedged workers. Closes #433. (#501)
+- **Dashboard `EnsembleCard` link prefix** — regression test added to lock the fix for the
+  `/dashboard/dashboard/` double-prefix bug (fix already on main via drive-by in
+  `389edbd28`). Closes #376. (#509)
+
+### Changed
+
+- **Communication-discipline rules in MCP server instructions** — three protocol rules
+  delivered to every player on connect: drafting ≠ sending, silent conductor = HOLD, no
+  autonomous player dispatch. Captured from real failure modes in overnight orchestration.
+  (#505)
+
+### CI / DX
+
+- **Skip build/test shards on doc-only PRs and main merge pushes** — `dorny/paths-filter`
+  gates the 4 heavy job groups; lint tripwires still run on every event. Squash-merges to
+  main no longer re-run the full matrix. Closes #354, #355. (#507)
+- **`npm run check:all`** — chains all locally-runnable CI gates fail-fast; exposes 4 new
+  npm scripts (`lint:test-ensemble-literals`, `lint:skip-reasons`, `lint:lockstep-version`,
+  `lint:dashboard-css-sync`) that were previously bare CI shell steps. (#508)
+
+### Docs
+
+- PR body conventions for multi-PR issues: use `Refs #N` on intermediate PRs, `Closes #N`
+  only on the final PR. Prevents premature GitHub auto-close. (#506)
+- CLAUDE.md project-structure tree updated with `terminal-error.ts` and `sdk-probe.ts`
+  entries. (#500)
+
 ## [0.28.0-beta.13] - 2026-04-30
 
 ### Changed
