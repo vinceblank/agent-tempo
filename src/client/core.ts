@@ -643,10 +643,14 @@ export function createTempoClientCore(
         if (s.playerId === 'maestro') continue;
         try {
           const sh = handle(s.workflowId);
-          const locked = await sh.query(outboxLockedQuery);
+          // Issue #433 — bound the per-session query so a single wedged
+          // worker doesn't block the rest of the bulk-release scan. The
+          // existing catch already maps failures to "not held".
+          const locked = await queryHandleWithTimeout(sh, outboxLockedQuery);
           if (locked) held.push(s);
         } catch {
-          // Skip sessions where the query fails (old workflows, terminated).
+          // Skip sessions where the query fails (old workflows, terminated,
+          // or wedged-worker timeout per #433).
         }
       }
 
@@ -982,7 +986,14 @@ export function createTempoClientCore(
       // — bare ensembles without a maestro hub aren't displaying any
       // pause-related state in the chat view either.
       try {
-        const paused = await handle(maestroWorkflowId(ensemble)).query(maestroPausedQuery);
+        // Issue #433 — bound the maestro query so a wedged maestro worker
+        // can't hang `isMaestroPaused` (called from `buildEnsembleSnapshot`
+        // on every `/v1/state/:ensemble` request and aggregate tick).
+        // Existing `catch` maps any failure to `false` (not paused).
+        const paused = await queryHandleWithTimeout(
+          handle(maestroWorkflowId(ensemble)),
+          maestroPausedQuery,
+        );
         return !!paused;
       } catch {
         return false;
@@ -1002,11 +1013,17 @@ export function createTempoClientCore(
           if (s.playerId === 'maestro') continue;
           try {
             const sh = handle(s.workflowId);
-            const locked = await sh.query(outboxLockedQuery);
+            // Issue #433 — bound the per-session query so a wedged worker
+            // can't hang `isAnySessionHeld` (called from
+            // `buildEnsembleSnapshot` on every snapshot fan-out). Without
+            // this, the first hung session blocks every subsequent
+            // session and the entire `held` field of the snapshot.
+            const locked = await queryHandleWithTimeout(sh, outboxLockedQuery);
             if (locked) return true;
           } catch {
-            // Old workflow without `outboxLocked` query, or terminated
-            // mid-scan — skip this session, keep checking the rest.
+            // Old workflow without `outboxLocked` query, terminated
+            // mid-scan, or wedged-worker timeout (#433) — skip this
+            // session, keep checking the rest.
           }
         }
         return false;

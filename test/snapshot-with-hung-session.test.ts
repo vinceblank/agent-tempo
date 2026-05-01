@@ -155,4 +155,137 @@ describe('snapshot fan-out with hung session (#433)', function () {
       expect(meta.startedAt).to.equal('fast-result');
     });
   });
+
+  // ── isMaestroPaused ──────────────────────────────────────────────────
+
+  describe('isMaestroPaused', function () {
+    it('returns false when the maestro paused-query hangs past timeoutMs', async function () {
+      this.timeout(5_000);
+      const ensemble = 'demo';
+      const wfId = maestroWorkflowId(ensemble);
+      const client = fakeTemporalClient({ [wfId]: 'hang' });
+      const tempo = createTempoClientCore(client);
+
+      const start = Date.now();
+      const paused = await tempo.isMaestroPaused(ensemble);
+      const elapsed = Date.now() - start;
+
+      // Bounded by DEFAULT_QUERY_TIMEOUT_MS; existing catch maps any
+      // failure (including `QueryTimeoutError`) to `false`.
+      expect(paused).to.equal(false);
+      expect(elapsed).to.be.lessThan(3_500);
+    });
+  });
+
+  // ── isAnySessionHeld ─────────────────────────────────────────────────
+
+  describe('isAnySessionHeld', function () {
+    /**
+     * Per-query-aware fake. Needed for `isAnySessionHeld` because
+     * `scanEnsembleSessions` issues `getMetadata`/`getPart` against each
+     * session before the call site we're testing reaches `outboxLockedQuery`.
+     * If those metadata queries hang, the scan stalls before
+     * `isAnySessionHeld` ever gets to the wrapped query — masking the
+     * fix under test.
+     */
+    function fakePerQueryClient(opts: {
+      sessions: Array<{ workflowId: string; ensemble: string; playerId: string; outboxBehavior: 'hang' | 'fast-locked' | 'fast-unlocked' }>;
+    }): Client {
+      return {
+        workflow: {
+          getHandle(workflowId: string): WorkflowHandle {
+            const session = opts.sessions.find((s) => s.workflowId === workflowId);
+            return {
+              workflowId,
+              async query(def: unknown): Promise<unknown> {
+                const name = typeof def === 'string' ? def : (def as { name: string }).name;
+                if (!session) throw new Error(`unknown workflow: ${workflowId}`);
+
+                // Fast metadata so `scanEnsembleSessions` can build the row.
+                if (name === 'getMetadata') {
+                  return {
+                    ensemble: session.ensemble,
+                    playerId: session.playerId,
+                    hostname: 'h',
+                    workDir: '/r',
+                    isConductor: false,
+                    agentType: 'claude',
+                  };
+                }
+                if (name === 'getPart') return '';
+                // Skip the optional W2 activity query — `scanEnsembleSessions`
+                // tolerates rejection so this contributes no rows to test.
+                if (name === 'getActivityState') throw new Error('not supported');
+
+                // The query the fix bounds.
+                if (name === 'outboxLocked') {
+                  if (session.outboxBehavior === 'hang') return new Promise(() => {});
+                  return session.outboxBehavior === 'fast-locked';
+                }
+                throw new Error(`unhandled query: ${name}`);
+              },
+            } as unknown as WorkflowHandle;
+          },
+          async *list() {
+            for (const s of opts.sessions) {
+              yield {
+                workflowId: s.workflowId,
+                searchAttributes: {},
+              };
+            }
+          },
+        },
+      } as unknown as Client;
+    }
+
+    it('returns false within bounded time when one session\'s outboxLocked query hangs', async function () {
+      this.timeout(5_000);
+      const ensemble = 'demo';
+      const client = fakePerQueryClient({
+        sessions: [
+          {
+            workflowId: sessionWorkflowId(ensemble, 'wedged'),
+            ensemble,
+            playerId: 'wedged',
+            outboxBehavior: 'hang',
+          },
+        ],
+      });
+      const tempo = createTempoClientCore(client);
+
+      const start = Date.now();
+      const held = await tempo.isAnySessionHeld(ensemble);
+      const elapsed = Date.now() - start;
+
+      // Inner catch maps the per-session timeout to "skip"; outer return
+      // is `false` since no session reported locked.
+      expect(held).to.equal(false);
+      expect(elapsed).to.be.lessThan(3_500);
+    });
+
+    it('a hung session does not block detection of a healthy held session that scans first', async function () {
+      this.timeout(5_000);
+      const ensemble = 'demo';
+      const client = fakePerQueryClient({
+        sessions: [
+          {
+            workflowId: sessionWorkflowId(ensemble, 'healthy-held'),
+            ensemble,
+            playerId: 'healthy-held',
+            outboxBehavior: 'fast-locked',
+          },
+          {
+            workflowId: sessionWorkflowId(ensemble, 'wedged'),
+            ensemble,
+            playerId: 'wedged',
+            outboxBehavior: 'hang',
+          },
+        ],
+      });
+      const tempo = createTempoClientCore(client);
+      const held = await tempo.isAnySessionHeld(ensemble);
+      // Healthy held session is found in the first iteration → early return.
+      expect(held).to.equal(true);
+    });
+  });
 });
