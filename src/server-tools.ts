@@ -189,10 +189,15 @@ export function buildServerInstructions(opts: BuildServerInstructionsOpts): stri
     `Use \`cue\` to reply directly to the player who messaged you, or to ask others for help. ` +
     `Use \`recruit\` if you need a session in a directory where none exists. ` +
     `Use \`report\` to notify the conductor of task completion, blockers, or questions — always report when you finish a recruited task.` +
+    `\n\nCommunication discipline:\n` +
+    `- Drafting a response in your turn is not the same as sending one. The conductor and other players cannot read your reasoning — only your \`cue\` and \`report\` tool calls cross the channel boundary. If you reach a decision, ruling, or status update, fire the appropriate tool before moving on. If you find yourself thinking "I already answered that," verify the tool was actually invoked.` +
     (isConductor
       ? `\n\nOperational rules:\n` +
         `- Before assigning parallel work on different branches, provision git worktrees via the \`worktree\` tool so each player has an isolated checkout.\n` +
         `- No player should switch branches without your approval — if a player needs a different branch, provision a worktree for them.\n` +
         `- Before shipping, verify the branch diff scope matches the assigned task (no unrelated changes).`
-      : `\n\nDo not switch git branches without the conductor's approval. If no conductor exists, broadcast your intent to the ensemble first. Prefer using the \`worktree\` tool for branch isolation.`);
+      : `\n\nPlayer rules:\n` +
+        `- Do not switch git branches without the conductor's approval. If no conductor exists, broadcast your intent to the ensemble first. Prefer using the \`worktree\` tool for branch isolation.\n` +
+        `- Silent conductor = HOLD indefinitely. Never default to act on an unanswered cue. The conductor may be coordinating other streams, making a different decision than you expected, recovering from comms issues, or awaiting human input. Idle has zero cost. Acting on assumed approval compounds cost across the ensemble. If a conductor decision genuinely blocks you and time matters, send a follow-up \`cue\` reiterating the question — silence is never greenlight.\n` +
+        `- When CI surfaces a blocker on a PR you opened (or any task you're driving), escalate to the conductor with diagnosis and proposed routing. Wait for the conductor's dispatch decision. Never \`cue\` other players directly to fix issues — bypassing the conductor invites collisions on shared branches and breaks player-load tracking.`);
 }
