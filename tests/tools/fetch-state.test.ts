@@ -18,25 +18,10 @@ import type { Client, WorkflowHandle } from '@temporalio/client';
 import type { Config } from '../../src/config';
 import { registerFetchStateTool } from '../../src/tools/fetch-state';
 import { PLAYER_STATE_DEFAULT_KEY } from '../../src/utils/validation';
+import { captureRegistration } from './_helpers';
 
-// ── Harness ───────────────────────────────────────────────────────────────
-
-type ToolHandler = (args: Record<string, any>) => Promise<{
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}>;
-
-function captureHandler(registerFn: (server: McpServer) => void): ToolHandler {
-  let captured: Function | undefined;
-  const fakeServer = {
-    tool: (_name: unknown, _desc: unknown, _schemas: unknown, handler: Function) => {
-      captured = handler;
-    },
-  } as unknown as McpServer;
-  registerFn(fakeServer);
-  if (!captured) throw new Error('fetch_state did not register a handler');
-  return (args) => captured!(args, {});
-}
+const captureHandler = (registerFn: (server: McpServer) => void) =>
+  captureRegistration(registerFn).call;
 
 const TEST_CONFIG: Config = {
   temporalAddress: 'localhost:7233',

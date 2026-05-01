@@ -1073,9 +1073,17 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   //
   // Validators run pre-handler so size/key/slot-cap rejections never commit
   // history events. Handler bodies trust their inputs and stay trivially
-  // deterministic. `Buffer.byteLength` is replay-safe (pure string-byte
-  // counting). `workflow.now()` is SDK-intercepted so `savedAt` is
+  // deterministic. `workflow.now()` is SDK-intercepted so `savedAt` is
   // replay-deterministic.
+
+  const assertValidPlayerStateKey = (key: unknown): void => {
+    if (typeof key !== 'string' || !PLAYER_STATE_KEY_REGEX.test(key) || key.length > PLAYER_STATE_KEY_MAX) {
+      throw ApplicationFailure.nonRetryable(
+        `Invalid playerState key "${key}" — must match ${PLAYER_STATE_KEY_REGEX} and be ≤ ${PLAYER_STATE_KEY_MAX} chars`,
+        'PlayerStateInvalidKey',
+      );
+    }
+  };
 
   setHandler(savePlayerStateUpdate, ({ key, content, savedBy }) => {
     playerState[key] = {
@@ -1088,21 +1096,15 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     return { saved: true as const, savedAt: playerState[key].savedAt };
   }, {
     validator: ({ key, content }) => {
-      if (typeof key !== 'string' || !PLAYER_STATE_KEY_REGEX.test(key) || key.length > PLAYER_STATE_KEY_MAX) {
-        throw ApplicationFailure.nonRetryable(
-          `Invalid playerState key "${key}" — must match ${PLAYER_STATE_KEY_REGEX} and be ≤ ${PLAYER_STATE_KEY_MAX} chars`,
-          'PlayerStateInvalidKey',
-        );
-      }
+      assertValidPlayerStateKey(key);
       if (typeof content !== 'string') {
         throw ApplicationFailure.nonRetryable(
           'playerState content must be a string',
           'PlayerStateInvalidContent',
         );
       }
-      // Compute UTF-8 byte length without `Buffer` (Node-only — not in the
-      // workflow sandbox). `TextEncoder` is part of the JS standard library
-      // and is replay-safe (pure string→bytes function, no clocks/randomness).
+      // `TextEncoder` is replay-safe (pure string→bytes); `Buffer` is Node-only
+      // and not available in the workflow sandbox.
       if (new TextEncoder().encode(content).length > PLAYER_STATE_CONTENT_MAX) {
         throw ApplicationFailure.nonRetryable(
           `playerState content exceeds ${PLAYER_STATE_CONTENT_MAX} bytes`,
@@ -1126,14 +1128,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     activityCount++;
     return { cleared: true };
   }, {
-    validator: ({ key }) => {
-      if (typeof key !== 'string' || !PLAYER_STATE_KEY_REGEX.test(key) || key.length > PLAYER_STATE_KEY_MAX) {
-        throw ApplicationFailure.nonRetryable(
-          `Invalid playerState key "${key}" — must match ${PLAYER_STATE_KEY_REGEX} and be ≤ ${PLAYER_STATE_KEY_MAX} chars`,
-          'PlayerStateInvalidKey',
-        );
-      }
-    },
+    validator: ({ key }) => assertValidPlayerStateKey(key),
   });
 
   setHandler(playerStateQuery, ({ key } = {}) => {

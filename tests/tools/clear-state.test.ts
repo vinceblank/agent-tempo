@@ -7,54 +7,13 @@
  * default-key behaviour, Zod-level rejection of bad keys, and propagation
  * of workflow-side errors into an isError response.
  */
-import { describe, it, expect, vi } from 'vitest';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { WorkflowHandle } from '@temporalio/client';
+import { describe, it, expect } from 'vitest';
 import { registerClearStateTool } from '../../src/tools/clear-state';
 import { PLAYER_STATE_DEFAULT_KEY } from '../../src/utils/validation';
+import { captureRegistration, makeFakeUpdateHandle } from './_helpers';
 
-type ToolHandler = (args: Record<string, any>) => Promise<{
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}>;
-
-interface CapturedRegistration {
-  call: ToolHandler;
-  schemas: Record<string, any>;
-}
-
-function captureRegistration(
-  registerFn: (server: McpServer) => void,
-): CapturedRegistration {
-  let captured: { handler: Function; schemas: Record<string, any> } | undefined;
-  const fakeServer = {
-    tool: (_name: unknown, _desc: unknown, schemas: any, handler: Function) => {
-      captured = { handler, schemas };
-    },
-  } as unknown as McpServer;
-  registerFn(fakeServer);
-  if (!captured) throw new Error('clear_state did not register a handler');
-  return {
-    call: (args) => captured!.handler(args, {}),
-    schemas: captured.schemas,
-  };
-}
-
-function makeFakeHandle(executeUpdateImpl?: (...args: any[]) => any): {
-  handle: WorkflowHandle;
-  calls: Array<{ payload: any }>;
-} {
-  const calls: Array<{ payload: any }> = [];
-  const handle = {
-    executeUpdate: vi.fn(async (_def: any, opts: any) => {
-      const payload = opts?.args?.[0];
-      calls.push({ payload });
-      if (executeUpdateImpl) return executeUpdateImpl(_def, opts);
-      return { cleared: true };
-    }),
-  } as unknown as WorkflowHandle;
-  return { handle, calls };
-}
+const makeFakeHandle = (impl?: (...args: any[]) => any) =>
+  makeFakeUpdateHandle({ cleared: true }, impl);
 
 describe('clear_state tool (#334 PR-1)', () => {
   it('reports "Cleared slot" when the workflow returns cleared:true', async () => {
