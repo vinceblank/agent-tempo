@@ -12,6 +12,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Path-filter gate — used by the heavy matrix jobs to skip work when a
+  # PR is docs-only (#354) and as part of the smoke-tripwire pattern that
+  # also short-circuits a redundant CI re-run on `main` after a squash-
+  # merge (#355). `code` outputs `true` iff the PR touches at least one
+  # file outside the docs allowlist; the heavy jobs combine this with a
+  # `github.event_name` gate so:
+  #   - pull_request + code change → full matrix
+  #   - pull_request + docs-only   → only lint-* jobs (the tripwires)
+  #   - push to main               → only lint-* jobs (PR matrix already
+  #                                  validated the byte-identical tree)
+  #   - workflow_dispatch          → full matrix (manual runs always full)
+  #
+  # `examples/**` is intentionally OUT of the docs allowlist — shipped
+  # lineup YAMLs and agent definitions in `examples/` are runtime
+  # resources that tests reference. Conservative call; widen later if
+  # the heavy-matrix-on-examples-only-edit waste shows up in practice.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
+              - '!*.md'
+              - '!.github/ISSUE_TEMPLATE/**'
+              - '!LICENSE'
+
   lint-test-ensemble:
     # Fast grep-based lint — guards against accidental `'test-ensemble'` literals
     # outside `test/helpers.ts` (#210). Runs first so the matrix doesn't start
@@ -49,7 +82,13 @@ jobs:
     # `zod` without root `node_modules`. The fix is non-obvious unless
     # you've debugged it once. Tracked in #368.
     runs-on: ubuntu-latest
-    needs: lint-test-ensemble
+    needs: [lint-test-ensemble, changes]
+    # #354 + #355: skip on docs-only PRs and on push-to-main (PR matrix
+    # already validated the byte-identical tree). Run on workflow_dispatch
+    # unconditionally so manual triggers always exercise the full matrix.
+    if: |
+      (github.event_name == 'pull_request' && needs.changes.outputs.code == 'true')
+      || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v6
         with:
@@ -293,7 +332,11 @@ jobs:
     # TUI (vitest) runs as a separate job below — no need to duplicate it across
     # every Mocha shard × Node combination.
     runs-on: ubuntu-latest
-    needs: lint-test-ensemble
+    needs: [lint-test-ensemble, changes]
+    # #354 + #355: skip on docs-only PRs and on push-to-main.
+    if: |
+      (github.event_name == 'pull_request' && needs.changes.outputs.code == 'true')
+      || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -440,7 +483,11 @@ jobs:
     # Vitest suite (tests/tui + tests/client). Independent of Mocha, so it runs
     # once across the Node matrix rather than per Mocha shard.
     runs-on: ubuntu-latest
-    needs: lint-test-ensemble
+    needs: [lint-test-ensemble, changes]
+    # #354 + #355: skip on docs-only PRs and on push-to-main.
+    if: |
+      (github.event_name == 'pull_request' && needs.changes.outputs.code == 'true')
+      || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -488,7 +535,11 @@ jobs:
     # dimension would push the CI surface past the budget without adding
     # bug-detection power.
     runs-on: windows-latest
-    needs: lint-test-ensemble
+    needs: [lint-test-ensemble, changes]
+    # #354 + #355: skip on docs-only PRs and on push-to-main.
+    if: |
+      (github.event_name == 'pull_request' && needs.changes.outputs.code == 'true')
+      || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
