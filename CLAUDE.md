@@ -171,6 +171,22 @@ Examples:
 - `fix(workflow): handle signal delivery edge case`
 - `docs: update getting started guide`
 
+## PR Body Conventions
+
+GitHub's auto-close keywords (`Closes`, `Fixes`, `Resolves`) ignore any trailing qualifier text. They cannot express "this PR closes part of an issue" — they always close the full issue.
+
+For multi-PR efforts tracked under a single issue, use these conventions in PR bodies:
+
+| Form | When to use |
+|---|---|
+| `Refs #N` | Any intermediate PR of a multi-PR effort. No auto-close. |
+| `Implements PR-K of #N` | Same as above, more explicit. No keyword match → no auto-close. |
+| `Closes #N` | Final PR of the effort (or single-PR efforts). Triggers auto-close on merge. |
+
+**Avoid `Closes #N PR-K`** — GitHub ignores the `PR-K` qualifier and auto-closes #N prematurely. If you find yourself wanting to express "closes part of," use `Refs #N` and add a manual close on the final PR.
+
+When sequencing multi-PR work, name the issue's open question explicitly in the first PR's body (e.g., "PR-1 of 2: foundation; PR-2 follows for the user-visible payoff") so reviewers know more is coming.
+
 ## Release Process
 
 > **Release rule**: Bump `package.json` + CHANGELOG before tagging. Never tag a commit that
