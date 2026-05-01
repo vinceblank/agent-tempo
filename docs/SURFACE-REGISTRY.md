@@ -30,10 +30,12 @@ Source: `src/tools/*.ts` — each file calls `defineTool(server, '<name>', '<des
 | `attachment_info` | `attachment-info.ts` | Query attachment lifecycle state — phase, holder, lease expiry, in-flight count |
 | `broadcast` | `broadcast.ts` | Send a message to all active players; optional type filter |
 | `cancel_stage` | `cancel-stage.ts` | Cancel an active pipeline stage (conductor only) |
+| `clear_state` | `clear-state.ts` | Clear one of your saved-state slots (owner-only; idempotent) |
 | `cue` | `cue.ts` | Send a message to another session by player name via Temporal signal |
 | `destroy` | `destroy.ts` | Terminate a session workflow or the entire ensemble (irreversible) |
 | `ensemble` | `ensemble.ts` | Discover active sessions — player IDs, descriptions, metadata |
 | `evaluate_gate` | `evaluate-gate.ts` | Mark quality gate criteria as passed or failed (conductor only) |
+| `fetch_state` | `fetch-state.ts` | Read a saved-state slot for yourself or a peer (defaults to your own `main` slot) |
 | `gates` | `gates.ts` | List quality gates and their status (conductor only) |
 | `hosts` | `hosts.ts` | Show daemons polling this Temporal namespace with advertised capabilities |
 | `listen` | `listen.ts` | Manually check for pending messages from other sessions |
@@ -49,6 +51,7 @@ Source: `src/tools/*.ts` — each file calls `defineTool(server, '<name>', '<des
 | `restart` | `restart.ts` | Restart a session — reap current attachment, claim fresh, spawn new adapter |
 | `restore` | `restore.ts` | Revive ensemble after `shutdown` — reattach orphans, unpause maestro + scheduler |
 | `save_lineup` | `save-lineup.ts` | Save current ensemble state as a YAML lineup (conductor only) |
+| `save_state` | `save-state.ts` | Save curated state for yourself into a named slot — peers can read it via `fetch_state` |
 | `schedule` | `schedule.ts` | Schedule a message to a player: one-shot, recurring, delay, or cron |
 | `schedules` | `schedules.ts` | List all active schedules in this ensemble |
 | `set_ensemble_description` | `set-ensemble-description.ts` | Update the ensemble's mission-flavor description (≤100 chars). Surfaces on the dashboard EnsembleCard |
@@ -61,7 +64,7 @@ Source: `src/tools/*.ts` — each file calls `defineTool(server, '<name>', '<des
 | `who_am_i` | `who-am-i.ts` | Get your identity, role, player type, and session details |
 | `worktree` | `worktree.ts` | Manage git worktrees for player isolation (conductor only) |
 
-**Count:** 34 tools  
+**Count:** 37 tools  
 **Full reference:** [docs/tools.md](tools.md)  
 **Note:** `detach` was removed from the MCP surface in v0.27 (#287) — its plumbing is used internally by `shutdown`.
 

@@ -89,7 +89,19 @@ import {
   orphanSummaryQuery,
   // Test-only (#226 reconnect-after-CAN coverage)
   testForceContinueAsNewSignal,
+  // Player saveable state (#334 PR-1)
+  savePlayerStateUpdate,
+  clearPlayerStateUpdate,
+  playerStateQuery,
+  playerStateKeysQuery,
 } from './signals';
+import {
+  PLAYER_STATE_KEY_REGEX,
+  PLAYER_STATE_KEY_MAX,
+  PLAYER_STATE_CONTENT_MAX,
+  PLAYER_STATE_SLOTS_MAX,
+  PLAYER_STATE_DEFAULT_KEY,
+} from '../utils/validation';
 import type {
   Attachment,
   AttachmentPhase,
@@ -98,6 +110,7 @@ import type {
   AdapterClass,
   AgentType,
   DetachReason,
+  PlayerStateEntry,
   OrphanSummary,
   SpawnOutboxEntry,
 } from '../types';
@@ -229,6 +242,12 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   let outboxLocked = input.outboxLocked ?? false;
   let heldMessage: string | undefined = input.heldMessage;
   let paused = input.paused ?? false;
+
+  // ── Player Saveable State (#334 PR-1; ADR 0011) ──
+  // Per-key opaque-string artifacts the player itself curates via `save_state`.
+  // Carried via continueAsNew (only when populated). Sized at validation:
+  // up to PLAYER_STATE_SLOTS_MAX × PLAYER_STATE_CONTENT_MAX.
+  const playerState: Record<string, PlayerStateEntry> = { ...(input.playerState ?? {}) };
 
   // ── v0.25 Attachment Lifecycle State (design §2.2) ──
   /** Current attachment lease, or null when detached. */
@@ -1050,6 +1069,75 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     ...(lastAdapterMeta ? { lastAdapter: lastAdapterMeta } : {}),
   }));
 
+  // ── Player Saveable State Handlers (#334 PR-1, ADR 0011) ──
+  //
+  // Validators run pre-handler so size/key/slot-cap rejections never commit
+  // history events. Handler bodies trust their inputs and stay trivially
+  // deterministic. `workflow.now()` is SDK-intercepted so `savedAt` is
+  // replay-deterministic.
+
+  const assertValidPlayerStateKey = (key: unknown): void => {
+    if (typeof key !== 'string' || !PLAYER_STATE_KEY_REGEX.test(key) || key.length > PLAYER_STATE_KEY_MAX) {
+      throw ApplicationFailure.nonRetryable(
+        `Invalid playerState key "${key}" — must match ${PLAYER_STATE_KEY_REGEX} and be ≤ ${PLAYER_STATE_KEY_MAX} chars`,
+        'PlayerStateInvalidKey',
+      );
+    }
+  };
+
+  setHandler(savePlayerStateUpdate, ({ key, content, savedBy }) => {
+    playerState[key] = {
+      content,
+      savedAt: workflowNow().toISOString(),
+      savedBy,
+    };
+    lastActivityTime = workflowNow().getTime();
+    activityCount++;
+    return { saved: true as const, savedAt: playerState[key].savedAt };
+  }, {
+    validator: ({ key, content }) => {
+      assertValidPlayerStateKey(key);
+      if (typeof content !== 'string') {
+        throw ApplicationFailure.nonRetryable(
+          'playerState content must be a string',
+          'PlayerStateInvalidContent',
+        );
+      }
+      // `TextEncoder` is replay-safe (pure string→bytes); `Buffer` is Node-only
+      // and not available in the workflow sandbox.
+      if (new TextEncoder().encode(content).length > PLAYER_STATE_CONTENT_MAX) {
+        throw ApplicationFailure.nonRetryable(
+          `playerState content exceeds ${PLAYER_STATE_CONTENT_MAX} bytes`,
+          'PlayerStateContentTooLarge',
+        );
+      }
+      if (!(key in playerState) && Object.keys(playerState).length >= PLAYER_STATE_SLOTS_MAX) {
+        const existingKeys = Object.keys(playerState).sort().join(', ');
+        throw ApplicationFailure.nonRetryable(
+          `playerState slots full (${PLAYER_STATE_SLOTS_MAX}). Clear one before saving "${key}". Existing slots: ${existingKeys}`,
+          'PlayerStateSlotsFull',
+        );
+      }
+    },
+  });
+
+  setHandler(clearPlayerStateUpdate, ({ key }) => {
+    if (!(key in playerState)) return { cleared: false };
+    delete playerState[key];
+    lastActivityTime = workflowNow().getTime();
+    activityCount++;
+    return { cleared: true };
+  }, {
+    validator: ({ key }) => assertValidPlayerStateKey(key),
+  });
+
+  setHandler(playerStateQuery, ({ key } = {}) => {
+    const k = key ?? PLAYER_STATE_DEFAULT_KEY;
+    return playerState[k] ?? null;
+  });
+
+  setHandler(playerStateKeysQuery, () => Object.keys(playerState).sort());
+
   // ── Conductor State ──
 
   const commandHistory: Command[] = input.commandHistory ?? [];
@@ -1762,6 +1850,10 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
         phase,
         ...(drainingSince ? { drainingSince } : {}),
         ...(drainingDeadlineMs !== null ? { drainingDeadlineMs } : {}),
+        // #334 PR-1 — carry player saveable state only when populated.
+        // Empty maps are omitted from the CAN payload to keep the wire
+        // small for the common no-state case (same idiom as currentAttachment).
+        ...(Object.keys(playerState).length > 0 ? { playerState } : {}),
         ...(input.metadata.isConductor ? { commandHistory, reportHistory, qualityGates, worktrees, stages } : {}),
       });
     }

@@ -63,6 +63,8 @@ Queries on a `claudeSessionWorkflow` instance (synchronous, read-only).
 | `getMessagingState` | `{ received: number; sent: number; outbox: string }` | **#399 W2.** Returns inbound + outbound + outbox-summary counters. `received` increments per inbound `receiveMessage` cue; `sent` increments per `submitOutbox` (every entry the session pushes). `outbox` is a server-side reduce: `"empty"` / `"N pending"` / `"N pending (oldest 2m)"` once the oldest pending entry exceeds the 30s stale threshold. All counters are monotonic across `continueAsNew`. |
 | `getActivityState` | `{ activityCount: number; lastActivityAt: string }` | **#399 W2.** Returns activity-counter + ISO timestamp of the most recent "work" event (cue / outbox push / schedule fire / report / recruit / restart / destroy / migrate — heartbeats and lifecycle plumbing don't bump). Critical-path for the per-ensemble maestro's tempo bucket projection (W1 fan-queries this from each session). Monotonic across `continueAsNew`. |
 | `getLeaseState` | `{ expiresAt: number \| null; leaseMs: number \| null }` | **#399 W2.** Returns the current attachment's expiry (epoch ms) + lease window (ms), or `{ expiresAt: null, leaseMs: null }` when no active lease (phase ∈ `booting` / `detached` / `gone`). The dashboard formats `"expires in 54s"` / `"expired"` client-side. |
+| `playerState` | `PlayerStateEntry \| null` | **#334.** Returns the named player-saveable-state slot (`{ content, savedAt, savedBy }`), or `null` when the slot is empty. Input: `{ key?: string }` — defaults to `'main'`. Peer-readable: any player in the ensemble may query any other player's slots (audit identity recorded on each entry's `savedBy`). Continues to serve queries against completed workflows (last-known state from history) — useful for post-mortem inspection after `destroy`. Carried across `continueAsNew`. |
+| `playerStateKeys` | `string[]` | **#334.** Returns the names of every populated player-saveable-state slot, sorted alphabetically. Empty array when no slots are saved. Operator/debugging surface only — reachable via `temporal workflow query <id> playerStateKeys`. ADR 0011 §Alternatives explicitly rejected exposing slot enumeration through the MCP tool surface (would force a polymorphic return on `fetch_state`); a dedicated `list_state` MCP tool can graduate in v2 if telemetry shows demand. |
 
 ---
 
@@ -80,6 +82,8 @@ Workflow updates on a `claudeSessionWorkflow` instance (transactional, returns a
 | `forceDetach` | `{ reason: DetachReason; expectedAttachmentId?; gracePeriodMs: number }` | `{ reaped: boolean; previousAttachmentId? }` | **v0.25.** Revoke the current attachment. Returns `{ reaped: true, previousAttachmentId }` when a live attachment was revoked; `{ reaped: false }` when already detached (idempotent). `expectedAttachmentId` guards against TOCTOU. `gracePeriodMs` is reserved for future use — PR-A always detaches immediately. |
 | `enqueueSpawn` | `{ host, attachmentId, runId, resume, sessionId?, adapterId, agentDefinition?, agentDefinitionPath?, nativeResolvable?, model? }` | `{ spawnEntryId: string }` | **v0.25.** Queue a spawn outbox entry carrying the claim token. Used by `restart` (PR-D) to route a fresh-adapter spawn to a per-host task queue after `claimAttachment`. The three `agent*` fields (added in #184, non-breaking additive) carry the resolved player-type so restart-triggered spawns pick `--agent <name>` or `--system-prompt <path>` the same way recruit does. `model?` (added in #131 Phase C, non-breaking additive) carries the claude-api model id across restart/encore/migrate so the restarted subprocess runs the same model the original recruit chose. |
 | `setPreferredHost` | `{ host: string }` | *(void)* | **v0.25.** Record a preferred host for daemon reconcile-on-boot (PR-E). |
+| `savePlayerState` | `{ key: string; content: string; savedBy: string }` | `{ saved: true; savedAt: string }` | **#334.** Write a curated artifact into one of the calling player's saveable-state slots. Validator (pre-handler) rejects invalid key (`PlayerStateInvalidKey`), oversized content > 32 KiB (`PlayerStateContentTooLarge`), or a new key when 4 slots are full (`PlayerStateSlotsFull` — error message lists existing slot names so the LLM can pick which to clear). On success writes `{ content, savedAt: workflow.now().toISOString(), savedBy }` to `playerState[key]`. Carried across `continueAsNew`. Owner-only by structure (the `save_state` MCP tool always wires the calling player's own session-workflow handle — no `playerId` arg). See `PlayerStateEntry` below. |
+| `clearPlayerState` | `{ key: string }` | `{ cleared: boolean }` | **#334.** Remove a saved-state slot. Returns `{ cleared: true }` when the slot existed, `{ cleared: false }` when it was already empty (idempotent). Validator rejects invalid keys with `PlayerStateInvalidKey`. Owner-only by structure (no `playerId` arg). |
 
 ---
 
@@ -307,6 +311,23 @@ Advertised by daemons via the `hostProfile` signal. **Open schema** — consumer
 | `[extraField]` | `unknown` | Additive open-schema escape hatch for forward compatibility. |
 
 Privacy contract: daemons MUST scrub absolute paths, env values, and user directories before signaling. See `src/daemon.ts` `scrubHostProfile` + `test/daemon-boot.test.ts` scrub invariant. (`daemonStartedAt` and `adapterVersions` carry no path / env data; they pass through the scrub unchanged.)
+
+### `PlayerStateEntry` (#334)
+
+Single slot of player-saveable state. Returned by `playerState` query, written by `savePlayerState` update.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `content` | `string` | Opaque artifact (markdown encouraged via tool docstring nudge, not enforced). Max 32 KiB UTF-8 per slot — validator rejects with `PlayerStateContentTooLarge`. |
+| `savedAt` | `string` | ISO 8601 timestamp from `workflow.now()` at write time. |
+| `savedBy` | `string` | Player id that wrote the slot — audit identity for peer reads. |
+
+Limits (enforced by `savePlayerState` validator and the `save_state` Zod schema):
+
+- Max key length: 32 chars; key regex: `/^[a-zA-Z0-9_-]+$/` (alphanumeric, underscore, hyphen).
+- Max content size: 32 KiB UTF-8 per slot.
+- Max populated slots per player: 4. Saving a 5th distinct key rejects with `PlayerStateSlotsFull` and lists existing slot names — caller must `clear_state` to free a slot. **No LRU eviction** — explicit clear required (Anthropic harness-design blog: explicit eviction reinforces authorial discipline).
+- Default slot key when omitted: `'main'`.
 
 ### `RecruitOutboxEntry` (selected fields)
 

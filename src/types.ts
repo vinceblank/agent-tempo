@@ -337,6 +337,28 @@ export interface HostInfo {
   profileStaleness: 'fresh' | 'stale' | 'missing';
 }
 
+/**
+ * One slot of player-saveable state (#334 PR-1, ADR 0011).
+ *
+ * Curated artifact written by the owning player itself via the `save_state`
+ * MCP tool — opaque string content with a markdown-template docstring nudge
+ * (no enforced schema). Read by any peer in the ensemble via `fetch_state`;
+ * cleared by the owner via `clear_state`.
+ *
+ * Sizing: per-key content max 32 KiB; up to 4 slots per player; aggregate
+ * structural max 128 KiB. See `src/utils/validation.ts` constants and
+ * `docs/design/334-player-saveable-state.md` §3 for the CAN-payload analysis.
+ *
+ * `savedAt` is an ISO timestamp produced via `workflow.now()` so replay stays
+ * deterministic. `savedBy` records the player id that wrote the slot — the
+ * audit identity for peer reads.
+ */
+export interface PlayerStateEntry {
+  content: string;
+  savedAt: string;
+  savedBy: string;
+}
+
 export interface SessionInput {
   metadata: SessionMetadata;
   /** Restored from continue-as-new */
@@ -413,6 +435,15 @@ export interface SessionInput {
     temporalNamespace: string;
     taskQueue: string;
   };
+  /**
+   * Restored from continue-as-new: per-player saveable-state slots
+   * (#334 PR-1 / ADR 0011). Map of `slotKey → PlayerStateEntry`. Carried
+   * forward only when at least one slot is populated — empty maps are
+   * omitted from the CAN payload to keep the wire small for the common
+   * no-state case (same idiom as `currentAttachment` / `preferredHost`).
+   * See `src/utils/validation.ts` for size + slot-count caps.
+   */
+  playerState?: Record<string, PlayerStateEntry>;
 }
 
 export interface Message {
