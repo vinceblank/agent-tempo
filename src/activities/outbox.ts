@@ -31,7 +31,10 @@ import {
   allMessagesQuery,
   receiveMessageSignal,
   updateMetadataSignal,
+  playerStateQuery,
 } from '../workflows/signals';
+import { PLAYER_STATE_DEFAULT_KEY } from '../utils/validation';
+import type { PlayerStateEntry } from '../types';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:outbox]', ...args);
 
@@ -202,6 +205,10 @@ export interface DeliverRestartInput {
   host?: string;
   fresh?: boolean;
   contextMessages?: number;
+  /** #334 PR-2 — see {@link RestartOutboxEntry.loadFromState}. */
+  loadFromState?: boolean | string;
+  /** #334 PR-2 — see {@link RestartOutboxEntry.transcript}. */
+  transcript?: 'suppress' | 'replay';
 }
 
 export interface SpawnProcessInput {
@@ -744,7 +751,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
      * outside the outbox pattern.
      */
     async deliverRestart(input: DeliverRestartInput): Promise<OutboxActivityResult> {
-      const { ensemble, targetPlayerId, invokerPlayerId, force = false, host, fresh = false, contextMessages = 10 } = input;
+      const { ensemble, targetPlayerId, invokerPlayerId, force = false, host, fresh = false, contextMessages = 10, loadFromState, transcript } = input;
       try {
         const handle = await resolveSession(client, ensemble, targetPlayerId);
         if (!handle) {
@@ -840,8 +847,49 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           }],
         });
 
-        // Step 5 — optional context replay.
-        if (!fresh) {
+        // Step 5 — context seed (saved state and/or transcript replay).
+        //
+        // #334 PR-2: `loadFromState` lets the player choose to seed the new
+        // session from a curated state slot instead of (or alongside) the
+        // existing transcript replay. The semantics matrix (design §4.4):
+        //
+        //   loadFromState set      → seed from saved state, suppress replay by default
+        //   loadFromState + 'replay' → stack: saved state first, then transcript
+        //   loadFromState set, slot empty → graceful fallback to transcript replay
+        //   loadFromState absent   → existing behaviour (replay governed by `fresh`)
+        //
+        // Backward compat is structural (no `patched()` marker — see ADR 0011
+        // §Consequences and design §7.3): old outbox entries omit
+        // `loadFromState`, `wantsState` evaluates falsy, and execution falls
+        // through to the original transcript-replay block bit-for-bit.
+        const wantsState = loadFromState !== undefined;
+        const wantsTranscriptByFlag = transcript === 'replay';
+        let saved: PlayerStateEntry | null = null;
+
+        if (wantsState) {
+          const stateKey = typeof loadFromState === 'string' ? loadFromState : PLAYER_STATE_DEFAULT_KEY;
+          saved = await handle.query(playerStateQuery, { key: stateKey }) as PlayerStateEntry | null;
+          if (saved) {
+            await handle.signal(receiveMessageSignal, {
+              from: 'self-restart',
+              text: `🎵 **Restored state — "${stateKey}"** (saved ${saved.savedAt} by ${saved.savedBy})\n\n${saved.content}`,
+              responseRequested: false,
+            });
+          } else {
+            log(`Restart loadFromState requested for slot "${stateKey}" but slot is empty — falling back to transcript replay`);
+            // UX-friendly fallback per design §4.4: replay the transcript as
+            // if the caller had not passed `loadFromState`. The fall-through
+            // below picks this up via `wantsState && !saved`.
+          }
+        }
+
+        // Replay the transcript when (a) loadFromState was not requested, OR
+        // (b) caller opted into stacking via `transcript: 'replay'`, OR
+        // (c) loadFromState was requested but the slot was empty (fallback).
+        // The pre-existing `fresh` flag still wins — `fresh: true` skips
+        // replay regardless of state-seeding outcome.
+        const wantsTranscript = !wantsState || wantsTranscriptByFlag || (wantsState && !saved);
+        if (!fresh && wantsTranscript) {
           const [part, allMessages] = await Promise.all([
             handle.query(getPartQuery) as Promise<string>,
             handle.query(allMessagesQuery) as Promise<Message[]>,

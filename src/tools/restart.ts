@@ -36,7 +36,14 @@ import type { OutboxEntryInput, AttachmentInfo } from '../types';
 import { submitOutboxUpdate, attachmentInfoQuery } from '../workflows/signals';
 import { resolveSession } from './resolve';
 import { defineTool, ok, fail, formatError } from './helpers';
-import { PLAYER_NAME_MAX, RESTART_CONTEXT_MESSAGES_MAX, validatePlayerName } from '../utils/validation';
+import {
+  PLAYER_NAME_MAX,
+  RESTART_CONTEXT_MESSAGES_MAX,
+  validatePlayerName,
+  PLAYER_STATE_KEY_REGEX,
+  PLAYER_STATE_KEY_MAX,
+  PLAYER_STATE_DEFAULT_KEY,
+} from '../utils/validation';
 
 const DEFAULT_CONTEXT_MESSAGES = 10;
 
@@ -47,6 +54,10 @@ export interface RestartToolArgs {
   force?: boolean;
   contextMessages?: number;
   confirmStealFromHost?: string;
+  /** #334 PR-2 — see {@link RestartOutboxEntry.loadFromState}. */
+  loadFromState?: boolean | string;
+  /** #334 PR-2 — see {@link RestartOutboxEntry.transcript}. */
+  transcript?: 'suppress' | 'replay';
 }
 
 /**
@@ -117,7 +128,7 @@ export function registerRestartTool(
   defineTool(
     server,
     'restart',
-    'Restart a session — reap the current attachment (gracefully, or with force=true), claim a fresh attachment, spawn a new adapter, and optionally replay recent context. Replaces `encore`, `recruit --force`, and `stop`-then-`recruit`. Pass `host` to restart on a different machine; when `force=true` AND the target is currently on a different host, pass `confirmStealFromHost` matching that hostname (design §16.5).',
+    'Restart a session — reap the current attachment (gracefully, or with force=true), claim a fresh attachment, spawn a new adapter, and optionally replay recent context. Replaces `encore`, `recruit --force`, and `stop`-then-`recruit`. Pass `host` to restart on a different machine; when `force=true` AND the target is currently on a different host, pass `confirmStealFromHost` matching that hostname (design §16.5). Pass `loadFromState` to seed the restarted session from a saved-state slot (#334) instead of (or alongside) transcript replay.',
     {
       playerId: z.string().max(PLAYER_NAME_MAX).describe('The player name to restart'),
       host: z.string().optional().describe('Target host for the new attachment (defaults to the session\'s preferredHost or last-known hostname). When set, the spawn is routed to the per-host task queue `claude-tempo-{host}`.'),
@@ -125,6 +136,16 @@ export function registerRestartTool(
       force: z.boolean().optional().describe('Steal a live attachment via forceDetach (default false; graceful detach is tried first regardless)'),
       contextMessages: z.number().min(0).max(RESTART_CONTEXT_MESSAGES_MAX).optional().describe(`Number of recent messages to include in context (default ${DEFAULT_CONTEXT_MESSAGES}, max ${RESTART_CONTEXT_MESSAGES_MAX})`),
       confirmStealFromHost: z.string().optional().describe('Required when `force=true` and the target\'s current attachment is on a different host. Must match the hostname currently holding the attachment (design §16.5 Option B).'),
+      // #334 PR-2 — saved-state seed integration.
+      loadFromState: z.union([
+        z.boolean(),
+        z.string().regex(PLAYER_STATE_KEY_REGEX).max(PLAYER_STATE_KEY_MAX),
+      ]).optional().describe(
+        `Seed the restarted session with a saved-state slot. \`true\` resolves to the default key "${PLAYER_STATE_DEFAULT_KEY}"; a string names a specific slot. By default, transcript replay is suppressed when this is set — pass \`transcript: 'replay'\` to stack both. Falls back to transcript replay if the slot is empty.`,
+      ),
+      transcript: z.enum(['suppress', 'replay']).optional().describe(
+        'When `loadFromState` is set, controls transcript-replay interaction: `suppress` (default) seeds only the saved state; `replay` seeds the saved state and then replays the recent transcript on top of it. Ignored when `loadFromState` is absent.',
+      ),
     },
     async (args) => {
       const input = args as RestartToolArgs;
@@ -146,6 +167,8 @@ export function registerRestartTool(
           ...(input.fresh !== undefined ? { fresh: input.fresh } : {}),
           ...(input.force !== undefined ? { force: input.force } : {}),
           ...(input.contextMessages !== undefined ? { contextMessages: input.contextMessages } : {}),
+          ...(input.loadFromState !== undefined ? { loadFromState: input.loadFromState } : {}),
+          ...(input.transcript !== undefined ? { transcript: input.transcript } : {}),
         };
         const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
         return ok(

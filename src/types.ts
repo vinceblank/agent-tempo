@@ -624,6 +624,26 @@ export interface RestartOutboxEntry extends OutboxEntryBase {
   contextMessages?: number;
   /** Identifier of the invoker for audit messages (default: 'cli'). */
   invokerPlayerId?: string;
+  /**
+   * #334 PR-2 — seed the restarted session with a saved-state slot instead of
+   * (or alongside) transcript replay. `true` resolves to `PLAYER_STATE_DEFAULT_KEY`
+   * (`'main'`); a string names a specific slot. Absent = current behaviour
+   * (transcript replay only). Backward compat is structural — old payloads
+   * omit this field and the new `wantsState` branch evaluates to `false`. See
+   * [docs/design/334-player-saveable-state.md](../../docs/design/334-player-saveable-state.md) §7.2.
+   */
+  loadFromState?: boolean | string;
+  /**
+   * #334 PR-2 — controls transcript-replay interaction when `loadFromState`
+   * is set:
+   *   - `'suppress'` (default when `loadFromState` set): only the saved
+   *     state seeds the new session.
+   *   - `'replay'`: both saved state and transcript are seeded (saved
+   *     state delivered first).
+   *   - When `loadFromState` is absent: ignored — transcript replay always
+   *     happens (governed by the existing `fresh` flag).
+   */
+  transcript?: 'suppress' | 'replay';
 }
 
 /**

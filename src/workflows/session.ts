@@ -1675,6 +1675,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
             // PR-D: route the `restart`/`migrate` verbs through the outbox
             // (QA B3). The activity owns the §8.2 algorithm: graceful detach
             // → optional force → claim → context replay → enqueueSpawn.
+            // #334 PR-2: forward `loadFromState` + `transcript` so the
+            // activity can seed the restarted session from a saved-state slot.
             await deliverRestart({
               ensemble: input.metadata.ensemble,
               targetPlayerId: entry.targetPlayerId,
@@ -1683,6 +1685,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               ...(entry.host !== undefined ? { host: entry.host } : {}),
               ...(entry.fresh !== undefined ? { fresh: entry.fresh } : {}),
               ...(entry.contextMessages !== undefined ? { contextMessages: entry.contextMessages } : {}),
+              ...(entry.loadFromState !== undefined ? { loadFromState: entry.loadFromState } : {}),
+              ...(entry.transcript !== undefined ? { transcript: entry.transcript } : {}),
             });
             break;
           }
