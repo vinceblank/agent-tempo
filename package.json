@@ -74,7 +74,12 @@
     "pretest:shard-2": "npm run build:test && npm run build:scripts",
     "test:shard-2": "node dist/scripts/run-shard.js 2",
     "test": "mocha && vitest run",
-    "lint:surface-drift": "node scripts/check-surface-drift.js"
+    "lint:surface-drift": "node scripts/check-surface-drift.js",
+    "lint:test-ensemble-literals": "bash scripts/check-test-ensemble-literals.sh",
+    "lint:skip-reasons": "node scripts/lint-skip-reasons.js",
+    "lint:lockstep-version": "node -e \"const r=require('./package.json').version,d=require('./dashboard/package.json').version;if(r!==d){console.error('Version drift: root='+r+' dashboard='+d+'. Bump dashboard/package.json#version to match root.');process.exit(1);}console.log('Lockstep OK: '+r);\"",
+    "lint:dashboard-css-sync": "npm run build:scripts && node dist/scripts/check-components-css-sync.js",
+    "check:all": "npm run lint:test-ensemble-literals && npm run lint:skip-reasons && npm run lint:lockstep-version && npm run lint:surface-drift && npm run build && npm run lint:dashboard-css-sync && npm test && npm --prefix dashboard run lint && npm --prefix dashboard run test && npm run size-limit && npm run verify-tarball"
   },
   "optionalDependencies": {
     "@github/copilot-sdk": "^0.2.0",
