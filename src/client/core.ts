@@ -714,6 +714,8 @@ export function createTempoClientCore(
         ...(opts.fresh !== undefined ? { fresh: opts.fresh } : {}),
         ...(opts.force !== undefined ? { force: opts.force } : {}),
         ...(opts.contextMessages !== undefined ? { contextMessages: opts.contextMessages } : {}),
+        ...(opts.loadFromState !== undefined ? { loadFromState: opts.loadFromState } : {}),
+        ...(opts.transcript !== undefined ? { transcript: opts.transcript } : {}),
       };
       const entryId = await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
       return {

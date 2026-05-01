@@ -88,6 +88,19 @@ export interface RestartClientOpts {
   contextMessages?: number;
   /** Identifier of the invoker for audit messages (default: 'cli'). */
   invokerPlayerId?: string;
+  /**
+   * #334 PR-2 — seed the restarted session from a saved-state slot. `true`
+   * resolves to the default key (`'main'`); a string names a specific slot.
+   * Suppresses transcript replay by default; pass `transcript: 'replay'` to
+   * stack. Falls back to transcript replay if the slot is empty.
+   */
+  loadFromState?: boolean | string;
+  /**
+   * #334 PR-2 — controls transcript-replay interaction when `loadFromState`
+   * is set: `'suppress'` (default) or `'replay'` (stack saved state + transcript).
+   * Ignored when `loadFromState` is absent.
+   */
+  transcript?: 'suppress' | 'replay';
 }
 
 export interface RestartClientResult {

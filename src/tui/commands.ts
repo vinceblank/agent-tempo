@@ -443,7 +443,7 @@ function requireEnsemble(
   return ctx.activeEnsemble;
 }
 
-/** /restart <player> [--fresh] [--no-force] — revive a player session per §8.2. */
+/** /restart <player> [--fresh] [--no-force] [--load-from-state[=key]] [--stack-transcript] — revive a player session per §8.2. */
 async function handleRestart(
   args: string[],
   dispatch: (action: TuiAction) => void,
@@ -451,7 +451,7 @@ async function handleRestart(
   ctx: CommandContext,
 ): Promise<void> {
   if (args.length === 0) {
-    commitNotification(dispatch, 'error', 'Usage: /restart <player> [--fresh] [--no-force]');
+    commitNotification(dispatch, 'error', 'Usage: /restart <player> [--fresh] [--no-force] [--load-from-state[=key]] [--stack-transcript]');
     return;
   }
   const ensemble = requireEnsemble(dispatch, ctx);
@@ -464,11 +464,27 @@ async function handleRestart(
   // --no-force to refuse if a live attachment is present.
   const force = !args.includes('--no-force');
 
+  // #334 PR-2 — saved-state seed. `--load-from-state` (no value) → default
+  // key 'main'; `--load-from-state=<key>` → named slot; `--load-from-state=`
+  // (empty after `=`) collapses to default rather than failing the Zod
+  // regex with a confusing slot-key validation error. `--stack-transcript`
+  // opts into stacking the transcript replay on top of the saved state.
+  const loadStateArg = args.find((a) => a === '--load-from-state' || a.startsWith('--load-from-state='));
+  let loadFromState: boolean | string | undefined;
+  if (loadStateArg !== undefined) {
+    const eqIdx = loadStateArg.indexOf('=');
+    const keyPart = eqIdx >= 0 ? loadStateArg.slice(eqIdx + 1) : '';
+    loadFromState = keyPart.length > 0 ? keyPart : true;
+  }
+  const transcript: 'suppress' | 'replay' | undefined = args.includes('--stack-transcript') ? 'replay' : undefined;
+
   try {
     const result = await api.restart(ensemble, target, {
       fresh,
       force,
       invokerPlayerId: 'tui',
+      ...(loadFromState !== undefined ? { loadFromState } : {}),
+      ...(transcript !== undefined ? { transcript } : {}),
     });
     // #306: Command-result summary as a bottom-pinned notification so it
     // stays visible while subsequent activity (heartbeats, joins, etc.)
@@ -1355,8 +1371,8 @@ export const COMMANDS: Record<string, CommandDef> = {
     handler: handleBroadcast,
   },
   restart: {
-    description: 'Restart a session (reap + claim + context replay + spawn). Steals a live lease by default — pass --no-force to refuse if held.',
-    usage: '/restart <player> [--fresh] [--no-force]',
+    description: 'Restart a session (reap + claim + context replay + spawn). Steals a live lease by default — pass --no-force to refuse if held. --load-from-state seeds from a saved-state slot (#334).',
+    usage: '/restart <player> [--fresh] [--no-force] [--load-from-state[=key]] [--stack-transcript]',
     handler: handleRestart,
   },
   destroy: {
