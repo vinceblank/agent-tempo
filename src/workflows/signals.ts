@@ -21,6 +21,7 @@ import type {
   AdapterClass,
   DetachReason,
   OrphanSummary,
+  PlayerStateEntry,
 } from '../types';
 
 // Re-export types for convenience within workflow code
@@ -56,6 +57,7 @@ export type {
   DetachReason,
   AdapterDirective,
   OrphanSummary,
+  PlayerStateEntry,
 } from '../types';
 
 // ── Player Signals ──
@@ -235,6 +237,63 @@ export const attachmentInfoQuery = defineQuery<AttachmentInfo>('attachmentInfo')
  * whether auto-restore applies.
  */
 export const orphanSummaryQuery = defineQuery<OrphanSummary>('orphanSummary');
+
+// ── Player Saveable State (#334 PR-1, ADR 0011) ──
+//
+// Per-session, player-curated state slots. Player-only writes (no `playerId`
+// arg → tool wires the calling player's own handle); peer reads via
+// `playerStateQuery`. Sized per design §3.3: max 4 slots × 32 KiB content
+// = 128 KiB structural max. Saturation rejects with `PlayerStateSlotsFull`
+// rather than evicting LRU.
+//
+// Validators run pre-handler so size/slot-cap rejections never commit
+// history events. See `src/utils/validation.ts` for the constants.
+
+/**
+ * Save curated state for the calling player into a named slot.
+ *
+ * Validation (pre-handler):
+ *  - `key` matches `PLAYER_STATE_KEY_REGEX` (alphanumeric + underscore + hyphen,
+ *    1–32 chars). `PlayerStateInvalidKey` on mismatch.
+ *  - `content` byte length ≤ `PLAYER_STATE_CONTENT_MAX` (32 KiB).
+ *    `PlayerStateContentTooLarge` on overflow.
+ *  - When the key is new and slots already at `PLAYER_STATE_SLOTS_MAX` (4),
+ *    rejects with `PlayerStateSlotsFull` and lists existing keys so the LLM
+ *    can pick which slot to clear.
+ *
+ * On success, writes `{ content, savedAt: workflowNow().toISOString(), savedBy }`
+ * to `playerState[key]`. Carried via `continueAsNew`.
+ */
+export const savePlayerStateUpdate = defineUpdate<
+  { saved: true; savedAt: string },
+  [{ key: string; content: string; savedBy: string }]
+>('savePlayerState');
+
+/**
+ * Clear the named slot. Returns `{ cleared: true }` if the slot existed,
+ * `{ cleared: false }` if it was already empty (idempotent). Validates `key`
+ * against `PLAYER_STATE_KEY_REGEX`.
+ */
+export const clearPlayerStateUpdate = defineUpdate<
+  { cleared: boolean },
+  [{ key: string }]
+>('clearPlayerState');
+
+/**
+ * Read the named slot. Returns `null` when the slot is empty.
+ * `key` defaults to `PLAYER_STATE_DEFAULT_KEY` ('main').
+ *
+ * Peer-readable: any player in the ensemble may query any other player's
+ * saved state (audit identity is the entry's `savedBy`). Mirrors the
+ * `recall`/`attachment_info` ergonomics.
+ */
+export const playerStateQuery = defineQuery<
+  PlayerStateEntry | null,
+  [{ key?: string }]
+>('playerState');
+
+/** List names of populated slots (sorted). Returns `[]` when no slots are saved. */
+export const playerStateKeysQuery = defineQuery<string[]>('playerStateKeys');
 
 // ── Outbox Update + Query ──
 

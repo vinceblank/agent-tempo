@@ -24,6 +24,9 @@ export default defineConfig({
       // parser, build-exclusion script harness, source-level recruit gate
       // + prefix-safety regressions).
       'tests/adapters/**/*.test.ts',
+      // #334 PR-1 — player saveable state MCP tools (Zod schema validation,
+      // error mapping, args propagation; no Temporal worker, no network).
+      'tests/tools/**/*.test.ts',
     ],
     environment: 'node',
     globals: false,

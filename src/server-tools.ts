@@ -54,6 +54,10 @@ import { registerMigrateTool } from './tools/migrate';
 import { registerAttachmentInfoTool } from './tools/attachment-info';
 import { registerHostsTool } from './tools/hosts';
 import { registerSetEnsembleDescriptionTool } from './tools/set-ensemble-description';
+// #334 PR-1 — player saveable state (save_state / fetch_state / clear_state).
+import { registerSaveStateTool } from './tools/save-state';
+import { registerFetchStateTool } from './tools/fetch-state';
+import { registerClearStateTool } from './tools/clear-state';
 
 /**
  * Identity + state context every tool registration consumes. The two
@@ -126,6 +130,10 @@ export function registerAllTempoTools(
   registerAttachmentInfoTool(server, client, config);
   registerHostsTool(server, client, config);
   registerSetEnsembleDescriptionTool(server, client, config);
+  // #334 PR-1 — owner-write / peer-read player saveable state.
+  registerSaveStateTool(server, handle, getPlayerId);
+  registerFetchStateTool(server, client, config, handle, getPlayerId);
+  registerClearStateTool(server, handle);
 
   if (isConductor) {
     registerQualityGateTool(server, handle, getPlayerId);

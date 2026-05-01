@@ -25,6 +25,31 @@ export const MESSAGE_MAX = 102400;
 /** Maximum part (status) length. */
 export const PART_MAX = 500;
 
+// ── Player saveable state (#334 PR-1) ──────────────────────────────────────
+//
+// Per-session, player-curated state slots. Sized per design §3.3:
+//   per-key 32 KiB × max 4 slots → 128 KiB structural max per session.
+// At a 1.2 MiB p99 session footprint, that lands at ~33 % of Temporal's
+// 4 MiB CAN-payload ceiling — comfortable. Saturation refuses with a
+// `PlayerStateSlotsFull` ApplicationFailure rather than evicting LRU
+// (Anthropic harness-design blog: explicit eviction reinforces authorial
+// discipline). See docs/adr/0011-player-saveable-state.md.
+
+/** Default slot key when callers omit `key`. */
+export const PLAYER_STATE_DEFAULT_KEY = 'main';
+
+/** Slot keys: alphanumeric + underscore + hyphen. Mirrors PLAYER_NAME_REGEX shape. */
+export const PLAYER_STATE_KEY_REGEX = /^[a-zA-Z0-9_-]+$/;
+
+/** Maximum slot key length. */
+export const PLAYER_STATE_KEY_MAX = 32;
+
+/** Maximum content size per slot — 32 KiB. Mirrors coat-check's per-entry cap. */
+export const PLAYER_STATE_CONTENT_MAX = 32 * 1024;
+
+/** Maximum number of populated slots per player. Saturation rejects with `PlayerStateSlotsFull`. */
+export const PLAYER_STATE_SLOTS_MAX = 4;
+
 /**
  * Maximum length of the ensemble description set via
  * `set_ensemble_description` (#399 W1, Q5.1). Soft cap — the MCP tool
