@@ -31,10 +31,9 @@ const TEST_CONFIG: Config = {
   defaultAgent: 'claude',
 };
 
-/** Build a fake handle whose `query` returns scripted slot/key data. */
+/** Build a fake handle whose `query` returns scripted slot data. */
 function makeFakeHandle(opts: {
   slot?: { content: string; savedAt: string; savedBy: string } | null;
-  keys?: string[];
   queryError?: Error;
 }): WorkflowHandle {
   return {
@@ -42,7 +41,6 @@ function makeFakeHandle(opts: {
       const queryName = typeof def === 'string' ? def : def?.name;
       if (opts.queryError) throw opts.queryError;
       if (queryName === 'playerState') return opts.slot ?? null;
-      if (queryName === 'playerStateKeys') return opts.keys ?? [];
       throw new Error(`unexpected query: ${queryName}`);
     }),
     workflowId: 'claude-session-pstate-test-target',
@@ -140,30 +138,6 @@ describe('fetch_state tool (#334 PR-1)', () => {
       );
       await call({});
       expect(observedKey).toBe(PLAYER_STATE_DEFAULT_KEY);
-    });
-
-    it('list:true returns the sorted slot names from playerStateKeys', async () => {
-      const ownHandle = makeFakeHandle({ keys: ['a', 'main', 'safety'] });
-      const call = captureHandler((server) =>
-        registerFetchStateTool(server, makeClient({}), TEST_CONFIG, ownHandle, () => 'tempo-eng'),
-      );
-      const result = await call({ list: true });
-      expect(result.isError).toBeFalsy();
-      const text = result.content[0].text;
-      expect(text).toContain('Slots for **tempo-eng**');
-      expect(text).toContain('`a`');
-      expect(text).toContain('`main`');
-      expect(text).toContain('`safety`');
-    });
-
-    it('list:true returns "(no slots saved)" message when keys is empty', async () => {
-      const ownHandle = makeFakeHandle({ keys: [] });
-      const call = captureHandler((server) =>
-        registerFetchStateTool(server, makeClient({}), TEST_CONFIG, ownHandle, () => 'tempo-eng'),
-      );
-      const result = await call({ list: true });
-      expect(result.isError).toBeFalsy();
-      expect(result.content[0].text).toContain('no slots saved for tempo-eng');
     });
   });
 

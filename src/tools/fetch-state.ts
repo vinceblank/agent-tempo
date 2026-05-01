@@ -25,7 +25,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle, Client } from '@temporalio/client';
 import { Config } from '../config';
 import { resolveSession } from './resolve';
-import { playerStateQuery, playerStateKeysQuery } from '../workflows/signals';
+import { playerStateQuery } from '../workflows/signals';
 import { defineTool, ok, fail, formatError } from './helpers';
 import type { PlayerStateEntry } from '../types';
 import {
@@ -36,6 +36,15 @@ import {
   PLAYER_STATE_DEFAULT_KEY,
 } from '../utils/validation';
 
+/**
+ * Return type is monomorphic by design: `{ content, savedAt, savedBy } | null`.
+ * ADR 0011 §Alternatives explicitly rejected a `list: boolean` flag because
+ * the overloaded return shape (slot vs `string[]`) would force union-narrowing
+ * on every downstream consumer (TUI, dashboard, future TempoClient). Slot
+ * enumeration is reachable for operators via `temporal workflow query <id>
+ * playerStateKeys`; v2 can graduate a dedicated `list_state` MCP tool if
+ * telemetry shows real demand.
+ */
 export function registerFetchStateTool(
   server: McpServer,
   client: Client,
@@ -48,9 +57,7 @@ export function registerFetchStateTool(
     'fetch_state',
     `Read a saved-state slot for yourself or a peer. Defaults to your own "${PLAYER_STATE_DEFAULT_KEY}" slot.
 
-Pass \`playerId\` to read a peer's slot (any player in the ensemble can read any other player's state — audit identity is recorded on each slot via \`savedBy\`). Returns a "(no state saved …)" message when the slot is empty.
-
-When \`list: true\` is passed, returns the names of all populated slots for the target player instead of any single slot's content.`,
+Pass \`playerId\` to read a peer's slot (any player in the ensemble can read any other player's state — audit identity is recorded on each slot via \`savedBy\`). Returns a "(no state saved …)" message when the slot is empty.`,
     {
       key: z.string().regex(PLAYER_STATE_KEY_REGEX).max(PLAYER_STATE_KEY_MAX).optional().describe(
         `Slot name (default "${PLAYER_STATE_DEFAULT_KEY}").`,
@@ -58,12 +65,9 @@ When \`list: true\` is passed, returns the names of all populated slots for the 
       playerId: z.string().max(PLAYER_NAME_MAX).optional().describe(
         'Target player name (default: self).',
       ),
-      list: z.boolean().optional().describe(
-        'When true, return the populated slot names instead of any single slot\'s content.',
-      ),
     },
     async (args) => {
-      const { key, playerId, list } = args as { key?: string; playerId?: string; list?: boolean };
+      const { key, playerId } = args as { key?: string; playerId?: string };
       const targetId = playerId ?? getPlayerId();
 
       // Validate any explicit playerId — `getPlayerId()` is trusted (set by
@@ -83,15 +87,6 @@ When \`list: true\` is passed, returns the names of all populated slots for the 
           : await resolveSession(client, config.ensemble, targetId);
         if (!targetHandle) {
           return fail(`No session found with name "${targetId}".`);
-        }
-
-        if (list) {
-          const keys = await targetHandle.query(playerStateKeysQuery) as string[];
-          if (keys.length === 0) {
-            return ok(`(no slots saved for ${targetId})`);
-          }
-          const slotList = keys.map((k) => `- \`${k}\``).join('\n');
-          return ok(`Slots for **${targetId}**:\n${slotList}`);
         }
 
         const slotKey = key ?? PLAYER_STATE_DEFAULT_KEY;
