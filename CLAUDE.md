@@ -113,8 +113,9 @@ touching `src/tui/`.
 
 ```bash
 npm install
-npm run build    # compiles TS, scripts/*.ts → dist/scripts/, and pre-bundles workflow code into workflow-bundle.js
+npm run build       # compiles TS, scripts/*.ts → dist/scripts/, and pre-bundles workflow code into workflow-bundle.js
 npm test
+npm run check:all   # runs every CI gate locally (build, tests, drift checks, lints, dashboard, size-limit, tarball). Run before pushing to catch CI failures up front.
 ```
 
 > **Always run `npm run build` after changing workflow code (`src/workflows/`).** The build
