@@ -20,11 +20,14 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `save_lineup` | Save the current ensemble as a YAML lineup (conductor only). |
 | `load_lineup` | Load a lineup to recruit players and create schedules. `hold: true` spawns players in warm-hold (attached but deferred until `release`). `initialStartup: true` pauses the ensemble at startup and waits for the user's first message before the conductor acts. |
 | `broadcast` | Send a message to all active players. Optional `type` filter limits to a specific player type. |
-| `restart` | Restart a player session — detaches the current adapter and re-spawns a fresh process. Works from any non-`gone` phase. Optional `host` param routes restart to a remote machine. |
+| `restart` | Restart a player session — detaches the current adapter and re-spawns a fresh process. Works from any non-`gone` phase. Optional `host` param routes restart to a remote machine. Pass `loadFromState: true` (or a slot key string) to seed the restarted session from a saved-state slot (#334) instead of replaying the transcript; combine with `transcript: 'replay'` to stack both. Falls back to transcript replay if the slot is empty. |
 | `destroy` | Terminate a session via ordered shutdown (outbox drain). When `playerId` is omitted, destroys the entire ensemble (peers → scheduler/maestro → conductor last). On partial failure (`Promise.allSettled` returns any `failed`), the response surfaces a "N peer(s) in indeterminate state — run `/destroy <ensemble>` again to clean up" hint; re-running is safe (workflow-side `destroyUpdate` is idempotent). |
 | `migrate` | Move a session to a different host — sets preferred host then triggers `restart` on the target machine's task queue. Requires `to` (target hostname). |
 | `attachment_info` | Fetch the current attachment phase, adapter ID, lease expiry, heartbeat age, and in-flight message count for a player. Accepts `player` name. Output matches CLI and TUI surfaces (shared formatter, #264). |
 | `recall` | Read your own message history. Shows received messages by default; pass `includeSent: true` for the full timeline. `limit` caps results (default 20, max 100); `offset` pages the timeline (gh-style `Showing X-Y of Z messages. Use offset: N for next page.`); `previewLength` truncates bodies to N chars (unset = full text). #128 unified the output with the TUI `/recall` and CLI `claude-tempo recall` via a shared formatter. |
+| `save_state` | **#334.** Write a curated artifact to a named slot (max 4 slots × 32 KiB). Owner-only. A peer can read it via `fetch_state`; a future restart can seed itself from the slot via `loadFromState`. Slot key defaults to `"main"`. When all 4 slots are full, saving a new key fails with `PlayerStateSlotsFull` — call `clear_state` to free a slot first. |
+| `fetch_state` | **#334.** Read a saved-state slot for yourself or a peer. Any player in the ensemble can read any other player's state (audit identity recorded in `savedBy`). Pass `playerId` for a peer; defaults to own `"main"` slot. Works even after `destroy` (last-known state served from workflow history). Returns a `(no state saved …)` message when the slot is empty. |
+| `clear_state` | **#334.** Clear one of your own saved-state slots. Owner-only. Idempotent — clearing an already-empty slot is a no-op. Returns whether the slot was non-empty before the clear. |
 | `hosts` | **#274.** List all daemons polling this Temporal namespace, joined with their boot-signaled capability profile (default agent, available player types, platform, claude bin basename). Optional `includeStale: true` shows hosts not seen in the last minute; `force: true` bypasses the 3-second result cache. Output matches CLI `claude-tempo hosts` and TUI `/hosts` (shared formatter, AC10a). |
 | `worktree` | Manage git worktrees for player isolation. Actions: `create`, `remove`, `list`. Conductor only. |
 | `quality_gate` | Define or replace a quality gate for a task — a named checklist of criteria that must pass. Conductor only. |
@@ -41,8 +44,10 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 
 ## Version History
 
-### v0.28 Changes (#382, #385, #449, #485)
+### v0.28 Changes (#382, #385, #449, #485, #502, #503)
 
+- **`save_state`, `fetch_state`, `clear_state` added** — per-player saveable-state slots. Owner writes/clears; any peer can read. Max 4 slots × 32 KiB. (#502)
+- **`restart` gains `loadFromState`** — seed a restarted session from a saved-state slot instead of (or alongside) transcript replay. Pass `loadFromState: true` for the default slot or a key string for a named slot; `transcript: 'replay'` stacks both. (#503)
 - **`recruit` mock params added** — `agent: 'mock'` (dev mode only) with `mockMode` and `mockScenario`. Gates reject mock outside dev mode and validate mode/scenario combinations.
 - **`recruit` OpenCode support** — `agent: 'opencode'` with `model: 'provider/name'` for multi-provider headless sessions via SST OpenCode (#449/#485).
 
