@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.15] - 2026-05-02
+
+### Added
+
+- **Chat-notification system** — `<ToastStack>` renders bottom-right toasts for incoming
+  `maestro-in` messages with 6s TTL, max 3 visible, `+N more` overflow chip, and
+  same-sender grouping within 8s. Sidebar ensemble rows show numeric unread badges.
+  Click either → routes to that ensemble's chat, clears badge, drops pending toasts from
+  that sender. Suppressed when operator is on the active ensemble's chat. (#513)
+
+### Changed
+
+- **Sonner system toasts removed** — 29 toast call sites migrated to inline UI scoped to
+  where the action happens: composer-anchored `<ComposerStatus>` banner (slash command
+  errors, cue failures), inline wizard error rows (CreateEnsemble, Recruit), and silent
+  success for state-changing mutations. `/help` is now a persistent dismissible inline
+  banner — fixes the long-standing 4s auto-dismiss wart. Removing Sonner shrinks the
+  dashboard JS bundle by ~8 kB gzipped. (#514)
+
+### Fixed
+
+- **Conductor self-report chat projection** — conductor `report` calls rendered as
+  `tempo-conductor → conductor` (a self-loop) in the maestro chat feed. Now projects as
+  `tempo-conductor → maestro` with `role: 'maestro-in'`, picking up the left-aligned
+  in-variant rendering. (#512)
+- **CI matrix-skip on doc-only PRs** — `dorny/paths-filter@v3` defaults to
+  `predicate-quantifier: 'some'`, causing the `**` pattern to always win on docs-only
+  diffs. Added `predicate-quantifier: 'every'` to make negation patterns subtractive
+  (gitignore-style). Closes #354. (#518)
+
+### Docs
+
+- `docs/tools.md` updated with `save_state`, `fetch_state`, `clear_state` rows and
+  `restart` `loadFromState` / `transcript` params (drift from #502, #503). (#511)
+- Design docs filed: notifications system port from canvas (#515); maestro session
+  availability fix root-cause + Layer 1/2 design (#517).
+
 ## [0.28.0-beta.14] - 2026-05-01
 
 ### Added
