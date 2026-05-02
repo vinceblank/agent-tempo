@@ -5,20 +5,25 @@
  * Owns the v1 set of dashboard slash verbs (matches the metadata in
  * `dashboard-commands.ts`):
  *
- *   /help            → show available verbs as a system message
- *   /clear           → wipe the local chat scrollback (cache only)
+ *   /help            → returns an info status with the verb list
+ *                      (Workspace renders it via `<ComposerStatus>`)
+ *   /clear           → wipe the local chat scrollback (cache only).
+ *                      Returns `handled: true` with no status — the
+ *                      visible chat clear IS the feedback.
  *   /pause           → pause the ensemble (existing usePauseMutation)
  *   /play            → resume the ensemble (existing usePlayMutation)
  *   /release [p]     → release held players (optional player arg)
  *   /recall <p>      → fetch a player's history (existing useRecallMutation)
  *
- * Anything else → toast "command not yet supported in dashboard —
- * delegate to conductor" so the user has a clear next step.
+ * Anything else → returns an error status the consumer can render.
  *
- * **Why a hook, not a class?** Every operation reaches for React Query
- * mutations + cache + the Sonner toast surface. Wrapping as a hook keeps
- * the call sites tiny (Workspace just calls `dispatch(parsed)`) without
- * threading a half-dozen mutation handles through props.
+ * **Post-Sonner contract** (PR-2 of the chat-notification port): the
+ * dispatcher no longer fires toasts directly. It returns a structured
+ * `SlashOutcome` with an optional `status` payload that Workspace
+ * routes into the `<ComposerStatus>` banner anchored above the
+ * Composer. Successful slash verbs that have a visible state-change
+ * effect (`/pause`, `/play`, `/release`, `/clear`, `/recall <p>`)
+ * return no status — the UI flag/cache change is the feedback.
  */
 import { useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -30,15 +35,31 @@ import {
   useReleaseMutation,
   useRecallMutation,
 } from './mutations';
-import { toastInfo, toastError } from './toast';
 import { logEvent } from './log';
 import { DASHBOARD_COMMANDS } from './dashboard-commands';
 import type { ParsedChatInput } from './parse-chat-input';
 
+/**
+ * Status payload a consumer (Workspace) renders inline next to the
+ * Composer. Optional on every outcome — silent slashes (visible
+ * state change is the feedback) leave it undefined.
+ */
+export interface SlashStatus {
+  level: 'error' | 'info';
+  message: string;
+  description?: string;
+}
+
 export type SlashOutcome =
-  | { handled: true; verb: string }
-  | { handled: false; reason: 'unknown'; verb: string }
-  | { handled: false; reason: 'invalid-args'; verb: string; usage: string };
+  | { handled: true; verb: string; status?: SlashStatus }
+  | { handled: false; reason: 'unknown'; verb: string; status: SlashStatus }
+  | {
+      handled: false;
+      reason: 'invalid-args';
+      verb: string;
+      usage: string;
+      status: SlashStatus;
+    };
 
 /**
  * Build the dispatcher for a given ensemble. The returned `dispatch`
@@ -59,13 +80,22 @@ export function useSlashDispatcher(ensemble: string): (parsed: ParsedChatInput &
 
       switch (verb) {
         case 'help': {
+          // The verb list isn't transient — surface it as an info
+          // banner anchored above the Composer that the user can
+          // re-read until they dismiss it. (The previous Sonner toast
+          // disappeared after 4 s, which was a known UX wart.)
           const lines = DASHBOARD_COMMANDS.map(
             (c) => `  ${c.usage.padEnd(28)} ${c.description}`,
           );
-          toastInfo('Slash commands', {
-            description: lines.join('\n'),
-          });
-          return { handled: true, verb };
+          return {
+            handled: true,
+            verb,
+            status: {
+              level: 'info',
+              message: 'Slash commands',
+              description: lines.join('\n'),
+            },
+          };
         }
 
         case 'clear': {
@@ -82,9 +112,7 @@ export function useSlashDispatcher(ensemble: string): (parsed: ParsedChatInput &
               };
             },
           );
-          toastInfo('Chat cleared', {
-            description: 'Local view only — server history is untouched.',
-          });
+          // Silent — the chat is visibly empty now.
           return { handled: true, verb };
         }
 
@@ -109,21 +137,34 @@ export function useSlashDispatcher(ensemble: string): (parsed: ParsedChatInput &
         case 'recall': {
           const playerId = parsed.args[0];
           if (!playerId) {
-            toastError('Usage: /recall <player>', {
-              description: 'Pass a player name — e.g. /recall tempo-eng',
-            });
-            return { handled: false, reason: 'invalid-args', verb, usage: '/recall <player>' };
+            return {
+              handled: false,
+              reason: 'invalid-args',
+              verb,
+              usage: '/recall <player>',
+              status: {
+                level: 'error',
+                message: 'Usage: /recall <player>',
+                description: 'Pass a player name — e.g. /recall tempo-eng',
+              },
+            };
           }
           recallM.mutate({ playerId });
           return { handled: true, verb };
         }
 
         default: {
-          toastError(`Slash command "/${verb}" not supported in the dashboard`, {
-            description:
-              'Use the Maestro chat to ask the conductor instead, or run it from the TUI / CLI.',
-          });
-          return { handled: false, reason: 'unknown', verb };
+          return {
+            handled: false,
+            reason: 'unknown',
+            verb,
+            status: {
+              level: 'error',
+              message: `Slash command "/${verb}" not supported in the dashboard`,
+              description:
+                'Use the Maestro chat to ask the conductor instead, or run it from the TUI / CLI.',
+            },
+          };
         }
       }
     },

@@ -54,7 +54,6 @@ import {
   type Theme,
 } from '../store/prefs';
 import { logEvent } from '../lib/log';
-import { toastSuccess } from '../lib/toast';
 import { PageHeader } from '../components/PageHeader';
 import { useScreenPageHeader } from '../components/AppShell';
 import { DisabledWithTooltip } from '../components/DisabledWithTooltip';
@@ -322,8 +321,11 @@ function ResetClientStateButton() {
         } catch {
           /* ignore */
         }
+        // Silent success — every Settings control updates immediately
+        // when the prefs store mutates, so the user can see "Reset"
+        // happened without a corner toast. The `prefs-*-set` log lines
+        // already provide the audit trail for the autonomous validator.
         logEvent('settings.reset', {});
-        toastSuccess('Settings reset to defaults');
       }}
     >
       Reset

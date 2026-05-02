@@ -4,17 +4,17 @@
  *   2. customize (host + start mode + conductor instructions)
  *   3. review + submit
  *
- * Submit posts to `useEnsembleCreateMutation` which calls the
- * (wire-pending) POST `/v1/ensembles` endpoint. Until the daemon
- * exposes that, the mutation handles the 404 with a wire-gap toast.
- * Tests use the mock client which records the call without an HTTP
- * round-trip, so this suite passes without the daemon endpoint.
+ * Submit posts to `useEnsembleCreateMutation` which calls POST
+ * `/v1/ensembles`. Failure paths (409 already-exists, 400 validation,
+ * generic) surface as an inline `<CreateEnsembleError>` row beneath
+ * the review-step summary — testid `create-ensemble-error`. PR-2 of
+ * the chat-notification port retired the prior Sonner toast surface
+ * for this screen.
  */
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import { Toaster } from 'sonner';
 import type { ReactNode } from 'react';
 import { CreateEnsemble } from '../src/screens/CreateEnsemble';
 import { HttpError } from '../src/lib/client';
@@ -29,11 +29,9 @@ function newQc() {
 
 interface RenderOpts {
   mock?: MockDashboardClient;
-  /** When true, mounts a `<Toaster />` so toast assertions can resolve. */
-  withToaster?: boolean;
 }
 
-function renderCreate({ mock, withToaster = false }: RenderOpts = {}) {
+function renderCreate({ mock }: RenderOpts = {}) {
   const client = mock ?? new MockDashboardClient();
   __setDashboardClientForTests(client);
   const qc = newQc();
@@ -43,7 +41,6 @@ function renderCreate({ mock, withToaster = false }: RenderOpts = {}) {
       <QueryClientProvider client={qc}>
         <MemoryRouter initialEntries={['/create-ensemble']}>
           <CreateEnsemble />
-          {withToaster && <Toaster toastOptions={{ unstyled: true }} />}
         </MemoryRouter>
       </QueryClientProvider> as ReactNode,
     ),
@@ -209,11 +206,11 @@ describe('CreateEnsemble wizard (PR-E)', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows 409 toast when ensemble already exists', async () => {
+  it('shows targeted 409 copy in the inline error row when ensemble already exists', async () => {
     const mock = new MockDashboardClient({
       mutationErrors: { createEnsemble: new HttpError(409, 'ensemble-exists', '/v1/ensembles') },
     });
-    renderCreate({ mock, withToaster: true });
+    renderCreate({ mock });
     fireEvent.change(screen.getByTestId('create-ensemble-input-name'), {
       target: { value: 'frontend-squad' },
     });
@@ -222,23 +219,22 @@ describe('CreateEnsemble wizard (PR-E)', () => {
     fireEvent.click(screen.getByTestId('create-ensemble-submit'));
 
     await waitFor(() => {
-      expect(screen.getByTestId('toast-error')).toBeInTheDocument();
+      expect(screen.getByTestId('create-ensemble-error')).toBeInTheDocument();
     });
-    const toast = screen.getByTestId('toast-error');
-    expect(toast.textContent).toMatch(/already exists/i);
+    const errorRow = screen.getByTestId('create-ensemble-error');
+    expect(errorRow.textContent).toMatch(/already exists/i);
+    expect(errorRow.textContent).toMatch(/Pick a different name/i);
   });
 
-  it('surfaces the underlying error message when createEnsemble fails', async () => {
-    // The original wire-gap toast for 404s retired with #400 — the
-    // POST /v1/ensembles endpoint exists now, so the dashboard maps
-    // 409 and 400 to targeted copy and shows the underlying message
-    // for everything else. Pin the generic-failure path; the 409 +
-    // 400 branches are exercised separately in the daemon-side tests
-    // that verify the HTTP shapes.
+  it('shows the underlying message in the inline error row for generic createEnsemble failures', async () => {
+    // The 409 + 400 branches get targeted copy (asserted in the
+    // sibling tests + see `CreateEnsembleError` in the source). Pin
+    // the generic-failure path: status missing → falls through to
+    // `Failed to create <name>` + the underlying error.message.
     const mock = new MockDashboardClient({
       mutationErrors: { createEnsemble: new Error('temporal unreachable') },
     });
-    renderCreate({ mock, withToaster: true });
+    renderCreate({ mock });
     fireEvent.change(screen.getByTestId('create-ensemble-input-name'), {
       target: { value: 'frontend-squad' },
     });
@@ -247,10 +243,32 @@ describe('CreateEnsemble wizard (PR-E)', () => {
     fireEvent.click(screen.getByTestId('create-ensemble-submit'));
 
     await waitFor(() => {
-      expect(screen.getByTestId('toast-error')).toBeInTheDocument();
+      expect(screen.getByTestId('create-ensemble-error')).toBeInTheDocument();
     });
-    const toast = screen.getByTestId('toast-error');
-    expect(toast.textContent).toMatch(/Failed to create frontend-squad/);
-    expect(toast.textContent).toMatch(/temporal unreachable/);
+    const errorRow = screen.getByTestId('create-ensemble-error');
+    expect(errorRow.textContent).toMatch(/Failed to create frontend-squad/);
+    expect(errorRow.textContent).toMatch(/temporal unreachable/);
+  });
+
+  it('shows targeted 400 copy in the inline error row for validation failures', async () => {
+    const mock = new MockDashboardClient({
+      mutationErrors: {
+        createEnsemble: new HttpError(400, 'name regex failed', '/v1/ensembles'),
+      },
+    });
+    renderCreate({ mock });
+    fireEvent.change(screen.getByTestId('create-ensemble-input-name'), {
+      target: { value: 'frontend-squad' },
+    });
+    fireEvent.click(screen.getByTestId('create-ensemble-next'));
+    fireEvent.click(screen.getByTestId('create-ensemble-next'));
+    fireEvent.click(screen.getByTestId('create-ensemble-submit'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('create-ensemble-error')).toBeInTheDocument();
+    });
+    const errorRow = screen.getByTestId('create-ensemble-error');
+    expect(errorRow.textContent).toMatch(/Couldn't create frontend-squad/);
+    expect(errorRow.textContent).toMatch(/Validation failed/);
   });
 });
