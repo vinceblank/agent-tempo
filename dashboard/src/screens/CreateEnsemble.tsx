@@ -8,11 +8,12 @@
  *
  * Source: `screens.jsx:CreateEnsemble` (lines 261-326) + audit doc § PR-E.
  *
- * Wire-pending: the daemon doesn't yet expose POST `/v1/ensembles`. The
- * mutation hook (`useEnsembleCreateMutation`) handles the 404 path with
- * a wire-gap-aware toast, so users see a useful message rather than a
- * generic failure. Lineup catalog is a hardcoded fallback
- * (`lib/static-catalog.ts`) until `/v1/lineups` ships.
+ * Wire-pending note: when this screen first shipped, the daemon didn't
+ * expose POST `/v1/ensembles` yet. PR-2 of the chat-notification port
+ * removed the Sonner toast surface; this wizard now formats targeted
+ * inline error copy (409 / 400 / generic) directly inside the review
+ * step. Lineup catalog is a hardcoded fallback (`lib/static-catalog.ts`)
+ * until `/v1/lineups` ships.
  *
  * Triggered from:
  *   - Overview "+ New ensemble" action (PR-B `navigate('/create-ensemble')`)
@@ -29,6 +30,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { LineupRow } from '../lib/client';
+import { HttpError } from '../lib/client';
 import { Btn } from '../components/Btn';
 import { ModalShell } from '../components/wizard/ModalShell';
 import { Dialog } from '../components/wizard/Dialog';
@@ -345,10 +347,57 @@ export function CreateEnsemble() {
               label="Instructions"
               value={form.conductorInstructions || '—'}
             />
+            {create.isError && create.error && (
+              <CreateEnsembleError name={form.name} err={create.error} />
+            )}
           </div>
         )}
       </Dialog>
     </ModalShell>
+  );
+}
+
+/**
+ * Inline error row shown beneath the review-step summary when the
+ * createEnsemble mutation fails. Replaces the prior Sonner-toast
+ * surface (PR-2 of the chat-notification port). Branches on
+ * `HttpError.status` so 409 (already exists) and 400 (validation)
+ * get targeted copy; everything else falls through to the underlying
+ * message. Mirrors the formatting that previously lived inside
+ * `useEnsembleCreateMutation`'s onError — moved here because the
+ * mutation hook is now pure data flow + the consumer owns UI feedback.
+ */
+function CreateEnsembleError({ name, err }: { name: string; err: Error }) {
+  const status = err instanceof HttpError ? err.status : null;
+  let message: string;
+  let description: string;
+  if (status === 409) {
+    message = `Ensemble "${name}" already exists`;
+    description = 'Pick a different name or open the existing one from Overview.';
+  } else if (status === 400) {
+    message = `Couldn't create ${name}`;
+    description = `Validation failed: ${err.message}`;
+  } else {
+    message = `Failed to create ${name}`;
+    description = err.message;
+  }
+  return (
+    <div
+      data-testid="create-ensemble-error"
+      role="alert"
+      style={{
+        marginTop: 12,
+        padding: '8px 12px',
+        background: 'var(--bg-1)',
+        border: '1px solid var(--accent)',
+        borderRadius: 8,
+        fontSize: 12.5,
+        lineHeight: 1.4,
+      }}
+    >
+      <div style={{ color: 'var(--text)', fontWeight: 500 }}>{message}</div>
+      <div style={{ marginTop: 3, color: 'var(--dim)' }}>{description}</div>
+    </div>
   );
 }
 

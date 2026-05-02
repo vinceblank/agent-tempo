@@ -268,6 +268,15 @@ export function Workspace() {
    * precedence over the cue mutation's pending error. Dismissing the
    * banner clears whichever source produced it — both, in case both
    * are live.
+   *
+   * **Why a derivation, not a useEffect-copy?** Mirroring `cueM.error`
+   * into local state via an effect has subtle race conditions when a
+   * new mutation fires before the prior failure has been displayed
+   * (the effect runs on the next render, which can be after the user
+   * has already submitted again). Derivation is purely functional —
+   * no mid-render setState — and `dismissStatus` calls both
+   * `setComposerStatus(null)` AND `cueM.reset()` so either source can
+   * be cleared cleanly. Don't "fix" this back to a useEffect.
    */
   const cueErrorStatus: SlashStatus | null =
     cueM.isError && cueM.error

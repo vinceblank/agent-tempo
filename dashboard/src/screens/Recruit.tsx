@@ -447,6 +447,34 @@ export function Recruit() {
                 .filter(Boolean)
                 .join(' · ')}
             />
+            {recruit.isError && recruit.error && (
+              // Inline error row shown when the recruit mutation fails.
+              // Replaces the prior Sonner-toast surface (PR-2 of the
+              // chat-notification port). Stays mounted so the user can
+              // tweak the form and retry without losing the failure
+              // context — `recruit.reset()` fires on the next mutate
+              // call so a successful retry clears the row implicitly.
+              <div
+                data-testid="recruit-error"
+                role="alert"
+                style={{
+                  marginTop: 12,
+                  padding: '8px 12px',
+                  background: 'var(--bg-1)',
+                  border: '1px solid var(--accent)',
+                  borderRadius: 8,
+                  fontSize: 12.5,
+                  lineHeight: 1.4,
+                }}
+              >
+                <div style={{ color: 'var(--text)', fontWeight: 500 }}>
+                  {`Failed to recruit ${form.name}`}
+                </div>
+                <div style={{ marginTop: 3, color: 'var(--dim)' }}>
+                  {recruit.error.message}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Dialog>

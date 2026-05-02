@@ -321,21 +321,23 @@ export function createDashboardClient(opts: DashboardClientOpts = {}): Dashboard
       return postJson<RecruitResult>(ensemblePath(ensemble, 'recruit'), opts);
     },
     async createEnsemble(opts) {
-      // Wire-pending — daemon doesn't expose POST /v1/ensembles yet.
-      // postJson surfaces the 404 to the mutation hook, which toasts a
-      // wire-gap message rather than a generic failure.
+      // The endpoint exists since #400. `postJson` surfaces the
+      // HttpError to the mutation hook, which forwards it via
+      // `mutation.error`; the consuming wizard formats targeted copy
+      // (409 / 400 / generic) into its inline error row.
       return postJson<CreateEnsembleResult>('/v1/ensembles', opts);
     },
 
     // ── PR-7 destructive actions (skeletons) ──────────────────────
     //
     // Daemon endpoints don't exist yet — `src/http/writes.ts` only
-    // routes the five collaborative actions. Each method below posts to
-    // the speculated route in anticipation of tempo-eng's parallel
-    // daemon PR; the call surfaces a 404 to the mutation hook, which
-    // toasts a "wire-gap" message identical to `createEnsemble`'s
-    // pattern. When the daemon route lands, no client-side change is
-    // needed beyond removing this comment.
+    // routes the five collaborative actions. Each method below posts
+    // to the speculated route in anticipation of tempo-eng's parallel
+    // daemon PR; the call surfaces a 404 / failure to the mutation
+    // hook, where the consuming screen handles user-visible feedback
+    // (inline status banner / error row, never a toast). When the
+    // daemon route lands, no client-side change is needed beyond
+    // removing this comment.
 
     async restart(ensemble, opts) {
       return postJson<RestartResult>(ensemblePath(ensemble, 'restart'), opts);

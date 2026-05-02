@@ -7,11 +7,21 @@
  * `logEvent('app-mounted', …)` fires once on mount so the conductor's
  * autonomous validation can confirm the SPA started cleanly via
  * `mcp__claude-in-chrome__read_console_messages`.
+ *
+ * Notification surfaces:
+ *   - Incoming chat from non-active ensembles renders as a toast
+ *     stack via `<NotificationProvider>` mounted inside the router
+ *     tree (see `router.tsx`'s `ShellLayout`).
+ *   - Per-action mutation feedback lives inline next to where the
+ *     action originated — `<ComposerStatus>` above the chat composer
+ *     for cue / slash failures, the `<CreateEnsembleError>` row in
+ *     the wizard's review step for create failures, etc. The PR-2
+ *     Sonner removal retired the generic toast layer this component
+ *     previously hosted.
  */
 import { useEffect, useMemo } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, type createBrowserRouter } from 'react-router-dom';
-import { Toaster } from 'sonner';
 import { createDashboardBrowserRouter } from './router';
 import { logEvent } from './lib/log';
 import { usePairTokenConsume } from './lib/pair';
@@ -45,17 +55,6 @@ export function App({ router }: AppProps = {}) {
   return (
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={activeRouter} />
-      {/*
-        Toaster — Sonner mount point, single instance at the root.
-        Custom toasts (`toast.custom`) carry their own `data-testid` +
-        `role="alert"` (see `lib/toast.tsx`). Sonner v1.x doesn't
-        forward arbitrary `data-*` props on its wrapper, so the
-        outer `<div data-testid="toaster">` gives the conductor's
-        autonomous validator a stable hook into "the toast layer".
-      */}
-      <div data-testid="toaster">
-        <Toaster position="bottom-right" toastOptions={{ unstyled: true }} />
-      </div>
     </QueryClientProvider>
   );
 }

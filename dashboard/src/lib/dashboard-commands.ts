@@ -5,8 +5,9 @@
  * the heavier verbs (recruit / destroy / restart / migrate / schedule /
  * worktree / lineup / status) belong in dedicated screens with structured
  * forms, not as one-line slash commands. Anything not listed here will
- * dispatch a "delegate to conductor" toast at submit time so users have
- * a clear next step.
+ * surface a "delegate to conductor" status banner above the Composer
+ * (via `useSlashDispatcher` → `<ComposerStatus>`) so users have a clear
+ * next step.
  *
  * Entries are pure metadata — name + description + usage. The submit-time
  * dispatcher in `parse-chat-input` decides what each verb actually does.

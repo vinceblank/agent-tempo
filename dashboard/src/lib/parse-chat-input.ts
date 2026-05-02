@@ -14,11 +14,12 @@
  * Edge cases pinned by tests in `tests/parse-chat-input.test.ts`:
  *   - `@<player>` with no text: returns `cue` with empty `text`. The
  *     caller must decide whether to drop, ping, or surface a usage
- *     toast — this parser doesn't impose a policy.
+ *     hint — this parser doesn't impose a policy.
  *   - Leading whitespace before `@` or `/` is tolerated (matches
  *     classifyPaletteInput in src/palette).
  *   - Unknown slash command: still classified as `slash`. The dispatcher
- *     decides whether to delegate to the conductor, toast, or no-op.
+ *     decides whether to delegate to the conductor, surface an inline
+ *     status, or no-op.
  *
  * Pure function — no side effects, no React, no imports beyond the
  * shared parseCommand helper.
@@ -36,7 +37,8 @@ export type ParsedChatInput =
  * in `src/utils/validation.ts` so dashboard mention parsing and TUI/CLI
  * player-name validation never silently diverge. The Workspace then
  * validates the captured target against the live roster — a mention
- * shaped like a name but unknown to the ensemble toasts a useful error.
+ * shaped like a name but unknown to the ensemble surfaces a useful
+ * inline error via `<ComposerStatus>`.
  *
  * Pinned by `tests/parse-chat-input.test.ts` (the `@-bad` and
  * `@bob.smith` cases lock in the exact char set). If `PLAYER_NAME_REGEX`
@@ -65,8 +67,8 @@ export function parseChatInput(raw: string): ParsedChatInput {
       const text = (m[2] ?? '').trim();
       return { kind: 'cue', target, text };
     }
-    // `@` alone or `@<garbage>` falls through to plain — caller can show
-    // a toast like "Invalid mention: …" or just send the literal text.
+    // `@` alone or `@<garbage>` falls through to plain — caller can
+    // surface an inline error or just send the literal text.
     return { kind: 'plain', text: trimmed };
   }
 
