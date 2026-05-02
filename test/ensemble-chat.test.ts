@@ -141,7 +141,15 @@ function normalizeMessages(input: NormalizeInput): { newMessages: EnsembleChatMe
   }
   for (const m of newCondRecv) {
     if (m.from === 'maestro' || m.isMaestro) continue;
-    newMessages.push({ id: `cond-${m.id}`, from: m.from, to: conductorId, text: truncate(m.text), timestamp: m.timestamp, role: 'conductor-in' });
+    const isConductorSelfReport = m.from === conductorId;
+    newMessages.push({
+      id: `cond-${m.id}`,
+      from: m.from,
+      to: isConductorSelfReport ? 'maestro' : conductorId,
+      text: truncate(m.text),
+      timestamp: m.timestamp,
+      role: isConductorSelfReport ? 'maestro-in' : 'conductor-in',
+    });
   }
   for (const m of newCondSent) {
     if (m.to === 'maestro') continue;
@@ -212,6 +220,44 @@ describe('fetchEnsembleChat normalization', function () {
     expect(result.newMessages).to.have.lengthOf(1);
     expect(result.newMessages[0].role).to.equal('conductor-in');
     expect(result.newMessages[0].to).to.equal('my-conductor');
+  });
+
+  it('re-targets conductor self-reports as maestro-in (tempo-conductor → maestro)', function () {
+    // When the conductor itself calls `report`, the message lands in its own
+    // `messages` array with from === conductorId. Without re-targeting it would
+    // render as a confusing self-loop (conductor → conductor). Re-route it so the
+    // chat shows the real audience: the maestro/operator.
+    const result = normalizeMessages({
+      maestroRecv: [],
+      maestroSent: [],
+      condRecv: [makeMsg('1', 'my-conductor', '2026-01-01T00:00:00Z', 'task done')],
+      condSent: [],
+      conductorId: 'my-conductor',
+      knownCounts: { maestroRecv: 0, maestroSent: 0, conductorRecv: 0, conductorSent: 0 },
+    });
+    expect(result.newMessages).to.have.lengthOf(1);
+    expect(result.newMessages[0].from).to.equal('my-conductor');
+    expect(result.newMessages[0].to).to.equal('maestro');
+    expect(result.newMessages[0].role).to.equal('maestro-in');
+    expect(result.newMessages[0].id).to.equal('cond-1'); // id-prefixing preserved
+  });
+
+  it('does NOT re-target condRecv from non-conductor players (discriminator lock)', function () {
+    // Negative case: the self-report discriminator must only fire for messages
+    // where m.from === conductorId. A regular player → conductor message must
+    // keep role: 'conductor-in' and to: conductorId, even when conductorId is set.
+    const result = normalizeMessages({
+      maestroRecv: [],
+      maestroSent: [],
+      condRecv: [makeMsg('1', 'tempo-soloist', '2026-01-01T00:00:00Z', 'progress update')],
+      condSent: [],
+      conductorId: 'my-conductor',
+      knownCounts: { maestroRecv: 0, maestroSent: 0, conductorRecv: 0, conductorSent: 0 },
+    });
+    expect(result.newMessages).to.have.lengthOf(1);
+    expect(result.newMessages[0].from).to.equal('tempo-soloist');
+    expect(result.newMessages[0].to).to.equal('my-conductor');
+    expect(result.newMessages[0].role).to.equal('conductor-in');
   });
 
   it('assigns conductor-out for conductor sent to non-maestro', function () {
