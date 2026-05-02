@@ -53,6 +53,9 @@ import {
   type ReactNode,
 } from 'react';
 import { useParams } from 'react-router-dom';
+import type { EnsembleChatMessage } from 'claude-tempo/types';
+import { getDashboardClient } from './client-singleton';
+import { useEnsembleList } from './queries';
 
 /** Toast TTL in ms — auto-dismiss after this duration. */
 export const TOAST_TIMEOUT_MS = 6000;
@@ -303,4 +306,103 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
   );
 
   return <NotificationCtx.Provider value={value}>{children}</NotificationCtx.Provider>;
+}
+
+// ── SSE wiring (commit 3) ────────────────────────────────────────────────
+//
+// `useNotificationStream` opens one SSE subscription per live ensemble
+// and feeds `chat.appended` events with `role === 'maestro-in'` into
+// `fire()`. The architect's design (§4.2) keeps this hook deliberately
+// separate from `NotificationProvider`:
+//
+//   - The provider has zero TanStack-Query / network deps. Unit tests
+//     that drive `fire()` imperatively can mount it standalone in a
+//     bare `MemoryRouter` (no `QueryClientProvider` required).
+//   - `NotificationStreamRunner` is a small render-nothing component
+//     that calls the hook from inside the provider tree. Production
+//     mounts both; tests of the provider in isolation can omit the
+//     runner.
+//
+// Why per-ensemble multiplex (not the cluster-wide `/v1/events` stream):
+// the dashboard's `DashboardTempoClient.subscribe(ensemble)` is per-
+// ensemble by contract, and `EnsembleChatMessage` lacks an `ensemble`
+// field so we tag at the multiplex boundary. Migration to a cluster
+// stream (architect's R1) is a swap behind this hook surface — no
+// upstream wire change needed today.
+
+/**
+ * Open per-ensemble SSE subscriptions for every ensemble in
+ * {@link useEnsembleList}, filter `chat.appended` events down to
+ * `role === 'maestro-in'`, and call `fire()` for each.
+ *
+ * Failure isolation: per-stream try/catch — one ensemble's wedge
+ * doesn't kill the others (mirrors {@link useSseSubscription}).
+ *
+ * Acceptable PR-1 limitation: while `useEnsembleList()` is loading or
+ * errored, no subscriptions exist. The 30 s `refetchInterval` re-arms
+ * subscriptions on the next list refetch (see architect risk R5).
+ */
+export function useNotificationStream(fire: NotificationContextValue['fire']): void {
+  const list = useEnsembleList();
+  const ensembles = list.data;
+
+  useEffect(() => {
+    if (!ensembles || ensembles.length === 0) return;
+    const client = getDashboardClient();
+
+    // Cleanup-scoped flag the inner async loops check on each event.
+    // Production transport (EventSource/fetch) ends the iterator when
+    // the AbortController fires, but we double-belt with this flag for
+    // mocks and edge cases where abort propagation is incomplete.
+    let cancelled = false;
+
+    const controllers = ensembles.map((e) => {
+      const ctrl = new AbortController();
+      (async () => {
+        try {
+          for await (const event of client.subscribe(e.name, {
+            signal: ctrl.signal,
+            topics: ['chat'],
+          })) {
+            if (cancelled) break;
+            if (event.type !== 'chat.appended') continue;
+            const msg = event.payload as EnsembleChatMessage;
+            if (msg.role !== 'maestro-in') continue;
+            // Tag `ensembleId` at the multiplex boundary — payload
+            // doesn't carry it (architect §4.2 / risk R2).
+            fire({
+              ensembleId: e.name,
+              ensembleName: e.name,
+              sender: msg.from,
+              body: msg.text,
+            });
+          }
+        } catch {
+          // Per-stream failure isolation. The dashboard already
+          // accepts SSE flakiness as a normal mode (`useSseSubscription`
+          // does the same pattern); we deliberately swallow rather
+          // than escalate so an ensemble whose stream wedges doesn't
+          // pull the other notification subscriptions down with it.
+        }
+      })();
+      return ctrl;
+    });
+
+    return () => {
+      cancelled = true;
+      controllers.forEach((c) => c.abort('unmount'));
+    };
+  }, [ensembles, fire]);
+}
+
+/**
+ * Render-nothing component that mounts {@link useNotificationStream}
+ * inside the provider tree. Production wires this in `ShellLayout`
+ * alongside `<NotificationProvider>` (commit 4); standalone provider
+ * tests can omit it to avoid the QueryClient dependency.
+ */
+export function NotificationStreamRunner() {
+  const { fire } = useNotifications();
+  useNotificationStream(fire);
+  return null;
 }
