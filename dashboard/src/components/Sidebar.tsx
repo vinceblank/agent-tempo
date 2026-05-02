@@ -33,6 +33,8 @@
 import { Link, NavLink, useLocation, useParams } from 'react-router-dom';
 import { Brandmark } from './Brandmark';
 import { MaestroAvatar } from './MaestroAvatar';
+import { UnreadBadge } from './notifications/UnreadBadge';
+import { useNotifications } from '../lib/notifications';
 import { useEnsembleList } from '../lib/queries';
 
 interface NavItem {
@@ -69,6 +71,12 @@ export function Sidebar() {
   // Per design: Ensembles kicker shows "running" count = ensembles with
   // ≥1 player, NOT the total count.
   const runningCount = ensembles.filter((e) => e.playerCount > 0).length;
+  // Soft-fallback safe — outside a `<NotificationProvider>` (e.g. some
+  // test render paths), `useNotifications()` returns the noop stub
+  // and `unread` is the frozen `{}`, so every row's count resolves
+  // to 0 and `<UnreadBadge>` renders nothing. The Sidebar stays
+  // standalone-renderable.
+  const { unread, markRead } = useNotifications();
 
   return (
     <aside className="sidebar" data-testid="sidebar" aria-label="Main navigation">
@@ -94,42 +102,56 @@ export function Sidebar() {
             No ensembles
           </div>
         ) : (
-          ensembles.map((e) => (
-            <Link
-              key={e.name}
-              to={`/ensemble/${encodeURIComponent(e.name)}`}
-              data-testid={`sidebar-ensemble-${e.name}`}
-              className={[
-                'ensemble-row',
-                activeEnsemble === e.name ? 'is-active' : '',
-                e.playerCount > 0 ? 'has-active' : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
-              style={{ textDecoration: 'none' }}
-            >
-              <span className="er-dot" />
-              {/*
-               * F-LEAD-3 (PR-B of #454): the `.er-initial` 32×32 letter-tile
-               * is `display: none` at desktop+laptop; the tablet `@container
-               * artboard (max-width: 900px)` rule promotes it to the
-               * collapsed-sidebar avatar. CSS-only swap — no rendering cost
-               * at the wider breakpoints.
-               */}
-              <span className="er-initial" aria-hidden="true">
-                {e.name.charAt(0).toUpperCase()}
-              </span>
-              <span className="col" style={{ gap: 0 }}>
-                <span className="er-name">{e.name}</span>
-                <span className="er-meta mono">
-                  {e.playerCount} {e.playerCount === 1 ? 'player' : 'players'}
+          ensembles.map((e) => {
+            const unreadCount = unread[e.name] ?? 0;
+            return (
+              <Link
+                key={e.name}
+                to={`/ensemble/${encodeURIComponent(e.name)}`}
+                data-testid={`sidebar-ensemble-${e.name}`}
+                className={[
+                  'ensemble-row',
+                  activeEnsemble === e.name ? 'is-active' : '',
+                  e.playerCount > 0 ? 'has-active' : '',
+                  unreadCount > 0 ? 'has-unread' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                style={{ textDecoration: 'none' }}
+                onClick={() => {
+                  // Clear the badge synchronously on click so the row
+                  // visually updates before the route resolves. The
+                  // URL-sync effect inside `NotificationProvider` will
+                  // also clear it (and drop pending toasts FROM this
+                  // ensemble) when the navigation completes — both
+                  // paths converge on the same end state.
+                  if (unreadCount > 0) markRead(e.name);
+                }}
+              >
+                <span className="er-dot" />
+                {/*
+                 * F-LEAD-3 (PR-B of #454): the `.er-initial` 32×32 letter-tile
+                 * is `display: none` at desktop+laptop; the tablet `@container
+                 * artboard (max-width: 900px)` rule promotes it to the
+                 * collapsed-sidebar avatar. CSS-only swap — no rendering cost
+                 * at the wider breakpoints.
+                 */}
+                <span className="er-initial" aria-hidden="true">
+                  {e.name.charAt(0).toUpperCase()}
                 </span>
-              </span>
-              <span className="mono dim" style={{ fontSize: 10 }}>
-                ↵
-              </span>
-            </Link>
-          ))
+                <span className="col" style={{ gap: 0 }}>
+                  <span className="er-name">{e.name}</span>
+                  <span className="er-meta mono">
+                    {e.playerCount} {e.playerCount === 1 ? 'player' : 'players'}
+                  </span>
+                </span>
+                <UnreadBadge count={unreadCount} />
+                <span className="mono dim" style={{ fontSize: 10 }}>
+                  ↵
+                </span>
+              </Link>
+            );
+          })
         )}
         <Link
           to="/create-ensemble"
