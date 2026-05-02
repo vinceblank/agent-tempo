@@ -60,12 +60,13 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { useLocation, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { PageHeader } from './PageHeader';
 import { PhoneAppBar, type PhoneAppBarStatus } from './PhoneAppBar';
 import { PhoneTabBar } from './PhoneTabBar';
 import { EnsembleSwitcher } from './EnsembleSwitcher';
+import { ToastStack } from './notifications/ToastStack';
 
 interface AppShellProps {
   children?: ReactNode;
@@ -175,12 +176,25 @@ export function useScreenPhoneAppBar(override: PhoneAppBarOverride): void {
 
 export function AppShell({ children }: AppShellProps) {
   const location = useLocation();
+  const navigate = useNavigate();
   const isWorkspace = location.pathname.startsWith('/ensemble/');
   // Active ensemble for the mobile chrome — `useParams` resolves the
   // matched `:id` param when AppShell sits inside an `/ensemble/:id`
   // route, and returns `{}` everywhere else (em-dash title fallback).
   const { id: activeEnsemble } = useParams<{ id?: string }>();
   const [switcherOpen, setSwitcherOpen] = useState(false);
+
+  // ToastStack click-to-route — navigate to the ensemble's workspace
+  // when the user opens a notification. The provider's URL-sync
+  // effect then clears that ensemble's unread + drops any other
+  // pending toasts FROM it. URL pattern matches `Sidebar`'s `<Link>`
+  // shape (`router.tsx` route `path: 'ensemble/:id'`).
+  const onToastOpen = useCallback(
+    (ensembleId: string) => {
+      navigate(`/ensemble/${encodeURIComponent(ensembleId)}`);
+    },
+    [navigate],
+  );
 
   const [override, setOverride] = useState<PageHeaderSlotState>(null);
   // Identity-gate the wrapper rebuild so a redundant `setRender(sameFn)`
@@ -264,6 +278,13 @@ export function AppShell({ children }: AppShellProps) {
             onClose={() => setSwitcherOpen(false)}
             activeEnsemble={activeEnsemble}
           />
+          {/* ToastStack — viewport-fixed bottom-right notification
+              column. Lives at the AppShell root rather than inside
+              `<main>` so it persists across screen swaps and isn't
+              clipped by per-screen layout containers. Renders
+              `null` when the queue is empty, so an inert provider
+              (no chat events) leaves no DOM footprint. */}
+          <ToastStack onOpen={onToastOpen} />
         </div>
       </div>
      </PhoneAppBarSlotContext.Provider>

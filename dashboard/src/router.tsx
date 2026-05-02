@@ -37,6 +37,10 @@ import {
   type RouteObject,
 } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
+import {
+  NotificationProvider,
+  NotificationStreamRunner,
+} from './lib/notifications';
 import { CreateEnsemble } from './screens/CreateEnsemble';
 import { Hosts } from './screens/Hosts';
 import { Loadouts } from './screens/Loadouts';
@@ -49,12 +53,28 @@ import { Recruit } from './screens/Recruit';
 import { Schedules } from './screens/Schedules';
 import { Settings } from './screens/Settings';
 
-/** Layout shell that hosts the routed content via `<Outlet />`. */
+/**
+ * Layout shell that hosts the routed content via `<Outlet />`.
+ *
+ * The notification system mounts here (NOT at `<App>`) so it sits
+ * INSIDE the router context — that's what makes `useParams` resolve
+ * inside `NotificationProvider` (URL-driven `activeEnsemble`) and
+ * lets `useNotificationStream`'s SSE multiplex live across every
+ * routed screen. See `docs/design/notifications-system.md` §4.4.
+ *
+ * `NotificationStreamRunner` is a render-nothing sibling that calls
+ * `useNotifications().fire` + the SSE stream hook; keeping it
+ * separate from `NotificationProvider` lets the provider stay
+ * QueryClient-independent for unit tests.
+ */
 function ShellLayout() {
   return (
-    <AppShell>
-      <Outlet />
-    </AppShell>
+    <NotificationProvider>
+      <NotificationStreamRunner />
+      <AppShell>
+        <Outlet />
+      </AppShell>
+    </NotificationProvider>
   );
 }
 
