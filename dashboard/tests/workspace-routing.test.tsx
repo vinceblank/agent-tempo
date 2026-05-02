@@ -13,18 +13,23 @@
  *      (The fix.)
  *   2. Plain text — routed to the conductor (legacy behaviour, must
  *      still work).
- *   3. `@<unknown>` — toasts an error, never calls cue.
+ *   3. `@<unknown>` — surfaces an inline composer-status banner, never
+ *      calls cue.
  *   4. `/clear` — wipes the local chat cache without calling any
  *      mutation.
  *   5. `/pause` — fires the pause mutation.
- *   6. `/<unknown>` — toasts "not supported" and does NOT cue the
- *      literal `/foo` string.
+ *   6. `/<unknown>` — surfaces a composer-status error and does NOT
+ *      cue the literal `/foo` string.
+ *
+ * Post-PR-2 (Sonner removal): assertions target `composer-status` with
+ * `data-level="error" | "info"` filters instead of the old Sonner
+ * `toast-error` / `toast-info` testids. The status banner lives
+ * inline above the Composer rather than as a corner toast.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from 'react-router-dom';
-import { Toaster } from 'sonner';
 import type { EnsembleStateV1 } from 'claude-tempo/http/event-types';
 import { createDashboardMemoryRouter } from '../src/router';
 import { MockDashboardClient } from './fixtures/mock-client';
@@ -45,15 +50,27 @@ function renderWorkspace(client: MockDashboardClient, path = '/ensemble/demo') {
   __setDashboardClientForTests(client);
   const qc = newQc();
   const router = createDashboardMemoryRouter([path]);
-  // Mirror App.tsx: Toaster mounts as a sibling to RouterProvider so
-  // toasts surface in the same DOM the test queries.
   const utils = render(
     <QueryClientProvider client={qc}>
       <RouterProvider router={router} />
-      <Toaster toastOptions={{ unstyled: true }} />
     </QueryClientProvider>,
   );
   return { ...utils, qc };
+}
+
+/**
+ * Helper for the post-PR-2 inline status surface. Returns the
+ * `<ComposerStatus>` element matching the requested level, or fails
+ * the assertion if not present.
+ */
+async function findComposerStatus(level: 'error' | 'info'): Promise<HTMLElement> {
+  // The status banner asserts `data-level="error"|"info"`; we filter
+  // by the attribute so error-vs-info tests don't false-positive on
+  // each other.
+  return screen.findByTestId('composer-status').then((el) => {
+    expect(el).toHaveAttribute('data-level', level);
+    return el;
+  });
 }
 
 beforeEach(() => {
@@ -131,20 +148,20 @@ describe('Workspace — directed cue routing (#471)', () => {
     expect(cue?.args).toEqual(['demo', 'tempo-conductor', 'hello everyone']);
   });
 
-  it('"@unknown hi" surfaces an error toast and does NOT call cue', async () => {
+  it('"@unknown hi" surfaces an inline composer-status error and does NOT call cue', async () => {
     const mock = makeMock();
     renderWorkspace(mock);
     const input = await getInput();
 
     fillAndSubmit(input, '@nonexistent-player ping');
 
-    // Toast appears with the `toast-error` testid (from src/lib/toast.tsx).
-    expect(await screen.findByTestId('toast-error')).toBeInTheDocument();
+    const status = await findComposerStatus('error');
+    expect(status.textContent).toMatch(/No player named "nonexistent-player"/);
     // No cue mutation fired — the validation gate held.
     expect(mock.mutationCalls.filter((c) => c.method === 'cue')).toHaveLength(0);
   });
 
-  it('"@tempo-eng" alone (no body) toasts an error and does NOT cue', async () => {
+  it('"@tempo-eng" alone (no body) surfaces a composer-status error and does NOT cue', async () => {
     // Pinned by parse-chat-input — mention-without-body must not
     // silently fall through.
     const mock = makeMock();
@@ -153,7 +170,8 @@ describe('Workspace — directed cue routing (#471)', () => {
 
     fillAndSubmit(input, '@tempo-eng');
 
-    expect(await screen.findByTestId('toast-error')).toBeInTheDocument();
+    const status = await findComposerStatus('error');
+    expect(status.textContent).toMatch(/No message after @tempo-eng/);
     expect(mock.mutationCalls.filter((c) => c.method === 'cue')).toHaveLength(0);
   });
 });
@@ -267,39 +285,47 @@ describe('Workspace — slash dispatch (#472)', () => {
     });
   });
 
-  it('"/recall" (no arg) toasts a usage error and does NOT call recall', async () => {
+  it('"/recall" (no arg) surfaces a usage error and does NOT call recall', async () => {
     const mock = makeMock();
     renderWorkspace(mock);
     const input = await getInput();
 
     fillAndSubmit(input, '/recall');
 
-    expect(await screen.findByTestId('toast-error')).toBeInTheDocument();
+    const status = await findComposerStatus('error');
+    expect(status.textContent).toMatch(/Usage: \/recall <player>/);
     expect(mock.mutationCalls.find((c) => c.method === 'recall')).toBeUndefined();
   });
 
-  it('"/unknownverb" toasts an error and does NOT cue the literal text', async () => {
+  it('"/unknownverb" surfaces a composer-status error and does NOT cue the literal text', async () => {
     const mock = makeMock();
     renderWorkspace(mock);
     const input = await getInput();
 
     fillAndSubmit(input, '/unknownverb foo');
 
-    expect(await screen.findByTestId('toast-error')).toBeInTheDocument();
+    const status = await findComposerStatus('error');
+    expect(status.textContent).toMatch(/not supported in the dashboard/i);
     // Critical: the literal `/unknownverb foo` must NOT have been sent
     // as a chat message to the conductor — that would defeat the slash
     // semantics entirely.
     expect(mock.mutationCalls.filter((c) => c.method === 'cue')).toHaveLength(0);
   });
 
-  it('"/help" surfaces an info toast (no wire calls)', async () => {
+  it('"/help" surfaces an info banner with the verb list (no wire calls)', async () => {
     const mock = makeMock();
     renderWorkspace(mock);
     const input = await getInput();
 
     fillAndSubmit(input, '/help');
 
-    expect(await screen.findByTestId('toast-info')).toBeInTheDocument();
+    const status = await findComposerStatus('info');
+    expect(status.textContent).toMatch(/Slash commands/);
+    // The verb list lives in the description — verify a couple of
+    // representative entries surface so a future refactor can't quietly
+    // drop them.
+    expect(status.textContent).toMatch(/\/help/);
+    expect(status.textContent).toMatch(/\/clear/);
     expect(mock.mutationCalls).toHaveLength(0);
   });
 });

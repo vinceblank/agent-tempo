@@ -75,11 +75,11 @@ import {
 } from '../lib/mutations';
 import { sortConductorFirst } from '../lib/player-sort';
 import { parseChatInput } from '../lib/parse-chat-input';
-import { useSlashDispatcher } from '../lib/use-slash-dispatcher';
+import { useSlashDispatcher, type SlashStatus } from '../lib/use-slash-dispatcher';
 import { DASHBOARD_COMMANDS } from '../lib/dashboard-commands';
-import { toastError } from '../lib/toast';
 import { ChatLog } from '../components/chat/ChatLog';
 import { Composer } from '../components/chat/Composer';
+import { ComposerStatus } from '../components/chat/ComposerStatus';
 import { ChatStub } from '../components/chat/ChatStub';
 import { PopoutWindow } from '../components/chat/PopoutWindow';
 import { RosterItem } from '../components/RosterItem';
@@ -173,6 +173,14 @@ export function Workspace() {
   const cueM = useCueMutation(ensemble ?? '');
   const slashDispatch = useSlashDispatcher(ensemble ?? '');
 
+  // Composer-anchored status banner (PR-2 of the chat-notification
+  // port). Replaces the prior Sonner toasts for composer-scoped
+  // feedback: mention parse errors (empty body, unknown player), slash
+  // command help/usage/unknown, and cue mutation failures. The local
+  // state is set per-action; cue errors fall through automatically via
+  // `cueM.error` (see `effectiveStatus` below).
+  const [composerStatus, setComposerStatus] = useState<SlashStatus | null>(null);
+
   // #471/#472 — player names list for `@` autofill. Memoized off the
   // sorted players so the Composer prop ref is stable across renders
   // when the snapshot doesn't change.
@@ -183,7 +191,8 @@ export function Workspace() {
    *
    * Three branches based on `parseChatInput`:
    *   - `slash`: dispatch locally (clear / help / pause / play / release /
-   *     recall). Anything else → "delegate to conductor" toast.
+   *     recall). Unsupported verbs surface a "delegate to conductor"
+   *     status banner.
    *   - `cue` (with `@<player>` prefix): route directly to that player,
    *     not the conductor. Fixes #471 — the dashboard previously routed
    *     EVERY chat row through the conductor regardless of `@` prefix.
@@ -191,22 +200,32 @@ export function Workspace() {
    *
    * The mention path validates the target against `playerNames` so a
    * typo (`@conducter`) doesn't silently send a cue to a non-existent
-   * player. Unknown targets fall through to a toast — the user can
-   * decide whether to retry or address the conductor.
+   * player. Unknown targets surface an inline error banner via
+   * `<ComposerStatus>` — the user can decide whether to retry or
+   * address the conductor.
    */
   const sendMessage = (text: string) => {
     const parsed = parseChatInput(text);
 
     if (parsed.kind === 'slash') {
-      slashDispatch(parsed);
+      const outcome = slashDispatch(parsed);
+      // The dispatcher hands back a status payload for the verbs
+      // that have something to say (`/help`, errors, unknown verbs);
+      // silent verbs like `/clear` / `/pause` / `/play` return no
+      // status and we clear any lingering banner from a previous
+      // submit.
+      setComposerStatus(outcome.status ?? null);
       return;
     }
 
     if (parsed.kind === 'cue') {
-      // Mention without a body: don't fire a no-op cue — toast and let
-      // the user decide. (Pinned by parse-chat-input tests.)
+      // Mention without a body: don't fire a no-op cue — surface an
+      // inline error and let the user decide. (Pinned by
+      // parse-chat-input tests.)
       if (parsed.text === '') {
-        toastError(`No message after @${parsed.target}`, {
+        setComposerStatus({
+          level: 'error',
+          message: `No message after @${parsed.target}`,
           description: 'Type something after the mention to send a directed cue.',
         });
         return;
@@ -214,11 +233,17 @@ export function Workspace() {
       // Validate target against the live roster — typos shouldn't
       // silently misroute.
       if (!playerNames.includes(parsed.target)) {
-        toastError(`No player named "${parsed.target}" in this ensemble`, {
+        setComposerStatus({
+          level: 'error',
+          message: `No player named "${parsed.target}" in this ensemble`,
           description: 'Check spelling, or use @ autocomplete (Tab to accept).',
         });
         return;
       }
+      // Valid mention → clear any prior status + reset stale cue
+      // error before firing the new mutation.
+      setComposerStatus(null);
+      cueM.reset();
       cueM.mutate({ to: parsed.target, message: parsed.text });
       return;
     }
@@ -232,8 +257,31 @@ export function Workspace() {
       });
       return;
     }
+    setComposerStatus(null);
+    cueM.reset();
     cueM.mutate({ to: conductorPlayerId, message: parsed.text });
   };
+
+  /**
+   * Effective status surfaced in the `<ComposerStatus>` banner. Local
+   * `composerStatus` (set by parse errors + slash outcomes) takes
+   * precedence over the cue mutation's pending error. Dismissing the
+   * banner clears whichever source produced it — both, in case both
+   * are live.
+   */
+  const cueErrorStatus: SlashStatus | null =
+    cueM.isError && cueM.error
+      ? {
+          level: 'error',
+          message: 'Failed to send',
+          description: cueM.error.message,
+        }
+      : null;
+  const effectiveStatus = composerStatus ?? cueErrorStatus;
+  const dismissStatus = useCallback(() => {
+    setComposerStatus(null);
+    if (cueM.isError) cueM.reset();
+  }, [cueM]);
 
   // Status pill counts. Mapping mirrors the audit's PHASES bucket
   // categories — `attached`+`processing` count as "active", `awaiting`
@@ -487,6 +535,14 @@ export function Workspace() {
                 players={players}
                 hasCompressedGap={hasCompressedGap}
               />
+              {effectiveStatus && (
+                <ComposerStatus
+                  level={effectiveStatus.level}
+                  message={effectiveStatus.message}
+                  description={effectiveStatus.description}
+                  onDismiss={dismissStatus}
+                />
+              )}
               <Composer
                 placeholder={
                   conductorPlayerId
@@ -683,6 +739,14 @@ export function Workspace() {
             players={players}
             hasCompressedGap={hasCompressedGap}
           />
+          {effectiveStatus && (
+            <ComposerStatus
+              level={effectiveStatus.level}
+              message={effectiveStatus.message}
+              description={effectiveStatus.description}
+              onDismiss={dismissStatus}
+            />
+          )}
           <Composer
             placeholder={
               conductorPlayerId
