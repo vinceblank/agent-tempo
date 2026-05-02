@@ -37,6 +37,20 @@ jobs:
       - uses: dorny/paths-filter@v3
         id: filter
         with:
+          # `predicate-quantifier: every` is REQUIRED for the negation
+          # patterns below to behave subtractively (gitignore-style).
+          # Without it dorny defaults to `some` — meaning a file matches
+          # the rule if ANY pattern matches. With our list, the `**`
+          # line always wins on any diff, so `code = true` fires
+          # universally and the docs allowlist is silently ignored.
+          # That was the bug behind #354's matrix-skip not triggering
+          # (PRs #511, #515, #517 ran the full matrix on docs-only
+          # diffs even though this filter was already in place).
+          # See https://github.com/dorny/paths-filter#predicate-quantifier
+          # for the action's own writeup of this footgun. Don't drop
+          # this property — it's the difference between OR and AND
+          # combination of the patterns.
+          predicate-quantifier: 'every'
           filters: |
             code:
               - '**'
