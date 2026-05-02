@@ -209,11 +209,18 @@ describe('CreateEnsemble wizard (PR-E)', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows 409 toast when ensemble already exists', async () => {
+  it('routes 409 (ensemble already exists) through the createEnsemble mutation', async () => {
+    // PR-2 commit 1 transition: the Sonner toast surface that previously
+    // verified the 409-targeted copy is gone. The mutation hook still
+    // surfaces the raw HttpError via `mutation.error`; commit 3 wires
+    // the wizard's inline error row to format the user-visible copy
+    // (and this test will then assert on the `create-ensemble-error`
+    // testid). For now, verify the mutation was attempted with the
+    // expected name — the user-visible UI assertion lands in commit 3.
     const mock = new MockDashboardClient({
       mutationErrors: { createEnsemble: new HttpError(409, 'ensemble-exists', '/v1/ensembles') },
     });
-    renderCreate({ mock, withToaster: true });
+    renderCreate({ mock });
     fireEvent.change(screen.getByTestId('create-ensemble-input-name'), {
       target: { value: 'frontend-squad' },
     });
@@ -222,23 +229,21 @@ describe('CreateEnsemble wizard (PR-E)', () => {
     fireEvent.click(screen.getByTestId('create-ensemble-submit'));
 
     await waitFor(() => {
-      expect(screen.getByTestId('toast-error')).toBeInTheDocument();
+      const call = mock.mutationCalls.find((c) => c.method === 'createEnsemble');
+      expect(call).toBeDefined();
+      expect((call?.args[0] as { name: string }).name).toBe('frontend-squad');
     });
-    const toast = screen.getByTestId('toast-error');
-    expect(toast.textContent).toMatch(/already exists/i);
   });
 
-  it('surfaces the underlying error message when createEnsemble fails', async () => {
-    // The original wire-gap toast for 404s retired with #400 — the
-    // POST /v1/ensembles endpoint exists now, so the dashboard maps
-    // 409 and 400 to targeted copy and shows the underlying message
-    // for everything else. Pin the generic-failure path; the 409 +
-    // 400 branches are exercised separately in the daemon-side tests
-    // that verify the HTTP shapes.
+  it('routes generic createEnsemble failures through the mutation', async () => {
+    // PR-2 commit 1 transition: see the 409 sibling test for context.
+    // Commit 3 will restore the assertion on the wizard's inline error
+    // row (testid `create-ensemble-error`) showing the underlying
+    // message ("temporal unreachable").
     const mock = new MockDashboardClient({
       mutationErrors: { createEnsemble: new Error('temporal unreachable') },
     });
-    renderCreate({ mock, withToaster: true });
+    renderCreate({ mock });
     fireEvent.change(screen.getByTestId('create-ensemble-input-name'), {
       target: { value: 'frontend-squad' },
     });
@@ -247,10 +252,8 @@ describe('CreateEnsemble wizard (PR-E)', () => {
     fireEvent.click(screen.getByTestId('create-ensemble-submit'));
 
     await waitFor(() => {
-      expect(screen.getByTestId('toast-error')).toBeInTheDocument();
+      const call = mock.mutationCalls.find((c) => c.method === 'createEnsemble');
+      expect(call).toBeDefined();
     });
-    const toast = screen.getByTestId('toast-error');
-    expect(toast.textContent).toMatch(/Failed to create frontend-squad/);
-    expect(toast.textContent).toMatch(/temporal unreachable/);
   });
 });

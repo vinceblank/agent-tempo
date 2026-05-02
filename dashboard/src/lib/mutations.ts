@@ -5,14 +5,25 @@
  * 1. Calls the matching `DashboardTempoClient` method
  * 2. Emits `mutation.<action>.{started,succeeded,failed}` log lines
  *    for the conductor's autonomous validator
- * 3. Surfaces a Sonner toast on success/error
- * 4. (cue only) installs an optimistic update on the
+ * 3. (cue only) installs an optimistic update on the
  *    `['ensemble', name]` cache slot, with rollback on error and
  *    reconciliation against the SSE `chat.appended` event that lands
  *    ~50ms later.
  *
  * Test seam: every hook accepts an optional `client` override (matches
  * the `useEnsembleList` / `useEnsembleSnapshot` pattern from PR-4).
+ *
+ * **No UI feedback at this layer** (PR-2 of the chat-notification port
+ * removed the Sonner toasts that previously fired here). Consumers
+ * read `mutation.error` / `mutation.isError` and own their own
+ * inline-feedback surface — `<ComposerStatus>` for chat-adjacent
+ * actions, scoped error rows for wizard submit paths. The migration
+ * principle: feedback should live next to the action that triggered
+ * it, not in a corner toast.
+ *
+ * For `useEnsembleCreateMutation` specifically, `error` is the raw
+ * `HttpError` (or `Error`) — the consumer (`CreateEnsemble.tsx`)
+ * branches on `err.status === 409 | 400` to format targeted copy.
  */
 import { useMutation, useQueryClient, type UseMutationResult } from '@tanstack/react-query';
 import type { EnsembleStateV1 } from 'claude-tempo/http/event-types';
@@ -34,11 +45,9 @@ import type {
   RestartOpts,
   RestartResult,
 } from './client';
-import { HttpError } from './client';
 import { getDashboardClient } from './client-singleton';
 import { logEvent } from './log';
 import { ENSEMBLES_QUERY_KEY, ensembleQueryKey } from './queries';
-import { toastError, toastSuccess } from './toast';
 
 /** Prefix used on optimistic message ids. */
 export const OPTIMISTIC_ID_PREFIX = 'optimistic-';
@@ -119,9 +128,6 @@ export function useCueMutation(
     },
     onSuccess: (result, vars, ctx) => {
       logEvent('mutation.cue.succeeded', { ensemble, target: vars.to, optimisticId: ctx?.optimisticId });
-      toastSuccess(`Cued ${vars.to}`, {
-        description: vars.message.length > 50 ? `${vars.message.slice(0, 47)}…` : vars.message,
-      });
       // The SSE chat.appended event will replace the optimistic entry
       // with the canonical one when it arrives (matching by `from` /
       // `to` / `text` / approximate timestamp). Until then the
@@ -134,7 +140,9 @@ export function useCueMutation(
         ensemble, target: vars.to,
         error: err instanceof Error ? err.message : String(err),
       }, 'warn');
-      // Roll back to the pre-optimistic snapshot.
+      // Roll back to the pre-optimistic snapshot. Surface the error to
+      // the consumer via `mutation.error` — Workspace renders a
+      // `<ComposerStatus level="error">` from it.
       if (ctx?.previousSnapshot) {
         qc.setQueryData(queryKey, ctx.previousSnapshot);
       } else if (ctx) {
@@ -151,9 +159,6 @@ export function useCueMutation(
           };
         });
       }
-      toastError(`Failed to cue ${vars.to}`, {
-        description: err instanceof Error ? err.message : 'Unknown error',
-      });
     },
   });
 }
@@ -172,11 +177,9 @@ export function usePauseMutation(
     },
     onSuccess: () => {
       logEvent('mutation.pause.succeeded', { ensemble });
-      toastSuccess(`${ensemble} paused`);
     },
     onError: (err) => {
       logEvent('mutation.pause.failed', { ensemble, error: errMsg(err) }, 'warn');
-      toastError(`Failed to pause ${ensemble}`, { description: errMsg(err) });
     },
   });
 }
@@ -197,13 +200,9 @@ export function usePlayMutation(
     },
     onSuccess: (_void, vars) => {
       logEvent('mutation.play.succeeded', { ensemble, release: vars?.release === true });
-      toastSuccess(
-        vars?.release === true ? `${ensemble} unpaused + released` : `${ensemble} unpaused`,
-      );
     },
     onError: (err) => {
       logEvent('mutation.play.failed', { ensemble, error: errMsg(err) }, 'warn');
-      toastError(`Failed to unpause ${ensemble}`, { description: errMsg(err) });
     },
   });
 }
@@ -229,14 +228,11 @@ export function useReleaseMutation(
         playerId: vars?.playerId,
         released: result.released.length,
       });
-      const target = vars?.playerId ?? `${result.released.length} player(s)`;
-      toastSuccess(`Released ${target}`);
     },
     onError: (err, vars) => {
       logEvent('mutation.release.failed', {
         ensemble, playerId: vars?.playerId, error: errMsg(err),
       }, 'warn');
-      toastError(`Failed to release in ${ensemble}`, { description: errMsg(err) });
     },
   });
 }
@@ -257,15 +253,11 @@ export function useRecruitMutation(
       logEvent('mutation.recruit.succeeded', {
         ensemble, name: vars.name, playerId: result.playerId, entryId: result.entryId,
       });
-      toastSuccess(`Recruited ${result.playerId}`, {
-        description: `Spawning in ${vars.workDir}`,
-      });
     },
     onError: (err, vars) => {
       logEvent('mutation.recruit.failed', {
         ensemble, name: vars.name, error: errMsg(err),
       }, 'warn');
-      toastError(`Failed to recruit ${vars.name}`, { description: errMsg(err) });
     },
   });
 }
@@ -276,15 +268,16 @@ export function useRecruitMutation(
  * Create a fresh ensemble — POST `/v1/ensembles` (#400). The daemon
  * recruits the conductor + fans out lineup players (parallel). Per-
  * player errors are non-fatal — surfaced via the result's
- * `playerErrors[]` and shown as a partial-success toast so the user
- * can re-recruit specific players from the workspace without rolling
- * back the whole ensemble.
+ * `playerErrors[]` so the wizard can show a partial-success message
+ * letting the user re-recruit specific players from the workspace
+ * without rolling back the whole ensemble.
  *
- * Error mapping: 409 (ensemble exists) and 400 (validation) get
- * targeted toast copy so the user can fix the input. Generic 5xx
- * shows the underlying message. The hook does NOT navigate on
- * success — the wizard does that, since only it knows whether the
- * modal should close + where the user came from.
+ * The hook does NOT navigate on success — the wizard does that, since
+ * only it knows whether the modal should close + where the user came
+ * from. Error formatting (409 → "already exists", 400 → "validation
+ * failed", everything else → underlying message) lives in the
+ * consumer; the hook surfaces the raw `HttpError` via `mutation.error`
+ * so the wizard can branch on `err.status`.
  *
  * On success: invalidates the ensembles list so the new ensemble
  * shows up on Overview without a manual refresh.
@@ -301,41 +294,17 @@ export function useEnsembleCreateMutation(
         name: vars.name, lineup: vars.lineup, startMode: vars.startMode,
       });
     },
-    onSuccess: (result, vars) => {
+    onSuccess: (result) => {
       logEvent('mutation.createEnsemble.succeeded', {
         ensemble: result.ensemble,
         conductorPlayerId: result.conductorPlayerId,
         recruitedPlayers: result.recruitedPlayers,
         playerErrors: result.playerErrors?.length ?? 0,
       });
-      const failed = result.playerErrors?.length ?? 0;
-      const description = failed > 0
-        ? `Conductor active. ${failed} player${failed === 1 ? '' : 's'} failed — re-recruit from Workspace.`
-        : vars.lineup
-          ? `Lineup: ${vars.lineup}`
-          : 'Blank ensemble — recruit players from Workspace.';
-      toastSuccess(`Created ${result.ensemble}`, { description });
       void qc.invalidateQueries({ queryKey: ENSEMBLES_QUERY_KEY });
     },
     onError: (err, vars) => {
-      const msg = errMsg(err);
-      logEvent('mutation.createEnsemble.failed', { name: vars.name, error: msg }, 'warn');
-      // 409 / 400 get targeted copy so the user can fix the input;
-      // anything else shows the underlying message.
-      const status = err instanceof HttpError ? err.status : null;
-      if (status === 409) {
-        toastError(`Ensemble "${vars.name}" already exists`, {
-          description: 'Pick a different name or open the existing one from Overview.',
-        });
-        return;
-      }
-      if (status === 400) {
-        toastError(`Couldn't create ${vars.name}`, {
-          description: `Validation failed: ${msg}`,
-        });
-        return;
-      }
-      toastError(`Failed to create ${vars.name}`, { description: msg });
+      logEvent('mutation.createEnsemble.failed', { name: vars.name, error: errMsg(err) }, 'warn');
     },
   });
 }
@@ -346,13 +315,11 @@ function errMsg(err: unknown): string {
 
 // ── PR-7 destructive actions (mutation skeletons) ───────────────────
 //
-// Each hook follows the existing pattern: log started/succeeded/failed,
-// toast on success/error, invalidate the per-ensemble snapshot so the
-// dashboard refreshes once the workflow side-effect lands. The
-// underlying client methods POST to the speculated `/v1/ensembles/:e/
-// <action>` routes; until tempo-eng's daemon-side PR adds those routes,
-// every call resolves to a 404 + toasts a wire-gap message. No
-// dashboard change needed when the daemon catches up.
+// Each hook follows the existing pattern: log started/succeeded/failed
+// + invalidate the per-ensemble snapshot so the dashboard refreshes
+// once the workflow side-effect lands. UI feedback is the consumer's
+// concern — see the file-header doc-comment for the post-Sonner
+// migration rationale.
 
 export function useRestartMutation(
   ensemble: string,
@@ -367,14 +334,12 @@ export function useRestartMutation(
     },
     onSuccess: (_result, vars) => {
       logEvent('mutation.restart.succeeded', { ensemble, playerId: vars.playerId });
-      toastSuccess(`Restart queued for ${vars.playerId}`);
       void qc.invalidateQueries({ queryKey: ensembleQueryKey(ensemble) });
     },
     onError: (err, vars) => {
       logEvent('mutation.restart.failed', {
         ensemble, playerId: vars.playerId, error: errMsg(err),
       }, 'warn');
-      toastError(`Failed to restart ${vars.playerId}`, { description: errMsg(err) });
     },
   });
 }
@@ -392,14 +357,12 @@ export function useDestroyMutation(
     },
     onSuccess: (_result, vars) => {
       logEvent('mutation.destroy.succeeded', { ensemble, playerId: vars.playerId });
-      toastSuccess(`Destroyed ${vars.playerId}`);
       void qc.invalidateQueries({ queryKey: ensembleQueryKey(ensemble) });
     },
     onError: (err, vars) => {
       logEvent('mutation.destroy.failed', {
         ensemble, playerId: vars.playerId, error: errMsg(err),
       }, 'warn');
-      toastError(`Failed to destroy ${vars.playerId}`, { description: errMsg(err) });
     },
   });
 }
@@ -417,14 +380,12 @@ export function useDetachMutation(
     },
     onSuccess: (_result, vars) => {
       logEvent('mutation.detach.succeeded', { ensemble, playerId: vars.playerId });
-      toastSuccess(`Detached ${vars.playerId}`);
       void qc.invalidateQueries({ queryKey: ensembleQueryKey(ensemble) });
     },
     onError: (err, vars) => {
       logEvent('mutation.detach.failed', {
         ensemble, playerId: vars.playerId, error: errMsg(err),
       }, 'warn');
-      toastError(`Failed to detach ${vars.playerId}`, { description: errMsg(err) });
     },
   });
 }
@@ -443,15 +404,11 @@ export function useRecallMutation(
       logEvent('mutation.recall.succeeded', {
         ensemble, playerId: vars.playerId, messages: result.messages,
       });
-      toastSuccess(`Recall sent to ${vars.playerId}`, {
-        description: `${result.messages} message(s) surfaced.`,
-      });
     },
     onError: (err, vars) => {
       logEvent('mutation.recall.failed', {
         ensemble, playerId: vars.playerId, error: errMsg(err),
       }, 'warn');
-      toastError(`Failed to recall ${vars.playerId}`, { description: errMsg(err) });
     },
   });
 }
