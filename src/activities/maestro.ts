@@ -277,13 +277,17 @@ export function createMaestroActivities(client: Client): MaestroActivities {
 
         for (const m of condRecv.slice(hw.conductorRecv)) {
           if (m.from === 'maestro' || m.isMaestro) continue; // Skip maestro<->conductor (already covered)
+          // Conductor self-reports (e.g. `tempo-conductor` calling `report`) land in the
+          // conductor's own `messages` array. Re-target them as inbound-to-maestro so the
+          // chat renders "tempo-conductor → maestro" instead of a confusing self-loop.
+          const isConductorSelfReport = m.from === conductorId;
           newMessages.push({
             id: `cond-${m.id}`,
             from: m.from,
-            to: conductorId,
+            to: isConductorSelfReport ? 'maestro' : conductorId,
             text: truncate(m.text),
             timestamp: m.timestamp,
-            role: 'conductor-in',
+            role: isConductorSelfReport ? 'maestro-in' : 'conductor-in',
             ...maybeBroadcast(m),
           });
         }
