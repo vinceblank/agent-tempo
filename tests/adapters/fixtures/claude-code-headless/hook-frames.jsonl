@@ -1,0 +1,3 @@
+{"type":"system","subtype":"hook_started","hook_id":"00000000-0000-0000-0000-000000000001","hook_name":"SessionStart:startup","hook_event":"SessionStart","uuid":"hook-start-1","session_id":"hook-test-session"}
+{"type":"system","subtype":"hook_response","hook_id":"00000000-0000-0000-0000-000000000001","hook_name":"SessionStart:startup","hook_event":"SessionStart","output":"placeholder hook output","stdout":"","stderr":"","exit_code":0,"outcome":"success","uuid":"hook-resp-1","session_id":"hook-test-session"}
+{"type":"system","subtype":"status","status":"healthy","uuid":"status-1","session_id":"hook-test-session"}

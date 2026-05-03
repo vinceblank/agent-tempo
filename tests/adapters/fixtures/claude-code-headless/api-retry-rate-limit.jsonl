@@ -1,0 +1,2 @@
+{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,"retry_delay_ms":2000,"error_status":429,"error":"rate_limit","session_id":"99999999-0000-0000-0000-000000000001","uuid":"synth-rate-limit-1"}
+{"type":"system","subtype":"api_retry","attempt":2,"max_retries":10,"retry_delay_ms":4000,"error_status":429,"error":"rate_limit","session_id":"99999999-0000-0000-0000-000000000001","uuid":"synth-rate-limit-2"}

@@ -1,0 +1,1 @@
+{"type":"system","subtype":"api_retry","attempt":1,"max_retries":3,"retry_delay_ms":1000,"error_status":400,"error":"billing_error","session_id":"99999999-0000-0000-0000-000000000002","uuid":"synth-billing-1"}

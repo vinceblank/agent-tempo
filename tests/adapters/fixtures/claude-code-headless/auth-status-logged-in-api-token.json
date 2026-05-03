@@ -1,0 +1,6 @@
+{
+  "loggedIn": true,
+  "authMethod": "api-token",
+  "apiProvider": "firstParty",
+  "email": "user@example.com"
+}

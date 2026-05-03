@@ -20,6 +20,7 @@ import { claudeCodeDescriptor } from './claude-code';
 import { copilotDescriptor } from './copilot';
 import { claudeApiDescriptor } from './claude-api';
 import { opencodeDescriptor } from './opencode';
+import { claudeCodeHeadlessDescriptor } from './claude-code-headless';
 import { isDevMode } from '../config';
 
 export const registry = new AdapterRegistry();
@@ -36,6 +37,13 @@ registry.register(claudeApiDescriptor);
 // `opencode` binary only matter at adapter spawn time. The recruit pre-flight
 // gates on both being available (or `force: true` to bypass).
 registry.register(opencodeDescriptor);
+// #520 — headless Claude Code adapter. Spawns the host's installed `claude`
+// CLI as a per-turn subprocess; uses the operator's existing OAuth login so
+// turns bill against subscription extra-usage credits (the only ToS-clean
+// path to that pool for a third-party tool). Always-registered — the
+// `claude` binary is a system binary, not an npm dep; recruit pre-flight
+// probes for installation + login state via `pre-flight.ts`.
+registry.register(claudeCodeHeadlessDescriptor);
 
 // ADR 0014 §7 gate 2 — import-time registration gate. The mock adapter's
 // descriptor only enters the registry when `isDevMode()` is true.
@@ -78,4 +86,5 @@ export { InteractiveAttachment } from './claude-code';
 export { CopilotSdkAttachment } from './copilot';
 export { DirectApiAttachment } from './claude-api';
 export { OpenCodeAttachment } from './opencode';
+export { ClaudeCodeHeadlessAttachment } from './claude-code-headless';
 export type { AdapterClass, AdapterDescriptor } from '../types';

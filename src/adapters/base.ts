@@ -1365,6 +1365,11 @@ export class AdapterRegistry {
     // #449 Phase C — headless multi-provider OpenCode adapter. Descriptor
     // lives in src/adapters/opencode; opt-in via `recruit({ agent: 'opencode' })`.
     if (agent === 'opencode') return 'opencode';
+    // #520 — headless Claude Code adapter (per-turn `claude -p` subprocess).
+    // Descriptor lives in src/adapters/claude-code-headless; opt-in via
+    // `recruit({ agent: 'claude-code-headless' })`. Uses the host's existing
+    // Claude Code OAuth login so turns bill against subscription extra-usage.
+    if (agent === 'claude-code-headless') return 'claude-code-headless';
     return 'claude-code';
   }
 }

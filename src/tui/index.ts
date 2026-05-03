@@ -91,12 +91,13 @@ export async function run(opts: TuiOpts): Promise<void> {
     // Render the TUI
     const app = ink.render(
       // The TUI recruit wizard only offers `claude` / `copilot` — `mock` is
-      // a dev-mode CLI-only path (ADR 0014 §7 gate 3); `claude-api` (#131)
-      // and `opencode` (#449) are CLI/MCP-only paths. If the user's resolved
-      // default is one of those, fall back to `claude` for the TUI default;
-      // they can still recruit those agents via the CLI (e.g. `claude-tempo
-      // recruit ... --agent opencode`) or the MCP `recruit` tool.
-      React.createElement(InkProvider, { ink, children: React.createElement(App, { api, ensemble: opts.ensemble, defaultAgent: (opts.config.defaultAgent === 'mock' || opts.config.defaultAgent === 'claude-api' || opts.config.defaultAgent === 'opencode') ? 'claude' : opts.config.defaultAgent }) }),
+      // a dev-mode CLI-only path (ADR 0014 §7 gate 3); `claude-api` (#131),
+      // `opencode` (#449), and `claude-code-headless` (#520) are CLI/MCP-only
+      // paths. If the user's resolved default is one of those, fall back to
+      // `claude` for the TUI default; they can still recruit those agents
+      // via the CLI (e.g. `claude-tempo recruit ... --agent opencode`) or
+      // the MCP `recruit` tool.
+      React.createElement(InkProvider, { ink, children: React.createElement(App, { api, ensemble: opts.ensemble, defaultAgent: (opts.config.defaultAgent === 'mock' || opts.config.defaultAgent === 'claude-api' || opts.config.defaultAgent === 'opencode' || opts.config.defaultAgent === 'claude-code-headless') ? 'claude' : opts.config.defaultAgent }) }),
     );
 
     await app.waitUntilExit();

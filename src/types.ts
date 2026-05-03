@@ -18,7 +18,7 @@
  * editing one line — see #476 (the `claude-api` allowlist drift bug
  * that motivated centralising this).
  */
-export const AGENT_TYPES = ['claude', 'copilot', 'mock', 'claude-api', 'opencode'] as const;
+export const AGENT_TYPES = ['claude', 'copilot', 'mock', 'claude-api', 'opencode', 'claude-code-headless'] as const;
 export type AgentType = typeof AGENT_TYPES[number];
 
 /**
@@ -560,6 +560,22 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
    * adapter's spawn time. Ignored when `agent !== 'claude-api'`.
    */
   model?: string;
+  /**
+   * #520 — claude-code-headless permission mode. Forwarded to `claude -p
+   * --permission-mode`. Recruit-arg → `CLAUDE_TEMPO_PERMISSION_MODE` env →
+   * `'acceptEdits'` default. Mutually exclusive with
+   * {@link dangerouslySkipPermissions}. Ignored when
+   * `agent !== 'claude-code-headless'`.
+   */
+  permissionMode?: 'acceptEdits' | 'auto' | 'bypassPermissions' | 'default' | 'dontAsk' | 'plan';
+  /**
+   * #520 — claude-code-headless dangerous-skip-permissions opt-in. When
+   * true, the adapter passes `--dangerously-skip-permissions` to `claude
+   * -p` instead of `--permission-mode`. Use only in trusted / sandboxed
+   * contexts. Mutually exclusive with {@link permissionMode}. Ignored
+   * when `agent !== 'claude-code-headless'`.
+   */
+  dangerouslySkipPermissions?: boolean;
 }
 
 export interface ReleaseOutboxEntry extends OutboxEntryBase {
