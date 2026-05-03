@@ -112,7 +112,13 @@ Extends the existing `recruit` Zod schema additively:
   // ... existing fields ...
   agent: z.enum(['claude', 'copilot', 'mock', 'claude-api', 'opencode', 'claude-code-headless']).optional()
     .describe(`Which agent to use (default: "${ownAgentType}", same as this session). … "claude-code-headless" runs the official Claude Code CLI as a headless per-turn subprocess; uses the host's existing Claude Code login (OAuth), so it taps subscription extra-usage credits — no API key needed. Requires the "claude" binary on PATH.`),
-  // EXISTING — model regex from #449 (relaxed for opencode) accepts both "claude-opus-4-7" and "anthropic/claude-opus-4-7" already.
+  // NOTE — `model` recruit-arg is NOT exposed for claude-code-headless in v1.
+  // The spawned `claude -p` uses its own default model selection (operator can
+  // override via `~/.claude/settings.json`'s `model` field, or by passing
+  // `--model` env-var indirection). Rationale: claude-code-headless inherits
+  // the host CLI's preferences end-to-end so headless and interactive players
+  // on the same host bill against the same model tier. Phase 2 candidate if
+  // recruit-time override becomes a real ask.
   // NEW — only meaningful for adapter='claude-code-headless'
   permissionMode: z.enum(['acceptEdits', 'auto', 'bypassPermissions', 'default', 'dontAsk', 'plan']).optional()
     .describe('Permission mode for claude-code-headless adapter. Default "acceptEdits" auto-approves writes + common fs commands. "bypassPermissions" / "dangerouslySkipPermissions" trades safety for speed in trusted contexts. Ignored for other adapters.'),
@@ -166,6 +172,7 @@ src/adapters/claude-code-headless/
 ├── adapter.ts        # ClaudeCodeHeadlessAttachment + claudeCodeHeadlessDescriptor (colocated)
 ├── index.ts          # Barrel re-export + binary-probe guard for the require.main self-exec path
 ├── stream-json.ts    # Frame parser (extracted for unit-testability; ~100 LoC)
+├── error-mapper.ts   # Subprocess-failure → #521 classifier translation (§5.8; ~80 LoC)
 └── pre-flight.ts     # claude --version + claude auth status helpers (shared with src/tools/recruit.ts)
 ```
 
@@ -189,7 +196,7 @@ node dist/adapters/claude-code-headless/adapter.js     (long-lived; manages V2 l
         └── node dist/server.js                        (claude-tempo MCP server — spawned by `claude` for tool dispatch)
 ```
 
-Two long-lived processes per player (the adapter + zero or one in-flight `claude`); a third short-lived MCP server child during turns. Memory cost is trivial; the architectural simplicity is worth it.
+**One long-lived adapter process; per turn, a transient `claude -p` child plus a short-lived MCP server grandchild.** When idle (no in-flight cue), only the adapter process exists. Memory cost is trivial; the architectural simplicity is worth it.
 
 **Env var contract for the adapter process:**
 
@@ -386,8 +393,9 @@ Per [headless docs](https://code.claude.com/docs/en/headless), `system/api_retry
 | `rate_limit` | Log WARNING; let CLI's own backoff handle (the retry event tells us it's already being retried) |
 | `invalid_request` | Exit 1; this is a bug — log full retry-event payload for triage |
 | `server_error` | Log WARNING; let CLI's own backoff handle |
-| `max_output_tokens` | Treat as soft-end-of-turn — not a retry; the CLI gives up on this. Surface to operator and let next turn proceed (similar to claude-api's `max_tokens` stop_reason). |
 | `unknown` | Log WARNING; let CLI's own backoff handle |
+
+> **Spike check**: `max_output_tokens` appears in the docs as a `system/api_retry` `error` category but is more naturally expressed as a `result` frame `stop_reason` (matching claude-api's `max_tokens` stop_reason). Engineer verifies at impl time which path the CLI actually emits and either keeps a row in this table or drops it (see §11.4).
 
 **Subprocess-level errors** (orthogonal to retry events):
 
@@ -411,6 +419,8 @@ Issue #521 flags that `claude-api`'s adapter retry loop has three independent ga
 | `retriable-immediate` | Lease lost during streaming, abort fired | `onSuperseded` SIGTERM during in-flight subprocess | Loop continues — message stays PENDING for next adapter (after restart) to pick up |
 
 **Retry budget**: shared with #521 — N=10 consecutive `retriable-with-backoff` failures → escalate to `fatal` and detach.
+
+**Reset semantics**: counter resets to 0 on **any successful turn** (`result` frame seen + `markDelivered` succeeded). On adapter restart (lease loss, crash, operator restart), counter starts fresh at 0 — no cross-process accounting. Rationale: a pure in-memory budget with success-driven reset matches the "is something sustained-broken vs transient" intent without requiring durable state.
 
 **Important asymmetry**: `claude -p`'s **internal** retry loop is observable to us via `system/api_retry` frames, but we do NOT add a second retry layer on top. When the CLI emits `api_retry` and continues, we let it. We only act on **subprocess termination** signals (exit code, no `result` frame). This means our classifier is **simpler** than claude-api's — we don't have to wrap each turn in a try/catch around `messages.create` because the CLI's own retry hides transient blips from us.
 
@@ -522,7 +532,11 @@ The classifier composes with the retry-budget logic from #521. The adapter's pol
 
 The only wire-protocol-doc touchpoint is the `agentType: 'claude-code-headless'` extension. `docs/WIRE-PROTOCOL.md` doesn't enumerate `AgentType` values today — no doc change required there.
 
-**`SessionMetadata` extension**: add a typed `claudeCodeSessionId?: string` field alongside the existing `sessionId` (Copilot) field. Strictly additive; pre-existing workflow runs that don't have it just see `undefined`.
+### 6.1 Strictly-additive metadata + host-profile extensions
+
+Two adjacent additive surfaces; neither is a new signal/query/update — both ride existing wire shapes.
+
+**(a) `SessionMetadata` extension**: add a typed `claudeCodeSessionId?: string` field alongside the existing `sessionId` (Copilot) field. Strictly additive; pre-existing workflow runs that don't have it just see `undefined`.
 
 ```ts
 // src/types.ts — addition to SessionMetadata
@@ -535,7 +549,18 @@ interface SessionMetadata {
 }
 ```
 
-**Daemon `hostProfile` extension** (§3.4): add `claudeAuthState: boolean` field to advertise whether the host has a logged-in `claude` CLI. Strictly additive; pre-existing daemons that don't advertise it default to `undefined`, which the cross-host pre-flight treats as "unknown — fall through to standard probe at recruit time".
+**(b) Daemon `hostProfile` extension**: add `claudeAuthState: boolean` field to advertise whether the host has a logged-in `claude` CLI. Exchanged via the existing `hostProfileSignal` in the maestro layer (no new signal). Strictly additive; pre-existing daemons that don't advertise it default to `undefined`, which the cross-host pre-flight treats as "unknown — fall through to standard probe at recruit time".
+
+```ts
+// src/types.ts — addition to HostProfile
+interface HostProfile {
+  // ... existing fields (hostname, platform, availableAgentTypes, …) ...
+  /** True when the host's `claude` CLI is installed AND logged in (probed at daemon boot). */
+  claudeAuthState?: boolean;
+}
+```
+
+Both fields are strictly read-and-write-extension on existing types — no schema migrations, no replay-incompatibility, no protobuf-side break.
 
 ---
 
@@ -607,8 +632,14 @@ export class ClaudeCodeHeadlessAttachment extends SdkAttachment {
 
   async run(): Promise<void> {
     const config = getConfig();
-    // ... boilerplate matching claude-api/adapter.ts:170-310 (workflow ID, Temporal connection,
-    //     pinned-runId discovery, terminal-cleanup hook, V2 claim, PID file, signal handlers) ...
+    // ── Reusable boilerplate from claude-api/adapter.ts ────────────────
+    // Lines 168-216  (workflow-id + pinnedRunId discovery loop)
+    // Lines 256-273  (terminal-cleanup hook)
+    // Lines 279-287  (startV2Lifecycle + claim)
+    // Lines 289-308  (PID file + signal handlers)
+    // SKIP claude-api lines 246-254 (Anthropic SDK construction) — this adapter
+    //      doesn't use the SDK. SKIP lines 218-244 (MCP bridge boot + system
+    //      prompt build) — this adapter passes MCP via spawn arg per turn.
 
     // Hydrate session UUID from workflow metadata (if exists from prior turn);
     // generate fresh UUID and stash on metadata if not.
@@ -686,9 +717,13 @@ export class ClaudeCodeHeadlessAttachment extends SdkAttachment {
     log(`spawning claude ${args.slice(0, 4).join(' ')} … (session=${this.claudeCodeSessionId})`);
     this.childProcess = spawn('claude', args, { stdio: ['pipe', 'pipe', 'pipe'], env: childEnv });
 
-    // Write the user prompt to stdin and close it (text-format input).
+    // Write the user prompt to stdin and close it. ⚠️ Windows stdin race risk:
+    // synchronous write-and-end immediately after `spawn` can drop the first
+    // chunk if `claude` hasn't opened stdin yet. Use a `setImmediate` to defer
+    // the `end()` until after the event loop turn, OR cork+uncork. Verify at
+    // impl time on Windows specifically — see §11.5 spike checklist.
     this.childProcess.stdin!.write(promptText);
-    this.childProcess.stdin!.end();
+    setImmediate(() => this.childProcess?.stdin?.end());
 
     let assembledText = '';
     let stopReason: string | null = null;
@@ -835,6 +870,18 @@ if (require.main === module) {
   - `permissionMode` flows through to outbox entry
   - `dangerouslySkipPermissions: true` and `permissionMode` are mutually exclusive
 
+### 8.1.1 Golden-file test for `encodeCwd()`
+
+Critical safety net — wrong cwd-encoding silently breaks session continuity (no error signal, just falls through to a fresh session JSONL). The test:
+
+1. Pick a known cwd (e.g. test fixture `/tmp/claude-tempo-encodecwd-test`).
+2. Spawn a real `claude -p` from that cwd with a synthesized `--session-id` and a no-op prompt.
+3. After exit, `glob` `~/.claude/projects/*/<uuid>.jsonl` and discover the actual encoded directory name.
+4. Assert `encodeCwd('/tmp/claude-tempo-encodecwd-test')` produces exactly that string.
+5. Capture the result as a fixture in `tests/adapters/fixtures/claude-code-headless/cwd-encoding.json`; CI runs it as a normal unit test against the fixture without spawning `claude`.
+
+This test runs as part of the impl-time spike (§11) and again periodically (manual, not CI — gated on `claude` being installed). If the encoding scheme ever changes in a Claude Code minor bump, this test catches it before users hit silent session-fork bugs.
+
 ### 8.2 Workflow integration (Mocha, `test/`)
 
 - `test/adapter-sdk-lifecycle-v2.test.ts` (existing) — already validates SDK-class lifecycle. **Parameterize over the new descriptor** if not already (claude-api should already have done this for #131); otherwise extract shared helper.
@@ -918,6 +965,36 @@ Captures become offline test inputs; no live `claude` calls in CI.
 ### 11.3 Pre-flight `claude auth status` parser
 
 Engineer captures `claude auth status` output for: logged-in (subscription), logged-in (long-lived OAuth via `setup-token`), logged-out, OAuth org denied. Each becomes a parser fixture; the pre-flight returns a structured result (`{ ok: boolean, mode?: 'subscription' | 'oauth-token', error?: string }`) that `recruit` surfaces actionably.
+
+### 11.4 `max_output_tokens` emission path
+
+Per §5.4 spike-check note: docs list `max_output_tokens` as a `system/api_retry` `error` category, but it's also a documented `result` frame `stop_reason`. Engineer captures one fixture forcing `max_output_tokens` (e.g. `claude -p --output-format stream-json --max-tokens 50 "write a 10000-word essay"`) and observes which path the CLI emits. Outcomes:
+
+- **Emitted as `system/api_retry`**: keep the §5.4 row; classifier returns `fatal` (no point retrying — same prompt will hit the same limit).
+- **Emitted only as `result.stop_reason`**: drop the §5.4 row; the success-path handler already covers it (assistant text returns truncated; operator handles in next turn).
+- **Both**: keep the row but document the duplicate signal.
+
+### 11.5 Windows stdin race verification
+
+Per §7 skeleton inline comment: synchronous `child.stdin.write(prompt); child.stdin.end()` can drop the first chunk on Windows if `claude` hasn't opened stdin yet. Engineer verifies on Windows specifically (the lead Linux/macOS test environment doesn't surface this). Three potential mitigations to spike (in order of preference):
+
+1. **`setImmediate(() => child.stdin.end())`** — defer end() to next event-loop turn. Cheapest fix; matches the skeleton.
+2. **Wait for `child.stdin` `'open'` or first `'drain'` event** before writing. More robust but more code.
+3. **`--input-text <prompt>` flag** if Claude Code adds it (current CLI doesn't). Eliminates stdin entirely. Track in Phase 2.
+
+If (1) is unreliable on Windows, fall back to (2). Capture the chosen pattern in `src/adapters/claude-code-headless/stdin-helper.ts` for clarity.
+
+### 11.6 Ensemble-identity surfacing (system-prompt fallback path)
+
+Per architect's Q2 review: §10 relies on Claude Code surfacing the claude-tempo MCP server's `instructions` field strongly enough that the LLM internalizes ensemble identity (player name, conductor presence, fellow players). claude-api and opencode added explicit `HEADLESS_*_ADDENDUM` strings precisely because operators couldn't trust the MCP-instructions-only path. **This v1 design assumes Claude Code's MCP instructions surfacing is sufficient — engineer must verify.**
+
+**Spike check**:
+1. Recruit a `claude-code-headless` player with the design's default (no `--append-system-prompt`).
+2. Cue it: *"What ensemble are you in? Who's the conductor? List the other players."*
+3. If the player answers correctly (knows ensemble name, conductor, can use `ensemble` MCP tool to list peers): the design is correct as-written.
+4. If the player is unsure or doesn't know: add `--append-system-prompt` with a `HEADLESS_CCH_ADDENDUM` constant (mirror claude-api's §10) before merging.
+
+Cheap to verify, cheap to add later. The fallback addendum text already exists in the codebase (`buildServerInstructions` in `src/server-tools.ts`); this only adds an `--append-system-prompt <built-string>` argv entry — no new content authoring required.
 
 ---
 
