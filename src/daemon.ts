@@ -31,6 +31,7 @@ import { DAEMON_PID_PATH, DAEMON_LOG_PATH, DAEMON_HEARTBEAT_PATH, HEARTBEAT_INTE
 import { createTempoClient } from './client';
 import { queryOrphanedSessions, restoreOrphansOnce, type OrphanCandidate } from './reconcile/orphans';
 import { listAgentTypes } from './ensemble/agent-types';
+import { probeClaudeBinary, probeClaudeAuth } from './adapters/claude-code-headless/pre-flight';
 import { probeAdapterVersions } from './daemon-adapter-versions';
 import type { GlobalMaestroInput, HostProfile } from './types';
 
@@ -267,15 +268,36 @@ export function computeHostProfile(config: Config): HostProfile {
     }
   })();
 
+  // Build the available-agents array. Always includes the configured
+  // default. #520 — additionally probe whether `claude` is installed AND
+  // logged in; if both pass, advertise `'claude-code-headless'` so
+  // cross-host recruit pre-flight can reject early on hosts without the
+  // CLI configured. Bounded by the probe timeouts (3s + 5s = ≤8s worst
+  // case) — acceptable boot cost for a one-shot probe.
+  const availableAgentTypes: string[] = [config.defaultAgent];
+  try {
+    const binProbe = probeClaudeBinary(config.claudeBin ?? 'claude');
+    if (binProbe.ok) {
+      const authProbe = probeClaudeAuth(config.claudeBin ?? 'claude');
+      if (authProbe.loggedIn && !availableAgentTypes.includes('claude-code-headless')) {
+        availableAgentTypes.push('claude-code-headless');
+      }
+    }
+  } catch {
+    // Probe machinery should never throw, but guard anyway — host-profile
+    // computation is on the critical boot path.
+  }
+
   return {
     hostname: os.hostname(),
     version: daemonVersion(),
     defaultAgent: config.defaultAgent,
-    // Currently the daemon advertises only the configured default as an
-    // "available runtime"; future work can probe for Copilot bridge via
-    // `require.resolve('@github/copilot-sdk')`. Recording as an array
-    // keeps the wire shape forward-compatible.
-    availableAgentTypes: [config.defaultAgent],
+    // #520 — was: `[config.defaultAgent]`. Now grows when the optional
+    // claude-code-headless probe passes. Future PRs can extend the same
+    // pattern for `copilot` / `claude-api` / `opencode` (e.g. probe
+    // `@anthropic-ai/sdk` install + ANTHROPIC_API_KEY env). Recording as
+    // an array keeps the wire shape forward-compatible.
+    availableAgentTypes,
     availablePlayerTypes: agentTypes,
     claudeBin: config.claudeBin,
     platform: process.platform,

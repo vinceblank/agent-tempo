@@ -15,16 +15,7 @@ import {
   probeClaudeBinary,
   probeClaudeAuth,
 } from '../adapters/claude-code-headless/pre-flight';
-
-/** Permission-mode values accepted by `claude -p --permission-mode`. */
-const CLAUDE_CODE_PERMISSION_MODES = [
-  'acceptEdits',
-  'auto',
-  'bypassPermissions',
-  'default',
-  'dontAsk',
-  'plan',
-] as const;
+import { CLAUDE_CODE_PERMISSION_MODES } from '../adapters/claude-code-headless/types';
 
 const toolLog = (...args: unknown[]) => console.error('[claude-tempo:recruit]', ...args);
 

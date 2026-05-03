@@ -211,7 +211,28 @@ export interface SessionMetadata {
   recruitedBy?: string;
   /** Worktree path if this session was spawned in an isolated worktree. */
   worktreePath?: string;
-  /** Session UUID — used for Copilot SDK sessionId and Claude Code --resume/--session-id. */
+  /**
+   * Adapter-specific session identifier. Stashed via `updateMetadataSignal`
+   * by the adapter on first turn / first claim; read back on restart /
+   * encore for resume continuity. Three usage paths today:
+   *
+   *   - **Copilot bridge** — Copilot SDK session id (UUIDv4-shaped).
+   *   - **Claude Code interactive** (`agent: 'claude'`) — UUIDv4 used as
+   *     `claude --session-id <id>` on spawn and `claude --resume <id>` on
+   *     restart for deterministic session resume.
+   *   - **Claude Code headless** (`agent: 'claude-code-headless'`, #520)
+   *     — UUIDv4 used as `claude -p --session-id <id>` per turn and
+   *     `--resume <id>` on subsequent turns. Shares the field with the
+   *     interactive adapter so an interactive↔headless migrate within the
+   *     same cwd preserves session continuity for free (Claude Code's
+   *     session JSONL is per-cwd, not per-adapter).
+   *   - **OpenCode** (`agent: 'opencode'`) — OpenCode-server session id.
+   *   - **Mock** — `mock-<pid>` placeholder (dev mode only).
+   *
+   * **Treat as opaque**: consumers MUST NOT depend on a specific UUID
+   * format or origin — different adapters write different shapes through
+   * this field, and that's by design.
+   */
   sessionId?: string;
   /**
    * #131 Phase C — model id for the claude-api adapter (e.g.
@@ -566,6 +587,15 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
    * `'acceptEdits'` default. Mutually exclusive with
    * {@link dangerouslySkipPermissions}. Ignored when
    * `agent !== 'claude-code-headless'`.
+   *
+   * Type literal kept inline (not imported from
+   * {@link ClaudeCodeHeadlessPermissionMode}) because this file is the
+   * V8 workflow-sandbox-safe shared types module — importing from
+   * `src/adapters/` would invert the dependency direction and risk
+   * loading adapter code into the sandbox. The Zod enum, spawn helper,
+   * and outbox `SpawnProcessInput` re-derive from the canonical tuple at
+   * their consumer surfaces (where `src/adapters/claude-code-headless/types`
+   * is safe to import).
    */
   permissionMode?: 'acceptEdits' | 'auto' | 'bypassPermissions' | 'default' | 'dontAsk' | 'plan';
   /**

@@ -15,9 +15,12 @@
 export {
   ClaudeCodeHeadlessAttachment,
   claudeCodeHeadlessDescriptor,
-  type ClaudeCodeHeadlessPermissionMode,
   type ClaudeCodeHeadlessAdapterOptions,
 } from './adapter';
+export {
+  CLAUDE_CODE_PERMISSION_MODES,
+  type ClaudeCodeHeadlessPermissionMode,
+} from './types';
 export {
   probeClaudeBinary,
   probeClaudeAuth,

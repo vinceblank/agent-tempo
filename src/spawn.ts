@@ -4,6 +4,7 @@ import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 import { ENV } from './config';
 import type { MockMode } from './types';
+import type { ClaudeCodeHeadlessPermissionMode } from './adapters/claude-code-headless/types';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:spawn]', ...args);
 
@@ -858,5 +859,135 @@ export function spawnOpenCodeAdapter(opts: OpenCodeAdapterOpts): OpenCodeAdapter
   }
 
   log(`Spawned opencode adapter (pid ${child.pid}) in ${opts.workDir} as "${opts.name}"${opts.model ? ` (model=${opts.model})` : ''}${opts.attachmentId ? ` (attachmentId=${opts.attachmentId})` : ''}`);
+  return { pid: child.pid, logPath, pidPath };
+}
+
+// ── claude-code-headless adapter (#520) ────────────────────────────────────
+
+/**
+ * Options for {@link spawnClaudeCodeHeadlessAdapter}. Mirrors
+ * {@link ClaudeApiAdapterOpts} for identity + Temporal connection +
+ * attachment handoff; adds `permissionMode` / `dangerouslySkipPermissions`
+ * for the per-turn `claude -p --permission-mode <mode>` flag.
+ *
+ * The adapter spawns the host's `claude` CLI as a per-turn subprocess; this
+ * spawn helper only launches the headless adapter Node process.
+ */
+export interface ClaudeCodeHeadlessAdapterOpts {
+  name: string;
+  ensemble: string;
+  temporalAddress: string;
+  temporalNamespace?: string;
+  temporalApiKey?: string;
+  temporalTlsCertPath?: string;
+  temporalTlsKeyPath?: string;
+  isConductor?: boolean;
+  workDir: string;
+  /** Directory for log + PID files. Defaults to `logs/` inside workDir. */
+  logDir?: string;
+  /**
+   * `--permission-mode` flag value forwarded to per-turn `claude -p`. Default
+   * `'acceptEdits'` (set inside the adapter on construction). Mutually
+   * exclusive with `dangerouslySkipPermissions`.
+   */
+  permissionMode?: ClaudeCodeHeadlessPermissionMode;
+  /** Pass `--dangerously-skip-permissions` to per-turn `claude -p`. Mutually exclusive with `permissionMode`. */
+  dangerouslySkipPermissions?: boolean;
+  /**
+   * PR-D attachment-lease handoff. When present, the workflow has already
+   * called `claimAttachment`; the adapter reads these from env and renews
+   * (rather than fresh-claims) the lease on boot.
+   */
+  attachmentId?: string;
+  attachmentRunId?: string;
+  adapterId?: string;
+}
+
+export interface ClaudeCodeHeadlessAdapterResult {
+  pid: number | undefined;
+  logPath: string;
+  pidPath: string;
+}
+
+/**
+ * Resolve the path to the claude-code-headless adapter entry point.
+ * Mirrors {@link resolveClaudeApiPath} so dev (ts-node) and prod
+ * (compiled .js) both launch the same code through the same
+ * `require.main === module` gate.
+ */
+function resolveClaudeCodeHeadlessPath(): { cmd: string; args: string[] } {
+  const isDev = __filename.endsWith('.ts');
+  if (isDev) {
+    return { cmd: 'npx', args: ['ts-node', resolve(__dirname, 'adapters', 'claude-code-headless', 'adapter.ts')] };
+  }
+  return { cmd: 'node', args: [resolve(__dirname, 'adapters', 'claude-code-headless', 'adapter.js')] };
+}
+
+/**
+ * Spawn the claude-code-headless adapter as a detached headless subprocess.
+ *
+ * Pattern matches {@link spawnClaudeApiAdapter} — no TTY, log + PID files
+ * in `logs/<name>.log` and `logs/<name>.pid`, env vars carry identity +
+ * Temporal connection settings + optional attachment-handoff.
+ *
+ * **Env hygiene** (design §3.6): the per-turn `claude -p` child needs to
+ * use the host's OAuth keychain — NOT a `ANTHROPIC_API_KEY` env var.
+ * The adapter strips `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN`
+ * from its child env at spawn time (in `adapter.ts`'s `invokeSdk`); this
+ * spawn helper passes the parent's full env through to the adapter
+ * itself (which needs other env vars like PATH).
+ */
+export function spawnClaudeCodeHeadlessAdapter(
+  opts: ClaudeCodeHeadlessAdapterOpts,
+): ClaudeCodeHeadlessAdapterResult {
+  const { cmd, args } = resolveClaudeCodeHeadlessPath();
+  const logDirPath = opts.logDir || join(opts.workDir, 'logs');
+  const logName = opts.name || `claude-code-headless-${Date.now()}`;
+  const logPath = join(logDirPath, `${logName}.log`);
+  const pidPath = join(logDirPath, `${logName}.pid`);
+
+  mkdirSync(logDirPath, { recursive: true });
+  const logFd = openSync(logPath, 'a');
+
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(cmd, args, {
+      cwd: opts.workDir,
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+      env: {
+        ...process.env,
+        [ENV.ENSEMBLE]: opts.ensemble,
+        [ENV.PLAYER_NAME]: opts.name,
+        [ENV.CONDUCTOR]: opts.isConductor ? 'true' : '',
+        [ENV.TEMPORAL_ADDRESS]: opts.temporalAddress,
+        ...(opts.temporalNamespace ? { [ENV.TEMPORAL_NAMESPACE]: opts.temporalNamespace } : {}),
+        ...(opts.temporalApiKey ? { [ENV.TEMPORAL_API_KEY]: opts.temporalApiKey } : {}),
+        ...(opts.temporalTlsCertPath ? { [ENV.TEMPORAL_TLS_CERT_PATH]: opts.temporalTlsCertPath } : {}),
+        ...(opts.temporalTlsKeyPath ? { [ENV.TEMPORAL_TLS_KEY_PATH]: opts.temporalTlsKeyPath } : {}),
+        // Permission mode: recruit-arg → CLAUDE_TEMPO_PERMISSION_MODE → in-adapter default.
+        ...(opts.permissionMode ? { [ENV.PERMISSION_MODE]: opts.permissionMode } : {}),
+        ...(opts.dangerouslySkipPermissions ? { [ENV.DANGEROUSLY_SKIP_PERMISSIONS]: '1' } : {}),
+        // Attachment handoff — adapter renews via startV2Lifecycle.
+        ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
+        ...(opts.attachmentRunId ? { [ENV.ATTACHMENT_RUN_ID]: opts.attachmentRunId } : {}),
+        ...(opts.adapterId ? { [ENV.ADAPTER_ID]: opts.adapterId } : {}),
+      },
+    });
+    child.unref();
+  } finally {
+    closeSync(logFd);
+  }
+
+  if (child.pid != null) {
+    writeFileSync(pidPath, String(child.pid));
+  }
+
+  log(
+    `Spawned claude-code-headless adapter (pid ${child.pid}) in ${opts.workDir} ` +
+    `as "${opts.name}"${opts.permissionMode ? ` (permissionMode=${opts.permissionMode})` : ''}` +
+    `${opts.dangerouslySkipPermissions ? ' (dangerouslySkipPermissions=true)' : ''}` +
+    `${opts.attachmentId ? ` (attachmentId=${opts.attachmentId})` : ''}`,
+  );
   return { pid: child.pid, logPath, pidPath };
 }
