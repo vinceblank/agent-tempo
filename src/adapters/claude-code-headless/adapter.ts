@@ -148,8 +148,9 @@ export class ClaudeCodeHeadlessAttachment extends SdkAttachment {
    */
   protected childProcess: ChildProcess | null = null;
   /**
-   * Per-cwd Claude Code session UUID. Used as both `--session-id` (every
-   * turn) and `--resume` (subsequent turns; see design §5.1). Hydrated from
+   * Per-cwd Claude Code session UUID. Used as `--session-id` on the first
+   * turn (to PIN the UUID) and `--resume` alone on subsequent turns
+   * (mutually exclusive per CLI v2.1.126 — see §16.9). Hydrated from
    * `SessionMetadata.sessionId` on `run()` — generated fresh + stashed if
    * absent. The same field is shared with the interactive Claude Code
    * adapter (architect-ratified Option (a) post-spike — see PR-3 §16).
