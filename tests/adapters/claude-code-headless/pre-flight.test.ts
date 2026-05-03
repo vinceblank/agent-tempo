@@ -1,11 +1,12 @@
 /**
  * Unit tests for the claude-code-headless adapter pre-flight probes.
  *
- * Two layers:
- *   1. Pure parser tests against captured fixtures (no subprocess spawn).
- *   2. End-to-end probe tests that spawn a fake binary via PATH manipulation
- *      to validate the spawnSync wrapper logic without depending on the
- *      real `claude` CLI being installed in CI.
+ * Pure parser tests against captured fixtures (no subprocess spawn). The
+ * `parseAuthStatusOutput` helper is the only side-effect-free surface that
+ * matters for CI — the spawnSync wrappers around `claude --version` and
+ * `claude auth status` are exercised end-to-end by the manual smoke test
+ * + the recruit-tool integration tests (PR-2 layers in a fake-binary
+ * coverage path via the spawn helper unit tests).
  *
  * Issue #520 PR-1 — covers the recruit-time pre-flight contract.
  */
