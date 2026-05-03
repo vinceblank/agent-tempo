@@ -12,7 +12,8 @@ import {
 } from '../utils/validation';
 import { ENSEMBLE_SENTINEL_FLAG } from '../constants';
 import { getGitInfo } from '../git-info';
-import { spawnInTerminal, spawnCopilotBridge, spawnClaudeApiAdapter, spawnOpenCodeAdapter } from '../spawn';
+import { spawnInTerminal, spawnCopilotBridge, spawnClaudeApiAdapter, spawnOpenCodeAdapter, spawnClaudeCodeHeadlessAdapter } from '../spawn';
+import type { ClaudeCodeHeadlessPermissionMode } from '../adapters/claude-code-headless/types';
 import { ENV } from '../config';
 import { resolveSession } from './resolve';
 import { resolveAgentType } from '../ensemble/agent-types';
@@ -261,6 +262,22 @@ export interface SpawnProcessInput {
    * the adapter to its respective env var → constants-pinned default.
    */
   model?: string;
+  /**
+   * #520 — claude-code-headless permission mode. Forwarded as
+   * `CLAUDE_TEMPO_PERMISSION_MODE` to the spawned adapter; the adapter
+   * passes it through to per-turn `claude -p --permission-mode <mode>`.
+   * Only meaningful when `agent === 'claude-code-headless'`. Mutually
+   * exclusive with {@link dangerouslySkipPermissions}. Type imported from
+   * the canonical {@link ClaudeCodeHeadlessPermissionMode} tuple.
+   */
+  permissionMode?: ClaudeCodeHeadlessPermissionMode;
+  /**
+   * #520 — claude-code-headless dangerous-skip-permissions opt-in.
+   * Forwarded as `CLAUDE_TEMPO_DANGEROUSLY_SKIP_PERMISSIONS=1`. Only
+   * meaningful when `agent === 'claude-code-headless'`. Mutually
+   * exclusive with {@link permissionMode}.
+   */
+  dangerouslySkipPermissions?: boolean;
 }
 
 // ── Activity result type ──
@@ -472,7 +489,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
-      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId, mockMode, mockScenario, model } = input;
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId, mockMode, mockScenario, model, permissionMode, dangerouslySkipPermissions } = input;
       // Read secrets from the worker's config closure — never from workflow state
       const { temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = config;
       try {
@@ -570,6 +587,34 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             adapterId,
           });
           log(`Spawned opencode adapter (pid ${pid}) in ${workDir} as "${targetName}"${model ? ` (model=${model})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
+        } else if (agent === 'claude-code-headless') {
+          // #520 — headless Claude Code adapter. Spawns the host's `claude` CLI
+          // as a per-turn subprocess; uses the operator's existing OAuth login
+          // so turns bill against subscription extra-usage credits. The adapter
+          // process itself is a Node subprocess (this branch); the per-turn
+          // `claude -p` invocations happen inside the adapter's invokeSdk loop
+          // (PR-3). Per-tool allowlists don't apply — claude-code-headless
+          // players inherit the full Claude Code tool surface.
+          if (allowedTools && allowedTools.length > 0) {
+            log(`Warning: allowedTools [${allowedTools.join(', ')}] specified for claude-code-headless agent "${targetName}" — claude-code-headless adapter does not gate tools per recruit, skipping`);
+          }
+          const { pid } = spawnClaudeCodeHeadlessAdapter({
+            name: targetName,
+            ensemble,
+            temporalAddress,
+            temporalNamespace,
+            temporalApiKey,
+            temporalTlsCertPath,
+            temporalTlsKeyPath,
+            isConductor,
+            workDir,
+            permissionMode,
+            dangerouslySkipPermissions,
+            attachmentId,
+            attachmentRunId,
+            adapterId,
+          });
+          log(`Spawned claude-code-headless adapter (pid ${pid}) in ${workDir} as "${targetName}"${permissionMode ? ` (permissionMode=${permissionMode})` : ''}${dangerouslySkipPermissions ? ' (dangerouslySkipPermissions=true)' : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else {
           // Resolve agent flags: --agent (native) > --system-prompt (shipped/legacy)
           let agentFlags: string[] = [];
@@ -823,7 +868,9 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
               ? 'claude-api'
               : rawAgent === 'opencode'
                 ? 'opencode'
-                : 'claude';
+                : rawAgent === 'claude-code-headless'
+                  ? 'claude-code-headless'
+                  : 'claude';
         const adapterId = metadata.adapterId
           || (agentType === 'copilot'
             ? 'copilot'
@@ -833,7 +880,9 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
                 ? 'claude-api'
                 : agentType === 'opencode'
                   ? 'opencode'
-                  : 'claude-code');
+                  : agentType === 'claude-code-headless'
+                    ? 'claude-code-headless'
+                    : 'claude-code');
         const adapterClass: AdapterClass = agentType === 'claude' ? 'interactive' : 'sdk';
         const targetHost = host ?? info.preferredHost ?? metadata.hostname;
 

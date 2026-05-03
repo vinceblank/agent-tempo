@@ -60,8 +60,15 @@ describe('ClaudeCodeHeadlessAttachment construction', () => {
     expect(() => new ClaudeCodeHeadlessAttachment({ dangerouslySkipPermissions: true })).not.toThrow();
   });
 
-  it('PR-1 stub: run() rejects with a descriptive error', async () => {
-    const attachment = new ClaudeCodeHeadlessAttachment();
-    await expect(attachment.run()).rejects.toThrow(/PR-2/);
+  it('PR-2 stub: invokeSdk() rejects with a PR-3 marker (loud-failure path)', async () => {
+    // PR-2 wires run() but leaves invokeSdk as a stub that throws on first
+    // call. The loud-failure path is intentional: a silent no-op would
+    // leave operators wondering why their cue went into a black hole.
+    // Calling invokeSdk via a protected-access type assertion is the
+    // narrowest test surface that doesn't require a full Temporal harness.
+    const attachment = new ClaudeCodeHeadlessAttachment() as unknown as {
+      invokeSdk: (prompt: string, timeoutMs: number) => Promise<unknown>;
+    };
+    await expect(attachment.invokeSdk('', 1000)).rejects.toThrow(/PR-3/);
   });
 });

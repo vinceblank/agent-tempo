@@ -85,4 +85,15 @@ describe('parseAuthStatusOutput', () => {
     const result = parseAuthStatusOutput('{"loggedIn": "true"}', 0);
     expect(result.loggedIn).toBe(false);
   });
+
+  it('handles `{"loggedIn": true}` with no optional fields (minimal valid envelope)', () => {
+    // Per QA Nit 4 from PR-1's review: confirm the parser doesn't require
+    // authMethod/apiProvider/email/etc — a minimal envelope from a future
+    // CLI version (or a test stub) must still resolve as logged-in.
+    const result = parseAuthStatusOutput('{"loggedIn": true}', 0);
+    expect(result.loggedIn).toBe(true);
+    expect(result.authMethod).toBeUndefined();
+    expect(result.apiProvider).toBeUndefined();
+    expect(result.error).toBeUndefined();
+  });
 });

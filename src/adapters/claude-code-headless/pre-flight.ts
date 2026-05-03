@@ -145,13 +145,23 @@ export function probeClaudeAuth(claudeBin = 'claude'): AuthProbeResult {
     };
   }
 
-  // Windows .cmd shim fallback (mirrors probeClaudeBinary).
+  // Windows .cmd shim fallback (mirrors probeClaudeBinary). Per QA Nit 2 from
+  // PR-1's review: explicitly check whether the cmd.exe fallback also failed,
+  // so the error copy stays "not found on PATH" instead of degrading to the
+  // generic "produced no output" the parser would otherwise emit on empty stdout.
   if (result.error && (result.error as NodeJS.ErrnoException).code === 'ENOENT') {
     if (process.platform === 'win32' && claudeBin === 'claude') {
       result = spawnSync('cmd.exe', ['/c', 'claude', 'auth', 'status'], {
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: AUTH_PROBE_TIMEOUT_MS,
       });
+      if (result.status !== 0 && (!result.stdout || result.stdout.length === 0)) {
+        const stderr = (result.stderr?.toString('utf8') ?? '').trim().slice(0, 200);
+        return {
+          loggedIn: false,
+          error: `\`${claudeBin}\` not found on PATH (cmd.exe shim also failed: ${stderr || `exit ${result.status}`}).`,
+        };
+      }
     } else {
       return { loggedIn: false, error: `\`${claudeBin}\` not found on PATH.` };
     }
