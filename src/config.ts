@@ -47,6 +47,21 @@ export const ENV = {
    */
   OPENCODE_MODEL: 'CLAUDE_TEMPO_OPENCODE_MODEL',
   /**
+   * #520 — claude-code-headless permission mode. Forwarded to `claude -p
+   * --permission-mode <mode>`. Recruit-arg `permissionMode` takes precedence;
+   * this env var is the fallback before the constants-pinned default
+   * (`'acceptEdits'`). Mutually exclusive with
+   * {@link DANGEROUSLY_SKIP_PERMISSIONS}.
+   */
+  PERMISSION_MODE: 'CLAUDE_TEMPO_PERMISSION_MODE',
+  /**
+   * #520 — claude-code-headless dangerous-skip-permissions opt-in. When set
+   * to `'1'`, the adapter passes `--dangerously-skip-permissions` to
+   * `claude -p` instead of `--permission-mode`. Use only in trusted /
+   * sandboxed contexts. Mutually exclusive with {@link PERMISSION_MODE}.
+   */
+  DANGEROUSLY_SKIP_PERMISSIONS: 'CLAUDE_TEMPO_DANGEROUSLY_SKIP_PERMISSIONS',
+  /**
    * v0.25 PR-D attachment resume plumbing. When `restart` / `migrate`
    * enqueues a spawn outbox entry, the workflow passes the pre-claimed
    * `attachmentId` + pinned `runId` + resolved `adapterId` through the spawn

@@ -11,6 +11,20 @@ import { defineTool, ok, fail, formatError } from './helpers';
 import { resolveAgentType, listAgentTypes } from '../ensemble/agent-types';
 import { PLAYER_NAME_MAX, MESSAGE_MAX, PATH_MAX, validatePlayerName } from '../utils/validation';
 import { probeSdkInstall } from '../utils/sdk-probe';
+import {
+  probeClaudeBinary,
+  probeClaudeAuth,
+} from '../adapters/claude-code-headless/pre-flight';
+
+/** Permission-mode values accepted by `claude -p --permission-mode`. */
+const CLAUDE_CODE_PERMISSION_MODES = [
+  'acceptEdits',
+  'auto',
+  'bypassPermissions',
+  'default',
+  'dontAsk',
+  'plan',
+] as const;
 
 const toolLog = (...args: unknown[]) => console.error('[claude-tempo:recruit]', ...args);
 
@@ -80,7 +94,7 @@ export function registerRecruitTool(
       initialMessage: z.string().max(MESSAGE_MAX).optional()
         .describe('Optional task or message for the new session (sent after it sets its name)'),
       agent: z.enum(AGENT_TYPES).optional()
-        .describe(`Which agent to use (default: "${ownAgentType}", same as this session). "mock" requires dev mode (--dev). "claude-api" runs headless via the Anthropic Messages API — requires ANTHROPIC_API_KEY env var and the @anthropic-ai/sdk optional dependency installed; has access to claude-tempo MCP tools (cue, report, recall, ensemble, …) but NOT file-edit or shell tools (use "claude" for those). "opencode" runs headless via a local opencode serve subprocess; multi-provider (Anthropic, OpenAI, Bedrock, Ollama, …) — requires the @opencode-ai/sdk optional dep and an opencode binary on PATH. opencode players ARE file-op-capable (file edits / shell / web search via OpenCode's built-in tools).`),
+        .describe(`Which agent to use (default: "${ownAgentType}", same as this session). "mock" requires dev mode (--dev). "claude-api" runs headless via the Anthropic Messages API — requires ANTHROPIC_API_KEY env var and the @anthropic-ai/sdk optional dependency installed; has access to claude-tempo MCP tools (cue, report, recall, ensemble, …) but NOT file-edit or shell tools (use "claude" for those). "opencode" runs headless via a local opencode serve subprocess; multi-provider (Anthropic, OpenAI, Bedrock, Ollama, …) — requires the @opencode-ai/sdk optional dep and an opencode binary on PATH. opencode players ARE file-op-capable (file edits / shell / web search via OpenCode's built-in tools). "claude-code-headless" runs the official Claude Code CLI as a headless per-turn \`claude -p\` subprocess — requires the \`claude\` binary on PATH AND a logged-in Claude Code session (\`claude auth login\`); turns bill against the host's existing subscription extra-usage credits, NOT a Console API key. claude-code-headless players have full Claude Code tool access (Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch).`),
       model: z.string().regex(/^[a-z0-9][a-z0-9-/.:_]*$/).optional()
         .describe('Model id. For "claude-api": bare Anthropic id (e.g. "claude-opus-4-7"). For "opencode": combined "provider/model" (e.g. "anthropic/claude-opus-4-7", "openai/gpt-4o", "ollama/llama3"). Falls back to CLAUDE_TEMPO_API_MODEL (claude-api) or CLAUDE_TEMPO_OPENCODE_MODEL (opencode), then a constants-pinned default. Ignored for claude / copilot / mock adapters.'),
       type: z.string().optional()
@@ -95,6 +109,11 @@ export function registerRecruitTool(
         .describe('Dev-mode only (agent: "mock"). Mock adapter mode. Default: "echo". "silent" never replies (heartbeat-stale validation); "chaos" probabilistic fail/crash injection (env-tuned).'),
       mockScenario: z.string().optional()
         .describe('Dev-mode only (agent: "mock", mockMode: "scripted"). Bare scenario name (resolved against shipped scenarios/) or absolute path to a scenario YAML.'),
+      // #520 — claude-code-headless adapter knobs. Both ignored for other adapters.
+      permissionMode: z.enum(CLAUDE_CODE_PERMISSION_MODES).optional()
+        .describe('claude-code-headless only. Permission mode forwarded to `claude -p --permission-mode`. Default "acceptEdits" auto-approves writes + common fs commands. "bypassPermissions" / "dangerouslySkipPermissions" trades safety for speed in trusted contexts. "plan" plans without executing — not useful for headless players. Mutually exclusive with `dangerouslySkipPermissions`.'),
+      dangerouslySkipPermissions: z.boolean().optional()
+        .describe('claude-code-headless only. When true, passes `--dangerously-skip-permissions` to `claude -p` instead of `--permission-mode`. Use only in sandboxed/trusted contexts. Mutually exclusive with `permissionMode`.'),
     },
     async (args) => {
       const { workDir, name, initialMessage } = args as {
@@ -110,6 +129,8 @@ export function registerRecruitTool(
         force?: boolean;
         mockMode?: MockMode;
         mockScenario?: string;
+        permissionMode?: typeof CLAUDE_CODE_PERMISSION_MODES[number];
+        dangerouslySkipPermissions?: boolean;
       };
       const isConductor = (args as any).conductor === true;
       const agent: AgentType = (args as any).agent || ownAgentType;
@@ -120,6 +141,8 @@ export function registerRecruitTool(
       const force = (args as any).force === true;
       const mockMode = (args as any).mockMode as MockMode | undefined;
       const mockScenario = (args as any).mockScenario as string | undefined;
+      const permissionMode = (args as any).permissionMode as typeof CLAUDE_CODE_PERMISSION_MODES[number] | undefined;
+      const dangerouslySkipPermissions = (args as any).dangerouslySkipPermissions === true;
 
       // ADR 0014 §7 gate 3 — recruit-time rejection of `agent: 'mock'`
       // outside dev mode. Defense-in-depth: even if a hand-edited install
@@ -162,6 +185,18 @@ export function registerRecruitTool(
       if (model != null && agent !== 'claude-api' && agent !== 'opencode') {
         return fail(`model is only valid when agent: "claude-api" or agent: "opencode" (got agent: "${agent}").`);
       }
+      // #520 — claude-code-headless permission knobs are mutually exclusive
+      // and only meaningful for that adapter. Reject silently-ignored
+      // params so users learn the right shape.
+      if (permissionMode != null && agent !== 'claude-code-headless') {
+        return fail(`permissionMode is only valid when agent: "claude-code-headless" (got agent: "${agent}").`);
+      }
+      if (dangerouslySkipPermissions && agent !== 'claude-code-headless') {
+        return fail(`dangerouslySkipPermissions is only valid when agent: "claude-code-headless" (got agent: "${agent}").`);
+      }
+      if (permissionMode != null && dangerouslySkipPermissions) {
+        return fail(`permissionMode and dangerouslySkipPermissions are mutually exclusive — pass at most one.`);
+      }
       if (agent === 'claude-api' && !host && !force) {
         if (!process.env.ANTHROPIC_API_KEY) {
           return fail(
@@ -191,6 +226,22 @@ export function registerRecruitTool(
           return fail(
             `agent: "opencode" requires the \`opencode\` binary on PATH. Install with \`npm install -g opencode-ai\` and retry, or use \`force: true\` to bypass this check.`,
           );
+        }
+      }
+      // #520 — claude-code-headless pre-flight. Two checks, both bounded by
+      // short timeouts (3s + 5s). The auth probe uses the official `claude
+      // auth status` subcommand — no billed API call. Cross-host recruits
+      // skip both — the target daemon's `availableAgentTypes` is the gate
+      // there (PR-2 wires the daemon-side probe).
+      if (agent === 'claude-code-headless' && !host && !force) {
+        const claudeBin = config.claudeBin ?? 'claude';
+        const binProbe = probeClaudeBinary(claudeBin);
+        if (!binProbe.ok) {
+          return fail(`agent: "claude-code-headless" pre-flight failed: ${binProbe.error} Use \`force: true\` to bypass.`);
+        }
+        const authProbe = probeClaudeAuth(claudeBin);
+        if (!authProbe.loggedIn) {
+          return fail(`agent: "claude-code-headless" pre-flight failed: ${authProbe.error} Use \`force: true\` to bypass.`);
         }
       }
 
@@ -307,6 +358,13 @@ export function registerRecruitTool(
           ...(agent === 'mock' ? { mockMode: mockMode ?? 'echo' } : {}),
           ...(agent === 'mock' && mockScenario ? { mockScenario } : {}),
           ...(agent === 'claude-api' && model ? { model } : {}),
+          // #520 — claude-code-headless permission knobs flow through the
+          // outbox so PR-2's spawn helper picks them up via env. Fields
+          // are only present on the entry when actually set; the
+          // OutboxEntryInput shape will gain typed `permissionMode` /
+          // `dangerouslySkipPermissions` fields in PR-2.
+          ...(agent === 'claude-code-headless' && permissionMode ? { permissionMode } : {}),
+          ...(agent === 'claude-code-headless' && dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
         } as OutboxEntryInput;
         const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 
