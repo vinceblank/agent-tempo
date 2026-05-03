@@ -1,0 +1,1 @@
+{"type":"system","subtype":"api_retry","attempt":1,"max_retries":3,"retry_delay_ms":1000,"error_status":401,"error":"authentication_failed","session_id":"99999999-0000-0000-0000-000000000003","uuid":"synth-auth-1"}
