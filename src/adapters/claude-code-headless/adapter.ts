@@ -38,7 +38,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import type { ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import type { AdapterDescriptor, Message, SessionMetadata } from '../../types';
 import { SdkAttachment, type SdkDeliverResult } from '../sdk/base';
@@ -50,6 +50,12 @@ import {
   getMetadataQuery,
   updateMetadataSignal,
 } from '../../workflows/signals';
+import { StreamJsonReader, type TurnAccumulator } from './stream-json';
+import {
+  mapSubprocessFailure,
+  describeFailure,
+  type ApiErrorCategory,
+} from './error-mapper';
 
 /**
  * Descriptor for the claude-code-headless adapter. Colocated with the
@@ -418,14 +424,17 @@ export class ClaudeCodeHeadlessAttachment extends SdkAttachment {
         const ackIds = messages.map((m) => m.id);
         // The whole batch is delivered as one `claude -p` invocation — the
         // representative `messages[0]` only drives processingStart/End.
-        // PR-3's invokeSdk reads `messages` directly via closure to build
-        // the prompt argv.
+        // QA flag from PR-2 review: closure-wrap so `invokeSdkWithBatch`
+        // sees `messages` via the captured argument (NOT via instance
+        // state — the prior comment claimed "via closure" but the method
+        // can't actually read closure-only vars). Mirrors opencode's
+        // pattern at `src/adapters/opencode/adapter.ts:443`.
         await this.deliver(
           handle,
           messages[0],
-          /* prompt unused — invokeSdk reads `messages` directly via closure */ '',
+          /* prompt unused — invokeSdkWithBatch reads `messages` from the closure-captured arg */ '',
           TURN_TIMEOUT_MS,
-          (timeoutPrompt, timeoutMs) => this.invokeSdk(timeoutPrompt, timeoutMs),
+          (timeoutPrompt, timeoutMs) => this.invokeSdkWithBatch(messages, timeoutPrompt, timeoutMs),
           ackIds,
         );
       } catch (err) {
@@ -447,25 +456,255 @@ export class ClaudeCodeHeadlessAttachment extends SdkAttachment {
   }
 
   /**
-   * Per-turn LLM dispatch. **PR-3** — currently a stub.
+   * Per-turn LLM dispatch. Spawns `claude -p` with the synthesized argv
+   * + inline `--mcp-config`, streams stdout through `StreamJsonReader`,
+   * and returns the closing `result` frame's assembled text + usage.
    *
-   * Will spawn `claude -p --output-format stream-json --verbose
-   * --strict-mcp-config --mcp-config <inline-json> --session-id <uuid>
-   * [--resume <uuid>] --permission-mode <mode>`, parse stream-json frames
-   * via `stream-json.ts`, and return the assembled assistant text +
-   * stop_reason + usage from the closing `result` frame.
+   * Closure-captured `messages[]` carries the multi-cue batch (PR-2 QA
+   * flag — see `pollLoop` for the closure-wrapping rationale). The
+   * representative `_prompt` arg from `SdkAttachment.deliver()` is
+   * unused; we build the prompt argv from `messages` directly.
    *
-   * For PR-2 the body throws — the poll loop catches it and the message
-   * stays PENDING for the next poll. This is the loud-failure path: a
-   * silent no-op would leave operators wondering why their cue went into
-   * a black hole. Once PR-3 lands the real implementation drops in.
+   * `_timeoutMs` is passed through to a Promise.race that SIGTERMs the
+   * subprocess on timeout. The base `SdkAttachment.deliver()` doesn't
+   * enforce its own timeout — we do it here.
+   *
+   * Subprocess failures (exit != 0, no result frame, or
+   * `result.is_error`) flow through the architect-ratified classifier
+   * in `./error-mapper.ts`. The classifier output is logged but the
+   * adapter does NOT call `markDelivered` on failure — the message
+   * stays PENDING so the next poll picks it up. The adapter's own
+   * retry-budget logic (PR-3 follow-up; mirrors #521's claude-api fix)
+   * tracks consecutive failures and escalates to detach when N=10
+   * `retriable-with-backoff` failures pile up.
    */
-  protected async invokeSdk(_prompt: string, _timeoutMs: number): Promise<SdkDeliverResult> {
-    throw new Error(
-      'claude-code-headless adapter invokeSdk() not yet implemented (PR-3 wires the per-turn `claude -p` tool-use loop). ' +
-      `Adapter is otherwise alive — sessionId=${this.sessionId}, permissionMode=${this.dangerouslySkipPermissions ? 'dangerously-skip-permissions' : this.permissionMode}.`,
+  protected async invokeSdkWithBatch(
+    messages: Message[],
+    _prompt: string,
+    timeoutMs: number,
+  ): Promise<SdkDeliverResult> {
+    if (!this.sessionId) {
+      throw new Error('invokeSdkWithBatch called before run() initialized sessionId');
+    }
+    const sessionId = this.sessionId;
+    const t0 = Date.now();
+
+    // Build the prompt — concatenate every queued cue with attribution.
+    // Mirrors opencode's `[from ${m.from}]: ${m.text}` shape so operators
+    // who switch between adapters see consistent transcript framing.
+    const promptText = messages
+      .map((m) => `[from ${m.from}]: ${m.text}`)
+      .join('\n\n');
+
+    // Synthesize the inline --mcp-config JSON. Per design §4 the adapter
+    // does NOT translate tool schemas itself; instead `claude` spawns
+    // `node dist/server.js` as a stdio MCP child of THE child (a separate
+    // process from the adapter). The MCP server picks up the env vars
+    // and registers all tempo tools natively.
+    const mcpServerPath = path.resolve(__dirname, '..', '..', 'server.js');
+    const config = getConfig();
+    const mcpConfig = JSON.stringify({
+      mcpServers: {
+        'claude-tempo': {
+          type: 'stdio',
+          command: 'node',
+          args: [mcpServerPath],
+          env: {
+            [ENV.ENSEMBLE]: config.ensemble,
+            [ENV.PLAYER_NAME]: this.playerName,
+            [ENV.TEMPORAL_ADDRESS]: config.temporalAddress,
+            [ENV.TEMPORAL_NAMESPACE]: config.temporalNamespace,
+          },
+        },
+      },
+    });
+
+    // Build the per-turn argv. `--resume` only on subsequent turns —
+    // detect by checking the per-cwd JSONL session file (see design
+    // §5.1 and the §11.2 cwd-encoding spike check).
+    const sessionFile = path.join(
+      os.homedir(),
+      '.claude',
+      'projects',
+      encodeCwd(process.cwd()),
+      `${sessionId}.jsonl`,
     );
+    const isResume = fs.existsSync(sessionFile);
+
+    const args = [
+      '-p',
+      '--output-format', 'stream-json',
+      '--verbose',
+      '--strict-mcp-config',
+      '--mcp-config', mcpConfig,
+      '--session-id', sessionId,
+      ...(isResume ? ['--resume', sessionId] : []),
+      ...(this.dangerouslySkipPermissions
+        ? ['--dangerously-skip-permissions']
+        : ['--permission-mode', this.permissionMode]),
+      // Trailing positional argument — the prompt text. The CLI accepts
+      // up to ARG_MAX bytes here (Windows: 32KB). Per §11.5 spike check,
+      // typical multi-cue batches stay well under the limit. (If we ever
+      // see ENAMETOOLONG, fall back to writing prompt to stdin via a
+      // setImmediate(end) pattern — design §7's original approach.)
+      promptText,
+    ];
+
+    // Env hygiene per design §3.6. ANTHROPIC_API_KEY would defeat the
+    // adapter's whole point (subscription billing); CLAUDE_CODE_OAUTH_TOKEN
+    // would force long-lived OAuth instead of the host's keychain. Strip
+    // both. Also strip CLAUDE_TEMPO_* (adapter-internal — the MCP server
+    // child gets its own env block via --mcp-config).
+    const childEnv: NodeJS.ProcessEnv = { ...process.env };
+    delete childEnv.ANTHROPIC_API_KEY;
+    delete childEnv.CLAUDE_CODE_OAUTH_TOKEN;
+    for (const k of Object.keys(childEnv)) {
+      if (k.startsWith('CLAUDE_TEMPO_')) delete childEnv[k];
+    }
+
+    // Windows: per architect's PR-3 reminder + the established pattern
+    // from spawnInTerminal / spawnOpenCodeAdapter, npm-installed binaries
+    // land as `.cmd` shims that Node's `CreateProcess` won't run directly
+    // and `shell: true` trips DEP0190. Wrap via `cmd.exe /c claude ...`
+    // explicitly. Non-Windows hosts spawn `claude` directly.
+    const isWindows = process.platform === 'win32';
+    const spawnCmd = isWindows ? 'cmd.exe' : 'claude';
+    const spawnArgs = isWindows ? ['/c', 'claude', ...args] : args;
+
+    log(`spawning claude -p (sessionId=${sessionId}, resume=${isResume}, permissionMode=${this.dangerouslySkipPermissions ? 'dangerously-skip-permissions' : this.permissionMode}, batch=${messages.length})`);
+
+    const child = spawn(spawnCmd, spawnArgs, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: childEnv,
+      // Don't inherit a controlling TTY — adapter runs headless.
+      detached: false,
+    });
+    this.childProcess = child;
+
+    const reader = new StreamJsonReader({
+      onParseError: (line, err) => {
+        log(`malformed stream-json frame skipped: ${err.message} — first 120 bytes: ${line.slice(0, 120)}`);
+      },
+    });
+    child.stdout!.on('data', (chunk) => reader.feed(chunk));
+
+    const stderrChunks: string[] = [];
+    let stderrBytes = 0;
+    const STDERR_CAP = 4096;
+    child.stderr!.on('data', (chunk) => {
+      const s = chunk.toString('utf8');
+      if (stderrBytes < STDERR_CAP) {
+        stderrChunks.push(s);
+        stderrBytes += s.length;
+      }
+    });
+
+    // Wait for subprocess exit OR per-turn timeout. The timeout SIGTERMs
+    // the child via `onSuperseded`'s machinery (childProcess pointer is
+    // set above) — same path the lease-loss abort uses.
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const exitCode = await new Promise<number | null>((resolve) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        log(`turn timeout (${timeoutMs}ms) — SIGTERMing claude subprocess`);
+        try { child.kill('SIGTERM'); } catch (err) { log('SIGTERM threw:', (err as Error)?.message ?? err); }
+      }, timeoutMs);
+      child.on('exit', (code) => resolve(code));
+    });
+    if (timer) clearTimeout(timer);
+
+    // Flush any trailing stdout line that arrived without a newline.
+    reader.flush();
+    this.childProcess = null;
+
+    const turn = reader.snapshot();
+    const stderr = stderrChunks.join('');
+
+    // Telemetry — log `apiKeySource: 'none'` from init so operators can
+    // confirm OAuth subscription billing is in effect. Architect note
+    // from spike comment.
+    if (turn.initApiKeySource !== null) {
+      log(`init apiKeySource=${turn.initApiKeySource} model=${turn.initModel ?? 'unknown'} (apiKeySource='none' confirms OAuth subscription billing)`);
+    }
+    if (turn.pluginErrors.length > 0) {
+      log(`WARNING: plugin_errors observed: ${JSON.stringify(turn.pluginErrors)}`);
+    }
+
+    // Surface informational rate-limit transitions for ops visibility.
+    // Architect Constraint #1: status='allowed' is informational — log
+    // only the action-required transitions to keep the log signal clean.
+    for (const evt of turn.rateLimitEvents) {
+      const status = evt.rate_limit_info?.status;
+      const overage = evt.rate_limit_info?.overageStatus;
+      if (status === 'blocked') {
+        log(`WARNING: rate_limit_event status=${status} overageStatus=${overage} — see error-mapper for classifier dispatch`);
+      }
+    }
+
+    // Per-turn telemetry log (design §5.6). `total_cost_usd` is reported
+    // even on subscription billing — it reflects equivalent API cost,
+    // not actual subscription burn. Operators should know this.
+    log(
+      `turn-usage adapter=claude-code-headless model=${turn.initModel ?? 'unknown'} ` +
+      `input=${(turn.usage?.['input_tokens'] as number | undefined) ?? 0} ` +
+      `output=${(turn.usage?.['output_tokens'] as number | undefined) ?? 0} ` +
+      `cache_read=${(turn.usage?.['cache_read_input_tokens'] as number | undefined) ?? 0} ` +
+      `cache_create=${(turn.usage?.['cache_creation_input_tokens'] as number | undefined) ?? 0} ` +
+      `cost_usd=${turn.totalCostUsd ?? 0} ` +
+      `elapsed_ms=${Date.now() - t0} ` +
+      `player=${this.playerName} ` +
+      `stop_reason=${turn.stopReason ?? 'none'}`,
+    );
+
+    // ── Success path ──
+    if (
+      turn.resultFrameSeen &&
+      turn.resultIsError === false &&
+      exitCode === 0
+    ) {
+      return {
+        sdkResult: {
+          assistantText: turn.assembledText,
+          stopReason: turn.stopReason,
+          usage: turn.usage,
+          totalCostUsd: turn.totalCostUsd,
+        },
+        elapsedMs: Date.now() - t0,
+      };
+    }
+
+    // ── Failure path ── classify and surface a useful error.
+    const ctx = { exitCode: timedOut ? null : exitCode, stderr, turn };
+    const category: ApiErrorCategory = mapSubprocessFailure(ctx);
+    const description = describeFailure(ctx);
+    log(`classifier=${category}: ${description}`);
+
+    // Throwing here surfaces to `SdkAttachment.deliver()`'s try/finally
+    // so `processingEnd` still fires and the message stays PENDING (no
+    // markDelivered on failure). The classifier category is logged for
+    // future PR-3 follow-up: when #521's shared classifier lands, the
+    // adapter's retry-budget logic will read this category and escalate
+    // to detach after N=10 consecutive `retriable-with-backoff` failures.
+    throw new Error(`claude -p ${category}: ${description}`);
   }
+}
+
+/**
+ * Encode a cwd into Claude Code's per-cwd project-dir naming scheme.
+ * Confirmed empirically in the §11.2 spike check (issue #520) — every
+ * `:`, `/`, and `\` becomes `-`. Drive prefixes like `C:\` produce a
+ * double-dash (`C--`).
+ *
+ * Pinned by `tests/adapters/claude-code-headless/cwd-encoding.test.ts`
+ * against the captured fixture so a future Claude Code minor bump that
+ * changes the scheme breaks loudly here, not silently in resume.
+ *
+ * Exported for tests only — production callers go through the on-disk
+ * sessionFile-exists check in `invokeSdkWithBatch`.
+ */
+export function encodeCwd(cwd: string): string {
+  return cwd.replace(/[\/\\:]/g, '-');
 }
 
 // Self-exec entry point — same pattern as claude-api / opencode. When this

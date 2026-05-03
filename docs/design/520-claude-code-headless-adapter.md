@@ -1069,3 +1069,206 @@ When cross-machine `migrate` lands in Phase 2, the v1 design must NOT pre-empt t
 - **MCP**:
   - `claude --help` — `--mcp-config`, `--strict-mcp-config`, `--allowedTools`, `--permission-mode` flag specs
   - [Claude Code MCP docs](https://code.claude.com/docs/en/mcp) — stdio MCP server schema
+
+---
+
+## 16. Spike findings (impl-time corrections to §5.x and §6.1)
+
+> **Status**: Append-only record of what was actually observed against
+> `claude --version` 2.1.126 during the §11 pre-impl spike (2026-05-02)
+> and confirmed during PR-3 implementation. **Does NOT rewrite §5.x or
+> §6.1** — the original sections are preserved as the design record;
+> this section documents the wild-vs-design deltas and the resolutions
+> ratified by the architect during PR-1 → PR-3.
+>
+> Future readers: §5.x and §6.1 reflect the design intent; §16 reflects
+> the implemented reality.
+
+### 16.1 `result` frame `subtype` field — Delta #1 (minor)
+
+**§5.3 said** `result` is a top-level type. **Reality**: every `result`
+frame carries a `subtype: 'success' | 'error'` and a richer envelope
+than documented. Concretely:
+
+```json
+{"type":"result","subtype":"success","is_error":false,"api_error_status":null,
+ "duration_ms":2191,"num_turns":1,"result":"PINEAPPLE","stop_reason":"end_turn",
+ "session_id":"...","total_cost_usd":0.088202,"usage":{...},
+ "modelUsage":{"claude-opus-4-7[1m]":{...}},"permission_denials":[],
+ "terminal_reason":"completed","fast_mode_state":"off"}
+```
+
+Bonus fields the adapter now consumes:
+
+- **`is_error: boolean`** — clean fatal-vs-success boolean.
+- **`api_error_status: number | null`** — HTTP status when API errored.
+  **Architect-ratified preferred classifier input** — see §16.4.
+- `permission_denials: []` — denied tool calls (telemetry).
+- `terminal_reason: 'completed' | 'aborted' | …` — orthogonal to `stop_reason`.
+- `total_cost_usd` — **present even on subscription billing** (reflects
+  equivalent API cost, not actual subscription burn). Logged in
+  `turn-usage` lines so operators see cost regardless of billing path.
+- `modelUsage` keyed by model — multi-model turn accounting.
+
+**Resolution**: stream-json parser (`src/adapters/claude-code-headless/stream-json.ts`)
+treats `result.subtype` as future-proofed; PR-3 dispatches on
+`result.is_error` + `result.api_error_status` directly via
+`error-mapper.ts`'s preferred path.
+
+### 16.2 `system/hook_*` and `system/status` frames — Delta #2 (filtering)
+
+**§5.3 didn't enumerate** `system/hook_started`, `system/hook_response`,
+`system/status`. **Reality**: these emit unconditionally whenever the host
+has Claude Code hooks configured (most operators do — SessionStart hooks
+for project context, language-server hooks, etc). The `output`/`stdout`
+fields can carry arbitrary user content (saw a 107KB SessionStart hook
+body in real captures).
+
+**Resolution**: parser explicitly enumerates these subtypes as IGNORED in
+the dispatch switch, with a comment so future readers don't think the
+pass-through is accidental. Documented in `hook-frames.jsonl` synthetic
+fixture so unit tests assert the ignore behavior.
+
+### 16.3 `rate_limit_event` is a top-level type — Delta #3 (classifier shape)
+
+**§5.4 / §5.5 / §5.8 assumed** `system/api_retry` is the carrier for
+rate-limit / billing / auth signals. **Reality**: `rate_limit_event` is
+a top-level frame type (NOT a `system/*` subtype), AND it carries TWO
+overloaded signal modes on the same wire shape, distinguished by
+`rate_limit_info.status`:
+
+```json
+{"type":"rate_limit_event",
+ "rate_limit_info":{"status":"allowed","resetsAt":1777782000,
+                    "rateLimitType":"five_hour","overageStatus":"allowed",
+                    "overageResetsAt":1777769400,"isUsingOverage":false},
+ "session_id":"...","uuid":"..."}
+```
+
+Critically, `status: 'allowed'` events fire **on every successful turn**
+as informational telemetry; only `status: 'blocked'` events represent
+action-required signals. Naively treating every `rate_limit_event` as a
+classifier input would overflow the N=10 retry budget on turn 1.
+
+**Architect ratification** (issue #520 spike-comment thread) — handle
+both channels with a 5-rule precedence table (most-fatal-wins, single
+increment per failure):
+
+| Rule | Signal | Category |
+|---|---|---|
+| 1 | subprocess+stderr-regex (auth/billing patterns) | `fatal` |
+| 2 | `system/api_retry` with `error: 'authentication_failed' \| 'oauth_org_not_allowed' \| 'billing_error' \| 'invalid_request' \| 'max_output_tokens'` | `fatal` |
+| 3 | `rate_limit_event` with `status: 'blocked'` AND `overageStatus: 'blocked'` | `fatal` |
+| 4 | `system/api_retry` with `error: 'rate_limit' \| 'server_error' \| 'unknown'` | `retriable-with-backoff` |
+| 5 | `rate_limit_event` with `status: 'blocked'` AND `overageStatus: 'allowed'` | `retriable-with-backoff` |
+
+Plus three pinned constraints:
+- `rate_limit_event` with `status: 'allowed'` is **NEVER** a classifier
+  input (informational telemetry only)
+- Auth/billing/oauth-org/invalid-request stay on `system/api_retry` +
+  stderr regex — `rate_limit_event` doesn't carry these categories
+- Multi-channel de-dupe: each subprocess failure increments the retry
+  budget exactly ONCE
+
+### 16.4 Architect-ratified preferred classifier path — `result.is_error` + `api_error_status`
+
+Independently surfaced from Delta #1: when the `result` frame arrives
+with `is_error: true` AND a non-null `api_error_status`, dispatch
+directly on the HTTP code (reuse claude-api's mapping shape):
+
+| HTTP status | Category |
+|---|---|
+| 401, 403 | `fatal` (auth) |
+| 400, 404, 422, … (other 4xx) | `fatal` |
+| 5xx, 529 | `retriable-with-backoff` |
+
+**Architect comment**: *"this is actually CLEANER than relying on either
+rate_limit_event or system/api_retry, and the design didn't anticipate
+it."* The result-frame path bypasses both streaming channels entirely
+for fatal-vs-transient classification.
+
+### 16.5 `sessionId` field — `claudeCodeSessionId` retracted (was §6.1)
+
+**§6.1 proposed** adding a typed `claudeCodeSessionId?: string` field to
+`SessionMetadata` "alongside the existing `sessionId` (Copilot) field."
+**Reality** (`src/types.ts:215` JSDoc): `sessionId` was already typed
+for shared use across Copilot AND interactive Claude Code:
+
+> *"Session UUID — used for Copilot SDK sessionId and Claude Code
+> --resume/--session-id."*
+
+The design's premise that `sessionId` was "Copilot-only" was working
+from a stale assumption — the field was already typed for shared use
+before this design doc was written.
+
+**Architect ratification — Option (a) — REUSE `sessionId`**:
+- Zero new wire surface (no `WIRE-PROTOCOL.md` change to the
+  `updateMetadata` payload)
+- Free interactive↔headless continuity if a player ever migrates
+  within the same cwd (Claude Code's session JSONL is per-cwd, not
+  per-adapter)
+- Avoids two-UUIDs-per-session forking pathologies
+
+**§6.1's proposed `claudeCodeSessionId` field is RETRACTED.** The
+canonical name is `sessionId` and it was already typed for shared use
+per `types.ts` JSDoc. PR-2 refreshed the JSDoc to reflect three usage
+paths (Copilot SDK + Claude Code interactive + Claude Code headless)
+plus an opaque-UUID warning.
+
+**Constraint for adapter-side consumers**: `sessionId` MUST be treated
+as opaque UUID string; different adapters write different shapes
+through this field (Copilot SDK ids, Claude Code UUIDv4, OpenCode
+server-session ids, even `mock-<pid>` placeholders in dev mode), and
+that's by design.
+
+### 16.6 Recruit-tool Zod mutex — `refine`/`superRefine` not callable
+
+**§3.1 implied** the recruit tool's Zod schema would enforce the
+`permissionMode` ↔ `dangerouslySkipPermissions` mutex via `refine` /
+`superRefine`. **Reality**: `defineTool()` (in `src/tools/helpers.ts`)
+takes `paramsSchema` as `Record<string, ZodTypeAny>` — NOT a
+`ZodObject` — so `refine` / `superRefine` aren't callable on it.
+
+**Resolution**: PR-1 enforces the mutex in the handler body via a
+runtime guard:
+
+```ts
+if (permissionMode != null && dangerouslySkipPermissions) {
+  return fail(`permissionMode and dangerouslySkipPermissions are mutually exclusive — pass at most one.`);
+}
+```
+
+This matches the existing `model` agent-guard pattern elsewhere in
+`recruit.ts` (e.g., `if (model != null && agent !== 'claude-api' && agent !== 'opencode')`).
+
+### 16.7 PR-2 closure-vs-method bug surfaced by QA
+
+PR-2 wrote `pollLoop` with a comment claiming `invokeSdk` *"reads
+`messages` directly via closure"* — but `invokeSdk` is a class method,
+not a closure-captured variable. QA flagged this; PR-3 fixed by
+adopting opencode's pattern: closure-wrap the `deliver` callback so
+`messages` flows through the closure-captured argument explicitly:
+
+```ts
+await this.deliver(
+  handle, messages[0], '', TURN_TIMEOUT_MS,
+  (timeoutPrompt, timeoutMs) => this.invokeSdkWithBatch(messages, timeoutPrompt, timeoutMs),
+  ackIds,
+);
+```
+
+`invokeSdk` (the original method name) was renamed to
+`invokeSdkWithBatch` and gained a leading `messages: Message[]`
+parameter. The original `invokeSdk` signature on `SdkAttachment` is
+unchanged — the wrapper closure satisfies the base class contract.
+
+### 16.8 Argv-prompt simplification — no stdin race
+
+§11.5 spike check found that for per-turn invocation (Phase 1 locked),
+the prompt can be passed as the trailing positional argv argument
+rather than written to stdin. This eliminates the design §7's "Windows
+stdin race" concern entirely for typical prompts. The adapter passes
+the multi-cue batch as a single concatenated argv string; only when
+the prompt would exceed Windows ARG_MAX (32KB) would the adapter need
+to fall back to a stdin pipe (deferred — none observed in real-world
+multi-cue batches so far).
