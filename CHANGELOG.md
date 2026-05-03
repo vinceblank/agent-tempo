@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.16] - 2026-05-03
+
 ### Added
 
 - **Headless Claude Code adapter** (`agent: 'claude-code-headless'`) — fifth
