@@ -90,6 +90,7 @@ src/
 │   ├── set-name.ts / set-part.ts / who-am-i.ts / release.ts
 │   ├── pause.ts / play.ts / shutdown.ts / restore.ts
 │   ├── hosts.ts / set-ensemble-description.ts
+│   ├── save-state.ts / fetch-state.ts / clear-state.ts
 │   └── helpers.ts     # Zod/MCP tool registration wrapper
 ├── tui/
 │   ├── App.tsx / store.ts / commands.ts   # TUI root, state, slash commands
