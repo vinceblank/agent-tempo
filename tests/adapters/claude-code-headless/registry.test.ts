@@ -60,15 +60,19 @@ describe('ClaudeCodeHeadlessAttachment construction', () => {
     expect(() => new ClaudeCodeHeadlessAttachment({ dangerouslySkipPermissions: true })).not.toThrow();
   });
 
-  it('PR-2 stub: invokeSdk() rejects with a PR-3 marker (loud-failure path)', async () => {
-    // PR-2 wires run() but leaves invokeSdk as a stub that throws on first
-    // call. The loud-failure path is intentional: a silent no-op would
-    // leave operators wondering why their cue went into a black hole.
-    // Calling invokeSdk via a protected-access type assertion is the
-    // narrowest test surface that doesn't require a full Temporal harness.
+  it('PR-3: invokeSdkWithBatch throws when sessionId is uninitialized (run() must precede)', async () => {
+    // PR-3 replaces the PR-2 stub with the real per-turn `claude -p`
+    // implementation. Calling it before run() initialized sessionId
+    // surfaces a programmer-error rather than silently spawning with a
+    // bogus session UUID. Narrowest test surface that doesn't need a
+    // full Temporal harness.
     const attachment = new ClaudeCodeHeadlessAttachment() as unknown as {
-      invokeSdk: (prompt: string, timeoutMs: number) => Promise<unknown>;
+      invokeSdkWithBatch: (
+        messages: unknown[],
+        prompt: string,
+        timeoutMs: number,
+      ) => Promise<unknown>;
     };
-    await expect(attachment.invokeSdk('', 1000)).rejects.toThrow(/PR-3/);
+    await expect(attachment.invokeSdkWithBatch([], '', 1000)).rejects.toThrow(/sessionId/);
   });
 });
