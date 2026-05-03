@@ -1,0 +1,77 @@
+name: tempo-headless-jam
+description: >
+  Subscription-billed headless ensemble for scheduled / CI / background work
+  where you don't want to spawn visible terminals or burn Console workspace
+  credits. Every player runs `agent: claude-code-headless` — the host's
+  installed `claude` CLI is invoked per-turn via `claude -p`, so turns bill
+  against the operator's existing Claude Code subscription extra-usage
+  pool (Pro / Max plans), NOT a `sk-ant-api03-...` Console key.
+
+  Requires:
+    - `claude` binary on PATH (`npm install -g @anthropic-ai/claude-code`
+      or follow https://claude.com/download)
+    - Logged-in Claude Code session (`claude auth login`) — the recruit
+      pre-flight rejects with an actionable error if either check fails
+
+  Use cases:
+    - Scheduled cleanup PRs, doctor checks, gate evaluators that you want
+      to run without a human-in-the-loop terminal window
+    - CI / build-bot ensembles on hosts where the operator already has
+      a Pro / Max subscription and wants to use it instead of Console credits
+    - "Pair with claude-code-headless" runs where one headless explorer +
+      one headless prototyper iterate on a problem, with the operator
+      reading transcripts via the dashboard rather than driving via
+      terminal interactions
+
+  Headless players have FULL Claude Code tool access (Bash, Read, Write,
+  Edit, Glob, Grep, WebSearch, WebFetch) by inheritance from the spawned
+  CLI — strictly more capable than `claude-api` headless players (which
+  have MCP-only tool access).
+
+  See [docs/design/520-claude-code-headless-adapter.md](../../docs/design/520-claude-code-headless-adapter.md)
+  for the full design and §16 spike findings.
+
+conductor:
+  type: tempo-conductor
+  agent: claude-code-headless
+  permissionMode: acceptEdits
+  instructions: >
+    You are driving a headless ensemble for scheduled or CI work. Your
+    players have full Claude Code tool access AND the claude-tempo MCP
+    surface. Decompose the operator's task, delegate to the explorer +
+    prototyper, synthesize results. Report cleanly via `report` —
+    operators read transcripts via the dashboard, not by joining a
+    terminal session.
+
+players:
+  - name: explorer
+    type: tempo-improv
+    agent: claude-code-headless
+    permissionMode: acceptEdits
+    instructions: >
+      You are the headless researcher. Investigate the operator's task
+      via Read / Grep / Glob / WebSearch / WebFetch. Report findings
+      with structured comparisons (pros / cons / trade-offs / recommendation).
+      You have full file-read access — no per-tool gating beyond
+      Claude Code's default `acceptEdits` permission mode. Show your
+      work — document what you tried and what you ruled out.
+
+  - name: prototyper
+    type: tempo-soloist
+    agent: claude-code-headless
+    permissionMode: acceptEdits
+    instructions: >
+      You build small implementations to validate the explorer's
+      findings. Write minimal code with Bash + Edit + Write. Run tests
+      where appropriate. Don't over-engineer — focus on proving or
+      disproving the approach. Report what worked and what didn't.
+
+# No `schedules` block — headless ensembles are typically driven by
+# external triggers (cron, CI hooks) or operator cues from the dashboard.
+# Add a `schedules:` block if you want a periodic progress check, e.g.:
+#
+#   schedules:
+#     - name: progress-check
+#       message: "Share what you've found so far."
+#       target: all
+#       every: 30m

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Headless Claude Code adapter** (`agent: 'claude-code-headless'`) — fifth
+  shipped adapter, peer of `claude-code` / `claude-api` / `copilot` /
+  `opencode`. Spawns the host's installed `claude` CLI as a per-turn
+  `claude -p --output-format stream-json` subprocess; uses the operator's
+  existing Claude Code OAuth login so turns bill against subscription
+  extra-usage credits (Pro / Max plans) rather than a Console workspace
+  API key — the only ToS-clean way for a third-party tool to tap that
+  pool. Tool surface is the union of full Claude Code built-ins
+  (Bash / Read / Write / Edit / Glob / Grep / WebSearch / WebFetch) plus
+  the claude-tempo MCP surface (registered via inline `--mcp-config` so
+  `claude` spawns `dist/server.js` as its own MCP child — no in-process
+  bridge). Recruit pre-flight probes for `claude` binary on PATH AND
+  `claude auth status` returning logged-in (`force: true` bypass).
+  Supports `permissionMode` + `dangerouslySkipPermissions` recruit knobs
+  for the per-turn `--permission-mode` flag. Daemon boot probe extends
+  `availableAgentTypes` for cross-host recruit gating. Includes a
+  `tempo-headless-jam` example lineup. Wire-protocol impact: zero new
+  signals/queries/updates. (#520)
+
 ## [0.28.0-beta.15] - 2026-05-02
 
 ### Added

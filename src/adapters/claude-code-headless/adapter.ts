@@ -148,8 +148,9 @@ export class ClaudeCodeHeadlessAttachment extends SdkAttachment {
    */
   protected childProcess: ChildProcess | null = null;
   /**
-   * Per-cwd Claude Code session UUID. Used as both `--session-id` (every
-   * turn) and `--resume` (subsequent turns; see design §5.1). Hydrated from
+   * Per-cwd Claude Code session UUID. Used as `--session-id` on the first
+   * turn (to PIN the UUID) and `--resume` alone on subsequent turns
+   * (mutually exclusive per CLI v2.1.126 — see §16.9). Hydrated from
    * `SessionMetadata.sessionId` on `run()` — generated fresh + stashed if
    * absent. The same field is shared with the interactive Claude Code
    * adapter (architect-ratified Option (a) post-spike — see PR-3 §16).
@@ -537,8 +538,17 @@ export class ClaudeCodeHeadlessAttachment extends SdkAttachment {
       '--verbose',
       '--strict-mcp-config',
       '--mcp-config', mcpConfig,
-      '--session-id', sessionId,
-      ...(isResume ? ['--resume', sessionId] : []),
+      // Mutually exclusive — `claude -p` v2.1.126 rejects the combo
+      // `--session-id X --resume X` with: *"--session-id can only be
+      // used with --continue or --resume if --fork-session is also
+      // specified."* Spike-confirmed during PR-4 §8.4 manual smoke;
+      // see §16.9 in the design doc. First turn uses `--session-id`
+      // to PIN the deterministic UUID; subsequent turns use `--resume`
+      // alone (the resume target IS the same UUID — the JSONL
+      // filename embeds it, so claude finds the right session).
+      ...(isResume
+        ? ['--resume', sessionId]
+        : ['--session-id', sessionId]),
       ...(this.dangerouslySkipPermissions
         ? ['--dangerously-skip-permissions']
         : ['--permission-mode', this.permissionMode]),

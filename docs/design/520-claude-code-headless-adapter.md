@@ -1272,3 +1272,42 @@ the multi-cue batch as a single concatenated argv string; only when
 the prompt would exceed Windows ARG_MAX (32KB) would the adapter need
 to fall back to a stdin pipe (deferred — none observed in real-world
 multi-cue batches so far).
+
+### 16.9 `claude -p --session-id X --resume X` mutually exclusive — Delta #4 (PR-4 smoke)
+
+Surfaced during PR-4's manual §8.4 smoke test (issue #520). PR-3's argv
+synthesis sent BOTH `--session-id <uuid>` AND `--resume <uuid>` on resume
+turns, following design §5.1's literal recommendation. **Reality**:
+`claude -p` v2.1.126 rejects the combo with:
+
+> Error: --session-id can only be used with --continue or --resume if --fork-session is also specified.
+
+The design's premise ("explicit `--session-id` for deterministic resume,
+matched on the JSONL filename") was correct, but the CLI enforces a
+mutex that the design didn't anticipate.
+
+**Resolution**: when `isResume === true`, drop `--session-id` and pass
+`--resume <uuid>` alone. The `--resume` argument identifies the session
+via the JSONL filename embed (the per-cwd `~/.claude/projects/<encoded>/<uuid>.jsonl`
+file is named after the same UUID that was set with `--session-id` on
+the first turn). First-turn argv stays as `--session-id <uuid>` (no
+`--resume`) to PIN the deterministic UUID; subsequent turns use
+`--resume <uuid>` only.
+
+**Smoke evidence** (PR-4 §8.4 manual run):
+- First turn: `cache_create=33865 cost_usd=0.21` (fresh session, full context load)
+- Second turn (after restart, `--resume <same-uuid>`): `cache_read=33865 cost_usd=0.028` (cache hits prove session continuity)
+- The `cache_read` exactly matching the prior `cache_create` is the
+  authoritative proof that the resumed session loaded the same context
+  — `--resume <uuid>` works correctly with the JSONL-filename embed.
+
+**Bonus finding**: PR-3's classifier returns `retriable-with-backoff`
+on this kind of CLI-rejection failure, but the adapter currently has no
+actual backoff logic — the poll loop spins as fast as the workflow
+delivers PENDING messages, spawning a new `claude -p` (and on Windows,
+a new `cmd.exe /c claude` shim) per attempt. During the smoke this
+manifested as ~20 cmd-shim windows briefly flashing on screen before
+the operator killed them. The flash is cosmetic on POSIX (no shim
+window) but disruptive on Windows. Real backoff is deferred to #521's
+shared classifier work; the immediate fix in this PR removes the
+underlying retry trigger by sending the correct argv.
