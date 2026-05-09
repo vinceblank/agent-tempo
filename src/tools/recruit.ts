@@ -235,6 +235,27 @@ export function registerRecruitTool(
           return fail(`agent: "claude-code-headless" pre-flight failed: ${authProbe.error} Use \`force: true\` to bypass.`);
         }
       }
+      // #532 — copilot pre-flight. SDK-only probe (mirrors claude-api's
+      // pattern; copilot has no subprocess CLI on PATH). The bridge
+      // subprocess hard-requires `@github/copilot-sdk` at module load
+      // (`src/adapters/copilot/adapter.ts:71`), so without this gate the
+      // user only learns of the missing dep AFTER bridge spawn —
+      // adapter crashes with `process.exit(1)` and the player sits in
+      // `booting` until lease timeout. We use `probeSdkInstall` (FS walk)
+      // rather than `require.resolve` because pnpm layouts without a
+      // top-level hoisted link otherwise false-negative; see issue #532
+      // investigation footnote. GITHUB_TOKEN / Copilot CLI login are
+      // intentionally NOT checked: the SDK falls through to the
+      // logged-in user (`adapter.ts:31, :263`), so token presence is not
+      // a hard requirement. Cross-host recruits skip — the target
+      // daemon's `availableAgentTypes` is the gate there.
+      if (agent === 'copilot' && !host && !force) {
+        if (!probeSdkInstall('@github/copilot-sdk')) {
+          return fail(
+            `agent: "copilot" requires the @github/copilot-sdk optional dependency. Install with \`npm install @github/copilot-sdk\` and retry, or use \`force: true\` to bypass this check.`,
+          );
+        }
+      }
 
       // Resolve agent type if provided
       let agentDefinition: string | undefined;
