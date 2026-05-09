@@ -29,6 +29,22 @@ const ROLE_ABBREVIATIONS: Record<string, string> = {
 };
 
 /**
+ * Adapter types that are considered "headless" — i.e. they run without
+ * an interactive terminal. When a session has no explicit `part` and no
+ * player type, a headless adapter gets `'Headless <adapter> session'`
+ * instead of the generic `'Session in <basename>'`.
+ *
+ * Issue #537.
+ */
+const HEADLESS_ADAPTERS = new Set([
+  'claude-code-headless',
+  'copilot',
+  'opencode',
+  'claude-api',
+  'mock',
+]);
+
+/**
  * Compute the default `part` text seeded into a fresh session workflow.
  *
  * Issue #450 — replaces the hardcoded `'Conductor session'` literal
@@ -51,13 +67,16 @@ const ROLE_ABBREVIATIONS: Record<string, string> = {
  *   2. Else if `isConductor`, return `'Conductor session'` (the
  *      pre-#450 conductor literal — kept so untyped conductor sessions
  *      still read correctly).
- *   3. Else fall back to `'Session in <basename(workDir)>'`, or
+ *   3. Else if the adapter is headless (#537), return
+ *      `'Headless <adapterType> session'`.
+ *   4. Else fall back to `'Session in <basename(workDir)>'`, or
  *      `'New session'` when no `workDir` is provided.
  */
 export function defaultPart(opts: {
   playerType?: string;
   isConductor?: boolean;
   workDir?: string;
+  adapterType?: string;
 }): string {
   const playerType = opts.playerType?.trim();
   if (playerType) {
@@ -73,6 +92,12 @@ export function defaultPart(opts: {
   }
   if (opts.isConductor) {
     return 'Conductor session';
+  }
+  // Issue #537 — headless adapters get a descriptive default when
+  // neither playerType nor isConductor identify the session.
+  const adapterType = opts.adapterType?.trim();
+  if (adapterType && HEADLESS_ADAPTERS.has(adapterType)) {
+    return `Headless ${adapterType} session`;
   }
   if (opts.workDir && opts.workDir.trim()) {
     return `Session in ${path.basename(opts.workDir)}`;

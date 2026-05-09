@@ -121,7 +121,7 @@ async function main() {
     // `'Session in <basename>'` otherwise. Routed through the helper so
     // any future server-side player-type discovery picks up the typed
     // default automatically.
-    autoSummary: defaultPart({ isConductor, workDir }),
+    autoSummary: defaultPart({ isConductor, workDir, adapterType: isBridgeMode ? 'copilot' : 'claude' }),
     temporalConfig: {
       temporalAddress: config.temporalAddress,
       temporalNamespace: config.temporalNamespace,
