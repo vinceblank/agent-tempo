@@ -110,6 +110,11 @@ describe('diffHostProfiles', () => {
 describe('diffEnsembleSnapshot', () => {
   const baseTrack = () => ({
     playerPhases: new Map<string, string | undefined>(),
+    // #535 — parallel agentType Map. Set on `player.added`, deleted on
+    // `player.removed`, consumed by the prior reconstruction in
+    // `tick()` so the prior carries the player's real adapter family
+    // instead of a hardcoded `'claude'` stand-in.
+    playerAgentTypes: new Map<string, 'claude' | 'copilot' | 'mock' | 'claude-api' | 'opencode' | 'claude-code-headless'>(),
     flags: null as { paused: boolean; held: boolean } | null,
     schedulesHash: null as string | null,
     chatIds: new Set<string>(),
@@ -177,6 +182,36 @@ describe('diffEnsembleSnapshot', () => {
     expect(removed).toBeDefined();
     expect((removed!.payload as { playerId: string }).playerId).toBe('gone-one');
     expect(track.playerPhases.has('gone-one')).toBe(false);
+  });
+
+  // #535 — track.playerAgentTypes is set in lockstep with playerPhases on
+  // `player.added` and cleared on `player.removed`. The prior
+  // reconstruction inside `AggregateRunner.tick()` reads from this Map so
+  // every player carries its real adapter family — pre-#535 the prior
+  // hardcoded `'claude'`, which became a type lie once the wire union
+  // expanded. The headless-adapter case is the regression we're guarding.
+  it('records and clears playerAgentTypes for headless adapters (#535)', () => {
+    const track = baseTrack();
+    const next: AggregateEnsembleSnapshot = {
+      ensemble: 'demo', hasConductor: true,
+      flags: { paused: false, held: false },
+      players: [
+        { playerId: 'scribe', ensemble: 'demo', hostname: 'h', isConductor: false, agentType: 'claude-code-headless', part: '', workDir: '', phase: 'attached' },
+        { playerId: 'researcher', ensemble: 'demo', hostname: 'h', isConductor: false, agentType: 'opencode', part: '', workDir: '', phase: 'attached' },
+        { playerId: 'echo', ensemble: 'demo', hostname: 'h', isConductor: false, agentType: 'claude-api', part: '', workDir: '', phase: 'attached' },
+      ],
+      schedules: [], chat: [],
+    };
+    diffEnsembleSnapshot(null, next, track, at);
+    expect(track.playerAgentTypes.get('scribe')).toBe('claude-code-headless');
+    expect(track.playerAgentTypes.get('researcher')).toBe('opencode');
+    expect(track.playerAgentTypes.get('echo')).toBe('claude-api');
+
+    // After all three drop, the Map should be empty in lockstep with playerPhases.
+    const empty: AggregateEnsembleSnapshot = { ...next, players: [] };
+    diffEnsembleSnapshot(next, empty, track, at);
+    expect(track.playerAgentTypes.size).toBe(0);
+    expect(track.playerPhases.size).toBe(0);
   });
 
   it('does NOT re-emit flags / schedules when unchanged across polls', () => {

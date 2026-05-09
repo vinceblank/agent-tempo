@@ -159,7 +159,7 @@ interface PlayerSummaryV1 {
   ensemble: string;
   hostname: string;
   isConductor: boolean;
-  agentType: 'claude' | 'copilot' | 'mock';
+  agentType: 'claude' | 'copilot' | 'mock' | 'claude-api' | 'opencode' | 'claude-code-headless';  // #535 — mirrors AgentType in src/types.ts
   playerType?: string;
   phase?: AttachmentPhase;     // from WIRE-PROTOCOL §Type Reference
   part: string;

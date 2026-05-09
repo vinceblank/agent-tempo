@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Wire protocol: `PlayerSummaryV1.agentType` union expanded** to mirror
+  `AgentType` in `src/types.ts` — adds `'claude-api'`, `'opencode'`, and
+  `'claude-code-headless'` alongside the existing `'claude'`, `'copilot'`,
+  `'mock'`. Pre-fix, the snapshot projection coerced every headless
+  adapter to `'claude'`, making `claude-api` / `opencode` /
+  `claude-code-headless` players visually indistinguishable from
+  interactive Claude Code sessions in the dashboard. Additive extension
+  per the §6 stability rule in `src/http/event-types.ts` — no `/v1/` →
+  `/v2/` path bump. Aggregate diff loop now tracks `playerAgentTypes`
+  per-ensemble in lockstep with `playerPhases`, so the prior-snapshot
+  reconstruction carries each player's real adapter family instead of a
+  hardcoded stand-in. (#535)
+
 ### Fixed
 
 - copilot adapter: recruit pre-flight now fails fast with an actionable error

@@ -21,11 +21,25 @@
  */
 import type { TempoClient } from '../client/interface';
 import type { MaestroPlayerInfo, AttachmentPhase } from '../types';
+import { AGENT_TYPES } from '../types';
 import {
   PR1_SENTINEL_EVENT_ID,
   type EnsembleStateV1,
   type PlayerSummaryV1,
 } from './event-types';
+
+/**
+ * Runtime type guard — `MaestroPlayerInfo.agentType` is intentionally typed
+ * as open `string` so a forked daemon advertising a never-shipped adapter
+ * (e.g. `'gemini'`) doesn't crash the projection at the type level. The
+ * guard narrows the open-string input to the closed wire union before it
+ * reaches `PlayerSummaryV1`. Anything not in `AGENT_TYPES` (the canonical
+ * source-of-truth list at `src/types.ts`) falls back to `'claude'` in the
+ * caller — same defensive default as pre-#535, just over a wider whitelist.
+ */
+function isWireAgentType(s: string): s is PlayerSummaryV1['agentType'] {
+  return (AGENT_TYPES as readonly string[]).includes(s);
+}
 
 /**
  * Maximum chat messages embedded in the snapshot. Larger paging is left
@@ -78,10 +92,14 @@ export interface PlayerWireMeta {
 
 /**
  * Project a `MaestroPlayerInfo` into the wire-stable `PlayerSummaryV1`.
- * Drops fields that aren't part of the v1 contract; coerces `agentType`
- * from the open-string MaestroPlayerInfo to the `'claude' | 'copilot'`
- * union (anything unknown defaults to `'claude'` — the v1 contract
- * doesn't expose third-party adapters yet).
+ * Drops fields that aren't part of the v1 contract; passes `agentType`
+ * through verbatim — the wire union mirrors {@link AgentType} from
+ * `src/types.ts`, so every shipped adapter projects to its own label
+ * (#535). Pre-#535 the wire union was closed at `'claude' | 'copilot' |
+ * 'mock'` and headless adapters were coerced to `'claude'`, which made
+ * them indistinguishable from interactive Claude Code players in the
+ * dashboard. The union expansion is additive per the §6 stability rule
+ * in `event-types.ts` — no `/v1/` → `/v2/` bump.
  *
  * `wireMeta` is the session-level projection from
  * `TempoClient.getPlayerWireMeta` (Issue #399 W2). Pass `null` (or omit)
@@ -98,14 +116,16 @@ export function toPlayerSummaryV1(
   p: MaestroPlayerInfo,
   wireMeta: PlayerWireMeta | null = null,
 ): PlayerSummaryV1 {
-  // `MaestroPlayerInfo.agentType` is open (string); the wire contract is
-  // closed at `'claude' | 'copilot' | 'mock'`. Unknown values default to
-  // `'claude'` so a forked daemon advertising a new adapter can't poison
-  // the wire shape consumers are typed against.
+  // `MaestroPlayerInfo.agentType` is intentionally open (`string`) so a
+  // forked daemon advertising a never-shipped adapter doesn't crash the
+  // type system here. `isWireAgentType` narrows it against `AGENT_TYPES`
+  // (the canonical source-of-truth list); anything outside falls back to
+  // `'claude'` — same defensive default as pre-#535, just enforced over
+  // a wider whitelist. The drift detector in `test/snapshot.test.ts`
+  // asserts the wire union mirrors `AgentType`, so a future shipped
+  // adapter missing from one of the two surfaces fails CI.
   const agentType: PlayerSummaryV1['agentType'] =
-    p.agentType === 'copilot' || p.agentType === 'mock'
-      ? p.agentType
-      : 'claude';
+    isWireAgentType(p.agentType) ? p.agentType : 'claude';
   return {
     playerId: p.playerId,
     ensemble: p.ensemble,

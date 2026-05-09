@@ -148,12 +148,22 @@ export interface PlayerSummaryV1 {
   hostname: string;
   isConductor: boolean;
   /**
-   * Adapter family the player runs on. `'mock'` is dev-mode-only (recruit
-   * gate rejects it in production); the wire union exposes it so dashboards
-   * can render mock-jam ensembles without coercing the actual adapter to
-   * `'claude'`. Mirrors {@link AgentType} from `src/types.ts`.
+   * Adapter family the player runs on. Mirrors {@link AgentType} from
+   * `src/types.ts` — every shipped adapter is exposed verbatim so dashboards
+   * can render the actual backend instead of coercing headless adapters into
+   * `'claude'`. `'mock'` is dev-mode-only (recruit gate rejects it in
+   * production); the headless adapters (`'claude-api'`, `'opencode'`,
+   * `'claude-code-headless'`) ship as additive `/v1/` extensions per the
+   * stability rule at §6 — adding new adapters in future versions remains
+   * non-breaking, removing one requires `/v2/`. See #535.
    */
-  agentType: 'claude' | 'copilot' | 'mock';
+  agentType:
+    | 'claude'
+    | 'copilot'
+    | 'mock'
+    | 'claude-api'
+    | 'opencode'
+    | 'claude-code-headless';
   playerType?: string;
   /** Authoritative attachment phase (post-v0.26 — see WIRE-PROTOCOL.md). */
   phase?: AttachmentPhase;
