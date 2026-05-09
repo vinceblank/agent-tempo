@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   cross-host `recruit { agent: 'copilot', host: 'X' }` was rejected with a
   misleading "Host \"X\" cannot run copilot" message even on hosts where the
   SDK was installed and Copilot was logged in. (#532)
+- claude-code-headless adapter: model now reliably replies via the `cue` MCP
+  tool by injecting a per-turn `--append-system-prompt` with the canonical
+  "use your MCP tools to reply" framing (shared verbatim with the copilot
+  adapter via `src/adapters/sdk/system-prompt.ts`). Previously, replies were
+  lost as discarded subprocess stdout — the model had no framing telling it
+  to call `cue`, so it produced English-prose responses that the adapter
+  captured but had nowhere to deliver. MAESTRO_ACK augmentation for
+  human-from-dashboard messages is now also factored into the same shared
+  module so copilot and headless apply the identical augmentation. (#536)
 
 ## [0.28.0-beta.16] - 2026-05-03
 
