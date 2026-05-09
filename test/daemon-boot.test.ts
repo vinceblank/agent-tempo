@@ -29,10 +29,12 @@ import type { Client } from '@temporalio/client';
 import type { HostProfile } from '../src/types';
 import {
   advertiseHostProfile,
+  computeHostProfile,
   runDaemonBoot,
   scrubHostProfile,
   warnIfDevNamespaceDrift,
 } from '../src/daemon';
+import type { Config } from '../src/config';
 import { DEV_TEMPORAL_NAMESPACE, ENV } from '../src/config';
 
 // Empty proxy stands in for a Client: reaching into it would throw, which
@@ -153,6 +155,76 @@ describe('scrubHostProfile (#274 AC5c / M10 — privacy)', function () {
       expect(field, `leaked 'bob' in: ${field}`).to.not.include('bob');
       expect(field, `leaked 'eve' in: ${field}`).to.not.include('eve');
     }
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// computeHostProfile — copilot probe (#532 PR-2)
+// ────────────────────────────────────────────────────────────────────────
+//
+// Asserts the host-profile probe correctly advertises 'copilot' in
+// `availableAgentTypes` when the SDK is installed, and excludes it
+// when the SDK is missing. The probe itself lives in
+// `src/daemon-adapter-versions.ts:resolveCopilotSdkVersionSync`; here
+// we exercise the daemon-side glue via the `ComputeHostProfileDeps`
+// dep-injection seam that #532 PR-2 added to keep `computeHostProfile`
+// synchronous (matching the existing `claude-code-headless` block).
+
+describe('computeHostProfile copilot probe (#532 PR-2)', function () {
+  // Minimal Config — `computeHostProfile` only reads `defaultAgent`
+  // and `claudeBin` from it. Everything else can stay undefined.
+  const baseConfig = {
+    defaultAgent: 'claude' as const,
+    claudeBin: 'claude',
+  } as unknown as Config;
+
+  it('advertises `copilot` in availableAgentTypes when the SDK probe returns a version', function () {
+    const profile = computeHostProfile(baseConfig, {
+      resolveCopilotSdkVersionSync: () => '0.2.0',
+    });
+    expect(profile.availableAgentTypes).to.include('copilot');
+  });
+
+  it('excludes `copilot` from availableAgentTypes when the SDK probe returns undefined', function () {
+    const profile = computeHostProfile(baseConfig, {
+      resolveCopilotSdkVersionSync: () => undefined,
+    });
+    expect(profile.availableAgentTypes).to.not.include('copilot');
+  });
+
+  // Tripwire — `resolveCopilotSdkVersionSync` is contracted to never
+  // throw (it swallows MODULE_NOT_FOUND etc.), but `computeHostProfile`
+  // is on the daemon-boot critical path and must survive any surprise
+  // from a future loosening of that guard.
+  it('does NOT crash when the SDK probe throws — `copilot` is excluded', function () {
+    const profile = computeHostProfile(baseConfig, {
+      resolveCopilotSdkVersionSync: () => {
+        throw new Error('synthetic failure');
+      },
+    });
+    expect(profile.availableAgentTypes).to.not.include('copilot');
+  });
+
+  it('does not double-add `copilot` when it is also the configured defaultAgent', function () {
+    const profile = computeHostProfile(
+      { ...baseConfig, defaultAgent: 'copilot' as const } as unknown as Config,
+      { resolveCopilotSdkVersionSync: () => '0.2.0' },
+    );
+    const copilotEntries = (profile.availableAgentTypes ?? []).filter(
+      (a) => a === 'copilot',
+    );
+    expect(copilotEntries).to.have.length(1);
+  });
+
+  it('uses the production helper when no `resolveCopilotSdkVersionSync` dep is passed (smoke test)', function () {
+    // Production callers omit `deps` entirely. We don't assert on the
+    // outcome (host environment may or may not have @github/copilot-sdk
+    // installed), only that the call doesn't crash and returns a
+    // well-shaped profile. The DI seam is what's under test — the
+    // default fall-through path is critical for the daemon-boot path.
+    const profile = computeHostProfile(baseConfig);
+    expect(profile.availableAgentTypes).to.be.an('array');
+    expect(profile.availableAgentTypes).to.include('claude'); // defaultAgent always present
   });
 });
 

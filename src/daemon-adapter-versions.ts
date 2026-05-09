@@ -162,21 +162,54 @@ async function defaultRunCommand(cmd: string, args: string[]): Promise<string> {
   return stdout;
 }
 
-/** Try to resolve the Copilot SDK's package.json version. Returns
- * `undefined` when the optional dep isn't installed (covers npm
- * installs that opted out, dev environments without the bridge, etc.). */
-async function defaultResolveCopilotSdkVersion(): Promise<string | undefined> {
+/**
+ * Synchronous companion to {@link defaultResolveCopilotSdkVersion}.
+ * Returns the Copilot SDK's `package.json#version` if the optional
+ * dependency is installed, or `undefined` when the require fails.
+ *
+ * Exported for #532 PR-2 — `src/daemon.ts` `computeHostProfile()` is
+ * synchronous (matches the existing `claude-code-headless` block at
+ * `daemon.ts:278-288`, which uses synchronous probes from
+ * `src/adapters/claude-code-headless/pre-flight.ts`). Awaiting an
+ * async helper from a sync function isn't possible without cascading
+ * the change to all `computeHostProfile` call sites; instead, this
+ * sync helper is the single require-source-of-truth, and the async
+ * `defaultResolveCopilotSdkVersion` (kept for the
+ * `ProbeAdapterVersionsDeps['resolveCopilotSdkVersion']` contract)
+ * delegates to it.
+ *
+ * Tests stub this directly via the `resolveCopilotSdkVersionSync` dep
+ * on `computeHostProfile` (see `test/daemon-boot.test.ts`).
+ *
+ * Never throws — a `try/catch` swallows MODULE_NOT_FOUND and any
+ * other failure mode to `undefined`. A throw here would crash the
+ * daemon-boot critical path.
+ */
+export function resolveCopilotSdkVersionSync(): string | undefined {
   try {
     // `require` rather than ESM `import` so we read the package.json
     // synchronously without the await + dynamic-import-of-JSON dance.
-    // The wrapper IIFE keeps the require inside a try block so a
+    // The wrapper try/catch keeps the require inside a guard so a
     // bundler that statically analyzes imports still treats it as
     // optional.
-    const pkg = require('@github/copilot-sdk/package.json') as { version?: string };
+    const pkg = require('@github/copilot-sdk/package.json') as {
+      version?: string;
+    };
     return pkg.version;
   } catch {
     return undefined;
   }
+}
+
+/** Try to resolve the Copilot SDK's package.json version. Returns
+ * `undefined` when the optional dep isn't installed (covers npm
+ * installs that opted out, dev environments without the bridge, etc.).
+ *
+ * Delegates to {@link resolveCopilotSdkVersionSync} so the require
+ * call has a single source of truth — see that function's docstring
+ * for why the sync sibling exists. */
+async function defaultResolveCopilotSdkVersion(): Promise<string | undefined> {
+  return resolveCopilotSdkVersionSync();
 }
 
 function defaultLog(...args: unknown[]): void {

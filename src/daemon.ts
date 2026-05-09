@@ -32,7 +32,10 @@ import { createTempoClient } from './client';
 import { queryOrphanedSessions, restoreOrphansOnce, type OrphanCandidate } from './reconcile/orphans';
 import { listAgentTypes } from './ensemble/agent-types';
 import { probeClaudeBinary, probeClaudeAuth } from './adapters/claude-code-headless/pre-flight';
-import { probeAdapterVersions } from './daemon-adapter-versions';
+import {
+  probeAdapterVersions,
+  resolveCopilotSdkVersionSync,
+} from './daemon-adapter-versions';
 import type { GlobalMaestroInput, HostProfile } from './types';
 
 const log = (...args: unknown[]) => console.error(`[claude-tempo:daemon ${new Date().toISOString()}]`, ...args);
@@ -250,6 +253,29 @@ function daemonVersion(): string {
 }
 
 /**
+ * Test-only dependency-injection seam for {@link computeHostProfile}.
+ *
+ * Production callers omit `deps` entirely; the defaults resolve to the
+ * real probes in `daemon-adapter-versions.ts`. Tests inject stubs to
+ * exercise installed-vs-not-installed scenarios deterministically
+ * without touching the host filesystem. Mirrors the
+ * `ProbeAdapterVersionsDeps` shape from `daemon-adapter-versions.ts`,
+ * but only includes synchronous probes — `computeHostProfile` is sync
+ * by contract.
+ *
+ * Added in #532 PR-2 for the copilot host-profile probe.
+ */
+export interface ComputeHostProfileDeps {
+  /**
+   * Synchronous Copilot SDK version probe. Default:
+   * {@link resolveCopilotSdkVersionSync} from `daemon-adapter-versions.ts`.
+   * Returns the SDK's `package.json#version` when installed, or
+   * `undefined` when missing or unresolvable.
+   */
+  resolveCopilotSdkVersionSync?: () => string | undefined;
+}
+
+/**
  * Build the daemon's capability profile from its config + runtime env.
  * Result is NOT scrubbed — call `scrubHostProfile` before signaling.
  *
@@ -257,7 +283,12 @@ function daemonVersion(): string {
  * `runDaemonBoot(client, deps)` which provides this as the default
  * `computeHostProfile` dep.
  */
-export function computeHostProfile(config: Config): HostProfile {
+export function computeHostProfile(
+  config: Config,
+  deps: ComputeHostProfileDeps = {},
+): HostProfile {
+  const resolveCopilotSync =
+    deps.resolveCopilotSdkVersionSync ?? resolveCopilotSdkVersionSync;
   const agentTypes = (() => {
     try {
       return listAgentTypes().map((a) => a.name);
@@ -287,16 +318,37 @@ export function computeHostProfile(config: Config): HostProfile {
     // Probe machinery should never throw, but guard anyway — host-profile
     // computation is on the critical boot path.
   }
+  // #532 PR-2 — copilot probe. Reuses the same sync require-source-of-
+  // truth as `defaultResolveCopilotSdkVersion` (which it delegates to);
+  // resolves to a version string when `@github/copilot-sdk` is
+  // installed, or `undefined` when missing. Closes the gap where
+  // cross-host recruit of `agent: 'copilot'` was rejected with a
+  // misleading "host cannot run copilot" message even on hosts where
+  // the SDK was installed and Copilot was logged in. Pattern mirrors
+  // the claude-code-headless block above.
+  try {
+    const copilotVersion = resolveCopilotSync();
+    if (copilotVersion && !availableAgentTypes.includes('copilot')) {
+      availableAgentTypes.push('copilot');
+    }
+  } catch {
+    // Defensive — `resolveCopilotSdkVersionSync` already swallows
+    // require failures, but the boot path must not crash on any
+    // surprise here.
+  }
 
   return {
     hostname: os.hostname(),
     version: daemonVersion(),
     defaultAgent: config.defaultAgent,
-    // #520 — was: `[config.defaultAgent]`. Now grows when the optional
-    // claude-code-headless probe passes. Future PRs can extend the same
-    // pattern for `copilot` / `claude-api` / `opencode` (e.g. probe
-    // `@anthropic-ai/sdk` install + ANTHROPIC_API_KEY env). Recording as
-    // an array keeps the wire shape forward-compatible.
+    // #520 + #532 PR-2 — was: `[config.defaultAgent]`. Now grows when
+    // the optional probes pass: `claude-code-headless` (when `claude`
+    // is on PATH AND logged in), `copilot` (when `@github/copilot-sdk`
+    // is installed). Future PRs can extend the same pattern for
+    // `claude-api` (probe `@anthropic-ai/sdk` install +
+    // ANTHROPIC_API_KEY env) and `opencode` (probe `@opencode-ai/sdk`
+    // install + `opencode` binary on PATH). Recording as an array
+    // keeps the wire shape forward-compatible.
     availableAgentTypes,
     availablePlayerTypes: agentTypes,
     claudeBin: config.claudeBin,
