@@ -56,6 +56,14 @@ import {
   describeFailure,
   type ApiErrorCategory,
 } from './error-mapper';
+// #536 — pure prompt-build helpers (system-prompt injection +
+// MAESTRO_ACK augmentation). Extracted so the per-turn driver below
+// stays focused on subprocess I/O.
+import {
+  buildClaudeArgs,
+  buildPromptText,
+  buildSdkSystemPrompt,
+} from './prompt';
 
 /**
  * Descriptor for the claude-code-headless adapter. Colocated with the
@@ -493,9 +501,10 @@ export class ClaudeCodeHeadlessAttachment extends SdkAttachment {
     // Build the prompt — concatenate every queued cue with attribution.
     // Mirrors opencode's `[from ${m.from}]: ${m.text}` shape so operators
     // who switch between adapters see consistent transcript framing.
-    const promptText = messages
-      .map((m) => `[from ${m.from}]: ${m.text}`)
-      .join('\n\n');
+    // #536 — `buildPromptText` additionally appends MAESTRO_ACK to any
+    // message with `isMaestro: true`, mirroring copilot's poll-loop
+    // pattern (see `src/adapters/copilot/adapter.ts:639-645`).
+    const promptText = buildPromptText(messages);
 
     // Synthesize the inline --mcp-config JSON. Per design §4 the adapter
     // does NOT translate tool schemas itself; instead `claude` spawns
@@ -532,33 +541,22 @@ export class ClaudeCodeHeadlessAttachment extends SdkAttachment {
     );
     const isResume = fs.existsSync(sessionFile);
 
-    const args = [
-      '-p',
-      '--output-format', 'stream-json',
-      '--verbose',
-      '--strict-mcp-config',
-      '--mcp-config', mcpConfig,
-      // Mutually exclusive — `claude -p` v2.1.126 rejects the combo
-      // `--session-id X --resume X` with: *"--session-id can only be
-      // used with --continue or --resume if --fork-session is also
-      // specified."* Spike-confirmed during PR-4 §8.4 manual smoke;
-      // see §16.9 in the design doc. First turn uses `--session-id`
-      // to PIN the deterministic UUID; subsequent turns use `--resume`
-      // alone (the resume target IS the same UUID — the JSONL
-      // filename embeds it, so claude finds the right session).
-      ...(isResume
-        ? ['--resume', sessionId]
-        : ['--session-id', sessionId]),
-      ...(this.dangerouslySkipPermissions
-        ? ['--dangerously-skip-permissions']
-        : ['--permission-mode', this.permissionMode]),
-      // Trailing positional argument — the prompt text. The CLI accepts
-      // up to ARG_MAX bytes here (Windows: 32KB). Per §11.5 spike check,
-      // typical multi-cue batches stay well under the limit. (If we ever
-      // see ENAMETOOLONG, fall back to writing prompt to stdin via a
-      // setImmediate(end) pattern — design §7's original approach.)
+    // #536 — per-turn system-prompt injection. The shared template
+    // (also used by copilot via `sessionConfig.systemMessage`) tells
+    // the model to use MCP tools — including `cue` — to reply. Without
+    // this the model produced English-prose responses to stdout that
+    // the adapter captured and discarded; no cue-back ever surfaced.
+    const systemPrompt = buildSdkSystemPrompt({ ensemble: config.ensemble });
+
+    const args = buildClaudeArgs({
+      sessionId,
+      isResume,
+      mcpConfig,
+      systemPrompt,
       promptText,
-    ];
+      permissionMode: this.permissionMode,
+      dangerouslySkipPermissions: this.dangerouslySkipPermissions,
+    });
 
     // Env hygiene per design §3.6. ANTHROPIC_API_KEY would defeat the
     // adapter's whole point (subscription billing); CLAUDE_CODE_OAUTH_TOKEN
