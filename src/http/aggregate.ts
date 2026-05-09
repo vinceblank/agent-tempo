@@ -505,6 +505,9 @@ export class AggregateRunner {
 
   /** Fetch the current cluster state via `TempoClient`. */
   async collect(): Promise<AggregateSnapshot> {
+    const tickGen = this.tickGen;
+    const preludeStart = this.now();
+    log(`collect tick=${tickGen}: prelude started`);
     const capturedAt = new Date(this.now()).toISOString();
     const ensembles = await this.client.listEnsembles().catch(() => []);
     const hostProfiles: Record<string, HostProfile> = {};
@@ -514,8 +517,16 @@ export class AggregateRunner {
         if (h.profile) hostProfiles[h.hostname] = h.profile;
       }
     } catch { /* fall through with empty hostProfiles */ }
+    const preludeMs = this.now() - preludeStart;
+    log(
+      `collect tick=${tickGen}: prelude complete ` +
+      `(${preludeMs}ms, ensembles=${ensembles.length}, ` +
+      `hosts=${Object.keys(hostProfiles).length})`,
+    );
 
     // Per-ensemble fan-out.
+    const pollStart = this.now();
+    log(`collect tick=${tickGen}: poll started`);
     const perEnsemble = await Promise.all(
       ensembles.map(async (e): Promise<AggregateEnsembleSnapshot | null> => {
         try {
@@ -546,6 +557,13 @@ export class AggregateRunner {
           return null;
         }
       }),
+    );
+    const dropped = perEnsemble.filter((x) => x === null).length;
+    const succeeded = perEnsemble.length - dropped;
+    const pollMs = this.now() - pollStart;
+    log(
+      `collect tick=${tickGen}: poll complete ` +
+      `(${pollMs}ms, succeeded=${succeeded}, dropped=${dropped})`,
     );
     return {
       capturedAt,
