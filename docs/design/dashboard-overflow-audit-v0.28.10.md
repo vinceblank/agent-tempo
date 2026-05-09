@@ -142,7 +142,7 @@ Four meta-findings emerged worth foregrounding for future audits:
 
 Mid-walk, both walker channels lost browser-automation tooling at different points:
 - **tempo-qa** hit `Browser extension is not connected` from Chrome MCP (~4 min into Batch A setup)
-- **tempo-researcher** hit the same Chrome MCP failure **plus** an aggregate-poll-stuck dev daemon (HTTP API hang, same #249-era pattern recurring) — **both failure modes simultaneously**
+- **tempo-researcher** hit the same Chrome MCP failure **plus** an aggregate-poll-stuck dev daemon (HTTP API hang — filed as #483 at the time, since identified as a duplicate of #433 fixed by PR #501) — **both failure modes simultaneously**
 
 The methodology degraded gracefully via two composable paths:
 1. **Static-only fallback** with disposition tag `static-confirmed, live measurement pending` for class-A self-overflow patterns where missing-rule causal chains constitute sufficient evidence
