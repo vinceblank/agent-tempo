@@ -42,6 +42,10 @@ import { createTemporalConnection } from '../../connection';
 import { Message } from '../../types';
 import type { AdapterDescriptor } from '../../types';
 import { SdkAttachment } from '../sdk/base';
+// #536 — shared SDK-class system-prompt + MAESTRO_ACK (was inline
+// here pre-#536; moved to the shared module so the post-#536
+// claude-code-headless adapter mirrors the same dialect).
+import { MAESTRO_ACK, buildSdkSystemPrompt } from '../sdk/system-prompt';
 import { updateMetadataSignal } from '../../workflows/signals';
 
 /**
@@ -282,18 +286,10 @@ export class CopilotSdkAttachment extends SdkAttachment {
       },
       systemMessage: {
         mode: 'append' as const,
-        content:
-          `You are part of the "${config.ensemble}" ensemble coordinated via Temporal. ` +
-          `You have MCP tools available — ALWAYS use these tools directly, NEVER try to run them as shell commands:\n` +
-          `- set_name: Set your player name (call this FIRST if instructed)\n` +
-          `- ensemble: List active sessions\n` +
-          `- cue: Send a message to another player\n` +
-          `- set_part: Update your status/description\n` +
-          `- listen: Check for pending messages\n` +
-          `- recruit: Spawn a new player session\n` +
-          `- report: Report to the conductor\n` +
-          `- stop: Stop a session\n\n` +
-          `When you receive a message from another session, treat it like a coworker asking for help — respond promptly using your MCP tools.`,
+        // #536 — content extracted to `src/adapters/sdk/system-prompt.ts`
+        // so claude-code-headless can use the same template via its
+        // `--append-system-prompt` argv. Behavior here is unchanged.
+        content: buildSdkSystemPrompt({ ensemble: config.ensemble }),
       },
       excludedTools: ['write_powershell', 'read_powershell', 'list_powershell'],
       ...(model ? { model } : {}),
@@ -459,7 +455,9 @@ export class CopilotSdkAttachment extends SdkAttachment {
       log(`set_name completed in ${Date.now() - t0}ms`);
     }
 
-    const MAESTRO_ACK = '\n\n[IMPORTANT: This message is from a human (Maestro). Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';
+    // #536 — `MAESTRO_ACK` lifted into `src/adapters/sdk/system-prompt.ts`
+    // so claude-code-headless's prompt-build applies the same string.
+    // Imported at the top of this module.
 
     // Write PID file so callers can find/kill orphaned bridge processes
     try {
