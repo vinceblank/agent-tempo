@@ -135,6 +135,16 @@ npm run check:all   # runs every CI gate locally (build, tests, drift checks, li
 > production code"; the hook's doc-comment should restate that explicitly. Hooks
 > are never surfaced through barrels or `TempoClient`.
 
+> **Project standard is npm** (declared via `package.json#packageManager`,
+> enforced in CI by `lint:lockfile-canonical`). If `npm` is blocked locally
+> (e.g. corp networks), `pnpm` works as a personal workaround — `pnpm-lock.yaml`
+> is gitignored, so it can exist on disk but must NOT be committed. The
+> `lint:lockfile-canonical` step inside `check:all` fails if any non-npm
+> lockfile (`pnpm-lock.yaml`, `yarn.lock`, or their `dashboard/` counterparts)
+> appears in `git ls-files`. The `dashboard/` subworkspace also uses npm and
+> ships its own `package-lock.json` — see `.github/workflows/ci.yml` for why
+> the install is intentionally independent.
+
 See [docs/development.md](docs/development.md) for full setup (Temporal dev server command,
 daemon worker notes, `npx ts-node` dev runner).
 
