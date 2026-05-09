@@ -27,13 +27,15 @@
  */
 import { expect } from 'chai';
 import type { TempoClient } from '../src/client/interface';
-import type { MaestroPlayerInfo, HostProfile } from '../src/types';
+import type { MaestroPlayerInfo, HostProfile, AgentType } from '../src/types';
+import { AGENT_TYPES } from '../src/types';
 import {
   buildEnsembleSnapshot,
   EnsembleNotFoundError,
   toPlayerSummaryV1,
   type PlayerWireMeta,
 } from '../src/http/snapshot';
+import type { PlayerSummaryV1 } from '../src/http/event-types';
 
 // ────────────────────────────────────────────────────────────────────────
 // toPlayerSummaryV1 projection
@@ -118,16 +120,67 @@ describe('toPlayerSummaryV1 projection (#399 W2 + Q5.6)', function () {
     expect(out.agentType).to.equal('copilot');
   });
 
-  it('coerces unknown agentType to claude per v1 contract', function () {
-    // The wire union is closed at `'claude' | 'copilot' | 'mock'`. Anything
-    // outside that set (e.g. a future `'gemini'` recruited from a forked
-    // build connecting to this snapshot) defaults to `'claude'` so the
-    // dashboard never sees a value the consumer isn't typed to handle.
+  // #535 — pre-fix the projection coerced any non-{claude,copilot,mock}
+  // value to `'claude'`, making the three headless adapters indistinguishable
+  // from interactive Claude Code players in the dashboard. Post-fix the wire
+  // union mirrors `AgentType` and the projection passes the value verbatim.
+  it('preserves agentType="claude-api" through the projection (#535)', function () {
+    const out = toPlayerSummaryV1({ ...baseInfo, agentType: 'claude-api' });
+    expect(out.agentType).to.equal('claude-api');
+  });
+
+  it('preserves agentType="opencode" through the projection (#535)', function () {
+    const out = toPlayerSummaryV1({ ...baseInfo, agentType: 'opencode' });
+    expect(out.agentType).to.equal('opencode');
+  });
+
+  it('preserves agentType="claude-code-headless" through the projection (#535)', function () {
+    const out = toPlayerSummaryV1({ ...baseInfo, agentType: 'claude-code-headless' });
+    expect(out.agentType).to.equal('claude-code-headless');
+  });
+
+  it('falls back to "claude" for forked-daemon unknown agentType (defensive)', function () {
+    // `MaestroPlayerInfo.agentType` is intentionally typed as open `string`
+    // — a forked daemon advertising a never-shipped adapter (e.g.
+    // `'gemini'` from a downstream consumer) shouldn't poison the wire
+    // shape consumers are typed against. The projection narrows via
+    // `AGENT_TYPES`; anything outside that whitelist falls back to
+    // `'claude'`. Pre-#535 the same default existed but the whitelist
+    // was just `['claude','copilot','mock']`; post-#535 it's the full
+    // `AgentType`.
     const out = toPlayerSummaryV1({
       ...baseInfo,
-      agentType: 'gemini' as unknown as MaestroPlayerInfo['agentType'],
+      agentType: 'gemini' as MaestroPlayerInfo['agentType'],
     });
     expect(out.agentType).to.equal('claude');
+  });
+
+  // #535 — type-level + runtime drift detector. Asserts the wire union
+  // covers every shipped `AgentType`. If a future adapter is added to
+  // `AGENT_TYPES` in `src/types.ts` but not to `PlayerSummaryV1.agentType`,
+  // either the compile fails (the `_AgentTypeIsSubsetOfWire` static check)
+  // or the runtime loop trips. Closes the gap that #535 surfaced — a new
+  // adapter shipping with no corresponding wire-union extension would
+  // silently coerce to `'claude'` again under the old projection.
+  it('every shipped AgentType is exposable on the wire (drift detector)', function () {
+    type _AgentTypeIsSubsetOfWire = AgentType extends PlayerSummaryV1['agentType']
+      ? true
+      : never;
+    // Compile-time witness — `true` is only assignable when the conditional
+    // resolves to `true` (i.e. AgentType ⊆ PlayerSummaryV1['agentType']).
+    // If a future adapter slips into AgentType without a wire-union update,
+    // this line will fail to type-check.
+    const _check: _AgentTypeIsSubsetOfWire = true;
+    void _check;
+
+    // Runtime check — exercises the projection for every entry in the
+    // canonical list, asserts pass-through. If the union is widened but
+    // the projection regresses to coercion, this catches it at test time
+    // instead of in production dashboards.
+    for (const t of AGENT_TYPES) {
+      const out = toPlayerSummaryV1({ ...baseInfo, agentType: t });
+      expect(out.agentType, `passthrough for AgentType="${t}"`).to.equal(t);
+    }
   });
 });
 

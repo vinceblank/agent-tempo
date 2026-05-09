@@ -347,7 +347,7 @@ Limits (enforced by `savePlayerState` validator and the `save_state` Zod schema)
 | `gitRoot` | `string?` | Git repository root, if detected. |
 | `gitBranch` | `string?` | Current git branch, if detected. |
 | `isConductor` | `boolean` | Whether this player is the conductor. |
-| `agentType` | `string` | Agent backend (`claude` or `copilot`). |
+| `agentType` | `string` | Agent backend — one of `claude`, `copilot`, `mock` (dev-mode-only), `claude-api`, `opencode`, `claude-code-headless`. Mirrors `AgentType` in `src/types.ts`. (#535) |
 | `playerType` | `string?` | Named agent type (e.g. `tempo-soloist`), if set. |
 | `status` | `string?` | Session lifecycle status (`pending`, `active`, `stale`, `blocked`, `terminated`). |
 

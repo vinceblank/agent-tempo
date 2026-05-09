@@ -51,6 +51,18 @@ interface EnsembleTrack {
   bus: EnsembleEventBus;
   /** Last seen player phase, keyed by playerId. */
   playerPhases: Map<string, string | undefined>;
+  /**
+   * Adapter family per playerId — used to faithfully reconstruct the
+   * prior `AggregateEnsembleSnapshot` view at tick boundaries (see #535).
+   * Pre-#535 the prior carried a hardcoded `agentType: 'claude'` because
+   * the wire union was closed at `'claude' | 'copilot' | 'mock'`; once the
+   * union mirrors `AgentType`, the prior must carry a real adapter type
+   * so the type system can't be blindsided by a future entry. Set in
+   * lockstep with `playerPhases` (`player.added` → `set`, `player.removed`
+   * → `delete`); agentType is treated as immutable for a player's
+   * lifetime (matches `MaestroPlayerInfo` semantics).
+   */
+  playerAgentTypes: Map<string, PlayerSummaryV1['agentType']>;
   /** Last (paused, held) tuple. */
   flags: { paused: boolean; held: boolean } | null;
   /** SHA-256 of last emitted schedules JSON. */
@@ -115,7 +127,7 @@ export interface DiffEvent {
 export function diffEnsembleSnapshot(
   prev: AggregateEnsembleSnapshot | null,
   next: AggregateEnsembleSnapshot,
-  track: Pick<EnsembleTrack, 'playerPhases' | 'flags' | 'schedulesHash' | 'chatIds' | 'chatIdOrder'>,
+  track: Pick<EnsembleTrack, 'playerPhases' | 'playerAgentTypes' | 'flags' | 'schedulesHash' | 'chatIds' | 'chatIdOrder'>,
   capturedAt: string,
 ): DiffEvent[] {
   const events: DiffEvent[] = [];
@@ -132,6 +144,11 @@ export function diffEnsembleSnapshot(
     if (!prevPlayers.has(p.playerId)) {
       events.push({ type: 'player.added', payload: p });
       track.playerPhases.set(p.playerId, p.phase);
+      // #535 — record the adapter family so the prior reconstruction at
+      // the next tick (aggregate.ts ~L600) carries the real agentType
+      // instead of a hardcoded `'claude'` stand-in. Treated as immutable
+      // for the player's lifetime; cleared on `player.removed` below.
+      track.playerAgentTypes.set(p.playerId, p.agentType);
       continue;
     }
     const lastPhase = track.playerPhases.get(p.playerId);
@@ -169,6 +186,7 @@ export function diffEnsembleSnapshot(
           },
         });
         track.playerPhases.delete(p.playerId);
+        track.playerAgentTypes.delete(p.playerId);
       }
     }
   }
@@ -419,6 +437,7 @@ export class AggregateRunner {
       track = {
         bus,
         playerPhases: new Map(),
+        playerAgentTypes: new Map(),
         flags: null,
         schedulesHash: null,
         chatIds: new Set(),
@@ -596,9 +615,17 @@ export class AggregateRunner {
         hasConductor: false, // not used by diffEnsembleSnapshot
         flags: track.flags ?? { paused: false, held: false }, // not used; uses track.flags directly
         players: [...track.playerPhases.keys()].map((id) => ({
-          // Minimal stand-in — only `playerId` is consulted by the diff.
+          // Minimal stand-in — only `playerId` is consulted by `diffEnsembleSnapshot`
+          // for `player.removed` events (see L154-L174). The other fields are
+          // zero-cost placeholders that satisfy `PlayerSummaryV1` typing without
+          // affecting any emitted event payload. `agentType` reads from the
+          // parallel track Map so the prior carries the player's real adapter
+          // family (#535) — pre-#535 this was hardcoded `'claude' as const`,
+          // which became a type lie once the wire union expanded to mirror
+          // `AgentType`. Fallback to `'claude'` covers the brief migration
+          // window where a long-running daemon's tracks predate the new Map.
           playerId: id, ensemble: eState.ensemble, hostname: '', isConductor: false,
-          agentType: 'claude' as const, part: '', workDir: '',
+          agentType: track.playerAgentTypes.get(id) ?? 'claude', part: '', workDir: '',
           phase: track.playerPhases.get(id) as import('../types').AttachmentPhase | undefined,
         })),
         schedules: [],
