@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- copilot adapter: recruit pre-flight now fails fast with an actionable error
+  when `@github/copilot-sdk` is not installed; daemon host profile correctly
+  advertises copilot when the SDK is available — closes the gap where
+  cross-host `recruit { agent: 'copilot', host: 'X' }` was rejected with a
+  misleading "Host \"X\" cannot run copilot" message even on hosts where the
+  SDK was installed and Copilot was logged in. (#532)
+
 ## [0.28.0-beta.16] - 2026-05-03
 
 ### Added
