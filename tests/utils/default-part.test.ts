@@ -8,7 +8,8 @@
  * `src/server.ts`).
  */
 import { describe, it, expect } from 'vitest';
-import { defaultPart } from '../../src/utils/default-part';
+import { defaultPart, HEADLESS_ADAPTERS } from '../../src/utils/default-part';
+import { AGENT_TYPES } from '../../src/types';
 
 describe('defaultPart', () => {
   describe('player-type-aware defaults', () => {
@@ -168,6 +169,32 @@ describe('defaultPart', () => {
       expect(defaultPart({ adapterType: '  opencode  ' })).toBe(
         'Headless opencode session',
       );
+    });
+  });
+
+  describe('HEADLESS_ADAPTERS drift detector (#537)', () => {
+    it('every non-claude member of AGENT_TYPES is in HEADLESS_ADAPTERS', () => {
+      // If a future adapter is added to AGENT_TYPES but not categorised
+      // here, this test fails loudly. If the new adapter is intentionally
+      // interactive (like 'claude'), add it to the opt-out list below.
+      const INTERACTIVE_OPT_OUT = new Set(['claude']);
+      for (const t of AGENT_TYPES) {
+        if (INTERACTIVE_OPT_OUT.has(t)) continue;
+        expect(
+          HEADLESS_ADAPTERS.has(t),
+          `AGENT_TYPES member '${t}' is not in HEADLESS_ADAPTERS — ` +
+          `add it there or to INTERACTIVE_OPT_OUT if intentionally interactive`,
+        ).toBe(true);
+      }
+    });
+
+    it('HEADLESS_ADAPTERS contains only known AGENT_TYPES members', () => {
+      for (const h of HEADLESS_ADAPTERS) {
+        expect(
+          (AGENT_TYPES as readonly string[]).includes(h),
+          `HEADLESS_ADAPTERS member '${h}' is not in AGENT_TYPES`,
+        ).toBe(true);
+      }
     });
   });
 });

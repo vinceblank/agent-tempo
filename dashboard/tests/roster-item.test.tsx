@@ -26,13 +26,13 @@ describe('RosterItem fallback chip (#537)', () => {
     expect(screen.queryByTestId(/^adapter-badge-/)).not.toBeInTheDocument();
   });
 
-  it('renders muted adapter-badge when playerType is absent and agentType is non-default', () => {
+  it('renders muted adapter-badge when playerType is absent and agentType is copilot', () => {
     render(
       <RosterItem
         player={makePlayer({
           playerId: 'scribe',
           playerType: undefined,
-          agentType: 'copilot' as any,
+          agentType: 'copilot',
         })}
       />,
     );
@@ -62,7 +62,7 @@ describe('RosterItem fallback chip (#537)', () => {
         player={makePlayer({
           playerId: 'eng',
           playerType: 'tempo-soloist',
-          agentType: 'copilot' as any,
+          agentType: 'copilot',
         })}
       />,
     );
@@ -83,5 +83,38 @@ describe('RosterItem fallback chip (#537)', () => {
     const chip = screen.getByTestId('adapter-badge-mock');
     expect(chip).toBeInTheDocument();
     expect(chip.textContent).toBe('mock');
+  });
+
+  it('renders adapter-badge for opencode agentType', () => {
+    // Post-#535 wire will carry real adapter types — verify opencode renders
+    render(
+      <RosterItem
+        player={makePlayer({
+          playerId: 'oc-player',
+          playerType: undefined,
+          // Post-#535 wire value; pre-#535 this would be coerced to 'claude'
+          agentType: 'opencode' as any,
+        })}
+      />,
+    );
+    const chip = screen.getByTestId('adapter-badge-opencode');
+    expect(chip).toBeInTheDocument();
+    expect(chip.textContent).toBe('opencode');
+  });
+
+  it('renders adapter-badge for claude-code-headless agentType', () => {
+    // Post-#535 wire value — the motivating case from the issue screenshot
+    render(
+      <RosterItem
+        player={makePlayer({
+          playerId: 'headless-player',
+          playerType: undefined,
+          agentType: 'claude-code-headless' as any,
+        })}
+      />,
+    );
+    const chip = screen.getByTestId('adapter-badge-claude-code-headless');
+    expect(chip).toBeInTheDocument();
+    expect(chip.textContent).toBe('claude-code-headless');
   });
 });

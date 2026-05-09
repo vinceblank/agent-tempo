@@ -36,7 +36,7 @@ const ROLE_ABBREVIATIONS: Record<string, string> = {
  *
  * Issue #537.
  */
-const HEADLESS_ADAPTERS = new Set([
+export const HEADLESS_ADAPTERS = new Set([
   'claude-code-headless',
   'copilot',
   'opencode',
