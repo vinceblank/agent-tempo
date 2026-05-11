@@ -4,7 +4,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 
 | Tool | Description |
 |------|-------------|
-| `ensemble` | Discover active sessions. Scope: `machine`, `repo`, or `all`. |
+| `ensemble` | Discover active sessions. Scope: `machine`, `repo`, or `all`. **#563**: output is split into "Active" and "Dormant" sections — a player is dormant when `phase=gone`, or `phase=detached` with no recorded activity in the last 1 hour. Dormant entries include a "Last seen X ago" line. Use the `dormant` arg (`show` default, `hide`, or `show-only`) to filter. |
 | `cue` | Send a message to a player by name. Delivered instantly via Temporal signal. |
 | `set_name` | Set a human-readable name for this session. |
 | `set_part` | Describe what you're working on. Visible to others via `ensemble`. |
