@@ -4,8 +4,9 @@ import { Client, WorkflowHandle } from '@temporalio/client';
 import { Config } from '../config';
 import { resolveSession } from './resolve';
 import { scanEnsembleSessions } from '../activities/resolve';
-import { submitOutboxUpdate } from '../workflows/signals';
-import type { OutboxEntryInput } from '../types';
+import { attachmentInfoQuery, submitOutboxUpdate } from '../workflows/signals';
+import { queryHandleWithTimeout } from '../utils/query-timeout';
+import type { AttachmentInfo, AttachmentPhase, OutboxEntryInput } from '../types';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { PLAYER_NAME_MAX, MESSAGE_MAX, validatePlayerName } from '../utils/validation';
 
@@ -18,6 +19,49 @@ import { PLAYER_NAME_MAX, MESSAGE_MAX, validatePlayerName } from '../utils/valid
 const FUZZY_MATCH_MAX_DISTANCE = 3;
 /** Cap on suggestions shown in the error to keep the message readable. */
 const FUZZY_MATCH_MAX_SUGGESTIONS = 3;
+
+/**
+ * Phases where the target session has no live adapter — the workflow inbox
+ * still queues the signal and auto-redelivers on re-attach, but the
+ * operator's "Message sent to X" success line is misleading because no
+ * human-readable surface processes the message *now*. #562 surfaces the
+ * gap.
+ *
+ * `draining` is NOT included — it's a brief mid-shutdown state and the
+ * adapter is still consuming pending messages; flagging it as undeliverable
+ * would false-positive during normal teardown.
+ */
+const UNDELIVERABLE_PHASES: ReadonlySet<AttachmentPhase> =
+  new Set<AttachmentPhase>(['detached', 'gone']);
+
+/**
+ * Cue pre-flight timeout. Half of {@link DEFAULT_QUERY_TIMEOUT_MS} —
+ * `cue` is operator-interactive, so a slow target shouldn't make the
+ * user wait the full 2s default before falling through to the best-
+ * effort path. 1s strikes the balance between catching the common
+ * detached-player case and not wedging the operator.
+ */
+const CUE_PHASE_PREFLIGHT_TIMEOUT_MS = 1000;
+
+/**
+ * Build the operator-facing error message when the cue target is in an
+ * undeliverable phase. Lists three actionable next steps per the issue
+ * body's AC #3.
+ *
+ * Exported for unit testing.
+ */
+export function formatDetachedDeliveryError(
+  playerId: string,
+  phase: AttachmentPhase,
+): string {
+  return (
+    `Player "${playerId}" is currently '${phase}' — no live adapter to receive. ` +
+    `Message NOT delivered. Options: ` +
+    `(1) use 'recall' to view their message history, ` +
+    `(2) 'restart' to re-attach the session and retry the cue, ` +
+    `(3) the workflow inbox queues the signal and auto-delivers on re-attach.`
+  );
+}
 
 export function registerCueTool(
   server: McpServer,
@@ -51,6 +95,33 @@ export function registerCueTool(
           const sessions = await scanEnsembleSessions(client, config.ensemble);
           const activePlayers = sessions.map((s) => s.playerId).sort();
           return fail(formatUnknownPlayerError(playerId, activePlayers));
+        }
+
+        // #562: phase pre-flight. Resolves the gap where `cue` to a
+        // detached/gone player returns "Message sent" — wire-truthful (the
+        // signal IS delivered to the workflow inbox), but operator-
+        // misleading because no live adapter surfaces the message.
+        let phase: AttachmentPhase | undefined;
+        try {
+          const info = await queryHandleWithTimeout<AttachmentInfo>(
+            resolved,
+            attachmentInfoQuery,
+            { timeoutMs: CUE_PHASE_PREFLIGHT_TIMEOUT_MS },
+          );
+          phase = info.phase;
+        } catch (err) {
+          // Query timed out or threw — workflow may be wedged. Don't
+          // penalize the operator: fall through to best-effort submit.
+          // Auto-redelivery on re-attach still applies. Stderr log keeps
+          // the observability trail without surfacing noise to the user.
+          console.error(
+            `[claude-tempo:cue] phase pre-flight failed for "${playerId}" — proceeding best-effort:`,
+            err instanceof Error ? err.message : err,
+          );
+        }
+
+        if (phase && UNDELIVERABLE_PHASES.has(phase)) {
+          return fail(formatDetachedDeliveryError(playerId, phase));
         }
 
         const entry = {
