@@ -215,6 +215,29 @@ export interface TempoClientCore {
    * from parked (all-sessions-detached) via `state`.
    */
   listEnsembles(): Promise<EnsembleSummary[]>;
+  /**
+   * #336/#529 — bounded variant of {@link listEnsembles}. Wraps the
+   * underlying visibility iterator with a wall-clock deadline and
+   * surfaces a `timedOut` flag so callers that diff against prior
+   * state (e.g. `AggregateRunner.collect()` at 750ms cadence) can
+   * skip an entire tick rather than silently produce a partial
+   * snapshot that would emit phantom `ensemble.destroyed` events.
+   *
+   * Unlike `listEnsembles()`, this method propagates non-timeout
+   * errors — the existing "swallow-and-return-empty" path is reserved
+   * for the unbounded variant's CLI / dashboard callers that don't
+   * need to distinguish timeout from emptiness.
+   *
+   * @param deadlineMs Wall-clock budget for the visibility iterator.
+   *                   `AggregateRunner` uses 500ms (correctness, well
+   *                   below the 750ms tick cadence); ad-hoc callers
+   *                   should match the caller's surrounding timeout.
+   */
+  listEnsemblesBounded(deadlineMs: number): Promise<{
+    items: EnsembleSummary[];
+    timedOut: boolean;
+    scanned: number;
+  }>;
   /** Get current player snapshot for an ensemble. */
   getPlayers(ensemble: string): Promise<MaestroPlayerInfo[]>;
   /**

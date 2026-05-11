@@ -3,6 +3,11 @@ import { ApplicationFailure } from '@temporalio/activity';
 import { conductorWorkflowId, sessionWorkflowId } from '../config';
 import { HistoryEntry, MaestroPlayerInfo, Message, SentMessage, EnsembleChatMessage, ChatHighWater, ZERO_CHAT_HIGH_WATER } from '../types';
 import { scanEnsembleSessions, resolveSession } from './resolve';
+import {
+  iterateWithDeadline,
+  isVisibilityTimeout,
+  VISIBILITY_DEADLINES_MS,
+} from '../utils/visibility-deadline';
 
 const log = (...args: unknown[]) => console.error('[claude-tempo:maestro]', ...args);
 
@@ -146,10 +151,18 @@ export function createMaestroActivities(client: Client): MaestroActivities {
     },
 
     async discoverEnsembles(): Promise<string[]> {
+      // #336/#529 — bounded visibility iterator. On deadline, return
+      // the partial result rather than aborting; the maestro retries on
+      // its own schedule, so a truncated enumeration this tick self-heals
+      // on the next.
+      const ensembles = new Set<string>();
+      const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
       try {
-        const ensembles = new Set<string>();
-        const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
-        for await (const wf of client.workflow.list({ query })) {
+        for await (const wf of iterateWithDeadline(
+          client.workflow.list({ query }),
+          VISIBILITY_DEADLINES_MS.discoverEnsembles,
+          'discoverEnsembles',
+        )) {
           try {
             const handle = client.workflow.getHandle(wf.workflowId);
             const metadata = await handle.query('getMetadata') as { ensemble: string };
@@ -162,6 +175,10 @@ export function createMaestroActivities(client: Client): MaestroActivities {
         }
         return Array.from(ensembles).sort();
       } catch (err) {
+        if (isVisibilityTimeout(err)) {
+          log(`discoverEnsembles: ${err.message} — returning partial (${ensembles.size} ensembles)`);
+          return Array.from(ensembles).sort();
+        }
         // Discovery failures are typically transient (network, server restart) — allow retry
         log('discoverEnsembles failed:', err);
         throw new Error(
