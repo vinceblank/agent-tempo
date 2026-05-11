@@ -29,7 +29,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `fetch_state` | **#334.** Read a saved-state slot for yourself or a peer. Any player in the ensemble can read any other player's state (audit identity recorded in `savedBy`). Pass `playerId` for a peer; defaults to own `"main"` slot. Works even after `destroy` (last-known state served from workflow history). Returns a `(no state saved …)` message when the slot is empty. |
 | `clear_state` | **#334.** Clear one of your own saved-state slots. Owner-only. Idempotent — clearing an already-empty slot is a no-op. Returns whether the slot was non-empty before the clear. |
 | `hosts` | **#274.** List all daemons polling this Temporal namespace, joined with their boot-signaled capability profile (default agent, available player types, platform, claude bin basename). Optional `includeStale: true` shows hosts not seen in the last minute; `force: true` bypasses the 3-second result cache. Output matches CLI `claude-tempo hosts` and TUI `/hosts` (shared formatter, AC10a). |
-| `worktree` | Manage git worktrees for player isolation. Actions: `create`, `remove`, `list`. Conductor only. |
+| `worktree` | Manage git worktrees for player isolation. Actions: `create`, `remove`, `list`. Conductor only. See [when to use worktrees](orchestration.md#when-to-use-worktrees). |
 | `quality_gate` | Define or replace a quality gate for a task — a named checklist of criteria that must pass. Conductor only. |
 | `evaluate_gate` | Mark one or more criteria on a quality gate as passed or failed. Conductor only. |
 | `gates` | List quality gates and their status. Filter by task name or status (`open`, `passed`, `failed`). Conductor only. |

@@ -61,6 +61,31 @@ Tell your conductor things like:
 - When a worktree is created, the player is notified with the path and branch
 - Worktrees survive `continueAsNew` for the conductor workflow's lifetime
 
+### When to use worktrees
+
+**Use worktrees when:**
+
+- **Multiple players commit to different branches of the same repo at the same time.** This is the canonical case — without worktrees, `git add` in one player's session can pick up uncommitted edits from another player's working directory. Each worktree has its own index and HEAD, so there is no cross-contamination.
+- **A player needs an experimental branch without dirtying the shared working tree.** If the operator's own checkout is on `main` and a player needs to rebase or bisect on a scratch branch, a worktree keeps the operator's `git status` clean.
+- **Parallel CI-style pipelines.** When several soloists each produce a PR (e.g., refactoring three independent modules), worktrees let each player commit, push, and run local checks in isolation.
+
+**Skip worktrees when:**
+
+- **Players work in separate repos** — already isolated by filesystem, no benefit.
+- **Players work on the same branch sequentially** — no concurrent commit conflict; a shared checkout is fine.
+- **The task is short-lived (under ~5 minutes)** — worktree setup and teardown takes 3–10 seconds plus disk I/O; the overhead may exceed the work itself.
+- **Work is read-only** — grepping, reading, analyzing source. No commits means no conflict risk.
+
+**Costs to be aware of:**
+
+- **Disk space** — one full checkout per worktree (same as cloning the repo again).
+- **Setup latency** — `create` runs `git worktree add` plus optional `npm install`; budget 5–30 seconds depending on dependency count.
+- **Mental bookkeeping** — the conductor must track which path/branch belongs to which player and call `remove` at task end to avoid orphaned checkouts.
+
+**Worked example:**
+
+> Three soloists are refactoring `auth/`, `payments/`, and `notifications/` in parallel, each producing a separate PR. All three would otherwise operate on `main` from the same `~/repos/myapp` checkout. Without worktrees, soloist-B's `git add -A` could pick up soloist-A's unstaged edits across module boundaries. Provisioning worktrees gives each player an isolated path (`~/repos/myapp-wt-payments-soloist-2`, etc.) and a dedicated branch (`ensemble/payments-soloist-2`), so commits, diffs, and `git status` are fully independent.
+
 ## Related
 
 - [tools.md](tools.md) — full tool list including `worktree`, `quality_gate`, `evaluate_gate`, `gates`, `stage`, `stages`, `cancel_stage`

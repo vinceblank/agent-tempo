@@ -19,7 +19,7 @@ export function registerWorktreeTool(
   defineTool(
     server,
     'worktree',
-    'Manage git worktrees for player isolation. Conductor only. Actions: create (provision worktree for a player), remove (clean up), list (show active worktrees).',
+    'Manage git worktrees for player isolation. Conductor only. Actions: create (provision worktree for a player), remove (clean up), list (show active worktrees). Use when multiple players commit to different branches of the same repo simultaneously; skip for read-only work, sequential work, or tasks under ~5 min. See docs/orchestration.md#when-to-use-worktrees.',
     {
       action: z.enum(['create', 'remove', 'list']).describe('Action to perform'),
       player: z.string().max(PLAYER_NAME_MAX).optional().describe('Player name (required for create/remove)'),
