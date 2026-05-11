@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- claude-api adapter: retry classification + exponential backoff + give-up
+  budget. Pre-fix, every error inside the `deliver()` poll loop was treated
+  as transient — a non-retriable 4xx (e.g. 400 `invalid_request_error` for
+  low credits, 401 auth, 403 permission, 404 model not found) would retry
+  every poll cycle indefinitely, burning quota and wedging the player with
+  no operator-visible signal. New `src/adapters/claude-api/api-error.ts`
+  classifies errors as `fatal` (4xx other than 408/429 → detach immediately
+  with `'agent-exited'` reason) or `retriable` (408, 429, 5xx, connection
+  errors → exponential backoff with ±25% jitter, capped at 30 s, honoring
+  `retry-after` headers when present). Consecutive retriable failures are
+  capped at 10 before escalating to fatal. (#521)
+
 ## [0.28.0-beta.17] - 2026-05-11
 
 ### Added
