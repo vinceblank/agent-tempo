@@ -16,7 +16,7 @@
  */
 import { expect } from 'chai';
 import { AdapterRegistry } from '../../src/adapters/base';
-import { registry } from '../../src/adapters';
+import { registry, CANONICAL_ADAPTER_IDS } from '../../src/adapters';
 import type { AdapterDescriptor } from '../../src/types';
 
 /** Build a valid descriptor for use in lookup tests. Override individual fields as needed. */
@@ -181,15 +181,15 @@ describe('shipped descriptors (registry singleton)', function () {
     expect(desc.heartbeatMs).to.equal(30_000);
   });
 
-  it('registry.all() contains exactly the five shipped descriptors', function () {
-    // Will break deliberately when a sixth production adapter ships — forces
-    // a conscious acknowledgment in the same commit that registers it.
-    // (Mock adapter is dev-mode-only and prepack-stripped; not in this list.)
-    // #131 Phase C added `claude-api` as the third production adapter;
-    // #449 Phase C added `opencode` as the fourth;
-    // #520 added `claude-code-headless` as the fifth.
+  it('registry.all() matches the CANONICAL_ADAPTER_IDS SSOT (#486)', function () {
+    // SSOT-derived: this list lives in `src/adapters/index.ts` next to the
+    // `registry.register(...)` calls. Drift in either direction
+    // (registered-but-not-canonical or canonical-but-not-registered) fails
+    // here, forcing a conscious update in the same commit that adds the
+    // adapter. Mirrors the AGENT_TYPES tripwire from `src/types.ts`. (Mock
+    // adapter is dev-mode-only and prepack-stripped; not in CANONICAL_ADAPTER_IDS.)
     const ids = registry.all().map((d) => d.adapterId).sort();
-    expect(ids).to.deep.equal(['claude-api', 'claude-code', 'claude-code-headless', 'copilot', 'opencode']);
+    expect(ids).to.deep.equal([...CANONICAL_ADAPTER_IDS].sort());
   });
 
   it('every shipped descriptor has a plausible heartbeatMs in range [10s, 300s]', function () {
