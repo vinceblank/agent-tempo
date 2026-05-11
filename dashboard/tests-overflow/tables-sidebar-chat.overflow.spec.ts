@@ -225,6 +225,12 @@ test.describe('F-B-1 / H1 — Sidebar `.er-name` long ensemble name overflow (cl
       `scrollWidth=${result.scrollWidth} should exceed clientWidth=${result.clientWidth} `+
       `for a 34-char ensemble name in a ~195px column — fixture or constraint regressed`,
     ).toBeGreaterThan(result.clientWidth);
+
+    // #493 visual regression baseline — captures the rendered sidebar row
+    // post-injection so a future CSS change that breaks ellipsis-vs-clip
+    // visual fidelity is caught even when the bbox + computed-style
+    // fingerprint still pass.
+    await expect(page.locator('.ensemble-row')).toHaveScreenshot('F-B-1-sidebar-er-name-ellipsis.png');
   });
 });
 
@@ -325,6 +331,12 @@ test.describe('F-B-2 / H5 — Hosts table FQDN cell overflow (class A)', () => {
       cell.clientWidth,
       `cell clientWidth=${cell.clientWidth} > 400 — auto-layout isn't honoring max-width hint`,
     ).toBeLessThan(400);
+
+    // #493 visual regression baseline — the hosts row's truncation behavior
+    // is visually distinct (ellipsis at the cell boundary); regressing the
+    // max-width / overflow / text-overflow trio loses the truncation
+    // without changing scrollWidth arithmetic.
+    await expect(page.locator('.table tr').first()).toHaveScreenshot('F-B-2-hosts-fqdn-truncate.png');
   });
 });
 
@@ -371,6 +383,12 @@ test.describe('F-B-3 / H7 — `.panel-head` subj+actions collision at boundary (
         head.overflowing,
         `panel-head overflowing at ${viewport.label}: scrollWidth=${head.scrollWidth} > clientWidth=${head.clientWidth} — F-B-3`,
       ).toBe(false);
+
+      // #493 visual regression baseline — per-viewport. The flex-wrap
+      // behavior at the boundaries is what regresses visibly; bbox math
+      // catches it geometrically but the screenshot also catches a
+      // change in WHICH items wrap onto a new line.
+      await expect(page.locator('.panel-head')).toHaveScreenshot(`F-B-3-panel-head-${viewport.w}px.png`);
     });
   }
 });
@@ -437,6 +455,10 @@ test.describe('F-B-4 / H8 — `.msg-body` code-block overflow (P1 prod-realistic
       pre.overflowing,
       `pre clientWidth=${pre.clientWidth} should be bounded by .msg-body, with scrollWidth=${pre.scrollWidth} > clientWidth → internal scroll — F-B-4`,
     ).toBe(true);
+
+    // #493 visual regression baseline — the 78% bubble cap + internal
+    // scrollbar produce a distinctive layout; baseline locks them.
+    await expect(page.locator('[data-testid="msg-out-1"]')).toHaveScreenshot('F-B-4-msg-out-78pct-bubble.png');
   });
 });
 
@@ -480,6 +502,9 @@ test.describe('F-B-5 / H9 — Settings `.kv` long-value overflow (class A)', () 
       row.overflowing,
       `kv row overflowing: row.scrollWidth=${row.scrollWidth} > row.clientWidth=${row.clientWidth} — F-B-5`,
     ).toBe(false);
+
+    // #493 visual regression baseline — long-value ellipsis vs clip.
+    await expect(page.locator('[data-testid="kv-row-version"]')).toHaveScreenshot('F-B-5-settings-kv-long-value.png');
   });
 });
 
@@ -555,6 +580,9 @@ test.describe('F-B-NEW-1 — Loadouts Name column unbounded (class A)', () => {
       nameCell.clientWidth,
       `cell clientWidth=${nameCell.clientWidth} > 400 — auto-layout isn't honoring max-width hint`,
     ).toBeLessThan(400);
+
+    // #493 visual regression baseline — table-cell ellipsis behavior.
+    await expect(page.locator('[data-testid="loadout-row-long"]')).toHaveScreenshot('F-B-NEW-1-loadouts-name-truncate.png');
   });
 });
 
@@ -591,6 +619,11 @@ test.describe('F-B-NEW-2 — Generic `.row` no flex-wrap (class A + C)', () => {
       row.overflowing,
       `row overflowing in 240px container: scrollWidth=${row.scrollWidth} > clientWidth=${row.clientWidth} — F-B-NEW-2`,
     ).toBe(false);
+
+    // #493 visual regression baseline — the flex-wrap behavior is what
+    // bbox math measures but not what it captures visually (button
+    // count per row, spacing).
+    await expect(page.locator('[data-testid="row-narrow"]')).toHaveScreenshot('F-B-NEW-2-narrow-row-wrap.png');
   });
 });
 
@@ -641,6 +674,11 @@ test.describe('H11 — TempoStrip narrow viewport (refuted; regression lock)', (
         strip.overflowing,
         `TempoStrip overflowing at ${viewport.label}: scrollWidth=${strip.scrollWidth} > clientWidth=${strip.clientWidth}`,
       ).toBe(false);
+
+      // #493 visual regression baseline — per-viewport. TempoStrip's
+      // viewBox compression at narrow viewports is visually distinctive;
+      // baseline locks the elastic-bar behavior.
+      await expect(page.locator('[data-testid="tempo-strip"]')).toHaveScreenshot(`H11-tempo-strip-${viewport.w}x${viewport.h}.png`);
     });
   }
 });

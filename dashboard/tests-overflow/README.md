@@ -97,6 +97,48 @@ The shim route is gated behind `import.meta.env.DEV` in `router.tsx`
 so vite's production build dead-code-eliminates the entire shim path
 — `npm run build` ships zero bytes of overflow-test code.
 
+## Regenerating baseline PNGs (#493)
+
+`toHaveScreenshot()` baselines MUST be generated on Linux to match the
+`dashboard-overflow` CI job's rendering environment — macOS and Windows
+diverge on font hinting / subpixel anti-aliasing / emoji rendering, so
+locally-generated PNGs on those platforms produce false-positive diffs
+against the committed baselines.
+
+**To regenerate baselines** (after a deliberate layout change, or when
+adding a new `toHaveScreenshot()` call to a spec):
+
+```bash
+# 1. Push your branch with the spec change + no PNG commit.
+git push -u origin <branch>
+
+# 2. Trigger the canonical Linux-CI regeneration workflow.
+gh workflow run update-overflow-snapshots.yml --ref <branch> -f ref=<branch>
+
+# 3. Wait for the workflow to complete and commit the PNGs back to
+#    your branch (~5-10 min).
+gh run watch  # or: gh run list --workflow=update-overflow-snapshots.yml
+
+# 4. Pull the auto-commit into your local worktree.
+git pull --ff-only
+
+# 5. Verify the regenerated PNGs by eye — open them and confirm no
+#    broken layouts, missing fonts, scrambled glyphs, etc. The
+#    workflow won't catch visually-broken-but-pixel-stable rendering.
+
+# 6. The next CI run on the PR validates the committed baselines pass
+#    `toHaveScreenshot()` end-to-end.
+```
+
+The workflow definition lives at `.github/workflows/update-overflow-snapshots.yml`.
+It's a `workflow_dispatch`-only trigger — never fires on push/PR — and
+refuses to run against `main` / `master`. See the file's header comment
+for the full security posture.
+
+**Why the workflow exists**: local `--update-snapshots` runs on a
+non-Linux developer machine produce PNGs that won't match CI's render.
+Centralizing baseline generation on Linux CI is the canonical fix.
+
 ## Folder structure
 
 ```
