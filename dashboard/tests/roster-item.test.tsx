@@ -92,8 +92,7 @@ describe('RosterItem fallback chip (#537)', () => {
         player={makePlayer({
           playerId: 'oc-player',
           playerType: undefined,
-          // Post-#535 wire value; pre-#535 this would be coerced to 'claude'
-          agentType: 'opencode' as any,
+          agentType: 'opencode',
         })}
       />,
     );
@@ -109,7 +108,7 @@ describe('RosterItem fallback chip (#537)', () => {
         player={makePlayer({
           playerId: 'headless-player',
           playerType: undefined,
-          agentType: 'claude-code-headless' as any,
+          agentType: 'claude-code-headless',
         })}
       />,
     );

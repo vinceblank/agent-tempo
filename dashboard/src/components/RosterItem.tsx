@@ -37,7 +37,7 @@ export function RosterItem({ player, selected = false, onSelect }: RosterItemPro
   // Issue #537 — when no playerType is set but agentType is a
   // non-default value (i.e. not the coerced 'claude'), render a
   // muted fallback chip so headless adapters are visually identified.
-  const showFallbackChip = !player.playerType && player.agentType && player.agentType !== 'claude';
+  const showFallbackChip = !player.playerType && player.agentType !== 'claude';
   return (
     <button
       type="button"
