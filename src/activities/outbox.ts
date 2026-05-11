@@ -443,6 +443,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             playerType: agentDefinition,
             isConductor,
             workDir,
+            adapterType: agent,
           }),
           disableStaleDetection: true,
           // When held: store the initial message for delivery on release, inject standby message instead

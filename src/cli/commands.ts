@@ -155,6 +155,7 @@ async function seedConductorWorkflow(args: {
       playerType: resolvedConductorType?.name,
       isConductor: true,
       workDir: process.cwd(),
+      adapterType: args.conductorAgent,
     }),
     disableStaleDetection: true,
     temporalConfig: {
@@ -253,6 +254,7 @@ async function applyLineupPlayersAndSchedules(args: {
         playerType: resolvedPlayerType?.name,
         isConductor: false,
         workDir: resolve(playerWorkDir),
+        adapterType: playerAgent,
       }),
       disableStaleDetection: true,
       temporalConfig: {

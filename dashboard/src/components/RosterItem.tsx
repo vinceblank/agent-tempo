@@ -34,6 +34,10 @@ interface RosterItemProps {
 export function RosterItem({ player, selected = false, onSelect }: RosterItemProps) {
   const cls = 'roster-item' + (selected ? ' is-active' : '');
   const part = player.part?.trim();
+  // Issue #537 — when no playerType is set but agentType is a
+  // non-default value (i.e. not the coerced 'claude'), render a
+  // muted fallback chip so headless adapters are visually identified.
+  const showFallbackChip = !player.playerType && player.agentType !== 'claude';
   return (
     <button
       type="button"
@@ -91,6 +95,24 @@ export function RosterItem({ player, selected = false, onSelect }: RosterItemPro
         </span>
         <span className="rp">
           {player.playerType && <TypeBadge type={player.playerType} />}
+          {showFallbackChip && (
+            <span
+              data-testid={`adapter-badge-${player.agentType}`}
+              style={{
+                display: 'inline-block',
+                padding: '1px 6px',
+                fontFamily: 'var(--ff-mono)',
+                fontSize: 11,
+                letterSpacing: '0.02em',
+                borderRadius: 4,
+                color: 'var(--muted)',
+                border: '1px solid var(--rule)',
+                background: 'transparent',
+              }}
+            >
+              {player.agentType}
+            </span>
+          )}
           {part && <span style={{ marginLeft: 6 }}>{part}</span>}
         </span>
       </span>

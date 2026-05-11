@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Dashboard: muted adapter-badge chip now renders for headless players (copilot, claude-code-headless, opencode, claude-api, mock) when no explicit type is set, making them visually distinguishable from interactive Claude Code sessions (#537)
+
 ### Changed
 
+- Default session part for headless adapters now reads "Headless \<adapter\> session" instead of the generic "Session in \<repo\>" — explicit `set_part` calls still override (#537)
 - **Wire protocol: `PlayerSummaryV1.agentType` union expanded** to mirror
   `AgentType` in `src/types.ts` — adds `'claude-api'`, `'opencode'`, and
   `'claude-code-headless'` alongside the existing `'claude'`, `'copilot'`,

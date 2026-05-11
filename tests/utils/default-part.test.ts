@@ -8,7 +8,8 @@
  * `src/server.ts`).
  */
 import { describe, it, expect } from 'vitest';
-import { defaultPart } from '../../src/utils/default-part';
+import { defaultPart, HEADLESS_ADAPTERS } from '../../src/utils/default-part';
+import { AGENT_TYPES } from '../../src/types';
 
 describe('defaultPart', () => {
   describe('player-type-aware defaults', () => {
@@ -108,6 +109,92 @@ describe('defaultPart', () => {
       expect(defaultPart({ playerType: 'my-tempo-', workDir: '/some/repo' })).toBe(
         'Session in repo',
       );
+    });
+  });
+
+  describe('headless-adapter defaults (#537)', () => {
+    it('returns headless default for claude-code-headless adapter', () => {
+      expect(defaultPart({ adapterType: 'claude-code-headless', workDir: '/work' })).toBe(
+        'Headless claude-code-headless session',
+      );
+    });
+
+    it('returns headless default for copilot adapter', () => {
+      expect(defaultPart({ adapterType: 'copilot', workDir: '/work' })).toBe(
+        'Headless copilot session',
+      );
+    });
+
+    it('returns headless default for opencode adapter', () => {
+      expect(defaultPart({ adapterType: 'opencode' })).toBe(
+        'Headless opencode session',
+      );
+    });
+
+    it('returns headless default for claude-api adapter', () => {
+      expect(defaultPart({ adapterType: 'claude-api' })).toBe(
+        'Headless claude-api session',
+      );
+    });
+
+    it('returns headless default for mock adapter', () => {
+      expect(defaultPart({ adapterType: 'mock' })).toBe(
+        'Headless mock session',
+      );
+    });
+
+    it('interactive claude adapter falls through to workDir default', () => {
+      expect(defaultPart({ adapterType: 'claude', workDir: '/repos/my-project' })).toBe(
+        'Session in my-project',
+      );
+    });
+
+    it('interactive claude adapter with no workDir falls through to New session', () => {
+      expect(defaultPart({ adapterType: 'claude' })).toBe('New session');
+    });
+
+    it('playerType takes priority over headless adapter default', () => {
+      expect(
+        defaultPart({ playerType: 'tempo-soloist', adapterType: 'claude-code-headless' }),
+      ).toBe('Soloist session');
+    });
+
+    it('isConductor takes priority over headless adapter default', () => {
+      expect(
+        defaultPart({ isConductor: true, adapterType: 'copilot' }),
+      ).toBe('Conductor session');
+    });
+
+    it('is whitespace-tolerant on adapterType', () => {
+      expect(defaultPart({ adapterType: '  opencode  ' })).toBe(
+        'Headless opencode session',
+      );
+    });
+  });
+
+  describe('HEADLESS_ADAPTERS drift detector (#537)', () => {
+    it('every non-claude member of AGENT_TYPES is in HEADLESS_ADAPTERS', () => {
+      // If a future adapter is added to AGENT_TYPES but not categorised
+      // here, this test fails loudly. If the new adapter is intentionally
+      // interactive (like 'claude'), add it to the opt-out list below.
+      const INTERACTIVE_OPT_OUT = new Set(['claude']);
+      for (const t of AGENT_TYPES) {
+        if (INTERACTIVE_OPT_OUT.has(t)) continue;
+        expect(
+          HEADLESS_ADAPTERS.has(t),
+          `AGENT_TYPES member '${t}' is not in HEADLESS_ADAPTERS — ` +
+          `add it there or to INTERACTIVE_OPT_OUT if intentionally interactive`,
+        ).toBe(true);
+      }
+    });
+
+    it('HEADLESS_ADAPTERS contains only known AGENT_TYPES members', () => {
+      for (const h of HEADLESS_ADAPTERS) {
+        expect(
+          (AGENT_TYPES as readonly string[]).includes(h),
+          `HEADLESS_ADAPTERS member '${h}' is not in AGENT_TYPES`,
+        ).toBe(true);
+      }
     });
   });
 });
