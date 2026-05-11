@@ -46,6 +46,7 @@ import { Hosts } from './screens/Hosts';
 import { Loadouts } from './screens/Loadouts';
 import { Overview } from './screens/Overview';
 import { Workspace } from './screens/Workspace';
+import { OverflowShim } from './screens/OverflowShim';
 import { PlayerDetail } from './screens/PlayerDetail';
 import { PlayerTypes } from './screens/PlayerTypes';
 import { Recruit } from './screens/Recruit';
@@ -77,6 +78,33 @@ function ShellLayout() {
   );
 }
 
+/**
+ * #492 — Dev-only overflow-test route entries. Mounted under the same
+ * `ShellLayout` so the routed component sees the real AppShell chrome
+ * (sidebar, header slot) it would see in production.
+ *
+ * **Gate**: active when either `import.meta.env.DEV` is true (local
+ * `vite dev`) OR `import.meta.env.VITE_OVERFLOW === '1'` (a production
+ * `vite build` run with `VITE_OVERFLOW=1` set, used by the Playwright
+ * overflow-test CI job). Both forms get dead-code-eliminated by vite
+ * when neither flag is set — a normal `npm run build` ships zero
+ * bytes of overflow-shim code.
+ *
+ * The dual gate exists because the overflow Playwright config builds
+ * via `npm run build` then serves `dist/` through `vite preview`
+ * (closer to production than `vite dev`), and `import.meta.env.DEV`
+ * is `false` for `vite build`. Setting `VITE_OVERFLOW=1` before the
+ * test build lights up the gate without flipping the screen to dev
+ * mode.
+ *
+ * See `src/screens/OverflowShim.tsx` for the full design rationale.
+ */
+const OVERFLOW_ROUTES_ENABLED =
+  import.meta.env.DEV || import.meta.env.VITE_OVERFLOW === '1';
+const OVERFLOW_ROUTES: RouteObject[] = OVERFLOW_ROUTES_ENABLED
+  ? [{ path: '__overflow/:component', element: <OverflowShim /> }]
+  : [];
+
 /** Route table — shared by the production browser router and the test memory router. */
 export const DASHBOARD_ROUTES: RouteObject[] = [
   {
@@ -105,6 +133,8 @@ export const DASHBOARD_ROUTES: RouteObject[] = [
       { path: 'loadouts', element: <Loadouts /> },
       { path: 'player-types', element: <PlayerTypes /> },
       { path: 'settings', element: <Settings /> },
+      // #492 — dev-only overflow test routes (zero bytes in production).
+      ...OVERFLOW_ROUTES,
       // Catch-all: redirect to overview for unknown paths inside the dashboard.
       { path: '*', element: <Navigate to="/" replace /> },
     ],

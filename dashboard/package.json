@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:overflow": "tsc -b && vite build --mode overflow",
     "preview": "vite preview",
     "lint": "eslint src/ tests/",
     "test": "vitest run",

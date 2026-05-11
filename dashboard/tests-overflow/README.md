@@ -77,24 +77,25 @@ H12, H14) protect proven-safe patterns against future regression.
 ## Daemon-availability behavior
 
 CI runs `vite preview` to serve `dashboard/dist/` but does **not** start a
-Temporal worker daemon. Two test methodologies cope differently with the
-missing daemon:
+Temporal worker daemon. Both test methodologies now run unconditionally
+against the daemon-free CI environment:
 
 - **Walk B specs** (`tables-sidebar-chat.overflow.spec.ts`) use
   `about:blank` + `page.setContent()` with an absolute CSS URL —
-  truly daemon-independent. Run regardless.
-- **Walk A specs** (`cards-headers-wizards.overflow.spec.ts`) navigate to
-  the live SPA; the SPA's `useEnsembleList()` query fires `/v1/*` which
-  vite proxies to `127.0.0.1:8473` (the daemon). When no daemon is
-  running, those tests `test.skip()` via the `ensureDaemonOrSkip()`
-  guard. PlayerTypes-only tests (F-A-3, H12) tolerate missing daemon
-  because the page derives content from the bundled `SHIPPED_LINEUPS`
-  catalog and doesn't require wire data.
+  truly daemon-independent.
+- **Walk A specs** (`cards-headers-wizards.overflow.spec.ts`) navigate
+  through the dev-only `/__overflow/<Component>?regime=<…>` route shim
+  (#492). The shim pre-seeds TanStack Query caches from the bundled
+  fixture catalog in `src/lib/overflow-fixtures.ts` BEFORE mounting
+  the target screen, so the screens render with realistic per-regime
+  content — no `/v1/*` calls, no daemon required. Walk A's
+  `gotoOverview` / `gotoCreateEnsemble` / `gotoPlayerTypes` helpers
+  drive this; each accepts an optional `regime` argument
+  (`'short' | 'long' | 'i18n' | 'stress'`, defaults to `'short'`).
 
-Once the v1 follow-up lands the `/__overflow/<Component>?regime=…` route
-shim (audit §10.3 step 4), Walk A's daemon-bound tests can switch to the
-shim's no-wire-required route and the `ensureDaemonOrSkip()` guard
-becomes obsolete.
+The shim route is gated behind `import.meta.env.DEV` in `router.tsx`
+so vite's production build dead-code-eliminates the entire shim path
+— `npm run build` ships zero bytes of overflow-test code.
 
 ## Folder structure
 
