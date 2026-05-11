@@ -70,13 +70,22 @@ export default defineConfig({
   // '/dashboard/'` config (see `dashboard/vite.config.ts`) ensures asset
   // URLs match the production layout.
   //
-  // CI provides the build via the `Build dashboard` step; locally,
-  // `npm --prefix dashboard run build` produces `dashboard/dist/`.
+  // #492 — `VITE_OVERFLOW=1` lights up the dev-only `/__overflow/:component`
+  // route shim that the Walk A specs depend on. The route is dead-code-
+  // eliminated by vite when the flag is absent, so a normal
+  // `npm run build` still produces a flag-free production bundle.
+  //
+  // CI provides the flag-on build via the `Build dashboard (overflow)`
+  // step; locally, `VITE_OVERFLOW=1 npm --prefix dashboard run build`
+  // produces a `dashboard/dist/` with the shim route registered, then
+  // `npm --prefix dashboard run preview` serves it.
   webServer: {
-    command: 'npm run preview -- --port ' + String(PORT) + ' --host ' + HOST + ' --strictPort',
+    command:
+      'npm run build:overflow && ' +
+      'npm run preview -- --port ' + String(PORT) + ' --host ' + HOST + ' --strictPort',
     url: BASE_URL + '/dashboard/',
     reuseExistingServer: !process.env.CI,
-    timeout: 30_000,
+    timeout: 60_000,
     stdout: 'pipe',
     stderr: 'pipe',
   },
