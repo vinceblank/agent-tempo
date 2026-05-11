@@ -7,19 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.18] - 2026-05-11
+
+### Added
+
+- CI: synthetic no-op success reporters for all required status checks on docs-only PRs — branch protection no longer blocks docs/scripts merges when the heavy test matrix is correctly skipped (#547, #551)
+- Dashboard: `lint:no-stale-scaffold` CI gate prevents stale placeholder text from shipping; existing PR-7 placeholder removed from TUI (#375, #545)
+- Scripts: heap-snapshot reproducer harness (`scripts/dev/heap-snapshot-336.sh`) for diagnosing the #336 memory regression (#548)
+
+### Changed
+
+- HTTP: recruit allowlist is now a single source of truth in `src/http/body.ts`; removed the duplicated inline list that was the root cause of the #541 gap (#546)
+- Dashboard: TypeScript strict unused-variables cleanup across dashboard components and tests; tsconfig tightened (#368, #553)
+- Docs: protobuf migration readiness assessment added to `docs/design/` (#544)
+- Docs: release-process runbook updated with lockstep version-bump rule (root + `dashboard/package.json` + `dashboard/package-lock.json` in the same commit) (#549)
+
 ### Fixed
 
-- claude-api adapter: retry classification + exponential backoff + give-up
-  budget. Pre-fix, every error inside the `deliver()` poll loop was treated
-  as transient — a non-retriable 4xx (e.g. 400 `invalid_request_error` for
-  low credits, 401 auth, 403 permission, 404 model not found) would retry
-  every poll cycle indefinitely, burning quota and wedging the player with
-  no operator-visible signal. New `src/adapters/claude-api/api-error.ts`
-  classifies errors as `fatal` (4xx other than 408/429 → detach immediately
-  with `'agent-exited'` reason) or `retriable` (408, 429, 5xx, connection
-  errors → exponential backoff with ±25% jitter, capped at 30 s, honoring
-  `retry-after` headers when present). Consecutive retriable failures are
-  capped at 10 before escalating to fatal. (#521)
+- Memory leak + unbounded iterator deadlines: new `src/utils/visibility-deadline.ts` caps `listEnsembles` and `listActivePlayers` iterators; `TempoClient.subscribe()` no longer leaks the long-poll connection on caller-side cancellation; `reconcile/orphans.ts` and schedule-fire activities bounded (#336, #529, #555)
+- HTTP aggregate: per-ensemble fan-out carry-forward — snapshot diff loop now propagates all player-phase / agent-type updates to each SSE subscriber independently, preventing stale snapshots after reconnect (#550, #557)
+- claude-api adapter: retry classification + exponential backoff + give-up budget — fatal 4xx errors (auth, permission, bad request) now detach immediately instead of retrying indefinitely; retriable errors (408, 429, 5xx) use jittered backoff capped at 30 s with `retry-after` header support; 10-consecutive-failure cap escalates to fatal (#521, #552)
+- Test race hardening: flaky lifecycle-v2 and global-maestro tests stabilised via explicit phase-wait sequencing and ensemble-scoped teardown (#383, #554, #556)
 
 ## [0.28.0-beta.17] - 2026-05-11
 
