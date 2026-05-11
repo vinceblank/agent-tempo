@@ -137,18 +137,41 @@ async function gotoCreateEnsemble(page: Page, regime: OverflowRegime = DEFAULT_R
 // ────────────────────────────────────────────────────────────────────────
 
 test.describe('F-A-1 / H2 — ec-meta host span overflow (class A)', () => {
-  test('host span does NOT overflow at FQDN hostname (class A)', async ({ page }) => {
+  test('ec-meta container does NOT overflow card at FQDN hostname (class A)', async ({ page }) => {
     await gotoOverview(page);
 
     const injected = await page.evaluate((fqdn: string) => {
       const span = document.querySelector<HTMLElement>('[data-testid$="-host"]');
       if (!span) return { found: false };
+      const meta = span.closest<HTMLElement>('.ec-meta');
+      const card = meta?.closest<HTMLElement>('.ensemble-card');
+      if (!meta || !card) return { found: false };
+
       span.textContent = fqdn;
+      // Force a layout pass before measuring.
+      void span.offsetWidth;
+
+      const spanStyle = getComputedStyle(span);
+      const metaRect = meta.getBoundingClientRect();
+      const cardRect = card.getBoundingClientRect();
+
       return {
         found: true,
-        scrollWidth: span.scrollWidth,
-        clientWidth: span.clientWidth,
-        overflowing: span.scrollWidth > span.clientWidth + 1,
+        // CSS rule applied — fingerprints the ellipsis machinery that
+        // makes graceful truncation possible. If a future change strips
+        // overflow:hidden or text-overflow:ellipsis, host content would
+        // bleed instead of ellipsifying — this catches that.
+        overflow: spanStyle.overflow,
+        textOverflow: spanStyle.textOverflow,
+        whiteSpace: spanStyle.whiteSpace,
+        // Outcome semantic — the actual F-A-1 invariant: the .ec-meta
+        // container must not overflow the card. Under host-alone pressure
+        // the host may ellipsify (architect-acknowledged UX trade-off);
+        // the container staying within the card is what matters.
+        metaScrollWidth: meta.scrollWidth,
+        metaClientWidth: meta.clientWidth,
+        metaRight: metaRect.right,
+        cardRight: cardRect.right,
       };
     }, FQDN_HOSTNAME);
 
@@ -157,23 +180,34 @@ test.describe('F-A-1 / H2 — ec-meta host span overflow (class A)', () => {
       return;
     }
 
-    // EXPECTATION: span should NOT overflow. Pre-PR-α this failed until F-A-1 fix.
+    // CSS rule fingerprint — catches "rule removed" / "selector mismatch"
+    // regressions. The actual values are spec'd in components.css :941.
+    expect(injected.overflow).toBe('hidden');
+    expect(injected.textOverflow).toBe('ellipsis');
+    expect(injected.whiteSpace).toBe('nowrap');
+
+    // Outcome semantic — F-A-1 invariant: container fits within the card.
+    // #494: pre-F-A-1 the rigid host pushed `.ec-meta` past the card's
+    // right edge. The architect's `flex: 0 1 auto` fix lets the host
+    // ellipsify when the container is too narrow for the full FQDN; the
+    // ellipsification is the acceptable trade-off documented in the
+    // architect's triage. The card-overflow check is the real invariant.
     expect(
-      injected.overflowing,
-      `host span scrollWidth=${injected.scrollWidth} > clientWidth=${injected.clientWidth}: confirms F-A-1`,
-    ).toBe(false);
+      injected.metaScrollWidth,
+      `.ec-meta scrollWidth=${injected.metaScrollWidth} > clientWidth=${injected.metaClientWidth}: container overflowed`,
+    ).toBeLessThanOrEqual(injected.metaClientWidth + 1);
+    expect(
+      injected.metaRight,
+      `.ec-meta right=${injected.metaRight} > card right=${injected.cardRight}: container bled past card edge`,
+    ).toBeLessThanOrEqual(injected.cardRight + 1);
   });
 
-  // TODO: #494 — The COMPANION test below (host span alone) holds at
-  // FQDN content; this combined-injection test (FQDN host + 34-char
-  // lineup) overflows the `.ec-meta` container under the #492 route
-  // shim's seeded baseline. The audit's F-A-1 refutation was
-  // calibrated against walker conditions whose specific column-width
-  // computation differs from the shim's. Skipped here so #492's CI
-  // stays green while #494 triages (assertion loosening vs UI CSS
-  // fix). See #492 PR body's "Refutation findings deferred to #494"
-  // section.
-  test.skip('ec-meta container does NOT overflow card at FQDN + long lineup (class A) — TODO: #494', async ({
+  // #494 (resolved): the F-A-1 fix relaxed `.ec-meta > span:last-child`
+  // from `flex-shrink: 0` to `flex: 0 1 auto`, letting the host ellipsify
+  // as a second priority under combined pressure (long lineup + FQDN
+  // host). Lineup still shrinks first via flex:1 1 0; host only kicks in
+  // when lineup alone can't absorb the overflow.
+  test('ec-meta container does NOT overflow card at FQDN + long lineup (class A)', async ({
     page,
   }) => {
     await gotoOverview(page);
@@ -621,20 +655,12 @@ test.describe('F-A-4 / H6-B — SheetHead player ID silent clip (class A + visua
 // changes. Locking the proof in CI prevents the regression.
 // ────────────────────────────────────────────────────────────────────────
 
-// TODO: #494 — Three of this group's six viewport iterations (899px,
-// 521px, 519px) surfaced real page-pills × page-actions collision
-// under the #492 route shim's seeded baseline. The shim let these
-// run unconditionally for the first time; the audit's H10 refutation
-// was calibrated against wider walker viewports and doesn't hold at
-// the narrower bands below ~900px. The affected iterations are
-// skipped here so #492's CI stays green while #494 triages
-// (assertion loosening vs UI CSS fix). See #492 PR body's
-// "Refutation findings deferred to #494" section.
-const H10_TODO_494_SKIP_LABELS = new Set([
-  'just-below-900', // 899px — pills.right > actions.left
-  'just-above-520', // 521px — same
-  'just-below-520', // 519px — same
-]);
+// #494 (resolved): the H10 fix adds `flex-wrap: wrap; gap: 4px;` to
+// `.page-pills` inside `@container artboard (max-width: 900px)` (the
+// 899px and 521px iterations now wrap cleanly within the title cell).
+// At 519px the header grid collapses to a single column — pills and
+// actions stack on separate rows, so the test heuristic was tightened
+// with a vertical AND-gate (see L660-680). All six viewports now hold.
 
 test.describe('H10 — page-pills × page-actions collision (refuted)', () => {
   for (const viewport of [
@@ -645,8 +671,7 @@ test.describe('H10 — page-pills × page-actions collision (refuted)', () => {
     { width: 521, height: 780, label: 'just-above-520' },
     { width: 519, height: 780, label: 'just-below-520' },
   ]) {
-    const todo494 = H10_TODO_494_SKIP_LABELS.has(viewport.label);
-    (todo494 ? test.skip : test)(`pills do not overlap actions at ${viewport.label} (${viewport.width}px)${todo494 ? ' — TODO: #494' : ''}`, async ({
+    test(`pills do not overlap actions at ${viewport.label} (${viewport.width}px)`, async ({
       page,
     }) => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
@@ -664,7 +689,17 @@ test.describe('H10 — page-pills × page-actions collision (refuted)', () => {
           found: true,
           pillsRight: pillsRect.right,
           actionsLeft: actionsRect.left,
-          overlapping: pillsRect.right > actionsRect.left,
+          pillsBottom: pillsRect.bottom,
+          actionsTop: actionsRect.top,
+          // #494: AND-gate vertical overlap. At <=520px the header grid
+          // collapses to `grid-template-columns: 1fr` (components.css ~L1068),
+          // so pills and actions stack on separate rows — horizontal-only
+          // comparison would trivially return true for two full-width
+          // stacked elements without there being a real visual collision.
+          // Require BOTH horizontal AND vertical overlap to count as a hit.
+          overlapping:
+            pillsRect.right > actionsRect.left &&
+            pillsRect.bottom > actionsRect.top,
         };
       });
 
@@ -783,14 +818,10 @@ test.describe('H12 — PlayerTypeCard row-height (P3 cosmetic, design-locked)', 
 // cell or imposes a max-width, this test must update.
 // ────────────────────────────────────────────────────────────────────────
 
-// TODO: #494 — Tablet (834px) iteration surfaced a real .page-title ×
-// .page-actions collision under the #492 route shim's i18n
-// simulation (2× label expansion). The audit's H14 refutation
-// claimed "safe at ≥834px / ≤2× English" but the 834px boundary is
-// where the title bleeds into the actions cell. Desktop (1440px)
-// and laptop (1180px) iterations still pass. See #492 PR body's
-// "Refutation findings deferred to #494" section.
-const H14_TODO_494_SKIP_LABELS = new Set(['tablet']);
+// #494 (resolved): the H14 fix added `min-width: 0` to `.page-title`
+// (components.css :369-382), letting the title shrink and allowing
+// F-A-4's existing `overflow-wrap: break-word` to engage. Tablet (834px)
+// now holds alongside desktop/laptop.
 
 test.describe('H14 — page-actions i18n button row (refuted at ≥834px / ≤2× English)', () => {
   for (const viewport of [
@@ -798,8 +829,7 @@ test.describe('H14 — page-actions i18n button row (refuted at ≥834px / ≤2�
     { width: 1180, height: 820, label: 'laptop' },
     { width: 834, height: 1100, label: 'tablet' },
   ]) {
-    const todo494 = H14_TODO_494_SKIP_LABELS.has(viewport.label);
-    (todo494 ? test.skip : test)(`page-actions buttons fit auto cell at ${viewport.label} (${viewport.width}px) with simulated i18n labels${todo494 ? ' — TODO: #494' : ''}`, async ({
+    test(`page-actions buttons fit auto cell at ${viewport.label} (${viewport.width}px) with simulated i18n labels`, async ({
       page,
     }) => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
@@ -831,8 +861,19 @@ test.describe('H14 — page-actions i18n button row (refuted at ≥834px / ≤2�
           actionsRight: actionsRect.right,
           actionsLeft: actionsRect.left,
           titleRight: titleRect.right,
+          titleBottom: titleRect.bottom,
+          actionsTop: actionsRect.top,
           actionsOverflowed: actionsRect.right > headerRect.right + 1,
-          actionsCollidedWithTitle: titleRect.right > actionsRect.left,
+          // #494: AND-gate vertical overlap — same pattern the H10@519
+          // refinement uses (~L660-680). At ≤900px the page-header grid
+          // collapses to `grid-template-columns: 1fr` (components.css :1079),
+          // so title and actions stack on separate rows. Horizontal-only
+          // comparison would trivially fire for any two stacked elements
+          // (both span the full header width). Require BOTH horizontal AND
+          // vertical overlap to count as a real visual collision.
+          actionsCollidedWithTitle:
+            titleRect.right > actionsRect.left &&
+            titleRect.bottom > actionsRect.top,
         };
       });
 
