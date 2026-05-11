@@ -50,6 +50,18 @@ const POLL_CHAT_LIMIT = 200;
  * *correctness* guard preventing partial-input ensemble diffs.
  */
 export const AGGREGATE_LIST_DEADLINE_MS = 500;
+/**
+ * #550 — consecutive-failure cap for the per-ensemble fan-out
+ * carry-forward. After this many `'failed'` outcomes in a row, the
+ * ensemble is promoted from `'failed'` (carry-forward in liveNames) to
+ * `'gone'` (excluded → emits `ensemble.destroyed`). Matches the
+ * 15s tick watchdog ceiling at 750ms cadence: 20 ticks × 750ms ≈ 15s.
+ * Operator-coherent: "can't observe → eventually treat as gone."
+ *
+ * Counted as the threshold to EXCEED (cf > K) so the spec table holds:
+ * 20 consecutive `'failed'` ticks stay 'failed'; the 21st promotes.
+ */
+export const MAX_CONSECUTIVE_FAILURES = 20;
 
 const log = (...args: unknown[]) =>
   console.error('[claude-tempo:aggregate]', ...args);
@@ -74,6 +86,16 @@ export class TickSkipped extends Error {
 /** Per-ensemble tracking state across ticks. */
 interface EnsembleTrack {
   bus: EnsembleEventBus;
+  /**
+   * #550 — consecutive `'failed'` outcomes since the last `'ok'` in
+   * `collect()`'s per-ensemble fan-out. Reset to 0 on a successful
+   * fan-out; incremented on `'failed'`. When it exceeds
+   * {@link MAX_CONSECUTIVE_FAILURES} the ensemble is promoted to
+   * `'gone'` and its track torn down by `applyDiff`. While this
+   * counter is `> 0` the cluster diff still treats the ensemble as
+   * alive (no phantom `ensemble.destroyed`).
+   */
+  consecutiveFailures: number;
   /** Last seen player phase, keyed by playerId. */
   playerPhases: Map<string, string | undefined>;
   /**
@@ -108,10 +130,58 @@ export interface AggregateEnsembleSnapshot {
   chat: EnsembleChatMessage[];
 }
 
+/**
+ * #550 — Per-ensemble fan-out outcome. The discriminated union lets
+ * `collect()` distinguish "we observed full state" (`'ok'`) from
+ * "ensemble is genuinely destroyed per Temporal" (`'gone'`, only on
+ * `EnsembleNotFoundError`) from "we couldn't observe this tick — try
+ * again next time" (`'failed'`, any other error).
+ *
+ * The classification decision lives in `collect()`'s `Promise.all`
+ * body; `applyDiff` stays ignorant of the failure mode and just
+ * consumes the resulting `AggregateSnapshot.liveEnsembleNames` set
+ * plus the `'ok'`-only `ensembles` array.
+ *
+ * Why this matters: lumping both into `null` (pre-#550 behavior)
+ * caused the cluster diff to emit `ensemble.destroyed` for ensembles
+ * whose fan-out merely timed out, producing phantom destroy events
+ * to every SSE subscriber every time a single per-ensemble query
+ * stalled.
+ */
+export type FanoutResult =
+  | { kind: 'ok'; snapshot: AggregateEnsembleSnapshot }
+  | { kind: 'gone'; name: string }
+  | { kind: 'failed'; name: string };
+
 /** Aggregate cluster snapshot — what one tick gathers. */
 export interface AggregateSnapshot {
   capturedAt: string;
+  /**
+   * Only `'ok'` fan-out results — i.e. ensembles for which we observed
+   * full per-ensemble state this tick. `applyDiff` iterates this for
+   * per-ensemble diff events (player.added, flags.changed, …).
+   */
   ensembles: AggregateEnsembleSnapshot[];
+  /**
+   * #550 — Cluster-diff input. Slim `{ensemble, hasConductor}` entries
+   * for the union of `'ok'` + `'failed'` outcomes (`'gone'` results
+   * excluded — they're the only kind that should trigger
+   * `ensemble.destroyed`).
+   *
+   * `hasConductor` for `'ok'` entries reflects the truthful
+   * fresh-this-tick value from `buildEnsembleSnapshot`; for `'failed'`
+   * entries it carries forward from the listEnsembles prelude (the
+   * cluster-list result already knew `hasConductor` per ensemble,
+   * even if the per-ensemble fan-out timed out). This keeps
+   * `ensemble.created` payloads truthful even when the very first
+   * tick for a new ensemble is a fan-out failure (researcher's
+   * "one-tick-delayed" carry-forward semantics).
+   *
+   * `applyDiff` consumes this directly without re-classifying the
+   * failure mode — the carry-forward decision is fully encoded by
+   * `collect()` upstream (architect's spec).
+   */
+  livePrelude: Array<{ ensemble: string; hasConductor: boolean }>;
   hostProfiles: Record<string, HostProfile>;
 }
 
@@ -284,15 +354,23 @@ export function diffHostProfiles(
 
 /**
  * Diff ensemble-name set → ensemble.created / ensemble.destroyed events.
+ *
+ * #550 — accepts the slim `{ensemble, hasConductor}` shape rather than
+ * a full `AggregateEnsembleSnapshot[]`. The full-snapshot type still
+ * satisfies it structurally, so existing tests passing
+ * `AggregateEnsembleSnapshot[]` continue to compile. The slimmer
+ * input lets `applyDiff` feed the `livePrelude` carry-forward set
+ * (which contains stub entries for `'failed'` outcomes that have no
+ * full snapshot this tick).
  */
 export function diffEnsembleSet(
   prev: ReadonlySet<string>,
-  nextEnsembles: AggregateEnsembleSnapshot[],
+  nextEnsembles: ReadonlyArray<{ ensemble: string; hasConductor: boolean }>,
   capturedAt: string,
 ): { events: DiffEvent[]; names: Set<string> } {
   const events: DiffEvent[] = [];
   const names = new Set<string>();
-  const seen = new Map<string, AggregateEnsembleSnapshot>();
+  const seen = new Map<string, { ensemble: string; hasConductor: boolean }>();
   for (const e of nextEnsembles) { names.add(e.ensemble); seen.set(e.ensemble, e); }
   for (const name of names) {
     if (!prev.has(name)) {
@@ -461,6 +539,7 @@ export class AggregateRunner {
       const bus = this.busFactory(ensemble, allocator);
       track = {
         bus,
+        consecutiveFailures: 0,
         playerPhases: new Map(),
         playerAgentTypes: new Map(),
         flags: null,
@@ -592,11 +671,13 @@ export class AggregateRunner {
       `hosts=${Object.keys(hostProfiles).length})`,
     );
 
-    // Per-ensemble fan-out.
+    // Per-ensemble fan-out. #550 — returns `FanoutResult` discriminated
+    // union so the cluster diff downstream can distinguish "still alive
+    // (carry forward)" from "actually destroyed (emit destroy)."
     const pollStart = this.now();
     log(`collect tick=${tickGen}: poll started`);
-    const perEnsemble = await Promise.all(
-      ensembles.map(async (e): Promise<AggregateEnsembleSnapshot | null> => {
+    const initialResults: FanoutResult[] = await Promise.all(
+      ensembles.map(async (e): Promise<FanoutResult> => {
         try {
           // Reuse `buildEnsembleSnapshot` so the projection logic stays in
           // one place. We only need a subset, but the full builder is cheap.
@@ -611,40 +692,115 @@ export class AggregateRunner {
             chat = wider.messages;
           } catch { /* fall back to the snapshot's narrow slice */ }
           return {
-            ensemble: e.name,
-            hasConductor: snap.hasConductor,
-            flags: snap.flags,
-            players: snap.players,
-            schedules: snap.schedules,
-            chat,
+            kind: 'ok',
+            snapshot: {
+              ensemble: e.name,
+              hasConductor: snap.hasConductor,
+              flags: snap.flags,
+              players: snap.players,
+              schedules: snap.schedules,
+              chat,
+            },
           };
         } catch (err) {
-          if (err instanceof EnsembleNotFoundError) return null;
-          // Per-ensemble soft fail — log and skip.
-          log(`collect: ensemble "${e.name}" failed:`, err instanceof Error ? err.message : err);
-          return null;
+          // #550 — conservative classification: only `EnsembleNotFoundError`
+          // counts as a real removal. Everything else (query timeout,
+          // network blip, transient worker wedge) is `'failed'` →
+          // carry-forward. False-negative destroy events are the worst
+          // possible failure mode (SSE consumers may take destructive
+          // action), so be deliberate about what gets classified as
+          // genuinely gone.
+          if (err instanceof EnsembleNotFoundError) {
+            return { kind: 'gone', name: e.name };
+          }
+          log(`collect: ensemble "${e.name}" failed (carry-forward):`,
+            err instanceof Error ? err.message : err);
+          return { kind: 'failed', name: e.name };
         }
       }),
     );
-    const dropped = perEnsemble.filter((x) => x === null).length;
-    const succeeded = perEnsemble.length - dropped;
+
+    // #550 — Update per-ensemble `consecutiveFailures` counters and
+    // apply the K=20 promotion pass. Mutating tracks here is safe (we
+    // serialize after Promise.all completes; the tick is single-flight
+    // courtesy of `inFlight`). Promoting 'failed' → 'gone' triggers
+    // `applyDiff` to tear the track down.
+    let okCount = 0, goneCount = 0, failedCount = 0, promotedCount = 0;
+    const finalResults: FanoutResult[] = initialResults.map((r) => {
+      if (r.kind === 'ok') {
+        const t = this.tracks.get(r.snapshot.ensemble);
+        if (t) t.consecutiveFailures = 0;
+        okCount++;
+        return r;
+      }
+      if (r.kind === 'gone') {
+        goneCount++;
+        return r;
+      }
+      // r.kind === 'failed' — ensure a track exists so the counter has
+      // a home, then increment + maybe promote.
+      this.getOrCreateEnsembleBus(r.name);
+      const t = this.tracks.get(r.name)!;
+      t.consecutiveFailures++;
+      if (t.consecutiveFailures > MAX_CONSECUTIVE_FAILURES) {
+        log(
+          `collect tick=${tickGen}: ensemble "${r.name}" failed ` +
+          `${t.consecutiveFailures}× consecutively (cap=${MAX_CONSECUTIVE_FAILURES}) — promote to 'gone'`,
+        );
+        promotedCount++;
+        // applyDiff's teardown loop will drop the track on the next tick.
+        return { kind: 'gone', name: r.name };
+      }
+      failedCount++;
+      return r;
+    });
+
+    // #550 — Build the cluster-diff input: ('ok' ∪ 'failed') with
+    // truthful `hasConductor` for each (from the fresh ok snapshot
+    // OR carried forward from the listEnsembles prelude for failed).
+    // 'gone' results (including K-promoted) are excluded so they
+    // trigger `ensemble.destroyed` downstream.
+    const preludeHasConductor = new Map<string, boolean>(
+      ensembles.map((e) => [e.name, e.hasConductor]),
+    );
+    const livePrelude: Array<{ ensemble: string; hasConductor: boolean }> = [];
+    const okSnapshots: AggregateEnsembleSnapshot[] = [];
+    for (const r of finalResults) {
+      if (r.kind === 'ok') {
+        okSnapshots.push(r.snapshot);
+        livePrelude.push({ ensemble: r.snapshot.ensemble, hasConductor: r.snapshot.hasConductor });
+      } else if (r.kind === 'failed') {
+        livePrelude.push({
+          ensemble: r.name,
+          hasConductor: preludeHasConductor.get(r.name) ?? false,
+        });
+      }
+      // 'gone' — explicitly excluded.
+    }
     const pollMs = this.now() - pollStart;
     log(
-      `collect tick=${tickGen}: poll complete ` +
-      `(${pollMs}ms, succeeded=${succeeded}, dropped=${dropped})`,
+      `collect tick=${tickGen}: poll complete (${pollMs}ms, ` +
+      `ok=${okCount}, failed=${failedCount}, gone=${goneCount}, promoted=${promotedCount})`,
     );
     return {
       capturedAt,
-      ensembles: perEnsemble.filter((x): x is AggregateEnsembleSnapshot => x !== null),
+      ensembles: okSnapshots,
+      livePrelude,
       hostProfiles,
     };
   }
 
   /** Apply diff and emit events — exposed for tests that want to inject fixtures. */
   applyDiff(snapshot: AggregateSnapshot): void {
-    // Global: ensemble created/destroyed.
+    // Global: ensemble created/destroyed. #550 — diff against
+    // `snapshot.livePrelude` (ok ∪ failed) so a transient per-ensemble
+    // fan-out failure does NOT trigger `ensemble.destroyed`. The
+    // discrimination between "failed (carry forward)" and "gone (real
+    // removal)" was made upstream in `collect()` per architect's spec;
+    // `applyDiff` is intentionally ignorant of the failure mode and
+    // just consumes the resolved live set.
     const { events: ensembleEvents, names } = diffEnsembleSet(
-      this.knownEnsembles, snapshot.ensembles, snapshot.capturedAt,
+      this.knownEnsembles, snapshot.livePrelude, snapshot.capturedAt,
     );
     for (const ev of ensembleEvents) this._globalBus.emit(ev.type, ev.payload);
     this.knownEnsembles = names;
