@@ -246,6 +246,14 @@ test.describe('F-A-1 / H2 — ec-meta host span overflow (class A)', () => {
       result.overflowing,
       `ec-meta scrollWidth=${result.scrollWidth} > clientWidth=${result.clientWidth}: confirms F-A-1`,
     ).toBe(false);
+
+    // #493 visual regression baseline — the combined-injection scenario
+    // (FQDN host + 34-char lineup) was un-skipped by #494's
+    // `flex: 0 1 auto` fix on `.ec-meta > span:last-child`. The
+    // screenshot locks the new layout where the host ellipsifies under
+    // combined pressure; a regression of that flex rule would visibly
+    // shift the ellipsis position.
+    await expect(page.locator('.ensemble-card').first()).toHaveScreenshot('F-A-1-ec-meta-combined.png');
   });
 });
 
