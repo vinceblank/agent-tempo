@@ -595,6 +595,96 @@ jobs:
           echo "- Mocha wall-clock: **${{ steps.mocha.outputs.duration }}s**" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
+  # ── #547 — Synthetic success reporters for docs-only PRs ─────────────────
+  #
+  # Problem: branch protection lists specific status check names as required.
+  # Those names come from the matrix-expanded `name:` fields of the heavy
+  # test jobs (build-and-test, test-tui, build-and-test-windows) plus the
+  # single dashboard and drift-check jobs. On docs-only PRs all of those jobs
+  # are SKIPPED (`code == 'false'`). GitHub branch protection treats a skipped
+  # required check as "not reported" — indistinguishable from a missing job —
+  # and blocks the merge.
+  #
+  # Fix: add a noop companion for every skippable required check. Each noop
+  # shares the exact same `name:` as its real counterpart (GitHub matches on
+  # `name:`, not job id) and runs ONLY when the real job is skipped. The two
+  # branches are mutually exclusive:
+  #   - code PR  → real jobs run, noops skip  (noop `if` is false)
+  #   - docs PR  → noops run, real jobs skip  (real `if` is false)
+  #   - push/dispatch → neither set's noop runs (noops gate on pull_request)
+  #
+  # See https://github.com/vinceblank/claude-tempo/issues/547 for root-cause
+  # analysis and the branch-protection check name inventory.
+
+  build-and-test-noop:
+    name: build-and-test (shard-${{ matrix.shard }}, node-${{ matrix.node-version }})
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    needs: [changes]
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22, 24]
+        shard: [1, 2]
+    steps:
+      - run: echo "docs-only PR — test matrix skipped"
+
+  test-tui-noop:
+    name: test-tui (${{ matrix.node-version }})
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    needs: [changes]
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22, 24]
+    steps:
+      - run: echo "docs-only PR — TUI vitest skipped"
+
+  build-and-test-windows-noop:
+    name: build-and-test-windows (shard-${{ matrix.shard }}, node-22)
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    needs: [changes]
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - run: echo "docs-only PR — Windows shard skipped"
+
+  shard-drift-check-noop:
+    name: shard-drift-check
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    needs: [changes]
+    steps:
+      - run: echo "docs-only PR — shard drift check skipped"
+
+  dashboard-build-noop:
+    name: dashboard-build
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    needs: [changes]
+    steps:
+      - run: echo "docs-only PR — dashboard build skipped"
+
+  dashboard-e2e-noop:
+    name: dashboard-e2e
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    needs: [changes]
+    steps:
+      - run: echo "docs-only PR — dashboard e2e skipped"
+
+  dashboard-overflow-noop:
+    name: dashboard-overflow
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    needs: [changes]
+    steps:
+      - run: echo "docs-only PR — dashboard overflow skipped"
+
   lint-commits:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
