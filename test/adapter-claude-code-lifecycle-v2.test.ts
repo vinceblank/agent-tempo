@@ -31,6 +31,7 @@ import {
   pendingMessagesQuery,
   allMessagesQuery,
   destroyUpdate,
+  pollWithTimeout,
 } from './helpers';
 import {
   claimAttachmentUpdate,
@@ -156,9 +157,21 @@ describe('claude-code adapter — V2 lifecycle (PR-C commit 2)', function () {
       });
 
       try {
-        // Let the background claim attempt resolve (and fail with AttachmentConflict).
-        // We can't await the returned closure — it's sync — so give the event loop a beat.
-        await new Promise((r) => setTimeout(r, 500));
+        // #383 P2: the background claim attempt resolves asynchronously
+        // (start() is sync and can't be awaited). The pre-#383 bare
+        // `setTimeout(500)` was racy under CI contention — if the
+        // AttachmentConflict update hadn't resolved by 500ms the query
+        // could observe a transitional phase. `pollWithTimeout` waits up
+        // to 5000ms for the state to settle at "lease still held by
+        // host-other" (canonical signal that our adapter's claim was
+        // rejected); 5s budget is consistent with other lifecycle tests.
+        await pollWithTimeout(
+          async () => {
+            const info: AttachmentInfo = await handle.query(attachmentInfoQuery);
+            return info.phase === 'attached' && info.currentAttachment?.hostname === 'host-other';
+          },
+          5000,
+        );
 
         // Phase still reflects host-other's attachment, not ours.
         const info: AttachmentInfo = await handle.query(attachmentInfoQuery);
