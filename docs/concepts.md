@@ -171,7 +171,9 @@ the conductor workflow and survive `continueAsNew`.
 isolated checkout on a separate branch. Managed via the `worktree` tool: `create` provisions
 the worktree and notifies the player, `remove` cleans up after the task, `list` shows all
 active worktrees. Worktree assignments are stored in the conductor workflow (`WorktreeEntry`
-records: player, path, branch, gitRoot, createdAt, createdBy).
+records: player, path, branch, gitRoot, createdAt, createdBy). See
+[orchestration.md — When to use worktrees](orchestration.md#when-to-use-worktrees) for
+heuristics on when worktrees pay off vs. are overkill.
 
 **Stage** — A fan-out/fan-in tracking primitive. Created via `stage`, listed via `stages`,
 cancelled via `cancel_stage`. Each stage tracks a set of players; when a tracked player sends a
