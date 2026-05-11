@@ -41,6 +41,7 @@ import { createTemporalConnection } from '../../connection';
 import { pendingMessagesQuery, allMessagesQuery, allSentMessagesQuery, isDestroyedQuery, receiveMessageSignal } from '../../workflows/signals';
 import { buildServerInstructions } from '../../server-tools';
 import { bootMcpBridge, type McpBridge } from './mcp-bridge';
+import { classifyApiError, computeBackoffMs, DEFAULT_RETRY_BUDGET } from './api-error';
 import type { Message as TempoMessage, SentMessage } from '../../types';
 
 /**
@@ -89,6 +90,17 @@ const log = (...args: unknown[]) => {
   const msg = `[claude-tempo:claude-api] ${args.map((a) => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}\n`;
   fs.writeSync(2, msg);
 };
+
+/**
+ * Format an unknown thrown value for a single log line. Caps long bodies
+ * (Anthropic 4xx error JSON can be hundreds of chars) so individual log
+ * lines stay grep-friendly. Used by the #521 retry-classification path.
+ */
+function truncateErr(err: unknown, max = 240): string {
+  const raw = (err as Error)?.message ?? (typeof err === 'string' ? err : JSON.stringify(err));
+  if (!raw) return 'unknown';
+  return raw.length > max ? raw.slice(0, max) + '…' : raw;
+}
 
 /** Default model id — verification addendum §1 (no date suffix on direct API). */
 const DEFAULT_MODEL = 'claude-opus-4-7';
@@ -325,6 +337,11 @@ export class DirectApiAttachment extends SdkAttachment {
     let polling = true;
     let processing = false;
     let pollCount = 0;
+    // #521: consecutive retriable-failure counter. Reset on every clean
+    // deliver; incremented on every retriable verdict; escalated to fatal
+    // once it exceeds DEFAULT_RETRY_BUDGET so a sustained outage doesn't
+    // wedge the player indefinitely.
+    let consecutiveFailures = 0;
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
     while (polling && !this.shouldStop()) {
@@ -385,12 +402,64 @@ export class DirectApiAttachment extends SdkAttachment {
           this.invokeSdk.bind(this),
           ackIds,
         );
+        // Clean delivery — reset the retry budget so a future transient
+        // doesn't compound with stale failure counts.
+        consecutiveFailures = 0;
       } catch (err) {
-        log(`deliver error: ${(err as Error)?.message ?? err}`);
-        // Don't exit the loop — transient failures (network blips,
-        // workflow-side update rejections) should leave the message
-        // PENDING for the next poll. Only terminal events (lease loss,
-        // destroy) exit via the onTerminal / status-check paths above.
+        // #521: classify before retrying. Pre-#521 every error was treated
+        // as transient — a non-retriable 4xx (e.g. 400 invalid_request_error
+        // for low credits, 401 auth, 403 permission, 404 model) would hot-
+        // loop the API forever, burning quota and wedging the player.
+        //
+        // Lease-revocation path: `onSuperseded` calls `AbortController.abort()`
+        // which surfaces as `APIUserAbortError` here. We classify those as
+        // fatal but skip the detach call below — the base-class terminal
+        // hook has already fired and `shouldStop()` returns true.
+        if (this.shouldStop()) {
+          log(`deliver error during shutdown — exiting loop: ${(err as Error)?.message ?? err}`);
+          polling = false;
+          break;
+        }
+
+        const verdict = classifyApiError(err);
+        log(`deliver error [${verdict.classification}] reason="${verdict.reason}" raw="${truncateErr(err)}"`);
+
+        // Both terminal paths below detach with `agent-exited` then exit
+        // the loop. Single helper keeps them obviously parallel.
+        const detachAndExit = async (logTag: string): Promise<void> => {
+          polling = false;
+          await this.detachGracefully('agent-exited').catch((e) =>
+            log(`${logTag} detachGracefully error:`, (e as Error)?.message ?? e),
+          );
+        };
+
+        if (verdict.classification === 'fatal') {
+          // Non-retriable. Surface the reason loudly so the operator sees it
+          // in the adapter log, then detach gracefully so `attachment_info`
+          // shows the player as detached (not stuck in `processing`).
+          log(`FATAL: ${verdict.reason} — detaching and exiting (no retry)`);
+          await detachAndExit('fatal-detach');
+          break;
+        }
+
+        consecutiveFailures += 1;
+        if (consecutiveFailures > DEFAULT_RETRY_BUDGET) {
+          // Retry budget exhausted. Escalate to fatal so we don't hot-loop
+          // on a sustained outage.
+          log(
+            `retry budget exhausted (${consecutiveFailures - 1} consecutive retriable failures; ` +
+            `last reason: ${verdict.reason}) — escalating to fatal, detaching and exiting`,
+          );
+          await detachAndExit('budget-exhausted');
+          break;
+        }
+
+        const sleepMs = verdict.retryAfterMs ?? computeBackoffMs(consecutiveFailures);
+        log(
+          `retriable failure ${consecutiveFailures}/${DEFAULT_RETRY_BUDGET} — ` +
+          `sleeping ${sleepMs}ms before retry${verdict.retryAfterMs !== undefined ? ' (honoring retry-after)' : ''}`,
+        );
+        await sleep(sleepMs);
       } finally {
         processing = false;
       }
