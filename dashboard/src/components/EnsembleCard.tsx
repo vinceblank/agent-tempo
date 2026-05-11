@@ -69,7 +69,6 @@ export function EnsembleCard({ ensemble }: EnsembleCardProps) {
     [data?.players],
   );
   const playerCount = players.length || ensemble.playerCount;
-  const hasConductor = data?.hasConductor ?? ensemble.hasConductor;
   const state = data?.state ?? ensemble.state ?? 'online';
   const flags = data?.flags;
   const isEmpty = playerCount === 0;
