@@ -200,6 +200,13 @@ test.describe('F-A-1 / H2 — ec-meta host span overflow (class A)', () => {
       injected.metaRight,
       `.ec-meta right=${injected.metaRight} > card right=${injected.cardRight}: container bled past card edge`,
     ).toBeLessThanOrEqual(injected.cardRight + 1);
+
+    // #493 visual regression baseline — locator-scoped on the first
+    // ensemble card so a CSS-level regression of the host span's
+    // text-overflow / min-width-0 (or #494's `flex: 0 1 auto` fix on
+    // `.ec-meta > span:last-child`) surfaces visibly even when
+    // scrollWidth math still passes.
+    await expect(page.locator('.ensemble-card').first()).toHaveScreenshot('F-A-1-host-fqdn.png');
   });
 
   // #494 (resolved): the F-A-1 fix relaxed `.ec-meta > span:last-child`
@@ -300,6 +307,13 @@ test.describe('F-A-5 / NEW — ec-name long ensemble name, BPM bbox escape (clas
       result.bpmEscapedCard,
       `BPM tempoRight=${result.tempoRight} > cardRight=${result.cardRight}: BPM escaped card — auto-P1 (F-A-5)`,
     ).toBe(false);
+
+    // #493 visual regression baseline — F-A-5 is the audit's headline
+    // class-B auto-P1. The bbox check confirms the BPM stays in the
+    // card; the screenshot also locks WHERE on the card the BPM lands
+    // (vertical alignment, font, spacing). CSS regressions of the
+    // ec-tempo column or ec-name min-width-0 surface visibly here.
+    await expect(page.locator('.ensemble-card').first()).toHaveScreenshot('F-A-5-bpm-card-boundary.png');
   });
 
   test('ec-name BPM does NOT collide into adjacent card at 36-char name (class B)', async ({
@@ -463,6 +477,10 @@ test.describe('F-A-2 / H3 — picker-row name overflow (class A)', () => {
       result.overflowing,
       `name scrollWidth=${result.scrollWidth} > clientWidth=${result.clientWidth} at '${result.slug}' — H3 prod-realistic refuted`,
     ).toBe(false);
+
+    // #493 visual regression baseline — locator-scoped on the first
+    // picker row, the production-realistic slug variant.
+    await expect(page.locator('.picker-row').first()).toHaveScreenshot('F-A-2-picker-row-prod-slug.png');
   });
 
   test('picker-row name does NOT overflow at synthetic-stress slug (F-A-2 fixed in PR-α)', async ({
@@ -497,6 +515,9 @@ test.describe('F-A-2 / H3 — picker-row name overflow (class A)', () => {
       result.overflowing,
       `name scrollWidth=${result.scrollWidth} > clientWidth=${result.clientWidth}: F-A-2 stress overflow regressed`,
     ).toBe(false);
+
+    // #493 visual regression baseline — synthetic-stress slug variant.
+    await expect(page.locator('.picker-row').first()).toHaveScreenshot('F-A-2-picker-row-stress-slug.png');
   });
 });
 
@@ -538,6 +559,9 @@ test.describe('F-A-3 / H4 — PlayerTypes .display overflow (class A)', () => {
       result.overflowing,
       `display scrollWidth=${result.scrollWidth} > clientWidth=${result.clientWidth}: H4A refutation regression`,
     ).toBe(false);
+
+    // #493 visual regression baseline — long-tail slug variant.
+    await expect(page.locator('.types-grid').first()).toHaveScreenshot('F-A-3-types-grid-long-tail.png');
   });
 
   test('.display does NOT overflow grid cell at synthetic-stress shortName (F-A-3 fixed in PR-α)', async ({
@@ -584,6 +608,11 @@ test.describe('F-A-3 / H4 — PlayerTypes .display overflow (class A)', () => {
       result.escapedIntoEl1,
       `display escaped into adjacent grid cell — class-B regression of F-A-3`,
     ).toBe(false);
+
+    // #493 visual regression baseline — synthetic-stress shortName.
+    // Captures the multi-line wrap behavior — bbox math sees it as
+    // "no overflow" but the visual wrap pattern is the actual fix.
+    await expect(page.locator('.types-grid').first()).toHaveScreenshot('F-A-3-types-grid-stress-wrap.png');
   });
 });
 
@@ -714,6 +743,13 @@ test.describe('H10 — page-pills × page-actions collision (refuted)', () => {
         result.overlapping,
         `pills right=${result.pillsRight} > actions left=${result.actionsLeft} at ${viewport.width}px: H10 collision (should never happen)`,
       ).toBe(false);
+
+      // #493 visual regression baseline — per-viewport. Captures the
+      // page-header's pill+action layout at the refuted-safe widths;
+      // a regression of `grid-template-columns: 1fr auto` would
+      // change the visual partition between the two columns even if
+      // bbox math still shows them not-overlapping at this viewport.
+      await expect(page.locator('.page-header')).toHaveScreenshot(`H10-page-header-${viewport.width}px.png`);
     });
   }
 });
@@ -745,6 +781,11 @@ test.describe('H13 — ec-roster avatar overflow at 50-player ensemble (refuted)
       result.overflowing,
       `ec-roster scrollWidth=${result.scrollWidth} > clientWidth=${result.clientWidth}: H13 should be refuted`,
     ).toBe(false);
+
+    // #493 visual regression baseline — the 5-avatar cap is visually
+    // distinctive; a regression that allows the 6th avatar through
+    // would change the visual stack even if scrollWidth still fits.
+    await expect(page.locator('.ec-roster').first()).toHaveScreenshot('H13-ec-roster-avatar-cap.png');
   });
 });
 
@@ -805,6 +846,12 @@ test.describe('H12 — PlayerTypeCard row-height (P3 cosmetic, design-locked)', 
       result.alignItems,
       `align-items='${result.alignItems}' would force equal heights — H12 needs design ratification`,
     ).not.toBe('stretch');
+
+    // #493 visual regression baseline — locks the PlayerTypes grid
+    // layout including the design-time `align-items: normal` shape
+    // that H12 ratifies. A regression to `stretch` would change the
+    // visual heights of adjacent cards.
+    await expect(page.locator('.types-grid')).toHaveScreenshot('H12-types-grid-design-lock.png');
   });
 });
 
@@ -891,6 +938,11 @@ test.describe('H14 — page-actions i18n button row (refuted at ≥834px / ≤2�
         result.actionsCollidedWithTitle,
         `title right=${result.titleRight} > actions left=${result.actionsLeft}: title bled into actions cell`,
       ).toBe(false);
+
+      // #493 visual regression baseline — per-viewport. The expanded
+      // i18n labels are visible in the screenshot; a regression of the
+      // auto-cell width budget would clip them differently.
+      await expect(page.locator('.page-header')).toHaveScreenshot(`H14-page-header-i18n-${viewport.width}px.png`);
     });
   }
 });
