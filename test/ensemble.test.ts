@@ -20,6 +20,7 @@ import {
   destroyUpdate,
   allMessagesQuery,
   waitForEnsembleMembers,
+  pollWithTimeout,
 } from './helpers';
 import {
   addScheduleSignal,
@@ -328,13 +329,22 @@ players:
         };
         await schedulerHandle.signal(addScheduleSignal, entry);
 
-        // Wait for the schedule to fire (1s delay + processing time)
-        await new Promise(r => setTimeout(r, 4000));
+        // #383 P2: scheduler timer fire (1s nextFireAt) → schedule-fire activity
+        // → outbox delivery to N session workflows. Under CI load the round-
+        // trip can exceed a fixed 4s budget. Poll for the first delivery
+        // (player1) — the assertions below cover the full fan-out across all
+        // three handles. 15s budget matches outbox tests' POLL_DELIVERY_MS.
+        await pollWithTimeout(async () => {
+          const msgs = await player1Handle.query(allMessagesQuery);
+          return msgs.some((m) => m.text.includes('[scheduled: fanout-test]'));
+        }, 15_000);
 
         // Verify both players received the message
-        const p1Messages = await player1Handle.query(allMessagesQuery);
-        const p2Messages = await player2Handle.query(allMessagesQuery);
-        const conductorMessages = await conductorHandle.query(allMessagesQuery);
+        const [p1Messages, p2Messages, conductorMessages] = await Promise.all([
+          player1Handle.query(allMessagesQuery),
+          player2Handle.query(allMessagesQuery),
+          conductorHandle.query(allMessagesQuery),
+        ]);
 
         const p1Scheduled = p1Messages.filter(m => m.text.includes('[scheduled: fanout-test]'));
         const p2Scheduled = p2Messages.filter(m => m.text.includes('[scheduled: fanout-test]'));
