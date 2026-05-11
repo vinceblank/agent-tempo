@@ -10,7 +10,7 @@
  * map to the appropriate 4xx response.
  */
 import type { IncomingMessage, ServerResponse } from 'http';
-import type { AgentType } from '../types';
+import { AGENT_TYPES, type AgentType } from '../types';
 import { isDevMode } from '../config';
 import { errorResponse } from './responses';
 import { validatePlayerName } from '../utils/validation';
@@ -76,12 +76,34 @@ export function stringField(
 }
 
 /**
- * Agent allowlists. `'mock'` is dev-mode-only — see ADR 0014 §7. Read
- * at request time so toggling `CLAUDE_TEMPO_DEV_MODE` between requests
- * is picked up without restart (parity with `src/tools/recruit.ts`).
+ * Dev-mode-only agent identifiers — must never appear in {@link ALLOWED_AGENTS_PROD}.
+ *
+ * Currently just `'mock'` (ADR 0014 §7). Listed explicitly so the prod
+ * allowlist below is "everything in {@link AGENT_TYPES} minus this set",
+ * which keeps the dev-only gate auditable and the derived prod list
+ * automatically picks up new adapters as they land in `AGENT_TYPES`
+ * (#541 — the drift bug this constant prevents).
  */
-export const ALLOWED_AGENTS_PROD: readonly AgentType[] = ['claude', 'copilot'];
-export const ALLOWED_AGENTS_DEV: readonly AgentType[] = ['claude', 'copilot', 'mock'];
+const DEV_ONLY_AGENTS: ReadonlySet<AgentType> = new Set(['mock']);
+
+/**
+ * Agent allowlists, derived from {@link AGENT_TYPES} (the SSOT in
+ * `src/types.ts`).
+ *
+ * `'mock'` is dev-mode-only — see ADR 0014 §7. Read at request time so
+ * toggling `CLAUDE_TEMPO_DEV_MODE` between requests is picked up without
+ * restart (parity with `src/tools/recruit.ts`).
+ *
+ * Deriving from `AGENT_TYPES` rather than hardcoding the list closes the
+ * #541 drift bug: every new adapter (`claude-api`, `opencode`,
+ * `claude-code-headless`, …) added to the SSOT is automatically accepted
+ * by the HTTP recruit endpoint, instead of being silently rejected by an
+ * allowlist that someone forgot to update.
+ */
+export const ALLOWED_AGENTS_DEV: readonly AgentType[] = AGENT_TYPES;
+export const ALLOWED_AGENTS_PROD: readonly AgentType[] = AGENT_TYPES.filter(
+  (a) => !DEV_ONLY_AGENTS.has(a),
+);
 
 export function allowedAgentsForCurrentMode(): readonly AgentType[] {
   return isDevMode() ? ALLOWED_AGENTS_DEV : ALLOWED_AGENTS_PROD;

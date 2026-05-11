@@ -267,7 +267,7 @@ describe('POST /v1/ensembles/:ensemble/recruit', () => {
       else process.env.CLAUDE_TEMPO_DEV_MODE = prevDevMode;
     });
 
-    it('prod mode: agent "mock" is rejected with allowed=[claude,copilot]', async () => {
+    it('prod mode: agent "mock" is rejected; allowed excludes mock but includes every other AGENT_TYPES entry', async () => {
       delete process.env.CLAUDE_TEMPO_DEV_MODE;
       const b = await boot();
       const res = await postJson(`${b.url}/v1/ensembles/demo/recruit`, {
@@ -276,7 +276,16 @@ describe('POST /v1/ensembles/:ensemble/recruit', () => {
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.error).toBe('invalid-agent');
-      expect(body.allowed).toEqual(['claude', 'copilot']);
+      // Prod allowlist == AGENT_TYPES minus dev-only entries (currently just 'mock').
+      // Assert by membership rather than equality so a new adapter landing in
+      // AGENT_TYPES doesn't force every recruit test to update — drift is
+      // covered by the dedicated body-allowlist sync test.
+      expect(body.allowed).not.toContain('mock');
+      expect(body.allowed).toContain('claude');
+      expect(body.allowed).toContain('copilot');
+      expect(body.allowed).toContain('claude-api');
+      expect(body.allowed).toContain('opencode');
+      expect(body.allowed).toContain('claude-code-headless');
     });
 
     it('dev mode: agent "mock" is accepted and forwarded to client.recruit', async () => {
@@ -301,7 +310,7 @@ describe('POST /v1/ensembles/:ensemble/recruit', () => {
       expect(recruitCall?.args[1]).toMatchObject({ agent: 'claude' });
     });
 
-    it('dev mode: unknown agent rejected with allowed=[claude,copilot,mock]', async () => {
+    it('dev mode: unknown agent rejected; allowed == full AGENT_TYPES SSOT (mock included)', async () => {
       process.env.CLAUDE_TEMPO_DEV_MODE = '1';
       const b = await boot();
       const res = await postJson(`${b.url}/v1/ensembles/demo/recruit`, {
@@ -310,7 +319,33 @@ describe('POST /v1/ensembles/:ensemble/recruit', () => {
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.error).toBe('invalid-agent');
-      expect(body.allowed).toEqual(['claude', 'copilot', 'mock']);
+      // Dev allowlist == AGENT_TYPES verbatim. Membership assertions
+      // (rather than deep-equals) keep this test stable as adapters
+      // land in AGENT_TYPES; the dedicated body-allowlist sync test
+      // is what catches drift.
+      expect(body.allowed).toContain('mock');
+      expect(body.allowed).toContain('claude');
+      expect(body.allowed).toContain('copilot');
+      expect(body.allowed).toContain('claude-api');
+      expect(body.allowed).toContain('opencode');
+      expect(body.allowed).toContain('claude-code-headless');
+    });
+
+    it('prod mode: each new headless adapter (claude-api / opencode / claude-code-headless) is forwarded to client.recruit (#541)', async () => {
+      delete process.env.CLAUDE_TEMPO_DEV_MODE;
+      const b = await boot();
+      for (const agent of ['claude-api', 'opencode', 'claude-code-headless'] as const) {
+        const res = await postJson(`${b.url}/v1/ensembles/demo/recruit`, {
+          name: 'alice', workDir: '/repo', agent,
+        });
+        expect(res.status, `agent=${agent}`).toBe(202);
+      }
+      const recruitedAgents = b.calls
+        .filter((c) => c.method === 'recruit')
+        .map((c) => (c.args[1] as { agent?: string }).agent);
+      expect(recruitedAgents).toContain('claude-api');
+      expect(recruitedAgents).toContain('opencode');
+      expect(recruitedAgents).toContain('claude-code-headless');
     });
   });
 });
