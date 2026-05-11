@@ -89,19 +89,30 @@ export function createOverflowFixtureClient(regime: OverflowRegime): DashboardTe
       // awaits the next event indefinitely; when the route unmounts the
       // controller aborts the signal, the iterator's `next()` rejects,
       // and the catch in the hook logs `sse.disconnected` and returns.
+      //
+      // The rejection follows the WHATWG AbortController convention
+      // (`error.name === 'AbortError'`) without referencing the
+      // `DOMException` global directly — that global isn't in the
+      // ESLint `env: browser` allowlist this repo uses, and the only
+      // consumer (`useSseSubscription`) reads `err.message` not the
+      // constructor identity, so a plain `Error` shaped like an
+      // AbortError is functionally identical.
       return {
         [Symbol.asyncIterator]() {
           return {
             next(): Promise<IteratorResult<TempoEvent>> {
               return new Promise((_resolve, reject) => {
+                const rejectAbort = (): void => {
+                  const err = new Error('Aborted');
+                  err.name = 'AbortError';
+                  reject(err);
+                };
                 if (opts.signal) {
                   if (opts.signal.aborted) {
-                    reject(new DOMException('Aborted', 'AbortError'));
+                    rejectAbort();
                     return;
                   }
-                  opts.signal.addEventListener('abort', () => {
-                    reject(new DOMException('Aborted', 'AbortError'));
-                  });
+                  opts.signal.addEventListener('abort', rejectAbort);
                 }
                 // Otherwise, never resolves. The shim's lifetime is
                 // bounded by the test's page lifetime; Playwright tears
