@@ -379,6 +379,12 @@
   display: inline-flex;
   align-items: baseline;
   gap: 0;
+  /* #494 H14 fix: same `min-width: 0` pattern F-A-1 established on `.ec-meta`
+   * spans (L941). Without this, the title's inline-flex content size pins it
+   * open and pushes `.page-actions` past the header's `auto` cell when i18n
+   * labels expand the actions column. Wrap (F-A-4) can only engage if the
+   * title is allowed to shrink first. */
+  min-width: 0;
 }
 .page-title .at { color: var(--accent); }
 .page-title .prefix { font-family: var(--ff-mono); font-size: 14px; color: var(--dim); letter-spacing: 0; margin-right: 8px; font-weight: 500; align-self: center; transform: translateY(1px); /* canvas v=49 sync: was vertical-align: 4px; margin-right: 6px */ }
@@ -940,7 +946,16 @@
  * host (last) shrinks to nothing rather than overflowing the card. */
 .ec-meta > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .ec-meta > span:first-child { flex: 1 1 0; }
-.ec-meta > span:last-child  { flex-shrink: 0; }
+/* #494 F-A-1 follow-up: relax host's `flex-shrink: 0` to `flex: 0 1 auto`
+ * so it can ellipsify under combined pressure (long lineup + FQDN). The
+ * pre-fix rigid host overflowed the .ec-meta container outwards — F-A-1's
+ * bug. Under host-alone pressure where the container is too narrow even
+ * without a long lineup, the host gracefully ellipsifies; the F-A-1
+ * invariant ".ec-meta does not overflow the card" still holds. Note: a
+ * weighted-shrink follow-up (`flex-shrink: 10` on lineup) is mathematically
+ * inert here because lineup's `flex-basis: 0` makes its shrink contribution
+ * `10 × 0 = 0` — see PR #(this) for empirical analysis. */
+.ec-meta > span:last-child  { flex: 0 1 auto; }
 /* Card-chrome flag chips. Tighter than `.page-pill` so they read as
  * indicators, not status pills. */
 .ec-flags {
@@ -1067,6 +1082,10 @@
   .workspace-side { flex-direction: column; }
   .page-header { grid-template-columns: 1fr; padding: 14px 16px 0; gap: 8px; }
   .page-actions { flex-wrap: wrap; }
+  /* #494 H10 fix: at <=900px the .page-pills live inside the 1fr cell of
+   * .page-title-row; without flex-wrap they bleed past the column edge into
+   * .page-actions. Wrapping keeps them inside the title cell. */
+  .page-pills { flex-wrap: wrap; gap: 4px; }
   .page-tempo { padding: 0 16px; }
 
   /* Hide the on-page sidebar maestro identity on tablet */
