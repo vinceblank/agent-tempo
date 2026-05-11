@@ -13,7 +13,7 @@
  * cache writes don't propagate synchronously through React 19.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import type { EnsembleSummary, TempoEvent } from 'claude-tempo/http/event-types';
 import type { EnsembleChatMessage } from 'claude-tempo/types';
 import { App } from '../../src/App';

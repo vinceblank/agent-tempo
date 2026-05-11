@@ -47,7 +47,6 @@ import { Loadouts } from './screens/Loadouts';
 import { Overview } from './screens/Overview';
 import { Workspace } from './screens/Workspace';
 import { PlayerDetail } from './screens/PlayerDetail';
-import { PlaceholderScreen } from './screens/Placeholder';
 import { PlayerTypes } from './screens/PlayerTypes';
 import { Recruit } from './screens/Recruit';
 import { Schedules } from './screens/Schedules';
