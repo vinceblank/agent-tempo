@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.17] - 2026-05-11
+
 ### Added
 
 - Dashboard: muted adapter-badge chip now renders for headless players (copilot, claude-code-headless, opencode, claude-api, mock) when no explicit type is set, making them visually distinguishable from interactive Claude Code sessions (#537)
