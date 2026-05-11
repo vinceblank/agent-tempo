@@ -24,6 +24,7 @@ dashboard/dist/*
 !scripts/lint-skip-reasons.js
 !scripts/gh-app-token.js
 !scripts/check-surface-drift.js
+!scripts/check-no-stale-scaffold.js
 !scripts/strip-mock-adapter.js
 !scripts/verify-tarball.js
 # Dashboard ESLint flat config — JS module, intentionally committed.
@@ -35,6 +36,9 @@ temporal-data.db
 
 # Temporary design handoff extraction directories.
 .tmp-design-handoff/
+
+# Heap-snapshot harness output (scripts/dev/heap-snapshot-336.sh, dev-only).
+scripts/dev/.out/
 
 # Never commit secrets. Private keys, GitHub App .pem files, etc.
 secrets/
