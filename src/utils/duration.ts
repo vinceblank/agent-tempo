@@ -30,3 +30,28 @@ export function formatDurationMs(ms: number): string {
   if (ms >= 60_000) return `${ms / 60_000}m`;
   return `${ms / 1000}s`;
 }
+
+/**
+ * Render an ISO timestamp as a coarse "N{s,m,h,d} ago" string for human-
+ * readable listings. Returns `"just now"` for ≤1s, `"unknown"` if the
+ * timestamp can't be parsed.
+ *
+ * `now` is injectable for deterministic tests; defaults to `Date.now()`.
+ *
+ * **Why a second time helper exists** (the TUI has `formatRelativeTime`
+ * in `src/tui/utils/format.ts` doing roughly the same thing):
+ * `src/tui/` carries Ink/React transitive imports the headless tools layer
+ * mustn't take on. This helper has zero dependencies and is freely
+ * importable by any layer. Consolidation across the two homes is tracked
+ * as future deduplication work, not in scope here.
+ */
+export function formatTimeAgo(iso: string, now: number = Date.now()): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return 'unknown';
+  const ms = now - t;
+  if (ms < 1000) return 'just now';
+  if (ms < 60_000) return `${Math.floor(ms / 1000)}s ago`;
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  return `${Math.floor(ms / 86_400_000)}d ago`;
+}
