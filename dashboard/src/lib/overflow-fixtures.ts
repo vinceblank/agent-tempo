@@ -116,7 +116,11 @@ export function fixtureEnsembleList(regime: OverflowRegime): EnsembleSummary[] {
   if (names.length === 0) names.push('tempo-jam');
   return names.map((name, i) => ({
     name,
-    playerCount: 3 + i,
+    // #574: in 'short' the matching `fixtureEnsembleSnapshot` seeds 6
+    // players to exercise the H13 5-avatar cap; keep playerCount in
+    // lockstep so cards that display the summary count agree with the
+    // roster they render. Other regimes' counts are unchanged (3 + i).
+    playerCount: regime === 'short' ? 6 : 3 + i,
     hasConductor: true,
     state: 'online',
   }));
@@ -140,6 +144,13 @@ export function fixtureEnsembleSnapshot(
   const conductorName = playerNames[0] ?? 'tempo-conductor';
   const leadName = playerNames[1] ?? 'tempo-eng';
   const startedAt = new Date(Date.now() - 3_600_000).toISOString(); // 1h ago
+  // #574: in the 'short' regime, seed 6 players so the H13 ec-roster test's
+  // 5-avatar slice cap is visually exercised (5 avatars rendered + 1 dropped
+  // by the JSX `.slice(0, 5)`). Other regimes keep the 2-player seed they
+  // had before — the only test currently invoking 'short' is H13's roster
+  // baseline, and changing 'long' / 'stress' / 'i18n' would force a refresh
+  // of every Overview-card baseline they touch for no incremental gain.
+  const extraPlayerCount = regime === 'short' ? 4 : 0;
   const players: PlayerSummaryV1[] = [
     {
       playerId: conductorName,
@@ -165,6 +176,22 @@ export function fixtureEnsembleSnapshot(
       workDir: '/repo',
       gitBranch: 'main',
     },
+    // #574: anonymous fill players so 'short' reaches 6 total — enough to
+    // exercise the H13 5-avatar cap visually. Indices 2-5 reuse playerNames
+    // from the catalog (falling back to deterministic synthesized names) so
+    // the roster keeps recognizable identities rather than `player-3` etc.
+    ...Array.from({ length: extraPlayerCount }, (_, idx): PlayerSummaryV1 => ({
+      playerId: playerNames[idx + 2] ?? `tempo-player-${idx + 3}`,
+      ensemble: ensembleName,
+      hostname,
+      isConductor: false,
+      agentType: 'claude',
+      playerType: 'my-tempo-engineer',
+      phase: 'attached',
+      part: 'Engineer session',
+      workDir: '/repo',
+      gitBranch: 'main',
+    })),
   ];
   return {
     v: 1,

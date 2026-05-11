@@ -1,0 +1,173 @@
+# #493 — CI-authored regeneration of the dashboard overflow Playwright
+# baseline PNGs.
+#
+# Why this workflow exists:
+#   Baseline PNGs MUST be generated on Linux to match the
+#   `dashboard-overflow` CI job's rendering environment. macOS / Windows
+#   snapshots diverge from Linux on font hinting, subpixel anti-aliasing,
+#   and emoji rendering — committing them produces false-positive diffs
+#   on every CI run.
+#
+# How operators use it:
+#   gh workflow run update-overflow-snapshots.yml \
+#     --ref feat/493-overflow-baseline-pngs \
+#     -f ref=feat/493-overflow-baseline-pngs
+#
+#   The workflow checks out the branch, runs Playwright with
+#   `--update-snapshots`, and commits the resulting PNGs back to the
+#   same branch as `claude-tempo[bot]`. The PR's CI then re-runs against
+#   the committed baselines and (assuming the screenshots are
+#   reasonable) the visual-regression assertions pass.
+#
+# Re-running it later:
+#   Future PRs that legitimately change a layout's appearance follow the
+#   same flow — push the change, run this workflow on the PR's branch,
+#   verify the new PNGs by eye, merge. The workflow is the canonical
+#   refresh tool; manual local `--update-snapshots` runs on
+#   non-Linux hosts produce baselines that won't match CI.
+#
+# Security:
+#   - `workflow_dispatch` only — never triggers on PR or push events.
+#     An operator with `gh workflow run` permission explicitly opts in.
+#   - `permissions: contents: write` is the minimum needed to commit
+#     the PNGs back to the branch.
+#   - The workflow refuses to run against `main` (or `master`) to
+#     prevent accidental baseline-commits onto the trunk; baselines
+#     belong on feature branches that are about to land via PR.
+
+name: Update Overflow Snapshots
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch to regenerate baselines on (e.g. feat/493-overflow-baseline-pngs)'
+        required: true
+        type: string
+
+permissions:
+  contents: write  # required to commit baseline PNGs back to the branch
+
+concurrency:
+  # Serialize per-branch — two operators triggering on the same branch
+  # would race the git-push step. Cancel the in-flight run on a fresh
+  # invocation.
+  group: update-overflow-snapshots-${{ inputs.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Refuse to run against main / master
+        # Belt-and-braces guard. Baselines belong on PR branches; if an
+        # operator typo'd `--ref main`, fail fast before checkout.
+        if: ${{ inputs.ref == 'main' || inputs.ref == 'master' }}
+        run: |
+          echo "::error::Refusing to regenerate baselines on main/master. Run against a feature branch instead." >&2
+          exit 1
+
+      - name: Checkout target branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0  # full history so the push can fast-forward
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Cache dashboard/node_modules
+        uses: actions/cache@v4
+        with:
+          path: dashboard/node_modules
+          key: dashboard-node-modules-${{ hashFiles('dashboard/package-lock.json') }}
+          restore-keys: |
+            dashboard-node-modules-
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ hashFiles('dashboard/package-lock.json') }}
+
+      - name: Install root dependencies (path-alias type resolution)
+        run: npm ci --ignore-scripts
+
+      - name: Install dashboard dependencies
+        run: npm --prefix dashboard ci
+
+      - name: Install Playwright chromium browser
+        run: npm --prefix dashboard exec -- playwright install --with-deps chromium
+
+      - name: Regenerate baselines (Playwright --update-snapshots=all)
+        # Runs the overflow suite end-to-end in baseline-capture mode.
+        # The Playwright config's `webServer` block does the
+        # `build:overflow && preview` chain so the dev-only
+        # `/__overflow/<Component>` route shim (#492) is live.
+        #
+        # `--update-snapshots=all` overwrites every PNG that backs a
+        # `toHaveScreenshot()` call. The `=all` qualifier is REQUIRED on
+        # Playwright >= 1.42 — bare `--update-snapshots` defaults to
+        # `changed`, which only rewrites when an assertion fails. A new
+        # render that diffs WITHIN the maxDiffPixels/maxDiffPixelRatio
+        # threshold (1500 px / 3%) therefore wouldn't get the snapshot
+        # written, even though it visibly differs from the baseline.
+        # `=all` forces unconditional regeneration; byte-identical results
+        # stay unchanged in git either way, so the downstream "anything
+        # changed?" gate still bails when nothing meaningful drifted.
+        # The 5 `// TODO: #494` skipped tests don't produce baselines —
+        # exactly the scope discipline we want.
+        run: npm --prefix dashboard run test:overflow -- --update-snapshots=all
+
+      - name: Stage the generated snapshots
+        run: |
+          git add 'dashboard/tests-overflow/*-snapshots/*.png' 2>/dev/null || true
+          git add 'dashboard/tests-overflow/**/*-snapshots/*.png' 2>/dev/null || true
+          git status --short
+
+      - name: Check if anything changed
+        id: changes
+        run: |
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No baseline PNG changes detected — bailing without commit."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --cached --stat
+          fi
+
+      - name: Commit + push regenerated baselines
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Attribute the commit to claude-tempo[bot] so the PR's authorship
+          # chain stays visible (matches the convention scripts/ensemble-gh
+          # uses for bot-authored writes).
+          git config user.name 'claude-tempo[bot]'
+          git config user.email '212054932+claude-tempo[bot]@users.noreply.github.com'
+          git commit -m "$(cat <<'EOF'
+          test(dashboard): #493 regenerate overflow baselines (CI-generated)
+
+          Auto-commit by .github/workflows/update-overflow-snapshots.yml —
+          Linux-rendered PNGs for `toHaveScreenshot()` assertions across
+          the dashboard overflow Playwright suite.
+
+          🤖 Generated by the Update Overflow Snapshots workflow.
+
+          Co-Authored-By: claude-tempo[bot] <noreply@anthropic.com>
+          EOF
+          )"
+          git push origin HEAD:'${{ inputs.ref }}'
+
+      - name: Upload Playwright report on failure (debugging aid)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-overflow-snapshots
+          path: dashboard/tests-overflow/playwright-report/
+          retention-days: 7
