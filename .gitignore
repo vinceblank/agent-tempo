@@ -36,6 +36,9 @@ temporal-data.db
 # Temporary design handoff extraction directories.
 .tmp-design-handoff/
 
+# Heap-snapshot harness output (scripts/dev/heap-snapshot-336.sh, dev-only).
+scripts/dev/.out/
+
 # Never commit secrets. Private keys, GitHub App .pem files, etc.
 secrets/
 *.pem
