@@ -61,7 +61,7 @@ export function registerEnsembleTool(
   defineTool(
     server,
     'ensemble',
-    `Discover active Claude Code sessions in the "${config.ensemble}" ensemble. Returns player IDs, descriptions, and metadata.`,
+    `Discover active Claude Code sessions in the "${config.ensemble}" ensemble. Returns player IDs, descriptions, and metadata. NOTE: returns tempo-registered players only — does NOT include Claude Code Agent-tool sub-agents (spawned via the Agent tool / subagent_type). Those are ephemeral and process-local; call TaskList separately to enumerate them. Tempo players are addressable via cue; Agent-tool sub-agents are not.`,
     {
       scope: z.string().optional().describe('Filter scope: "machine" (same hostname), "repo" (same git root), "all" (default). All scopes are within the current ensemble.'),
       // #563: dormancy filter. Default `show` preserves the pre-#563 listing
