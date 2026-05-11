@@ -103,17 +103,25 @@ jobs:
       - name: Install Playwright chromium browser
         run: npm --prefix dashboard exec -- playwright install --with-deps chromium
 
-      - name: Regenerate baselines (Playwright --update-snapshots)
+      - name: Regenerate baselines (Playwright --update-snapshots=all)
         # Runs the overflow suite end-to-end in baseline-capture mode.
         # The Playwright config's `webServer` block does the
         # `build:overflow && preview` chain so the dev-only
         # `/__overflow/<Component>` route shim (#492) is live.
         #
-        # `--update-snapshots` overwrites or creates PNGs for every
-        # `toHaveScreenshot()` call in the currently-enabled tests.
+        # `--update-snapshots=all` overwrites every PNG that backs a
+        # `toHaveScreenshot()` call. The `=all` qualifier is REQUIRED on
+        # Playwright >= 1.42 — bare `--update-snapshots` defaults to
+        # `changed`, which only rewrites when an assertion fails. A new
+        # render that diffs WITHIN the maxDiffPixels/maxDiffPixelRatio
+        # threshold (1500 px / 3%) therefore wouldn't get the snapshot
+        # written, even though it visibly differs from the baseline.
+        # `=all` forces unconditional regeneration; byte-identical results
+        # stay unchanged in git either way, so the downstream "anything
+        # changed?" gate still bails when nothing meaningful drifted.
         # The 5 `// TODO: #494` skipped tests don't produce baselines —
         # exactly the scope discipline we want.
-        run: npm --prefix dashboard run test:overflow -- --update-snapshots
+        run: npm --prefix dashboard run test:overflow -- --update-snapshots=all
 
       - name: Stage the generated snapshots
         run: |
