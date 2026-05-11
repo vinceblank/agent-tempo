@@ -16,8 +16,8 @@
  *     to dropped ensembles no longer fire
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { useEffect, type ReactNode } from 'react';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { type ReactNode } from 'react';
+import { render, screen, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type {

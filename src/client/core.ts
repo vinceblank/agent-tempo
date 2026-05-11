@@ -53,6 +53,7 @@ import {
 import { resolveSession, scanEnsembleSessions } from '../activities/resolve';
 import { restoreOrphansOnce, type RestoreOrphansSummary } from '../reconcile/orphans';
 import { queryHandleWithTimeout } from '../utils/query-timeout';
+import { iterateWithDeadline, isVisibilityTimeout } from '../utils/visibility-deadline';
 import {
   pauseMaestroAndScheduler,
   unpauseMaestroAndScheduler,
@@ -132,6 +133,85 @@ export function createTempoClientCore(
   /** Helper: get a workflow handle by ID. */
   function handle(workflowId: string) {
     return client.workflow.getHandle(workflowId);
+  }
+
+  /**
+   * Shared between `listEnsembles()` and `listEnsemblesBounded()` (#336/#529).
+   * Given the per-ensemble aggregation map produced by the visibility-list
+   * loop, fans out the per-ensemble maestro `maestroPaused` query and
+   * builds the final `EnsembleSummary[]`.
+   *
+   * Kept as a closure so it inherits `handle` from the factory scope (and
+   * the `queryHandleWithTimeout` + `maestroPausedQuery` bindings from
+   * module scope) without threading them through as args.
+   */
+  async function finishEnsembleSummaries(
+    byEnsemble: Map<string, {
+      count: number;
+      hasConductor: boolean;
+      conductorStatus?: string;
+      liveAdapterCount: number;
+      hasDetached: boolean;
+    }>,
+  ): Promise<EnsembleSummary[]> {
+    // Per-ensemble paused lookup: `/pause` and `/shutdown` both flip
+    // `maestroSetPausedSignal` on the maestro hub workflow. The hub's
+    // `maestroPaused` query is the authoritative "ensemble is paused"
+    // signal — fall back to the phase heuristic when the hub doesn't
+    // exist (bare ensemble before any conductor / TUI was attached).
+    const pausedByEnsemble = new Map<string, boolean>();
+    await Promise.all(
+      [...byEnsemble.keys()].map(async (name) => {
+        try {
+          // Issue #433 — bound per-ensemble maestro query so a wedged
+          // maestro can't hang `listEnsembles` (the snapshot existence
+          // gate at snapshot.ts:144). Existing catch maps any failure
+          // to "leave paused undefined" and the downstream phase
+          // heuristic classifies the ensemble.
+          const paused = await queryHandleWithTimeout(
+            handle(maestroWorkflowId(name)),
+            maestroPausedQuery,
+          );
+          pausedByEnsemble.set(name, !!paused);
+        } catch {
+          // Hub workflow not running, or worker wedged (#433) — leave
+          // undefined so the phase heuristic below decides
+          // classification.
+        }
+      }),
+    );
+
+    const out: EnsembleSummary[] = [];
+    for (const [name, info] of byEnsemble) {
+      // Skip ensembles with no non-gone sessions — they're either
+      // terminating or fully destroyed.
+      if (info.liveAdapterCount === 0 && !info.hasDetached) continue;
+      const paused = pausedByEnsemble.get(name);
+      // Three-state classification:
+      //   online  — hub unpaused (or no hub + at least one live adapter).
+      //   paused  — hub paused AND at least one live adapter remains
+      //             (`/pause` semantics: resume in place via `/play`).
+      //   offline — hub paused AND zero live adapters
+      //             (`/shutdown` semantics: requires `/restore`).
+      // When the hub didn't answer (no maestro yet), fall back to the
+      // phase heuristic — a live adapter implies online.
+      let state: 'online' | 'paused' | 'offline';
+      if (paused === true) {
+        state = info.liveAdapterCount > 0 ? 'paused' : 'offline';
+      } else if (paused === false) {
+        state = 'online';
+      } else {
+        state = info.liveAdapterCount > 0 ? 'online' : 'offline';
+      }
+      out.push({
+        name,
+        playerCount: info.count,
+        hasConductor: info.hasConductor,
+        conductorStatus: info.conductorStatus,
+        state,
+      });
+    }
+    return out;
   }
 
   return {
@@ -264,64 +344,77 @@ export function createTempoClientCore(
         return [];
       }
 
-      // Per-ensemble paused lookup: `/pause` and `/shutdown` both flip
-      // `maestroSetPausedSignal` on the maestro hub workflow. The hub's
-      // `maestroPaused` query is the authoritative "ensemble is paused"
-      // signal — fall back to the phase heuristic when the hub doesn't
-      // exist (bare ensemble before any conductor / TUI was attached).
-      const pausedByEnsemble = new Map<string, boolean>();
-      await Promise.all(
-        [...byEnsemble.keys()].map(async (name) => {
-          try {
-            // Issue #433 — bound per-ensemble maestro query so a wedged
-            // maestro can't hang `listEnsembles` (the snapshot existence
-            // gate at snapshot.ts:144). Existing catch maps any failure
-            // to "leave paused undefined" and the downstream phase
-            // heuristic classifies the ensemble.
-            const paused = await queryHandleWithTimeout(
-              handle(maestroWorkflowId(name)),
-              maestroPausedQuery,
-            );
-            pausedByEnsemble.set(name, !!paused);
-          } catch {
-            // Hub workflow not running, or worker wedged (#433) — leave
-            // undefined so the phase heuristic below decides
-            // classification.
-          }
-        }),
-      );
+      return await finishEnsembleSummaries(byEnsemble);
+    },
 
-      const out: EnsembleSummary[] = [];
-      for (const [name, info] of byEnsemble) {
-        // Skip ensembles with no non-gone sessions — they're either
-        // terminating or fully destroyed.
-        if (info.liveAdapterCount === 0 && !info.hasDetached) continue;
-        const paused = pausedByEnsemble.get(name);
-        // Three-state classification:
-        //   online  — hub unpaused (or no hub + at least one live adapter).
-        //   paused  — hub paused AND at least one live adapter remains
-        //             (`/pause` semantics: resume in place via `/play`).
-        //   offline — hub paused AND zero live adapters
-        //             (`/shutdown` semantics: requires `/restore`).
-        // When the hub didn't answer (no maestro yet), fall back to the
-        // phase heuristic — a live adapter implies online.
-        let state: 'online' | 'paused' | 'offline';
-        if (paused === true) {
-          state = info.liveAdapterCount > 0 ? 'paused' : 'offline';
-        } else if (paused === false) {
-          state = 'online';
-        } else {
-          state = info.liveAdapterCount > 0 ? 'online' : 'offline';
+    async listEnsemblesBounded(deadlineMs: number): Promise<{
+      items: EnsembleSummary[];
+      timedOut: boolean;
+      scanned: number;
+    }> {
+      // #336/#529 site 6 — bounded variant for `AggregateRunner.collect()`'s
+      // 750ms poll. On deadline, propagates `timedOut: true` so the
+      // collect tick can skip the entire diff round (preserving
+      // `knownEnsembles` and avoiding phantom `ensemble.destroyed`
+      // SSE events). Architect-approved invariant for this PR.
+      const LIVE_PHASES = new Set<AttachmentPhase>([
+        'attached', 'processing', 'awaiting', 'booting', 'draining',
+      ]);
+      type Agg = {
+        count: number;
+        hasConductor: boolean;
+        conductorStatus?: string;
+        liveAdapterCount: number;
+        hasDetached: boolean;
+      };
+      const byEnsemble = new Map<string, Agg>();
+      let scanned = 0;
+      let timedOut = false;
+
+      try {
+        const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+        for await (const wf of iterateWithDeadline(
+          client.workflow.list({ query }),
+          deadlineMs,
+          'listEnsemblesBounded',
+        )) {
+          scanned++;
+          const name = getEnsembleName(wf);
+          if (!name) continue;
+          const playerType = getSearchAttrString(wf, 'ClaudeTempoPlayerType');
+          const isMaestroSession = playerType === 'maestro'
+            || (wf.workflowId?.endsWith('-maestro') ?? false);
+          const phase = getAttachmentPhase(wf) as AttachmentPhase | undefined;
+          const entry = byEnsemble.get(name) ?? {
+            count: 0, hasConductor: false, liveAdapterCount: 0, hasDetached: false,
+          };
+          if (!isMaestroSession) entry.count++;
+          if (phase === 'detached') entry.hasDetached = true;
+          else if (phase && LIVE_PHASES.has(phase) && !isMaestroSession) {
+            entry.liveAdapterCount++;
+          }
+          const isConductorFromSA = getIsConductor(wf) === true;
+          const isConductorFromId = wf.workflowId?.endsWith('-conductor') ?? false;
+          if (isConductorFromSA || isConductorFromId) {
+            entry.hasConductor = true;
+            if (phase) entry.conductorStatus = phase;
+          }
+          byEnsemble.set(name, entry);
         }
-        out.push({
-          name,
-          playerCount: info.count,
-          hasConductor: info.hasConductor,
-          conductorStatus: info.conductorStatus,
-          state,
-        });
+      } catch (err) {
+        if (isVisibilityTimeout(err)) {
+          timedOut = true;
+          // Fall through: the caller (`AggregateRunner`) checks
+          // `timedOut` and bails before applying any diff; we still
+          // return whatever we managed to enumerate so test/diag
+          // surfaces can inspect partial state if useful.
+        } else {
+          throw err; // catastrophic — propagate (no unbounded swallow).
+        }
       }
-      return out;
+
+      const items = await finishEnsembleSummaries(byEnsemble);
+      return { items, timedOut, scanned };
     },
 
     async getPlayers(ensemble: string): Promise<MaestroPlayerInfo[]> {

@@ -279,7 +279,21 @@ function fakeClient(over: Partial<TempoClient> = {}): TempoClient {
     },
     async getPlayerWireMeta() { return null; },
   };
-  return new Proxy({ ...base, ...over }, {
+  const merged = { ...base, ...over };
+  // #336/#529 site 6 — `AggregateRunner.collect()` now calls
+  // `listEnsemblesBounded`. The default impl delegates to whichever
+  // `listEnsembles` was supplied (base or per-test override) so existing
+  // tests don't need to stub a second method. Per-test overrides can
+  // still provide a custom `listEnsemblesBounded` to exercise the
+  // `timedOut` branch directly (see `AggregateRunner > collect skips
+  // diff on listEnsembles deadline`).
+  if (!merged.listEnsemblesBounded) {
+    merged.listEnsemblesBounded = async (_deadlineMs: number) => {
+      const items = await merged.listEnsembles!();
+      return { items, timedOut: false, scanned: items.length };
+    };
+  }
+  return new Proxy(merged, {
     get(target: Record<string, unknown>, prop: string) {
       if (prop in target) return target[prop];
       return () => { throw new Error(`unstubbed TempoClient.${String(prop)}`); };
@@ -439,5 +453,90 @@ describe('AggregateRunner', () => {
     expect(runner.getEnsembleBus('demo')).not.toBeNull();
     expect(runner.getEnsembleBus('other')).toBeNull();
     runner.close();
+  });
+
+  describe('listEnsembles deadline → skip-tick (#336/#529 site 6)', () => {
+    it('does NOT emit ensemble.destroyed when listEnsemblesBounded reports timedOut', async () => {
+      // First tick: prime knownEnsembles = {demo, other}.
+      // Second tick: bounded returns `timedOut: true` with partial items.
+      //              `tick()` must catch `TickSkipped`, NOT call `applyDiff`,
+      //              and leave `knownEnsembles` untouched (no phantom
+      //              ensemble.destroyed events).
+      let tick = 0;
+      const fullList = [
+        { name: 'demo', playerCount: 0, hasConductor: false, state: 'online' as const },
+        { name: 'other', playerCount: 0, hasConductor: false, state: 'online' as const },
+      ];
+      const client = fakeClient({
+        async listEnsembles() { return fullList; },
+        async listEnsemblesBounded(_deadlineMs: number) {
+          tick++;
+          if (tick === 1) {
+            return { items: fullList, timedOut: false, scanned: fullList.length };
+          }
+          // Simulate deadline-exceeded: bounded returns truncated set.
+          return { items: [fullList[0]], timedOut: true, scanned: 1 };
+        },
+        async getPlayers() { return []; },
+      });
+      const runner = new AggregateRunner({ client, bootEpoch: 1, pollIntervalMs: 60_000 });
+      const globalSub = runner.globalBus().subscribe();
+
+      // Tick 1 — knownEnsembles becomes {demo, other}; two created events emitted.
+      await runner.tick();
+      const tick1Types = [...globalSub.pending].map((e) => e.type);
+      while (globalSub.pending.length > 0) globalSub.pending.shift();
+      expect(tick1Types.filter((t) => t === 'ensemble.created').length).toBe(2);
+
+      // Tick 2 — bounded reports timedOut. NO diff applied. NO destroy event.
+      await runner.tick();
+      const tick2Events = [...globalSub.pending].map((e) => e.type);
+      expect(tick2Events).not.toContain('ensemble.destroyed');
+      // Ensemble buses for both ensembles still present — knownEnsembles unchanged.
+      expect(runner.getEnsembleBus('demo')).not.toBeNull();
+      expect(runner.getEnsembleBus('other')).not.toBeNull();
+
+      runner.close();
+    });
+
+    it('resumes normal diff behavior on the next successful tick (no compound destroy)', async () => {
+      // After a timeout tick, the next tick that completes cleanly should
+      // diff against the truthful prior set — NOT the empty/partial one
+      // that the timeout produced.
+      let tick = 0;
+      const baseline = [
+        { name: 'alpha', playerCount: 0, hasConductor: false, state: 'online' as const },
+        { name: 'beta', playerCount: 0, hasConductor: false, state: 'online' as const },
+      ];
+      const afterTimeout = [
+        { name: 'alpha', playerCount: 0, hasConductor: false, state: 'online' as const },
+        // beta is gone — a genuine destruction this round.
+      ];
+      const client = fakeClient({
+        async listEnsembles() { return baseline; },
+        async listEnsemblesBounded(_deadlineMs: number) {
+          tick++;
+          if (tick === 1) return { items: baseline, timedOut: false, scanned: baseline.length };
+          if (tick === 2) return { items: [baseline[0]], timedOut: true, scanned: 1 };
+          return { items: afterTimeout, timedOut: false, scanned: afterTimeout.length };
+        },
+        async getPlayers() { return []; },
+      });
+      const runner = new AggregateRunner({ client, bootEpoch: 1, pollIntervalMs: 60_000 });
+      const globalSub = runner.globalBus().subscribe();
+
+      await runner.tick(); // tick 1: prime {alpha, beta}
+      while (globalSub.pending.length > 0) globalSub.pending.shift();
+
+      await runner.tick(); // tick 2: timedOut → skip diff
+      expect([...globalSub.pending].map((e) => e.type)).not.toContain('ensemble.destroyed');
+
+      await runner.tick(); // tick 3: beta is genuinely gone → exactly one destroy
+      const tick3Types = [...globalSub.pending].map((e) => e.type);
+      const destroyEvents = tick3Types.filter((t) => t === 'ensemble.destroyed');
+      expect(destroyEvents.length).toBe(1);
+
+      runner.close();
+    });
   });
 });
