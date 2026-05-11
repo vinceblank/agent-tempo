@@ -11,6 +11,7 @@ import {
   getClient,
   TASK_QUEUE,
   withWorkerAndGlobalMaestroActivities,
+  pollWithTimeout,
 } from './helpers';
 import {
   maestroShutdownSignal,
@@ -150,8 +151,15 @@ describe('claudeGlobalMaestroWorkflow', function () {
         async () => {
           const handle = await startGlobalMaestro(getClient());
 
-          // Wait for refresh cycle
-          await sleep(2000);
+          // #383 P3: poll for the maestro's periodic refresh cycle to pick up
+          // the mocked discovery. With FAST_POLL_MS=500 the second refresh
+          // tick lands well inside the 5s budget under load; the previous
+          // fixed 2s sleep was generous in steady state but tight on cold-
+          // start CI runners.
+          await pollWithTimeout(async () => {
+            const e = await handle.query(maestroEnsemblesQuery);
+            return e.includes('team-a') && e.includes('team-b');
+          }, 5000);
 
           const ensembles = await handle.query(maestroEnsemblesQuery);
           expect(ensembles).to.include('team-a');
@@ -187,7 +195,11 @@ describe('claudeGlobalMaestroWorkflow', function () {
         async () => {
           const handle = await startGlobalMaestro(getClient());
 
-          await sleep(2000);
+          // #383 P3: poll for initial discovery — see comment on line ~154.
+          await pollWithTimeout(async () => {
+            const e = await handle.query(maestroEnsemblesQuery);
+            return e.includes('team-a') && e.includes('team-b');
+          }, 5000);
 
           let ensembles = await handle.query(maestroEnsemblesQuery);
           expect(ensembles).to.include('team-a');
@@ -195,7 +207,11 @@ describe('claudeGlobalMaestroWorkflow', function () {
 
           // Remove team-b
           currentEnsembles = ['team-a'];
-          await sleep(2000);
+          // #383 P3: poll for the next refresh cycle to detect the removal.
+          await pollWithTimeout(async () => {
+            const e = await handle.query(maestroEnsemblesQuery);
+            return e.includes('team-a') && !e.includes('team-b');
+          }, 5000);
 
           ensembles = await handle.query(maestroEnsemblesQuery);
           expect(ensembles).to.include('team-a');
@@ -338,8 +354,14 @@ describe('claudeGlobalMaestroWorkflow', function () {
           });
           expect(cmdId).to.be.a('string');
 
-          // Wait for dispatch
-          await sleep(2000);
+          // #383 P3: poll for the global maestro's command-dispatch loop to
+          // pick up the queued command and relay it through the mocked
+          // activity. The mock pushes onto `relayedCommands` synchronously
+          // when invoked.
+          await pollWithTimeout(
+            async () => relayedCommands.length >= 1,
+            5000,
+          );
 
           expect(relayedCommands).to.have.length.greaterThanOrEqual(1);
           expect(relayedCommands[0].ensemble).to.equal('team-a');
