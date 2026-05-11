@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0-beta.19] - 2026-05-11
+
+### Added
+
+- `cue` tool: actionable error with Levenshtein suggestion when the target player name does not exist — silent timeout replaced by an immediate structured error listing the closest match (#560)
+- `ensemble` tool: active and dormant players are now shown in separate sections — attached/processing players listed first, detached/draining players in a distinct "dormant" group for clearer roster visibility (#563)
+- `cue` tool: detached-target detection — when the destination player is in a detached phase, `cue` surfaces accurate delivery truth (queued-but-undeliverable) instead of silently enqueuing to a dead mailbox (#562)
+- Dashboard: dev-only `/__overflow/` route shim serves fixture data for the Playwright overflow spec suite, eliminating the need for a live Temporal daemon in overflow CI (#492)
+- Docs: when-to-use-worktrees guidance added to `docs/` covering the worktree tool decision tree (#564)
+
+### Changed
+
+- Tests: registry conformance suite now derives the expected agent-type list from the canonical SSOT (`src/ensemble/agent-types.ts`) rather than a parallel hand-maintained list — future type additions auto-propagate to conformance assertions (#486)
+
 ## [0.28.0-beta.18] - 2026-05-11
 
 ### Added
