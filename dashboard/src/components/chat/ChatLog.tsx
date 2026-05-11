@@ -139,7 +139,7 @@ export function ChatLog({
           }}
         >
           …earlier messages were dropped to keep up with chat volume.
-          Reload to fetch them (full reload UX lands in PR-7 of #340).
+          Reload the page to fetch them.
         </div>
       )}
       {feedItems.map((m) => (
