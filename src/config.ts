@@ -605,7 +605,9 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
   const configFile = loadConfigFile();
 
   function resolveWithSource(
-    key: string,
+    // Documentation-only label preserved at call sites for readability;
+    // not used inside the body. Prefixed `_` to signal intentional non-use.
+    _key: string,
     cliVal: string | undefined,
     envKey: string,
     fileVal: string | undefined,

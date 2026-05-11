@@ -42,9 +42,34 @@ export const DEFAULT_POLL_INTERVAL_MS = 750;
 const CHAT_ID_MEMORY = 1024;
 /** How many chat messages to fetch per poll — wider than the snapshot limit so bursts aren't silently lost. */
 const POLL_CHAT_LIMIT = 200;
+/**
+ * #336/#529 site 6 — correctness deadline for `listEnsemblesBounded()`
+ * inside `collect()`. 500ms < 750ms cadence leaves ≥250ms headroom for
+ * `applyDiff()` + per-ensemble fan-out + emission. Architect's call:
+ * the 15s `tickWatchdogMs` is the *liveness* guard; this 500ms is the
+ * *correctness* guard preventing partial-input ensemble diffs.
+ */
+export const AGGREGATE_LIST_DEADLINE_MS = 500;
 
 const log = (...args: unknown[]) =>
   console.error('[claude-tempo:aggregate]', ...args);
+
+/**
+ * #336/#529 site 6 — sentinel thrown by `collect()` when the
+ * visibility-iterator deadline trips. `tick()`'s catch logs it calmly
+ * and SKIPS `applyDiff()`, preserving `knownEnsembles` so the next
+ * successful tick diffs against the truthful prior set rather than
+ * emitting phantom `ensemble.destroyed` events.
+ *
+ * Modeled as a distinct error class so the catch can branch
+ * informatively (`if (err instanceof TickSkipped)`) without parsing
+ * error messages — and so callers downstream don't accidentally
+ * propagate it as a fatal error.
+ */
+export class TickSkipped extends Error {
+  override readonly name = 'TickSkipped';
+  constructor(reason: string) { super(reason); }
+}
 
 /** Per-ensemble tracking state across ticks. */
 interface EnsembleTrack {
@@ -510,7 +535,16 @@ export class AggregateRunner {
       const snapshot = await this.collect();
       this.applyDiff(snapshot);
     } catch (err) {
-      log('tick error (non-fatal):', err instanceof Error ? err.message : err);
+      // #336/#529 site 6 — `TickSkipped` is the architect-approved
+      // signal that `collect()` deliberately bailed before applying
+      // any diff (e.g. visibility-iterator deadline tripped). It is
+      // expected and frequent under load; do NOT log noisily. Other
+      // throws are unexpected failures worth surfacing.
+      if (err instanceof TickSkipped) {
+        log(`tick=${myGen}: skipped — ${err.message}`);
+      } else {
+        log('tick error (non-fatal):', err instanceof Error ? err.message : err);
+      }
     } finally {
       clearTimeout(watchdog);
       // Only release `inFlight` if the watchdog hasn't already done so —
@@ -528,7 +562,22 @@ export class AggregateRunner {
     const preludeStart = this.now();
     log(`collect tick=${tickGen}: prelude started`);
     const capturedAt = new Date(this.now()).toISOString();
-    const ensembles = await this.client.listEnsembles().catch(() => []);
+    // #336/#529 site 6 — bounded variant prevents the 750ms poll from
+    // emitting phantom `ensemble.destroyed` events when the visibility
+    // iterator partially enumerates under load. On timeout, throw
+    // `TickSkipped` so `tick()`'s catch preserves `knownEnsembles`
+    // unchanged (no `applyDiff` runs). 500ms budget leaves >=250ms
+    // headroom for the rest of `collect()` + `applyDiff` + emission
+    // within the 750ms cadence (architect's call).
+    const listRes = await this.client.listEnsemblesBounded(AGGREGATE_LIST_DEADLINE_MS);
+    if (listRes.timedOut) {
+      log(
+        `collect tick=${tickGen}: listEnsembles deadline (` +
+        `${AGGREGATE_LIST_DEADLINE_MS}ms, ${listRes.scanned} scanned) — skip diff`,
+      );
+      throw new TickSkipped('listEnsembles deadline');
+    }
+    const ensembles = listRes.items;
     const hostProfiles: Record<string, HostProfile> = {};
     try {
       const hosts = await this.client.listHosts();

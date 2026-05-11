@@ -31,6 +31,11 @@ import { attachmentInfoQuery, orphanSummaryQuery } from '../workflows/signals';
 import { isEnsembleAllowed } from '../config';
 import { createTempoClient } from '../client';
 import { queryHandleWithTimeout } from '../utils/query-timeout';
+import {
+  iterateWithDeadline,
+  isVisibilityTimeout,
+  VISIBILITY_DEADLINES_MS,
+} from '../utils/visibility-deadline';
 
 /**
  * Default broad phase set used by daemon reconcile-on-boot and CLI
@@ -172,11 +177,24 @@ export function buildOrphanQuery(opts: BuildOrphanQueryOpts): string {
  * query, query handler throws) is logged and the candidate is skipped — the
  * result array always reflects only the candidates that could be fully
  * resolved at query time.
+ *
+ * **Deadline (#336/#529):** the visibility iterator is bounded by
+ * `deadlineMs`. Default is `VISIBILITY_DEADLINES_MS.orphanQueryBoot`
+ * (60s) — suitable for the daemon's one-shot boot reconcile, which can
+ * afford a generous budget to enumerate thousands of workflows. The
+ * periodic 6h cleanup loop should pass
+ * `VISIBILITY_DEADLINES_MS.orphanQueryCleanup` (30s) since it runs
+ * frequently enough to amortize partial scans. On timeout, returns the
+ * partial result and emits a warn log: the function's existing comment
+ * states partial enumeration is acceptable ("next tick will retry"),
+ * so the boot path can call `restoreOrphansOnce` again on a subsequent
+ * cycle to pick up missed candidates.
  */
 export async function queryOrphanedSessions(
   client: Client,
   filter: OrphanQueryFilter,
   log: (...args: unknown[]) => void = () => {},
+  deadlineMs: number = VISIBILITY_DEADLINES_MS.orphanQueryBoot,
 ): Promise<OrphanCandidate[]> {
   const isAlive = filter.isAdapterProcessAlive ?? isAdapterProcessAliveStub;
   const query = buildOrphanQuery({
@@ -196,33 +214,49 @@ export async function queryOrphanedSessions(
 
   const orphans: OrphanCandidate[] = [];
 
-  for await (const wf of client.workflow.list({ query })) {
-    const handle = client.workflow.getHandle(wf.workflowId);
-    try {
-      // Issue #433 — bound each per-workflow query so a hung session
-      // (workflow `Running` but worker dead) can't block the orphan scan
-      // forever. The `try/catch` already treats query failure as "skip
-      // this candidate"; `QueryTimeoutError` falls into the same path.
-      const info = await queryHandleWithTimeout(handle, attachmentInfoQuery) as AttachmentInfo;
+  try {
+    for await (const wf of iterateWithDeadline(
+      client.workflow.list({ query }),
+      deadlineMs,
+      'queryOrphanedSessions',
+    )) {
+      const handle = client.workflow.getHandle(wf.workflowId);
+      try {
+        // Issue #433 — bound each per-workflow query so a hung session
+        // (workflow `Running` but worker dead) can't block the orphan scan
+        // forever. The `try/catch` already treats query failure as "skip
+        // this candidate"; `QueryTimeoutError` falls into the same path.
+        const info = await queryHandleWithTimeout(handle, attachmentInfoQuery) as AttachmentInfo;
 
-      // Phase allowlist re-check (see above).
-      if (phaseAllowlist && info.phase && !phaseAllowlist.has(info.phase)) {
-        continue;
+        // Phase allowlist re-check (see above).
+        if (phaseAllowlist && info.phase && !phaseAllowlist.has(info.phase)) {
+          continue;
+        }
+
+        // Live adapter — not an orphan.
+        if (info.currentAttachment && isAlive(info.currentAttachment.hostname, wf.workflowId)) {
+          continue;
+        }
+
+        const summary = await queryHandleWithTimeout(handle, orphanSummaryQuery) as OrphanSummary;
+        orphans.push({ workflowId: wf.workflowId, info, summary });
+      } catch (err) {
+        // Workflow may have completed between list + query, a query handler
+        // threw, or the per-query timeout fired (#433 — wedged worker).
+        // Skip — not every candidate will be reachable, and partial results
+        // are acceptable for reconcile (next tick will retry).
+        log(`orphan-query skip ${wf.workflowId}:`, err instanceof Error ? err.message : String(err));
       }
-
-      // Live adapter — not an orphan.
-      if (info.currentAttachment && isAlive(info.currentAttachment.hostname, wf.workflowId)) {
-        continue;
-      }
-
-      const summary = await queryHandleWithTimeout(handle, orphanSummaryQuery) as OrphanSummary;
-      orphans.push({ workflowId: wf.workflowId, info, summary });
-    } catch (err) {
-      // Workflow may have completed between list + query, a query handler
-      // threw, or the per-query timeout fired (#433 — wedged worker).
-      // Skip — not every candidate will be reachable, and partial results
-      // are acceptable for reconcile (next tick will retry).
-      log(`orphan-query skip ${wf.workflowId}:`, err instanceof Error ? err.message : String(err));
+    }
+  } catch (err) {
+    if (isVisibilityTimeout(err)) {
+      // #336/#529 — partial-tolerant: warn-log and return what we have.
+      // The caller (reconcile-on-boot / cleanup loop) treats partial
+      // results as best-effort; the next sweep picks up any missed
+      // candidates.
+      log(`queryOrphanedSessions: ${err.message} — returning partial (${orphans.length} orphans)`);
+    } else {
+      throw err;
     }
   }
 

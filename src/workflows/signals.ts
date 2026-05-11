@@ -17,7 +17,6 @@ import type {
   StageEntry,
   AttachmentToken,
   AttachmentInfo,
-  AttachmentPhase,
   AdapterClass,
   DetachReason,
   OrphanSummary,
