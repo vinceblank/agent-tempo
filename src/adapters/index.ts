@@ -45,6 +45,28 @@ registry.register(opencodeDescriptor);
 // probes for installation + login state via `pre-flight.ts`.
 registry.register(claudeCodeHeadlessDescriptor);
 
+/**
+ * Canonical list of production adapters registered at module-import time.
+ *
+ * SSOT for the conformance test asserting every shipped adapter is present
+ * in the registry (#486). Adding a new adapter is two adjacent touches in
+ * this file: a `registry.register(...)` call above AND a new entry below.
+ * The test (`test/conformance/registry.test.ts`) imports this constant and
+ * compares it against `registry.all()`, so it catches BOTH "registered but
+ * not declared canonical" AND "declared canonical but not registered"
+ * drift. Mirrors the `AGENT_TYPES` tripwire in `src/types.ts`.
+ *
+ * Mock adapter is intentionally excluded — it's dev-mode-only and stripped
+ * from the npm tarball at prepack time (ADR 0014 §7 gate 1).
+ */
+export const CANONICAL_ADAPTER_IDS = [
+  'claude-code',
+  'copilot',
+  'claude-api',
+  'opencode',
+  'claude-code-headless',
+] as const;
+
 // ADR 0014 §7 gate 2 — import-time registration gate. The mock adapter's
 // descriptor only enters the registry when `isDevMode()` is true.
 //
