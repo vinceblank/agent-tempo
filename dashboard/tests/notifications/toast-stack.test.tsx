@@ -8,7 +8,7 @@
  * `stream.test.tsx`.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { useEffect, type ReactNode } from 'react';
+import { useEffect } from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import {

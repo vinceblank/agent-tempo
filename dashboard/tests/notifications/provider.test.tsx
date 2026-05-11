@@ -24,7 +24,6 @@ import { act, renderHook } from '@testing-library/react';
 import { type ReactNode } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import {
-  GROUP_WINDOW_MS,
   NotificationProvider,
   TOAST_TIMEOUT_MS,
   useNotifications,

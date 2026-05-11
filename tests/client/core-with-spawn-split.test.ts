@@ -35,6 +35,7 @@ const CORE_METHOD_NAMES = [
   // Discovery
   'discoverEnsembles',
   'listEnsembles',
+  'listEnsemblesBounded', // #336/#529 site 6 — bounded variant for AggregateRunner
   'listHosts',
   'hasGlobalMaestro',
   'isConnected',

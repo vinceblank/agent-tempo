@@ -117,6 +117,7 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
   return {
     discoverEnsembles: async () => [],
     listEnsembles: async () => [],
+    listEnsemblesBounded: async () => ({ items: [], timedOut: false, scanned: 0 }),
     createEnsemble: fail,
     spawnConductor: fail,
     getPlayers: async () => [],
