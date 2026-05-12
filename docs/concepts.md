@@ -82,6 +82,43 @@ non-`gone` attachment phase (attached, awaiting, processing, draining, detached)
 **Migrate** — Sugar for `restart --host=<h>`. Identical semantics to restart; separate verb for
 UX clarity when moving sessions across physical hosts.
 
+**Cross-host orphan visibility** (#151) — When a host goes offline with running player workflows
+still attached to it, those sessions become **dormant orphans** from the perspective of every
+*other* host: the workflows are alive in Temporal but no adapter on the local daemon owns them.
+The remote daemon's `reconcileOnBoot` reattaches them automatically when it returns, so most
+operators never need to think about cross-host orphans at all.
+
+Three discovery surfaces let you see them when you do need to:
+
+- **`claude-tempo restore <ensemble>`** (default) — reattaches dormant orphans on the **local**
+  host. Cross-host orphans (those whose `preferredHost` points elsewhere) are skipped silently
+  with `reason: 'preferredHost'` — the remote daemon is the authoritative restorer and the local
+  host shouldn't barge in. Almost always the right behavior.
+
+- **`claude-tempo restore --all-hosts`** (#151) — cluster-view, read-only listing. Surfaces every
+  orphan in the namespace grouped by `preferredHost`, annotated with a liveness label joined
+  against `listHosts()`:
+  - `[live]` — preferred host's daemon is polling now (`HOST_FRESHNESS_THRESHOLD_MS`, 60s).
+    Recovery is imminent on its next reconcile tick.
+  - `[stale]` — preferred host registered a profile but no poller seen recently. Probably down.
+  - `[missing]` — preferred host has no registered profile at all (never came back, or maestro
+    restarted and the profile expired). Almost certainly safe to deliberately steal.
+  Each cross-host group includes the TUI `/migrate <player> <local> --force` command the
+  operator would run to steal the session to the local host. The verb **never** enqueues a
+  restart itself — it's a discovery tool, not a recovery action.
+
+- **TUI `/migrate <player> <host> --force`** — the deliberate-action recovery edge. Reattaches
+  the session on the local host, stealing it from whichever host currently owns the attachment.
+  Replaces the operator-judgment role that a timer-based reclaim cannot fulfill — a clock cannot
+  distinguish "host decommissioned" from "host offline for the weekend," and PR-F §3 Site 3
+  forbids unprompted cross-host takeover. The §16.5-Option-B `--yes-steal=<host>` deliberate-
+  action gate currently lives only on the MCP `restart` tool; a follow-up issue tracks adding it
+  to the TUI surface for parity.
+
+The cluster-view path is opt-in to keep `claude-tempo restore <ensemble>` scriptable and
+backward-compatible — scripts that previously expected the per-host narrow output continue to
+work unchanged.
+
 ---
 
 ## Adapter and attachment phases

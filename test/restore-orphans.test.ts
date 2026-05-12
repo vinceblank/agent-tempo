@@ -340,6 +340,12 @@ describe('restoreOrphansOnce', function () {
     it('renders skip reasons', function () {
       expect(formatRestoreOutcome({ kind: 'skipped', reason: 'preferredHost', detail: 'other' }))
         .to.equal('skipped: preferredHost=other');
+      // #151 — `crossHost` is the readonly-listing label (distinct from the
+      // active-restore `preferredHost` skip).
+      expect(formatRestoreOutcome({ kind: 'skipped', reason: 'crossHost', detail: 'host-B' }))
+        .to.equal('cross-host orphan: preferredHost=host-B');
+      expect(formatRestoreOutcome({ kind: 'skipped', reason: 'crossHost' }))
+        .to.equal('cross-host orphan: preferredHost=(unknown)');
       expect(formatRestoreOutcome({ kind: 'skipped', reason: 'ageWindow' }))
         .to.equal('skipped: age window');
       expect(formatRestoreOutcome({ kind: 'skipped', reason: 'ensembleAllowlist' }))
@@ -468,6 +474,168 @@ describe('restoreOrphansOnce', function () {
       expect(tempo.calls.map((c) => c.playerId)).to.deep.equal(['parked']);
       expect(summary.reattached).to.equal(1);
       expect(summary.details).to.have.length(1);
+    });
+  });
+
+  // #151 — `mode: 'all-hosts-readonly'` cluster-view listing. Never calls
+  // `restart`; emits every visible orphan as `{ kind: 'skipped', reason:
+  // 'crossHost', detail: <preferredHost> }` so the CLI `--all-hosts`
+  // formatter can group by host and annotate with liveness.
+  describe("mode 'all-hosts-readonly' (#151)", function () {
+    it('emits crossHost outcome for every orphan; never calls restart', async function () {
+      const client = makeFakeClient([
+        fx({
+          ensemble: 'e1',
+          playerId: 'remote-1',
+          detachedSince: new Date(NOW - 60_000).toISOString(),
+          preferredHost: 'host-B',
+        }),
+        fx({
+          ensemble: 'e1',
+          playerId: 'remote-2',
+          detachedSince: new Date(NOW - 60_000).toISOString(),
+          preferredHost: 'host-C',
+        }),
+        // A local-preferred orphan should ALSO appear in readonly listing —
+        // operator's cluster view shows everything. detail falls through to
+        // the preferredHost.
+        fx({
+          ensemble: 'e1',
+          playerId: 'local',
+          detachedSince: new Date(NOW - 60_000).toISOString(),
+          preferredHost: HOST,
+        }),
+      ]);
+      const tempo = stubTempo();
+      const summary = await restoreOrphansOnce(client, {
+        hostname: HOST,
+        invokerPlayerId: 'cli',
+        policy: 'auto', // policy is short-circuited by readonly mode
+        mode: 'all-hosts-readonly',
+        now: () => NOW,
+        tempoClientFactory: tempo.factory,
+      });
+      expect(tempo.calls, 'restart never called in readonly mode').to.have.length(0);
+      expect(summary.reattached).to.equal(0);
+      expect(summary.failed).to.equal(0);
+      expect(summary.skipped).to.equal(3);
+      expect(summary.details.map((d) => d.playerId)).to.deep.equal(['remote-1', 'remote-2', 'local']);
+      for (const d of summary.details) {
+        expect(d.outcome.kind).to.equal('skipped');
+        if (d.outcome.kind === 'skipped') {
+          expect(d.outcome.reason).to.equal('crossHost');
+        }
+      }
+      // detail carries the preferred host so the CLI can group/render.
+      const details = summary.details.map((d) => (d.outcome as any).detail);
+      expect(details).to.deep.equal(['host-B', 'host-C', HOST]);
+    });
+
+    it("preferredHost unset — detail falls through to lastAdapter.hostname", async function () {
+      // Build a fixture with `lastAdapter` (the orphan's home-host clue when
+      // preferredHost was never written).
+      const fixture: Fixture = {
+        workflowId: 'claude-session-e1-anon',
+        info: { phase: 'detached', inFlightCount: 0 },
+        summary: {
+          ensemble: 'e1',
+          playerId: 'anon',
+          detachedSince: new Date(NOW - 60_000).toISOString(),
+          lastAdapter: { hostname: 'host-X', adapterId: 'claude-code' },
+        },
+      };
+      const client = makeFakeClient([fixture]);
+      const tempo = stubTempo();
+      const summary = await restoreOrphansOnce(client, {
+        hostname: HOST,
+        invokerPlayerId: 'cli',
+        policy: 'auto',
+        mode: 'all-hosts-readonly',
+        now: () => NOW,
+        tempoClientFactory: tempo.factory,
+      });
+      expect(tempo.calls).to.have.length(0);
+      expect(summary.details).to.have.length(1);
+      expect(summary.details[0].outcome).to.deep.equal({
+        kind: 'skipped',
+        reason: 'crossHost',
+        detail: 'host-X',
+      });
+    });
+
+    it('preferredHost AND lastAdapter both unset — detail is "(unknown)"', async function () {
+      const client = makeFakeClient([
+        fx({ ensemble: 'e1', playerId: 'mystery', detachedSince: new Date(NOW - 60_000).toISOString() }),
+      ]);
+      const tempo = stubTempo();
+      const summary = await restoreOrphansOnce(client, {
+        hostname: HOST,
+        invokerPlayerId: 'cli',
+        policy: 'auto',
+        mode: 'all-hosts-readonly',
+        now: () => NOW,
+        tempoClientFactory: tempo.factory,
+      });
+      expect(summary.details[0].outcome).to.deep.equal({
+        kind: 'skipped',
+        reason: 'crossHost',
+        detail: '(unknown)',
+      });
+    });
+
+    it('readonly mode respects ensemble narrowing', async function () {
+      const client = makeFakeClient([
+        fx({
+          ensemble: 'band-a',
+          playerId: 'alice',
+          detachedSince: new Date(NOW - 60_000).toISOString(),
+          preferredHost: 'host-B',
+        }),
+        fx({
+          ensemble: 'band-b',
+          playerId: 'bob',
+          detachedSince: new Date(NOW - 60_000).toISOString(),
+          preferredHost: 'host-C',
+        }),
+      ]);
+      const tempo = stubTempo();
+      const summary = await restoreOrphansOnce(client, {
+        hostname: HOST,
+        invokerPlayerId: 'cli',
+        policy: 'auto',
+        mode: 'all-hosts-readonly',
+        ensemble: 'band-a',
+        now: () => NOW,
+        tempoClientFactory: tempo.factory,
+      });
+      expect(summary.details.map((d) => d.playerId)).to.deep.equal(['alice']);
+    });
+
+    it('readonly mode does NOT apply age window — every visible orphan is listed', async function () {
+      // An ancient orphan in `policy: 'auto'` local mode would be skipped
+      // with reason=ageWindow. In readonly listing mode the operator wants
+      // to SEE it (especially the dormant ones), so the age filter shouldn't
+      // pre-filter the listing.
+      const client = makeFakeClient([
+        fx({
+          ensemble: 'e1',
+          playerId: 'ancient',
+          detachedSince: '2020-01-01T00:00:00Z',
+          preferredHost: 'host-B',
+        }),
+      ]);
+      const tempo = stubTempo();
+      const summary = await restoreOrphansOnce(client, {
+        hostname: HOST,
+        invokerPlayerId: 'cli',
+        policy: 'auto',
+        mode: 'all-hosts-readonly',
+        autoRestoreMaxAgeHours: 24,
+        now: () => NOW,
+        tempoClientFactory: tempo.factory,
+      });
+      expect(summary.details).to.have.length(1);
+      expect(summary.details[0].outcome).to.deep.include({ kind: 'skipped', reason: 'crossHost' });
     });
   });
 

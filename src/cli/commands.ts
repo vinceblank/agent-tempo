@@ -2284,7 +2284,16 @@ export async function recall(opts: RecallCliOpts) {
 // --- Restore command (#288 clean break: ensemble-scoped, no picker flags) ---
 
 interface RestoreCliOpts extends CliOverrides {
-  ensemble: string;
+  /** Required for the default local-restore flow; ignored when `allHosts` is set. */
+  ensemble?: string;
+  /**
+   * #151: cluster-view listing mode. Lists cross-host orphans the local
+   * daemon's `claude-tempo restore <ensemble>` would otherwise skip
+   * silently. Read-only: never enqueues a `restart`. Recovery still
+   * happens through the remote daemon's `reconcileOnBoot` when it
+   * returns, or a deliberate TUI `/migrate <player> <host> --force`.
+   */
+  allHosts?: boolean;
 }
 
 /**
@@ -2293,8 +2302,22 @@ interface RestoreCliOpts extends CliOverrides {
  * direct-to-`restoreOrphansOnce` path left the ensemble paused after a
  * `shutdown → restore` roundtrip). The TUI home view (#290) is the picker
  * surface; the CLI is the scriptable bulk operation, one ensemble at a time.
+ *
+ * `--all-hosts` (#151): switches to cluster-view readonly listing — the
+ * positional `<ensemble>` becomes optional (when set, narrows the listing;
+ * when omitted, lists across every ensemble). Never enqueues a restart.
+ * See `formatCrossHostOrphans` for the output shape.
  */
 export async function restore(opts: RestoreCliOpts) {
+  if (opts.allHosts) {
+    await restoreAllHosts(opts);
+    return;
+  }
+  if (!opts.ensemble) {
+    out.error('Usage: claude-tempo restore <ensemble>   (or --all-hosts for cluster-view)');
+    process.exit(1);
+  }
+
   const { connection, client } = await verbClient(opts);
   try {
     const { formatRestoreOutcome } = await import('../reconcile/orphans');
@@ -2316,6 +2339,69 @@ export async function restore(opts: RestoreCliOpts) {
       }
     }
     out.log(`\n${summary.reattached} reattached, ${summary.skipped} skipped, ${summary.failed} failed.`);
+  } catch (err: any) {
+    out.error(err?.message || String(err));
+    process.exit(1);
+  } finally {
+    await connection.close();
+  }
+}
+
+/**
+ * #151 — `claude-tempo restore --all-hosts` implementation.
+ *
+ * Read-only cluster-view: enumerates every orphan in the namespace (not
+ * just local) and groups by `preferredHost`. Each group is annotated with
+ * a liveness label (`[live]` / `[stale]` / `[missing]`) derived from
+ * `listHosts()`, and each orphan line includes the TUI `/migrate`
+ * command the operator would run to deliberately steal the session to
+ * the local host.
+ *
+ * Never enqueues a restart. The architect's spec (#151 refined Option D)
+ * is explicit: recovery happens reflexively when the remote daemon comes
+ * back (its own `reconcileOnBoot` picks up matching orphans), or by
+ * deliberate operator action via `/migrate`. A timer-based reclaim is
+ * disallowed (PR-F §3 Site 3) — a clock cannot distinguish "host
+ * decommissioned" from "weekend offline."
+ *
+ * Output format mirrors the existing `hosts` formatter's section style
+ * (per-host groupings, dimmed annotations). Liveness label semantics:
+ *
+ *   [live]    — host's daemon is polling now (`HOST_FRESHNESS_THRESHOLD_MS`,
+ *               60s). Recovery is imminent on its next reconcile tick.
+ *   [stale]   — host has a profile but no poller seen in the last minute.
+ *               Probably down; manual `/migrate` if recovery can't wait.
+ *   [missing] — host has no registered profile (never came back since boot,
+ *               or the maestro restarted and the profile expired). Almost
+ *               certainly safe to steal.
+ */
+async function restoreAllHosts(opts: RestoreCliOpts): Promise<void> {
+  const { connection, client } = await verbClient(opts);
+  try {
+    const localHost = hostname();
+    const { restoreOrphansOnce } = await import('../reconcile/orphans');
+    const { listHosts } = await import('../utils/hosts');
+    const { formatCrossHostOrphans } = await import('../utils/restore-format');
+
+    // Run the cluster-view query and the host enumeration concurrently —
+    // the join is cheap and both calls take 50-200ms apiece against a
+    // healthy Temporal.
+    const [summary, hosts] = await Promise.all([
+      restoreOrphansOnce(client, {
+        hostname: localHost,
+        invokerPlayerId: 'cli',
+        policy: 'auto',
+        mode: 'all-hosts-readonly',
+        ...(opts.ensemble ? { ensemble: opts.ensemble } : {}),
+      }),
+      listHosts(client, { force: true }),
+    ]);
+
+    const output = formatCrossHostOrphans(summary.details, hosts, {
+      localHost,
+      ...(opts.ensemble ? { ensemble: opts.ensemble } : {}),
+    });
+    out.log(output);
   } catch (err: any) {
     out.error(err?.message || String(err));
     process.exit(1);
