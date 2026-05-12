@@ -44,6 +44,27 @@ observers (the TUI, the CLI `ensemble` tool, the Maestro dashboard, the daemon
 the initial message before the process spawns, ensuring reliable message delivery even if the
 process starts slowly.
 
+**`recruit` vs Claude Code `Agent` tool** — Two surfaces for spawning sub-agents; choosing
+wrong locks you out of mid-flight updates.
+
+| | `recruit` (tempo player) | `Agent` tool (sub-agent) |
+|---|---|---|
+| Identity | Stable `playerId`, registered with ensemble | Ephemeral; valid only inside the spawner's process |
+| Visibility | Appears in `ensemble`; visible across all conductor turns | Invisible to `ensemble`; only the spawner knows it exists |
+| Messaging | Addressable via `cue` at any point | Not addressable via `cue`; `SendMessage` is LLM-only |
+| Lifecycle | Temporal workflow; survives daemon bounce and session restart | Process-local; dies when the spawner's turn ends |
+| Spawn cost | ~3–5s session boot | Lightweight; no Temporal workflow |
+
+**Rule of thumb**: use `recruit` whenever you might want to update the agent's brief mid-flight,
+merge results across multiple turns, or restart it with preserved context. Use `Agent` for
+self-contained one-shot work (research spikes, quick lookups, parallel greps) whose result you
+will read once and discard within the same turn.
+
+> **Why `cue` won't reach Agent-tool agents**: Tempo's MCP server runs as a separate process
+> from Claude Code and has no access to Claude Code's internal task registry. `cue` signals
+> Temporal workflows; Agent-tool sub-agents are not Temporal workflows. See the `cue` tool's
+> error message for the full explanation if you accidentally try this.
+
 **Restart** — Revives a session by running the §8.2 algorithm: graceful `requestDetach` (or
 `forceDetach` with `force: true`), fresh `claimAttachment` on the target host, optional context
 replay via `receiveMessage`, then `enqueueSpawn` on the target's own outbox. Works on any
