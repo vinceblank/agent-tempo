@@ -799,6 +799,12 @@ export function createTempoClientCore(
       const invokerPlayerId = opts.invokerPlayerId ?? 'cli';
       const maestroId = sessionWorkflowId(ensemble, 'maestro');
       const h = handle(maestroId);
+      // #580 — `confirmStealFromHost` is a caller-side intent flag (§16.5
+      // Option B). The outbox entry has no slot for it because the workflow
+      // trusts the caller; the gate is enforced pre-submit by the TUI
+      // handler and the shared MCP-tool guard. Accepting the field on
+      // `RestartClientOpts` gives external SDK consumers and the TUI a
+      // typed pipeline to forward the confirmed value.
       const entry: OutboxEntryInput = {
         type: 'restart',
         targetPlayerId: playerId,

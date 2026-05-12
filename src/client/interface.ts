@@ -101,6 +101,18 @@ export interface RestartClientOpts {
    * Ignored when `loadFromState` is absent.
    */
   transcript?: 'suppress' | 'replay';
+  /**
+   * #580 / design §16.5 Option B — deliberate-action gate for cross-host
+   * force-restart. When `force: true` AND the target's current attachment
+   * is on a host other than the caller's, the value must match the
+   * current holder's hostname exactly. The shared MCP-tool guard
+   * (`enforceYesStealGuard` in `src/tools/restart.ts`) enforces the same
+   * property when callers go through the `restart` / `migrate` MCP tools;
+   * the TUI's `/migrate` handler enforces it locally and forwards the
+   * confirmed value here so the recorded intent rides the call. Workflow
+   * trusts the caller — the check happens pre-submit, not in the outbox.
+   */
+  confirmStealFromHost?: string;
 }
 
 export interface RestartClientResult {
