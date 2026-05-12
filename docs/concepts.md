@@ -111,9 +111,11 @@ Three discovery surfaces let you see them when you do need to:
   the session on the local host, stealing it from whichever host currently owns the attachment.
   Replaces the operator-judgment role that a timer-based reclaim cannot fulfill — a clock cannot
   distinguish "host decommissioned" from "host offline for the weekend," and PR-F §3 Site 3
-  forbids unprompted cross-host takeover. The §16.5-Option-B `--yes-steal=<host>` deliberate-
-  action gate currently lives only on the MCP `restart` tool; a follow-up issue tracks adding it
-  to the TUI surface for parity.
+  forbids unprompted cross-host takeover. The §16.5-Option-B `--yes-steal=<currentHost>`
+  deliberate-action gate is now enforced on both surfaces (MCP `restart`/`migrate` tools and the
+  TUI `/migrate` handler, #580) — `--force` against a target whose current attachment lives on
+  another host hard-rejects until the operator types the holder's hostname exactly. The same
+  finger habit that mashes `y` at any prompt cannot satisfy a name-the-target check.
 
 The cluster-view path is opt-in to keep `claude-tempo restore <ensemble>` scriptable and
 backward-compatible — scripts that previously expected the per-host narrow output continue to

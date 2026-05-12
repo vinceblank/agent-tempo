@@ -9,6 +9,7 @@
  * are re-exported below so the TUI's surface stays unchanged. The
  * dashboard imports the same helpers via `claude-tempo/palette`.
  */
+import { hostname as osHostname } from 'os';
 import type { TempoClient } from '../client';
 import type { TuiAction, StaticItem, NotificationItem } from './store';
 import { NOTIFICATION_TTL_MS } from './store';
@@ -43,6 +44,13 @@ export interface CommandContext {
   activeEnsemble: string | null;
   /** Default agent type from config (defaults to 'claude'). */
   defaultAgent?: 'claude' | 'copilot';
+  /**
+   * #580 — local hostname for cross-host checks (e.g. `/migrate`'s
+   * §16.5 Option B `--yes-steal` gate). Defaults to `os.hostname()` at
+   * the call site when absent; tests inject a fixed value for
+   * deterministic assertions.
+   */
+  localHostname?: string;
 }
 
 /** Handler function signature for slash commands. */
@@ -500,7 +508,18 @@ async function handleRestart(
   }
 }
 
-/** /migrate <player> <host> [--fresh] [--force] — restart on a different host. */
+/**
+ * /migrate <player> <host> [--fresh] [--force] [--yes-steal=<hostname>] — restart on a different host.
+ *
+ * #580 — when `--force` is set AND the target's current attachment is on a
+ * host other than the operator's, the deliberate-action gate from design
+ * §16.5 Option B requires `--yes-steal=<currentHost>` to match the holder's
+ * hostname exactly. This mirrors the MCP-tool guard (`enforceYesStealGuard`
+ * in `src/tools/restart.ts`) — making the operator type the host being stolen
+ * from prevents accidental cross-host takeover by the same finger habit that
+ * mashes `y` at any prompt. The MCP path was always covered; the TUI was the
+ * only operator surface that bypassed it.
+ */
 async function handleMigrate(
   args: string[],
   dispatch: (action: TuiAction) => void,
@@ -508,7 +527,11 @@ async function handleMigrate(
   ctx: CommandContext,
 ): Promise<void> {
   if (args.length < 2) {
-    commitNotification(dispatch, 'error', 'Usage: /migrate <player> <host> [--fresh] [--force]');
+    commitNotification(
+      dispatch,
+      'error',
+      'Usage: /migrate <player> <host> [--fresh] [--force] [--yes-steal=<hostname>]',
+    );
     return;
   }
   const ensemble = requireEnsemble(dispatch, ctx);
@@ -519,11 +542,72 @@ async function handleMigrate(
   const fresh = args.includes('--fresh');
   const force = args.includes('--force');
 
+  // #580 — `--yes-steal=<hostname>` parsing. Same shape as
+  // `--load-from-state=<key>` in handleRestart: accept `--yes-steal=value`
+  // (canonical), reject the bare flag with a friendly hint because the
+  // gate's whole UX value is naming the host explicitly.
+  const yesStealArg = args.find(
+    (a) => a === '--yes-steal' || a.startsWith('--yes-steal='),
+  );
+  let confirmStealFromHost: string | undefined;
+  if (yesStealArg !== undefined) {
+    const eqIdx = yesStealArg.indexOf('=');
+    const valuePart = eqIdx >= 0 ? yesStealArg.slice(eqIdx + 1).trim() : '';
+    if (valuePart.length === 0) {
+      commitNotification(
+        dispatch,
+        'error',
+        "--yes-steal requires a hostname: --yes-steal=<currentHost>. The flag's safety property is that you type the host name being stolen from.",
+      );
+      return;
+    }
+    confirmStealFromHost = valuePart;
+  }
+
+  // #580 — cross-host force-migrate gate. Only fires when --force is set
+  // AND the target's current attachment is on a different host. Mirrors
+  // the lookup `enforceYesStealGuard` does on the MCP side.
+  if (force) {
+    const localHostname = ctx.localHostname ?? osHostname();
+    let currentHost: string | undefined;
+    try {
+      const info = await api.attachmentInfo(ensemble, target);
+      currentHost = info.currentAttachment?.hostname;
+    } catch {
+      // If we can't read the phase, fall through and let downstream
+      // handle the state. Not our job to synthesize a phantom guard
+      // failure from a transient query error.
+    }
+    if (currentHost && currentHost !== localHostname) {
+      if (!confirmStealFromHost) {
+        commitNotification(
+          dispatch,
+          'error',
+          `session "${target}" is attached to host "${currentHost}".\n` +
+            `To confirm moving it, re-run with --yes-steal:\n\n` +
+            `  /migrate ${target} ${host} --force --yes-steal=${currentHost}\n\n` +
+            `This safety flag prevents accidental cross-host session takeover.`,
+        );
+        return;
+      }
+      if (confirmStealFromHost !== currentHost) {
+        commitNotification(
+          dispatch,
+          'error',
+          `--yes-steal mismatch: session "${target}" is on "${currentHost}", ` +
+            `not "${confirmStealFromHost}". Re-run with --yes-steal=${currentHost}.`,
+        );
+        return;
+      }
+    }
+  }
+
   try {
     const result = await api.migrate(ensemble, target, host, {
       fresh,
       force,
       invokerPlayerId: 'tui',
+      ...(confirmStealFromHost !== undefined ? { confirmStealFromHost } : {}),
     });
     commitStatic(
       dispatch,
@@ -1381,8 +1465,8 @@ export const COMMANDS: Record<string, CommandDef> = {
     handler: handleDestroy,
   },
   migrate: {
-    description: 'Restart a session on a different host',
-    usage: '/migrate <player> <host> [--fresh] [--force]',
+    description: "Restart a session on a different host. --force on a cross-host target requires --yes-steal=<currentHost> (§16.5 Option B).",
+    usage: '/migrate <player> <host> [--fresh] [--force] [--yes-steal=<hostname>]',
     handler: handleMigrate,
   },
   'attachment-info': {
