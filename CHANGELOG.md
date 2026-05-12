@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- CLI: `claude-tempo migrate` removed-verb hint now points to `/migrate <player> <host>` — previously pointed to `/restart <player> --host <hostname>` which is not a valid form (the `/restart` TUI command accepts no `--host` flag), sending operators to a dead end since #288
+
 ## [0.28.0-beta.19] - 2026-05-11
 
 ### Added

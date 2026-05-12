@@ -27,7 +27,7 @@ export const REMOVED_VERBS: Record<string, string> = {
   detach: '/shutdown (ensemble-wide) — detach is no longer a user-facing verb',
   restart: '/restart <player>',
   recruit: '/recruit <name>',
-  migrate: '/restart <player> --host <hostname>',
+  migrate: '/migrate <player> <host>',
   resume: '/play',
 };
 
