@@ -75,6 +75,46 @@ describe('buildOrphanQuery', function () {
       expect(q).to.not.include('ClaudeTempoAttachmentState IN (');
     });
   });
+
+  // #151 — cluster-view: `allHosts: true` drops the per-host predicates so
+  // the visibility query spans every host's orphans. Powers `claude-tempo
+  // restore --all-hosts`.
+  describe('allHosts axis (#151)', function () {
+    it('with allHosts=true — emits state-only clauses, no hostname predicates', function () {
+      const q = buildOrphanQuery({ hostname: 'host-1', allHosts: true });
+      expect(q).to.include('WorkflowType = "claudeSessionWorkflow"');
+      expect(q).to.include('ExecutionStatus = "Running"');
+      // Default phase set is preserved — every live phase + detached, but
+      // each clause is a bare `ClaudeTempoAttachmentState ...` predicate
+      // with no hostname AND.
+      expect(q).to.include('ClaudeTempoAttachmentState IN ("attached","processing","awaiting","draining")');
+      expect(q).to.include('ClaudeTempoAttachmentState = "detached"');
+      // No hostname predicates anywhere in the query.
+      expect(q).to.not.include('ClaudeTempoAttachedHost');
+      expect(q).to.not.include('ClaudeTempoHostname');
+    });
+
+    it('with allHosts=true + phases=["detached"] — only the bare detached state clause', function () {
+      const q = buildOrphanQuery({ hostname: 'host-1', allHosts: true, phases: ['detached'] });
+      expect(q).to.include('ClaudeTempoAttachmentState = "detached"');
+      expect(q).to.not.include('ClaudeTempoAttachmentState IN (');
+      expect(q).to.not.include('ClaudeTempoAttachedHost');
+      expect(q).to.not.include('ClaudeTempoHostname');
+    });
+
+    it('with allHosts=true + ensemble — keeps the ensemble clause', function () {
+      const q = buildOrphanQuery({ hostname: 'host-1', allHosts: true, ensemble: 'band-a' });
+      expect(q).to.include('ClaudeTempoEnsemble = "band-a"');
+      expect(q).to.not.include('ClaudeTempoAttachedHost');
+      expect(q).to.not.include('ClaudeTempoHostname');
+    });
+
+    it('with allHosts=false (or unset) — preserves the existing per-host predicate form', function () {
+      const q = buildOrphanQuery({ hostname: 'host-1' });
+      expect(q).to.include('ClaudeTempoAttachedHost = "host-1"');
+      expect(q).to.include('ClaudeTempoHostname = "host-1"');
+    });
+  });
 });
 
 describe('isAdapterProcessAliveStub', function () {

@@ -47,7 +47,7 @@ ${out.bold('Commands:')}
   ${out.cyan('recall')} <name>            Read a player's message history (--limit/--offset/--preview/--from/--since/--include-sent/--json)
   ${out.cyan('hosts')}                    List daemons polling this Temporal namespace with advertised capabilities (--all/--json)
   ${out.cyan('refresh-host-profile')}     Re-advertise this daemon's capability profile to the global Maestro
-  ${out.cyan('restore')} <ensemble>       Restore orphaned sessions in one ensemble on this host
+  ${out.cyan('restore')} <ensemble>       Restore orphaned sessions in one ensemble on this host (--all-hosts for cluster-view listing)
   ${out.cyan('release')} [ensemble]       Release all held players (unlock outbox, deliver messages)
   ${out.cyan('agent-types')} <sub>        Manage player type definitions (list/show/init)
   ${out.cyan('daemon')}    <sub>          Manage the worker daemon (start/stop/status/logs)
@@ -87,6 +87,7 @@ ${out.bold('Other options:')}
   --scenario <name|path>       Force every mock player in the lineup into mockMode:scripted with this scenario (dev-mode-only, up + --lineup)
   --no-hold                    Skip startup hold (requires --lineup on up)
   --ensemble <name>            Target a specific ensemble (broadcast, destroy, restore)
+  --all-hosts                  List cross-host orphans across the whole namespace (restore — read-only, #151)
   -d, --dir <path>             Target directory (default: cwd)
 
 ${out.bold('Config command:')}

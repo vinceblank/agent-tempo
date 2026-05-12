@@ -90,6 +90,16 @@ export interface OrphanQueryFilter {
    */
   phases?: AttachmentPhase[];
   /**
+   * #151 cluster-view: when `true`, drop the `ClaudeTempoAttachedHost` /
+   * `ClaudeTempoHostname` predicates from the visibility query so the result
+   * spans **every** host's orphans, not just the local one. Used by
+   * `claude-tempo restore --all-hosts` to surface dormant remote orphans
+   * the operator would otherwise need per-host SSH to see. `hostname` is
+   * still required (it's the join key for the cross-host record) but no
+   * longer filters the query.
+   */
+  allHosts?: boolean;
+  /**
    * When set, override `isAdapterProcessAlive`. Default stub returns `false`
    * (always assume dead, conservative always-restore). Tests pass a custom
    * predicate; production callers omit.
@@ -102,6 +112,13 @@ export interface BuildOrphanQueryOpts {
   hostname: string;
   ensemble?: string;
   phases?: AttachmentPhase[];
+  /**
+   * #151: drop hostname predicates from the emitted query. The shape becomes
+   *   `WorkflowType=... AND ExecutionStatus="Running" AND ClaudeTempoAttachmentState IN (...)`
+   * (no host clause), returning every orphan in the namespace. The `hostname`
+   * field is ignored when this is `true`.
+   */
+  allHosts?: boolean;
 }
 
 /**
@@ -142,16 +159,29 @@ export function buildOrphanQuery(opts: BuildOrphanQueryOpts): string {
   const includeDetached = phases.includes('detached');
 
   const clauses: string[] = [];
-  if (livePhases.length > 0) {
-    const liveList = livePhases.map((p) => `"${p}"`).join(',');
-    clauses.push(
-      `(ClaudeTempoAttachedHost = "${h}" AND ClaudeTempoAttachmentState IN (${liveList}))`,
-    );
-  }
-  if (includeDetached) {
-    clauses.push(
-      `(ClaudeTempoAttachmentState = "detached" AND ClaudeTempoHostname = "${h}")`,
-    );
+  if (opts.allHosts) {
+    // #151 cluster-view — drop the per-host predicates entirely. Phase filter
+    // is still respected so we don't sweep up genuinely-live sessions when
+    // the caller narrowed to `['detached']`.
+    if (livePhases.length > 0) {
+      const liveList = livePhases.map((p) => `"${p}"`).join(',');
+      clauses.push(`ClaudeTempoAttachmentState IN (${liveList})`);
+    }
+    if (includeDetached) {
+      clauses.push(`ClaudeTempoAttachmentState = "detached"`);
+    }
+  } else {
+    if (livePhases.length > 0) {
+      const liveList = livePhases.map((p) => `"${p}"`).join(',');
+      clauses.push(
+        `(ClaudeTempoAttachedHost = "${h}" AND ClaudeTempoAttachmentState IN (${liveList}))`,
+      );
+    }
+    if (includeDetached) {
+      clauses.push(
+        `(ClaudeTempoAttachmentState = "detached" AND ClaudeTempoHostname = "${h}")`,
+      );
+    }
   }
 
   // Safety net — both arms empty means caller passed `phases: []`. Fall back
@@ -201,6 +231,7 @@ export async function queryOrphanedSessions(
     hostname: filter.hostname,
     ...(filter.ensemble !== undefined ? { ensemble: filter.ensemble } : {}),
     ...(filter.phases !== undefined ? { phases: filter.phases } : {}),
+    ...(filter.allHosts ? { allHosts: true } : {}),
   });
 
   // Defense-in-depth: even though the visibility query filters by phase,
@@ -283,6 +314,19 @@ export interface RestoreOrphansOpts {
   /** `'auto'` — call `restart` on each eligible candidate.
    *  `'prompt'` — log each candidate; do not call `restart`. */
   policy: 'auto' | 'prompt';
+  /**
+   * #151 listing mode. `'local'` (default) keeps the pre-existing behavior:
+   * orphan query is filtered to this host, and `policy: 'auto'` restarts
+   * locally-preferred candidates. `'all-hosts-readonly'` widens the query
+   * to every host (cluster-view) AND short-circuits `policy` so `restart`
+   * is NEVER called — every visible orphan is emitted as
+   * `{ kind: 'skipped', reason: 'crossHost', detail: <preferredHost> }`
+   * for the CLI's `--all-hosts` discovery formatter. Recovery still
+   * happens through the existing safety valve (the remote daemon's own
+   * `reconcileOnBoot`, or a deliberate `restart --host <local> --force
+   * --confirm-steal-from-host <remote>`).
+   */
+  mode?: 'local' | 'all-hosts-readonly';
   /** Optional narrowing filter — only consider orphans in this ensemble. */
   ensemble?: string;
   /**
@@ -319,7 +363,24 @@ export type RestoreOutcome =
   | { kind: 'queued'; entryId: string }
   | {
       kind: 'skipped';
-      reason: 'preferredHost' | 'ageWindow' | 'ensembleAllowlist' | 'attachmentConflict' | 'prompt';
+      reason:
+        | 'preferredHost'
+        /**
+         * #151: cluster-view listing entry. Emitted by `restoreOrphansOnce`
+         * when `mode === 'all-hosts-readonly'` — semantically distinct from
+         * `preferredHost`, which fires on an *active* restore attempt that
+         * stepped back because the remote daemon owns recovery. `crossHost`
+         * is a passive observation for `claude-tempo restore --all-hosts`:
+         * "this orphan exists, here's its preferred host, we did nothing."
+         * Same data shape (`detail` carries the preferred host); the
+         * different label lets CLI / dashboard surfaces distinguish
+         * "skipped-during-auto-restore" from "shown-during-readonly-listing".
+         */
+        | 'crossHost'
+        | 'ageWindow'
+        | 'ensembleAllowlist'
+        | 'attachmentConflict'
+        | 'prompt';
       /** Extra context, e.g. the remote `preferredHost` value. */
       detail?: string;
     }
@@ -340,6 +401,7 @@ export function formatRestoreOutcome(o: RestoreOutcome): string {
     case 'skipped':
       switch (o.reason) {
         case 'preferredHost': return `skipped: preferredHost=${o.detail ?? '(unknown)'}`;
+        case 'crossHost': return `cross-host orphan: preferredHost=${o.detail ?? '(unknown)'}`;
         case 'ageWindow': return 'skipped: age window';
         case 'ensembleAllowlist': return 'skipped: ensemble allowlist';
         case 'attachmentConflict': return 'skipped: AttachmentConflict';
@@ -396,6 +458,9 @@ export async function restoreOrphansOnce(
   };
   const now = opts.now ?? Date.now;
 
+  const mode = opts.mode ?? 'local';
+  const allHostsReadonly = mode === 'all-hosts-readonly';
+
   let orphans: OrphanCandidate[];
   try {
     orphans = await queryOrphanedSessions(
@@ -404,6 +469,7 @@ export async function restoreOrphansOnce(
         hostname: opts.hostname,
         ...(opts.ensemble ? { ensemble: opts.ensemble } : {}),
         ...(opts.phases ? { phases: opts.phases } : {}),
+        ...(allHostsReadonly ? { allHosts: true } : {}),
       },
       log,
     );
@@ -428,6 +494,25 @@ export async function restoreOrphansOnce(
     });
     log(`restoreOrphansOnce: ${o.workflowId} — ${formatRestoreOutcome(outcome)}`);
   };
+
+  // #151: cluster-view readonly mode. Never calls `restart` — emits every
+  // visible orphan as a structured `crossHost` skip so the CLI's
+  // `--all-hosts` formatter can group, annotate, and surface the action
+  // edge. Recovery happens out-of-band: the remote daemon's reconcile-on-
+  // boot when it returns, or a deliberate TUI `/migrate <player> <host>
+  // --force`. The post-query phase allowlist (live `attached` not flagged
+  // as orphan candidate) and ensemble narrowing are both applied here too.
+  if (allHostsReadonly) {
+    for (const o of orphans) {
+      if (opts.ensemble && o.summary.ensemble !== opts.ensemble) continue;
+      // `detail` carries the preferred host when set, falling back to the
+      // candidate's home hostname (from `OrphanSummary.lastAdapter.hostname`)
+      // and finally `(unknown)`. The CLI groups by this value.
+      const detail = o.summary.preferredHost ?? o.summary.lastAdapter?.hostname ?? '(unknown)';
+      record(o, { kind: 'skipped', reason: 'crossHost', detail });
+    }
+    return summary;
+  }
 
   // Filter: (1) ensemble narrowing from the caller, (2) PR-F cross-host
   // filter (design §16 — remote orphans are the remote daemon's problem).

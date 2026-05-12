@@ -49,6 +49,13 @@ interface ParsedArgs {
   keepDaemon: boolean;
   yes: boolean;
   all: boolean;
+  /**
+   * `restore --all-hosts` (#151): switch the `restore` verb into cluster-view
+   * readonly listing mode. Surfaces orphans on remote hosts the local
+   * daemon's `restore <ensemble>` would skip silently. Never enqueues a
+   * restart.
+   */
+  allHosts: boolean;
   project: boolean;
   /** Issue #172: `up --no-hold` opts out of the defer-conductor-instructions-
    *  until-first-user-message behavior. */
@@ -104,6 +111,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     keepDaemon: false,
     yes: false,
     all: false,
+    allHosts: false,
     project: false,
     noHold: false,
     destroy: false,
@@ -148,6 +156,9 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.yes = true;
     } else if (arg === '--all') {
       result.all = true;
+    } else if (arg === '--all-hosts') {
+      // #151: `restore --all-hosts` — cluster-view readonly orphan listing.
+      result.allHosts = true;
     } else if (arg === '--project') {
       result.project = true;
     } else if (arg === '--no-hold') {
@@ -533,14 +544,17 @@ async function main() {
     }
 
     case 'restore': {
-      // #288: ensemble-scoped, no flags. Positional ensemble name is required.
+      // #288: ensemble-scoped local mode requires a positional name.
+      // #151: `--all-hosts` switches to cluster-view readonly listing
+      //       — ensemble becomes optional (when set, narrows the listing).
       const target = args.positional[1] || args.ensemble || process.env[ENV.ENSEMBLE];
-      if (!target) {
-        out.error('Usage: claude-tempo restore <ensemble>');
+      if (!args.allHosts && !target) {
+        out.error('Usage: claude-tempo restore <ensemble>   (or --all-hosts for cluster-view)');
         process.exit(1);
       }
       await restore({
-        ensemble: target,
+        ...(target ? { ensemble: target } : {}),
+        ...(args.allHosts ? { allHosts: true } : {}),
         ...overrides,
       });
       break;
