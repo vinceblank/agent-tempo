@@ -159,12 +159,24 @@ function PlayerTypeCard({ type }: PlayerTypeCardProps) {
         data-testid={`${testRoot}-name`}
         style={{ fontSize: 20 }}
       >
+        {/*
+         * #575: render the glyph in a fixed-width centred slot. Music
+         * symbols like ♮ (U+266E, natural) and 𝅘𝅥 (U+1D158/U+1D165, SMP
+         * quarter note) have noticeably narrower advance widths than
+         * the eighth-note family (♪♫♬) in the mono font, so a bare
+         * margin-right yields inconsistent visible spacing per card.
+         * Pinning min-width: 1em + text-align: center normalises the
+         * footprint across all 8 glyph variants in `GLYPHS`.
+         */}
         <span
           aria-hidden="true"
           style={{
             color: `oklch(0.82 0.12 ${hue})`,
             fontFamily: 'var(--ff-mono)',
             fontSize: 22,
+            display: 'inline-block',
+            minWidth: '1em',
+            textAlign: 'center',
             marginRight: 8,
           }}
         >
