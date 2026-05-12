@@ -74,14 +74,39 @@ describe('claudeGlobalMaestroWorkflow', function () {
   // Under the shared env a leaked Global Maestro keeps polling
   // `discoverEnsembles` / `refreshEnsembleState` after the test's mocked
   // activity closures have exited, which surfaces as cross-file flakes.
+  //
+  // #583: bound the shutdown so the hook can't cascade-fail when a test body
+  // threw BEFORE reaching its inline `signal(shutdown) + result()` block.
+  // The throw triggers `worker.runUntil(fn)` to stop the worker; the signal
+  // we send here lands in Temporal history fine but no worker is left to
+  // process it, so `handle.result()` would otherwise wait until the Mocha
+  // default 2s hook timeout — surfacing as a second "after each hook"
+  // failure stacked on top of the original assertion failure. The race +
+  // terminate fallback turns that into a clean teardown regardless.
   afterEach(async function () {
+    this.timeout(10_000);
+    const SHUTDOWN_GRACE_MS = 2_000;
     const toClean = pendingHandles.splice(0);
     for (const handle of toClean) {
       try {
         await handle.signal(maestroShutdownSignal);
-        await handle.result().catch(() => { /* COMPLETED */ });
       } catch {
-        // Inline shutdown already happened, or workflow completed. Ignore.
+        // Workflow already complete (inline shutdown raced ahead) — nothing to do.
+        continue;
+      }
+      const outcome = await Promise.race([
+        handle.result().then(() => 'completed' as const).catch(() => 'errored' as const),
+        new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), SHUTDOWN_GRACE_MS)),
+      ]);
+      if (outcome === 'timeout') {
+        // Worker is gone — workflow can't process the shutdown signal we
+        // just sent. Force-terminate so the workflow doesn't leak into the
+        // next file under the shared env.
+        try {
+          await handle.terminate('test-cleanup: worker stopped before shutdown processed');
+        } catch {
+          // Already terminated or completed — fine either way.
+        }
       }
     }
   });
@@ -153,13 +178,22 @@ describe('claudeGlobalMaestroWorkflow', function () {
 
           // #383 P3: poll for the maestro's periodic refresh cycle to pick up
           // the mocked discovery. With FAST_POLL_MS=500 the second refresh
-          // tick lands well inside the 5s budget under load; the previous
-          // fixed 2s sleep was generous in steady state but tight on cold-
-          // start CI runners.
+          // tick lands well inside the budget under load; the previous fixed
+          // 2s sleep was generous in steady state but tight on cold-start CI
+          // runners.
+          //
+          // #583: budget bumped 5s → 10s after the Linux shard-2/node-22
+          // flake at https://github.com/vinceblank/claude-tempo/actions/runs/25710621734.
+          // The first discovery cycle needs (~workflow scheduling latency)
+          // + (mocked activity round-trip) + (FAST_POLL_MS=500). Under shard
+          // contention the first two terms can spike past 5s while staying
+          // well below the test's 15s outer timeout. The poll resolves the
+          // instant the assertion is true, so the bump only costs latency
+          // on the rare slow path.
           await pollWithTimeout(async () => {
             const e = await handle.query(maestroEnsemblesQuery);
             return e.includes('team-a') && e.includes('team-b');
-          }, 5000);
+          }, 10_000);
 
           const ensembles = await handle.query(maestroEnsemblesQuery);
           expect(ensembles).to.include('team-a');
@@ -183,7 +217,11 @@ describe('claudeGlobalMaestroWorkflow', function () {
     });
 
     it('removes stale ensembles when no longer discovered', async function () {
-      this.timeout(15_000);
+      // #583: outer timeout bumped from 15s → 25s to cover the worst case
+      // where both `pollWithTimeout` calls (each 10s) approach their budget
+      // back-to-back. In practice each poll resolves on the first or second
+      // tick, so the typical wall-clock is unchanged.
+      this.timeout(25_000);
 
       let currentEnsembles = ['team-a', 'team-b'];
 
@@ -195,11 +233,13 @@ describe('claudeGlobalMaestroWorkflow', function () {
         async () => {
           const handle = await startGlobalMaestro(getClient());
 
-          // #383 P3: poll for initial discovery — see comment on line ~154.
+          // #383 P3: poll for initial discovery — see comment in the sibling
+          // "discovers ensembles and refreshes players per ensemble" test.
+          // #583: budget bumped 5s → 10s for shard contention headroom.
           await pollWithTimeout(async () => {
             const e = await handle.query(maestroEnsemblesQuery);
             return e.includes('team-a') && e.includes('team-b');
-          }, 5000);
+          }, 10_000);
 
           let ensembles = await handle.query(maestroEnsemblesQuery);
           expect(ensembles).to.include('team-a');
@@ -208,10 +248,11 @@ describe('claudeGlobalMaestroWorkflow', function () {
           // Remove team-b
           currentEnsembles = ['team-a'];
           // #383 P3: poll for the next refresh cycle to detect the removal.
+          // #583: budget bumped 5s → 10s — same reasoning as the initial poll.
           await pollWithTimeout(async () => {
             const e = await handle.query(maestroEnsemblesQuery);
             return e.includes('team-a') && !e.includes('team-b');
-          }, 5000);
+          }, 10_000);
 
           ensembles = await handle.query(maestroEnsemblesQuery);
           expect(ensembles).to.include('team-a');
@@ -358,9 +399,11 @@ describe('claudeGlobalMaestroWorkflow', function () {
           // pick up the queued command and relay it through the mocked
           // activity. The mock pushes onto `relayedCommands` synchronously
           // when invoked.
+          // #583: budget bumped 5s → 10s — same shard-contention reasoning
+          // as the sibling discovery tests.
           await pollWithTimeout(
             async () => relayedCommands.length >= 1,
-            5000,
+            10_000,
           );
 
           expect(relayedCommands).to.have.length.greaterThanOrEqual(1);
