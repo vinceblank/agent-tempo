@@ -53,7 +53,7 @@ Use `/players <name>` to open a scrollable message history for any player.
 | `/recruit-conductor` | Recruit a conductor for the current ensemble |
 | `/restart <player> [--fresh] [--no-force]` | Restart a player — detaches current adapter and re-spawns. Steals a live lease by default; pass `--no-force` to refuse if a lease is held. Works from any non-`gone` phase. |
 | `/destroy <player\|ensemble> [reason]` | Terminate a player session (ordered shutdown) or the entire ensemble. Prompts for confirmation. Cannot target the conductor — use `/shutdown` or `/restart conductor` instead. |
-| `/migrate <player> <host> [--fresh] [--force]` | Move a session to a different host. Requires target host to have an active daemon. |
+| `/migrate <player> <host> [--fresh] [--force] [--yes-steal=<hostname>]` | Move a session to a different host. Requires target host to have an active daemon. When `--force` is set and the current attachment is held by a different host, `--yes-steal=<currentHost>` must match the holder's hostname exactly — preventing accidental cross-host takeover (#580). |
 | `/pause [ensemble]` | Pause the ensemble — locks outbox dispatch and pauses the scheduler. |
 | `/play [ensemble]` | Resume a paused ensemble — unlocks outbox dispatch and restarts the scheduler. (#287) |
 | `/shutdown [ensemble]` | Gracefully shut down the entire ensemble — drains all players and stops the conductor. (#287) |
