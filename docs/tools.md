@@ -5,7 +5,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | Tool | Description |
 |------|-------------|
 | `ensemble` | Discover active sessions. Scope: `machine`, `repo`, or `all`. **#563**: output is split into "Active" and "Dormant" sections — a player is dormant when `phase=gone`, or `phase=detached` with no recorded activity in the last 1 hour. Dormant entries include a "Last seen X ago" line. Use the `dormant` arg (`show` default, `hide`, or `show-only`) to filter. |
-| `cue` | Send a message to a player by name. Delivered instantly via Temporal signal. |
+| `cue` | Send a message to a player by name. Delivered instantly via Temporal signal. **#562**: pre-flight phase check surfaces an actionable error when the target is `detached`/`gone` instead of silently returning "Message sent". Pass `attachmentTicket` to attach a coat-check ticket when the body exceeds ~100 KB — the cue body should carry a short summary; the recipient pulls the full artifact via `coat_check_get`. |
 | `set_name` | Set a human-readable name for this session. |
 | `set_part` | Describe what you're working on. Visible to others via `ensemble`. |
 | `set_ensemble_description` | Update the ensemble's mission-flavor description (≤100 chars). Surfaces on the dashboard EnsembleCard. Empty string clears it. Conductors should refresh at milestone boundaries. |
@@ -28,6 +28,10 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `save_state` | **#334.** Write a curated artifact to a named slot (max 4 slots × 32 KiB). Owner-only. A peer can read it via `fetch_state`; a future restart can seed itself from the slot via `loadFromState`. Slot key defaults to `"main"`. When all 4 slots are full, saving a new key fails with `PlayerStateSlotsFull` — call `clear_state` to free a slot first. |
 | `fetch_state` | **#334.** Read a saved-state slot for yourself or a peer. Any player in the ensemble can read any other player's state (audit identity recorded in `savedBy`). Pass `playerId` for a peer; defaults to own `"main"` slot. Works even after `destroy` (last-known state served from workflow history). Returns a `(no state saved …)` message when the slot is empty. |
 | `clear_state` | **#334.** Clear one of your own saved-state slots. Owner-only. Idempotent — clearing an already-empty slot is a no-op. Returns whether the slot was non-empty before the clear. |
+| `coat_check_put` | **#318 (ADR 0008).** Stash a large content body on per-ensemble Maestro state. Returns a ticket id any player can redeem via `coat_check_get`. Use when a cue body would exceed the 100 KB cap — pass the ticket via `cue`'s `attachmentTicket` field; the cue body carries a short summary. Max 32 KiB per entry, 20 slots per ensemble; TTL default 7d, range [1h, 30d]. Saturation → `CoatCheckSlotsFull` (no LRU eviction — call `coat_check_evict` or wait for TTL). |
+| `coat_check_get` | **#318 (ADR 0008).** Redeem a coat-check ticket and pull the full content body. Returns the full entry (summary + content + audit fields) or `null` for missing/expired/evicted tickets — no error on miss. Bumps `fetchCount`, `lastFetchedAt`, `lastFetchedBy` so the putter can confirm redemption. Implemented as a workflow Update (not Query) because it mutates audit state. |
+| `coat_check_list` | **#318 (ADR 0008).** List coat-check entry headers for this ensemble (content body omitted), sorted newest-first. Read-only — does NOT bump fetch-audit counters. Optional filters: `putBy` (audit lens), `prefix` (summary-prefix narrow), `unfetchedOnly` (entries with `fetchCount === 0`). Expired entries are filtered from the view. |
+| `coat_check_evict` | **#318 (ADR 0008).** Evict a coat-check entry before its TTL expires. Owner-or-conductor permission gate: must be the original putter or the ensemble conductor; others get `CoatCheckEvictPermissionDenied`. Returns `{ evicted: false }` for missing/expired/already-evicted tickets (no throw). |
 | `hosts` | **#274.** List all daemons polling this Temporal namespace, joined with their boot-signaled capability profile (default agent, available player types, platform, claude bin basename). Optional `includeStale: true` shows hosts not seen in the last minute; `force: true` bypasses the 3-second result cache. Output matches CLI `claude-tempo hosts` and TUI `/hosts` (shared formatter, AC10a). |
 | `worktree` | Manage git worktrees for player isolation. Actions: `create`, `remove`, `list`. Conductor only. See [when to use worktrees](orchestration.md#when-to-use-worktrees). |
 | `quality_gate` | Define or replace a quality gate for a task — a named checklist of criteria that must pass. Conductor only. |
@@ -43,6 +47,13 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 | `restore` | Restore orphaned sessions in one ensemble — re-attaches a fresh adapter to every `detached` session whose preferred host matches. Defaults to scanning the local OS hostname. Pass `hostname: "<other-host>"` for cross-host setups (per-host task queues, #274) where the operator's daemon runs on a different machine than the parked sessions. (#287, #288, #306 follow-up) |
 
 ## Version History
+
+### v0.29 Changes (#318, #560, #562, #563, #582)
+
+- **`coat_check_put`, `coat_check_get`, `coat_check_list`, `coat_check_evict` added** — coat-check pattern for large cues. Stash artifacts up to 32 KiB on Maestro state and attach the ticket to a `cue` via `attachmentTicket`. (#318, ADR 0008)
+- **`cue` gains `attachmentTicket`** — optional field to attach a coat-check ticket to a cue; the recipient sees it on `recall` and can pull the body via `coat_check_get`. (#318)
+- **`cue` detached-target detection** — pre-flight phase check returns an actionable error when the target is `detached`/`gone` instead of silently returning "Message sent". (#562)
+- **`ensemble` dormant split** — active and dormant players appear in separate sections. Dormant players include "Last seen X ago". Use `dormant` arg (`show` / `hide` / `show-only`). (#563)
 
 ### v0.28 Changes (#382, #385, #449, #485, #502, #503)
 
