@@ -4,6 +4,7 @@ import { basename, join, resolve } from 'path';
 import { execFileSync, spawn as cpSpawn } from 'child_process';
 import { homedir, hostname } from 'os';
 import { randomUUID } from 'crypto';
+import { Cron } from 'croner';
 import { Client, Connection, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { spawnInTerminal, spawnCopilotBridge, spawnMockAdapter, resolveClaudePath } from '../spawn';
 import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, isDevMode, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
@@ -746,24 +747,18 @@ export async function status(opts: StatusOpts) {
     }
   }
 
-  // Query scheduler workflows for active schedules
-  const schedulesByEnsemble = new Map<string, Array<{
-    name: string;
-    target: string;
-    nextFireAt: string;
-    interval?: number;
-    type: string;
-    remainingCount?: number;
-    firedCount: number;
-    createdBy: string;
-    message: string;
-  }>>();
+  // Query scheduler workflows for active schedules. #586 — using
+  // `ScheduleEntry` directly (the wire shape) so the display formatter
+  // sees the canonical `'once' | 'interval' | 'cron'` discriminator and
+  // can pick up `cronExpression` / `timezone` for cron entries instead
+  // of falling through to "one-shot".
+  const schedulesByEnsemble = new Map<string, ScheduleEntry[]>();
 
   const schedulerQuery = 'WorkflowType = "claudeSchedulerWorkflow" AND ExecutionStatus = "Running"';
   for await (const wf of client.workflow.list({ query: schedulerQuery })) {
     try {
       const handle = client.workflow.getHandle(wf.workflowId);
-      const entries = await handle.query('getSchedules') as any[];
+      const entries = await handle.query('getSchedules') as ScheduleEntry[];
       if (entries.length > 0) {
         // Extract ensemble from workflow ID: claude-scheduler-{ensemble}
         const ensemble = wf.workflowId.replace('claude-scheduler-', '');
@@ -832,9 +827,7 @@ export async function status(opts: StatusOpts) {
       console.log();
       out.log(`  ${out.dim(`${ensembleSchedules.length} active schedule${ensembleSchedules.length !== 1 ? 's' : ''}`)}`);
       for (const sched of ensembleSchedules) {
-        const recur = sched.interval
-          ? `every ${formatDurationMs(sched.interval)}`
-          : 'one-shot';
+        const recur = formatScheduleRecurrence(sched);
         const next = new Date(sched.nextFireAt).toLocaleTimeString();
         const bounds: string[] = [];
         if (sched.remainingCount != null) bounds.push(`${sched.firedCount}/${sched.firedCount + sched.remainingCount} fired`);
@@ -1458,13 +1451,67 @@ export async function up(opts: UpOpts) {
   console.log();
 }
 
-/** Convert a lineup schedule definition to a ScheduleEntry for the scheduler workflow. */
-function lineupScheduleToEntry(sched: NonNullable<import('../ensemble/schema').EnsembleLineup['schedules']>[number]): ScheduleEntry {
-  const now = Date.now();
+/**
+ * Format a `ScheduleEntry` recurrence for the `status` display.
+ *
+ * #586 — cron entries previously rendered as `'one-shot'` because the inline
+ * formatter only checked `sched.interval`. The display formatter now mirrors
+ * the wire-type triplet (`'once' | 'interval' | 'cron'`) from
+ * `ScheduleEntry.type` so cron schedules from the lineup loader (and the
+ * MCP `load_lineup` path) read correctly in `claude-tempo status`.
+ *
+ * Exported for unit tests.
+ */
+export function formatScheduleRecurrence(sched: ScheduleEntry): string {
+  if (sched.type === 'cron' && sched.cronExpression) {
+    const tz = sched.timezone && sched.timezone !== 'UTC' ? ` ${sched.timezone}` : '';
+    return `cron: ${sched.cronExpression}${tz}`;
+  }
+  if (sched.interval) {
+    return `every ${formatDurationMs(sched.interval)}`;
+  }
+  return 'one-shot';
+}
+
+/**
+ * Convert a lineup schedule definition to a ScheduleEntry for the scheduler
+ * workflow.
+ *
+ * #586 — cron entries now produce `type: 'cron'` with `cronExpression` +
+ * `timezone` populated; previously they fell through to the default
+ * `nextFireAt = now + 60_000` with `type: 'once'`, firing once and getting
+ * garbage-collected. The cron branch mirrors the MCP-side `load_lineup` tool
+ * at `src/tools/load-lineup.ts:280-300` so both load paths agree on the wire
+ * shape submitted to the scheduler workflow.
+ *
+ * Exported for unit tests; consumed internally by `up` /
+ * `ensembleCommand` after a lineup is parsed.
+ */
+export function lineupScheduleToEntry(
+  sched: NonNullable<import('../ensemble/schema').EnsembleLineup['schedules']>[number],
+  /** Injectable clock for deterministic tests. Defaults to `Date.now()`. */
+  now: number = Date.now(),
+): ScheduleEntry {
   let nextFireAt: string;
   let interval: number | undefined;
+  let cronExpression: string | undefined;
+  let timezone: string | undefined;
 
-  if (sched.every) {
+  if (sched.cron) {
+    // #586 — cron branch matches MCP `load_lineup` (src/tools/load-lineup.ts:280).
+    // `croner` is a runtime dependency declared in package.json; the scheduler
+    // workflow uses it on the firing side too (src/activities/schedule-fire.ts).
+    cronExpression = sched.cron;
+    timezone = sched.timezone ?? 'UTC';
+    const job = new Cron(cronExpression, { timezone });
+    const next = job.nextRun(new Date(now));
+    if (!next) {
+      throw new Error(
+        `Cron expression "${sched.cron}" has no upcoming fire time (schedule "${sched.name}")`,
+      );
+    }
+    nextFireAt = next.toISOString();
+  } else if (sched.every) {
     interval = parseDuration(sched.every);
     nextFireAt = sched.delay
       ? new Date(now + parseDuration(sched.delay)).toISOString()
@@ -1477,6 +1524,12 @@ function lineupScheduleToEntry(sched: NonNullable<import('../ensemble/schema').E
     nextFireAt = new Date(now + 60_000).toISOString(); // default: 1 minute
   }
 
+  const type: ScheduleEntry['type'] = cronExpression
+    ? 'cron'
+    : interval
+      ? 'interval'
+      : 'once';
+
   return {
     name: sched.name,
     message: sched.message,
@@ -1484,10 +1537,12 @@ function lineupScheduleToEntry(sched: NonNullable<import('../ensemble/schema').E
     createdBy: 'lineup',
     nextFireAt,
     interval,
+    cronExpression,
+    timezone,
     until: sched.until,
     remainingCount: sched.count,
     firedCount: 0,
-    type: interval ? 'interval' : 'once',
+    type,
   };
 }
 
