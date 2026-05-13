@@ -187,6 +187,38 @@ sessions, and (by default) stale sessions.
 messages by default; pass `includeSent: true` to also see sent messages. Supports `limit`,
 `since`, and `from` filters.
 
+**Coat-check** (#318, ADR 0008) — Ensemble-shared, ticket-keyed stash for content that's too
+large to inline in a `cue` body (the wire cap is 100 KB). The motivating case: a researcher
+finishes a 3K-word report and needs to hand it to an engineer; pasting it into a cue blows
+the cap, and conductor-routed delivery is fragile under restarts. With coat-check the
+researcher calls `coat_check_put` to stash the artifact on per-ensemble Maestro state, gets
+back a ticket id, and includes it on a normal `cue` via the `attachmentTicket` field. The
+engineer sees the ticket on their `recall` row and calls `coat_check_get` to pull the body.
+
+Four MCP tools: `coat_check_put` / `coat_check_get` / `coat_check_list` / `coat_check_evict`.
+Three guarantees worth remembering:
+
+- **Bounded storage**: max 20 entries × 32 KiB content per ensemble (640 KiB aggregate). The
+  21st put rejects with `CoatCheckSlotsFull` listing the oldest 3 ticket ids — caller waits
+  for TTL or calls `coat_check_evict` (owner-or-conductor). **No LRU eviction** — silent peer
+  eviction is the wrong default in a cross-host shared store; refuse-and-error makes
+  saturation an observable signal instead.
+- **TTL inline-sweep**: every entry has a server-clamped TTL (default 7 days, range [1h, 30d]).
+  Sweep runs at the head of every coat-check handler, so an expired entry is invisible to
+  `get` / `list` / `evict` even if the per-ensemble Maestro hasn't had a refresh tick since
+  the expiry.
+- **Fetch audit**: every successful `coat_check_get` bumps `lastFetchedAt` / `lastFetchedBy` /
+  `fetchCount` on the entry. `coat_check_list` does NOT bump these — only redemptions count.
+  The putter can later inspect "did anyone redeem my ticket?" via the list. Pass
+  `unfetchedOnly: true` to filter for never-redeemed entries (owner cleanup workflow).
+
+Audit identity (`putBy`, `fetchedBy`, `evictedBy`) is set by the MCP tool layer via
+`getPlayerId()` — there is no `playerId` arg on any of the four tool schemas, so callers
+cannot spoof. Same structural-permission pattern as `save_state` / `fetch_state` from #334.
+
+The dashboard surface for coat-check (visualizing entries, fetch counts, expirations) is a
+separate follow-up; the `coat_check_list` query is the integration point.
+
 **Per-host task queues** — Each host running the claude-tempo daemon also runs a
 `claude-tempo-{hostname}` activity worker for local-only operations (e.g., `spawnProcess`).
 This enables cross-machine recruiting — the `recruit`, `restart`, and `migrate` tools accept

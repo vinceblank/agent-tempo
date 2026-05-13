@@ -69,7 +69,10 @@ export type {
 // `broadcastId` (#357) is an additive optional field — same id on every fan-out
 // target of one `broadcast` invocation. The TUI uses it to fold N deliveries
 // into one chat row.
-export const receiveMessageSignal = defineSignal<[{ from: string; text: string; isMaestro?: boolean; isScheduled?: boolean; scheduleName?: string; responseRequested?: boolean; broadcastId?: string }]>('receiveMessage');
+// `attachmentTicket` (#318) is an additive optional field — coat-check ticket
+// the sender stashed via `coat_check_put`; the recipient pulls the body via
+// `coat_check_get`. Backward-compatible — pre-#318 cues simply don't have it.
+export const receiveMessageSignal = defineSignal<[{ from: string; text: string; isMaestro?: boolean; isScheduled?: boolean; scheduleName?: string; responseRequested?: boolean; broadcastId?: string; attachmentTicket?: string }]>('receiveMessage');
 export const recordSentMessageSignal = defineSignal<[{ to: string; text: string; broadcastId?: string }]>('recordSentMessage');
 export const setPartSignal = defineSignal<[string]>('setPart');
 export const markDeliveredSignal = defineSignal<[string[]]>('markDelivered');

@@ -446,6 +446,10 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       // so subsequent `allMessages`/`fetchEnsembleChat` queries surface
       // it for TUI grouping.
       ...(msg.broadcastId !== undefined ? { broadcastId: msg.broadcastId } : {}),
+      // #318: thread the coat-check ticket (if any) onto the stored
+      // Message so `recall` / `fetchPlayerMessages` surface it and the
+      // recipient knows to fetch via `coat_check_get`.
+      ...(msg.attachmentTicket !== undefined ? { attachmentTicket: msg.attachmentTicket } : {}),
     });
     lastActivityTime = workflowNow().getTime();
     activityCount++;
@@ -1575,6 +1579,9 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               // #357: thread broadcast id so the target's `receiveMessage`
               // signal carries it onto the stored Message.
               ...(entry.broadcastId !== undefined ? { broadcastId: entry.broadcastId } : {}),
+              // #318: thread coat-check ticket so the target can pull the
+              // full content body via `coat_check_get`.
+              ...(entry.attachmentTicket !== undefined ? { attachmentTicket: entry.attachmentTicket } : {}),
             });
             break;
           case 'report':

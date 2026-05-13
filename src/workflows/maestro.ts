@@ -56,6 +56,11 @@ import {
   getEnsembleStartTimeQuery,
   getCurrentBpmQuery,
   getTempoSeriesQuery,
+  // #318 coat-check
+  coatCheckPutUpdate,
+  coatCheckGetUpdate,
+  coatCheckListQuery,
+  coatCheckEvictUpdate,
   // Global Maestro signals/queries/updates
   maestroNotifyMessageSignal,
   maestroEnsemblesQuery,
@@ -71,7 +76,19 @@ import {
   // #280 — combined existence + profiles query
   hostProfilesWithExistenceQuery,
 } from './maestro-signals';
-import type { HostProfile } from '../types';
+import { ApplicationFailure } from '@temporalio/workflow';
+import type { HostProfile, CoatCheckEntry, CoatCheckEntryHeader } from '../types';
+import {
+  COAT_CHECK_CONTENT_MAX,
+  COAT_CHECK_SUMMARY_MAX,
+  COAT_CHECK_CONTENT_TYPE_MAX,
+  COAT_CHECK_SLOTS_MAX,
+  COAT_CHECK_TICKET_MAX,
+  COAT_CHECK_TICKET_REGEX,
+  COAT_CHECK_TTL_MIN_MS,
+  COAT_CHECK_TTL_MAX_MS,
+  COAT_CHECK_TTL_DEFAULT_MS,
+} from '../utils/validation';
 
 // ── Activity Proxies ──
 // Only proxy activities actually used in the workflow.
@@ -131,6 +148,46 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
     : [];
   let tempoCurrentBucket: { startMs: number; count: number } =
     input.tempoCurrentBucket ?? { startMs: workflowNow().getTime(), count: 0 };
+
+  // ── Coat-check (#318, ADR 0008) ─────────────────────────────────────
+  //
+  // Per-ensemble ticket-keyed stash. Restored across CAN; mutated by the
+  // four `coatCheck*` handlers below. Inline-sweep eviction runs at the
+  // start of every handler entry so an idle ensemble doesn't need a
+  // dedicated timer to GC expired entries (the 5s refresh tick below
+  // also touches it opportunistically).
+  //
+  // `putByIndex` is a reverse index of `putBy → Set<ticket>` rebuilt from
+  // the stored entries on CAN restore. It's cheap to maintain at admission
+  // time and supports the future per-host quota (researcher's flagged v1
+  // mitigation, intentionally not enforced in v1).
+  const coatCheck: Record<string, CoatCheckEntry> = { ...(input.coatCheck ?? {}) };
+  const putByIndex = new Map<string, Set<string>>();
+  for (const [ticket, entry] of Object.entries(coatCheck)) {
+    const bucket = putByIndex.get(entry.putBy) ?? new Set<string>();
+    bucket.add(ticket);
+    putByIndex.set(entry.putBy, bucket);
+  }
+
+  /**
+   * Drop entries whose `expiresAt` is in the past. Pure, deterministic —
+   * uses `workflowNow()`. Called at the head of every coat-check handler
+   * and opportunistically inside the main 5s refresh tick so idle ensembles
+   * still trim. Mutates `coatCheck` + `putByIndex` in place.
+   */
+  function sweepExpiredCoatCheck(): void {
+    const nowMs = workflowNow().getTime();
+    for (const [ticket, entry] of Object.entries(coatCheck)) {
+      if (Date.parse(entry.expiresAt) <= nowMs) {
+        delete coatCheck[ticket];
+        const bucket = putByIndex.get(entry.putBy);
+        if (bucket) {
+          bucket.delete(ticket);
+          if (bucket.size === 0) putByIndex.delete(entry.putBy);
+        }
+      }
+    }
+  }
 
   // ── Signal Handlers ──
 
@@ -195,6 +252,200 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
     validator: (cmd) => {
       if (!cmd.text || cmd.text.trim().length === 0) {
         throw new Error('Command text must not be empty');
+      }
+    },
+  });
+
+  // ── Coat-check Handlers (#318, ADR 0008) ─────────────────────────────
+
+  setHandler(coatCheckPutUpdate, (input) => {
+    // Sweep first so a saturation rejection reflects fresh state — a
+    // caller who fills the cap but waits past TTL of older entries should
+    // succeed on retry.
+    sweepExpiredCoatCheck();
+
+    const ticket = uuid4();
+    const nowDate = workflowNow();
+    const ttlMs = input.ttlMs ?? COAT_CHECK_TTL_DEFAULT_MS;
+    const expiresAtMs = nowDate.getTime() + ttlMs;
+    const size = new TextEncoder().encode(input.content).length;
+    const entry: CoatCheckEntry = {
+      summary: input.summary,
+      content: input.content,
+      ...(input.contentType !== undefined ? { contentType: input.contentType } : {}),
+      putBy: input.putBy,
+      putAt: nowDate.toISOString(),
+      expiresAt: new Date(expiresAtMs).toISOString(),
+      size,
+      fetchCount: 0,
+    };
+    coatCheck[ticket] = entry;
+    const bucket = putByIndex.get(input.putBy) ?? new Set<string>();
+    bucket.add(ticket);
+    putByIndex.set(input.putBy, bucket);
+
+    const slotsUsed = Object.keys(coatCheck).length;
+    return {
+      ticket,
+      expiresAt: entry.expiresAt,
+      slotsUsed,
+      slotsTotal: COAT_CHECK_SLOTS_MAX,
+    };
+  }, {
+    validator: (input) => {
+      if (typeof input.summary !== 'string' || input.summary.length === 0) {
+        throw ApplicationFailure.nonRetryable(
+          'coat-check summary must be a non-empty string',
+          'CoatCheckInvalidSummary',
+        );
+      }
+      if (input.summary.length > COAT_CHECK_SUMMARY_MAX) {
+        throw ApplicationFailure.nonRetryable(
+          `coat-check summary exceeds ${COAT_CHECK_SUMMARY_MAX} chars`,
+          'CoatCheckSummaryTooLarge',
+        );
+      }
+      if (typeof input.content !== 'string') {
+        throw ApplicationFailure.nonRetryable(
+          'coat-check content must be a string',
+          'CoatCheckInvalidContent',
+        );
+      }
+      // `TextEncoder` is replay-safe (pure string→bytes); `Buffer` is Node-
+      // only and not available in the workflow sandbox. Same idiom as #334.
+      if (new TextEncoder().encode(input.content).length > COAT_CHECK_CONTENT_MAX) {
+        throw ApplicationFailure.nonRetryable(
+          `coat-check content exceeds ${COAT_CHECK_CONTENT_MAX} bytes`,
+          'CoatCheckEntryTooLarge',
+        );
+      }
+      if (input.contentType !== undefined) {
+        if (typeof input.contentType !== 'string' || input.contentType.length > COAT_CHECK_CONTENT_TYPE_MAX) {
+          throw ApplicationFailure.nonRetryable(
+            `coat-check contentType must be a string ≤ ${COAT_CHECK_CONTENT_TYPE_MAX} chars`,
+            'CoatCheckInvalidContentType',
+          );
+        }
+      }
+      if (input.ttlMs !== undefined) {
+        if (typeof input.ttlMs !== 'number' || !Number.isFinite(input.ttlMs)
+          || input.ttlMs < COAT_CHECK_TTL_MIN_MS || input.ttlMs > COAT_CHECK_TTL_MAX_MS) {
+          throw ApplicationFailure.nonRetryable(
+            `coat-check ttlMs must be a number in [${COAT_CHECK_TTL_MIN_MS}, ${COAT_CHECK_TTL_MAX_MS}]`,
+            'CoatCheckInvalidTtl',
+          );
+        }
+      }
+      if (typeof input.putBy !== 'string' || input.putBy.length === 0) {
+        throw ApplicationFailure.nonRetryable(
+          'coat-check putBy must be a non-empty string',
+          'CoatCheckInvalidPutBy',
+        );
+      }
+      // Saturation check runs LAST + on a post-sweep view so a caller who
+      // hit saturation at T=0 but whose entries have since TTL-expired can
+      // succeed on retry. Sweep is idempotent inside the validator scope —
+      // it runs again in the handler body before admitting.
+      const probe = { ...coatCheck };
+      const nowMs = workflowNow().getTime();
+      for (const [t, e] of Object.entries(probe)) {
+        if (Date.parse(e.expiresAt) <= nowMs) delete probe[t];
+      }
+      if (Object.keys(probe).length >= COAT_CHECK_SLOTS_MAX) {
+        const oldest = Object.entries(probe)
+          .sort((a, b) => Date.parse(a[1].putAt) - Date.parse(b[1].putAt))
+          .slice(0, 3)
+          .map(([t, e]) => `${t} (putBy=${e.putBy}, putAt=${e.putAt})`)
+          .join('; ');
+        throw ApplicationFailure.nonRetryable(
+          `coat-check slots full (${COAT_CHECK_SLOTS_MAX}). Evict one via \`coat_check_evict\` (owner-or-conductor) or wait for TTL. Oldest 3: ${oldest}`,
+          'CoatCheckSlotsFull',
+        );
+      }
+    },
+  });
+
+  setHandler(coatCheckGetUpdate, ({ ticket, fetchedBy }) => {
+    sweepExpiredCoatCheck();
+    const entry = coatCheck[ticket];
+    if (!entry) return null;
+    // Successful fetch — bump audit. The bump only fires on the happy path
+    // so failed lookups don't pollute the counter.
+    entry.lastFetchedAt = workflowNow().toISOString();
+    entry.lastFetchedBy = fetchedBy;
+    entry.fetchCount += 1;
+    return entry;
+  });
+
+  setHandler(coatCheckListQuery, (input) => {
+    // Queries cannot mutate state, but inline filtering against a post-
+    // sweep VIEW gives consistent results — expired entries shouldn't
+    // appear in the listing even if they haven't been physically swept.
+    const nowMs = workflowNow().getTime();
+    const headers: CoatCheckEntryHeader[] = [];
+    for (const [ticket, entry] of Object.entries(coatCheck)) {
+      if (Date.parse(entry.expiresAt) <= nowMs) continue;
+      if (input?.putBy && entry.putBy !== input.putBy) continue;
+      if (input?.prefix && !entry.summary.startsWith(input.prefix)) continue;
+      if (input?.unfetchedOnly && entry.fetchCount > 0) continue;
+      headers.push({
+        ticket,
+        summary: entry.summary,
+        ...(entry.contentType !== undefined ? { contentType: entry.contentType } : {}),
+        putBy: entry.putBy,
+        putAt: entry.putAt,
+        expiresAt: entry.expiresAt,
+        size: entry.size,
+        ...(entry.lastFetchedAt !== undefined ? { lastFetchedAt: entry.lastFetchedAt } : {}),
+        ...(entry.lastFetchedBy !== undefined ? { lastFetchedBy: entry.lastFetchedBy } : {}),
+        fetchCount: entry.fetchCount,
+      });
+    }
+    // Newest-first so the operator sees recent activity at the top.
+    headers.sort((a, b) => Date.parse(b.putAt) - Date.parse(a.putAt));
+    return headers;
+  });
+
+  setHandler(coatCheckEvictUpdate, ({ ticket, evictedBy }) => {
+    sweepExpiredCoatCheck();
+    const entry = coatCheck[ticket];
+    if (!entry) return { evicted: false };
+
+    // Owner-or-conductor permission gate. `players` is the closure-captured
+    // snapshot, refreshed every 5s by the main loop — good enough for an
+    // identity check (conductor identity is stable across the ensemble's
+    // lifetime). A non-owner / non-conductor evict throws structurally so
+    // the caller's MCP tool surfaces it as a permission error.
+    const isOwner = entry.putBy === evictedBy;
+    const isConductor = players.some((p) => p.isConductor && p.playerId === evictedBy);
+    if (!isOwner && !isConductor) {
+      throw ApplicationFailure.nonRetryable(
+        `coat-check evict denied: "${evictedBy}" is neither the owner ("${entry.putBy}") nor the ensemble conductor`,
+        'CoatCheckEvictPermissionDenied',
+      );
+    }
+
+    delete coatCheck[ticket];
+    const bucket = putByIndex.get(entry.putBy);
+    if (bucket) {
+      bucket.delete(ticket);
+      if (bucket.size === 0) putByIndex.delete(entry.putBy);
+    }
+    return { evicted: true };
+  }, {
+    validator: ({ ticket, evictedBy }) => {
+      if (typeof ticket !== 'string' || ticket.length === 0 || ticket.length > COAT_CHECK_TICKET_MAX
+        || !COAT_CHECK_TICKET_REGEX.test(ticket)) {
+        throw ApplicationFailure.nonRetryable(
+          `coat-check ticket must match ${COAT_CHECK_TICKET_REGEX} and be ≤ ${COAT_CHECK_TICKET_MAX} chars`,
+          'CoatCheckInvalidTicket',
+        );
+      }
+      if (typeof evictedBy !== 'string' || evictedBy.length === 0) {
+        throw ApplicationFailure.nonRetryable(
+          'coat-check evictedBy must be a non-empty string',
+          'CoatCheckInvalidEvictedBy',
+        );
       }
     },
   });
@@ -348,6 +599,12 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
       }
     }
 
+    // ── Coat-check opportunistic TTL sweep (#318) ──
+    // Idle ensembles still trim expired entries even when no caller is
+    // exercising the handlers. The sweep is also cheap (Object.entries scan)
+    // and idempotent, so it's safe to call on every refresh tick.
+    sweepExpiredCoatCheck();
+
     // ── Auto-terminate if idle ──
     // #318: was `Date.now() - lastActiveSessionTime` — non-deterministic on
     // replay. `workflowNow()` reads the SDK-intercepted clock; idle decision
@@ -360,6 +617,10 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
     const info = workflowInfo();
     if (info.continueAsNewSuggested) {
       await condition(allHandlersFinished);
+      // #318: only carry coat-check across CAN when non-empty. Matches the
+      // `playerState` carry idiom in `src/workflows/session.ts:1617-1638`
+      // — keeps the wire small for the common no-coat-check case.
+      const carryCoatCheck = Object.keys(coatCheck).length > 0;
       await continueAsNew<typeof claudeMaestroWorkflow>({
         ensemble: input.ensemble,
         players,
@@ -377,6 +638,8 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
         startTimeIso,
         tempoHistoryBuckets,
         tempoCurrentBucket,
+        // #318 — carry the coat-check map only when populated.
+        ...(carryCoatCheck ? { coatCheck } : {}),
       });
     }
   }

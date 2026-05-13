@@ -27,7 +27,7 @@ Signals sent **to** a `claudeSessionWorkflow` instance.
 
 | Signal Name | Payload | Description |
 |-------------|---------|-------------|
-| `receiveMessage` | `{ from: string; text: string; isMaestro?: boolean; isScheduled?: boolean; scheduleName?: string; responseRequested?: boolean }` | Delivers an inbound message from another player (or Maestro) into the session's inbox. The session's poller consumes pending messages and forwards them to Claude. `isScheduled: true` and `scheduleName` are set when the message was fired by the scheduler workflow — useful for dashboard integrations that want to distinguish scheduled messages from direct cues. `responseRequested: false` marks informational messages (broadcasts, schedule-fires, heartbeats, system notifications) that should not trigger blocked detection. Defaults to `true` when omitted, preserving existing behavior for direct cues. |
+| `receiveMessage` | `{ from: string; text: string; isMaestro?: boolean; isScheduled?: boolean; scheduleName?: string; responseRequested?: boolean; broadcastId?: string; attachmentTicket?: string }` | Delivers an inbound message from another player (or Maestro) into the session's inbox. The session's poller consumes pending messages and forwards them to Claude. `isScheduled: true` and `scheduleName` are set when the message was fired by the scheduler workflow — useful for dashboard integrations that want to distinguish scheduled messages from direct cues. `responseRequested: false` marks informational messages (broadcasts, schedule-fires, heartbeats, system notifications) that should not trigger blocked detection. Defaults to `true` when omitted, preserving existing behavior for direct cues. `broadcastId` (#357) is the shared id across every fan-out target of one `broadcast` invocation — additive optional field used by the TUI to fold N identical deliveries into one chat row. `attachmentTicket` (#318) is a coat-check ticket id referencing content stashed via `coat_check_put` on per-ensemble Maestro state — the recipient pulls the body via `coat_check_get`. Additive optional, backward-compatible with pre-#318 cues. |
 | `recordSentMessage` | `{ to: string; text: string }` | Records an outbound message in the session's sent-message history without triggering any delivery. Used for audit/history continuity. |
 | `setPart` | `string` | Updates the player's current "part" — a short description of what the session is working on, visible to other players via `ensemble`. |
 | `markDelivered` | `string[]` | Marks one or more messages (by ID) as delivered. Resets stale-detection timer; any delivery proves the session is alive. |
@@ -172,16 +172,20 @@ Queries on a `claudeMaestroWorkflow` instance (synchronous, read-only).
 | `getEnsembleStartTime` | — | `string` (ISO8601) | **#399 W1 (Q5.3a).** ISO timestamp of the maestro's *first-ever* start (`workflowInfo().startTime` on the original execution; preserved across CAN via `MaestroInput.startTimeIso`). Dashboard derives ensemble uptime client-side. |
 | `getCurrentBpm` | — | `number` | **#399 W1 (Q5.6 Flavor B).** Current ensemble BPM — sum of activity in the most recent ~60 seconds (the in-progress 30 s bucket plus the two prior finished buckets). Returns `0` when no buckets have accumulated. |
 | `getTempoSeries` | — | `number[]` | **#399 W1 (Q5.6 Flavor B).** Up to 60 finished 30-second activity buckets (oldest-first). Each entry is the count of player-activity deltas observed during that window. Used by the dashboard's `TempoStrip` sparkline. The in-progress bucket is *not* included; it surfaces only via `getCurrentBpm`. |
+| `coatCheckList` | `{ putBy?: string; prefix?: string; unfetchedOnly?: boolean }` | `CoatCheckEntryHeader[]` | **#318 (ADR 0008).** List coat-check entry headers (content body omitted) for this ensemble, sorted newest-first. Read-only — does NOT bump fetch-audit counters on the entries it surveys; only `coatCheckGet` does. Optional filters: `putBy` (audit lens for "what did <player> stash?"), `prefix` (summary-prefix narrow), `unfetchedOnly` (only entries with `fetchCount === 0` — owner cleanup workflow). Expired entries are filtered from the view but their physical sweep happens at the next mutating handler. |
 
 ---
 
-## Per-Ensemble Maestro Update
+## Per-Ensemble Maestro Updates
 
-Workflow update on a `claudeMaestroWorkflow` instance (transactional, returns a value).
+Workflow updates on a `claudeMaestroWorkflow` instance (transactional, returns a value).
 
 | Update Name | Input | Return | Description |
 |-------------|-------|--------|-------------|
 | `maestroSendCommand` | `{ text: string; source: string; replyTo?: string }` | `string` (command ID) | Enqueues a command for relay to the conductor. Returns the generated command ID. The Maestro workflow relays it to the conductor via the `command` signal. |
+| `coatCheckPut` | `{ summary: string; content: string; contentType?: string; ttlMs?: number; putBy: string }` | `{ ticket: string; expiresAt: string; slotsUsed: number; slotsTotal: number }` | **#318 (ADR 0008).** Admit a new coat-check entry on per-ensemble Maestro state. Content cap 32 KiB; summary cap 500 chars; ttl range [1h, 30d] (default 7d). Saturation (20-slot cap) → `CoatCheckSlotsFull` ApplicationFailure with the oldest 3 ticket ids in the message. Oversize → `CoatCheckEntryTooLarge`. `putBy` is the audit identity, set by the MCP tool layer via `getPlayerId()` — there is no `playerId` arg on the tool schema. Carried across CAN only when the entry map is non-empty. |
+| `coatCheckGet` | `{ ticket: string; fetchedBy: string }` | `CoatCheckEntry \| null` | **#318 (ADR 0008).** Redeem a coat-check ticket. Returns the full entry (including content body) on hit, or `null` for missing / expired / evicted tickets — no error-class proliferation. Successful hits bump `lastFetchedAt`, `lastFetchedBy`, `fetchCount` on the entry so the putter can later see whether anyone has redeemed. Implemented as an Update (not a Query) because the fetch-audit counters mutate state. `fetchedBy` is the audit identity, set by the tool layer. |
+| `coatCheckEvict` | `{ ticket: string; evictedBy: string }` | `{ evicted: boolean }` | **#318 (ADR 0008).** Evict a coat-check entry before its TTL expires. Owner-or-conductor permission gate (`evictedBy === entry.putBy` OR `evictedBy === <ensemble conductor playerId>`); mismatches throw `CoatCheckEvictPermissionDenied`. `evicted: false` when the ticket was missing / expired / already evicted (no throw). `evictedBy` is the audit identity, set by the tool layer. |
 
 ---
 
@@ -328,6 +332,36 @@ Limits (enforced by `savePlayerState` validator and the `save_state` Zod schema)
 - Max content size: 32 KiB UTF-8 per slot.
 - Max populated slots per player: 4. Saving a 5th distinct key rejects with `PlayerStateSlotsFull` and lists existing slot names — caller must `clear_state` to free a slot. **No LRU eviction** — explicit clear required (Anthropic harness-design blog: explicit eviction reinforces authorial discipline).
 - Default slot key when omitted: `'main'`.
+
+### `CoatCheckEntry` (#318)
+
+Single coat-check entry as stored on per-ensemble Maestro state. Returned by `coatCheckGet` (or `null` for missing/expired/evicted tickets).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `summary` | `string` | Short preamble (≤500 chars). Surfaced in `coatCheckList`. |
+| `content` | `string` | Opaque body (≤32 KiB UTF-8). Returned only by `coatCheckGet`, never on the listing projection. |
+| `contentType` | `string?` | Optional free-form MIME-shaped hint (≤64 chars), e.g. `"text/markdown"`. |
+| `putBy` | `string` | Player id of the stasher — audit identity. Cannot be spoofed: set by the MCP tool layer via `getPlayerId()`, no caller-supplied arg. |
+| `putAt` | `string` | ISO 8601 timestamp from `workflowNow()` at put time. |
+| `expiresAt` | `string` | ISO 8601 timestamp when TTL inline-sweep will evict the entry. |
+| `size` | `number` | UTF-8 byte length of `content`, computed once at put time for cheap listing. |
+| `lastFetchedAt` | `string?` | ISO timestamp of the most recent successful `coatCheckGet`. Undefined until first fetch. |
+| `lastFetchedBy` | `string?` | Player id of the most recent fetcher. Undefined until first fetch. |
+| `fetchCount` | `number` | Total number of successful redemptions. `0` until first fetch. Lists do NOT increment it. |
+
+### `CoatCheckEntryHeader` (#318)
+
+Listing projection — same as `CoatCheckEntry` minus the `content` body, plus a top-level `ticket: string` field. Used by `coatCheckList` so dashboards can survey without pulling every body.
+
+Limits (enforced by `coatCheckPut` validator and the `coat_check_put` Zod schema):
+
+- Max `content` size: 32 KiB UTF-8 per entry (`CoatCheckEntryTooLarge`).
+- Max `summary` length: 500 chars (`CoatCheckSummaryTooLarge`).
+- Max `contentType` length: 64 chars.
+- Max populated entries per ensemble: 20. The 21st put rejects with `CoatCheckSlotsFull` listing the oldest 3 ticket ids — caller must wait for TTL or call `coat_check_evict` (owner-or-conductor). **No LRU eviction** — refuse-and-error matches #334's saturation policy and is structurally safer in the multi-host scope (LRU on a shared store with multi-host writers means a noisy host silently evicts peers).
+- TTL range: [1h, 30d]; default 7d. Sub-minute TTLs rejected with `CoatCheckInvalidTtl`.
+- `evictedBy` permission gate on `coatCheckEvict`: must equal `entry.putBy` OR `<ensemble conductor's playerId>`; everyone else gets `CoatCheckEvictPermissionDenied`.
 
 ### `RecruitOutboxEntry` (selected fields)
 

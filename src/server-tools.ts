@@ -58,6 +58,11 @@ import { registerSetEnsembleDescriptionTool } from './tools/set-ensemble-descrip
 import { registerSaveStateTool } from './tools/save-state';
 import { registerFetchStateTool } from './tools/fetch-state';
 import { registerClearStateTool } from './tools/clear-state';
+// #318 — ensemble-shared coat-check (put / get / list / evict).
+import { registerCoatCheckPutTool } from './tools/coat-check-put';
+import { registerCoatCheckGetTool } from './tools/coat-check-get';
+import { registerCoatCheckListTool } from './tools/coat-check-list';
+import { registerCoatCheckEvictTool } from './tools/coat-check-evict';
 
 /**
  * Identity + state context every tool registration consumes. The two
@@ -134,6 +139,13 @@ export function registerAllTempoTools(
   registerSaveStateTool(server, handle, getPlayerId);
   registerFetchStateTool(server, client, config, handle, getPlayerId);
   registerClearStateTool(server, handle);
+  // #318 — ensemble-shared coat-check (put/get/list/evict). Any player can put;
+  // any player can get/list; owner-or-conductor can evict. Audit identity is
+  // set at the tool layer via getPlayerId() — no playerId arg on any schema.
+  registerCoatCheckPutTool(server, client, config, getPlayerId);
+  registerCoatCheckGetTool(server, client, config, getPlayerId);
+  registerCoatCheckListTool(server, client, config);
+  registerCoatCheckEvictTool(server, client, config, getPlayerId);
 
   if (isConductor) {
     registerQualityGateTool(server, handle, getPlayerId);

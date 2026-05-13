@@ -484,6 +484,13 @@ export interface Message {
    * for non-broadcast direct cues.
    */
   broadcastId?: string;
+  /**
+   * #318: Coat-check ticket id when the sender stashed content via
+   * `coat_check_put` and called `cue` with `attachmentTicket`. Receivers
+   * call `coat_check_get` with this value to pull the full content body.
+   * `undefined` for cues without an attachment.
+   */
+  attachmentTicket?: string;
 }
 
 export interface SentMessage {
@@ -541,6 +548,14 @@ export interface CueOutboxEntry extends OutboxEntryBase {
    * into a single chat row. `undefined` for non-broadcast cues.
    */
   broadcastId?: string;
+  /**
+   * #318: Optional coat-check ticket id referencing content stashed on
+   * per-ensemble Maestro state via `coat_check_put`. Receivers see this
+   * field on their delivered `Message` and can call `coat_check_get` to
+   * pull the full content body. Backward-compatible — pre-#318 cues just
+   * don't have it.
+   */
+  attachmentTicket?: string;
 }
 
 export interface RecruitOutboxEntry extends OutboxEntryBase {
@@ -1039,4 +1054,68 @@ export interface MaestroInput {
    * accumulated activity.
    */
   tempoCurrentBucket?: { startMs: number; count: number };
+  /**
+   * #318 coat-check pattern — ticket-keyed stash for large content. Carried
+   * across CAN only when the map is non-empty (mirrors the `playerState`
+   * carry idiom in `src/workflows/session.ts:1617-1638`).
+   */
+  coatCheck?: Record<string, CoatCheckEntry>;
+}
+
+// ── Coat-check (#318, ADR 0008) ────────────────────────────────────────────
+
+/**
+ * A single coat-check entry as stored on per-ensemble Maestro workflow
+ * state. `content` is opaque to the system — author-supplied markdown,
+ * JSON, or arbitrary text up to `COAT_CHECK_CONTENT_MAX`. All timestamps
+ * are ISO 8601 from `workflowNow()` for replay determinism.
+ *
+ * The `lastFetched*` / `fetchCount` triple is the fetch-audit surface
+ * vinceblank added on top of the architect's verdict — owners need to
+ * know if a recipient consumed their ticket. Default semantics: undefined
+ * `lastFetchedAt` + `fetchCount === 0` means "never fetched."
+ */
+export interface CoatCheckEntry {
+  /** Short human-readable preamble (≤ `COAT_CHECK_SUMMARY_MAX`). */
+  summary: string;
+  /** Opaque body (≤ `COAT_CHECK_CONTENT_MAX` UTF-8 bytes). */
+  content: string;
+  /** Optional MIME-shaped hint (e.g. `'text/markdown'`); free-form. */
+  contentType?: string;
+  /** Audit identity — player who called `coat_check_put`. */
+  putBy: string;
+  /** When the entry was admitted, `workflowNow().toISOString()`. */
+  putAt: string;
+  /** When the entry expires under TTL inline-sweep, `workflowNow().toISOString()`. */
+  expiresAt: string;
+  /** UTF-8 byte length of `content` — pre-computed at put time for cheap listing. */
+  size: number;
+  /** Last successful `coat_check_get` timestamp, or undefined if never fetched. */
+  lastFetchedAt?: string;
+  /** Last `coat_check_get` caller's playerId, or undefined if never fetched. */
+  lastFetchedBy?: string;
+  /** Successful `coat_check_get` count. 0 until first fetch. */
+  fetchCount: number;
+}
+
+/**
+ * Listing projection — `coat_check_list` and the put/evict update return
+ * shapes that omit `content` so callers can survey without pulling the
+ * whole body for every entry. `size` is preserved so dashboards can
+ * present an at-a-glance "how big" without an extra fetch.
+ */
+export interface CoatCheckEntryHeader {
+  ticket: string;
+  summary: string;
+  contentType?: string;
+  putBy: string;
+  putAt: string;
+  expiresAt: string;
+  size: number;
+  /** Mirrors `CoatCheckEntry.lastFetchedAt`. */
+  lastFetchedAt?: string;
+  /** Mirrors `CoatCheckEntry.lastFetchedBy`. */
+  lastFetchedBy?: string;
+  /** Mirrors `CoatCheckEntry.fetchCount`. */
+  fetchCount: number;
 }
