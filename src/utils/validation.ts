@@ -50,6 +50,47 @@ export const PLAYER_STATE_CONTENT_MAX = 32 * 1024;
 /** Maximum number of populated slots per player. Saturation rejects with `PlayerStateSlotsFull`. */
 export const PLAYER_STATE_SLOTS_MAX = 4;
 
+// ── Coat-check (#318, ADR 0008) ────────────────────────────────────────────
+//
+// Ensemble-shared, ticket-keyed stash for content too large to inline in a
+// `cue` message body. Lives on per-ensemble Maestro workflow state.
+//
+// Sizing per the #318 architect verdict (which adjusts ADR 0008's 50-slot
+// proposal):
+//   per-entry 32 KiB × max 20 slots → 640 KiB structural max per ensemble.
+//   That lands at ~16 % of Temporal's 4 MiB CAN-payload ceiling — comfortable
+//   headroom on top of existing maestro state (~316 KiB). Saturation refuses
+//   with a `CoatCheckSlotsFull` ApplicationFailure rather than evicting LRU
+//   — cross-host scope makes silent peer eviction a sharper footgun than
+//   the rejection's diagnostic UX.
+
+/** Coat-check ticket id pattern. Alphanumeric + underscore + hyphen, generated server-side via `uuid4()`. */
+export const COAT_CHECK_TICKET_REGEX = /^[a-zA-Z0-9_-]+$/;
+
+/** Maximum coat-check ticket id length. Generous to accommodate uuid4 + future versioning prefixes. */
+export const COAT_CHECK_TICKET_MAX = 64;
+
+/** Maximum content size per coat-check entry — 32 KiB. Mirrors `PLAYER_STATE_CONTENT_MAX`. */
+export const COAT_CHECK_CONTENT_MAX = 32 * 1024;
+
+/** Maximum summary length per coat-check entry — short, listing-friendly preamble. */
+export const COAT_CHECK_SUMMARY_MAX = 500;
+
+/** Maximum free-form contentType string (e.g. `'text/markdown'`). */
+export const COAT_CHECK_CONTENT_TYPE_MAX = 64;
+
+/** Maximum populated coat-check slots per ensemble. Saturation rejects with `CoatCheckSlotsFull`. */
+export const COAT_CHECK_SLOTS_MAX = 20;
+
+/** Minimum allowed `ttlMs` argument on `coat_check_put` — 1 hour. */
+export const COAT_CHECK_TTL_MIN_MS = 60 * 60 * 1000;
+
+/** Maximum allowed `ttlMs` argument on `coat_check_put` — 30 days. */
+export const COAT_CHECK_TTL_MAX_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Default `ttlMs` when caller omits the argument — 7 days. */
+export const COAT_CHECK_TTL_DEFAULT_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
  * Maximum length of the ensemble description set via
  * `set_ensemble_description` (#399 W1, Q5.1). Soft cap — the MCP tool

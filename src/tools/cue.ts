@@ -8,7 +8,13 @@ import { attachmentInfoQuery, submitOutboxUpdate } from '../workflows/signals';
 import { queryHandleWithTimeout } from '../utils/query-timeout';
 import type { AttachmentInfo, AttachmentPhase, OutboxEntryInput } from '../types';
 import { defineTool, ok, fail, formatError } from './helpers';
-import { PLAYER_NAME_MAX, MESSAGE_MAX, validatePlayerName } from '../utils/validation';
+import {
+  PLAYER_NAME_MAX,
+  MESSAGE_MAX,
+  COAT_CHECK_TICKET_MAX,
+  COAT_CHECK_TICKET_REGEX,
+  validatePlayerName,
+} from '../utils/validation';
 
 /**
  * Max Levenshtein distance for a fuzzy-match candidate to surface in the
@@ -73,13 +79,20 @@ export function registerCueTool(
   defineTool(
     server,
     'cue',
-    'Send a message to another Claude Code session by player name. Delivered instantly via Temporal signal.',
+    'Send a message to another Claude Code session by player name. Delivered instantly via Temporal signal. For content larger than ~100 KB, use `coat_check_put` to stash the body and pass the returned ticket via `attachmentTicket` — the cue body itself should carry a short summary the recipient can act on without fetching.',
     {
       playerId: z.string().max(PLAYER_NAME_MAX).describe('The player name of the target session'),
       message: z.string().max(MESSAGE_MAX).describe('The message to send'),
+      attachmentTicket: z.string().regex(COAT_CHECK_TICKET_REGEX).max(COAT_CHECK_TICKET_MAX).optional().describe(
+        'Optional coat-check ticket (#318). Reference content stashed via `coat_check_put`; the receiver sees the ticket on their `recall` message and can pull the body via `coat_check_get`. Backward-compatible — omit for normal cues.',
+      ),
     },
     async (args) => {
-      const { playerId, message } = args as { playerId: string; message: string };
+      const { playerId, message, attachmentTicket } = args as {
+        playerId: string;
+        message: string;
+        attachmentTicket?: string;
+      };
 
       const nameError = validatePlayerName(playerId);
       if (nameError) return fail(nameError);
@@ -128,6 +141,7 @@ export function registerCueTool(
           type: 'cue',
           targetPlayerId: playerId,
           message,
+          ...(attachmentTicket !== undefined ? { attachmentTicket } : {}),
         } as OutboxEntryInput;
         const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 

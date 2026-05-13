@@ -9,6 +9,8 @@ import type {
   Message,
   SentMessage,
   HostProfile,
+  CoatCheckEntry,
+  CoatCheckEntryHeader,
 } from '../types';
 
 // Re-export types for convenience within workflow code
@@ -96,6 +98,96 @@ export const getTempoSeriesQuery = defineQuery<number[]>('getTempoSeries');
 
 /** Queue a command to be relayed to the conductor. Returns the command ID. */
 export const maestroSendCommandUpdate = defineUpdate<string, [{ text: string; source: string; replyTo?: string }]>('maestroSendCommand');
+
+// ── Coat-check (#318, ADR 0008) ────────────────────────────────────────────
+//
+// Three updates + one query. `coatCheckGet` is an Update (not a Query) because
+// it mutates `lastFetchedAt` / `lastFetchedBy` / `fetchCount` on the entry —
+// Temporal Queries cannot mutate. `coatCheckList` stays a Query because it's
+// read-only and we don't want operators browsing the list to silently mark
+// entries as fetched.
+//
+// Audit identity (`putBy`, `evictedBy`, `fetchedBy`) is set by the MCP tool
+// layer via `getPlayerId()` — the tool schemas have NO `playerId` arg, so
+// callers can't spoof. Matches #334's `savedBy` structural-permission pattern.
+
+export interface CoatCheckPutInput {
+  summary: string;
+  content: string;
+  contentType?: string;
+  ttlMs?: number;
+  /** Audit identity — set by the tool layer, NOT a caller-supplied MCP arg. */
+  putBy: string;
+}
+
+export interface CoatCheckPutResult {
+  ticket: string;
+  expiresAt: string;
+  slotsUsed: number;
+  slotsTotal: number;
+}
+
+export interface CoatCheckGetInput {
+  ticket: string;
+  /** Audit identity — set by the tool layer, NOT a caller-supplied MCP arg. */
+  fetchedBy: string;
+}
+
+export interface CoatCheckListInput {
+  /** Optional `putBy` filter — audit lens for "what did <player> stash?" */
+  putBy?: string;
+  /** Optional summary-prefix filter. */
+  prefix?: string;
+  /**
+   * When `true`, only return entries with `fetchCount === 0`. Owner cleanup
+   * workflow: "show me what nobody's picked up yet."
+   */
+  unfetchedOnly?: boolean;
+}
+
+export interface CoatCheckEvictInput {
+  ticket: string;
+  /**
+   * Audit identity — set by the tool layer. Workflow validator enforces
+   * `evictedBy === entry.putBy` OR `evictedBy === <conductor playerId>` so
+   * eviction is owner-or-conductor; everyone else gets a
+   * `CoatCheckEvictPermissionDenied` ApplicationFailure.
+   */
+  evictedBy: string;
+}
+
+/**
+ * Admit a new coat-check entry. Saturation (20-slot cap exhausted) rejects
+ * with `CoatCheckSlotsFull` ApplicationFailure carrying the oldest 3 ticket
+ * ids in the message. Oversize content rejects with `CoatCheckEntryTooLarge`.
+ * Re-export the entry-and-result types so workflow code and tools share one
+ * shape.
+ */
+export const coatCheckPutUpdate = defineUpdate<CoatCheckPutResult, [CoatCheckPutInput]>('coatCheckPut');
+
+/**
+ * Fetch a coat-check entry by ticket. Returns the full entry (including
+ * content body) on success, or `null` when the ticket is missing / expired /
+ * evicted — no error class proliferation for the common "ticket already
+ * gone" case. Successful reads mutate `lastFetchedAt` / `lastFetchedBy` /
+ * `fetchCount` on the entry; failed reads do not.
+ */
+export const coatCheckGetUpdate = defineUpdate<CoatCheckEntry | null, [CoatCheckGetInput]>('coatCheckGet');
+
+/**
+ * List coat-check entry headers (content omitted) newest-first. Read-only —
+ * does NOT bump fetch-audit counters. Optional `putBy` / `prefix` /
+ * `unfetchedOnly` filters narrow the result.
+ */
+export const coatCheckListQuery = defineQuery<CoatCheckEntryHeader[], [CoatCheckListInput?]>('coatCheckList');
+
+/**
+ * Evict a coat-check entry by ticket. Owner-or-conductor only — workflow
+ * validator rejects mismatched `evictedBy` with `CoatCheckEvictPermissionDenied`.
+ * `evicted: false` when the ticket was missing / already expired before the
+ * call landed.
+ */
+export const coatCheckEvictUpdate = defineUpdate<{ evicted: boolean }, [CoatCheckEvictInput]>('coatCheckEvict');
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Global Maestro — single instance handling ALL ensembles

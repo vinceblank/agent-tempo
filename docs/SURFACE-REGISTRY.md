@@ -31,6 +31,10 @@ Source: `src/tools/*.ts` — each file calls `defineTool(server, '<name>', '<des
 | `broadcast` | `broadcast.ts` | Send a message to all active players; optional type filter |
 | `cancel_stage` | `cancel-stage.ts` | Cancel an active pipeline stage (conductor only) |
 | `clear_state` | `clear-state.ts` | Clear one of your saved-state slots (owner-only; idempotent) |
+| `coat_check_evict` | `coat-check-evict.ts` | Evict a coat-check entry before TTL expires (owner-or-conductor) |
+| `coat_check_get` | `coat-check-get.ts` | Redeem a coat-check ticket and pull the stashed content; null when missing/expired/evicted |
+| `coat_check_list` | `coat-check-list.ts` | List coat-check entry headers in this ensemble; optional putBy / prefix / unfetchedOnly filters |
+| `coat_check_put` | `coat-check-put.ts` | Stash content (≤32 KiB) on per-ensemble Maestro state and return a ticket for later redemption |
 | `cue` | `cue.ts` | Send a message to another session by player name via Temporal signal |
 | `destroy` | `destroy.ts` | Terminate a session workflow or the entire ensemble (irreversible) |
 | `ensemble` | `ensemble.ts` | Discover active sessions — player IDs, descriptions, metadata |

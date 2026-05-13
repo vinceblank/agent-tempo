@@ -132,7 +132,7 @@ const SECTION_TO_KIND: Record<string, DefineKind | null> = {
   'Global Maestro Queries': 'query',
   // Update sections
   'Session Updates': 'update',
-  'Per-Ensemble Maestro Update': 'update',
+  'Per-Ensemble Maestro Updates': 'update', // pluralized in #318 when coatCheckPut/Get/Evict joined maestroSendCommand
   'Global Maestro Updates': 'update',
   // Explicit skips — documentation-only sections whose table entries are
   // not `define*` handler names (workflow function names, Temporal search
@@ -343,7 +343,7 @@ describe('kindFromSectionHeader — #239 allowlist', function () {
     ['Global Maestro Queries', 'query'],
     // Update sections
     ['Session Updates', 'update'],
-    ['Per-Ensemble Maestro Update', 'update'],
+    ['Per-Ensemble Maestro Updates', 'update'], // #318 pluralized; coatCheckPut/Get/Evict joined maestroSendCommand
     ['Global Maestro Updates', 'update'],
     // Explicit skips
     ['Stability Guarantee', null],

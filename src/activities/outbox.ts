@@ -138,6 +138,14 @@ export interface DeliverCueInput {
    * later TUI grouping. `undefined` for non-broadcast direct cues.
    */
   broadcastId?: string;
+  /**
+   * #318: Coat-check ticket referencing content stashed via
+   * `coat_check_put`. Threaded through to the target's `receiveMessage`
+   * signal so the stored `Message` carries it and the recipient can
+   * pull the body via `coat_check_get`. `undefined` for cues without an
+   * attachment.
+   */
+  attachmentTicket?: string;
 }
 
 export interface DeliverReportInput {
@@ -319,19 +327,20 @@ export interface OutboxActivities {
 export function createOutboxActivities(client: Client, config: Config): OutboxActivities {
   return {
     async deliverCue(input: DeliverCueInput): Promise<OutboxActivityResult> {
-      const { ensemble, fromPlayerId, targetPlayerId, message, broadcastId } = input;
+      const { ensemble, fromPlayerId, targetPlayerId, message, broadcastId, attachmentTicket } = input;
       try {
         const handle = await resolveSession(client, ensemble, targetPlayerId);
         if (!handle) {
           throw ApplicationFailure.nonRetryable(`No active session found for "${targetPlayerId}"`);
         }
-        // #357: thread broadcastId (when present) onto the receiver's
-        // `receiveMessage` signal payload. Additive optional field —
-        // direct cues omit it.
+        // #357 + #318: thread broadcastId / attachmentTicket onto the
+        // receiver's `receiveMessage` signal payload. Both fields are
+        // additive optionals — direct cues omit one or both.
         await handle.signal('receiveMessage', {
           from: fromPlayerId,
           text: message,
           ...(broadcastId !== undefined ? { broadcastId } : {}),
+          ...(attachmentTicket !== undefined ? { attachmentTicket } : {}),
         });
         return { success: true };
       } catch (err) {

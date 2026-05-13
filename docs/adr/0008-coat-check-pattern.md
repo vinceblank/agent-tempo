@@ -1,9 +1,20 @@
 # ADR 0008 — Coat-check pattern for large cues
 
-- **Status**: Accepted (design — implementation deferred to post-Phase-3-PR-4 + 48 h soak)
-- **Date**: 2026-04-26
+- **Status**: **Implemented in v0.29** (#318) — see the implementation-time divergences in the "Divergences from the original decision" section below.
+- **Date**: 2026-04-26 (decision) / 2026-05-13 (implementation)
 - **Authors**: tempo-architect
-- **Related**: [`docs/design/coat-check-pattern.md`](../design/coat-check-pattern.md), issue #318
+- **Related**: [`docs/design/coat-check-pattern.md`](../design/coat-check-pattern.md), issue #318, [#318 architect verdict](https://github.com/vinceblank/claude-tempo/issues/318#issuecomment-4437033250)
+
+## Divergences from the original decision
+
+The implementation shipped four deliberate divergences from this ADR, each ratified in the #318 architect verdict. Captured here so future readers don't need to cross-reference the issue thread:
+
+1. **`coatCheckGet` is an Update, not a Query.** The fetch-audit triple (`lastFetchedAt` / `lastFetchedBy` / `fetchCount` — added per the issue review) mutates entry state; Temporal queries cannot mutate. `coatCheckList` stays a Query.
+2. **Wire-protocol names normalized to `coatCheckPut/Get/List/Evict`** (dropping the `maestro` prefix the ADR proposed). Consistent with the MCP tool names; no other prefixed pattern exists in `maestro-signals.ts`.
+3. **Slot count: 20, not 50.** Verdict §"Sizing": fewer slots surface operational pressure sooner under the refuse-and-error policy. Raising 20 → 50 is a non-breaking change on the strength of breadcrumb data.
+4. **Saturation policy: refuse-and-error, not LRU.** Verdict §Q3: cross-host scope means LRU silently evicts peer hosts' entries — a sharper footgun than the rejection's diagnostic UX. Matches #334's `PlayerStateSlotsFull` semantics.
+5. **Evict scope: owner-or-conductor.** Original ADR said "conductor-only"; vinceblank's locked decision broadened to owners-too, so a player who notices they over-stashed can clean up without conductor mediation.
+6. **Fetch-audit fields added.** `lastFetchedAt`, `lastFetchedBy`, `fetchCount` on `CoatCheckEntry`. Owners can inspect "did anyone redeem my ticket?" via `coat_check_list`. Pure-additive on top of the original entry shape.
 
 ## Context
 
