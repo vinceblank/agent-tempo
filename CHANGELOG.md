@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-05-13
+
+### Added
+
+- **Coat-check pattern for large cues** — new `coat_check_put` / `coat_check_get` /
+  `coat_check_list` / `coat_check_evict` MCP tools let players stash large content bodies
+  (up to 32 KiB) on per-ensemble Maestro state and pass a lightweight ticket via `cue`'s
+  new `attachmentTicket` field. Solves the 100 KB cue body cap for researcher reports,
+  review dumps, and other large artifacts. Limits: 20 slots per ensemble, TTL 7 days
+  (configurable 1h–30d), no LRU eviction — saturation rejects with `CoatCheckSlotsFull`.
+  Eviction is owner-or-conductor; fetch audit (`fetchCount`, `lastFetchedAt`,
+  `lastFetchedBy`) lets the putter confirm redemption. (#318, ADR 0008)
+
 ## [0.28.0] - 2026-05-13
 
 ### Added

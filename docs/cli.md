@@ -169,7 +169,10 @@ Restores orphaned (detached) sessions in one ensemble on this host — re-attach
 
 ```bash
 claude-tempo restore myband        # restore all orphans in "myband" on this host
+claude-tempo restore --all-hosts   # cluster-view: list detached sessions across all hosts (read-only, no re-attach)
 ```
+
+`--all-hosts` (#151) is a discovery mode — it queries Temporal for every detached session in the ensemble regardless of preferred host and prints a grouped listing so you can see what's parked on remote machines. No sessions are re-attached; use `claude-tempo restore <ensemble>` on the appropriate host to recover them.
 
 The daemon auto-restores orphans on boot when `restorePolicy` is configured; `restore` lets you trigger it manually.
 
