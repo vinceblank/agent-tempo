@@ -9,6 +9,27 @@ import {
   uuid4,
 } from '@temporalio/workflow';
 
+/**
+ * Workflow-deterministic clock — mirrors the helper in `src/workflows/session.ts`.
+ *
+ * The Temporal TS SDK intercepts `new Date()` at the sandbox level so it
+ * returns replay-consistent time. `Date.now()`, however, is NOT intercepted
+ * by default — calling it from workflow code reads the host clock and breaks
+ * replay determinism. The architect's #318 review flagged the per-ensemble
+ * maestro's idle-timeout check (`Date.now() - lastActiveSessionTime > IDLE_TIMEOUT_MS`)
+ * as a pre-existing instance of this bug; this commit replaces every
+ * `Date.now()` site in `claudeMaestroWorkflow` with `workflowNow().getTime()`
+ * so the determinism guarantee holds end-to-end. See CLAUDE.md
+ * ("no `Date.now()` in workflow code, use `workflow.now()` instead") and
+ * `src/workflows/session.ts:21-23` for the convention.
+ *
+ * Naming matches the session-workflow helper so a grep for `workflowNow`
+ * finds both implementations.
+ */
+function workflowNow(): Date {
+  return new Date();
+}
+
 import type { MaestroActivities } from '../activities/maestro';
 
 import {
@@ -90,7 +111,7 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
   let chatHighWater: ChatHighWater = input.chatHighWater ?? ZERO_CHAT_HIGH_WATER;
   let shutdownRequested = false;
   let commandQueued = false;
-  let lastActiveSessionTime = Date.now();
+  let lastActiveSessionTime = workflowNow().getTime();
   let ensemblePaused = input.paused ?? false;
 
   // #399 W1 (Q5.1) — ensemble description, restored across CAN.
@@ -109,7 +130,7 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
     ? input.tempoHistoryBuckets.slice(-TEMPO_HISTORY_MAX)
     : [];
   let tempoCurrentBucket: { startMs: number; count: number } =
-    input.tempoCurrentBucket ?? { startMs: Date.now(), count: 0 };
+    input.tempoCurrentBucket ?? { startMs: workflowNow().getTime(), count: 0 };
 
   // ── Signal Handlers ──
 
@@ -190,8 +211,9 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
     // ── Refresh Ensemble State ──
     try {
       const newPlayers = await refreshEnsembleState(input.ensemble);
-      const now = new Date().toISOString();
-      const nowMs = Date.now();
+      const nowDate = workflowNow();
+      const now = nowDate.toISOString();
+      const nowMs = nowDate.getTime();
 
       // #399 W1 (Q5.6 Flavor B) — accumulate per-player activity deltas
       // into the current bucket BEFORE replacing `players`. We diff the
@@ -279,7 +301,7 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
         (p) => p.phase !== undefined && COORDINATABLE_PHASES.includes(p.phase),
       );
       if (hasRunningSessions) {
-        lastActiveSessionTime = Date.now();
+        lastActiveSessionTime = workflowNow().getTime();
       }
     } catch {
       // Activity failure after retries — skip this cycle, try again next loop
@@ -327,7 +349,10 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
     }
 
     // ── Auto-terminate if idle ──
-    if (Date.now() - lastActiveSessionTime > IDLE_TIMEOUT_MS) {
+    // #318: was `Date.now() - lastActiveSessionTime` — non-deterministic on
+    // replay. `workflowNow()` reads the SDK-intercepted clock; idle decision
+    // is now replay-stable.
+    if (workflowNow().getTime() - lastActiveSessionTime > IDLE_TIMEOUT_MS) {
       break;
     }
 
