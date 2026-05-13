@@ -7,9 +7,153 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-05-13
+
+### Added
+
+- **`restore --all-hosts`** — `claude-tempo restore` and the `restore` MCP tool now accept
+  `--all-hosts` / `{ allHosts: true }` to surface orphaned sessions from every host in the
+  cluster, not just the local one. Unifies cross-machine orphan visibility into a single
+  command. (#151, #582)
+- **`--yes-steal` deliberate-action gate on `/migrate`** — the TUI `/migrate` command now
+  requires an explicit `--yes-steal` flag when the target player is attached on a different
+  host, preventing accidental lease steals. Mirrors the `confirmStealFromHost` guard already
+  on `/restart`. (#580, #585)
+- **Cron schedules honoured in lineup loader + status display** — `claude-tempo up --lineup`
+  and `claude-tempo status` now parse and surface `cron`-typed schedule entries correctly;
+  previously cron schedules loaded from lineup YAML were silently ignored. (#586, #587)
+- **`cue` actionable error on unknown player** — sending a cue to a player name that does
+  not exist now returns an immediate structured error with a Levenshtein-ranked suggestion
+  list, replacing the previous silent timeout. (#560)
+- **`cue` detached-target detection** — when the destination player is in a detached phase,
+  `cue` surfaces the accurate delivery truth (queued-but-undeliverable) instead of silently
+  enqueuing to a dead mailbox. (#562)
+- **`ensemble` active/dormant split** — the `ensemble` tool output now groups players into
+  "active" (attached/processing) and "dormant" (detached/draining) sections for clearer
+  roster visibility. (#563)
+- **Web dashboard** (`claude-tempo dashboard`) — full Vite + React web UI serving all
+  ensemble and player data live. Screens: Overview, Workspace (chat + player list),
+  PlayerDetail, PlayerTypes, Hosts, Loadouts/Schedules, CreateEnsemble + Recruit wizards,
+  Settings. Action wiring: Recall, Restart, Detach, Destroy trigger real workflow operations.
+  Chat notification toasts for incoming messages. Cross-device pairing via QR-code one-time
+  bearer token. Flags: `--port`, `--bind`, `--no-open`, `--pair`. (#340)
+- **Daemon HTTP/SSE event source** — The daemon exposes a local HTTP server with snapshot +
+  streaming endpoints: `GET /v1/health`, `/v1/ensembles`, `/v1/state/:ensemble`,
+  `/v1/hosts`, `/v1/events/:ensemble` (SSE stream), `/v1/events` (cluster stream). SSE
+  streams deliver a snapshot prelude, replay from a 256-event ring buffer on reconnect
+  (`Last-Event-ID`), and a `gap` event on overflow. Bearer auth + CORS; loopback skips
+  auth. (#94, #95)
+- **`TempoClient.subscribe()` AsyncIterable** — programmatic SSE consumer for dashboards
+  and external integrations. Dual transport: native `EventSource` (browser/loopback) and
+  `fetch`-based (Node/bearer). Exposes the full `ClusterEvent` type stream. (#94, #95)
+- **TUI live streaming** — all ensemble/player state now drives from `client.subscribe()`
+  instead of the 2-second poll loop. Sub-second event latency; reconnect handled
+  transparently. (#94, #95)
+- **OpenCode adapter** (`agent: 'opencode'`) — headless multi-provider adapter via SST
+  OpenCode subprocess. Supports Anthropic, OpenAI, Bedrock, Vertex, Ollama, and ~70 other
+  providers via `model: 'provider/name'`. Tool bridging is MCP-native; session state
+  persisted server-side with reconnect across `opencode serve` restarts. Requires
+  `opencode-ai` CLI + `@opencode-ai/sdk`. (#449)
+- **Claude-code-headless adapter** (`agent: 'claude-code-headless'`) — headless adapter
+  driving sessions via the `claude` CLI as per-turn `claude -p --output-format stream-json`
+  subprocesses. Bills against the host's Claude Code subscription (Pro/Max extra-usage
+  credits). Full Claude Code built-ins + claude-tempo MCP surface. Requires `claude` binary
+  on PATH and a logged-in Claude Code session. (#520)
+- **Player saveable state** — `save_state`, `fetch_state`, `clear_state` MCP tools let
+  players persist curated context to named slots (max 4, 32 KiB each). Owner-write /
+  peer-read. `restart` accepts `loadFromState` to seed the next session from a saved slot.
+  Implements ADR 0011. (#334)
+- **Dev mode** (`--dev` flag / `CLAUDE_TEMPO_DEV_MODE=1`) — fully isolated testing profile:
+  home dir `~/.claude-tempo-dev/`, HTTP port 8474, namespace `claude-tempo-dev`, task queue
+  `claude-tempo-dev`. Shell env vars (`TEMPORAL_NAMESPACE`, `TEMPORAL_ADDRESS`) are ignored
+  in dev mode. `--dev down` does not kill Temporal if the prod profile is live. (#423)
+- **Mock adapter** (`agent: 'mock'`, dev mode only) — four modes: `echo`, `scripted`,
+  `silent`, `chaos`. Stripped from the npm tarball by `prepack`. (#340)
+- **Dashboard chat notifications** — incoming maestro messages trigger bottom-right toasts
+  (6s TTL, max 3 visible, `+N more` chip, same-sender grouping). Sidebar ensemble rows show
+  unread badges; click navigates to that ensemble's chat. (#513)
+- **`claude-tempo daemon stats`** — new CLI subcommand prints live memory usage, uptime,
+  active ensembles, and SSE subscriber count from `/v1/health`. (#336)
+- **Adapter process-lifecycle telemetry** — structured log lines on all process exit/signal/
+  uncaught events. Grep `[claude-tempo:adapter]` in daemon logs. (#258)
+- **CI: Windows test matrix** — `build-and-test-windows` job (Node 22, 2 shards); catches
+  OS-specific EACCES failures with retry-and-reap on Windows Defender scan interference.
+  (#150)
+- **Surface drift detector** — `scripts/check-surface-drift.js` + `npm run lint:surface-drift`
+  diffs `docs/SURFACE-REGISTRY.md` against source; wired into CI. (#305)
+- **Overflow Playwright guardrail** — `npm run test:overflow` visual regression suite for
+  the dashboard overflow surface. CI `dashboard-overflow` job. (#461)
+- **`update-overflow-snapshots` workflow** — `workflow_dispatch`-only CI workflow
+  regenerates Playwright baseline PNGs on Linux (matching CI rendering environment) and
+  commits them back to the feature branch as `claude-tempo[bot]`. (#493)
+
 ### Fixed
 
-- CLI: `claude-tempo migrate` removed-verb hint now points to `/migrate <player> <host>` — previously pointed to `/restart <player> --host <hostname>` which is not a valid form (the `/restart` TUI command accepts no `--host` flag), sending operators to a dead end since #288
+- **Dashboard overflow refutations resolved** — 3 CSS fixes (pill flex-wrap, title
+  `min-width: 0`, `.ec-meta` flex-shrink relaxation) + 2 test-heuristic refinements; all
+  skipped Walk A tests re-enabled. (#494)
+- **Dashboard icon-glyph footprint on PlayerTypes card** — normalised to remove excess
+  spacing regression. (#575, #578)
+- **Migrate hint in removed-verbs** — `/migrate` hint now shows the correct TUI form
+  instead of a stale CLI verb. (#581)
+- **Memory leak + unbounded iterator deadlines** — `listEnsembles` and `listActivePlayers`
+  iterators are now bounded; `TempoClient.subscribe()` no longer leaks the long-poll
+  connection on caller-side cancellation; schedule-fire and orphan-query activities bounded.
+  (#336, #529)
+- **HTTP aggregate carry-forward** — per-ensemble fan-out snapshot diff loop now propagates
+  all player-phase / agent-type updates to each SSE subscriber independently, preventing
+  stale snapshots after reconnect. (#550)
+- **claude-api adapter retry classification** — fatal 4xx errors detach immediately;
+  retriable errors use jittered backoff capped at 30s with `retry-after` support; 10-
+  consecutive-failure cap escalates to fatal. (#521)
+- **Outbox silently broken after force-restart** — server.ts now uses an unpinned workflow
+  handle (`getHandle`) for MCP tool registrations, so `executeUpdate` resolves to the latest
+  run after any continue-as-new or force-restart. (#347)
+- **Adapter post-CAN double-loop silence** — tiebreaker + structured `fireTerminal` log
+  prevent the post-continue-as-new double-loop from silently reaping a healthy attachment.
+  (#258)
+- **Dashboard snapshot responsiveness** — `buildEnsembleSnapshot` query calls bounded at
+  2s/call; 15s aggregate tick watchdog as defense-in-depth. Eliminates unbounded `tick
+  skipped` accumulation on wedged sessions. (#433)
+- **Mocha zombie Temporal server cleanup** — `mochaGlobalTeardown` + `process.on('exit')`
+  + signal handlers reap orphan ephemeral Temporal server processes even when teardown is
+  skipped mid-suite. (#306)
+- **Test flake hardening** — maestro discovery test race deflaked via ensemble-scoped
+  teardown; lifecycle-v2 stabilised with explicit phase-wait sequencing. (#383, #583, #584)
+- **Dev-mode isolation** — prod env vars (`TEMPORAL_NAMESPACE`, `TEMPORAL_ADDRESS`) no
+  longer bleed into the dev profile; `down` no longer kills prod workers when invoked in
+  dev mode. (#423)
+
+### Changed
+
+- **Wire protocol: `PlayerSummaryV1.agentType` union expanded** — adds `'claude-api'`,
+  `'opencode'`, and `'claude-code-headless'` alongside existing values. Additive extension
+  per the §6 stability rule; no `/v1/` → `/v2/` path bump. (#537)
+- **Communication-discipline rules delivered to every player** — three protocol rules
+  injected via MCP server instructions on connect: drafting ≠ sending, silent conductor =
+  HOLD, no autonomous player dispatch. (#505)
+- **`TempoClient` split into `Core` + `WithSpawn`** — `TempoClientCore` exposes 38 pure-RPC
+  methods; `TempoClientWithSpawn` extends with spawn helpers. `type TempoClient =
+  TempoClientWithSpawn` preserves every existing import. (#308)
+- **Dashboard: Sonner system toasts removed** — 29 call sites migrated to inline
+  `<ComposerStatus>` banner + inline wizard errors + silent success; bundle −8 kB gzipped.
+  (#514)
+
+### Docs
+
+- Agent-tool vs recruit guidance + `ensemble` tool description hint added to docs. (#561, #577)
+- `docs/release-process.md` updated with lockstep version-bump rule. (#549)
+- `docs/SURFACE-REGISTRY.md` — canonical inventory of all MCP tools, CLI commands, and TUI
+  slash commands. (#305)
+- 5 design ADRs added: coat-check pattern (ADR 0008), protobuf migration (ADR 0009),
+  player-saveable state (ADR 0011), Claude API adapter scoping (ADR 0012), web dashboard
+  scoping (ADR 0013). (#334, #340)
+- Dashboard design handoff bundle at `docs/design/dashboard-handoff/`. (#340)
+- When-to-use-worktrees guidance. (#564)
+
+---
+
+<!-- Pre-release history: beta.1 through beta.19 entries are preserved below. -->
 
 ## [0.28.0-beta.19] - 2026-05-11
 
