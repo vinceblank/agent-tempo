@@ -48,7 +48,7 @@ These tools are available inside Claude Code sessions connected to claude-tempo.
 
 ## Version History
 
-### v0.29 Changes (#318, #560, #562, #563, #582)
+### v0.29 Changes (#318)
 
 - **`coat_check_put`, `coat_check_get`, `coat_check_list`, `coat_check_evict` added** — coat-check pattern for large cues. Stash artifacts up to 32 KiB on Maestro state and attach the ticket to a `cue` via `attachmentTicket`. (#318, ADR 0008)
 - **`cue` gains `attachmentTicket`** — optional field to attach a coat-check ticket to a cue; the recipient sees it on `recall` and can pull the body via `coat_check_get`. (#318)
