@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.29.1] - 2026-05-15
+
+### Fixed
+
+- **`worktree` remove silently failing on Windows** — on Windows the `worktree` MCP tool's
+  `remove` action could half-succeed when a worktree contained a memory-mapped `.node` binary
+  (e.g. a running Next.js dev server): `git worktree remove --force` cleared `.git/worktrees`
+  metadata but Windows refused the directory deletion, leaving a stale orphan on disk while
+  the tool reported success. The next `create` for the same player then failed with a
+  confusing `fatal: '...' already exists`. Fix: post-removal `existsSync` verification with
+  surfaced failure, and stale-orphan recovery in `createWorktree` (auto-`fs.rmSync` of a
+  detected orphan path before `git worktree add`, with a clear error if recovery itself
+  fails). (#594, #595)
+
+### Docs
+
+- **`docs/tools.md` v0.29 Changes header** — corrected the issue-ref list under the
+  `v0.29 Changes` heading; the previous list mixed in issues that shipped in v0.28. (#592,
+  #593)
+- **`docs/orchestration.md` — "Stop long-running processes before `remove`"** — new section
+  explaining why processes inside a worktree must be stopped before `remove`, with Windows-
+  specific detail on memory-mapped file locks and the auto-recovery behaviour added in #594.
+  Also reflected as an IMPORTANT warning in the `worktree` MCP tool description. (#594, #595)
+
 ## [0.29.0] - 2026-05-13
 
 ### Added
