@@ -22,10 +22,13 @@ import { defaultPart } from './utils/default-part';
 import { buildServerInstructions, registerAllTempoTools } from './server-tools';
 import { registry, InteractiveAttachment } from './adapters';
 import { resolveAgentType } from './ensemble/agent-types';
+import { installParentDeathWatchdog } from './utils/parent-death-watchdog';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo]', ...args);
 
 async function main() {
+  installParentDeathWatchdog();
+
   // Only activate when explicitly opted in via AGENT_TEMPO_ENSEMBLE
   if (!process.env[ENV.ENSEMBLE]) {
     log(`${ENV.ENSEMBLE} not set — MCP server idle (no workflow started)`);
