@@ -10,9 +10,9 @@
 
 ## 0. TL;DR
 
-Add a fourth adapter — `src/adapters/opencode/` — that drives [SST OpenCode](https://opencode.ai) as a headless local subprocess, giving claude-tempo a multi-provider LLM story (Anthropic, OpenAI, GitHub Copilot, ChatGPT account-based, Bedrock, Vertex, Ollama, ~70+ providers). New `OpenCodeAttachment extends SdkAttachment` mirrors the Copilot bridge / claude-api structure: detached Node subprocess, `claimAttachment` + heartbeat lifecycle inherited free, single override of `invokeSdk` for the LLM-turn loop.
+Add a fourth adapter — `src/adapters/opencode/` — that drives [SST OpenCode](https://opencode.ai) as a headless local subprocess, giving agent-tempo a multi-provider LLM story (Anthropic, OpenAI, GitHub Copilot, ChatGPT account-based, Bedrock, Vertex, Ollama, ~70+ providers). New `OpenCodeAttachment extends SdkAttachment` mirrors the Copilot bridge / claude-api structure: detached Node subprocess, `claimAttachment` + heartbeat lifecycle inherited free, single override of `invokeSdk` for the LLM-turn loop.
 
-The new adapter is selected via `recruit({ agent: 'opencode', model: 'provider/name', ... })`. **Tool bridging uses OpenCode's native MCP config block** (`type: "local"` stdio child) — the adapter synthesizes an inline JSON config (`OPENCODE_CONFIG_CONTENT` env) that registers `claude-tempo` as an OpenCode MCP child process. OpenCode owns tool dispatch + per-provider translation server-side, so **no `mcp-bridge.ts` translation layer is needed** — the single largest LoC saving vs claude-api (#131).
+The new adapter is selected via `recruit({ agent: 'opencode', model: 'provider/name', ... })`. **Tool bridging uses OpenCode's native MCP config block** (`type: "local"` stdio child) — the adapter synthesizes an inline JSON config (`OPENCODE_CONFIG_CONTENT` env) that registers `agent-tempo` as an OpenCode MCP child process. OpenCode owns tool dispatch + per-provider translation server-side, so **no `mcp-bridge.ts` translation layer is needed** — the single largest LoC saving vs claude-api (#131).
 
 **Locked decisions on the 7 open questions** (researcher's directional leans validated and tightened):
 
@@ -40,8 +40,8 @@ The new adapter is selected via `recruit({ agent: 'opencode', model: 'provider/n
 
 Issue #449 motivates the OpenCode adapter on three orthogonal value props, all complementary to the existing 3-adapter family:
 
-1. **Multi-provider headless** — `claude-code` / `copilot` / `claude-api` are each single-provider. Issue #449's primary motivation is to extend claude-tempo's headless story across all providers OpenCode supports (Anthropic, OpenAI, GitHub Copilot, ChatGPT account-based, Bedrock, Vertex, Ollama, ~70+). Per-provider, per-player-class flexibility unlocks ensembles where the executor uses one provider and the advisor uses another (Phase 2 advisor strategy).
-2. **Headless with file-op tools** — claude-api players are headless but lack file-edit / shell / web tools (deferred to Phase 2 in #131). OpenCode players ARE file-op-capable through OpenCode's own built-in tool registry — without claude-tempo having to ship those bridges. The headless-identity addendum in §10 makes this UX delta explicit to the LLM.
+1. **Multi-provider headless** — `claude-code` / `copilot` / `claude-api` are each single-provider. Issue #449's primary motivation is to extend agent-tempo's headless story across all providers OpenCode supports (Anthropic, OpenAI, GitHub Copilot, ChatGPT account-based, Bedrock, Vertex, Ollama, ~70+). Per-provider, per-player-class flexibility unlocks ensembles where the executor uses one provider and the advisor uses another (Phase 2 advisor strategy).
+2. **Headless with file-op tools** — claude-api players are headless but lack file-edit / shell / web tools (deferred to Phase 2 in #131). OpenCode players ARE file-op-capable through OpenCode's own built-in tool registry — without agent-tempo having to ship those bridges. The headless-identity addendum in §10 makes this UX delta explicit to the LLM.
 3. **Provider-portable cost monitoring** — OpenCode's normalized event stream surfaces per-turn `usage` data uniformly across providers. Different providers expose different fields (Anthropic has `cache_read`/`cache_creation`; OpenAI doesn't), but the wire shape is consistent. v1 logs whatever's present to stderr; Phase 2 can add per-provider aggregation.
 
 The new adapter is **independent** of #318 (coat-check), #319 (protobuf), #334 (saveable-state), and the SSE event source (#94/#95). It composes naturally with the just-merged #131 (claude-api) — both SDK-class, both inherit `SdkAttachment`, both expose the same tempo MCP surface — so operators can fall back to `claude-api` (Anthropic-only, no third-party dep) if OpenCode's HTTP API ever breaks under a minor bump. The **dependency-stability hedge** is real architectural property, not aspirational.
@@ -193,7 +193,7 @@ Env var contract:
 | `CLAUDE_TEMPO_TEMPORAL_ADDRESS` | spawner | Temporal connection |
 | `CLAUDE_TEMPO_TEMPORAL_NAMESPACE` | spawner | Temporal connection |
 | `CLAUDE_TEMPO_OPENCODE_MODEL` | operator (optional) | Default model override; recruit `model` arg takes precedence. **NEW** — distinct from `CLAUDE_TEMPO_API_MODEL` to keep namespaces clean |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / etc. | operator | Provider auth — read directly by OpenCode's provider client libs, not by claude-tempo |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / etc. | operator | Provider auth — read directly by OpenCode's provider client libs, not by agent-tempo |
 
 The adapter then synthesizes `OPENCODE_CONFIG_CONTENT` and exports it for the spawned `opencode serve` child. **Synthesis happens inside the adapter process, not the spawner activity** — keeps the inline-JSON construction colocated with the rest of the spawn-side adapter logic, and avoids leaking provider/model knobs into the outbox-entry surface.
 
@@ -204,7 +204,7 @@ No new shell-quoting concerns — the spawn path matches claude-api's, which is 
 The adapter builds the inline JSON config at spawn time from:
 
 - `model` from recruit-arg (combined `provider/model` string)
-- claude-tempo's MCP server registration (absolute path to `dist/server.js` + the standard env-var contract)
+- agent-tempo's MCP server registration (absolute path to `dist/server.js` + the standard env-var contract)
 - Server config (`port: <probed>`, `hostname: '127.0.0.1'`, `mdns: false`)
 
 Example synthesized config (with secrets redacted in stderr config-log):
@@ -219,7 +219,7 @@ Example synthesized config (with secrets redacted in stderr config-log):
   },
   "server": { "port": 4732, "hostname": "127.0.0.1", "mdns": false },
   "mcp": {
-    "claude-tempo": {
+    "agent-tempo": {
       "type": "local",
       "command": ["node", "/abs/path/to/dist/server.js"],
       "environment": {
@@ -233,7 +233,7 @@ Example synthesized config (with secrets redacted in stderr config-log):
 }
 ```
 
-OpenCode's config supports `{env:VAR_NAME}` substitution natively — provider API keys flow through without claude-tempo seeing them in plaintext. The adapter logs the synthesized config to stderr at spawn time with provider `apiKey` substrings replaced by `***` so operators can debug without leaking creds.
+OpenCode's config supports `{env:VAR_NAME}` substitution natively — provider API keys flow through without agent-tempo seeing them in plaintext. The adapter logs the synthesized config to stderr at spawn time with provider `apiKey` substrings replaced by `***` so operators can debug without leaking creds.
 
 **Provider auto-detection**: the adapter populates `provider.<name>.options` only for providers whose env vars are present at spawn time (same as OpenCode's own behavior). Non-Anthropic recruits with `model: 'openai/gpt-4o'` get a `provider.openai.options.apiKey: '{env:OPENAI_API_KEY}'` block instead. The mapping table is small (~10 entries for the major providers) and lives in `src/adapters/opencode/config.ts`.
 
@@ -243,11 +243,11 @@ OpenCode's config supports `{env:VAR_NAME}` substitution natively — provider A
 
 The architectural keystone. Direct contrast with claude-api's `mcp-bridge.ts`.
 
-### 4.1 Locked: claude-tempo's MCP server runs as an OpenCode-spawned stdio child
+### 4.1 Locked: agent-tempo's MCP server runs as an OpenCode-spawned stdio child
 
 The adapter does **NOT** translate tool schemas. Instead:
 
-1. The adapter (running in claude-tempo's process) builds `OPENCODE_CONFIG_CONTENT` (§3.7) with an `mcp.claude-tempo` block pointing at `node dist/server.js`.
+1. The adapter (running in agent-tempo's process) builds `OPENCODE_CONFIG_CONTENT` (§3.7) with an `mcp.agent-tempo` block pointing at `node dist/server.js`.
 2. The adapter spawns `opencode serve` with that config.
 3. OpenCode reads the config, spawns `node dist/server.js` as a stdio MCP subprocess (a **second, separate** Node process from the adapter), and listens for `list_tools` / `call_tool` requests.
 4. The MCP server (existing `src/server.ts`, unchanged) registers all tempo tools — the same surface every adapter sees: `cue`, `report`, `recall`, `ensemble`, `broadcast`, `recruit`, `set_part`, `set_name`, `who_am_i`, `schedule`, `pause`, `play`, `release`, `set_ensemble_description`, etc.
@@ -256,9 +256,9 @@ The adapter does **NOT** translate tool schemas. Instead:
 
 ```
 OpenCode adapter process tree at runtime:
-  node dist/adapters/opencode/adapter.js          (claude-tempo adapter — manages lifecycle)
+  node dist/adapters/opencode/adapter.js          (agent-tempo adapter — manages lifecycle)
     └── opencode serve --port 4732 ...            (OpenCode subprocess — spawned by adapter)
-          └── node /abs/path/to/dist/server.js    (claude-tempo MCP server — spawned by OpenCode for tool dispatch)
+          └── node /abs/path/to/dist/server.js    (agent-tempo MCP server — spawned by OpenCode for tool dispatch)
 ```
 
 Three Node processes per opencode player. Memory cost is the trade-off; the architectural simplification is worth it.
@@ -312,7 +312,7 @@ OpenCode's tool dispatcher normalizes provider quirks, but there's a real Phase 
 
 OpenCode's HTTP API persists session history server-side. Per Phase A spike §1.8, session lifecycle on the OpenCode side:
 
-| Phase | OpenCode-side action | claude-tempo-side action |
+| Phase | OpenCode-side action | agent-tempo-side action |
 |---|---|---|
 | Create | `POST /session` returns `Session` with `id` | Stash `id` on workflow metadata via `updateMetadataSignal` (matches Copilot's `sessionId` stash pattern) |
 | Send turn | `POST /session/:id/prompt_async` (preferred — 204 + observe via SSE) | Wrap in `SdkAttachment.deliver()` — `processingStart` → POST → wait for `finish` event → `processingEnd` → `markDelivered` |
@@ -347,7 +347,7 @@ The adapter:
 
 - Filters events to the active session id (multiple sessions may share an `opencode serve` instance — though Phase 1 is per-player, the filtering is cheap insurance)
 - Accumulates `assistant.message` text parts into a running buffer
-- Observes `ToolPart` events for telemetry breadcrumbs (`[claude-tempo:opencode] tool=cue parts=...` style)
+- Observes `ToolPart` events for telemetry breadcrumbs (`[agent-tempo:opencode] tool=cue parts=...` style)
 - On `finish` reason, returns the assembled assistant text + finish reason from `invokeSdk`
 
 **No `input_json_delta` partial-parse complexity** — tool streaming is OFF by default in v1.14.29 (Phase A spike §1.3). Tool calls arrive in a single completed event. This is a complexity-win over claude-api (where verification-addendum #4 documents the partial-parse landmine).
@@ -372,7 +372,7 @@ OpenCode has built-in doom-loop detection and context compaction. Phase A spike 
 - How does the adapter learn that compaction has happened? Does the SSE stream emit a `compacted` event?
 - Does the next `GET /session/:id/message` show a different shape?
 
-**Phase C engineer's responsibility.** The architectural shape doesn't change either way — the adapter just observes whichever signal OpenCode emits. Document the answer in `src/adapters/opencode/README.md` at impl time. **No claude-tempo-side context-overflow message** like claude-api §5.5 emits — OpenCode handles this upstream.
+**Phase C engineer's responsibility.** The architectural shape doesn't change either way — the adapter just observes whichever signal OpenCode emits. Document the answer in `src/adapters/opencode/README.md` at impl time. **No agent-tempo-side context-overflow message** like claude-api §5.5 emits — OpenCode handles this upstream.
 
 ### 5.6 Per-turn usage telemetry
 
@@ -380,7 +380,7 @@ OpenCode has built-in doom-loop detection and context compaction. Phase A spike 
 log(`turn-usage provider=${provider} model=${model} input=${usage.input_tokens ?? 0} output=${usage.output_tokens ?? 0} cache_read=${usage.cache_read_input_tokens ?? 0} elapsed_ms=${elapsedMs} player=${playerName} stop_reason=${stopReason ?? 'none'}`);
 ```
 
-Same shape family as `claude-api`'s `[claude-tempo:claude-api] turn-usage` log line — operators already grep `turn-usage` for cost monitoring. Provider attribution added (`provider=anthropic` / `provider=openai`).
+Same shape family as `claude-api`'s `[agent-tempo:claude-api] turn-usage` log line — operators already grep `turn-usage` for cost monitoring. Provider attribution added (`provider=anthropic` / `provider=openai`).
 
 **Per-provider semantics differ**: Anthropic exposes `cache_read` / `cache_creation`; OpenAI doesn't have those concepts. Adapter logs whatever's present in OpenCode's event-stream `usage` field, doesn't try to normalize across providers. Operators triaging burn rate know provider-specific shapes.
 
@@ -392,7 +392,7 @@ The adapter spawns `opencode serve` between Temporal connect and attachment clai
 
 1. **Probe a free port** (port-file pattern from `src/http/server.ts`)
 2. **Spawn `opencode serve --port <probed> --hostname 127.0.0.1`** with `OPENCODE_CONFIG_CONTENT` env populated
-3. **Redirect stdout/stderr** to `~/.claude-tempo/opencode-{playerId}.log` (per Phase A spike §1.7 — terminal noise reduction acknowledged in OpenCode's own changelog)
+3. **Redirect stdout/stderr** to `~/.agent-tempo/opencode-{playerId}.log` (per Phase A spike §1.7 — terminal noise reduction acknowledged in OpenCode's own changelog)
 4. **Health-probe** `GET /global/health` until 200 (timeout-bounded — fail loudly if OpenCode doesn't come up in 10s)
 5. **Version-drift check** — log `WARNING: opencode version X.Y.Z drift from tested ~1.14.29` if mismatch (locked: warn-only)
 6. **Then** proceed to `startV2Lifecycle(workflowId)` and the poll loop
@@ -563,7 +563,7 @@ try {
 }
 
 const log = (...args: unknown[]) => {
-  const msg = `[claude-tempo:opencode] ${args.map((a) => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}\n`;
+  const msg = `[agent-tempo:opencode] ${args.map((a) => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}\n`;
   fs.writeSync(2, msg);
 };
 
@@ -585,9 +585,9 @@ const HEALTH_PROBE_TIMEOUT_MS = 10_000;
 const GRACEFUL_ABORT_TIMEOUT_MS = 3000;
 const SIGTERM_TIMEOUT_MS = 5000;
 const HEADLESS_OPENCODE_ADDENDUM =
-  '\n\nYou are an **opencode** player — you have access to the claude-tempo MCP tools ' +
+  '\n\nYou are an **opencode** player — you have access to the agent-tempo MCP tools ' +
   '(cue, report, recall, ensemble, broadcast, recruit, set_part, …) AND OpenCode\'s built-in ' +
-  'tools (file edits, shell, web search). Use the claude-tempo tools for ensemble coordination ' +
+  'tools (file edits, shell, web search). Use the agent-tempo tools for ensemble coordination ' +
   'and OpenCode\'s built-ins for local task work. Your model is delivered via OpenCode, so the ' +
   'underlying provider (Anthropic, OpenAI, Bedrock, Ollama, …) is opaque to you and to the rest ' +
   'of the ensemble.';
@@ -682,7 +682,7 @@ export class OpenCodeAttachment extends SdkAttachment {
     this.configureV2(client, os.hostname());
     let handle = await waitForWorkflow(client, expectedWorkflowId);   // helper — same shape as claude-api
 
-    // 6. Build cached system prompt (claude-tempo MCP_INSTRUCTIONS + OpenCode-specific addendum)
+    // 6. Build cached system prompt (agent-tempo MCP_INSTRUCTIONS + OpenCode-specific addendum)
     this.systemPrompt = buildServerInstructions({
       ensemble: config.ensemble,
       playerId: playerIdForWorkflow,
@@ -774,7 +774,7 @@ export class OpenCodeAttachment extends SdkAttachment {
       log(`Created OpenCode session ${session.id}`);
     }
 
-    // 2. Build the new turn's parts. claude-tempo MCP server runs as OpenCode's child;
+    // 2. Build the new turn's parts. agent-tempo MCP server runs as OpenCode's child;
     //    the messages from the workflow's pendingMessages are flattened into a single
     //    user-prompt parts array. (Multi-cue batching mirrors claude-api's history sort.)
     const pendingMessages = await this.pinnedHandle!.query(pendingMessagesQuery) as Message[];
@@ -875,7 +875,7 @@ Phase A spike's bottom-up estimate is **805-1,175 LoC**. #449's body cites a 600
 
 1. **Shared SDK-class lifecycle test helper** (-80 to -150 LoC). The Mocha integration test for the new adapter currently looks like it'd duplicate the SDK-class lifecycle baseline (`test/adapter-sdk-lifecycle-v2.test.ts`). Extract the SDK-class lifecycle cases (claim → first heartbeat → processingStart/End pairing → markDelivered → graceful detach → superseded abort) into a shared helper (`test/helpers/sdk-class-lifecycle.ts`) that both copilot, claude-api, and the new opencode test consume. Yields recurring savings: future SDK-class adapters (advisor strategy, etc.) all reuse the helper.
 2. **Raw `fetch` over `@opencode-ai/sdk`** if SDK weight bites (-50 to -100 LoC). The auto-generated SDK adds OpenAPI runtime + per-endpoint typed clients. The hot path uses ~5 endpoints + SSE. Hand-rolled `server-bridge.ts` over raw `fetch` is leaner and avoids an additional dependency. Phase C engineer makes the call after a quick sizing experiment. **Architectural shape unchanged either way.**
-3. **Narrower v1 telemetry surface** (-20 to -40 LoC). Phase C should ship the stderr `turn-usage` line + the `WARNING: opencode version drift` line, but defer the more elaborate breadcrumbs (`tool=cue session=...` per-tool-use logs) to a Phase 2 enhancement. Operators can grep `[claude-tempo:opencode]` for adapter health; per-tool-use breadcrumbs are diagnostic richness, not v1 critical path.
+3. **Narrower v1 telemetry surface** (-20 to -40 LoC). Phase C should ship the stderr `turn-usage` line + the `WARNING: opencode version drift` line, but defer the more elaborate breadcrumbs (`tool=cue session=...` per-tool-use logs) to a Phase 2 enhancement. Operators can grep `[agent-tempo:opencode]` for adapter health; per-tool-use breadcrumbs are diagnostic richness, not v1 critical path.
 
 **Combined potential savings: 150-290 LoC**, comfortably landing the v1 implementation inside #449's 1,000-LoC ceiling. Phase C engineer picks the actual tightening; design-doc commitment is "the architecture supports landing inside the ceiling, here's how."
 
@@ -945,7 +945,7 @@ The OpenCode adapter needs a system prompt that establishes the player as part o
 
 - Ensemble identity
 - Player name + role
-- Available claude-tempo MCP tools (cue, report, recall, ensemble, …)
+- Available agent-tempo MCP tools (cue, report, recall, ensemble, …)
 - Coordination conventions (broadcast intent before branch switches, conductor authority, etc.)
 
 Implementer pulls the same `buildServerInstructions(...)` output into the system prompt at session-init time (one-shot, lives in OpenCode's per-session system context — note: NOT explicitly cached client-side because OpenCode handles caching server-side per its provider transform layer).
@@ -955,9 +955,9 @@ Implementer pulls the same `buildServerInstructions(...)` output into the system
 claude-api's addendum tells the model "you do NOT have file edit / shell / web tools" because claude-api has no analog. **OpenCode's addendum says the opposite**: the player IS file-op-capable through OpenCode's own built-in tool registry:
 
 ```
-You are an **opencode** player — you have access to the claude-tempo MCP tools
+You are an **opencode** player — you have access to the agent-tempo MCP tools
 (cue, report, recall, ensemble, broadcast, recruit, set_part, …) AND OpenCode's
-built-in tools (file edits, shell, web search). Use the claude-tempo tools for
+built-in tools (file edits, shell, web search). Use the agent-tempo tools for
 ensemble coordination and OpenCode's built-ins for local task work. Your model
 is delivered via OpenCode, so the underlying provider (Anthropic, OpenAI,
 Bedrock, Ollama, …) is opaque to you and to the rest of the ensemble.
@@ -974,7 +974,7 @@ This is the substantive UX delta vs claude-api: opencode players are full-power,
 | **Cross-provider tool parity testing** | Per #449's body explicitly out of scope for Phase 1. OpenAI GPT-4o and Claude Opus 4.7 may behave subtly differently using the same `cue` tool schema. |
 | **Subprocess-shared `opencode serve`** | Memory savings ~50-100 MB per player, but lifecycle coupling (stuck `prompt_async` blocks all sessions on the shared server) is worse trade-off for v1. |
 | **`type: "remote"` MCP transport** | Share single MCP server across all adapter types via daemon HTTP; composes with #94/#95. Reduces per-player MCP-server-process count. |
-| **OpenCode OAuth flows** | Provider-specific OAuth (GitHub Copilot via OpenCode, ChatGPT account-based) bypassed in v1 via env-var pass-through. Verify whether claude-tempo can pass through cleanly or needs a wrapper. |
+| **OpenCode OAuth flows** | Provider-specific OAuth (GitHub Copilot via OpenCode, ChatGPT account-based) bypassed in v1 via env-var pass-through. Verify whether agent-tempo can pass through cleanly or needs a wrapper. |
 | **Per-provider quota / throttling awareness** | Distinct from stderr-only telemetry. Different providers have different rate-limit shapes; aggregation by provider per ensemble. |
 | **OpenCode version-drift CI** | Pin against latest `~1.14.x` in CI; detect breaking changes within 24h of each minor release. Matches OpenCode's daily cadence. |
 | **Per-turn usage signal + workflow-side aggregation** | When a consumer (cost dashboard / per-session cap / ensemble-level budget) lands, add `recordTurnUsage` signal at that time. Same Phase 2 candidate as claude-api #131's deferred follow-up. |

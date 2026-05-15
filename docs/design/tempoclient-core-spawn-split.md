@@ -10,7 +10,7 @@
 
 ## 0. TL;DR
 
-The current `TempoClient` interface has 37 methods. Exactly **two** of them shell out to a local terminal (`createEnsemble`, `spawnConductor`) — both via `runTempoCli('claude-tempo up …')`. The other 35 are pure Temporal RPC and safe in any process.
+The current `TempoClient` interface has 37 methods. Exactly **two** of them shell out to a local terminal (`createEnsemble`, `spawnConductor`) — both via `runTempoCli('agent-tempo up …')`. The other 35 are pure Temporal RPC and safe in any process.
 
 This is a clean cut. Split the interface into:
 
@@ -29,7 +29,7 @@ Three forces converge:
 
 1. **The SSE event source (#94, #95)** — the new HTTP/SSE daemon endpoint serves a future web dashboard. The aggregate poll loop and per-route handlers will instantiate `TempoClient` to project Temporal state into JSON. A web dashboard host has no TTY; calling `.spawnConductor()` from inside the daemon process would launch a terminal where there's nothing to display it. The current `TempoClient` shape makes that error reachable; a typed split makes it impossible.
 2. **The MCP `restore` tool's docstring contract** — `src/tools/restore.ts` already explicitly disclaims spawn: *"Does NOT spawn a conductor terminal — use the CLI for that."* This is a docstring promise, enforced only by reviewer discipline. It belongs in the type system.
-3. **Future SDK consumers (#67 if it returns)** — exporting `TempoClient` to external Node consumers (`@claude-tempo/client` npm package) means external code has to either (a) accept the `child_process` dependency, or (b) tree-shake around the spawn methods at runtime. A `TempoClientCore` export sidesteps both.
+3. **Future SDK consumers (#67 if it returns)** — exporting `TempoClient` to external Node consumers (`@agent-tempo/client` npm package) means external code has to either (a) accept the `child_process` dependency, or (b) tree-shake around the spawn methods at runtime. A `TempoClientCore` export sidesteps both.
 
 The boundary aligns with v0.27's three-layer architecture: process layer (TTY-bound) vs Temporal/aggregate layer (process-independent). The split makes the architecture self-enforcing.
 
@@ -66,8 +66,8 @@ The complete inventory of `src/client/interface.ts` `TempoClient` (as of `main` 
 
 | Method | Shells out to | Caller pattern |
 |---|---|---|
-| `createEnsemble({ ensemble, workDir?, lineup? })` | `claude-tempo up <ensemble> [--lineup <name>]` | TUI "create ensemble" wizard, CLI bootstrap |
-| `spawnConductor({ ensemble, workDir? })` | `claude-tempo up <ensemble>` (idempotent at workflow layer) | TUI restore flow, CLI `restore` follow-up |
+| `createEnsemble({ ensemble, workDir?, lineup? })` | `agent-tempo up <ensemble> [--lineup <name>]` | TUI "create ensemble" wizard, CLI bootstrap |
+| `spawnConductor({ ensemble, workDir? })` | `agent-tempo up <ensemble>` (idempotent at workflow layer) | TUI restore flow, CLI `restore` follow-up |
 
 Both share the same private `runTempoCli(args, workDir?)` helper at `src/client/index.ts:90-102`. The helper imports `child_process` dynamically (lazy import — already a defensive pattern).
 
@@ -179,7 +179,7 @@ export interface TempoClientCore {
 export interface TempoClientWithSpawn extends TempoClientCore {
   /**
    * Spawn a new conductor terminal for a brand-new ensemble. Shells out to
-   * `claude-tempo up <ensemble>`. **Requires a TTY context** — DO NOT call
+   * `agent-tempo up <ensemble>`. **Requires a TTY context** — DO NOT call
    * from MCP tools, the daemon, or other headless processes.
    */
   createEnsemble(opts: CreateEnsembleOpts): Promise<void>;
@@ -320,7 +320,7 @@ Status quo plus comments.
 ## 9. Open questions (none blocking)
 
 1. **`createTempoClient` deprecation timeline** — keep the alias indefinitely, or sunset in v0.30+ with a codemod? Recommendation: keep indefinitely; aliases are free.
-2. **`@claude-tempo/client` npm package** — if/when the SDK story revives (#67), `TempoClientCore` is the natural export. Out of scope for this spike.
+2. **`@agent-tempo/client` npm package** — if/when the SDK story revives (#67), `TempoClientCore` is the natural export. Out of scope for this spike.
 3. **`TempoClientReadOnly` future tier** — file as a follow-up issue if the SSE aggregate ever wants it. Not now.
 
 ---

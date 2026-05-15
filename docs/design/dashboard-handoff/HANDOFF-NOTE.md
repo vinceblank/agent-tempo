@@ -2,9 +2,9 @@
 
 ## What this is
 
-This is a **Claude Design (claude.ai/design) handoff bundle** for the claude-tempo web dashboard,
-corresponding to issues [#340](https://github.com/vinceblank/claude-tempo/issues/340) and
-[#389](https://github.com/vinceblank/claude-tempo/issues/389).
+This is a **Claude Design (claude.ai/design) handoff bundle** for the agent-tempo web dashboard,
+corresponding to issues [#340](https://github.com/vinceblank/agent-tempo/issues/340) and
+[#389](https://github.com/vinceblank/agent-tempo/issues/389).
 
 vinceblank mocked up the dashboard UI in Claude Design, then exported this bundle. Three versions
 exist in the wild:

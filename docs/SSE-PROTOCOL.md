@@ -1,6 +1,6 @@
 # SSE Protocol Reference
 
-This document is the authoritative reference for the **HTTP/SSE event source** exposed by the claude-tempo daemon (#94, #95). It mirrors the role of [`WIRE-PROTOCOL.md`](WIRE-PROTOCOL.md) for the Temporal layer: every endpoint, event name, and payload here is part of a stable contract between the daemon and any consumer (TUI, web dashboard, CLI follower, third-party integration).
+This document is the authoritative reference for the **HTTP/SSE event source** exposed by the agent-tempo daemon (#94, #95). It mirrors the role of [`WIRE-PROTOCOL.md`](WIRE-PROTOCOL.md) for the Temporal layer: every endpoint, event name, and payload here is part of a stable contract between the daemon and any consumer (TUI, web dashboard, CLI follower, third-party integration).
 
 ## Stability guarantee
 
@@ -20,7 +20,7 @@ This document is the authoritative reference for the **HTTP/SSE event source** e
 | Default bind | `127.0.0.1:8473` | Loopback only by default. Port: `t-e-m-p-o` mnemonic; not IANA-registered — operators MAY override. |
 | Bind override | `CLAUDE_TEMPO_HTTP_BIND=0.0.0.0` | Forces token mode (see §3). Daemon refuses to start if token mode prerequisites unmet. |
 | Port override | `CLAUDE_TEMPO_DAEMON_PORT` | |
-| Port discovery | `~/.claude-tempo/daemon.port` | Atomic-write file containing the bound port. TUI reads this on startup so the port is config-free for local consumers. Removed on daemon shutdown. |
+| Port discovery | `~/.agent-tempo/daemon.port` | Atomic-write file containing the bound port. TUI reads this on startup so the port is config-free for local consumers. Removed on daemon shutdown. |
 | Snapshot Content-Type | `application/json; charset=utf-8` | |
 | Stream Content-Type | `text/event-stream; charset=utf-8` | |
 | Encoding | UTF-8 | Required by SSE spec. |
@@ -70,7 +70,7 @@ calls (which carry their own Temporal-backed durability).
 
 | Field | Value |
 |---|---|
-| Path | `~/.claude-tempo/config.json` |
+| Path | `~/.agent-tempo/config.json` |
 | Field | `httpToken: string` |
 | Auto-generation | First daemon boot with bearer mode required AND no `httpToken` set: daemon writes `crypto.randomBytes(32).toString('base64url')` to the file (mode `0600`). |
 | Rotation | Delete the field; next daemon boot regenerates. Live SSE connections retain their grant; new connections must present the new token. |
@@ -377,7 +377,7 @@ Contrast with `event: gap`, which is a **hard gap** spanning all event kinds and
 | Source signal | Cadence | Rule |
 |---|---|---|
 | Daemon aggregate poll | every **750 ms** | Single internal loop; mirrors today's TUI fan-out once per tick. Subscriber count has zero impact on Temporal RPC volume. |
-| **Aggregate poll backpressure** | serial-with-skip | If a tick's Temporal queries don't complete before the next 750 ms boundary, the next tick is **skipped** and the daemon emits a structured warn-log (`[claude-tempo:aggregate] tick skipped — prior tick still in flight (Xms)`). The daemon NEVER has more than one in-flight aggregate fetch. Overlapping ticks would risk unbounded RPC volume during Temporal slowness; serial-with-skip is the conservative ceiling. Persistent skips (e.g. ≥5 in 60 s) are an operator alert signal — surface in `/v1/health` as a future field if metrics warrant. |
+| **Aggregate poll backpressure** | serial-with-skip | If a tick's Temporal queries don't complete before the next 750 ms boundary, the next tick is **skipped** and the daemon emits a structured warn-log (`[agent-tempo:aggregate] tick skipped — prior tick still in flight (Xms)`). The daemon NEVER has more than one in-flight aggregate fetch. Overlapping ticks would risk unbounded RPC volume during Temporal slowness; serial-with-skip is the conservative ceiling. Persistent skips (e.g. ≥5 in 60 s) are an operator alert signal — surface in `/v1/health` as a future field if metrics warrant. |
 | **Per-ensemble fan-out carry-forward (#550)** | bounded by `MAX_CONSECUTIVE_FAILURES = 20` | When per-ensemble fan-out (`buildEnsembleSnapshot` per ensemble) fails transiently — timeout, query error, network blip — the ensemble is **carried forward** in the cluster-diff input rather than emitting `ensemble.destroyed`. Only `EnsembleNotFoundError` from the existence gate counts as genuine destruction. The cluster diff's `liveEnsembleNames` = (`'ok'` ∪ `'failed'`) outcomes; `'gone'` is the only kind that triggers `ensemble.destroyed`. After 20 consecutive `'failed'` outcomes (~15 s at 750 ms cadence — matches the tick watchdog ceiling), the ensemble is promoted to `'gone'` and a single `ensemble.destroyed` event fires. Carry-forward means per-track diff state (`playerPhases`, `flags`, `schedulesHash`, `chatIds`) is NOT updated for `'failed'` ticks — the next successful tick observes the truthful prior state and emits player-level events with one-tick delay. Prevents the pre-#550 phantom-destroy bug where a transient per-ensemble timeout silently triggered `ensemble.destroyed` to every connected dashboard subscriber. |
 | `ClaudeTempoAttachmentState` change | ≤ once / 250 ms / playerId | Latest-wins debounce |
 | `maestroEnsembleChat` append | per-message | Hard cap 100/sec/ensemble; excess → one `chat.compressed` |
@@ -527,14 +527,14 @@ Three endpoints surface on-disk catalog data so the dashboard's CreateEnsemble +
 | Method | Path | Body shape | Success response | Notes |
 |---|---|---|---|---|
 | `GET` | `/v1/agent-types` | — | `200 { agentTypes: [{ name, description?, source }] }` | `source: 'project' \| 'user' \| 'shipped'`. Three-tier dedup (project > user > shipped). On-disk `path` and `nativeResolvable` fields are stripped — privacy contract parity with `HostProfile`. |
-| `GET` | `/v1/lineups` | — | `200 { lineups: [{ name, description?, players, source }] }` | `source: 'saved' \| 'shipped'`. Saved (`~/.claude-tempo/ensembles/`) wins over shipped (`<package-root>/examples/ensembles/`). Malformed YAML rows are silently skipped — `loadLineup`'s strict validation runs at recruit time, so the picker only surfaces well-formed entries. |
+| `GET` | `/v1/lineups` | — | `200 { lineups: [{ name, description?, players, source }] }` | `source: 'saved' \| 'shipped'`. Saved (`~/.agent-tempo/ensembles/`) wins over shipped (`<package-root>/examples/ensembles/`). Malformed YAML rows are silently skipped — `loadLineup`'s strict validation runs at recruit time, so the picker only surfaces well-formed entries. |
 | `POST` | `/v1/ensembles` | `{ name, lineup?, host?, startMode?, conductorInstructions? }` | `201 { ensemble, conductorPlayerId, lineup, recruitedPlayers, playerErrors? }` | Recruits the conductor (`isConductor: true`), then fans out lineup players if a lineup was supplied. |
 
 ### POST `/v1/ensembles` semantics
 
 `startMode` ∈ `{ 'hold', 'release' }`. `hold` passes `held: true` to every recruit; `release` is the default (immediate run). `conductorInstructions` is forwarded as the conductor's `initialMessage`.
 
-**Skipped vs CLI `claude-tempo up` (intentional)**:
+**Skipped vs CLI `agent-tempo up` (intentional)**:
 
 - No Temporal-server start: the daemon serving this request already proves Temporal is up.
 - No daemon-start / agent-type-install / MCP-register: a browser caller doesn't go through that pre-flight.
@@ -570,7 +570,7 @@ Same as §11b — POST/GET method-not-allowed surfaces fall through to the stand
 
 | File | Responsibility |
 |---|---|
-| `src/http/server.ts` | `http.createServer`, port-file write to `~/.claude-tempo/daemon.port`, bind/CORS/bearer middleware, route table |
+| `src/http/server.ts` | `http.createServer`, port-file write to `~/.agent-tempo/daemon.port`, bind/CORS/bearer middleware, route table |
 | `src/http/aggregate.ts` | 750 ms poll loop, diff vs last snapshot, emit events to ring buffer |
 | `src/http/events.ts` | `EnsembleEventBus`, ring buffer, `Last-Event-ID` replay, throttle/coalesce rules from §6 + §8 |
 | `src/http/event-types.ts` | TS interfaces for every event payload + `SSE_EVENT_KINDS` const array (drift detector) |

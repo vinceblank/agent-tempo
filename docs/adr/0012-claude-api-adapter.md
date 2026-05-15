@@ -7,7 +7,7 @@
 
 ## Context
 
-Today claude-tempo ships two session adapters: `claude-code` (interactive CLI, push-delivery) and `copilot` (SDK-class, pull-delivery via `@github/copilot-sdk`). Both inherit constraints from their underlying processes — interactive TTYs, manual dev-channels prompt bypass, terminal lifecycle baggage. CI / cloud / scheduled-work environments don't have a terminal, and the executor/advisor pattern Anthropic published needs API-direct access to switch models per turn.
+Today agent-tempo ships two session adapters: `claude-code` (interactive CLI, push-delivery) and `copilot` (SDK-class, pull-delivery via `@github/copilot-sdk`). Both inherit constraints from their underlying processes — interactive TTYs, manual dev-channels prompt bypass, terminal lifecycle baggage. CI / cloud / scheduled-work environments don't have a terminal, and the executor/advisor pattern Anthropic published needs API-direct access to switch models per turn.
 
 Issue #131 proposes a third adapter — `claude-api` — that uses the Anthropic Messages API directly. Phase 1 ships the basic headless adapter; Phase 2 (advisor strategy, file-op tools) is explicitly deferred pending strategy clarity on opt-in mechanism, executor/advisor coupling, cost monitoring, fallback behaviour, and audit trail.
 
@@ -37,7 +37,7 @@ Headline locked-in choices:
 - **Conversation state**: rebuilt every turn from workflow `messages[]` + `sentMessages[]` queries. Stateless API + durable workflow = single source of truth. Prompt caching always-on with `cache_control: { type: 'ephemeral' }` on the system prompt + tools head; conversation tail is uncached and walks forward each turn.
 - **Tool-use loop**: AsyncIterable streaming, manual loop (NOT `client.beta.messages.toolRunner` — fights us on lifecycle hooks). SDK `maxRetries: 0` inside the loop (avoids double-execution of side-effecting tools). Stop on `end_turn` / `max_tokens`; on `model_context_window_exceeded` emit a workflow message and exit.
 - **Cancellation**: `AbortController` wired into `messages.create({ signal })`; `onSuperseded()` aborts. Inherited `processingEnd` `finally` ensures the in-flight marker releases even on throw.
-- **Per-turn usage**: structured stderr log line in v1 (`[claude-tempo:claude-api] turn-usage model=… input=… output=… cache_create=… cache_read=… elapsed_ms=… player=…`). **No wire-protocol signal in v1** — adding `recordTurnUsage` without a consumer (cost dashboard / per-session cap) inflates surface for no gain. Forward-compatible: signal can be added later without breaking the adapter.
+- **Per-turn usage**: structured stderr log line in v1 (`[agent-tempo:claude-api] turn-usage model=… input=… output=… cache_create=… cache_read=… elapsed_ms=… player=…`). **No wire-protocol signal in v1** — adding `recordTurnUsage` without a consumer (cost dashboard / per-session cap) inflates surface for no gain. Forward-compatible: signal can be added later without breaking the adapter.
 - **Model selection**: recruit-arg precedence → `CLAUDE_TEMPO_API_MODEL` env → constants-pinned default (`claude-opus-4-7-20250115` at impl time, reviewable at next minor SDK bump).
 - **Context-overflow UX**: emit a workflow message recommending `save_state` + `restart({ loadFromState: true })`. Auto-compact via #334 deferred to Phase 2.
 

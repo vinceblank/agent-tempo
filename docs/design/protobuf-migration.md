@@ -83,13 +83,13 @@ Per-PR rollback cost matrix:
 |---|---|---|---|
 | **PR-1** | `.proto` files, `ts-proto` build step, generated types in `dist-protos/`, decode helper CLI. **Workflow code still uses JSON**; converter NOT switched. | **Free** — `git revert` the PR. No deployed wire change; no in-flight workflow impact. | No |
 | **PR-2** | Workflow + activity code refactored to use generated TS types; tests updated. **Converter still NOT switched** — wire format remains JSON. | **Cheap** — `git revert` reverses the type-import swap and the determinism audit fixes. ~2-3 hours of mechanical un-doing if the audit fixes have downstream effects. No in-flight workflow impact. | No |
-| **PR-3** | `payloadConverterPath` set on `Client`, `Worker`, `TestWorkflowEnvironment`. Wire format flips to protobuf. Major version bump shipped. | **Painful** — republish previous npm tag, redeploy all daemons, destroy-and-restart every running ensemble, operators on every host re-run `claude-tempo down --destroy && up`. **Hours of operator-coordinated effort**, can't be done by one person. | Yes — every operator |
+| **PR-3** | `payloadConverterPath` set on `Client`, `Worker`, `TestWorkflowEnvironment`. Wire format flips to protobuf. Major version bump shipped. | **Painful** — republish previous npm tag, redeploy all daemons, destroy-and-restart every running ensemble, operators on every host re-run `agent-tempo down --destroy && up`. **Hours of operator-coordinated effort**, can't be done by one person. | Yes — every operator |
 
 **The PR-3 cost is the load-bearing risk.** Mitigation:
 
 1. **Soak gate**: PR-3 ships to a staging environment first; runs ≥ 24 hours under realistic load; only then to npm latest tag. The 24h is calibrated against the maestro CAN cycle (every ~12 hours under normal load) so we observe at least one CAN through the new converter.
 2. **Pre-cutover smoke checklist**: PR-3's PR description includes a 10-item operator checklist (destroy old workflows, confirm version, validate decode helper, etc.). Pre-flight rather than post-flight discovery.
-3. **Decode helper required** (§6): operators MUST be able to inspect any in-flight payload during the soak. Without `claude-tempo decode`, post-cutover debugging is opaque-base64-vs-stack-trace.
+3. **Decode helper required** (§6): operators MUST be able to inspect any in-flight payload during the soak. Without `agent-tempo decode`, post-cutover debugging is opaque-base64-vs-stack-trace.
 4. **Communicate the cutover**: PR-3's CHANGELOG entry and release notes explicitly call out the breaking change with operator migration steps.
 
 **Verdict**: rollback is **real and asymmetric**. Pre-cutover free; post-cutover painful. The soak + smoke checklist + decode helper bring the risk to acceptable. **Vetoes are still possible up to and during PR-3** — no irreversibility before the npm publish.
@@ -210,19 +210,19 @@ Issue #319 lists this as "worth building alongside, or skip until pain materiali
 
 Reasoning:
 - The "opaque base64 in `temporal workflow show`" ergonomic regression is a *daily-debugging* tax — not a one-time pain. Operators inspecting workflow history every day will hit this.
-- It's small (~80 LoC) — `claude-tempo decode <payload-base64> [--message <name>]` reads a base64 payload, picks the right message type via the protobuf root, calls `Type.decode(buffer).toJSON()`.
+- It's small (~80 LoC) — `agent-tempo decode <payload-base64> [--message <name>]` reads a base64 payload, picks the right message type via the protobuf root, calls `Type.decode(buffer).toJSON()`.
 - Without it, PR-3's 24h staging soak (per §1.3) is *much* harder — operators can't validate payload shapes during the soak window.
 
 CLI integration:
 ```bash
-$ claude-tempo decode CgVoZWxsbw==
+$ agent-tempo decode CgVoZWxsbw==
 {
   "from": "tempo-architect",
   "text": "hello",
   "responseRequested": true
 }
 
-$ claude-tempo decode CgVoZWxsbw== --message ReceiveMessageArgs
+$ agent-tempo decode CgVoZWxsbw== --message ReceiveMessageArgs
 # Same — explicit type when payload doesn't carry the well-known type metadata
 ```
 
@@ -240,7 +240,7 @@ Two options:
 
 **Selected: v1.0.0.** Reasoning:
 - Wire-protocol cutover is the cleanest moment to drop pre-1.0 semantics. Doing it later means *another* breaking change to mark v1.0 — diluting both.
-- The Anthropic story benefits from a stable public-API claim. claude-tempo packages under `@anthropic-ai/claude-tempo-*` (or similar) reading "1.0.0" instead of "0.28.0" reduces consumer hesitation.
+- The Anthropic story benefits from a stable public-API claim. agent-tempo packages under `@anthropic-ai/agent-tempo-*` (or similar) reading "1.0.0" instead of "0.28.0" reduces consumer hesitation.
 - Concrete commitment forcing function: shipping v1.0.0 means we can't add wire-protocol breaking changes without a v2.0.0 — disciplines future work.
 
 Trade-off: a 1.0 ships with known v1 features only. Coat-check (#318) and SSE Phase 3 PR-4 should be in v1.0 baseline if the timing allows; otherwise they're v1.1 additive features (which is fine — additive doesn't break v1.0 contract).
@@ -259,7 +259,7 @@ const preProtobufCount = await countPreProtobufWorkflows(client);
 if (preProtobufCount > 0) {
   log.fatal(
     `Found ${preProtobufCount} pre-v1.0 workflows in namespace. ` +
-    `Run 'claude-tempo down --destroy' on every active ensemble before ` +
+    `Run 'agent-tempo down --destroy' on every active ensemble before ` +
     `starting the v1.0 daemon. Pre-v1.0 workflows are wire-incompatible with v1.0 workers.`
   );
   process.exit(1);

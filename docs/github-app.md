@@ -29,10 +29,10 @@ different identity) must approve before merge.
 
 ## Credentials layout
 
-Everything lives outside the repo at `~/.claude-tempo/`:
+Everything lives outside the repo at `~/.agent-tempo/`:
 
 ```
-~/.claude-tempo/
+~/.agent-tempo/
 ├── github-app.env                # App ID, Installation ID, key path (sourceable)
 ├── github-app.private-key.pem    # RSA private key (chmod 600 — never commit)
 └── github-app.token.json         # Auto-managed token cache (55-min TTL)
@@ -56,7 +56,7 @@ single invocation.
 ./scripts/ensemble-gh pr create --title "..." --body "..."
 
 # Raw API call as the bot
-./scripts/ensemble-gh api repos/vinceblank/claude-tempo/issues
+./scripts/ensemble-gh api repos/vinceblank/agent-tempo/issues
 ```
 
 The wrapper exec's `gh` directly, so every flag and subcommand works. It also
@@ -85,7 +85,7 @@ talking to a human.
 ```markdown
 
 ---
-🎼 _Posted by [claude-tempo\[bot\]](https://github.com/apps/claude-tempo) —
+🎼 _Posted by [agent-tempo\[bot\]](https://github.com/apps/agent-tempo) —
 an AI ensemble acting on behalf of @vinceblank. For a human, mention @vinceblank directly._
 ```
 
@@ -110,10 +110,10 @@ node scripts/gh-app-token.js --json     # prints full API response with expiry
 node scripts/gh-app-token.js --force    # bypasses the local cache
 ```
 
-It self-loads `~/.claude-tempo/github-app.env` if the env vars aren't already
+It self-loads `~/.agent-tempo/github-app.env` if the env vars aren't already
 set, mints an RS256 JWT from the private key, exchanges it for an installation
 token via GitHub's `/app/installations/{id}/access_tokens` endpoint, and caches
-the result at `~/.claude-tempo/github-app.token.json` (refreshed when <5 min
+the result at `~/.agent-tempo/github-app.token.json` (refreshed when <5 min
 remain).
 
 Plain CommonJS, no npm dependencies — runs without `npm run build`.
@@ -122,13 +122,13 @@ Plain CommonJS, no npm dependencies — runs without `npm run build`.
 
 **`missing env: CLAUDE_TEMPO_GH_APP_*`**  
 The helper couldn't find credentials. Either the env file is missing, or its
-values aren't loaded. Verify `~/.claude-tempo/github-app.env` exists and has
+values aren't loaded. Verify `~/.agent-tempo/github-app.env` exists and has
 all three of `APP_ID`, `INSTALLATION_ID`, `PRIVATE_KEY`.
 
 **`GitHub API 401: Bad credentials`**  
 The JWT was rejected. Usually means the clock is skewed (>60 s off) or the
 private key doesn't match the App ID. Regenerate a key at
-`https://github.com/settings/apps/claude-tempo` if in doubt.
+`https://github.com/settings/apps/agent-tempo` if in doubt.
 
 **`GitHub API 404: Not Found` from `/installations/{id}/access_tokens`**  
 Installation ID is wrong or the app has been uninstalled. Check
@@ -153,10 +153,10 @@ Keys are long-lived and have no automatic expiry. Rotate whenever:
 
 Procedure:
 
-1. `https://github.com/settings/apps/claude-tempo` → **Private keys** → **Generate a private key** (downloads `.pem`).
-2. Move to `~/.claude-tempo/github-app.private-key.pem` (overwriting). `chmod 600`.
+1. `https://github.com/settings/apps/agent-tempo` → **Private keys** → **Generate a private key** (downloads `.pem`).
+2. Move to `~/.agent-tempo/github-app.private-key.pem` (overwriting). `chmod 600`.
 3. Click **Delete** next to the old key on the app settings page.
-4. Delete the cache: `rm ~/.claude-tempo/github-app.token.json`.
+4. Delete the cache: `rm ~/.agent-tempo/github-app.token.json`.
 5. Smoke test: `node scripts/gh-app-token.js --json` should print a fresh token.
 
 ## Smoke test
@@ -167,9 +167,9 @@ Procedure:
 
 # Post and immediately delete a test comment
 url=$(./scripts/ensemble-gh issue comment <issue-number> \
-  --body "smoke test — will be deleted" --repo vinceblank/claude-tempo)
+  --body "smoke test — will be deleted" --repo vinceblank/agent-tempo)
 # verify identity shows as claude-tempo[bot], then:
 comment_id="${url##*issuecomment-}"
 ./scripts/ensemble-gh api -X DELETE \
-  repos/vinceblank/claude-tempo/issues/comments/"$comment_id"
+  repos/vinceblank/agent-tempo/issues/comments/"$comment_id"
 ```

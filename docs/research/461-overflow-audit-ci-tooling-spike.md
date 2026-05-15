@@ -20,7 +20,7 @@
 
 2. **Lean recommendation: HYBRID (Playwright per-Locator screenshot diffs + JS structural assertions, layered)** — the conductor's optional 4th option becomes the primary call. Rationale: (a) #461 needs visual-diff coverage for overlap-into-adjacent; (b) JS assertions are 10× faster + 0-flake for the structural subset they DO catch; (c) Playwright is already wired into CI (zero new infra); (d) baselines stored in-repo (no SaaS spend until the surface stabilises).
 
-3. **Chromatic OSS-free is likely INELIGIBLE.** Their free-for-OSS tier is gated on "open-source *design systems or UI component libraries*." claude-tempo is an MCP server that ships a dashboard, not a component library. Costing assumes the **paid Starter tier ($179/mo, 35k snapshots/mo, $0.008/extra)**. At a realistic ~30 components × 4 viewports × 3 content regimes = 360 snapshots/run × ~50 PR-and-main runs/mo = ~18k snapshots/mo — fits Starter, *just* fits free if we miraculously qualify.
+3. **Chromatic OSS-free is likely INELIGIBLE.** Their free-for-OSS tier is gated on "open-source *design systems or UI component libraries*." agent-tempo is an MCP server that ships a dashboard, not a component library. Costing assumes the **paid Starter tier ($179/mo, 35k snapshots/mo, $0.008/extra)**. At a realistic ~30 components × 4 viewports × 3 content regimes = 360 snapshots/run × ~50 PR-and-main runs/mo = ~18k snapshots/mo — fits Starter, *just* fits free if we miraculously qualify.
 
 4. **Phased path lands cheaply — v0 / v1 / v2 staging.**
    - **v0** (ships in ~3-4 hr): JS structural assertions inside a new `dashboard-overflow` Playwright job. Catches class A (self-overflow) reliably and class D (computed-style drift) cleanly. ~150 LoC, 0 baseline images, 0 SaaS spend.
@@ -137,7 +137,7 @@ Calibrated against the actual project structure:
 
 Per [Chromatic's open-source sponsorship docs](https://www.chromatic.com/docs/open-source/) (validated 2026-04-29): the free OSS tier is restricted to "open-source design systems or UI component libraries." Eligible examples cited: government component libraries, large-org design systems.
 
-claude-tempo is an MCP server with a bundled dashboard — *not* a design system or component library. Eligibility is **probable no** without a special arrangement. The recommendation thus must assume **paid Starter ($179/mo, $2,148/yr)** as the realistic cost — not zero.
+agent-tempo is an MCP server with a bundled dashboard — *not* a design system or component library. Eligibility is **probable no** without a special arrangement. The recommendation thus must assume **paid Starter ($179/mo, $2,148/yr)** as the realistic cost — not zero.
 
 There's a nonzero chance Chromatic accepts our application anyway (they decide case-by-case via in-app chat), but planning around the "lucky outcome" is irresponsible cost analysis.
 

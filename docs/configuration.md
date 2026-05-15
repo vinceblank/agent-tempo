@@ -2,27 +2,27 @@
 
 ## Interactive Setup
 
-Run `claude-tempo config` to save Temporal connection settings so you don't need flags or env vars every time:
+Run `agent-tempo config` to save Temporal connection settings so you don't need flags or env vars every time:
 
 ```
-$ claude-tempo config
+$ agent-tempo config
 
 ? Temporal address (localhost:7233): my-ns.tmprl.cloud:7233
 ? Temporal namespace (default): my-ns.abc123
 ? Auth method: (None / API key / mTLS)
 ? API key: ****
-Saved to ~/.claude-tempo/config.json
+Saved to ~/.agent-tempo/config.json
 ✓ Connected successfully
 ```
 
-Settings are stored in `~/.claude-tempo/config.json`. You can also set values non-interactively:
+Settings are stored in `~/.agent-tempo/config.json`. You can also set values non-interactively:
 
 ```bash
-claude-tempo config set temporalAddress my-ns.tmprl.cloud:7233
-claude-tempo config set temporalNamespace my-ns.abc123
-claude-tempo config set temporalApiKey tcl_...
-claude-tempo config set claude-bin /usr/local/bin/claude-nightly
-claude-tempo config show
+agent-tempo config set temporalAddress my-ns.tmprl.cloud:7233
+agent-tempo config set temporalNamespace my-ns.abc123
+agent-tempo config set temporalApiKey tcl_...
+agent-tempo config set claude-bin /usr/local/bin/claude-nightly
+agent-tempo config show
 ```
 
 ## Resolution Order
@@ -31,8 +31,8 @@ Settings are resolved in this order (first match wins):
 
 1. CLI flags (`--temporal-address`, `--temporal-namespace`, etc.)
 2. Environment variables (`TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, etc.)
-3. claude-tempo config file (`~/.claude-tempo/config.json`)
-4. Temporal CLI config (`~/.config/temporalio/temporal.yaml`) — if you've already configured the Temporal CLI, claude-tempo reads it automatically
+3. agent-tempo config file (`~/.agent-tempo/config.json`)
+4. Temporal CLI config (`~/.config/temporalio/temporal.yaml`) — if you've already configured the Temporal CLI, agent-tempo reads it automatically
 5. Defaults (`localhost:7233`, `default` namespace)
 
 ## Environment Variables
@@ -44,13 +44,13 @@ Settings are resolved in this order (first match wins):
 | `TEMPORAL_API_KEY` | *(none)* | Temporal Cloud API key |
 | `TEMPORAL_TLS_CERT_PATH` | *(none)* | mTLS client certificate path |
 | `TEMPORAL_TLS_KEY_PATH` | *(none)* | mTLS client key path |
-| `CLAUDE_TEMPO_TASK_QUEUE` | `claude-tempo` | Task queue name |
+| `CLAUDE_TEMPO_TASK_QUEUE` | `agent-tempo` | Task queue name |
 | `CLAUDE_TEMPO_ENSEMBLE` | `default` | Ensemble name |
 | `CLAUDE_TEMPO_CONDUCTOR` | `false` | Enable conductor mode |
 | `CLAUDE_TEMPO_PLAYER_NAME` | *(random hex)* | Player name on startup |
 | `CLAUDE_TEMPO_DEFAULT_AGENT` | `claude` | Default agent type (`claude` or `copilot`) |
 | `CLAUDE_TEMPO_CLAUDE_BIN` | *(auto-detected)* | Path to a custom `claude` executable. Takes precedence over the config file setting and `which`/`where` auto-detection. Useful when multiple Claude versions are installed or the binary is not on `PATH`. |
-| `CLAUDE_TEMPO_DEV_MODE` | `false` | Enable dev profile (`1` or `true`). Flips home dir to `~/.claude-tempo-dev/`, HTTP port to 8474, Temporal namespace to `claude-tempo-dev`, task queue to `claude-tempo-dev`. Also enables the mock adapter (`agent: 'mock'`). Same effect as the `--dev` CLI flag. |
+| `CLAUDE_TEMPO_DEV_MODE` | `false` | Enable dev profile (`1` or `true`). Flips home dir to `~/.agent-tempo-dev/`, HTTP port to 8474, Temporal namespace to `agent-tempo-dev`, task queue to `agent-tempo-dev`. Also enables the mock adapter (`agent: 'mock'`). Same effect as the `--dev` CLI flag. |
 
 **Dev-mode mock adapter** (requires `CLAUDE_TEMPO_DEV_MODE=1`):
 
@@ -65,14 +65,14 @@ Settings are resolved in this order (first match wins):
 
 ## Custom Claude Executable
 
-By default, claude-tempo auto-detects the `claude` binary using `which` (POSIX) or `where` (Windows). To use a different binary:
+By default, agent-tempo auto-detects the `claude` binary using `which` (POSIX) or `where` (Windows). To use a different binary:
 
 ```bash
 # Set via env var (takes highest precedence)
 export CLAUDE_TEMPO_CLAUDE_BIN=/usr/local/bin/claude-nightly
 
 # Or persist in config file
-claude-tempo config set claude-bin /usr/local/bin/claude-nightly
+agent-tempo config set claude-bin /usr/local/bin/claude-nightly
 ```
 
 **Resolution order:** `CLAUDE_TEMPO_CLAUDE_BIN` env var → config file → `which`/`where` → bare `claude` fallback.
@@ -81,7 +81,7 @@ Paths with spaces are handled correctly on both Windows and POSIX.
 
 ## Temporal Cloud
 
-For Temporal Cloud, run `claude-tempo config` and provide your cloud address, namespace, and API key. Or set them as environment variables in CI:
+For Temporal Cloud, run `agent-tempo config` and provide your cloud address, namespace, and API key. Or set them as environment variables in CI:
 
 ```bash
 export TEMPORAL_ADDRESS=my-ns.abc123.tmprl.cloud:7233

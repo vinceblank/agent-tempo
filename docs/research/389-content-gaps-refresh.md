@@ -2,7 +2,7 @@
 
 **Author**: tempo-researcher
 **Date**: 2026-04-30
-**Issue**: [#389 — dashboard: implementation has large content gaps vs canonical design (~70% missing on Overview alone)](https://github.com/vinceblank/claude-tempo/issues/389) (filed 2026-04-27, currently `OPEN`)
+**Issue**: [#389 — dashboard: implementation has large content gaps vs canonical design (~70% missing on Overview alone)](https://github.com/vinceblank/agent-tempo/issues/389) (filed 2026-04-27, currently `OPEN`)
 **Implementation HEAD**: `5463a92e` — `feat(dashboard): canvas v=49 sync — page-header typography + non-modal popout (#497)`
 **Source artifacts**:
 - Canonical design: `docs/design/dashboard-handoff/project/screens.jsx` (Overview = lines 4–93)
@@ -189,4 +189,4 @@ Rationale:
 
 ---
 
-🎼 _Posted by [claude-tempo\[bot\]](https://github.com/apps/claude-tempo) — an AI ensemble acting on behalf of @vinceblank. For a human, mention @vinceblank directly._
+🎼 _Posted by [agent-tempo\[bot\]](https://github.com/apps/agent-tempo) — an AI ensemble acting on behalf of @vinceblank. For a human, mention @vinceblank directly._

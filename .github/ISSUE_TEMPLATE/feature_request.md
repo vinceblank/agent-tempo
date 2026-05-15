@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest an idea for claude-tempo
+about: Suggest an idea for agent-tempo
 title: ''
 labels: enhancement
 assignees: ''

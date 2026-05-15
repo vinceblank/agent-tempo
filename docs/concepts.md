@@ -90,12 +90,12 @@ operators never need to think about cross-host orphans at all.
 
 Three discovery surfaces let you see them when you do need to:
 
-- **`claude-tempo restore <ensemble>`** (default) — reattaches dormant orphans on the **local**
+- **`agent-tempo restore <ensemble>`** (default) — reattaches dormant orphans on the **local**
   host. Cross-host orphans (those whose `preferredHost` points elsewhere) are skipped silently
   with `reason: 'preferredHost'` — the remote daemon is the authoritative restorer and the local
   host shouldn't barge in. Almost always the right behavior.
 
-- **`claude-tempo restore --all-hosts`** (#151) — cluster-view, read-only listing. Surfaces every
+- **`agent-tempo restore --all-hosts`** (#151) — cluster-view, read-only listing. Surfaces every
   orphan in the namespace grouped by `preferredHost`, annotated with a liveness label joined
   against `listHosts()`:
   - `[live]` — preferred host's daemon is polling now (`HOST_FRESHNESS_THRESHOLD_MS`, 60s).
@@ -117,7 +117,7 @@ Three discovery surfaces let you see them when you do need to:
   another host hard-rejects until the operator types the holder's hostname exactly. The same
   finger habit that mashes `y` at any prompt cannot satisfy a name-the-target check.
 
-The cluster-view path is opt-in to keep `claude-tempo restore <ensemble>` scriptable and
+The cluster-view path is opt-in to keep `agent-tempo restore <ensemble>` scriptable and
 backward-compatible — scripts that previously expected the per-host narrow output continue to
 work unchanged.
 
@@ -133,7 +133,7 @@ Three shipped adapters:
   `sendAndWait` delivery, 30s heartbeat lease.
 - `DirectApiAttachment` (`src/adapters/claude-api/`) — headless Anthropic Messages API adapter
   (#131 Phase C). No TTY, no Claude Code CLI; runs in any cloud / CI / scheduled-work
-  environment. Tool surface limited to claude-tempo MCP tools (cue, report, recall, …) — file-edit
+  environment. Tool surface limited to agent-tempo MCP tools (cue, report, recall, …) — file-edit
   / shell / web tools deferred to Phase 2. Requires `ANTHROPIC_API_KEY` + the
   `@anthropic-ai/sdk` optional dependency. Recruit via `recruit({ agent: 'claude-api', model? })`.
 
@@ -161,7 +161,7 @@ update, `destroy` update.
 **Heartbeat invariant** (#249): After a successful `claimAttachment`, the adapter's heartbeat
 loop MUST fire at the configured `heartbeatMs` cadence for the life of the lease. Silent
 orphaning of the loop (unhandled error, missed reschedule) is now detectable via structured
-log lines emitted by `src/adapters/base.ts` (grep `[claude-tempo:adapter]`):
+log lines emitted by `src/adapters/base.ts` (grep `[agent-tempo:adapter]`):
 - `first heartbeat scheduled in Xms` — after claim
 - `heartbeat#1 delivered` — first successful tick; reset on reconnect/CAN-rebind
 - `heartbeats-delivered=N / phase-ticks=N` — liveness breadcrumb every 10 ticks
@@ -219,8 +219,8 @@ cannot spoof. Same structural-permission pattern as `save_state` / `fetch_state`
 The dashboard surface for coat-check (visualizing entries, fetch counts, expirations) is a
 separate follow-up; the `coat_check_list` query is the integration point.
 
-**Per-host task queues** — Each host running the claude-tempo daemon also runs a
-`claude-tempo-{hostname}` activity worker for local-only operations (e.g., `spawnProcess`).
+**Per-host task queues** — Each host running the agent-tempo daemon also runs a
+`agent-tempo-{hostname}` activity worker for local-only operations (e.g., `spawnProcess`).
 This enables cross-machine recruiting — the `recruit`, `restart`, and `migrate` tools accept
 an optional `host` parameter to route the spawn to a remote machine's task queue. The target
 host must have an active daemon running.
@@ -289,13 +289,13 @@ a blocker from any player fails the entire stage. Stages survive `continueAsNew`
 
 - **Explicit hold** (`load_lineup(hold: true)`, conductor-invoked mid-work): spawns players with
   locked outboxes and a standby message instead of their real task. When ready, `release` (MCP
-  tool or `claude-tempo release` CLI) unlocks outboxes and delivers the actual task messages. Use
+  tool or `agent-tempo release` CLI) unlocks outboxes and delivers the actual task messages. Use
   case: pre-warm a full team before kicking off a long job.
 
 **Pause / Resume** — Ensemble-wide mid-session flow control. `pause_ensemble` locks all session
 outboxes and signals the scheduler to skip fires; `resume_ensemble` reverses both. `stop` outbox
 entries bypass the pause lock and are always dispatched. Pass `release: true` to `resume_ensemble`
-(or `--release` on `claude-tempo resume`) to also release any held sessions in the same call —
+(or `--release` on `agent-tempo resume`) to also release any held sessions in the same call —
 idempotent on non-held sessions. Pause state is owned by the per-ensemble Maestro
 (`maestroSetPaused` signal) and synced to sessions and the scheduler.
 
@@ -328,7 +328,7 @@ Uses Global Maestro as the primary source with graceful fallback to per-ensemble
 direct workflow list queries.
 
 **Ensemble state** — Every ensemble is classified into one of three states by TempoClient and
-surfaced in the TUI home view and `claude-tempo status`:
+surfaced in the TUI home view and `agent-tempo status`:
 
 - **online** — the maestro hub is unpaused (or, if no hub exists yet, at least one player has a
   live adapter attached).

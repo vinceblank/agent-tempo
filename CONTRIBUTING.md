@@ -1,6 +1,6 @@
-# Contributing to claude-tempo
+# Contributing to agent-tempo
 
-Thank you for your interest in contributing to claude-tempo! This guide will help you get started.
+Thank you for your interest in contributing to agent-tempo! This guide will help you get started.
 
 ## Development Setup
 
@@ -13,8 +13,8 @@ Thank you for your interest in contributing to claude-tempo! This guide will hel
 
 ```bash
 # Clone the repository
-git clone https://github.com/vinceblank/claude-tempo.git
-cd claude-tempo
+git clone https://github.com/vinceblank/agent-tempo.git
+cd agent-tempo
 
 # Install dependencies
 npm install
@@ -112,8 +112,8 @@ See [CLAUDE.md](./CLAUDE.md) for a detailed overview of the codebase structure, 
 - TypeScript strict mode is enabled.
 - No additional linter/formatter is configured — follow the patterns in existing code.
 - Prefer explicit types over `any`.
-- Use the `log` pattern (`const log = (...args: unknown[]) => console.error('[claude-tempo:module]', ...args)`) for debug logging.
+- Use the `log` pattern (`const log = (...args: unknown[]) => console.error('[agent-tempo:module]', ...args)`) for debug logging.
 
 ## Questions?
 
-Open an issue or start a discussion on the [GitHub repository](https://github.com/vinceblank/claude-tempo).
+Open an issue or start a discussion on the [GitHub repository](https://github.com/vinceblank/agent-tempo).

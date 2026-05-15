@@ -1,4 +1,4 @@
-# Packaged web dashboard — `claude-tempo dashboard`
+# Packaged web dashboard — `agent-tempo dashboard`
 
 > **Status**: Design proposal (spike — no implementation in this branch)
 > **Author**: tempo-architect
@@ -10,7 +10,7 @@
 
 ## 0. TL;DR
 
-Ship a React + Vite + Tailwind 4 + shadcn/ui SPA at `dashboard/`, prebuilt at publish time, served by the existing daemon HTTP server at `/dashboard` on the same port as `/v1/*`. New CLI verb `claude-tempo dashboard` opens the local browser. Cross-device access via Tailscale or LAN with a **QR-code one-time-pairing-token → long-lived bearer** handshake.
+Ship a React + Vite + Tailwind 4 + shadcn/ui SPA at `dashboard/`, prebuilt at publish time, served by the existing daemon HTTP server at `/dashboard` on the same port as `/v1/*`. New CLI verb `agent-tempo dashboard` opens the local browser. Cross-device access via Tailscale or LAN with a **QR-code one-time-pairing-token → long-lived bearer** handshake.
 
 The SPA consumes the existing daemon HTTP/SSE event source (PRs #320, #324, #325) via `TempoClient` — **zero new wire-protocol surface**, **zero new daemon endpoints** beyond a single static-asset handler (`src/http/dashboard.ts`, ~80 LoC) and a one-time-pairing endpoint pair. Old non-dashboard users pay no install or runtime cost.
 
@@ -44,7 +44,7 @@ Issue #340 makes the case explicit; the infrastructure to support a web dashboar
 - **Daemon HTTP server** (PR #320, merged) — `/v1/state/:ensemble`, `/v1/health`, `/v1/ensembles`, `/v1/hosts` snapshot endpoints
 - **SSE streaming** (PR #324, merged) — `/v1/events/:ensemble`, `/v1/events` real-time event source
 - **`TempoClient.subscribe()`** (PR #325, merged) — fetch-based AsyncIterable streaming consumer
-- **Auth + CORS** — bearer token in `~/.claude-tempo/config.json`; default `localhost:*` allowlist; non-loopback bind requires bearer
+- **Auth + CORS** — bearer token in `~/.agent-tempo/config.json`; default `localhost:*` allowlist; non-loopback bind requires bearer
 - **Multi-host support** (#274 v0.27) — per-host task queues, host profiles surfaced via `/v1/hosts`
 
 The dashboard is a **thin client over `TempoClient`** — no new wire protocol, no new auth surface, no new daemon endpoints needed for v1 beyond static-asset serving + a tiny pairing endpoint pair for cross-device.
@@ -58,8 +58,8 @@ The canonical visual design lives in `docs/design/dashboard-handoff/` (PR #345).
 ## 2. Repo layout — locked
 
 ```
-claude-tempo/                          # existing repo root
-├── package.json                       # root (claude-tempo)
+agent-tempo/                          # existing repo root
+├── package.json                       # root (agent-tempo)
 ├── src/                               # existing TS sources
 │   └── http/
 │       └── dashboard.ts               # NEW — static-asset handler + SPA fallback (~80 LoC)
@@ -96,7 +96,7 @@ claude-tempo/                          # existing repo root
 │   │   ├── styles/
 │   │   │   ├── tokens.css             # CSS-first @theme — maps from dashboard-handoff/styles.css
 │   │   │   └── globals.css            # base resets, typography, density variables
-│   │   └── types.ts                   # Re-exports from claude-tempo's TempoClient types
+│   │   └── types.ts                   # Re-exports from agent-tempo's TempoClient types
 │   ├── public/
 │   │   └── (icons / favicon — uses dashboard-handoff/assets/)
 │   ├── tests/
@@ -241,8 +241,8 @@ export function handlePairConsume(...) { ... }
 The dashboard SPA receives its bearer one of three ways:
 
 1. **Loopback** — no bearer needed; daemon serves dashboard + `/v1/*` over HTTP without auth on `127.0.0.1`.
-2. **Cross-device pair** — operator runs `claude-tempo dashboard --pair`, daemon prints a QR code. Phone scans → SPA loads at `http://<host>:<port>/dashboard/?pair=<token>` → SPA exchanges via `GET /dashboard/api/pair/:token` for the bearer → stores in `localStorage`.
-3. **Manual paste** — operator copies bearer from `~/.claude-tempo/config.json`, pastes into a settings sheet on the SPA. Fallback path; QR is the recommended UX.
+2. **Cross-device pair** — operator runs `agent-tempo dashboard --pair`, daemon prints a QR code. Phone scans → SPA loads at `http://<host>:<port>/dashboard/?pair=<token>` → SPA exchanges via `GET /dashboard/api/pair/:token` for the bearer → stores in `localStorage`.
+3. **Manual paste** — operator copies bearer from `~/.agent-tempo/config.json`, pastes into a settings sheet on the SPA. Fallback path; QR is the recommended UX.
 
 ### 4.4 CORS
 
@@ -253,7 +253,7 @@ Existing allowlist (`localhost:*` + `CLAUDE_TEMPO_CORS_ORIGINS`) covers same-ori
 ## 5. CLI command
 
 ```
-claude-tempo dashboard [--port <n>] [--bind <addr>] [--no-open] [--pair]
+agent-tempo dashboard [--port <n>] [--bind <addr>] [--no-open] [--pair]
 ```
 
 | Flag | Purpose |
@@ -296,11 +296,11 @@ async function runDashboard(args: DashboardArgs) {
 
 ### 6.1 `TempoClient` browser-mode integration
 
-PR #325 already shipped fetch-based AsyncIterable subscribe. The dashboard imports the published `claude-tempo` types directly:
+PR #325 already shipped fetch-based AsyncIterable subscribe. The dashboard imports the published `agent-tempo` types directly:
 
 ```ts
 // dashboard/src/lib/client.ts
-import { createTempoClientCore } from 'claude-tempo/client/core';
+import { createTempoClientCore } from 'agent-tempo/client/core';
 import { getBearerFromStorage } from './auth';
 
 // NOTE: We use `createTempoClientCore` (no spawn capability) — the dashboard
@@ -315,9 +315,9 @@ export function buildClient() {
 }
 ```
 
-**Caveat**: the dashboard is a peer in the monorepo; importing from `claude-tempo` requires a workspace setup. Two options:
+**Caveat**: the dashboard is a peer in the monorepo; importing from `agent-tempo` requires a workspace setup. Two options:
 
-- **Path-alias**: `dashboard/tsconfig.json` adds `"paths": { "claude-tempo/*": ["../src/*"] }`; `vite.config.ts` mirrors with `resolve.alias`. Simpler; chosen.
+- **Path-alias**: `dashboard/tsconfig.json` adds `"paths": { "agent-tempo/*": ["../src/*"] }`; `vite.config.ts` mirrors with `resolve.alias`. Simpler; chosen.
 - **npm workspaces** with `dashboard` as a workspace package. Heavier; deferred.
 
 ### 6.2 TanStack Query + SSE bridge (`dashboard/src/lib/sse.ts`)
@@ -375,7 +375,7 @@ export const usePrefs = create(persist<{
     setDensity: (density) => set({ density }),
     setAccent: (accent) => set({ accent }),
   }),
-  { name: 'claude-tempo-dashboard-prefs' },
+  { name: 'agent-tempo-dashboard-prefs' },
 ));
 ```
 
@@ -407,7 +407,7 @@ Document in `dashboard/README.md` and `docs/development.md`: install Tailscale o
 ### 7.2 QR-code pairing flow
 
 ```
-1. Operator on host runs:           claude-tempo dashboard --pair
+1. Operator on host runs:           agent-tempo dashboard --pair
 2. Daemon mints token (32-byte b64url, 5-min TTL, single-use)
 3. CLI prints QR code encoding:     http://<host>:<port>/dashboard/?pair=<token>
 4. Phone scans QR → loads SPA
@@ -417,7 +417,7 @@ Document in `dashboard/README.md` and `docs/development.md`: install Tailscale o
 8. Subsequent requests use the bearer; pair token is now consumed (subsequent uses 410)
 ```
 
-If the QR is shared / token expires before scan → SPA shows a "pairing expired, run `claude-tempo dashboard --pair` again" banner.
+If the QR is shared / token expires before scan → SPA shows a "pairing expired, run `agent-tempo dashboard --pair` again" banner.
 
 ### 7.3 Mobile responsive
 
@@ -495,7 +495,7 @@ The Zustand prefs store sets `document.documentElement.dataset.density = String(
 | **Type badge** (tiny chip) | `primitives.jsx:83-98` | Port verbatim; `hueForType` for color |
 | **Brandmark** (metronome + wordmark) | `primitives.jsx:30-41` | Port verbatim |
 
-These are NOT shadcn primitives — they're claude-tempo-specific. Live under `dashboard/src/components/tempo/`.
+These are NOT shadcn primitives — they're agent-tempo-specific. Live under `dashboard/src/components/tempo/`.
 
 ### 8.5 Tweaks panel — defer to dashboard-internal Settings sheet
 
@@ -613,7 +613,7 @@ CI step `npm run size-limit` after `build:dashboard`. Hard fail if exceeded — 
 
 Small pack — not full coverage:
 
-- Smoke 1: `claude-tempo dashboard` opens, Overview loads, ensemble list renders from snapshot
+- Smoke 1: `agent-tempo dashboard` opens, Overview loads, ensemble list renders from snapshot
 - Smoke 2: cue from Workspace lands as a chat message via SSE round-trip (against test fixture daemon)
 - Smoke 3: phone viewport — Sidebar collapses to Sheet, PhoneAppBar visible
 - Smoke 4: pairing flow — `--pair` mints token; SPA exchanges; bearer stored
@@ -673,7 +673,7 @@ Engineer's call. PR-A as a solo first drop is good for early review.
 
 ### 13.3 Alignment with v1.0 release theme
 
-If protobuf migration (#319) lands as v1.0, the dashboard could be a v1.0 launch headline — "claude-tempo, now with mobile-friendly web dashboard". Consider sequencing for that.
+If protobuf migration (#319) lands as v1.0, the dashboard could be a v1.0 launch headline — "agent-tempo, now with mobile-friendly web dashboard". Consider sequencing for that.
 
 ---
 

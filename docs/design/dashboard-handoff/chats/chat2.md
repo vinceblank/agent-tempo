@@ -1,4 +1,4 @@
-# Claude-Tempo Dashboard
+# Agent-Tempo Dashboard
 
 _Started 2026-04-25 01:56 UTC_
 
@@ -6,11 +6,11 @@ _Started 2026-04-25 01:56 UTC_
 
 ## User
 
-In the claude-tempo repo we have the TUI interface and you created the TUI Design System, now I want to create the ultimate dashboard for the claude-tempo Maestro as a web interface leveraging shadcn and tailwind.  It will serve as the master interface with interacting with and orchestrating ensembles and players - multiple AI agents interacting and coordinating together with a user at the helm overseeing and guiding from this dashboard.
+In the agent-tempo repo we have the TUI interface and you created the TUI Design System, now I want to create the ultimate dashboard for the agent-tempo Maestro as a web interface leveraging shadcn and tailwind.  It will serve as the master interface with interacting with and orchestrating ensembles and players - multiple AI agents interacting and coordinating together with a user at the helm overseeing and guiding from this dashboard.
 
 ## Assistant
 
-I'll start by exploring the project to understand the existing TUI design system and any context that's already been established for claude-tempo.
+I'll start by exploring the project to understand the existing TUI design system and any context that's already been established for agent-tempo.
 
 _[tool: list_files]_
 
@@ -60,8 +60,8 @@ I want to flag two gaps before I dive in — both will dramatically improve the 
 
 **1. The `/assets` folder is empty.** No metronome logos are present in this project. Could you upload them (drag into chat, or use the Import menu)?
 
-**2. I don't see the claude-tempo codebase attached.** You mentioned reading the code to understand the maestro workflow and interactions. Without it, I'll have to invent the data shapes for ensembles, conductors, players, loadouts, hosts, schedules — and I'll likely miss specifics (e.g. what makes a "loadout" different from a player type, what fields a host has, what the Conductor↔player message routing actually looks like). Could you:
-- Use the **Import menu** → link the claude-tempo repo (local or GitHub), OR
+**2. I don't see the agent-tempo codebase attached.** You mentioned reading the code to understand the maestro workflow and interactions. Without it, I'll have to invent the data shapes for ensembles, conductors, players, loadouts, hosts, schedules — and I'll likely miss specifics (e.g. what makes a "loadout" different from a player type, what fields a host has, what the Conductor↔player message routing actually looks like). Could you:
+- Use the **Import menu** → link the agent-tempo repo (local or GitHub), OR
 - Link a sibling project that has the source, OR
 - Paste key files (the maestro workflow, the player/ensemble types, the conductor types)?
 
@@ -75,7 +75,7 @@ It says github is connected
 
 _[tool: github_list_repos]_
 
-I see `vinceblank/claude-tempo` and `vinceblank/maestro`. Let me explore both.
+I see `vinceblank/agent-tempo` and `vinceblank/maestro`. Let me explore both.
 
 _[tool: github_get_tree]_
 
@@ -99,13 +99,13 @@ _[tool: github_import_files]_
 
 ## User
 
-claude-tempo is the codebase, maestro is being deleted, ignore it
+agent-tempo is the codebase, maestro is being deleted, ignore it
 
 ## Assistant
 
 _[tool: snip]_
 
-Got it — ignoring maestro entirely, claude-tempo is the source of truth. Let me pull the logo assets, the key type definitions, and the TUI App to understand how the maestro (you-the-human) actually interacts with the ensemble.
+Got it — ignoring maestro entirely, agent-tempo is the source of truth. Let me pull the logo assets, the key type definitions, and the TUI App to understand how the maestro (you-the-human) actually interacts with the ensemble.
 
 _[tool: github_import_files]_
 
@@ -306,7 +306,7 @@ _[tool: done]_
 
 _[tool: fork_verifier_agent]_
 
-Built the **claude-tempo Maestro web dashboard** as a single design canvas (`dashboard.html`) with 9 artboards across 4 sections:
+Built the **agent-tempo Maestro web dashboard** as a single design canvas (`dashboard.html`) with 9 artboards across 4 sections:
 
 - **Primary surface** — Ensemble workspace (conductor chat + roster + tempo + event log) and Player detail sheet
 - **Overview & creation** — All-ensembles overview, Create Ensemble wizard, Recruit Player wizard
@@ -319,7 +319,7 @@ Built the **claude-tempo Maestro web dashboard** as a single design canvas (`das
 
 **Caveats / next steps:**
 - No assets folder logos found — the metronome is drawn inline (swinging triangle + pendulum). Drop real logos in `/assets` and I'll wire them in.
-- Data is fictional but shaped to match what I inferred about claude-tempo (ensembles → conductor + players, lineups, hosts, schedules, player types). Once you point me at the real repo I can rename fields and rewire the screens.
+- Data is fictional but shaped to match what I inferred about agent-tempo (ensembles → conductor + players, lineups, hosts, schedules, player types). Once you point me at the real repo I can rename fields and rewire the screens.
 - Settings screen is stubbed (sidebar link only) — say the word if you want it fleshed out.
 - The screens are static hi-fi mocks; happy to wire in interactivity (drill from overview → workspace → player detail) if you want a clickable prototype.
 
@@ -1569,7 +1569,7 @@ Good call — and an important distinction worth making explicit in the design v
 - **Conductor** = the lead Claude in the ensemble (a player with a star, sender of routing decisions)
 - **Maestro** = the *human operator* — you, the dashboard user, the source of `maestro →` messages in the chat
 
-Right now they're visually conflated. The conductor has a treble clef; the Maestro just shows up as a `♩` glyph in chat headers and has no presence in the sidebar header (which currently shows the Maestro logo/wordmark for the *product*, "claude-tempo"). That's three things sharing two icons.
+Right now they're visually conflated. The conductor has a treble clef; the Maestro just shows up as a `♩` glyph in chat headers and has no presence in the sidebar header (which currently shows the Maestro logo/wordmark for the *product*, "agent-tempo"). That's three things sharing two icons.
 
 **Proposal — give Maestro its own mark:**
 
@@ -1578,7 +1578,7 @@ The Maestro is the human at the podium — the one giving the downbeat. The natu
 My pick: **a baton glyph** — it's the simplest, most iconic mark for the role. Drawn as a slightly-angled tapered line with a small bulb at the grip end. Renders well at small sizes, distinct from any musical note, and pairs naturally with the existing musical vocabulary.
 
 **Where Maestro's icon would appear:**
-1. Top-left of the sidebar, replacing or accompanying the "claude-tempo" wordmark, as a "you are signed in as Maestro" affordance
+1. Top-left of the sidebar, replacing or accompanying the "agent-tempo" wordmark, as a "you are signed in as Maestro" affordance
 2. In chat message headers — `🎼 maestro →` becomes `[baton] maestro →`
 3. In the composer — the prompt glyph at the start of the input
 4. Anywhere the system distinguishes "human-sent" vs "Claude-sent" messages
@@ -2081,7 +2081,7 @@ But wait — `showSide` defaults to `false`, so the side rail shouldn't even ren
 
 _[tool: grep]_
 
-Hmm — JSX looks correct. Let me look at the actual screenshot again more carefully. Looking at it: the "claude-tempo" brand mark appears at the *top of the page header area* (above "Ensembles" kicker). The sidebar is rendering its full content (Ensembles, Library, etc.) starting from `claude-tempo` and going down. Then "ensemble / @my-band" page header appears at the very BOTTOM.
+Hmm — JSX looks correct. Let me look at the actual screenshot again more carefully. Looking at it: the "agent-tempo" brand mark appears at the *top of the page header area* (above "Ensembles" kicker). The sidebar is rendering its full content (Ensembles, Library, etc.) starting from `agent-tempo` and going down. Then "ensemble / @my-band" page header appears at the very BOTTOM.
 
 The actual layout error: **the grid is collapsed to a single column**, with sidebar content stacking on top of main content. That means `.app-shell { grid-template-columns: 244px 1fr }` is being overridden, OR the artboard container is so narrow that it fell into a media query.
 
@@ -5045,7 +5045,7 @@ Now I have a clear picture. Let me audit the gaps and decide the right alignment
 
 **Gap audit:**
 
-1. **Brand mark.** Spec shows "M·aestro" with italic serif M on terracotta tile. Reality: `claude-tempo` wordmark + a swinging metronome SVG. The dashboard is the source of truth — it's a richer brand expression. **Fix the spec.**
+1. **Brand mark.** Spec shows "M·aestro" with italic serif M on terracotta tile. Reality: `agent-tempo` wordmark + a swinging metronome SVG. The dashboard is the source of truth — it's a richer brand expression. **Fix the spec.**
 
 2. **Phase chips.** Spec lists `▶ playing / ⏸ paused / ● error`. Reality: phases come from `window.PHASES` (booting, idle, attached, detached, composing, etc.) with custom icons. The dashboard model is correct; the spec is fictional. **Fix the spec to document the real PHASES system.**
 
@@ -5079,7 +5079,7 @@ _[tool: snip]_
 
 _[tool: snip]_
 
-Now I have full context. The product is `claude-tempo`, mark is the metronome SVG + wordmark, italic-serif `M` is the *operator's* avatar (`MaestroMark`), phases come from `PHASES`, etc. Let me rewrite the design system to match reality.
+Now I have full context. The product is `agent-tempo`, mark is the metronome SVG + wordmark, italic-serif `M` is the *operator's* avatar (`MaestroMark`), phases come from `PHASES`, etc. Let me rewrite the design system to match reality.
 
 _[tool: read_file]_
 
@@ -5094,21 +5094,21 @@ _[tool: snip]_
 Now I have the full picture. The DS doc is heavily fictional — wrong product name, wrong brand mark, wrong phase model, wrong tempo strip, wrong sidebar width, wrong italic discipline rule, wrong chat row visuals. Best UX practice: **the design system should document what actually exists in the product** — engineers reference DS docs to build things; if the doc lies, they build the wrong thing.
 
 I'll do a focused rewrite of the inaccurate sections rather than rewriting the entire file. Targeted edits to:
-1. Brand: claude-tempo wordmark + Metronome SVG, MaestroMark for operator
+1. Brand: agent-tempo wordmark + Metronome SVG, MaestroMark for operator
 2. Type: "Instrument Serif as display, italic for accents only"
 3. Layout: sidebar 244px, workspace 1fr/340px
 4. Chat row: real `.msg` patterns
 5. Roster row: real `.roster-item` with PlayerAvatar
 6. Tempo strip: sparkline + bpm overlay
 7. Phase chips: real PHASES model
-8. Voice samples: claude-tempo names
+8. Voice samples: agent-tempo names
 9. Fix `.types-grid` hardcoded paddings
 
 _[tool: str_replace_edit]_
 
 _[tool: str_replace_edit]_
 
-Now the sidebar brand. The serif italic em on the dash for `claude-tempo` is wrong — it's a regular hyphen with terracotta color in the real wordmark. Let me check then fix.
+Now the sidebar brand. The serif italic em on the dash for `agent-tempo` is wrong — it's a regular hyphen with terracotta color in the real wordmark. Let me check then fix.
 
 Looking at primitives.jsx: `claude<span className="brandmark-dash">-</span>tempo` — accent-colored hyphen. The italic `em` won't match. Let me also restyle the .ds-nav .brand to match the real treatment (mono font, accent dash):
 

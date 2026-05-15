@@ -32,7 +32,7 @@ temporal server start-dev \
 > `ClaudeTempoStatus` was removed in v0.26. If you're upgrading a long-lived cluster,
 > see [`docs/ops/v0.26-migration.md`](ops/v0.26-migration.md) for the operator-side drop.
 
-> **Note**: The `claude-tempo up` CLI command handles this automatically for production use.
+> **Note**: The `agent-tempo up` CLI command handles this automatically for production use.
 > The manual command above is the fallback for development environments where you want
 > direct control over the Temporal server.
 
@@ -90,14 +90,14 @@ appears in the registry. Run it locally before pushing to catch drift early.
 
 ## Running an isolated dev environment
 
-Dev mode provides a fully isolated profile for E2E testing with zero impact on any installed prod claude-tempo. No global install required — `node dist/cli.js` is the canonical entry point.
+Dev mode provides a fully isolated profile for E2E testing with zero impact on any installed prod agent-tempo. No global install required — `node dist/cli.js` is the canonical entry point.
 
 ```bash
 # 1. Build from source (required before first run and after any src/ change)
 npm run build
 
-# 2. Start the dev daemon — isolated namespace (claude-tempo-dev), port 8474,
-#    home dir ~/.claude-tempo-dev/. Leaves prod daemon and shared Temporal server alone.
+# 2. Start the dev daemon — isolated namespace (agent-tempo-dev), port 8474,
+#    home dir ~/.agent-tempo-dev/. Leaves prod daemon and shared Temporal server alone.
 node dist/cli.js --dev daemon start
 
 # 3. Run the all-mock lineup (conductor + 4 players are all mock — zero real LLM calls)
@@ -109,9 +109,9 @@ node dist/cli.js --dev down
 
 **Key points:**
 
-- `node dist/cli.js --dev <verb>` works for every command (`daemon`, `up`, `down`, `status`, `cue`, `scenarios`, …). The `claude-tempo` shell command is a convenience shim — never required.
-- Do NOT set `TEMPORAL_NAMESPACE` or `TEMPORAL_ADDRESS` shell-wide for dev work. Post-#423, dev mode ignores these env vars to prevent namespace leaks; use `--temporal-namespace` / `--temporal-address` CLI flags or `~/.claude-tempo-dev/config.json` if you need to override.
-- Dev profile data lives in `~/.claude-tempo-dev/`. Delete it for a clean slate: `rm -rf ~/.claude-tempo-dev/` (leaves prod at `~/.claude-tempo/` untouched).
+- `node dist/cli.js --dev <verb>` works for every command (`daemon`, `up`, `down`, `status`, `cue`, `scenarios`, …). The `agent-tempo` shell command is a convenience shim — never required.
+- Do NOT set `TEMPORAL_NAMESPACE` or `TEMPORAL_ADDRESS` shell-wide for dev work. Post-#423, dev mode ignores these env vars to prevent namespace leaks; use `--temporal-namespace` / `--temporal-address` CLI flags or `~/.agent-tempo-dev/config.json` if you need to override.
+- Dev profile data lives in `~/.agent-tempo-dev/`. Delete it for a clean slate: `rm -rf ~/.agent-tempo-dev/` (leaves prod at `~/.agent-tempo/` untouched).
 - `--dev down` skips the Temporal server kill if the prod profile appears active (ADR 0014 §5.6). Add `--kill-shared-temporal` to override — **this will disconnect the prod daemon** from Temporal.
 
 See [dev-mode.md](dev-mode.md) for the mock adapter, scenario library, and chaos mode reference.
@@ -120,7 +120,7 @@ See [dev-mode.md](dev-mode.md) for the mock adapter, scenario library, and chaos
 
 ```bash
 # Start the daemon (runs Temporal workers in background)
-claude-tempo daemon start
+agent-tempo daemon start
 
 # Run the MCP server directly (connects to the running daemon)
 npx ts-node src/server.ts
@@ -131,11 +131,11 @@ npx ts-node src/server.ts
 Temporal workers are no longer run in-process by sessions. The daemon (`src/daemon.ts`)
 runs as a detached background process and owns all worker duties:
 
-- PID stored at `~/.claude-tempo/daemon.pid`
-- Logs at `~/.claude-tempo/daemon.log`
-- Managed via `claude-tempo daemon start|stop|status|logs`
+- PID stored at `~/.agent-tempo/daemon.pid`
+- Logs at `~/.agent-tempo/daemon.log`
+- Managed via `agent-tempo daemon start|stop|status|logs`
 
-Sessions are pure MCP clients. The daemon is auto-started by any `claude-tempo` command
+Sessions are pure MCP clients. The daemon is auto-started by any `agent-tempo` command
 if not already running — you don't need to start it manually except in development.
 
 ## Related

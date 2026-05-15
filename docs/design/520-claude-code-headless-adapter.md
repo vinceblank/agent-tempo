@@ -3,7 +3,7 @@
 > **Status**: Design proposal (spike — no implementation in this branch)
 > **Author**: tempo-researcher
 > **Branch**: `design/520-claude-code-headless`
-> **Tracking**: issue [#520](https://github.com/vinceblank/claude-tempo/issues/520)
+> **Tracking**: issue [#520](https://github.com/vinceblank/agent-tempo/issues/520)
 > **Audience**: implementing engineer (tempo-eng pickup), tempo-architect for ratification, conductor for review.
 
 ---
@@ -14,9 +14,9 @@ Add a fifth adapter — `src/adapters/claude-code-headless/` — that drives the
 
 New `ClaudeCodeHeadlessAttachment extends SdkAttachment` mirrors the `claude-api` and `opencode` patterns: detached Node subprocess, `claimAttachment` + heartbeat + phase-watcher lifecycle inherited free, single override of `invokeSdk` for the per-turn `claude -p` invocation.
 
-The new adapter is selected via `recruit({ agent: 'claude-code-headless', ... })`. **Tool bridging uses Claude Code's native `--mcp-config` flag** — the adapter synthesizes an inline JSON config that registers `claude-tempo` as a stdio MCP child of the spawned `claude` process. **No `mcp-bridge.ts` translation layer** (matches `opencode` #449's MCP-native architecture, not `claude-api` #131's in-process bridge).
+The new adapter is selected via `recruit({ agent: 'claude-code-headless', ... })`. **Tool bridging uses Claude Code's native `--mcp-config` flag** — the adapter synthesizes an inline JSON config that registers `agent-tempo` as a stdio MCP child of the spawned `claude` process. **No `mcp-bridge.ts` translation layer** (matches `opencode` #449's MCP-native architecture, not `claude-api` #131's in-process bridge).
 
-**Cross-adapter consistency with #521**: Issue [#521](https://github.com/vinceblank/claude-tempo/issues/521) (just-filed, parallel to this design) flags the `claude-api` adapter's tight retry loop on non-retriable 4xx — no error classification, no backoff, no give-up. The same failure-mode shapes apply here at the **subprocess-exit boundary**, not the SDK-call boundary. Decision: **defer to #521's classifier shape**, with the subprocess-specific translation layer documented in §5.8. See §5.8 for the classifier-translation table; see §13's Q4 for the locked decision.
+**Cross-adapter consistency with #521**: Issue [#521](https://github.com/vinceblank/agent-tempo/issues/521) (just-filed, parallel to this design) flags the `claude-api` adapter's tight retry loop on non-retriable 4xx — no error classification, no backoff, no give-up. The same failure-mode shapes apply here at the **subprocess-exit boundary**, not the SDK-call boundary. Decision: **defer to #521's classifier shape**, with the subprocess-specific translation layer documented in §5.8. See §5.8 for the classifier-translation table; see §13's Q4 for the locked decision.
 
 **Locked decisions on the 5 open questions** (issue body):
 
@@ -24,8 +24,8 @@ The new adapter is selected via `recruit({ agent: 'claude-code-headless', ... })
 |---|---|---|
 | 1. Persistence model | **Per-turn `claude -p` invocation** with `--session-id` + `--resume` for continuity. | Simpler control flow; abort = subprocess SIGTERM; matches OpenCode's per-turn `prompt_async` shape. Long-lived `claude` via `--input-format stream-json` is undocumented (per Anthropic's own issue #24594). Pay subprocess startup cost (~1-2s) for the simplification. |
 | 2. Session continuity (restart / encore / migrate) | **Stash session UUID on workflow metadata via `updateMetadataSignal`**; resume via `--session-id <uuid>` on every turn AND on adapter restart. **Cross-machine `migrate` not supported in v1** — Claude Code persists session JSONL per-cwd in `~/.claude/projects/<encoded-cwd>/`, so the resume only works from the same host + cwd. | Identical to Copilot/OpenCode metadata stash pattern. Cross-machine migrate deferred to Phase 2 (would need session-export/import or a remote session store). |
-| 3. Tool surface | **Full inheritance + claude-tempo MCP overlay.** Spawn with `--strict-mcp-config --mcp-config <synthesized>` so only claude-tempo's MCP server is registered (no stray user `.mcp.json` configs). File-op / shell / web tools inherit from the CLI by default. **Permission mode**: `--permission-mode acceptEdits` default; `--dangerously-skip-permissions` opt-in via recruit arg. | Strictly more capable than `claude-api` — file-ops come free. `acceptEdits` matches operator expectation that recruited players can do their job; full bypass is opt-in. |
-| 4. Stream-json error mapping | **Map `system/api_retry` event categories** to claude-tempo failure modes: `authentication_failed` / `oauth_org_not_allowed` → exit + surface "log in via `claude` first"; `billing_error` → exit + surface "subscription/extra-usage exhausted"; `rate_limit` / `server_error` → let CLI's own backoff handle (log warning); subprocess exit code != 0 → exit and let next poll retry. **Result frame** (`type: 'result'`) closes the turn cleanly with stop_reason + usage. | Aligns with Anthropic's documented error-category enum (`/en/headless`); operator-actionable error surfaces. |
+| 3. Tool surface | **Full inheritance + agent-tempo MCP overlay.** Spawn with `--strict-mcp-config --mcp-config <synthesized>` so only agent-tempo's MCP server is registered (no stray user `.mcp.json` configs). File-op / shell / web tools inherit from the CLI by default. **Permission mode**: `--permission-mode acceptEdits` default; `--dangerously-skip-permissions` opt-in via recruit arg. | Strictly more capable than `claude-api` — file-ops come free. `acceptEdits` matches operator expectation that recruited players can do their job; full bypass is opt-in. |
+| 4. Stream-json error mapping | **Map `system/api_retry` event categories** to agent-tempo failure modes: `authentication_failed` / `oauth_org_not_allowed` → exit + surface "log in via `claude` first"; `billing_error` → exit + surface "subscription/extra-usage exhausted"; `rate_limit` / `server_error` → let CLI's own backoff handle (log warning); subprocess exit code != 0 → exit and let next poll retry. **Result frame** (`type: 'result'`) closes the turn cleanly with stop_reason + usage. | Aligns with Anthropic's documented error-category enum (`/en/headless`); operator-actionable error surfaces. |
 | 5. Pre-flight contract | **`claude auth status` invocation with 5s timeout** (not a billed call — official supported subcommand). Plus `claude --version` (binary version probe). Both gated by `force: true` bypass. Daemon's `hostProfile.availableAgentTypes` extended to include `'claude-code-headless'` only when both probes pass at boot. | No billed test message; clean op-ergonomic failure mode if user isn't logged in. |
 
 **Wire surface**: zero new signals/queries/updates on `claudeSessionWorkflow`. Strictly additive on `recruit`'s tool schema (`agent: 'claude-code-headless'` enum value), `AgentType` (`… | 'claude-code-headless'`), and `AdapterRegistry.resolveFromAgentType` (one line).
@@ -48,7 +48,7 @@ Issue #520 motivates the adapter on three orthogonal value props, all complement
 
 1. **Subscription extra-usage access** — the immediate trigger. PR #131's `claude-api` adapter hit a 400 `"credit balance too low"` on a smoke test even though the operator had ~$159 of unused subscription extra-usage credits sitting idle. Researcher confirmed (~30 min spike, see [reseach memo](#)) the gap is structural: subscription extra-usage credits are OAuth-gated and unreachable via raw `sk-ant-api03-...` keys. **Spawning the official `claude` binary is the only ToS-clean way for a third-party tool to tap that pool** — Anthropic's [authentication policy](https://code.claude.com/docs/en/authentication) explicitly forbids using subscription OAuth tokens in non-Claude-Code third-party products.
 2. **Headless with file-op tools, Anthropic-only path** — `claude-api` is headless but lacks file-ops (deferred to Phase 2 in #131). `opencode` players are headless + file-op-capable but go through a third-party multi-provider tool (extra dep risk, weekly breaking changes per #449's stability stance). `claude-code-headless` players are **first-party Anthropic** + headless + file-op-capable — closing a real gap in the matrix.
-3. **CI / scheduled work on a personal subscription** — operators with Pro/Max plans want to run scheduled claude-tempo cron jobs (cleanup PRs, gate evaluators, doctor checks) without burning Console-billed credits. This adapter makes that natively supported.
+3. **CI / scheduled work on a personal subscription** — operators with Pro/Max plans want to run scheduled agent-tempo cron jobs (cleanup PRs, gate evaluators, doctor checks) without burning Console-billed credits. This adapter makes that natively supported.
 
 The new adapter is **independent** of #318 (coat-check), #319 (protobuf), #334 (saveable-state), and #94/#95 (SSE event source). It composes naturally with #449 (`opencode`) and #131 (`claude-api`) — all three are SDK-class, all three inherit `SdkAttachment`, all three expose the same tempo MCP surface.
 
@@ -163,7 +163,7 @@ Before submitting the recruit outbox entry, validate (mirrors the established pa
 
 **No new npm optional dep** — `claude` is a system binary, not an npm package. The probe is shell-based (`spawn('claude', ['--version'])`), so the adapter itself has zero new package dependencies. This is a meaningful simplification vs `claude-api` (`@anthropic-ai/sdk`) and `opencode` (`@opencode-ai/sdk`), neither of which is required at adapter-import time but both of which add install-time decisions for end users.
 
-**Install instruction** for new claude-tempo users surfaces the binary requirement in CLAUDE.md, README, and the recruit tool description.
+**Install instruction** for new agent-tempo users surfaces the binary requirement in CLAUDE.md, README, and the recruit tool description.
 
 **Registration shape** (per ADR 0012, mirrors the four shipped adapters):
 
@@ -193,7 +193,7 @@ Process tree at runtime:
 ```
 node dist/adapters/claude-code-headless/adapter.js     (long-lived; manages V2 lifecycle + poll loop)
   └── claude -p --output-format stream-json …          (transient, one per turn — exits after `result` frame)
-        └── node dist/server.js                        (claude-tempo MCP server — spawned by `claude` for tool dispatch)
+        └── node dist/server.js                        (agent-tempo MCP server — spawned by `claude` for tool dispatch)
 ```
 
 **One long-lived adapter process; per turn, a transient `claude -p` child plus a short-lived MCP server grandchild.** When idle (no in-flight cue), only the adapter process exists. Memory cost is trivial; the architectural simplicity is worth it.
@@ -226,11 +226,11 @@ No new shell-quoting concerns — the spawn path matches `claude-api`'s and `ope
 
 The architectural keystone. Direct contrast with `claude-api`'s `mcp-bridge.ts` (158 LoC); aligned with `opencode`'s MCP-native design.
 
-### 4.1 Locked: claude-tempo's MCP server runs as a `claude`-spawned stdio child
+### 4.1 Locked: agent-tempo's MCP server runs as a `claude`-spawned stdio child
 
 The adapter does **NOT** translate tool schemas. Instead:
 
-1. The adapter (running in claude-tempo's adapter process) builds an inline JSON MCP config at turn time.
+1. The adapter (running in agent-tempo's adapter process) builds an inline JSON MCP config at turn time.
 2. The adapter spawns `claude -p --strict-mcp-config --mcp-config <inline-json>`.
 3. `claude` reads the config, spawns `node dist/server.js` as a stdio MCP subprocess (a **second, separate** Node process from the adapter), and registers the tools from `list_tools` alongside its built-in tools.
 4. The MCP server (existing `src/server.ts`, unchanged) registers all tempo tools — same surface every adapter sees: `cue`, `report`, `recall`, `ensemble`, `broadcast`, `recruit`, `set_part`, `set_name`, `who_am_i`, `schedule`, `pause`, `play`, `release`, `set_ensemble_description`, `save_state`, `fetch_state`, `clear_state`, etc.
@@ -247,7 +247,7 @@ The flag accepts either a file path or a JSON string (per `claude --help`: *"Loa
 // Synthesized inline (per turn):
 {
   "mcpServers": {
-    "claude-tempo": {
+    "agent-tempo": {
       "type": "stdio",
       "command": "node",
       "args": ["/abs/path/to/dist/server.js"],
@@ -296,7 +296,7 @@ The 158 LoC of `mcp-bridge.ts` (Anthropic schema translation) has no analog here
 
 A `claude-code-headless` player has access to:
 
-- **Tempo MCP tools** (via `--mcp-config`): `cue`, `report`, `recall`, `ensemble`, `broadcast`, `recruit`, `set_part`, `set_name`, `who_am_i`, `schedule`, `unschedule`, `schedules`, `pause`, `play`, `shutdown`, `release`, `restart`, `destroy`, `migrate`, `attachment_info`, `agent_types`, `hosts`, `set_ensemble_description`, `save_state`, `fetch_state`, `clear_state`, `restore`, `load_lineup`, `save_lineup`. Tool names are prefixed with `mcp__claude-tempo__` per Claude Code's MCP convention (`claude --help` confirms).
+- **Tempo MCP tools** (via `--mcp-config`): `cue`, `report`, `recall`, `ensemble`, `broadcast`, `recruit`, `set_part`, `set_name`, `who_am_i`, `schedule`, `unschedule`, `schedules`, `pause`, `play`, `shutdown`, `release`, `restart`, `destroy`, `migrate`, `attachment_info`, `agent_types`, `hosts`, `set_ensemble_description`, `save_state`, `fetch_state`, `clear_state`, `restore`, `load_lineup`, `save_lineup`. Tool names are prefixed with `mcp__agent-tempo__` per Claude Code's MCP convention (`claude --help` confirms).
 - **Built-in Claude Code tools** (inherited): `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `Task`, `TodoWrite`, `NotebookEdit`, etc.
 - **No user MCP servers** (because `--strict-mcp-config`). This is intentional — predictable surface in CI / scheduled contexts.
 
@@ -334,7 +334,7 @@ Each session is a per-cwd, per-id, append-only JSONL file. `claude -p --resume <
 
 Per Phase A spike:
 
-| Phase | claude-side action | claude-tempo-side action |
+| Phase | claude-side action | agent-tempo-side action |
 |---|---|---|
 | First turn | Adapter spawns `claude -p --session-id <uuid>` (UUID generated by adapter) | Stash `<uuid>` on workflow metadata via `updateMetadataSignal` (matches Copilot's `sessionId` stash pattern at `src/adapters/copilot/`) |
 | Subsequent turns | Adapter spawns `claude -p --session-id <uuid> --resume <uuid>` | Read `<uuid>` from workflow metadata, pass to spawn |
@@ -385,10 +385,10 @@ The Q1 carry-forward decision. Two architectures considered:
 
 Per [headless docs](https://code.claude.com/docs/en/headless), `system/api_retry` events carry an `error` field with category enum:
 
-| Category | claude-tempo handling |
+| Category | agent-tempo handling |
 |---|---|
 | `authentication_failed` | Exit 1 immediately. Surface to operator: `"claude is not logged in or token expired. Run 'claude auth status' to diagnose."` Don't retry. |
-| `oauth_org_not_allowed` | Exit 1. Surface: `"OAuth org access denied. Operator needs to authorize claude-tempo via 'claude auth login --org <id>' or recruit with agent: 'claude-api'."` |
+| `oauth_org_not_allowed` | Exit 1. Surface: `"OAuth org access denied. Operator needs to authorize agent-tempo via 'claude auth login --org <id>' or recruit with agent: 'claude-api'."` |
 | `billing_error` | Exit 1. Surface: `"Subscription extra-usage exhausted or billing issue. Top up at console.anthropic.com or wait for plan reset. Recruit agent: 'claude-api' to use Console credits instead."` |
 | `rate_limit` | Log WARNING; let CLI's own backoff handle (the retry event tells us it's already being retried) |
 | `invalid_request` | Exit 1; this is a bug — log full retry-event payload for triage |
@@ -434,7 +434,7 @@ Issue #521 flags that `claude-api`'s adapter retry loop has three independent ga
 log(`turn-usage adapter=claude-code-headless model=${frame.model ?? 'unknown'} input=${frame.usage?.input_tokens ?? 0} output=${frame.usage?.output_tokens ?? 0} cache_read=${frame.usage?.cache_read_input_tokens ?? 0} cache_create=${frame.usage?.cache_creation_input_tokens ?? 0} elapsed_ms=${elapsedMs} cost_usd=${frame.total_cost_usd ?? 0} player=${playerName} stop_reason=${frame.stop_reason ?? 'none'}`);
 ```
 
-Same shape family as `claude-api` and `opencode` `[claude-tempo:*] turn-usage` log lines — operators already grep `turn-usage` for cost monitoring. **`cost_usd` is a v1 win** for this adapter — `claude -p`'s `result` frame includes `total_cost_usd` per Anthropic's documented JSON envelope, so we get authoritative cost without computing from token counts ourselves.
+Same shape family as `claude-api` and `opencode` `[agent-tempo:*] turn-usage` log lines — operators already grep `turn-usage` for cost monitoring. **`cost_usd` is a v1 win** for this adapter — `claude -p`'s `result` frame includes `total_cost_usd` per Anthropic's documented JSON envelope, so we get authoritative cost without computing from token counts ourselves.
 
 **No wire-protocol signal in v1** — same forward-compatibility argument as claude-api §5.6 / opencode §5.6.
 
@@ -594,7 +594,7 @@ export const claudeCodeHeadlessDescriptor: AdapterDescriptor = {
 };
 
 const log = (...args: unknown[]) => {
-  const msg = `[claude-tempo:claude-code-headless] ${args.map((a) => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}\n`;
+  const msg = `[agent-tempo:claude-code-headless] ${args.map((a) => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}\n`;
   fs.writeSync(2, msg);
 };
 
@@ -671,7 +671,7 @@ export class ClaudeCodeHeadlessAttachment extends SdkAttachment {
     // Synthesize --mcp-config inline JSON.
     const mcpConfig = JSON.stringify({
       mcpServers: {
-        'claude-tempo': {
+        'agent-tempo': {
           type: 'stdio',
           command: 'node',
           args: [path.resolve(__dirname, '..', '..', 'server.js')],
@@ -874,10 +874,10 @@ if (require.main === module) {
 
 Critical safety net — wrong cwd-encoding silently breaks session continuity (no error signal, just falls through to a fresh session JSONL). The test:
 
-1. Pick a known cwd (e.g. test fixture `/tmp/claude-tempo-encodecwd-test`).
+1. Pick a known cwd (e.g. test fixture `/tmp/agent-tempo-encodecwd-test`).
 2. Spawn a real `claude -p` from that cwd with a synthesized `--session-id` and a no-op prompt.
 3. After exit, `glob` `~/.claude/projects/*/<uuid>.jsonl` and discover the actual encoded directory name.
-4. Assert `encodeCwd('/tmp/claude-tempo-encodecwd-test')` produces exactly that string.
+4. Assert `encodeCwd('/tmp/agent-tempo-encodecwd-test')` produces exactly that string.
 5. Capture the result as a fixture in `tests/adapters/fixtures/claude-code-headless/cwd-encoding.json`; CI runs it as a normal unit test against the fixture without spawning `claude`.
 
 This test runs as part of the impl-time spike (§11) and again periodically (manual, not CI — gated on `claude` being installed). If the encoding scheme ever changes in a Claude Code minor bump, this test catches it before users hit silent session-fork bugs.
@@ -900,8 +900,8 @@ This test runs as part of the impl-time spike (§11) and again periodically (man
 
 Per the issue's acceptance criteria, the hand-test:
 
-1. Recruit a `claude-code-headless` player on a host with a logged-in `claude` CLI: `claude-tempo recruit foo --agent claude-code-headless`
-2. Cue it: from another player or via `claude-tempo cue foo "hello, what's your subscription billing state?"`
+1. Recruit a `claude-code-headless` player on a host with a logged-in `claude` CLI: `agent-tempo recruit foo --agent claude-code-headless`
+2. Cue it: from another player or via `agent-tempo cue foo "hello, what's your subscription billing state?"`
 3. Verify the player responds via `cue` or `report`
 4. **Verify billing source** — check `console.anthropic.com/usage` for the test ensemble; should show `$0.00` Console burn (the test billed against the subscription pool, not Console)
 5. `restart` the player; verify next cue resumes the same Claude Code session (check `~/.claude/projects/<encoded-cwd>/` for the JSONL file with the stashed UUID)
@@ -931,7 +931,7 @@ Per the issue's acceptance criteria, the hand-test:
 The `claude-code-headless` adapter does NOT inject a custom system prompt in v1. The reasoning:
 
 - `claude -p` reads the host's `CLAUDE.md` (project + user) by default; this is exactly the context a `claude-code` interactive player would have.
-- `claude -p` registers the claude-tempo MCP server as `mcp__claude-tempo__*` tools; the LLM sees the tool descriptions (which include role/responsibility cues set by `src/server-tools.ts`).
+- `claude -p` registers the agent-tempo MCP server as `mcp__agent-tempo__*` tools; the LLM sees the tool descriptions (which include role/responsibility cues set by `src/server-tools.ts`).
 - The tempo MCP server's `instructions` field carries the player-identity addendum (ensemble name, player name, available tools) per the existing pattern; this addendum is delivered as MCP server instructions, which Claude Code surfaces in its prompt automatically.
 
 **No `--append-system-prompt` in v1.** Phase 2 candidate if operator feedback shows the existing addendum isn't surfacing strongly enough through MCP-instructions-only delivery.
@@ -950,7 +950,7 @@ Before writing the parser, capture real `claude -p` output for these scenarios i
 |---|---|
 | `success-simple.jsonl` | `claude -p --output-format stream-json --verbose --include-partial-messages "echo hello"` (no MCP, no tool use) |
 | `tool-use-bash.jsonl` | `claude -p --output-format stream-json --verbose "list files in cwd" --allowedTools Bash` |
-| `tool-use-mcp.jsonl` | `claude -p --output-format stream-json --verbose --strict-mcp-config --mcp-config <claude-tempo-config> "use the cue tool to send a test message"` |
+| `tool-use-mcp.jsonl` | `claude -p --output-format stream-json --verbose --strict-mcp-config --mcp-config <agent-tempo-config> "use the cue tool to send a test message"` |
 | `api-retry-rate-limit.jsonl` | Synthesized — write a frame matching the documented `system/api_retry` schema with `error: 'rate_limit'` |
 | `api-retry-billing.jsonl` | Synthesized — `error: 'billing_error'` |
 | `auth-failed.jsonl` | Capture from a session where `claude auth logout` was run first, then `claude -p ...` |
@@ -960,7 +960,7 @@ Captures become offline test inputs; no live `claude` calls in CI.
 
 ### 11.2 cwd-encoding scheme
 
-`encodeCwd()` in §7's skeleton is a stub. Engineer verifies the actual scheme by inspecting `~/.claude/projects/` after running a `claude` CLI session in a known cwd. As of mid-2026, the scheme is path-with-slashes-replaced-by-hyphens (e.g., `/Users/foo/repos/claude-tempo` → `-Users-foo-repos-claude-tempo`), but verify and pin via tests.
+`encodeCwd()` in §7's skeleton is a stub. Engineer verifies the actual scheme by inspecting `~/.claude/projects/` after running a `claude` CLI session in a known cwd. As of mid-2026, the scheme is path-with-slashes-replaced-by-hyphens (e.g., `/Users/foo/repos/agent-tempo` → `-Users-foo-repos-agent-tempo`), but verify and pin via tests.
 
 ### 11.3 Pre-flight `claude auth status` parser
 
@@ -986,7 +986,7 @@ If (1) is unreliable on Windows, fall back to (2). Capture the chosen pattern in
 
 ### 11.6 Ensemble-identity surfacing (system-prompt fallback path)
 
-Per architect's Q2 review: §10 relies on Claude Code surfacing the claude-tempo MCP server's `instructions` field strongly enough that the LLM internalizes ensemble identity (player name, conductor presence, fellow players). claude-api and opencode added explicit `HEADLESS_*_ADDENDUM` strings precisely because operators couldn't trust the MCP-instructions-only path. **This v1 design assumes Claude Code's MCP instructions surfacing is sufficient — engineer must verify.**
+Per architect's Q2 review: §10 relies on Claude Code surfacing the agent-tempo MCP server's `instructions` field strongly enough that the LLM internalizes ensemble identity (player name, conductor presence, fellow players). claude-api and opencode added explicit `HEADLESS_*_ADDENDUM` strings precisely because operators couldn't trust the MCP-instructions-only path. **This v1 design assumes Claude Code's MCP instructions surfacing is sufficient — engineer must verify.**
 
 **Spike check**:
 1. Recruit a `claude-code-headless` player with the design's default (no `--append-system-prompt`).
@@ -1029,7 +1029,7 @@ When cross-machine `migrate` lands in Phase 2, the v1 design must NOT pre-empt t
 |---|---|---|
 | Q1: Persistence model | **Per-turn `claude -p`** with `--session-id` + `--resume` for continuity | Long-lived path depends on undocumented `--input-format stream-json` schema; per-turn pays only ~1-2s startup cost vs simpler control flow |
 | Q2: Session continuity | **Stash UUID on workflow metadata via `updateMetadataSignal`**; resume via `--session-id`. **Cross-machine migrate not in v1.** | Matches Copilot/OpenCode pattern; cross-machine constraint is a JSONL-locality property of Claude Code itself |
-| Q3: Tool surface | **Full inheritance + claude-tempo MCP overlay via `--strict-mcp-config`**. **Permission mode `acceptEdits` default**, `--dangerously-skip-permissions` opt-in. | Strictly more capable than `claude-api`; default permission mode matches operator expectation that recruited players can do their job |
+| Q3: Tool surface | **Full inheritance + agent-tempo MCP overlay via `--strict-mcp-config`**. **Permission mode `acceptEdits` default**, `--dangerously-skip-permissions` opt-in. | Strictly more capable than `claude-api`; default permission mode matches operator expectation that recruited players can do their job |
 | Q4: Stream-json error mapping | **Map `system/api_retry` categories** → exit-with-actionable-error for `auth/billing/oauth_org_not_allowed`; let CLI's backoff handle `rate_limit/server_error/unknown` | Leverages Anthropic's documented error-category enum; operator-actionable failure surface |
 | Q5: Pre-flight contract | **`claude auth status`** (no billed call) + `claude --version` (binary probe), both timeout-bounded; `force: true` bypasses | Official supported subcommand; clean op ergonomics; no billed test message |
 | **Cross-adapter retry consistency (#521)** | **Defer to #521's `fatal | retriable-with-backoff | retriable-immediate` classifier**; share the module at `src/adapters/sdk/api-error-classifier.ts` between claude-api and claude-code-headless. See §5.5 + §5.8. | Single source of truth for error classification; pickup-by-both-adapters when new error categories emerge; subprocess-specific signal translation lives in this adapter's error-mapper |

@@ -1,7 +1,7 @@
 # CLI Reference
 
 ```
-claude-tempo <command> [options]
+agent-tempo <command> [options]
 ```
 
 ## Commands
@@ -14,14 +14,14 @@ claude-tempo <command> [options]
 | `server` | Start the Temporal dev server and register search attributes |
 | `status [ensemble]` | Show active sessions and Temporal health |
 | `config` | Configure Temporal connection settings (interactive or `set`/`show`) |
-| `init` | Register claude-tempo MCP server globally (`--project` for per-directory) |
+| `init` | Register agent-tempo MCP server globally (`--project` for per-directory) |
 | `preflight` | Run environment checks |
 | `broadcast <msg>` | Send a message to all active players. Use `--type` to filter by player type, `--include-stale` to include stale sessions. |
 | `destroy <ensemble> [-y]` | Terminate every workflow in an ensemble — ordered shutdown via outbox drain. Prompts for typed confirmation; `-y` skips. |
 | `attachment-info <name>` (alias: `attachment`) | Inspect a session's attachment phase, current holder, lease expiry, heartbeat age, and in-flight message count. |
 | `recall <name>` | Read a player's message history (#128). Flags: `--limit N` (default 20, max 100), `--offset N` (paging, default 0), `--preview N` (truncate bodies to N chars; omit for full text), `--from X` (sender filter for received), `--since ISO` (time filter), `--include-sent` (include outbound too), `--json` (emit raw `{received, sent, total, shown, hasMore, text}`). |
 | `hosts` | **#274.** List daemons polling this Temporal namespace with their advertised capabilities. Flags: `--all` includes stale hosts; `--json` emits raw `HostInfo[]`. Output matches MCP `hosts` tool and TUI `/hosts` (shared formatter). |
-| `refresh-host-profile` | **#274.** Re-advertise this daemon's capability profile to the global Maestro. Useful after editing `~/.claude-tempo/config.json` or adding/removing player-type files without restarting the daemon. Exits 0 on confirmed refresh, 1 on signal failure or unconfirmed after the 10s poll. |
+| `refresh-host-profile` | **#274.** Re-advertise this daemon's capability profile to the global Maestro. Useful after editing `~/.agent-tempo/config.json` or adding/removing player-type files without restarting the daemon. Exits 0 on confirmed refresh, 1 on signal failure or unconfirmed after the 10s poll. |
 | `restore <ensemble>` | Restore orphaned (detached) sessions in one ensemble on this host — re-attaches a fresh adapter to every matching `detached` session. (#288) |
 | `release [ensemble]` | Release all held players — unlocks outboxes and delivers deferred task messages. Use `-n <name>` to release one player. |
 | `ensemble <sub>` | Manage saved lineups (`save`, `list`, `show`) |
@@ -35,10 +35,10 @@ claude-tempo <command> [options]
 
 > **Removed commands — use the TUI instead** (since v0.27 / #288):
 > - `stop` / `restart` / `detach` / `migrate` → TUI `/destroy` · `/restart` · `/shutdown`
-> - `conduct` / `start` / `recruit` / `disband` → launch `claude-tempo` · TUI `/recruit` · `/destroy`
+> - `conduct` / `start` / `recruit` / `disband` → launch `agent-tempo` · TUI `/recruit` · `/destroy`
 > - `pause` / `resume` → TUI `/pause` · `/play`
 >
-> See [github.com/vinceblank/claude-tempo/issues/285](https://github.com/vinceblank/claude-tempo/issues/285) for the full migration table.
+> See [github.com/vinceblank/agent-tempo/issues/285](https://github.com/vinceblank/agent-tempo/issues/285) for the full migration table.
 
 ## Global Options
 
@@ -59,23 +59,23 @@ claude-tempo <command> [options]
 --lineup <name|file>          Load an ensemble lineup by name or file path (up)
 --no-hold                     Skip hold-on-startup: deliver lineup instructions immediately (up --lineup)
 --scenario <name>             Force every mock player in the lineup into scripted mode with this scenario (up --dev, dev mode only)
---dev                         Run in dev-mode isolated profile (home: ~/.claude-tempo-dev/, port: 8474, namespace: claude-tempo-dev). See dev-mode.md.
+--dev                         Run in dev-mode isolated profile (home: ~/.agent-tempo-dev/, port: 8474, namespace: agent-tempo-dev). See dev-mode.md.
 -v, --version                 Print version and exit
 ```
 
 ## Command Details
 
-### `claude-tempo up`
+### `agent-tempo up`
 
 The recommended way to get started:
 
 ```
-$ claude-tempo up myband
+$ agent-tempo up myband
 
-claude-tempo setup
+agent-tempo setup
   ✓ temporal CLI installed
   … Starting Temporal dev server...
-  ✓ Temporal started (pid 12345, data in ~/.claude-tempo/)
+  ✓ Temporal started (pid 12345, data in ~/.agent-tempo/)
   ✓ Registered search attributes
   ✓ .mcp.json created
 
@@ -86,24 +86,24 @@ Launching conductor in ensemble myband...
   Ensemble: myband
 
   What next?
-  claude-tempo status myband   See who's active
+  agent-tempo status myband   See who's active
   Or use the TUI to recruit players (/recruit)
 ```
 
 If a conductor is already running in the target ensemble, `up` detects it and prompts with options: join as a player, reconnect to the existing conductor, tear down and start fresh, or cancel. This prevents two sessions from silently sharing the same Temporal workflow.
 
-### `claude-tempo server`
+### `agent-tempo server`
 
 Starts the Temporal dev server with automatic search attribute registration:
 
 ```bash
-claude-tempo server                 # foreground (Ctrl+C to stop)
-claude-tempo server --background    # daemonize
+agent-tempo server                 # foreground (Ctrl+C to stop)
+agent-tempo server --background    # daemonize
 ```
 
-Data persists in `~/.claude-tempo/temporal-data.db`. If Temporal is already running, registers attributes and exits.
+Data persists in `~/.agent-tempo/temporal-data.db`. If Temporal is already running, registers attributes and exits.
 
-### `claude-tempo status`
+### `agent-tempo status`
 
 Shows all active sessions:
 
@@ -127,62 +127,62 @@ Ensemble: myband
   deploy-watch → ops | every 1h | next: 3:00:00 PM
 ```
 
-### `claude-tempo preflight`
+### `agent-tempo preflight`
 
-Verifies your environment: Node.js >= 20, Temporal reachable, `~/.claude-tempo` writable, `.mcp.json` configured. Missing `claude` binary is now reported at spawn time rather than preflight.
+Verifies your environment: Node.js >= 20, Temporal reachable, `~/.agent-tempo` writable, `.mcp.json` configured. Missing `claude` binary is now reported at spawn time rather than preflight.
 
-### `claude-tempo init`
+### `agent-tempo init`
 
-Registers the claude-tempo MCP server globally so it's available in every Claude Code session:
+Registers the agent-tempo MCP server globally so it's available in every Claude Code session:
 
 ```bash
-claude-tempo init             # global install (recommended)
-claude-tempo init --project   # per-directory .mcp.json instead
+agent-tempo init             # global install (recommended)
+agent-tempo init --project   # per-directory .mcp.json instead
 ```
 
 If the `claude` CLI is not available, falls back to creating `.mcp.json` in the current directory.
 
-### `claude-tempo down`
+### `agent-tempo down`
 
 Full teardown — stops all sessions, the daemon, and Temporal, then removes MCP config:
 
 ```bash
-claude-tempo down                  # full teardown (current ensemble)
-claude-tempo down --all            # stop all ensembles, daemon, and Temporal
-claude-tempo down --destroy -y     # terminate every workflow, then tear down (skip confirmation)
-claude-tempo down --keep-mcp       # preserve MCP config
-claude-tempo down --keep-daemon    # stop sessions and Temporal, but leave daemon running
+agent-tempo down                  # full teardown (current ensemble)
+agent-tempo down --all            # stop all ensembles, daemon, and Temporal
+agent-tempo down --destroy -y     # terminate every workflow, then tear down (skip confirmation)
+agent-tempo down --keep-mcp       # preserve MCP config
+agent-tempo down --keep-daemon    # stop sessions and Temporal, but leave daemon running
 ```
 
-### `claude-tempo destroy`
+### `agent-tempo destroy`
 
 Terminates every workflow in an ensemble via ordered shutdown (outbox drain). Prompts for typed confirmation; use `-y` to skip:
 
 ```bash
-claude-tempo destroy myband        # terminate all sessions in "myband"
-claude-tempo destroy myband -y     # skip confirmation
+agent-tempo destroy myband        # terminate all sessions in "myband"
+agent-tempo destroy myband -y     # skip confirmation
 ```
 
-### `claude-tempo restore`
+### `agent-tempo restore`
 
 Restores orphaned (detached) sessions in one ensemble on this host — re-attaches a fresh adapter to every matching `detached` session:
 
 ```bash
-claude-tempo restore myband        # restore all orphans in "myband" on this host
-claude-tempo restore --all-hosts   # cluster-view: list detached sessions across all hosts (read-only, no re-attach)
+agent-tempo restore myband        # restore all orphans in "myband" on this host
+agent-tempo restore --all-hosts   # cluster-view: list detached sessions across all hosts (read-only, no re-attach)
 ```
 
-`--all-hosts` (#151) is a discovery mode — it queries Temporal for every detached session in the ensemble regardless of preferred host and prints a grouped listing so you can see what's parked on remote machines. No sessions are re-attached; use `claude-tempo restore <ensemble>` on the appropriate host to recover them.
+`--all-hosts` (#151) is a discovery mode — it queries Temporal for every detached session in the ensemble regardless of preferred host and prints a grouped listing so you can see what's parked on remote machines. No sessions are re-attached; use `agent-tempo restore <ensemble>` on the appropriate host to recover them.
 
 The daemon auto-restores orphans on boot when `restorePolicy` is configured; `restore` lets you trigger it manually.
 
-### `claude-tempo upgrade`
+### `agent-tempo upgrade`
 
 Graceful self-update — stops the daemon, installs the latest (or specified) version, then restarts the daemon:
 
 ```bash
-claude-tempo upgrade            # install latest version
-claude-tempo upgrade 0.20.0     # install a specific version
+agent-tempo upgrade            # install latest version
+agent-tempo upgrade 0.20.0     # install a specific version
 ```
 
 ## Related

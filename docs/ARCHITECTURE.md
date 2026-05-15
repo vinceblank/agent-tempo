@@ -92,7 +92,7 @@ any non-terminal → gone  (via destroy)
 | `destroy` verb | Terminates (complete) | `onTerminal` fires; teardown | Killed if alive | All three layers end |
 | `detach` verb | `draining → detached` | Graceful teardown; `adapterExited` sent | Exits normally | Workflow persists; adapter + process released |
 | `restart` (any phase) | Unchanged; `forceDetach` clears old lease | Old revoked; new claims fresh lease | Old exits; new spawns | Full continuity; fresh adapter + process |
-| `migrate` (cross-host) | `preferredHost` updated | New claims on `claude-tempo-{host}` task queue | New spawns on target host | Same as restart; spawn routed to remote |
+| `migrate` (cross-host) | `preferredHost` updated | New claims on `agent-tempo-{host}` task queue | New spawns on target host | Same as restart; spawn routed to remote |
 | Host / machine crash | Unchanged; lease held by absent adapter | Heartbeat stops; lease TTL expires | Gone | Phase → `detached` after lease timeout; daemon reconcile repairs |
 | Heartbeat timeout | Phase → `detached` | Revoked (lease expired) | Dead or orphaned | Session queryable via `ClaudeTempoAttachmentState=detached`; `restart` or auto-restore |
 
@@ -188,7 +188,7 @@ PR-E's `reconcileOnBoot` pass is a direct consequence of the three-layer model. 
 
 ### PR-F — Cross-host routing
 
-Layer 1 is topology-agnostic. A `claudeSessionWorkflow` has no awareness of which host its adapter runs on — it tracks only the `preferredHost` field on its state and the `ClaudeTempoAttachedHost` search attribute set by the adapter on claim. Layer 2 is where host affinity lives: the `enqueueSpawn` update carries the target host name, and the `spawnProcess` activity is dispatched to the `claude-tempo-{host}` task queue, which only the daemon on that host processes. `migrate` (`restart --host=<target>`) sets `preferredHost`, issues `forceDetach` on the current adapter, and routes the new spawn to the target queue. The `--yes-steal=<hostname>` flag requires the caller to name the current host before taking over a live session, preventing accidental cross-host conflicts.
+Layer 1 is topology-agnostic. A `claudeSessionWorkflow` has no awareness of which host its adapter runs on — it tracks only the `preferredHost` field on its state and the `ClaudeTempoAttachedHost` search attribute set by the adapter on claim. Layer 2 is where host affinity lives: the `enqueueSpawn` update carries the target host name, and the `spawnProcess` activity is dispatched to the `agent-tempo-{host}` task queue, which only the daemon on that host processes. `migrate` (`restart --host=<target>`) sets `preferredHost`, issues `forceDetach` on the current adapter, and routes the new spawn to the target queue. The `--yes-steal=<hostname>` flag requires the caller to name the current host before taking over a live session, preventing accidental cross-host conflicts.
 
 ---
 

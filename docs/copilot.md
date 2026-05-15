@@ -16,9 +16,9 @@ GitHub Copilot CLI sessions can join an ensemble via the Copilot bridge. Bridge 
 Use `--agent copilot` with any session-launching command:
 
 ```bash
-claude-tempo start myband --agent copilot -n copilot-1      # start a player
-claude-tempo conduct myband --agent copilot                  # start a conductor
-claude-tempo up myband --agent copilot                       # full setup
+agent-tempo start myband --agent copilot -n copilot-1      # start a player
+agent-tempo conduct myband --agent copilot                  # start a conductor
+agent-tempo up myband --agent copilot                       # full setup
 ```
 
 Or recruit from within any active session:
@@ -30,7 +30,7 @@ Or recruit from within any active session:
 To avoid passing `--agent copilot` every time:
 
 ```bash
-claude-tempo config set default-agent copilot
+agent-tempo config set default-agent copilot
 ```
 
 Or via environment variable:
@@ -46,7 +46,7 @@ Resolution order: `--agent` flag → `CLAUDE_TEMPO_DEFAULT_AGENT` env → config
 Set `COPILOT_BRIDGE_MODEL` to use a specific model for Copilot sessions:
 
 ```bash
-COPILOT_BRIDGE_MODEL=gpt-4o claude-tempo start myband --agent copilot
+COPILOT_BRIDGE_MODEL=gpt-4o agent-tempo start myband --agent copilot
 ```
 
 ## Limitations

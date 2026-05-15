@@ -1,6 +1,6 @@
 # Surface Registry
 
-Single canonical inventory of every public-facing surface in claude-tempo.
+Single canonical inventory of every public-facing surface in agent-tempo.
 Use this as the ground truth when doing drift checks — compare against the
 source files below rather than grepping multiple directories.
 
@@ -99,7 +99,7 @@ Source: `src/cli/help-text.ts` Commands section and `src/cli.ts` switch statemen
 | `daemon <sub>` | Manage the worker daemon (`start` / `stop` / `status` / `logs` / `stats`) |
 | `dashboard` | Open the web dashboard in the default browser (`--no-open` / `--pair` / `--json`) |
 | `scenarios <sub>` | Discover mock-adapter scenarios shipped at `<package>/scenarios/` (`list` / `show <name>`). Available outside `--dev`; the recruit gate (`agent: 'mock'`) still requires it. |
-| `upgrade [version]` | Upgrade claude-tempo to latest or a specific version |
+| `upgrade [version]` | Upgrade agent-tempo to latest or a specific version |
 | `config` | Configure Temporal connection settings (interactive or `set` / `show`) |
 | `init` | Register MCP server globally (`--project` for per-directory) |
 | `preflight` | Run environment preflight checks |

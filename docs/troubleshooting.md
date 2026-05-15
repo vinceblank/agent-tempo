@@ -4,23 +4,23 @@
 
 | Symptom | Fix |
 |---------|-----|
-| `workflow execution not found` errors | Restart the daemon: `claude-tempo daemon stop && claude-tempo daemon start` |
-| Sessions not responding to messages | Run `claude-tempo daemon status` — ensure the daemon is running |
-| `.mcp.json` keeps being recreated with `npx` | Delete `.mcp.json` and use user-level registration: `claude-tempo init` |
-| `claude-tempo daemon status` reports orphan processes | See **Orphaned daemon processes** below |
+| `workflow execution not found` errors | Restart the daemon: `agent-tempo daemon stop && agent-tempo daemon start` |
+| Sessions not responding to messages | Run `agent-tempo daemon status` — ensure the daemon is running |
+| `.mcp.json` keeps being recreated with `npx` | Delete `.mcp.json` and use user-level registration: `agent-tempo init` |
+| `agent-tempo daemon status` reports orphan processes | See **Orphaned daemon processes** below |
 | Multiple `node` processes pinning `@temporalio/core-bridge/index.node` (npm uninstall blocked) | See **Orphaned daemon processes** below |
 
 ## Orphaned daemon processes
 
-> Added in response to issue [#157](https://github.com/vinceblank/claude-tempo/issues/157) —
+> Added in response to issue [#157](https://github.com/vinceblank/agent-tempo/issues/157) —
 > users running on unsupported Node versions (or after a crashed daemon shutdown) may
-> accumulate node processes pinned to `claude-tempo/dist/daemon.js`. The PID file
-> (`~/.claude-tempo/daemon.pid`) can be missing even while daemons are still running,
-> which means `claude-tempo daemon stop` is a no-op. The command-line-scan helper
+> accumulate node processes pinned to `agent-tempo/dist/daemon.js`. The PID file
+> (`~/.agent-tempo/daemon.pid`) can be missing even while daemons are still running,
+> which means `agent-tempo daemon stop` is a no-op. The command-line-scan helper
 > in `daemon status` now lists these, and this section documents the emergency
 > escape hatches.
 
-> **Automatic reaping (commit `5399945`):** `claude-tempo daemon stop` now automatically
+> **Automatic reaping (commit `5399945`):** `agent-tempo daemon stop` now automatically
 > reaps zombie daemon processes left over from a crash — no manual `taskkill`/`kill` needed
 > in most cases. Fall back to the steps below only if `daemon stop` itself fails or exits
 > while processes remain.
@@ -28,7 +28,7 @@
 ### Inspect
 
 ```bash
-claude-tempo daemon status
+agent-tempo daemon status
 ```
 
 If the daemon is tracked via the PID file, this lists any additional daemon processes
@@ -38,15 +38,15 @@ reported as orphans.
 ### Windows — PowerShell
 
 ```powershell
-# List all claude-tempo daemon processes
+# List all agent-tempo daemon processes
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
-  Where-Object { $_.CommandLine -match 'claude-tempo.*[\\/]dist[\\/]daemon\.js' } |
+  Where-Object { $_.CommandLine -match 'agent-tempo.*[\\/]dist[\\/]daemon\.js' } |
   Select-Object ProcessId, CommandLine |
   Format-List
 
 # Kill all of them (after confirming the list above matches what you expect!)
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
-  Where-Object { $_.CommandLine -match 'claude-tempo.*[\\/]dist[\\/]daemon\.js' } |
+  Where-Object { $_.CommandLine -match 'agent-tempo.*[\\/]dist[\\/]daemon\.js' } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 ```
 
@@ -54,27 +54,27 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
 
 ```bash
 # List
-pgrep -af 'claude-tempo.*dist/daemon\.js'
+pgrep -af 'agent-tempo.*dist/daemon\.js'
 
 # Kill (again: inspect first)
-pkill -f 'claude-tempo.*dist/daemon\.js'
+pkill -f 'agent-tempo.*dist/daemon\.js'
 ```
 
 ### After cleanup
 
 ```bash
-rm -f ~/.claude-tempo/daemon.pid ~/.claude-tempo/daemon.pid.lock   # clear any stale file locks
-claude-tempo daemon start                                          # spawn a single fresh daemon
-claude-tempo daemon status                                         # verify orphan count is zero
+rm -f ~/.agent-tempo/daemon.pid ~/.agent-tempo/daemon.pid.lock   # clear any stale file locks
+agent-tempo daemon start                                          # spawn a single fresh daemon
+agent-tempo daemon status                                         # verify orphan count is zero
 ```
 
 Alternatively, once orphans are killed and the pid file is cleared, `daemon start --force` is a one-step shortcut — it bypasses the orphan pre-flight check and removes any stale pid file before spawning:
 
 ```bash
-claude-tempo daemon start --force
+agent-tempo daemon start --force
 ```
 
-Pattern match is narrow (`claude-tempo` + `dist/daemon.js` in the command line) so
+Pattern match is narrow (`agent-tempo` + `dist/daemon.js` in the command line) so
 these commands won't touch unrelated node processes. Review the list output before
 running the kill variant.
 
@@ -88,23 +88,23 @@ dedicated modules before any heavy import fires.
 
 | Subcommand | Crash-proof under broken Temporal SDK? | Notes |
 |---|---|---|
-| `claude-tempo version` / `-v` / `--version` | ✅ Yes | Reads `package.json.version` directly |
-| `claude-tempo help` / `-h` / `--help` | ✅ Yes | Static help text (`src/cli/help-text.ts`) |
-| `claude-tempo daemon <sub>` (`start`, `stop`, `status`, `logs`, `install`, `uninstall`) | ✅ Yes | `src/cli/daemon-command.ts` |
-| `claude-tempo upgrade [version]` | ✅ Yes | Temporal used dynamically for the *optional* active-session warning; silently skipped on SDK failure |
-| `claude-tempo config show` / `config set` | ✅ Yes | Pure fs / zod |
-| `claude-tempo config` (interactive) | ✅ Mostly | Connection-test step uses dynamic Temporal import; the rest of the flow (prompts, file writes) is crash-proof |
-| `claude-tempo preflight` | ❌ No | Intentional — preflight's job is to test Temporal reachability |
-| `claude-tempo attachment-info <name>` | ❌ No | Queries a workflow directly; requires live Temporal |
+| `agent-tempo version` / `-v` / `--version` | ✅ Yes | Reads `package.json.version` directly |
+| `agent-tempo help` / `-h` / `--help` | ✅ Yes | Static help text (`src/cli/help-text.ts`) |
+| `agent-tempo daemon <sub>` (`start`, `stop`, `status`, `logs`, `install`, `uninstall`) | ✅ Yes | `src/cli/daemon-command.ts` |
+| `agent-tempo upgrade [version]` | ✅ Yes | Temporal used dynamically for the *optional* active-session warning; silently skipped on SDK failure |
+| `agent-tempo config show` / `config set` | ✅ Yes | Pure fs / zod |
+| `agent-tempo config` (interactive) | ✅ Mostly | Connection-test step uses dynamic Temporal import; the rest of the flow (prompts, file writes) is crash-proof |
+| `agent-tempo preflight` | ❌ No | Intentional — preflight's job is to test Temporal reachability |
+| `agent-tempo attachment-info <name>` | ❌ No | Queries a workflow directly; requires live Temporal |
 | All other verbs (`start`, `stop`, `status`, `restart`, `detach`, `destroy`, `migrate`, `restore`, `pause`, `resume`, `release`, `broadcast`, `server`, `up`, `down`, `init`, …) | ❌ No | Inherently Temporal-touching |
 
 If you hit a broken SDK scenario and need to recover:
 
 ```bash
-claude-tempo version                # confirms CLI loads at all
-claude-tempo daemon stop            # halt the broken daemon
-claude-tempo upgrade                # reinstall latest
-claude-tempo daemon start           # fresh daemon on repaired SDK
+agent-tempo version                # confirms CLI loads at all
+agent-tempo daemon stop            # halt the broken daemon
+agent-tempo upgrade                # reinstall latest
+agent-tempo daemon start           # fresh daemon on repaired SDK
 ```
 
 The `test/cli-crash-proof-isolation.test.ts` suite enforces this contract in
@@ -144,7 +144,7 @@ Phase transitions are deterministic and adapter-driven:
 - **`detached → attached`** on a fresh `claimAttachment` (restart / migrate / recovery)
 - **any → `gone`** on `destroyUpdate`
 
-`claude-tempo status` shows `(pending)` / `(disconnected)` / `(gone)` labels next to player
+`agent-tempo status` shows `(pending)` / `(disconnected)` / `(gone)` labels next to player
 names. Filter sessions in the Temporal UI via `ClaudeTempoAttachmentState = "detached"`.
 
 > **Historical** — The pre-v0.26 `ClaudeTempoStatus` attribute (values `pending | active |
@@ -155,12 +155,12 @@ names. Filter sessions in the Temporal UI via `ClaudeTempoAttachmentState = "det
 
 ### Dev daemon connects to wrong namespace
 
-**Symptom**: The dev banner prints `namespace claude-tempo-dev` but the daemon log says `Connecting to Temporal at localhost:7233 (namespace: default)`. Workflows and workers end up on the wrong namespace.
+**Symptom**: The dev banner prints `namespace agent-tempo-dev` but the daemon log says `Connecting to Temporal at localhost:7233 (namespace: default)`. Workflows and workers end up on the wrong namespace.
 
 **Diagnosis**: Run `node dist/cli.js --dev config show` to see resolved values with source annotations. The banner now reads from the same resolved config, so a disagreement is immediately visible — look for `(env)` next to any field:
 
 ```
-[DEV MODE] using ~/.claude-tempo-dev · port 8474 · namespace default (env) · queue claude-tempo-dev (default)
+[DEV MODE] using ~/.agent-tempo-dev · port 8474 · namespace default (env) · queue agent-tempo-dev (default)
 ```
 
 `(env)` means a shell environment variable overrode the dev default.
@@ -170,14 +170,14 @@ names. Filter sessions in the Temporal UI via `ClaudeTempoAttachmentState = "det
 | Cause | Fix |
 |-------|-----|
 | `TEMPORAL_NAMESPACE=default` set in shell rc (`.bashrc`, `.zshrc`, PowerShell profile) | Post-#423, dev mode ignores this var automatically. If you're on an older build, `unset TEMPORAL_NAMESPACE` before running dev commands. |
-| `~/.claude-tempo-dev/config.json` has `temporalNamespace` set to prod value | Edit or delete the file: `rm ~/.claude-tempo-dev/config.json`. |
+| `~/.agent-tempo-dev/config.json` has `temporalNamespace` set to prod value | Edit or delete the file: `rm ~/.agent-tempo-dev/config.json`. |
 | Explicit `--temporal-namespace` CLI flag pointing at wrong namespace | Omit the flag; the dev default fills in. |
 
-The daemon also emits a boot-time warning to `~/.claude-tempo-dev/daemon.log` if the resolved namespace differs from `claude-tempo-dev` — grep `[dev-mode] WARNING` for it.
+The daemon also emits a boot-time warning to `~/.agent-tempo-dev/daemon.log` if the resolved namespace differs from `agent-tempo-dev` — grep `[dev-mode] WARNING` for it.
 
 ### `down` command refuses to kill Temporal server
 
-**Symptom**: `claude-tempo --dev down` finishes but prints:
+**Symptom**: `agent-tempo --dev down` finishes but prints:
 
 ```
 ⚠ Temporal server kept running — the prod profile appears active. Pass --kill-shared-temporal to override.
@@ -189,11 +189,11 @@ The daemon also emits a boot-time warning to `~/.claude-tempo-dev/daemon.log` if
 
 - **Normal teardown**: leave it. The dev daemon and its workers are stopped; the shared Temporal server keeps running for prod. This is correct.
 - **Hard reset** (you want to kill everything, including prod): `node dist/cli.js --dev down --kill-shared-temporal`. ⚠️ This will disconnect the prod daemon from Temporal.
-- **Prod-only teardown of Temporal**: `claude-tempo down` (prod mode, no `--dev`) — this has the same cross-profile guard and will skip the kill if dev is alive.
+- **Prod-only teardown of Temporal**: `agent-tempo down` (prod mode, no `--dev`) — this has the same cross-profile guard and will skip the kill if dev is alive.
 
 ## Known Limitations
 
-- **`recruit` requires manual acknowledgment** — Recruited sessions use `--dangerously-load-development-channels`. Claude Code shows a confirmation prompt that must be manually acknowledged in the spawned terminal. This will be resolved once claude-tempo is published as an approved channel plugin. Copilot bridge sessions do not have this limitation.
+- **`recruit` requires manual acknowledgment** — Recruited sessions use `--dangerously-load-development-channels`. Claude Code shows a confirmation prompt that must be manually acknowledged in the spawned terminal. This will be resolved once agent-tempo is published as an approved channel plugin. Copilot bridge sessions do not have this limitation.
 
 ## Upgrading to v0.19.0
 
@@ -202,37 +202,37 @@ v0.19.0 introduces the **worker daemon** — a single background process that ru
 1. **Stop everything:**
 
    ```bash
-   claude-tempo down --all
+   agent-tempo down --all
    ```
 
 2. **Install the new version:**
 
    ```bash
-   npm install -g claude-tempo@latest
+   npm install -g agent-tempo@latest
    ```
 
 3. **Fix MCP registration (if you previously used `npx`):**
 
-   If you registered with `npx` (e.g. via `claude-tempo init` before v0.19.0):
+   If you registered with `npx` (e.g. via `agent-tempo init` before v0.19.0):
 
    ```bash
    # Remove old registration
-   claude mcp remove claude-tempo -s user
+   claude mcp remove agent-tempo -s user
 
    # Re-register with the direct binary
-   claude mcp add claude-tempo -s user -- claude-tempo-server
+   claude mcp add agent-tempo -s user -- agent-tempo-server
    ```
 
    If you have a project-level `.mcp.json` with `"command": "npx"`, either delete it or change the entry:
 
    ```json
-   { "command": "claude-tempo-server", "args": [] }
+   { "command": "agent-tempo-server", "args": [] }
    ```
 
 4. **Start fresh:**
 
    ```bash
-   claude-tempo up <ensemble>
+   agent-tempo up <ensemble>
    ```
 
    The daemon starts automatically — no manual daemon management needed.

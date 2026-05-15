@@ -67,7 +67,7 @@ Beta.7 is fit-for-purpose. PR-7 (action wiring) is unblocked.
 | `is-empty` modifier | yes | exact match | ✅ | — |
 | SectionHead II/RECENT | `kicker="II / RECENT"` "Recent activity" + right slot "across all ensembles" | exact match | ✅ | — |
 | Recent activity event log | 7-row list of cluster events | **empty-state placeholder** with honest "Cross-ensemble event stream lands in beta.8" copy | ✅ | — (correct graceful-degrade per Q5; explicitly approved in audit §3.1) |
-| Empty state (no ensembles) | not shown in design | `<code>` snippet "claude-tempo up <name>" | ✅ | better than design (helpful) |
+| Empty state (no ensembles) | not shown in design | `<code>` snippet "agent-tempo up <name>" | ✅ | better than design (helpful) |
 
 **Verdict**: ✅ **Fully faithful**. Minor description fallback paraphrase
 is the only stylistic call worth revisiting.
@@ -190,7 +190,7 @@ is the only meaningful gap and is small.
 
 | Element | Design | Implementation | Status | Action |
 |---|---|---|---|---|
-| PageHeader | title + subtitle (with mono `claude-tempo up --lineup`) + 2 actions | exact match | ✅ | — |
+| PageHeader | title + subtitle (with mono `agent-tempo up --lineup`) + 2 actions | exact match | ✅ | — |
 | Page-actions | `↑ Import YAML` (ghost) + `+ New loadout` (primary) | both DisabledWithTooltip | 🟡 nit | P1 — Import YAML uses neutral disabled (correct); New loadout should be `variant="primary"` styled even when disabled. Currently uniform with Import YAML. |
 | Table 6 columns | Name / Summary / Players / Source / Last used / actions | exact match | ✅ | — |
 | Row name with `≡` accent prefix | yes | exact match | ✅ | — |
@@ -290,7 +290,7 @@ a beneficial divergence from the design's read-only KV display.
 
 | Marker | Status | Notes |
 |---|---|---|
-| **C1** BrandMark = `claude-tempo` wordmark + Metronome SVG | ✅ | Sidebar.tsx line 76 imports `<Brandmark size="md" running={false} />`. Brandmark.tsx implements wordmark + SVG (inferred — not directly read but hash comment in Sidebar matches design). |
+| **C1** BrandMark = `agent-tempo` wordmark + Metronome SVG | ✅ | Sidebar.tsx line 76 imports `<Brandmark size="md" running={false} />`. Brandmark.tsx implements wordmark + SVG (inferred — not directly read but hash comment in Sidebar matches design). |
 | **C2** MaestroMark = italic serif M, **distinct from BrandMark** | ✅ | Sidebar.tsx line 35 imports `MaestroMark` separately. MaestroMark.tsx line 36 has `fontStyle: 'italic'`. Used in sidebar-maestro identity row AND in FeedMessage `kind: 'out'` head (operator's own messages). Two distinct primitives; clean separation. |
 | **C3** PhaseDot real PHASES vocab | ✅ | tempo-helpers.ts PHASES table matches: `attached`/`processing`/`awaiting`/`draining`/`detached`/`booting`/`gone` → 6 visible chip variants. **One label drift**: `attached` → label "active" (not "attached"). Minor — bucket name vs phase name. Not a functional issue. |
 | **C4** Italic discipline | ✅ | grep confirms `font-style: italic` only in: (1) `MaestroMark.tsx:36` (correct — the M is italic), (2) `FeedMessage.tsx:19` (a comment, not code), (3) `components.css:509` `.msg.route .msg-body` (overheard messages — intentional per audit). **No `.page-title` italics, no whole-heading italics.** |

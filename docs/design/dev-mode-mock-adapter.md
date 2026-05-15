@@ -3,7 +3,7 @@
 - **Status**: Design — pending PR breakdown to engineer
 - **Date**: 2026-04-27
 - **Author**: tempo-architect
-- **Conductor brief**: Enable autonomous, end-to-end validation of claude-tempo (especially the web dashboard, #340) by an AI operator using `mcp__claude-in-chrome__*`, without polluting the operator's production daemon and without requiring human "trust this folder" prompts.
+- **Conductor brief**: Enable autonomous, end-to-end validation of agent-tempo (especially the web dashboard, #340) by an AI operator using `mcp__claude-in-chrome__*`, without polluting the operator's production daemon and without requiring human "trust this folder" prompts.
 - **Related**:
   - `src/adapters/README.md`, `src/adapters/base.ts`, `src/adapters/sdk/base.ts`
   - `src/adapters/copilot/adapter.ts` (closest existing precedent)
@@ -13,10 +13,10 @@
 
 ## 1. Problem
 
-Today the conductor (an AI operator running `claude-tempo`) has a hard ceiling on what it can validate end-to-end:
+Today the conductor (an AI operator running `agent-tempo`) has a hard ceiling on what it can validate end-to-end:
 
 1. **Real player sessions need a human-in-the-loop.** Spawning a Claude Code session pops the "trust this folder" prompt the first time. The conductor can't approve it; vinceblank has to.
-2. **There is one daemon per machine.** Any dashboard / TUI / wire-protocol experiment the conductor runs hits the same `~/.claude-tempo/` directory, the same `claude-tempo` task queue on Temporal's `default` namespace, and the same HTTP port (8473). Test traffic and production traffic share the same workflow visibility, the same `Maestro` workflow, the same SSE stream.
+2. **There is one daemon per machine.** Any dashboard / TUI / wire-protocol experiment the conductor runs hits the same `~/.agent-tempo/` directory, the same `agent-tempo` task queue on Temporal's `default` namespace, and the same HTTP port (8473). Test traffic and production traffic share the same workflow visibility, the same `Maestro` workflow, the same SSE stream.
 3. **The dashboard testing the conductor *did* manage last night** (#375, #376) was against vinceblank's prod daemon. Every click polluted real ensemble state.
 
 The fix has to address all three at once. A mock adapter without an isolated daemon still pollutes prod. An isolated daemon without a mock adapter still needs human trust prompts. Designing them together as one stack lets a developer (human or AI) spin up a fully sealed environment, drive multi-player scenarios, and tear it down with zero blast radius.
@@ -34,14 +34,14 @@ This generalizes beyond the dashboard:
 ┌──────────────────────────────────────────────────────────────────────┐
 │  Developer / AI conductor                                            │
 │                                                                      │
-│    $ claude-tempo --dev up --lineup tempo-mock-jam                   │
+│    $ agent-tempo --dev up --lineup tempo-mock-jam                   │
 │                                                                      │
 │           │                                                          │
 │           │ ┌─────────────────────────────────────────────────────┐  │
 │           ▼ ▼                                                     │  │
 │    ┌───────────────────┐    ┌───────────────────────────────────┐ │  │
 │    │  Dev daemon       │    │  Temporal namespace                │ │  │
-│    │  ~/.claude-tempo- │◄──►│  claude-tempo-dev                  │ │  │
+│    │  ~/.agent-tempo- │◄──►│  agent-tempo-dev                  │ │  │
 │    │  dev/             │    │  (auto-created on dev daemon boot) │ │  │
 │    │  Port 8474        │    └───────────────────────────────────┘ │  │
 │    │  Bus + HTTP + SSE │                                          │  │
@@ -60,7 +60,7 @@ This generalizes beyond the dashboard:
 │    http://localhost:8474/dashboard ────────────────────────────────  │
 │                                                                      │
 │  Production daemon (untouched)                                       │
-│    ~/.claude-tempo/  Port 8473  Namespace "default"                  │
+│    ~/.agent-tempo/  Port 8473  Namespace "default"                  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -221,7 +221,7 @@ Following the Copilot pattern, `src/adapters/mock/adapter.ts` is dual-purpose:
 
 The spawn activity (`src/spawn.ts`) gets a new branch: when `agent: 'mock'`, it spawns the subprocess directly via `child_process.spawn(process.execPath, [adapterPath], { detached: true, stdio: 'inherit', env })`. **No terminal window** — mock players have no UI, they're headless workers. This is one of the key wins: the conductor can recruit them without any "trust this folder" prompt or visible Ghostty / WT / iTerm window.
 
-The mock subprocess shares its stdout/stderr with the daemon's log file via `stdio: 'inherit'` so log lines appear in `~/.claude-tempo-dev/daemon.log` for debugging.
+The mock subprocess shares its stdout/stderr with the daemon's log file via `stdio: 'inherit'` so log lines appear in `~/.agent-tempo-dev/daemon.log` for debugging.
 
 ### 4.8 Scenario discovery — `scenarios/` at the repo root
 
@@ -236,12 +236,12 @@ Resolution rules for `--mockScript` / `CLAUDE_TEMPO_MOCK_SCRIPT`:
 CLI ergonomics for discovery:
 
 ```bash
-$ claude-tempo --dev scenarios list           # prints name + description for every shipped scenario
-$ claude-tempo --dev scenarios show handoff   # prints the full YAML for inspection
-$ claude-tempo --dev recruit alice --agent mock --mockMode scripted --mockScript handoff
+$ agent-tempo --dev scenarios list           # prints name + description for every shipped scenario
+$ agent-tempo --dev scenarios show handoff   # prints the full YAML for inspection
+$ agent-tempo --dev recruit alice --agent mock --mockMode scripted --mockScript handoff
 ```
 
-This makes the scenario library **discoverable** rather than tribal-knowledge — a fresh conductor session can `scenarios list` to see what's available without reading source. Same pattern as how `examples/ensembles/` lineups are discoverable via `claude-tempo lineups list`.
+This makes the scenario library **discoverable** rather than tribal-knowledge — a fresh conductor session can `scenarios list` to see what's available without reading source. Same pattern as how `examples/ensembles/` lineups are discoverable via `agent-tempo lineups list`.
 
 **Why repo root, not `examples/`:** scenarios are first-class artifacts (referenced by name, used by the validation harness, shipped to users), not illustrative examples. Putting them in `examples/` would imply they're optional sample code; putting them at the repo root signals "this is part of the library."
 
@@ -260,10 +260,10 @@ These are intentional limits. The mock is a dashboard / wire-protocol / coordina
 
 | Axis                  | Production default                    | Dev profile default                     | Resolved by                            |
 | --------------------- | ------------------------------------- | --------------------------------------- | -------------------------------------- |
-| Home dir              | `~/.claude-tempo/`                    | `~/.claude-tempo-dev/`                  | `CLAUDE_TEMPO_HOME` constant           |
+| Home dir              | `~/.agent-tempo/`                    | `~/.agent-tempo-dev/`                  | `CLAUDE_TEMPO_HOME` constant           |
 | HTTP port             | `8473`                                | `8474`                                  | `CLAUDE_TEMPO_DAEMON_PORT` env default |
-| Temporal namespace    | `default`                             | `claude-tempo-dev`                      | `TEMPORAL_NAMESPACE` env default       |
-| Task queue            | `claude-tempo`                        | `claude-tempo-dev`                      | `CLAUDE_TEMPO_TASK_QUEUE` env default  |
+| Temporal namespace    | `default`                             | `agent-tempo-dev`                      | `TEMPORAL_NAMESPACE` env default       |
+| Task queue            | `agent-tempo`                        | `agent-tempo-dev`                      | `CLAUDE_TEMPO_TASK_QUEUE` env default  |
 
 All four flip together when the `--dev` flag (or `CLAUDE_TEMPO_DEV_MODE=1` env) is set. **The user never sets these individually for dev work.** If they want to override one (e.g. run the dev daemon on a custom port), they can — the existing `CliOverrides` and env precedence chain still wins. But the default path is "one switch, four axes".
 
@@ -290,8 +290,8 @@ function resolveTempoHome(): string {
     return process.env.CLAUDE_TEMPO_HOME_OVERRIDE;
   }
   return isDevMode()
-    ? join(homedir(), '.claude-tempo-dev')
-    : join(homedir(), '.claude-tempo');
+    ? join(homedir(), '.agent-tempo-dev')
+    : join(homedir(), '.agent-tempo');
 }
 
 export const CLAUDE_TEMPO_HOME = resolveTempoHome();
@@ -306,19 +306,19 @@ The same pattern applies to `getConfig()` defaults: `temporalNamespace`, `taskQu
 
 ```
 # Spin up the dev stack
-$ claude-tempo --dev up --lineup tempo-mock-jam
+$ agent-tempo --dev up --lineup tempo-mock-jam
 
 # Or start the dev daemon alone
-$ claude-tempo --dev daemon up
+$ agent-tempo --dev daemon up
 
 # Anything you'd do against prod, prefixed with --dev
-$ claude-tempo --dev ensemble
-$ claude-tempo --dev recruit alice --workDir /tmp/scratch --agent mock --mockMode scripted --mockScript ./scenarios/handoff.yaml
-$ claude-tempo --dev cue alice "what's the time"
-$ claude-tempo --dev dashboard
+$ agent-tempo --dev ensemble
+$ agent-tempo --dev recruit alice --workDir /tmp/scratch --agent mock --mockMode scripted --mockScript ./scenarios/handoff.yaml
+$ agent-tempo --dev cue alice "what's the time"
+$ agent-tempo --dev dashboard
 
 # Tear down
-$ claude-tempo --dev daemon stop
+$ agent-tempo --dev daemon stop
 ```
 
 The `--dev` flag is a **top-level** CLI option (parsed before the verb) so every existing verb works in dev mode without per-command plumbing. Implementation: a single check in `src/cli.ts`'s arg parser before verb dispatch.
@@ -326,10 +326,10 @@ The `--dev` flag is a **top-level** CLI option (parsed before the verb) so every
 Banner: every CLI invocation in dev mode prints a single conspicuous header line:
 
 ```
-[DEV MODE] using ~/.claude-tempo-dev/ · port 8474 · namespace claude-tempo-dev
+[DEV MODE] using ~/.agent-tempo-dev/ · port 8474 · namespace agent-tempo-dev
 ```
 
-Daemon also prints this on startup so `~/.claude-tempo-dev/daemon.log` self-identifies.
+Daemon also prints this on startup so `~/.agent-tempo-dev/daemon.log` self-identifies.
 
 ### 5.5 Lifetime
 
@@ -339,13 +339,13 @@ Daemon also prints this on startup so `~/.claude-tempo-dev/daemon.log` self-iden
 - The conductor wants to drive multiple scenarios in succession without per-scenario teardown.
 - Dev workflows in the dev namespace persist in Temporal until completed, terminated, or aged out — a long-lived dev daemon polls them naturally; a short-lived one would need to handle "what about workflows from the previous run".
 
-The existing daemon stop / status / heartbeat machinery applies as-is. `claude-tempo --dev daemon status` reports against the dev daemon; `claude-tempo daemon status` reports against prod. They never confuse each other because their PID files live in different home dirs.
+The existing daemon stop / status / heartbeat machinery applies as-is. `agent-tempo --dev daemon status` reports against the dev daemon; `agent-tempo daemon status` reports against prod. They never confuse each other because their PID files live in different home dirs.
 
 ### 5.6 Conflict avoidance
 
 - **Dev daemon vs prod daemon on the same machine:** different home dirs (so different PID files, different lock files), different ports, different namespaces. They coexist — but **not as automatically as one might hope** — see §5.7 below for the orphan-detector caveat surfaced during PR-1 implementation.
 - **Two dev daemons on the same machine:** the existing `tryAcquireLockFile` mechanism in `src/cli/daemon.ts` prevents this — second starter sees the lock, waits, finds the first daemon's PID file, and connects to it. Same behavior as prod. v1 explicitly does **not** support multiple parallel dev daemons; users who need that set `CLAUDE_TEMPO_HOME_OVERRIDE` per environment.
-- **Dev daemon vs prod daemon talking to the same Temporal:** namespace-scoped. Dev workflows live in `claude-tempo-dev`; prod's `default` namespace can't see them via `workflow.list()` queries.
+- **Dev daemon vs prod daemon talking to the same Temporal:** namespace-scoped. Dev workflows live in `agent-tempo-dev`; prod's `default` namespace can't see them via `workflow.list()` queries.
 
 ### 5.7 Cross-profile orphan-detector coexistence
 
@@ -373,7 +373,7 @@ This isn't a one-off patch — it's a structural lesson: **any host-wide enumera
 Acceptance criteria the implementation must meet:
 
 1. `--dev daemon stop` MUST NOT kill the prod daemon, ever.
-2. `claude-tempo daemon stop` MUST NOT kill the dev daemon, ever.
+2. `agent-tempo daemon stop` MUST NOT kill the dev daemon, ever.
 3. Genuine zombies (matching the daemon cmdline regex but not in either profile's PID file) MUST still be reaped — except in the weak-evidence partial-state case described above.
 4. Unit tests must cover: (a) cross-profile coexistence, (b) genuine-zombie reap, (c) weak-evidence suppression, (d) opposite-profile PID file read failure (non-fatal).
 
@@ -381,7 +381,7 @@ Acceptance criteria the implementation must meet:
 
 ### 6.1 Namespace name
 
-`claude-tempo-dev`. Reasons: explicit (no chance of collision with another product using `dev`), prefix-stable (so future namespaces like `claude-tempo-staging` slot in cleanly), and matches the home-dir naming pattern.
+`agent-tempo-dev`. Reasons: explicit (no chance of collision with another product using `dev`), prefix-stable (so future namespaces like `agent-tempo-staging` slot in cleanly), and matches the home-dir naming pattern.
 
 ### 6.2 Auto-provisioning on dev daemon boot
 
@@ -397,7 +397,7 @@ async function ensureDevNamespace(connection: Connection, namespace: string): Pr
       namespace,
       // Workflow execution retention for dev — short, to keep the namespace tidy.
       workflowExecutionRetentionPeriod: { seconds: 86400 },  // 1 day
-      description: 'claude-tempo dev profile — auto-created. Safe to drop.',
+      description: 'agent-tempo dev profile — auto-created. Safe to drop.',
     });
     log(`registered Temporal namespace "${namespace}"`);
   } catch (err) {
@@ -413,7 +413,7 @@ async function ensureDevNamespace(connection: Connection, namespace: string): Pr
 }
 ```
 
-Idempotent. Bounded. Non-fatal: if namespace registration fails for any reason, the worker bootstrap will fail with a clear `Namespace not found` error from Temporal — the user is told what to do (`temporal operator namespace create -n claude-tempo-dev`).
+Idempotent. Bounded. Non-fatal: if namespace registration fails for any reason, the worker bootstrap will fail with a clear `Namespace not found` error from Temporal — the user is told what to do (`temporal operator namespace create -n agent-tempo-dev`).
 
 ### 6.3 Why namespace and not "tag with dev=true"
 
@@ -421,7 +421,7 @@ Considered alternative: keep one namespace, tag dev workflows with a search attr
 
 - Visibility queries (`workflow.list`) would require operators to remember to filter by tag — easy to forget, leaks dev state into prod tooling.
 - The Maestro workflow is namespace-wide; one Maestro per namespace is the existing invariant. Keeping dev in its own namespace means dev gets its own Maestro, untouched by prod ensemble state.
-- Temporal CLI / UI (`temporal workflow list`) defaults to a namespace; switching is one flag (`-n claude-tempo-dev`). With tag-based isolation, every CLI call needs a search-attribute filter — friction.
+- Temporal CLI / UI (`temporal workflow list`) defaults to a namespace; switching is one flag (`-n agent-tempo-dev`). With tag-based isolation, every CLI call needs a search-attribute filter — friction.
 
 Namespace isolation is the natural Temporal idiom and what Temporal's own docs recommend for "different environments / tenants in the same cluster".
 
@@ -454,9 +454,9 @@ if (isDevMode()) {
   // don't fail with a missing-module error at import time.
   import('./mock').then(({ mockDescriptor }) => {
     registry.register(mockDescriptor);
-    console.error('[claude-tempo] DEV MODE: mock adapter registered');
+    console.error('[agent-tempo] DEV MODE: mock adapter registered');
   }).catch((err) => {
-    console.error('[claude-tempo] DEV MODE: mock adapter unavailable —', err);
+    console.error('[agent-tempo] DEV MODE: mock adapter unavailable —', err);
   });
 }
 ```
@@ -489,22 +489,22 @@ This is the conductor's primary use case. After PR 2 lands:
 
 ```
 # 1. Start the dev daemon (auto-creates namespace, binds 8474)
-$ claude-tempo --dev daemon up
+$ agent-tempo --dev daemon up
 
 # 2. Recruit two mock players for a multi-player scenario
-$ claude-tempo --dev recruit alice \
+$ agent-tempo --dev recruit alice \
     --workDir /tmp/dev-scratch \
     --agent mock \
     --mockMode scripted \
     --mockScript $(pwd)/examples/mock-scenarios/handoff.yaml
 
-$ claude-tempo --dev recruit bob \
+$ agent-tempo --dev recruit bob \
     --workDir /tmp/dev-scratch \
     --agent mock \
     --mockMode echo
 
 # 3. Drive the scenario by sending a cue
-$ claude-tempo --dev cue alice "implement feature X"
+$ agent-tempo --dev cue alice "implement feature X"
 
 # 4. Conductor opens the dashboard via Chrome MCP
    mcp__claude-in-chrome__navigate http://localhost:8474/dashboard
@@ -517,12 +517,12 @@ $ claude-tempo --dev cue alice "implement feature X"
 #    - the ensemble view matches the actual workflow state
 
 # 6. Tear down
-$ claude-tempo --dev daemon stop
+$ agent-tempo --dev daemon stop
 ```
 
-Production daemon at `~/.claude-tempo/` and `:8473` is **untouched** at every step.
+Production daemon at `~/.agent-tempo/` and `:8473` is **untouched** at every step.
 
-PR 3 adds `claude-tempo --dev up --lineup tempo-mock-jam` which collapses steps 1–3 into one command using a pre-baked lineup YAML.
+PR 3 adds `agent-tempo --dev up --lineup tempo-mock-jam` which collapses steps 1–3 into one command using a pre-baked lineup YAML.
 
 ## 9. Implementation phasing — three PRs, each <500 LoC
 
@@ -534,13 +534,13 @@ PR 3 adds `claude-tempo --dev up --lineup tempo-mock-jam` which collapses steps 
 - Profile-aware defaults for `temporalNamespace`, `taskQueue`, `DAEMON_PORT_DEFAULT`
 - `--dev` top-level CLI flag in `src/cli.ts`; sets `CLAUDE_TEMPO_DEV_MODE=1` before verb dispatch
 - `[DEV MODE]` banner in CLI output and daemon startup log
-- Auto-create `claude-tempo-dev` namespace on dev daemon boot (`src/daemon.ts`)
+- Auto-create `agent-tempo-dev` namespace on dev daemon boot (`src/daemon.ts`)
 
 **Tests:**
 - Unit: `isDevMode()` env var parsing edge cases
 - Unit: profile-aware path resolution (mocked `homedir()`)
 - Unit: namespace registration idempotency (mocked `workflowService.registerNamespace`)
-- Integration: dev daemon starts, writes to `~/.claude-tempo-dev/daemon.pid`, binds 8474
+- Integration: dev daemon starts, writes to `~/.agent-tempo-dev/daemon.pid`, binds 8474
 
 **Wire-protocol changes:** none.
 
@@ -579,7 +579,7 @@ PR 3 adds `claude-tempo --dev up --lineup tempo-mock-jam` which collapses steps 
 - `src/adapters/mock/README.md` — adapter contract, scenario format, mode descriptions
 - `docs/dev-mode.md` updated with mock adapter usage
 - `scenarios/{handoff,echo-everything,silent-witness}.yaml` at repo root — three reference scenarios (shipped via `package.json#files`)
-- `claude-tempo --dev scenarios list` / `scenarios show <name>` CLI subcommands for discovery
+- `agent-tempo --dev scenarios list` / `scenarios show <name>` CLI subcommands for discovery
 
 **Engineer:** tempo-lead.
 
@@ -592,7 +592,7 @@ PR 3 adds `claude-tempo --dev up --lineup tempo-mock-jam` which collapses steps 
 - `chaos` mode (probabilistic delay / throw / skip; seedable via `CLAUDE_TEMPO_MOCK_CHAOS_SEED`)
 - `examples/ensembles/tempo-mock-jam.yaml` — pre-baked lineup of mock players for `--dev up`
 - `scenarios/{stress-reconnect,multi-player-handoff,encore-flow}.yaml` — additional reference scenarios at repo root
-- `claude-tempo --dev up --lineup tempo-mock-jam --scenario <name>` integration (uses existing `up` machinery; `--scenario` flag wires the scripted YAML through to the spawned mock player envs)
+- `agent-tempo --dev up --lineup tempo-mock-jam --scenario <name>` integration (uses existing `up` machinery; `--scenario` flag wires the scripted YAML through to the spawned mock player envs)
 
 **Tests:**
 - Unit: chaos RNG seeded reproducibility
@@ -607,7 +607,7 @@ PR 3 adds `claude-tempo --dev up --lineup tempo-mock-jam` which collapses steps 
 
 **Engineer:** tempo-lead (or split off to a second engineer if velocity warrants).
 
-**Validation post-PR-3:** **full autonomous validation harness.** Conductor runs one command (`claude-tempo --dev up --lineup tempo-mock-jam`), gets a multi-player ensemble, drives the dashboard via Chrome MCP, validates wire-protocol changes, captures bugs as scenarios.
+**Validation post-PR-3:** **full autonomous validation harness.** Conductor runs one command (`agent-tempo --dev up --lineup tempo-mock-jam`), gets a multi-player ensemble, drives the dashboard via Chrome MCP, validates wire-protocol changes, captures bugs as scenarios.
 
 ### Out of scope for v1 (Phase 2 follow-ups)
 
@@ -623,7 +623,7 @@ PR 3 adds `claude-tempo --dev up --lineup tempo-mock-jam` which collapses steps 
 | ----------------------------------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | Mock adapter ships in production tarball                                                              | Low        | Gate 1 (build-time files exclusion); gate 4 (loud banner if anyone ever runs it)                                              |
 | Mock adapter recruited against prod ensemble (defeats the whole point of dev mode)                    | Low        | Gate 3 (recruit pre-flight rejection); gate 2 (registration only in dev mode); gate 1 ensures it can't even be there to register |
-| Dev daemon registers `claude-tempo-dev` namespace on a production Temporal cluster the user shares    | Low        | Auto-registration is silent on `ALREADY_EXISTS`; on `PERMISSION_DENIED` it logs + lets workers fail with a clear error        |
+| Dev daemon registers `agent-tempo-dev` namespace on a production Temporal cluster the user shares    | Low        | Auto-registration is silent on `ALREADY_EXISTS`; on `PERMISSION_DENIED` it logs + lets workers fail with a clear error        |
 | Scripted scenario YAML evolves into a configuration language ("just one more action type…")           | Medium     | Closed action set (cue / report / recruit / release / delayMs / crash) — anything fancier requires a Phase 2 design decision  |
 | `__MOCK__:` prefix accidentally typed by a real user                                                  | Low        | Real Claude Code adapters never see these messages because real users don't recruit mock players; the prefix is conspicuous   |
 | Two dev daemons on the same machine collide                                                           | Low        | Existing `tryAcquireLockFile` machinery prevents it; v1 explicitly doesn't support parallel dev environments                  |
@@ -653,14 +653,14 @@ PR 3 adds `claude-tempo --dev up --lineup tempo-mock-jam` which collapses steps 
 | Dev-mode gate: env var, CLI flag, separate npm package, build-time exclusion?             | **All four** (defense-in-depth). Build-time exclusion + import-time gate + recruit-time rejection + runtime banner.                          |
 | Daemon approach: separate daemon or multi-tenant single daemon?                           | **Separate daemon process** with its own home dir, PID file, port, namespace, task queue. Multi-tenancy is a Phase 2 concern.                 |
 | State isolation: separate home dir, tagged workflows, or fully separate Temporal cluster? | **Separate home dir + separate Temporal namespace.** No tagged-workflow approach.                                                            |
-| CLI ergonomics: `claude-tempo --dev daemon up` vs `claude-tempo dev daemon up` vs `claude-tempo daemon up --dev`? | **Top-level `--dev` flag** parsed before verb dispatch. Every existing verb works in dev mode without per-command plumbing.                   |
+| CLI ergonomics: `agent-tempo --dev daemon up` vs `agent-tempo dev daemon up` vs `agent-tempo daemon up --dev`? | **Top-level `--dev` flag** parsed before verb dispatch. Every existing verb works in dev mode without per-command plumbing.                   |
 | Lifetime: long-lived dev daemon vs spin-up-per-validation?                                | **Long-lived.** Same lifecycle as prod daemon. Cold-start latency would be punishing for iterative validation work.                          |
-| Namespace name: `claude-tempo-dev` vs `dev`?                                              | **`claude-tempo-dev`.** Explicit, matches home-dir naming, leaves room for `claude-tempo-staging` etc. without future renaming.              |
+| Namespace name: `agent-tempo-dev` vs `dev`?                                              | **`agent-tempo-dev`.** Explicit, matches home-dir naming, leaves room for `agent-tempo-staging` etc. without future renaming.              |
 | Provisioning: auto-create namespace or require manual setup?                              | **Auto-create on dev daemon boot.** Idempotent on `ALREADY_EXISTS`. Production daemons never auto-create.                                    |
 | Conflict avoidance: how do two dev daemons on same machine handle each other?             | **Existing `tryAcquireLockFile` machinery prevents it.** v1 doesn't support parallel dev daemons; `CLAUDE_TEMPO_HOME_OVERRIDE` is the escape. |
 | Mock adapter base class: `BaseAttachment` or `SdkAttachment`?                             | **`SdkAttachment`.** Pull-delivery semantics + `processingStart/End` pairing matches what the dashboard renders for real sessions.            |
 | Should the mock adapter expose its own MCP tools?                                         | **No.** Mock adapter has no tools; its only outputs are outbox entries via the same surface real sessions use.                               |
-| Should mock players be visible in `claude-tempo --dev ensemble`?                          | **Yes** — they're real workflows in the dev namespace. The dashboard / TUI / CLI treat them identically to any other player.                 |
+| Should mock players be visible in `agent-tempo --dev ensemble`?                          | **Yes** — they're real workflows in the dev namespace. The dashboard / TUI / CLI treat them identically to any other player.                 |
 | Should production code paths know about the mock adapter?                                 | **No.** The production registry never sees the mock descriptor; `AgentType` includes `'mock'` but recruit rejects it outside dev mode.       |
 | Should `--dev` change the wire protocol in any way?                                       | **No.** Wire protocol is identical between dev and prod. This is a hard invariant — bugs caught in dev must repro in prod.                   |
 | Where do scripted scenarios live in the repo?                                             | **`scenarios/` at the repo root**, parallel to `examples/ensembles/`. Shipped via `package.json#files`. Discoverable via `--dev scenarios list`. Not under `examples/` because they're first-class artifacts, not illustrative samples. |
