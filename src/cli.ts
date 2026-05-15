@@ -18,8 +18,8 @@
 // `require.cache` after load.
 
 // MUST be the first import — promotes a top-level `--dev` flag into the
-// `CLAUDE_TEMPO_DEV_MODE=1` env var BEFORE `./config` evaluates its
-// module-load-time `CLAUDE_TEMPO_HOME` constant. ADR 0014 §5.4.
+// `AGENT_TEMPO_DEV_MODE=1` env var BEFORE `./config` evaluates its
+// module-load-time `AGENT_TEMPO_HOME` constant. ADR 0014 §5.4.
 import './cli/dev-mode-bootstrap';
 
 import { readFileSync } from 'fs';
@@ -28,6 +28,7 @@ import * as out from './cli/output';
 import { emitDevBannerIfActive } from './cli/dev-banner';
 import { AGENT_TYPES, AgentType } from './types';
 import { ENV, CliOverrides, getConfig, isDevMode } from './config';
+import { formatMigrationResult, type LegacyMigrationResult } from './cli/legacy-migration';
 
 /** Package root — cli.js compiles to dist/cli.js, so one level up. Used by the inline `version` handler. */
 const PACKAGE_ROOT = resolve(__dirname, '..');
@@ -71,8 +72,12 @@ interface ParsedArgs {
   type?: string;
   includeStale: boolean;
   host?: string;
-  /** `daemon start --force` — bypass the stale-PID-file guard. */
+  /** `daemon start --force` — bypass the stale-PID-file guard.
+   *  Also consumed by `migrate-from-claude-tempo --force` to bypass the
+   *  conflict + volatile-state guards. */
   force: boolean;
+  /** `migrate-from-claude-tempo --dry-run` — print the migration plan without writing. */
+  dryRun?: boolean;
   // #128 recall flags (generic enough to share with future commands).
   limit?: number;
   offset?: number;
@@ -180,8 +185,12 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (arg === '--host' && i + 1 < argv.length) {
       result.host = argv[++i];
     } else if (arg === '--force') {
-      // Only consumed by `daemon start --force` to bypass the stale-PID guard.
+      // Consumed by `daemon start --force` (bypass stale-PID guard) and by
+      // `migrate-from-claude-tempo --force` (bypass conflict + volatile-state guards).
       result.force = true;
+    } else if (arg === '--dry-run') {
+      // `migrate-from-claude-tempo --dry-run` — print the plan, write nothing.
+      result.dryRun = true;
     } else if (arg === '--no-open') {
       // `dashboard --no-open` — print the URL without spawning a browser.
       result.noOpen = true;
@@ -286,6 +295,38 @@ function cliOverrides(args: ParsedArgs): CliOverrides {
     temporalTlsCertPath: args.temporalTlsCertPath,
     temporalTlsKeyPath: args.temporalTlsKeyPath,
   };
+}
+
+/**
+ * Format + print a {@link LegacyMigrationResult} from
+ * `migrate-from-claude-tempo`. Extracted to module scope (an if/else cascade
+ * rather than a nested switch) so the body doesn't trip the CLI surface-drift
+ * detector, which scans top-level `case '...':` labels in this file.
+ */
+function reportMigrationResult(result: LegacyMigrationResult): void {
+  const msg = formatMigrationResult(result);
+  if (result.status === 'no-legacy' || result.status === 'already-migrated') {
+    out.success(msg);
+    return;
+  }
+  if (result.status === 'migrated') {
+    out.success(msg);
+    if (result.copiedFiles?.length) {
+      for (const f of result.copiedFiles) out.log(`  ${out.dim('+')} ${f}`);
+    }
+    if (result.errors?.length) {
+      for (const e of result.errors) out.warn(e);
+    }
+    return;
+  }
+  if (result.status === 'skipped') {
+    out.warn(msg);
+    process.exitCode = 1;
+    return;
+  }
+  // 'failed'
+  out.error(msg);
+  process.exitCode = 1;
 }
 
 async function main() {
@@ -592,6 +633,21 @@ async function main() {
     case 'init':
       await init({ dir: args.dir, project: args.project });
       break;
+
+    case 'migrate-from-claude-tempo': {
+      // PR-2 of the v1.0 rebrand — one-shot copy of `~/.claude-tempo/` →
+      // `~/.agent-tempo/`. Crash-proof (no Temporal deps). The `--dev`
+      // top-level flag selects the dev profile (`~/.claude-tempo-dev/` →
+      // `~/.agent-tempo-dev/`) via {@link isDevMode}.
+      const { migrateLegacyHome } = await import('./cli/legacy-migration');
+      const result = await migrateLegacyHome({
+        dryRun: !!(args as { dryRun?: boolean }).dryRun,
+        force: !!(args as { force?: boolean }).force,
+        profile: isDevMode() ? 'dev' : 'prod',
+      });
+      reportMigrationResult(result);
+      break;
+    }
 
     case 'preflight': {
       // Preflight legitimately requires Temporal (that's what it tests), so

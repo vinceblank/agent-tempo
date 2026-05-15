@@ -117,7 +117,7 @@ export interface McpBridge {
  */
 export async function bootMcpBridge(opts: RegisterAllTempoToolsOpts): Promise<McpBridge> {
   const server = new McpServer({
-    name: 'claude-tempo',
+    name: 'agent-tempo',
     version: packageVersion(),
   });
 

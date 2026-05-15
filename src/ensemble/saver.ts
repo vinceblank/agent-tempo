@@ -2,11 +2,11 @@ import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 
 import { join, resolve } from 'path';
 import { Client } from '@temporalio/client';
 import { stringify as yamlStringify } from 'yaml';
-import { CLAUDE_TEMPO_HOME, schedulerWorkflowId } from '../config';
+import { AGENT_TEMPO_HOME, schedulerWorkflowId } from '../config';
 import { EnsembleLineup } from './schema';
 import { loadLineup } from './loader';
 
-const ENSEMBLES_DIR = join(CLAUDE_TEMPO_HOME, 'ensembles');
+const ENSEMBLES_DIR = join(AGENT_TEMPO_HOME, 'ensembles');
 
 function ensemblesDir(): string {
   mkdirSync(ENSEMBLES_DIR, { recursive: true });
@@ -114,7 +114,7 @@ export async function saveLineup(
 }
 
 /**
- * List all saved ensemble lineups in ~/.claude-tempo/ensembles/.
+ * List all saved ensemble lineups in ~/.agent-tempo/ensembles/.
  */
 export function listLineups(): Array<{ name: string; path: string }> {
   const dir = ensemblesDir();
@@ -128,7 +128,7 @@ export function listLineups(): Array<{ name: string; path: string }> {
 }
 
 /**
- * Read a saved lineup by name from ~/.claude-tempo/ensembles/.
+ * Read a saved lineup by name from ~/.agent-tempo/ensembles/.
  */
 export function readSavedLineup(name: string): string | null {
   const dir = ensemblesDir();
@@ -172,7 +172,7 @@ export interface LineupCatalogEntry {
 }
 
 /**
- * List all available lineups — saved (`~/.claude-tempo/ensembles/`)
+ * List all available lineups — saved (`~/.agent-tempo/ensembles/`)
  * plus shipped (`<package-root>/examples/ensembles/`). Saved takes
  * precedence over shipped when names collide.
  *

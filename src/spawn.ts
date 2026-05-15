@@ -6,7 +6,7 @@ import { ENV } from './config';
 import type { MockMode } from './types';
 import type { ClaudeCodeHeadlessPermissionMode } from './adapters/claude-code-headless/types';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:spawn]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:spawn]', ...args);
 
 /** Stable GUID for the claude-tempo Windows Terminal profile. */
 const WT_PROFILE_GUID = '{c1a0d300-0e30-4000-a000-c1a0de00e300}';
@@ -141,7 +141,7 @@ export function shellQuote(s: string): string {
  *
  * Resolution order:
  *  1. `configBin` parameter (from Config.claudeBin — env var or config file)
- *  2. `CLAUDE_TEMPO_CLAUDE_BIN` env var (checked directly for spawned processes that
+ *  2. `AGENT_TEMPO_CLAUDE_BIN` env var (checked directly for spawned processes that
  *     may not have full config resolution, e.g., activities)
  *  3. `which claude` / `where claude` lookup
  *  4. Bare `claude` fallback
@@ -151,7 +151,7 @@ export function resolveClaudePath(configBin?: string): string {
   if (configBin) return configBin;
 
   // Priority 2: env var (may be set by parent process)
-  const envBin = process.env.CLAUDE_TEMPO_CLAUDE_BIN;
+  const envBin = process.env.AGENT_TEMPO_CLAUDE_BIN;
   if (envBin) return envBin;
 
   // Priority 3: which/where lookup
@@ -611,8 +611,8 @@ export function spawnMockAdapter(opts: MockAdapterOpts): MockAdapterResult {
         ...(opts.temporalTlsCertPath ? { [ENV.TEMPORAL_TLS_CERT_PATH]: opts.temporalTlsCertPath } : {}),
         ...(opts.temporalTlsKeyPath ? { [ENV.TEMPORAL_TLS_KEY_PATH]: opts.temporalTlsKeyPath } : {}),
         // Mock-specific knobs.
-        CLAUDE_TEMPO_MOCK_MODE: opts.mockMode ?? 'echo',
-        ...(opts.mockScenario ? { CLAUDE_TEMPO_MOCK_SCENARIO: opts.mockScenario } : {}),
+        AGENT_TEMPO_MOCK_MODE: opts.mockMode ?? 'echo',
+        ...(opts.mockScenario ? { AGENT_TEMPO_MOCK_SCENARIO: opts.mockScenario } : {}),
         // Attachment handoff — adapter renews via startV2Lifecycle.
         ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
         ...(opts.attachmentRunId ? { [ENV.ATTACHMENT_RUN_ID]: opts.attachmentRunId } : {}),
@@ -658,7 +658,7 @@ export interface ClaudeApiAdapterOpts {
   workDir: string;
   /** Directory for log + PID files. Defaults to `logs/` inside workDir. */
   logDir?: string;
-  /** Model id (e.g. `claude-opus-4-7`). Forwarded via `CLAUDE_TEMPO_API_MODEL`. */
+  /** Model id (e.g. `claude-opus-4-7`). Forwarded via `AGENT_TEMPO_API_MODEL`. */
   model?: string;
   /**
    * PR-D attachment-lease handoff. When present, the workflow has already
@@ -695,7 +695,7 @@ function resolveClaudeApiPath(): { cmd: string; args: string[] } {
  * Mirrors {@link spawnCopilotBridge} — no TTY, log + PID files in
  * `logs/<name>.log` and `logs/<name>.pid`, env vars carry identity +
  * Temporal connection settings + optional attachment-handoff. The adapter
- * resolves the LLM model from `CLAUDE_TEMPO_API_MODEL` (set here when
+ * resolves the LLM model from `AGENT_TEMPO_API_MODEL` (set here when
  * `opts.model` is provided) or falls back to the constants-pinned default
  * (`claude-opus-4-7`) inside the adapter's `run()`. `ANTHROPIC_API_KEY`
  * is inherited from the parent's env (recruit pre-flight checks it).
@@ -727,7 +727,7 @@ export function spawnClaudeApiAdapter(opts: ClaudeApiAdapterOpts): ClaudeApiAdap
         ...(opts.temporalApiKey ? { [ENV.TEMPORAL_API_KEY]: opts.temporalApiKey } : {}),
         ...(opts.temporalTlsCertPath ? { [ENV.TEMPORAL_TLS_CERT_PATH]: opts.temporalTlsCertPath } : {}),
         ...(opts.temporalTlsKeyPath ? { [ENV.TEMPORAL_TLS_KEY_PATH]: opts.temporalTlsKeyPath } : {}),
-        // Model selection: recruit-arg → CLAUDE_TEMPO_API_MODEL → in-adapter default.
+        // Model selection: recruit-arg → AGENT_TEMPO_API_MODEL → in-adapter default.
         ...(opts.model ? { [ENV.API_MODEL]: opts.model } : {}),
         // Attachment handoff — adapter renews via startV2Lifecycle.
         ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
@@ -754,8 +754,8 @@ export function spawnClaudeApiAdapter(opts: ClaudeApiAdapterOpts): ClaudeApiAdap
  * Options for {@link spawnOpenCodeAdapter}. Mirrors {@link ClaudeApiAdapterOpts}
  * with one shape difference: the model id carries a `provider/...` prefix
  * (`anthropic/claude-opus-4-7`, `openai/gpt-4o`, …) and is forwarded via
- * `CLAUDE_TEMPO_OPENCODE_MODEL` so it doesn't collide with claude-api's
- * `CLAUDE_TEMPO_API_MODEL` namespace.
+ * `AGENT_TEMPO_OPENCODE_MODEL` so it doesn't collide with claude-api's
+ * `AGENT_TEMPO_API_MODEL` namespace.
  *
  * The adapter manages its own `opencode serve` subprocess internally — the
  * spawn helper here only launches the headless adapter Node process; the
@@ -773,7 +773,7 @@ export interface OpenCodeAdapterOpts {
   workDir: string;
   /** Directory for log + PID files. Defaults to `logs/` inside workDir. */
   logDir?: string;
-  /** Model id (e.g. `anthropic/claude-opus-4-7`). Forwarded via `CLAUDE_TEMPO_OPENCODE_MODEL`. */
+  /** Model id (e.g. `anthropic/claude-opus-4-7`). Forwarded via `AGENT_TEMPO_OPENCODE_MODEL`. */
   model?: string;
   /**
    * PR-D attachment-lease handoff. When present, the workflow has already
@@ -841,7 +841,7 @@ export function spawnOpenCodeAdapter(opts: OpenCodeAdapterOpts): OpenCodeAdapter
         ...(opts.temporalApiKey ? { [ENV.TEMPORAL_API_KEY]: opts.temporalApiKey } : {}),
         ...(opts.temporalTlsCertPath ? { [ENV.TEMPORAL_TLS_CERT_PATH]: opts.temporalTlsCertPath } : {}),
         ...(opts.temporalTlsKeyPath ? { [ENV.TEMPORAL_TLS_KEY_PATH]: opts.temporalTlsKeyPath } : {}),
-        // Model selection: recruit-arg → CLAUDE_TEMPO_OPENCODE_MODEL → in-adapter default.
+        // Model selection: recruit-arg → AGENT_TEMPO_OPENCODE_MODEL → in-adapter default.
         ...(opts.model ? { [ENV.OPENCODE_MODEL]: opts.model } : {}),
         // Attachment handoff — adapter renews via startV2Lifecycle.
         ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
@@ -965,7 +965,7 @@ export function spawnClaudeCodeHeadlessAdapter(
         ...(opts.temporalApiKey ? { [ENV.TEMPORAL_API_KEY]: opts.temporalApiKey } : {}),
         ...(opts.temporalTlsCertPath ? { [ENV.TEMPORAL_TLS_CERT_PATH]: opts.temporalTlsCertPath } : {}),
         ...(opts.temporalTlsKeyPath ? { [ENV.TEMPORAL_TLS_KEY_PATH]: opts.temporalTlsKeyPath } : {}),
-        // Permission mode: recruit-arg → CLAUDE_TEMPO_PERMISSION_MODE → in-adapter default.
+        // Permission mode: recruit-arg → AGENT_TEMPO_PERMISSION_MODE → in-adapter default.
         ...(opts.permissionMode ? { [ENV.PERMISSION_MODE]: opts.permissionMode } : {}),
         ...(opts.dangerouslySkipPermissions ? { [ENV.DANGEROUSLY_SKIP_PERMISSIONS]: '1' } : {}),
         // Attachment handoff — adapter renews via startV2Lifecycle.

@@ -4,7 +4,7 @@
  * Owns the V2 attachment lifecycle for Claude Code CLI sessions: claims the
  * attachment, drives the base-class heartbeat + phase-watcher loops, and runs
  * the delivery poll against a runId-pinned handle. PR-H (#132) removed the
- * `CLAUDE_TEMPO_LIFECYCLE_V2=0` escape hatch that previously gated V1 vs V2.
+ * `AGENT_TEMPO_LIFECYCLE_V2=0` escape hatch that previously gated V1 vs V2.
  *
  * Delivery itself (per design §5.3): push via MCP notification, ack via
  * `markDelivered`. No `processingStart`/`End` pairs — those are for SDK
@@ -24,7 +24,7 @@ import type { AdapterDescriptor, DetachReason } from '../../types';
 import { Message } from '../../types';
 import { ENV } from '../../config';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:poller]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:poller]', ...args);
 
 /**
  * Descriptor for the claude-code adapter. Kept colocated with the class so
@@ -164,7 +164,7 @@ function startMessagePoller(
  * the poller on the live run. Transparent to upstream.
  *
  * PR-H (#132): the legacy unpinned-poll fallback (gated on
- * `CLAUDE_TEMPO_LIFECYCLE_V2=0`) has been removed. V2 is the only path.
+ * `AGENT_TEMPO_LIFECYCLE_V2=0`) has been removed. V2 is the only path.
  */
 export class InteractiveAttachment extends BaseAttachment {
   readonly descriptor: AdapterDescriptor = claudeCodeDescriptor;

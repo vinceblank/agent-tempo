@@ -472,7 +472,7 @@ function EnsembleWorkspace({ compact = false }) {
                 <span className="popout-dot g" />
               </div>
               <div className="popout-title mono">
-                <span className="dim">claude-tempo · maestro chat ·</span> <span className="accent">@my-band</span>
+                <span className="dim">agent-tempo · maestro chat ·</span> <span className="accent">@my-band</span>
               </div>
               <div className="popout-right mono dim"><span className="popout-pin">◈</span> always on top</div>
             </div>

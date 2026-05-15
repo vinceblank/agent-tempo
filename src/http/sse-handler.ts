@@ -9,7 +9,7 @@
  *   - epoch match, `seq < ringStart` → emit `gap` with `reason: 'overflow'`, live tail
  *   - epoch match, `seq >= ringStart` → replay `[seq+1 … newest]`, live tail
  * - Per-connection 1 MiB write-buffer cap (§7.3) with destroy-on-overflow.
- * - Process-wide connection cap (`CLAUDE_TEMPO_SSE_MAX_CONNECTIONS`,
+ * - Process-wide connection cap (`AGENT_TEMPO_SSE_MAX_CONNECTIONS`,
  *   default 100); over-cap → `503 Service Unavailable`, `Retry-After: 5`.
  * - Cancellation: socket close drops the subscription within one
  *   event-loop tick.
@@ -35,7 +35,7 @@ export const DEFAULT_MAX_CONNECTIONS = 100;
 export const PER_CONNECTION_BUFFER_LIMIT = 1 * 1024 * 1024;
 
 const log = (...args: unknown[]) =>
-  console.error('[claude-tempo:sse]', ...args);
+  console.error('[agent-tempo:sse]', ...args);
 
 /** Counts open SSE connections. Exported for `/v1/health.subscriberCount`. */
 export class ConnectionCap {

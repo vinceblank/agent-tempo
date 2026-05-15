@@ -2,13 +2,13 @@
  * Unit tests for `resolveTempoHome()` and the dev-mode-aware Config
  * defaults (ADR 0014 §5.1, §5.3).
  *
- *   - Dev mode flips the home dir to `~/.claude-tempo-dev/`.
- *   - `CLAUDE_TEMPO_HOME_OVERRIDE` wins over both prod and dev defaults.
+ *   - Dev mode flips the home dir to `~/.agent-tempo-dev/`.
+ *   - `AGENT_TEMPO_HOME_OVERRIDE` wins over both prod and dev defaults.
  *   - `getConfig()` defaults `temporalNamespace` and `taskQueue` to the
  *     dev variants when `isDevMode()` is true.
  *   - Negative case: env unset → production paths/values everywhere.
  *
- * NOTE: `CLAUDE_TEMPO_HOME` is a module-load-time constant, so it can't
+ * NOTE: `AGENT_TEMPO_HOME` is a module-load-time constant, so it can't
  * be re-evaluated by toggling env vars at test time. The constant path
  * is covered indirectly: `resolveTempoHome()` is exported so we can
  * exercise the three-tier precedence directly, and the live constant is
@@ -54,17 +54,17 @@ describe('resolveTempoHome (ADR 0014 §5.3)', () => {
     expect(resolveTempoHome()).toBe(join(homedir(), PROD_HOME_DIR_NAME));
   });
 
-  it('returns the dev home dir when CLAUDE_TEMPO_DEV_MODE=1', () => {
+  it('returns the dev home dir when AGENT_TEMPO_DEV_MODE=1', () => {
     process.env[ENV.DEV_MODE] = '1';
     expect(resolveTempoHome()).toBe(join(homedir(), DEV_HOME_DIR_NAME));
   });
 
-  it('honors CLAUDE_TEMPO_HOME_OVERRIDE in production', () => {
+  it('honors AGENT_TEMPO_HOME_OVERRIDE in production', () => {
     process.env[ENV.DEV_HOME_OVERRIDE] = '/tmp/scratch-prod';
     expect(resolveTempoHome()).toBe('/tmp/scratch-prod');
   });
 
-  it('honors CLAUDE_TEMPO_HOME_OVERRIDE even in dev mode (highest precedence)', () => {
+  it('honors AGENT_TEMPO_HOME_OVERRIDE even in dev mode (highest precedence)', () => {
     // The override is the v1 escape hatch for triple-isolated envs (ADR
     // 0014 §5.3). It MUST win over the dev default, otherwise a power
     // user setting both can't actually point to a third profile.
@@ -106,17 +106,17 @@ describe('getConfig dev-aware defaults (ADR 0014 §5.1)', () => {
     expect(config.taskQueue).toBe(PROD_TASK_QUEUE);
   });
 
-  it('dev defaults when CLAUDE_TEMPO_DEV_MODE=1', () => {
+  it('dev defaults when AGENT_TEMPO_DEV_MODE=1', () => {
     process.env[ENV.DEV_MODE] = '1';
     const config = getConfig();
     expect(config.temporalNamespace).toBe(DEV_TEMPORAL_NAMESPACE);
     expect(config.taskQueue).toBe(DEV_TASK_QUEUE);
   });
 
-  it('CLAUDE_TEMPO_TASK_QUEUE env var still overrides the dev default', () => {
+  it('AGENT_TEMPO_TASK_QUEUE env var still overrides the dev default', () => {
     // Per architect Q1 (#423 PR-A), the env-var carve-out covers ONLY
     // `TEMPORAL_NAMESPACE` and `TEMPORAL_ADDRESS` — the two paths that bled
-    // a user's prod connection into the dev profile. `CLAUDE_TEMPO_TASK_QUEUE`
+    // a user's prod connection into the dev profile. `AGENT_TEMPO_TASK_QUEUE`
     // is its own scope (per-ensemble routing) and is deferred to PR-B.
     // This test pins the post-PR-A contract: namespace honors the carve-out,
     // task queue does not.

@@ -1642,7 +1642,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               mockMode: entry.mockMode,
               mockScenario: entry.mockScenario,
               // #131 Phase C — forward to spawnProcess so spawnClaudeApiAdapter
-              // can plumb it into the subprocess env (CLAUDE_TEMPO_API_MODEL).
+              // can plumb it into the subprocess env (AGENT_TEMPO_API_MODEL).
               ...(entry.model !== undefined ? { model: entry.model } : {}),
             });
             break;

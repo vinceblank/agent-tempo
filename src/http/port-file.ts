@@ -1,5 +1,5 @@
 /**
- * `~/.claude-tempo/daemon.port` — atomic write + cleanup helpers.
+ * `~/.agent-tempo/daemon.port` — atomic write + cleanup helpers.
  *
  * The TUI / CLI / web dashboard read this file to discover the daemon's
  * bound HTTP port without any out-of-band config. SSE-PROTOCOL.md §1
@@ -18,10 +18,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { setTimeout as sleep } from 'timers/promises';
-import { CLAUDE_TEMPO_HOME } from '../config';
+import { AGENT_TEMPO_HOME } from '../config';
 
-/** Default location, anchored to `~/.claude-tempo/`. */
-export const DAEMON_PORT_PATH = path.join(CLAUDE_TEMPO_HOME, 'daemon.port');
+/** Default location, anchored to `~/.agent-tempo/`. */
+export const DAEMON_PORT_PATH = path.join(AGENT_TEMPO_HOME, 'daemon.port');
 
 /**
  * Atomically write `port` (decimal ASCII, no trailing newline) to

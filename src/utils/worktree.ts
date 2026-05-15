@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, rmSync } from 'fs';
 import * as path from 'path';
 import { WORKTREE_INSTALL_TIMEOUT } from './validation';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:worktree]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:worktree]', ...args);
 
 /**
  * Compute the base directory for all worktrees in an ensemble.

@@ -91,7 +91,7 @@ const DEV_ONLY_AGENTS: ReadonlySet<AgentType> = new Set(['mock']);
  * `src/types.ts`).
  *
  * `'mock'` is dev-mode-only — see ADR 0014 §7. Read at request time so
- * toggling `CLAUDE_TEMPO_DEV_MODE` between requests is picked up without
+ * toggling `AGENT_TEMPO_DEV_MODE` between requests is picked up without
  * restart (parity with `src/tools/recruit.ts`).
  *
  * Deriving from `AGENT_TYPES` rather than hardcoding the list closes the

@@ -43,7 +43,7 @@ import type { BaseAttachmentOptions } from '../src/adapters/base';
 /**
  * Capture `console.error` output for the duration of `fn` and return what
  * was logged. The adapter module uses `console.error` as its log sink
- * (`log = (...args) => console.error('[claude-tempo:adapter]', ...args)`)
+ * (`log = (...args) => console.error('[agent-tempo:adapter]', ...args)`)
  * so this is the seam for asserting on diagnostic output without mocking
  * the module itself.
  */

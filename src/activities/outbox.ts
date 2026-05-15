@@ -37,7 +37,7 @@ import {
 import { PLAYER_STATE_DEFAULT_KEY } from '../utils/validation';
 import type { PlayerStateEntry } from '../types';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:outbox]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:outbox]', ...args);
 
 /**
  * Classify a Temporal client error raised by `handle.query` / `handle.signal`
@@ -253,18 +253,18 @@ export interface SpawnProcessInput {
   adapterId?: string;
   /**
    * Mock-adapter configuration (ADR 0014 §4.2). Only present when `agent === 'mock'`.
-   * Forwarded into the spawned subprocess as `CLAUDE_TEMPO_MOCK_MODE` /
-   * `CLAUDE_TEMPO_MOCK_SCENARIO` env vars. Chaos mode also reads
-   * `CLAUDE_TEMPO_MOCK_CHAOS_*` from the daemon's env (inherited via spawn).
+   * Forwarded into the spawned subprocess as `AGENT_TEMPO_MOCK_MODE` /
+   * `AGENT_TEMPO_MOCK_SCENARIO` env vars. Chaos mode also reads
+   * `AGENT_TEMPO_MOCK_CHAOS_*` from the daemon's env (inherited via spawn).
    */
   mockMode?: MockMode;
   mockScenario?: string;
   /**
    * #131 / #449 Phase C — model id for the headless adapters.
    *   - `claude-api`: bare Anthropic id (e.g. `claude-opus-4-7`); forwarded
-   *     as `CLAUDE_TEMPO_API_MODEL`.
+   *     as `AGENT_TEMPO_API_MODEL`.
    *   - `opencode`: combined provider/model (e.g. `anthropic/claude-opus-4-7`,
-   *     `openai/gpt-4o`); forwarded as `CLAUDE_TEMPO_OPENCODE_MODEL`.
+   *     `openai/gpt-4o`); forwarded as `AGENT_TEMPO_OPENCODE_MODEL`.
    * The spawn dispatcher inspects `agent` to pick the right env var. Only
    * meaningful for those two adapters; ignored otherwise. Falls back inside
    * the adapter to its respective env var → constants-pinned default.
@@ -272,7 +272,7 @@ export interface SpawnProcessInput {
   model?: string;
   /**
    * #520 — claude-code-headless permission mode. Forwarded as
-   * `CLAUDE_TEMPO_PERMISSION_MODE` to the spawned adapter; the adapter
+   * `AGENT_TEMPO_PERMISSION_MODE` to the spawned adapter; the adapter
    * passes it through to per-turn `claude -p --permission-mode <mode>`.
    * Only meaningful when `agent === 'claude-code-headless'`. Mutually
    * exclusive with {@link dangerouslySkipPermissions}. Type imported from
@@ -281,7 +281,7 @@ export interface SpawnProcessInput {
   permissionMode?: ClaudeCodeHeadlessPermissionMode;
   /**
    * #520 — claude-code-headless dangerous-skip-permissions opt-in.
-   * Forwarded as `CLAUDE_TEMPO_DANGEROUSLY_SKIP_PERMISSIONS=1`. Only
+   * Forwarded as `AGENT_TEMPO_DANGEROUSLY_SKIP_PERMISSIONS=1`. Only
    * meaningful when `agent === 'claude-code-headless'`. Mutually
    * exclusive with {@link permissionMode}.
    */

@@ -7,7 +7,7 @@ import { randomUUID } from 'crypto';
 import { Cron } from 'croner';
 import { Client, Connection, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { spawnInTerminal, spawnCopilotBridge, spawnMockAdapter, resolveClaudePath } from '../spawn';
-import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, isDevMode, Config, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
+import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, isDevMode, Config, CliOverrides, AGENT_TEMPO_HOME } from '../config';
 import { getGitInfo } from '../git-info';
 import { createTemporalConnection } from '../connection';
 import { releaseHeldSignal, outboxLockedQuery, setPausedSignal, destroyUpdate } from '../workflows/signals';
@@ -547,7 +547,7 @@ async function start(opts: StartOpts) {
         await ensureMaestroWorkflow(conductorClient, config, opts.ensemble);
       } catch (err) {
         if (process.env.DEBUG) {
-          console.error('[claude-tempo:conduct] ensureMaestroWorkflow failed:', err);
+          console.error('[agent-tempo:conduct] ensureMaestroWorkflow failed:', err);
         }
       }
       if (startLineup) {
@@ -881,21 +881,24 @@ function initProject(dir: string) {
   const mcpPath = join(dir, '.mcp.json');
 
   const entry = {
-    command: 'claude-tempo-server',
+    command: 'agent-tempo-server',
   };
 
   if (existsSync(mcpPath)) {
     try {
       const existing = JSON.parse(readFileSync(mcpPath, 'utf8'));
-      if (existing?.mcpServers?.['claude-tempo']) {
-        out.success('.mcp.json already has a claude-tempo entry');
+      // Backward-compat: detect either the new (`agent-tempo`) or legacy
+      // (`claude-tempo`) registration. Skip the rewrite if either is present —
+      // the migration verb is the one path that upgrades the key.
+      if (existing?.mcpServers?.['agent-tempo'] || existing?.mcpServers?.['claude-tempo']) {
+        out.success('.mcp.json already has an agent-tempo entry');
         out.log(`  ${out.dim(mcpPath)}`);
         return;
       }
       existing.mcpServers = existing.mcpServers || {};
-      existing.mcpServers['claude-tempo'] = entry;
+      existing.mcpServers['agent-tempo'] = entry;
       writeFileSync(mcpPath, JSON.stringify(existing, null, 2) + '\n');
-      out.success('Added claude-tempo to existing .mcp.json');
+      out.success('Added agent-tempo to existing .mcp.json');
     } catch {
       out.error(`Failed to parse ${mcpPath}. Fix the JSON or delete it and re-run.`);
       process.exit(1);
@@ -903,11 +906,11 @@ function initProject(dir: string) {
   } else {
     const config = {
       mcpServers: {
-        'claude-tempo': entry,
+        'agent-tempo': entry,
       },
     };
     writeFileSync(mcpPath, JSON.stringify(config, null, 2) + '\n');
-    out.success('Created .mcp.json with claude-tempo config');
+    out.success('Created .mcp.json with agent-tempo config');
   }
 
   out.log(`  ${out.dim(mcpPath)}`);
@@ -918,7 +921,7 @@ function initProject(dir: string) {
 
 // --- Temporal server management ---
 
-const DEFAULT_DB_PATH = join(CLAUDE_TEMPO_HOME, 'temporal-data.db');
+const DEFAULT_DB_PATH = join(AGENT_TEMPO_HOME, 'temporal-data.db');
 
 const SEARCH_ATTRIBUTES = [
   { name: 'ClaudeTempoHostname', type: 'Keyword' },
@@ -1007,7 +1010,7 @@ export async function server(opts: ServerOpts) {
   }
 
   // Ensure data directory exists
-  mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
+  mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
 
   const port = config.temporalAddress.split(':')[1] || '7233';
   const args = [
@@ -1124,7 +1127,7 @@ export async function up(opts: UpOpts) {
     out.check('Temporal running', true, config.temporalAddress);
   } else {
     out.log(`  ${out.dim('...')} Starting Temporal dev server...`);
-    mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
+    mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
     const port = config.temporalAddress.split(':')[1] || '7233';
     const child = cpSpawn('temporal', [
       'server', 'start-dev',
@@ -1143,7 +1146,7 @@ export async function up(opts: UpOpts) {
       out.error('Temporal did not start within 10 seconds');
       process.exit(1);
     }
-    out.check('Temporal started', true, `pid ${child.pid}, data in ~/.claude-tempo/`);
+    out.check('Temporal started', true, `pid ${child.pid}, data in ~/.agent-tempo/`);
   }
 
   // Step 3: Register search attributes
@@ -1806,7 +1809,8 @@ export async function down(opts: DownOpts) {
   if (existsSync(projectMcpPath)) {
     try {
       const mcpContent = JSON.parse(readFileSync(projectMcpPath, 'utf8'));
-      const tempoEntry = mcpContent?.mcpServers?.['claude-tempo'];
+      // Backward-compat: check both the new (`agent-tempo`) and legacy (`claude-tempo`) keys.
+      const tempoEntry = mcpContent?.mcpServers?.['agent-tempo'] ?? mcpContent?.mcpServers?.['claude-tempo'];
       if (tempoEntry) {
         const cmd = tempoEntry.command ?? '';
         const entryArgs: string[] = tempoEntry.args ?? [];
@@ -1823,24 +1827,27 @@ export async function down(opts: DownOpts) {
     // Remove global registration
     if (isGlobalMcpRegistered()) {
       if (removeGlobalMcp()) {
-        out.success('Removed claude-tempo from global MCP config');
+        out.success('Removed agent-tempo from global MCP config');
       } else {
         out.warn('Could not remove global MCP entry');
       }
     }
 
-    // Also remove project-level .mcp.json entry if present
+    // Also remove project-level .mcp.json entry if present.
+    // Backward-compat: clean up either the new (`agent-tempo`) or legacy (`claude-tempo`) key.
     if (existsSync(projectMcpPath)) {
       try {
         const existing = JSON.parse(readFileSync(projectMcpPath, 'utf8'));
-        if (existing?.mcpServers?.['claude-tempo']) {
-          delete existing.mcpServers['claude-tempo'];
+        const removedAny =
+          (existing?.mcpServers?.['agent-tempo'] && (delete existing.mcpServers['agent-tempo'])) ||
+          (existing?.mcpServers?.['claude-tempo'] && (delete existing.mcpServers['claude-tempo']));
+        if (removedAny) {
           if (Object.keys(existing.mcpServers).length === 0) {
             unlinkSync(projectMcpPath);
             out.success('Removed .mcp.json (no other servers configured)');
           } else {
             writeFileSync(projectMcpPath, JSON.stringify(existing, null, 2) + '\n');
-            out.success('Removed claude-tempo from .mcp.json');
+            out.success('Removed agent-tempo from .mcp.json');
           }
         }
       } catch {
@@ -1858,7 +1865,7 @@ export async function down(opts: DownOpts) {
 
   console.log();
   out.success('claude-tempo is shut down');
-  out.log(`  ${out.dim('Temporal data preserved in ~/.claude-tempo/ (delete manually to reset)')}`);
+  out.log(`  ${out.dim('Temporal data preserved in ~/.agent-tempo/ (delete manually to reset)')}`);
   console.log();
 }
 

@@ -73,10 +73,10 @@ Operators can grep / `kill -9` either independently. Cleaned up on graceful shut
 Per-turn stderr log line:
 
 ```
-[claude-tempo:opencode] turn-usage provider=anthropic model=anthropic/claude-opus-4-7 input=1234 output=567 cache_read=8910 elapsed_ms=4321 player=my-player stop_reason=end_turn
+[agent-tempo:opencode] turn-usage provider=anthropic model=anthropic/claude-opus-4-7 input=1234 output=567 cache_read=8910 elapsed_ms=4321 player=my-player stop_reason=end_turn
 ```
 
-Same shape family as claude-api's `[claude-tempo:claude-api] turn-usage` — operators already grep `turn-usage` for cost monitoring. Provider attribution is added (`provider=...`) since opencode is multi-provider.
+Same shape family as claude-api's `[agent-tempo:claude-api] turn-usage` — operators already grep `turn-usage` for cost monitoring. Provider attribution is added (`provider=...`) since opencode is multi-provider.
 
 Per-provider semantics differ — Anthropic exposes `cache_read` / `cache_creation`, OpenAI doesn't. The adapter logs whatever's present; cross-provider normalization is a Phase 2 candidate.
 
@@ -85,7 +85,7 @@ Per-provider semantics differ — Anthropic exposes `cache_read` / `cache_creati
 The adapter probes `GET /global/health` on boot and logs:
 
 ```
-[claude-tempo:opencode] WARNING: opencode version 1.15.0 drift from tested ~1.14.29
+[agent-tempo:opencode] WARNING: opencode version 1.15.0 drift from tested ~1.14.29
 ```
 
 …when the running OpenCode major.minor diverges from the tested-pinned `~1.14.29`. **Warn-only** — refusing on every minor bump would brick users given OpenCode's daily release cadence (ADR 0015 §52, §65).

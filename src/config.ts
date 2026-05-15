@@ -9,18 +9,18 @@ import { validateEnsembleName } from './utils/validation';
 // `defaultAgent` set — recruit pre-flight rejects it outside dev mode anyway,
 // and it's never a sensible *default* (each mock spawn is configured per call
 // via the `agent: 'mock'` flag, not via the resolved chain). Listing it here
-// would only enable users to set `defaultAgent=mock` in `~/.claude-tempo/config.json`,
+// would only enable users to set `defaultAgent=mock` in `~/.agent-tempo/config.json`,
 // which the recruit gate would then turn around and reject in production.
 const VALID_AGENTS: readonly AgentType[] = ['claude', 'copilot'] as const;
 
 /** Environment variable name constants — use these instead of string literals. */
 export const ENV = {
-  ENSEMBLE: 'CLAUDE_TEMPO_ENSEMBLE',
-  CONDUCTOR: 'CLAUDE_TEMPO_CONDUCTOR',
-  PLAYER_NAME: 'CLAUDE_TEMPO_PLAYER_NAME',
-  TASK_QUEUE: 'CLAUDE_TEMPO_TASK_QUEUE',
+  ENSEMBLE: 'AGENT_TEMPO_ENSEMBLE',
+  CONDUCTOR: 'AGENT_TEMPO_CONDUCTOR',
+  PLAYER_NAME: 'AGENT_TEMPO_PLAYER_NAME',
+  TASK_QUEUE: 'AGENT_TEMPO_TASK_QUEUE',
   BRIDGE_NAME: 'COPILOT_BRIDGE_NAME',
-  BRIDGE_MODE: 'CLAUDE_TEMPO_BRIDGE_MODE',
+  BRIDGE_MODE: 'AGENT_TEMPO_BRIDGE_MODE',
   BRIDGE_MODEL: 'COPILOT_BRIDGE_MODEL',
   BRIDGE_SESSION_ID: 'COPILOT_BRIDGE_SESSION_ID',
   TEMPORAL_ADDRESS: 'TEMPORAL_ADDRESS',
@@ -28,15 +28,15 @@ export const ENV = {
   TEMPORAL_API_KEY: 'TEMPORAL_API_KEY',
   TEMPORAL_TLS_CERT_PATH: 'TEMPORAL_TLS_CERT_PATH',
   TEMPORAL_TLS_KEY_PATH: 'TEMPORAL_TLS_KEY_PATH',
-  DEFAULT_AGENT: 'CLAUDE_TEMPO_DEFAULT_AGENT',
-  PLAYER_TYPE: 'CLAUDE_TEMPO_PLAYER_TYPE',
-  CLAUDE_BIN: 'CLAUDE_TEMPO_CLAUDE_BIN',
+  DEFAULT_AGENT: 'AGENT_TEMPO_DEFAULT_AGENT',
+  PLAYER_TYPE: 'AGENT_TEMPO_PLAYER_TYPE',
+  CLAUDE_BIN: 'AGENT_TEMPO_CLAUDE_BIN',
   /**
    * #131 Phase C — claude-api adapter model override. Recruit-arg takes
    * precedence; this env var is the next fallback before the constants-pinned
    * default (`claude-opus-4-7`). Ignored by other adapters.
    */
-  API_MODEL: 'CLAUDE_TEMPO_API_MODEL',
+  API_MODEL: 'AGENT_TEMPO_API_MODEL',
   /**
    * #449 Phase C — opencode adapter model override. Distinct from
    * `API_MODEL` to keep namespaces clean: claude-api is Anthropic-only
@@ -45,7 +45,7 @@ export const ENV = {
    * `openai/gpt-4o`, `ollama/llama3`, …). Recruit-arg precedence:
    * recruit `model` arg → this env var → `DEFAULT_MODEL` constant.
    */
-  OPENCODE_MODEL: 'CLAUDE_TEMPO_OPENCODE_MODEL',
+  OPENCODE_MODEL: 'AGENT_TEMPO_OPENCODE_MODEL',
   /**
    * #520 — claude-code-headless permission mode. Forwarded to `claude -p
    * --permission-mode <mode>`. Recruit-arg `permissionMode` takes precedence;
@@ -53,14 +53,14 @@ export const ENV = {
    * (`'acceptEdits'`). Mutually exclusive with
    * {@link DANGEROUSLY_SKIP_PERMISSIONS}.
    */
-  PERMISSION_MODE: 'CLAUDE_TEMPO_PERMISSION_MODE',
+  PERMISSION_MODE: 'AGENT_TEMPO_PERMISSION_MODE',
   /**
    * #520 — claude-code-headless dangerous-skip-permissions opt-in. When set
    * to `'1'`, the adapter passes `--dangerously-skip-permissions` to
    * `claude -p` instead of `--permission-mode`. Use only in trusted /
    * sandboxed contexts. Mutually exclusive with {@link PERMISSION_MODE}.
    */
-  DANGEROUSLY_SKIP_PERMISSIONS: 'CLAUDE_TEMPO_DANGEROUSLY_SKIP_PERMISSIONS',
+  DANGEROUSLY_SKIP_PERMISSIONS: 'AGENT_TEMPO_DANGEROUSLY_SKIP_PERMISSIONS',
   /**
    * v0.25 PR-D attachment resume plumbing. When `restart` / `migrate`
    * enqueues a spawn outbox entry, the workflow passes the pre-claimed
@@ -70,9 +70,9 @@ export const ENV = {
    * so there is no race window between the workflow's claim and the adapter
    * boot. Absent on first-recruit spawn (fresh claim path).
    */
-  ATTACHMENT_ID: 'CLAUDE_TEMPO_ATTACHMENT_ID',
-  ATTACHMENT_RUN_ID: 'CLAUDE_TEMPO_ATTACHMENT_RUN_ID',
-  ADAPTER_ID: 'CLAUDE_TEMPO_ADAPTER_ID',
+  ATTACHMENT_ID: 'AGENT_TEMPO_ATTACHMENT_ID',
+  ATTACHMENT_RUN_ID: 'AGENT_TEMPO_ATTACHMENT_RUN_ID',
+  ADAPTER_ID: 'AGENT_TEMPO_ADAPTER_ID',
   /**
    * Daemon HTTP/SSE event source (#94, #95). See SSE-PROTOCOL.md §1, §3.
    * `HTTP_BIND` defaults to `127.0.0.1`. Setting to `0.0.0.0` forces
@@ -81,10 +81,10 @@ export const ENV = {
    * explicit allowlist (no wildcards) — only consulted in bearer mode.
    * `SSE_MAX_CONNECTIONS` caps live SSE subscribers (PR-2; defaults 100).
    */
-  HTTP_BIND: 'CLAUDE_TEMPO_HTTP_BIND',
-  DAEMON_PORT: 'CLAUDE_TEMPO_DAEMON_PORT',
-  CORS_ORIGINS: 'CLAUDE_TEMPO_CORS_ORIGINS',
-  SSE_MAX_CONNECTIONS: 'CLAUDE_TEMPO_SSE_MAX_CONNECTIONS',
+  HTTP_BIND: 'AGENT_TEMPO_HTTP_BIND',
+  DAEMON_PORT: 'AGENT_TEMPO_DAEMON_PORT',
+  CORS_ORIGINS: 'AGENT_TEMPO_CORS_ORIGINS',
+  SSE_MAX_CONNECTIONS: 'AGENT_TEMPO_SSE_MAX_CONNECTIONS',
   /**
    * Dev profile gate (ADR 0014 §5.2). One source of truth — every layer
    * (paths, namespace, port, task queue, banner, registry gating) consults
@@ -92,14 +92,14 @@ export const ENV = {
    * top-level CLI flag in `src/cli.ts` sets this to `'1'` before any other
    * module loads (see `src/cli/dev-mode-bootstrap.ts`).
    */
-  DEV_MODE: 'CLAUDE_TEMPO_DEV_MODE',
+  DEV_MODE: 'AGENT_TEMPO_DEV_MODE',
   /**
    * Escape hatch for triple-isolated environments (ADR 0014 §5.3). When
    * set, `resolveTempoHome()` returns this path verbatim — bypassing both
    * the production default and the dev-mode default. Lets a power user
    * coordinate three or more parallel claude-tempo profiles on one box.
    */
-  DEV_HOME_OVERRIDE: 'CLAUDE_TEMPO_HOME_OVERRIDE',
+  DEV_HOME_OVERRIDE: 'AGENT_TEMPO_HOME_OVERRIDE',
 } as const;
 
 // PR-H (#132): `lifecycleV2Enabled()` removed. The V2 attachment-lease path
@@ -118,7 +118,7 @@ export interface Config {
   ensemble: string;
 }
 
-/** Persisted config file fields (stored in ~/.claude-tempo/config.json). */
+/** Persisted config file fields (stored in ~/.agent-tempo/config.json). */
 export interface PersistedConfig {
   temporalAddress?: string;
   temporalNamespace?: string;
@@ -130,7 +130,7 @@ export interface PersistedConfig {
   /**
    * Bearer token for the daemon's HTTP/SSE event source (#94, #95,
    * SSE-PROTOCOL.md §3.1). Auto-generated on first daemon boot when
-   * bearer mode is required (`CLAUDE_TEMPO_HTTP_BIND` non-loopback OR
+   * bearer mode is required (`AGENT_TEMPO_HTTP_BIND` non-loopback OR
    * a request with a non-loopback `Origin`) and no token is set:
    * `crypto.randomBytes(32).toString('base64url')`, 0600 on POSIX.
    * Rotation = delete this field; next daemon boot regenerates.
@@ -142,11 +142,11 @@ export interface PersistedConfig {
 
 /**
  * Dev profile defaults — one switch (`--dev` top-level flag, or
- * `CLAUDE_TEMPO_DEV_MODE=1` env var) flips four isolation axes at once
+ * `AGENT_TEMPO_DEV_MODE=1` env var) flips four isolation axes at once
  * (ADR 0014 §5.1). Production stays on the existing defaults.
  */
-export const DEV_HOME_DIR_NAME = '.claude-tempo-dev';
-export const PROD_HOME_DIR_NAME = '.claude-tempo';
+export const DEV_HOME_DIR_NAME = '.agent-tempo-dev';
+export const PROD_HOME_DIR_NAME = '.agent-tempo';
 export const DEV_TEMPORAL_NAMESPACE = 'claude-tempo-dev';
 export const PROD_TEMPORAL_NAMESPACE = 'default';
 export const DEV_TASK_QUEUE = 'claude-tempo-dev';
@@ -160,12 +160,12 @@ export const PROD_DAEMON_PORT = 8473;
  * staging/ci/demo profiles would follow the same `isStagingMode()` pattern.
  *
  * Recognises `'1'` and `'true'` (case-insensitive) so users can write
- * either `CLAUDE_TEMPO_DEV_MODE=1` or `CLAUDE_TEMPO_DEV_MODE=true`. Any
+ * either `AGENT_TEMPO_DEV_MODE=1` or `AGENT_TEMPO_DEV_MODE=true`. Any
  * other value (including the empty string) is treated as production.
  *
  * **Important**: when the `--dev` CLI flag is used, the env var must be
  * set BEFORE `src/config.ts` is first imported (see
- * `src/cli/dev-mode-bootstrap.ts`) so the module-load-time `CLAUDE_TEMPO_HOME`
+ * `src/cli/dev-mode-bootstrap.ts`) so the module-load-time `AGENT_TEMPO_HOME`
  * constant resolves to the dev profile.
  */
 export function isDevMode(): boolean {
@@ -176,18 +176,18 @@ export function isDevMode(): boolean {
 
 /**
  * Resolve the claude-tempo home directory. Three-tier precedence:
- *   1. `CLAUDE_TEMPO_HOME_OVERRIDE` env — explicit override (multi-isolation
+ *   1. `AGENT_TEMPO_HOME_OVERRIDE` env — explicit override (multi-isolation
  *      escape hatch; ADR 0014 §5.3).
- *   2. Dev mode (`CLAUDE_TEMPO_DEV_MODE=1`): `~/.claude-tempo-dev/`.
- *   3. Production default: `~/.claude-tempo/`.
+ *   2. Dev mode (`AGENT_TEMPO_DEV_MODE=1`): `~/.agent-tempo-dev/`.
+ *   3. Production default: `~/.agent-tempo/`.
  *
  * Evaluated once at module load time; downstream callers consume the
- * exported `CLAUDE_TEMPO_HOME` constant. The bootstrap module guarantees
+ * exported `AGENT_TEMPO_HOME` constant. The bootstrap module guarantees
  * the env var is set before this function first runs.
  *
  * Exported (rather than file-private) so unit tests can exercise the
  * three-tier precedence directly without resorting to `vi.resetModules()`
- * gymnastics. Production code should consume {@link CLAUDE_TEMPO_HOME}
+ * gymnastics. Production code should consume {@link AGENT_TEMPO_HOME}
  * — calling this helper per-request would re-read env on every call.
  */
 export function resolveTempoHome(): string {
@@ -198,13 +198,13 @@ export function resolveTempoHome(): string {
     : join(homedir(), PROD_HOME_DIR_NAME);
 }
 
-export const CLAUDE_TEMPO_HOME = resolveTempoHome();
-export const CONFIG_FILE_PATH = join(CLAUDE_TEMPO_HOME, 'config.json');
+export const AGENT_TEMPO_HOME = resolveTempoHome();
+export const CONFIG_FILE_PATH = join(AGENT_TEMPO_HOME, 'config.json');
 
 // ── Daemon config (PR-E design §10.2) ──
 
 /**
- * Daemon-level configuration persisted in `~/.claude-tempo/config.json`
+ * Daemon-level configuration persisted in `~/.agent-tempo/config.json`
  * alongside the existing `PersistedConfig` fields.
  *
  * `restorePolicy` is the effective off-switch for daemon reconcile-on-boot
@@ -238,7 +238,7 @@ export const DaemonConfigSchema = z.object({
 export type DaemonConfig = z.infer<typeof DaemonConfigSchema>;
 
 /**
- * Load `~/.claude-tempo/config.json` and extract the daemon-level fields.
+ * Load `~/.agent-tempo/config.json` and extract the daemon-level fields.
  * Returns fully-defaulted `DaemonConfig` if the file is missing, unreadable,
  * or contains no daemon fields. Partial configs (user sets one field only)
  * merge with defaults via Zod's `.default()` per-field behaviour.
@@ -257,11 +257,11 @@ export function loadDaemonConfig(): DaemonConfig {
     // `.object()` schema (strip mode), which is what we want.
     const result = DaemonConfigSchema.safeParse(raw);
     if (result.success) return result.data;
-    console.error('[claude-tempo] Invalid daemon config; using defaults.', result.error.format());
+    console.error('[agent-tempo] Invalid daemon config; using defaults.', result.error.format());
     return DaemonConfigSchema.parse({});
   } catch (err) {
     console.error(
-      '[claude-tempo] Could not read daemon config; using defaults:',
+      '[agent-tempo] Could not read daemon config; using defaults:',
       err instanceof Error ? err.message : String(err),
     );
     return DaemonConfigSchema.parse({});
@@ -294,7 +294,7 @@ export function isEnsembleAllowed(ensemble: string, allowlist: string[]): boolea
   return allowlist.some((p) => matchEnsembleGlob(ensemble, p));
 }
 
-/** Load ~/.claude-tempo/config.json if it exists. */
+/** Load ~/.agent-tempo/config.json if it exists. */
 export function loadConfigFile(): PersistedConfig {
   try {
     if (existsSync(CONFIG_FILE_PATH)) {
@@ -302,15 +302,15 @@ export function loadConfigFile(): PersistedConfig {
     }
   } catch {
     // Corrupt file — warn but don't crash
-    console.error(`[claude-tempo] Warning: could not parse ${CONFIG_FILE_PATH} — ignoring config file`);
+    console.error(`[agent-tempo] Warning: could not parse ${CONFIG_FILE_PATH} — ignoring config file`);
   }
   return {};
 }
 
-/** Save config to ~/.claude-tempo/config.json with restrictive permissions. */
+/** Save config to ~/.agent-tempo/config.json with restrictive permissions. */
 export function saveConfigFile(config: PersistedConfig): void {
   const { writeFileSync, chmodSync } = require('fs') as typeof import('fs');
-  mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
+  mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
   writeFileSync(CONFIG_FILE_PATH, JSON.stringify(config, null, 2) + '\n');
   // Restrict permissions to owner-only (like aws credentials, gh hosts.yml)
   if (process.platform !== 'win32') {
@@ -546,7 +546,7 @@ export function getConfig(overrides: CliOverrides = {}): Config {
       configFile.temporalNamespace,
       // ADR 0014 §5.1: dev profile flips the namespace default. CLI flag and
       // the dev profile's own claude-tempo config file
-      // (`~/.claude-tempo-dev/config.json`) still win — but the
+      // (`~/.agent-tempo-dev/config.json`) still win — but the
       // `TEMPORAL_NAMESPACE` env var (carved out above) and
       // `~/.config/temporalio/temporal.yaml` are intentionally ignored in
       // dev mode. Both capture the user's *default* Temporal environment

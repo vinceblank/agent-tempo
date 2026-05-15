@@ -10,7 +10,7 @@ import { createScheduleActivities } from './activities/schedule-fire';
 import { createOutboxActivities } from './activities/outbox';
 import { createMaestroActivities } from './activities/maestro';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:worker]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:worker]', ...args);
 
 const BUNDLE_PATH = path.resolve(__dirname, '..', 'workflow-bundle.js');
 

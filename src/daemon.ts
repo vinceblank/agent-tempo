@@ -5,7 +5,7 @@
  * Started by `startDaemon()` in `src/cli/daemon.ts`.
  * Config is passed via environment variables set by the parent.
  *
- * Writes its PID to ~/.claude-tempo/daemon.pid on startup and removes it
+ * Writes its PID to ~/.agent-tempo/daemon.pid on startup and removes it
  * on graceful shutdown (SIGTERM/SIGINT).
  */
 import * as fs from 'fs';
@@ -17,7 +17,7 @@ import { WorkflowIdConflictPolicy } from '@temporalio/client';
 import {
   getConfig,
   type Config,
-  CLAUDE_TEMPO_HOME,
+  AGENT_TEMPO_HOME,
   DEV_TEMPORAL_NAMESPACE,
   GLOBAL_MAESTRO_WORKFLOW_ID,
   isDevMode,
@@ -38,7 +38,7 @@ import {
 } from './daemon-adapter-versions';
 import type { GlobalMaestroInput, HostProfile } from './types';
 
-const log = (...args: unknown[]) => console.error(`[claude-tempo:daemon ${new Date().toISOString()}]`, ...args);
+const log = (...args: unknown[]) => console.error(`[agent-tempo:daemon ${new Date().toISOString()}]`, ...args);
 
 /**
  * Daemon process start time, captured at module load. Issue #399 Q5.3b
@@ -96,7 +96,7 @@ export async function writePidFileAtomic(pidFilePath: string, pid: number): Prom
 /**
  * Runtime drift detector — #423 PR-A Fix 3. When dev mode is active but
  * the resolved namespace is NOT the dev default, an explicit override is
- * in play (CLI `--namespace`, `~/.claude-tempo-dev/config.json`, or — if
+ * in play (CLI `--namespace`, `~/.agent-tempo-dev/config.json`, or — if
  * the env-var carve-out from Fix 1 ever regressed — a leaked shell var).
  * Either way, the operator deserves a load-bearing diagnostic so the
  * "banner says X, daemon connects to Y" drift doesn't recur silently.
@@ -684,7 +684,7 @@ export function formatMemoryUsage(usage: NodeJS.MemoryUsage): string {
 }
 
 /**
- * #336 — schedule a periodic `[claude-tempo:daemon ...] memory: ...` log
+ * #336 — schedule a periodic `[agent-tempo:daemon ...] memory: ...` log
  * line so the next memory-leak investigation has a baseline + growth curve
  * directly in the daemon log instead of needing a debugger attach.
  *
@@ -822,14 +822,14 @@ export function startCleanupLoop(
 
 async function main() {
   // ADR 0014 §5.4 / gate 4 — dev daemon log self-identifies. Banner fires
-  // first so it lands at the top of `~/.claude-tempo-dev/daemon.log` for
+  // first so it lands at the top of `~/.agent-tempo-dev/daemon.log` for
   // grep-friendly identification regardless of subsequent log volume.
   emitDevBannerIfActive();
 
-  // Ensure daemon directory exists. CLAUDE_TEMPO_HOME already resolves to
-  // `~/.claude-tempo-dev/` in dev mode (ADR 0014 §5.3), so this lands in
+  // Ensure daemon directory exists. AGENT_TEMPO_HOME already resolves to
+  // `~/.agent-tempo-dev/` in dev mode (ADR 0014 §5.3), so this lands in
   // the right place without a per-callsite branch.
-  fs.mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
+  fs.mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
 
   // Write PID file — the parent polls for this to confirm startup.
   // Atomic write: tmp + rename so a racing reader never sees a half-written
@@ -868,7 +868,7 @@ async function main() {
   // namespace. Fix 1's env-var carve-out plus Fix 2's source-annotated
   // banner make a silent disagreement impossible at the resolution layer,
   // but a future regression — or an operator who hand-edits
-  // `~/.claude-tempo-dev/config.json` to a non-dev namespace by mistake —
+  // `~/.agent-tempo-dev/config.json` to a non-dev namespace by mistake —
   // would still slip through. The warning fires once at boot and lands at
   // the top of `daemon.log` so an operator chasing weird coordination bugs
   // sees the override on first inspection.

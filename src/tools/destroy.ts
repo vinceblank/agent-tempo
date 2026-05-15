@@ -28,7 +28,7 @@ import { defineTool, ok, fail, formatError } from './helpers';
 import { PLAYER_NAME_MAX, validatePlayerName } from '../utils/validation';
 import type { EnsembleDestroyDetail } from '../client/interface';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:destroy]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:destroy]', ...args);
 
 export function registerDestroyTool(
   server: McpServer,

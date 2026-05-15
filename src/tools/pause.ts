@@ -5,7 +5,7 @@ import { setPausedSignal } from '../workflows/signals';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { pauseMaestroAndScheduler, signalAllSessions } from '../utils/ensemble-ops';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:pause]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:pause]', ...args);
 
 export function registerPauseTool(
   server: McpServer,

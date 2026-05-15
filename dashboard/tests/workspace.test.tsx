@@ -126,7 +126,7 @@ describe('Workspace screen', () => {
         .map(String);
       expect(
         lines.some(
-          (l) => l.includes('[claude-tempo:dashboard]') && l.includes('workspace.opened'),
+          (l) => l.includes('[agent-tempo:dashboard]') && l.includes('workspace.opened'),
         ),
       ).toBe(true);
     });

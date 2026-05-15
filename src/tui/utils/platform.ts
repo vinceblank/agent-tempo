@@ -228,7 +228,7 @@ export function metronomeBrailleFrames(): BrailleLine[][] {
   // ASCII fallback for terminals without Unicode support
   if (!supportsUnicode()) {
     const asciiFrame: BrailleLine[] = [
-      [{ char: '  claude-tempo', color: 'cyan' }],
+      [{ char: '  agent-tempo', color: 'cyan' }],
     ];
     return [asciiFrame, asciiFrame, asciiFrame];
   }

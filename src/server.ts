@@ -23,15 +23,15 @@ import { buildServerInstructions, registerAllTempoTools } from './server-tools';
 import { registry, InteractiveAttachment } from './adapters';
 import { resolveAgentType } from './ensemble/agent-types';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo]', ...args);
 
 async function main() {
-  // Only activate when explicitly opted in via CLAUDE_TEMPO_ENSEMBLE
+  // Only activate when explicitly opted in via AGENT_TEMPO_ENSEMBLE
   if (!process.env[ENV.ENSEMBLE]) {
     log(`${ENV.ENSEMBLE} not set — MCP server idle (no workflow started)`);
     // Keep the process alive so Claude Code doesn't see a crash, but do nothing
     const transport = new StdioServerTransport();
-    const idleServer = new McpServer({ name: 'claude-tempo', version: PKG_VERSION });
+    const idleServer = new McpServer({ name: 'agent-tempo', version: PKG_VERSION });
     await idleServer.connect(transport);
     return;
   }
@@ -245,7 +245,7 @@ async function main() {
   });
 
   const mcpServer = new McpServer({
-    name: 'claude-tempo',
+    name: 'agent-tempo',
     version: PKG_VERSION,
   }, {
     capabilities: {
@@ -273,7 +273,7 @@ async function main() {
   // Dispatch by adapterClass from the registry (PR-B). Pass client + host so
   // the adapter can claim the attachment — `InteractiveAttachment` runs the
   // V2 attachment-lease lifecycle for the attachment's lifetime. PR-H (#132)
-  // removed the `CLAUDE_TEMPO_LIFECYCLE_V2=0` legacy-shim branch; V2 is the
+  // removed the `AGENT_TEMPO_LIFECYCLE_V2=0` legacy-shim branch; V2 is the
   // only path.
   const stopPoller = adapterDescriptor.adapterClass === 'sdk'
     ? () => {} // no-op — SDK adapters handle delivery in their own subprocess

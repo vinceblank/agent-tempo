@@ -9,7 +9,7 @@
 /** Whether fullscreen mode is supported and enabled. */
 export function fullscreenSupported(): boolean {
   // User opt-out
-  if (process.env.CLAUDE_TEMPO_NO_FULLSCREEN === '1') return false;
+  if (process.env.AGENT_TEMPO_NO_FULLSCREEN === '1') return false;
 
   // Legacy cmd.exe on Windows doesn't support alternate buffer.
   // Windows Terminal sets WT_SESSION; if absent on win32, skip.

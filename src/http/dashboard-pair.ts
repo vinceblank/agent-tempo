@@ -113,7 +113,7 @@ function prefix(token: string): string {
   return token.slice(0, 8);
 }
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:pair]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:pair]', ...args);
 
 /**
  * POST `/dashboard/api/pair` — mint a pairing. Caller is the operator

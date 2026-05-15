@@ -9,7 +9,7 @@
  *
  * **Backpressure** (§8): serial-with-skip. If a tick's queries don't
  * complete before the next 750 ms boundary, the next tick is skipped
- * and a `[claude-tempo:aggregate]` warn-log fires. The daemon never
+ * and a `[agent-tempo:aggregate]` warn-log fires. The daemon never
  * has more than one in-flight aggregate fetch.
  *
  * **Coalescing** (§6, §8):
@@ -64,7 +64,7 @@ export const AGGREGATE_LIST_DEADLINE_MS = 500;
 export const MAX_CONSECUTIVE_FAILURES = 20;
 
 const log = (...args: unknown[]) =>
-  console.error('[claude-tempo:aggregate]', ...args);
+  console.error('[agent-tempo:aggregate]', ...args);
 
 /**
  * #336/#529 site 6 — sentinel thrown by `collect()` when the

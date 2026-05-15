@@ -4,7 +4,7 @@
  * Owns the V2 attachment lifecycle — `claimAttachment`, heartbeat loop,
  * `attachmentInfo` phase watcher, `WorkflowNotFound` terminal handling, and
  * graceful-detach orchestration. PR-H (#132) removed the
- * `CLAUDE_TEMPO_LIFECYCLE_V2=0` escape hatch and its PR-A compat shim path;
+ * `AGENT_TEMPO_LIFECYCLE_V2=0` escape hatch and its PR-A compat shim path;
  * V2 is now the only path.
  *
  * The `SdkAttachment` intermediate class (processing-signal pairing, split-brain
@@ -28,7 +28,7 @@ import type {
   DetachReason,
 } from '../types';
 import { isTerminalWorkflowError } from './terminal-error';
-const log = (...args: unknown[]) => console.error('[claude-tempo:adapter]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:adapter]', ...args);
 
 // ── Hypothesis A telemetry (#258 follow-up) ─────────────────────────────
 //
@@ -77,10 +77,10 @@ let processLifecycleHandlerRefs: Array<{ event: string; handler: (...args: unkno
 /**
  * Should `installProcessLifecycleTelemetry()` actually wire up handlers?
  *
- * - Forced on by `CLAUDE_TEMPO_LIFECYCLE_TELEMETRY=1` (used by the
+ * - Forced on by `AGENT_TEMPO_LIFECYCLE_TELEMETRY=1` (used by the
  *   child-process tests for these handlers — see
  *   `test/adapter-process-lifecycle-telemetry.test.ts`).
- * - Forced off by `CLAUDE_TEMPO_LIFECYCLE_TELEMETRY=0`.
+ * - Forced off by `AGENT_TEMPO_LIFECYCLE_TELEMETRY=0`.
  * - Off when running under mocha (detected via `globalThis.it` —
  *   mocha defines this; vitest with `globals: false` does not).
  * - Off when `NODE_ENV === 'test'` — belt and suspenders.
@@ -88,7 +88,7 @@ let processLifecycleHandlerRefs: Array<{ event: string; handler: (...args: unkno
  */
 function shouldInstallLifecycleTelemetry(force: boolean): boolean {
   if (force) return true;
-  const flag = process.env.CLAUDE_TEMPO_LIFECYCLE_TELEMETRY;
+  const flag = process.env.AGENT_TEMPO_LIFECYCLE_TELEMETRY;
   if (flag === '1' || flag === 'true') return true;
   if (flag === '0' || flag === 'false') return false;
   // Mocha exposes BDD globals (`it`, `describe`, …) on the global object;
@@ -136,7 +136,7 @@ export function buildProcessTerminatingFrame(
 
 function emitTerminatingLog(signal: string, errorMessage?: string): void {
   // `console.error` synchronously writes to stderr on POSIX + Windows.
-  // The `[claude-tempo:adapter]` prefix matches the rest of the adapter
+  // The `[agent-tempo:adapter]` prefix matches the rest of the adapter
   // logs so a single grep surfaces both the existing `terminal fire`
   // line and these new lifecycle lines for the same incident.
   log(`adapter-process-terminating: ${buildProcessTerminatingFrame(signal, errorMessage)}`);
@@ -300,7 +300,7 @@ export interface BaseAttachmentOptions {
  * Subclasses must call `startV2Lifecycle()` before their delivery loop and
  * `stopV2Lifecycle()` on shutdown.
  *
- * PR-H (#132): the `CLAUDE_TEMPO_LIFECYCLE_V2` flag and the legacy V1 poll-
+ * PR-H (#132): the `AGENT_TEMPO_LIFECYCLE_V2` flag and the legacy V1 poll-
  * only path it gated have been removed. The V2 attachment-lease path is
  * now the only path.
  */

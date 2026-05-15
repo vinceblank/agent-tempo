@@ -67,7 +67,7 @@ describe('spawnProcess — adapter routing switch (#131 PR-fixup)', () => {
     expect(claudeApiSpy).toHaveBeenCalledTimes(1);
     expect(terminalSpy).not.toHaveBeenCalled();
     expect(copilotSpy).not.toHaveBeenCalled();
-    // Forward the model into the helper so CLAUDE_TEMPO_API_MODEL gets set.
+    // Forward the model into the helper so AGENT_TEMPO_API_MODEL gets set.
     expect(claudeApiSpy.mock.calls[0][0]).toMatchObject({
       name: 'tempo-test',
       ensemble: 'test-ensemble',
@@ -119,7 +119,7 @@ describe('spawnProcess — adapter routing switch (#131 PR-fixup)', () => {
     expect(terminalSpy).not.toHaveBeenCalled();
     expect(claudeApiSpy).not.toHaveBeenCalled();
     expect(copilotSpy).not.toHaveBeenCalled();
-    // Forward the model into the helper so CLAUDE_TEMPO_OPENCODE_MODEL gets set.
+    // Forward the model into the helper so AGENT_TEMPO_OPENCODE_MODEL gets set.
     expect(openCodeSpy.mock.calls[0][0]).toMatchObject({
       name: 'tempo-test',
       ensemble: 'test-ensemble',

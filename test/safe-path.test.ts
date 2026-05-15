@@ -48,8 +48,8 @@ describe('safe-path', function () {
       expect(result).to.equal(resolve(filePath));
     });
 
-    it('allows files in ~/.claude-tempo/ensembles/', function () {
-      const ensemblesDir = join(homedir(), '.claude-tempo', 'ensembles');
+    it('allows files in ~/.agent-tempo/ensembles/', function () {
+      const ensemblesDir = join(homedir(), '.agent-tempo', 'ensembles');
       const filePath = join(ensemblesDir, 'my-lineup.yaml');
       const cwd = join(tmpdir(), 'somewhere-else');
       const result = safeLineupPath(filePath, cwd);

@@ -66,7 +66,7 @@ export interface OpenCodeEvent {
 export interface ServerBridgeOpts {
   /** Base URL — `http://127.0.0.1:<port>` per the loopback-only model. */
   baseUrl: string;
-  /** Logger — adapter passes its `[claude-tempo:opencode]` prefix here. */
+  /** Logger — adapter passes its `[agent-tempo:opencode]` prefix here. */
   log?: (...args: unknown[]) => void;
   /**
    * Test seam — defaults to global `fetch`. Tests inject a stub to drive

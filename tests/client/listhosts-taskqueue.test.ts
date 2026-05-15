@@ -98,7 +98,7 @@ describe('TempoClient.listHosts — taskQueue plumbing (#437)', () => {
     }
   });
 
-  it('threads a custom taskQueue through (e.g. CLAUDE_TEMPO_TASK_QUEUE override)', async () => {
+  it('threads a custom taskQueue through (e.g. AGENT_TEMPO_TASK_QUEUE override)', async () => {
     const calls: DescribeCall[] = [];
     const fake = makeFakeClient('default', calls);
     const tempo = createTempoClient(fake, { taskQueue: 'my-custom-queue' });

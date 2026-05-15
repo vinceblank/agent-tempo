@@ -102,11 +102,12 @@ Source: `src/cli/help-text.ts` Commands section and `src/cli.ts` switch statemen
 | `upgrade [version]` | Upgrade agent-tempo to latest or a specific version |
 | `config` | Configure Temporal connection settings (interactive or `set` / `show`) |
 | `init` | Register MCP server globally (`--project` for per-directory) |
+| `migrate-from-claude-tempo` | One-shot copy `~/.claude-tempo/` → `~/.agent-tempo/` (`--dry-run` / `--force` / `--dev`). Auto-runs on first boot of v1.0+. |
 | `preflight` | Run environment preflight checks |
 | `version` | Print the installed version |
 | `help` | Show help message |
 
-**Count:** 25 commands (including `down --destroy` as a distinct flag variant)  
+**Count:** 26 commands (including `down --destroy` as a distinct flag variant)  
 **Full reference:** [docs/cli.md](cli.md)  
 **Removed (v0.27 / #288):** `stop`, `restart`, `detach`, `migrate`, `conduct`, `start`, `recruit`, `disband`, `pause`, `resume` — see [docs/cli.md](cli.md) for migration hints.
 

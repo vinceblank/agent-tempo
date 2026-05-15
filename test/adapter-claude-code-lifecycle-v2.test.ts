@@ -1,7 +1,7 @@
 /**
  * Claude Code adapter — V2 lifecycle path tests (PR-C commit 2; PR-H #132).
  *
- * PR-H (#132) removed the `CLAUDE_TEMPO_LIFECYCLE_V2=0` legacy branch. These
+ * PR-H (#132) removed the `AGENT_TEMPO_LIFECYCLE_V2=0` legacy branch. These
  * tests now exercise only the V2 path:
  *
  *  - **Claim**: adapter calls `claimAttachment`, phase transitions to `attached`,

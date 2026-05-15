@@ -23,8 +23,8 @@
  *   node dist/adapters/copilot/adapter.js
  *
  * Environment variables:
- *   CLAUDE_TEMPO_ENSEMBLE     — ensemble name (default: "default")
- *   CLAUDE_TEMPO_PLAYER_NAME  — player ID for workflow registration (set by spawner for deterministic workflow IDs)
+ *   AGENT_TEMPO_ENSEMBLE     — ensemble name (default: "default")
+ *   AGENT_TEMPO_PLAYER_NAME  — player ID for workflow registration (set by spawner for deterministic workflow IDs)
  *   COPILOT_BRIDGE_NAME       — player name for set_name (optional)
  *   COPILOT_BRIDGE_MODEL      — model to use (optional)
  *   COPILOT_BRIDGE_SESSION_ID — deterministic session ID for resumable sessions (optional)
@@ -200,7 +200,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
    * `onSuperseded` to disconnect the Copilot session on lease revocation.
    *
    * PR-H (#132): the legacy fire-and-forget processingStart/End path
-   * gated on `CLAUDE_TEMPO_LIFECYCLE_V2=0` has been removed. V2 is the
+   * gated on `AGENT_TEMPO_LIFECYCLE_V2=0` has been removed. V2 is the
    * only path.
    */
   async run(): Promise<void> {
@@ -226,7 +226,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
 
     // Determine the expected workflow ID. The MCP server uses the pattern
     // `claude-session-{ensemble}-{playerId}`, where playerId comes from
-    // CLAUDE_TEMPO_PLAYER_NAME or a random hex. We pass CLAUDE_TEMPO_PLAYER_NAME
+    // AGENT_TEMPO_PLAYER_NAME or a random hex. We pass AGENT_TEMPO_PLAYER_NAME
     // to the MCP server env so both sides agree on the ID.
     const isConductor = process.env[ENV.CONDUCTOR] === 'true';
     const requestedName = process.env[ENV.PLAYER_NAME] || playerName || '';
@@ -277,7 +277,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
       onPermissionRequest: approveAll,
       workingDirectory: workDir,
       mcpServers: {
-        'claude-tempo': {
+        'agent-tempo': {
           command: serverCommand,
           args: serverArgs,
           env: mcpEnv,
@@ -366,7 +366,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
     const pidFile = path.join(pidDir, `${playerName || playerIdForWorkflow}.pid`);
 
     // Wait for the MCP server's workflow to register in Temporal.
-    // We know the exact workflow ID because we pass CLAUDE_TEMPO_PLAYER_NAME to the
+    // We know the exact workflow ID because we pass AGENT_TEMPO_PLAYER_NAME to the
     // MCP server — no need for a time-window heuristic that could misidentify workflows.
     log(`Waiting for workflow ${expectedWorkflowId} to register...`);
     let handle = client.workflow.getHandle(expectedWorkflowId);
@@ -412,7 +412,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
     // phase=gone, lease revoked) triggers clean shutdown below.
     //
     // PR-H (#132): unconditional — the V1 fallback gated on
-    // `CLAUDE_TEMPO_LIFECYCLE_V2=0` has been removed.
+    // `AGENT_TEMPO_LIFECYCLE_V2=0` has been removed.
 
     // Wire terminal handler BEFORE claiming so a race between claim + lease
     // loss can't drop the event.
@@ -653,7 +653,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
         // stale detection doesn't misclassify a long tool call as dead. The V2
         // path goes through `SdkAttachment.deliver()` which makes these updates
         // synchronous (§7.1) and carries `expectedAttachmentId` so a revoked
-        // lease is observable. PR-H (#132): the `CLAUDE_TEMPO_LIFECYCLE_V2=0`
+        // lease is observable. PR-H (#132): the `AGENT_TEMPO_LIFECYCLE_V2=0`
         // legacy fire-and-forget fallback has been removed.
         if (!this.token) {
           // Should be unreachable: `startV2Lifecycle` populates token before

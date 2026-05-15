@@ -188,7 +188,7 @@ describe('cue phase pre-flight (#562)', () => {
     // Stderr log emitted with the player id + the underlying error message.
     expect(stderrSpy).toHaveBeenCalled();
     const stderrCall = stderrSpy.mock.calls[0].join(' ');
-    expect(stderrCall).toContain('[claude-tempo:cue]');
+    expect(stderrCall).toContain('[agent-tempo:cue]');
     expect(stderrCall).toContain('wedged-player');
     expect(stderrCall).toContain('timed out');
 

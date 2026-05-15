@@ -17,7 +17,7 @@
  */
 import { homedir } from 'os';
 import {
-  CLAUDE_TEMPO_HOME,
+  AGENT_TEMPO_HOME,
   type ConfigSource,
   DEV_DAEMON_PORT,
   DEV_TASK_QUEUE,
@@ -34,7 +34,7 @@ import { bold, yellow } from './output';
 /**
  * Render `<homedir>/foo/bar` as `~/foo/bar` for human-readable banner
  * output. Falls back to the absolute path when it doesn't live under the
- * user's home dir (e.g. `CLAUDE_TEMPO_HOME_OVERRIDE=/tmp/scratch`).
+ * user's home dir (e.g. `AGENT_TEMPO_HOME_OVERRIDE=/tmp/scratch`).
  *
  * Exported for unit testing — banner output is checked against this
  * formatter so the test fixtures don't bake in a developer's username.
@@ -59,7 +59,7 @@ export function prettyPath(absPath: string, home: string = homedir()): string {
 
 /** Inputs to {@link formatDevBanner}. Exposed so tests can pin every value. */
 export interface DevBannerInputs {
-  /** Resolved home dir; defaults to `CLAUDE_TEMPO_HOME`. */
+  /** Resolved home dir; defaults to `AGENT_TEMPO_HOME`. */
   home?: string;
   /** Daemon port; defaults to {@link DEV_DAEMON_PORT}. */
   port?: number;
@@ -110,23 +110,23 @@ function annotateField(
 /**
  * Format the single-line `[DEV MODE]` banner. Pure function — no I/O.
  *
- *   [DEV MODE] using ~/.claude-tempo-dev · port 8474 · namespace claude-tempo-dev (default) · queue claude-tempo-dev (default)
+ *   [DEV MODE] using ~/.agent-tempo-dev · port 8474 · namespace claude-tempo-dev (default) · queue claude-tempo-dev (default)
  *
  * After a leak the banner self-narrates the drift:
  *
- *   [DEV MODE] using ~/.claude-tempo-dev · port 8474 · namespace default (env) · queue claude-tempo-dev (default)
+ *   [DEV MODE] using ~/.agent-tempo-dev · port 8474 · namespace default (env) · queue claude-tempo-dev (default)
  *
  * The `[DEV MODE]` prefix is rendered with ANSI yellow + bold when stdout
  * is a TTY (`out.bold`/`out.yellow` handle the `NO_COLOR` / non-TTY
  * fallback). The remainder is plain text so it greps cleanly out of
- * `~/.claude-tempo-dev/daemon.log`.
+ * `~/.agent-tempo-dev/daemon.log`.
  *
  * Production callers go through {@link emitDevBannerIfActive}, which
  * resolves the inputs from {@link getConfigWithSources}. Tests pin every
  * input to keep fixtures deterministic.
  */
 export function formatDevBanner(inputs: DevBannerInputs = {}): string {
-  const home = inputs.home ?? CLAUDE_TEMPO_HOME;
+  const home = inputs.home ?? AGENT_TEMPO_HOME;
   const port = inputs.port ?? DEV_DAEMON_PORT;
   const namespace = inputs.namespace ?? DEV_TEMPORAL_NAMESPACE;
   const taskQueue = inputs.taskQueue ?? DEV_TASK_QUEUE;
@@ -166,7 +166,7 @@ export function resolveDevBannerInputs(): DevBannerInputs {
     };
   } catch (err) {
     // `getConfigWithSources` validates the ensemble name and may throw
-    // when an operator has e.g. invalid characters in `$CLAUDE_TEMPO_ENSEMBLE`.
+    // when an operator has e.g. invalid characters in `$AGENT_TEMPO_ENSEMBLE`.
     // Surface the cause to stderr — the banner stays diagnostic and the
     // operator sees that the displayed values are dev defaults, not the
     // actual resolution. The CLI surfaces the same validation error a

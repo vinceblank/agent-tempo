@@ -30,7 +30,7 @@ import { join } from 'path';
 import type { AgentType } from '../types';
 import { ENSEMBLE_SENTINEL_FLAG, escapeNameForRegex } from '../constants';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:hard-terminate]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:hard-terminate]', ...args);
 
 export interface HardTerminateInput {
   /**

@@ -503,7 +503,7 @@ async function daemonStats(): Promise<void> {
 
   const port = readPortFile();
   if (port === null) {
-    out.error('Daemon port file not found at ~/.claude-tempo/daemon.port');
+    out.error('Daemon port file not found at ~/.agent-tempo/daemon.port');
     out.log(`  ${out.dim('The daemon may be from a pre-HTTP build. Restart it with `claude-tempo daemon stop && start`.')}`);
     process.exit(1);
   }

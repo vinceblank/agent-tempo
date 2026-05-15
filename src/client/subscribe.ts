@@ -79,7 +79,7 @@ const SSE_KIND_SET: ReadonlySet<string> = new Set(SSE_EVENT_KINDS);
 export interface SubscribeDeps {
   /**
    * Daemon HTTP base URL (e.g. `http://127.0.0.1:8473`). When omitted, the
-   * URL is derived per-call from `~/.claude-tempo/daemon.port` with a
+   * URL is derived per-call from `~/.agent-tempo/daemon.port` with a
    * `127.0.0.1:8473` fallback. Re-read on every reconnect so a daemon
    * restart on a new port heals automatically.
    */
@@ -323,7 +323,7 @@ function resolveEventSource(deps: SubscribeDeps): typeof EventSource | undefined
 async function runEventSourceLoop(args: InternalRunArgs): Promise<void> {
   const { scope, opts, deps, signal, onEvent } = args;
   const ES = resolveEventSource(deps);
-  if (!ES) throw new Error('[claude-tempo:subscribe] EventSource not available');
+  if (!ES) throw new Error('[agent-tempo:subscribe] EventSource not available');
 
   const url = buildUrl(scope, opts.topics, deps.baseUrl);
   const es = new ES(url);
@@ -696,7 +696,7 @@ function globalFetch(): typeof fetch {
   const f = (globalThis as { fetch?: typeof fetch }).fetch;
   if (!f) {
     throw new Error(
-      '[claude-tempo:subscribe] global fetch is not available; pass deps.fetchImpl',
+      '[agent-tempo:subscribe] global fetch is not available; pass deps.fetchImpl',
     );
   }
   return f;

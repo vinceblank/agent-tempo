@@ -55,7 +55,7 @@ describe('isDevMode (ADR 0014 §5.2)', () => {
   it('returns false for "0", "false", "no", or other truthy-looking strings', () => {
     // The gate is intentionally strict — only `1` and `true` flip dev mode.
     // Any other value (even an existing-but-falsy string) is treated as
-    // production, so that an accidental `CLAUDE_TEMPO_DEV_MODE=0` in a
+    // production, so that an accidental `AGENT_TEMPO_DEV_MODE=0` in a
     // shell rc file doesn't quietly stay in dev mode.
     for (const v of ['0', 'false', 'no', 'off', 'yes', 'on', 'enabled']) {
       process.env[ENV.DEV_MODE] = v;

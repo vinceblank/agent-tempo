@@ -9,7 +9,7 @@ import * as path from 'path';
 import { spawn, execFileSync } from 'child_process';
 import { homedir } from 'os';
 import {
-  CLAUDE_TEMPO_HOME,
+  AGENT_TEMPO_HOME,
   Config,
   DEV_HOME_DIR_NAME,
   ENV,
@@ -17,17 +17,17 @@ import {
   isDevMode,
 } from '../config';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:daemon]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:daemon]', ...args);
 
-export const DAEMON_PID_PATH = path.join(CLAUDE_TEMPO_HOME, 'daemon.pid');
-export const DAEMON_LOG_PATH = path.join(CLAUDE_TEMPO_HOME, 'daemon.log');
+export const DAEMON_PID_PATH = path.join(AGENT_TEMPO_HOME, 'daemon.pid');
+export const DAEMON_LOG_PATH = path.join(AGENT_TEMPO_HOME, 'daemon.log');
 /**
  * Path to the daemon heartbeat file. The running daemon touches this file
  * on a {@link HEARTBEAT_INTERVAL_MS} cadence so `daemon status` can
  * distinguish "pid is alive AND main loop is serving" from "pid is alive
  * but something hung" (#157 diagnostic improvement).
  */
-export const DAEMON_HEARTBEAT_PATH = path.join(CLAUDE_TEMPO_HOME, 'daemon.heartbeat');
+export const DAEMON_HEARTBEAT_PATH = path.join(AGENT_TEMPO_HOME, 'daemon.heartbeat');
 
 /** How often the daemon touches {@link DAEMON_HEARTBEAT_PATH}. */
 export const HEARTBEAT_INTERVAL_MS = 60_000;
@@ -375,7 +375,7 @@ export async function startDaemon(config: Config): Promise<number> {
   }
 
   // Ensure daemon directory exists
-  fs.mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
+  fs.mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
 
   // Acquire exclusive start lock. If another process holds the lock, decide
   // whether to wait for it (live starter) or auto-repair it (stale from a

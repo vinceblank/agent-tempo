@@ -6,7 +6,7 @@ import { releaseHeldSignal, setPausedSignal } from '../workflows/signals';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { unpauseMaestroAndScheduler, signalAllSessions } from '../utils/ensemble-ops';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:play]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:play]', ...args);
 
 export function registerPlayTool(
   server: McpServer,

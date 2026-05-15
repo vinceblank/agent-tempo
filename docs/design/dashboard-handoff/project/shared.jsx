@@ -1,4 +1,4 @@
-// Shared data + helpers for the claude-tempo Maestro dashboard.
+// Shared data + helpers for the agent-tempo Maestro dashboard.
 // Exposes everything on window so other Babel <script> files can consume.
 
 const ACCENT = "#E07A5F";
@@ -98,7 +98,7 @@ const PLAYERS = [
     phase: "processing",
     part: "coordinating frontend ↔ backend on the release",
     branch: "main",
-    workDir: "/repos/claude-tempo",
+    workDir: "/repos/agent-tempo",
     host: "studio.local",
     heartbeat: "2s",
     messages: 184,
@@ -111,7 +111,7 @@ const PLAYERS = [
     phase: "awaiting",
     part: "waiting on tuner's test report",
     branch: "feat/v0.27",
-    workDir: "/repos/claude-tempo",
+    workDir: "/repos/agent-tempo",
     host: "studio.local",
     heartbeat: "14s",
     messages: 42,
@@ -123,7 +123,7 @@ const PLAYERS = [
     phase: "processing",
     part: "refactoring the attachment state machine",
     branch: "feat/v0.27-lead",
-    workDir: "/repos/claude-tempo",
+    workDir: "/repos/agent-tempo",
     host: "studio.local",
     heartbeat: "1s",
     messages: 98,
@@ -136,7 +136,7 @@ const PLAYERS = [
     phase: "processing",
     part: "implementing the hosts MCP tool",
     branch: "feat/v0.27-hosts",
-    workDir: "/repos/claude-tempo",
+    workDir: "/repos/agent-tempo",
     host: "box-02.lan",
     heartbeat: "3s",
     messages: 61,
@@ -149,7 +149,7 @@ const PLAYERS = [
     phase: "processing",
     part: "running the v0.26 migration conformance suite",
     branch: "feat/v0.27-tests",
-    workDir: "/repos/claude-tempo",
+    workDir: "/repos/agent-tempo",
     host: "studio.local",
     heartbeat: "1s",
     messages: 33,
@@ -162,7 +162,7 @@ const PLAYERS = [
     phase: "detached",
     part: "reconnecting…",
     branch: "review/pr-284",
-    workDir: "/repos/claude-tempo",
+    workDir: "/repos/agent-tempo",
     host: "box-02.lan",
     heartbeat: "2m 14s",
     messages: 19,

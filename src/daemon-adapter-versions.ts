@@ -213,5 +213,5 @@ async function defaultResolveCopilotSdkVersion(): Promise<string | undefined> {
 }
 
 function defaultLog(...args: unknown[]): void {
-  console.error('[claude-tempo:adapter-versions]', ...args);
+  console.error('[agent-tempo:adapter-versions]', ...args);
 }

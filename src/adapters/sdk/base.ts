@@ -29,7 +29,7 @@ import { BaseAttachment, type BaseAttachmentOptions } from '../base';
 import { processingStartUpdate, processingEndUpdate, markDeliveredSignal } from '../../workflows/signals';
 import type { Message, DetachReason } from '../../types';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:sdk-adapter]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:sdk-adapter]', ...args);
 
 /** Per-message result from `SdkAttachment.deliver()`. */
 export interface SdkDeliverResult {

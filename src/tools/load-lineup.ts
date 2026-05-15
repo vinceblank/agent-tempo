@@ -16,7 +16,7 @@ import { defineTool, ok, fail, formatError } from './helpers';
 import { PLAYER_NAME_MAX, PATH_MAX } from '../utils/validation';
 import { ensembleReadyDirective } from '../constants';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:load-lineup]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:load-lineup]', ...args);
 
 export function registerLoadLineupTool(
   server: McpServer,

@@ -70,10 +70,10 @@ players:
     mockMode: chaos
     instructions: >
       Probabilistic failure injection. Configure rates via env vars on the
-      daemon: `CLAUDE_TEMPO_MOCK_CHAOS_DELAY_MS`,
-      `CLAUDE_TEMPO_MOCK_CHAOS_FAIL_RATE`,
-      `CLAUDE_TEMPO_MOCK_CHAOS_CRASH_RATE`,
-      `CLAUDE_TEMPO_MOCK_CHAOS_SEED` (pin for reproducibility). Defaults
+      daemon: `AGENT_TEMPO_MOCK_CHAOS_DELAY_MS`,
+      `AGENT_TEMPO_MOCK_CHAOS_FAIL_RATE`,
+      `AGENT_TEMPO_MOCK_CHAOS_CRASH_RATE`,
+      `AGENT_TEMPO_MOCK_CHAOS_SEED` (pin for reproducibility). Defaults
       are conservative (5 % fail, 1 % crash, no delay) so an idle ensemble
       doesn't churn — set higher rates explicitly to stress the
       supervisor-restart + outbox-retry paths.
