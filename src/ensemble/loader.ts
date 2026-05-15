@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, resolve } from 'path';
 import { parse as parseYaml } from 'yaml';
 import { EnsembleLineup } from './schema';
-import { CLAUDE_TEMPO_HOME } from '../config';
+import { AGENT_TEMPO_HOME } from '../config';
 
 /** Walk up from a directory to find the nearest package.json. */
 function findPackageRoot(dir: string): string {
@@ -24,8 +24,8 @@ export interface LineupResolution {
  * Resolution order: saved lineups → shipped examples → direct file path → error.
  */
 export function resolveLineupPath(nameOrPath: string): LineupResolution {
-  // 1. Saved lineups (~/.claude-tempo/ensembles/)
-  const ensemblesDir = join(CLAUDE_TEMPO_HOME, 'ensembles');
+  // 1. Saved lineups (~/.agent-tempo/ensembles/)
+  const ensemblesDir = join(AGENT_TEMPO_HOME, 'ensembles');
   const savedYaml = join(ensemblesDir, `${nameOrPath}.yaml`);
   const savedYml = join(ensemblesDir, `${nameOrPath}.yml`);
   if (existsSync(savedYaml)) return { path: savedYaml, source: 'saved' };
@@ -74,7 +74,7 @@ export function loadLineup(filePath: string): EnsembleLineup {
   // Every ensemble must define exactly one conductor — the default chat
   // target and anchor for the maestro's `getEnsembleChat`.
   const remediation =
-    `Add a conductor block with 'name:' (default "conductor") and 'agent:' (default from CLAUDE_TEMPO_DEFAULT_AGENT config).`;
+    `Add a conductor block with 'name:' (default "conductor") and 'agent:' (default from AGENT_TEMPO_DEFAULT_AGENT config).`;
   if (doc.conductor == null) {
     throw new Error(
       `lineup "${doc.name}" is missing a conductor; every ensemble must define exactly one conductor. ${remediation}`,

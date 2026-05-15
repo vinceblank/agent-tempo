@@ -241,7 +241,7 @@ export interface SessionMetadata {
    * model selection across `continueAsNew` boundaries (the recruit-arg
    * lives only in `RecruitOutboxEntry` which is dropped after dispatch).
    * Absent for non-claude-api sessions; absent for pre-#131 sessions
-   * (the spawn falls back to `CLAUDE_TEMPO_API_MODEL` env / pinned default).
+   * (the spawn falls back to `AGENT_TEMPO_API_MODEL` env / pinned default).
    */
   model?: string;
 }
@@ -319,7 +319,7 @@ export interface HostProfile {
 /**
  * Single daemon-process instance observed by Temporal's poller registry.
  * A `HostInfo` may carry ≥1 instance when multiple daemons run on the same
- * hostname (e.g. different `CLAUDE_TEMPO_HOME` per user session).
+ * hostname (e.g. different `AGENT_TEMPO_HOME` per user session).
  */
 export interface InstanceInfo {
   pid: number;
@@ -592,13 +592,13 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
   mockScenario?: string;
   /**
    * Optional model id for the claude-api adapter (#131 Phase C). Falls back
-   * to `CLAUDE_TEMPO_API_MODEL` env then a constants-pinned default at the
+   * to `AGENT_TEMPO_API_MODEL` env then a constants-pinned default at the
    * adapter's spawn time. Ignored when `agent !== 'claude-api'`.
    */
   model?: string;
   /**
    * #520 — claude-code-headless permission mode. Forwarded to `claude -p
-   * --permission-mode`. Recruit-arg → `CLAUDE_TEMPO_PERMISSION_MODE` env →
+   * --permission-mode`. Recruit-arg → `AGENT_TEMPO_PERMISSION_MODE` env →
    * `'acceptEdits'` default. Mutually exclusive with
    * {@link dangerouslySkipPermissions}. Ignored when
    * `agent !== 'claude-code-headless'`.

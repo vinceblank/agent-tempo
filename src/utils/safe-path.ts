@@ -20,14 +20,14 @@ export function assertSafePath(filePath: string, allowedRoots: string[]): void {
 
 /**
  * Validate and resolve a lineup file path, ensuring it stays within allowed directories.
- * Allowed roots: ~/.claude-tempo/ensembles/, cwd, and optionally a project dir.
+ * Allowed roots: ~/.agent-tempo/ensembles/, cwd, and optionally a project dir.
  */
 export function safeLineupPath(filePath: string, cwd: string, projectDir?: string): string {
   const { join } = require('path') as typeof import('path');
   const { homedir } = require('os') as typeof import('os');
 
   const allowedRoots = [
-    join(homedir(), '.claude-tempo', 'ensembles'),
+    join(homedir(), '.agent-tempo', 'ensembles'),
     cwd,
   ];
   if (projectDir && projectDir !== cwd) {

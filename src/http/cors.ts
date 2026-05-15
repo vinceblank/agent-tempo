@@ -12,7 +12,7 @@
  * - `Access-Control-Allow-Headers: Authorization, Last-Event-ID` (non-configurable)
  * - `Access-Control-Max-Age: 600` (non-configurable)
  *
- * Override the allowlist via `CLAUDE_TEMPO_CORS_ORIGINS` — comma-separated
+ * Override the allowlist via `AGENT_TEMPO_CORS_ORIGINS` — comma-separated
  * explicit origins (e.g. `https://dashboard.example.com,https://localhost:3000`).
  * Wildcards are NOT supported. `*` is incompatible with credentials, and
  * we want operators to opt every origin in deliberately.
@@ -23,7 +23,7 @@ import { isLoopbackBindAddr } from './auth';
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 
 export interface CorsConfig {
-  /** Explicit list from `CLAUDE_TEMPO_CORS_ORIGINS`. Empty → defaults only. */
+  /** Explicit list from `AGENT_TEMPO_CORS_ORIGINS`. Empty → defaults only. */
   allowedOrigins: string[];
 }
 
@@ -108,7 +108,7 @@ export function corsResponseHeaders(): Record<string, string> {
  * Convenience wrapper — should the daemon enforce CORS at all? `true`
  * iff the bind addr is non-loopback (every connection is bearer-mode)
  * OR the operator opted into bearer mode by setting an explicit
- * allowlist via `CLAUDE_TEMPO_CORS_ORIGINS`.
+ * allowlist via `AGENT_TEMPO_CORS_ORIGINS`.
  *
  * Used at boot time to decide whether to install the CORS middleware
  * or no-op it. Per-request bearer determination still happens via

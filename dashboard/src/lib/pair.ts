@@ -1,7 +1,7 @@
 /**
  * Cross-device pair-token consume — PR-8 of #340.
  *
- * The CLI's `claude-tempo dashboard --pair` mints a single-use,
+ * The CLI's `agent-tempo dashboard --pair` mints a single-use,
  * 5-minute, base64url 32-byte token and prints a QR-code URL of the
  * form `https://<daemon-url>/dashboard/?pair=<token>`. When the user
  * scans that on their phone the SPA loads with `?pair=<token>` in

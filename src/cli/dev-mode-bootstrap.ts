@@ -1,11 +1,11 @@
 /**
  * Pre-import side-effect that promotes a top-level `--dev` CLI flag into
- * `CLAUDE_TEMPO_DEV_MODE=1` BEFORE any other module loads (ADR 0014 §5.4).
+ * `AGENT_TEMPO_DEV_MODE=1` BEFORE any other module loads (ADR 0014 §5.4).
  *
  * **Why this file exists**: `src/cli.ts` imports `./config` statically, and
- * `src/config.ts` evaluates `CLAUDE_TEMPO_HOME = resolveTempoHome()` at
+ * `src/config.ts` evaluates `AGENT_TEMPO_HOME = resolveTempoHome()` at
  * module load time. By the time the main argv parser runs, that constant
- * has already been frozen against `~/.claude-tempo/`. The bootstrap mutates
+ * has already been frozen against `~/.agent-tempo/`. The bootstrap mutates
  * `process.env` early — before the static `./config` import resolves — so
  * the dev profile lights up everywhere downstream consistently.
  *
@@ -16,13 +16,13 @@
  *
  * Side effects:
  *   1. If `--dev` appears anywhere in `process.argv`, set
- *      `process.env.CLAUDE_TEMPO_DEV_MODE='1'`.
+ *      `process.env.AGENT_TEMPO_DEV_MODE='1'`.
  *   2. Strip `--dev` from `process.argv` so the main parser doesn't reject
  *      it as unknown.
  *
- * Daemon child processes inherit `CLAUDE_TEMPO_DEV_MODE` automatically via
+ * Daemon child processes inherit `AGENT_TEMPO_DEV_MODE` automatically via
  * `spawn(..., { env: { ...process.env } })` in `src/cli/daemon.ts`. Users
- * can also bypass the flag entirely by setting `CLAUDE_TEMPO_DEV_MODE=1`
+ * can also bypass the flag entirely by setting `AGENT_TEMPO_DEV_MODE=1`
  * directly in their shell — useful for MCP server processes that aren't
  * launched via the CLI.
  */
@@ -31,7 +31,7 @@ const DEV_FLAG = '--dev';
 
 const idx = process.argv.indexOf(DEV_FLAG);
 if (idx !== -1) {
-  process.env.CLAUDE_TEMPO_DEV_MODE = '1';
+  process.env.AGENT_TEMPO_DEV_MODE = '1';
   process.argv.splice(idx, 1);
 }
 

@@ -4,7 +4,7 @@
  * Boots a real listener with a mocked TempoClient, then exercises the
  * three new catalog endpoints. The two GETs touch the local
  * filesystem (the daemon's own `examples/` dir, since these tests
- * don't shadow `CLAUDE_TEMPO_HOME`). The POST flow records every
+ * don't shadow `AGENT_TEMPO_HOME`). The POST flow records every
  * `client.recruit` call so we can assert the conductor + lineup
  * fan-out without a live Temporal namespace.
  */

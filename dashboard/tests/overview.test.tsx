@@ -193,7 +193,7 @@ describe('Overview screen', () => {
     renderOverview({ client: mock });
     await waitFor(() => {
       const messages = consoleWarn.mock.calls.flat().map(String);
-      expect(messages.some((m) => m.includes('[claude-tempo:dashboard]') && m.includes('snapshot.error'))).toBe(true);
+      expect(messages.some((m) => m.includes('[agent-tempo:dashboard]') && m.includes('snapshot.error'))).toBe(true);
     });
   });
 

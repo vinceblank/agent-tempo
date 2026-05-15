@@ -9,7 +9,7 @@ import {
   VISIBILITY_DEADLINES_MS,
 } from '../utils/visibility-deadline';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:maestro]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:maestro]', ...args);
 
 // ── Activity input types ──
 

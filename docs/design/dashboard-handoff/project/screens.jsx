@@ -336,7 +336,7 @@ function Loadouts({ activeNav = "loadouts", onNav, activeEnsemble = "my-band", o
           <header className="page-header">
             <div>
               <h1 className="page-title">Loadouts</h1>
-              <div className="page-subtitle">Reusable ensemble lineups. Loaded via <span className="mono">claude-tempo up --lineup</span> or from here.</div>
+              <div className="page-subtitle">Reusable ensemble lineups. Loaded via <span className="mono">agent-tempo up --lineup</span> or from here.</div>
             </div>
             <div className="page-actions">
               <window.Btn variant="ghost" size="sm" icon="↑">Import YAML</window.Btn>
@@ -579,7 +579,7 @@ function Settings({ activeNav = "settings", onNav, activeEnsemble = "my-band", o
                 <div className="panel-body">
                   <window.KV k="namespace" v="default" mono />
                   <window.KV k="address" v="localhost:7233" mono />
-                  <window.KV k="task queue" v="claude-tempo" mono />
+                  <window.KV k="task queue" v="agent-tempo" mono />
                   <window.KV k="tls" v="off" mono />
                   <window.KV k="auth" v="—" mono />
                 </div>

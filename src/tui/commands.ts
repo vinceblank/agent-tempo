@@ -279,7 +279,7 @@ async function handleBroadcast(
 /**
  * /hosts [--all] — list daemons polling this Temporal namespace.
  *
- * #274. Surfaces the same data as `claude-tempo hosts` CLI and the
+ * #274. Surfaces the same data as `agent-tempo hosts` CLI and the
  * `hosts` MCP tool via the shared `formatHostList` helper.
  * `--all` opts into stale hosts; default hides them.
  */
@@ -308,7 +308,7 @@ async function handleHosts(
  * #128: unified per-session recall. Without a player positional, targets
  * the ensemble's maestro session (the TUI's natural context); with a
  * player positional, queries that player's session — same data shape the
- * MCP `recall` tool and `claude-tempo recall <name>` CLI surface.
+ * MCP `recall` tool and `agent-tempo recall <name>` CLI surface.
  *
  * The legacy pre-#128 behavior (aggregated maestro relay-log filtered
  * by player) is retired; that path was inconsistent with the other two
@@ -1099,9 +1099,9 @@ async function handleRecruitConductor(
 
   commitStatic(dispatch, 'info', '\u2026 Recruiting conductor (tempo-conductor)\u2026');
 
-  // `claude-tempo conduct` was removed in #288. Delegate to the shared helper
+  // `agent-tempo conduct` was removed in #288. Delegate to the shared helper
   // which query-first checks for a live conductor phase, then shells out via
-  // `client.spawnConductor` (which runs `claude-tempo up <ensemble>`). This is
+  // `client.spawnConductor` (which runs `agent-tempo up <ensemble>`). This is
   // the same two-op `/restore` uses, so the recruit-vs-restore code paths stay
   // aligned.
   const { ensureConductorSpawned } = await import('../client/ensure-conductor-spawned');

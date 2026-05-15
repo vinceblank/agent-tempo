@@ -76,27 +76,27 @@ export const CANONICAL_ADAPTER_IDS = [
 // dynamic `import()` would leave a window where `registry.get('mock')`
 // throws "Unknown adapter" until the promise lands. Tests that want to
 // flip dev mode mid-process can re-require this module after mutating
-// `process.env.CLAUDE_TEMPO_DEV_MODE`.
+// `process.env.AGENT_TEMPO_DEV_MODE`.
 //
 // In production tarballs `dist/adapters/mock/` is excluded via the root
 // `.npmignore` (gate 1). If a malicious / hand-edited install somehow has
-// the file present AND `CLAUDE_TEMPO_DEV_MODE=1`, recruit-time rejection
+// the file present AND `AGENT_TEMPO_DEV_MODE=1`, recruit-time rejection
 // (gate 3) is the next line of defence.
 if (isDevMode()) {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { mockDescriptor } = require('./mock') as typeof import('./mock');
     registry.register(mockDescriptor);
-    console.error('[claude-tempo] DEV MODE: mock adapter registered');
+    console.error('[agent-tempo] DEV MODE: mock adapter registered');
   } catch (err) {
     // ADR 0014 §7 gate 1 strips `dist/adapters/mock/` from the published
-    // tarball. If a user then sets `CLAUDE_TEMPO_DEV_MODE=1` against an
+    // tarball. If a user then sets `AGENT_TEMPO_DEV_MODE=1` against an
     // npm-installed claude-tempo, the require above fails — and that's
     // exactly the safety property we want. Log + continue so the rest of
     // the daemon boots normally; gate 3 (recruit-time rejection) catches
     // any later `agent: 'mock'` request with a clearer message.
     console.error(
-      '[claude-tempo] DEV MODE: mock adapter unavailable in this build —',
+      '[agent-tempo] DEV MODE: mock adapter unavailable in this build —',
       err instanceof Error ? err.message : err,
     );
   }

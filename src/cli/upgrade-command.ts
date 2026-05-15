@@ -19,7 +19,7 @@
 import { readFileSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { execFileSync, spawn as cpSpawn } from 'child_process';
-import { getConfig, CliOverrides, CLAUDE_TEMPO_HOME } from '../config';
+import { getConfig, CliOverrides, AGENT_TEMPO_HOME } from '../config';
 import { isDaemonRunning, stopDaemon } from './daemon';
 import * as out from './output';
 
@@ -114,7 +114,7 @@ const PID = ${cliPid};
 const INSTALL_SPEC = ${JSON.stringify(installSpec)};
 const TARGET = ${JSON.stringify(targetVersion)};
 const IS_WIN = ${isWin};
-const LOG_PATH = ${JSON.stringify(join(CLAUDE_TEMPO_HOME, 'upgrade.log'))};
+const LOG_PATH = ${JSON.stringify(join(AGENT_TEMPO_HOME, 'upgrade.log'))};
 
 function log(msg) {
   const line = new Date().toISOString() + ' ' + msg;
@@ -190,7 +190,7 @@ main().catch(err => {
 `.trim();
 
   // Clear previous upgrade log before spawning
-  const logPath = join(CLAUDE_TEMPO_HOME, 'upgrade.log');
+  const logPath = join(AGENT_TEMPO_HOME, 'upgrade.log');
   try { writeFileSync(logPath, ''); } catch { /* ignore */ }
 
   // Spawn the updater as a detached child process

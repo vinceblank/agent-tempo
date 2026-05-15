@@ -86,7 +86,7 @@ if (!opencodeSdkAvailable && require.main === module) {
  * non-enumerable) and renders `Error` as `{}` — useless for debugging.
  */
 const log = (...args: unknown[]) => {
-  const msg = `[claude-tempo:opencode] ${args.map((a) => {
+  const msg = `[agent-tempo:opencode] ${args.map((a) => {
     if (typeof a === 'string') return a;
     if (a instanceof Error) return a.stack ? `${a.message}\n${a.stack}` : a.message;
     try { return JSON.stringify(a); } catch { return String(a); }

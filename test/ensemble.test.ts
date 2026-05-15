@@ -153,7 +153,7 @@ players:
       writeFileSync(filePath, `name: solo\nplayers:\n  - name: p1\n`);
 
       expect(() => loadLineup(filePath)).to.throw(/lineup "solo" is missing a conductor/);
-      expect(() => loadLineup(filePath)).to.throw(/CLAUDE_TEMPO_DEFAULT_AGENT/);
+      expect(() => loadLineup(filePath)).to.throw(/AGENT_TEMPO_DEFAULT_AGENT/);
     });
 
     it('rejects lineup where conductor is malformed (non-object)', function () {
@@ -273,8 +273,8 @@ players:
   describe('listLineups', function () {
     it('lists YAML files in the ensembles directory', function () {
       // We need to use the actual ensembles dir for this test
-      const { CLAUDE_TEMPO_HOME } = require('../src/config');
-      const ensemblesDir = join(CLAUDE_TEMPO_HOME, 'ensembles');
+      const { AGENT_TEMPO_HOME } = require('../src/config');
+      const ensemblesDir = join(AGENT_TEMPO_HOME, 'ensembles');
       mkdirSync(ensemblesDir, { recursive: true });
 
       const testFile = join(ensemblesDir, 'list-test.yaml');

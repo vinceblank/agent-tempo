@@ -2,21 +2,21 @@
  * Structured console logging for the dashboard.
  *
  * State transitions, mutations, and SSE events go through `logEvent` so the
- * conductor's autonomous validation script can grep `[claude-tempo:dashboard]`
+ * conductor's autonomous validation script can grep `[agent-tempo:dashboard]`
  * via `mcp__claude-in-chrome__read_console_messages` without parsing the DOM.
- * Mirrors the `[claude-tempo:adapter]` format from `src/adapters/base.ts`
+ * Mirrors the `[agent-tempo:adapter]` format from `src/adapters/base.ts`
  * (#249) so the same regex-based reader works across both surfaces.
  *
  * Output format (one line per event):
  *
- *   [claude-tempo:dashboard] <action> key=value key=value
+ *   [agent-tempo:dashboard] <action> key=value key=value
  *
  * Values are JSON-stringified so strings carry their quotes (which makes them
  * unambiguously match-able vs. numbers/booleans). See `dashboard/README.md`
  * § Testability for the conventions.
  */
 
-const LOG_PREFIX = '[claude-tempo:dashboard]';
+const LOG_PREFIX = '[agent-tempo:dashboard]';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 

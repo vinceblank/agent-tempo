@@ -10,7 +10,7 @@
  * module only produces the `BootstrapResult` that the TUI consumes as
  * initial props.
  *
- * Per-step caching (`~/.claude-tempo/.bootstrap-cache.json`) is keyed by
+ * Per-step caching (`~/.agent-tempo/.bootstrap-cache.json`) is keyed by
  * `schemaVersion` + `binaryVersion` so an upgrade wipes the cache and the
  * new binary re-validates everything. Steps with volatile state (daemon
  * liveness, orphan count) are never cached.
@@ -25,7 +25,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as semver from 'semver';
 import { Client } from '@temporalio/client';
-import { Config, CLAUDE_TEMPO_HOME } from '../config';
+import { Config, AGENT_TEMPO_HOME } from '../config';
 import { createTemporalConnection } from '../connection';
 import { isMcpConfigured, isGlobalMcpRegistered, addGlobalMcp } from './mcp';
 import {
@@ -42,12 +42,14 @@ import { createTempoClient } from '../client';
 import type { EnsembleSummary } from '../client/interface';
 import { hostname as osHostname } from 'os';
 import { getGitInfo } from '../git-info';
+import { migrateLegacyHome, formatMigrationResult } from './legacy-migration';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Public types (locked by #289 + #290 spec pins)
 // ─────────────────────────────────────────────────────────────────────────
 
 export type StepName =
+  | 'legacyHomeMigration'
   | 'preflight'
   | 'mcpConfig'
   | 'temporalReach'
@@ -99,7 +101,7 @@ export interface BootstrapArgs {
   cwd?: string;
   /** Injectable clock for tests. */
   now?: () => number;
-  /** Injectable cache-path override for tests. Default: `CLAUDE_TEMPO_HOME`. */
+  /** Injectable cache-path override for tests. Default: `AGENT_TEMPO_HOME`. */
   cacheDir?: string;
   /** Injectable npm-version fetcher for tests. Default: live registry fetch. */
   fetchLatestVersion?: (pkgName: string, timeoutMs: number) => Promise<string | null>;
@@ -113,6 +115,15 @@ export interface BootstrapArgs {
    * simulates a successful start; `'failed'` + `detail` simulates failure.
    */
   daemonBoot?: (config: Config) => Promise<StepOutcome>;
+  /**
+   * PR-2 of the v1.0 rebrand — one-shot copy of `~/.claude-tempo/` →
+   * `~/.agent-tempo/`. Runs once on first boot of the new binary; idempotent
+   * thereafter. Tests should override to avoid touching real $HOME.
+   *
+   * Failure here MUST NOT block the boot path — record `'failed'` with a
+   * detail string and let the rest of bootstrap proceed.
+   */
+  legacyHomeMigration?: () => Promise<StepOutcome>;
   /**
    * Inject the Temporal reachability probe (steps 3 + 6). Tests override
    * to avoid real network I/O — default performs `createTemporalConnection`
@@ -327,6 +338,38 @@ function daemonLogErrorTail(logPath: string): DaemonLogErrorsBadge | undefined {
 // Individual steps
 // ─────────────────────────────────────────────────────────────────────────
 
+/**
+ * Default step-0 implementation — invokes the one-shot legacy home migration
+ * (`~/.claude-tempo/` → `~/.agent-tempo/`). Idempotent: re-runs are
+ * `'skipped'` once the marker is in place. Failure is recorded but never
+ * blocks bootstrap (PR-2 brief).
+ */
+async function defaultLegacyHomeMigrationStep(): Promise<StepOutcome> {
+  const t0 = performance.now();
+  try {
+    const result = await migrateLegacyHome();
+    const durationMs = performance.now() - t0;
+    const detail = formatMigrationResult(result);
+    switch (result.status) {
+      case 'no-legacy':
+      case 'already-migrated':
+        return { status: 'skipped', durationMs, detail };
+      case 'migrated':
+        return { status: 'action-taken', durationMs, detail };
+      case 'skipped':
+        return { status: 'skipped', durationMs, detail };
+      case 'failed':
+        return { status: 'failed', durationMs, detail };
+    }
+  } catch (err) {
+    return {
+      status: 'failed',
+      durationMs: performance.now() - t0,
+      detail: `legacy-migration crashed: ${(err as Error).message}`,
+    };
+  }
+}
+
 async function stepPreflight(
   cache: BootstrapCache,
   now: number,
@@ -346,10 +389,10 @@ async function stepPreflight(
     // TUI badge can surface "claude not found" when the agent requires it.
 
     try {
-      fs.mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
-      fs.accessSync(CLAUDE_TEMPO_HOME, fs.constants.W_OK);
+      fs.mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
+      fs.accessSync(AGENT_TEMPO_HOME, fs.constants.W_OK);
     } catch {
-      errors.push(`${CLAUDE_TEMPO_HOME} is not writable. Check permissions or set $HOME.`);
+      errors.push(`${AGENT_TEMPO_HOME} is not writable. Check permissions or set $HOME.`);
     }
 
     return errors;
@@ -646,9 +689,9 @@ async function startTemporalDevServer(
   config: Config,
   reachableProbe: (config: Config) => Promise<boolean>,
 ): Promise<boolean> {
-  fs.mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
+  fs.mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
   const port = config.temporalAddress.split(':')[1] || '7233';
-  const dbPath = path.join(CLAUDE_TEMPO_HOME, 'temporal-data.db');
+  const dbPath = path.join(AGENT_TEMPO_HOME, 'temporal-data.db');
   const child = cpSpawn('temporal', ['server', 'start-dev', '--port', port, '--db-filename', dbPath], {
     detached: true,
     stdio: 'ignore',
@@ -685,12 +728,21 @@ export async function bootstrap(args: BootstrapArgs): Promise<BootstrapResult> {
   const start = performance.now();
   const cwd = args.cwd ?? process.cwd();
   const now = (args.now ?? (() => Date.now()))();
-  const cacheDir = args.cacheDir ?? CLAUDE_TEMPO_HOME;
+  const cacheDir = args.cacheDir ?? AGENT_TEMPO_HOME;
   const binaryVersion = args.binaryVersion ?? readBinaryVersion();
   const fetchLatest = args.fetchLatestVersion ?? defaultFetchLatestVersion;
 
   const cache = readCache(cacheDir, binaryVersion);
   const reachableProbe = args.isTemporalReachable ?? ((c: Config) => isTemporalReachable(c, 3000));
+
+  // Step 0: legacy home migration (`~/.claude-tempo/` → `~/.agent-tempo/`)
+  // — PR-2 of the v1.0 rebrand. Runs before preflight so subsequent steps
+  // (cache read, MCP config write, daemon boot) all see the new home.
+  // MUST NOT block bootstrap — failure becomes a `'failed'` step with
+  // `detail`, and we keep going.
+  const legacyHomeMigration = await (
+    args.legacyHomeMigration ?? defaultLegacyHomeMigrationStep
+  )();
 
   // Steps 1–5: fail-fast on step 1 so we don't try to register MCP on an
   // incompatible Node. Each step mutates the cache in-place.
@@ -734,6 +786,7 @@ export async function bootstrap(args: BootstrapArgs): Promise<BootstrapResult> {
   return {
     durationMs: performance.now() - start,
     steps: {
+      legacyHomeMigration,
       preflight,
       mcpConfig,
       temporalReach,

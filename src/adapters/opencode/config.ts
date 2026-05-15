@@ -101,10 +101,10 @@ export interface SynthesizeOpenCodeConfigOpts {
  *   "provider": { "anthropic": { "options": { "apiKey": "{env:ANTHROPIC_API_KEY}" } } },
  *   "server": { "port": 4732, "hostname": "127.0.0.1", "mdns": false },
  *   "mcp": {
- *     "claude-tempo": {
+ *     "agent-tempo": {
  *       "type": "local",
  *       "command": ["node", "/abs/path/to/dist/server.js"],
- *       "environment": { "CLAUDE_TEMPO_ENSEMBLE": "{env:CLAUDE_TEMPO_ENSEMBLE}", … }
+ *       "environment": { "AGENT_TEMPO_ENSEMBLE": "{env:AGENT_TEMPO_ENSEMBLE}", … }
  *     }
  *   }
  * }
@@ -149,12 +149,12 @@ export function synthesizeOpenCodeConfig(opts: SynthesizeOpenCodeConfigOpts): st
       mdns: false,
     },
     mcp: {
-      'claude-tempo': {
+      'agent-tempo': {
         type: 'local',
         command: ['node', opts.mcpServerPath],
         environment: {
-          CLAUDE_TEMPO_ENSEMBLE: '{env:CLAUDE_TEMPO_ENSEMBLE}',
-          CLAUDE_TEMPO_PLAYER_NAME: '{env:CLAUDE_TEMPO_PLAYER_NAME}',
+          AGENT_TEMPO_ENSEMBLE: '{env:AGENT_TEMPO_ENSEMBLE}',
+          AGENT_TEMPO_PLAYER_NAME: '{env:AGENT_TEMPO_PLAYER_NAME}',
           TEMPORAL_ADDRESS: '{env:TEMPORAL_ADDRESS}',
           TEMPORAL_NAMESPACE: '{env:TEMPORAL_NAMESPACE}',
         },

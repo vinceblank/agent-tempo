@@ -35,7 +35,7 @@ function stripAnsi(s: string): string {
 
 describe('prettyPath', () => {
   it('collapses paths under homedir to ~/...', () => {
-    expect(prettyPath('/home/alice/.claude-tempo-dev', '/home/alice')).toBe('~/.claude-tempo-dev');
+    expect(prettyPath('/home/alice/.agent-tempo-dev', '/home/alice')).toBe('~/.agent-tempo-dev');
   });
 
   it('returns "~" when the path is exactly homedir', () => {
@@ -47,16 +47,16 @@ describe('prettyPath', () => {
   });
 
   it('handles Windows-style separators', () => {
-    expect(prettyPath('C:\\Users\\alice\\.claude-tempo-dev', 'C:\\Users\\alice'))
-      .toBe('~/.claude-tempo-dev');
+    expect(prettyPath('C:\\Users\\alice\\.agent-tempo-dev', 'C:\\Users\\alice'))
+      .toBe('~/.agent-tempo-dev');
   });
 
   it('handles a forward-slash home with backslash path (cross-style tolerance)', () => {
     // Some env-var setups use forward slashes even on Windows; the formatter
     // should tolerate the mixed-separator case rather than render an
     // unstripped absolute path.
-    expect(prettyPath('C:/Users/alice/.claude-tempo-dev', 'C:/Users/alice'))
-      .toBe('~/.claude-tempo-dev');
+    expect(prettyPath('C:/Users/alice/.agent-tempo-dev', 'C:/Users/alice'))
+      .toBe('~/.agent-tempo-dev');
   });
 });
 
@@ -64,19 +64,19 @@ describe('formatDevBanner', () => {
   it('matches the locked single-line format from ADR 0014 §5.4', () => {
     const banner = stripAnsi(
       formatDevBanner({
-        home: '/home/alice/.claude-tempo-dev',
+        home: '/home/alice/.agent-tempo-dev',
         homedirOverride: '/home/alice',
       }),
     );
     expect(banner).toBe(
-      `[DEV MODE] using ~/.claude-tempo-dev · port ${DEV_DAEMON_PORT} ` +
+      `[DEV MODE] using ~/.agent-tempo-dev · port ${DEV_DAEMON_PORT} ` +
       `· namespace ${DEV_TEMPORAL_NAMESPACE} · queue ${DEV_TASK_QUEUE}`,
     );
   });
 
   it('uses dev profile defaults when no inputs are passed', () => {
-    // No `home:` override ⇒ uses the live `CLAUDE_TEMPO_HOME` constant
-    // (which is `~/.claude-tempo/` here because dev mode wasn't set when
+    // No `home:` override ⇒ uses the live `AGENT_TEMPO_HOME` constant
+    // (which is `~/.agent-tempo/` here because dev mode wasn't set when
     // config.ts loaded). Either way the rest of the values must be the
     // dev defaults — we don't want production values bleeding into the
     // banner via stale closures.
@@ -115,7 +115,7 @@ describe('formatDevBanner — source-annotated diagnostic banner (#423 PR-A)', (
   it('annotates the default-source namespace with "(default)"', () => {
     const banner = stripAnsi(
       formatDevBanner({
-        home: '/home/alice/.claude-tempo-dev',
+        home: '/home/alice/.agent-tempo-dev',
         homedirOverride: '/home/alice',
         namespace: DEV_TEMPORAL_NAMESPACE,
         namespaceSource: 'default',
@@ -127,7 +127,7 @@ describe('formatDevBanner — source-annotated diagnostic banner (#423 PR-A)', (
   it('annotates the default-source queue with "(default)"', () => {
     const banner = stripAnsi(
       formatDevBanner({
-        home: '/home/alice/.claude-tempo-dev',
+        home: '/home/alice/.agent-tempo-dev',
         homedirOverride: '/home/alice',
         taskQueue: DEV_TASK_QUEUE,
         taskQueueSource: 'default',
@@ -139,7 +139,7 @@ describe('formatDevBanner — source-annotated diagnostic banner (#423 PR-A)', (
   it('does NOT annotate when source is unspecified (back-compat for legacy fixtures)', () => {
     const banner = stripAnsi(
       formatDevBanner({
-        home: '/home/alice/.claude-tempo-dev',
+        home: '/home/alice/.agent-tempo-dev',
         homedirOverride: '/home/alice',
         namespace: DEV_TEMPORAL_NAMESPACE,
         taskQueue: DEV_TASK_QUEUE,
@@ -152,7 +152,7 @@ describe('formatDevBanner — source-annotated diagnostic banner (#423 PR-A)', (
   it('annotates with "(flag)" when namespace came from a CLI override', () => {
     const banner = stripAnsi(
       formatDevBanner({
-        home: '/home/alice/.claude-tempo-dev',
+        home: '/home/alice/.agent-tempo-dev',
         homedirOverride: '/home/alice',
         namespace: 'explicit-override',
         namespaceSource: 'flag',
@@ -164,7 +164,7 @@ describe('formatDevBanner — source-annotated diagnostic banner (#423 PR-A)', (
   it('annotates with "(config)" when namespace came from config.json', () => {
     const banner = stripAnsi(
       formatDevBanner({
-        home: '/home/alice/.claude-tempo-dev',
+        home: '/home/alice/.agent-tempo-dev',
         homedirOverride: '/home/alice',
         namespace: 'my-dev-ns',
         namespaceSource: 'config',
@@ -173,15 +173,15 @@ describe('formatDevBanner — source-annotated diagnostic banner (#423 PR-A)', (
     expect(banner).toContain('namespace my-dev-ns (config) ·');
   });
 
-  it('annotates the queue with "(env)" when CLAUDE_TEMPO_TASK_QUEUE is set', () => {
+  it('annotates the queue with "(env)" when AGENT_TEMPO_TASK_QUEUE is set', () => {
     // Drift indicator for the task-queue path. Env-var override of
-    // `CLAUDE_TEMPO_TASK_QUEUE` is still honored (carve-out for queue is
+    // `AGENT_TEMPO_TASK_QUEUE` is still honored (carve-out for queue is
     // deferred to PR-B per architect Q1) — but the banner makes it
     // visible so an operator chasing "why are my workers polling that
     // queue?" sees the override on first inspection.
     const banner = stripAnsi(
       formatDevBanner({
-        home: '/home/alice/.claude-tempo-dev',
+        home: '/home/alice/.agent-tempo-dev',
         homedirOverride: '/home/alice',
         taskQueue: 'my-custom-queue',
         taskQueueSource: 'env',
@@ -199,7 +199,7 @@ describe('formatDevBanner — source-annotated diagnostic banner (#423 PR-A)', (
     // `docs/design/dev-mode-isolation-fix-423.md` line 115.
     const banner = stripAnsi(
       formatDevBanner({
-        home: '/home/alice/.claude-tempo-dev',
+        home: '/home/alice/.agent-tempo-dev',
         homedirOverride: '/home/alice',
         namespace: DEV_TEMPORAL_NAMESPACE,
         namespaceSource: 'default',
@@ -208,7 +208,7 @@ describe('formatDevBanner — source-annotated diagnostic banner (#423 PR-A)', (
       }),
     );
     expect(banner).toBe(
-      `[DEV MODE] using ~/.claude-tempo-dev · port ${DEV_DAEMON_PORT} · ` +
+      `[DEV MODE] using ~/.agent-tempo-dev · port ${DEV_DAEMON_PORT} · ` +
       `namespace ${DEV_TEMPORAL_NAMESPACE} (default) · ` +
       `queue ${DEV_TASK_QUEUE} (default)`,
     );
@@ -267,7 +267,7 @@ describe('resolveDevBannerInputs (#423 PR-A)', () => {
     expect(inputs.namespaceSource).toBe('default');
   });
 
-  it('reports queueSource="env" when CLAUDE_TEMPO_TASK_QUEUE is set', () => {
+  it('reports queueSource="env" when AGENT_TEMPO_TASK_QUEUE is set', () => {
     // Task queue env-var path is NOT carved out in PR-A (architect Q1
     // deferred to PR-B), so the env override IS honored. The banner's
     // job is to make the override visible.

@@ -20,12 +20,12 @@ for the design.
 | `silent`     | (PR-3) Drains messages, never responds.                                                                   | Test pause/resume, timeout, stale phase, encore flows  |
 | `chaos`      | (PR-3) Probabilistic delay / throw / skip.                                                                | Stress-test reconnect / timeout / supervisor logic     |
 
-Mode is selected at boot via `CLAUDE_TEMPO_MOCK_MODE` env. There is no
+Mode is selected at boot via `AGENT_TEMPO_MOCK_MODE` env. There is no
 mid-session switching — restart the player to change modes.
 
 ## Scenario format
 
-YAML at the path given by `CLAUDE_TEMPO_MOCK_SCENARIO`. Resolution rules:
+YAML at the path given by `AGENT_TEMPO_MOCK_SCENARIO`. Resolution rules:
 
 1. **Absolute path** — used verbatim.
 2. **Bare name** (no path separators) — `<package-root>/scenarios/<name>.yaml`.

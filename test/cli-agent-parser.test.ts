@@ -35,9 +35,9 @@ function runCli(...args: string[]) {
     env: {
       ...process.env,
       // Suppress the dev-mode banner if a developer happens to have
-      // CLAUDE_TEMPO_DEV_MODE exported in their shell — keeps the
+      // AGENT_TEMPO_DEV_MODE exported in their shell — keeps the
       // stderr assertions deterministic.
-      CLAUDE_TEMPO_DEV_MODE: '0',
+      AGENT_TEMPO_DEV_MODE: '0',
     },
   });
 }

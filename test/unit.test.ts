@@ -18,7 +18,7 @@ import {
   getConfig,
   getConfigWithSources,
   ENV,
-  CLAUDE_TEMPO_HOME,
+  AGENT_TEMPO_HOME,
   CONFIG_FILE_PATH,
 } from '../src/config';
 
@@ -385,7 +385,7 @@ describe('getConfig', function () {
     after(function () {
       // Restore original state
       if (originalConfigContent !== null) {
-        fs.mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
+        fs.mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
         fs.writeFileSync(CONFIG_FILE_PATH, originalConfigContent);
       } else {
         try { fs.unlinkSync(CONFIG_FILE_PATH); } catch { /* didn't exist */ }
@@ -394,7 +394,7 @@ describe('getConfig', function () {
 
     beforeEach(function () {
       // Write a known config for each test (env vars are cleared by the outer beforeEach)
-      fs.mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
+      fs.mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
       fs.writeFileSync(CONFIG_FILE_PATH, JSON.stringify({
         temporalAddress: 'config-file-host:7233',
         temporalNamespace: 'config-file-ns',
@@ -426,7 +426,7 @@ describe('getConfig', function () {
       expect(cfg.taskQueue).to.equal('claude-tempo');
     });
 
-    it('CLAUDE_TEMPO_TASK_QUEUE env var overrides taskQueue default', function () {
+    it('AGENT_TEMPO_TASK_QUEUE env var overrides taskQueue default', function () {
       process.env[ENV.TASK_QUEUE] = 'custom-queue';
       const cfg = getConfig();
       expect(cfg.taskQueue).to.equal('custom-queue');
@@ -437,7 +437,7 @@ describe('getConfig', function () {
       expect(cfg.ensemble).to.equal('default');
     });
 
-    it('CLAUDE_TEMPO_ENSEMBLE env var sets ensemble', function () {
+    it('AGENT_TEMPO_ENSEMBLE env var sets ensemble', function () {
       process.env[ENV.ENSEMBLE] = 'my-band';
       const cfg = getConfig();
       expect(cfg.ensemble).to.equal('my-band');
@@ -467,7 +467,7 @@ describe('getConfig', function () {
   // ── ensemble name validation ──
 
   describe('ensemble name validation', function () {
-    it('throws when CLAUDE_TEMPO_ENSEMBLE contains invalid characters', function () {
+    it('throws when AGENT_TEMPO_ENSEMBLE contains invalid characters', function () {
       process.env[ENV.ENSEMBLE] = 'bad ensemble!';
       expect(() => getConfig()).to.throw(/Invalid ensemble name/);
     });
@@ -489,14 +489,14 @@ describe('getConfig', function () {
   describe('optional fields', function () {
     it('temporalApiKey is undefined when not set anywhere', function () {
       // Write a config file with no apiKey so file layer returns undefined too
-      fs.mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
+      fs.mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
       fs.writeFileSync(CONFIG_FILE_PATH, JSON.stringify({}));
       const cfg = getConfig();
       expect(cfg.temporalApiKey).to.be.undefined;
     });
 
     it('temporalTlsCertPath is undefined when not set anywhere', function () {
-      fs.mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
+      fs.mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
       fs.writeFileSync(CONFIG_FILE_PATH, JSON.stringify({}));
       const cfg = getConfig();
       expect(cfg.temporalTlsCertPath).to.be.undefined;
@@ -528,13 +528,13 @@ describe('getConfigWithSources', function () {
       originalConfigContent = null;
     }
     // Write empty config so file layer doesn't interfere with source detection
-    fs.mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
+    fs.mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
     fs.writeFileSync(CONFIG_FILE_PATH, JSON.stringify({}));
   });
 
   after(function () {
     if (originalConfigContent !== null) {
-      fs.mkdirSync(CLAUDE_TEMPO_HOME, { recursive: true });
+      fs.mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
       fs.writeFileSync(CONFIG_FILE_PATH, originalConfigContent);
     } else {
       try { fs.unlinkSync(CONFIG_FILE_PATH); } catch { /* ok */ }

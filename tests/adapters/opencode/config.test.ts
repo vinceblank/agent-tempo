@@ -146,19 +146,19 @@ describe('synthesizeOpenCodeConfig — MCP block', () => {
     env: {},
   };
 
-  it('registers claude-tempo as a type=local stdio child', () => {
+  it('registers agent-tempo as a type=local stdio child', () => {
     const out = JSON.parse(synthesizeOpenCodeConfig(baseOpts));
-    expect(out.mcp['claude-tempo'].type).toBe('local');
-    expect(out.mcp['claude-tempo'].command).toEqual(['node', '/abs/dist/server.js']);
+    expect(out.mcp['agent-tempo'].type).toBe('local');
+    expect(out.mcp['agent-tempo'].command).toEqual(['node', '/abs/dist/server.js']);
   });
 
   it('passes the standard env-var contract to the MCP child', () => {
     const out = JSON.parse(synthesizeOpenCodeConfig(baseOpts));
-    const env = out.mcp['claude-tempo'].environment;
+    const env = out.mcp['agent-tempo'].environment;
     // {env:VAR} markers — OpenCode resolves at config-read time so no
     // literal credentials appear in the synthesized JSON.
-    expect(env.CLAUDE_TEMPO_ENSEMBLE).toBe('{env:CLAUDE_TEMPO_ENSEMBLE}');
-    expect(env.CLAUDE_TEMPO_PLAYER_NAME).toBe('{env:CLAUDE_TEMPO_PLAYER_NAME}');
+    expect(env.AGENT_TEMPO_ENSEMBLE).toBe('{env:AGENT_TEMPO_ENSEMBLE}');
+    expect(env.AGENT_TEMPO_PLAYER_NAME).toBe('{env:AGENT_TEMPO_PLAYER_NAME}');
     expect(env.TEMPORAL_ADDRESS).toBe('{env:TEMPORAL_ADDRESS}');
     expect(env.TEMPORAL_NAMESPACE).toBe('{env:TEMPORAL_NAMESPACE}');
   });

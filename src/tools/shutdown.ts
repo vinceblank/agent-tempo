@@ -18,7 +18,7 @@ import { defineTool, ok, fail, formatError } from './helpers';
 import { MAX_DETACH_DEADLINE_MS, DEFAULT_RESTART_DETACH_DEADLINE_MS } from '../utils/validation';
 import { pauseMaestroAndScheduler, signalAllSessions } from '../utils/ensemble-ops';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:shutdown]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:shutdown]', ...args);
 
 export function registerShutdownTool(
   server: McpServer,

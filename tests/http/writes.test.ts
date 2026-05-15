@@ -261,14 +261,14 @@ describe('POST /v1/ensembles/:ensemble/recruit', () => {
     // var would otherwise be captured as the "prior" value and restored
     // incorrectly for the rest of this block.
     let prevDevMode: string | undefined;
-    beforeEach(() => { prevDevMode = process.env.CLAUDE_TEMPO_DEV_MODE; });
+    beforeEach(() => { prevDevMode = process.env.AGENT_TEMPO_DEV_MODE; });
     afterEach(() => {
-      if (prevDevMode === undefined) delete process.env.CLAUDE_TEMPO_DEV_MODE;
-      else process.env.CLAUDE_TEMPO_DEV_MODE = prevDevMode;
+      if (prevDevMode === undefined) delete process.env.AGENT_TEMPO_DEV_MODE;
+      else process.env.AGENT_TEMPO_DEV_MODE = prevDevMode;
     });
 
     it('prod mode: agent "mock" is rejected; allowed excludes mock but includes every other AGENT_TYPES entry', async () => {
-      delete process.env.CLAUDE_TEMPO_DEV_MODE;
+      delete process.env.AGENT_TEMPO_DEV_MODE;
       const b = await boot();
       const res = await postJson(`${b.url}/v1/ensembles/demo/recruit`, {
         name: 'alice', workDir: '/repo', agent: 'mock',
@@ -289,7 +289,7 @@ describe('POST /v1/ensembles/:ensemble/recruit', () => {
     });
 
     it('dev mode: agent "mock" is accepted and forwarded to client.recruit', async () => {
-      process.env.CLAUDE_TEMPO_DEV_MODE = '1';
+      process.env.AGENT_TEMPO_DEV_MODE = '1';
       const b = await boot();
       const res = await postJson(`${b.url}/v1/ensembles/demo/recruit`, {
         name: 'alice', workDir: '/repo', agent: 'mock',
@@ -300,7 +300,7 @@ describe('POST /v1/ensembles/:ensemble/recruit', () => {
     });
 
     it('dev mode: agent "claude" still works (parity with prod)', async () => {
-      process.env.CLAUDE_TEMPO_DEV_MODE = '1';
+      process.env.AGENT_TEMPO_DEV_MODE = '1';
       const b = await boot();
       const res = await postJson(`${b.url}/v1/ensembles/demo/recruit`, {
         name: 'alice', workDir: '/repo', agent: 'claude',
@@ -311,7 +311,7 @@ describe('POST /v1/ensembles/:ensemble/recruit', () => {
     });
 
     it('dev mode: unknown agent rejected; allowed == full AGENT_TYPES SSOT (mock included)', async () => {
-      process.env.CLAUDE_TEMPO_DEV_MODE = '1';
+      process.env.AGENT_TEMPO_DEV_MODE = '1';
       const b = await boot();
       const res = await postJson(`${b.url}/v1/ensembles/demo/recruit`, {
         name: 'alice', workDir: '/repo', agent: 'banana',
@@ -332,7 +332,7 @@ describe('POST /v1/ensembles/:ensemble/recruit', () => {
     });
 
     it('prod mode: each new headless adapter (claude-api / opencode / claude-code-headless) is forwarded to client.recruit (#541)', async () => {
-      delete process.env.CLAUDE_TEMPO_DEV_MODE;
+      delete process.env.AGENT_TEMPO_DEV_MODE;
       const b = await boot();
       for (const agent of ['claude-api', 'opencode', 'claude-code-headless'] as const) {
         const res = await postJson(`${b.url}/v1/ensembles/demo/recruit`, {

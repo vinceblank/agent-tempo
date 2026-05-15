@@ -9,9 +9,9 @@
  *   1. Caller passes a {@link TempoClient}, namespace, and version to
  *      {@link startHttpServer}.
  *   2. Server binds to `127.0.0.1:8473` in production / `:8474` in dev mode
- *      (defaults overridable via `CLAUDE_TEMPO_HTTP_BIND` /
- *      `CLAUDE_TEMPO_DAEMON_PORT`; dev profile per ADR 0014 §5.1).
- *   3. The bound port is written atomically to `~/.claude-tempo/daemon.port`.
+ *      (defaults overridable via `AGENT_TEMPO_HTTP_BIND` /
+ *      `AGENT_TEMPO_DAEMON_PORT`; dev profile per ADR 0014 §5.1).
+ *   3. The bound port is written atomically to `~/.agent-tempo/daemon.port`.
  *   4. Caller `await`s {@link HttpServerHandle.close} on shutdown — drains
  *      in-flight requests, removes the port file, then resolves.
  */
@@ -70,7 +70,7 @@ import {
 import type { HealthV1 } from './event-types';
 
 const log = (...args: unknown[]) =>
-  console.error(`[claude-tempo:http ${new Date().toISOString()}]`, ...args);
+  console.error(`[agent-tempo:http ${new Date().toISOString()}]`, ...args);
 
 /** Default bind addr per SSE-PROTOCOL.md §1. */
 export const DEFAULT_BIND_ADDR = '127.0.0.1';
@@ -80,7 +80,7 @@ export const DEFAULT_BIND_ADDR = '127.0.0.1';
  * daemons can coexist on the same machine without binding the same port.
  *
  * Evaluated at module load time. The dev daemon child process inherits
- * `CLAUDE_TEMPO_DEV_MODE=1` from its parent CLI (set by the
+ * `AGENT_TEMPO_DEV_MODE=1` from its parent CLI (set by the
  * `dev-mode-bootstrap` side-effect), so by the time this module loads,
  * `isDevMode()` already returns the correct value.
  */
@@ -113,7 +113,7 @@ export interface HttpServerOptions {
   portFilePath?: string;
   /**
    * Inject the bearer token directly. Production callers pass `undefined`
-   * so the server reads/auto-generates from `~/.claude-tempo/config.json`.
+   * so the server reads/auto-generates from `~/.agent-tempo/config.json`.
    */
   httpToken?: string;
   /**
@@ -174,7 +174,7 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
   if (!bindIsLoopback && !httpToken) {
     throw new Error(
       'Bearer token required for non-loopback bind but none configured. ' +
-      'Set httpToken in ~/.claude-tempo/config.json or unset CLAUDE_TEMPO_HTTP_BIND.',
+      'Set httpToken in ~/.agent-tempo/config.json or unset AGENT_TEMPO_HTTP_BIND.',
     );
   }
 

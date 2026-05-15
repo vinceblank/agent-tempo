@@ -1,5 +1,5 @@
 /**
- * Unit tests for `CLAUDE_TEMPO_DEFAULT_AGENT` resolution and validation.
+ * Unit tests for `AGENT_TEMPO_DEFAULT_AGENT` resolution and validation.
  *
  * Covers:
  *   - `parseAgent()` validates against the {@link AgentType} union.
@@ -27,7 +27,7 @@ describe('parseAgent', () => {
 
   it('throws with the source label from each origin', () => {
     expect(() => parseAgent('gpt-4o', 'flag')).toThrow(/--agent CLI flag/);
-    expect(() => parseAgent('gpt-4o', 'env')).toThrow(/CLAUDE_TEMPO_DEFAULT_AGENT env var/);
+    expect(() => parseAgent('gpt-4o', 'env')).toThrow(/AGENT_TEMPO_DEFAULT_AGENT env var/);
     expect(() => parseAgent('gpt-4o', 'config')).toThrow(/config\.json/);
   });
 
@@ -70,7 +70,7 @@ describe('getConfig defaultAgent precedence', () => {
   it('invalid env var throws and names the env var', () => {
     process.env[ENV.DEFAULT_AGENT] = 'gpt-4o';
     expect(() => getConfig()).toThrow(/Invalid agent "gpt-4o"/);
-    expect(() => getConfig()).toThrow(/CLAUDE_TEMPO_DEFAULT_AGENT env var/);
+    expect(() => getConfig()).toThrow(/AGENT_TEMPO_DEFAULT_AGENT env var/);
   });
 
   it('invalid CLI flag throws and names the flag', () => {

@@ -16,7 +16,7 @@
  * `/v1/health` is **never authenticated** — it's the liveness probe used
  * by reverse proxies, supervisord, and the TUI bootstrap state machine.
  *
- * **Token storage** (§3.1) — `~/.claude-tempo/config.json` field
+ * **Token storage** (§3.1) — `~/.agent-tempo/config.json` field
  * `httpToken`. Auto-generated on first daemon boot when bearer mode is
  * required and no token is set: `crypto.randomBytes(32).toString('base64url')`,
  * 0600 on POSIX. Rotation = delete the field; next daemon boot regenerates.

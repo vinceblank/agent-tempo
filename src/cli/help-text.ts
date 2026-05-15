@@ -74,7 +74,7 @@ ${out.bold('Connection options (all commands):')}
 ${out.bold('Other options:')}
   --name <name>                Set session window name (up only)
   --agent <name>               Agent type to spawn — ${AGENT_OPTIONS} (default: from config; up)
-  --dev                        Use the dev profile (~/.claude-tempo-dev, port 8474, namespace claude-tempo-dev)
+  --dev                        Use the dev profile (~/.agent-tempo-dev, port 8474, namespace claude-tempo-dev)
   --skip-preflight             Skip preflight checks
   --background                 Run Temporal in background (server only)
   --project                    Use per-project .mcp.json instead of global (init only)
@@ -95,7 +95,7 @@ ${out.bold('Config command:')}
   ${out.dim('claude-tempo config show')}         Show resolved config
   ${out.dim('claude-tempo config set <k> <v>')}  Set a config value
 
-  Settings are saved to ~/.claude-tempo/config.json.
+  Settings are saved to ~/.agent-tempo/config.json.
   Also reads ~/.config/temporalio/temporal.yaml as a fallback.
 
   ${out.bold('Resolution order:')} CLI flag > env var > config file > temporal CLI config > default
@@ -111,14 +111,14 @@ ${out.bold('Typical workflow:')}
   ${out.dim('claude-tempo status myband')}      Check who's active in an ensemble
 
 ${out.bold('Environment:')}
-  CLAUDE_TEMPO_ENSEMBLE       Default ensemble name (fallback: "default")
+  AGENT_TEMPO_ENSEMBLE       Default ensemble name (fallback: "default")
   TEMPORAL_ADDRESS            Default Temporal address (fallback: localhost:7233)
   TEMPORAL_NAMESPACE          Default Temporal namespace (fallback: "default")
   TEMPORAL_API_KEY            Temporal API key
   TEMPORAL_TLS_CERT_PATH      Path to TLS client certificate
   TEMPORAL_TLS_KEY_PATH       Path to TLS client key
-  CLAUDE_TEMPO_DEFAULT_AGENT  Default agent type: claude or copilot (fallback: claude)
-  CLAUDE_TEMPO_DEV_MODE       Set to "1" or "true" to enable the dev profile (alternative to --dev)
-  CLAUDE_TEMPO_HOME_OVERRIDE  Override the home dir entirely (escape hatch for triple-isolated envs)
+  AGENT_TEMPO_DEFAULT_AGENT  Default agent type: claude or copilot (fallback: claude)
+  AGENT_TEMPO_DEV_MODE       Set to "1" or "true" to enable the dev profile (alternative to --dev)
+  AGENT_TEMPO_HOME_OVERRIDE  Override the home dir entirely (escape hatch for triple-isolated envs)
 `);
 }

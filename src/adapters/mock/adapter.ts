@@ -57,8 +57,8 @@ import {
 
 /** Env vars consumed by the mock adapter. Mirrors `ENV` constants in `src/config.ts`. */
 export const MOCK_ENV = {
-  MODE: 'CLAUDE_TEMPO_MOCK_MODE',
-  SCENARIO: 'CLAUDE_TEMPO_MOCK_SCENARIO',
+  MODE: 'AGENT_TEMPO_MOCK_MODE',
+  SCENARIO: 'AGENT_TEMPO_MOCK_SCENARIO',
   // PR-3 chaos config — see `src/adapters/mock/chaos.ts` for the fully-typed
   // surface. Keys re-exported here so the spawn layer reads from one place.
   CHAOS_DELAY_MS: CHAOS_ENV.DELAY_MS,
@@ -84,7 +84,7 @@ const WORKFLOW_REGISTER_TIMEOUT_S = 30;
 const log = (...args: unknown[]) => {
   // Bypass Node's stream buffering — when stderr is redirected to a file
   // (the daemon log) buffered writes can hide diagnostics during a crash.
-  const msg = `[claude-tempo:mock] ${args
+  const msg = `[agent-tempo:mock] ${args
     .map((a) => (typeof a === 'string' ? a : JSON.stringify(a)))
     .join(' ')}\n`;
   fs.writeSync(2, msg);
@@ -94,7 +94,7 @@ const log = (...args: unknown[]) => {
 class ScenarioLoadError extends Error {}
 
 /**
- * Read + validate the scenario file referenced by `CLAUDE_TEMPO_MOCK_SCENARIO`.
+ * Read + validate the scenario file referenced by `AGENT_TEMPO_MOCK_SCENARIO`.
  * Resolution rules (architect §4.8):
  *
  *   1. Absolute path (starts with `/` or drive letter) — used verbatim.

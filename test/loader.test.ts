@@ -8,10 +8,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { resolveLineupPath } from '../src/ensemble/loader';
-import { CLAUDE_TEMPO_HOME } from '../src/config';
+import { AGENT_TEMPO_HOME } from '../src/config';
 
 describe('resolveLineupPath', function () {
-  const ensemblesDir = path.join(CLAUDE_TEMPO_HOME, 'ensembles');
+  const ensemblesDir = path.join(AGENT_TEMPO_HOME, 'ensembles');
   let tmpDir: string;
 
   before(function () {

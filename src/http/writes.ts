@@ -204,7 +204,7 @@ async function handleRecruit(
 
   const agent = stringField(body, 'agent');
   // Dev-mode parity with the MCP `recruit` tool: `'mock'` is only valid when
-  // `CLAUDE_TEMPO_DEV_MODE=1`. The mock adapter's registry registration is
+  // `AGENT_TEMPO_DEV_MODE=1`. The mock adapter's registry registration is
   // also dev-gated (ADR 0014 §7 gate 2); rejecting here gives a clearer 400
   // than the registry's downstream "Unknown adapter" error.
   const allowed = allowedAgentsForCurrentMode();

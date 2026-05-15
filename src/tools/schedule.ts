@@ -8,7 +8,7 @@ import { resolveSession } from './resolve';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { SCHEDULE_NAME_MAX, SCHEDULE_MESSAGE_MAX, PLAYER_NAME_MAX, CRON_EXPRESSION_MAX } from '../utils/validation';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:schedule]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:schedule]', ...args);
 
 export function registerScheduleTool(
   server: McpServer,

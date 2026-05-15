@@ -48,7 +48,7 @@ services:
     environment:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: default
-      CLAUDE_TEMPO_ENSEMBLE: multi-host-test
+      AGENT_TEMPO_ENSEMBLE: multi-host-test
     depends_on:
       temporal:
         condition: service_healthy
@@ -61,7 +61,7 @@ services:
     environment:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: default
-      CLAUDE_TEMPO_ENSEMBLE: multi-host-test
+      AGENT_TEMPO_ENSEMBLE: multi-host-test
     depends_on:
       temporal:
         condition: service_healthy

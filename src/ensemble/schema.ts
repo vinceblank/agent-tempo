@@ -9,7 +9,7 @@ export interface EnsembleLineup {
    * Every ensemble defines exactly one conductor — the default chat target,
    * the home for system messages, and the anchor for `getEnsembleChat`.
    * Inner fields remain optional: unset `name` defaults to `"conductor"` and
-   * unset `agent` falls back to `CLAUDE_TEMPO_DEFAULT_AGENT`.
+   * unset `agent` falls back to `AGENT_TEMPO_DEFAULT_AGENT`.
    */
   conductor: {
     name?: string;        // custom conductor name (defaults to "conductor")

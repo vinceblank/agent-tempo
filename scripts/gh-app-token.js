@@ -6,9 +6,9 @@
 //   node scripts/gh-app-token.js --json    → prints full API response
 //   node scripts/gh-app-token.js --force   → bypasses cache
 //
-// Reads CLAUDE_TEMPO_GH_APP_{ID,INSTALLATION_ID,PRIVATE_KEY} from env, or from
-// ~/.claude-tempo/github-app.env if not already set. Caches the token at
-// ~/.claude-tempo/github-app.token.json and reuses it while >5min remain.
+// Reads AGENT_TEMPO_GH_APP_{ID,INSTALLATION_ID,PRIVATE_KEY} from env, or from
+// ~/.agent-tempo/github-app.env if not already set. Caches the token at
+// ~/.agent-tempo/github-app.token.json and reuses it while >5min remain.
 //
 // Plain CommonJS — runs without a build step. Kept out of the TS build per
 // the same convention as scripts/lint-skip-reasons.js.
@@ -19,7 +19,7 @@ const os = require('os');
 const path = require('path');
 
 const HOME = os.homedir();
-const CONFIG_DIR = path.join(HOME, '.claude-tempo');
+const CONFIG_DIR = path.join(HOME, '.agent-tempo');
 const ENV_FILE = path.join(CONFIG_DIR, 'github-app.env');
 const CACHE_FILE = path.join(CONFIG_DIR, 'github-app.token.json');
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
@@ -110,13 +110,13 @@ function die(msg) {
 
 async function main() {
   loadEnvFile();
-  const appId = process.env.CLAUDE_TEMPO_GH_APP_ID;
-  const installationId = process.env.CLAUDE_TEMPO_GH_APP_INSTALLATION_ID;
-  const keyPath = process.env.CLAUDE_TEMPO_GH_APP_PRIVATE_KEY;
+  const appId = process.env.AGENT_TEMPO_GH_APP_ID;
+  const installationId = process.env.AGENT_TEMPO_GH_APP_INSTALLATION_ID;
+  const keyPath = process.env.AGENT_TEMPO_GH_APP_PRIVATE_KEY;
   const missing = [];
-  if (!appId) missing.push('CLAUDE_TEMPO_GH_APP_ID');
-  if (!installationId) missing.push('CLAUDE_TEMPO_GH_APP_INSTALLATION_ID');
-  if (!keyPath) missing.push('CLAUDE_TEMPO_GH_APP_PRIVATE_KEY');
+  if (!appId) missing.push('AGENT_TEMPO_GH_APP_ID');
+  if (!installationId) missing.push('AGENT_TEMPO_GH_APP_INSTALLATION_ID');
+  if (!keyPath) missing.push('AGENT_TEMPO_GH_APP_PRIVATE_KEY');
   if (missing.length) die(`missing env: ${missing.join(', ')} (expected in env or ${ENV_FILE})`);
   if (!fs.existsSync(keyPath)) die(`private key not found at ${keyPath}`);
 

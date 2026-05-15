@@ -27,9 +27,9 @@ Spike captures used the **strict-isolation** pattern to prevent the spike subpro
 from auto-registering with the host's running claude-tempo ensemble:
 
 ```bash
-env -u CLAUDE_TEMPO_PLAYER_NAME \
-    -u CLAUDE_TEMPO_PLAYER_TYPE \
-    -u CLAUDE_TEMPO_ENSEMBLE \
+env -u AGENT_TEMPO_PLAYER_NAME \
+    -u AGENT_TEMPO_PLAYER_TYPE \
+    -u AGENT_TEMPO_ENSEMBLE \
   claude -p \
     --strict-mcp-config \
     --mcp-config '{"mcpServers":{}}' \

@@ -2,7 +2,7 @@
  * Dev-mode scriptable CLI verbs (#432).
  *
  * Five thin shell-scriptable wrappers over the MCP tool surface, available
- * only when `--dev` / `CLAUDE_TEMPO_DEV_MODE=1` is active. Production CLI
+ * only when `--dev` / `AGENT_TEMPO_DEV_MODE=1` is active. Production CLI
  * was collapsed to TUI/MCP-only in #288; this module restores
  * shell-scriptable access for autonomous E2E validation harnesses without
  * re-introducing the public surface that #288 retired.

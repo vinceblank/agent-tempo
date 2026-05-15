@@ -80,19 +80,19 @@ describe('src/http/body.ts — recruit allowlists (#541)', () => {
 
   describe('allowedAgentsForCurrentMode()', () => {
     let prev: string | undefined;
-    beforeEach(() => { prev = process.env.CLAUDE_TEMPO_DEV_MODE; });
+    beforeEach(() => { prev = process.env.AGENT_TEMPO_DEV_MODE; });
     afterEach(() => {
-      if (prev === undefined) delete process.env.CLAUDE_TEMPO_DEV_MODE;
-      else process.env.CLAUDE_TEMPO_DEV_MODE = prev;
+      if (prev === undefined) delete process.env.AGENT_TEMPO_DEV_MODE;
+      else process.env.AGENT_TEMPO_DEV_MODE = prev;
     });
 
-    it('returns ALLOWED_AGENTS_PROD when CLAUDE_TEMPO_DEV_MODE is unset', () => {
-      delete process.env.CLAUDE_TEMPO_DEV_MODE;
+    it('returns ALLOWED_AGENTS_PROD when AGENT_TEMPO_DEV_MODE is unset', () => {
+      delete process.env.AGENT_TEMPO_DEV_MODE;
       expect(allowedAgentsForCurrentMode()).toBe(ALLOWED_AGENTS_PROD);
     });
 
-    it('returns ALLOWED_AGENTS_DEV when CLAUDE_TEMPO_DEV_MODE=1', () => {
-      process.env.CLAUDE_TEMPO_DEV_MODE = '1';
+    it('returns ALLOWED_AGENTS_DEV when AGENT_TEMPO_DEV_MODE=1', () => {
+      process.env.AGENT_TEMPO_DEV_MODE = '1';
       expect(allowedAgentsForCurrentMode()).toBe(ALLOWED_AGENTS_DEV);
     });
   });

@@ -36,7 +36,7 @@ export function NewEnsembleModal({ onSubmit, onCancel, submitting, error }: NewE
 
   return React.createElement(Box, { flexDirection: 'column' },
     React.createElement(Text, { bold: true, color: THEME.accent }, ' New ensemble'),
-    React.createElement(Text, { color: THEME.dim }, '  Conductor defaults: name "conductor", agent CLAUDE_TEMPO_DEFAULT_AGENT.'),
+    React.createElement(Text, { color: THEME.dim }, '  Conductor defaults: name "conductor", agent AGENT_TEMPO_DEFAULT_AGENT.'),
     React.createElement(Box, { marginTop: 1 },
       React.createElement(Text, { color: THEME.accent }, ' ? '),
       React.createElement(Text, { bold: true, color: THEME.text }, 'Ensemble name:'),

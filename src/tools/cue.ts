@@ -128,7 +128,7 @@ export function registerCueTool(
           // Auto-redelivery on re-attach still applies. Stderr log keeps
           // the observability trail without surfacing noise to the user.
           console.error(
-            `[claude-tempo:cue] phase pre-flight failed for "${playerId}" — proceeding best-effort:`,
+            `[agent-tempo:cue] phase pre-flight failed for "${playerId}" — proceeding best-effort:`,
             err instanceof Error ? err.message : err,
           );
         }

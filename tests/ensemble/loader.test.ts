@@ -44,7 +44,7 @@ describe('loadLineup — conductor required', () => {
       const msg = (err as Error).message;
       expect(msg).toMatch(/lineup "orchestra" is missing a conductor/);
       expect(msg).toMatch(/every ensemble must define exactly one conductor/);
-      expect(msg).toMatch(/CLAUDE_TEMPO_DEFAULT_AGENT/);
+      expect(msg).toMatch(/AGENT_TEMPO_DEFAULT_AGENT/);
     }
   });
 

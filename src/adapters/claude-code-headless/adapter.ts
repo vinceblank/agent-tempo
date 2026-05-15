@@ -107,7 +107,7 @@ export interface ClaudeCodeHeadlessAdapterOptions {
  * to a file. Same pattern claude-api / opencode use.
  */
 const log = (...args: unknown[]) => {
-  const msg = `[claude-tempo:claude-code-headless] ${args.map((a) => {
+  const msg = `[agent-tempo:claude-code-headless] ${args.map((a) => {
     if (typeof a === 'string') return a;
     if (a instanceof Error) return a.stack ? `${a.message}\n${a.stack}` : a.message;
     try { return JSON.stringify(a); } catch { return String(a); }
@@ -515,7 +515,7 @@ export class ClaudeCodeHeadlessAttachment extends SdkAttachment {
     const config = getConfig();
     const mcpConfig = JSON.stringify({
       mcpServers: {
-        'claude-tempo': {
+        'agent-tempo': {
           type: 'stdio',
           command: 'node',
           args: [mcpServerPath],
@@ -561,13 +561,13 @@ export class ClaudeCodeHeadlessAttachment extends SdkAttachment {
     // Env hygiene per design §3.6. ANTHROPIC_API_KEY would defeat the
     // adapter's whole point (subscription billing); CLAUDE_CODE_OAUTH_TOKEN
     // would force long-lived OAuth instead of the host's keychain. Strip
-    // both. Also strip CLAUDE_TEMPO_* (adapter-internal — the MCP server
+    // both. Also strip AGENT_TEMPO_* (adapter-internal — the MCP server
     // child gets its own env block via --mcp-config).
     const childEnv: NodeJS.ProcessEnv = { ...process.env };
     delete childEnv.ANTHROPIC_API_KEY;
     delete childEnv.CLAUDE_CODE_OAUTH_TOKEN;
     for (const k of Object.keys(childEnv)) {
-      if (k.startsWith('CLAUDE_TEMPO_')) delete childEnv[k];
+      if (k.startsWith('AGENT_TEMPO_')) delete childEnv[k];
     }
 
     // Windows: per architect's PR-3 reminder + the established pattern

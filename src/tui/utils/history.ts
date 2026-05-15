@@ -1,12 +1,12 @@
 /**
  * Persistent command history for the TUI.
- * Saves to ~/.claude-tempo/tui-history.json.
+ * Saves to ~/.agent-tempo/tui-history.json.
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-const HISTORY_DIR = path.join(os.homedir(), '.claude-tempo');
+const HISTORY_DIR = path.join(os.homedir(), '.agent-tempo');
 const HISTORY_FILE = path.join(HISTORY_DIR, 'tui-history.json');
 const MAX_ENTRIES = 500;
 const CURRENT_VERSION = 1;
@@ -34,7 +34,7 @@ export function loadHistory(): string[] {
 
 /**
  * Save command history to disk.
- * Creates ~/.claude-tempo/ if it doesn't exist.
+ * Creates ~/.agent-tempo/ if it doesn't exist.
  */
 export function saveHistory(entries: string[]): void {
   try {

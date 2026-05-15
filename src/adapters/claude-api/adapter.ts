@@ -87,7 +87,7 @@ try {
 // so log lines appear immediately even when stderr is redirected to a file.
 // Same pattern the copilot bridge uses for the same reason.
 const log = (...args: unknown[]) => {
-  const msg = `[claude-tempo:claude-api] ${args.map((a) => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}\n`;
+  const msg = `[agent-tempo:claude-api] ${args.map((a) => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}\n`;
   fs.writeSync(2, msg);
 };
 

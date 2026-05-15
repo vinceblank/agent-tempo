@@ -35,7 +35,7 @@ import { setPausedSignal } from '../workflows/signals';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { unpauseMaestroAndScheduler, signalAllSessions } from '../utils/ensemble-ops';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:restore]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:restore]', ...args);
 
 export function registerRestoreTool(
   server: McpServer,

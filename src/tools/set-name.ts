@@ -7,7 +7,7 @@ import { resolveSession } from './resolve';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { PLAYER_NAME_MAX, validatePlayerName } from '../utils/validation';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:set-name]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:set-name]', ...args);
 
 export function registerSetNameTool(
   server: McpServer,

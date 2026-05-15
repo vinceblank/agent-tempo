@@ -7,7 +7,7 @@ import { safeLineupPath } from '../utils/safe-path';
 import { defineTool, ok, fail, formatError } from './helpers';
 import { PLAYER_NAME_MAX, PATH_MAX } from '../utils/validation';
 
-const log = (...args: unknown[]) => console.error('[claude-tempo:save-lineup]', ...args);
+const log = (...args: unknown[]) => console.error('[agent-tempo:save-lineup]', ...args);
 
 export function registerSaveLineupTool(
   server: McpServer,

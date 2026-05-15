@@ -113,17 +113,17 @@ describe('installProcessLifecycleTelemetry — env gating', () => {
     _resetProcessLifecycleTelemetryForTest();
   });
 
-  it('honors the CLAUDE_TEMPO_LIFECYCLE_TELEMETRY=0 opt-out env var', () => {
+  it('honors the AGENT_TEMPO_LIFECYCLE_TELEMETRY=0 opt-out env var', () => {
     _resetProcessLifecycleTelemetryForTest();
-    const prev = process.env.CLAUDE_TEMPO_LIFECYCLE_TELEMETRY;
-    process.env.CLAUDE_TEMPO_LIFECYCLE_TELEMETRY = '0';
+    const prev = process.env.AGENT_TEMPO_LIFECYCLE_TELEMETRY;
+    process.env.AGENT_TEMPO_LIFECYCLE_TELEMETRY = '0';
     try {
       const before = process.listenerCount('SIGTERM');
       installProcessLifecycleTelemetry();
       expect(process.listenerCount('SIGTERM')).to.equal(before);
     } finally {
-      if (prev === undefined) delete process.env.CLAUDE_TEMPO_LIFECYCLE_TELEMETRY;
-      else process.env.CLAUDE_TEMPO_LIFECYCLE_TELEMETRY = prev;
+      if (prev === undefined) delete process.env.AGENT_TEMPO_LIFECYCLE_TELEMETRY;
+      else process.env.AGENT_TEMPO_LIFECYCLE_TELEMETRY = prev;
       _resetProcessLifecycleTelemetryForTest();
     }
   });
@@ -155,7 +155,7 @@ function spawnStub(stubBody: string, opts: { signal?: NodeJS.Signals; killAfterM
         ...process.env,
         // Belt-and-suspenders: even if NODE_ENV is set in this test run's
         // env, the child gets a clean install path.
-        CLAUDE_TEMPO_LIFECYCLE_TELEMETRY: '1',
+        AGENT_TEMPO_LIFECYCLE_TELEMETRY: '1',
         NODE_ENV: '',
       },
       stdio: ['ignore', 'pipe', 'pipe'],

@@ -17,7 +17,7 @@
  *     supervisor sees the dead subprocess and transitions the workflow phase
  *     to `gone`. Should NOT crash the daemon itself.
  *
- * Determinism contract: given the same `CLAUDE_TEMPO_MOCK_CHAOS_SEED`,
+ * Determinism contract: given the same `AGENT_TEMPO_MOCK_CHAOS_SEED`,
  * {@link decideChaosOutcome} returns the same sequence of `'fail' | 'crash' |
  * 'echo'` decisions for the same sequence of input messages — so test
  * expectations and bug repros are reproducible.
@@ -103,10 +103,10 @@ function readNumeric(
 
 /** Env var names — exported so the spawn layer + tests can refer by constant. */
 export const CHAOS_ENV = {
-  DELAY_MS: 'CLAUDE_TEMPO_MOCK_CHAOS_DELAY_MS',
-  FAIL_RATE: 'CLAUDE_TEMPO_MOCK_CHAOS_FAIL_RATE',
-  CRASH_RATE: 'CLAUDE_TEMPO_MOCK_CHAOS_CRASH_RATE',
-  SEED: 'CLAUDE_TEMPO_MOCK_CHAOS_SEED',
+  DELAY_MS: 'AGENT_TEMPO_MOCK_CHAOS_DELAY_MS',
+  FAIL_RATE: 'AGENT_TEMPO_MOCK_CHAOS_FAIL_RATE',
+  CRASH_RATE: 'AGENT_TEMPO_MOCK_CHAOS_CRASH_RATE',
+  SEED: 'AGENT_TEMPO_MOCK_CHAOS_SEED',
 } as const;
 
 /**
@@ -116,11 +116,11 @@ export const CHAOS_ENV = {
  * silently bypassing the gate.
  *
  * Seed defaults to `Date.now()` when unset — meaning chaos runs are random by
- * default but pin via `CLAUDE_TEMPO_MOCK_CHAOS_SEED=<int>` for repro work.
+ * default but pin via `AGENT_TEMPO_MOCK_CHAOS_SEED=<int>` for repro work.
  */
 export function chaosFromEnv(
   env: Record<string, string | undefined> = process.env,
-  warn: (msg: string) => void = (msg) => console.error(`[claude-tempo:mock:chaos] ${msg}`),
+  warn: (msg: string) => void = (msg) => console.error(`[agent-tempo:mock:chaos] ${msg}`),
   now: () => number = Date.now,
 ): ChaosConfig {
   const delayMs = readNumeric(env[CHAOS_ENV.DELAY_MS], CHAOS_DEFAULTS.delayMs, 0, MAX_DELAY_MS, CHAOS_ENV.DELAY_MS, warn);

@@ -7,7 +7,7 @@ Tests for `src/tools/recruit.ts` terminal spawning across platforms and configur
 - Temporal dev server running (`temporal server start-dev`)
 - Project built (`npm run build`)
 - Claude Code installed and on PATH
-- `CLAUDE_TEMPO_ENSEMBLE` set in the conductor session
+- `AGENT_TEMPO_ENSEMBLE` set in the conductor session
 
 ---
 
@@ -22,7 +22,7 @@ Tests for `src/tools/recruit.ts` terminal spawning across platforms and configur
 ### GT-2: Environment variables are passed through
 - **Setup**: Conductor is in ensemble "myband"
 - **Steps**: Recruit a new session
-- **Expected**: The recruited session's MCP server activates (not idle mode), confirming `CLAUDE_TEMPO_ENSEMBLE=myband` was received
+- **Expected**: The recruited session's MCP server activates (not idle mode), confirming `AGENT_TEMPO_ENSEMBLE=myband` was received
 - **Verify**: New session appears in `ensemble` output with matching ensemble
 
 ### GT-3: Node manager (fnm/nvm) PATH is preserved
