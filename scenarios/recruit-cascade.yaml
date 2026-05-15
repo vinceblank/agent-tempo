@@ -6,7 +6,7 @@ description: |
   Drive recursively from the dashboard or via `cue` to exercise the full
   recruit → spawn → claim → first-heartbeat cascade across multiple players.
 
-  Drive with: `claude-tempo --dev cue conductor "cascade 3 worker"`.
+  Drive with: `agent-tempo --dev cue conductor "cascade 3 worker"`.
   Each "worker" mock you recruit can re-cascade if pointed at this scenario,
   letting validation harnesses observe the maestro's per-ensemble player
   count tick up under load.

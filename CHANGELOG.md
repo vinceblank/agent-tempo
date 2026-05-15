@@ -17,7 +17,7 @@ Every v0.x workflow still in Temporal history becomes a permanent orphan after t
 release — by design. Operators MUST follow the
 [v1.0 migration guide](docs/ops/v1.0-migration.md) before upgrading.
 
-PR-1 through PR-3 of the v1.0 rebrand series land in this release candidate:
+All four engineering PRs of the v1.0 rebrand series land in this release:
 
 - **Documentation rename** (PR-1): brand string `claude-tempo` → `agent-tempo` across all
   live docs, README, and community files. Hero tagline: "Many agents, one tempo."
@@ -27,7 +27,7 @@ PR-1 through PR-3 of the v1.0 rebrand series land in this release candidate:
   (`claude-tempo` + `agent-tempo`) on package.json `bin` for the migration window.
   New verb `agent-tempo migrate-from-claude-tempo` + bootstrap step auto-runs on first
   boot, copying state to the new home with SHA-256 partial-copy resume.
-- **Wire-level rename** (PR-3, this release): search attributes `ClaudeTempo*` →
+- **Wire-level rename** (PR-3): search attributes `ClaudeTempo*` →
   `AgentTempo*` (~455 sites); workflow type names `claudeSessionWorkflow` /
   `claudeSchedulerWorkflow` / `claudeMaestroWorkflow` / `claudeGlobalMaestroWorkflow` →
   `agent*Workflow`; workflow ID prefixes `claude-{session,scheduler,maestro}-` →
@@ -36,6 +36,14 @@ PR-1 through PR-3 of the v1.0 rebrand series land in this release candidate:
   daemon boot-time preflight (`src/cli/sa-preflight.ts`) fails fast with an actionable
   error message containing the exact `temporal operator search-attribute create`
   commands operators need to paste.
+- **npm publish flip** (PR-4, this release): package `name` = `agent-tempo`; `bin` now
+  only `agent-tempo` / `agent-tempo-server` (the migration-window `claude-tempo*` aliases
+  are dropped); `homepage` / `repository.url` / `bugs.url` point at
+  `vinceblank/agent-tempo`. The auto-publish workflow (`release.yml`) was removed —
+  publish is intentionally manual for v1.0 (see `docs/release-process-v1.0.md`).
+  Packaging templates renamed: `agent-tempo.service`, `com.agent.tempo.plist`
+  (`agent-tempo daemon uninstall` removes either the new or the legacy unit / plist
+  so v0.x installs migrate cleanly). Logo SVG wordmarks updated to `agent-tempo`.
 
 ### Required operator actions before upgrading
 
@@ -60,8 +68,6 @@ Full walkthrough: [docs/ops/v1.0-migration.md](docs/ops/v1.0-migration.md).
 - Saved state slot semantics; the fs migration helper carries them across.
 - `claude-tempo[bot]` GitHub App slug — renamed in a follow-up release; existing
   installations preserve their installation ID.
-- npm package name (still `claude-tempo` for this release candidate; the publish flip is
-  a follow-up release coordinated with the deprecation stub).
 
 ## [0.29.1] - 2026-05-15
 

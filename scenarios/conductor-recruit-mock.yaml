@@ -7,7 +7,7 @@ description: |
   recruit → spawn → claim → first-heartbeat path end-to-end without a
   real LLM in the loop.
 
-  Drive with: `claude-tempo --dev cue conductor "recruit alice"`.
+  Drive with: `agent-tempo --dev cue conductor "recruit alice"`.
 
 defaultDelayMs: 800
 
