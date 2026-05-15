@@ -330,7 +330,7 @@ let currentEnsemblePrefix = 'test-ensemble';
 /**
  * The prefix derived by the most recent `setupTestEnv()` invocation. Exposed
  * for tests that need to build their own IDs with the same namespace (e.g.
- * `claude-session-${getTestEnsemble()}-custom-id`).
+ * `agent-session-${getTestEnsemble()}-custom-id`).
  */
 export function getTestEnsemble(): string {
   return currentEnsemblePrefix;
@@ -516,18 +516,18 @@ export async function setupTestEnv(): Promise<void> {
     testEnv = await createLocalWithRetry({
       server: {
         // Register custom search attributes at server startup.
-        // `ClaudeTempoStatus` removed in v0.26 (#175 / #178).
+        // `AgentTempoStatus` removed in v0.26 (#175 / #178).
         extraArgs: [
-          '--search-attribute', 'ClaudeTempoEnsemble=Keyword',
-          '--search-attribute', 'ClaudeTempoPlayerId=Keyword',
-          '--search-attribute', 'ClaudeTempoHostname=Keyword',
-          '--search-attribute', 'ClaudeTempoGitRoot=Keyword',
-          '--search-attribute', 'ClaudeTempoPlayerType=Keyword',
-          '--search-attribute', 'ClaudeTempoIsConductor=Bool',
+          '--search-attribute', 'AgentTempoEnsemble=Keyword',
+          '--search-attribute', 'AgentTempoPlayerId=Keyword',
+          '--search-attribute', 'AgentTempoHostname=Keyword',
+          '--search-attribute', 'AgentTempoGitRoot=Keyword',
+          '--search-attribute', 'AgentTempoPlayerType=Keyword',
+          '--search-attribute', 'AgentTempoIsConductor=Bool',
           // v0.25 attachment lifecycle search attrs (§9, §11.2)
-          '--search-attribute', 'ClaudeTempoAttachedHost=Keyword',
-          '--search-attribute', 'ClaudeTempoAttachmentState=Keyword',
-          '--search-attribute', 'ClaudeTempoAttachmentId=Keyword',
+          '--search-attribute', 'AgentTempoAttachedHost=Keyword',
+          '--search-attribute', 'AgentTempoAttachmentState=Keyword',
+          '--search-attribute', 'AgentTempoAttachmentId=Keyword',
         ],
       },
     });
@@ -832,13 +832,13 @@ export async function startSession(
 
   // Always use playerId in the workflow ID. conductorMetadata() defaults
   // playerId to 'conductor', so callers that don't override get the canonical
-  // 'claude-session-{ensemble}-conductor' ID unchanged. Callers that pass a
+  // 'agent-session-{ensemble}-conductor' ID unchanged. Callers that pass a
   // non-default playerId (e.g. stages.test.ts uses 'stage-cond-N') get a
   // unique ID per test, preventing WorkflowExecutionAlreadyStartedError
   // cascades when a test fails before its cleanup destroyUpdate runs.
-  const workflowId = `claude-session-${metadata.ensemble}-${metadata.playerId}`;
+  const workflowId = `agent-session-${metadata.ensemble}-${metadata.playerId}`;
 
-  return requireTestEnv().client.workflow.start('claudeSessionWorkflow', {
+  return requireTestEnv().client.workflow.start('agentSessionWorkflow', {
     workflowId,
     taskQueue: TASK_QUEUE,
     args: [input],
@@ -887,7 +887,7 @@ export async function listEnsemble(
   ensemble: string,
 ): Promise<SessionMetadata[]> {
   const results: SessionMetadata[] = [];
-  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
+  const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"`;
 
   for await (const wf of client.workflow.list({ query })) {
     try {
@@ -913,7 +913,7 @@ export async function resolveByName(
   ensemble: string,
   playerName: string,
 ): Promise<WorkflowHandle | null> {
-  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
+  const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"`;
 
   for await (const wf of client.workflow.list({ query })) {
     try {
@@ -934,7 +934,7 @@ export async function resolveByName(
  * Build the deterministic conductor workflow ID for an ensemble.
  */
 export function conductorWorkflowId(ensemble: string): string {
-  return `claude-session-${ensemble}-conductor`;
+  return `agent-session-${ensemble}-conductor`;
 }
 
 /**
@@ -1353,10 +1353,10 @@ export async function reconnectSession(
   };
 
   const workflowId = metadata.isConductor
-    ? `claude-session-${metadata.ensemble}-conductor`
-    : `claude-session-${metadata.ensemble}-${metadata.playerId}`;
+    ? `agent-session-${metadata.ensemble}-conductor`
+    : `agent-session-${metadata.ensemble}-${metadata.playerId}`;
 
-  return requireTestEnv().client.workflow.start('claudeSessionWorkflow', {
+  return requireTestEnv().client.workflow.start('agentSessionWorkflow', {
     workflowId,
     taskQueue: TASK_QUEUE,
     args: [input],

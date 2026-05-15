@@ -67,7 +67,7 @@ const getPlayerId = () => TEST_PLAYER_ID;
 const testConfig: Config = {
   temporalAddress: 'localhost:7233',
   temporalNamespace: 'default',
-  taskQueue: 'claude-tempo',
+  taskQueue: 'agent-tempo',
   ensemble: 'test-ensemble-tools-mock',
   defaultAgent: 'claude',
 };
@@ -433,7 +433,7 @@ describe('load_lineup conductor section', function () {
     // Track signals sent to the conductor handle
     const signals: Array<{ name: string; args: any }> = [];
     const conductorHandle = {
-      workflowId: `claude-session-${testConfig.ensemble}-conductor`,
+      workflowId: `agent-session-${testConfig.ensemble}-conductor`,
       executeUpdate: async () => 'fake-entry-id',
       signal: async (name: string, ...args: any[]) => { signals.push({ name, args: args[0] }); },
       describe: async () => ({ status: { name: 'RUNNING' } }),
@@ -529,7 +529,7 @@ describe('load_lineup conductor section', function () {
     const signals: Array<{ name: string; args: any }> = [];
     const updates: Array<{ name: any; args: any }> = [];
     const conductorHandle = {
-      workflowId: `claude-session-${testConfig.ensemble}-conductor`,
+      workflowId: `agent-session-${testConfig.ensemble}-conductor`,
       executeUpdate: async (name: any, opts: any) => {
         // `name` is the UpdateDefinition object produced by defineUpdate —
         // fall back to plain-string for callers that use the string form.
@@ -620,7 +620,7 @@ describe('load_lineup conductor section', function () {
     const signals: Array<{ name: string; args: any }> = [];
     const updates: Array<{ name: any; args: any }> = [];
     const conductorHandle = {
-      workflowId: `claude-session-${testConfig.ensemble}-conductor`,
+      workflowId: `agent-session-${testConfig.ensemble}-conductor`,
       executeUpdate: async (name: any, opts: any) => {
         const uname = typeof name === 'string' ? name : (name.name || 'unknown');
         updates.push({ name: uname, args: opts?.args?.[0] });
@@ -688,7 +688,7 @@ describe('load_lineup conductor section', function () {
 
     const signals: Array<{ name: string; args: any }> = [];
     const conductorHandle = {
-      workflowId: `claude-session-${testConfig.ensemble}-conductor`,
+      workflowId: `agent-session-${testConfig.ensemble}-conductor`,
       executeUpdate: async () => 'fake-entry-id',
       signal: async (name: string, ...args: any[]) => { signals.push({ name, args: args[0] }); },
       describe: async () => ({ status: { name: 'RUNNING' } }),
@@ -739,7 +739,7 @@ function makeClientWithPlayers(
     playerId: string;
     ensemble?: string;
     playerType?: string;
-    /** Attachment phase exposed via `ClaudeTempoAttachmentState` search attribute.
+    /** Attachment phase exposed via `AgentTempoAttachmentState` search attribute.
      *  Defaults to `'attached'` (the "live, deliverable" phase) when omitted. */
     phase?: 'booting' | 'attached' | 'processing' | 'awaiting' | 'draining' | 'detached' | 'gone';
   }>,
@@ -752,7 +752,7 @@ function makeClientWithPlayers(
         query: async (queryName: string) => {
           if (queryName === 'getMetadata') {
             const player = players.find(
-              (p) => workflowId === `claude-session-${testConfig.ensemble}-${p.playerId}`,
+              (p) => workflowId === `agent-session-${testConfig.ensemble}-${p.playerId}`,
             );
             return {
               playerId: player?.playerId ?? 'unknown',
@@ -771,12 +771,12 @@ function makeClientWithPlayers(
       start: async () => ({ runId: 'fake-run-id' }),
       list: async function* () {
         // Broadcast/ensemble filtering reads phase from the
-        // `ClaudeTempoAttachmentState` search attribute (v0.26).
+        // `AgentTempoAttachmentState` search attribute (v0.26).
         for (const p of players) {
           yield {
-            workflowId: `claude-session-${testConfig.ensemble}-${p.playerId}`,
+            workflowId: `agent-session-${testConfig.ensemble}-${p.playerId}`,
             searchAttributes: {
-              ClaudeTempoAttachmentState: [p.phase ?? 'attached'],
+              AgentTempoAttachmentState: [p.phase ?? 'attached'],
             },
           };
         }
@@ -1168,7 +1168,7 @@ function makeV2Client(opts: {
     typeof nameOrDef === 'string' ? nameOrDef : (nameOrDef as { name: string }).name;
 
   const handle = {
-    workflowId: `claude-session-test-ensemble-${playerId}`,
+    workflowId: `agent-session-test-ensemble-${playerId}`,
     signals,
     updates,
     async signal(nameOrDef: unknown, args: unknown) {
@@ -1382,7 +1382,7 @@ function makeResumeClient(players: string[]): {
         // listed workflow; return minimal valid shapes keyed off the
         // workflowId so the scan doesn't swallow the session.
         query: async (queryName: string) => {
-          const playerId = workflowId.replace(`claude-session-${testConfig.ensemble}-`, '');
+          const playerId = workflowId.replace(`agent-session-${testConfig.ensemble}-`, '');
           if (queryName === 'getMetadata') {
             return {
               playerId,
@@ -1400,8 +1400,8 @@ function makeResumeClient(players: string[]): {
       list: async function* () {
         for (const p of players) {
           yield {
-            workflowId: `claude-session-${testConfig.ensemble}-${p}`,
-            searchAttributes: { ClaudeTempoPlayerId: [p] },
+            workflowId: `agent-session-${testConfig.ensemble}-${p}`,
+            searchAttributes: { AgentTempoPlayerId: [p] },
           };
         }
       },
@@ -1468,7 +1468,7 @@ describe('play tool — release arg (Issue #172, renamed from resume_ensemble pe
     // Each of alice/bob/carol should have been targeted exactly once for release.
     const targeted = new Set(
       releaseHeldCalls.map((s) =>
-        s.workflowId.replace(`claude-session-${testConfig.ensemble}-`, ''),
+        s.workflowId.replace(`agent-session-${testConfig.ensemble}-`, ''),
       ),
     );
     expect(targeted).to.deep.equal(new Set(['alice', 'bob', 'carol']));

@@ -20,7 +20,7 @@ describe('logEvent format', () => {
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
-    window.localStorage.removeItem('claudeTempoDebug');
+    window.localStorage.removeItem('agentTempoDebug');
     // Reset URL so per-test ?debug=1 doesn't leak.
     window.history.replaceState({}, '', '/');
   });
@@ -70,14 +70,14 @@ describe('logEvent format', () => {
     expect(debugSpy).toHaveBeenCalledWith('[agent-tempo:dashboard] verbose-step k="v"');
   });
 
-  it('debug fires when `localStorage.claudeTempoDebug === "true"`', () => {
-    window.localStorage.setItem('claudeTempoDebug', 'true');
+  it('debug fires when `localStorage.agentTempoDebug === "true"`', () => {
+    window.localStorage.setItem('agentTempoDebug', 'true');
     logEvent('verbose-step', { k: 'v' }, 'debug');
     expect(debugSpy).toHaveBeenCalledWith('[agent-tempo:dashboard] verbose-step k="v"');
   });
 
   it('debug stays suppressed when localStorage holds an unrelated value', () => {
-    window.localStorage.setItem('claudeTempoDebug', 'yes');
+    window.localStorage.setItem('agentTempoDebug', 'yes');
     logEvent('verbose-step', { k: 'v' }, 'debug');
     expect(debugSpy).not.toHaveBeenCalled();
   });

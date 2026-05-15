@@ -15,12 +15,12 @@ import type { AttachmentInfo, OrphanSummary } from '../src/types';
 describe('buildOrphanQuery', function () {
   it('produces the §10.1 visibility query for a given hostname', function () {
     const q = buildOrphanQuery({ hostname: 'host-1' });
-    expect(q).to.include('WorkflowType = "claudeSessionWorkflow"');
+    expect(q).to.include('WorkflowType = "agentSessionWorkflow"');
     expect(q).to.include('ExecutionStatus = "Running"');
-    expect(q).to.include('ClaudeTempoAttachedHost = "host-1"');
-    expect(q).to.include('ClaudeTempoAttachmentState IN ("attached","processing","awaiting","draining")');
-    expect(q).to.include('ClaudeTempoAttachmentState = "detached"');
-    expect(q).to.include('ClaudeTempoHostname = "host-1"');
+    expect(q).to.include('AgentTempoAttachedHost = "host-1"');
+    expect(q).to.include('AgentTempoAttachmentState IN ("attached","processing","awaiting","draining")');
+    expect(q).to.include('AgentTempoAttachmentState = "detached"');
+    expect(q).to.include('AgentTempoHostname = "host-1"');
   });
 
   it('sanitizes quote/backslash/newline chars out of the hostname', function () {
@@ -36,32 +36,32 @@ describe('buildOrphanQuery', function () {
   describe('phases filter', function () {
     it('with phases=["detached"] — emits only the detached clause, no live-phase IN clause', function () {
       const q = buildOrphanQuery({ hostname: 'host-1', phases: ['detached'] });
-      expect(q).to.include('ClaudeTempoAttachmentState = "detached"');
-      expect(q).to.include('ClaudeTempoHostname = "host-1"');
+      expect(q).to.include('AgentTempoAttachmentState = "detached"');
+      expect(q).to.include('AgentTempoHostname = "host-1"');
       // Live-phase clause must NOT appear — that's the whole point of the
       // narrowing (live sessions are not orphan candidates for user /restore).
-      expect(q).to.not.include('ClaudeTempoAttachmentState IN (');
-      expect(q).to.not.include('ClaudeTempoAttachedHost = "host-1"');
+      expect(q).to.not.include('AgentTempoAttachmentState IN (');
+      expect(q).to.not.include('AgentTempoAttachedHost = "host-1"');
     });
 
     it('with phases unset — defaults to the broad live-phase + detached set (daemon reconcile semantics)', function () {
       const q = buildOrphanQuery({ hostname: 'host-1' });
-      expect(q).to.include('ClaudeTempoAttachmentState IN ("attached","processing","awaiting","draining")');
-      expect(q).to.include('ClaudeTempoAttachmentState = "detached"');
+      expect(q).to.include('AgentTempoAttachmentState IN ("attached","processing","awaiting","draining")');
+      expect(q).to.include('AgentTempoAttachmentState = "detached"');
     });
 
     it('with phases=["attached"] — emits only the live-phase clause, no detached clause', function () {
       const q = buildOrphanQuery({ hostname: 'host-1', phases: ['attached'] });
-      expect(q).to.include('ClaudeTempoAttachmentState IN ("attached")');
-      expect(q).to.include('ClaudeTempoAttachedHost = "host-1"');
+      expect(q).to.include('AgentTempoAttachmentState IN ("attached")');
+      expect(q).to.include('AgentTempoAttachedHost = "host-1"');
       // No `= "detached"` anywhere (the standalone detached clause is gone).
-      expect(q).to.not.include('ClaudeTempoAttachmentState = "detached"');
+      expect(q).to.not.include('AgentTempoAttachmentState = "detached"');
     });
 
     it('with phases=[] — falls back to the broad default (safety net against empty array)', function () {
       const q = buildOrphanQuery({ hostname: 'host-1', phases: [] });
-      expect(q).to.include('ClaudeTempoAttachmentState IN ("attached","processing","awaiting","draining")');
-      expect(q).to.include('ClaudeTempoAttachmentState = "detached"');
+      expect(q).to.include('AgentTempoAttachmentState IN ("attached","processing","awaiting","draining")');
+      expect(q).to.include('AgentTempoAttachmentState = "detached"');
     });
 
     it('opts-object form also accepts ensemble narrowing', function () {
@@ -70,9 +70,9 @@ describe('buildOrphanQuery', function () {
         ensemble: 'band-a',
         phases: ['detached'],
       });
-      expect(q).to.include('ClaudeTempoAttachmentState = "detached"');
-      expect(q).to.include('ClaudeTempoEnsemble = "band-a"');
-      expect(q).to.not.include('ClaudeTempoAttachmentState IN (');
+      expect(q).to.include('AgentTempoAttachmentState = "detached"');
+      expect(q).to.include('AgentTempoEnsemble = "band-a"');
+      expect(q).to.not.include('AgentTempoAttachmentState IN (');
     });
   });
 
@@ -82,37 +82,37 @@ describe('buildOrphanQuery', function () {
   describe('allHosts axis (#151)', function () {
     it('with allHosts=true — emits state-only clauses, no hostname predicates', function () {
       const q = buildOrphanQuery({ hostname: 'host-1', allHosts: true });
-      expect(q).to.include('WorkflowType = "claudeSessionWorkflow"');
+      expect(q).to.include('WorkflowType = "agentSessionWorkflow"');
       expect(q).to.include('ExecutionStatus = "Running"');
       // Default phase set is preserved — every live phase + detached, but
-      // each clause is a bare `ClaudeTempoAttachmentState ...` predicate
+      // each clause is a bare `AgentTempoAttachmentState ...` predicate
       // with no hostname AND.
-      expect(q).to.include('ClaudeTempoAttachmentState IN ("attached","processing","awaiting","draining")');
-      expect(q).to.include('ClaudeTempoAttachmentState = "detached"');
+      expect(q).to.include('AgentTempoAttachmentState IN ("attached","processing","awaiting","draining")');
+      expect(q).to.include('AgentTempoAttachmentState = "detached"');
       // No hostname predicates anywhere in the query.
-      expect(q).to.not.include('ClaudeTempoAttachedHost');
-      expect(q).to.not.include('ClaudeTempoHostname');
+      expect(q).to.not.include('AgentTempoAttachedHost');
+      expect(q).to.not.include('AgentTempoHostname');
     });
 
     it('with allHosts=true + phases=["detached"] — only the bare detached state clause', function () {
       const q = buildOrphanQuery({ hostname: 'host-1', allHosts: true, phases: ['detached'] });
-      expect(q).to.include('ClaudeTempoAttachmentState = "detached"');
-      expect(q).to.not.include('ClaudeTempoAttachmentState IN (');
-      expect(q).to.not.include('ClaudeTempoAttachedHost');
-      expect(q).to.not.include('ClaudeTempoHostname');
+      expect(q).to.include('AgentTempoAttachmentState = "detached"');
+      expect(q).to.not.include('AgentTempoAttachmentState IN (');
+      expect(q).to.not.include('AgentTempoAttachedHost');
+      expect(q).to.not.include('AgentTempoHostname');
     });
 
     it('with allHosts=true + ensemble — keeps the ensemble clause', function () {
       const q = buildOrphanQuery({ hostname: 'host-1', allHosts: true, ensemble: 'band-a' });
-      expect(q).to.include('ClaudeTempoEnsemble = "band-a"');
-      expect(q).to.not.include('ClaudeTempoAttachedHost');
-      expect(q).to.not.include('ClaudeTempoHostname');
+      expect(q).to.include('AgentTempoEnsemble = "band-a"');
+      expect(q).to.not.include('AgentTempoAttachedHost');
+      expect(q).to.not.include('AgentTempoHostname');
     });
 
     it('with allHosts=false (or unset) — preserves the existing per-host predicate form', function () {
       const q = buildOrphanQuery({ hostname: 'host-1' });
-      expect(q).to.include('ClaudeTempoAttachedHost = "host-1"');
-      expect(q).to.include('ClaudeTempoHostname = "host-1"');
+      expect(q).to.include('AgentTempoAttachedHost = "host-1"');
+      expect(q).to.include('AgentTempoHostname = "host-1"');
     });
   });
 });
@@ -163,7 +163,7 @@ describe('queryOrphanedSessions', function () {
     const client = makeFakeClient({
       workflows: [
         {
-          workflowId: 'claude-session-e1-alice',
+          workflowId: 'agent-session-e1-alice',
           info: { phase: 'detached', inFlightCount: 0 },
           summary: { ensemble: 'e1', playerId: 'alice', detachedSince: '2026-04-01T00:00:00Z', preferredHost: 'host-1' },
         },
@@ -171,7 +171,7 @@ describe('queryOrphanedSessions', function () {
     });
     const orphans = await queryOrphanedSessions(client, { hostname: 'host-1' });
     expect(orphans).to.have.length(1);
-    expect(orphans[0].workflowId).to.equal('claude-session-e1-alice');
+    expect(orphans[0].workflowId).to.equal('agent-session-e1-alice');
     expect(orphans[0].info.phase).to.equal('detached');
     expect(orphans[0].summary.detachedSince).to.equal('2026-04-01T00:00:00Z');
     expect(orphans[0].summary.ensemble).to.equal('e1');
@@ -179,10 +179,10 @@ describe('queryOrphanedSessions', function () {
   });
 
   it('resolves dashed player names via OrphanSummary (regression: #143 regex dropped dashes)', async function () {
-    // Workflow id is `claude-session-{ensemble}-{playerId}`. The legacy
-    // regex `/^claude-session-.+-([^-]+)$/` greedily captured ensemble and
+    // Workflow id is `agent-session-{ensemble}-{playerId}`. The legacy
+    // regex `/^agent-session-.+-([^-]+)$/` greedily captured ensemble and
     // took the last dash-delimited segment as playerId — for a workflow
-    // `claude-session-tempo-impl-tempo-eng` it produced
+    // `agent-session-tempo-impl-tempo-eng` it produced
     //   ensemble = "tempo-impl-tempo", playerId = "eng"
     // instead of the canonical
     //   ensemble = "tempo-impl",       playerId = "tempo-eng"
@@ -193,7 +193,7 @@ describe('queryOrphanedSessions', function () {
     const client = makeFakeClient({
       workflows: [
         {
-          workflowId: 'claude-session-tempo-impl-tempo-eng',
+          workflowId: 'agent-session-tempo-impl-tempo-eng',
           info: { phase: 'detached', inFlightCount: 0 },
           summary: { ensemble: 'tempo-impl', playerId: 'tempo-eng' },
         },
@@ -209,7 +209,7 @@ describe('queryOrphanedSessions', function () {
     const client = makeFakeClient({
       workflows: [
         {
-          workflowId: 'claude-session-e1-alive',
+          workflowId: 'agent-session-e1-alive',
           info: {
             phase: 'attached',
             inFlightCount: 0,
@@ -227,7 +227,7 @@ describe('queryOrphanedSessions', function () {
           },
         },
         {
-          workflowId: 'claude-session-e1-dead',
+          workflowId: 'agent-session-e1-dead',
           info: { phase: 'detached', inFlightCount: 0 },
           summary: { ensemble: 'e1', playerId: 'dead' },
         },
@@ -235,28 +235,28 @@ describe('queryOrphanedSessions', function () {
     });
     const orphans = await queryOrphanedSessions(client, {
       hostname: 'host-1',
-      isAdapterProcessAlive: (_host, workflowId) => workflowId === 'claude-session-e1-alive',
+      isAdapterProcessAlive: (_host, workflowId) => workflowId === 'agent-session-e1-alive',
     });
-    expect(orphans.map((o) => o.workflowId)).to.deep.equal(['claude-session-e1-dead']);
+    expect(orphans.map((o) => o.workflowId)).to.deep.equal(['agent-session-e1-dead']);
   });
 
   it('skips candidates whose query handler throws (workflow gone, race)', async function () {
     const client = makeFakeClient({
       workflows: [
         {
-          workflowId: 'claude-session-e1-gone',
+          workflowId: 'agent-session-e1-gone',
           info: { phase: 'gone', inFlightCount: 0 }, // unused
           queryError: new Error('WorkflowNotFound'),
         },
         {
-          workflowId: 'claude-session-e1-ok',
+          workflowId: 'agent-session-e1-ok',
           info: { phase: 'detached', inFlightCount: 0 },
           summary: { ensemble: 'e1', playerId: 'ok' },
         },
       ],
     });
     const orphans = await queryOrphanedSessions(client, { hostname: 'host-1' });
-    expect(orphans.map((o) => o.workflowId)).to.deep.equal(['claude-session-e1-ok']);
+    expect(orphans.map((o) => o.workflowId)).to.deep.equal(['agent-session-e1-ok']);
   });
 
   it('returns empty array when workflow.list yields nothing', async function () {
@@ -307,10 +307,10 @@ describe('queryOrphanedSessions', function () {
       // wedged workflow would hang the scan permanently.
       this.timeout(5_000);
       const client = clientWithHangs(
-        new Set(['claude-session-e1-wedged']),
+        new Set(['agent-session-e1-wedged']),
         [
           {
-            workflowId: 'claude-session-e1-ok',
+            workflowId: 'agent-session-e1-ok',
             info: { phase: 'detached', inFlightCount: 0 },
             summary: { ensemble: 'e1', playerId: 'ok' },
           },
@@ -326,9 +326,9 @@ describe('queryOrphanedSessions', function () {
       const elapsed = Date.now() - start;
 
       // Healthy candidate still returned.
-      expect(orphans.map((o) => o.workflowId)).to.deep.equal(['claude-session-e1-ok']);
+      expect(orphans.map((o) => o.workflowId)).to.deep.equal(['agent-session-e1-ok']);
       // Wedged candidate was skipped via the existing log path.
-      expect(skipMessages.some((m) => m.includes('claude-session-e1-wedged'))).to.equal(true);
+      expect(skipMessages.some((m) => m.includes('agent-session-e1-wedged'))).to.equal(true);
       // Bounded by DEFAULT_QUERY_TIMEOUT_MS (2000ms) — never the
       // pre-fix "hang forever".
       expect(elapsed).to.be.lessThan(3_500);

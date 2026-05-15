@@ -6,11 +6,11 @@
  * no adapter process is alive to own its attachment. Two candidate shapes
  * matter:
  *
- *  1. **Active-host sessions** — `ClaudeTempoAttachedHost = local` AND phase
+ *  1. **Active-host sessions** — `AgentTempoAttachedHost = local` AND phase
  *     is `attached` / `processing` / `awaiting` / `draining`. The attachment
  *     exists but the adapter process may have died.
- *  2. **Detached-home sessions** — `ClaudeTempoAttachmentState = detached` AND
- *     `ClaudeTempoHostname = local`. No adapter at all; the home host is us.
+ *  2. **Detached-home sessions** — `AgentTempoAttachmentState = detached` AND
+ *     `AgentTempoHostname = local`. No adapter at all; the home host is us.
  *
  * For each candidate we query `attachmentInfo` + `orphanSummary`. If the
  * adapter process is alive (`isAdapterProcessAlive` returns true) we skip —
@@ -46,8 +46,8 @@ import {
  * genuinely-attached sessions from being torn down.
  *
  * Includes `'detached'` so the broad query emits both §10.1 clauses:
- *   - active-host live-phase (`ClaudeTempoAttachedHost = host AND state IN (...)`)
- *   - detached home-host (`state = "detached" AND ClaudeTempoHostname = host`)
+ *   - active-host live-phase (`AgentTempoAttachedHost = host AND state IN (...)`)
+ *   - detached home-host (`state = "detached" AND AgentTempoHostname = host`)
  *
  * User-invoked `/restore` narrows this to `['detached']` via the `phases`
  * filter so a healthy live session is never flagged as an orphan candidate.
@@ -72,7 +72,7 @@ export interface OrphanCandidate {
 
 /** Filter options for {@link queryOrphanedSessions}. */
 export interface OrphanQueryFilter {
-  /** Local hostname to match against `ClaudeTempoAttachedHost` / `ClaudeTempoHostname`. */
+  /** Local hostname to match against `AgentTempoAttachedHost` / `AgentTempoHostname`. */
   hostname: string;
   /** Optional ensemble narrowing pushed into the visibility query. */
   ensemble?: string;
@@ -90,8 +90,8 @@ export interface OrphanQueryFilter {
    */
   phases?: AttachmentPhase[];
   /**
-   * #151 cluster-view: when `true`, drop the `ClaudeTempoAttachedHost` /
-   * `ClaudeTempoHostname` predicates from the visibility query so the result
+   * #151 cluster-view: when `true`, drop the `AgentTempoAttachedHost` /
+   * `AgentTempoHostname` predicates from the visibility query so the result
    * spans **every** host's orphans, not just the local one. Used by
    * `claude-tempo restore --all-hosts` to surface dormant remote orphans
    * the operator would otherwise need per-host SSH to see. `hostname` is
@@ -114,7 +114,7 @@ export interface BuildOrphanQueryOpts {
   phases?: AttachmentPhase[];
   /**
    * #151: drop hostname predicates from the emitted query. The shape becomes
-   *   `WorkflowType=... AND ExecutionStatus="Running" AND ClaudeTempoAttachmentState IN (...)`
+   *   `WorkflowType=... AND ExecutionStatus="Running" AND AgentTempoAttachmentState IN (...)`
    * (no host clause), returning every orphan in the namespace. The `hostname`
    * field is ignored when this is `true`.
    */
@@ -149,7 +149,7 @@ function sanitizeQueryValue(value: string): string {
 export function buildOrphanQuery(opts: BuildOrphanQueryOpts): string {
   const h = sanitizeQueryValue(opts.hostname);
   const ensembleClause = opts.ensemble
-    ? ` AND ClaudeTempoEnsemble = "${sanitizeQueryValue(opts.ensemble)}"`
+    ? ` AND AgentTempoEnsemble = "${sanitizeQueryValue(opts.ensemble)}"`
     : '';
 
   const phases = opts.phases && opts.phases.length > 0
@@ -165,21 +165,21 @@ export function buildOrphanQuery(opts: BuildOrphanQueryOpts): string {
     // the caller narrowed to `['detached']`.
     if (livePhases.length > 0) {
       const liveList = livePhases.map((p) => `"${p}"`).join(',');
-      clauses.push(`ClaudeTempoAttachmentState IN (${liveList})`);
+      clauses.push(`AgentTempoAttachmentState IN (${liveList})`);
     }
     if (includeDetached) {
-      clauses.push(`ClaudeTempoAttachmentState = "detached"`);
+      clauses.push(`AgentTempoAttachmentState = "detached"`);
     }
   } else {
     if (livePhases.length > 0) {
       const liveList = livePhases.map((p) => `"${p}"`).join(',');
       clauses.push(
-        `(ClaudeTempoAttachedHost = "${h}" AND ClaudeTempoAttachmentState IN (${liveList}))`,
+        `(AgentTempoAttachedHost = "${h}" AND AgentTempoAttachmentState IN (${liveList}))`,
       );
     }
     if (includeDetached) {
       clauses.push(
-        `(ClaudeTempoAttachmentState = "detached" AND ClaudeTempoHostname = "${h}")`,
+        `(AgentTempoAttachmentState = "detached" AND AgentTempoHostname = "${h}")`,
       );
     }
   }
@@ -191,7 +191,7 @@ export function buildOrphanQuery(opts: BuildOrphanQueryOpts): string {
   }
 
   return (
-    `WorkflowType = "claudeSessionWorkflow" ` +
+    `WorkflowType = "agentSessionWorkflow" ` +
     `AND ExecutionStatus = "Running" ` +
     `AND (${clauses.join(' OR ')})${ensembleClause}`
   );

@@ -71,7 +71,7 @@ function fixture(opts: {
   preferredHost?: string;
 }): Fixture {
   return {
-    workflowId: opts.id ?? `claude-session-${opts.ensemble}-${opts.playerId}`,
+    workflowId: opts.id ?? `agent-session-${opts.ensemble}-${opts.playerId}`,
     info: {
       phase: opts.phase ?? 'detached',
       inFlightCount: 0,

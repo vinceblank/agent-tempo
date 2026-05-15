@@ -421,9 +421,9 @@ describe('getConfig', function () {
   // ── env-only defaults (taskQueue, ensemble) ──
 
   describe('env-only defaults', function () {
-    it('taskQueue defaults to "claude-tempo" when env var is not set', function () {
+    it('taskQueue defaults to "agent-tempo" when env var is not set', function () {
       const cfg = getConfig();
-      expect(cfg.taskQueue).to.equal('claude-tempo');
+      expect(cfg.taskQueue).to.equal('agent-tempo');
     });
 
     it('AGENT_TEMPO_TASK_QUEUE env var overrides taskQueue default', function () {

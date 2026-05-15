@@ -81,7 +81,7 @@ describe('TempoClient.getPlayers — fallback precedence', () => {
     const globalResult = { demo: [p('alice'), p('bob')] };
     const fake = makeFakeClient({
       handlers: {
-        'claude-maestro-global': {
+        'agent-maestro-global': {
           maestroPlayersByEnsemble: () => globalResult,
         },
       },
@@ -93,16 +93,16 @@ describe('TempoClient.getPlayers — fallback precedence', () => {
 
     expect(players.map((x) => x.playerId)).toEqual(['alice', 'bob']);
     // Should have hit the global maestro handle
-    expect(spy).toHaveBeenCalledWith('claude-maestro-global');
+    expect(spy).toHaveBeenCalledWith('agent-maestro-global');
   });
 
   it('falls back to per-ensemble Maestro when Global Maestro fails', async () => {
     const fake = makeFakeClient({
       handlers: {
-        'claude-maestro-global': {
+        'agent-maestro-global': {
           maestroPlayersByEnsemble: () => new Error('global maestro unavailable'),
         },
-        'claude-maestro-demo': {
+        'agent-maestro-demo': {
           maestroPlayers: () => [p('carol')],
         },
       },
@@ -116,21 +116,21 @@ describe('TempoClient.getPlayers — fallback precedence', () => {
   it('falls back to direct workflow-list scan when both Maestro tiers fail', async () => {
     const fake = makeFakeClient({
       handlers: {
-        'claude-maestro-global': {
+        'agent-maestro-global': {
           maestroPlayersByEnsemble: () => new Error('unavailable'),
         },
-        'claude-maestro-demo': {
+        'agent-maestro-demo': {
           maestroPlayers: () => new Error('unavailable'),
         },
       },
       listItems: [
         {
-          workflowId: 'claude-session-demo-dave',
+          workflowId: 'agent-session-demo-dave',
           searchAttributes: {
-            ClaudeTempoEnsemble: ['demo'],
-            ClaudeTempoPlayerId: ['dave'],
-            ClaudeTempoHostname: ['host-1'],
-            ClaudeTempoAttachmentState: ['attached'],
+            AgentTempoEnsemble: ['demo'],
+            AgentTempoPlayerId: ['dave'],
+            AgentTempoHostname: ['host-1'],
+            AgentTempoAttachmentState: ['attached'],
           },
         },
       ],
@@ -147,8 +147,8 @@ describe('TempoClient.getPlayers — fallback precedence', () => {
   it('returns empty array when all three tiers fail', async () => {
     const fake = makeFakeClient({
       handlers: {
-        'claude-maestro-global': { maestroPlayersByEnsemble: () => new Error('x') },
-        'claude-maestro-demo': { maestroPlayers: () => new Error('x') },
+        'agent-maestro-global': { maestroPlayersByEnsemble: () => new Error('x') },
+        'agent-maestro-demo': { maestroPlayers: () => new Error('x') },
       },
       listError: new Error('list failed'),
     });
@@ -161,10 +161,10 @@ describe('TempoClient.getPlayers — fallback precedence', () => {
     // (maestroPlayersByEnsemble returns an empty record for demo).
     const fake = makeFakeClient({
       handlers: {
-        'claude-maestro-global': {
+        'agent-maestro-global': {
           maestroPlayersByEnsemble: () => ({ /* no demo key */ }),
         },
-        'claude-maestro-demo': {
+        'agent-maestro-demo': {
           maestroPlayers: () => [p('eve')],
         },
       },
@@ -181,7 +181,7 @@ describe('TempoClient.discoverEnsembles — fallback precedence', () => {
   it('prefers Global Maestro and returns all ensembles it knows', async () => {
     const fake = makeFakeClient({
       handlers: {
-        'claude-maestro-global': {
+        'agent-maestro-global': {
           maestroPlayersByEnsemble: () => ({
             demo: [p('alice'), { ...p('conductor'), isConductor: true }],
             other: [p('bob')],
@@ -202,24 +202,24 @@ describe('TempoClient.discoverEnsembles — fallback precedence', () => {
   it('falls through to workflow list when Global Maestro returns empty', async () => {
     const fake = makeFakeClient({
       handlers: {
-        'claude-maestro-global': {
+        'agent-maestro-global': {
           maestroPlayersByEnsemble: () => ({}),
         },
       },
       listItems: [
         {
-          workflowId: 'claude-session-mine-conductor',
+          workflowId: 'agent-session-mine-conductor',
           searchAttributes: {
-            ClaudeTempoEnsemble: ['mine'],
-            ClaudeTempoIsConductor: [true],
-            ClaudeTempoAttachmentState: ['attached'],
+            AgentTempoEnsemble: ['mine'],
+            AgentTempoIsConductor: [true],
+            AgentTempoAttachmentState: ['attached'],
           },
         },
         {
-          workflowId: 'claude-session-mine-alice',
+          workflowId: 'agent-session-mine-alice',
           searchAttributes: {
-            ClaudeTempoEnsemble: ['mine'],
-            ClaudeTempoIsConductor: [false],
+            AgentTempoEnsemble: ['mine'],
+            AgentTempoIsConductor: [false],
           },
         },
       ],
@@ -231,14 +231,14 @@ describe('TempoClient.discoverEnsembles — fallback precedence', () => {
     expect(ensembles[0].playerCount).toBe(2);
     expect(ensembles[0].hasConductor).toBe(true);
     // Post-#176: `conductorStatus` reads attachment phase from
-    // `ClaudeTempoAttachmentState` (mock returns 'attached' above).
+    // `AgentTempoAttachmentState` (mock returns 'attached' above).
     expect(ensembles[0].conductorStatus).toBe('attached');
   });
 
   it('returns empty array when both Global Maestro and workflow list fail', async () => {
     const fake = makeFakeClient({
       handlers: {
-        'claude-maestro-global': {
+        'agent-maestro-global': {
           maestroPlayersByEnsemble: () => new Error('down'),
         },
       },
@@ -255,7 +255,7 @@ describe('TempoClient.getMessages', () => {
   it('filters ring-buffer messages by ensemble', async () => {
     const fake = makeFakeClient({
       handlers: {
-        'claude-maestro-global': {
+        'agent-maestro-global': {
           maestroRecentMessages: () => [
             { id: 'a', ensemble: 'demo', from: 'alice', to: 'maestro', text: 'hi', timestamp: '', direction: 'inbound' },
             { id: 'b', ensemble: 'other', from: 'bob', to: 'maestro', text: 'other', timestamp: '', direction: 'inbound' },
@@ -272,7 +272,7 @@ describe('TempoClient.getMessages', () => {
   it('applies limit as a tail slice', async () => {
     const fake = makeFakeClient({
       handlers: {
-        'claude-maestro-global': {
+        'agent-maestro-global': {
           maestroRecentMessages: () => Array.from({ length: 5 }, (_, i) => ({
             id: `m${i}`, ensemble: 'demo', from: 'alice', to: 'maestro',
             text: '', timestamp: '', direction: 'inbound' as const,
@@ -288,7 +288,7 @@ describe('TempoClient.getMessages', () => {
   it('returns empty array when Global Maestro query fails', async () => {
     const fake = makeFakeClient({
       handlers: {
-        'claude-maestro-global': {
+        'agent-maestro-global': {
           maestroRecentMessages: () => new Error('x'),
         },
       },
@@ -304,7 +304,7 @@ describe('TempoClient.getEnsembleChat', () => {
   it('returns chat from per-ensemble Maestro', async () => {
     const fake = makeFakeClient({
       handlers: {
-        'claude-maestro-demo': {
+        'agent-maestro-demo': {
           maestroEnsembleChat: () => ({
             messages: [{ id: '1', from: 'alice', to: 'conductor', text: 'hi', timestamp: '', role: 'conductor-in' }],
             total: 1,
@@ -323,7 +323,7 @@ describe('TempoClient.getEnsembleChat', () => {
   it('returns empty result when Maestro is unavailable', async () => {
     const fake = makeFakeClient({
       handlers: {
-        'claude-maestro-demo': {
+        'agent-maestro-demo': {
           maestroEnsembleChat: () => new Error('down'),
         },
       },

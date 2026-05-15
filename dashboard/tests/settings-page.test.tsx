@@ -69,7 +69,7 @@ describe('Settings page', () => {
 
   // Connection panel KVs (#436 + #444) — namespace and taskQueue must
   // reflect the live `/v1/health` response, not hard-coded defaults.
-  // Mock advertises namespace=`default` + taskQueue=`claude-tempo`; pinning
+  // Mock advertises namespace=`default` + taskQueue=`agent-tempo`; pinning
   // both prevents another KV from silently regressing to a static string.
   it('Connection panel renders namespace + task queue from /v1/health', async () => {
     renderStandalone();
@@ -81,7 +81,7 @@ describe('Settings page', () => {
     // independent and React Query settles them in the same tick.
     await Promise.all([
       within(panel).findByText('default'),
-      within(panel).findByText('claude-tempo'),
+      within(panel).findByText('agent-tempo'),
     ]);
   });
 
@@ -126,16 +126,16 @@ describe('Settings page', () => {
       expect(document.documentElement.dataset.accent).toBe('sage');
     });
 
-    it('debug toggle round-trips localStorage.claudeTempoDebug', () => {
-      try { window.localStorage.removeItem('claudeTempoDebug'); } catch { /* ignore */ }
+    it('debug toggle round-trips localStorage.agentTempoDebug', () => {
+      try { window.localStorage.removeItem('agentTempoDebug'); } catch { /* ignore */ }
       renderStandalone();
       const checkbox = screen.getByTestId('settings-debug-checkbox') as HTMLInputElement;
       expect(checkbox.checked).toBe(false);
       fireEvent.click(checkbox);
       expect(checkbox.checked).toBe(true);
-      expect(window.localStorage.getItem('claudeTempoDebug')).toBe('true');
+      expect(window.localStorage.getItem('agentTempoDebug')).toBe('true');
       fireEvent.click(checkbox);
-      expect(window.localStorage.getItem('claudeTempoDebug')).toBeNull();
+      expect(window.localStorage.getItem('agentTempoDebug')).toBeNull();
     });
   });
 

@@ -76,7 +76,7 @@ State transitions, mutations, and SSE events MUST log via `logEvent(action, kvs)
 
 The conductor's autonomous validation script can `mcp__claude-in-chrome__read_console_messages` with the regex `\[claude-tempo:dashboard\]` to verify state transitions without parsing the DOM. This mirrors the `[claude-tempo:adapter]` shape used by adapter heartbeat logs (#249).
 
-Debug-level logs are gated by `?debug=1` in the URL or `localStorage.claudeTempoDebug = 'true'`.
+Debug-level logs are gated by `?debug=1` in the URL or `localStorage.agentTempoDebug = 'true'`.
 
 ## Design tokens
 

@@ -6,7 +6,7 @@
  * leaves an orphaned `claude.exe` holding the session ID, and the next `-n <name>` spawn
  * collides with its own past self ("Error: Session ID <uuid> is already in use").
  *
- * This activity runs on the target's per-host task queue (`claude-tempo-{hostname}`) so
+ * This activity runs on the target's per-host task queue (`agent-tempo-{hostname}`) so
  * the kill happens on the machine where the process actually lives. Callers:
  *   - workflow main-loop §9.5.c drainingDeadline (best-effort, workflow keeps flipping state
  *     on failure so it doesn't get wedged in `draining` forever)

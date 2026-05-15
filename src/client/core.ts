@@ -82,10 +82,10 @@ import { createSubscribe, type SubscribeDeps } from './subscribe';
  * environments.
  *
  * `taskQueue` is the daemon's polling task queue name (e.g.
- * `claude-tempo` in prod, `claude-tempo-dev` in dev mode). It's used by
+ * `agent-tempo` in prod, `agent-tempo-dev` in dev mode). It's used by
  * `listHosts` to discover daemons polling the right queue — without it,
- * `listHosts` defaults to `claude-tempo` and silently returns `[]` in dev
- * mode even though the dev daemon is healthy on `claude-tempo-dev` (#437).
+ * `listHosts` defaults to `agent-tempo` and silently returns `[]` in dev
+ * mode even though the dev daemon is healthy on `agent-tempo-dev` (#437).
  * Headless construction sites (daemon HTTP server, MCP server) MUST pass
  * `taskQueue: config.taskQueue` so dev/prod isolation flows through.
  */
@@ -247,7 +247,7 @@ export function createTempoClientCore(
 
       // Strategy 2: Direct workflow list scan
       try {
-        const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+        const query = 'WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"';
         const ensembleMap = new Map<string, { count: number; hasConductor: boolean; conductorStatus?: string }>();
 
         for await (const wf of client.workflow.list({ query })) {
@@ -257,15 +257,15 @@ export function createTempoClientCore(
           const entry = ensembleMap.get(name) || { count: 0, hasConductor: false };
           entry.count++;
 
-          // Preferred: ClaudeTempoIsConductor search attribute (canonical, queryable).
+          // Preferred: AgentTempoIsConductor search attribute (canonical, queryable).
           // Fallback: workflow ID convention — covers the brief window after a
           // conductor spawn before the search attribute is indexed.
           const isConductorFromSA = getIsConductor(wf) === true;
           const isConductorFromId = wf.workflowId?.endsWith('-conductor') ?? false;
           if (isConductorFromSA || isConductorFromId) {
             entry.hasConductor = true;
-            // Post-#175 the workflow writes `ClaudeTempoAttachmentState` (phase) in
-            // place of the removed `ClaudeTempoStatus` search attribute.
+            // Post-#175 the workflow writes `AgentTempoAttachmentState` (phase) in
+            // place of the removed `AgentTempoStatus` search attribute.
             entry.conductorStatus = getAttachmentPhase(wf);
           }
 
@@ -305,7 +305,7 @@ export function createTempoClientCore(
       };
       const byEnsemble = new Map<string, Agg>();
       try {
-        const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+        const query = 'WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"';
         for await (const wf of client.workflow.list({ query })) {
           const name = getEnsembleName(wf);
           if (!name) continue;
@@ -315,10 +315,10 @@ export function createTempoClientCore(
           // agent — counting it produced confusing "(2 players)" rows on
           // a fresh ensemble with one real player. Mirrors the
           // `filterRealPlayers` rule used in StatusBar (cf6becd). Detect
-          // via the canonical `ClaudeTempoPlayerType` search attribute,
+          // via the canonical `AgentTempoPlayerType` search attribute,
           // with a workflow-id-suffix fallback for the brief post-start
           // window before search attributes propagate.
-          const playerType = getSearchAttrString(wf, 'ClaudeTempoPlayerType');
+          const playerType = getSearchAttrString(wf, 'AgentTempoPlayerType');
           const isMaestroSession = playerType === 'maestro'
             || (wf.workflowId?.endsWith('-maestro') ?? false);
 
@@ -372,7 +372,7 @@ export function createTempoClientCore(
       let timedOut = false;
 
       try {
-        const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+        const query = 'WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"';
         for await (const wf of iterateWithDeadline(
           client.workflow.list({ query }),
           deadlineMs,
@@ -381,7 +381,7 @@ export function createTempoClientCore(
           scanned++;
           const name = getEnsembleName(wf);
           if (!name) continue;
-          const playerType = getSearchAttrString(wf, 'ClaudeTempoPlayerType');
+          const playerType = getSearchAttrString(wf, 'AgentTempoPlayerType');
           const isMaestroSession = playerType === 'maestro'
             || (wf.workflowId?.endsWith('-maestro') ?? false);
           const phase = getAttachmentPhase(wf) as AttachmentPhase | undefined;
@@ -443,27 +443,27 @@ export function createTempoClientCore(
 
       // Strategy 3: Direct workflow list
       try {
-        const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}"`;
+        const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}"`;
         const players: MaestroPlayerInfo[] = [];
         for await (const wf of client.workflow.list({ query })) {
           const sa = wf.searchAttributes || {};
-          const playerId = Array.isArray(sa.ClaudeTempoPlayerId) ? String(sa.ClaudeTempoPlayerId[0]) : wf.workflowId;
-          // Preferred: ClaudeTempoIsConductor search attribute (canonical, queryable).
+          const playerId = Array.isArray(sa.AgentTempoPlayerId) ? String(sa.AgentTempoPlayerId[0]) : wf.workflowId;
+          // Preferred: AgentTempoIsConductor search attribute (canonical, queryable).
           // Fallback: workflow ID convention — covers the brief window after a
           // conductor spawn before the search attribute is indexed.
-          const isConductorFromSA = Array.isArray(sa.ClaudeTempoIsConductor) && sa.ClaudeTempoIsConductor[0] === true;
+          const isConductorFromSA = Array.isArray(sa.AgentTempoIsConductor) && sa.AgentTempoIsConductor[0] === true;
           const isConductorFromId = wf.workflowId?.endsWith('-conductor') ?? false;
           players.push({
             playerId,
             ensemble,
             part: '',
-            hostname: Array.isArray(sa.ClaudeTempoHostname) ? String(sa.ClaudeTempoHostname[0]) : '',
+            hostname: Array.isArray(sa.AgentTempoHostname) ? String(sa.AgentTempoHostname[0]) : '',
             workDir: '',
             isConductor: isConductorFromSA || isConductorFromId,
             agentType: 'claude',
-            // Attachment phase from `ClaudeTempoAttachmentState` search attr.
-            phase: Array.isArray(sa.ClaudeTempoAttachmentState)
-              ? (String(sa.ClaudeTempoAttachmentState[0]) as AttachmentPhase)
+            // Attachment phase from `AgentTempoAttachmentState` search attr.
+            phase: Array.isArray(sa.AgentTempoAttachmentState)
+              ? (String(sa.AgentTempoAttachmentState[0]) as AttachmentPhase)
               : undefined,
           });
         }
@@ -584,7 +584,7 @@ export function createTempoClientCore(
     async getPlayerMetadata(ensemble: string, playerId: string): Promise<SessionMetadata | null> {
       try {
         // Query the player's workflow directly for metadata
-        const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND ClaudeTempoPlayerId = "${sanitizeQueryValue(playerId)}"`;
+        const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND AgentTempoPlayerId = "${sanitizeQueryValue(playerId)}"`;
         for await (const wf of client.workflow.list({ query })) {
           const h = handle(wf.workflowId);
           // #433: unbounded — justified, `getPlayerMetadata` is not
@@ -625,7 +625,7 @@ export function createTempoClientCore(
 
     async sendMessage(ensemble: string, to: string, text: string, source: string): Promise<string> {
       // Direct signal with isMaestro flag — matches web Maestro pattern
-      const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND ClaudeTempoPlayerId = "${sanitizeQueryValue(to)}"`;
+      const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND AgentTempoPlayerId = "${sanitizeQueryValue(to)}"`;
       let sent = false;
       for await (const wf of client.workflow.list({ query })) {
         const h = handle(wf.workflowId);
@@ -658,7 +658,7 @@ export function createTempoClientCore(
     },
 
     async terminatePlayer(ensemble: string, playerId: string): Promise<void> {
-      const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND ClaudeTempoPlayerId = "${sanitizeQueryValue(playerId)}"`;
+      const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND AgentTempoPlayerId = "${sanitizeQueryValue(playerId)}"`;
       for await (const wf of client.workflow.list({ query })) {
         const h = handle(wf.workflowId);
         await h.terminate('terminated via TUI');
@@ -1030,9 +1030,9 @@ export function createTempoClientCore(
       const { listHosts } = await import('../utils/hosts');
       // #437 — both `namespace` and `taskQueue` must match the daemon's
       // config or poller discovery silently returns `[]` (dev mode hits
-      // `'claude-tempo-dev'`, prod hits `'claude-tempo'`). Passing
+      // `'agent-tempo-dev'`, prod hits `'agent-tempo'`). Passing
       // `taskQueue: undefined` is harmless — `listHosts` defaults via
-      // `?? 'claude-tempo'` and unconditional pass-through avoids
+      // `?? 'agent-tempo'` and unconditional pass-through avoids
       // per-call object allocation on this hot path.
       return listHosts(client, {
         force: Boolean(opts.force),
@@ -1064,7 +1064,7 @@ export function createTempoClientCore(
       let terminated = 0;
 
       // Terminate all session workflows in the ensemble
-      const sessionQuery = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}"`;
+      const sessionQuery = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}"`;
       for await (const wf of client.workflow.list({ query: sessionQuery })) {
         try {
           const h = handle(wf.workflowId);
@@ -1261,17 +1261,17 @@ export function createTempoClientCore(
       };
 
       try {
-        const wfHandle = await client.workflow.start('claudeSessionWorkflow', {
+        const wfHandle = await client.workflow.start('agentSessionWorkflow', {
           workflowId,
-          taskQueue: 'claude-tempo',
+          taskQueue: 'agent-tempo',
           args: [sessionInput],
           workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
           workflowExecutionTimeout: '24 hours',
           searchAttributes: {
-            ClaudeTempoHostname: ['dashboard'],
-            ClaudeTempoEnsemble: [ensemble],
-            ClaudeTempoPlayerId: ['maestro'],
-            ClaudeTempoPlayerType: ['maestro'],
+            AgentTempoHostname: ['dashboard'],
+            AgentTempoEnsemble: [ensemble],
+            AgentTempoPlayerId: ['maestro'],
+            AgentTempoPlayerType: ['maestro'],
           },
         });
         console.error(`[tui:client] Maestro session started: ${wfHandle.workflowId}`);
@@ -1281,13 +1281,13 @@ export function createTempoClientCore(
         // previously created by a CLI command.
         const maestroHubId = maestroWorkflowId(ensemble);
         try {
-          await client.workflow.start('claudeMaestroWorkflow', {
+          await client.workflow.start('agentMaestroWorkflow', {
             workflowId: maestroHubId,
-            taskQueue: 'claude-tempo',
+            taskQueue: 'agent-tempo',
             args: [{ ensemble }],
             workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
             searchAttributes: {
-              ClaudeTempoEnsemble: [ensemble],
+              AgentTempoEnsemble: [ensemble],
             },
           });
           console.error(`[tui:client] Maestro hub ensured: ${maestroHubId}`);
@@ -1305,7 +1305,7 @@ export function createTempoClientCore(
 
     async sendAsMaestro(ensemble: string, targetPlayer: string, text: string): Promise<void> {
       // Resolve target player workflow via search attributes
-      const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND ClaudeTempoPlayerId = "${sanitizeQueryValue(targetPlayer)}"`;
+      const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND AgentTempoPlayerId = "${sanitizeQueryValue(targetPlayer)}"`;
       let targetHandle;
       for await (const wf of client.workflow.list({ query })) {
         targetHandle = handle(wf.workflowId);

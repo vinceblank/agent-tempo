@@ -310,13 +310,13 @@ export function registerLoadLineupTool(
                 await handle.describe();
                 await handle.signal('addSchedule', scheduleEntry);
               } catch {
-                await client.workflow.start('claudeSchedulerWorkflow', {
+                await client.workflow.start('agentSchedulerWorkflow', {
                   workflowId: wfId,
                   taskQueue: config.taskQueue,
                   args: [{ ensemble: config.ensemble, entries: [scheduleEntry] }],
                   workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
                   searchAttributes: {
-                    ClaudeTempoEnsemble: [config.ensemble],
+                    AgentTempoEnsemble: [config.ensemble],
                   },
                 });
               }

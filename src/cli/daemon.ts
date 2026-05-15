@@ -450,7 +450,7 @@ export async function startDaemon(config: Config): Promise<number> {
 
 /**
  * Info about a running claude-tempo daemon process discovered via OS process
- * listing. Returned by {@link scanClaudeTempoDaemons}.
+ * listing. Returned by {@link scanAgentTempoDaemons}.
  */
 export interface DaemonProcessInfo {
   pid: number;
@@ -479,7 +479,7 @@ const DAEMON_CMDLINE_RE = /\bnode(?:\.exe)?\b.*\bclaude-tempo\b.*[\\/]dist[\\/]d
  *
  * Exported for testing with a stubbed executor.
  */
-export function scanClaudeTempoDaemons(
+export function scanAgentTempoDaemons(
   exec: (cmd: string, args: readonly string[]) => string = (cmd, args) =>
     execFileSync(cmd, args as string[], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }),
   platform: NodeJS.Platform = process.platform,
@@ -592,7 +592,7 @@ function killDaemonPid(
  * @internal
  */
 export interface StopDaemonOpts {
-  /** Process scanner — defaults to {@link scanClaudeTempoDaemons}. */
+  /** Process scanner — defaults to {@link scanAgentTempoDaemons}. */
   scan?: () => DaemonProcessInfo[];
   /** Signal sender — defaults to `process.kill`. */
   killer?: (pid: number, signal?: NodeJS.Signals | number) => void;
@@ -616,7 +616,7 @@ export interface StopDaemonOpts {
  * Stop the daemon process by sending SIGTERM (or killing on Windows). In
  * addition to the daemon tracked by the PID file, this also reaps any
  * **zombie** daemons — `node dist/daemon.js` processes detected by
- * {@link scanClaudeTempoDaemons} that the PID file doesn't know about.
+ * {@link scanAgentTempoDaemons} that the PID file doesn't know about.
  *
  * Why reap zombies on every stop? When a prior daemon loses PID-file
  * tracking (crashed `daemon stop`, manual PID-file delete, surviving across
@@ -629,7 +629,7 @@ export interface StopDaemonOpts {
  * Returns `true` if at least one process (tracked or zombie) was stopped.
  */
 export function stopDaemon(opts: StopDaemonOpts = {}): boolean {
-  const scan = opts.scan ?? scanClaudeTempoDaemons;
+  const scan = opts.scan ?? scanAgentTempoDaemons;
   const killer = opts.killer ?? process.kill.bind(process);
   const platform = opts.platform ?? process.platform;
   const otherLikelyRunning = opts.isOtherProfileLikelyRunning ?? isOtherProfileLikelyRunning;

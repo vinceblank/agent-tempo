@@ -25,7 +25,7 @@ describe('runId pinning — prevents zombie-resurrection via unpinned handles', 
     this.timeout(15_000);
     await withWorker(async () => {
       const ensemble = `pin-hazard-${Date.now()}`;
-      const wfId = `claude-session-${ensemble}-pin-bot`;
+      const wfId = `agent-session-${ensemble}-pin-bot`;
       const client = getClient();
       const input = {
         metadata: playerMetadata({ playerId: 'pin-bot', ensemble }),
@@ -34,7 +34,7 @@ describe('runId pinning — prevents zombie-resurrection via unpinned handles', 
       };
 
       // Start run 1, capture runId
-      const h1 = await client.workflow.start('claudeSessionWorkflow', {
+      const h1 = await client.workflow.start('agentSessionWorkflow', {
         workflowId: wfId,
         taskQueue: TASK_QUEUE,
         args: [input],
@@ -46,7 +46,7 @@ describe('runId pinning — prevents zombie-resurrection via unpinned handles', 
       await h1.result();
 
       // Start run 2 with USE_EXISTING (completed run allows this) — fresh runId
-      const h2 = await client.workflow.start('claudeSessionWorkflow', {
+      const h2 = await client.workflow.start('agentSessionWorkflow', {
         workflowId: wfId,
         taskQueue: TASK_QUEUE,
         args: [input],
@@ -71,7 +71,7 @@ describe('runId pinning — prevents zombie-resurrection via unpinned handles', 
     this.timeout(15_000);
     await withWorker(async () => {
       const ensemble = `pin-safe-${Date.now()}`;
-      const wfId = `claude-session-${ensemble}-pin-safe`;
+      const wfId = `agent-session-${ensemble}-pin-safe`;
       const client = getClient();
       const input = {
         metadata: playerMetadata({ playerId: 'pin-safe', ensemble }),
@@ -80,7 +80,7 @@ describe('runId pinning — prevents zombie-resurrection via unpinned handles', 
       };
 
       // Start + terminate run 1
-      const h1 = await client.workflow.start('claudeSessionWorkflow', {
+      const h1 = await client.workflow.start('agentSessionWorkflow', {
         workflowId: wfId,
         taskQueue: TASK_QUEUE,
         args: [input],
@@ -94,13 +94,13 @@ describe('runId pinning — prevents zombie-resurrection via unpinned handles', 
       const pinned1 = client.workflow.getHandle(wfId, runId1);
       const pinnedDesc = await pinned1.describe();
       expect(pinnedDesc.runId).to.equal(runId1);
-      // Historical phase still readable via the `ClaudeTempoAttachmentState`
+      // Historical phase still readable via the `AgentTempoAttachmentState`
       // search attribute — `gone` marks the terminal destroy state post-#175.
-      const pinnedPhase = (pinnedDesc.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined)?.[0];
+      const pinnedPhase = (pinnedDesc.searchAttributes?.AgentTempoAttachmentState as string[] | undefined)?.[0];
       expect(pinnedPhase).to.equal('gone');
 
       // Start run 2 (fresh)
-      const h2 = await client.workflow.start('claudeSessionWorkflow', {
+      const h2 = await client.workflow.start('agentSessionWorkflow', {
         workflowId: wfId,
         taskQueue: TASK_QUEUE,
         args: [input],

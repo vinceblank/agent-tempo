@@ -72,13 +72,13 @@ function makeClient(opts: {
   const calls: Call[] = [];
   const sessionIds: Array<{ workflowId: string; playerId: string; isConductor: boolean }> =
     players.map((p) => ({
-      workflowId: `claude-session-${ensemble}-${p}`,
+      workflowId: `agent-session-${ensemble}-${p}`,
       playerId: p,
       isConductor: false,
     }));
   if (includeConductor) {
     sessionIds.push({
-      workflowId: `claude-session-${ensemble}-conductor`,
+      workflowId: `agent-session-${ensemble}-conductor`,
       playerId: 'conductor',
       isConductor: true,
     });
@@ -121,7 +121,7 @@ function makeClient(opts: {
   const client = {
     workflow: {
       getHandle(workflowId: string) {
-        if (!hasScheduler && workflowId === `claude-scheduler-${ensemble}`) {
+        if (!hasScheduler && workflowId === `agent-scheduler-${ensemble}`) {
           return {
             workflowId,
             async signal() { throw new Error('workflow not found'); },
@@ -129,7 +129,7 @@ function makeClient(opts: {
             async executeUpdate() { throw new Error('workflow not found'); },
           };
         }
-        if (!hasMaestroHub && workflowId === `claude-maestro-${ensemble}`) {
+        if (!hasMaestroHub && workflowId === `agent-maestro-${ensemble}`) {
           return {
             workflowId,
             async signal() { throw new Error('workflow not found'); },
@@ -151,7 +151,7 @@ function makeClient(opts: {
 const testConfig = (ensemble: string): Config => ({
   temporalAddress: 'localhost:7233',
   temporalNamespace: 'default',
-  taskQueue: 'claude-tempo',
+  taskQueue: 'agent-tempo',
   ensemble,
   defaultAgent: 'claude',
 });
@@ -192,7 +192,7 @@ describe('shutdown tool (#287)', function () {
     const detachTargets = calls
       .filter((c) => c.name === 'requestDetach')
       .map((c) => c.workflowId);
-    expect(detachTargets).to.deep.equal([`claude-session-${ensemble}-alice`]);
+    expect(detachTargets).to.deep.equal([`agent-session-${ensemble}-alice`]);
   });
 
   it('forwards custom deadlineMs onto requestDetach payload', async function () {
@@ -360,7 +360,7 @@ describe('restore tool (#287)', function () {
       // doesn't track paused state across calls — what we're locking in is
       // that `restore` ALWAYS sends setPaused=false to every session,
       // regardless of whatever paused-true history precedes it.
-      const aliceWfId = `claude-session-${ensemble}-alice`;
+      const aliceWfId = `agent-session-${ensemble}-alice`;
       await client.workflow.getHandle(aliceWfId).signal('setPaused', true);
 
       // Sanity: the pre-pause was recorded.
@@ -381,10 +381,10 @@ describe('restore tool (#287)', function () {
       );
       expect(setPausedFalse).to.have.lengthOf(4);
       expect(setPausedFalse.map((c) => c.workflowId)).to.have.members([
-        `claude-session-${ensemble}-alice`,
-        `claude-session-${ensemble}-bob`,
-        `claude-session-${ensemble}-charlie`,
-        `claude-session-${ensemble}-conductor`,
+        `agent-session-${ensemble}-alice`,
+        `agent-session-${ensemble}-bob`,
+        `agent-session-${ensemble}-charlie`,
+        `agent-session-${ensemble}-conductor`,
       ]);
 
       // Ordering invariant: the unpause to alice must come AFTER the
@@ -406,7 +406,7 @@ describe('restore tool (#287)', function () {
   // cross-host restore. The MCP tool runs inside the daemon worker; if
   // the operator's daemon is on host A but the parked sessions' workflows
   // were attached to host B before shutdown, the visibility query
-  // (`AND ClaudeTempoHostname = "<host>"`) needs B's hostname, not A's.
+  // (`AND AgentTempoHostname = "<host>"`) needs B's hostname, not A's.
   // The tool now accepts an optional `hostname` param.
   it('forwards a custom hostname arg through to restoreOrphansOnce', async function () {
     const ensemble = 'restore-cross-host';
@@ -493,15 +493,15 @@ describe('destroy tool — ensemble scope (#287)', function () {
     // Scheduler + maestro terminated exactly once each.
     const terminates = calls.filter((c) => c.kind === 'terminate');
     expect(terminates.map((c) => c.workflowId)).to.deep.equal([
-      `claude-scheduler-${ensemble}`,
-      `claude-maestro-${ensemble}`,
+      `agent-scheduler-${ensemble}`,
+      `agent-maestro-${ensemble}`,
     ]);
 
     // Conductor destroy is the LAST workflow-mutation call — by the order the
     // tool's architect (tempo-architect) specified: peers → scheduler →
     // maestro → conductor.
     const ops = calls.filter((c) => c.kind === 'update' || c.kind === 'terminate');
-    expect(ops.at(-1)!.workflowId).to.equal(`claude-session-${ensemble}-conductor`);
+    expect(ops.at(-1)!.workflowId).to.equal(`agent-session-${ensemble}-conductor`);
 
     // Summary message surfaces the counts.
     expect(result.content[0].text).to.include('3 destroyed');
@@ -523,7 +523,7 @@ describe('destroy tool — ensemble scope (#287)', function () {
     const destroyUpdates = calls.filter((c) => c.kind === 'update' && c.name === 'destroy');
     // Only alice's workflow got destroyed — operator was self-skipped.
     expect(destroyUpdates.map((c) => c.workflowId)).to.deep.equal([
-      `claude-session-${ensemble}-alice`,
+      `agent-session-${ensemble}-alice`,
     ]);
   });
 
@@ -543,8 +543,8 @@ describe('destroy tool — ensemble scope (#287)', function () {
     const destroyedIds = calls
       .filter((c) => c.kind === 'update' && c.name === 'destroy')
       .map((c) => c.workflowId);
-    expect(destroyedIds).to.deep.equal([`claude-session-${ensemble}-alice`]);
-    expect(destroyedIds).to.not.include(`claude-session-${ensemble}-conductor`);
+    expect(destroyedIds).to.deep.equal([`agent-session-${ensemble}-alice`]);
+    expect(destroyedIds).to.not.include(`agent-session-${ensemble}-conductor`);
   });
 
   it('single-player mode (playerId given) enqueues outbox entry via caller handle', async function () {
@@ -616,7 +616,7 @@ describe('destroy tool — ensemble scope (#287)', function () {
   it('partial-failure surfaces an indeterminate-state hint and "partially destroyed" headline', async function () {
     const ensemble = 'destroy-partial-fail';
     // alice's `executeUpdate` throws — simulates an RPC failure mid-fan-out.
-    const aliceWfId = `claude-session-${ensemble}-alice`;
+    const aliceWfId = `agent-session-${ensemble}-alice`;
     const { client } = makeClient({
       ensemble,
       players: ['alice', 'bob'],
@@ -649,8 +649,8 @@ describe('destroy tool — ensemble scope (#287)', function () {
   // Plural variant: when ≥2 peers fail, the hint says "peers" (not "peer").
   it('partial-failure with multiple failures pluralizes the hint correctly', async function () {
     const ensemble = 'destroy-partial-fail-many';
-    const aliceWfId = `claude-session-${ensemble}-alice`;
-    const bobWfId = `claude-session-${ensemble}-bob`;
+    const aliceWfId = `agent-session-${ensemble}-alice`;
+    const bobWfId = `agent-session-${ensemble}-bob`;
     const { client } = makeClient({
       ensemble,
       players: ['alice', 'bob', 'charlie'],
@@ -742,7 +742,7 @@ describe('pause tool (#287)', function () {
     const { client } = makeClient({
       ensemble,
       players: ['alice', 'bob'],
-      failOnSignal: new Set([`claude-session-${ensemble}-alice`]),
+      failOnSignal: new Set([`agent-session-${ensemble}-alice`]),
     });
     const call = extractHandler((server) =>
       registerPauseTool(server, client, testConfig(ensemble), () => 'conductor'),

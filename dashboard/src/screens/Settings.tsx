@@ -58,7 +58,7 @@ import { PageHeader } from '../components/PageHeader';
 import { useScreenPageHeader } from '../components/AppShell';
 import { DisabledWithTooltip } from '../components/DisabledWithTooltip';
 
-const DEBUG_FLAG_KEY = 'claudeTempoDebug';
+const DEBUG_FLAG_KEY = 'agentTempoDebug';
 
 const ACCENT_LABELS: Record<Accent, string> = {
   terracotta: 'Terracotta',

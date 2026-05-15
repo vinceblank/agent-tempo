@@ -83,7 +83,7 @@ describe('destroy verb — fixes #102 (graceful stop → resurrection loop)', fu
     await withWorker(async () => {
       const ensemble = `destroy-resurrect-${Date.now()}`;
       const metadata = playerMetadata({ playerId: 'resurrect-bob', ensemble });
-      const wfId = `claude-session-${ensemble}-resurrect-bob`;
+      const wfId = `agent-session-${ensemble}-resurrect-bob`;
       const client = getClient();
 
       const input = {
@@ -93,7 +93,7 @@ describe('destroy verb — fixes #102 (graceful stop → resurrection loop)', fu
       };
 
       // Initial run — pin runId
-      const handle1 = await client.workflow.start('claudeSessionWorkflow', {
+      const handle1 = await client.workflow.start('agentSessionWorkflow', {
         workflowId: wfId,
         taskQueue: TASK_QUEUE,
         args: [input],
@@ -107,7 +107,7 @@ describe('destroy verb — fixes #102 (graceful stop → resurrection loop)', fu
 
       // Simulate the adapter-recovery misbehavior: call start() again with USE_EXISTING.
       // Temporal reuses the old workflowId but (since it completed) allows a new run.
-      const handle2 = await client.workflow.start('claudeSessionWorkflow', {
+      const handle2 = await client.workflow.start('agentSessionWorkflow', {
         workflowId: wfId,
         taskQueue: TASK_QUEUE,
         args: [input],

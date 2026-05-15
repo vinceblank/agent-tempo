@@ -34,7 +34,7 @@ let ENSEMBLE: string;
 const SCHEDULER_TASK_QUEUE = 'test-claude-tempo';
 
 function schedulerWorkflowId(ensemble: string): string {
-  return `claude-scheduler-${ensemble}`;
+  return `agent-scheduler-${ensemble}`;
 }
 
 function makeEntry(overrides: Partial<ScheduleEntry> & { name: string; message: string; target: string }): ScheduleEntry {
@@ -62,7 +62,7 @@ async function startScheduler(
   entries: ScheduleEntry[] = [],
   options: StartSchedulerOptions = {},
 ): Promise<WorkflowHandle> {
-  return client.workflow.start('claudeSchedulerWorkflow', {
+  return client.workflow.start('agentSchedulerWorkflow', {
     workflowId: schedulerWorkflowId(ENSEMBLE),
     taskQueue: SCHEDULER_TASK_QUEUE,
     args: [{
@@ -73,7 +73,7 @@ async function startScheduler(
   });
 }
 
-describe('claudeSchedulerWorkflow', function () {
+describe('agentSchedulerWorkflow', function () {
   before(async function () {
     // 120s matches `setupSharedEnv()` in helpers.ts — see issue #383 P1
     // for why 60s tipped over on contended runners. Inlined here (not

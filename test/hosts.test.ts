@@ -62,8 +62,8 @@ function stubDescribe(table: Record<string, RawPoller[]>) {
 }
 
 describe('parseIdentity (#274 AC6d)', function () {
-  it('parses the post-#274 format `claude-tempo:<hostname>:<pid>:<version>`', function () {
-    expect(parseIdentity('claude-tempo:mac-alice:12345:0.26.0-beta.7')).to.deep.equal({
+  it('parses the post-#274 format `agent-tempo:<hostname>:<pid>:<version>`', function () {
+    expect(parseIdentity('agent-tempo:mac-alice:12345:0.26.0-beta.7')).to.deep.equal({
       hostname: 'mac-alice',
       pid: 12345,
       version: '0.26.0-beta.7',
@@ -83,15 +83,15 @@ describe('parseIdentity (#274 AC6d)', function () {
   it('returns null for opaque third-party identities (skipped silently)', function () {
     expect(parseIdentity('some-other-worker-identity')).to.equal(null);
     expect(parseIdentity('')).to.equal(null);
-    // Note: `claude-tempo:too:few` is malformed (3-segment), covered by the
+    // Note: `agent-tempo:too:few` is malformed (3-segment), covered by the
     // next test's rejection path — not a taxonomy-opaque case.
     expect(parseIdentity('abc@host')).to.equal(null); // non-numeric pid
     expect(parseIdentity('0@host')).to.equal(null); // pid must be > 0
   });
 
   it('rejects malformed post-#274 format with wrong segment count', function () {
-    expect(parseIdentity('claude-tempo:only:two')).to.equal(null);
-    expect(parseIdentity('claude-tempo:a:1:v:extra')).to.equal(null);
+    expect(parseIdentity('agent-tempo:only:two')).to.equal(null);
+    expect(parseIdentity('agent-tempo:a:1:v:extra')).to.equal(null);
   });
 });
 
@@ -109,11 +109,11 @@ describe('listHosts (#274 AC6)', function () {
   };
 
   it('happy path — single host with all three worker streams → live + recruit-ready', async function () {
-    const ident = 'claude-tempo:mac-alice:12345:0.26.0-beta.7';
+    const ident = 'agent-tempo:mac-alice:12345:0.26.0-beta.7';
     const table: Record<string, RawPoller[]> = {
-      [`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller(ident, 5_000)],
-      [`claude-tempo:${TASK_QUEUE_TYPE_ACTIVITY}`]: [mkPoller(ident, 3_000)],
-      [`claude-tempo-mac-alice:${TASK_QUEUE_TYPE_ACTIVITY}`]: [mkPoller(ident, 1_000)],
+      [`agent-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller(ident, 5_000)],
+      [`agent-tempo:${TASK_QUEUE_TYPE_ACTIVITY}`]: [mkPoller(ident, 3_000)],
+      [`agent-tempo-mac-alice:${TASK_QUEUE_TYPE_ACTIVITY}`]: [mkPoller(ident, 1_000)],
     };
     const hosts = await listHosts(fakeClient, {
       force: true,
@@ -140,9 +140,9 @@ describe('listHosts (#274 AC6)', function () {
   });
 
   it('only one of workflow/activity present — still lists host but recruitReady=false', async function () {
-    const ident = 'claude-tempo:h:1:0.26';
+    const ident = 'agent-tempo:h:1:0.26';
     const table: Record<string, RawPoller[]> = {
-      [`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller(ident, 2_000)],
+      [`agent-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller(ident, 2_000)],
       // no activity, no per-host
     };
     const hosts = await listHosts(fakeClient, {
@@ -161,12 +161,12 @@ describe('listHosts (#274 AC6)', function () {
   });
 
   it('stale pollers (lastAccessTime > freshness threshold) → freshness=stale, recruitReady=false', async function () {
-    const ident = 'claude-tempo:h:1:0.26';
+    const ident = 'agent-tempo:h:1:0.26';
     const stale = HOST_FRESHNESS_THRESHOLD_MS + 10_000; // well past threshold
     const table: Record<string, RawPoller[]> = {
-      [`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller(ident, stale)],
-      [`claude-tempo:${TASK_QUEUE_TYPE_ACTIVITY}`]: [mkPoller(ident, stale)],
-      [`claude-tempo-h:${TASK_QUEUE_TYPE_ACTIVITY}`]: [mkPoller(ident, stale)],
+      [`agent-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller(ident, stale)],
+      [`agent-tempo:${TASK_QUEUE_TYPE_ACTIVITY}`]: [mkPoller(ident, stale)],
+      [`agent-tempo-h:${TASK_QUEUE_TYPE_ACTIVITY}`]: [mkPoller(ident, stale)],
     };
     const hosts = await listHosts(fakeClient, {
       force: true,
@@ -183,9 +183,9 @@ describe('listHosts (#274 AC6)', function () {
 
   it('M13 identity-vs-profile reconciliation — version mismatch → profileStaleness=stale', async function () {
     // Identity says v0.27.0, profile says v0.26.0 — identity wins (live truth).
-    const ident = 'claude-tempo:h:1:0.27.0';
+    const ident = 'agent-tempo:h:1:0.27.0';
     const table: Record<string, RawPoller[]> = {
-      [`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller(ident, 1_000)],
+      [`agent-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller(ident, 1_000)],
     };
     const hosts = await listHosts(fakeClient, {
       force: true,
@@ -204,9 +204,9 @@ describe('listHosts (#274 AC6)', function () {
   });
 
   it('fetchProfiles returns null (maestro absent) → all hosts get profileStaleness=missing', async function () {
-    const ident = 'claude-tempo:h:1:0.26';
+    const ident = 'agent-tempo:h:1:0.26';
     const table: Record<string, RawPoller[]> = {
-      [`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller(ident, 1_000)],
+      [`agent-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller(ident, 1_000)],
     };
     const hosts = await listHosts(fakeClient, {
       force: true,
@@ -221,9 +221,9 @@ describe('listHosts (#274 AC6)', function () {
   });
 
   it('fetchProfiles empty map but maestro present — host still missing its specific profile', async function () {
-    const ident = 'claude-tempo:h:1:0.26';
+    const ident = 'agent-tempo:h:1:0.26';
     const table: Record<string, RawPoller[]> = {
-      [`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller(ident, 1_000)],
+      [`agent-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller(ident, 1_000)],
     };
     const hosts = await listHosts(fakeClient, {
       force: true,
@@ -238,9 +238,9 @@ describe('listHosts (#274 AC6)', function () {
 
   it('multiple instances (same hostname, different pids) grouped under one HostInfo', async function () {
     const table: Record<string, RawPoller[]> = {
-      [`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [
-        mkPoller('claude-tempo:h:1:0.26', 1_000),
-        mkPoller('claude-tempo:h:2:0.26', 1_000),
+      [`agent-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [
+        mkPoller('agent-tempo:h:1:0.26', 1_000),
+        mkPoller('agent-tempo:h:2:0.26', 1_000),
       ],
     };
     const hosts = await listHosts(fakeClient, {
@@ -265,19 +265,19 @@ describe('listHosts (#274 AC6)', function () {
     for (let i = 0; i < hostCount; i++) {
       const hostname = `h${i}`;
       expectedHostnames.push(hostname);
-      const ident = `claude-tempo:${hostname}:${1000 + i}:0.27.0`;
-      table[`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`] = [
-        ...(table[`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`] ?? []),
+      const ident = `agent-tempo:${hostname}:${1000 + i}:0.27.0`;
+      table[`agent-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`] = [
+        ...(table[`agent-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`] ?? []),
         mkPoller(ident, 1_000),
       ];
-      table[`claude-tempo-${hostname}:${TASK_QUEUE_TYPE_ACTIVITY}`] = [mkPoller(ident, 1_000)];
+      table[`agent-tempo-${hostname}:${TASK_QUEUE_TYPE_ACTIVITY}`] = [mkPoller(ident, 1_000)];
     }
 
     let perHostQueueCalls = 0;
     const describe = async (
       _c: Client, _ns: string, taskQueueName: string, taskQueueType: TaskQueueType,
     ): Promise<RawPoller[]> => {
-      if (taskQueueName.startsWith('claude-tempo-')) perHostQueueCalls++;
+      if (taskQueueName.startsWith('agent-tempo-')) perHostQueueCalls++;
       return table[`${taskQueueName}:${taskQueueType}`] ?? [];
     };
 
@@ -293,8 +293,8 @@ describe('listHosts (#274 AC6)', function () {
 
   it('opaque third-party identities are skipped silently', async function () {
     const table: Record<string, RawPoller[]> = {
-      [`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [
-        mkPoller('claude-tempo:h:1:0.26', 1_000),
+      [`agent-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [
+        mkPoller('agent-tempo:h:1:0.26', 1_000),
         mkPoller('some-other-worker', 1_000),
       ],
     };
@@ -312,7 +312,7 @@ describe('listHosts (#274 AC6)', function () {
 
   it('legacy identity is accepted and tagged with legacy:true', async function () {
     const table: Record<string, RawPoller[]> = {
-      [`claude-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller('42@legacy-host', 1_000)],
+      [`agent-tempo:${TASK_QUEUE_TYPE_WORKFLOW}`]: [mkPoller('42@legacy-host', 1_000)],
     };
     const hosts = await listHosts(fakeClient, {
       force: true,
@@ -333,7 +333,7 @@ describe('listHosts (#274 AC6)', function () {
       _c: Client, _ns: string, _q: string, _t: TaskQueueType,
     ): Promise<RawPoller[]> => {
       calls++;
-      return [mkPoller('claude-tempo:h:1:0.26', 1_000)];
+      return [mkPoller('agent-tempo:h:1:0.26', 1_000)];
     };
     const deps = { now: () => NOW, describePollers: describe, fetchProfiles: async () => null };
     const first = await listHosts(fakeClient, { force: true, deps });
@@ -367,7 +367,7 @@ describe('formatHostList (#274 AC10a)', function () {
       {
         pid: 12345,
         version: '0.26.0-beta.7',
-        identity: 'claude-tempo:mac-alice:12345:0.26.0-beta.7',
+        identity: 'agent-tempo:mac-alice:12345:0.26.0-beta.7',
         lastAccessTime: '2026-04-20T00:00:00.000Z',
         hasWorkflowWorker: true,
         hasActivityWorker: true,

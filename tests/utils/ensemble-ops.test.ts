@@ -56,7 +56,7 @@ function makeClient(opts: {
   const calls: RecordedCall[] = [];
 
   const sessionIds = players.map((p) => ({
-    workflowId: `claude-session-${ensemble}-${p}`,
+    workflowId: `agent-session-${ensemble}-${p}`,
     playerId: p,
   }));
 
@@ -93,14 +93,14 @@ function makeClient(opts: {
     workflow: {
       getHandle(workflowId: string) {
         // Scheduler/maestro "not running" simulation.
-        if (!hasScheduler && workflowId === `claude-scheduler-${ensemble}`) {
+        if (!hasScheduler && workflowId === `agent-scheduler-${ensemble}`) {
           return {
             workflowId,
             async query() { return undefined; },
             async signal() { throw new Error('workflow not found'); },
           };
         }
-        if (!hasMaestroHub && workflowId === `claude-maestro-${ensemble}`) {
+        if (!hasMaestroHub && workflowId === `agent-maestro-${ensemble}`) {
           return {
             workflowId,
             async query() { return undefined; },
@@ -129,13 +129,13 @@ describe('pauseMaestroAndScheduler', () => {
     expect(result.scheduler).toBe(true);
 
     const maestroSignal = calls.find(
-      (c) => c.workflowId === 'claude-maestro-ens-pause' && c.kind === 'signal',
+      (c) => c.workflowId === 'agent-maestro-ens-pause' && c.kind === 'signal',
     );
     expect(maestroSignal?.name).toBe('maestroSetPaused');
     expect(maestroSignal?.payload).toBe(true);
 
     const schedulerSignal = calls.find(
-      (c) => c.workflowId === 'claude-scheduler-ens-pause' && c.kind === 'signal',
+      (c) => c.workflowId === 'agent-scheduler-ens-pause' && c.kind === 'signal',
     );
     expect(schedulerSignal?.name).toBe('setSchedulerPaused');
     expect(schedulerSignal?.payload).toBe(true);
@@ -185,7 +185,7 @@ describe('pauseMaestroAndScheduler', () => {
     const { client } = makeClient({
       ensemble: 'ens-rpc-err',
       players: [],
-      failOnSignal: new Set(['claude-maestro-ens-rpc-err']),
+      failOnSignal: new Set(['agent-maestro-ens-rpc-err']),
     });
     await expect(pauseMaestroAndScheduler(client, 'ens-rpc-err')).resolves.not.toThrow();
   });
@@ -235,9 +235,9 @@ describe('signalAllSessions', () => {
     expect(setPausedCalls.every((c) => c.payload === true)).toBe(true);
     // Every session's workflowId received the signal.
     const signalledIds = setPausedCalls.map((c) => c.workflowId);
-    expect(signalledIds).toContain('claude-session-ens-fanout-alice');
-    expect(signalledIds).toContain('claude-session-ens-fanout-bob');
-    expect(signalledIds).toContain('claude-session-ens-fanout-charlie');
+    expect(signalledIds).toContain('agent-session-ens-fanout-alice');
+    expect(signalledIds).toContain('agent-session-ens-fanout-bob');
+    expect(signalledIds).toContain('agent-session-ens-fanout-charlie');
   });
 
   it('passes the payload through unchanged (false, objects, undefined)', async () => {
@@ -276,7 +276,7 @@ describe('signalAllSessions', () => {
 
     // Caller's signal was never dispatched.
     const callerSignals = calls.filter(
-      (c) => c.workflowId === 'claude-session-ens-skip-caller' && c.kind === 'signal',
+      (c) => c.workflowId === 'agent-session-ens-skip-caller' && c.kind === 'signal',
     );
     expect(callerSignals).toHaveLength(0);
   });
@@ -290,14 +290,14 @@ describe('signalAllSessions', () => {
     // The IDs passed to skip() are short player names, not workflow IDs.
     expect(seen).toContain('alice');
     expect(seen).toContain('bob');
-    expect(seen.every((id) => !id.startsWith('claude-session-'))).toBe(true);
+    expect(seen.every((id) => !id.startsWith('agent-session-'))).toBe(true);
   });
 
   it('tolerates individual session signal failures — others still succeed', async () => {
     const { client } = makeClient({
       ensemble: 'ens-fail-one',
       players: ['alice', 'bob', 'charlie'],
-      failOnSignal: new Set(['claude-session-ens-fail-one-bob']),
+      failOnSignal: new Set(['agent-session-ens-fail-one-bob']),
     });
     const result = await signalAllSessions(client, 'ens-fail-one', 'setPaused', true);
 
@@ -314,17 +314,17 @@ describe('signalAllSessions', () => {
     const { client } = makeClient({
       ensemble: 'ens-per-session',
       players: ['alice', 'bob'],
-      failOnSignal: new Set(['claude-session-ens-per-session-bob']),
+      failOnSignal: new Set(['agent-session-ens-per-session-bob']),
     });
     const result = await signalAllSessions(client, 'ens-per-session', 'sig', 'x');
 
     const alice = result.perSession.find((p) => p.playerId === 'alice');
     expect(alice?.outcome).toBe('sent');
-    expect(alice?.workflowId).toBe('claude-session-ens-per-session-alice');
+    expect(alice?.workflowId).toBe('agent-session-ens-per-session-alice');
 
     const bob = result.perSession.find((p) => p.playerId === 'bob');
     expect(bob?.outcome).toBe('failed');
-    expect(bob?.workflowId).toBe('claude-session-ens-per-session-bob');
+    expect(bob?.workflowId).toBe('agent-session-ens-per-session-bob');
   });
 
   it('perSession skipped entry has workflowId + outcome (no error field)', async () => {
@@ -348,8 +348,8 @@ describe('signalAllSessions', () => {
       ensemble,
       players: ['alice', 'bob'],
       failOnSignal: new Set([
-        'claude-session-ens-all-fail-alice',
-        'claude-session-ens-all-fail-bob',
+        'agent-session-ens-all-fail-alice',
+        'agent-session-ens-all-fail-bob',
       ]),
     });
     const result = await signalAllSessions(client, ensemble, 'sig', null);
@@ -359,7 +359,7 @@ describe('signalAllSessions', () => {
     expect(result.skipped).toBe(0);
   });
 
-  it('uses the correct workflow IDs (claude-session-{ensemble}-{player})', async () => {
+  it('uses the correct workflow IDs (agent-session-{ensemble}-{player})', async () => {
     const { client, calls } = makeClient({
       ensemble: 'my-ens',
       players: ['player-a'],
@@ -367,6 +367,6 @@ describe('signalAllSessions', () => {
     await signalAllSessions(client, 'my-ens', 'testSignal', 42);
 
     const sig = calls.find((c) => c.kind === 'signal' && c.name === 'testSignal');
-    expect(sig?.workflowId).toBe('claude-session-my-ens-player-a');
+    expect(sig?.workflowId).toBe('agent-session-my-ens-player-a');
   });
 });

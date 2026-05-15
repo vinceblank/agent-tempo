@@ -20,7 +20,7 @@ import { captureRegistration, makeFakeUpdateHandle } from './_helpers';
 const TEST_CONFIG: Config = {
   temporalAddress: 'localhost:7233',
   temporalNamespace: 'default',
-  taskQueue: 'claude-tempo',
+  taskQueue: 'agent-tempo',
   ensemble: 'pstate-restart-test',
   defaultAgent: 'claude',
 };

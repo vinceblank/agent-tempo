@@ -35,7 +35,7 @@ function baseConfig(): Config {
   return {
     temporalAddress: DEAD_REMOTE_ADDRESS,
     temporalNamespace: 'default',
-    taskQueue: 'claude-tempo',
+    taskQueue: 'agent-tempo',
     ensemble: 'bootstrap-mocha-test',
     defaultAgent: 'claude',
   };

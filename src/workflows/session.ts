@@ -160,7 +160,7 @@ function getHardTerminateProxyForDestroy(hostname: string) {
   }).hardTerminateAttachment;
 }
 
-export async function claudeSessionWorkflow(input: SessionInput): Promise<void> {
+export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   // ── v0.25 Attachment Lifecycle Timers (design §2.3, §9.5) ──
   // PR-C commit 6 (#119a): each attachment carries its own `leaseMs` (negotiated at
   // claim time). No workflow-side default constant — heartbeats extend `expiresAt`
@@ -207,17 +207,17 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   // via WorkflowIdConflictPolicy.USE_EXISTING, which skips the attributes
   // passed to client.workflow.start().
   upsertSearchAttributes({
-    ClaudeTempoEnsemble: [input.metadata.ensemble],
-    ClaudeTempoPlayerId: [input.metadata.playerId],
-    ClaudeTempoHostname: [input.metadata.hostname],
-    ...(input.metadata.gitRoot ? { ClaudeTempoGitRoot: [input.metadata.gitRoot] } : {}),
-    ...(input.metadata.playerType ? { ClaudeTempoPlayerType: [input.metadata.playerType] } : {}),
-    ClaudeTempoIsConductor: [input.metadata.isConductor === true],
+    AgentTempoEnsemble: [input.metadata.ensemble],
+    AgentTempoPlayerId: [input.metadata.playerId],
+    AgentTempoHostname: [input.metadata.hostname],
+    ...(input.metadata.gitRoot ? { AgentTempoGitRoot: [input.metadata.gitRoot] } : {}),
+    ...(input.metadata.playerType ? { AgentTempoPlayerType: [input.metadata.playerType] } : {}),
+    AgentTempoIsConductor: [input.metadata.isConductor === true],
     // v0.25 attachment search attributes — initial values for a fresh/restored workflow.
     // Updated on every phase transition below.
-    ClaudeTempoAttachedHost: [input.currentAttachment?.hostname ?? ''],
-    ClaudeTempoAttachmentState: [input.phase ?? 'booting'],
-    ClaudeTempoAttachmentId: [input.currentAttachment?.attachmentId ?? ''],
+    AgentTempoAttachedHost: [input.currentAttachment?.hostname ?? ''],
+    AgentTempoAttachmentState: [input.phase ?? 'booting'],
+    AgentTempoAttachmentId: [input.currentAttachment?.attachmentId ?? ''],
   });
 
   // ── State (carried across continue-as-new) ──
@@ -348,7 +348,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
   function setPhase(next: AttachmentPhase): void {
     if (phase === next) return;
     phase = next;
-    upsertSearchAttributes({ ClaudeTempoAttachmentState: [next] });
+    upsertSearchAttributes({ AgentTempoAttachmentState: [next] });
     lastActivityTime = workflowNow().getTime();
     activityCount++;
   }
@@ -470,7 +470,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
 
   setHandler(setNameSignal, (newName) => {
     input.metadata.playerId = newName;
-    upsertSearchAttributes({ ClaudeTempoPlayerId: [newName] });
+    upsertSearchAttributes({ AgentTempoPlayerId: [newName] });
     lastActivityTime = workflowNow().getTime();
     activityCount++;
   });
@@ -500,12 +500,12 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     // (driven by the V2 wire surface: claimAttachment / adapterExited /
     // forceDetach / destroy) is authoritative for lifecycle state.
     upsertSearchAttributes({
-      ClaudeTempoEnsemble: [input.metadata.ensemble],
-      ClaudeTempoPlayerId: [input.metadata.playerId],
-      ClaudeTempoHostname: [input.metadata.hostname],
-      ...(input.metadata.gitRoot ? { ClaudeTempoGitRoot: [input.metadata.gitRoot] } : {}),
-      ...(input.metadata.playerType ? { ClaudeTempoPlayerType: [input.metadata.playerType] } : {}),
-      ClaudeTempoIsConductor: [input.metadata.isConductor === true],
+      AgentTempoEnsemble: [input.metadata.ensemble],
+      AgentTempoPlayerId: [input.metadata.playerId],
+      AgentTempoHostname: [input.metadata.hostname],
+      ...(input.metadata.gitRoot ? { AgentTempoGitRoot: [input.metadata.gitRoot] } : {}),
+      ...(input.metadata.playerType ? { AgentTempoPlayerType: [input.metadata.playerType] } : {}),
+      AgentTempoIsConductor: [input.metadata.isConductor === true],
     });
     lastActivityTime = workflowNow().getTime();
     activityCount++;
@@ -742,8 +742,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       currentAttachment = null;
     }
     upsertSearchAttributes({
-      ClaudeTempoAttachedHost: [''],
-      ClaudeTempoAttachmentId: [''],
+      AgentTempoAttachedHost: [''],
+      AgentTempoAttachmentId: [''],
     });
     setPhase('gone');
     // Inject a final audit message so the old adapter-completion path has something to show.
@@ -845,8 +845,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     detachedSince = null;
     setPhase('attached');
     upsertSearchAttributes({
-      ClaudeTempoAttachedHost: [host],
-      ClaudeTempoAttachmentId: [newAttachment.attachmentId],
+      AgentTempoAttachedHost: [host],
+      AgentTempoAttachmentId: [newAttachment.attachmentId],
     });
     lastActivityTime = nowMs;
     activityCount++;
@@ -927,8 +927,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     detachedSince = workflowNow().toISOString();
     setPhase('detached');
     upsertSearchAttributes({
-      ClaudeTempoAttachedHost: [''],
-      ClaudeTempoAttachmentId: [''],
+      AgentTempoAttachedHost: [''],
+      AgentTempoAttachmentId: [''],
     });
     // #159 Gap 1b: wake the main loop — `phase === 'detached'` isn't in the predicate
     // and the condition would otherwise sleep on the now-stale lease-expiry deadline.
@@ -1044,8 +1044,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     detachedSince = workflowNow().toISOString();
     setPhase('detached');
     upsertSearchAttributes({
-      ClaudeTempoAttachedHost: [''],
-      ClaudeTempoAttachmentId: [''],
+      AgentTempoAttachedHost: [''],
+      AgentTempoAttachmentId: [''],
     });
     lastActivityTime = workflowNow().getTime();
     activityCount++;
@@ -1473,8 +1473,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       detachedSince = workflowNow().toISOString();
       setPhase('detached');
       upsertSearchAttributes({
-        ClaudeTempoAttachedHost: [''],
-        ClaudeTempoAttachmentId: [''],
+        AgentTempoAttachedHost: [''],
+        AgentTempoAttachmentId: [''],
       });
       workflowLog.warn(`lease expired for attachment ${reaped.attachmentId} (host=${reaped.hostname})`);
     }
@@ -1547,8 +1547,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
       detachedSince = workflowNow().toISOString();
       setPhase('detached');
       upsertSearchAttributes({
-        ClaudeTempoAttachedHost: [''],
-        ClaudeTempoAttachmentId: [''],
+        AgentTempoAttachedHost: [''],
+        AgentTempoAttachmentId: [''],
       });
       if (reaped) {
         workflowLog.info(
@@ -1610,7 +1610,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
               fromPlayerId: input.metadata.playerId,
               agent: entry.agent,
               systemPrompt: entry.systemPrompt,
-              taskQueue: tc?.taskQueue || 'claude-tempo',
+              taskQueue: tc?.taskQueue || 'agent-tempo',
               agentDefinition: entry.agentDefinition,
               agentDefinitionDescription: entry.agentDefinitionDescription,
               allowedTools: entry.allowedTools,
@@ -1760,8 +1760,8 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
           detachedSince = workflowNow().toISOString();
           setPhase('detached');
           upsertSearchAttributes({
-            ClaudeTempoAttachedHost: [''],
-            ClaudeTempoAttachmentId: [''],
+            AgentTempoAttachedHost: [''],
+            AgentTempoAttachmentId: [''],
           });
           workflowLog.warn(
             `spawn failed for "${entry.targetName}"; rolled back attachment ${entry.attachmentId} → detached`,
@@ -1774,7 +1774,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
     // Issue #117: after outbox drain completes, if the attachment is still held,
     // no messages are in flight, and no outbox entries are pending/processing,
     // the session is in its idle steady state. Transition to `awaiting` so
-    // external observers (ClaudeTempoAttachmentState search attribute, TUI,
+    // external observers (AgentTempoAttachmentState search attribute, TUI,
     // monitoring) see the correct phase. `processingStart` (line 502) already
     // guards for `awaiting`, so the next inbound message lifts us to `processing`.
     if (phase === 'attached' && inFlightMessages.size === 0) {
@@ -1836,7 +1836,7 @@ export async function claudeSessionWorkflow(input: SessionInput): Promise<void> 
           )
         : undefined;
 
-      await continueAsNew<typeof claudeSessionWorkflow>({
+      await continueAsNew<typeof agentSessionWorkflow>({
         ...input,
         part,
         messages: messages.filter((m) => !m.delivered),

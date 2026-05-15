@@ -74,7 +74,7 @@ describe('hold and release (warm hold)', function () {
 
         // Verify the recruited workflow exists and is pending (process spawned)
         const recruitedHandle = getClient().workflow.getHandle(
-          `claude-session-${ensemble}-warm-held-player`,
+          `agent-session-${ensemble}-warm-held-player`,
         );
         // Recruited workflow starts in `booting` phase (no adapter has claimed it
         // yet — spawn is in-flight). The distinction vs a non-held recruit is
@@ -135,7 +135,7 @@ describe('hold and release (warm hold)', function () {
         await sleep(2000);
 
         const recruitedHandle = getClient().workflow.getHandle(
-          `claude-session-${ensemble}-normal-player`,
+          `agent-session-${ensemble}-normal-player`,
         );
 
         // Outbox should NOT be locked
@@ -188,7 +188,7 @@ describe('hold and release (warm hold)', function () {
 
         // Verify it's locked
         const recruitedHandle = getClient().workflow.getHandle(
-          `claude-session-${ensemble}-release-target`,
+          `agent-session-${ensemble}-release-target`,
         );
         expect(await recruitedHandle.query(outboxLockedQuery)).to.be.true;
 
@@ -269,7 +269,7 @@ describe('hold and release (warm hold)', function () {
         await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
         const recruitedHandle = getClient().workflow.getHandle(
-          `claude-session-${ensemble}-release-sent-target`,
+          `agent-session-${ensemble}-release-sent-target`,
         );
         await recruitedHandle.executeUpdate(destroyUpdate, { args: [{}] });
         try { await recruitedHandle.result(); } catch { /* cleanup */ }
@@ -424,8 +424,8 @@ describe('hold and release (warm hold)', function () {
         await sleep(3000);
 
         // Verify both are locked
-        const handleA = getClient().workflow.getHandle(`claude-session-${ensemble}-held-a`);
-        const handleB = getClient().workflow.getHandle(`claude-session-${ensemble}-held-b`);
+        const handleA = getClient().workflow.getHandle(`agent-session-${ensemble}-held-a`);
+        const handleB = getClient().workflow.getHandle(`agent-session-${ensemble}-held-b`);
         expect(await handleA.query(outboxLockedQuery)).to.be.true;
         expect(await handleB.query(outboxLockedQuery)).to.be.true;
 

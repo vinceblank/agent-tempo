@@ -10,7 +10,7 @@ import {
 } from '../utils/visibility-deadline';
 
 /** Shared query for listing running session workflows. */
-const SESSION_LIST_QUERY = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
+const SESSION_LIST_QUERY = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"`;
 
 /**
  * Resolve a session by player name.
@@ -74,7 +74,7 @@ export interface EnsembleSessionInfo {
   agentType: string;
   playerType?: string;
   /**
-   * Attachment phase read from the `ClaudeTempoAttachmentState` search attribute.
+   * Attachment phase read from the `AgentTempoAttachmentState` search attribute.
    * May be undefined for older workflows that predate the attachment lifecycle,
    * or transiently while search attributes propagate.
    */
@@ -129,7 +129,7 @@ export async function scanEnsembleSessions(
 
         const part: string = await queryHandleWithTimeout<string>(handle, 'getPart');
 
-        // Attachment phase lives in the `ClaudeTempoAttachmentState` search
+        // Attachment phase lives in the `AgentTempoAttachmentState` search
         // attribute (written by the workflow on every phase transition).
         const phase = getAttachmentPhase(workflow);
 

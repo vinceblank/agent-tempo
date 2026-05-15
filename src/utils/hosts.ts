@@ -6,7 +6,7 @@
  *      — populates `hasWorkflowWorker` per identity.
  *   2. Same queue, `TASK_QUEUE_TYPE_ACTIVITY` — populates `hasActivityWorker`.
  *   3. `DescribeTaskQueue` on each per-host queue
- *      (`claude-tempo-<hostname>`), `TASK_QUEUE_TYPE_ACTIVITY` — populates
+ *      (`agent-tempo-<hostname>`), `TASK_QUEUE_TYPE_ACTIVITY` — populates
  *      `hasHostQueueWorker`. Runs in parallel across discovered hostnames.
  *
  * Plus one `hostProfiles` query against the global maestro when it's
@@ -14,7 +14,7 @@
  * `profileStaleness: 'missing'`.
  *
  * Identity is parsed with dual-format tolerance (AC6d / M6):
- *   - `claude-tempo:<hostname>:<pid>:<version>` (set by #274 workers)
+ *   - `agent-tempo:<hostname>:<pid>:<version>` (set by v1.0+ workers)
  *   - `<pid>@<hostname>` (legacy SDK default, pre-#274 daemons)
  *   - Anything else is skipped silently as opaque third-party.
  *
@@ -85,14 +85,20 @@ export interface ParsedIdentity {
  * system pollers or an unrelated worker sharing the namespace). Callers
  * skip those silently.
  *
- * The post-#274 format (`claude-tempo:<hostname>:<pid>:<version>`) is
+ * The v1.0 format (`agent-tempo:<hostname>:<pid>:<version>`) is
  * guaranteed to have exactly 4 colon-delimited segments because every
  * component has its own validation: hostname passes `PLAYER_NAME_REGEX`
  * (no colons possible), pid is numeric, and version is a semver-ish
  * string (no colons).
+ *
+ * v0.x daemons used the pre-rebrand `claude-tempo:` prefix. Under the
+ * v1.0 hard break those daemons no longer interoperate with v1.x ones —
+ * but the parse still accepts the old prefix so cross-host listings
+ * during the upgrade window degrade to "stale identity" rather than
+ * "opaque skip", giving operators a chance to spot stragglers.
  */
 export function parseIdentity(identity: string): ParsedIdentity | null {
-  if (identity.startsWith('claude-tempo:')) {
+  if (identity.startsWith('agent-tempo:') || identity.startsWith('claude-tempo:')) {
     const parts = identity.split(':');
     if (parts.length === 4) {
       const [, hostname, pidStr, version] = parts;
@@ -228,7 +234,7 @@ export interface ListHostsOpts {
   force?: boolean;
   /** Default `'default'`. */
   namespace?: string;
-  /** Default `'claude-tempo'`. */
+  /** Default `'agent-tempo'`. */
   taskQueue?: string;
   /** Test-only dep-injection seam. Production callers omit. */
   deps?: ListHostsDeps;
@@ -242,7 +248,7 @@ export async function listHosts(client: Client, opts: ListHostsOpts = {}): Promi
   }
 
   const namespace = opts.namespace ?? 'default';
-  const taskQueue = opts.taskQueue ?? 'claude-tempo';
+  const taskQueue = opts.taskQueue ?? 'agent-tempo';
   const describe = deps.describePollers ?? describeQueuePollers;
   const fetchProfiles = deps.fetchProfiles ?? fetchHostProfiles;
 

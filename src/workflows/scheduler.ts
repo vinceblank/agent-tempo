@@ -44,7 +44,7 @@ export interface SchedulerInput {
   gracePeriodMs?: number;
 }
 
-export async function claudeSchedulerWorkflow(input: SchedulerInput): Promise<void> {
+export async function agentSchedulerWorkflow(input: SchedulerInput): Promise<void> {
   let entries: ScheduleEntry[] = input.entries ?? [];
   let dirty = false; // flag to wake the loop when signals arrive
   let schedulerPaused = input.paused ?? false;
@@ -175,7 +175,7 @@ export async function claudeSchedulerWorkflow(input: SchedulerInput): Promise<vo
     const info = workflowInfo();
     if (info.continueAsNewSuggested) {
       await condition(allHandlersFinished);
-      await continueAsNew<typeof claudeSchedulerWorkflow>({
+      await continueAsNew<typeof agentSchedulerWorkflow>({
         ensemble: input.ensemble,
         entries,
         paused: schedulerPaused,

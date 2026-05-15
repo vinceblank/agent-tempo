@@ -23,7 +23,7 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 /**
  * Whether debug-level logs should fire. Two opt-ins (either is sufficient):
  *   - `?debug=1` (or any value) on the URL
- *   - `localStorage.claudeTempoDebug === 'true'`
+ *   - `localStorage.agentTempoDebug === 'true'`
  *
  * The check is done per call rather than cached so toggling localStorage in a
  * running session takes effect immediately. The cost is negligible — the
@@ -37,7 +37,7 @@ function debugEnabled(): boolean {
     /* malformed URL — fall through to localStorage check */
   }
   try {
-    return window.localStorage?.getItem('claudeTempoDebug') === 'true';
+    return window.localStorage?.getItem('agentTempoDebug') === 'true';
   } catch {
     return false;
   }

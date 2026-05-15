@@ -51,7 +51,7 @@ export function registerRestoreTool(
       // #306 follow-up: cross-host restore. The default (omitted) preserves
       // the original behavior — scan the local daemon's host. When supplied,
       // we route the orphan-visibility query against the named host's
-      // `ClaudeTempoAttachedHost`/`ClaudeTempoHostname` search attributes,
+      // `AgentTempoAttachedHost`/`AgentTempoHostname` search attributes,
       // so an operator on host A can revive sessions parked on host B.
       // Surfaced from my own #306 review (regression risk #2): "MCP
       // restore hard-codes hostname: osHostname() — won't see orphans on

@@ -34,7 +34,7 @@ import {
   stopDaemon,
   getDaemonStatus,
   getOtherProfilePid,
-  scanClaudeTempoDaemons,
+  scanAgentTempoDaemons,
   selectOrphans,
   DAEMON_PID_PATH,
   DAEMON_LOG_PATH,
@@ -138,7 +138,7 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
       const preflight = evaluateStartPreflight(
         // Skip the actual OS scan when we're already-running, force is set,
         // or we're suppressing for cross-profile safety.
-        status.running || opts.force || skipOrphanScan ? [] : scanClaudeTempoDaemons(),
+        status.running || opts.force || skipOrphanScan ? [] : scanAgentTempoDaemons(),
         status,
         Boolean(opts.force) || skipOrphanScan,
         otherPid,
@@ -193,7 +193,7 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
 
     case 'status': {
       const status = getDaemonStatus();
-      const scanned = scanClaudeTempoDaemons();
+      const scanned = scanAgentTempoDaemons();
 
       if (status.running) {
         out.success(`Daemon running (pid ${status.pid})`);

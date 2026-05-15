@@ -213,7 +213,7 @@ describe('registerRecruitTool host pre-flight (M15)', function () {
   // same file that might grow into workflow-touching cases.
   const cfg = {
     ensemble: getTestEnsemble(),
-    taskQueue: 'claude-tempo',
+    taskQueue: 'agent-tempo',
     temporalNamespace: 'default',
     temporalAddress: 'localhost:7233',
     defaultAgent: 'claude' as const,

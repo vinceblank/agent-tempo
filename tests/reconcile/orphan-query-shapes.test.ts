@@ -15,14 +15,14 @@ import { buildOrphanQuery } from '../../src/reconcile/orphans';
 import type { BuildOrphanQueryOpts } from '../../src/reconcile/orphans';
 
 describe('buildOrphanQuery — single opts-object shape (post tier-1)', () => {
-  it('omitted ensemble produces a query with no ClaudeTempoEnsemble clause', () => {
+  it('omitted ensemble produces a query with no AgentTempoEnsemble clause', () => {
     const q = buildOrphanQuery({ hostname: 'host-1' });
-    expect(q).not.toContain('ClaudeTempoEnsemble');
+    expect(q).not.toContain('AgentTempoEnsemble');
   });
 
-  it('explicit ensemble adds the ClaudeTempoEnsemble clause', () => {
+  it('explicit ensemble adds the AgentTempoEnsemble clause', () => {
     const q = buildOrphanQuery({ hostname: 'host-1', ensemble: 'band-a' });
-    expect(q).toContain('ClaudeTempoEnsemble = "band-a"');
+    expect(q).toContain('AgentTempoEnsemble = "band-a"');
   });
 
   it('TS types — only the opts-object overload is callable', () => {

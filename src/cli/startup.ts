@@ -221,15 +221,15 @@ const TTL_60S = 60 * 1000;
 // ─────────────────────────────────────────────────────────────────────────
 
 const SEARCH_ATTRIBUTES: ReadonlyArray<{ name: string; type: 'Keyword' | 'Bool' }> = [
-  { name: 'ClaudeTempoHostname', type: 'Keyword' },
-  { name: 'ClaudeTempoGitRoot', type: 'Keyword' },
-  { name: 'ClaudeTempoEnsemble', type: 'Keyword' },
-  { name: 'ClaudeTempoPlayerId', type: 'Keyword' },
-  { name: 'ClaudeTempoPlayerType', type: 'Keyword' },
-  { name: 'ClaudeTempoIsConductor', type: 'Bool' },
-  { name: 'ClaudeTempoAttachedHost', type: 'Keyword' },
-  { name: 'ClaudeTempoAttachmentState', type: 'Keyword' },
-  { name: 'ClaudeTempoAttachmentId', type: 'Keyword' },
+  { name: 'AgentTempoHostname', type: 'Keyword' },
+  { name: 'AgentTempoGitRoot', type: 'Keyword' },
+  { name: 'AgentTempoEnsemble', type: 'Keyword' },
+  { name: 'AgentTempoPlayerId', type: 'Keyword' },
+  { name: 'AgentTempoPlayerType', type: 'Keyword' },
+  { name: 'AgentTempoIsConductor', type: 'Bool' },
+  { name: 'AgentTempoAttachedHost', type: 'Keyword' },
+  { name: 'AgentTempoAttachmentState', type: 'Keyword' },
+  { name: 'AgentTempoAttachmentId', type: 'Keyword' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────

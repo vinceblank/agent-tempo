@@ -26,7 +26,7 @@ export async function saveLineup(
   const outputPath = filePath || join(ensemblesDir(), `${name || ensemble}.yaml`);
 
   // Query all running session workflows
-  const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+  const query = 'WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"';
   const players: EnsembleLineup['players'] = [];
   let conductor: EnsembleLineup['conductor'] | undefined;
 

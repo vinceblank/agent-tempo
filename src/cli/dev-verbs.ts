@@ -159,7 +159,7 @@ async function releaseCommand(args: DevVerbArgs): Promise<void> {
 
     // Ensemble-wide — same algorithm as `release()` in commands.ts.
     const sanitized = args.ensemble.replace(/["\\\n\r]/g, '');
-    const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${sanitized}"`;
+    const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${sanitized}"`;
     let released = 0;
     for await (const wf of client.workflow.list({ query })) {
       try {
@@ -169,7 +169,7 @@ async function releaseCommand(args: DevVerbArgs): Promise<void> {
           await handle.signal(releaseHeldSignal);
           released++;
           const sa = wf.searchAttributes || {};
-          const playerId = Array.isArray(sa.ClaudeTempoPlayerId) ? String(sa.ClaudeTempoPlayerId[0]) : wf.workflowId;
+          const playerId = Array.isArray(sa.AgentTempoPlayerId) ? String(sa.AgentTempoPlayerId[0]) : wf.workflowId;
           out.log(`  ${out.dim('released')} ${playerId}`);
         }
       } catch {

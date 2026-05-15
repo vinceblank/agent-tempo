@@ -16,7 +16,7 @@
  * Scenario:
  *   1. Connect a TempoClient to the shared Temporal dev server.
  *   2. Recruit a session with `host: 'host-a'` — expect it to land on
- *      daemon-a's task queue and `ClaudeTempoAttachedHost=host-a` after boot.
+ *      daemon-a's task queue and `AgentTempoAttachedHost=host-a` after boot.
  *   3. Call `restart({ host: 'host-b', force: true,
  *      confirmStealFromHost: 'host-a' })`.
  *   4. Poll `attachmentInfo` until `currentAttachment.hostname === 'host-b'`

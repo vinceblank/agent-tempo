@@ -3,7 +3,7 @@
  * construction-time `taskQueue` through to the underlying `listHosts`
  * helper in `src/utils/hosts.ts`.
  *
- * The bug: `listHosts` defaults `taskQueue ?? 'claude-tempo'`, so when
+ * The bug: `listHosts` defaults `taskQueue ?? 'agent-tempo'`, so when
  * the dev daemon polls `'claude-tempo-dev'`, the TempoClient API silently
  * returned `[]` because it queried the wrong queue's pollers in the
  * `claude-tempo-dev` namespace. Both `namespace` AND `taskQueue` must
@@ -85,7 +85,7 @@ describe('TempoClient.listHosts — taskQueue plumbing (#437)', () => {
     }
   });
 
-  it('defaults to "claude-tempo" when no taskQueue is passed (prod path)', async () => {
+  it('defaults to "agent-tempo" when no taskQueue is passed (prod path)', async () => {
     const calls: DescribeCall[] = [];
     const fake = makeFakeClient('default', calls);
     const tempo = createTempoClient(fake); // no taskQueue → utils/hosts default
@@ -94,7 +94,7 @@ describe('TempoClient.listHosts — taskQueue plumbing (#437)', () => {
 
     expect(calls.length).toBeGreaterThanOrEqual(2);
     for (const c of calls) {
-      expect(c.taskQueue).toBe('claude-tempo');
+      expect(c.taskQueue).toBe('agent-tempo');
     }
   });
 

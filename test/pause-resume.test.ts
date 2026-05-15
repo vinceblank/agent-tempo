@@ -196,8 +196,8 @@ describe('pause and resume', function () {
       await withWorkerAndMaestroActivities({}, async () => {
         const ensemble = `maestro-pause-${Date.now()}`;
 
-        const maestroHandle = await getClient().workflow.start('claudeMaestroWorkflow', {
-          workflowId: `claude-maestro-${ensemble}`,
+        const maestroHandle = await getClient().workflow.start('agentMaestroWorkflow', {
+          workflowId: `agent-maestro-${ensemble}`,
           taskQueue: TASK_QUEUE,
           args: [{ ensemble, pollIntervalMs: 200 }],
         });
@@ -234,8 +234,8 @@ describe('pause and resume', function () {
         });
 
         // Start scheduler with a schedule that fires soon
-        const schedulerHandle = await getClient().workflow.start('claudeSchedulerWorkflow', {
-          workflowId: `claude-scheduler-${ensemble}`,
+        const schedulerHandle = await getClient().workflow.start('agentSchedulerWorkflow', {
+          workflowId: `agent-scheduler-${ensemble}`,
           taskQueue: TASK_QUEUE,
           args: [{
             ensemble,

@@ -203,7 +203,7 @@ export class MockAttachment extends SdkAttachment {
     const playerId = isConductor
       ? 'conductor'
       : playerName || `mock-${Date.now()}`;
-    const expectedWorkflowId = `claude-session-${config.ensemble}-${playerId}`;
+    const expectedWorkflowId = `agent-session-${config.ensemble}-${playerId}`;
 
     log(`Starting mock adapter (mode=${this.mode}, ensemble=${config.ensemble}, player=${playerId})`);
 
