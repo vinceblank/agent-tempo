@@ -1,5 +1,10 @@
 # Release Process
 
+> **Superseded by [release-process-v1.0.md](./release-process-v1.0.md) as of v1.0** —
+> the v1.0 doc covers the one-time `claude-tempo` → `agent-tempo` cutover sequence
+> plus the standard release flow that applies to v1.0.1+. This page is retained
+> for inbound-link continuity and historical reference.
+
 ## Correct order — never deviate
 
 1. **Merge the feature PR into `main`** (squash merge). Never tag before the PR is merged.

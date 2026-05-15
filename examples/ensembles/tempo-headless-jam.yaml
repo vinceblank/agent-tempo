@@ -37,7 +37,7 @@ conductor:
   permissionMode: acceptEdits
   instructions: >
     You are driving a headless ensemble for scheduled or CI work. Your
-    players have full Claude Code tool access AND the claude-tempo MCP
+    players have full Claude Code tool access AND the agent-tempo MCP
     surface. Decompose the operator's task, delegate to the explorer +
     prototyper, synthesize results. Report cleanly via `report` —
     operators read transcripts via the dashboard, not by joining a

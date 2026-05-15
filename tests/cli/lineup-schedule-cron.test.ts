@@ -10,7 +10,7 @@
  *
  * Display-side coverage (`formatScheduleRecurrence`) lives in the same
  * suite because the bug surfaced together: even when the cron entry was
- * shaped correctly, `claude-tempo status` rendered it as "one-shot"
+ * shaped correctly, `agent-tempo status` rendered it as "one-shot"
  * because the inline formatter only checked `sched.interval`.
  */
 import { describe, it, expect } from 'vitest';

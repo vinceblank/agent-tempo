@@ -68,7 +68,7 @@ async function cueCommand(args: DevVerbArgs): Promise<void> {
   const message = args.positional.slice(2).join(' ');
 
   if (!playerId || !message) {
-    out.error('Usage: claude-tempo --dev cue <player> <message>');
+    out.error('Usage: agent-tempo --dev cue <player> <message>');
     process.exit(1);
   }
 
@@ -188,7 +188,7 @@ async function releaseCommand(args: DevVerbArgs): Promise<void> {
 
 async function setEnsembleDescriptionCommand(args: DevVerbArgs): Promise<void> {
   if (args.positional.length < 2) {
-    out.error('Usage: claude-tempo --dev set-ensemble-description "<description>" (use "" to clear)');
+    out.error('Usage: agent-tempo --dev set-ensemble-description "<description>" (use "" to clear)');
     process.exit(1);
   }
   const description = args.positional.slice(1).join(' ');

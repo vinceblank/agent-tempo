@@ -1,7 +1,7 @@
 import path from 'path';
 
 /**
- * Match the common claude-tempo agent-type prefixes so the suffix can be
+ * Match the common agent-tempo agent-type prefixes so the suffix can be
  * surfaced as a human-readable role:
  *   - `tempo-*`     (shipped types: tempo-conductor, tempo-soloist, …)
  *   - `my-tempo-*`  (per-user overrides under `~/.claude/agents/`)

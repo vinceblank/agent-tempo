@@ -126,7 +126,7 @@ describe('TempoClient.recruit (#306)', () => {
   // real `targetHostname` so the session workflow's `case 'recruit'` dispatch
   // routes spawnProcess to an actual host worker. Without this, the fallback
   // `entry.targetHostname || input.metadata.hostname` path would route to
-  // `claude-tempo-dashboard` — the TUI maestro session's placeholder hostname
+  // `agent-tempo-dashboard` — the TUI maestro session's placeholder hostname
   // — and spawnProcess would hang forever on an unattended task queue.
   it('defaults targetHostname to the current OS hostname when host is omitted', async () => {
     const { hostname: osHostname } = await import('os');

@@ -74,14 +74,14 @@ describe('CLI dev-verbs dispatch smoke (#432)', function () {
       expect(
         result.stderr,
         'cue handler should print its own usage error',
-      ).to.match(/Usage:\s*claude-tempo\s+--dev\s+cue\s+<player>\s+<message>/);
+      ).to.match(/Usage:\s*agent-tempo\s+--dev\s+cue\s+<player>\s+<message>/);
       assertReachedDevVerb(result.stderr, 'cue');
     });
 
     it('reaches the verb when only player given (still missing message)', function () {
       const result = runDev('cue', 'alice');
       expect(result.status).to.equal(1);
-      expect(result.stderr).to.match(/Usage:\s*claude-tempo\s+--dev\s+cue/);
+      expect(result.stderr).to.match(/Usage:\s*agent-tempo\s+--dev\s+cue/);
       assertReachedDevVerb(result.stderr, 'cue');
     });
   });
@@ -124,7 +124,7 @@ describe('CLI dev-verbs dispatch smoke (#432)', function () {
     it('reaches the verb (its own usage error on missing description)', function () {
       const result = runDev('set-ensemble-description');
       expect(result.status).to.equal(1);
-      expect(result.stderr).to.match(/Usage:\s*claude-tempo\s+--dev\s+set-ensemble-description/);
+      expect(result.stderr).to.match(/Usage:\s*agent-tempo\s+--dev\s+set-ensemble-description/);
       assertReachedDevVerb(result.stderr, 'set-ensemble-description');
     });
 
@@ -136,7 +136,7 @@ describe('CLI dev-verbs dispatch smoke (#432)', function () {
       expect(
         result.stderr,
         'empty string is a valid "clear the description" input — usage must not fire',
-      ).to.not.match(/Usage:\s*claude-tempo\s+--dev\s+set-ensemble-description/);
+      ).to.not.match(/Usage:\s*agent-tempo\s+--dev\s+set-ensemble-description/);
       assertReachedDevVerb(result.stderr, 'set-ensemble-description');
     });
   });

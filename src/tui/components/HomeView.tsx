@@ -112,7 +112,7 @@ function ensemblesEqual(a: readonly EnsembleSummary[], b: readonly EnsembleSumma
   return true;
 }
 
-/** Matches the `claude-tempo up` default: ensemble named after the repo root. */
+/** Matches the `agent-tempo up` default: ensemble named after the repo root. */
 function defaultCwdMatcher(ensemble: EnsembleSummary, gitRoot: string): boolean {
   const basename = gitRoot.split(/[\\/]/).filter(Boolean).pop() ?? '';
   return basename.length > 0 && ensemble.name === basename;
@@ -238,7 +238,7 @@ function renderBody(props: RenderBodyProps): React.ReactElement {
   const header = React.createElement(
     Text,
     { bold: true, color: THEME.accent, key: 'home-header' },
-    ' claude-tempo',
+    ' agent-tempo',
   );
 
   const statusLine = React.createElement(

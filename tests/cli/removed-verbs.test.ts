@@ -52,9 +52,9 @@ describe('removedVerbMessage', () => {
       const msg = removedVerbMessage(verb);
       expect(msg).toContain(`"${verb}"`);
       expect(msg).toContain('Use the TUI');
-      expect(msg).toContain('claude-tempo → ');
+      expect(msg).toContain('agent-tempo → ');
       expect(msg).toContain(REMOVED_VERBS[verb]);
-      expect(msg).toContain('github.com/vinceblank/claude-tempo/issues/285');
+      expect(msg).toContain('github.com/vinceblank/agent-tempo/issues/285');
     }
   });
 

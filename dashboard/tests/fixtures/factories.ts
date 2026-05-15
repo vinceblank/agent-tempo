@@ -10,7 +10,7 @@ import type {
   EnsembleChatMessage,
   EnsembleStateV1,
   PlayerSummaryV1,
-} from 'claude-tempo/http/event-types';
+} from 'agent-tempo/http/event-types';
 export { makeSnapshot } from './mock-client';
 export type { EnsembleStateV1 };
 

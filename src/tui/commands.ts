@@ -7,7 +7,7 @@
  * `classifyPaletteInput`, `filterPaletteCommands`, `filterPlayerNames`,
  * `PLAYER_PARAM_COMMANDS`, `SUBCOMMAND_MAP`) live in `src/palette/` and
  * are re-exported below so the TUI's surface stays unchanged. The
- * dashboard imports the same helpers via `claude-tempo/palette`.
+ * dashboard imports the same helpers via `agent-tempo/palette`.
  */
 import { hostname as osHostname } from 'os';
 import type { TempoClient } from '../client';

@@ -26,8 +26,8 @@
  * branches on `err.status === 409 | 400` to format targeted copy.
  */
 import { useMutation, useQueryClient, type UseMutationResult } from '@tanstack/react-query';
-import type { EnsembleStateV1 } from 'claude-tempo/http/event-types';
-import type { EnsembleChatMessage } from 'claude-tempo/types';
+import type { EnsembleStateV1 } from 'agent-tempo/http/event-types';
+import type { EnsembleChatMessage } from 'agent-tempo/types';
 import type {
   CreateEnsembleOpts,
   CreateEnsembleResult,

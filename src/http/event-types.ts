@@ -51,7 +51,7 @@ export interface HealthV1 {
   subscriberCount: number;
   /**
    * #336 memory diagnostics — exposes `process.memoryUsage()` at request
-   * time so external monitors and `claude-tempo daemon stats` can spot
+   * time so external monitors and `agent-tempo daemon stats` can spot
    * leaks without attaching a debugger. Bytes; see Node docs for field
    * semantics. Optional so legacy clients ignoring the field don't break.
    */

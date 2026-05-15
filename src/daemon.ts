@@ -153,7 +153,7 @@ export interface EnsureDevNamespaceResult {
  *   - `PERMISSION_DENIED`: e.g. managed Temporal Cloud where `RegisterNamespace`
  *     isn't granted. Log + return; the subsequent worker bootstrap fails
  *     loudly with `Namespace not found` and the operator can run
- *     `temporal operator namespace create -n claude-tempo-dev` themselves.
+ *     `temporal operator namespace create -n agent-tempo-dev` themselves.
  *   - any other error: same fall-through; daemon stays alive without
  *     mutating state.
  *
@@ -177,7 +177,7 @@ export async function ensureDevNamespace(
       // by Temporal's own examples. Cast keeps the call site readable
       // without dragging `long.js` into our direct dep graph.
       workflowExecutionRetentionPeriod: { seconds: 86_400 as unknown as import('long') },
-      description: 'claude-tempo dev profile — auto-created. Safe to drop.',
+      description: 'agent-tempo dev profile — auto-created. Safe to drop.',
     });
     logFn(`[dev-mode] registered Temporal namespace "${namespace}"`);
     return { ok: true, status: 'created' };
@@ -441,7 +441,7 @@ async function realSendHostProfileSignal(client: Client, profile: HostProfile): 
  * execution. On total failure, logs a warning and returns — the daemon
  * stays alive without its profile advertised.
  *
- * Exported for reuse by the Phase 5 `claude-tempo refresh-host-profile`
+ * Exported for reuse by the Phase 5 `agent-tempo refresh-host-profile`
  * CLI subcommand, which re-signals without needing the full
  * `runDaemonBoot` sequence (the global maestro is already up).
  */
@@ -528,7 +528,7 @@ export interface DaemonBootDeps {
  *
  * Hard-failure behavior (AC5b): if `ensureGlobalMaestro` rejects, the
  * daemon stays alive WITHOUT advertising its profile. Next opportunity
- * is the next daemon restart OR a manual `claude-tempo refresh-host-profile`
+ * is the next daemon restart OR a manual `agent-tempo refresh-host-profile`
  * invocation (Phase 5).
  *
  * Tests in `test/daemon-boot.test.ts` exercise:
@@ -602,7 +602,7 @@ export async function runDaemonBoot(client: Client, deps: DaemonBootDeps): Promi
  *    window. `AttachmentConflict` is caught silently — another process
  *    may have restored concurrently.
  *  - `prompt`: log the orphan list and leave the restore to the CLI
- *    `claude-tempo restore` command. No automatic action.
+ *    `agent-tempo restore` command. No automatic action.
  *  - `never`: silent no-op.
  *
  * All three branches exit in bounded time — never blocks worker startup.
@@ -657,7 +657,7 @@ export async function reconcileOnBoot(
     `(scanned ${total})`,
   );
   if (daemonConfig.restorePolicy === 'prompt' && summary.skipped > 0) {
-    log('reconcile: [prompt] run `claude-tempo restore` to restore interactively');
+    log('reconcile: [prompt] run `agent-tempo restore` to restore interactively');
   }
 }
 

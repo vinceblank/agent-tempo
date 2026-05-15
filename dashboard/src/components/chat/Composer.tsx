@@ -33,7 +33,7 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
 } from 'react';
-import { modeToPrefix } from 'claude-tempo/palette';
+import { modeToPrefix } from 'agent-tempo/palette';
 import { Btn } from '../Btn';
 import { AutofillPopup } from './AutofillPopup';
 import { useAutofill } from '../../lib/use-autofill';

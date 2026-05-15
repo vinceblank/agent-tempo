@@ -1,4 +1,4 @@
-# daemon-b — claude-tempo daemon running with hostname=host-b.
+# daemon-b — agent-tempo daemon running with hostname=host-b.
 #
 # Identical to daemon-a Dockerfile; kept as a separate file so compose's
 # two services can have distinct build contexts if they ever need to

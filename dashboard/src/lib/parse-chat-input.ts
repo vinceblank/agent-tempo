@@ -24,7 +24,7 @@
  * Pure function — no side effects, no React, no imports beyond the
  * shared parseCommand helper.
  */
-import { parseCommand } from 'claude-tempo/palette';
+import { parseCommand } from 'agent-tempo/palette';
 
 export type ParsedChatInput =
   | { kind: 'cue'; target: string; text: string }

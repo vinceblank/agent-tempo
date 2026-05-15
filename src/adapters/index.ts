@@ -91,7 +91,7 @@ if (isDevMode()) {
   } catch (err) {
     // ADR 0014 §7 gate 1 strips `dist/adapters/mock/` from the published
     // tarball. If a user then sets `AGENT_TEMPO_DEV_MODE=1` against an
-    // npm-installed claude-tempo, the require above fails — and that's
+    // npm-installed agent-tempo, the require above fails — and that's
     // exactly the safety property we want. Log + continue so the rest of
     // the daemon boots normally; gate 3 (recruit-time rejection) catches
     // any later `agent: 'mock'` request with a clearer message.

@@ -51,7 +51,7 @@ const sampleHost: HostInfo = {
   instances: [{
     pid: 1,
     version: '0.27.0',
-    identity: 'claude-tempo:eng-host:1:0.27.0',
+    identity: 'agent-tempo:eng-host:1:0.27.0',
     lastAccessTime: '2026-04-26T12:00:00.000Z',
     hasWorkflowWorker: true,
     hasActivityWorker: true,

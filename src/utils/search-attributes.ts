@@ -73,7 +73,7 @@ export function getSearchAttrBool(
   return undefined;
 }
 
-// ── Typed wrappers for claude-tempo's custom search attributes ──
+// ── Typed wrappers for agent-tempo's custom search attributes ──
 //
 // Keeping one wrapper per attribute gives callers a readable, typed API
 // without re-stating the attribute name at every site. Adding a fourth

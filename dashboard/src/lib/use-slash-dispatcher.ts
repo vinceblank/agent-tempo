@@ -27,7 +27,7 @@
  */
 import { useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { EnsembleStateV1 } from 'claude-tempo/http/event-types';
+import type { EnsembleStateV1 } from 'agent-tempo/http/event-types';
 import { ensembleQueryKey } from './queries';
 import {
   usePauseMutation,

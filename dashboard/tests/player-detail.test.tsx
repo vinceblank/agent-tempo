@@ -28,8 +28,8 @@ import { createDashboardMemoryRouter } from '../src/router';
 import { MockDashboardClient } from './fixtures/mock-client';
 import { makePlayer as basePlayer, makeChatMessage, makeSnapshot } from './fixtures/factories';
 import { __setDashboardClientForTests } from '../src/lib/client-singleton';
-import type { PlayerSummaryV1 } from 'claude-tempo/http/event-types';
-import type { EnsembleChatMessage } from 'claude-tempo/types';
+import type { PlayerSummaryV1 } from 'agent-tempo/http/event-types';
+import type { EnsembleChatMessage } from 'agent-tempo/types';
 
 function newQc() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -339,7 +339,7 @@ describe('PlayerDetail — KV sections (audit Q2 lock-in)', () => {
         ensemble: 'demo',
         players: [makePlayer({
           playerId: 'tempo-eng',
-          workDir: '/repos/claude-tempo',
+          workDir: '/repos/agent-tempo',
           gitBranch: 'feat/x',
           part: 'Refactor lease math',
         })],
@@ -348,7 +348,7 @@ describe('PlayerDetail — KV sections (audit Q2 lock-in)', () => {
     renderAtPath(mock, '/ensemble/demo/player/tempo-eng');
 
     const section = await screen.findByTestId('player-detail-tempo-eng-section-work');
-    expect(within(section).getByTestId('player-detail-tempo-eng-kv-dir').textContent).toContain('/repos/claude-tempo');
+    expect(within(section).getByTestId('player-detail-tempo-eng-kv-dir').textContent).toContain('/repos/agent-tempo');
     expect(within(section).getByTestId('player-detail-tempo-eng-kv-branch').textContent).toContain('feat/x');
     expect(within(section).getByTestId('player-detail-tempo-eng-kv-part').textContent).toContain('Refactor lease math');
     expect(within(section).getByTestId('player-detail-tempo-eng-kv-worktree').textContent).toContain('—');

@@ -8,7 +8,7 @@ description: |
   conductor's report stream — all without a real LLM call.
 
   Pair this scenario with another player named "bob" (any mode — `echo`
-  works fine). Drive with: `claude-tempo --dev cue alice "discuss caching"`.
+  works fine). Drive with: `agent-tempo --dev cue alice "discuss caching"`.
 
 defaultDelayMs: 600
 

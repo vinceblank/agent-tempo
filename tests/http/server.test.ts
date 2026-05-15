@@ -30,7 +30,7 @@ const samplePlayer: MaestroPlayerInfo = {
 const sampleHost: HostInfo = {
   hostname: 'eng-host',
   instances: [{
-    pid: 1, version: '0.27.0', identity: 'claude-tempo:eng-host:1:0.27.0',
+    pid: 1, version: '0.27.0', identity: 'agent-tempo:eng-host:1:0.27.0',
     lastAccessTime: '2026-04-26T12:00:00.000Z',
     hasWorkflowWorker: true, hasActivityWorker: true, hasHostQueueWorker: true,
   }],
@@ -108,7 +108,7 @@ async function boot(opts: {
   const handle = await startHttpServer({
     client: opts.client ?? makeFakeClient(),
     namespace: 'default',
-    taskQueue: 'claude-tempo-test',
+    taskQueue: 'agent-tempo-test',
     version: '0.27.0-test',
     bindAddr: opts.bindAddr ?? '127.0.0.1',
     port: 0, // ephemeral
@@ -147,8 +147,8 @@ describe('GET /v1/health', () => {
     expect(body.ok).toBe(true);
     expect(body.namespace).toBe('default');
     // #444 — taskQueue surfaced so the dashboard can reflect the live runtime
-    // queue (e.g. `claude-tempo` vs `claude-tempo-dev`) instead of a default.
-    expect(body.taskQueue).toBe('claude-tempo-test');
+    // queue (e.g. `agent-tempo` vs `agent-tempo-dev`) instead of a default.
+    expect(body.taskQueue).toBe('agent-tempo-test');
     expect(body.version).toBe('0.27.0-test');
     expect(body.subscriberCount).toBe(0);
     expect(body.ensembleCount).toBe(1);

@@ -21,7 +21,7 @@ function writeLineup(name: string, body: string): string {
 
 describe('loadLineup — conductor required', () => {
   beforeAll(() => {
-    tmpDir = join(tmpdir(), `claude-tempo-loader-${Date.now()}-${process.pid}`);
+    tmpDir = join(tmpdir(), `agent-tempo-loader-${Date.now()}-${process.pid}`);
     mkdirSync(tmpDir, { recursive: true });
   });
 

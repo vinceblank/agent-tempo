@@ -16,7 +16,7 @@
 import * as out from './output';
 
 /**
- * Short hints completing "Use the TUI: claude-tempo → …". Keys are the
+ * Short hints completing "Use the TUI: agent-tempo → …". Keys are the
  * removed CLI verbs; values name the TUI equivalent.
  */
 export const REMOVED_VERBS: Record<string, string> = {
@@ -34,7 +34,7 @@ export const REMOVED_VERBS: Record<string, string> = {
 /** Format the error message for a single removed verb. */
 export function removedVerbMessage(verb: string): string {
   const hint = REMOVED_VERBS[verb];
-  return `"${verb}" is no longer a CLI verb. Use the TUI: claude-tempo → ${hint}. See https://github.com/vinceblank/claude-tempo/issues/285 for details.`;
+  return `"${verb}" is no longer a CLI verb. Use the TUI: agent-tempo → ${hint}. See https://github.com/vinceblank/agent-tempo/issues/285 for details.`;
 }
 
 /** Print the removed-verb error to stderr via the shared output helpers. */

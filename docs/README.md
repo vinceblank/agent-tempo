@@ -2,8 +2,6 @@
 
 > **Durable coordination for multi-agent work.**
 
-> ⚠️ **v1.0 rebrand in progress.** This documentation reflects the upcoming `agent-tempo` v1.0 release. The currently published CLI is still `claude-tempo` — substitute the old name in command examples until v1.0 ships to npm. See [CHANGELOG.md](../CHANGELOG.md#unreleased) for status.
-
 Reference documentation for agent-tempo. See the main [README](../README.md) for installation and quick start.
 
 ## Contents

@@ -9,7 +9,7 @@
  * (see `docs/SSE-PROTOCOL.md`).
  *
  * Wire types (`EnsembleSummary`, `EnsembleStateV1`, `TempoEvent`) are
- * imported from the parent repo via the `claude-tempo/*` path alias —
+ * imported from the parent repo via the `agent-tempo/*` path alias —
  * **types only**, no runtime deps that could pull in Temporal/Node code.
  * If a wire type changes shape upstream, this module's `tsc` build
  * fails; that's the drift guard the architect asked for in risk #14
@@ -17,7 +17,7 @@
  *
  * Architectural deviation from the brief:
  * The conductor's brief said "instantiate `createTempoClientCore` from
- * `claude-tempo/client/core`". That factory takes a Temporal `Client`
+ * `agent-tempo/client/core`". That factory takes a Temporal `Client`
  * — not browser-friendly. The architect's design doc §6.1 used the
  * same name as illustrative pseudocode, but the practical answer is
  * a separate browser-mode HTTP client. Documented here so future
@@ -28,9 +28,9 @@ import type {
   HealthV1,
   TempoEvent,
   SubscribeOptions,
-} from 'claude-tempo/http/event-types';
-import type { EnsembleSummary } from 'claude-tempo/client/interface';
-import type { HostInfo } from 'claude-tempo/types';
+} from 'agent-tempo/http/event-types';
+import type { EnsembleSummary } from 'agent-tempo/client/interface';
+import type { HostInfo } from 'agent-tempo/types';
 import { logEvent } from './log';
 import { getBearerToken } from './auth';
 

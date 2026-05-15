@@ -9,7 +9,7 @@ description: |
   carol's rosters.
 
   Pair this with a `tempo-mock-jam`-shaped lineup (3 mock players named
-  alice / bob / carol). Drive with: `claude-tempo --dev cue alice "ship
+  alice / bob / carol). Drive with: `agent-tempo --dev cue alice "ship
   feature caching"`.
 
 defaultDelayMs: 500

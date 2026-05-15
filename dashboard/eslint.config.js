@@ -1,4 +1,4 @@
-// Flat ESLint config for the claude-tempo dashboard.
+// Flat ESLint config for the agent-tempo dashboard.
 //
 // **Build-blocking custom rules** (architect's testability addendum):
 //

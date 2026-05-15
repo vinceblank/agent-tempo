@@ -653,7 +653,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           // kills by ensemble (issue #180). See src/constants.ts for details.
           const spawnArgs = [
             '--dangerously-skip-permissions',
-            '--dangerously-load-development-channels', 'server:claude-tempo',
+            '--dangerously-load-development-channels', 'server:agent-tempo',
             ENSEMBLE_SENTINEL_FLAG, ensemble,
             ...nameArgs,
             ...agentFlags,
@@ -1000,7 +1000,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         // the session's project, so the project-tier lookup needs the session's
         // own cwd). `nativeResolvable` means the target can `--agent <name>`
         // from its own tier lookup; the path fallback is shipped-relative so
-        // it exists on any host with claude-tempo installed — safe cross-host.
+        // it exists on any host with agent-tempo installed — safe cross-host.
         const resolved = metadata.playerType
           ? resolveAgentType(metadata.playerType, metadata.workDir)
           : null;

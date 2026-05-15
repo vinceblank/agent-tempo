@@ -17,7 +17,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      'claude-tempo': fileURLToPath(new URL('../src', import.meta.url)),
+      'agent-tempo': fileURLToPath(new URL('../src', import.meta.url)),
     },
   },
   test: {

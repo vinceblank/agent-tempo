@@ -1,6 +1,6 @@
 {
-  "name": "claude-tempo",
-  "version": "1.0.0-rc.1",
+  "name": "agent-tempo",
+  "version": "1.0.0",
   "description": "Many agents, one tempo. Durable coordination for multi-agent work via Temporal.",
   "keywords": [
     "mcp",
@@ -10,13 +10,13 @@
     "orchestration",
     "claude-code"
   ],
-  "homepage": "https://github.com/vinceblank/claude-tempo",
+  "homepage": "https://github.com/vinceblank/agent-tempo",
   "bugs": {
-    "url": "https://github.com/vinceblank/claude-tempo/issues"
+    "url": "https://github.com/vinceblank/agent-tempo/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/vinceblank/claude-tempo.git"
+    "url": "https://github.com/vinceblank/agent-tempo.git"
   },
   "types": "./dist/server.d.ts",
   "type": "commonjs",
@@ -51,8 +51,6 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "claude-tempo": "dist/cli.js",
-    "claude-tempo-server": "dist/server.js",
     "agent-tempo": "dist/cli.js",
     "agent-tempo-server": "dist/server.js"
   },

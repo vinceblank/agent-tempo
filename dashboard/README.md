@@ -1,12 +1,12 @@
-# claude-tempo dashboard
+# agent-tempo dashboard
 
-A web dashboard for managing claude-tempo ensembles. Bundled into the npm package and served by the daemon at `/dashboard/*`.
+A web dashboard for managing agent-tempo ensembles. Bundled into the npm package and served by the daemon at `/dashboard/*`.
 
-This directory is a **sibling project** to the main `src/` TypeScript build — independent `node_modules`, build artifacts, and tooling. The shared `claude-tempo` source lives at `../src/` and is reachable via the `claude-tempo/*` path alias (configured in `vite.config.ts` and `tsconfig.json`).
+This directory is a **sibling project** to the main `src/` TypeScript build — independent `node_modules`, build artifacts, and tooling. The shared `agent-tempo` source lives at `../src/` and is reachable via the `agent-tempo/*` path alias (configured in `vite.config.ts` and `tsconfig.json`).
 
 ## Status
 
-PR-2 of [#340](https://github.com/vinceblank/claude-tempo/issues/340) — Vite + Tailwind 4 scaffold + AppShell + testability infra. The shell renders a brandmark, sidebar, and page header; **no real data is wired yet**. PR-4 introduces `TempoClient` integration; PR-5 fills out the read-only screens.
+PR-2 of [#340](https://github.com/vinceblank/agent-tempo/issues/340) — Vite + Tailwind 4 scaffold + AppShell + testability infra. The shell renders a brandmark, sidebar, and page header; **no real data is wired yet**. PR-4 introduces `TempoClient` integration; PR-5 fills out the read-only screens.
 
 ## Stack (locked — see [`docs/adr/0013-web-dashboard.md`](../docs/adr/0013-web-dashboard.md))
 
@@ -39,7 +39,7 @@ npm --prefix dashboard run test
 
 ## Testability
 
-This dashboard is tested both by Vitest (component tests) and by an autonomous AI agent (the claude-tempo conductor) using `mcp__claude-in-chrome__*` browser automation tools. Tailwind class names are **NOT** a stable test surface; `data-testid` is.
+This dashboard is tested both by Vitest (component tests) and by an autonomous AI agent (the agent-tempo conductor) using `mcp__claude-in-chrome__*` browser automation tools. Tailwind class names are **NOT** a stable test surface; `data-testid` is.
 
 Every interactive or state-significant element MUST carry a stable `data-testid` attribute.
 
@@ -71,10 +71,10 @@ ESLint enforces both bans; lint is build-blocking (see `eslint.config.js`).
 State transitions, mutations, and SSE events MUST log via `logEvent(action, kvs)` from `src/lib/log.ts`. Output format:
 
 ```
-[claude-tempo:dashboard] <action> key=value key=value
+[agent-tempo:dashboard] <action> key=value key=value
 ```
 
-The conductor's autonomous validation script can `mcp__claude-in-chrome__read_console_messages` with the regex `\[claude-tempo:dashboard\]` to verify state transitions without parsing the DOM. This mirrors the `[claude-tempo:adapter]` shape used by adapter heartbeat logs (#249).
+The conductor's autonomous validation script can `mcp__claude-in-chrome__read_console_messages` with the regex `\[agent-tempo:dashboard\]` to verify state transitions without parsing the DOM. This mirrors the `[agent-tempo:adapter]` shape used by adapter heartbeat logs (#249).
 
 Debug-level logs are gated by `?debug=1` in the URL or `localStorage.agentTempoDebug = 'true'`.
 
@@ -86,6 +86,6 @@ Custom tempo motifs (Metronome, TempoStrip, PhaseDot, PlayerAvatar, TypeBadge, B
 
 ## Reference / fork-and-customize
 
-This dashboard is structured to be **reasonably forkable** as a starting point against `TempoClient`. Downstream consumers building their own dashboard against claude-tempo can copy this directory, adjust the path alias, and replace `src/components/` to taste while reusing the AppShell + prefs scaffolding.
+This dashboard is structured to be **reasonably forkable** as a starting point against `TempoClient`. Downstream consumers building their own dashboard against agent-tempo can copy this directory, adjust the path alias, and replace `src/components/` to taste while reusing the AppShell + prefs scaffolding.
 
 Detailed fork notes will land in a follow-up PR once PR-4 wires up `TempoClient` and the integration shape is stable.

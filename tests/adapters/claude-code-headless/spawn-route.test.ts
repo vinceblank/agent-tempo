@@ -37,7 +37,7 @@ const config = {
   ensemble: 'test-ensemble',
   temporalAddress: 'localhost:7233',
   temporalNamespace: 'default',
-  taskQueue: 'claude-tempo-test',
+  taskQueue: 'agent-tempo-test',
 } as unknown as Config;
 
 const client = {} as Client;

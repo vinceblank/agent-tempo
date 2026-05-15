@@ -3,7 +3,7 @@
  *
  * Per audit rev 4 C2: distinct primitive from `BrandMark`. Both render
  * an "M" but mean different things — BrandMark is the brand wordmark
- * (claude-tempo + metronome); MaestroMark is the human operator's
+ * (agent-tempo + metronome); MaestroMark is the human operator's
  * personal mark, italic per audit C4 (italic discipline allows
  * italic only on `<em>` accents and the MaestroMark M).
  *

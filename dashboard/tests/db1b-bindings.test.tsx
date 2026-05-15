@@ -22,8 +22,8 @@ import {
   formatLeaseRemaining,
   formatRunId,
 } from '../src/lib/time-format';
-import type { EnsembleStateV1, PlayerSummaryV1 } from 'claude-tempo/http/event-types';
-import type { HostInfo } from 'claude-tempo/types';
+import type { EnsembleStateV1, PlayerSummaryV1 } from 'agent-tempo/http/event-types';
+import type { HostInfo } from 'agent-tempo/types';
 
 function newQc() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

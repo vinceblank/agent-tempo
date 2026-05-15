@@ -1,5 +1,5 @@
 /**
- * Daemon CLI command handler — `claude-tempo daemon <start|stop|status|logs|install|uninstall>`.
+ * Daemon CLI command handler — `agent-tempo daemon <start|stop|status|logs|install|uninstall>`.
  *
  * **Critical constraint**: this module must NOT import from `@temporalio/*`,
  * `../workflows/*`, `../adapters/*`, `../spawn`, `../client`, or any module
@@ -107,7 +107,7 @@ export interface DaemonOpts extends CliOverrides {
    * Only meaningful for the `start` subcommand. Skips the orphan-process
    * pre-flight check and spawns a daemon even if scanner-matched processes
    * are found. Also cleans up a stale pid file if present. Use only when
-   * you've verified no conflicting claude-tempo daemons exist — or in CI
+   * you've verified no conflicting agent-tempo daemons exist — or in CI
    * scripts where idempotent-start is required (see `daemon status` first).
    */
   force?: boolean;
@@ -152,11 +152,11 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
         case 'abort':
           // Piling a new daemon on top of orphans is the original #157 user-pain
           // scenario. User must clean up first — see troubleshooting docs.
-          out.error(`Found ${preflight.orphans.length} orphaned claude-tempo daemon process${preflight.orphans.length === 1 ? '' : 'es'} — daemon start aborted.`);
+          out.error(`Found ${preflight.orphans.length} orphaned agent-tempo daemon process${preflight.orphans.length === 1 ? '' : 'es'} — daemon start aborted.`);
           for (const p of preflight.orphans) out.log(`  pid ${p.pid}: ${p.commandLine}`);
           out.log('');
           out.log(`  ${out.dim('Emergency cleanup: see docs/troubleshooting.md → "Orphaned daemon processes"')}`);
-          out.log(`  ${out.dim('Override (use only after confirming): claude-tempo daemon start --force')}`);
+          out.log(`  ${out.dim('Override (use only after confirming): agent-tempo daemon start --force')}`);
           process.exit(1);
           break;
 
@@ -217,14 +217,14 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
         // prod doesn't flag dev as an orphan / vice versa (ADR 0014 §5.6).
         const extras = selectOrphans(scanned, [status.pid, getOtherProfilePid()]);
         if (extras.length > 0) {
-          out.warn(`Found ${extras.length} additional claude-tempo daemon process${extras.length === 1 ? '' : 'es'} not tracked by the pid file:`);
+          out.warn(`Found ${extras.length} additional agent-tempo daemon process${extras.length === 1 ? '' : 'es'} not tracked by the pid file:`);
           for (const p of extras) out.log(`  pid ${p.pid}: ${p.commandLine}`);
-          out.log(`  ${out.dim('See `claude-tempo daemon --help` or docs/troubleshooting.md for emergency cleanup.')}`);
+          out.log(`  ${out.dim('See `agent-tempo daemon --help` or docs/troubleshooting.md for emergency cleanup.')}`);
         }
       } else {
         out.log('Daemon is not running');
         if (scanned.length > 0) {
-          out.warn(`Found ${scanned.length} orphaned claude-tempo daemon process${scanned.length === 1 ? '' : 'es'} (no pid file):`);
+          out.warn(`Found ${scanned.length} orphaned agent-tempo daemon process${scanned.length === 1 ? '' : 'es'} (no pid file):`);
           for (const p of scanned) out.log(`  pid ${p.pid}: ${p.commandLine}`);
           out.log(`  ${out.dim('These are untracked. See docs/troubleshooting.md → "Orphaned daemon processes" for emergency cleanup.')}`);
         }
@@ -285,15 +285,15 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
       break;
 
     default:
-      out.error('Usage: claude-tempo daemon <start|stop|status|stats|logs|install|uninstall>');
-      out.log(`\n  ${out.dim('claude-tempo daemon start [--force]')}  Start the worker daemon`);
+      out.error('Usage: agent-tempo daemon <start|stop|status|stats|logs|install|uninstall>');
+      out.log(`\n  ${out.dim('agent-tempo daemon start [--force]')}  Start the worker daemon`);
       out.log(`  ${out.dim('                           --force: skip orphan-process check + clear stale pid file')}`);
-      out.log(`  ${out.dim('claude-tempo daemon stop')}              Stop the worker daemon`);
-      out.log(`  ${out.dim('claude-tempo daemon status')}            Check daemon status + heartbeat + orphans`);
-      out.log(`  ${out.dim('claude-tempo daemon stats')}             Show memory + uptime + ensemble count`);
-      out.log(`  ${out.dim('claude-tempo daemon logs')}              Tail daemon log output`);
-      out.log(`  ${out.dim('claude-tempo daemon install')}           Install as a system service`);
-      out.log(`  ${out.dim('claude-tempo daemon uninstall')}         Uninstall the system service`);
+      out.log(`  ${out.dim('agent-tempo daemon stop')}              Stop the worker daemon`);
+      out.log(`  ${out.dim('agent-tempo daemon status')}            Check daemon status + heartbeat + orphans`);
+      out.log(`  ${out.dim('agent-tempo daemon stats')}             Show memory + uptime + ensemble count`);
+      out.log(`  ${out.dim('agent-tempo daemon logs')}              Tail daemon log output`);
+      out.log(`  ${out.dim('agent-tempo daemon install')}           Install as a system service`);
+      out.log(`  ${out.dim('agent-tempo daemon uninstall')}         Uninstall the system service`);
       process.exit(1);
   }
 
@@ -304,33 +304,33 @@ export async function daemon(opts: DaemonOpts): Promise<void> {
 async function daemonInstall(): Promise<void> {
   const platform = process.platform;
   if (platform === 'linux') {
-    const src = packagingFile('systemd', 'claude-tempo.service');
+    const src = packagingFile('systemd', 'agent-tempo.service');
     const dstDir = join(homedir(), '.config', 'systemd', 'user');
-    const dst = join(dstDir, 'claude-tempo.service');
+    const dst = join(dstDir, 'agent-tempo.service');
     mkdirSync(dstDir, { recursive: true });
     copyFileSync(src, dst);
     out.success(`Installed systemd --user unit: ${dst}`);
     // Try to enable + start. User may still need `systemctl --user daemon-reload`.
     try {
       execFileSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'ignore' });
-      execFileSync('systemctl', ['--user', 'enable', '--now', 'claude-tempo'], { stdio: 'ignore' });
-      out.log('  Enabled + started: systemctl --user enable --now claude-tempo');
+      execFileSync('systemctl', ['--user', 'enable', '--now', 'agent-tempo'], { stdio: 'ignore' });
+      out.log('  Enabled + started: systemctl --user enable --now agent-tempo');
     } catch {
       out.warn('  systemctl invocation failed — run manually:');
       out.log(`    ${out.dim('systemctl --user daemon-reload')}`);
-      out.log(`    ${out.dim('systemctl --user enable --now claude-tempo')}`);
+      out.log(`    ${out.dim('systemctl --user enable --now agent-tempo')}`);
     }
     return;
   }
 
   if (platform === 'darwin') {
-    const src = packagingFile('launchd', 'com.claude.tempo.plist');
+    const src = packagingFile('launchd', 'com.agent.tempo.plist');
     const dstDir = join(homedir(), 'Library', 'LaunchAgents');
-    const dst = join(dstDir, 'com.claude.tempo.plist');
+    const dst = join(dstDir, 'com.agent.tempo.plist');
     mkdirSync(dstDir, { recursive: true });
     copyFileSync(src, dst);
     out.success(`Installed launchd agent: ${dst}`);
-    out.warn('  NOTE: macOS launchd integration is untested in v0.25.0-beta.1 — feedback welcome.');
+    out.warn('  NOTE: macOS launchd integration is best-effort — feedback welcome.');
     try {
       execFileSync('launchctl', ['load', dst], { stdio: 'ignore' });
       out.log('  Loaded: launchctl load ' + dst);
@@ -364,15 +364,24 @@ async function daemonInstall(): Promise<void> {
 async function daemonUninstall(): Promise<void> {
   const platform = process.platform;
   if (platform === 'linux') {
-    const dst = join(homedir(), '.config', 'systemd', 'user', 'claude-tempo.service');
-    try { execFileSync('systemctl', ['--user', 'disable', '--now', 'claude-tempo'], { stdio: 'ignore' }); } catch { /* may not be running */ }
+    // Backward-compat: clean up either the new (`agent-tempo.service`) or
+    // legacy (`agent-tempo.service`) unit so v0.x installs migrate cleanly.
+    const dirSystemd = join(homedir(), '.config', 'systemd', 'user');
+    const dstNew = join(dirSystemd, 'agent-tempo.service');
+    const dstLegacy = join(dirSystemd, 'agent-tempo.service');
+    for (const svc of ['agent-tempo', 'agent-tempo']) {
+      try { execFileSync('systemctl', ['--user', 'disable', '--now', svc], { stdio: 'ignore' }); } catch { /* may not be running */ }
+    }
+    let removed = false;
     try {
-      if (existsSync(dst)) {
-        unlinkSync(dst);
-        out.success(`Removed ${dst}`);
-      } else {
-        out.log('No systemd unit file found.');
+      for (const dst of [dstNew, dstLegacy]) {
+        if (existsSync(dst)) {
+          unlinkSync(dst);
+          out.success(`Removed ${dst}`);
+          removed = true;
+        }
       }
+      if (!removed) out.log('No systemd unit file found.');
     } catch (err: any) {
       out.error(`Failed to remove systemd unit: ${err?.message ?? err}`);
       process.exit(1);
@@ -381,14 +390,20 @@ async function daemonUninstall(): Promise<void> {
   }
 
   if (platform === 'darwin') {
-    const dst = join(homedir(), 'Library', 'LaunchAgents', 'com.claude.tempo.plist');
-    try { execFileSync('launchctl', ['unload', dst], { stdio: 'ignore' }); } catch { /* may not be loaded */ }
-    if (existsSync(dst)) {
-      unlinkSync(dst);
-      out.success(`Removed ${dst}`);
-    } else {
-      out.log('No launchd plist found.');
+    // Backward-compat: clean up either the new (`com.agent.tempo.plist`) or
+    // legacy (`com.claude.tempo.plist`) plist so v0.x installs migrate cleanly.
+    const dstNew = join(homedir(), 'Library', 'LaunchAgents', 'com.agent.tempo.plist');
+    const dstLegacy = join(homedir(), 'Library', 'LaunchAgents', 'com.claude.tempo.plist');
+    let removed = false;
+    for (const dst of [dstNew, dstLegacy]) {
+      try { execFileSync('launchctl', ['unload', dst], { stdio: 'ignore' }); } catch { /* may not be loaded */ }
+      if (existsSync(dst)) {
+        unlinkSync(dst);
+        out.success(`Removed ${dst}`);
+        removed = true;
+      }
     }
+    if (!removed) out.log('No launchd plist found.');
     return;
   }
 
@@ -497,14 +512,14 @@ async function daemonStats(): Promise<void> {
   // than a raw ECONNREFUSED if not.
   const status = getDaemonStatus();
   if (!status.running) {
-    out.warn('Daemon is not running — start it with `claude-tempo daemon start`');
+    out.warn('Daemon is not running — start it with `agent-tempo daemon start`');
     process.exit(1);
   }
 
   const port = readPortFile();
   if (port === null) {
     out.error('Daemon port file not found at ~/.agent-tempo/daemon.port');
-    out.log(`  ${out.dim('The daemon may be from a pre-HTTP build. Restart it with `claude-tempo daemon stop && start`.')}`);
+    out.log(`  ${out.dim('The daemon may be from a pre-HTTP build. Restart it with `agent-tempo daemon stop && start`.')}`);
     process.exit(1);
   }
 

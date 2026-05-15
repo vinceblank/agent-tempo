@@ -16,8 +16,8 @@
  * regression cannot reappear.
  */
 import { describe, it, expect } from 'vitest';
-import type { PlayerSummaryV1 } from 'claude-tempo/http/event-types';
-import type { EnsembleChatMessage } from 'claude-tempo/types';
+import type { PlayerSummaryV1 } from 'agent-tempo/http/event-types';
+import type { EnsembleChatMessage } from 'agent-tempo/types';
 import { buildFormattedRows } from '../src/lib/chat-format';
 import { rowToFeedMessage } from '../src/components/chat/ChatLog';
 import { makeChatMessage } from './fixtures/factories';

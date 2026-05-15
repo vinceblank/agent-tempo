@@ -34,7 +34,7 @@ import type {
   EnsembleStateV1,
   HealthV1,
 } from './client';
-import type { TempoEvent, SubscribeOptions } from 'claude-tempo/http/event-types';
+import type { TempoEvent, SubscribeOptions } from 'agent-tempo/http/event-types';
 import {
   fixtureAgentTypes,
   fixtureEnsembleList,

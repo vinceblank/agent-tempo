@@ -7,5 +7,5 @@
   <!-- Pivot dot -->
   <circle cx="160" cy="88" r="3.5" fill="#E07A5F"/>
   <!-- Text -->
-  <text x="160" y="132" text-anchor="middle" font-family="'JetBrains Mono','SF Mono','Consolas',monospace" font-size="18" font-weight="600" fill="#FAF3EE" letter-spacing="-0.5">claude-tempo</text>
+  <text x="160" y="132" text-anchor="middle" font-family="'JetBrains Mono','SF Mono','Consolas',monospace" font-size="18" font-weight="600" fill="#FAF3EE" letter-spacing="-0.5">agent-tempo</text>
 </svg>

@@ -15,7 +15,7 @@ import {
   usePairTokenConsume,
 } from '../src/lib/pair';
 
-const STORAGE_KEY = 'claude-tempo:bearer';
+const STORAGE_KEY = 'agent-tempo:bearer';
 
 beforeEach(() => {
   window.localStorage.clear();

@@ -24,7 +24,7 @@
 import type { ReactNode } from 'react';
 
 interface PopoutWindowProps {
-  /** Mono dim subtitle prefix (e.g., "claude-tempo · maestro chat ·"). */
+  /** Mono dim subtitle prefix (e.g., "agent-tempo · maestro chat ·"). */
   titlePrefix?: string;
   /** Accent-coloured tail (e.g., "@my-band"). */
   titleAccent?: string;
@@ -39,7 +39,7 @@ interface PopoutWindowProps {
 }
 
 export function PopoutWindow({
-  titlePrefix = 'claude-tempo · maestro chat',
+  titlePrefix = 'agent-tempo · maestro chat',
   titleAccent,
   alwaysOnTopLabel = 'always on top',
   onClose,

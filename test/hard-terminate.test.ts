@@ -83,7 +83,7 @@ function reapStaleTestVictims(): void {
  * On Windows, the real production spawn path (`src/spawn.ts` §WT branch) builds
  * the inner command as a single string with EVERY arg explicitly wrapped in
  * double quotes — e.g.
- *     "C:\...\claude.exe" "server:claude-tempo" "-n" "<playerName>" "--session-id" ...
+ *     "C:\...\claude.exe" "server:agent-tempo" "-n" "<playerName>" "--session-id" ...
  * Between `-n` and `<playerName>` is literally `" "` (close-quote, space,
  * open-quote). That's the topology the old `-n\s+<name>` regex failed to match,
  * making the whole kill path a silent no-op in production.

@@ -202,7 +202,7 @@ async function applyLineupPlayersAndSchedules(args: {
    * set, every mock player in the lineup gets `mockMode: 'scripted'` and
    * `mockScenario: <this value>` regardless of what the lineup YAML
    * specified. Lets the conductor one-command spin up an entire scripted
-   * ensemble: `claude-tempo --dev up --lineup tempo-mock-jam --scenario echo-roundtrip`.
+   * ensemble: `agent-tempo --dev up --lineup tempo-mock-jam --scenario echo-roundtrip`.
    */
   scenarioOverride?: string;
 }): Promise<void> {
@@ -334,7 +334,7 @@ async function applyLineupPlayersAndSchedules(args: {
       } else {
         const claudeArgs = [
           '--dangerously-skip-permissions',
-          '--dangerously-load-development-channels', 'server:claude-tempo',
+          '--dangerously-load-development-channels', 'server:agent-tempo',
           // ENSEMBLE_SENTINEL_FLAG carries the ensemble name into the spawned
           // claude.exe's CommandLine so hard-terminate can scope `destroy --all`
           // kills by ensemble (#180, #259). Mirrors src/activities/outbox.ts.
@@ -476,8 +476,8 @@ async function start(opts: StartOpts) {
           out.log(`Resuming conductor for ensemble "${opts.ensemble}" — reconnecting to existing workflow state.\n`);
         } else {
           out.error(`A conductor is already running for ensemble "${opts.ensemble}".`);
-          out.log(`  ${out.dim('claude-tempo conduct --resume')}    Reconnect a new session to the existing workflow`);
-          out.log(`  ${out.dim('claude-tempo conduct --replace')}   Stop the existing conductor and start fresh`);
+          out.log(`  ${out.dim('agent-tempo conduct --resume')}    Reconnect a new session to the existing workflow`);
+          out.log(`  ${out.dim('agent-tempo conduct --replace')}   Stop the existing conductor and start fresh`);
           await connection.close();
           process.exit(1);
         }
@@ -590,7 +590,7 @@ async function start(opts: StartOpts) {
   } else {
     const claudeArgs = [
       '--dangerously-skip-permissions',
-      '--dangerously-load-development-channels', 'server:claude-tempo',
+      '--dangerously-load-development-channels', 'server:agent-tempo',
       // ENSEMBLE_SENTINEL_FLAG carries the ensemble name into the spawned
       // claude.exe's CommandLine so hard-terminate can scope `destroy --all`
       // kills by ensemble (#180, #259). Mirrors src/activities/outbox.ts.
@@ -669,7 +669,7 @@ async function start(opts: StartOpts) {
     try { await conductorConnection.close(); } catch { /* best effort */ }
   }
 
-  out.log(`\nCheck status: ${out.dim('claude-tempo status ' + opts.ensemble)}`);
+  out.log(`\nCheck status: ${out.dim('agent-tempo status ' + opts.ensemble)}`);
   if (startLineup && startInitialStartup) {
     console.log();
     out.log(`  ${ensembleReadyBanner(startLineup.name, startLineup.players.length)}`);
@@ -852,7 +852,7 @@ export async function init(opts: InitOpts) {
 
   // Default: global install via `claude mcp add`
   if (isGlobalMcpRegistered() || isMcpConfigured(opts.dir)) {
-    out.success('claude-tempo already registered');
+    out.success('agent-tempo already registered');
     out.log(`  ${out.dim('claude mcp list -s user')}`);
     return;
   }
@@ -864,7 +864,7 @@ export async function init(opts: InitOpts) {
   }
 
   if (addGlobalMcp()) {
-    out.success('Registered claude-tempo globally (user scope)');
+    out.success('Registered agent-tempo globally (user scope)');
     out.log(`  ${out.dim('Available in all Claude Code sessions')}`);
   } else {
     out.warn('Failed to register globally — falling back to project-level .mcp.json');
@@ -873,7 +873,7 @@ export async function init(opts: InitOpts) {
 
   out.log(`\nNext steps:`);
   out.log(`  1. Start Temporal:  ${out.dim('temporal server start-dev')}`);
-  out.log(`  2. Start conductor: ${out.dim('claude-tempo conduct')}`);
+  out.log(`  2. Start conductor: ${out.dim('agent-tempo conduct')}`);
 }
 
 /** Per-project .mcp.json install (legacy, used with --project flag). */
@@ -888,9 +888,9 @@ function initProject(dir: string) {
     try {
       const existing = JSON.parse(readFileSync(mcpPath, 'utf8'));
       // Backward-compat: detect either the new (`agent-tempo`) or legacy
-      // (`claude-tempo`) registration. Skip the rewrite if either is present —
+      // (`agent-tempo`) registration. Skip the rewrite if either is present —
       // the migration verb is the one path that upgrades the key.
-      if (existing?.mcpServers?.['agent-tempo'] || existing?.mcpServers?.['claude-tempo']) {
+      if (existing?.mcpServers?.['agent-tempo'] || existing?.mcpServers?.['agent-tempo']) {
         out.success('.mcp.json already has an agent-tempo entry');
         out.log(`  ${out.dim(mcpPath)}`);
         return;
@@ -916,7 +916,7 @@ function initProject(dir: string) {
   out.log(`  ${out.dim(mcpPath)}`);
   out.log(`\nNext steps:`);
   out.log(`  1. Start Temporal:  ${out.dim('temporal server start-dev')}`);
-  out.log(`  2. Start conductor: ${out.dim('claude-tempo conduct')}`);
+  out.log(`  2. Start conductor: ${out.dim('agent-tempo conduct')}`);
 }
 
 // --- Temporal server management ---
@@ -1110,7 +1110,7 @@ interface UpOpts extends CliOverrides {
 export async function up(opts: UpOpts) {
   const config = getConfig(opts);
 
-  out.heading('claude-tempo setup');
+  out.heading('agent-tempo setup');
 
   // Step 1: Check temporal CLI
   if (!temporalCliExists()) {
@@ -1184,7 +1184,7 @@ export async function up(opts: UpOpts) {
       out.check('Worker daemon started', true, `pid ${daemonPid}`);
     } catch (err: any) {
       out.error(`Failed to start worker daemon: ${err.message || err}`);
-      out.log(`  ${out.dim('You can start it manually: claude-tempo daemon start')}`);
+      out.log(`  ${out.dim('You can start it manually: agent-tempo daemon start')}`);
       process.exit(1);
     }
   }
@@ -1251,7 +1251,7 @@ export async function up(opts: UpOpts) {
     if (desc.status.name === 'RUNNING') {
       if (!process.stdin.isTTY) {
         out.error(`A conductor is already running for ensemble "${opts.ensemble}".`);
-        out.log(`  Use ${out.dim('--resume')} to reconnect, or ${out.dim('claude-tempo start')} to join as a player.`);
+        out.log(`  Use ${out.dim('--resume')} to reconnect, or ${out.dim('agent-tempo start')} to join as a player.`);
         process.exit(1);
       }
 
@@ -1380,7 +1380,7 @@ export async function up(opts: UpOpts) {
   } else {
     const claudeArgs = [
       '--dangerously-skip-permissions',
-      '--dangerously-load-development-channels', 'server:claude-tempo',
+      '--dangerously-load-development-channels', 'server:agent-tempo',
       // ENSEMBLE_SENTINEL_FLAG carries the ensemble name into the spawned
       // claude.exe's CommandLine so hard-terminate can scope `destroy --all`
       // kills by ensemble (#180, #259). Mirrors src/activities/outbox.ts.
@@ -1434,14 +1434,14 @@ export async function up(opts: UpOpts) {
   out.log(`  Ensemble: ${out.cyan(opts.ensemble)}`);
   if (!lineup) {
     out.log(`\n  ${out.bold('What next?')}`);
-    out.log(`  ${out.dim('claude-tempo start ' + opts.ensemble)}    Add a player session`);
-    out.log(`  ${out.dim('claude-tempo status ' + opts.ensemble)}   See who\'s active`);
+    out.log(`  ${out.dim('agent-tempo start ' + opts.ensemble)}    Add a player session`);
+    out.log(`  ${out.dim('agent-tempo status ' + opts.ensemble)}   See who\'s active`);
     out.log(`  Or ask the conductor to ${out.dim('recruit')} players for you`);
   } else {
     out.log(`  Lineup: ${out.dim(lineup.name)}`);
     out.log(`  Players: ${lineup.players.length}`);
     if (lineup.schedules?.length) out.log(`  Schedules: ${lineup.schedules.length}`);
-    out.log(`\n  ${out.dim('claude-tempo status ' + opts.ensemble)}   See who\'s active`);
+    out.log(`\n  ${out.dim('agent-tempo status ' + opts.ensemble)}   See who\'s active`);
   }
   // Issue #172: print the canonical "ensemble ready" banner on stdout so the
   // user sees the same wording in their terminal, the conductor's tab, and
@@ -1461,7 +1461,7 @@ export async function up(opts: UpOpts) {
  * formatter only checked `sched.interval`. The display formatter now mirrors
  * the wire-type triplet (`'once' | 'interval' | 'cron'`) from
  * `ScheduleEntry.type` so cron schedules from the lineup loader (and the
- * MCP `load_lineup` path) read correctly in `claude-tempo status`.
+ * MCP `load_lineup` path) read correctly in `agent-tempo status`.
  *
  * Exported for unit tests.
  */
@@ -1652,7 +1652,7 @@ export type StopTemporalResult =
  * The Temporal dev server is a single OS-wide process — `pkill -f` on
  * POSIX and `taskkill /IM temporal.exe` on Windows kill it by name and
  * cannot distinguish dev-profile vs prod-profile ownership. So when
- * `claude-tempo --dev down` runs while the prod profile is also active,
+ * `agent-tempo --dev down` runs while the prod profile is also active,
  * the unconditional kill takes down the prod profile's Temporal as
  * collateral damage. This is exactly the bug `isOtherProfileLikelyRunning`
  * was introduced to prevent on the daemon side; the missing piece was
@@ -1686,10 +1686,10 @@ export function stopTemporalServer(opts: StopTemporalServerOpts): StopTemporalRe
 export async function down(opts: DownOpts) {
   const config = getConfig(opts);
 
-  out.heading('claude-tempo teardown');
+  out.heading('agent-tempo teardown');
   out.log(opts.destroy
     ? `  ${out.bold('Destroying all workflows')}, then stopping daemon + Temporal.`
-    : `  Stopping daemon + Temporal. Workflows stay parked for the next ${out.dim('claude-tempo up')}.`,
+    : `  Stopping daemon + Temporal. Workflows stay parked for the next ${out.dim('agent-tempo up')}.`,
   );
 
   // Step 1 (destroy mode only): enumerate + terminate workflows across every
@@ -1736,7 +1736,7 @@ export async function down(opts: DownOpts) {
           // is best-effort scorched-earth.
           const terminate = async (id: string): Promise<boolean> => {
             try {
-              await client.workflow.getHandle(id).terminate('claude-tempo down --destroy');
+              await client.workflow.getHandle(id).terminate('agent-tempo down --destroy');
               return true;
             } catch {
               return false;
@@ -1809,8 +1809,8 @@ export async function down(opts: DownOpts) {
   if (existsSync(projectMcpPath)) {
     try {
       const mcpContent = JSON.parse(readFileSync(projectMcpPath, 'utf8'));
-      // Backward-compat: check both the new (`agent-tempo`) and legacy (`claude-tempo`) keys.
-      const tempoEntry = mcpContent?.mcpServers?.['agent-tempo'] ?? mcpContent?.mcpServers?.['claude-tempo'];
+      // Backward-compat: check both the new (`agent-tempo`) and legacy (`agent-tempo`) keys.
+      const tempoEntry = mcpContent?.mcpServers?.['agent-tempo'] ?? mcpContent?.mcpServers?.['agent-tempo'];
       if (tempoEntry) {
         const cmd = tempoEntry.command ?? '';
         const entryArgs: string[] = tempoEntry.args ?? [];
@@ -1834,13 +1834,13 @@ export async function down(opts: DownOpts) {
     }
 
     // Also remove project-level .mcp.json entry if present.
-    // Backward-compat: clean up either the new (`agent-tempo`) or legacy (`claude-tempo`) key.
+    // Backward-compat: clean up either the new (`agent-tempo`) or legacy (`agent-tempo`) key.
     if (existsSync(projectMcpPath)) {
       try {
         const existing = JSON.parse(readFileSync(projectMcpPath, 'utf8'));
         const removedAny =
           (existing?.mcpServers?.['agent-tempo'] && (delete existing.mcpServers['agent-tempo'])) ||
-          (existing?.mcpServers?.['claude-tempo'] && (delete existing.mcpServers['claude-tempo']));
+          (existing?.mcpServers?.['agent-tempo'] && (delete existing.mcpServers['agent-tempo']));
         if (removedAny) {
           if (Object.keys(existing.mcpServers).length === 0) {
             unlinkSync(projectMcpPath);
@@ -1860,11 +1860,11 @@ export async function down(opts: DownOpts) {
     console.log();
     out.warn('Your .mcp.json uses npx which may cache stale versions.');
     out.log(`  ${out.dim('Consider removing it — user-level registration is preferred.')}`);
-    out.log(`  ${out.dim('Run: claude-tempo init')}`);
+    out.log(`  ${out.dim('Run: agent-tempo init')}`);
   }
 
   console.log();
-  out.success('claude-tempo is shut down');
+  out.success('agent-tempo is shut down');
   out.log(`  ${out.dim('Temporal data preserved in ~/.agent-tempo/ (delete manually to reset)')}`);
   console.log();
 }
@@ -1936,7 +1936,7 @@ export async function agentTypesCommand(opts: AgentTypesCommandOpts) {
       const types = listAgentTypes();
       if (types.length === 0) {
         out.log('No agent types found.');
-        out.log(`  Run ${out.dim('claude-tempo agent-types init')} to install shipped examples.`);
+        out.log(`  Run ${out.dim('agent-tempo agent-types init')} to install shipped examples.`);
         return;
       }
       out.heading('Available agent types');
@@ -1950,13 +1950,13 @@ export async function agentTypesCommand(opts: AgentTypesCommandOpts) {
     }
     case 'show': {
       if (!opts.name) {
-        out.error('Usage: claude-tempo agent-types show <name>');
+        out.error('Usage: agent-tempo agent-types show <name>');
         process.exit(1);
       }
       const info = resolveAgentType(opts.name);
       if (!info) {
         out.error(`No agent type found named "${opts.name}"`);
-        out.log(`  Run ${out.dim('claude-tempo agent-types list')} to see available types.`);
+        out.log(`  Run ${out.dim('agent-tempo agent-types list')} to see available types.`);
         process.exit(1);
       }
       out.log(`${out.bold(info.name)} ${out.dim(`(${info.source}: ${info.path})`)}\n`);
@@ -1992,10 +1992,10 @@ export async function agentTypesCommand(opts: AgentTypesCommandOpts) {
       break;
     }
     default:
-      out.error('Usage: claude-tempo agent-types <list|show|init> [name]');
-      out.log(`\n  ${out.dim('claude-tempo agent-types list')}          List available agent types`);
-      out.log(`  ${out.dim('claude-tempo agent-types show <name>')}   Display an agent definition`);
-      out.log(`  ${out.dim('claude-tempo agent-types init')}          Copy shipped examples to ~/.claude/agents/`);
+      out.error('Usage: agent-tempo agent-types <list|show|init> [name]');
+      out.log(`\n  ${out.dim('agent-tempo agent-types list')}          List available agent types`);
+      out.log(`  ${out.dim('agent-tempo agent-types show <name>')}   Display an agent definition`);
+      out.log(`  ${out.dim('agent-tempo agent-types init')}          Copy shipped examples to ~/.claude/agents/`);
       process.exit(1);
   }
 }
@@ -2113,7 +2113,7 @@ export async function verbClient(opts: CliOverrides): Promise<{ config: Config; 
 }
 
 /**
- * `claude-tempo destroy <ensemble> [-y]` — terminate every workflow in an
+ * `agent-tempo destroy <ensemble> [-y]` — terminate every workflow in an
  * ensemble (#288). Prompts with the ensemble name and workflow count unless
  * `-y` is passed. The per-player destroy path lives in the TUI (`/destroy
  * --player`).
@@ -2161,7 +2161,7 @@ export async function destroy(opts: DestroyCliOpts) {
 
     const results = await Promise.all(handles.map(async (h) => {
       try {
-        await client.workflow.getHandle(h.id).terminate(`claude-tempo destroy ${opts.ensemble}`);
+        await client.workflow.getHandle(h.id).terminate(`agent-tempo destroy ${opts.ensemble}`);
         return true;
       } catch { return false; }
     }));
@@ -2350,7 +2350,7 @@ interface RestoreCliOpts extends CliOverrides {
   ensemble?: string;
   /**
    * #151: cluster-view listing mode. Lists cross-host orphans the local
-   * daemon's `claude-tempo restore <ensemble>` would otherwise skip
+   * daemon's `agent-tempo restore <ensemble>` would otherwise skip
    * silently. Read-only: never enqueues a `restart`. Recovery still
    * happens through the remote daemon's `reconcileOnBoot` when it
    * returns, or a deliberate TUI `/migrate <player> <host> --force`.
@@ -2359,7 +2359,7 @@ interface RestoreCliOpts extends CliOverrides {
 }
 
 /**
- * `claude-tempo restore <ensemble>` — delegate to {@link TempoClient.restore},
+ * `agent-tempo restore <ensemble>` — delegate to {@link TempoClient.restore},
  * which reattaches orphans AND unpauses maestro + scheduler (#298 — the
  * direct-to-`restoreOrphansOnce` path left the ensemble paused after a
  * `shutdown → restore` roundtrip). The TUI home view (#290) is the picker
@@ -2376,7 +2376,7 @@ export async function restore(opts: RestoreCliOpts) {
     return;
   }
   if (!opts.ensemble) {
-    out.error('Usage: claude-tempo restore <ensemble>   (or --all-hosts for cluster-view)');
+    out.error('Usage: agent-tempo restore <ensemble>   (or --all-hosts for cluster-view)');
     process.exit(1);
   }
 
@@ -2410,7 +2410,7 @@ export async function restore(opts: RestoreCliOpts) {
 }
 
 /**
- * #151 — `claude-tempo restore --all-hosts` implementation.
+ * #151 — `agent-tempo restore --all-hosts` implementation.
  *
  * Read-only cluster-view: enumerates every orphan in the namespace (not
  * just local) and groups by `preferredHost`. Each group is annotated with
@@ -2497,7 +2497,7 @@ export async function ensembleCommand(opts: EnsembleCommandOpts) {
     case 'list': {
       const lineups = listLineups();
       if (lineups.length === 0) {
-        out.log('No saved ensembles. Use `claude-tempo ensemble save [name]` to save one.');
+        out.log('No saved ensembles. Use `agent-tempo ensemble save [name]` to save one.');
         return;
       }
       out.heading('Saved ensembles');
@@ -2509,23 +2509,23 @@ export async function ensembleCommand(opts: EnsembleCommandOpts) {
     }
     case 'show': {
       if (!opts.name) {
-        out.error('Usage: claude-tempo ensemble show <name>');
+        out.error('Usage: agent-tempo ensemble show <name>');
         process.exit(1);
       }
       const content = readSavedLineup(opts.name);
       if (!content) {
         out.error(`No saved ensemble named "${opts.name}"`);
-        out.log(`  Run ${out.dim('claude-tempo ensemble list')} to see available ensembles.`);
+        out.log(`  Run ${out.dim('agent-tempo ensemble list')} to see available ensembles.`);
         process.exit(1);
       }
       console.log(content);
       break;
     }
     default:
-      out.error('Usage: claude-tempo ensemble <save|list|show> [name]');
-      out.log(`\n  ${out.dim('claude-tempo ensemble save [name]')}   Save current ensemble state`);
-      out.log(`  ${out.dim('claude-tempo ensemble list')}          List saved ensembles`);
-      out.log(`  ${out.dim('claude-tempo ensemble show <name>')}   Display a saved lineup`);
+      out.error('Usage: agent-tempo ensemble <save|list|show> [name]');
+      out.log(`\n  ${out.dim('agent-tempo ensemble save [name]')}   Save current ensemble state`);
+      out.log(`  ${out.dim('agent-tempo ensemble list')}          List saved ensembles`);
+      out.log(`  ${out.dim('agent-tempo ensemble show <name>')}   Display a saved lineup`);
       process.exit(1);
   }
 }
@@ -2534,7 +2534,7 @@ export async function ensembleCommand(opts: EnsembleCommandOpts) {
 // The daemon CLI surface lives in its own module with zero Temporal/workflow
 // imports so that `daemon stop` / `daemon status` remain operable when the
 // Temporal SDK itself is broken (e.g. a native-dep build failure on an
-// unsupported Node version). `src/cli.ts` routes `claude-tempo daemon ...`
+// unsupported Node version). `src/cli.ts` routes `agent-tempo daemon ...`
 // directly to that module via dynamic import.
 
 // ── Hold / Pause / Resume ──

@@ -117,7 +117,7 @@ const TURN_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_TOKENS_PER_TURN = 8192;
 /** Headless-identity addendum appended to the shared instructions per design §10. */
 const HEADLESS_ADDENDUM =
-  '\n\nYou are a **headless** claude-api player — you have access to the claude-tempo MCP tools ' +
+  '\n\nYou are a **headless** claude-api player — you have access to the agent-tempo MCP tools ' +
   '(cue, report, recall, ensemble, broadcast, recruit, set_part, …) but **NOT** the file-edit, shell, ' +
   'or web tools that a `claude-code` player would have (no Bash, Read, Write, Edit, Glob, Grep, ' +
   'WebSearch, WebFetch). For tasks requiring file edits or shell commands, ask the conductor to ' +

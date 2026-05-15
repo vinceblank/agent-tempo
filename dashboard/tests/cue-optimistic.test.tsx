@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
-import type { EnsembleStateV1 } from 'claude-tempo/http/event-types';
+import type { EnsembleStateV1 } from 'agent-tempo/http/event-types';
 import {
   __setOptimisticNonceFnForTests,
   OPTIMISTIC_ID_PREFIX,

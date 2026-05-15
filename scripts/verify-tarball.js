@@ -65,7 +65,7 @@ if (mockMatches.length > 0) {
 
 // (3) Mock-adapter scenarios SHIP in the tarball (architect's §4.8 — they're
 // first-class library artifacts, discoverable by npm-install dev-mode users
-// via `claude-tempo --dev scenarios list`). They're inert without the mock
+// via `agent-tempo --dev scenarios list`). They're inert without the mock
 // adapter (which gate 1 strips above) so there's no production-safety
 // concern. A spot check confirms at least one scenario landed.
 const scenarioMatches = files.filter((p) => p.startsWith('scenarios/') && p.endsWith('.yaml'));

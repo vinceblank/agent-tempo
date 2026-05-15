@@ -523,7 +523,7 @@ describe('outbox', function () {
   // Flavor B — recruit-activities (3 tests share one worker)
   //
   // These tests need the per-host stub for `spawnProcess` (recruit pipeline
-  // routes activities to `claude-tempo-{hostname}`). They share a single
+  // routes activities to `agent-tempo-{hostname}`). They share a single
   // recruit-stub worker the same way Flavor A shares its outbox-stub one.
   // ────────────────────────────────────────────────────────────────────────
 
@@ -568,7 +568,7 @@ describe('outbox', function () {
         const ensemble = `recruit-${Date.now()}`;
 
         // Pass temporalConfig so startRecruitedSession creates the recruited workflow
-        // on the test task queue (default 'claude-tempo' would have no worker)
+        // on the test task queue (default 'agent-tempo' would have no worker)
         const handle = await startSession({
           metadata: playerMetadata({ playerId: 'recruiter', ensemble }),
           temporalConfig: {

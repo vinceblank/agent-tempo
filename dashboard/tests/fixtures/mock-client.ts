@@ -12,8 +12,8 @@ import type {
   EnsembleSummary,
   HealthV1,
   TempoEvent,
-} from 'claude-tempo/http/event-types';
-import type { HostInfo } from 'claude-tempo/types';
+} from 'agent-tempo/http/event-types';
+import type { HostInfo } from 'agent-tempo/types';
 import type {
   AgentTypeRow,
   CreateEnsembleOpts,

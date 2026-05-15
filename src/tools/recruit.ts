@@ -85,7 +85,7 @@ export function registerRecruitTool(
       initialMessage: z.string().max(MESSAGE_MAX).optional()
         .describe('Optional task or message for the new session (sent after it sets its name)'),
       agent: z.enum(AGENT_TYPES).optional()
-        .describe(`Which agent to use (default: "${ownAgentType}", same as this session). "mock" requires dev mode (--dev). "claude-api" runs headless via the Anthropic Messages API — requires ANTHROPIC_API_KEY env var and the @anthropic-ai/sdk optional dependency installed; has access to claude-tempo MCP tools (cue, report, recall, ensemble, …) but NOT file-edit or shell tools (use "claude" for those). "opencode" runs headless via a local opencode serve subprocess; multi-provider (Anthropic, OpenAI, Bedrock, Ollama, …) — requires the @opencode-ai/sdk optional dep and an opencode binary on PATH. opencode players ARE file-op-capable (file edits / shell / web search via OpenCode's built-in tools). "claude-code-headless" runs the official Claude Code CLI as a headless per-turn \`claude -p\` subprocess — requires the \`claude\` binary on PATH AND a logged-in Claude Code session (\`claude auth login\`); turns bill against the host's existing subscription extra-usage credits, NOT a Console API key. claude-code-headless players have full Claude Code tool access (Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch).`),
+        .describe(`Which agent to use (default: "${ownAgentType}", same as this session). "mock" requires dev mode (--dev). "claude-api" runs headless via the Anthropic Messages API — requires ANTHROPIC_API_KEY env var and the @anthropic-ai/sdk optional dependency installed; has access to agent-tempo MCP tools (cue, report, recall, ensemble, …) but NOT file-edit or shell tools (use "claude" for those). "opencode" runs headless via a local opencode serve subprocess; multi-provider (Anthropic, OpenAI, Bedrock, Ollama, …) — requires the @opencode-ai/sdk optional dep and an opencode binary on PATH. opencode players ARE file-op-capable (file edits / shell / web search via OpenCode's built-in tools). "claude-code-headless" runs the official Claude Code CLI as a headless per-turn \`claude -p\` subprocess — requires the \`claude\` binary on PATH AND a logged-in Claude Code session (\`claude auth login\`); turns bill against the host's existing subscription extra-usage credits, NOT a Console API key. claude-code-headless players have full Claude Code tool access (Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch).`),
       model: z.string().regex(/^[a-z0-9][a-z0-9-/.:_]*$/).optional()
         .describe('Model id. For "claude-api": bare Anthropic id (e.g. "claude-opus-4-7"). For "opencode": combined "provider/model" (e.g. "anthropic/claude-opus-4-7", "openai/gpt-4o", "ollama/llama3"). Falls back to AGENT_TEMPO_API_MODEL (claude-api) or AGENT_TEMPO_OPENCODE_MODEL (opencode), then a constants-pinned default. Ignored for claude / copilot / mock adapters.'),
       type: z.string().optional()
@@ -142,7 +142,7 @@ export function registerRecruitTool(
       // this rejects the request with a clear, actionable error.
       if (agent === 'mock' && !isDevMode()) {
         return fail(
-          `agent: "mock" is only available in dev mode. Restart claude-tempo with --dev (or set AGENT_TEMPO_DEV_MODE=1) to enable.`,
+          `agent: "mock" is only available in dev mode. Restart agent-tempo with --dev (or set AGENT_TEMPO_DEV_MODE=1) to enable.`,
         );
       }
       // mockMode / mockScenario are only meaningful with the mock adapter —
@@ -321,7 +321,7 @@ export function registerRecruitTool(
               if (force) {
                 await conductorHandle.terminate(`Force-terminated for re-recruit by ${getPlayerId()}`);
               } else {
-                return fail(`A conductor is already running in ensemble "${config.ensemble}". Use \`claude-tempo conduct --replace\` from the CLI to replace it, \`stop\` it first, or use \`force: true\` to replace it.`);
+                return fail(`A conductor is already running in ensemble "${config.ensemble}". Use \`agent-tempo conduct --replace\` from the CLI to replace it, \`stop\` it first, or use \`force: true\` to replace it.`);
               }
             }
           } catch {

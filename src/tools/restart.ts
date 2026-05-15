@@ -13,7 +13,7 @@
  * PR-F adds two cross-host pieces:
  *
  * 1. `host` param — routes the eventual `spawnProcess` to the
- *    `claude-tempo-{host}` task queue. Threaded through the existing
+ *    `agent-tempo-{host}` task queue. Threaded through the existing
  *    `RestartOutboxEntry.host` → `deliverRestart` activity → `enqueueSpawn`
  *    update → `SpawnOutboxEntry.targetHostname` → `case 'spawn':`
  *    dispatcher → `getSpawnProxy(host)` → per-host task queue. All the
@@ -131,7 +131,7 @@ export function registerRestartTool(
     'Restart a session — reap the current attachment (gracefully, or with force=true), claim a fresh attachment, spawn a new adapter, and optionally replay recent context. Replaces `encore`, `recruit --force`, and `stop`-then-`recruit`. Pass `host` to restart on a different machine; when `force=true` AND the target is currently on a different host, pass `confirmStealFromHost` matching that hostname (design §16.5). Pass `loadFromState` to seed the restarted session from a saved-state slot (#334) instead of (or alongside) transcript replay.',
     {
       playerId: z.string().max(PLAYER_NAME_MAX).describe('The player name to restart'),
-      host: z.string().optional().describe('Target host for the new attachment (defaults to the session\'s preferredHost or last-known hostname). When set, the spawn is routed to the per-host task queue `claude-tempo-{host}`.'),
+      host: z.string().optional().describe('Target host for the new attachment (defaults to the session\'s preferredHost or last-known hostname). When set, the spawn is routed to the per-host task queue `agent-tempo-{host}`.'),
       fresh: z.boolean().optional().describe('Skip context replay — spawn a clean slate (default false)'),
       force: z.boolean().optional().describe('Steal a live attachment via forceDetach (default false; graceful detach is tried first regardless)'),
       contextMessages: z.number().min(0).max(RESTART_CONTEXT_MESSAGES_MAX).optional().describe(`Number of recent messages to include in context (default ${DEFAULT_CONTEXT_MESSAGES}, max ${RESTART_CONTEXT_MESSAGES_MAX})`),

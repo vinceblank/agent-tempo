@@ -33,7 +33,7 @@
  *     (#458) — see the comment block in screens.jsx:Settings().
  *   - ST-3: Appearance panel does NOT render the canonical mock's
  *     `metronome = on` row — `metronome` isn't a real Settings semantic
- *     in claude-tempo; the canvas mock is design-time scaffolding.
+ *     in agent-tempo; the canvas mock is design-time scaffolding.
  *   - ST-4: Profile + Notifications panels intentionally show `—`
  *     placeholders — the underlying account-mgmt / notif-prefs surfaces
  *     are wire-pending; blank placeholders are honest until they ship.
@@ -276,7 +276,7 @@ function DangerZonePanel() {
           <DisabledWithTooltip
             testId="settings-disband-all"
             action="settings.disband-all"
-            reason="Disbanding every ensemble at once requires a daemon endpoint that hasn't shipped yet. Use `claude-tempo down --destroy` from the CLI for now."
+            reason="Disbanding every ensemble at once requires a daemon endpoint that hasn't shipped yet. Use `agent-tempo down --destroy` from the CLI for now."
           >
             Disband all
           </DisabledWithTooltip>

@@ -30,7 +30,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { HostInfo } from 'claude-tempo/types';
+import type { HostInfo } from 'agent-tempo/types';
 import { Btn } from '../components/Btn';
 import { DisabledWithTooltip } from '../components/DisabledWithTooltip';
 import { PageHeader } from '../components/PageHeader';
@@ -135,7 +135,7 @@ export function Hosts() {
           {all.length === 0 ? (
             <>
               No daemons reporting. Run{' '}
-              <code style={monoStyle}>claude-tempo daemon start</code> on a host.
+              <code style={monoStyle}>agent-tempo daemon start</code> on a host.
             </>
           ) : (
             <>

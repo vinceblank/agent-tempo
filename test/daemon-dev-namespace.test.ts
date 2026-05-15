@@ -80,7 +80,7 @@ describe('ensureDevNamespace (ADR 0014 §6.2)', function () {
     const calls: RegisterCall[] = [];
     const err: { code: string; message: string } = {
       code: 'ALREADY_EXISTS',
-      message: 'Namespace claude-tempo-dev is already registered.',
+      message: 'Namespace agent-tempo-dev is already registered.',
     };
     const conn = makeStubConnection({ recordedCalls: calls, reject: err });
     const result = await ensureDevNamespace(
@@ -109,7 +109,7 @@ describe('ensureDevNamespace (ADR 0014 §6.2)', function () {
     const calls: RegisterCall[] = [];
     // Bare Error with no `.code` — the substring match is the last line of
     // defense for SDK transports that swallow gRPC metadata.
-    const err = new Error('namespace claude-tempo-dev already exists');
+    const err = new Error('namespace agent-tempo-dev already exists');
     const conn = makeStubConnection({ recordedCalls: calls, reject: err });
     const result = await ensureDevNamespace(
       conn as unknown as Parameters<typeof ensureDevNamespace>[0],

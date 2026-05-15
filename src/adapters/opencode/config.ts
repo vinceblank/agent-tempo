@@ -12,7 +12,7 @@
  *   - Auto-detects the provider from the `model` arg's `provider/...`
  *     prefix and emits a `provider.<name>.options` block for whichever
  *     env vars are present (mirrors OpenCode's own behavior).
- *   - Registers claude-tempo as an OpenCode MCP child via `type: "local"`
+ *   - Registers agent-tempo as an OpenCode MCP child via `type: "local"`
  *     stdio. OpenCode spawns a SECOND copy of `dist/server.js` as its
  *     MCP subprocess and dispatches tool calls there directly — the
  *     adapter is never on the tool-dispatch hot path.
@@ -71,7 +71,7 @@ export interface SynthesizeOpenCodeConfigOpts {
   model: string;
   /** Probed-free port `opencode serve` will bind. */
   port: number;
-  /** Absolute path to claude-tempo's `dist/server.js` — runs as OpenCode's MCP child. */
+  /** Absolute path to agent-tempo's `dist/server.js` — runs as OpenCode's MCP child. */
   mcpServerPath: string;
   /** Ensemble name — passed through to the MCP child env. */
   ensemble: string;

@@ -34,8 +34,8 @@
  *     PlayerAvatar falls back to the deterministic glyph palette.
  */
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
-import type { EnsembleChatMessage } from 'claude-tempo/types';
-import type { PlayerSummaryV1 } from 'claude-tempo/http/event-types';
+import type { EnsembleChatMessage } from 'agent-tempo/types';
+import type { PlayerSummaryV1 } from 'agent-tempo/http/event-types';
 import { logEvent } from '../../lib/log';
 import {
   buildFormattedRows,

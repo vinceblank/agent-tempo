@@ -120,7 +120,7 @@ export function formatCrossHostOrphans(
         // in #288 and the TUI `/migrate` doesn't accept the flag yet.
         lines.push(`      In TUI: /migrate ${d.playerId} ${localHost} --force`);
       } else if (isLocal) {
-        lines.push(`      Use \`claude-tempo restore ${d.ensemble}\` (single-ensemble) to reattach.`);
+        lines.push(`      Use \`agent-tempo restore ${d.ensemble}\` (single-ensemble) to reattach.`);
       }
     }
     lines.push('');

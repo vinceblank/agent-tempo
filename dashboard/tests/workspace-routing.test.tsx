@@ -30,7 +30,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from 'react-router-dom';
-import type { EnsembleStateV1 } from 'claude-tempo/http/event-types';
+import type { EnsembleStateV1 } from 'agent-tempo/http/event-types';
 import { createDashboardMemoryRouter } from '../src/router';
 import { MockDashboardClient } from './fixtures/mock-client';
 import { makePlayer, makeSnapshot } from './fixtures/factories';

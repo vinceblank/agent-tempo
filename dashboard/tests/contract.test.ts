@@ -9,7 +9,7 @@
  *
  * 2. The wire types we depend on (`EnsembleSummary`, `EnsembleStateV1`,
  *    `TempoEvent`) match the daemon-side wire types. The path-aliased
- *    type imports from `claude-tempo/*` mean a wire-protocol change
+ *    type imports from `agent-tempo/*` mean a wire-protocol change
  *    upstream automatically breaks our tsc build — but we make the
  *    expectation explicit here so a future contributor reading this
  *    test understands the dependency.
@@ -21,7 +21,7 @@ import type {
   EnsembleStateV1,
   EnsembleSummary,
   TempoEvent,
-} from 'claude-tempo/http/event-types';
+} from 'agent-tempo/http/event-types';
 
 describe('Contract drift — DashboardTempoClient ↔ MockDashboardClient', () => {
   it('MockDashboardClient implements every method on DashboardTempoClient', () => {

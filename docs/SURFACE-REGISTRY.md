@@ -102,7 +102,7 @@ Source: `src/cli/help-text.ts` Commands section and `src/cli.ts` switch statemen
 | `upgrade [version]` | Upgrade agent-tempo to latest or a specific version |
 | `config` | Configure Temporal connection settings (interactive or `set` / `show`) |
 | `init` | Register MCP server globally (`--project` for per-directory) |
-| `migrate-from-claude-tempo` | One-shot copy `~/.claude-tempo/` → `~/.agent-tempo/` (`--dry-run` / `--force` / `--dev`). Auto-runs on first boot of v1.0+. |
+| `migrate-from-claude-tempo` | One-shot copy `~/.agent-tempo/` → `~/.agent-tempo/` (`--dry-run` / `--force` / `--dev`). Auto-runs on first boot of v1.0+. |
 | `preflight` | Run environment preflight checks |
 | `version` | Print the installed version |
 | `help` | Show help message |

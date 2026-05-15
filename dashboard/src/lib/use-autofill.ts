@@ -29,7 +29,7 @@ import {
   filterPaletteCommands,
   filterPlayerNames,
   type PaletteContext,
-} from 'claude-tempo/palette';
+} from 'agent-tempo/palette';
 import type { DashboardCommandMeta } from './dashboard-commands';
 
 export interface AutofillItem {

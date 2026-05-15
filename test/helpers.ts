@@ -1,5 +1,5 @@
 /**
- * Test helpers for claude-tempo workflow tests.
+ * Test helpers for agent-tempo workflow tests.
  *
  * **Shared TestWorkflowEnvironment (#210 Phase 1)**:
  * Environment creation is process-wide singleton. The first `setupTestEnv()`
@@ -336,14 +336,14 @@ export function getTestEnsemble(): string {
   return currentEnsemblePrefix;
 }
 
-export const TASK_QUEUE = 'test-claude-tempo';
+export const TASK_QUEUE = 'test-agent-tempo';
 
 /**
  * Per-host task queue for spawnProcess activities.
- * The workflow routes spawnProcess to `claude-tempo-{hostname}`.
- * Tests use hostname 'test-host', so the queue is `claude-tempo-test-host`.
+ * The workflow routes spawnProcess to `agent-tempo-{hostname}`.
+ * Tests use hostname 'test-host', so the queue is `agent-tempo-test-host`.
  */
-const HOST_TASK_QUEUE = 'claude-tempo-test-host';
+const HOST_TASK_QUEUE = 'agent-tempo-test-host';
 
 /**
  * Locate the pre-built workflow bundle. `npm run build` must be run first.
@@ -732,7 +732,7 @@ export async function skipTime(durationMs: number): Promise<void> {
  * Create and start a Worker that runs for the duration of `fn`.
  * The worker is shut down when `fn` resolves or rejects.
  *
- * Also spins up a tiny per-host worker on `claude-tempo-test-host` that stubs
+ * Also spins up a tiny per-host worker on `agent-tempo-test-host` that stubs
  * `hardTerminateAttachment` — needed by `forceDetachUpdate` and the fire-and-forget
  * `destroyUpdate` (#164) which schedule the activity on the per-host queue.
  */
@@ -1020,9 +1020,9 @@ export async function withWorkerAndOutboxActivities<T>(fn: () => Promise<T>): Pr
  * Like withWorkerAndOutboxActivities, but also registers a second worker on the
  * per-host task queue used by `spawnProcess` during recruit dispatch.
  *
- * The session workflow routes `spawnProcess` to `claude-tempo-{hostname}`.
+ * The session workflow routes `spawnProcess` to `agent-tempo-{hostname}`.
  * Tests use hostname 'test-host' (see playerMetadata), so we need a worker on
- * `claude-tempo-test-host` with a stubbed spawnProcess to avoid launching real terminals.
+ * `agent-tempo-test-host` with a stubbed spawnProcess to avoid launching real terminals.
  */
 export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): Promise<T> {
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
@@ -1050,12 +1050,12 @@ export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): P
   });
 
   // Per-host worker: handles spawnProcess for the 'test-host' hostname.
-  // spawnProcess is routed to `claude-tempo-{hostname}` by the session workflow.
+  // spawnProcess is routed to `agent-tempo-{hostname}` by the session workflow.
   // No workflowBundle — this worker only polls for activity tasks, matching
   // the production per-host worker config in src/worker.ts.
   const hostWorker = await Worker.create({
     connection: requireTestEnv().nativeConnection,
-    taskQueue: `claude-tempo-test-host`,
+    taskQueue: `agent-tempo-test-host`,
     activities: {
       spawnProcess: async () => ({ success: true }),
       // #159 Gap 2: stub hardTerminate alongside spawnProcess on the per-host queue.
@@ -1219,7 +1219,7 @@ export async function withWorkerAndRecruitCapture<T>(
 
   const hostWorker = await Worker.create({
     connection: requireTestEnv().nativeConnection,
-    taskQueue: `claude-tempo-test-host`,
+    taskQueue: `agent-tempo-test-host`,
     activities: {
       spawnProcess: capturingSpawn,
       hardTerminateAttachment: async () => ({

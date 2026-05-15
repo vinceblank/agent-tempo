@@ -1,6 +1,6 @@
 /**
  * Orphan-session query — shared by `reconcileOnBoot()` in `src/daemon.ts` and
- * the `claude-tempo restore` CLI command (`src/cli/commands.ts`).
+ * the `agent-tempo restore` CLI command (`src/cli/commands.ts`).
  *
  * Design §10.1: a session is an **orphan** when the workflow is `Running` but
  * no adapter process is alive to own its attachment. Two candidate shapes
@@ -93,7 +93,7 @@ export interface OrphanQueryFilter {
    * #151 cluster-view: when `true`, drop the `AgentTempoAttachedHost` /
    * `AgentTempoHostname` predicates from the visibility query so the result
    * spans **every** host's orphans, not just the local one. Used by
-   * `claude-tempo restore --all-hosts` to surface dormant remote orphans
+   * `agent-tempo restore --all-hosts` to surface dormant remote orphans
    * the operator would otherwise need per-host SSH to see. `hostname` is
    * still required (it's the join key for the cross-host record) but no
    * longer filters the query.
@@ -370,7 +370,7 @@ export type RestoreOutcome =
          * when `mode === 'all-hosts-readonly'` — semantically distinct from
          * `preferredHost`, which fires on an *active* restore attempt that
          * stepped back because the remote daemon owns recovery. `crossHost`
-         * is a passive observation for `claude-tempo restore --all-hosts`:
+         * is a passive observation for `agent-tempo restore --all-hosts`:
          * "this orphan exists, here's its preferred host, we did nothing."
          * Same data shape (`detail` carries the preferred host); the
          * different label lets CLI / dashboard surfaces distinguish

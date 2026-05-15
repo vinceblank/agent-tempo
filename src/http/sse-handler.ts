@@ -103,7 +103,7 @@ export function frameSseComment(comment: string): Buffer {
  */
 export function openSseResponse(
   res: ServerResponse,
-  comment: string = 'claude-tempo SSE',
+  comment: string = 'agent-tempo SSE',
 ): void {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',

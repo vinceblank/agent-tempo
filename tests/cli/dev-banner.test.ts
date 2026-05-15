@@ -86,8 +86,8 @@ describe('formatDevBanner', () => {
     expect(banner).toContain(`queue ${DEV_TASK_QUEUE}`);
     // Sanity: production constants must NOT appear as the resolved value
     // for that field. Match end-of-string OR a separator character so the
-    // assertion isn't fooled by `claude-tempo` being a substring of
-    // `claude-tempo-dev` (the dev task queue).
+    // assertion isn't fooled by `agent-tempo` being a substring of
+    // `agent-tempo-dev` (the dev task queue).
     const sep = '(?:[\\s·]|$)';
     expect(banner).not.toMatch(new RegExp(`port ${PROD_DEFAULTS_FOR_TESTS.port}${sep}`));
     expect(banner).not.toMatch(new RegExp(`namespace ${PROD_DEFAULTS_FOR_TESTS.namespace}${sep}`));
@@ -107,7 +107,7 @@ describe('formatDevBanner', () => {
 
 describe('formatDevBanner — source-annotated diagnostic banner (#423 PR-A)', () => {
   // The architect's `dev-mode-isolation-fix-423.md` example shows
-  // `namespace claude-tempo-dev (default) · queue claude-tempo-dev (default)`.
+  // `namespace agent-tempo-dev (default) · queue agent-tempo-dev (default)`.
   // The annotation fires for every non-`none` source — including `default` —
   // so the operator never has to ask "is this annotated or not?". Drift
   // (e.g. an env-var leak) becomes a single-character diff in the banner.

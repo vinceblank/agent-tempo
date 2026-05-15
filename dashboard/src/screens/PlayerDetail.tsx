@@ -13,8 +13,8 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { EnsembleChatMessage } from 'claude-tempo/types';
-import type { PlayerSummaryV1 } from 'claude-tempo/http/event-types';
+import type { EnsembleChatMessage } from 'agent-tempo/types';
+import type { PlayerSummaryV1 } from 'agent-tempo/http/event-types';
 import { useEnsembleSnapshot, useHosts } from '../lib/queries';
 import {
   useDestroyMutation,

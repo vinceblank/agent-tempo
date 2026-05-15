@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # heap-snapshot-336.sh — throwaway reproducer harness for issue #336.
 #
-# Issue: claude-tempo daemon RSS grows to 1.1 GB after 17 h sustained
+# Issue: agent-tempo daemon RSS grows to 1.1 GB after 17 h sustained
 # ensemble activity. Suspect (per the 2026-05-11 diagnostic spike): gRPC
 # stream-buffer retention from the six un-bounded visibility iterators
 # in the daemon hot path (#529).
@@ -81,13 +81,13 @@ mkdir -p "$OUT_DIR"
 log() { printf '[heap-336 %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 # Cross-platform: prefer `node dist/cli.js --dev` (canonical entry per
-# CLAUDE.md dev-mode section). Falls back to `claude-tempo --dev` if a
+# CLAUDE.md dev-mode section). Falls back to `agent-tempo --dev` if a
 # global install is present.
 ct() {
   if [ -f "$REPO_ROOT/dist/cli.js" ]; then
     node "$REPO_ROOT/dist/cli.js" --dev "$@"
   else
-    claude-tempo --dev "$@"
+    agent-tempo --dev "$@"
   fi
 }
 

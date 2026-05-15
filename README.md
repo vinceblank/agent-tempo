@@ -9,11 +9,10 @@
   <strong>Many agents, one tempo.</strong>
 </p>
 <p align="center">
+  <a href="https://www.npmjs.com/package/agent-tempo"><img src="https://img.shields.io/npm/v/agent-tempo.svg" alt="npm version"></a>
   <a href="https://github.com/vinceblank/agent-tempo/actions/workflows/ci.yml"><img src="https://github.com/vinceblank/agent-tempo/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
 </p>
-
-> ⚠️ **v1.0 rebrand in progress.** This documentation reflects the upcoming `agent-tempo` v1.0 release. The currently published CLI is still `claude-tempo` — substitute the old name in command examples until v1.0 ships to npm. See [CHANGELOG.md](./CHANGELOG.md#unreleased) for status.
 
 Multiple Claude Code sessions discover each other, exchange messages in real time, and coordinate work — across machines, not just localhost.
 

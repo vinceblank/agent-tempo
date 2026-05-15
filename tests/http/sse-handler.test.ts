@@ -203,7 +203,7 @@ describe('SSE handler — end-to-end', () => {
     setTimeout(() => bus.emit('player.added', { playerId: 'a' }), 50);
 
     const chunks = await readSseChunks(`${server.url}/v1/events/demo`, 3);
-    expect(chunks[0]).toMatch(/^: claude-tempo SSE/);
+    expect(chunks[0]).toMatch(/^: agent-tempo SSE/);
     expect(chunks.find((c) => /event: snapshot/.test(c))).toBeDefined();
     expect(chunks.find((c) => /event: player\.added/.test(c))).toBeDefined();
   });

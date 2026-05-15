@@ -24,7 +24,7 @@ export OPENAI_API_KEY=sk-...        # for `model: 'openai/gpt-4o'`
 # (or rely on AWS / GCP / OAuth env chains for bedrock / vertex / github-copilot)
 
 # 4. Recruit
-claude-tempo recruit my-player --agent opencode --model anthropic/claude-opus-4-7
+agent-tempo recruit my-player --agent opencode --model anthropic/claude-opus-4-7
 ```
 
 ## Q6 — session persistence across `opencode serve` restart

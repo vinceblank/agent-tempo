@@ -3,7 +3,7 @@ description: >
   All-mock ensemble for autonomous validation harnesses (ADR 0014 §5.5).
   One-command spin-up of a multi-player dev environment with mixed modes —
   no real LLM calls, no terminal windows, no "trust this folder" prompts.
-  Pair with `claude-tempo --dev up --lineup tempo-mock-jam` and drive via
+  Pair with `agent-tempo --dev up --lineup tempo-mock-jam` and drive via
   Chrome MCP / dashboard / `cue`.
 
   Mode mix exercises every PR-3 mock surface in one ensemble:
@@ -23,7 +23,7 @@ description: >
   `claimAttachment`.
 
   Override the scripted player's scenario per-run via the CLI:
-    claude-tempo --dev up --lineup tempo-mock-jam --scenario echo-roundtrip
+    agent-tempo --dev up --lineup tempo-mock-jam --scenario echo-roundtrip
   That forces EVERY mock player into `mockMode: scripted` with the named
   scenario regardless of the per-player `mockMode` here. Useful for
   one-command "all mocks reply via this scenario" runs.

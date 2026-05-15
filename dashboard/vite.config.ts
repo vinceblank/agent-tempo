@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath, URL } from 'node:url';
 
-// claude-tempo dashboard — Vite config
+// agent-tempo dashboard — Vite config
 //
 // - Proxies `/v1/*` and `/dashboard/api/*` to the local daemon (port 8473) so
 //   `npm --prefix dashboard run dev` can hit the running daemon during dev.
@@ -34,11 +34,11 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
-      // `claude-tempo/*` resolves to the parent repo's TS sources so the
+      // `agent-tempo/*` resolves to the parent repo's TS sources so the
       // dashboard imports `TempoClient` types directly. PR-4 will start
       // exercising this; PR-2 just configures it. See ADR 0013 for the
       // path-alias-vs-workspaces decision.
-      'claude-tempo': fileURLToPath(new URL('../src', import.meta.url)),
+      'agent-tempo': fileURLToPath(new URL('../src', import.meta.url)),
     },
   },
   server: {
@@ -53,7 +53,7 @@ export default defineConfig({
     sourcemap: true,
     rollupOptions: {
       // Belt-and-braces: any accidental `node:*` import (e.g. via the
-      // `claude-tempo` alias pulling in node-only TempoClient code) should
+      // `agent-tempo` alias pulling in node-only TempoClient code) should
       // fail the build rather than silently bundle a broken chunk. PR-4
       // will need to be careful which TempoClient surface it imports.
       external: [/^node:/],

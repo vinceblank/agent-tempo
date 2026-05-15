@@ -1,9 +1,9 @@
 {
-  "name": "claude-tempo-dashboard",
+  "name": "agent-tempo-dashboard",
   "private": true,
-  "version": "1.0.0-rc.1",
+  "version": "1.0.0",
   "type": "module",
-  "description": "Web dashboard for claude-tempo. Bundled into the npm package; served by the daemon at /dashboard/*.",
+  "description": "Web dashboard for agent-tempo. Bundled into the npm package; served by the daemon at /dashboard/*.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

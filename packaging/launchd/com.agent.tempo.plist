@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  claude-tempo daemon — launchd user agent.
+  agent-tempo daemon — launchd user agent.
 
   NOTE: macOS launchd integration ships best-effort untested in v0.25.0-beta.1
-  (PR-E §8 answer 4). Feedback welcome at https://github.com/vinceblank/claude-tempo/issues.
+  (PR-E §8 answer 4). Feedback welcome at https://github.com/vinceblank/agent-tempo/issues.
 
-  Installed to ~/Library/LaunchAgents/com.claude.tempo.plist by
-  `claude-tempo daemon install`. Load with:
+  Installed to ~/Library/LaunchAgents/com.agent.tempo.plist by
+  `agent-tempo daemon install`. Load with:
 
-    launchctl load ~/Library/LaunchAgents/com.claude.tempo.plist
+    launchctl load ~/Library/LaunchAgents/com.agent.tempo.plist
 
   User-level only (no sudo). `RunAtLoad` + `KeepAlive` bounce the daemon
   if it crashes; `ThrottleInterval` guards against restart loops.
@@ -17,12 +17,12 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.claude.tempo</string>
+  <string>com.agent.tempo</string>
 
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/env</string>
-    <string>claude-tempo</string>
+    <string>agent-tempo</string>
     <string>daemon</string>
     <string>start</string>
     <string>--foreground</string>
@@ -38,9 +38,9 @@
   <integer>10</integer>
 
   <key>StandardOutPath</key>
-  <string>/tmp/claude-tempo-daemon.stdout.log</string>
+  <string>/tmp/agent-tempo-daemon.stdout.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/tmp/claude-tempo-daemon.stderr.log</string>
+  <string>/tmp/agent-tempo-daemon.stderr.log</string>
 </dict>
 </plist>

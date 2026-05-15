@@ -256,7 +256,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       // `src/types.ts` so the CLI surface tracks the union automatically when
       // a new adapter lands. Pre-#476 this was a hardcoded `'claude'|'copilot'`
       // pair that fell out of sync when `'mock'` (#220) and `'claude-api'`
-      // (#131) were added — `claude-tempo recruit --agent claude-api` errored
+      // (#131) were added — `agent-tempo recruit --agent claude-api` errored
       // out here even though the recruit MCP tool accepted it. Dev-mode gating
       // for `'mock'` lives downstream at the recruit boundary (`src/tools/
       // recruit.ts`, ADR 0014 §7 gate 3); we don't double-gate it here.
@@ -273,7 +273,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.positional.push(arg);
     } else {
       out.error(`Unknown option: ${arg}`);
-      out.log(`Run ${out.dim('claude-tempo help')} for usage.`);
+      out.log(`Run ${out.dim('agent-tempo help')} for usage.`);
       process.exit(1);
     }
     i++;
@@ -358,9 +358,9 @@ async function main() {
   if (args.command === 'version') {
     try {
       const pkg = JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8'));
-      out.log(`claude-tempo v${pkg.version}`);
+      out.log(`agent-tempo v${pkg.version}`);
     } catch {
-      out.log('claude-tempo (unknown version)');
+      out.log('agent-tempo (unknown version)');
     }
     return;
   }
@@ -495,7 +495,7 @@ async function main() {
     case 'broadcast': {
       const msg = args.positional.slice(1).join(' ');
       if (!msg) {
-        out.error('Usage: claude-tempo broadcast <message> [--ensemble <name>] [--type <player-type>] [--include-stale]');
+        out.error('Usage: agent-tempo broadcast <message> [--ensemble <name>] [--type <player-type>] [--include-stale]');
         process.exit(1);
       }
       await broadcast({
@@ -518,7 +518,7 @@ async function main() {
     case 'destroy': {
       const target = args.positional[1] || args.ensemble || process.env[ENV.ENSEMBLE];
       if (!target) {
-        out.error('Usage: claude-tempo destroy <ensemble> [-y]');
+        out.error('Usage: agent-tempo destroy <ensemble> [-y]');
         process.exit(1);
       }
       await destroy({
@@ -533,7 +533,7 @@ async function main() {
     case 'attachment': {
       const name = args.positional[1] || args.name;
       if (!name) {
-        out.error('Usage: claude-tempo attachment-info <name>');
+        out.error('Usage: agent-tempo attachment-info <name>');
         process.exit(1);
       }
       await attachmentInfo({
@@ -566,7 +566,7 @@ async function main() {
       // Positional player is required — matches the #128 design.
       const name = args.positional[1] || args.name;
       if (!name) {
-        out.error('Usage: claude-tempo recall <player> [--limit N] [--offset N] [--preview N] [--from X] [--since ISO] [--include-sent] [--json]');
+        out.error('Usage: agent-tempo recall <player> [--limit N] [--offset N] [--preview N] [--from X] [--since ISO] [--include-sent] [--json]');
         process.exit(1);
       }
       await recall({
@@ -590,7 +590,7 @@ async function main() {
       //       — ensemble becomes optional (when set, narrows the listing).
       const target = args.positional[1] || args.ensemble || process.env[ENV.ENSEMBLE];
       if (!args.allHosts && !target) {
-        out.error('Usage: claude-tempo restore <ensemble>   (or --all-hosts for cluster-view)');
+        out.error('Usage: agent-tempo restore <ensemble>   (or --all-hosts for cluster-view)');
         process.exit(1);
       }
       await restore({
@@ -619,7 +619,7 @@ async function main() {
     case 'scenarios': {
       // ADR 0014 PR-2 — mock-adapter scenario library discovery surface.
       // Available regardless of `--dev` so users investigating a published
-      // claude-tempo can see the shipped library; but the actual recruit
+      // agent-tempo can see the shipped library; but the actual recruit
       // gate (`agent: 'mock'`) still rejects without dev mode.
       const { scenariosCommand } = await import('./cli/scenarios-command');
       await scenariosCommand({
@@ -635,9 +635,9 @@ async function main() {
       break;
 
     case 'migrate-from-claude-tempo': {
-      // PR-2 of the v1.0 rebrand — one-shot copy of `~/.claude-tempo/` →
+      // PR-2 of the v1.0 rebrand — one-shot copy of `~/.agent-tempo/` →
       // `~/.agent-tempo/`. Crash-proof (no Temporal deps). The `--dev`
-      // top-level flag selects the dev profile (`~/.claude-tempo-dev/` →
+      // top-level flag selects the dev profile (`~/.agent-tempo-dev/` →
       // `~/.agent-tempo-dev/`) via {@link isDevMode}.
       const { migrateLegacyHome } = await import('./cli/legacy-migration');
       const result = await migrateLegacyHome({
@@ -707,7 +707,7 @@ async function main() {
 
     default:
       out.error(`Unknown command: ${args.command}`);
-      out.log(`Run ${out.dim('claude-tempo --help')} for usage.`);
+      out.log(`Run ${out.dim('agent-tempo --help')} for usage.`);
       process.exit(1);
   }
 }

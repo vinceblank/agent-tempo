@@ -113,9 +113,9 @@ const HEALTH_PROBE_TIMEOUT_MS = 10_000;
 const SIGTERM_TIMEOUT_MS = 5_000;
 /** OpenCode-specific system-prompt addendum — design §10. */
 const HEADLESS_OPENCODE_ADDENDUM =
-  '\n\nYou are an **opencode** player — you have access to the claude-tempo MCP tools ' +
+  '\n\nYou are an **opencode** player — you have access to the agent-tempo MCP tools ' +
   '(cue, report, recall, ensemble, broadcast, recruit, set_part, …) AND OpenCode\'s built-in ' +
-  'tools (file edits, shell, web search). Use the claude-tempo tools for ensemble coordination ' +
+  'tools (file edits, shell, web search). Use the agent-tempo tools for ensemble coordination ' +
   'and OpenCode\'s built-ins for local task work. Your model is delivered via OpenCode, so the ' +
   'underlying provider (Anthropic, OpenAI, Bedrock, Ollama, …) is opaque to you and to the rest ' +
   'of the ensemble.';
@@ -304,7 +304,7 @@ export class OpenCodeAttachment extends SdkAttachment {
     handle = client.workflow.getHandle(expectedWorkflowId, pinnedRunId);
     log(`Workflow ready: ${expectedWorkflowId} (pinned runId ${pinnedRunId})`);
 
-    // (6) Build cached system prompt — claude-tempo MCP_INSTRUCTIONS plus
+    // (6) Build cached system prompt — agent-tempo MCP_INSTRUCTIONS plus
     // the opencode-specific addendum. Sent every turn; OpenCode caches
     // server-side per its provider transform layer.
     this.systemPrompt = buildServerInstructions({

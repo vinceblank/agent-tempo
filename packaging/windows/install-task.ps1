@@ -1,4 +1,4 @@
-# claude-tempo daemon — Windows Task Scheduler install script
+# agent-tempo daemon — Windows Task Scheduler install script
 #
 # Registers a per-user scheduled task that starts the daemon at logon and
 # keeps it running. User-level only (current user scope; does not require
@@ -12,8 +12,8 @@ param(
   [switch]$Uninstall
 )
 
-$TaskName = 'claude-tempo-daemon'
-$TaskDescription = 'claude-tempo daemon — Temporal workers + reconcile loop'
+$TaskName = 'agent-tempo-daemon'
+$TaskDescription = 'agent-tempo daemon — Temporal workers + reconcile loop'
 
 if ($Uninstall) {
   $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -26,10 +26,10 @@ if ($Uninstall) {
   exit 0
 }
 
-# Resolve claude-tempo.cmd (the npm-installed shim on PATH).
-$claudeTempo = (Get-Command claude-tempo -ErrorAction SilentlyContinue).Source
+# Resolve agent-tempo.cmd (the npm-installed shim on PATH).
+$claudeTempo = (Get-Command agent-tempo -ErrorAction SilentlyContinue).Source
 if (-not $claudeTempo) {
-  Write-Error "claude-tempo not found on PATH. Install it first (`npm i -g claude-tempo`)."
+  Write-Error "agent-tempo not found on PATH. Install it first (`npm i -g agent-tempo`)."
   exit 1
 }
 

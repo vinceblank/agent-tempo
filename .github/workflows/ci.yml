@@ -91,7 +91,7 @@ jobs:
     # **Job cloning note**: if you copy this job for another dashboard-
     # related CI step (e.g. `dashboard-e2e`, future `dashboard-perf`),
     # copy ALL setup steps — especially "Install root dependencies".
-    # The dashboard's `claude-tempo/*` path alias drags `../src/*` into
+    # The dashboard's `agent-tempo/*` path alias drags `../src/*` into
     # `tsc -b`, which fails to resolve `@temporalio/client` / `yaml` /
     # `zod` without root `node_modules`. The fix is non-obvious unless
     # you've debugged it once. Tracked in #368.
@@ -120,7 +120,7 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 22
-          # Root npm cache — needed because the dashboard's `claude-tempo/*`
+          # Root npm cache — needed because the dashboard's `agent-tempo/*`
           # path alias drags `../src/*` into `tsc -b` (see PR-4 of #340), and
           # those parent files import `@temporalio/client` / `yaml` / `zod`
           # from root `node_modules`. Without root deps, lint + tests + build
@@ -136,7 +136,7 @@ jobs:
             dashboard-node-modules-
 
       - name: Lockstep version check (root === dashboard)
-        # ADR 0013: dashboard pins in lockstep with claude-tempo. CI enforces
+        # ADR 0013: dashboard pins in lockstep with agent-tempo. CI enforces
         # `dashboard/package.json#version` matches root so a release never
         # ships a stale dashboard against a new daemon.
         run: |
@@ -150,7 +150,7 @@ jobs:
           echo "Lockstep OK: $ROOT_VER"
 
       - name: Install root dependencies (for path-alias type resolution)
-        # The dashboard's `claude-tempo/*` path alias resolves to `../src/*`,
+        # The dashboard's `agent-tempo/*` path alias resolves to `../src/*`,
         # whose files import `@temporalio/client`, `yaml`, and `zod` from
         # root `node_modules`. `tsc -b` walks those imports during type
         # checking; without root deps the build fails with "Cannot find
@@ -214,7 +214,7 @@ jobs:
         with:
           node-version: 22
           # Root npm cache — same reason as `dashboard-build`: the
-          # dashboard's `claude-tempo/*` path alias drags `../src/*`
+          # dashboard's `agent-tempo/*` path alias drags `../src/*`
           # into `tsc -b`, and parent files import @temporalio/* + yaml
           # + zod from root `node_modules`.
           cache: npm
@@ -239,7 +239,7 @@ jobs:
 
       - name: Install root dependencies (for path-alias type resolution)
         # Mirrors the same step in `dashboard-build`. The dashboard's
-        # `claude-tempo/*` path alias resolves to `../src/*`, whose
+        # `agent-tempo/*` path alias resolves to `../src/*`, whose
         # files import @temporalio/client / yaml / zod from root
         # `node_modules`. `tsc -b` (run by `dashboard run build`) walks
         # those imports during type checking; without root deps the
@@ -535,7 +535,7 @@ jobs:
     # rolling per-test timeouts on Windows under runner contention — different
     # heavy test failed each rerun (`pause-resume`, `outbox >
     # submitOutboxUpdate basics`, `adapter-claude-code-lifecycle-v2`). The
-    # `claude-tempo --dev daemon up` ramp-up + Temporal createLocal cost lands
+    # `agent-tempo --dev daemon up` ramp-up + Temporal createLocal cost lands
     # roughly 2× on Windows vs Linux; running the entire suite serially
     # against a single 30s/60s per-test cap left no headroom. Sharding cuts
     # per-job wall-clock roughly in half so the heaviest tests have margin.
@@ -613,7 +613,7 @@ jobs:
   #   - docs PR  → noops run, real jobs skip  (real `if` is false)
   #   - push/dispatch → neither set's noop runs (noops gate on pull_request)
   #
-  # See https://github.com/vinceblank/claude-tempo/issues/547 for root-cause
+  # See https://github.com/vinceblank/agent-tempo/issues/547 for root-cause
   # analysis and the branch-protection check name inventory.
 
   build-and-test-noop:

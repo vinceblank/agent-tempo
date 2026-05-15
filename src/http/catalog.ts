@@ -98,7 +98,7 @@ interface CreateEnsembleBody {
  * POST `/v1/ensembles` — create a fresh ensemble.
  *
  * The bootstrap path is the daemon-side equivalent of the CLI's
- * `claude-tempo up` codepath, but trimmed to the actions the daemon
+ * `agent-tempo up` codepath, but trimmed to the actions the daemon
  * can run for a browser caller:
  *
  *   1. Validate the body (name regex, lineup exists if specified,

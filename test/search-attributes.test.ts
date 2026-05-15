@@ -2,7 +2,7 @@
  * Unit tests for `src/utils/search-attributes.ts`.
  *
  * Covers the primitive string/bool readers and the typed wrappers for the
- * three claude-tempo custom attributes. Pure logic — no Temporal SDK, no
+ * three agent-tempo custom attributes. Pure logic — no Temporal SDK, no
  * TestWorkflowEnvironment. Runs in milliseconds.
  */
 import { expect } from 'chai';

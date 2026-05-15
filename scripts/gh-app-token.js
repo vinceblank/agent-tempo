@@ -73,7 +73,7 @@ async function fetchInstallationToken(jwt, installationId) {
     headers: {
       Authorization: `Bearer ${jwt}`,
       Accept: 'application/vnd.github+json',
-      'User-Agent': 'claude-tempo',
+      'User-Agent': 'agent-tempo',
       'X-GitHub-Api-Version': '2022-11-28',
     },
   });

@@ -40,7 +40,7 @@ function host(
       {
         pid: 1,
         version: '0.26.0-beta.7',
-        identity: `claude-tempo:${hostname}:1:0.26.0-beta.7`,
+        identity: `agent-tempo:${hostname}:1:0.26.0-beta.7`,
         lastAccessTime: new Date().toISOString(),
         hasWorkflowWorker: true,
         hasActivityWorker: true,

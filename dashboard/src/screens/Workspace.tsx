@@ -61,7 +61,7 @@ import {
   useNavigate,
   useLocation,
 } from 'react-router-dom';
-import type { ScheduleEntry } from 'claude-tempo/types';
+import type { ScheduleEntry } from 'agent-tempo/types';
 import { useEnsembleSnapshot } from '../lib/queries';
 import { useSseSubscription } from '../lib/sse';
 import { formatUptimeFromIso } from '../lib/time-format';
@@ -736,7 +736,7 @@ export function Workspace() {
 
       {popped && (
         <PopoutWindow
-          titlePrefix="claude-tempo · maestro chat ·"
+          titlePrefix="agent-tempo · maestro chat ·"
           titleAccent={`@${ensemble}`}
           onClose={() => setPopped(false)}
           testId="workspace-popout-window"

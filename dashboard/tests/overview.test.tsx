@@ -7,7 +7,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import type { HostInfo } from 'claude-tempo/types';
+import type { HostInfo } from 'agent-tempo/types';
 import { AppShell } from '../src/components/AppShell';
 import { Overview } from '../src/screens/Overview';
 import { MockDashboardClient, makeSnapshot } from './fixtures/mock-client';

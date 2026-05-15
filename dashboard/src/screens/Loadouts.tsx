@@ -50,7 +50,7 @@ export function Loadouts() {
         subtitle={
           <>
             Reusable ensemble lineups. Loaded via{' '}
-            <span className="mono">claude-tempo up --lineup</span> or from here.
+            <span className="mono">agent-tempo up --lineup</span> or from here.
           </>
         }
         actions={

@@ -30,7 +30,7 @@ export const LEGACY_CONDUCTOR_NAME = 'conductor';
  * The dashboard has NO local-echo path in PR-5 (safe writes land in
  * PR-7), so this module is simpler than the TUI's equivalent.
  */
-import type { EnsembleChatMessage } from 'claude-tempo/types';
+import type { EnsembleChatMessage } from 'agent-tempo/types';
 
 export interface FormattedChatRow {
   /** Original first message of the (possibly folded) group. */
