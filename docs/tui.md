@@ -4,10 +4,10 @@
 
 ```bash
 # Multi-ensemble mode — lists all running ensembles
-claude-tempo tui
+agent-tempo tui
 
 # Direct ensemble mode — connects straight to a named ensemble
-claude-tempo tui --ensemble my-ensemble
+agent-tempo tui --ensemble my-ensemble
 ```
 
 ## Interface
@@ -62,7 +62,7 @@ Use `/players <name>` to open a scrollable message history for any player.
 | `/players [name]` | Show detailed player info; no args opens interactive picker |
 | `/ensemble [name]` | Switch active ensemble context; no args navigates home |
 | `/status` | Show dismissible overlay with all players, status, type, and part |
-| `/recall [player]` | Query a player's inbox directly. Omit player to target the maestro session. Flags: `--limit N` (default 20, max 100), `--offset N` (paging), `--preview N` (truncate bodies; omit = full text), `--from X`, `--since ISO`, `--include-sent`. (#128: unified semantics with MCP `recall` and `claude-tempo recall` CLI.) |
+| `/recall [player]` | Query a player's inbox directly. Omit player to target the maestro session. Flags: `--limit N` (default 20, max 100), `--offset N` (paging), `--preview N` (truncate bodies; omit = full text), `--from X`, `--since ISO`, `--include-sent`. (#128: unified semantics with MCP `recall` and `agent-tempo recall` CLI.) |
 | `/hosts [--all]` | List daemons polling this Temporal namespace with their advertised capabilities. `--all` includes stale hosts. Output matches CLI and MCP surfaces (shared formatter, #274). |
 | `/search <term>` | Search message history across the ensemble |
 | `/schedule [create \| delete <name>]` | List active schedules (interactive overlay); `create` launches the schedule wizard; `delete <name>` cancels a named schedule |
@@ -88,11 +88,11 @@ Interactive overlays (`/schedule`, `/gates`, `/stages`, `/worktree`) support arr
 - **`/home` added** — multi-ensemble home screen with two-list layout (ensembles + players) and restore modal. (#290)
 - **`/destroy <player|ensemble>`** — extended to accept an ensemble name in addition to a player name.
 - **Removed**: `/resume`, `/detach`, `/disband`, `/pause_ensemble`, `/resume_ensemble` — each shows a migration hint pointing to the replacement command.
-- **Bare `claude-tempo` invocation** launches the TUI directly (with auto-provisioning); `claude-tempo tui` is a synonym.
+- **Bare `agent-tempo` invocation** launches the TUI directly (with auto-provisioning); `agent-tempo tui` is a synonym.
 
 ### v0.25 Changes
 
-> **Breaking change in v0.25.0-beta.1**: The wire protocol changed. If upgrading from v0.24.x, run `claude-tempo down` and `claude-tempo up` to reinitialize before launching the TUI.
+> **Breaking change in v0.25.0-beta.1**: The wire protocol changed. If upgrading from v0.24.x, run `agent-tempo down` and `agent-tempo up` to reinitialize before launching the TUI.
 
 - **`/encore` removed** — use `/restart` instead. Restart works from any non-`gone` attachment phase.
 - **New lifecycle commands**: `/restart`, `/destroy`, `/migrate`, `/attachment-info` expose the v0.25 attachment state machine.
@@ -118,6 +118,6 @@ The TUI's API layer (`src/client/`) wraps these queries behind a `TempoClient` i
 
 ## Related
 
-- [cli.md](cli.md) — `claude-tempo tui` command reference
+- [cli.md](cli.md) — `agent-tempo tui` command reference
 - [WIRE-PROTOCOL.md](WIRE-PROTOCOL.md) — stable Temporal signal/query names for Maestro
 - [tui-performance.md](tui-performance.md) — Ink/React performance lessons for contributors

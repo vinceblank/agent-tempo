@@ -227,7 +227,7 @@ That addendum + the existing design + ADR is sufficient for engineer pickup. **N
 
 ## 5. Sources
 
-- Existing claude-tempo docs (read 2026-04-28):
+- Existing agent-tempo docs (read 2026-04-28):
   - `docs/research/131-claude-api-adapter-alternatives.md` (PR #339)
   - `docs/design/131-claude-api-adapter.md` (PR #344)
   - `docs/adr/0012-claude-api-adapter.md` (PR #344)

@@ -2,17 +2,18 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.svg">
-    <img alt="claude-tempo" src="assets/logo-light.svg" height="140">
+    <img alt="agent-tempo" src="assets/logo-light.svg" height="140">
   </picture>
 </p>
 <p align="center">
-  Multi-session <a href="https://claude.ai/code">Claude Code</a> coordination via <a href="https://temporal.io">Temporal</a>.
+  <strong>Many agents, one tempo.</strong>
 </p>
 <p align="center">
-  <a href="https://www.npmjs.com/package/claude-tempo"><img src="https://img.shields.io/npm/v/claude-tempo.svg" alt="npm version"></a>
-  <a href="https://github.com/vinceblank/claude-tempo/actions/workflows/ci.yml"><img src="https://github.com/vinceblank/claude-tempo/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/vinceblank/agent-tempo/actions/workflows/ci.yml"><img src="https://github.com/vinceblank/agent-tempo/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
 </p>
+
+> ⚠️ **v1.0 rebrand in progress.** This documentation reflects the upcoming `agent-tempo` v1.0 release. The currently published CLI is still `claude-tempo` — substitute the old name in command examples until v1.0 ships to npm. See [CHANGELOG.md](./CHANGELOG.md#unreleased) for status.
 
 Multiple Claude Code sessions discover each other, exchange messages in real time, and coordinate work — across machines, not just localhost.
 
@@ -20,7 +21,7 @@ Each session registers as a **player** in Temporal. Players discover each other 
 
 📖 **[Full documentation](docs/README.md)**
 
-## Why claude-tempo?
+## Why agent-tempo?
 
 - **Crash-safe durability** — Sessions are Temporal workflows. Crashes, restarts, and network blips don't lose messages or drop coordination state.
 - **Instant signaling** — Temporal signals deliver messages with no polling. Players receive cues the moment they're sent, regardless of which machine they're on.
@@ -42,7 +43,7 @@ Each session registers as a **player** in Temporal. Players discover each other 
 ## Installation
 
 ```bash
-npm install -g claude-tempo
+npm install -g agent-tempo
 ```
 
 **Prerequisites**: [Node.js](https://nodejs.org/) 20 LTS, 22 LTS, or 24 LTS, [Temporal CLI](https://docs.temporal.io/cli), [Claude Code](https://claude.ai/code)
@@ -53,13 +54,13 @@ One command handles everything:
 
 ```bash
 cd your-project
-claude-tempo up
+agent-tempo up
 ```
 
 This starts Temporal, registers the MCP server, launches the daemon, and opens a conductor session. Then add players:
 
 ```bash
-claude-tempo status         # see who's active
+agent-tempo status         # see who's active
 ```
 
 Or use the TUI to recruit players, or ask the conductor to `recruit` from inside Claude Code.
@@ -67,38 +68,38 @@ Or use the TUI to recruit players, or ask the conductor to `recruit` from inside
 ### Manual setup
 
 ```bash
-claude-tempo server         # start Temporal dev server
-claude-tempo init           # register MCP server globally
-claude-tempo preflight      # verify environment
-claude-tempo up             # launch conductor via auto-provisioning
+agent-tempo server         # start Temporal dev server
+agent-tempo init           # register MCP server globally
+agent-tempo preflight      # verify environment
+agent-tempo up             # launch conductor via auto-provisioning
 ```
 
 ## Upgrading
 
 ```bash
-claude-tempo upgrade
+agent-tempo upgrade
 ```
 
 Stops the daemon, installs the latest version, and restarts automatically. To upgrade to a specific version:
 
 ```bash
-claude-tempo upgrade 0.22.0
+agent-tempo upgrade 0.22.0
 ```
 
 ## Stopping & Tear Down
 
 ```bash
 # Terminate all sessions in an ensemble
-claude-tempo destroy my-ensemble
+agent-tempo destroy my-ensemble
 
 # Tear down everything (all sessions, schedulers, and Maestro workflows)
-claude-tempo down --all
+agent-tempo down --all
 
 # Tear down and terminate all workflows in one step
-claude-tempo down --destroy -y
+agent-tempo down --destroy -y
 
 # Stop the background daemon
-claude-tempo daemon stop
+agent-tempo daemon stop
 ```
 
 📖 [Full CLI reference → docs/cli.md](docs/cli.md)
@@ -114,16 +115,16 @@ claude-tempo daemon stop
 - **Lineup** — A YAML file that defines a full team and recruits them in one step
 - **Player Type** — A reusable agent definition (`.md` with YAML frontmatter) that gives a player a named role
 
-Players in one ensemble cannot see or message players in another. Launch `claude-tempo` to open the TUI and switch between ensembles, or target a specific ensemble directly:
+Players in one ensemble cannot see or message players in another. Launch `agent-tempo` to open the TUI and switch between ensembles, or target a specific ensemble directly:
 
 ```bash
-claude-tempo up frontend        # provision and launch conductor in "frontend"
-claude-tempo up backend         # provision and launch conductor in "backend"
+agent-tempo up frontend        # provision and launch conductor in "frontend"
+agent-tempo up backend         # provision and launch conductor in "backend"
 ```
 
 ## MCP Tools
 
-Tools available inside Claude Code sessions connected to claude-tempo:
+Tools available inside Claude Code sessions connected to agent-tempo:
 
 | Tool | Description |
 |------|-------------|
@@ -140,21 +141,21 @@ Tools available inside Claude Code sessions connected to claude-tempo:
 ## CLI
 
 ```bash
-claude-tempo                    # launch TUI (auto-provisions on first run)
-claude-tempo up [ensemble]      # provision infrastructure and launch conductor
-claude-tempo down [--destroy]   # tear down infrastructure (--destroy also terminates workflows)
-claude-tempo status [ensemble]  # list active sessions
-claude-tempo destroy <ensemble> # terminate all sessions in an ensemble
-claude-tempo restore <ensemble> # restore orphaned sessions on this host
-claude-tempo hosts              # list daemons polling this Temporal namespace (--all/--json)
-claude-tempo recall <name>      # read a player's message history (--limit/--offset/--preview/--json)
-claude-tempo attachment-info <name> # inspect a session's phase, holder, lease, and heartbeat age
-claude-tempo release [ensemble] # release held players (unlock + deliver tasks)
-claude-tempo daemon <sub>       # manage the worker daemon
-claude-tempo upgrade            # update to latest
+agent-tempo                    # launch TUI (auto-provisions on first run)
+agent-tempo up [ensemble]      # provision infrastructure and launch conductor
+agent-tempo down [--destroy]   # tear down infrastructure (--destroy also terminates workflows)
+agent-tempo status [ensemble]  # list active sessions
+agent-tempo destroy <ensemble> # terminate all sessions in an ensemble
+agent-tempo restore <ensemble> # restore orphaned sessions on this host
+agent-tempo hosts              # list daemons polling this Temporal namespace (--all/--json)
+agent-tempo recall <name>      # read a player's message history (--limit/--offset/--preview/--json)
+agent-tempo attachment-info <name> # inspect a session's phase, holder, lease, and heartbeat age
+agent-tempo release [ensemble] # release held players (unlock + deliver tasks)
+agent-tempo daemon <sub>       # manage the worker daemon
+agent-tempo upgrade            # update to latest
 ```
 
-Run `claude-tempo --help` or `claude-tempo <command> --help` for all flags.
+Run `agent-tempo --help` or `agent-tempo <command> --help` for all flags.
 
 📖 [Full CLI reference → docs/cli.md](docs/cli.md)
 
@@ -183,7 +184,7 @@ schedules:
 ```
 
 ```bash
-claude-tempo up --lineup my-project.yaml   # load from CLI
+agent-tempo up --lineup my-project.yaml   # load from CLI
 ```
 
 Or from inside a session: *"Load the my-project lineup"*
@@ -205,8 +206,8 @@ players:
 Eight types ship out of the box: `tempo-conductor`, `tempo-composer`, `tempo-soloist`, `tempo-tuner`, `tempo-critic`, `tempo-roadie`, `tempo-improv`, `tempo-liner`. Five lineup presets are included: `tempo-big-band`, `tempo-dev-team`, `tempo-review-squad`, `tempo-jam-session`, `tempo-mock-jam`.
 
 ```bash
-claude-tempo agent-types list   # discover available types
-claude-tempo agent-types init   # copy shipped types to ~/.claude/agents/
+agent-tempo agent-types list   # discover available types
+agent-tempo agent-types init   # copy shipped types to ~/.claude/agents/
 ```
 
 📖 [Player types deep dive → docs/ensembles.md](docs/ensembles.md)
@@ -214,10 +215,10 @@ claude-tempo agent-types init   # copy shipped types to ~/.claude/agents/
 ## Configuration
 
 ```bash
-claude-tempo config   # interactive setup (Temporal address, namespace, API key)
+agent-tempo config   # interactive setup (Temporal address, namespace, API key)
 ```
 
-Settings persist in `~/.claude-tempo/config.json`. Resolution order: CLI flags → env vars → config file → Temporal CLI config → defaults.
+Settings persist in `~/.agent-tempo/config.json`. Resolution order: CLI flags → env vars → config file → Temporal CLI config → defaults.
 
 Key environment variables:
 
@@ -233,8 +234,8 @@ Key environment variables:
 ## Terminal UI
 
 ```bash
-claude-tempo tui                          # multi-ensemble home screen
-claude-tempo tui --ensemble my-ensemble   # direct ensemble mode
+agent-tempo tui                          # multi-ensemble home screen
+agent-tempo tui --ensemble my-ensemble   # direct ensemble mode
 ```
 
 The TUI provides a chat-focused shell for managing your ensemble:
@@ -259,15 +260,15 @@ GitHub Copilot CLI sessions can join an ensemble using `--agent copilot`. Recrui
 
 ## Worker Daemon
 
-The daemon runs Temporal workers as a background process — it starts automatically on first use. Manage it explicitly with `claude-tempo daemon start|stop|status|logs`.
+The daemon runs Temporal workers as a background process — it starts automatically on first use. Manage it explicitly with `agent-tempo daemon start|stop|status|logs`.
 
 📖 [Daemon reference → docs/daemon.md](docs/daemon.md)
 
 ## Development
 
 ```bash
-git clone https://github.com/vinceblank/claude-tempo.git
-cd claude-tempo && npm install
+git clone https://github.com/vinceblank/agent-tempo.git
+cd agent-tempo && npm install
 
 npm run build   # compile TypeScript + pre-bundle workflows
 npm test        # run tests
@@ -282,7 +283,7 @@ See [CLAUDE.md](CLAUDE.md) for project structure, conventions, and development s
 
 ## Known Limitations
 
-- **`recruit` requires manual acknowledgment** — Recruited sessions show a Claude Code confirmation prompt that must be acknowledged in the spawned terminal. This will be resolved once claude-tempo is a published approved channel plugin. Copilot bridge sessions are not affected.
+- **`recruit` requires manual acknowledgment** — Recruited sessions show a Claude Code confirmation prompt that must be acknowledged in the spawned terminal. This will be resolved once agent-tempo is a published approved channel plugin. Copilot bridge sessions are not affected.
 
 ## License
 

@@ -2,12 +2,12 @@
 
 - **Author**: tempo-researcher (claude-tempo[bot] ensemble)
 - **Date**: 2026-04-26 (refresh-and-persist of issue-comment research from 2026-04-20)
-- **Status**: **Parked** — graduated from issue-only comments to versioned doc. Recommendation continues to track [vinceblank's 2026-04-19 deprioritize decision](https://github.com/vinceblank/claude-tempo/issues/262#issuecomment-4277094436).
+- **Status**: **Parked** — graduated from issue-only comments to versioned doc. Recommendation continues to track [vinceblank's 2026-04-19 deprioritize decision](https://github.com/vinceblank/agent-tempo/issues/262#issuecomment-4277094436).
 - **Tracking issue**: #262
 - **Prior canonical sources** (this doc supersedes for reference but does NOT change the standing decision):
-  - [Original tempo-researcher inventory](https://github.com/vinceblank/claude-tempo/issues/262#issuecomment-4284567729)
-  - [Implementation-time addendum (one-mode-per-process invariant)](https://github.com/vinceblank/claude-tempo/issues/262#issuecomment-4284572465)
-  - [vinceblank's deprioritize reply](https://github.com/vinceblank/claude-tempo/issues/262#issuecomment-4277094436)
+  - [Original tempo-researcher inventory](https://github.com/vinceblank/agent-tempo/issues/262#issuecomment-4284567729)
+  - [Implementation-time addendum (one-mode-per-process invariant)](https://github.com/vinceblank/agent-tempo/issues/262#issuecomment-4284572465)
+  - [vinceblank's deprioritize reply](https://github.com/vinceblank/agent-tempo/issues/262#issuecomment-4277094436)
 
 ---
 
@@ -41,7 +41,7 @@ All five sites exercise pure workflow-timer waits (drain deadlines / scheduler `
 
 ## 3. Why migration is not justified — vinceblank's 5 blockers (verbatim citations)
 
-From [issue #262 comment](https://github.com/vinceblank/claude-tempo/issues/262#issuecomment-4277094436):
+From [issue #262 comment](https://github.com/vinceblank/agent-tempo/issues/262#issuecomment-4277094436):
 
 1. **Search-attribute `extraArgs` incompatibility** — `createTimeSkipping()` runs the Java test server. Our env uses 9 `--search-attribute` `extraArgs` via the CLI dev server; Java server's startup-config surface differs and likely silently no-ops these. Most session/conductor tests query search attributes; regression risk is real.
 2. **Singleton-env clock bleed** — SDK docs: *"time skipping is global to the environment … highly recommend running tests serially … or creating a separate environment per test."* Our shared singleton across 40+ Mocha files violates this.
@@ -59,7 +59,7 @@ Earlier audit identified ~125 s reclaimable across `scheduler.test.ts` (~35 s), 
 
 ## 6. Implementation-time guard pattern (for whoever ever picks this up)
 
-If a future `setupTimeSkippingTestEnv()` ever lands alongside `setupTestEnv()`, the two singletons MUST NOT coexist in-process. From the [implementation-time addendum](https://github.com/vinceblank/claude-tempo/issues/262#issuecomment-4284572465):
+If a future `setupTimeSkippingTestEnv()` ever lands alongside `setupTestEnv()`, the two singletons MUST NOT coexist in-process. From the [implementation-time addendum](https://github.com/vinceblank/agent-tempo/issues/262#issuecomment-4284572465):
 
 ```ts
 let envMode: 'local' | 'skipping' | undefined;

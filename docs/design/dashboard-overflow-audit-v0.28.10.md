@@ -933,7 +933,7 @@ The walker branches are NOT merged into `feat/461-overflow-audit-lead` (this bra
 **Phased path**:
 - **v0** — JS structural assertions (3b, broad) in a new `dashboard-overflow` Playwright job. Catches class A reliably + class D cleanly + partial class B via bbox math. ~150 LoC + 0 baseline PNGs. ~3-4 hr work.
 - **v1** — Targeted Playwright per-Locator screenshots layered onto v0 specs for class B (F-A-5, F-A-6 cases that bbox math can't fully resolve) and class C (F-B-3, F-B-NEW-2 visual-judgment cases). ~50 baseline PNGs committed in-repo; ~100 LoC additional. ~3-4 hr work. Same PR cluster as v0.
-- **v2** — Storybook + Chromatic. **Deferred indefinitely.** Today's audit is one-shot regression hunt + lock-in, not design-iteration cadence. Researcher's #474 §3.4 confirms Chromatic OSS-free is likely ineligible (claude-tempo isn't a design-system / component-library project), so v2 cost is $179/mo Starter (~$2,148/yr) for ~30 components × ~4 viewports × ~3 regimes × ~50 PR-and-main runs/mo = ~18k snapshots/mo. **Not justified by today's failure-class shape.**
+- **v2** — Storybook + Chromatic. **Deferred indefinitely.** Today's audit is one-shot regression hunt + lock-in, not design-iteration cadence. Researcher's #474 §3.4 confirms Chromatic OSS-free is likely ineligible (agent-tempo isn't a design-system / component-library project), so v2 cost is $179/mo Starter (~$2,148/yr) for ~30 components × ~4 viewports × ~3 regimes × ~50 PR-and-main runs/mo = ~18k snapshots/mo. **Not justified by today's failure-class shape.**
 
 **Total v0+v1 effort**: ~7-9 hr eng work, ~450-690 LoC, $0 SaaS spend. Single PR cluster.
 

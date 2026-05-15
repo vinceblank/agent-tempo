@@ -7,7 +7,7 @@
 
 ## Context
 
-`TempoClient` (37 methods) is the canonical Node-side abstraction over Temporal for claude-tempo. Of those 37 methods, exactly two — `createEnsemble` and `spawnConductor` — shell out to a local terminal via `runTempoCli('claude-tempo up …')`. The other 35 are pure Temporal RPC.
+`TempoClient` (37 methods) is the canonical Node-side abstraction over Temporal for agent-tempo. Of those 37 methods, exactly two — `createEnsemble` and `spawnConductor` — shell out to a local terminal via `runTempoCli('agent-tempo up …')`. The other 35 are pure Temporal RPC.
 
 Three forces motivate splitting the type now:
 
@@ -45,7 +45,7 @@ The full design document — boundary tables, consumer catalog, migration plan, 
   - Headless-safety becomes typecheckable. The daemon (`src/daemon.ts:435`), MCP tools (`src/server.ts`), reconcile loop (`src/reconcile/orphans.ts:428`), and CLI commands (`src/cli/commands.ts:1931, 2054, 2112`) — all already Core-only in practice — become Core-only in type. A future maintainer can't accidentally introduce a TTY dependency in the daemon by calling `spawnConductor`; the type forbids it.
   - The `restore` tool docstring's "DOES NOT spawn" promise is now enforced by the type system, not reviewer discipline.
   - The SSE event source (#94/#95) gets a clean import target — `createTempoClientCore` for the aggregate's read paths.
-  - Future `@claude-tempo/client` SDK exports `TempoClientCore` without dragging in `child_process`.
+  - Future `@agent-tempo/client` SDK exports `TempoClientCore` without dragging in `child_process`.
   - **Migration is non-breaking** — `TempoClient` alias preserves every existing import.
 - **Negative**:
   - Two factories instead of one — minor surface increase. Mitigated by the alias preserving the canonical `createTempoClient` name.
@@ -65,7 +65,7 @@ The full design document — boundary tables, consumer catalog, migration plan, 
 
 - A `TempoClientReadOnly` interface (subset of Core: just queries, no signals/updates) is the natural next split if/when an aggressive caching consumer materializes (e.g. SSE event source's per-tick poll loop). Tracked as a follow-up. Not in scope for the current split.
 - The `createTempoClient` alias is intentionally permanent — aliases are free, and removing it later would force a codemod for no architectural benefit.
-- If/when the `@claude-tempo/client` SDK is published to npm (#67), `TempoClientCore` is the canonical export; `TempoClientWithSpawn` stays internal to the monorepo (TUI/CLI only).
+- If/when the `@agent-tempo/client` SDK is published to npm (#67), `TempoClientCore` is the canonical export; `TempoClientWithSpawn` stays internal to the monorepo (TUI/CLI only).
 
 ## References
 

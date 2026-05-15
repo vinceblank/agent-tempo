@@ -58,7 +58,7 @@ Three primitives partially overlap; coat-check unifies them as a first-class sto
 |---|---|---|---|---|---|
 | **Per-ensemble maestro state** | Bounded by maestro state ceiling (see §3.2) | No (single-host v1) | ✅ deterministic | Lives + dies with ensemble | **Selected** |
 | Per-conductor session state | Same | No | ✅ deterministic | Lives + dies with conductor (lost on conductor restart — bad) | Rejected |
-| Filesystem `~/.claude-tempo/coatcheck/` | Unbounded | No (single-host v1) | ❌ non-deterministic in workflow context | Manual cleanup | Rejected |
+| Filesystem `~/.agent-tempo/coatcheck/` | Unbounded | No (single-host v1) | ❌ non-deterministic in workflow context | Manual cleanup | Rejected |
 | External blob (S3/sqlite/MinIO) | Unbounded | ✅ Yes | ❌ non-deterministic | Operator-managed | Rejected for v1 |
 
 ### 3.2 Maestro state size headroom
@@ -107,7 +107,7 @@ The **CAN-input constraint is the load-bearing one** for coat-check sizing. When
 
 ### Why not Option 2 (external storage) for v1
 
-External storage (filesystem `~/.claude-tempo/coatcheck/<ensemble>/<ticket>` or activity-mediated blob store) gives unbounded per-entry size at the cost of:
+External storage (filesystem `~/.agent-tempo/coatcheck/<ensemble>/<ticket>` or activity-mediated blob store) gives unbounded per-entry size at the cost of:
 
 - **Replay determinism** — workflow state must NOT contain the content; activities read/write it. Workflow only carries metadata. Adds an activity round-trip on every put/get.
 - **Cross-machine fragility** — host-bound FS doesn't survive the future cross-host-coat-check use case the issue flagged as v2 scope. Forces storage to migrate again later.
@@ -390,7 +390,7 @@ Store coat-check entries on the conductor's `claudeSessionWorkflow` instead of t
 
 **Rejected**: conductor restart loses state. Ensemble-scope coordination is the maestro's job; sticking the store there matches the architecture.
 
-### 11.2 Storage: filesystem `~/.claude-tempo/coatcheck/`
+### 11.2 Storage: filesystem `~/.agent-tempo/coatcheck/`
 
 **Rejected**: workflow-context filesystem reads are non-deterministic and would require funnelling through an activity. Extra moving parts; no cross-host sharing benefit. Manual cleanup is operator-hostile.
 

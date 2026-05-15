@@ -37,12 +37,12 @@ schedules:
 1. **From the CLI** — load a lineup when starting an ensemble:
 
    ```bash
-   claude-tempo up --lineup my-lineup.yaml
+   agent-tempo up --lineup my-lineup.yaml
    ```
 
 2. **From inside a session** — use the `load_lineup` tool:
 
-   *"Load the lineup from ~/.claude-tempo/ensembles/my-project.yaml"*
+   *"Load the lineup from ~/.agent-tempo/ensembles/my-project.yaml"*
 
 3. **Save the current state** — snapshot a running ensemble as a lineup (conductor only):
 
@@ -117,7 +117,7 @@ Player types are resolved in order (first match wins):
 
 1. **Project** — `.claude/agents/` in the project directory
 2. **User** — `~/.claude/agents/` in the user's home directory
-3. **Shipped** — `examples/agents/` bundled with claude-tempo
+3. **Shipped** — `examples/agents/` bundled with agent-tempo
 
 Project and user types are resolved natively by Claude Code via `--agent <name>`. Shipped types fall back to `--system-prompt <path>`.
 
@@ -149,9 +149,9 @@ Project and user types are resolved natively by Claude Code via `--agent <name>`
 Use the `agent_types` MCP tool inside a session or the CLI:
 
 ```bash
-claude-tempo agent-types list          # show available types
-claude-tempo agent-types show <name>   # print full definition
-claude-tempo agent-types init          # copy shipped examples to ~/.claude/agents/
+agent-tempo agent-types list          # show available types
+agent-tempo agent-types show <name>   # print full definition
+agent-tempo agent-types init          # copy shipped examples to ~/.claude/agents/
 ```
 
 ## Related

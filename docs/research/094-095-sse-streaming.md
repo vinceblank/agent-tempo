@@ -32,11 +32,11 @@
   - Built-in `Last-Event-ID` reconnect → matches the durable-execution worldview.
   - Trivial multi-subscriber fan-out (one `res.write(...)` per subscriber).
 - **Fallback**: none in v1. WebSocket only justified if we later need bidirectional UI control (collaborative cursors, etc.). Long-poll is unnecessary — corporate proxies that strip SSE also strip WS.
-- **Auth/CORS**: localhost-only by default; bearer token from `~/.claude-tempo/config.json` for cross-origin web-dashboard. CORS allowlist via `CLAUDE_TEMPO_CORS_ORIGINS` env var.
+- **Auth/CORS**: localhost-only by default; bearer token from `~/.agent-tempo/config.json` for cross-origin web-dashboard. CORS allowlist via `CLAUDE_TEMPO_CORS_ORIGINS` env var.
 
 ## Daemon event source design (sketch)
 
-- **HTTP server**: spin up `http.createServer` inside `src/daemon.ts` after `runDaemonBoot` (port from `CLAUDE_TEMPO_HTTP_PORT`, default `0` → ephemeral, written into `~/.claude-tempo/daemon.port`).
+- **HTTP server**: spin up `http.createServer` inside `src/daemon.ts` after `runDaemonBoot` (port from `CLAUDE_TEMPO_HTTP_PORT`, default `0` → ephemeral, written into `~/.agent-tempo/daemon.port`).
 - **Endpoints**:
   - `GET /v1/state/:ensemble` — JSON snapshot (one-shot) for initial render.
   - `GET /v1/events/:ensemble` — SSE stream, optional `?topics=phase,chat,flags,schedules`.

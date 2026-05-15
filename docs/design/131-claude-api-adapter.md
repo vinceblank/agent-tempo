@@ -20,7 +20,7 @@ The new adapter is selected via `recruit({ adapter: 'claude-api', ... })`. Tool 
 |---|---|
 | 1. Tool surface scope | **MCP-tools-only in v1**. File ops deferred to Phase 2. Document the limitation in `recruit`'s tool description and `src/adapters/README.md`. |
 | 2. MCP transport | **In-process MCP server + `InMemoryTransport` paired client**. Avoids subprocess; preserves the abstraction. |
-| 3. Per-turn usage telemetry | **Structured stderr log line** in v1 (`[claude-tempo:claude-api] turn-usage …`). Wire-protocol signal deferred until a consumer (cost dashboard / per-session cap) lands. |
+| 3. Per-turn usage telemetry | **Structured stderr log line** in v1 (`[agent-tempo:claude-api] turn-usage …`). Wire-protocol signal deferred until a consumer (cost dashboard / per-session cap) lands. |
 | 4. Model selection | **Recruit-arg precedence** → `CLAUDE_TEMPO_API_MODEL` env → constants-pinned default (`claude-opus-4-7` at impl time; reviewable at the next minor bump). |
 | 5. Prompt cache opt-out | **Always-on in v1**, no flag. The cache is strict-prefix; cost of re-validation is trivial. |
 | 6. Context-overflow UX | **Emit workflow message** ("context window exhausted; recommend `save_state(...)` then `restart({ loadFromState: true })`"). Auto-compact via #334 deferred to Phase 2. |
@@ -221,7 +221,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
-const server = new McpServer({ name: 'claude-tempo', version: PACKAGE_VERSION });
+const server = new McpServer({ name: 'agent-tempo', version: PACKAGE_VERSION });
 registerEnsembleTool(server, ...);    // every tool from src/tools/*
 registerCueTool(server, ...);
 // ... full registrar bundle, identical to src/server.ts ...
@@ -287,7 +287,7 @@ for (const block of assistantMessage.content) {
 | **WebSearch / WebFetch** | **Out** — Phase 2 | Same reasoning — not on Phase 1's critical path. |
 
 **Document the constraint** in:
-- `recruit`'s tool description: "claude-api players have access to claude-tempo MCP tools (cue, report, recall, …) but NOT file-edit or shell tools — use claude-code adapter for tasks requiring file ops."
+- `recruit`'s tool description: "claude-api players have access to agent-tempo MCP tools (cue, report, recall, …) but NOT file-edit or shell tools — use claude-code adapter for tasks requiring file ops."
 - `src/adapters/README.md` — tool-availability matrix per adapter
 - `docs/concepts.md` — adapter-comparison table
 
@@ -373,7 +373,7 @@ The player sees the message on the next deliver cycle. Auto-compact via #334 is 
 log(`turn-usage model=${model} input=${usage.input_tokens} output=${usage.output_tokens} cache_create=${usage.cache_creation_input_tokens ?? 0} cache_read=${usage.cache_read_input_tokens ?? 0} elapsed_ms=${elapsedMs} player=${playerName}`);
 ```
 
-Operators grep `[claude-tempo:claude-api] turn-usage` from daemon logs. **No wire-protocol signal in v1** — adding a `recordTurnUsage` signal without a consumer (cost dashboard / per-session cap) inflates surface for no gain. When a consumer lands, add the signal at that time; v1's structured stderr log is sufficient for operator triage.
+Operators grep `[agent-tempo:claude-api] turn-usage` from daemon logs. **No wire-protocol signal in v1** — adding a `recordTurnUsage` signal without a consumer (cost dashboard / per-session cap) inflates surface for no gain. When a consumer lands, add the signal at that time; v1's structured stderr log is sufficient for operator triage.
 
 ---
 
@@ -497,7 +497,7 @@ export class DirectApiAttachment extends SdkAttachment {
   }
 
   private async bootMcp(): Promise<void> {
-    const server = new McpServer({ name: 'claude-tempo', version: PACKAGE_VERSION });
+    const server = new McpServer({ name: 'agent-tempo', version: PACKAGE_VERSION });
     registerAllTempoTools(server, /* … workflow handle, identity context … */);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
@@ -651,7 +651,7 @@ Implementer pulls the same instructions string into the system prompt at session
 
 **Headless-identity addendum** — the system prompt must clearly distinguish a `claude-api` player from a `claude-code` player so the LLM doesn't reach for tools it doesn't have. Append a short paragraph after `MCP_INSTRUCTIONS` such as:
 
-> You are a **headless** claude-api player — you have access to the claude-tempo MCP tools (cue, report, recall, ensemble, broadcast, recruit, set_part, …) but **NOT** the file-edit, shell, or web tools that a `claude-code` player would have (no Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch). For tasks requiring file edits or shell commands, ask the conductor to recruit a `claude-code` player and hand off via cue. (File-op tool support is planned for a Phase 2 enhancement.)
+> You are a **headless** claude-api player — you have access to the agent-tempo MCP tools (cue, report, recall, ensemble, broadcast, recruit, set_part, …) but **NOT** the file-edit, shell, or web tools that a `claude-code` player would have (no Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch). For tasks requiring file edits or shell commands, ask the conductor to recruit a `claude-code` player and hand off via cue. (File-op tool support is planned for a Phase 2 enhancement.)
 
 The addendum lives under the same `cache_control: { type: 'ephemeral' }` block as the rest of the system prompt — cost is amortized across the session.
 

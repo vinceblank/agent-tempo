@@ -2,13 +2,13 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in claude-tempo, please report it responsibly.
+If you discover a security vulnerability in agent-tempo, please report it responsibly.
 
 **Do NOT open a public GitHub issue for security vulnerabilities.**
 
 ### How to Report
 
-1. **GitHub Security Advisories** (preferred): Go to the [Security Advisories](https://github.com/vinceblank/claude-tempo/security/advisories) page and click "Report a vulnerability."
+1. **GitHub Security Advisories** (preferred): Go to the [Security Advisories](https://github.com/vinceblank/agent-tempo/security/advisories) page and click "Report a vulnerability."
 
 2. **Email**: If you prefer email, contact the maintainers directly through their GitHub profile.
 
@@ -27,7 +27,7 @@ If you discover a security vulnerability in claude-tempo, please report it respo
 
 ### Scope
 
-This policy covers the claude-tempo MCP server codebase. Note that claude-tempo coordinates Claude Code sessions via Temporal — security of the underlying Temporal server and Claude Code sessions is outside our scope.
+This policy covers the agent-tempo MCP server codebase. Note that agent-tempo coordinates Claude Code sessions via Temporal — security of the underlying Temporal server and Claude Code sessions is outside our scope.
 
 ## Supported Versions
 

@@ -3,7 +3,7 @@
 - **Status**: **Implemented in v0.29** (#318) — see the implementation-time divergences in the "Divergences from the original decision" section below.
 - **Date**: 2026-04-26 (decision) / 2026-05-13 (implementation)
 - **Authors**: tempo-architect
-- **Related**: [`docs/design/coat-check-pattern.md`](../design/coat-check-pattern.md), issue #318, [#318 architect verdict](https://github.com/vinceblank/claude-tempo/issues/318#issuecomment-4437033250)
+- **Related**: [`docs/design/coat-check-pattern.md`](../design/coat-check-pattern.md), issue #318, [#318 architect verdict](https://github.com/vinceblank/agent-tempo/issues/318#issuecomment-4437033250)
 
 ## Divergences from the original decision
 
@@ -29,7 +29,7 @@ The pattern: sender stores content under a ticket (`coat_check_put`); cues carry
 Storage candidates evaluated:
 - Per-ensemble maestro workflow state
 - Per-conductor session workflow state
-- Filesystem `~/.claude-tempo/coatcheck/`
+- Filesystem `~/.agent-tempo/coatcheck/`
 - External blob store (S3 / sqlite / MinIO)
 
 ## Decision
@@ -66,7 +66,7 @@ The full design — storage analysis with state-size headroom, decision matrix, 
 ## Alternatives considered
 
 - **Per-conductor session state** — rejected. Conductor restart loses state. Coat-check is ensemble-scoped, not conductor-scoped.
-- **Filesystem `~/.claude-tempo/coatcheck/`** — rejected. Workflow-context FS reads are non-deterministic; would require an activity wrapper. No cross-host benefit. Manual cleanup is operator-hostile.
+- **Filesystem `~/.agent-tempo/coatcheck/`** — rejected. Workflow-context FS reads are non-deterministic; would require an activity wrapper. No cross-host benefit. Manual cleanup is operator-hostile.
 - **External blob store (S3 / sqlite / MinIO) or filesystem-via-activity** — rejected for v1. Adds deployment dependency, requires an activity round-trip on every put/get, host-bound on FS path (breaks the future cross-host-coat-check use case the issue flagged as v2 scope). Reserved as the v2 storage swap if the 32 KiB per-entry cap binds in practice.
 - **Single `coat_check` tool with `verb` discriminator** — rejected. Violates the codebase's per-verb tool precedent; harder Zod schemas; lower discoverability.
 - **Conductor-only `coat_check_put`** — rejected. Contradicts issue #318's own example (player parks their own review before cueing). Audit trail via `putBy` is sufficient deterrent.

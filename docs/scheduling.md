@@ -37,7 +37,7 @@ The `timezone` parameter accepts any IANA timezone (e.g. `"America/New_York"`, `
 - The `from` field is set to the schedule creator, so replies go to the right person
 - If the target player is gone when a schedule fires, the creator is notified so they can re-recruit if needed. Falls back to notifying the conductor if the creator is also unavailable
 - Messages include `isScheduled` metadata for dashboard integrations
-- `claude-tempo status` shows active schedules alongside sessions
+- `agent-tempo status` shows active schedules alongside sessions
 - A single durable scheduler workflow per ensemble manages all schedules using Temporal timers
 
 ## Fan-out Schedules

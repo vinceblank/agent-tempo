@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Docs
+
+- **Rebrand: `claude-tempo` → `agent-tempo`** (PR-1 of 5). Documentation rename only; CLI,
+  npm package, env vars, wire protocol unchanged in this release. See
+  `docs/migration/v1.0.md` (drafted in PR-3) for the full migration guide.
+
 ## [0.29.1] - 2026-05-15
 
 ### Fixed

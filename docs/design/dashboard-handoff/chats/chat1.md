@@ -14,11 +14,11 @@ Welcome! I can explore a GitHub repo's structure and pull selected files in to u
 
 ## User
 
-I want to create a design system for the TUI interface I am building in my claude-tempo repository.
+I want to create a design system for the TUI interface I am building in my agent-tempo repository.
 
 ## Assistant
 
-I'll help you create a design system for your claude-tempo TUI. Let me first explore the repository to understand what you're building.
+I'll help you create a design system for your agent-tempo TUI. Let me first explore the repository to understand what you're building.
 
 _[tool: github_list_repos]_
 
@@ -64,7 +64,7 @@ _[tool: update_todos]_
 
 ## Design system plan
 
-I'm going to build a single-page HTML design system reference for the claude-tempo TUI. It will document what already exists in the codebase and formalize it as a system:
+I'm going to build a single-page HTML design system reference for the agent-tempo TUI. It will document what already exists in the codebase and formalize it as a system:
 
 **Approach (pulled directly from the repo):**
 - **Aesthetic**: dark terminal, warm-neutral palette. Terracotta accent (#E07A5F) paired with cream foreground (#FAF3EE) on near-black (#0A0E12). The metronome/music-notation motif (♩ ★ •) is already the brand vocabulary — I'll lean into it.
@@ -82,7 +82,7 @@ _[tool: snip]_
 
 _[tool: fork_verifier_agent]_
 
-Built a single-page design system doc at **design-system.html** covering the claude-tempo TUI, sourced directly from `src/tui/utils/theme.ts`, `platform.ts`, and `format.ts`.
+Built a single-page design system doc at **design-system.html** covering the agent-tempo TUI, sourced directly from `src/tui/utils/theme.ts`, `platform.ts`, and `format.ts`.
 
 **What's in it:**
 1. **Brand** — metronome mark, quarter-note ♩ glyph, voice guidelines

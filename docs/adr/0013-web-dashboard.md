@@ -1,4 +1,4 @@
-# ADR 0013 — Packaged web dashboard via `claude-tempo dashboard`
+# ADR 0013 — Packaged web dashboard via `agent-tempo dashboard`
 
 - **Status**: Accepted (design — implementation deferred to scheduled engineer pickup; eng-2 named per conductor)
 - **Date**: 2026-04-26
@@ -7,7 +7,7 @@
 
 ## Context
 
-Issue #340 proposes a packaged React web dashboard for managing claude-tempo ensembles, started via a new CLI verb `claude-tempo dashboard`. Goal: become the **primary cross-device interface** (alongside the existing terminal TUI), serve as a reference fork-target for downstream consumers, and ship as a reasonably-sized addition to the npm tarball.
+Issue #340 proposes a packaged React web dashboard for managing agent-tempo ensembles, started via a new CLI verb `agent-tempo dashboard`. Goal: become the **primary cross-device interface** (alongside the existing terminal TUI), serve as a reference fork-target for downstream consumers, and ship as a reasonably-sized addition to the npm tarball.
 
 Infrastructure to support a dashboard already landed in v0.27 + Phase 3 of #94/#95: daemon HTTP server (PR #320), SSE streaming (PR #324), `TempoClient.subscribe()` (PR #325), bearer-token auth + CORS, multi-host support. The dashboard is a thin client over the existing wire surface; **no new Temporal signals/queries/updates** are required.
 
@@ -28,13 +28,13 @@ Headline locked-in choices:
 - **Build & packaging**: top-level `npm run build` invokes `npm --prefix dashboard run build` before the workflow bundle step. **Cap +30 s**; split out lazily if it blows. **Static assets shipped via `package.json#files`**; **NO `postinstall` build hook** (Mink's known support black hole).
 - **Bundle budget**: ≤1 MB gzip-on-wire / ≤3 MB unpacked for the dashboard portion. Enforced by `size-limit` in CI; hard fail if exceeded.
 - **Daemon serving**: one new file (`src/http/dashboard.ts`, ~80 LoC) for static + SPA fallback at `/dashboard/*`; reuses existing auth (bearer for non-loopback) and CORS allowlist. Two new endpoints under `/dashboard/api/*` for the QR-code pairing flow (POST `/pair` + GET `/pair/:token`).
-- **CLI verb**: `claude-tempo dashboard [--port] [--bind] [--no-open] [--pair]` — auto-starts daemon, reads port file, opens browser, optionally mints a 5-min single-use pairing token and prints a QR code.
+- **CLI verb**: `agent-tempo dashboard [--port] [--bind] [--no-open] [--pair]` — auto-starts daemon, reads port file, opens browser, optionally mints a 5-min single-use pairing token and prints a QR code.
 - **Cross-device auth**: Tailscale primary path; QR-code-with-short-lived-pairing-token UX for mobile. **Token shape**: `crypto.randomBytes(32).toString('base64url')`, 5-min TTL, single-use, in-memory map (daemon restart invalidates outstanding pairings — acceptable).
 - **State management**: **TanStack Query** for server state (snapshots from `/v1/state/:ensemble`; SSE events feed `queryClient.setQueryData`). **Zustand** for user preferences (theme/density/accent/viewport, `localStorage`-backed). **useState** for component-local UI state. **NO Redux**.
 - **v1 functional cut**: **all 9 screens render**; only **safe writes wired** (cue, report, release, play, pause, recruit). Destructive verbs (destroy, restart, restore, shutdown), schedule edit, lineup edit, gates, worktrees — disabled with `Coming in v2` tooltip. Visible-but-disabled deliberately, so the v2 roadmap is on-screen.
 - **Browser support floor**: last 2 evergreen of Chrome/Edge/Safari/Firefox; Safari ≥16; no IE. Locked in `vite.config.ts` `build.target`.
 - **Lighthouse / a11y**: targets Perf ≥85 / Accessibility ≥90 / Best Practices ≥90 (mobile, 4G throttle). **CI checks size-limit only**; Lighthouse is a **release-checklist item**, not blocking CI.
-- **Versioning**: dashboard pinned in lockstep with claude-tempo (no independent release). CI enforces `dashboard/package.json` version matches root.
+- **Versioning**: dashboard pinned in lockstep with agent-tempo (no independent release). CI enforces `dashboard/package.json` version matches root.
 - **Reference-fork story**: `dashboard/README.md` documents the TempoClient integration shape, design-token mapping, and an explicit "fork-and-customize" guide. Mentioned from the main README. Honours issue #340's reference-quality goal.
 - **Design tokens**: full mapping table from `dashboard-handoff/styles.css` CSS variables to shadcn theme tokens (`--accent` → `--primary`, `--bg` → `--background`, `--rule` → `--border`, …) lives in design §8. Custom tempo motifs (Metronome, TempoStrip, PhaseDot, PlayerAvatar, TypeBadge, Brandmark) ported verbatim to `dashboard/src/components/tempo/`.
 
@@ -61,12 +61,12 @@ Headline locked-in choices:
   - **`TempoClient` is the source of truth for the wire contract** — dashboard imports the published types directly; new tools and surfaces light up automatically as `TempoClient` grows.
   - **Visible v2 roadmap** — disabled-with-tooltip pattern shows users what's coming without UI churn during v2 unlock. Engineer can ship destructive-write paths in a later PR with no layout changes.
   - **Bundle budget is honest** — 1 MB gzip / 3 MB unpacked is enforced by CI from day one, not aspirational. Prisma's 87 MB → 136 MB cautionary tale (per researcher §1) doesn't repeat here.
-  - **Fork-friendly** — the `dashboard/` dir is dependency-isolated and architecture-documented. Downstream consumers can fork it as a starting point against `TempoClient` without lifting the rest of claude-tempo.
+  - **Fork-friendly** — the `dashboard/` dir is dependency-isolated and architecture-documented. Downstream consumers can fork it as a starting point against `TempoClient` without lifting the rest of agent-tempo.
   - **Visual design is canonical** — implementer pulls tokens directly from `dashboard-handoff/styles.css` rather than re-deriving from screenshots. Component shapes pre-spec'd across 9 artboards in `dashboard.html`.
 - **Negative**:
   - **+30 s build cost** for `npm run build`. If it blows the cap during impl, the fallback (split into a lazy `build:dashboard` invoked only at release time) is documented; both paths are in scope.
   - **Static assets shipped in tarball** grow the npm package by ~1 MB. Acceptable per the bundle-budget reasoning; well under the 2 MB ceiling the issue named.
-  - **Path-alias for `claude-tempo` imports** in the dashboard (vs npm workspaces) means the dashboard depends on the source layout being stable. If `src/client/` reorganises, the alias breaks. Acceptable trade — npm workspaces add tooling complexity that isn't justified for a single dashboard consumer.
+  - **Path-alias for `agent-tempo` imports** in the dashboard (vs npm workspaces) means the dashboard depends on the source layout being stable. If `src/client/` reorganises, the alias breaks. Acceptable trade — npm workspaces add tooling complexity that isn't justified for a single dashboard consumer.
   - **In-memory pairing-token map** means daemon restart invalidates outstanding pairings. Operator re-runs `--pair`; no persistence layer to manage. Acceptable trade — pairings are transient.
   - **Lighthouse not in CI** means perf regressions can land between releases. Mitigated by size-limit catching the most common cause (bundle bloat); release-time manual run catches the rest.
   - **Sibling-dir + path-alias setup is non-obvious for new contributors** — `dashboard/README.md` + `docs/development.md` document the dev workflow explicitly.
@@ -84,7 +84,7 @@ Headline locked-in choices:
 - **Iframe the TUI in a web wrapper** — rejected. TUI is Ink-rendered to a terminal; not portable to browser context.
 - **Next.js with App Router + RSC** — rejected. RSC requires Node runtime; we're shipping a static SPA. RSC's value is server-rendered data fetching — we already have `TempoClient.subscribe()`. Dead weight for our scope.
 - **Per-project Vite build at user-install time (`postinstall: build`)** — rejected. Mink's known support black hole on `npm i -g`. Prebuild once at publish; `dashboard/dist/` ships in the tarball.
-- **Sub-package with independent version (`@claude-tempo/dashboard`)** — rejected for v1. No external consumer; lockstep eliminates the "which dashboard goes with which daemon" matrix. Revisit if downstream forks need independent versioning.
+- **Sub-package with independent version (`@agent-tempo/dashboard`)** — rejected for v1. No external consumer; lockstep eliminates the "which dashboard goes with which daemon" matrix. Revisit if downstream forks need independent versioning.
 - **Subprocess vs in-process MCP for dashboard tool calls** — N/A; dashboard speaks HTTP+SSE to the daemon, not MCP. The MCP-bridging design from #131 (claude-api adapter) is for adapter contexts, not dashboard.
 - **Redux + redux-saga** — rejected. TanStack Query + Zustand cover both server and prefs state with less ceremony. Redux added complexity exceeds its value.
 - **Cypress for e2e** — rejected in favour of Playwright. Faster, fewer flakes, better mobile-viewport story, matches researcher §2.
@@ -107,7 +107,7 @@ Headline locked-in choices:
 - **v2 dark/light auto** — `prefers-color-scheme` media-query auto-toggle (currently manual via Settings sheet).
 - **v2 i18n** — out of scope for v1; researcher §8 deferred. Revisit if international contributors materialise.
 - **v3 multi-user / RBAC** — out of scope. The current bearer-token model assumes single-operator. Multi-user requires a real auth surface (OIDC, …) — large project; separate issue.
-- **External-host hosting** (e.g., a managed `https://dashboard.claude-tempo.dev` against your local daemon) — explicit anti-pattern per researcher §1; not pursued.
+- **External-host hosting** (e.g., a managed `https://dashboard.agent-tempo.dev` against your local daemon) — explicit anti-pattern per researcher §1; not pursued.
 - **Wire-protocol additions post-v1.0** must register with the protobuf field-number plan in `protos/README.md` reservations log when #319 (protobuf migration) lands. The dashboard speaks JSON over HTTP; the protobuf migration is Temporal-internal — no dashboard changes when #319 lands.
 - **TUI deprecation path** — TUI continues indefinitely. The dashboard is additive, not a replacement. If/when usage data shows the dashboard fully subsumes TUI use cases, deprecation can be considered; not v1 or v2 concern.
 

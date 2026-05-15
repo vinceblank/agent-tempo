@@ -1,7 +1,7 @@
 {
   "name": "claude-tempo",
   "version": "0.29.1",
-  "description": "MCP server for multi-session Claude Code coordination via Temporal",
+  "description": "Many agents, one tempo. Durable coordination for multi-agent work via Temporal.",
   "keywords": [
     "mcp",
     "claude",

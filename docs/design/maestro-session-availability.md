@@ -14,7 +14,7 @@ The maestro is a regular `claudeSessionWorkflow` running at workflow-id `claude-
 
 The problem is **lifecycle**: `ensureMaestroSession()` is the only thing that creates this workflow, and it's called from exactly **3 UI sites**. The ensemble lifecycle (`commands.ts up`) and the daemon's reconcile-on-boot sequence don't create it. So:
 
-- A fresh `claude-tempo up <ensemble>` produces an ensemble with **no maestro session**. Any `cue maestro` from the conductor before a UI opens fails at `resolveSession` and never reaches an outbox.
+- A fresh `agent-tempo up <ensemble>` produces an ensemble with **no maestro session**. Any `cue maestro` from the conductor before a UI opens fails at `resolveSession` and never reaches an outbox.
 - A daemon restart **after** a UI opened wipes the maestro session (24-hour `workflowExecutionTimeout` is enforced, daemon shutdown also terminates it). The next UI mount recreates it; nothing else does.
 
 **Fix**: hoist the maestro session into the ensemble's standing infrastructure. `commands.ts up` creates it (Layer 1, immediate fix). The daemon reconciles it on boot for every ensemble it knows about (Layer 2, resilience).
@@ -149,7 +149,7 @@ async function reconcileMaestroSessions(client: TempoClient): Promise<void> {
     try {
       await client.ensureMaestroSession(ensemble);
     } catch (err) {
-      console.error(`[claude-tempo:reconcile] ensureMaestroSession failed for ${ensemble}:`, err);
+      console.error(`[agent-tempo:reconcile] ensureMaestroSession failed for ${ensemble}:`, err);
     }
   }
 }
@@ -173,7 +173,7 @@ Recommend **one PR with two commits**:
 
 | # | Commit | Files | Tests |
 |---|---|---|---|
-| 1 | `fix(cli): ensure maestro session in 'up' command` | MOD `src/cli/commands.ts` | NEW integration test: `claude-tempo up <ensemble>` → assert `claude-session-{ensemble}-maestro` is running → assert a `cue maestro` from a peer succeeds without a UI ever mounting. |
+| 1 | `fix(cli): ensure maestro session in 'up' command` | MOD `src/cli/commands.ts` | NEW integration test: `agent-tempo up <ensemble>` → assert `claude-session-{ensemble}-maestro` is running → assert a `cue maestro` from a peer succeeds without a UI ever mounting. |
 | 2 | `feat(daemon): reconcile maestro sessions on boot` | NEW `src/reconcile/maestro.ts` (or extend `orphans.ts`); MOD `src/daemon.ts` (call site) | NEW integration test: start daemon → start an ensemble → terminate the maestro session manually → restart daemon → assert the session reappears. |
 
 Layer 1 is shippable on its own — Layer 2's bug surface (daemon-restart with stale session) is rare enough that we don't need to bundle them. But shipping both together makes the chat surface fully reliable.
@@ -243,7 +243,7 @@ This is a narrow, ~10-line projection adjustment for the case where the conducto
 ### Integration tests
 
 1. **`test/cli-up-maestro-session.test.ts`** (Layer 1 — Mocha):
-   - Start a fresh ensemble via `claude-tempo up`.
+   - Start a fresh ensemble via `agent-tempo up`.
    - Assert `claude-session-{ensemble}-maestro` is running and the session's `getMetadata` query returns `playerId: 'maestro'`, `hostname: 'dashboard'`.
    - Send a cue from a synthetic peer to "maestro" and assert the cue succeeds (returns a valid outbox id, doesn't error with `No active session found`).
    - Query `allMessages` on the maestro session and assert the cued message appears.

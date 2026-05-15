@@ -1,6 +1,10 @@
-# claude-tempo — Full Documentation
+# agent-tempo — Full Documentation
 
-Reference documentation for claude-tempo. See the main [README](../README.md) for installation and quick start.
+> **Durable coordination for multi-agent work.**
+
+> ⚠️ **v1.0 rebrand in progress.** This documentation reflects the upcoming `agent-tempo` v1.0 release. The currently published CLI is still `claude-tempo` — substitute the old name in command examples until v1.0 ships to npm. See [CHANGELOG.md](../CHANGELOG.md#unreleased) for status.
+
+Reference documentation for agent-tempo. See the main [README](../README.md) for installation and quick start.
 
 ## Contents
 
@@ -8,7 +12,7 @@ Reference documentation for claude-tempo. See the main [README](../README.md) fo
 |------|-------------|
 | [tools.md](tools.md) | MCP tools reference — all tools available inside Claude Code sessions |
 | [cli.md](cli.md) | CLI command reference — commands, options, and examples |
-| [concepts.md](concepts.md) | Key concepts glossary — full definitions for all claude-tempo primitives |
+| [concepts.md](concepts.md) | Key concepts glossary — full definitions for all agent-tempo primitives |
 | [development.md](development.md) | Development setup — Temporal server, build, test, daemon worker notes |
 | [scheduling.md](scheduling.md) | Scheduling — one-shot, recurring, cron, fan-out |
 | [orchestration.md](orchestration.md) | Orchestration — Quality Gates, Pipeline Stages, Git Worktrees |

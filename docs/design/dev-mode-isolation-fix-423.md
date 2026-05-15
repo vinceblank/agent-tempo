@@ -3,7 +3,7 @@
 - **Status**: Spec — engineer pickup
 - **Date**: 2026-04-28
 - **Author**: tempo-architect
-- **Related**: [#423](https://github.com/vinceblank/claude-tempo/issues/423), [ADR 0014](../adr/0014-dev-mode-mock-adapter.md)
+- **Related**: [#423](https://github.com/vinceblank/agent-tempo/issues/423), [ADR 0014](../adr/0014-dev-mode-mock-adapter.md)
 
 ## TL;DR
 
@@ -30,7 +30,7 @@ Two paths cause the banner-vs-actual mismatch:
 temporalNamespace: resolve(
   overrides.temporalNamespace,            // CLI flag wins
   ENV.TEMPORAL_NAMESPACE,                 // ⬅️ leaks: TEMPORAL_NAMESPACE=default in user shell
-  configFile.temporalNamespace,           // ⬅️ leaks: ~/.claude-tempo-dev/config.json
+  configFile.temporalNamespace,           // ⬅️ leaks: ~/.agent-tempo-dev/config.json
   isDevMode() ? undefined : temporalCli.temporalNamespace,  // ✓ already dropped in dev
   isDevMode() ? DEV_TEMPORAL_NAMESPACE : PROD_TEMPORAL_NAMESPACE,
 ),
@@ -64,13 +64,13 @@ Both branches kill **every** matching process on the host. No profile awareness,
 
 ### Gap 4 — global install
 
-The `claude-tempo` shell command is just a `package.json#bin` shim that invokes `dist/cli.js`. Every code path the user needs for dev-mode E2E already works through `node dist/cli.js --dev <verb>`. The user's experience of "needed global install to recover" was a downstream symptom of Gap 3: when shared Temporal got nuked, prod's auto-restart logic wanted to spawn a Temporal server itself, and that path goes through `claude-tempo` resolved on PATH. With Gap 3 fixed, that recovery path doesn't fire in the first place.
+The `agent-tempo` shell command is just a `package.json#bin` shim that invokes `dist/cli.js`. Every code path the user needs for dev-mode E2E already works through `node dist/cli.js --dev <verb>`. The user's experience of "needed global install to recover" was a downstream symptom of Gap 3: when shared Temporal got nuked, prod's auto-restart logic wanted to spawn a Temporal server itself, and that path goes through `agent-tempo` resolved on PATH. With Gap 3 fixed, that recovery path doesn't fire in the first place.
 
 This gap is closed by **documentation** + a small assertion that `node dist/cli.js --dev <verb>` is a supported entry point.
 
 ### Gap 2 — shared Temporal server (deferred)
 
-With Gap 1 fixed, both daemons connect to `localhost:7233` but use different namespaces (`claude-tempo-dev` vs `default`) and different task queues (`claude-tempo-dev` vs `claude-tempo`). Workers don't compete; visibility queries are namespace-scoped; activities don't cross. The only remaining coupling is operational: dev and prod share the Temporal server's lifetime. With Gap 3 fixed, neither profile can destroy that shared lifetime via its CLI.
+With Gap 1 fixed, both daemons connect to `localhost:7233` but use different namespaces (`agent-tempo-dev` vs `default`) and different task queues (`agent-tempo-dev` vs `agent-tempo`). Workers don't compete; visibility queries are namespace-scoped; activities don't cross. The only remaining coupling is operational: dev and prod share the Temporal server's lifetime. With Gap 3 fixed, neither profile can destroy that shared lifetime via its CLI.
 
 A profile-owned Temporal server (Gap 2) would buy:
 - True lifecycle independence (dev can `down` Temporal without affecting prod)
@@ -81,7 +81,7 @@ But it costs:
 - Track its PID, heartbeat it, reap it on shutdown
 - Port-conflict detection (7234 might be taken)
 - Ramp-down ordering (kill server only after dev daemon drains)
-- Either: dev daemon owns the server (then `daemon stop` must stop both); or: server is its own subcommand (`claude-tempo --dev temporal start/stop`).
+- Either: dev daemon owns the server (then `daemon stop` must stop both); or: server is its own subcommand (`agent-tempo --dev temporal start/stop`).
 
 Skip for v1. Document the manual escape hatch (`temporal server start-dev --port 7234` in a separate terminal + `--temporal-address localhost:7234` CLI flag) for users who want full lifecycle isolation today.
 
@@ -95,7 +95,7 @@ Three small PRs, ordered for safe rollout. Each ships independently and adds val
 
 **Changes**:
 
-1. `src/config.ts` — in both `getConfig` and `getConfigWithSources`, gate `process.env.TEMPORAL_NAMESPACE` and `process.env.TEMPORAL_ADDRESS` on `!isDevMode()`. Mirrors the existing temporal-cli drop. CLI flag (`overrides.*`) and the per-profile `~/.claude-tempo-dev/config.json` continue to win, so users who genuinely want a non-default namespace in dev have explicit overrides.
+1. `src/config.ts` — in both `getConfig` and `getConfigWithSources`, gate `process.env.TEMPORAL_NAMESPACE` and `process.env.TEMPORAL_ADDRESS` on `!isDevMode()`. Mirrors the existing temporal-cli drop. CLI flag (`overrides.*`) and the per-profile `~/.agent-tempo-dev/config.json` continue to win, so users who genuinely want a non-default namespace in dev have explicit overrides.
 
    Concretely, replace the `resolve()` callsite signature where needed, OR lift env-var reads into a helper:
    ```ts
@@ -108,11 +108,11 @@ Three small PRs, ordered for safe rollout. Each ships independently and adds val
 
 2. `src/cli/dev-banner.ts` — re-render the banner from actual `getConfig()` instead of constants. Adds source annotations so banner becomes diagnostic-grade:
    ```
-   [DEV MODE] using ~/.claude-tempo-dev · port 8474 · namespace claude-tempo-dev · queue claude-tempo-dev
+   [DEV MODE] using ~/.agent-tempo-dev · port 8474 · namespace agent-tempo-dev · queue agent-tempo-dev
    ```
    becomes (using `getConfigWithSources()`):
    ```
-   [DEV MODE] using ~/.claude-tempo-dev · port 8474 · namespace claude-tempo-dev (default) · queue claude-tempo-dev (default)
+   [DEV MODE] using ~/.agent-tempo-dev · port 8474 · namespace agent-tempo-dev (default) · queue agent-tempo-dev (default)
    ```
    When the banner shows `namespace default (env)` an operator instantly sees a leak. Future drift is caught at runtime, not weeks later.
 
@@ -120,20 +120,20 @@ Three small PRs, ordered for safe rollout. Each ships independently and adds val
    ```ts
    if (isDevMode() && config.temporalNamespace !== DEV_TEMPORAL_NAMESPACE) {
      log(`[dev-mode] WARNING: resolved namespace "${config.temporalNamespace}" != dev default "${DEV_TEMPORAL_NAMESPACE}"`);
-     log(`[dev-mode] check overrides: --temporal-namespace, ${ENV.TEMPORAL_NAMESPACE} env, ~/.claude-tempo-dev/config.json`);
+     log(`[dev-mode] check overrides: --temporal-namespace, ${ENV.TEMPORAL_NAMESPACE} env, ~/.agent-tempo-dev/config.json`);
    }
    ```
    Defense in depth: even if a future config-resolution refactor reintroduces the leak, the daemon log self-identifies the drift.
 
 **Tests** (Mocha or Vitest, existing dirs both fine):
-- `getConfig()` with `CLAUDE_TEMPO_DEV_MODE=1` + `TEMPORAL_NAMESPACE=default` in env → returns `claude-tempo-dev`. Same for `TEMPORAL_ADDRESS`.
+- `getConfig()` with `CLAUDE_TEMPO_DEV_MODE=1` + `TEMPORAL_NAMESPACE=default` in env → returns `agent-tempo-dev`. Same for `TEMPORAL_ADDRESS`.
 - `getConfig()` with `CLAUDE_TEMPO_DEV_MODE=1` + `--temporal-namespace=foo` CLI override → returns `foo` (CLI flag still wins).
-- `getConfig()` with `CLAUDE_TEMPO_DEV_MODE=1` + `~/.claude-tempo-dev/config.json` having `temporalNamespace: bar` → returns `bar` (per-profile config wins; this is the override path).
+- `getConfig()` with `CLAUDE_TEMPO_DEV_MODE=1` + `~/.agent-tempo-dev/config.json` having `temporalNamespace: bar` → returns `bar` (per-profile config wins; this is the override path).
 - Banner formatter renders the resolved namespace, not `DEV_TEMPORAL_NAMESPACE`, when they differ.
 
 **Wire protocol impact**: none. No signal/query/update changes; namespace selection is client-side.
 
-**Risk**: medium-low. Users who actively rely on shell-wide `TEMPORAL_NAMESPACE` to override claude-tempo's namespace in dev would need to switch to a CLI flag. Document this in the changelog as a small breaking change for dev mode only; prod behavior is unchanged.
+**Risk**: medium-low. Users who actively rely on shell-wide `TEMPORAL_NAMESPACE` to override agent-tempo's namespace in dev would need to switch to a CLI flag. Document this in the changelog as a small breaking change for dev mode only; prod behavior is unchanged.
 
 ### PR-B — Gap 3: profile-scope `down` (~80 LoC)
 
@@ -150,7 +150,7 @@ Three small PRs, ordered for safe rollout. Each ships independently and adds val
      // existing pkill / taskkill logic
    } else if (temporalUp && otherProfileAlive) {
      out.warn('Temporal server left running — shared with the other profile.');
-     out.log(`  ${out.dim('Override (kills both profiles\' connection): claude-tempo down --kill-shared-temporal')}`);
+     out.log(`  ${out.dim('Override (kills both profiles\' connection): agent-tempo down --kill-shared-temporal')}`);
    } else {
      out.log(`  ${out.dim('Temporal not running')}`);
    }
@@ -177,12 +177,12 @@ Three small PRs, ordered for safe rollout. Each ships independently and adds val
 
 1. `docs/development.md` — add a "Running an isolated dev environment" section:
    ```bash
-   git clone https://github.com/vinceblank/claude-tempo
-   cd claude-tempo
+   git clone https://github.com/vinceblank/agent-tempo
+   cd agent-tempo
    npm install
    npm run build
 
-   # Start the dev profile — fully isolated from any prod claude-tempo install
+   # Start the dev profile — fully isolated from any prod agent-tempo install
    node dist/cli.js --dev daemon start
 
    # Run the all-mock E2E lineup (no real Claude sessions, no trust prompt)
@@ -192,14 +192,14 @@ Three small PRs, ordered for safe rollout. Each ships independently and adds val
    node dist/cli.js --dev down
    ```
    Note explicitly:
-   - `claude-tempo` shell command is convenience, not required. `node dist/cli.js` is the canonical entry.
+   - `agent-tempo` shell command is convenience, not required. `node dist/cli.js` is the canonical entry.
    - Do NOT set `TEMPORAL_NAMESPACE` or `TEMPORAL_ADDRESS` shell-wide in dev mode. If you must override per-call, use `--temporal-namespace=...` / `--temporal-address=...` CLI flags. (PR-A makes this safe by ignoring shell vars; doc reinforces the supported path.)
-   - Dev profile data lives in `~/.claude-tempo-dev/`; safe to `rm -rf` for a clean slate.
+   - Dev profile data lives in `~/.agent-tempo-dev/`; safe to `rm -rf` for a clean slate.
 
 2. `docs/troubleshooting.md` — new section "Dev daemon connects to wrong namespace":
-   - Symptoms: dev banner says `claude-tempo-dev` but daemon log says `Connecting to ... namespace: default`.
+   - Symptoms: dev banner says `agent-tempo-dev` but daemon log says `Connecting to ... namespace: default`.
    - Diagnosis: run `node dist/cli.js --dev config show` to see resolved values + sources.
-   - Common causes: stale shell `TEMPORAL_NAMESPACE` (PR-A blocks this in dev mode for new installs; older builds need to `unset` the var); `~/.claude-tempo-dev/config.json` carrying over prod values.
+   - Common causes: stale shell `TEMPORAL_NAMESPACE` (PR-A blocks this in dev mode for new installs; older builds need to `unset` the var); `~/.agent-tempo-dev/config.json` carrying over prod values.
 
 3. `README.md` — one-paragraph "Try the mock E2E demo" section that points at the development.md guide.
 
@@ -214,7 +214,7 @@ Three small PRs, ordered for safe rollout. Each ships independently and adds val
 3. **PR-C ships any time after PR-A.** Pure docs.
 
 After all three ship, the acceptance criteria from #423 are met:
-- ✅ Dev daemon connects to `claude-tempo-dev` regardless of shell env vars (PR-A).
+- ✅ Dev daemon connects to `agent-tempo-dev` regardless of shell env vars (PR-A).
 - ✅ All dev workflows visible only on dev's namespace (PR-A — namespace isolation was the original ADR 0014 goal; the bug was the namespace leak, not the design).
 - ✅ `--dev down` only affects dev resources (PR-B).
 - ✅ Cross-profile coexistence: zero new code; the existing `isOtherProfileLikelyRunning()` already guards `daemon start` and `daemon stop`. PR-B extends to `down`.
@@ -226,14 +226,14 @@ The only deferred item is "dev daemon starts its own Temporal server on a separa
 
 - Changing prod CLI behavior (`down` still kills Temporal in prod-mode-only invocations when no other profile is alive).
 - Migrating dev mode off `temporal server start-dev`.
-- Adding a `claude-tempo --dev temporal <start|stop>` subcommand (would be useful but is part of the deferred Gap 2 work).
+- Adding a `agent-tempo --dev temporal <start|stop>` subcommand (would be useful but is part of the deferred Gap 2 work).
 - Multi-profile awareness beyond dev/prod (Phase 3 `staging` profile per ADR 0014).
 
 ## Open questions for engineer
 
 1. **PR-A — env-var override semantics**: should we drop ALL `TEMPORAL_*` env vars in dev mode (including `TEMPORAL_API_KEY`, `TEMPORAL_TLS_*`)? Recommendation: yes for `TEMPORAL_NAMESPACE` and `TEMPORAL_ADDRESS` (they're the leaks); leave API key + TLS alone since those are per-credential and a user with Temporal Cloud auth probably wants the same auth in dev. Surface in `getConfigWithSources()` so `config show` makes it visible.
 2. **PR-B — flag name**: `--kill-shared-temporal` is the architect-suggested name. Alternatives: `--force-temporal-kill`, `--down-temporal-too`. Engineer's call. The doc string matters more than the flag name.
-3. **PR-A — banner format**: the source-annotated banner is suggested ("namespace claude-tempo-dev (default)"). Acceptable to ship PR-A without that polish if it adds friction; the assertion in `daemon.ts` is the load-bearing diagnostic. Banner change is a nice-to-have.
+3. **PR-A — banner format**: the source-annotated banner is suggested ("namespace agent-tempo-dev (default)"). Acceptable to ship PR-A without that polish if it adds friction; the assertion in `daemon.ts` is the load-bearing diagnostic. Banner change is a nice-to-have.
 
 ## References
 
@@ -244,4 +244,4 @@ The only deferred item is "dev daemon starts its own Temporal server on a separa
 - `src/cli/daemon.ts:631-684` — `stopDaemon` (existing reference implementation of profile-aware kill)
 - `src/cli/commands.ts:1511-1677` — `down` (PR-B target)
 - `docs/adr/0014-dev-mode-mock-adapter.md` §5.6 — cross-profile coexistence design rule
-- [#423](https://github.com/vinceblank/claude-tempo/issues/423) — original issue
+- [#423](https://github.com/vinceblank/agent-tempo/issues/423) — original issue

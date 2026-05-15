@@ -3,7 +3,7 @@
 **Author**: tempo-architect
 **Date**: 2026-04-28
 **Source artifacts**:
-- Live dashboard: `localhost:5174/dashboard/` → dev daemon at `localhost:8474` (namespace `claude-tempo-dev`, version `0.28.0-beta.8`)
+- Live dashboard: `localhost:5174/dashboard/` → dev daemon at `localhost:8474` (namespace `agent-tempo-dev`, version `0.28.0-beta.8`)
 - Test ensembles: `design-audit` (5 mock players: alice, bob, silent-witness, chaos-monkey, conductor) + `verify-mock-fix` (same shape)
 - Canonical design: `docs/design/dashboard-handoff/project/{screens.jsx, workspace.jsx, web-design-system.html, dashboard.html, styles.css}`
 - Binding spec: `docs/design/dashboard-audit-389.md` rev 4
@@ -57,7 +57,7 @@ Legend: ✅ matches design · 🟡 nit · 🔴 gap · 🟧 regression vs rev 2 �
 | EnsembleCard footer (`mono dim`) | 🆕 🔴 | Design shape: `<lineup> · <host>` (2 spans, justified). Live shape: `<lineup> · <conductor>` + trailing span `<host>`. **Conductor name surfaces in the lineup-host position** (impl renders 3 things instead of 2). DOM verified: `<span>— · <span class>conductor</span></span><span>—</span>`. P1.5 carry-over with new visual asymmetry. |
 | EnsembleCard always-rendered `paused`/`held` text | 🆕 🔴 | DOM has bare `<span>paused</span><span>held</span>` between `.ec-stats` and `.ec-roster` on **every card regardless of state**. design-audit's API state is `paused`; verify-mock-fix's is `offline` — both render both chips. The chips are unstyled (no `.pill` class, no conditional render). **This is dead/broken pill rendering** that doesn't appear in canonical `screens.jsx:Overview` at all. |
 | Recent activity copy `"lands in beta.8"` | 🆕 🔴 | Daemon `version: "0.28.0-beta.8"`. The placeholder is now stale — we ARE on beta.8 and the cross-ensemble event stream still hasn't shipped. Update copy to `"lands in beta.9"` or `"coming soon"` until wire ships. |
-| Empty state when no ensembles | ✅ | Better than design — shows `claude-tempo up <name>` snippet (rev 2 noted) |
+| Empty state when no ensembles | ✅ | Better than design — shows `agent-tempo up <name>` snippet (rev 2 noted) |
 
 **Verdict**: 🔴 **3 new live-only bugs** (footer shape, paused/held chips, sub-minute uptime). 1 stale copy. Description paraphrase is rev 2 carry-over (#430 filed).
 
@@ -141,7 +141,7 @@ Legend: ✅ matches design · 🟡 nit · 🔴 gap · 🟧 regression vs rev 2 �
 |---|---|---|
 | `<h1>Loadouts</h1>` page title | ✅ | — |
 | **Stacked `header.page-header` × 2** | 🆕 🔴 | Two `<header class="page-header">` elements: first contains `Maestro / Density6 / ☀ Light` (a global app-shell strip), second contains `Loadouts` + subtitle + actions. **Visible double-header.** Verified `headerCount: 2`. Doesn't appear on PlayerTypes (`headerCount: 1`) or Hosts — refactor inconsistency. PlayerTypes/Hosts may have moved their app-strip into a different slot. |
-| Subtitle: `Reusable ensemble lineups. Loaded via claude-tempo up --lineup or from here.` | ✅ | — |
+| Subtitle: `Reusable ensemble lineups. Loaded via agent-tempo up --lineup or from here.` | ✅ | — |
 | Page-actions: `↑ Import YAML` + `+ New loadout` | ✅ | — |
 | Table 6 columns: Name / Summary / Players / Source / Last used / actions | ✅ | — |
 | 5 rows (post-#429 fix) | ✅ | Conductor's parallel finding |
@@ -188,7 +188,7 @@ Legend: ✅ matches design · 🟡 nit · 🔴 gap · 🟧 regression vs rev 2 �
 |---|---|---|
 | Single `<h1>Hosts</h1>` | ✅ | `headerCount: 1` (no stacked, unlike Loadouts/Schedules) |
 | Subtitle + actions: `⟳ Re-scan` + `Show stale` | ✅ | Both render |
-| **Empty table** despite 5 active sessions | 🆕 🔴 | `tableHeads: []`, `rowCount: 0`. Body shows `"No daemons reporting. Run claude-tempo daemon start on a host."`. **The dev daemon IS running (per `/v1/health`) but doesn't advertise its `hostProfile`.** Snapshot returns `hostProfiles: {}`. **Real wire bug** — corroborates conductor's parallel finding. Per `src/daemon.ts` `runDaemonBoot`, the daemon should signal `hostProfile` to global maestro. Either the maestro lookup is broken OR the dev daemon isn't reaching the global maestro (related to namespace isolation? unlikely — same namespace). Worth dispatching to research. |
+| **Empty table** despite 5 active sessions | 🆕 🔴 | `tableHeads: []`, `rowCount: 0`. Body shows `"No daemons reporting. Run agent-tempo daemon start on a host."`. **The dev daemon IS running (per `/v1/health`) but doesn't advertise its `hostProfile`.** Snapshot returns `hostProfiles: {}`. **Real wire bug** — corroborates conductor's parallel finding. Per `src/daemon.ts` `runDaemonBoot`, the daemon should signal `hostProfile` to global maestro. Either the maestro lookup is broken OR the dev daemon isn't reaching the global maestro (related to namespace isolation? unlikely — same namespace). Worth dispatching to research. |
 
 **Verdict**: 🔴 **wire bug — Hosts empty in dev mode**. Architectural; not solely a dashboard issue.
 
@@ -199,7 +199,7 @@ Legend: ✅ matches design · 🟡 nit · 🔴 gap · 🟧 regression vs rev 2 �
 | Element | Status | Notes |
 |---|---|---|
 | 5 panels: Connection / Profile / Notifications / Appearance / Danger zone | ✅ | All present (panelCount probe sees 10 due to nested selectors, but 5 distinct head texts) |
-| Connection panel: connected page-pill + `namespace=default · address=localhost:7233 · task queue=claude-tempo · tls=off · auth=—` | 🆕 🔴 | **Daemon is on namespace `claude-tempo-dev` + task queue `claude-tempo-dev`** (per `/v1/health`). Settings panel reads **static config**, not the running daemon. **Same class of bug as #423 Gap 1 (banner-vs-actual mismatch)** — settings panel asserts a connection state that contradicts the daemon's actual state. Confirms conductor's parallel finding. **Recommend: wire to `/v1/health` for namespace/version + read `getConfig()` snapshot endpoint for the rest.** |
+| Connection panel: connected page-pill + `namespace=default · address=localhost:7233 · task queue=agent-tempo · tls=off · auth=—` | 🆕 🔴 | **Daemon is on namespace `agent-tempo-dev` + task queue `agent-tempo-dev`** (per `/v1/health`). Settings panel reads **static config**, not the running daemon. **Same class of bug as #423 Gap 1 (banner-vs-actual mismatch)** — settings panel asserts a connection state that contradicts the daemon's actual state. Confirms conductor's parallel finding. **Recommend: wire to `/v1/health` for namespace/version + read `getConfig()` snapshot endpoint for the rest.** |
 | Profile panel: hardcoded `default lineup: tempo-dev-team`, others `—` | 🟡 | Rev 2 P2 tier. Same pattern. |
 | Notifications: hardcoded display values | 🟡 | Rev 2 P2 tier. |
 | Appearance: functional controls (theme/density/accent) | ✅ | Rev 2 verified |
@@ -275,11 +275,11 @@ A walk of every visible empty-state in the dashboard:
 | PlayerDetail `worktree: undefined` | wire-pending | `"—"` | ✅ acceptable |
 | PlayerDetail `branch: "HEAD"` (detached) | literal "HEAD" | `"HEAD"` | 🟡 UX confusion |
 | PlayerDetail `part: "Conductor session"` (default for non-conductors: `"Session in <ensemble>"`) | generic default | renders generic | 🟡 doesn't reflect role |
-| Hosts table when `hostProfiles: {}` | empty dict | `"No daemons reporting. Run claude-tempo daemon start on a host."` | ✅ degrade copy is good — but wire bug means it shouldn't fire |
+| Hosts table when `hostProfiles: {}` | empty dict | `"No daemons reporting. Run agent-tempo daemon start on a host."` | ✅ degrade copy is good — but wire bug means it shouldn't fire |
 | Schedules table when no schedules | empty | empty `<tbody>` (no rows) | ✅ acceptable |
 | Recent activity list | empty (cluster events not shipped) | `"No recent activity. Cross-ensemble event stream lands in beta.8."` | 🔴 stale copy (we ARE on beta.8) |
 | PhoneAppBar on /dashboard root | no ensemble context | `"ensemble · @—"` (renders selector with placeholder) | 🔴 should suppress selector entirely or show screen name |
-| Settings Connection panel | static config in dev mode | reports `default` namespace + `localhost:7233` + `claude-tempo` queue | 🔴 reads stale source, not running daemon |
+| Settings Connection panel | static config in dev mode | reports `default` namespace + `localhost:7233` + `agent-tempo` queue | 🔴 reads stale source, not running daemon |
 
 **Net 7 empty-state surfaces beyond #430 worth tracking**: #431 + footer shape + paused/held chips + lineup-half degrade + heartbeat wire-rename + branch=HEAD + recent-activity stale + PhoneAppBar empty-context + Settings static config.
 
@@ -434,16 +434,16 @@ on hover, so the impl pattern correctly uses `aria-disabled`.
 ### Net new finding under cert pass
 
 **Settings task-queue field still shows prod default in dev mode.** R3.P1.8 (Settings static-config)
-was largely closed in #436 — the namespace KV now correctly shows `claude-tempo-dev` from the
-running daemon. But the task-queue KV still reads `claude-tempo` (prod default), while the dev
-daemon's actual queue is `claude-tempo-dev` (per `[DEV MODE] using ~/.claude-tempo-dev · port 8474
-· namespace claude-tempo-dev (default) · queue claude-tempo-dev (default)` banner).
+was largely closed in #436 — the namespace KV now correctly shows `agent-tempo-dev` from the
+running daemon. But the task-queue KV still reads `agent-tempo` (prod default), while the dev
+daemon's actual queue is `agent-tempo-dev` (per `[DEV MODE] using ~/.agent-tempo-dev · port 8474
+· namespace agent-tempo-dev (default) · queue agent-tempo-dev (default)` banner).
 
 | KV | Live value | Expected (dev mode) |
 |---|---|---|
-| `namespace` | `claude-tempo-dev` | ✅ |
+| `namespace` | `agent-tempo-dev` | ✅ |
 | `address` | `localhost:7233` | ✅ |
-| `task queue` | `claude-tempo` | 🔴 should be `claude-tempo-dev` |
+| `task queue` | `agent-tempo` | 🔴 should be `agent-tempo-dev` |
 | `tls` | `off` | ✅ |
 | `auth` | `—` | ✅ |
 

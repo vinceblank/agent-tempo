@@ -1,6 +1,6 @@
 # Wire Protocol Reference
 
-This document is the authoritative reference for all Temporal signal, query, update, and workflow names used by claude-tempo. These names form the wire protocol between sessions — they appear in Temporal history and are referenced across workflow versions.
+This document is the authoritative reference for all Temporal signal, query, update, and workflow names used by agent-tempo. These names form the wire protocol between sessions — they appear in Temporal history and are referenced across workflow versions.
 
 ## Stability Guarantee
 
@@ -33,7 +33,7 @@ Signals sent **to** a `claudeSessionWorkflow` instance.
 | `markDelivered` | `string[]` | Marks one or more messages (by ID) as delivered. Resets stale-detection timer; any delivery proves the session is alive. |
 | `setName` | `string` | Updates the player's human-readable ID (`ClaudeTempoPlayerId` search attribute). Called by the `set_name` MCP tool. |
 | `updateMetadata` | `{ hostname?, gitBranch?, gitRoot?, terminatedBy?, enableStaleDetection?, playerType?, playerTypeDescription?, worktreePath?, sessionId? }` | Updates session metadata fields and syncs search attributes. `enableStaleDetection: true` re-arms stale detection after reconnect; `worktreePath` records the git worktree path when the session uses worktree isolation; `sessionId` stores the session UUID — used for Copilot SDK session resumption, Claude Code deterministic `--resume` on restart, and (since #449 Phase C) re-attachment to the persisted OpenCode session id across `opencode serve` restart. Note: the former `status: 'terminated'` shim was retired in PR-H (#132); use the `destroy` update for ordered session teardown. |
-| `releaseHeld` | *(none)* | Releases a held session: injects the stored initial message and unlocks the outbox. Sent by the conductor (or operator) after a session has been paused at startup via the hold/pause mechanism. **Idempotent** on sessions that aren't holding (no `heldMessage`, `outboxLocked` already `false`) — safe to blanket-signal across an ensemble. Used by the `release` MCP tool, `claude-tempo release` CLI, and (since #172) by `resume_ensemble { release: true }` / `claude-tempo resume --release` which fan it out to every running session. |
+| `releaseHeld` | *(none)* | Releases a held session: injects the stored initial message and unlocks the outbox. Sent by the conductor (or operator) after a session has been paused at startup via the hold/pause mechanism. **Idempotent** on sessions that aren't holding (no `heldMessage`, `outboxLocked` already `false`) — safe to blanket-signal across an ensemble. Used by the `release` MCP tool, `agent-tempo release` CLI, and (since #172) by `resume_ensemble { release: true }` / `agent-tempo resume --release` which fan it out to every running session. |
 | `setPaused` | `boolean` | Pauses (`true`) or resumes (`false`) the session's outbox dispatch. While paused, queued outbox entries are not processed. |
 | `heartbeat` | `{ attachmentId: string; at: string }` | **v0.25.** Liveness proof from the attached adapter — renews the lease's `expiresAt` to `workflow.now() + LEASE_MS`. Ignored (last-write-wins) if `attachmentId` doesn't match the current attachment. Adapters beat at 30 s (SDK) or 60 s (interactive). |
 | `requestDetach` | `{ reason: DetachReason; deadlineMs: number }` | **v0.25.** Adapter-, conductor-, or operator-initiated graceful detach. Transitions phase → `'draining'`; the main loop reaps to `'detached'` when the outbox is drained OR after `drainingDeadline` (default 5 s). Idempotent on `'draining'`/`'detached'`. |
@@ -453,7 +453,7 @@ String union used in `requestDetach`, `adapterExited`, and `forceDetach` to reco
 
 | Value | Description |
 |-------|-------------|
-| `'user-stop'` | User-initiated graceful stop (`claude-tempo stop`). |
+| `'user-stop'` | User-initiated graceful stop (`agent-tempo stop`). |
 | `'restart'` | Adapter is being replaced by a new attachment (e.g. `restart` operation). |
 | `'heartbeat-timeout'` | Adapter missed 3+ consecutive heartbeats; workflow forced detach. |
 | `'superseded'` | Another adapter claimed the attachment (multi-host migration). |

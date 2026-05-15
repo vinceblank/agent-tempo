@@ -22,7 +22,7 @@ We need to pick one before Phase 3 implementation begins.
 ## Consequences
 
 - **Positive**:
-  - Zero new processes — operators already manage daemon lifecycle (`claude-tempo daemon start/stop/status`).
+  - Zero new processes — operators already manage daemon lifecycle (`agent-tempo daemon start/stop/status`).
   - Shared Temporal client → the aggregate poll loop reuses the connection that's already paying TLS/heartbeat costs.
   - Daemon failure → clients reconnect on daemon restart (same way they reconnect on TCP drop). No partial-failure modes where workers run but the event source is dead.
   - Existing per-host task-queue model means each host runs one daemon → one HTTP source per host. Cross-host clients hit the appropriate daemon directly (or the global one for cluster events).
@@ -35,7 +35,7 @@ We need to pick one before Phase 3 implementation begins.
 
 ## Alternatives considered
 
-- **Sidecar process**: rejected for v1. Would double the operator burden (`claude-tempo http start/stop/status`) without solving any current problem. The daemon already has the right lifecycle, the right connections, and the right capability profile to advertise.
+- **Sidecar process**: rejected for v1. Would double the operator burden (`agent-tempo http start/stop/status`) without solving any current problem. The daemon already has the right lifecycle, the right connections, and the right capability profile to advertise.
 - **MCP tool surface**: rejected. MCP is a request/response protocol for tool calls; bolting streaming onto stdio would require a custom event protocol over the existing transport, which is exactly what SSE solves over HTTP. MCP also has no story for a future browser-hosted web dashboard.
 
 ## Forward-looking notes

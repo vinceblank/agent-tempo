@@ -1,15 +1,15 @@
 # Dev mode
 
-claude-tempo's `--dev` flag flips four isolation axes at once so a developer
+agent-tempo's `--dev` flag flips four isolation axes at once so a developer
 (human or AI) can spin up a sealed environment with **zero blast radius** on
 the production daemon:
 
 | Axis                  | Production default                    | Dev profile default                     |
 | --------------------- | ------------------------------------- | --------------------------------------- |
-| Home dir              | `~/.claude-tempo/`                    | `~/.claude-tempo-dev/`                  |
+| Home dir              | `~/.agent-tempo/`                    | `~/.agent-tempo-dev/`                  |
 | HTTP port             | `8473`                                | `8474`                                  |
-| Temporal namespace    | `default`                             | `claude-tempo-dev`                      |
-| Task queue            | `claude-tempo`                        | `claude-tempo-dev`                      |
+| Temporal namespace    | `default`                             | `agent-tempo-dev`                      |
+| Task queue            | `agent-tempo`                        | `agent-tempo-dev`                      |
 
 Design references: [ADR 0014](adr/0014-dev-mode-mock-adapter.md) and
 [design/dev-mode-mock-adapter.md](design/dev-mode-mock-adapter.md).
@@ -17,25 +17,25 @@ Design references: [ADR 0014](adr/0014-dev-mode-mock-adapter.md) and
 ## Quickstart
 
 ```bash
-# Start the dev daemon — auto-creates the claude-tempo-dev namespace,
-# binds 127.0.0.1:8474, writes its PID to ~/.claude-tempo-dev/daemon.pid.
-$ claude-tempo --dev daemon up
+# Start the dev daemon — auto-creates the agent-tempo-dev namespace,
+# binds 127.0.0.1:8474, writes its PID to ~/.agent-tempo-dev/daemon.pid.
+$ agent-tempo --dev daemon up
 
 # Recruit a mock player (requires --dev — see "Mock adapter" below).
-$ claude-tempo --dev recruit alice \
+$ agent-tempo --dev recruit alice \
     --workDir /tmp/dev-scratch \
     --agent mock \
     --mockMode scripted \
     --mockScenario echo-roundtrip
 
 # Drive it.
-$ claude-tempo --dev cue alice "hello"
+$ agent-tempo --dev cue alice "hello"
 
 # Open the dashboard (separate port from prod).
-$ claude-tempo --dev dashboard
+$ agent-tempo --dev dashboard
 
-# Tear down. Production daemon at ~/.claude-tempo/ on :8473 is untouched.
-$ claude-tempo --dev daemon stop
+# Tear down. Production daemon at ~/.agent-tempo/ on :8473 is untouched.
+$ agent-tempo --dev daemon stop
 ```
 
 The `--dev` flag is **top-level** — it parses before the verb dispatch, so
@@ -47,10 +47,10 @@ in dev mode without per-command plumbing.
 Every dev-mode CLI invocation prints one line to stderr:
 
 ```
-[DEV MODE] using ~/.claude-tempo-dev · port 8474 · namespace claude-tempo-dev · queue claude-tempo-dev
+[DEV MODE] using ~/.agent-tempo-dev · port 8474 · namespace agent-tempo-dev · queue agent-tempo-dev
 ```
 
-The dev daemon also writes the same line to `~/.claude-tempo-dev/daemon.log`
+The dev daemon also writes the same line to `~/.agent-tempo-dev/daemon.log`
 on startup. Grep the log for `DEV MODE` to confirm a daemon is running the
 right profile. ADR 0014 §7 names this "gate 4" of the production-safety
 defense in depth.
@@ -65,7 +65,7 @@ windows, and SSE events look identical to a real Claude / Copilot session.
 
 ```bash
 # Bare-name scenario resolution — picks scenarios/echo-roundtrip.yaml
-$ claude-tempo --dev recruit alice --agent mock --mockMode scripted --mockScenario echo-roundtrip
+$ agent-tempo --dev recruit alice --agent mock --mockMode scripted --mockScenario echo-roundtrip
 ```
 
 Four modes (PR-2 shipped `echo` + `scripted`; PR-3 added `silent` + `chaos`):
@@ -99,8 +99,8 @@ Four modes (PR-2 shipped `echo` + `scripted`; PR-3 added `silent` + `chaos`):
 Three reference scenarios ship in the npm tarball at `<package>/scenarios/`:
 
 ```bash
-$ claude-tempo --dev scenarios list
-$ claude-tempo --dev scenarios show echo-roundtrip
+$ agent-tempo --dev scenarios list
+$ agent-tempo --dev scenarios show echo-roundtrip
 ```
 
 | Scenario                     | Purpose                                                                             |
@@ -120,7 +120,7 @@ full scenario format, action set, and `__MOCK__:` cue-prefix directive.
 that exercises every PR-3 mode. Spin it up with one command:
 
 ```bash
-$ claude-tempo --dev up --lineup tempo-mock-jam
+$ agent-tempo --dev up --lineup tempo-mock-jam
 ```
 
 All five slots are mock: `conductor` (scripted, conductor-recruit-mock),
@@ -131,7 +131,7 @@ All five slots are mock: `conductor` (scripted, conductor-recruit-mock),
 `--scenario` flag:
 
 ```bash
-$ claude-tempo --dev up --lineup tempo-mock-jam --scenario echo-roundtrip
+$ agent-tempo --dev up --lineup tempo-mock-jam --scenario echo-roundtrip
 ```
 
 `--scenario` forces every `agent: "mock"` player in the loaded lineup into
@@ -150,11 +150,11 @@ without re-introducing the public surface that #288 retired.
 
 | Verb | Effect | Notes |
 |---|---|---|
-| `claude-tempo --dev cue <player> <message>` | Direct cue to a named session | Uses `from: 'cli'`. Mirrors the MCP `cue` tool. |
-| `claude-tempo --dev pause` | Fan-out pause across the ensemble | Pauses maestro + scheduler + every session. Mirrors the MCP `pause` tool. |
-| `claude-tempo --dev play` | Fan-out resume across the ensemble | Resumes maestro + scheduler + every session. Held sessions are NOT released — call `release` separately. |
-| `claude-tempo --dev release [<player>]` | Release held sessions | With `<player>`, releases that one. Without, ensemble-wide scan releases every locked session. |
-| `claude-tempo --dev set-ensemble-description "<text>"` | Update maestro mission description | Surfaces on dashboard EnsembleCard. Use `""` to clear. |
+| `agent-tempo --dev cue <player> <message>` | Direct cue to a named session | Uses `from: 'cli'`. Mirrors the MCP `cue` tool. |
+| `agent-tempo --dev pause` | Fan-out pause across the ensemble | Pauses maestro + scheduler + every session. Mirrors the MCP `pause` tool. |
+| `agent-tempo --dev play` | Fan-out resume across the ensemble | Resumes maestro + scheduler + every session. Held sessions are NOT released — call `release` separately. |
+| `agent-tempo --dev release [<player>]` | Release held sessions | With `<player>`, releases that one. Without, ensemble-wide scan releases every locked session. |
+| `agent-tempo --dev set-ensemble-description "<text>"` | Update maestro mission description | Surfaces on dashboard EnsembleCard. Use `""` to clear. |
 
 All five verbs:
 
@@ -192,15 +192,15 @@ justification for crash-proofing it.
 
 ```bash
 # Spin up a fully-mock ensemble in dev mode
-claude-tempo --dev up --lineup tempo-mock-jam
+agent-tempo --dev up --lineup tempo-mock-jam
 
 # Drive it from a script
-claude-tempo --dev cue mock-alice "echo this back"
-claude-tempo --dev set-ensemble-description "Phase 1 — exploratory cues"
-claude-tempo --dev pause
+agent-tempo --dev cue mock-alice "echo this back"
+agent-tempo --dev set-ensemble-description "Phase 1 — exploratory cues"
+agent-tempo --dev pause
 # (... investigate state ...)
-claude-tempo --dev play
-claude-tempo --dev release             # release any held sessions
+agent-tempo --dev play
+agent-tempo --dev release             # release any held sessions
 ```
 
 ## Production safety

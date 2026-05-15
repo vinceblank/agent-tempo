@@ -75,7 +75,7 @@ The new primitive is the durable, player-controlled, multi-purpose generalisatio
 |---|---|---|---|---|---|
 | **Per-session workflow state** | Across CAN; lost on workflow termination | ✅ (string content + `workflow.now()`) | N/A — bound to the session's workflow, not the host | Lives + dies with the player | **Selected** |
 | Per-ensemble maestro state (coat-check style) | Across CAN | ✅ | N/A | Lives + dies with the ensemble | Rejected — wrong scope (intra-player, not inter-player) |
-| Filesystem `~/.claude-tempo/playerstate/` | Across processes; host-bound | ❌ workflow-context FS reads non-deterministic | ❌ host-bound | Manual cleanup | Rejected — non-deterministic; loses CAN survival framing |
+| Filesystem `~/.agent-tempo/playerstate/` | Across processes; host-bound | ❌ workflow-context FS reads non-deterministic | ❌ host-bound | Manual cleanup | Rejected — non-deterministic; loses CAN survival framing |
 | External blob (S3 / sqlite) | Unbounded | ❌ | ✅ | Operator-managed | Rejected for v1 — adds deployment dep, activity round-trip per save |
 
 **Verdict**: per-session workflow state. Same storage placement reasoning as the existing `messages` / `outbox` / `part` fields — those are also intra-player, durable, replay-safe, CAN-carried.

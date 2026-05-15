@@ -7,7 +7,7 @@ to match `dashboard.html` reality. 7 spec clarifications absorbed into PR
 briefs. Underlying screens.jsx + styles.css UNCHANGED → PR-0 work continues.)
 **Source**: v2 design bundle at `docs/design/dashboard-handoff/` (after vinceblank's
 re-fetch with `chats/` + `web-design-system.html` + `workspace.jsx` populated)
-**Issue**: [#389](https://github.com/vinceblank/claude-tempo/issues/389)
+**Issue**: [#389](https://github.com/vinceblank/agent-tempo/issues/389)
 
 ## Decision lock-ins (revision 2 header)
 
@@ -32,7 +32,7 @@ to honest doc what exists). Underlying `styles.css` + `screens.jsx` UNCHANGED.
 
 | # | Clarification | Affects |
 |---|---|---|
-| C1 | **BrandMark = `claude-tempo` mono wordmark with terracotta hyphen + swinging Metronome SVG** (NOT the v2-spec "M·aestro" italic-on-tile) | PR-A1 BrandMark primitive |
+| C1 | **BrandMark = `agent-tempo` mono wordmark with terracotta hyphen + swinging Metronome SVG** (NOT the v2-spec "M·aestro" italic-on-tile) | PR-A1 BrandMark primitive |
 | C2 | **MaestroMark = italic serif `M` (Fraunces)** representing the OPERATOR (the human user) — separate primitive from BrandMark, not the brand | PR-A1 MaestroMark primitive (sidebar identity row) |
 | C3 | **Phase chips use real codebase PHASES**: `processing` (●, --ok, pulse), `idle` (○), `draining` (◐, --warn), `detached` (◐, --warn), `booting` (◔, --dim), `gone` (✕, --dim). Codebase 7 phases map: `attached → processing` chip, `awaiting → idle` chip; rest 1:1. NOT generic playing/paused/error | PR-A2 FeedMessage PhaseDot, PR-D PlayerDetail |
 | C4 | **Italic discipline (corrected)**: italic ONLY for (a) MaestroMark `M`, (b) single `<em>` accent inside a display heading ("@my-band is *listening*"). Serif display NON-italic for `.page-title` / `.section-title` / `.subj` / ensemble names | PR-A1 PageHeader / SectionHead, tokens.css typography note |
@@ -575,7 +575,7 @@ ordering invariant.
 | `RosterItem` (avatar + name + conductor★ + PhaseDot + TypeBadge + part + heartbeat + msg count) | workspace.jsx Roster panel | `data-testid="roster-item-{playerId}"` |
 | `EventRow` (timestamp + kind-pill + body) | screens.jsx Overview, workspace.jsx Event log | `data-testid="event-row-{kind}"` |
 | `MaestroMark` | new (per chat2.md addition) — italic serif `M` (Fraunces), 18-22px, represents the operator. **Distinct from BrandMark** (rev 4 C2). | — |
-| `BrandMark` (revision 4 clarification C1) | `claude-tempo` mono wordmark with terracotta `-` hyphen + swinging Metronome SVG (pendulum animation tied to ensemble bpm via `animation-duration: 60/bpm s`). Lives in sidebar-brand top slot. | `data-testid="brand-mark"` |
+| `BrandMark` (revision 4 clarification C1) | `agent-tempo` mono wordmark with terracotta `-` hyphen + swinging Metronome SVG (pendulum animation tied to ensemble bpm via `animation-duration: 60/bpm s`). Lives in sidebar-brand top slot. | `data-testid="brand-mark"` |
 
 ### 5.2 PR-A2 — chat + tempo primitives (target ~400 LoC)
 
@@ -855,7 +855,7 @@ established.
     maestro identity row + footer (`localhost:7233 · v0.26`). Tablet
     collapse to 64px rail with `.er-initial` 32×32 letter tile + green
     presence dot per chat2.md (lines 4870-4974).
-  - **BrandMark (rev 4 C1)**: `claude-tempo` mono wordmark with terracotta
+  - **BrandMark (rev 4 C1)**: `agent-tempo` mono wordmark with terracotta
     hyphen + swinging Metronome SVG (pendulum tied to ensemble bpm via
     `animation-duration: 60/bpm s`, frozen when paused). Lives in
     sidebar-brand top slot.

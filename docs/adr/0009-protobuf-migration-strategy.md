@@ -28,7 +28,7 @@ Headline locked-in choices:
 - **Tooling**: `ts-proto` v2 with `outputClientImpl=false, useExactTypes=true` — generates plain TS interfaces matching existing `src/types.ts` shape
 - **Layout**: `protos/` at repo root for `.proto` source; `src/protos/` for generated TS (committed for review visibility)
 - **Versioning**: field numbers + reserved ranges from day 1; proto3 `optional` keyword on every existing TS-optional field
-- **Decode helper**: ship in PR-1, NOT deferred — `claude-tempo decode <payload-base64>` is a daily-debugging requirement, not a nice-to-have
+- **Decode helper**: ship in PR-1, NOT deferred — `agent-tempo decode <payload-base64>` is a daily-debugging requirement, not a nice-to-have
 - **Major version**: **v1.0.0** (drops pre-1.0 era; wire-protocol cutover is the cleanest moment)
 - **In-flight workflows**: fail-closed — daemon refuses to start if pre-v1.0 workflows exist
 - **Refactor strategy**: Option B (TS-interface-compatible) — minimizes churn; payload construction sites unchanged
@@ -45,7 +45,7 @@ Headline locked-in choices:
   - **Decode helper** mitigates the "opaque base64 in `temporal workflow show`" daily-debugging tax
 - **Negative**:
   - **2-2.5 week dedicated workstream** — ~2700 LoC across 3 PRs, with PR-2's determinism audit as the long pole
-  - **Post-cutover rollback is painful** — every operator runs `claude-tempo down --destroy && up`; one-time burden but unavoidable. Mitigated by 24h staging soak before npm publish.
+  - **Post-cutover rollback is painful** — every operator runs `agent-tempo down --destroy && up`; one-time burden but unavoidable. Mitigated by 24h staging soak before npm publish.
   - **`temporal workflow show` UI shows opaque base64** for in-flight payloads — daily ergonomics regression mitigated (not eliminated) by the decode helper
   - **Generated TS in source control** — PR diffs show generated code; mitigated by reviewer convention (skim generated files, focus on `.proto` source)
   - **Build complexity** — `ts-proto` becomes a build-time dependency; `scripts/generate-protos.ts` runs in `npm run build`

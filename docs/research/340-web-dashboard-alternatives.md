@@ -57,10 +57,10 @@ The infrastructure already exists. Add **one file** + **one route registration**
 ## 5. CLI command
 
 ```
-claude-tempo dashboard [--port <n>] [--bind <addr>] [--no-open]
+agent-tempo dashboard [--port <n>] [--bind <addr>] [--no-open]
 ```
 
-- **Bootstrap**: ensure daemon is running (existing auto-start path); read `~/.claude-tempo/daemon.port`; compose URL `http://<host>:<port>/dashboard`; `child_process.spawn(opener, [url])` via `open` package or platform-native (`start` / `xdg-open` / `open`).
+- **Bootstrap**: ensure daemon is running (existing auto-start path); read `~/.agent-tempo/daemon.port`; compose URL `http://<host>:<port>/dashboard`; `child_process.spawn(opener, [url])` via `open` package or platform-native (`start` / `xdg-open` / `open`).
 - `--port` overrides daemon port (rarely needed; daemon is already managed).
 - `--bind` forwarded to daemon if not already running with that bind; **forces token mode** when non-loopback (existing daemon behavior).
 - `--no-open` for headless servers — print the URL only.
@@ -70,7 +70,7 @@ claude-tempo dashboard [--port <n>] [--bind <addr>] [--no-open]
 
 - **Tailscale is the recommended path**. Document it in the Phase C README.
 - **Bearer token UX** for cross-device:
-  - **Lean**: QR-code-with-short-lived-pairing-token. The `claude-tempo dashboard` CLI prints a QR encoding `http://<tailscale-or-LAN-IP>:8473/dashboard?pair=<short-token>` (token TTL 5 min, single-use, exchanged for the long-lived bearer on the SPA's first load and stored in `localStorage`). Better UX than copy-paste on phone.
+  - **Lean**: QR-code-with-short-lived-pairing-token. The `agent-tempo dashboard` CLI prints a QR encoding `http://<tailscale-or-LAN-IP>:8473/dashboard?pair=<short-token>` (token TTL 5 min, single-use, exchanged for the long-lived bearer on the SPA's first load and stored in `localStorage`). Better UX than copy-paste on phone.
   - **Fallback**: copy-paste the bearer from the host machine.
 - **Mobile responsive**: shadcn's components are responsive out of the box; reserve work for safe-area insets (`env(safe-area-inset-*)`), 44 × 44 pt minimum touch targets per Apple HIG, prefer `Sheet` over `Dialog` on small viewports.
 - **Browser support**: modern evergreen only (last 2 versions of Chrome/Edge/Safari/Firefox); no IE / no Safari < 16.
@@ -89,12 +89,12 @@ claude-tempo dashboard [--port <n>] [--bind <addr>] [--no-open]
 
 ## 8. Open questions for architect's Phase B
 
-1. **Repo layout**: confirm `dashboard/` sibling dir vs sub-package (`@claude-tempo/dashboard`)? Sibling dir simpler; sub-package allows independent versioning (probably not needed v1).
+1. **Repo layout**: confirm `dashboard/` sibling dir vs sub-package (`@agent-tempo/dashboard`)? Sibling dir simpler; sub-package allows independent versioning (probably not needed v1).
 2. **Build orchestration**: include in `npm run build` (cap +30 s) or split into `npm run build:dashboard`? Decide by measuring.
 3. **Hot-reload dev workflow**: `cd dashboard && npm run dev` proxies daemon at `127.0.0.1:8473` → `vite.config.ts` `server.proxy` for `/v1/*` and `/dashboard/api/*`? Document in `docs/development.md`.
 4. **Pairing-token shape**: short-lived (5-min) one-time-use vs JWT vs random base64url? Phase B locks the wire format.
 5. **State management granularity**: TanStack Query as the *only* server-state layer, or pair with Zustand for cached subscribe state? Lean: TanStack Query alone — cleaner.
-6. **Versioning**: dashboard pinned in lockstep with claude-tempo (no independent release). Confirm.
+6. **Versioning**: dashboard pinned in lockstep with agent-tempo (no independent release). Confirm.
 7. **Functional scope v1 cut**: confirm read-mostly + safe writes (cue, pause, play, release) per issue. Defer destructive writes (destroy, restart, restore, shutdown) to v2.
 8. **Browser support floor**: last 2 evergreen only? Phase B locks the `targets` in `vite.config.ts`.
 9. **Lighthouse / a11y budget**: aim for Lighthouse 90+ on Performance/Accessibility/Best Practices? Add to CI?
