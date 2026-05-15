@@ -124,7 +124,7 @@ const { deliverCue, deliverReport, terminateSession, startRecruitedSession, rele
 
 function getSpawnProxy(hostname: string) {
   return proxyActivities<Pick<OutboxActivities, 'spawnProcess'>>({
-    taskQueue: `claude-tempo-${hostname}`,
+    taskQueue: `agent-tempo-${hostname}`,
     startToCloseTimeout: '2 minutes',
     retry: { maximumAttempts: 2 },
   }).spawnProcess;
@@ -132,13 +132,13 @@ function getSpawnProxy(hostname: string) {
 
 /**
  * Host-routed proxy for the #159 Gap 2 hard-terminate activity. Runs on the target's
- * `claude-tempo-{hostname}` task queue so the kill happens where the child process
+ * `agent-tempo-{hostname}` task queue so the kill happens where the child process
  * actually lives. Short timeout + low retry — this is a best-effort cleanup and the
  * workflow must not wedge if the host worker is down.
  */
 function getHardTerminateProxy(hostname: string) {
   return proxyActivities<Pick<OutboxActivities, 'hardTerminateAttachment'>>({
-    taskQueue: `claude-tempo-${hostname}`,
+    taskQueue: `agent-tempo-${hostname}`,
     startToCloseTimeout: '10 seconds',
     scheduleToCloseTimeout: '20 seconds',
     retry: { maximumAttempts: 1 },
@@ -153,7 +153,7 @@ function getHardTerminateProxy(hostname: string) {
  */
 function getHardTerminateProxyForDestroy(hostname: string) {
   return proxyActivities<Pick<OutboxActivities, 'hardTerminateAttachment'>>({
-    taskQueue: `claude-tempo-${hostname}`,
+    taskQueue: `agent-tempo-${hostname}`,
     startToCloseTimeout: '5 seconds',
     scheduleToCloseTimeout: '5 seconds',
     retry: { maximumAttempts: 1 },

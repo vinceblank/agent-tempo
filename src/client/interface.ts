@@ -200,7 +200,7 @@ export interface CreateEnsembleOpts {
   ensemble: string;
   /** Working directory for the spawned conductor terminal. Defaults to `process.cwd()`. */
   workDir?: string;
-  /** Optional lineup name or path forwarded to `claude-tempo up --lineup …`. */
+  /** Optional lineup name or path forwarded to `agent-tempo up --lineup …`. */
   lineup?: string;
 }
 
@@ -449,7 +449,7 @@ export interface TempoClientCore {
  * #308 follow-up: TTY-bound superset of {@link TempoClientCore}.
  *
  * Adds the two methods that shell out to a local terminal via
- * `claude-tempo up …`. Required for the TUI's "create ensemble" wizard
+ * `agent-tempo up …`. Required for the TUI's "create ensemble" wizard
  * and the restore-after-shutdown flow. **DO NOT depend on this interface
  * from headless contexts** — the daemon, MCP tools, and SSE event source
  * must use {@link TempoClientCore}.
@@ -457,14 +457,14 @@ export interface TempoClientCore {
 export interface TempoClientWithSpawn extends TempoClientCore {
   /**
    * Spawn a new conductor terminal for a brand-new ensemble. Shells out to
-   * `claude-tempo up <name>` so the spawned conductor terminal matches the
+   * `agent-tempo up <name>` so the spawned conductor terminal matches the
    * CLI path. **Requires a TTY context** — DO NOT call from MCP tools, the
    * daemon, or other headless processes.
    */
   createEnsemble(opts: CreateEnsembleOpts): Promise<void>;
   /**
    * Spawn a conductor terminal for an existing ensemble — the restore-
-   * after-shutdown path. Shells out to `claude-tempo up <name>` which is
+   * after-shutdown path. Shells out to `agent-tempo up <name>` which is
    * idempotent at the workflow layer. Semantically distinct from
    * {@link TempoClientWithSpawn.createEnsemble}: this fires on an ensemble
    * that already exists; a "create" contradiction would mislead future

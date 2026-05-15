@@ -68,7 +68,7 @@ export function ErrorView({
 
   // Title
   children.push('\n\n');
-  children.push(React.createElement(Text, { key: 'title', bold: true, color: THEME.accent }, '  claude-tempo'));
+  children.push(React.createElement(Text, { key: 'title', bold: true, color: THEME.accent }, '  agent-tempo'));
   children.push('\n');
   children.push(React.createElement(Text, { key: 'sub', color: THEME.dim }, '  Multi-session orchestration via Temporal'));
   children.push('\n');
@@ -105,7 +105,7 @@ export function ErrorView({
 
   const steps = [
     { label: '1. Start the Temporal dev server:', cmd: '   $ temporal server start-dev' },
-    { label: '2. Or specify a custom address:', cmd: '   $ TEMPORAL_ADDRESS=host:7233 claude-tempo' },
+    { label: '2. Or specify a custom address:', cmd: '   $ TEMPORAL_ADDRESS=host:7233 agent-tempo' },
     { label: '3. Check if Temporal is running:', cmd: '   $ temporal operator cluster health' },
   ];
   for (let i = 0; i < steps.length; i++) {
@@ -122,7 +122,7 @@ export function ErrorView({
 
   children.push('\n');
   children.push(React.createElement(Text, { key: 'be', color: THEME.dim }, `  \u2502${' '.repeat(boxWidth)}\u2502`));
-  const docsUrl = 'Docs: https://github.com/vinceblank/claude-tempo#setup';
+  const docsUrl = 'Docs: https://github.com/vinceblank/agent-tempo#setup';
   const docsPad = ' '.repeat(Math.max(0, boxWidth - docsUrl.length - 2));
   children.push('\n');
   children.push(React.createElement(Text, { key: 'bd', color: THEME.dim }, `  \u2502  ${docsUrl}${docsPad}\u2502`));

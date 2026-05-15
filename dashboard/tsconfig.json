@@ -20,7 +20,7 @@
     "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"],
     "baseUrl": ".",
     "paths": {
-      "claude-tempo/*": ["../src/*"]
+      "agent-tempo/*": ["../src/*"]
     }
   },
   "include": ["src", "tests", "vite.config.ts"]

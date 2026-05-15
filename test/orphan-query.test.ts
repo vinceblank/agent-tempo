@@ -77,7 +77,7 @@ describe('buildOrphanQuery', function () {
   });
 
   // #151 — cluster-view: `allHosts: true` drops the per-host predicates so
-  // the visibility query spans every host's orphans. Powers `claude-tempo
+  // the visibility query spans every host's orphans. Powers `agent-tempo
   // restore --all-hosts`.
   describe('allHosts axis (#151)', function () {
     it('with allHosts=true — emits state-only clauses, no hostname predicates', function () {

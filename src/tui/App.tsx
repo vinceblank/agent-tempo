@@ -760,7 +760,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
         const connected = await api.isConnected();
         if (cancelled) return;
         if (!connected) {
-          dispatch({ type: 'SET_PHASE', phase: 'error', error: 'Cannot connect to Temporal. Run `claude-tempo up` first.' });
+          dispatch({ type: 'SET_PHASE', phase: 'error', error: 'Cannot connect to Temporal. Run `agent-tempo up` first.' });
           return;
         }
 
@@ -899,7 +899,7 @@ export function App({ api, ensemble, defaultAgent }: AppProps) {
 
     const activeEns = state.activeEnsemble;
     if (!activeEns) {
-      dispatch({ type: 'RECRUIT_DONE', error: 'No active ensemble. Start one with: claude-tempo up <name>' });
+      dispatch({ type: 'RECRUIT_DONE', error: 'No active ensemble. Start one with: agent-tempo up <name>' });
       return;
     }
 

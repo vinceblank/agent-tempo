@@ -151,7 +151,7 @@ function findPackageRoot(dir: string): string {
 /**
  * Lineup catalog entry — each row in `listAllLineups()` output. Used by
  * the TUI's CreateEnsembleWizard, the dashboard's `/v1/lineups`
- * endpoint, and the `claude-tempo up --lineup` resolver.
+ * endpoint, and the `agent-tempo up --lineup` resolver.
  *
  * `players` and `description` come from a YAML parse — best-effort: a
  * malformed lineup file silently degrades to `players: 0` /

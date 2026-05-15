@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [1.0.0-rc.1] - 2026-05-15
+## [1.0.0] - 2026-05-15
 
 ### ⚠️ BREAKING — `claude-tempo` is now `agent-tempo`
 

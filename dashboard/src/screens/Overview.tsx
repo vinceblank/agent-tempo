@@ -174,7 +174,7 @@ export function Overview() {
       {stats.ensembles === 0 ? (
         <div data-testid="overview-empty" className="dim" style={emptyCardStyle}>
           No ensembles are running. Open a terminal and run{' '}
-          <code style={monoStyle}>claude-tempo up &lt;name&gt;</code> to start one.
+          <code style={monoStyle}>agent-tempo up &lt;name&gt;</code> to start one.
         </div>
       ) : (
         <div className="ensemble-grid">

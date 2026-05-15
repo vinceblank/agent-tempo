@@ -1,5 +1,5 @@
 /**
- * `claude-tempo dashboard` — open the packaged web dashboard,
+ * `agent-tempo dashboard` — open the packaged web dashboard,
  * optionally minting a single-use pairing token + QR code for
  * cross-device access. PR-8 of #340.
  *
@@ -8,12 +8,12 @@
  * module that pulls in the Temporal SDK. The dashboard verb must
  * remain operable when Temporal itself is broken (same #157
  * reasoning: a stranded operator with a running daemon should still
- * be able to run `claude-tempo dashboard` to see what's going on).
+ * be able to run `agent-tempo dashboard` to see what's going on).
  *
  * Flow:
  *   1. Resolve the daemon's port (port-file or `--port` override)
  *   2. Probe `GET /v1/health` — if the daemon isn't running, exit 1
- *      with a hint to run `claude-tempo daemon start`
+ *      with a hint to run `agent-tempo daemon start`
  *   3. Print the dashboard URL
  *   4. If `--pair`: POST `/dashboard/api/pair` (with the operator's
  *      bearer if any) → render a terminal QR + the URL with the
@@ -74,7 +74,7 @@ export async function dashboardCommand(args: DashboardCommandArgs): Promise<void
   if (!healthy) {
     return emitError(args.json ?? false, {
       error: 'daemon-not-reachable',
-      hint: `No response from ${baseUrl}/v1/health. Run \`claude-tempo daemon start\` and retry.`,
+      hint: `No response from ${baseUrl}/v1/health. Run \`agent-tempo daemon start\` and retry.`,
     });
   }
 
@@ -106,7 +106,7 @@ export async function dashboardCommand(args: DashboardCommandArgs): Promise<void
   }
 
   // Human-readable output
-  out.heading('claude-tempo dashboard');
+  out.heading('agent-tempo dashboard');
   out.log(`  ${out.cyan(dashboardUrl)}`);
   if (pairResult) {
     out.log('');
@@ -130,7 +130,7 @@ async function resolvePort(args: DashboardCommandArgs, json: boolean): Promise<n
   if (fromFile !== null) return fromFile;
   emitError(json, {
     error: 'no-port',
-    hint: 'No daemon port file. Pass --port <N> or run `claude-tempo daemon start` first.',
+    hint: 'No daemon port file. Pass --port <N> or run `agent-tempo daemon start` first.',
   });
   return null;
 }

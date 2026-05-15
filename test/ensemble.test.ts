@@ -32,7 +32,7 @@ import { listLineups } from '../src/ensemble/saver';
 
 /** Per-file ensemble namespace — seeded in `before()` (see #210). */
 let ENSEMBLE: string;
-const SCHEDULER_TASK_QUEUE = 'test-claude-tempo';
+const SCHEDULER_TASK_QUEUE = 'test-agent-tempo';
 
 function schedulerWorkflowId(ensemble: string): string {
   return `agent-scheduler-${ensemble}`;
@@ -40,7 +40,7 @@ function schedulerWorkflowId(ensemble: string): string {
 
 /** Create a temporary directory for test files. */
 function makeTmpDir(): string {
-  const dir = join(tmpdir(), `claude-tempo-test-${Date.now()}`);
+  const dir = join(tmpdir(), `agent-tempo-test-${Date.now()}`);
   mkdirSync(dir, { recursive: true });
   return dir;
 }

@@ -14,8 +14,8 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import type { EnsembleSummary, TempoEvent } from 'claude-tempo/http/event-types';
-import type { EnsembleChatMessage } from 'claude-tempo/types';
+import type { EnsembleSummary, TempoEvent } from 'agent-tempo/http/event-types';
+import type { EnsembleChatMessage } from 'agent-tempo/types';
 import { App } from '../../src/App';
 import { createDashboardMemoryRouter } from '../../src/router';
 import { __setDashboardClientForTests } from '../../src/lib/client-singleton';

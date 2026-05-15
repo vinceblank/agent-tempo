@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-> ⚠️ **v1.0 rebrand in progress.** This documentation reflects the upcoming `agent-tempo` v1.0 release. The currently published CLI is still `claude-tempo` — substitute the old name in command examples until v1.0 ships to npm. See [CHANGELOG.md](./CHANGELOG.md#unreleased) for status.
-
 ## What is this?
 
 agent-tempo is an MCP server that enables multiple Claude Code sessions to coordinate via Temporal.

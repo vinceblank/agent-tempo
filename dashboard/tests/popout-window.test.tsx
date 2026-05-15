@@ -23,7 +23,7 @@ describe('PopoutWindow primitive', () => {
     expect(screen.getByTestId('popout-window-close')).toBeInTheDocument();
     expect(container.querySelectorAll('.popout-dot').length).toBe(3);
     const title = container.querySelector('.popout-title');
-    expect(title?.textContent).toContain('claude-tempo');
+    expect(title?.textContent).toContain('agent-tempo');
     expect(title?.textContent).toContain('@my-band');
     const right = container.querySelector('.popout-right');
     expect(right?.textContent).toContain('always on top');

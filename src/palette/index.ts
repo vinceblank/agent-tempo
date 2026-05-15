@@ -9,7 +9,7 @@
  * Extracted from `src/tui/commands.ts` in #471/#472 (dashboard chat-input
  * TUI parity bundle). The TUI re-exports every symbol from here so existing
  * callers see no behaviour change. The dashboard imports directly from
- * `claude-tempo/palette` (Vite alias `claude-tempo` → `../src`).
+ * `agent-tempo/palette` (Vite alias `agent-tempo` → `../src`).
  *
  * **No imports allowed.** Keep this module dependency-free so it
  * tree-shakes cleanly into the dashboard bundle and runs unmodified in

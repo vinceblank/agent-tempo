@@ -9,9 +9,9 @@ export function isGlobalMcpRegistered(): boolean {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     });
-    // Match either the new (`agent-tempo`) or legacy (`claude-tempo`) registration —
+    // Match either the new (`agent-tempo`) or legacy (`agent-tempo`) registration —
     // dual-bin in `package.json` keeps the old name working through the migration window.
-    return /\bagent-tempo\b/.test(output) || /\bclaude-tempo\b/.test(output);
+    return /\bagent-tempo\b/.test(output) || /\bagent-tempo\b/.test(output);
   } catch {
     return false;
   }

@@ -4,9 +4,9 @@
  * helper in `src/utils/hosts.ts`.
  *
  * The bug: `listHosts` defaults `taskQueue ?? 'agent-tempo'`, so when
- * the dev daemon polls `'claude-tempo-dev'`, the TempoClient API silently
+ * the dev daemon polls `'agent-tempo-dev'`, the TempoClient API silently
  * returned `[]` because it queried the wrong queue's pollers in the
- * `claude-tempo-dev` namespace. Both `namespace` AND `taskQueue` must
+ * `agent-tempo-dev` namespace. Both `namespace` AND `taskQueue` must
  * match the daemon's config for poller discovery to land on the right
  * queue. Dashboard, snapshot.hostProfiles, AggregateRunner, and the TUI
  * `/hosts` slash command all flow through this path.
@@ -71,8 +71,8 @@ describe('TempoClient.listHosts — taskQueue plumbing (#437)', () => {
 
   it('uses the construction-time taskQueue when provided', async () => {
     const calls: DescribeCall[] = [];
-    const fake = makeFakeClient('claude-tempo-dev', calls);
-    const tempo = createTempoClient(fake, { taskQueue: 'claude-tempo-dev' });
+    const fake = makeFakeClient('agent-tempo-dev', calls);
+    const tempo = createTempoClient(fake, { taskQueue: 'agent-tempo-dev' });
 
     await tempo.listHosts({ force: true });
 
@@ -80,8 +80,8 @@ describe('TempoClient.listHosts — taskQueue plumbing (#437)', () => {
     // Both must hit the dev queue, in the dev namespace.
     expect(calls.length).toBeGreaterThanOrEqual(2);
     for (const c of calls) {
-      expect(c.namespace).toBe('claude-tempo-dev');
-      expect(c.taskQueue).toBe('claude-tempo-dev');
+      expect(c.namespace).toBe('agent-tempo-dev');
+      expect(c.taskQueue).toBe('agent-tempo-dev');
     }
   });
 

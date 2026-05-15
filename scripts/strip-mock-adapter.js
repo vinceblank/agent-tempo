@@ -30,7 +30,7 @@ const targets = [
   //
   // The repo-root `scenarios/` directory ships in the tarball (architect's
   // §4.8 first-class library artifact) — npm-install dev-mode users
-  // running `claude-tempo --dev scenarios list` against a fresh package
+  // running `agent-tempo --dev scenarios list` against a fresh package
   // need them to be discoverable, and they're inert without the adapter.
   path.join('dist', 'adapters', 'mock'),
 ];

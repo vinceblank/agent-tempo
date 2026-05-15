@@ -1,4 +1,4 @@
-# claude-tempo multi-host integration harness (PR-F).
+# agent-tempo multi-host integration harness (PR-F).
 #
 # Two daemon containers (`host-a`, `host-b`) share a single Temporal dev
 # server. Used by `test/multi-host-cross-host-restart.test.ts` to exercise

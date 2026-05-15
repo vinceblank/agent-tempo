@@ -1,5 +1,5 @@
 /**
- * Unit tests for `claude-tempo recall <player>`'s argv → formatter glue.
+ * Unit tests for `agent-tempo recall <player>`'s argv → formatter glue.
  *
  * The shared formatter (`src/utils/recall-format.ts`) has its own coverage
  * at `test/recall.test.ts`. This file owns the CLI-specific wiring: that

@@ -110,7 +110,7 @@ async function boot(opts: {
   const handle = await startHttpServer({
     client,
     namespace: 'default',
-    taskQueue: 'claude-tempo-test',
+    taskQueue: 'agent-tempo-test',
     version: '0.28.0-test',
     bindAddr: opts.bindAddr ?? '127.0.0.1',
     port: 0,

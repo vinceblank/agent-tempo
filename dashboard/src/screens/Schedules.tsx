@@ -16,7 +16,7 @@
  * `disabled-with-tooltip` until PR-7 wires the safe-write paths.
  */
 import { useCallback, useEffect, type ReactNode } from 'react';
-import type { ScheduleEntry } from 'claude-tempo/types';
+import type { ScheduleEntry } from 'agent-tempo/types';
 import { PageHeader } from '../components/PageHeader';
 import { useScreenPageHeader } from '../components/AppShell';
 import { DisabledWithTooltip } from '../components/DisabledWithTooltip';

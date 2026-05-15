@@ -331,7 +331,7 @@ export interface InstanceInfo {
   lastAccessTime: string;
   hasWorkflowWorker: boolean;
   hasActivityWorker: boolean;
-  /** `true` when the per-host activity queue (`claude-tempo-<hostname>`) has a live poller. Controls `HostInfo.recruitReady`. */
+  /** `true` when the per-host activity queue (`agent-tempo-<hostname>`) has a live poller. Controls `HostInfo.recruitReady`. */
   hasHostQueueWorker: boolean;
   /** Set only when identity was in the legacy `<pid>@<hostname>` form. */
   legacy?: true;

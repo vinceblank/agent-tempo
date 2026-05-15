@@ -12,7 +12,7 @@ import type { DaemonProcessInfo, DaemonStatus } from '../src/cli/daemon';
 
 describe('evaluateStartPreflight (#157 PR B)', function () {
   // Helper — build a plausible scanner result entry.
-  const proc = (pid: number, suffix = 'repos/claude-tempo/dist/daemon.js'): DaemonProcessInfo => ({
+  const proc = (pid: number, suffix = 'repos/agent-tempo/dist/daemon.js'): DaemonProcessInfo => ({
     pid,
     commandLine: `node /home/dev/${suffix}`,
   });

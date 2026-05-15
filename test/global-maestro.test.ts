@@ -183,7 +183,7 @@ describe('agentGlobalMaestroWorkflow', function () {
           // runners.
           //
           // #583: budget bumped 5s → 10s after the Linux shard-2/node-22
-          // flake at https://github.com/vinceblank/claude-tempo/actions/runs/25710621734.
+          // flake at https://github.com/vinceblank/agent-tempo/actions/runs/25710621734.
           // The first discovery cycle needs (~workflow scheduling latency)
           // + (mocked activity round-trip) + (FAST_POLL_MS=500). Under shard
           // contention the first two terms can spike past 5s while staying

@@ -43,7 +43,7 @@ export interface OpenCodeSession {
 
 /**
  * Body for `POST /session/:id/prompt_async`. The adapter sends the system
- * prompt + the new turn's parts (claude-tempo workflow's pendingMessages
+ * prompt + the new turn's parts (agent-tempo workflow's pendingMessages
  * flattened into a parts array) plus the model id to use for this turn.
  */
 export interface PromptAsyncBody {
@@ -251,7 +251,7 @@ function parseSseBlock(block: string): OpenCodeEvent | null {
     if (line.startsWith('data:')) {
       dataLines.push(line.slice(5).trimStart());
     }
-    // event: / id: / retry: lines ignored — claude-tempo only consumes data.
+    // event: / id: / retry: lines ignored — agent-tempo only consumes data.
   }
   if (dataLines.length === 0) return null;
   const payload = dataLines.join('\n');

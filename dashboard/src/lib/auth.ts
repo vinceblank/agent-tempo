@@ -11,7 +11,7 @@
  * default key is read.
  */
 
-const STORAGE_KEY = 'claude-tempo:bearer';
+const STORAGE_KEY = 'agent-tempo:bearer';
 
 /** Read the saved bearer token, or `null` when none / unavailable. */
 export function getBearerToken(): string | null {

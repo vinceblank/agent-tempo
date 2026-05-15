@@ -33,7 +33,7 @@ function makeFakeClient(opts: {
 describe('ensureConductorSpawned — #306 race-handling branch (commit 4a8788b)', () => {
   it('returns alreadyLive (NOT spawnFailed) when spawnConductor throws "conductor is already running"', async () => {
     const spawnConductor = vi.fn(async () => {
-      // Mirrors the real CLI error from `claude-tempo up <ensemble>` when
+      // Mirrors the real CLI error from `agent-tempo up <ensemble>` when
       // a conductor workflow is already attached. The case-insensitive
       // regex in the helper means casing differences shouldn't matter,
       // but we use the actual message to keep the test honest.

@@ -148,7 +148,7 @@ describe('buildClaudeArgs (#536)', () => {
   });
 
   it('threads --mcp-config bytes verbatim — no JSON re-parse / re-stringify', () => {
-    const config = '{"mcpServers":{"claude-tempo":{"type":"stdio","command":"node"}}}';
+    const config = '{"mcpServers":{"agent-tempo":{"type":"stdio","command":"node"}}}';
     const args = buildClaudeArgs({ ...argsBase, mcpConfig: config });
     expect(args[args.indexOf('--mcp-config') + 1]).toBe(config);
   });

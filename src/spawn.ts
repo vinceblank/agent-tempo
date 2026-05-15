@@ -8,9 +8,9 @@ import type { ClaudeCodeHeadlessPermissionMode } from './adapters/claude-code-he
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:spawn]', ...args);
 
-/** Stable GUID for the claude-tempo Windows Terminal profile. */
+/** Stable GUID for the agent-tempo Windows Terminal profile. */
 const WT_PROFILE_GUID = '{c1a0d300-0e30-4000-a000-c1a0de00e300}';
-const WT_PROFILE_NAME = 'claude-tempo';
+const WT_PROFILE_NAME = 'agent-tempo';
 
 /** Resolve the absolute path to the package's icon file (PNG for Windows Terminal). */
 export function resolveIconPath(): string {
@@ -52,7 +52,7 @@ function stripJsonComments(text: string): string {
 }
 
 /**
- * Ensure a "claude-tempo" profile exists in Windows Terminal settings.json
+ * Ensure a "agent-tempo" profile exists in Windows Terminal settings.json
  * with our icon. Returns true if the profile is ready for use.
  *
  * Windows Terminal settings path:
@@ -106,7 +106,7 @@ export function ensureWindowsTerminalProfile(): boolean {
       if (existing.closeOnExit !== 'always') { existing.closeOnExit = 'always'; dirty = true; }
       if (dirty) {
         writeFileSync(settingsPath, JSON.stringify(settings, null, 4) + '\n');
-        log('Updated claude-tempo profile in Windows Terminal');
+        log('Updated agent-tempo profile in Windows Terminal');
       }
       return true;
     }
@@ -123,7 +123,7 @@ export function ensureWindowsTerminalProfile(): boolean {
 
     // Write back with original formatting style (4-space indent to match WT default)
     writeFileSync(settingsPath, JSON.stringify(settings, null, 4) + '\n');
-    log('Created claude-tempo profile in Windows Terminal with icon:', iconPath);
+    log('Created agent-tempo profile in Windows Terminal with icon:', iconPath);
     return true;
   } catch (e) {
     log('Failed to update Windows Terminal settings:', e);
@@ -302,7 +302,7 @@ export function spawnInTerminal(
 
     // Terminal.app: .command file with shell profile sourcing
     const userShell = process.env.SHELL || '/bin/zsh';
-    const scriptPath = join(tmpdir(), `claude-tempo-recruit-${Date.now()}.command`);
+    const scriptPath = join(tmpdir(), `agent-tempo-recruit-${Date.now()}.command`);
     let profileSource: string;
     if (userShell.endsWith('/fish')) {
       profileSource = `exec fish -c "cd ${shellQuote(workDir)} && ${claudeInvocation}"`;
@@ -348,7 +348,7 @@ export function spawnInTerminal(
       const nameIdx = claudeArgs.indexOf('-n');
       const tabTitle = nameIdx !== -1 && nameIdx + 1 < claudeArgs.length
         ? claudeArgs[nameIdx + 1]
-        : 'claude-tempo';
+        : 'agent-tempo';
 
       // Ensure our profile with icon exists in Windows Terminal settings
       const hasProfile = ensureWindowsTerminalProfile();

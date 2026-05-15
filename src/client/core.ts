@@ -700,7 +700,7 @@ export function createTempoClientCore(
       // maestro session stores `hostname: 'dashboard'` in its metadata
       // (a placeholder, not a real host), so the session workflow's
       // fallback path — `entry.targetHostname || input.metadata.hostname`
-      // — routes `spawnProcess` to task queue `claude-tempo-dashboard`,
+      // — routes `spawnProcess` to task queue `agent-tempo-dashboard`,
       // which has no worker. The MCP `recruit` tool worked because the
       // conductor session that ran it had a real OS hostname in metadata.
       // Mirror that behavior here by defaulting to `osHostname()` when

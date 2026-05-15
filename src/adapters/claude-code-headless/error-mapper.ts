@@ -259,7 +259,7 @@ export function describeFailure(ctx: SubprocessFailureContext): string {
       return `\`claude\` is not logged in or token expired. Run \`claude auth status\` to diagnose.`;
     }
     if (cat === 'oauth_org_not_allowed') {
-      return `OAuth org access denied. Authorize claude-tempo via \`claude auth login --org <id>\` or recruit with \`agent: 'claude-api'\`.`;
+      return `OAuth org access denied. Authorize agent-tempo via \`claude auth login --org <id>\` or recruit with \`agent: 'claude-api'\`.`;
     }
     if (cat === 'billing_error') {
       return `Subscription extra-usage exhausted. Top up at console.anthropic.com or wait for plan reset. Recruit with \`agent: 'claude-api'\` to use Console credits instead.`;

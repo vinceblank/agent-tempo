@@ -23,8 +23,8 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type {
   EnsembleSummary,
   TempoEvent,
-} from 'claude-tempo/http/event-types';
-import type { EnsembleChatMessage } from 'claude-tempo/types';
+} from 'agent-tempo/http/event-types';
+import type { EnsembleChatMessage } from 'agent-tempo/types';
 import {
   NotificationProvider,
   NotificationStreamRunner,

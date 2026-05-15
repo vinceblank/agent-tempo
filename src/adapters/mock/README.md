@@ -9,7 +9,7 @@ for the design.
 > paths. See `docs/adr/0014-dev-mode-mock-adapter.md` §7. The npm `prepack`
 > script (`scripts/strip-mock-adapter.js`) deletes `dist/adapters/mock/`
 > before the published tarball is built — so a user who `npm install`s
-> claude-tempo will not have this code on their machine at all.
+> agent-tempo will not have this code on their machine at all.
 
 ## Modes (PR-2 ships `echo` + `scripted`)
 
@@ -33,7 +33,7 @@ YAML at the path given by `AGENT_TEMPO_MOCK_SCENARIO`. Resolution rules:
 
 ```yaml
 name: my-scenario
-description: short blurb shown by `claude-tempo --dev scenarios list`
+description: short blurb shown by `agent-tempo --dev scenarios list`
 defaultDelayMs: 500          # optional; inserted between actions in a rule
 
 rules:
@@ -94,9 +94,9 @@ cross-pollinated `__MOCK__:` directive is inert plain text.
 ## Discoverability
 
 ```bash
-$ claude-tempo --dev scenarios list
-$ claude-tempo --dev scenarios show echo-roundtrip
-$ claude-tempo --dev recruit alice --workDir /tmp/dev --agent mock --mockMode scripted --mockScenario echo-roundtrip
+$ agent-tempo --dev scenarios list
+$ agent-tempo --dev scenarios show echo-roundtrip
+$ agent-tempo --dev recruit alice --workDir /tmp/dev --agent mock --mockMode scripted --mockScenario echo-roundtrip
 ```
 
 The `scenarios list / show` subcommands work even outside dev mode (so a

@@ -14,7 +14,7 @@ export interface TitleBarProps {
 export function TitleBar({ context }: TitleBarProps) {
   const { Text } = useInk();
   const cols = process.stdout.columns || 80;
-  const left = 'claude-tempo';
+  const left = 'agent-tempo';
   // Pad between left and right to push context to the right edge
   const padding = Math.max(1, cols - left.length - context.length - 4); // -4 for paddingX
 

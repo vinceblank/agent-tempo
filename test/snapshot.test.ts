@@ -51,7 +51,7 @@ describe('toPlayerSummaryV1 projection (#399 W2 + Q5.6)', function () {
     playerType: 'my-tempo-engineer',
     phase: 'attached',
     part: 'wiring up the snapshot',
-    workDir: '/repos/claude-tempo',
+    workDir: '/repos/agent-tempo',
     gitBranch: 'feat/snapshot-wire-extension-projection',
   };
 

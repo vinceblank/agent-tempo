@@ -1,5 +1,5 @@
 /**
- * `claude-tempo upgrade` CLI handler.
+ * `agent-tempo upgrade` CLI handler.
  *
  * **Critical constraint**: this module must NOT statically import from
  * `@temporalio/*`, `../workflows/*`, `../adapters/*`, `../spawn`, `../client`,
@@ -12,7 +12,7 @@
  * sessions" informational step. It's dynamic-imported inside the existing
  * try/catch — if the SDK fails to load, the warning is silently skipped
  * (strictly better than a crash). The user is already getting fresh binaries
- * via `npm install -g claude-tempo`.
+ * via `npm install -g agent-tempo`.
  *
  * Extracted from `src/cli/commands.ts` in issue #157 PR C.
  */
@@ -33,7 +33,7 @@ export interface UpgradeOpts extends CliOverrides {
 export async function upgrade(opts: UpgradeOpts): Promise<void> {
   const config = getConfig(opts);
   const targetVersion = opts.version || 'latest';
-  const installSpec = targetVersion === 'latest' ? 'claude-tempo' : `claude-tempo@${targetVersion}`;
+  const installSpec = targetVersion === 'latest' ? 'agent-tempo' : `agent-tempo@${targetVersion}`;
 
   // Read current version
   let currentVersion = 'unknown';
@@ -42,7 +42,7 @@ export async function upgrade(opts: UpgradeOpts): Promise<void> {
     currentVersion = pkg.version || 'unknown';
   } catch { /* ignore */ }
 
-  out.heading('claude-tempo upgrade');
+  out.heading('agent-tempo upgrade');
   out.log(`  Current: v${currentVersion}`);
   out.log(`  Target:  ${targetVersion}`);
   console.log();
@@ -76,7 +76,7 @@ export async function upgrade(opts: UpgradeOpts): Promise<void> {
 
   if (activeSessions > 0) {
     out.warn(`${activeSessions} active session(s) detected. They will lose daemon connectivity during upgrade.`);
-    out.log(`  ${out.dim('Consider running: claude-tempo stop --all')}`);
+    out.log(`  ${out.dim('Consider running: agent-tempo stop --all')}`);
     console.log();
   }
 
@@ -91,7 +91,7 @@ export async function upgrade(opts: UpgradeOpts): Promise<void> {
       await new Promise((r) => setTimeout(r, 200));
     }
     if (isDaemonRunning()) {
-      out.error('Daemon did not stop in time. Try: claude-tempo daemon stop');
+      out.error('Daemon did not stop in time. Try: agent-tempo daemon stop');
       process.exit(1);
     }
     out.success('Daemon stopped');
@@ -155,7 +155,7 @@ async function main() {
 
   // Verify installation
   try {
-    const tempoCmd = IS_WIN ? 'claude-tempo.cmd' : 'claude-tempo';
+    const tempoCmd = IS_WIN ? 'agent-tempo.cmd' : 'agent-tempo';
     const ver = execFileSync(tempoCmd, ['--version'], {
       encoding: 'utf8',
       timeout: 10000,
@@ -163,13 +163,13 @@ async function main() {
     log('Verified: ' + ver);
   } catch (err) {
     log('WARNING: Could not verify installation: ' + err.message);
-    log('Recovery: npm install -g claude-tempo');
+    log('Recovery: npm install -g agent-tempo');
   }
 
   // Restart the daemon
   log('Restarting daemon...');
   try {
-    const tempoCmd = IS_WIN ? 'claude-tempo.cmd' : 'claude-tempo';
+    const tempoCmd = IS_WIN ? 'agent-tempo.cmd' : 'agent-tempo';
     execFileSync(tempoCmd, ['daemon', 'start'], {
       stdio: 'inherit',
       timeout: 30000,
@@ -177,7 +177,7 @@ async function main() {
     log('Daemon restarted');
   } catch (err) {
     log('WARNING: Daemon restart failed: ' + err.message);
-    log('Run manually: claude-tempo daemon start');
+    log('Run manually: agent-tempo daemon start');
   }
 
   log('Upgrade complete!');

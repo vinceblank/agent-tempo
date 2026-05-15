@@ -34,7 +34,7 @@
  */
 import type { EnsembleSummary, EnsembleStateV1, HostInfo } from './client';
 import type { AgentTypeRow, LineupRow } from './client';
-import type { PlayerSummaryV1 } from 'claude-tempo/http/event-types';
+import type { PlayerSummaryV1 } from 'agent-tempo/http/event-types';
 import overflowFixtures from '../../test-fixtures/overflow.json' with { type: 'json' };
 
 /** Supported regime values for the `?regime=` query param. */

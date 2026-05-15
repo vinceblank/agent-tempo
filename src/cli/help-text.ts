@@ -1,5 +1,5 @@
 /**
- * Help-text module for `claude-tempo help` / `--help` / `-h`.
+ * Help-text module for `agent-tempo help` / `--help` / `-h`.
  *
  * **Critical constraint**: this module must NOT import from `@temporalio/*`,
  * `../workflows/*`, `../adapters/*`, `../spawn`, `../client`, `./commands`,
@@ -24,15 +24,15 @@ const AGENT_OPTIONS = AGENT_TYPES.join('|');
 
 export function printHelp(): void {
   console.log(`
-${out.bold('claude-tempo')} — Multi-session Claude Code coordination via Temporal
+${out.bold('agent-tempo')} — Multi-session Claude Code coordination via Temporal
 
 ${out.bold('Getting started:')}
-  ${out.cyan('claude-tempo up')}                  Start infrastructure, then launch the TUI with ${out.dim('claude-tempo')}
+  ${out.cyan('agent-tempo up')}                  Start infrastructure, then launch the TUI with ${out.dim('agent-tempo')}
 
 ${out.bold('Usage:')}
-  claude-tempo                         Launch the TUI (auto-provisions + opens home view)
-  claude-tempo <ensemble>              Launch the TUI directly into an ensemble view
-  claude-tempo <command> [options]
+  agent-tempo                         Launch the TUI (auto-provisions + opens home view)
+  agent-tempo <ensemble>              Launch the TUI directly into an ensemble view
+  agent-tempo <command> [options]
 
 ${out.bold('Commands:')}
   ${out.cyan('up')}                       Start infrastructure only — Temporal, daemon, MCP registration
@@ -52,7 +52,7 @@ ${out.bold('Commands:')}
   ${out.cyan('agent-types')} <sub>        Manage player type definitions (list/show/init)
   ${out.cyan('daemon')}    <sub>          Manage the worker daemon (start/stop/status/logs)
   ${out.cyan('dashboard')}                Open the web dashboard (--no-open / --pair / --json)
-  ${out.cyan('upgrade')}  [version]       Upgrade claude-tempo to latest (or specific version)
+  ${out.cyan('upgrade')}  [version]       Upgrade agent-tempo to latest (or specific version)
   ${out.cyan('config')}                   Configure Temporal connection settings
   ${out.cyan('init')}                     Register MCP server globally (or --project for .mcp.json)
   ${out.cyan('preflight')}                Run preflight checks only
@@ -60,9 +60,9 @@ ${out.bold('Commands:')}
 
 ${out.bold('Removed — use the TUI:')}
   ${out.dim('stop / restart / detach / migrate')}   → ${out.dim('/destroy · /restart · /shutdown')}
-  ${out.dim('conduct / start / recruit / disband')} → ${out.dim('launch `claude-tempo` · /recruit · /destroy')}
+  ${out.dim('conduct / start / recruit / disband')} → ${out.dim('launch `agent-tempo` · /recruit · /destroy')}
   ${out.dim('resume')}                              → ${out.dim('/play')}
-  See https://github.com/vinceblank/claude-tempo/issues/285 for the full migration table.
+  See https://github.com/vinceblank/agent-tempo/issues/285 for the full migration table.
 
 ${out.bold('Connection options (all commands):')}
   --temporal-address <addr>    Temporal server address (default: localhost:7233)
@@ -74,7 +74,7 @@ ${out.bold('Connection options (all commands):')}
 ${out.bold('Other options:')}
   --name <name>                Set session window name (up only)
   --agent <name>               Agent type to spawn — ${AGENT_OPTIONS} (default: from config; up)
-  --dev                        Use the dev profile (~/.agent-tempo-dev, port 8474, namespace claude-tempo-dev)
+  --dev                        Use the dev profile (~/.agent-tempo-dev, port 8474, namespace agent-tempo-dev)
   --skip-preflight             Skip preflight checks
   --background                 Run Temporal in background (server only)
   --project                    Use per-project .mcp.json instead of global (init only)
@@ -91,9 +91,9 @@ ${out.bold('Other options:')}
   -d, --dir <path>             Target directory (default: cwd)
 
 ${out.bold('Config command:')}
-  ${out.dim('claude-tempo config')}              Interactive connection setup
-  ${out.dim('claude-tempo config show')}         Show resolved config
-  ${out.dim('claude-tempo config set <k> <v>')}  Set a config value
+  ${out.dim('agent-tempo config')}              Interactive connection setup
+  ${out.dim('agent-tempo config show')}         Show resolved config
+  ${out.dim('agent-tempo config set <k> <v>')}  Set a config value
 
   Settings are saved to ~/.agent-tempo/config.json.
   Also reads ~/.config/temporalio/temporal.yaml as a fallback.
@@ -102,13 +102,13 @@ ${out.bold('Config command:')}
 
 ${out.bold('First time? Run this:')}
   ${out.dim('cd your-project')}
-  ${out.dim('claude-tempo up')}
-  ${out.dim('claude-tempo')}            # Launch the TUI
+  ${out.dim('agent-tempo up')}
+  ${out.dim('agent-tempo')}            # Launch the TUI
 
 ${out.bold('Typical workflow:')}
-  ${out.dim('claude-tempo up')}                 Start infrastructure (once per host)
-  ${out.dim('claude-tempo')}                    Launch the TUI
-  ${out.dim('claude-tempo status myband')}      Check who's active in an ensemble
+  ${out.dim('agent-tempo up')}                 Start infrastructure (once per host)
+  ${out.dim('agent-tempo')}                    Launch the TUI
+  ${out.dim('agent-tempo status myband')}      Check who's active in an ensemble
 
 ${out.bold('Environment:')}
   AGENT_TEMPO_ENSEMBLE       Default ensemble name (fallback: "default")

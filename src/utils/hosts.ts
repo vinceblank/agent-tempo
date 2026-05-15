@@ -91,14 +91,13 @@ export interface ParsedIdentity {
  * (no colons possible), pid is numeric, and version is a semver-ish
  * string (no colons).
  *
- * v0.x daemons used the pre-rebrand `claude-tempo:` prefix. Under the
- * v1.0 hard break those daemons no longer interoperate with v1.x ones —
- * but the parse still accepts the old prefix so cross-host listings
- * during the upgrade window degrade to "stale identity" rather than
- * "opaque skip", giving operators a chance to spot stragglers.
+ * Pre-v1.0 daemons emitted a `claude-tempo:` prefix. Under the v1.0 hard
+ * break those daemons can't reach v1.x task queues anyway, so we no longer
+ * parse that variant — v0.x identities show up as opaque third-party skips,
+ * which is the same fate they'd hit at the task-queue boundary.
  */
 export function parseIdentity(identity: string): ParsedIdentity | null {
-  if (identity.startsWith('agent-tempo:') || identity.startsWith('claude-tempo:')) {
+  if (identity.startsWith('agent-tempo:')) {
     const parts = identity.split(':');
     if (parts.length === 4) {
       const [, hostname, pidStr, version] = parts;

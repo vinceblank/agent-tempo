@@ -22,8 +22,8 @@ import type {
   EnsembleStateV1,
   TempoEvent,
   PlayerSummaryV1,
-} from 'claude-tempo/http/event-types';
-import type { EnsembleChatMessage } from 'claude-tempo/types';
+} from 'agent-tempo/http/event-types';
+import type { EnsembleChatMessage } from 'agent-tempo/types';
 import { logEvent } from './log';
 import { ensembleQueryKey } from './queries';
 import type { DashboardTempoClient } from './client';

@@ -4,7 +4,7 @@
  * Pre-#476 the argv parser hardcoded `'claude' | 'copilot'` and rejected
  * every other value, even though `AgentType` had grown to include `'mock'`
  * (#220) and `'claude-api'` (#131). The bug was latent — only fired when
- * users invoked the CLI directly (`claude-tempo recruit --agent claude-api`).
+ * users invoked the CLI directly (`agent-tempo recruit --agent claude-api`).
  *
  * The fix sources the allowlist from the canonical `AGENT_TYPES` tuple in
  * `src/types.ts` so the CLI tracks the union automatically. These tests

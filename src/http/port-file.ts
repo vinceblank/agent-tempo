@@ -74,7 +74,7 @@ export function removePortFile(filePath: string = DAEMON_PORT_PATH): void {
 /**
  * Read the current port from disk, or `null` when the file is missing,
  * empty, or not a parseable port. Used by clients (TempoClient HTTP
- * transport, `claude-tempo daemon status`, …) to discover the live port.
+ * transport, `agent-tempo daemon status`, …) to discover the live port.
  */
 export function readPortFile(filePath: string = DAEMON_PORT_PATH): number | null {
   let raw: string;

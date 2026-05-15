@@ -253,7 +253,7 @@ test('4. Pair-token flow drops ?pair= BEFORE the bearer lands (risk #16)', async
     const recorded: { search: string }[] = [];
     Object.defineProperty(window, '__pairProbeRecord', { value: recorded });
     window.localStorage.setItem = function (key: string, value: string) {
-      if (key === 'claude-tempo:bearer') recorded.push({ search: window.location.search });
+      if (key === 'agent-tempo:bearer') recorded.push({ search: window.location.search });
       return realSetItem(key, value);
     };
   });
@@ -262,7 +262,7 @@ test('4. Pair-token flow drops ?pair= BEFORE the bearer lands (risk #16)', async
 
   // Wait for the bearer to land + the URL to settle.
   await expect.poll(async () =>
-    await page.evaluate(() => window.localStorage.getItem('claude-tempo:bearer')),
+    await page.evaluate(() => window.localStorage.getItem('agent-tempo:bearer')),
     { timeout: 5000 },
   ).toBeTruthy();
 

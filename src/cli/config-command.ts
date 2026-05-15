@@ -74,9 +74,9 @@ async function choose(prompt: string, options: string[]): Promise<string> {
   return options[0];
 }
 
-/** Interactive config setup: `claude-tempo config` */
+/** Interactive config setup: `agent-tempo config` */
 export async function configInteractive(): Promise<void> {
-  out.heading('claude-tempo config');
+  out.heading('agent-tempo config');
 
   const existing = loadConfigFile();
 
@@ -137,11 +137,11 @@ export async function configInteractive(): Promise<void> {
     out.success('Connected successfully');
   } catch (err: any) {
     out.warn(`Could not connect: ${err?.message || err}`);
-    out.log(`  Config was saved — you can fix the connection and re-run ${out.dim('claude-tempo config')}`);
+    out.log(`  Config was saved — you can fix the connection and re-run ${out.dim('agent-tempo config')}`);
   }
 }
 
-/** Non-interactive: `claude-tempo config set <key> <value>` */
+/** Non-interactive: `agent-tempo config set <key> <value>` */
 export function configSet(key: string, value: string): void {
   const config = loadConfigFile();
   const keyMap: Record<string, keyof PersistedConfig> = {
@@ -181,9 +181,9 @@ export function configSet(key: string, value: string): void {
   out.success(`Set ${configKey} = ${configKey.includes('Key') ? '****' : value}`);
 }
 
-/** Show current config: `claude-tempo config show` */
+/** Show current config: `agent-tempo config show` */
 export function configShow(): void {
-  out.heading('claude-tempo config');
+  out.heading('agent-tempo config');
 
   const { config, sources } = getConfigWithSources();
 
@@ -211,7 +211,7 @@ export function configShow(): void {
   console.log();
 }
 
-/** Route `claude-tempo config [subcommand] [args...]` */
+/** Route `agent-tempo config [subcommand] [args...]` */
 export async function configCommand(positional: string[]): Promise<void> {
   const sub = positional[1]; // positional[0] is "config"
 
@@ -222,7 +222,7 @@ export async function configCommand(positional: string[]): Promise<void> {
     const key = positional[2];
     const value = positional[3];
     if (!key || !value) {
-      out.error('Usage: claude-tempo config set <key> <value>');
+      out.error('Usage: agent-tempo config set <key> <value>');
       process.exit(1);
     }
     configSet(key, value);
@@ -230,9 +230,9 @@ export async function configCommand(positional: string[]): Promise<void> {
     configShow();
   } else {
     out.error(`Unknown config subcommand: "${sub}"`);
-    out.log(`  Usage: ${out.dim('claude-tempo config')}             Interactive setup`);
-    out.log(`         ${out.dim('claude-tempo config show')}        Show current config`);
-    out.log(`         ${out.dim('claude-tempo config set <k> <v>')} Set a config value`);
+    out.log(`  Usage: ${out.dim('agent-tempo config')}             Interactive setup`);
+    out.log(`         ${out.dim('agent-tempo config show')}        Show current config`);
+    out.log(`         ${out.dim('agent-tempo config set <k> <v>')} Set a config value`);
     process.exit(1);
   }
 }

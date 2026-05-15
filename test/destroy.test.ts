@@ -266,7 +266,7 @@ describe('destroy verb — fixes #227 (orphan claude.exe on detached destroy)', 
   ): Promise<T> {
     const connection = getNativeConnection();
     const bundle = { code: fs.readFileSync(findWorkflowBundle(), 'utf-8') };
-    const hostTaskQueue = `claude-tempo-${hostname}`;
+    const hostTaskQueue = `agent-tempo-${hostname}`;
 
     const captureStub = async (input: {
       ensemble: string;

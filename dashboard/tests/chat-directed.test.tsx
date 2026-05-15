@@ -9,8 +9,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
-import type { EnsembleChatMessage } from 'claude-tempo/types';
-import type { PlayerSummaryV1 } from 'claude-tempo/http/event-types';
+import type { EnsembleChatMessage } from 'agent-tempo/types';
+import type { PlayerSummaryV1 } from 'agent-tempo/http/event-types';
 import { buildFormattedRows, type FormattedChatRow } from '../src/lib/chat-format';
 import { rowToFeedMessage } from '../src/components/chat/ChatLog';
 import { FeedMessage } from '../src/components/chat/FeedMessage';

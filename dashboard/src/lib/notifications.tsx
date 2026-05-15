@@ -53,7 +53,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useParams } from 'react-router-dom';
-import type { EnsembleChatMessage } from 'claude-tempo/types';
+import type { EnsembleChatMessage } from 'agent-tempo/types';
 import { getDashboardClient } from './client-singleton';
 import { useEnsembleList } from './queries';
 

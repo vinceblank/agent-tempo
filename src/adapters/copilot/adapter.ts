@@ -392,7 +392,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
       log(`ERROR: Workflow ${expectedWorkflowId} did not register within 30 seconds`);
       await session.disconnect();
       await copilotClient.stop();
-      // Clean up PID file to avoid stale entries in `claude-tempo status`
+      // Clean up PID file to avoid stale entries in `agent-tempo status`
       try { fs.unlinkSync(pidFile); } catch { /* may not exist yet */ }
       process.exit(1);
     }

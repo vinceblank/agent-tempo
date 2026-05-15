@@ -97,7 +97,7 @@ export const ENV = {
    * Escape hatch for triple-isolated environments (ADR 0014 §5.3). When
    * set, `resolveTempoHome()` returns this path verbatim — bypassing both
    * the production default and the dev-mode default. Lets a power user
-   * coordinate three or more parallel claude-tempo profiles on one box.
+   * coordinate three or more parallel agent-tempo profiles on one box.
    */
   DEV_HOME_OVERRIDE: 'AGENT_TEMPO_HOME_OVERRIDE',
 } as const;
@@ -175,7 +175,7 @@ export function isDevMode(): boolean {
 }
 
 /**
- * Resolve the claude-tempo home directory. Three-tier precedence:
+ * Resolve the agent-tempo home directory. Three-tier precedence:
  *   1. `AGENT_TEMPO_HOME_OVERRIDE` env — explicit override (multi-isolation
  *      escape hatch; ADR 0014 §5.3).
  *   2. Dev mode (`AGENT_TEMPO_DEV_MODE=1`): `~/.agent-tempo-dev/`.
@@ -507,7 +507,7 @@ function readEnvWithDevCarveOut(key: string): string | undefined {
 
 /**
  * Build a resolved Config using the priority chain:
- *   CLI flag > env var > claude-tempo config file > temporal CLI config > defaults
+ *   CLI flag > env var > agent-tempo config file > temporal CLI config > defaults
  *
  * In dev mode, `TEMPORAL_NAMESPACE` and `TEMPORAL_ADDRESS` env vars are
  * dropped from the chain — see {@link DEV_ENV_CARVE_OUT}.
@@ -545,7 +545,7 @@ export function getConfig(overrides: CliOverrides = {}): Config {
       overrides.temporalNamespace, ENV.TEMPORAL_NAMESPACE,
       configFile.temporalNamespace,
       // ADR 0014 §5.1: dev profile flips the namespace default. CLI flag and
-      // the dev profile's own claude-tempo config file
+      // the dev profile's own agent-tempo config file
       // (`~/.agent-tempo-dev/config.json`) still win — but the
       // `TEMPORAL_NAMESPACE` env var (carved out above) and
       // `~/.config/temporalio/temporal.yaml` are intentionally ignored in
@@ -594,7 +594,7 @@ export interface ConfigWithSources {
 
 /**
  * Like getConfig(), but also returns which source each value came from.
- * Used by `claude-tempo config show` to help users debug.
+ * Used by `agent-tempo config show` to help users debug.
  *
  * Mirrors {@link getConfig}'s dev-mode env-var carve-out — without this
  * parity the user would see `env: TEMPORAL_NAMESPACE=default` in

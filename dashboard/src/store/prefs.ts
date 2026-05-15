@@ -1,7 +1,7 @@
 /**
  * Zustand store for user-level dashboard preferences.
  *
- * Persistence is `localStorage`-backed (under key `claude-tempo:prefs`).
+ * Persistence is `localStorage`-backed (under key `agent-tempo:prefs`).
  * Theme / density / accent each map to a `dataset` attribute on
  * `documentElement` so the design tokens (CSS-first `@theme` blocks in
  * `src/styles/tokens.css`) can re-paint via attribute selectors without
@@ -19,7 +19,7 @@ export type Theme = 'dark' | 'light';
 export type Density = 4 | 5 | 6 | 7 | 8 | 9;
 export type Accent = 'terracotta' | 'sage' | 'plum';
 
-const STORAGE_KEY = 'claude-tempo:prefs';
+const STORAGE_KEY = 'agent-tempo:prefs';
 /** Default values — exported so consumers (e.g. the Settings page's Reset button) reuse them. */
 export const DEFAULT_THEME: Theme = 'dark';
 export const DEFAULT_DENSITY: Density = 6;

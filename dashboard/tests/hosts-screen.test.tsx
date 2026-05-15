@@ -6,7 +6,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import type { HostInfo } from 'claude-tempo/types';
+import type { HostInfo } from 'agent-tempo/types';
 import { Hosts } from '../src/screens/Hosts';
 import { MockDashboardClient } from './fixtures/mock-client';
 import { __setDashboardClientForTests } from '../src/lib/client-singleton';

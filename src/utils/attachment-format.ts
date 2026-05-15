@@ -2,7 +2,7 @@
  * Shared attachment-info display formatter.
  *
  * Renders an {@link AttachmentInfo} snapshot into an array of plain strings
- * suitable for either stdout (`claude-tempo attachment-info`) or the TUI
+ * suitable for either stdout (`agent-tempo attachment-info`) or the TUI
  * overlay (`/attachment-info`). Pure — no Temporal, no stdout, no ANSI
  * colors — so unit tests can assert exact lines without booting a client.
  *

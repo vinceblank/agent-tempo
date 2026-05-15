@@ -10,8 +10,8 @@ import type {
   EnsembleStateV1,
   EnsembleSummary,
   HealthV1,
-} from 'claude-tempo/http/event-types';
-import type { HostInfo } from 'claude-tempo/types';
+} from 'agent-tempo/http/event-types';
+import type { HostInfo } from 'agent-tempo/types';
 import { logEvent } from './log';
 import type { AgentTypeRow, DashboardTempoClient, LineupRow } from './client';
 import { getDashboardClient } from './client-singleton';

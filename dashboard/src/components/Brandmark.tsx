@@ -1,8 +1,8 @@
 /**
- * BrandMark — the metronome motif + `claude-tempo` mono wordmark.
+ * BrandMark — the metronome motif + `agent-tempo` mono wordmark.
  *
  * Per audit rev 4 C1: the brand identity is the metronome icon (triangle
- * shell with terracotta pendulum) paired with the lowercase `claude-tempo`
+ * shell with terracotta pendulum) paired with the lowercase `agent-tempo`
  * wordmark, terracotta hyphen between the two halves. Distinct from
  * `MaestroMark` (the operator's italic-M identity, see C2).
  *

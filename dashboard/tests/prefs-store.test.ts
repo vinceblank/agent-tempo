@@ -4,7 +4,7 @@
  *   2. Mutate `documentElement.dataset.{theme,density,accent}` so CSS
  *      attribute selectors in `tokens.css` repaint without React
  *      re-renders
- *   3. Persist to `localStorage` under `claude-tempo:prefs`
+ *   3. Persist to `localStorage` under `agent-tempo:prefs`
  *
  * If any of those drifts apart from the others, the design-token
  * cascade silently breaks.
@@ -30,7 +30,7 @@ describe('usePrefs store', () => {
     usePrefs.getState().setTheme('light');
     expect(usePrefs.getState().theme).toBe('light');
     expect(document.documentElement.dataset.theme).toBe('light');
-    const persisted = JSON.parse(window.localStorage.getItem('claude-tempo:prefs') || '{}');
+    const persisted = JSON.parse(window.localStorage.getItem('agent-tempo:prefs') || '{}');
     expect(persisted.theme).toBe('light');
   });
 
@@ -52,7 +52,7 @@ describe('usePrefs store', () => {
     usePrefs.getState().setAccent('sage');
     expect(usePrefs.getState().accent).toBe('sage');
     expect(document.documentElement.dataset.accent).toBe('sage');
-    const persisted = JSON.parse(window.localStorage.getItem('claude-tempo:prefs') || '{}');
+    const persisted = JSON.parse(window.localStorage.getItem('agent-tempo:prefs') || '{}');
     expect(persisted.accent).toBe('sage');
   });
 
@@ -60,7 +60,7 @@ describe('usePrefs store', () => {
     usePrefs.getState().setTheme('light');
     usePrefs.getState().setDensity(8);
     usePrefs.getState().setAccent('plum');
-    const persisted = JSON.parse(window.localStorage.getItem('claude-tempo:prefs') || '{}');
+    const persisted = JSON.parse(window.localStorage.getItem('agent-tempo:prefs') || '{}');
     expect(persisted).toEqual({ theme: 'light', density: 8, accent: 'plum' });
   });
 });

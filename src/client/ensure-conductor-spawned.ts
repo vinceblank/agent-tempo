@@ -21,7 +21,7 @@ export type EnsureConductorSpawnedOutcome =
 /**
  * If the ensemble already has a conductor session in a live phase, no-op.
  * Otherwise shell out via {@link TempoClientWithSpawn.spawnConductor} to
- * open a conductor terminal. The `claude-tempo up` path is idempotent at
+ * open a conductor terminal. The `agent-tempo up` path is idempotent at
  * the workflow layer, so a benign race (two restores in flight) converges
  * on one workflow.
  *
@@ -51,7 +51,7 @@ export async function ensureConductorSpawned(
     // conductor — `restoreOrphansOnce` reattaches the orphan adapter via
     // `deliverRestart`, and this helper falls through to a fresh spawn when
     // the attachment-info query returns a non-live phase. If the orphan
-    // reattach wins the race, our spawn (`claude-tempo up <ensemble>`)
+    // reattach wins the race, our spawn (`agent-tempo up <ensemble>`)
     // throws "A conductor is already running for ensemble" — which is the
     // success condition for THIS helper. Swallow the race and report alive.
     if (/conductor is already running/i.test(message)) {

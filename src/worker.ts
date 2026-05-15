@@ -88,7 +88,7 @@ export async function createWorkers(config: Config): Promise<DualWorkers> {
     connection,
     namespace: config.temporalNamespace,
     taskQueue: config.taskQueue,
-    identity: workerIdentity(), // #274 — parseable claude-tempo:<host>:<pid>:<version>
+    identity: workerIdentity(), // #274 — parseable agent-tempo:<host>:<pid>:<version>
     workflowBundle,
     shutdownGraceTime: SHUTDOWN_GRACE_TIME,
     shutdownForceTime: SHUTDOWN_FORCE_TIME,

@@ -1,7 +1,7 @@
 # claude-code-headless adapter test fixtures
 
 Captured during the §11 pre-impl spike for issue #520. See the spike-results comment on
-[issue #520](https://github.com/vinceblank/claude-tempo/issues/520) for context.
+[issue #520](https://github.com/vinceblank/agent-tempo/issues/520) for context.
 
 | Fixture | Source | Notes |
 |---|---|---|
@@ -24,7 +24,7 @@ behavioral schemas are unchanged.
 ## Capture pattern
 
 Spike captures used the **strict-isolation** pattern to prevent the spike subprocess
-from auto-registering with the host's running claude-tempo ensemble:
+from auto-registering with the host's running agent-tempo ensemble:
 
 ```bash
 env -u AGENT_TEMPO_PLAYER_NAME \

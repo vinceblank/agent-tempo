@@ -522,8 +522,8 @@ describe('warnIfDevNamespaceDrift (#423 PR-A Fix 3)', function () {
   });
 
   it('does NOT warn when dev mode is on AND namespace matches the dev default', function () {
-    // Happy path — `[DEV MODE]` banner says `claude-tempo-dev`, daemon
-    // connects to `claude-tempo-dev`, no log noise.
+    // Happy path — `[DEV MODE]` banner says `agent-tempo-dev`, daemon
+    // connects to `agent-tempo-dev`, no log noise.
     process.env[ENV.DEV_MODE] = '1';
     const calls: unknown[][] = [];
     const fired = warnIfDevNamespaceDrift(

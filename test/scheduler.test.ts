@@ -31,7 +31,7 @@ import { ScheduleEntry } from '../src/types';
  * workflow IDs don't collide with any other file under the shared env.
  */
 let ENSEMBLE: string;
-const SCHEDULER_TASK_QUEUE = 'test-claude-tempo';
+const SCHEDULER_TASK_QUEUE = 'test-agent-tempo';
 
 function schedulerWorkflowId(ensemble: string): string {
   return `agent-scheduler-${ensemble}`;

@@ -3,13 +3,13 @@
  *
  * Joins two sources of truth and returns a formatted text payload:
  *   - Temporal's own poller registry (`describeTaskQueue`), filtered to
- *     identities parseable as `claude-tempo:<host>:<pid>:<version>` or
+ *     identities parseable as `agent-tempo:<host>:<pid>:<version>` or
  *     the legacy `<pid>@<hostname>` SDK default.
  *   - The `hostProfiles` projection maintained by the global maestro
  *     from daemon boot signals.
  *
  * Consumes the shared formatter from `src/utils/format-hosts.ts`, so
- * CLI `claude-tempo hosts` and TUI `/hosts` produce the same text.
+ * CLI `agent-tempo hosts` and TUI `/hosts` produce the same text.
  * Thin wrapper — all the logic is in `listHosts`.
  */
 import { z } from 'zod';

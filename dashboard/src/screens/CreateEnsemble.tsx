@@ -24,7 +24,7 @@
  * Validation rule (`validateName`) mirrors the daemon's
  * `ENSEMBLE_NAME_REGEX` from `src/utils/validation.ts` — kept duplicated
  * because the regex constant lives outside the dashboard's
- * type-only `claude-tempo/*` import surface. A future shared validation
+ * type-only `agent-tempo/*` import surface. A future shared validation
  * module can absorb both copies.
  */
 import { useEffect, useMemo, useState } from 'react';

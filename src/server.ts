@@ -84,7 +84,7 @@ async function main() {
       log(`Worker daemon started (pid ${daemonPid})`);
     } catch (err: any) {
       log(`Failed to start worker daemon: ${err?.message || err}`);
-      log('Start it manually with: claude-tempo daemon start');
+      log('Start it manually with: agent-tempo daemon start');
       process.exit(1);
     }
   } else {

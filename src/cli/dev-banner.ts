@@ -92,7 +92,7 @@ export interface DevBannerInputs {
  *
  * The architect's `docs/design/dev-mode-isolation-fix-423.md` example:
  *
- *   `namespace claude-tempo-dev (default) · queue claude-tempo-dev (default)`
+ *   `namespace agent-tempo-dev (default) · queue agent-tempo-dev (default)`
  *
  * After a leak this becomes `namespace default (env)` — operator instantly
  * sees what changed. If we suppressed `(default)` they'd have to know
@@ -110,11 +110,11 @@ function annotateField(
 /**
  * Format the single-line `[DEV MODE]` banner. Pure function — no I/O.
  *
- *   [DEV MODE] using ~/.agent-tempo-dev · port 8474 · namespace claude-tempo-dev (default) · queue claude-tempo-dev (default)
+ *   [DEV MODE] using ~/.agent-tempo-dev · port 8474 · namespace agent-tempo-dev (default) · queue agent-tempo-dev (default)
  *
  * After a leak the banner self-narrates the drift:
  *
- *   [DEV MODE] using ~/.agent-tempo-dev · port 8474 · namespace default (env) · queue claude-tempo-dev (default)
+ *   [DEV MODE] using ~/.agent-tempo-dev · port 8474 · namespace default (env) · queue agent-tempo-dev (default)
  *
  * The `[DEV MODE]` prefix is rendered with ANSI yellow + bold when stdout
  * is a TTY (`out.bold`/`out.yellow` handle the `NO_COLOR` / non-TTY
@@ -182,7 +182,7 @@ export function resolveDevBannerInputs(): DevBannerInputs {
 /**
  * Convenience: emit the banner to stderr if `isDevMode()` is true,
  * otherwise no-op. Stderr (not stdout) so the banner doesn't pollute
- * commands whose stdout is captured by callers (e.g. `claude-tempo
+ * commands whose stdout is captured by callers (e.g. `agent-tempo
  * --dev recall --json …`).
  *
  * Resolves the displayed values from {@link getConfigWithSources} so the

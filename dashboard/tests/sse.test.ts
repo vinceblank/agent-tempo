@@ -8,13 +8,13 @@
  * removed but `hasConductor` left stuck on `true`, etc.).
  */
 import { describe, it, expect } from 'vitest';
-import { SSE_EVENT_KINDS } from 'claude-tempo/http/event-types';
+import { SSE_EVENT_KINDS } from 'agent-tempo/http/event-types';
 import type {
   TempoEvent,
   EnsembleStateV1,
   PlayerSummaryV1,
-} from 'claude-tempo/http/event-types';
-import type { EnsembleChatMessage, HostProfile } from 'claude-tempo/types';
+} from 'agent-tempo/http/event-types';
+import type { EnsembleChatMessage, HostProfile } from 'agent-tempo/types';
 import { applyEvent } from '../src/lib/sse';
 import { makeSnapshot } from './fixtures/mock-client';
 

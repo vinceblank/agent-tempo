@@ -2,7 +2,7 @@
  * Search-attribute preflight (PR-3 of the v1.0 rebrand).
  *
  * After the wire-level rename from `ClaudeTempo*` to `AgentTempo*`, every
- * Temporal namespace claude-tempo / agent-tempo touches needs the new
+ * Temporal namespace agent-tempo / agent-tempo touches needs the new
  * search attributes registered before workflows can start. Self-hosted
  * Temporal makes registration a privileged one-shot operator action — the
  * daemon can't do it itself, but it CAN refuse to boot with an actionable

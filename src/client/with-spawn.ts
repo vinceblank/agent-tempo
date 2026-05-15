@@ -2,7 +2,7 @@
  * `TempoClientWithSpawn` — TTY-bound superset of {@link TempoClientCore}.
  *
  * Composes {@link createTempoClientCore} with the two methods that shell
- * out to a local `claude-tempo up …` invocation. **Never import this from
+ * out to a local `agent-tempo up …` invocation. **Never import this from
  * the daemon, MCP tools, or the SSE event source** — those contexts have
  * no TTY and a stray spawn would launch a terminal nothing can render.
  *
@@ -19,7 +19,7 @@ import type { TempoClientWithSpawn } from './interface';
 export type { CreateTempoClientOpts } from './core';
 
 /**
- * Invoke the `claude-tempo` CLI as a child process. The lazy
+ * Invoke the `agent-tempo` CLI as a child process. The lazy
  * `child_process` import keeps the dependency out of `core.ts` so
  * `TempoClientCore` consumers never pay for it. Shared by the two spawn
  * methods so they have identical process semantics (cwd default,
@@ -28,12 +28,12 @@ export type { CreateTempoClientOpts } from './core';
 async function runTempoCli(args: string[], workDir?: string): Promise<void> {
   const { execFile } = await import('child_process');
   await new Promise<void>((resolve, reject) => {
-    execFile('claude-tempo', args, {
+    execFile('agent-tempo', args, {
       cwd: workDir ?? process.cwd(),
       timeout: 60_000,
       shell: true,
     }, (err, _stdout, stderr) => {
-      if (err) reject(new Error(stderr?.toString().trim() || err.message || `claude-tempo ${args[0]} failed`));
+      if (err) reject(new Error(stderr?.toString().trim() || err.message || `agent-tempo ${args[0]} failed`));
       else resolve();
     });
   });
@@ -63,7 +63,7 @@ export function createTempoClientWithSpawn(
     },
 
     async spawnConductor(opts) {
-      // `claude-tempo up <ensemble>` is idempotent at the workflow layer —
+      // `agent-tempo up <ensemble>` is idempotent at the workflow layer —
       // re-invoking it on a live ensemble reuses the existing conductor
       // workflow (deterministic workflow ID). Distinct from
       // `createEnsemble` so call sites read as "make sure the conductor

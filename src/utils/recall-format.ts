@@ -2,7 +2,7 @@
  * Shared recall formatter (#128).
  *
  * Single source of truth for how the MCP `recall` tool, TUI `/recall` slash
- * command, and CLI `claude-tempo recall` present a timeline. Pure — no
+ * command, and CLI `agent-tempo recall` present a timeline. Pure — no
  * Temporal, no stdout, no I/O — so each surface can unit-test its rendering
  * with canned data.
  *

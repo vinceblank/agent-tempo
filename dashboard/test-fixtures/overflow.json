@@ -138,9 +138,9 @@
 
   "_loaderHint": {
     "_comment": "How recruits seed the dashboard with each fixture. Daemon URL TBD with conductor; the tempo-mock-jam ensemble is the canonical seed surface for stress data.",
-    "step1_baseline": "Start the daemon with `claude-tempo --dev daemon start` and bring up the mock ensemble: `claude-tempo --dev up --lineup tempo-mock-jam`. This gives a 5-player baseline ensemble with deterministic mock players (no real Claude calls).",
+    "step1_baseline": "Start the daemon with `agent-tempo --dev daemon start` and bring up the mock ensemble: `agent-tempo --dev up --lineup tempo-mock-jam`. This gives a 5-player baseline ensemble with deterministic mock players (no real Claude calls).",
     "step2_seed_long_tail": "For long-tail content: use the dashboard's CreateEnsemble wizard manually with names from `ensembleNames.longTail`, OR `cue` mock players to inject long descriptions via `set_ensemble_description`.",
-    "step3_seed_stress": "For stress content: same mechanism but with values from `*.stress` arrays. Note: claude-tempo enforces ENSEMBLE_NAME_REGEX + a max-length on names — synthetic stress strings may be rejected at the validation layer (good — flag as a finding if validation is missing). Use the dashboard's React DevTools or `__seedFixturesForTests` hook (TBD with eng team) to bypass server validation for layout-only testing.",
+    "step3_seed_stress": "For stress content: same mechanism but with values from `*.stress` arrays. Note: agent-tempo enforces ENSEMBLE_NAME_REGEX + a max-length on names — synthetic stress strings may be rejected at the validation layer (good — flag as a finding if validation is missing). Use the dashboard's React DevTools or `__seedFixturesForTests` hook (TBD with eng team) to bypass server validation for layout-only testing.",
     "step4_seed_50_player": "For 50-player ensembleSizeProfile.stress: mock-recruit 50 players against a single ensemble. Conductor can dispatch this via a one-shot script.",
     "_alternative": "If wire-seeding is too slow, recruits may use the dashboard's React DevTools to override props on a target component manually. The fixtures above are the source of truth for content values regardless of injection method."
   }

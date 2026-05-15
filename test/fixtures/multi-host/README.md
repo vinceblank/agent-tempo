@@ -1,6 +1,6 @@
 # Multi-host integration harness (PR-F)
 
-Two claude-tempo daemon containers sharing a Temporal dev server. Used by
+Two agent-tempo daemon containers sharing a Temporal dev server. Used by
 `test/multi-host-cross-host-restart.test.ts` to validate cross-host
 `restart` end-to-end.
 
@@ -51,7 +51,7 @@ docker-compose -f test/fixtures/multi-host/docker-compose.yml down -v
 The daemon Dockerfiles do `COPY . /app && npm ci && npm run build` — they
 build from the current working tree, not a published image. This is
 deliberate per PR-F §8 answer 4: the integration test validates the branch
-under test. Using `FROM claude-tempo:latest` would test whatever is on npm
+under test. Using `FROM agent-tempo:latest` would test whatever is on npm
 (v0.24 or worse) instead of your local changes.
 
 BuildKit cache mounts are available but commented out in

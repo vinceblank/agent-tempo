@@ -5,7 +5,7 @@
  * `src/http/dashboard.ts` (PR-1) with the real two-endpoint flow:
  *
  *   POST /dashboard/api/pair         (post-auth)
- *     The CLI invokes this when the operator runs `claude-tempo
+ *     The CLI invokes this when the operator runs `agent-tempo
  *     dashboard --pair`. Mints a single-use, 5-minute, base64url
  *     32-byte token. The token is paired with the operator's bearer
  *     for delivery on consume.
@@ -61,7 +61,7 @@ const PAIR_TOKEN_BYTES = 32;
 /**
  * Hard cap on simultaneous pending pairings. Defence-in-depth against
  * an abusive operator (or a script in the operator's terminal)
- * hammering `claude-tempo dashboard --pair` faster than the 60-second
+ * hammering `agent-tempo dashboard --pair` faster than the 60-second
  * sweep can reclaim memory. With 5-min TTL the natural ceiling is one
  * mint per second × 300 seconds = 300 entries; cap at 100 forces a
  * 503 long before that becomes load-bearing.
@@ -117,7 +117,7 @@ const log = (...args: unknown[]) => console.error('[agent-tempo:pair]', ...args)
 
 /**
  * POST `/dashboard/api/pair` — mint a pairing. Caller is the operator
- * via `claude-tempo dashboard --pair`; the request has already passed
+ * via `agent-tempo dashboard --pair`; the request has already passed
  * the bearer-auth gate so we know the operator is authorised. We
  * accept the operator's bearer from the `Authorization` header and
  * stamp it onto the pending entry so consume can hand it back.

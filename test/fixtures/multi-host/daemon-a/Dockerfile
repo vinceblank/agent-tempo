@@ -1,4 +1,4 @@
-# daemon-a — claude-tempo daemon running with hostname=host-a.
+# daemon-a — agent-tempo daemon running with hostname=host-a.
 #
 # Local-source build per PR-F §8 answer 4 — the integration test must
 # validate the branch under test, not a published image. Optional

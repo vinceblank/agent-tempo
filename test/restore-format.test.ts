@@ -77,7 +77,7 @@ describe('formatCrossHostOrphans (#151)', function () {
     // Player line carries the ensemble context.
     expect(out).to.include('alice');
     expect(out).to.include('(ensemble: tempo-impl)');
-    // Action edge — TUI form, no `claude-tempo` prefix, local host as target.
+    // Action edge — TUI form, no `agent-tempo` prefix, local host as target.
     expect(out).to.include(`In TUI: /migrate alice ${LOCAL} --force`);
   });
 
@@ -143,7 +143,7 @@ describe('formatCrossHostOrphans (#151)', function () {
     expect(idxLocal, 'local host listed before remote').to.be.lessThan(idxRemote);
     expect(out).to.include(`**${LOCAL}** [live] (local)`);
     // Local section recommends the single-ensemble restore command.
-    expect(out).to.include('Use `claude-tempo restore tempo-impl` (single-ensemble) to reattach.');
+    expect(out).to.include('Use `agent-tempo restore tempo-impl` (single-ensemble) to reattach.');
     // Local section does NOT print the /migrate steal command for self.
     const localSection = out.slice(out.indexOf(`**${LOCAL}**`), out.indexOf('**host-B**'));
     expect(localSection).to.not.include('/migrate');

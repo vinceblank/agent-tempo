@@ -85,8 +85,8 @@ describe('defaultPart', () => {
     });
 
     it('returns `Session in <basename>` for untyped non-conductors with a workDir', () => {
-      expect(defaultPart({ workDir: '/repos/claude-tempo' })).toBe(
-        'Session in claude-tempo',
+      expect(defaultPart({ workDir: '/repos/agent-tempo' })).toBe(
+        'Session in agent-tempo',
       );
       expect(defaultPart({ isConductor: false, workDir: '/some/repo' })).toBe(
         'Session in repo',

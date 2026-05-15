@@ -29,7 +29,7 @@ Tests for `src/tools/recruit.ts` terminal spawning across platforms and configur
 - **Setup**: Node is managed via fnm or nvm (not a system install)
 - **Steps**: Recruit a new session
 - **Expected**: The MCP server starts successfully (requires `node` on PATH)
-- **Verify**: `/mcp` in the new session shows claude-tempo connected, not failed
+- **Verify**: `/mcp` in the new session shows agent-tempo connected, not failed
 
 ### GT-4: Shell with slow startup
 - **Setup**: Add `sleep 2` to fish config (`~/.config/fish/config.fish`)
@@ -64,7 +64,7 @@ Tests for `src/tools/recruit.ts` terminal spawning across platforms and configur
 - **Setup**: Node managed via nvm/fnm, iTerm2 as terminal
 - **Steps**: Recruit a new session
 - **Expected**: MCP server connects to Temporal (node is on PATH, env vars passed)
-- **Verify**: `/mcp` in new session shows claude-tempo connected
+- **Verify**: `/mcp` in new session shows agent-tempo connected
 
 ### IT-3: Uses `write text` not `command`
 - **Setup**: iTerm2 active
@@ -95,7 +95,7 @@ Tests for `src/tools/recruit.ts` terminal spawning across platforms and configur
 
 ### TA-4: .command file cleanup
 - **Steps**: Recruit a session, note the timestamp
-- **Expected**: A `.command` file exists in `$TMPDIR` named `claude-tempo-recruit-<timestamp>.command`
+- **Expected**: A `.command` file exists in `$TMPDIR` named `agent-tempo-recruit-<timestamp>.command`
 - **Note**: These are not auto-cleaned; consider periodic cleanup in future
 
 ---

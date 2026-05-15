@@ -1,7 +1,7 @@
 /**
  * Auto-provisioning bootstrap state machine (#289 / S7 of #285).
  *
- * Bare `claude-tempo` invocation runs this on the way to the TUI. Six steps
+ * Bare `agent-tempo` invocation runs this on the way to the TUI. Six steps
  * get the user from "nothing installed" → "ready for the TUI home view";
  * each step is idempotent and cached where safe so a warm system completes
  * in <50ms (steps 1–5) and a cold system stays under ~200ms.
@@ -116,7 +116,7 @@ export interface BootstrapArgs {
    */
   daemonBoot?: (config: Config) => Promise<StepOutcome>;
   /**
-   * PR-2 of the v1.0 rebrand — one-shot copy of `~/.claude-tempo/` →
+   * PR-2 of the v1.0 rebrand — one-shot copy of `~/.agent-tempo/` →
    * `~/.agent-tempo/`. Runs once on first boot of the new binary; idempotent
    * thereafter. Tests should override to avoid touching real $HOME.
    *
@@ -340,7 +340,7 @@ function daemonLogErrorTail(logPath: string): DaemonLogErrorsBadge | undefined {
 
 /**
  * Default step-0 implementation — invokes the one-shot legacy home migration
- * (`~/.claude-tempo/` → `~/.agent-tempo/`). Idempotent: re-runs are
+ * (`~/.agent-tempo/` → `~/.agent-tempo/`). Idempotent: re-runs are
  * `'skipped'` once the marker is in place. Failure is recorded but never
  * blocks bootstrap (PR-2 brief).
  */
@@ -432,9 +432,9 @@ async function stepMcpConfig(
     }
     // Install into global user scope (matches current `init` behavior).
     if (!isGlobalMcpRegistered() && addGlobalMcp()) {
-      return { status: 'action-taken', durationMs: 0, detail: 'registered claude-tempo in user MCP scope' };
+      return { status: 'action-taken', durationMs: 0, detail: 'registered agent-tempo in user MCP scope' };
     }
-    return { status: 'failed', durationMs: 0, detail: 'Could not register claude-tempo MCP. Run `claude-tempo init` manually.' };
+    return { status: 'failed', durationMs: 0, detail: 'Could not register agent-tempo MCP. Run `agent-tempo init` manually.' };
   });
 
   if (outcome.status !== 'failed') {
@@ -617,7 +617,7 @@ async function stepBadgeCollection(
   if (isCacheFresh(cachedNpm, TTL_24H, now) && cachedNpm?.result) {
     latest = cachedNpm.result.latest;
   } else {
-    latest = await fetchLatest('claude-tempo', 500);
+    latest = await fetchLatest('agent-tempo', 500);
     if (latest) {
       cache.steps.npmVersionCheck = {
         lastSuccess: new Date(now).toISOString(),
@@ -735,7 +735,7 @@ export async function bootstrap(args: BootstrapArgs): Promise<BootstrapResult> {
   const cache = readCache(cacheDir, binaryVersion);
   const reachableProbe = args.isTemporalReachable ?? ((c: Config) => isTemporalReachable(c, 3000));
 
-  // Step 0: legacy home migration (`~/.claude-tempo/` → `~/.agent-tempo/`)
+  // Step 0: legacy home migration (`~/.agent-tempo/` → `~/.agent-tempo/`)
   // — PR-2 of the v1.0 rebrand. Runs before preflight so subsequent steps
   // (cache read, MCP config write, daemon boot) all see the new home.
   // MUST NOT block bootstrap — failure becomes a `'failed'` step with

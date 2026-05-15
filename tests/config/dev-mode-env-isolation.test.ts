@@ -2,10 +2,10 @@
  * Unit tests for the dev-mode env-var carve-out — #423 PR-A (ADR 0014 §5.1).
  *
  * The bug: a user with `export TEMPORAL_NAMESPACE=default` in their shell rc
- * runs `claude-tempo --dev …`. The daemon honors the env var, connects to
+ * runs `agent-tempo --dev …`. The daemon honors the env var, connects to
  * `default` namespace, and the supposedly-isolated dev profile ends up
  * coordinating with the user's prod ensembles. The dev banner says "namespace
- * claude-tempo-dev" while the worker is actually pointed at `default`.
+ * agent-tempo-dev" while the worker is actually pointed at `default`.
  *
  * The fix: in dev mode, `TEMPORAL_NAMESPACE` and `TEMPORAL_ADDRESS` env vars
  * are ignored. CLI flags and the dev-mode `config.json` still win — those
@@ -139,7 +139,7 @@ describe('dev-mode env-var carve-out (#423 PR-A)', () => {
       const { config, sources } = getConfigWithSources();
       // Both the value and the source must reflect the carve-out — otherwise
       // `config show` reports `env: default` while the daemon connects to
-      // `claude-tempo-dev`, recreating the original drift bug for users
+      // `agent-tempo-dev`, recreating the original drift bug for users
       // debugging via `config show`.
       expect(config.temporalNamespace).toBe(DEV_TEMPORAL_NAMESPACE);
       expect(sources.temporalNamespace).toBe('default');

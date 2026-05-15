@@ -483,7 +483,7 @@ test.describe('F-B-5 / H9 — Settings `.kv` long-value overflow (class A)', () 
             </div>
           </div>
           <div class="panel-body">
-            <div class="kv"><span class="kv-k">namespace</span><span class="kv-v mono">claude-tempo-dev</span></div>
+            <div class="kv"><span class="kv-k">namespace</span><span class="kv-v mono">agent-tempo-dev</span></div>
             <div class="kv" data-testid="kv-row-version"><span class="kv-k">version</span><span class="kv-v mono" data-testid="kv-version">${longVersion}</span></div>
           </div>
         </div>

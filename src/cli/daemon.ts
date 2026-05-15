@@ -449,7 +449,7 @@ export async function startDaemon(config: Config): Promise<number> {
 }
 
 /**
- * Info about a running claude-tempo daemon process discovered via OS process
+ * Info about a running agent-tempo daemon process discovered via OS process
  * listing. Returned by {@link scanAgentTempoDaemons}.
  */
 export interface DaemonProcessInfo {
@@ -460,11 +460,11 @@ export interface DaemonProcessInfo {
 
 /**
  * Matches a node process running the compiled daemon entry — both global-install
- * paths (`...\claude-tempo\dist\daemon.js`) and dev-tree paths. Narrow enough to
+ * paths (`...\agent-tempo\dist\daemon.js`) and dev-tree paths. Narrow enough to
  * exclude unrelated `node` processes on the system; never force-kills based on
  * this match alone (self-healing is gated by explicit user action per #157).
  */
-const DAEMON_CMDLINE_RE = /\bnode(?:\.exe)?\b.*\bclaude-tempo\b.*[\\/]dist[\\/]daemon\.js\b/i;
+const DAEMON_CMDLINE_RE = /\bnode(?:\.exe)?\b.*\bagent-tempo\b.*[\\/]dist[\\/]daemon\.js\b/i;
 
 /**
  * Shell out to the platform process list and return any matching daemon
@@ -549,9 +549,9 @@ function parseCsvMatches(csv: string): DaemonProcessInfo[] {
     if (isNaN(pid) || pid === process.pid) continue;
     // Match the daemon signature against the FULL LINE. CSV quoting (both
     // PowerShell's doubled-quote `""` form and backslash-escape variants)
-    // doesn't hide the literal `node.exe` and `claude-tempo\dist\daemon.js`
+    // doesn't hide the literal `node.exe` and `agent-tempo\dist\daemon.js`
     // substrings from a substring regex — splitting into quoted fields would
-    // wrongly separate `node.exe` from `claude-tempo\dist\daemon.js` when
+    // wrongly separate `node.exe` from `agent-tempo\dist\daemon.js` when
     // they're in different CSV columns (e.g. `"node.exe" "...\daemon.js"`).
     if (DAEMON_CMDLINE_RE.test(line)) {
       matches.push({ pid, commandLine: line });

@@ -20,7 +20,7 @@
  * Source: `workspace.jsx:386-404` (Roster panel) + components.css
  * `.roster-item` / `.rn` / `.rp` / `.rmeta`.
  */
-import type { PlayerSummaryV1 } from 'claude-tempo/http/event-types';
+import type { PlayerSummaryV1 } from 'agent-tempo/http/event-types';
 import { PlayerAvatar } from './tempo/PlayerAvatar';
 import { PhaseDot } from './tempo/PhaseDot';
 import { TypeBadge } from './tempo/TypeBadge';

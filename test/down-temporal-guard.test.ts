@@ -5,7 +5,7 @@
  * The Temporal dev server is a single OS-wide process — `pkill -f
  * 'temporal server start-dev'` on POSIX and `taskkill /IM temporal.exe`
  * on Windows kill it by name and cannot distinguish dev vs prod profile
- * ownership. Without the guard, `claude-tempo --dev down` would tear
+ * ownership. Without the guard, `agent-tempo --dev down` would tear
  * down the prod profile's Temporal as collateral damage. The matching
  * guard already lives on `stopDaemon`'s zombie reaper; PR-B of #423
  * adds it to `down` and exposes `--kill-shared-temporal` as the

@@ -96,13 +96,13 @@ interface CrashProofModule {
 }
 
 const CRASH_PROOF_MODULES: readonly CrashProofModule[] = [
-  // PR A — `claude-tempo daemon …`
+  // PR A — `agent-tempo daemon …`
   { name: 'daemon-command', ts: 'src/cli/daemon-command.ts', dist: 'dist/cli/daemon-command.js' },
-  // PR C — `claude-tempo help`
+  // PR C — `agent-tempo help`
   { name: 'help-text', ts: 'src/cli/help-text.ts', dist: 'dist/cli/help-text.js' },
-  // PR C — `claude-tempo upgrade` (Temporal accessed via dynamic import only)
+  // PR C — `agent-tempo upgrade` (Temporal accessed via dynamic import only)
   { name: 'upgrade-command', ts: 'src/cli/upgrade-command.ts', dist: 'dist/cli/upgrade-command.js' },
-  // PR C — `claude-tempo config` (connection test uses dynamic import)
+  // PR C — `agent-tempo config` (connection test uses dynamic import)
   { name: 'config-command', ts: 'src/cli/config-command.ts', dist: 'dist/cli/config-command.js' },
   // #288 — removed-verb friendly errors: fire BEFORE `./cli/commands` loads
   // so they work even when the Temporal SDK install is broken.

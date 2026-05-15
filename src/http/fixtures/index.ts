@@ -91,7 +91,7 @@ export async function handleFixtureSse(
     return errorResponse(res, 404, { error: 'unknown-fixture', fixture: fixtureName });
   }
 
-  openSseResponse(res, 'claude-tempo SSE (fixture)');
+  openSseResponse(res, 'agent-tempo SSE (fixture)');
 
   // AbortController is the single source of truth for "client disconnected".
   // Fires on TCP drop, abort, or natural end-of-events. `once()` ensures

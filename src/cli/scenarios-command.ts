@@ -1,12 +1,12 @@
 /**
- * `claude-tempo --dev scenarios <list|show> [name]` — discoverability surface
+ * `agent-tempo --dev scenarios <list|show> [name]` — discoverability surface
  * for the mock-adapter scenario library shipped at the package's repo-root
  * `scenarios/` directory (ADR 0014 §4.8).
  *
  * Crash-proof: imports only `fs`, `path`, the scenario parser, and the
  * shared CLI output helpers. No Temporal, no rxjs — lives in the same
  * "always-importable" tier as `help-text.ts` and `daemon-command.ts`. A
- * conductor can `claude-tempo --dev scenarios list` to enumerate the
+ * conductor can `agent-tempo --dev scenarios list` to enumerate the
  * library before the dev daemon is even running.
  *
  * Resolution rules mirror `MockAttachment.resolveScenarioPath`:
@@ -43,7 +43,7 @@ export async function scenariosCommand(args: {
       return;
     case 'show':
       if (!args.name) {
-        out.error('Usage: claude-tempo --dev scenarios show <name>');
+        out.error('Usage: agent-tempo --dev scenarios show <name>');
         process.exit(1);
       }
       await showScenario(args.name);
@@ -62,7 +62,7 @@ async function listScenarios(asJson: boolean): Promise<void> {
       return;
     }
     out.warn(`No scenarios directory found at ${dir}.`);
-    out.warn('This claude-tempo install may have been built without dev-mode artifacts.');
+    out.warn('This agent-tempo install may have been built without dev-mode artifacts.');
     return;
   }
 
@@ -107,7 +107,7 @@ async function listScenarios(asJson: boolean): Promise<void> {
       out.log(`    ${item.description}`);
     }
   }
-  out.log('\nUse with: claude-tempo --dev recruit <name> --agent mock --mockMode scripted --mockScenario <name>');
+  out.log('\nUse with: agent-tempo --dev recruit <name> --agent mock --mockMode scripted --mockScenario <name>');
 }
 
 async function showScenario(reference: string): Promise<void> {

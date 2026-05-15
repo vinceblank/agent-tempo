@@ -5,7 +5,7 @@ import { tmpdir } from 'os';
 import { parseFrontmatter, listAgentTypes, resolveAgentType, loadAndResolveLineup } from '../src/ensemble/agent-types';
 
 // Create a temp directory for each test run
-const TEST_DIR = join(tmpdir(), `claude-tempo-agent-types-test-${Date.now()}`);
+const TEST_DIR = join(tmpdir(), `agent-tempo-agent-types-test-${Date.now()}`);
 const PROJECT_AGENTS = join(TEST_DIR, 'project', '.claude', 'agents');
 const SHIPPED_AGENTS = join(TEST_DIR, 'shipped');
 

@@ -2,7 +2,7 @@
  * Unit tests for the shared recall formatter (#128). Tests the pure
  * pipeline — filter → sort → slice → render — without booting Temporal.
  *
- * The MCP `recall` tool, TUI `/recall` slash command, and `claude-tempo
+ * The MCP `recall` tool, TUI `/recall` slash command, and `agent-tempo
  * recall <name>` CLI all feed the same formatter; per-surface integration
  * tests live alongside their respective modules. This file covers the
  * core cases that apply to every surface:

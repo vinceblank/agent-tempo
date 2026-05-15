@@ -30,7 +30,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { registerAllTempoTools, type RegisterAllTempoToolsOpts } from '../../server-tools';
 
 /**
- * Resolve claude-tempo's `version` from its own `package.json`. Walks up
+ * Resolve agent-tempo's `version` from its own `package.json`. Walks up
  * from `__dirname` searching for a `package.json` whose `name` matches —
  * robust across all build contexts:
  *   - `src/adapters/claude-api/mcp-bridge.ts` (ts-node dev)
@@ -54,7 +54,7 @@ function packageVersion(): string {
   for (let i = 0; i < 8; i++) {
     try {
       const pkg = JSON.parse(fs.readFileSync(join(dir, 'package.json'), 'utf8'));
-      if (pkg && pkg.name === 'claude-tempo' && typeof pkg.version === 'string') {
+      if (pkg && pkg.name === 'agent-tempo' && typeof pkg.version === 'string') {
         resolved = pkg.version;
         break;
       }

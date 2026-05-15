@@ -220,8 +220,8 @@ describe('daemon management', function () {
       seedPidFile(DAEMON_PID_PATH, process.pid); // tracked = current process (alive)
       const killed: number[] = [];
       const scan = () => [
-        { pid: 99001, commandLine: 'node /tmp/claude-tempo/dist/daemon.js' },
-        { pid: 99002, commandLine: 'node /opt/claude-tempo/dist/daemon.js' },
+        { pid: 99001, commandLine: 'node /tmp/agent-tempo/dist/daemon.js' },
+        { pid: 99002, commandLine: 'node /opt/agent-tempo/dist/daemon.js' },
       ];
       const killer = (pid: number) => { killed.push(pid); };
 
@@ -238,7 +238,7 @@ describe('daemon management', function () {
       try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
       const killed: number[] = [];
       const scan = () => [
-        { pid: 88001, commandLine: 'node /tmp/claude-tempo/dist/daemon.js' },
+        { pid: 88001, commandLine: 'node /tmp/agent-tempo/dist/daemon.js' },
       ];
       const killer = (pid: number) => { killed.push(pid); };
 
@@ -255,8 +255,8 @@ describe('daemon management', function () {
       // showed up in the OS process listing). selectOrphans must drop it so
       // we don't double-signal.
       const scan = () => [
-        { pid: process.pid, commandLine: 'node /tmp/claude-tempo/dist/daemon.js' },
-        { pid: 77001, commandLine: 'node /opt/claude-tempo/dist/daemon.js' },
+        { pid: process.pid, commandLine: 'node /tmp/agent-tempo/dist/daemon.js' },
+        { pid: 77001, commandLine: 'node /opt/agent-tempo/dist/daemon.js' },
       ];
       const killer = (pid: number) => { killed.push(pid); };
 
@@ -406,7 +406,7 @@ describe('daemon management', function () {
     let scratchLock: string;
 
     beforeEach(function () {
-      const scratch = path.join(os.tmpdir(), `claude-tempo-lock-test-${process.pid}-${Date.now()}`);
+      const scratch = path.join(os.tmpdir(), `agent-tempo-lock-test-${process.pid}-${Date.now()}`);
       fs.mkdirSync(scratch, { recursive: true });
       scratchLock = path.join(scratch, 'daemon.pid.lock');
     });
@@ -548,7 +548,7 @@ describe('daemon management', function () {
     let scratchPid: string;
 
     beforeEach(function () {
-      const dir = path.join(os.tmpdir(), `claude-tempo-pid-test-${process.pid}-${Date.now()}`);
+      const dir = path.join(os.tmpdir(), `agent-tempo-pid-test-${process.pid}-${Date.now()}`);
       fs.mkdirSync(dir, { recursive: true });
       scratchPid = path.join(dir, 'daemon.pid');
     });

@@ -250,7 +250,7 @@ function findProcessesByCommandLine(binaryName: string, playerName: string, ense
     // The regex matches `-n` followed by the playerName, tolerant of the Windows quoted
     // arg form. In production the spawned `claude.exe` receives argv re-serialized with
     // CRT-style quoting, so its CommandLine as visible to Win32_Process looks like:
-    //   ... "server:claude-tempo" "-n" "<playerName>" "--session-id" ...
+    //   ... "server:agent-tempo" "-n" "<playerName>" "--session-id" ...
     // Between `-n` and `<playerName>` there is literally `" "` — close-quote, space,
     // open-quote — which `\s+` alone does NOT match. The character class `[\s"']+`
     // accepts any combination of whitespace and quote characters, covering both the

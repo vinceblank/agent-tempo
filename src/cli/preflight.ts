@@ -54,16 +54,16 @@ export async function runPreflight(opts: CliOverrides & {
   out.check('claude binary found', claudeOk, claudeOk ? claudePath : 'not on PATH');
   if (!claudeOk) errors.push('claude binary not found on PATH. Install Claude Code first.');
 
-  // 4. claude-tempo-server binary (the MCP server)
-  const serverPath = whichSync('claude-tempo-server');
+  // 4. agent-tempo-server binary (the MCP server)
+  const serverPath = whichSync('agent-tempo-server');
   const serverOk = !!serverPath;
-  out.check('claude-tempo-server found', serverOk, serverOk ? serverPath! : 'not on PATH');
-  if (!serverOk) errors.push('claude-tempo-server not found on PATH. Run: npm install -g claude-tempo');
+  out.check('agent-tempo-server found', serverOk, serverOk ? serverPath! : 'not on PATH');
+  if (!serverOk) errors.push('agent-tempo-server not found on PATH. Run: npm install -g agent-tempo');
 
   // 5. MCP config (global or project-level)
   const mcpOk = isMcpConfigured(opts.dir);
   out.check('MCP configured', mcpOk, mcpOk ? 'global or project' : 'not found');
-  if (!mcpOk) warnings.push('No claude-tempo MCP config found. Run: claude-tempo init');
+  if (!mcpOk) warnings.push('No agent-tempo MCP config found. Run: agent-tempo init');
 
   console.log();
   return { ok: errors.length === 0, errors, warnings };
