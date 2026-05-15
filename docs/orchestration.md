@@ -61,6 +61,25 @@ Tell your conductor things like:
 - When a worktree is created, the player is notified with the path and branch
 - Worktrees survive `continueAsNew` for the conductor workflow's lifetime
 
+### Stop long-running processes before `remove`
+
+**Before the conductor calls `worktree remove`, the player must stop any
+long-running process started inside the worktree** — dev servers (`npm run
+dev`), file watchers, test runners in `--watch` mode, and the like.
+
+On Windows this is **mandatory**: a running process memory-maps native `.node`
+modules from the worktree's `node_modules` (e.g. a framework's native runtime),
+and Windows holds the file lock until that process exits. `git worktree remove`
+deletes the worktree's git metadata first, then fails to delete the locked
+directory — leaving a half-removed orphan. As of the #594 fix, `remove` detects
+this and returns a failure (conductor state is left intact so you can retry),
+rather than silently reporting success. A later `create` for the same player
+then recovers the orphan automatically — but the cleanest path is to stop the
+process first so `remove` succeeds outright.
+
+On macOS and Linux the lock semantics are laxer, but stopping watchers first is
+still good hygiene — it avoids a watcher firing on a half-deleted tree.
+
 ### When to use worktrees
 
 **Use worktrees when:**
