@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import * as path from 'path';
 import { WorktreeEntry } from '../src/types';
-import { createWorktree, worktreeBasePath } from '../src/utils/worktree';
+import { createWorktree, removeWorktree, worktreeBasePath } from '../src/utils/worktree';
 import {
   setupTestEnv,
   setupSharedEnv,
@@ -410,5 +410,115 @@ describe('createWorktree reuse semantics (#261)', function () {
       true,
       'the operator\'s in-flight file must survive a refused repoint',
     );
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// #594 — removeWorktree must throw (not swallow) when the directory survives
+// the removal, and createWorktree must recover a half-removed orphan instead
+// of falling through to a confusing `git worktree add` fatal. These exercise
+// the real git binary in a tmp repo; no Temporal dependency.
+// ──────────────────────────────────────────────────────────────────────────
+
+describe('worktree remove failure + stale-orphan recovery (#594)', function () {
+  // Allow git + worktree calls on slow Windows CI runners.
+  this.timeout(30_000);
+
+  let tmpRoot: string;
+  let primaryRepo: string;
+  const ensemble = getTestEnsemble();
+  const playerName = 'test-player';
+  let expectedWtPath: string;
+
+  const git = (cwd: string, args: string[]): string => {
+    try {
+      return execFileSync('git', args, {
+        cwd,
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).toString();
+    } catch (err: any) {
+      const msg = err.stderr || err.stdout || err.message || String(err);
+      throw new Error(`git ${args.join(' ')} (in ${cwd}) failed: ${msg.trim()}`);
+    }
+  };
+
+  beforeEach(function () {
+    tmpRoot = mkdtempSync(path.join(tmpdir(), 'ct-wt-594-'));
+    primaryRepo = path.join(tmpRoot, 'primary');
+    mkdirSync(primaryRepo);
+
+    git(primaryRepo, ['init', '-b', 'main']);
+    git(primaryRepo, ['config', 'user.email', 'test@example.com']);
+    git(primaryRepo, ['config', 'user.name', 'Test']);
+    writeFileSync(path.join(primaryRepo, 'README.md'), '# test repo\n');
+    git(primaryRepo, ['add', 'README.md']);
+    git(primaryRepo, ['commit', '-m', 'init']);
+    git(primaryRepo, ['branch', 'legacy']);
+    git(primaryRepo, ['remote', 'add', 'origin', primaryRepo]);
+    git(primaryRepo, ['fetch', 'origin']);
+
+    expectedWtPath = path.join(worktreeBasePath(primaryRepo, ensemble), playerName);
+  });
+
+  afterEach(function () {
+    try {
+      rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 3 });
+    } catch {
+      // Best-effort cleanup.
+    }
+  });
+
+  it('removeWorktree clears the directory for a real worktree', function () {
+    createWorktree({ gitRoot: primaryRepo, ensemble, playerName, branch: 'legacy' });
+    expect(existsSync(expectedWtPath)).to.equal(true, 'precondition: worktree created');
+
+    removeWorktree(expectedWtPath, primaryRepo);
+
+    expect(existsSync(expectedWtPath)).to.equal(false, 'directory must be gone after a clean remove');
+  });
+
+  it('removeWorktree throws when the directory survives the removal', function () {
+    // ARRANGE: a plain directory that is NOT a registered git worktree.
+    // `git worktree remove` fails and — unlike a real worktree — the
+    // directory stays on disk. Same end-state as the Windows file-lock
+    // half-removal #594 is about: metadata op fails, directory persists.
+    const bogusPath = path.join(tmpRoot, 'not-a-worktree');
+    mkdirSync(bogusPath);
+    writeFileSync(path.join(bogusPath, 'file.txt'), 'content\n');
+
+    // ACT + ASSERT: must throw rather than swallow — the caller relies on the
+    // throw to avoid signalling `removeWorktree` state on a half-removal.
+    expect(() => removeWorktree(bogusPath, primaryRepo)).to.throw(/still exists/i);
+    expect(existsSync(bogusPath)).to.equal(
+      true,
+      'directory is untouched — the throw is the only signal the caller gets',
+    );
+  });
+
+  it('createWorktree recovers a half-removed orphan (dir present, .git deleted)', function () {
+    // ARRANGE: create a worktree, then simulate a half-removal — delete the
+    // `.git` file but leave the directory. This is the exact on-disk state
+    // after `git worktree remove` deletes metadata then fails the rmdir.
+    createWorktree({ gitRoot: primaryRepo, ensemble, playerName, branch: 'legacy' });
+    rmSync(path.join(expectedWtPath, '.git'), { force: true });
+    expect(existsSync(expectedWtPath)).to.equal(true, 'precondition: orphan directory present');
+    expect(existsSync(path.join(expectedWtPath, '.git'))).to.equal(
+      false,
+      'precondition: `.git` deleted — reuse guard will be skipped',
+    );
+
+    // ACT: createWorktree should detect the orphan, clear it, prune the
+    // dangling metadata, and recreate fresh — not fatal on `git worktree add`.
+    const result = createWorktree({ gitRoot: primaryRepo, ensemble, playerName, branch: 'requested' });
+
+    // ASSERT: a fresh worktree on the requested branch.
+    expect(result.created).to.equal(true, 'orphan cleared → fresh creation, not reuse');
+    expect(result.branch).to.equal('requested');
+    expect(existsSync(path.join(expectedWtPath, '.git'))).to.equal(
+      true,
+      'recreated worktree has its `.git` link back',
+    );
+    expect(git(expectedWtPath, ['branch', '--show-current']).trim()).to.equal('requested');
   });
 });

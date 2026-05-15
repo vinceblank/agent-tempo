@@ -5,7 +5,7 @@
  * isolated copy of the repository without conflicting with others.
  */
 import { execFileSync } from 'child_process';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, rmSync } from 'fs';
 import * as path from 'path';
 import { WORKTREE_INSTALL_TIMEOUT } from './validation';
 
@@ -173,6 +173,43 @@ export function createWorktree(opts: CreateWorktreeOpts): CreateWorktreeResult {
     return { path: wtPath, branch, created: false, switched };
   }
 
+  // #594 defect 2: stale-orphan recovery. A half-removed worktree leaves the
+  // directory on disk with its `.git` file already deleted (`git worktree
+  // remove` deletes metadata before the rmdir, which then fails under a
+  // Windows file lock). The reuse guard above keys on `.git` presence, so it
+  // is skipped — and `git worktree add` below refuses a non-empty pre-existing
+  // directory with a confusing `fatal: '...' already exists`. Detect the
+  // orphan and clear it first, with a clear error if the lock is still held.
+  if (existsSync(wtPath)) {
+    log(`Stale worktree directory at "${wtPath}" (no \`.git\`) — attempting cleanup`);
+    try {
+      rmSync(wtPath, { recursive: true, force: true });
+    } catch (err: any) {
+      // Swallow — the existsSync re-check below is the authoritative gate.
+      log(`Warning: \`rmSync\` on stale worktree "${wtPath}" failed: ${err?.message ?? err}`);
+    }
+    if (existsSync(wtPath)) {
+      throw new Error(
+        `Stale worktree directory at "${wtPath}" could not be removed — kill any ` +
+        `processes running inside it (e.g. a dev server) and retry. On Windows, ` +
+        `memory-mapped native \`.node\` modules hold the lock until the owning ` +
+        `process exits.`,
+      );
+    }
+    // Directory cleared — prune any dangling git metadata so `git worktree add`
+    // doesn't trip over a stale registration for the same path/branch.
+    try {
+      execFileSync('git', ['worktree', 'prune'], {
+        cwd: gitRoot,
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch {
+      // Best-effort — prune failure is non-fatal; the add below will surface
+      // any real conflict.
+    }
+  }
+
   // Ensure base directory exists
   mkdirSync(basePath, { recursive: true });
 
@@ -258,16 +295,49 @@ export function installDependencies(
 
 /**
  * Remove a git worktree.
+ *
+ * Throws if the worktree directory survives the removal (#594). On Windows,
+ * `git worktree remove --force` deletes `.git/worktrees/<name>` metadata
+ * *first*, then `rmdir`s the directory — so when a native `.node` module
+ * inside the worktree is memory-mapped by a live process, the directory
+ * deletion fails while the metadata is already gone. The pre-#594 code
+ * swallowed that failure (log-only, no throw), so the caller reported
+ * success and Temporal state diverged from disk. Now the post-removal
+ * `existsSync` check turns a half-removal into a hard error the caller can
+ * surface.
+ *
+ * `gitRoot` scopes the `git worktree remove` invocation to the owning
+ * repository. Pre-#594 the command ran with no `cwd`, so it only worked when
+ * `process.cwd()` happened to be the right repo — fragile, and wrong outright
+ * when the conductor's cwd is a different checkout than the worktree's repo.
+ * Callers should pass `entry.gitRoot` from the `WorktreeEntry`; it defaults to
+ * `process.cwd()` for backward compatibility.
  */
-export function removeWorktree(worktreePath: string): void {
+export function removeWorktree(worktreePath: string, gitRoot: string = process.cwd()): void {
   try {
     execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
+      cwd: gitRoot,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    log(`Removed worktree at "${worktreePath}"`);
   } catch (err: any) {
     const msg = err.stderr || err.message || String(err);
-    log(`Warning: failed to remove worktree at "${worktreePath}": ${msg.trim()}`);
+    log(`Warning: \`git worktree remove\` failed at "${worktreePath}": ${msg.trim()}`);
+    // Don't return here — fall through to the post-removal check. git may have
+    // deleted the metadata but failed the rmdir; the existsSync gate below is
+    // the real success criterion.
   }
+
+  // #594 defect 1: post-removal verification. If the directory is still on
+  // disk, the removal half-succeeded — surface it instead of returning void.
+  if (existsSync(worktreePath)) {
+    throw new Error(
+      `Worktree directory "${worktreePath}" still exists after \`git worktree remove\`. ` +
+      `On Windows this usually means a process is holding a file lock — e.g. a dev ` +
+      `server with a memory-mapped native \`.node\` module. Stop any processes running ` +
+      `inside the worktree and retry.`,
+    );
+  }
+
+  log(`Removed worktree at "${worktreePath}"`);
 }

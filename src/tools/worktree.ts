@@ -19,7 +19,7 @@ export function registerWorktreeTool(
   defineTool(
     server,
     'worktree',
-    'Manage git worktrees for player isolation. Conductor only. Actions: create (provision worktree for a player), remove (clean up), list (show active worktrees). Use when multiple players commit to different branches of the same repo simultaneously; skip for read-only work, sequential work, or tasks under ~5 min. See docs/orchestration.md#when-to-use-worktrees.',
+    'Manage git worktrees for player isolation. Conductor only. Actions: create (provision worktree for a player), remove (clean up), list (show active worktrees). Use when multiple players commit to different branches of the same repo simultaneously; skip for read-only work, sequential work, or tasks under ~5 min. IMPORTANT: before `remove`, have the player stop any long-running processes inside the worktree (dev servers, file watchers) — on Windows a memory-mapped native module will block directory removal and `remove` will fail. See docs/orchestration.md#when-to-use-worktrees.',
     {
       action: z.enum(['create', 'remove', 'list']).describe('Action to perform'),
       player: z.string().max(PLAYER_NAME_MAX).optional().describe('Player name (required for create/remove)'),
@@ -128,10 +128,24 @@ export function registerWorktreeTool(
               return fail(`No worktree found for player "${player}".`);
             }
 
-            // Remove from disk
-            removeWorktree(entry.path);
+            // Remove from disk. #594: removeWorktree throws if the directory
+            // survives the removal (Windows file-lock half-removal). We must
+            // NOT signal `removeWorktree` state or cue the player until disk
+            // removal is confirmed — otherwise Temporal state records "no
+            // worktree" while a locked orphan directory remains on disk, and
+            // the next `create` fails with a confusing git fatal.
+            try {
+              removeWorktree(entry.path, entry.gitRoot);
+            } catch (err) {
+              return fail(
+                `Worktree for **${player}** could not be removed: ${formatError(err)}\n\n` +
+                `Conductor state is unchanged — the worktree is still tracked. ` +
+                `Have the player stop any long-running processes inside the worktree ` +
+                `(dev servers, file watchers), then retry \`worktree remove\`.`,
+              );
+            }
 
-            // Remove from conductor state
+            // Remove from conductor state (only reached on confirmed disk removal)
             await handle.signal('removeWorktree', player);
 
             // Auto-cue the player
