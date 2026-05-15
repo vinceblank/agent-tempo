@@ -228,7 +228,7 @@ export class ClaudeCodeHeadlessAttachment extends SdkAttachment {
     const playerIdForWorkflow = isConductor
       ? 'conductor'
       : (requestedName && requestedName !== 'conductor' ? requestedName : '') || `claude-code-headless-${Date.now()}`;
-    const expectedWorkflowId = `claude-session-${config.ensemble}-${playerIdForWorkflow}`;
+    const expectedWorkflowId = `agent-session-${config.ensemble}-${playerIdForWorkflow}`;
     const workDir = process.cwd();
     this.playerName = playerIdForWorkflow;
 

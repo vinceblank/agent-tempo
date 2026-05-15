@@ -25,7 +25,7 @@ interface Call {
 
 /**
  * Build a fake client with N sessions in `ensemble`. Each session's workflowId
- * follows the production convention `claude-session-{ens}-{playerId}`; the
+ * follows the production convention `agent-session-{ens}-{playerId}`; the
  * conductor ID uses the `-conductor` suffix. `getHandle` returns a handle
  * that captures calls by workflowId. `scanEnsembleSessions` resolves via
  * `workflow.list` + the stubbed `getMetadata` query.
@@ -47,11 +47,11 @@ function makeClient(opts: {
 
   // Session workflow IDs (including conductor if requested).
   const sessionIds: Array<{ workflowId: string; playerId: string }> = players.map((p) => ({
-    workflowId: `claude-session-${ensemble}-${p}`,
+    workflowId: `agent-session-${ensemble}-${p}`,
     playerId: p,
   }));
   if (includeConductor) {
-    sessionIds.push({ workflowId: `claude-session-${ensemble}-conductor`, playerId: 'conductor' });
+    sessionIds.push({ workflowId: `agent-session-${ensemble}-conductor`, playerId: 'conductor' });
   }
 
   const makeHandle = (workflowId: string) => ({
@@ -90,7 +90,7 @@ function makeClient(opts: {
     workflow: {
       getHandle(workflowId: string) {
         // Scheduler / maestro are "not running" when the test opts them out.
-        if (!hasScheduler && workflowId === `claude-scheduler-${ensemble}`) {
+        if (!hasScheduler && workflowId === `agent-scheduler-${ensemble}`) {
           return {
             workflowId,
             async signal() { throw new Error('workflow not found'); },
@@ -98,7 +98,7 @@ function makeClient(opts: {
             async executeUpdate() { throw new Error('workflow not found'); },
           };
         }
-        if (!hasMaestroHub && workflowId === `claude-maestro-${ensemble}`) {
+        if (!hasMaestroHub && workflowId === `agent-maestro-${ensemble}`) {
           return {
             workflowId,
             async signal() { throw new Error('workflow not found'); },
@@ -228,12 +228,12 @@ describe('TempoClient.destroy (ensemble scope, #287)', () => {
     const updateNames = calls
       .filter((c) => c.kind === 'update' || c.kind === 'terminate')
       .map((c) => c.workflowId);
-    expect(updateNames.at(-1)).toBe(`claude-session-e1-conductor`);
+    expect(updateNames.at(-1)).toBe(`agent-session-e1-conductor`);
   });
 
   it('single-player mode (playerId given) still enqueues outbox entry', async () => {
     const { client, calls } = makeClient({ ensemble: 'e1', players: ['alice'] });
-    // Make the maestro session workflow (`claude-session-e1-maestro`) capture
+    // Make the maestro session workflow (`agent-session-e1-maestro`) capture
     // the outbox update. The harness getHandle already returns a handle that
     // records executeUpdate for every workflowId, so this path exercises the
     // existing single-player branch.

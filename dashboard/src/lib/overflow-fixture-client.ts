@@ -63,7 +63,7 @@ export function createOverflowFixtureClient(regime: OverflowRegime): DashboardTe
   const health: HealthV1 = {
     ok: true,
     namespace: 'default',
-    taskQueue: 'claude-tempo-overflow',
+    taskQueue: 'agent-tempo-overflow',
     version: '0.0.0-overflow',
     uptimeMs: 60_000,
     ensembleCount: ensembles.length,

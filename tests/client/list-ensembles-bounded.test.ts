@@ -76,10 +76,10 @@ function entry(ensemble: string, opts: {
   return {
     workflowId: opts.workflowId ?? `${ensemble}-player-${Math.random().toString(36).slice(2)}`,
     searchAttributes: {
-      ClaudeTempoEnsemble: [ensemble],
-      ...(opts.phase !== undefined ? { ClaudeTempoAttachmentState: [opts.phase] } : {}),
-      ...(opts.isConductor !== undefined ? { ClaudeTempoIsConductor: [opts.isConductor] } : {}),
-      ...(opts.playerType !== undefined ? { ClaudeTempoPlayerType: [opts.playerType] } : {}),
+      AgentTempoEnsemble: [ensemble],
+      ...(opts.phase !== undefined ? { AgentTempoAttachmentState: [opts.phase] } : {}),
+      ...(opts.isConductor !== undefined ? { AgentTempoIsConductor: [opts.isConductor] } : {}),
+      ...(opts.playerType !== undefined ? { AgentTempoPlayerType: [opts.playerType] } : {}),
     },
   };
 }

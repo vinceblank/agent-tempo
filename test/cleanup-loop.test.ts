@@ -17,7 +17,7 @@ function makeOrphan(opts: {
   playerId?: string;
 }): OrphanCandidate {
   return {
-    workflowId: opts.workflowId ?? 'claude-session-e1-p1',
+    workflowId: opts.workflowId ?? 'agent-session-e1-p1',
     info: {
       phase: opts.phase ?? 'detached',
       inFlightCount: 0,

@@ -323,7 +323,7 @@ describe('snapshot fan-out with hung session (#433)', function () {
       this.timeout(5_000);
       const ensemble = 'demo';
       const client = fakePerWorkflowClient({
-        'claude-maestro-global': 'hang',
+        'agent-maestro-global': 'hang',
         [maestroWorkflowId(ensemble)]: 'fast-empty',
       });
       const tempo = createTempoClientCore(client);
@@ -363,8 +363,8 @@ describe('snapshot fan-out with hung session (#433)', function () {
     it('returns empty within bounded time when scheduler query hangs', async function () {
       this.timeout(5_000);
       const ensemble = 'demo';
-      // `getSchedules` queries `claude-scheduler-{ensemble}` not the maestro.
-      const wfId = `claude-scheduler-${ensemble}`;
+      // `getSchedules` queries `agent-scheduler-{ensemble}` not the maestro.
+      const wfId = `agent-scheduler-${ensemble}`;
       const client = fakeTemporalClient({ [wfId]: 'hang' });
       const tempo = createTempoClientCore(client);
       const start = Date.now();

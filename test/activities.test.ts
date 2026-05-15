@@ -34,7 +34,7 @@ function mockConfig(overrides: Partial<Config> = {}): Config {
     temporalAddress: 'localhost:7233',
     temporalNamespace: 'default',
     defaultAgent: 'claude',
-    taskQueue: 'claude-tempo',
+    taskQueue: 'agent-tempo',
     ensemble: 'test-ensemble-unit-mock',
     ...overrides,
   };
@@ -79,7 +79,7 @@ function mockHandle(opts: {
   const attachmentInfo = opts.attachmentInfo ?? { phase: 'detached', inFlightCount: 0 };
 
   return {
-    workflowId: `claude-session-test-ensemble-${defaultMetadata.playerId}`,
+    workflowId: `agent-session-test-ensemble-${defaultMetadata.playerId}`,
     signals,
     updates,
     async signal(nameOrDef: unknown, args: unknown) {
@@ -98,7 +98,7 @@ function mockHandle(opts: {
       return undefined;
     },
     async describe() {
-      return { status: { name: 'RUNNING' }, workflowId: `claude-session-test-ensemble-${defaultMetadata.playerId}` };
+      return { status: { name: 'RUNNING' }, workflowId: `agent-session-test-ensemble-${defaultMetadata.playerId}` };
     },
     async executeUpdate(nameOrDef: unknown, updateOpts: { args: unknown[] }) {
       const name = asName(nameOrDef);
@@ -277,7 +277,7 @@ describe('scanEnsembleSessions', function () {
     expect(sessions[0].agentType).to.equal('copilot');
     expect(sessions[0].playerType).to.equal('tempo-conductor');
     // Note: legacy `status` passthrough assertion removed in #176 — `scanEnsembleSessions`
-    // now exposes `phase` from `ClaudeTempoAttachmentState`. The mock does not populate
+    // now exposes `phase` from `AgentTempoAttachmentState`. The mock does not populate
     // search attributes, so `phase` stays undefined here; covered by #178 rewrite.
   });
 });
@@ -1007,7 +1007,7 @@ describe('startRecruitedSession — error classification (#236)', function () {
     isConductor: false,
     fromPlayerId: 'alice',
     agent: 'claude' as const,
-    taskQueue: 'claude-tempo',
+    taskQueue: 'agent-tempo',
   };
 
   it('re-throws plain Error when workflow.start hits a transient RPC failure', async function () {

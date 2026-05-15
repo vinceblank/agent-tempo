@@ -84,7 +84,7 @@ function fx(opts: {
   preferredHost?: string;
 }): Fixture {
   return {
-    workflowId: opts.id ?? `claude-session-${opts.ensemble}-${opts.playerId}`,
+    workflowId: opts.id ?? `agent-session-${opts.ensemble}-${opts.playerId}`,
     info: { phase: opts.phase ?? 'detached', inFlightCount: 0 },
     summary: {
       ensemble: opts.ensemble,
@@ -535,7 +535,7 @@ describe('restoreOrphansOnce', function () {
       // Build a fixture with `lastAdapter` (the orphan's home-host clue when
       // preferredHost was never written).
       const fixture: Fixture = {
-        workflowId: 'claude-session-e1-anon',
+        workflowId: 'agent-session-e1-anon',
         info: { phase: 'detached', inFlightCount: 0 },
         summary: {
           ensemble: 'e1',
@@ -746,7 +746,7 @@ describe('restoreOrphansOnce', function () {
           getHandle: () => sessionHandle,
           async *list() {
             yield {
-              workflowId: `claude-session-${orphan.ensemble}-${orphan.playerId}`,
+              workflowId: `agent-session-${orphan.ensemble}-${orphan.playerId}`,
             };
           },
         },
@@ -758,7 +758,7 @@ describe('restoreOrphansOnce', function () {
     const baseConfig: Config = {
       temporalAddress: 'localhost:7233',
       temporalNamespace: 'default',
-      taskQueue: 'claude-tempo',
+      taskQueue: 'agent-tempo',
       ensemble: 'test-orphan-e2e',
       defaultAgent: 'claude',
     };

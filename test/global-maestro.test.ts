@@ -49,8 +49,8 @@ async function startGlobalMaestro(
     playersByEnsemble: overrides.playersByEnsemble,
     pollIntervalMs: FAST_POLL_MS,
   };
-  const uniqueId = `claude-maestro-global-test-${++testCounter}`;
-  const handle = await client.workflow.start('claudeGlobalMaestroWorkflow', {
+  const uniqueId = `agent-maestro-global-test-${++testCounter}`;
+  const handle = await client.workflow.start('agentGlobalMaestroWorkflow', {
     workflowId: uniqueId,
     taskQueue: TASK_QUEUE,
     args: [input],
@@ -63,7 +63,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-describe('claudeGlobalMaestroWorkflow', function () {
+describe('agentGlobalMaestroWorkflow', function () {
   before(setupSharedEnv);
 
   after(async function () {

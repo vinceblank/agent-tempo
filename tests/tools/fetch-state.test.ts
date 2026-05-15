@@ -26,7 +26,7 @@ const captureHandler = (registerFn: (server: McpServer) => void) =>
 const TEST_CONFIG: Config = {
   temporalAddress: 'localhost:7233',
   temporalNamespace: 'default',
-  taskQueue: 'claude-tempo',
+  taskQueue: 'agent-tempo',
   ensemble: 'pstate-test',
   defaultAgent: 'claude',
 };
@@ -43,7 +43,7 @@ function makeFakeHandle(opts: {
       if (queryName === 'playerState') return opts.slot ?? null;
       throw new Error(`unexpected query: ${queryName}`);
     }),
-    workflowId: 'claude-session-pstate-test-target',
+    workflowId: 'agent-session-pstate-test-target',
   } as unknown as WorkflowHandle;
 }
 

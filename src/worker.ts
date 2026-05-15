@@ -20,7 +20,7 @@ const BUNDLE_PATH = path.resolve(__dirname, '..', 'workflow-bundle.js');
  * tuples without guessing at the SDK default (`<pid>@<hostname>`, which
  * loses the version axis and is only informally guaranteed).
  *
- * Format: `claude-tempo:<hostname>:<pid>:<version>`. Colons are safe
+ * Format: `agent-tempo:<hostname>:<pid>:<version>`. Colons are safe
  * because the middle segments have their own validation:
  *   - hostname passes `PLAYER_NAME_REGEX` on the signal side (≤64 chars,
  *     no colons by construction on any platform the daemon supports)
@@ -39,7 +39,7 @@ function workerIdentity(): string {
   // production code paths, so this runs against the real `dist/`
   // layout where `../package.json` is the repo root.
   const { version } = require('../package.json') as { version: string };
-  return `claude-tempo:${os.hostname()}:${process.pid}:${version}`;
+  return `agent-tempo:${os.hostname()}:${process.pid}:${version}`;
 }
 
 async function getWorkflowBundle(): Promise<{ code: string }> {

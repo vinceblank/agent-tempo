@@ -1,5 +1,5 @@
 /**
- * Unit tests for {@link scanClaudeTempoDaemons} — the OS process-list
+ * Unit tests for {@link scanAgentTempoDaemons} — the OS process-list
  * helper that detects orphaned claude-tempo daemon processes by command-
  * line match (issue #157).
  *
@@ -7,9 +7,9 @@
  * identically on all CI matrix entries regardless of platform.
  */
 import { expect } from 'chai';
-import { scanClaudeTempoDaemons, selectOrphans, type DaemonProcessInfo } from '../src/cli/daemon';
+import { scanAgentTempoDaemons, selectOrphans, type DaemonProcessInfo } from '../src/cli/daemon';
 
-describe('scanClaudeTempoDaemons', function () {
+describe('scanAgentTempoDaemons', function () {
   describe('POSIX (ps) scanner', function () {
     const posix: NodeJS.Platform = 'linux';
 
@@ -18,7 +18,7 @@ describe('scanClaudeTempoDaemons', function () {
         '  PID COMMAND\n' +
         '12345 node /usr/local/lib/node_modules/claude-tempo/dist/daemon.js\n' +
         '67890 node /some/other/script.js\n';
-      const result = scanClaudeTempoDaemons(stub, posix);
+      const result = scanAgentTempoDaemons(stub, posix);
       expect(result).to.have.length(1);
       expect(result[0].pid).to.equal(12345);
       expect(result[0].commandLine).to.include('claude-tempo');
@@ -29,7 +29,7 @@ describe('scanClaudeTempoDaemons', function () {
       const stub = () =>
         'PID COMMAND\n' +
         '54321 /usr/bin/node /home/dev/repos/claude-tempo/dist/daemon.js\n';
-      const result = scanClaudeTempoDaemons(stub, posix);
+      const result = scanAgentTempoDaemons(stub, posix);
       expect(result).to.have.length(1);
       expect(result[0].pid).to.equal(54321);
     });
@@ -39,7 +39,7 @@ describe('scanClaudeTempoDaemons', function () {
         'PID COMMAND\n' +
         '11111 node /tmp/my-app/dist/server.js\n' +
         '22222 node /opt/other-tool/index.js\n';
-      const result = scanClaudeTempoDaemons(stub, posix);
+      const result = scanAgentTempoDaemons(stub, posix);
       expect(result).to.deep.equal([]);
     });
 
@@ -47,7 +47,7 @@ describe('scanClaudeTempoDaemons', function () {
       // Stub injects our own pid with a matching command line — filter must drop it.
       const stub = () =>
         `PID COMMAND\n${process.pid} node /tmp/claude-tempo/dist/daemon.js\n12345 node /other/claude-tempo/dist/daemon.js\n`;
-      const result = scanClaudeTempoDaemons(stub, posix);
+      const result = scanAgentTempoDaemons(stub, posix);
       expect(result.map((p) => p.pid)).to.deep.equal([12345]);
     });
 
@@ -57,7 +57,7 @@ describe('scanClaudeTempoDaemons', function () {
         '11111 node /usr/local/lib/node_modules/claude-tempo/dist/daemon.js\n' +
         '22222 node /home/dev/claude-tempo/dist/daemon.js\n' +
         '33333 node /opt/unrelated/daemon.js\n';
-      const result = scanClaudeTempoDaemons(stub, posix);
+      const result = scanAgentTempoDaemons(stub, posix);
       const pids = result.map((p) => p.pid).sort();
       expect(pids).to.deep.equal([11111, 22222]);
     });
@@ -66,7 +66,7 @@ describe('scanClaudeTempoDaemons', function () {
       const stub = () => {
         throw new Error('ps: command not found');
       };
-      const result = scanClaudeTempoDaemons(stub, posix);
+      const result = scanAgentTempoDaemons(stub, posix);
       expect(result).to.deep.equal([]);
     });
 
@@ -77,7 +77,7 @@ describe('scanClaudeTempoDaemons', function () {
         'PID COMMAND\n' +
         '11111 node /usr/local/lib/node_modules/claude-tempo/dist/cli.js daemon stop\n' +
         '22222 node /usr/local/lib/node_modules/claude-tempo/dist/server.js\n';
-      const result = scanClaudeTempoDaemons(stub, posix);
+      const result = scanAgentTempoDaemons(stub, posix);
       expect(result).to.deep.equal([]);
     });
   });
@@ -92,7 +92,7 @@ describe('scanClaudeTempoDaemons', function () {
       const stub = () =>
         '"ProcessId","CommandLine"\r\n' +
         '"12345","""C:\\Program Files\\nodejs\\node.exe"" ""C:\\Users\\vince\\AppData\\Roaming\\npm\\node_modules\\claude-tempo\\dist\\daemon.js"""\r\n';
-      const result = scanClaudeTempoDaemons(stub, win);
+      const result = scanAgentTempoDaemons(stub, win);
       expect(result).to.have.length(1);
       expect(result[0].pid).to.equal(12345);
       expect(result[0].commandLine).to.match(/claude-tempo/);
@@ -105,7 +105,7 @@ describe('scanClaudeTempoDaemons', function () {
         '"11111","""C:\\nodejs\\node.exe"" ""C:\\some\\other\\app.js"""\r\n' +
         '"22222","""C:\\nodejs\\node.exe"" ""C:\\repos\\claude-tempo\\dist\\daemon.js"""\r\n' +
         '"33333","""C:\\nodejs\\node.exe"" ""C:\\unrelated\\daemon.js"""\r\n';
-      const result = scanClaudeTempoDaemons(stub, win);
+      const result = scanAgentTempoDaemons(stub, win);
       const pids = result.map((p) => p.pid);
       expect(pids).to.deep.equal([22222]);
     });
@@ -123,7 +123,7 @@ describe('scanClaudeTempoDaemons', function () {
           'HOST1,"""C:\\nodejs\\node.exe"" ""C:\\repos\\claude-tempo\\dist\\daemon.js""",22222\r\n'
         );
       };
-      const result = scanClaudeTempoDaemons(stub, win);
+      const result = scanAgentTempoDaemons(stub, win);
       expect(result).to.have.length(1);
       expect(result[0].pid).to.equal(22222);
     });
@@ -132,7 +132,7 @@ describe('scanClaudeTempoDaemons', function () {
       const stub = () => {
         throw new Error('not found');
       };
-      const result = scanClaudeTempoDaemons(stub, win);
+      const result = scanAgentTempoDaemons(stub, win);
       expect(result).to.deep.equal([]);
     });
   });

@@ -26,7 +26,7 @@ import {
   historyQuery,
 } from './helpers';
 
-describe('claudeSessionWorkflow', function () {
+describe('agentSessionWorkflow', function () {
   before(setupSharedEnv);
 
   after(async function () {
@@ -585,9 +585,9 @@ describe('claudeSessionWorkflow', function () {
     });
   });
 
-  // ── ClaudeTempoPlayerType search attribute ──
+  // ── AgentTempoPlayerType search attribute ──
 
-  describe('ClaudeTempoPlayerType search attribute', function () {
+  describe('AgentTempoPlayerType search attribute', function () {
     /**
      * Poll describe() until the expected search attribute value appears.
      * The local TestWorkflowEnvironment propagates upsertSearchAttributes
@@ -612,7 +612,7 @@ describe('claudeSessionWorkflow', function () {
       return desc.searchAttributes?.[attrName] as string[] | undefined;
     }
 
-    it('sets ClaudeTempoPlayerType search attribute when playerType is in initial metadata', async function () {
+    it('sets AgentTempoPlayerType search attribute when playerType is in initial metadata', async function () {
       this.timeout(15_000);
       await withWorker(async () => {
         const handle = await startSession({
@@ -626,7 +626,7 @@ describe('claudeSessionWorkflow', function () {
         await handle.query(getMetadataQuery);
 
         // Poll until the search attribute propagates to describe()
-        const value = await pollSearchAttr(handle, 'ClaudeTempoPlayerType', ['tempo-soloist']);
+        const value = await pollSearchAttr(handle, 'AgentTempoPlayerType', ['tempo-soloist']);
         expect(value).to.deep.equal(['tempo-soloist']);
 
         await handle.executeUpdate(destroyUpdate, { args: [{}] });
@@ -634,7 +634,7 @@ describe('claudeSessionWorkflow', function () {
       });
     });
 
-    it('updates ClaudeTempoPlayerType search attribute via updateMetadata signal', async function () {
+    it('updates AgentTempoPlayerType search attribute via updateMetadata signal', async function () {
       this.timeout(15_000);
       await withWorker(async () => {
         const handle = await startSession({
@@ -650,7 +650,7 @@ describe('claudeSessionWorkflow', function () {
         expect(meta.playerType).to.equal('tempo-critic');
 
         // Poll until the search attribute propagates to describe()
-        const value = await pollSearchAttr(handle, 'ClaudeTempoPlayerType', ['tempo-critic']);
+        const value = await pollSearchAttr(handle, 'AgentTempoPlayerType', ['tempo-critic']);
         expect(value).to.deep.equal(['tempo-critic']);
 
         await handle.executeUpdate(destroyUpdate, { args: [{}] });

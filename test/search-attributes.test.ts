@@ -89,56 +89,56 @@ describe('getSearchAttrBool', function () {
 });
 
 describe('getAttachmentPhase', function () {
-  it('reads canonical AttachmentPhase values from ClaudeTempoAttachmentState', function () {
+  it('reads canonical AttachmentPhase values from AgentTempoAttachmentState', function () {
     for (const phase of [
       'booting', 'attached', 'processing', 'awaiting', 'draining', 'detached', 'gone',
     ]) {
-      expect(getAttachmentPhase(carrier('ClaudeTempoAttachmentState', [phase]))).to.equal(phase);
+      expect(getAttachmentPhase(carrier('AgentTempoAttachmentState', [phase]))).to.equal(phase);
     }
   });
 
   it('returns undefined when the attribute is absent', function () {
     expect(getAttachmentPhase({})).to.be.undefined;
-    expect(getAttachmentPhase(carrier('ClaudeTempoAttachmentState', []))).to.be.undefined;
+    expect(getAttachmentPhase(carrier('AgentTempoAttachmentState', []))).to.be.undefined;
   });
 
   it('ignores other search attributes', function () {
-    expect(getAttachmentPhase(carrier('ClaudeTempoEnsemble', ['e1']))).to.be.undefined;
+    expect(getAttachmentPhase(carrier('AgentTempoEnsemble', ['e1']))).to.be.undefined;
   });
 });
 
 describe('getEnsembleName', function () {
-  it('reads a string value from ClaudeTempoEnsemble', function () {
-    expect(getEnsembleName(carrier('ClaudeTempoEnsemble', ['tempo-impl']))).to.equal('tempo-impl');
+  it('reads a string value from AgentTempoEnsemble', function () {
+    expect(getEnsembleName(carrier('AgentTempoEnsemble', ['tempo-impl']))).to.equal('tempo-impl');
   });
 
   it('returns undefined when the attribute is missing', function () {
     expect(getEnsembleName({})).to.be.undefined;
-    expect(getEnsembleName(carrier('ClaudeTempoEnsemble', undefined))).to.be.undefined;
+    expect(getEnsembleName(carrier('AgentTempoEnsemble', undefined))).to.be.undefined;
   });
 
   it('ignores other search attributes', function () {
-    expect(getEnsembleName(carrier('ClaudeTempoAttachmentState', ['attached']))).to.be.undefined;
+    expect(getEnsembleName(carrier('AgentTempoAttachmentState', ['attached']))).to.be.undefined;
   });
 });
 
 describe('getIsConductor', function () {
-  it('returns true for native true from ClaudeTempoIsConductor', function () {
-    expect(getIsConductor(carrier('ClaudeTempoIsConductor', [true]))).to.equal(true);
+  it('returns true for native true from AgentTempoIsConductor', function () {
+    expect(getIsConductor(carrier('AgentTempoIsConductor', [true]))).to.equal(true);
   });
 
   it('returns false for native false', function () {
-    expect(getIsConductor(carrier('ClaudeTempoIsConductor', [false]))).to.equal(false);
+    expect(getIsConductor(carrier('AgentTempoIsConductor', [false]))).to.equal(false);
   });
 
   it('returns undefined when absent (caller falls back to workflow-id convention)', function () {
     expect(getIsConductor({})).to.be.undefined;
-    expect(getIsConductor(carrier('ClaudeTempoIsConductor', []))).to.be.undefined;
+    expect(getIsConductor(carrier('AgentTempoIsConductor', []))).to.be.undefined;
   });
 
   it('tolerates string "true" / "false" shapes', function () {
-    expect(getIsConductor(carrier('ClaudeTempoIsConductor', ['true']))).to.equal(true);
-    expect(getIsConductor(carrier('ClaudeTempoIsConductor', ['false']))).to.equal(false);
+    expect(getIsConductor(carrier('AgentTempoIsConductor', ['true']))).to.equal(true);
+    expect(getIsConductor(carrier('AgentTempoIsConductor', ['false']))).to.equal(false);
   });
 });
 
@@ -149,9 +149,9 @@ describe('multi-attribute carriers', function () {
   it('each typed wrapper reads its own attribute independently', function () {
     const wf: SearchAttributeCarrier = {
       searchAttributes: {
-        ClaudeTempoEnsemble: ['tempo-impl'],
-        ClaudeTempoIsConductor: [true],
-        ClaudeTempoAttachmentState: ['attached'],
+        AgentTempoEnsemble: ['tempo-impl'],
+        AgentTempoIsConductor: [true],
+        AgentTempoAttachmentState: ['attached'],
         UnrelatedAttr: ['noise'],
       },
     };

@@ -7,11 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Docs
+## [1.0.0-rc.1] - 2026-05-15
 
-- **Rebrand: `claude-tempo` → `agent-tempo`** (PR-1 of 5). Documentation rename only; CLI,
-  npm package, env vars, wire protocol unchanged in this release. See
-  `docs/migration/v1.0.md` (drafted in PR-3) for the full migration guide.
+### ⚠️ BREAKING — `claude-tempo` is now `agent-tempo`
+
+v1.0 is a hard-break rebrand. Wire-level identifiers (Temporal search attributes, workflow
+types, workflow IDs, task queues) have been renamed without a backward-compatibility shim.
+Every v0.x workflow still in Temporal history becomes a permanent orphan after this
+release — by design. Operators MUST follow the
+[v1.0 migration guide](docs/ops/v1.0-migration.md) before upgrading.
+
+PR-1 through PR-3 of the v1.0 rebrand series land in this release candidate:
+
+- **Documentation rename** (PR-1): brand string `claude-tempo` → `agent-tempo` across all
+  live docs, README, and community files. Hero tagline: "Many agents, one tempo."
+- **Code surface rename** (PR-2): env vars `CLAUDE_TEMPO_*` → `AGENT_TEMPO_*`; filesystem
+  `~/.claude-tempo[-dev]/` → `~/.agent-tempo[-dev]/`; MCP server name `claude-tempo` →
+  `agent-tempo`; log prefixes `[claude-tempo:*]` → `[agent-tempo:*]`. Dual-bin
+  (`claude-tempo` + `agent-tempo`) on package.json `bin` for the migration window.
+  New verb `agent-tempo migrate-from-claude-tempo` + bootstrap step auto-runs on first
+  boot, copying state to the new home with SHA-256 partial-copy resume.
+- **Wire-level rename** (PR-3, this release): search attributes `ClaudeTempo*` →
+  `AgentTempo*` (~455 sites); workflow type names `claudeSessionWorkflow` /
+  `claudeSchedulerWorkflow` / `claudeMaestroWorkflow` / `claudeGlobalMaestroWorkflow` →
+  `agent*Workflow`; workflow ID prefixes `claude-{session,scheduler,maestro}-` →
+  `agent-*-`; task queues `claude-tempo` / `claude-tempo-{hostname}` / `claude-tempo-dev`
+  → `agent-tempo*`; dashboard `localStorage` keys `claudeTempo*` → `agentTempo*`. New
+  daemon boot-time preflight (`src/cli/sa-preflight.ts`) fails fast with an actionable
+  error message containing the exact `temporal operator search-attribute create`
+  commands operators need to paste.
+
+### Required operator actions before upgrading
+
+1. Drain in-flight work — workflow state from v0.x is unrecoverable from v1.x.
+2. `claude-tempo down --all` on every host.
+3. (Recommended) `claude-tempo destroy --ensemble <name> --all` for each ensemble.
+4. `npm install -g agent-tempo` (or project-local replacement).
+5. Update `.mcp.json` files: `claude-tempo` → `agent-tempo` server entries.
+6. `agent-tempo migrate-from-claude-tempo` to copy `~/.claude-tempo/` → `~/.agent-tempo/`.
+7. Rename `CLAUDE_TEMPO_*` env vars (shell profiles, CI secrets, `.env` files) → `AGENT_TEMPO_*`.
+8. Register `AgentTempo*` search attributes on each Temporal namespace — the daemon
+   surfaces the exact commands on first boot. Self-hosted only; Temporal Cloud users:
+   ops handles namespace registration before this version is published.
+9. `agent-tempo up --lineup <name>` to recruit fresh ensembles. Lineup YAMLs need no edits.
+
+Full walkthrough: [docs/ops/v1.0-migration.md](docs/ops/v1.0-migration.md).
+
+### Unchanged
+
+- Lineup YAML schema (no edits to existing lineups).
+- `TEMPORAL_*` and `COPILOT_BRIDGE_*` environment variables.
+- Saved state slot semantics; the fs migration helper carries them across.
+- `claude-tempo[bot]` GitHub App slug — renamed in a follow-up release; existing
+  installations preserve their installation ID.
+- npm package name (still `claude-tempo` for this release candidate; the publish flip is
+  a follow-up release coordinated with the deprecation stub).
 
 ## [0.29.1] - 2026-05-15
 

@@ -59,9 +59,9 @@ describe('#347 — session handle staleness across continueAsNew', () => {
       const client = getClient();
       const ensemble = getTestEnsemble();
       const playerId = `eng3-347-shape-${Date.now()}`;
-      const workflowId = `claude-session-${ensemble}-${playerId}`;
+      const workflowId = `agent-session-${ensemble}-${playerId}`;
 
-      const startedHandle = await client.workflow.start('claudeSessionWorkflow', {
+      const startedHandle = await client.workflow.start('agentSessionWorkflow', {
         workflowId,
         taskQueue: TASK_QUEUE,
         args: [{
@@ -91,9 +91,9 @@ describe('#347 — session handle staleness across continueAsNew', () => {
       const client = getClient();
       const ensemble = getTestEnsemble();
       const playerId = `eng3-347-fix-shape-${Date.now()}`;
-      const workflowId = `claude-session-${ensemble}-${playerId}`;
+      const workflowId = `agent-session-${ensemble}-${playerId}`;
 
-      await client.workflow.start('claudeSessionWorkflow', {
+      await client.workflow.start('agentSessionWorkflow', {
         workflowId,
         taskQueue: TASK_QUEUE,
         args: [{
@@ -131,9 +131,9 @@ describe('#347 — session handle staleness across continueAsNew', () => {
       const client = getClient();
       const ensemble = getTestEnsemble();
       const playerId = `eng3-347-stale-${Date.now()}`;
-      const workflowId = `claude-session-${ensemble}-${playerId}`;
+      const workflowId = `agent-session-${ensemble}-${playerId}`;
 
-      await client.workflow.start('claudeSessionWorkflow', {
+      await client.workflow.start('agentSessionWorkflow', {
         workflowId,
         taskQueue: TASK_QUEUE,
         args: [{

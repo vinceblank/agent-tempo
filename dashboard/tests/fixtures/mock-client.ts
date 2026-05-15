@@ -113,7 +113,7 @@ export class MockDashboardClient implements DashboardTempoClient {
     return {
       ok: true,
       namespace: 'default',
-      taskQueue: 'claude-tempo',
+      taskQueue: 'agent-tempo',
       version: '0.0.0-test',
       uptimeMs: 0,
       ensembleCount: 0,

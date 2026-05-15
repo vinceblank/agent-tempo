@@ -1,4 +1,4 @@
 // Workflow entry point — re-exports all workflows for bundling.
-export { claudeSessionWorkflow } from './session';
-export { claudeSchedulerWorkflow } from './scheduler';
-export { claudeMaestroWorkflow, claudeGlobalMaestroWorkflow } from './maestro';
+export { agentSessionWorkflow } from './session';
+export { agentSchedulerWorkflow } from './scheduler';
+export { agentMaestroWorkflow, agentGlobalMaestroWorkflow } from './maestro';

@@ -26,7 +26,7 @@ function makeClient(opts: {
 } = {}): any {
   const found = opts.found !== false; // default: found
   const handle = {
-    workflowId: 'claude-session-e1-alice',
+    workflowId: 'agent-session-e1-alice',
     async query(name: unknown) {
       if (opts.queryError) throw opts.queryError;
       if (asName(name) === 'attachmentInfo') return opts.info;

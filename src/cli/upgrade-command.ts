@@ -64,7 +64,7 @@ export async function upgrade(opts: UpgradeOpts): Promise<void> {
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
     ]);
     const client = new Client({ connection, namespace: config.temporalNamespace });
-    const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+    const query = 'WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"';
     for await (const _wf of client.workflow.list({ query })) {
       activeSessions++;
     }

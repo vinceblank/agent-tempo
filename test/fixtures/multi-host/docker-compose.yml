@@ -21,16 +21,16 @@ services:
       - start-dev
       - --ip=0.0.0.0
       - --namespace=default
-      - --search-attribute=ClaudeTempoEnsemble=Keyword
-      - --search-attribute=ClaudeTempoPlayerId=Keyword
-      - --search-attribute=ClaudeTempoHostname=Keyword
-      # ClaudeTempoStatus removed in v0.26 (#175 / #178).
-      - --search-attribute=ClaudeTempoGitRoot=Keyword
-      - --search-attribute=ClaudeTempoPlayerType=Keyword
-      - --search-attribute=ClaudeTempoIsConductor=Bool
-      - --search-attribute=ClaudeTempoAttachedHost=Keyword
-      - --search-attribute=ClaudeTempoAttachmentState=Keyword
-      - --search-attribute=ClaudeTempoAttachmentId=Keyword
+      - --search-attribute=AgentTempoEnsemble=Keyword
+      - --search-attribute=AgentTempoPlayerId=Keyword
+      - --search-attribute=AgentTempoHostname=Keyword
+      # AgentTempoStatus removed in v0.26 (#175 / #178).
+      - --search-attribute=AgentTempoGitRoot=Keyword
+      - --search-attribute=AgentTempoPlayerType=Keyword
+      - --search-attribute=AgentTempoIsConductor=Bool
+      - --search-attribute=AgentTempoAttachedHost=Keyword
+      - --search-attribute=AgentTempoAttachmentState=Keyword
+      - --search-attribute=AgentTempoAttachmentId=Keyword
     ports:
       - "7233:7233"
       - "8233:8233"   # temporal UI

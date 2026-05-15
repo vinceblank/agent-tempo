@@ -15,7 +15,7 @@
  *     re-stopped the poller permanently.
  *
  * Result: one final `markDelivered` then 11.5 hours of silence — the
- * smoking-gun symptom from the spike on `claude-session-tempo-impl-conductor`
+ * smoking-gun symptom from the spike on `agent-session-tempo-impl-conductor`
  * run `0d17dc0f-90fb-487a-a068-0c1f1111ebc3`.
  *
  * The fix adds a `describe()` tiebreaker. These tests assert:

@@ -139,7 +139,7 @@ function makeFakeHandle(): {
 // pre-flight + outbox-submit paths.
 const cfg = {
   ensemble: 'test-ensemble-recruit-preflight',
-  taskQueue: 'claude-tempo',
+  taskQueue: 'agent-tempo',
   temporalNamespace: 'default',
   temporalAddress: 'localhost:7233',
   defaultAgent: 'claude' as const,

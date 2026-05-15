@@ -63,7 +63,7 @@ export function createScheduleActivities(client: Client): ScheduleActivities {
 
         // Handle target "all" — deliver to every active player except the conductor
         if (target === 'all') {
-          const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
+          const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"`;
           const failures: string[] = [];
           let delivered = 0;
           let scanned = 0;

@@ -61,8 +61,8 @@ async function startMaestro(
     players: overrides.players,
     pollIntervalMs: FAST_POLL_MS,
   };
-  const uniqueId = `claude-maestro-${input.ensemble}-coatcheck-${++testCounter}`;
-  const handle = await client.workflow.start('claudeMaestroWorkflow', {
+  const uniqueId = `agent-maestro-${input.ensemble}-coatcheck-${++testCounter}`;
+  const handle = await client.workflow.start('agentMaestroWorkflow', {
     workflowId: uniqueId,
     taskQueue: TASK_QUEUE,
     args: [input],

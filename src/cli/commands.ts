@@ -40,13 +40,13 @@ const PACKAGE_ROOT = resolve(__dirname, '..', '..');
 async function ensureMaestroWorkflow(client: Client, config: Config, ensemble: string): Promise<void> {
   const wfId = maestroWorkflowId(ensemble);
   try {
-    await client.workflow.start('claudeMaestroWorkflow', {
+    await client.workflow.start('agentMaestroWorkflow', {
       workflowId: wfId,
       taskQueue: config.taskQueue,
       args: [{ ensemble }],
       workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
       searchAttributes: {
-        ClaudeTempoEnsemble: [ensemble],
+        AgentTempoEnsemble: [ensemble],
       },
     });
   } catch {
@@ -167,16 +167,16 @@ async function seedConductorWorkflow(args: {
     ...(seededMessages.length > 0 ? { messages: seededMessages } : {}),
   };
 
-  await client.workflow.start('claudeSessionWorkflow', {
+  await client.workflow.start('agentSessionWorkflow', {
     workflowId: conductorWfId,
     taskQueue: config.taskQueue,
     args: [conductorInput],
     workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
     searchAttributes: {
-      ...(conductorGitRoot ? { ClaudeTempoGitRoot: [conductorGitRoot] } : {}),
-      ClaudeTempoHostname: [hostname()],
-      ClaudeTempoEnsemble: [ensemble],
-      ClaudeTempoPlayerId: [conductorName],
+      ...(conductorGitRoot ? { AgentTempoGitRoot: [conductorGitRoot] } : {}),
+      AgentTempoHostname: [hostname()],
+      AgentTempoEnsemble: [ensemble],
+      AgentTempoPlayerId: [conductorName],
     },
   });
 }
@@ -279,16 +279,16 @@ async function applyLineupPlayersAndSchedules(args: {
           } : {})),
     };
     try {
-      await client.workflow.start('claudeSessionWorkflow', {
+      await client.workflow.start('agentSessionWorkflow', {
         workflowId: playerWfId,
         taskQueue: config.taskQueue,
         args: [playerInput],
         workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
         searchAttributes: {
-          ...(playerGitRoot ? { ClaudeTempoGitRoot: [playerGitRoot] } : {}),
-          ClaudeTempoHostname: [hostname()],
-          ClaudeTempoEnsemble: [ensemble],
-          ClaudeTempoPlayerId: [player.name],
+          ...(playerGitRoot ? { AgentTempoGitRoot: [playerGitRoot] } : {}),
+          AgentTempoHostname: [hostname()],
+          AgentTempoEnsemble: [ensemble],
+          AgentTempoPlayerId: [player.name],
         },
       });
     } catch (err) {
@@ -373,13 +373,13 @@ async function applyLineupPlayersAndSchedules(args: {
           await handle.describe();
           await handle.signal(addScheduleSignal, entry);
         } catch {
-          await client.workflow.start('claudeSchedulerWorkflow', {
+          await client.workflow.start('agentSchedulerWorkflow', {
             workflowId: schedulerWfId,
             taskQueue: config.taskQueue,
             args: [{ ensemble, entries: [entry] }],
             workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
             searchAttributes: {
-              ClaudeTempoEnsemble: [ensemble],
+              AgentTempoEnsemble: [ensemble],
             },
           });
         }
@@ -699,7 +699,7 @@ export async function status(opts: StatusOpts) {
 
   // List all running session workflows, filter by ensemble using metadata queries.
   // This avoids depending on custom search attributes which are eventually consistent.
-  const query = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+  const query = 'WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"';
 
   const sessions: Array<{
     id: string;
@@ -727,7 +727,7 @@ export async function status(opts: StatusOpts) {
       // Filter by ensemble if specified
       if (opts.ensemble && ensemble !== opts.ensemble) continue;
 
-      // Attachment phase lives on the `ClaudeTempoAttachmentState` search attribute (post-#175).
+      // Attachment phase lives on the `AgentTempoAttachmentState` search attribute (post-#175).
       const phase = getAttachmentPhase(wf);
 
       sessions.push({
@@ -754,14 +754,14 @@ export async function status(opts: StatusOpts) {
   // of falling through to "one-shot".
   const schedulesByEnsemble = new Map<string, ScheduleEntry[]>();
 
-  const schedulerQuery = 'WorkflowType = "claudeSchedulerWorkflow" AND ExecutionStatus = "Running"';
+  const schedulerQuery = 'WorkflowType = "agentSchedulerWorkflow" AND ExecutionStatus = "Running"';
   for await (const wf of client.workflow.list({ query: schedulerQuery })) {
     try {
       const handle = client.workflow.getHandle(wf.workflowId);
       const entries = await handle.query('getSchedules') as ScheduleEntry[];
       if (entries.length > 0) {
-        // Extract ensemble from workflow ID: claude-scheduler-{ensemble}
-        const ensemble = wf.workflowId.replace('claude-scheduler-', '');
+        // Extract ensemble from workflow ID: agent-scheduler-{ensemble}
+        const ensemble = wf.workflowId.replace('agent-scheduler-', '');
         if (opts.ensemble && ensemble !== opts.ensemble) continue;
         schedulesByEnsemble.set(ensemble, entries);
       }
@@ -924,20 +924,20 @@ function initProject(dir: string) {
 const DEFAULT_DB_PATH = join(AGENT_TEMPO_HOME, 'temporal-data.db');
 
 const SEARCH_ATTRIBUTES = [
-  { name: 'ClaudeTempoHostname', type: 'Keyword' },
-  { name: 'ClaudeTempoGitRoot', type: 'Keyword' },
-  { name: 'ClaudeTempoEnsemble', type: 'Keyword' },
-  { name: 'ClaudeTempoPlayerId', type: 'Keyword' },
-  { name: 'ClaudeTempoPlayerType', type: 'Keyword' },
-  { name: 'ClaudeTempoIsConductor', type: 'Bool' },
+  { name: 'AgentTempoHostname', type: 'Keyword' },
+  { name: 'AgentTempoGitRoot', type: 'Keyword' },
+  { name: 'AgentTempoEnsemble', type: 'Keyword' },
+  { name: 'AgentTempoPlayerId', type: 'Keyword' },
+  { name: 'AgentTempoPlayerType', type: 'Keyword' },
+  { name: 'AgentTempoIsConductor', type: 'Bool' },
   // v0.25 attachment lifecycle search attrs (design §9, §11.2).
   // Ops note: registration documented in docs/ops/v0.26-migration.md.
-  // `ClaudeTempoStatus` was removed in v0.26 (#175 / #178); operators on
+  // `AgentTempoStatus` was removed in v0.26 (#175 / #178); operators on
   // long-lived Temporal clusters must manually drop the attribute — Temporal
   // does not auto-unregister search attributes.
-  { name: 'ClaudeTempoAttachedHost', type: 'Keyword' },
-  { name: 'ClaudeTempoAttachmentState', type: 'Keyword' },
-  { name: 'ClaudeTempoAttachmentId', type: 'Keyword' },
+  { name: 'AgentTempoAttachedHost', type: 'Keyword' },
+  { name: 'AgentTempoAttachmentState', type: 'Keyword' },
+  { name: 'AgentTempoAttachmentId', type: 'Keyword' },
 ];
 
 async function isTemporalReachable(config: { temporalAddress: string; temporalNamespace?: string; temporalApiKey?: string; temporalTlsCertPath?: string; temporalTlsKeyPath?: string }): Promise<boolean> {
@@ -1704,7 +1704,7 @@ export async function down(opts: DownOpts) {
         // the confirmation-display and termination loops share the same list.
         const sessionIds: string[] = [];
         const runningEnsembles = new Set<string>();
-        const listQuery = 'WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"';
+        const listQuery = 'WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"';
         for await (const wf of client.workflow.list({ query: listQuery })) {
           sessionIds.push(wf.workflowId);
           const name = getEnsembleName(wf);
@@ -2027,7 +2027,7 @@ export async function broadcast(opts: BroadcastOpts) {
   const client = new Client({ connection, namespace: config.temporalNamespace });
   const ensemble = opts.ensemble || config.ensemble;
 
-  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
+  const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"`;
   const targets: Array<{ playerId: string; workflowId: string }> = [];
 
   for await (const wf of client.workflow.list({ query })) {
@@ -2038,7 +2038,7 @@ export async function broadcast(opts: BroadcastOpts) {
       if (metadata.ensemble !== ensemble) continue;
 
       // Filter by attachment phase (post-#176). Phase lives on the
-      // `ClaudeTempoAttachmentState` search attribute.
+      // `AgentTempoAttachmentState` search attribute.
       const phase = getAttachmentPhase(wf);
       if (!shouldIncludeInBroadcast(phase, !!opts.includeStale)) continue;
 
@@ -2122,7 +2122,7 @@ export async function destroy(opts: DestroyCliOpts) {
   const { config, connection, client } = await verbClient(opts);
   try {
     const handles: Array<{ id: string; label: string }> = [];
-    const sessionQuery = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${opts.ensemble}"`;
+    const sessionQuery = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${opts.ensemble}"`;
     for await (const wf of client.workflow.list({ query: sessionQuery })) {
       handles.push({ id: wf.workflowId, label: 'session' });
     }
@@ -2561,7 +2561,7 @@ export async function release(opts: ReleaseOpts) {
 
   const client = new Client({ connection, namespace: config.temporalNamespace });
 
-  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${opts.ensemble.replace(/["\\\n\r]/g, '')}"`;
+  const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${opts.ensemble.replace(/["\\\n\r]/g, '')}"`;
   let released = 0;
 
   for await (const wf of client.workflow.list({ query })) {
@@ -2572,7 +2572,7 @@ export async function release(opts: ReleaseOpts) {
         await handle.signal(releaseHeldSignal);
         released++;
         const sa = wf.searchAttributes || {};
-        const playerId = Array.isArray(sa.ClaudeTempoPlayerId) ? String(sa.ClaudeTempoPlayerId[0]) : wf.workflowId;
+        const playerId = Array.isArray(sa.AgentTempoPlayerId) ? String(sa.AgentTempoPlayerId[0]) : wf.workflowId;
         out.log(`  ${out.dim('released')} ${playerId}`);
       }
     } catch {
@@ -2606,7 +2606,7 @@ async function setPausedState(client: Client, ensemble: string, paused: boolean)
 
   // 2. Signal all active sessions
   const sanitized = ensemble.replace(/["\\\n\r]/g, '');
-  const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running" AND ClaudeTempoEnsemble = "${sanitized}"`;
+  const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${sanitized}"`;
   let count = 0;
   for await (const wf of client.workflow.list({ query })) {
     try {

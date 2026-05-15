@@ -34,7 +34,7 @@ export interface HealthV1 {
   namespace: string;
   /**
    * Shared task queue the daemon's workers poll. Mirrors `config.taskQueue`
-   * (e.g. `claude-tempo` in production, `claude-tempo-dev` in dev mode).
+   * (e.g. `agent-tempo` in production, `agent-tempo-dev` in dev mode).
    * Surfaced for the dashboard's Settings → Connection panel so the displayed
    * value reflects the live runtime instead of a hard-coded default. (#444)
    */

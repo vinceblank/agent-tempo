@@ -35,7 +35,7 @@ export function registerBroadcastTool(
       const includeDisconnected = rawIncludeStale === true;
 
       try {
-        const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
+        const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"`;
         const targets: Array<{ playerId: string; playerType?: string }> = [];
 
         for await (const workflow of client.workflow.list({ query })) {
@@ -50,7 +50,7 @@ export function registerBroadcastTool(
             if (metadata.playerId === getPlayerId()) continue;
 
             // Filter by attachment phase (post-#176). Phase lives on the
-            // `ClaudeTempoAttachmentState` search attribute.
+            // `AgentTempoAttachmentState` search attribute.
             const phase = getAttachmentPhase(workflow);
             if (!shouldIncludeInBroadcast(phase, includeDisconnected)) continue;
 

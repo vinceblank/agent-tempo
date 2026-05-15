@@ -199,17 +199,17 @@ describe('outbox', function () {
         // outbox entry to `delivered`.
         await pollWithTimeout(async () => {
           const desc = await bob.describe();
-          const phase = (desc.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined)?.[0];
+          const phase = (desc.searchAttributes?.AgentTempoAttachmentState as string[] | undefined)?.[0];
           const ob = await alice.query(outboxQuery);
           return phase === 'gone' && ob[0]?.status === 'delivered';
         }, POLL_DELIVERY_MS);
 
         // Bob's attachment phase transitions to `gone` via the `stop` outbox entry
         // triggering `destroyUpdate` on the target. Read the phase from the
-        // `ClaudeTempoAttachmentState` search attribute — it persists on the
+        // `AgentTempoAttachmentState` search attribute — it persists on the
         // workflow description even after the workflow completes.
         const bobDesc = await bob.describe();
-        const bobPhase = (bobDesc.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined)?.[0];
+        const bobPhase = (bobDesc.searchAttributes?.AgentTempoAttachmentState as string[] | undefined)?.[0];
         expect(bobPhase).to.equal('gone');
 
         const aliceOutbox = await alice.query(outboxQuery);
@@ -380,7 +380,7 @@ describe('outbox', function () {
         // notification to the conductor.
         await pollWithTimeout(async () => {
           const desc = await target.describe();
-          const phase = (desc.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined)?.[0];
+          const phase = (desc.searchAttributes?.AgentTempoAttachmentState as string[] | undefined)?.[0];
           if (phase !== 'gone') return false;
           const msgs = await conductor.query(allMessagesQuery);
           return msgs.some(
@@ -391,9 +391,9 @@ describe('outbox', function () {
         }, POLL_DELIVERY_MS);
 
         // Target's phase transitions to `gone` via the stop-delivery's destroyUpdate.
-        // Read from the `ClaudeTempoAttachmentState` search attribute — survives completion.
+        // Read from the `AgentTempoAttachmentState` search attribute — survives completion.
         const targetDesc = await target.describe();
-        const targetPhase = (targetDesc.searchAttributes?.ClaudeTempoAttachmentState as string[] | undefined)?.[0];
+        const targetPhase = (targetDesc.searchAttributes?.AgentTempoAttachmentState as string[] | undefined)?.[0];
         expect(targetPhase).to.equal('gone');
 
         // Conductor should receive the system notification about the termination
@@ -594,7 +594,7 @@ describe('outbox', function () {
         // Wait for dispatch to run both startRecruitedSession + spawnProcess,
         // and for the recruited workflow's pendingMessages to land.
         const recruitedHandle = getClient().workflow.getHandle(
-          `claude-session-${ensemble}-new-player`,
+          `agent-session-${ensemble}-new-player`,
         );
         await pollWithTimeout(async () => {
           const ob = await handle.query(outboxQuery);
@@ -676,7 +676,7 @@ describe('outbox', function () {
 
         // No initialMessage — inbox should be empty
         const recruitedHandle = getClient().workflow.getHandle(
-          `claude-session-${ensemble}-silent-player`,
+          `agent-session-${ensemble}-silent-player`,
         );
         const pending = await recruitedHandle.query(pendingMessagesQuery);
         expect(pending).to.have.lengthOf(0);
@@ -885,7 +885,7 @@ describe('outbox', function () {
           await handle.executeUpdate(destroyUpdate, { args: [{}] });
           await handle.result();
           const recruitedHandle = getClient().workflow.getHandle(
-            `claude-session-${ensemble}-bin-player`,
+            `agent-session-${ensemble}-bin-player`,
           );
           await recruitedHandle.executeUpdate(destroyUpdate, { args: [{}] });
           try { await recruitedHandle.result(); } catch { /* cleanup */ }

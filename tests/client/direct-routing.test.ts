@@ -32,8 +32,8 @@ function makeClient(opts: {
 
   const sessionHandles = new Map<string, any>();
   for (const s of sessions) {
-    sessionHandles.set(`claude-session-${ensemble}-${s.playerId}`, {
-      workflowId: `claude-session-${ensemble}-${s.playerId}`,
+    sessionHandles.set(`agent-session-${ensemble}-${s.playerId}`, {
+      workflowId: `agent-session-${ensemble}-${s.playerId}`,
       async query(nameOrDef: unknown) {
         const name = asName(nameOrDef);
         if (name === 'outboxLocked') return s.outboxLocked === true;
@@ -46,7 +46,7 @@ function makeClient(opts: {
   }
 
   const maestroHandle = {
-    workflowId: `claude-session-${ensemble}-maestro`,
+    workflowId: `agent-session-${ensemble}-maestro`,
     async executeUpdate(nameOrDef: unknown, opts2: { args: unknown[] }) {
       entries.push({ name: asName(nameOrDef), args: opts2.args[0] });
       return `entry-${entries.length}`;
@@ -65,9 +65,9 @@ function makeClient(opts: {
       async *list() {
         for (const s of sessions) {
           yield {
-            workflowId: `claude-session-${ensemble}-${s.playerId}`,
+            workflowId: `agent-session-${ensemble}-${s.playerId}`,
             searchAttributes: {
-              ClaudeTempoPlayerId: [s.playerId],
+              AgentTempoPlayerId: [s.playerId],
             },
           };
         }

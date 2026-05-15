@@ -35,7 +35,7 @@ let ENSEMBLE: string;
 const SCHEDULER_TASK_QUEUE = 'test-claude-tempo';
 
 function schedulerWorkflowId(ensemble: string): string {
-  return `claude-scheduler-${ensemble}`;
+  return `agent-scheduler-${ensemble}`;
 }
 
 /** Create a temporary directory for test files. */
@@ -312,7 +312,7 @@ players:
         });
 
         // Start scheduler and add a schedule targeting "all" that fires soon
-        const schedulerHandle = await getClient().workflow.start('claudeSchedulerWorkflow', {
+        const schedulerHandle = await getClient().workflow.start('agentSchedulerWorkflow', {
           workflowId: schedulerWorkflowId(fanoutEnsemble),
           taskQueue: SCHEDULER_TASK_QUEUE,
           args: [{ ensemble: fanoutEnsemble, entries: [] }],

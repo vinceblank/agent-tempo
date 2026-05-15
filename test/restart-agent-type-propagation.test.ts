@@ -83,7 +83,7 @@ function makeClient(fixture: MockSessionFixture) {
 const testConfig: Config = {
   temporalAddress: 'localhost:7233',
   temporalNamespace: 'default',
-  taskQueue: 'claude-tempo',
+  taskQueue: 'agent-tempo',
   ensemble: 'test-ensemble-restart-agent-mock',
   defaultAgent: 'claude',
 };
@@ -102,7 +102,7 @@ describe('deliverRestart agent type propagation (#184)', function () {
   //    with a hermetic fixture.
   it('threads resolved agent definition into enqueueSpawn payload', async function () {
     const { client, captured } = makeClient({
-      workflowId: 'claude-session-test-ensemble-soloist',
+      workflowId: 'agent-session-test-ensemble-soloist',
       metadata: {
         ensemble: 'test-ensemble-restart-agent-mock',
         playerId: 'soloist',
@@ -149,7 +149,7 @@ describe('deliverRestart agent type propagation (#184)', function () {
 
     try {
       const { client, captured } = makeClient({
-        workflowId: 'claude-session-test-ensemble-eng',
+        workflowId: 'agent-session-test-ensemble-eng',
         metadata: {
           ensemble: 'test-ensemble-restart-agent-mock',
           playerId: 'eng',
@@ -192,7 +192,7 @@ describe('deliverRestart agent type propagation (#184)', function () {
 
     for (const freshFlag of [true, false]) {
       const { client, captured } = makeClient({
-        workflowId: 'claude-session-test-ensemble-fresh',
+        workflowId: 'agent-session-test-ensemble-fresh',
         metadata: {
           ensemble: 'test-ensemble-restart-agent-mock',
           playerId: 'bob',
@@ -232,7 +232,7 @@ describe('deliverRestart agent type propagation (#184)', function () {
   //    should omit all three fields.
   it('omits agent fields when metadata has no playerType', async function () {
     const { client, captured } = makeClient({
-      workflowId: 'claude-session-test-ensemble-plain',
+      workflowId: 'agent-session-test-ensemble-plain',
       metadata: {
         ensemble: 'test-ensemble-restart-agent-mock',
         playerId: 'plain',

@@ -156,7 +156,7 @@ export function createMaestroActivities(client: Client): MaestroActivities {
       // its own schedule, so a truncated enumeration this tick self-heals
       // on the next.
       const ensembles = new Set<string>();
-      const query = `WorkflowType = "claudeSessionWorkflow" AND ExecutionStatus = "Running"`;
+      const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"`;
       try {
         for await (const wf of iterateWithDeadline(
           client.workflow.list({ query }),

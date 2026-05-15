@@ -52,7 +52,7 @@ function makeClient(opts: {
   };
 
   const sessionHandle = {
-    workflowId: `claude-session-${ensemble}-${playerId}`,
+    workflowId: `agent-session-${ensemble}-${playerId}`,
     async query(nameOrDef: unknown) {
       const name = asName(nameOrDef);
       if (name === 'getMetadata') return { ensemble, playerId, hostname, workDir: '/w' };
@@ -65,7 +65,7 @@ function makeClient(opts: {
   };
 
   const maestroHandle = {
-    workflowId: `claude-session-${ensemble}-maestro`,
+    workflowId: `agent-session-${ensemble}-maestro`,
     async executeUpdate(nameOrDef: unknown, opts: { args: unknown[] }) {
       entries.push({ name: asName(nameOrDef), args: opts.args[0] });
       return `entry-${entries.length}`;

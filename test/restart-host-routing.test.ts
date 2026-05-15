@@ -63,7 +63,7 @@ function makeTargetClient(opts: { attachedHost?: string } = {}): any {
   return {
     workflow: {
       getHandle: () => ({
-        workflowId: 'claude-session-test-ensemble-restart-host-mock-target',
+        workflowId: 'agent-session-test-ensemble-restart-host-mock-target',
         async query(name: unknown) {
           const n = asName(name);
           if (n === 'attachmentInfo') return info;
@@ -71,7 +71,7 @@ function makeTargetClient(opts: { attachedHost?: string } = {}): any {
           return undefined;
         },
       }),
-      async *list() { yield { workflowId: 'claude-session-test-ensemble-restart-host-mock-target' }; },
+      async *list() { yield { workflowId: 'agent-session-test-ensemble-restart-host-mock-target' }; },
     },
   };
 }
@@ -90,7 +90,7 @@ function makeCaptureHandle(): { handle: WorkflowHandle; entries: Array<{ name: s
 const testConfig = {
   temporalAddress: 'localhost:7233',
   temporalNamespace: 'default',
-  taskQueue: 'claude-tempo',
+  taskQueue: 'agent-tempo',
   ensemble: 'test-ensemble-restart-host-mock',
   defaultAgent: 'claude' as const,
 };

@@ -77,13 +77,13 @@ export function getSearchAttrBool(
 //
 // Keeping one wrapper per attribute gives callers a readable, typed API
 // without re-stating the attribute name at every site. Adding a fourth
-// attribute (e.g. `ClaudeTempoHost`) later follows the same pattern.
+// attribute (e.g. `AgentTempoHost`) later follows the same pattern.
 
 /**
- * Read the attachment phase from `ClaudeTempoAttachmentState`.
+ * Read the attachment phase from `AgentTempoAttachmentState`.
  *
  * Post-#175 this is the canonical lifecycle state (replaced the v0.25
- * `ClaudeTempoStatus` heuristic). Returns `undefined` when the attribute is
+ * `AgentTempoStatus` heuristic). Returns `undefined` when the attribute is
  * missing — typically during the brief post-start window before the
  * workflow has written its first phase transition, or for workflows that
  * predate the attachment-lifecycle rework.
@@ -91,13 +91,13 @@ export function getSearchAttrBool(
 export function getAttachmentPhase(
   carrier: SearchAttributeCarrier,
 ): AttachmentPhase | undefined {
-  return getSearchAttrString(carrier, 'ClaudeTempoAttachmentState') as
+  return getSearchAttrString(carrier, 'AgentTempoAttachmentState') as
     | AttachmentPhase
     | undefined;
 }
 
 /**
- * Read the ensemble name from `ClaudeTempoEnsemble`.
+ * Read the ensemble name from `AgentTempoEnsemble`.
  *
  * Returns `undefined` when the attribute is absent — callers typically
  * treat that as "skip this session" since every session workflow should
@@ -106,11 +106,11 @@ export function getAttachmentPhase(
 export function getEnsembleName(
   carrier: SearchAttributeCarrier,
 ): string | undefined {
-  return getSearchAttrString(carrier, 'ClaudeTempoEnsemble');
+  return getSearchAttrString(carrier, 'AgentTempoEnsemble');
 }
 
 /**
- * Read the conductor flag from `ClaudeTempoIsConductor`.
+ * Read the conductor flag from `AgentTempoIsConductor`.
  *
  * Returns `undefined` when absent (e.g. transiently un-indexed after a
  * conductor spawn). Callers wanting the pre-#178 workflow-id-suffix
@@ -119,5 +119,5 @@ export function getEnsembleName(
 export function getIsConductor(
   carrier: SearchAttributeCarrier,
 ): boolean | undefined {
-  return getSearchAttrBool(carrier, 'ClaudeTempoIsConductor');
+  return getSearchAttrBool(carrier, 'AgentTempoIsConductor');
 }

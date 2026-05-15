@@ -129,7 +129,7 @@ export function Splash({ status, version, connected, ensembles, onContinue, onCr
 
   // Title + tagline + version
   children.push('\n\n');
-  children.push(React.createElement(Text, { key: 'title', bold: true, color: THEME.accent }, center('claude-tempo')));
+  children.push(React.createElement(Text, { key: 'title', bold: true, color: THEME.accent }, center('agent-tempo')));
   children.push('\n');
   children.push(React.createElement(Text, { key: 'tagline', color: THEME.dim }, center('Multi-session orchestration via Temporal')));
   children.push('\n');

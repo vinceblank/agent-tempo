@@ -18,7 +18,7 @@ import {
  * replay determinism. The architect's #318 review flagged the per-ensemble
  * maestro's idle-timeout check (`Date.now() - lastActiveSessionTime > IDLE_TIMEOUT_MS`)
  * as a pre-existing instance of this bug; this commit replaces every
- * `Date.now()` site in `claudeMaestroWorkflow` with `workflowNow().getTime()`
+ * `Date.now()` site in `agentMaestroWorkflow` with `workflowNow().getTime()`
  * so the determinism guarantee holds end-to-end. See CLAUDE.md
  * ("no `Date.now()` in workflow code, use `workflow.now()` instead") and
  * `src/workflows/session.ts:21-23` for the convention.
@@ -115,7 +115,7 @@ const TEMPO_BPM_WINDOW_MS = 60_000;
 // Per-Ensemble Maestro (existing — unchanged)
 // ══════════════════════════════════════════════════════════════════════════════
 
-export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> {
+export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
   patched('v0.17-initial');
 
   const refreshIntervalMs = input.pollIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
@@ -621,7 +621,7 @@ export async function claudeMaestroWorkflow(input: MaestroInput): Promise<void> 
       // `playerState` carry idiom in `src/workflows/session.ts:1617-1638`
       // — keeps the wire small for the common no-coat-check case.
       const carryCoatCheck = Object.keys(coatCheck).length > 0;
-      await continueAsNew<typeof claudeMaestroWorkflow>({
+      await continueAsNew<typeof agentMaestroWorkflow>({
         ensemble: input.ensemble,
         players,
         events,
@@ -711,7 +711,7 @@ const globalActivities = proxyActivities<
   retry: { maximumAttempts: 3 },
 });
 
-export async function claudeGlobalMaestroWorkflow(input: GlobalMaestroInput): Promise<void> {
+export async function agentGlobalMaestroWorkflow(input: GlobalMaestroInput): Promise<void> {
   patched('v0.18-global-maestro');
 
   const refreshIntervalMs = input.pollIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
@@ -961,7 +961,7 @@ export async function claudeGlobalMaestroWorkflow(input: GlobalMaestroInput): Pr
     const info = workflowInfo();
     if (info.continueAsNewSuggested) {
       await condition(allHandlersFinished);
-      await continueAsNew<typeof claudeGlobalMaestroWorkflow>({
+      await continueAsNew<typeof agentGlobalMaestroWorkflow>({
         knownEnsembles,
         playersByEnsemble,
         recentMessages,

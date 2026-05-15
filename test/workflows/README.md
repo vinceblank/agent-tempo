@@ -1,6 +1,6 @@
 # `test/workflows/` — workflow-invariant tests
 
-Single-adapter (non-parameterized) tests that assert correctness of `claudeSessionWorkflow` invariants introduced or touched in the v0.25 rebuild.
+Single-adapter (non-parameterized) tests that assert correctness of `agentSessionWorkflow` invariants introduced or touched in the v0.25 rebuild.
 
 ## Scope
 

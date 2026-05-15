@@ -22,10 +22,10 @@ function wf(opts: {
   return {
     workflowId: opts.workflowId,
     searchAttributes: {
-      ClaudeTempoEnsemble: [opts.ensemble],
-      ClaudeTempoAttachmentState: [opts.phase],
-      ClaudeTempoIsConductor: [!!opts.isConductor],
-      ...(opts.playerType ? { ClaudeTempoPlayerType: [opts.playerType] } : {}),
+      AgentTempoEnsemble: [opts.ensemble],
+      AgentTempoAttachmentState: [opts.phase],
+      AgentTempoIsConductor: [!!opts.isConductor],
+      ...(opts.playerType ? { AgentTempoPlayerType: [opts.playerType] } : {}),
     },
   };
 }
@@ -33,7 +33,7 @@ function wf(opts: {
 /**
  * Build a fake Temporal Client. `pausedByEnsemble` populates the
  * `maestroPaused` query result for each ensemble's maestro hub workflow
- * (id pattern: `claude-maestro-{ensemble}`). Hubs not listed throw on
+ * (id pattern: `agent-maestro-{ensemble}`). Hubs not listed throw on
  * query — same shape as a real "workflow not running" failure, which the
  * client treats as "fall through to the phase heuristic".
  */
@@ -50,7 +50,7 @@ function makeClient(
             // QueryDefinition object — mirror both shapes here.
             const name = typeof nameOrDef === 'string' ? nameOrDef : nameOrDef?.name;
             if (name === 'maestroPaused') {
-              const m = workflowId.match(/^claude-maestro-(.+)$/);
+              const m = workflowId.match(/^agent-maestro-(.+)$/);
               if (m && m[1] in pausedByEnsemble) return pausedByEnsemble[m[1]];
               throw new Error('workflow not found');
             }
@@ -68,8 +68,8 @@ function makeClient(
 describe('TempoClient.listEnsembles', () => {
   it('classifies an ensemble with any live session as online (no hub)', async () => {
     const tempo = createTempoClient(makeClient([
-      wf({ workflowId: 'claude-session-alpha-conductor', ensemble: 'alpha', phase: 'attached', isConductor: true }),
-      wf({ workflowId: 'claude-session-alpha-p1', ensemble: 'alpha', phase: 'detached' }),
+      wf({ workflowId: 'agent-session-alpha-conductor', ensemble: 'alpha', phase: 'attached', isConductor: true }),
+      wf({ workflowId: 'agent-session-alpha-p1', ensemble: 'alpha', phase: 'detached' }),
     ]) as any);
     const list = await tempo.listEnsembles();
     expect(list).toHaveLength(1);
@@ -78,8 +78,8 @@ describe('TempoClient.listEnsembles', () => {
 
   it('classifies an all-detached ensemble as offline (no hub)', async () => {
     const tempo = createTempoClient(makeClient([
-      wf({ workflowId: 'claude-session-beta-conductor', ensemble: 'beta', phase: 'detached', isConductor: true }),
-      wf({ workflowId: 'claude-session-beta-p1', ensemble: 'beta', phase: 'detached' }),
+      wf({ workflowId: 'agent-session-beta-conductor', ensemble: 'beta', phase: 'detached', isConductor: true }),
+      wf({ workflowId: 'agent-session-beta-p1', ensemble: 'beta', phase: 'detached' }),
     ]) as any);
     const list = await tempo.listEnsembles();
     expect(list).toHaveLength(1);
@@ -88,7 +88,7 @@ describe('TempoClient.listEnsembles', () => {
 
   it('skips ensembles with no live or detached sessions', async () => {
     const tempo = createTempoClient(makeClient([
-      wf({ workflowId: 'claude-session-gone-conductor', ensemble: 'gone', phase: 'gone', isConductor: true }),
+      wf({ workflowId: 'agent-session-gone-conductor', ensemble: 'gone', phase: 'gone', isConductor: true }),
     ]) as any);
     const list = await tempo.listEnsembles();
     expect(list).toEqual([]);
@@ -109,14 +109,14 @@ describe('TempoClient.listEnsembles', () => {
   // ── Maestro session is excluded from headline player counts ──────────────
   // The maestro session is the TUI's own dashboard attachment, not a peer
   // agent. Counting it produced confusing "(2 players)" rows on a fresh
-  // ensemble with one real player. Detected via `ClaudeTempoPlayerType`
+  // ensemble with one real player. Detected via `AgentTempoPlayerType`
   // search attribute (canonical) or workflow-id-suffix fallback.
 
   it('excludes the maestro session from playerCount (by playerType search attr)', async () => {
     const tempo = createTempoClient(makeClient([
-      wf({ workflowId: 'claude-session-gamma-conductor', ensemble: 'gamma', phase: 'attached', isConductor: true }),
-      wf({ workflowId: 'claude-session-gamma-alice', ensemble: 'gamma', phase: 'attached' }),
-      wf({ workflowId: 'claude-session-gamma-maestro', ensemble: 'gamma', phase: 'attached', playerType: 'maestro' }),
+      wf({ workflowId: 'agent-session-gamma-conductor', ensemble: 'gamma', phase: 'attached', isConductor: true }),
+      wf({ workflowId: 'agent-session-gamma-alice', ensemble: 'gamma', phase: 'attached' }),
+      wf({ workflowId: 'agent-session-gamma-maestro', ensemble: 'gamma', phase: 'attached', playerType: 'maestro' }),
     ]) as any);
     const list = await tempo.listEnsembles();
     expect(list).toHaveLength(1);
@@ -124,10 +124,10 @@ describe('TempoClient.listEnsembles', () => {
   });
 
   it('excludes the maestro session by workflow-id suffix when search attr missing', async () => {
-    // Brief post-start window where ClaudeTempoPlayerType hasn't propagated.
+    // Brief post-start window where AgentTempoPlayerType hasn't propagated.
     const tempo = createTempoClient(makeClient([
-      wf({ workflowId: 'claude-session-delta-alice', ensemble: 'delta', phase: 'attached' }),
-      wf({ workflowId: 'claude-session-delta-maestro', ensemble: 'delta', phase: 'booting' /* no playerType */ }),
+      wf({ workflowId: 'agent-session-delta-alice', ensemble: 'delta', phase: 'attached' }),
+      wf({ workflowId: 'agent-session-delta-maestro', ensemble: 'delta', phase: 'booting' /* no playerType */ }),
     ]) as any);
     const list = await tempo.listEnsembles();
     expect(list).toHaveLength(1);
@@ -150,8 +150,8 @@ describe('TempoClient.listEnsembles', () => {
     const tempo = createTempoClient(
       makeClient(
         [
-          wf({ workflowId: 'claude-session-eps-alice', ensemble: 'eps', phase: 'attached' }),
-          wf({ workflowId: 'claude-session-eps-maestro', ensemble: 'eps', phase: 'attached', playerType: 'maestro' }),
+          wf({ workflowId: 'agent-session-eps-alice', ensemble: 'eps', phase: 'attached' }),
+          wf({ workflowId: 'agent-session-eps-maestro', ensemble: 'eps', phase: 'attached', playerType: 'maestro' }),
         ],
         { eps: true },
       ) as any,
@@ -168,8 +168,8 @@ describe('TempoClient.listEnsembles', () => {
     const tempo = createTempoClient(
       makeClient(
         [
-          wf({ workflowId: 'claude-session-shut-alice', ensemble: 'shut', phase: 'detached' }),
-          wf({ workflowId: 'claude-session-shut-maestro', ensemble: 'shut', phase: 'attached', playerType: 'maestro' }),
+          wf({ workflowId: 'agent-session-shut-alice', ensemble: 'shut', phase: 'detached' }),
+          wf({ workflowId: 'agent-session-shut-maestro', ensemble: 'shut', phase: 'attached', playerType: 'maestro' }),
         ],
         { shut: true },
       ) as any,
@@ -185,7 +185,7 @@ describe('TempoClient.listEnsembles', () => {
         [
           // Even if every session were detached, an unpaused hub means the
           // user has explicitly resumed (`/play`) — honor the hub's truth.
-          wf({ workflowId: 'claude-session-zeta-alice', ensemble: 'zeta', phase: 'detached' }),
+          wf({ workflowId: 'agent-session-zeta-alice', ensemble: 'zeta', phase: 'detached' }),
         ],
         { zeta: false },
       ) as any,
@@ -201,7 +201,7 @@ describe('TempoClient.listEnsembles', () => {
     // present means online.
     const tempo = createTempoClient(
       makeClient([
-        wf({ workflowId: 'claude-session-eta-alice', ensemble: 'eta', phase: 'attached' }),
+        wf({ workflowId: 'agent-session-eta-alice', ensemble: 'eta', phase: 'attached' }),
       ]) as any,
     );
     const list = await tempo.listEnsembles();

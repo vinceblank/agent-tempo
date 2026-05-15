@@ -314,7 +314,7 @@ export interface OutboxActivities {
   deliverRestart(input: DeliverRestartInput): Promise<OutboxActivityResult>;
   /**
    * OS-level child-process-tree kill for the target session. Runs on the per-host
-   * task queue (`claude-tempo-{hostname}`) so the kill happens where the process
+   * task queue (`agent-tempo-{hostname}`) so the kill happens where the process
    * actually lives. See `src/activities/hard-terminate.ts` and issue #159 Gap 2.
    */
   hardTerminateAttachment(input: HardTerminateInput): Promise<HardTerminateResult>;
@@ -474,16 +474,16 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
               }] : undefined),
         };
 
-        await client.workflow.start('claudeSessionWorkflow', {
+        await client.workflow.start('agentSessionWorkflow', {
           workflowId,
           taskQueue,
           args: [sessionInput],
           workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
           searchAttributes: {
-            ...(gitRoot ? { ClaudeTempoGitRoot: [gitRoot] } : {}),
-            ClaudeTempoHostname: [os.hostname()],
-            ClaudeTempoEnsemble: [ensemble],
-            ClaudeTempoPlayerId: [targetName],
+            ...(gitRoot ? { AgentTempoGitRoot: [gitRoot] } : {}),
+            AgentTempoHostname: [os.hostname()],
+            AgentTempoEnsemble: [ensemble],
+            AgentTempoPlayerId: [targetName],
           },
         });
 

@@ -45,7 +45,7 @@ export function Schedules() {
         subtitle={
           <>
             Durable message deliveries via{' '}
-            <span className="mono">claudeSchedulerWorkflow</span>.
+            <span className="mono">agentSchedulerWorkflow</span>.
           </>
         }
         actions={

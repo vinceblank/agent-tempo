@@ -4,7 +4,7 @@ This document is the authoritative reference for all Temporal signal, query, upd
 
 ## Stability Guarantee
 
-> **These names are stable as of v0.10.** Renaming or removing any signal, query, update, or workflow name is a breaking change requiring a major version bump. Adding new names is non-breaking.
+> **These names are stable as of v1.0.** Renaming or removing any signal, query, update, or workflow name is a breaking change requiring a major version bump. Adding new names is non-breaking.
 >
 > **Adding a new `## Section` to this file** also requires a matching entry in the `SECTION_TO_KIND` map in `test/wire-protocol.test.ts` — the drift detector throws on unknown section headers.
 
@@ -14,16 +14,16 @@ This document is the authoritative reference for all Temporal signal, query, upd
 
 | Name | Description |
 |------|-------------|
-| `claudeSessionWorkflow` | The main workflow for a player session. One instance per active Claude Code session. Carries all message state, outbox entries, and conductor history across `continueAsNew` boundaries. |
-| `claudeSchedulerWorkflow` | Durable scheduler workflow — one per ensemble. Manages named one-shot and recurring schedules, firing them by signalling the target session at the configured time. |
-| `claudeMaestroWorkflow` | Per-ensemble management hub — one per ensemble. Workflow ID pattern: `claude-maestro-{ensemble}`. Aggregates a snapshot of all players, maintains a ring-buffer event log (max 200 entries), and queues commands for relay to the conductor. Survives restarts via `continueAsNew`. |
-| `claudeGlobalMaestroWorkflow` | Global ensemble hub — single instance spanning ALL ensembles. Workflow ID: `claude-maestro-global`. Aggregates players by ensemble, maintains a cross-ensemble message ring buffer (max 500 entries), and exposes on-demand player/conductor history via updates. Survives restarts via `continueAsNew`. |
+| `agentSessionWorkflow` | The main workflow for a player session. One instance per active Claude Code session. Carries all message state, outbox entries, and conductor history across `continueAsNew` boundaries. |
+| `agentSchedulerWorkflow` | Durable scheduler workflow — one per ensemble. Manages named one-shot and recurring schedules, firing them by signalling the target session at the configured time. |
+| `agentMaestroWorkflow` | Per-ensemble management hub — one per ensemble. Workflow ID pattern: `agent-maestro-{ensemble}`. Aggregates a snapshot of all players, maintains a ring-buffer event log (max 200 entries), and queues commands for relay to the conductor. Survives restarts via `continueAsNew`. |
+| `agentGlobalMaestroWorkflow` | Global ensemble hub — single instance spanning ALL ensembles. Workflow ID: `agent-maestro-global`. Aggregates players by ensemble, maintains a cross-ensemble message ring buffer (max 500 entries), and exposes on-demand player/conductor history via updates. Survives restarts via `continueAsNew`. |
 
 ---
 
 ## Session Signals
 
-Signals sent **to** a `claudeSessionWorkflow` instance.
+Signals sent **to** a `agentSessionWorkflow` instance.
 
 | Signal Name | Payload | Description |
 |-------------|---------|-------------|
@@ -31,7 +31,7 @@ Signals sent **to** a `claudeSessionWorkflow` instance.
 | `recordSentMessage` | `{ to: string; text: string }` | Records an outbound message in the session's sent-message history without triggering any delivery. Used for audit/history continuity. |
 | `setPart` | `string` | Updates the player's current "part" — a short description of what the session is working on, visible to other players via `ensemble`. |
 | `markDelivered` | `string[]` | Marks one or more messages (by ID) as delivered. Resets stale-detection timer; any delivery proves the session is alive. |
-| `setName` | `string` | Updates the player's human-readable ID (`ClaudeTempoPlayerId` search attribute). Called by the `set_name` MCP tool. |
+| `setName` | `string` | Updates the player's human-readable ID (`AgentTempoPlayerId` search attribute). Called by the `set_name` MCP tool. |
 | `updateMetadata` | `{ hostname?, gitBranch?, gitRoot?, terminatedBy?, enableStaleDetection?, playerType?, playerTypeDescription?, worktreePath?, sessionId? }` | Updates session metadata fields and syncs search attributes. `enableStaleDetection: true` re-arms stale detection after reconnect; `worktreePath` records the git worktree path when the session uses worktree isolation; `sessionId` stores the session UUID — used for Copilot SDK session resumption, Claude Code deterministic `--resume` on restart, and (since #449 Phase C) re-attachment to the persisted OpenCode session id across `opencode serve` restart. Note: the former `status: 'terminated'` shim was retired in PR-H (#132); use the `destroy` update for ordered session teardown. |
 | `releaseHeld` | *(none)* | Releases a held session: injects the stored initial message and unlocks the outbox. Sent by the conductor (or operator) after a session has been paused at startup via the hold/pause mechanism. **Idempotent** on sessions that aren't holding (no `heldMessage`, `outboxLocked` already `false`) — safe to blanket-signal across an ensemble. Used by the `release` MCP tool, `agent-tempo release` CLI, and (since #172) by `resume_ensemble { release: true }` / `agent-tempo resume --release` which fan it out to every running session. |
 | `setPaused` | `boolean` | Pauses (`true`) or resumes (`false`) the session's outbox dispatch. While paused, queued outbox entries are not processed. |
@@ -44,7 +44,7 @@ Signals sent **to** a `claudeSessionWorkflow` instance.
 
 ## Session Queries
 
-Queries on a `claudeSessionWorkflow` instance (synchronous, read-only).
+Queries on a `agentSessionWorkflow` instance (synchronous, read-only).
 
 | Query Name | Return Type | Description |
 |------------|-------------|-------------|
@@ -70,7 +70,7 @@ Queries on a `claudeSessionWorkflow` instance (synchronous, read-only).
 
 ## Session Updates
 
-Workflow updates on a `claudeSessionWorkflow` instance (transactional, returns a value).
+Workflow updates on a `agentSessionWorkflow` instance (transactional, returns a value).
 
 | Update Name | Input | Return | Description |
 |-------------|-------|--------|-------------|
@@ -125,7 +125,7 @@ Conductor-specific signals, only registered when `input.metadata.isConductor` is
 
 ## Scheduler Signals
 
-Signals sent **to** a `claudeSchedulerWorkflow` instance.
+Signals sent **to** a `agentSchedulerWorkflow` instance.
 
 | Signal Name | Payload | Description |
 |-------------|---------|-------------|
@@ -147,7 +147,7 @@ Signals sent **to** a `claudeSchedulerWorkflow` instance.
 
 ## Per-Ensemble Maestro Signal
 
-Signal sent **to** a `claudeMaestroWorkflow` instance.
+Signal sent **to** a `agentMaestroWorkflow` instance.
 
 | Signal Name | Payload | Description |
 |-------------|---------|-------------|
@@ -159,7 +159,7 @@ Signal sent **to** a `claudeMaestroWorkflow` instance.
 
 ## Per-Ensemble Maestro Queries
 
-Queries on a `claudeMaestroWorkflow` instance (synchronous, read-only).
+Queries on a `agentMaestroWorkflow` instance (synchronous, read-only).
 
 | Query Name | Input | Return Type | Description |
 |------------|-------|-------------|-------------|
@@ -178,7 +178,7 @@ Queries on a `claudeMaestroWorkflow` instance (synchronous, read-only).
 
 ## Per-Ensemble Maestro Updates
 
-Workflow updates on a `claudeMaestroWorkflow` instance (transactional, returns a value).
+Workflow updates on a `agentMaestroWorkflow` instance (transactional, returns a value).
 
 | Update Name | Input | Return | Description |
 |-------------|-------|--------|-------------|
@@ -191,7 +191,7 @@ Workflow updates on a `claudeMaestroWorkflow` instance (transactional, returns a
 
 ## Global Maestro Signals
 
-Signals sent **to** a `claudeGlobalMaestroWorkflow` instance (`claude-maestro-global`).
+Signals sent **to** a `agentGlobalMaestroWorkflow` instance (`agent-maestro-global`).
 
 | Signal Name | Payload | Description |
 |-------------|---------|-------------|
@@ -202,7 +202,7 @@ Signals sent **to** a `claudeGlobalMaestroWorkflow` instance (`claude-maestro-gl
 
 ## Global Maestro Queries
 
-Queries on a `claudeGlobalMaestroWorkflow` instance (synchronous, read-only).
+Queries on a `agentGlobalMaestroWorkflow` instance (synchronous, read-only).
 
 | Query Name | Return Type | Description |
 |------------|-------------|-------------|
@@ -216,7 +216,7 @@ Queries on a `claudeGlobalMaestroWorkflow` instance (synchronous, read-only).
 
 ## Global Maestro Updates
 
-Workflow updates on a `claudeGlobalMaestroWorkflow` instance (transactional, returns a value).
+Workflow updates on a `agentGlobalMaestroWorkflow` instance (transactional, returns a value).
 
 | Update Name | Input | Return | Description |
 |-------------|-------|--------|-------------|
@@ -229,25 +229,25 @@ Workflow updates on a `claudeGlobalMaestroWorkflow` instance (transactional, ret
 
 ## Search Attributes
 
-The following custom Temporal search attributes are written by `claudeSessionWorkflow` and used for session discovery.
+The following custom Temporal search attributes are written by `agentSessionWorkflow` and used for session discovery.
 
-> **v0.26-beta breaking change** — `ClaudeTempoStatus` has been removed. Lifecycle truth
-> now lives on `ClaudeTempoAttachmentState` (search attribute) and the `attachmentInfo`
+> **v0.26-beta breaking change** — `AgentTempoStatus` has been removed. Lifecycle truth
+> now lives on `AgentTempoAttachmentState` (search attribute) and the `attachmentInfo`
 > query. Operators on long-lived Temporal clusters must manually drop the legacy
 > attribute — Temporal does not auto-unregister search attributes.
 > See [`docs/ops/v0.26-migration.md`](ops/v0.26-migration.md) for the upgrade steps.
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| `ClaudeTempoEnsemble` | `Keyword` | Ensemble namespace (from `CLAUDE_TEMPO_ENSEMBLE` env var). Scopes sessions to a named group. |
-| `ClaudeTempoPlayerId` | `Keyword` | Human-readable player name (or hex ID before `set_name` is called). |
-| `ClaudeTempoHostname` | `Keyword` | Hostname of the machine running the session. Used to route spawn activities to the correct per-host task queue. |
-| `ClaudeTempoGitRoot` | `Keyword` | Absolute path to the git repository root on the session's host. |
-| `ClaudeTempoPlayerType` | `Keyword` | Agent type name (e.g. `tempo-soloist`), set from the player's agent definition. |
-| `ClaudeTempoIsConductor` | `Bool` | `true` for conductor workflows, absent or `false` for regular players. Set via `upsertSearchAttributes` in `claudeSessionWorkflow` at startup and after `continueAsNew`. Enables efficient conductor discovery without scanning all session workflows. |
-| `ClaudeTempoAttachmentState` | `Keyword` | **v0.25.** Current attachment phase: `booting \| attached \| processing \| awaiting \| draining \| detached \| gone`. Enables external observers (TUI, monitoring, daemon reconcile-on-boot) to query session readiness without polling the `attachmentInfo` query. |
-| `ClaudeTempoAttachedHost` | `Keyword` | **v0.25.** Hostname of the machine currently holding the attachment lease. Empty string when no attachment is active (`detached` / `gone` phases). Used by daemon reconcile-on-boot to identify orphaned sessions whose adapter process may have died on this host. |
-| `ClaudeTempoAttachmentId` | `Keyword` | **v0.25.** UUID of the current attachment (from `claimAttachment`). Empty string when no attachment is active. Allows the daemon to correlate a specific adapter instance with the workflow that claimed it. |
+| `AgentTempoEnsemble` | `Keyword` | Ensemble namespace (from `AGENT_TEMPO_ENSEMBLE` env var). Scopes sessions to a named group. |
+| `AgentTempoPlayerId` | `Keyword` | Human-readable player name (or hex ID before `set_name` is called). |
+| `AgentTempoHostname` | `Keyword` | Hostname of the machine running the session. Used to route spawn activities to the correct per-host task queue. |
+| `AgentTempoGitRoot` | `Keyword` | Absolute path to the git repository root on the session's host. |
+| `AgentTempoPlayerType` | `Keyword` | Agent type name (e.g. `tempo-soloist`), set from the player's agent definition. |
+| `AgentTempoIsConductor` | `Bool` | `true` for conductor workflows, absent or `false` for regular players. Set via `upsertSearchAttributes` in `agentSessionWorkflow` at startup and after `continueAsNew`. Enables efficient conductor discovery without scanning all session workflows. |
+| `AgentTempoAttachmentState` | `Keyword` | **v0.25.** Current attachment phase: `booting \| attached \| processing \| awaiting \| draining \| detached \| gone`. Enables external observers (TUI, monitoring, daemon reconcile-on-boot) to query session readiness without polling the `attachmentInfo` query. |
+| `AgentTempoAttachedHost` | `Keyword` | **v0.25.** Hostname of the machine currently holding the attachment lease. Empty string when no attachment is active (`detached` / `gone` phases). Used by daemon reconcile-on-boot to identify orphaned sessions whose adapter process may have died on this host. |
+| `AgentTempoAttachmentId` | `Keyword` | **v0.25.** UUID of the current attachment (from `claimAttachment`). Empty string when no attachment is active. Allows the daemon to correlate a specific adapter instance with the workflow that claimed it. |
 
 ---
 

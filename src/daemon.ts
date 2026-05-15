@@ -219,7 +219,7 @@ async function ensureGlobalMaestro(config: ReturnType<typeof getConfig>): Promis
     const client = new Client({ connection, namespace: config.temporalNamespace });
 
     const input: GlobalMaestroInput = {};
-    await client.workflow.start('claudeGlobalMaestroWorkflow', {
+    await client.workflow.start('agentGlobalMaestroWorkflow', {
       workflowId: GLOBAL_MAESTRO_WORKFLOW_ID,
       taskQueue: config.taskQueue,
       args: [input],
@@ -900,6 +900,34 @@ async function main() {
     }
   }
 
+  // PR-3 of the v1.0 rebrand — fail fast if the `AgentTempo*` search
+  // attributes aren't registered on the target namespace. The actionable
+  // error message includes the exact `temporal operator search-attribute
+  // create` commands operators need to paste. Probe failure (Temporal CLI
+  // missing, namespace unreachable) is downgraded to a warning — the
+  // createWorkers() call below will surface the connection error with
+  // better context. The hard-stop is only "namespace reached, but SAs
+  // missing".
+  {
+    const { verifySearchAttributes } = await import('./cli/sa-preflight');
+    const result = await verifySearchAttributes({
+      temporalAddress: config.temporalAddress,
+      temporalNamespace: config.temporalNamespace,
+    });
+    if (!result.ok && !result.probeError) {
+      process.stderr.write('ERROR: ' + result.message + '\n');
+      log('Daemon refused to boot — search attributes missing on namespace ' + config.temporalNamespace);
+      try { fs.unlinkSync(DAEMON_PID_PATH); } catch { /* ignore */ }
+      try { fs.unlinkSync(DAEMON_HEARTBEAT_PATH); } catch { /* ignore */ }
+      process.exit(1);
+    } else if (result.probeError) {
+      log(
+        'search-attribute preflight probe failed (non-fatal — createWorkers will surface the real error):',
+        result.probeError,
+      );
+    }
+  }
+
   // Use mutable refs so signal handlers can be registered before workers
   // are created — closes the narrow window where a SIGTERM during
   // createWorkers() would be missed.
@@ -1041,7 +1069,7 @@ async function main() {
       const { AggregateRunner } = await import('./http/aggregate');
       // #437 — pass the daemon's polling task queue through. `listHosts`
       // (called by `/v1/hosts`, snapshot.hostProfiles, dashboard, TUI,
-      // AggregateRunner) defaults to `'claude-tempo'` and silently
+      // AggregateRunner) defaults to `'agent-tempo'` and silently
       // returns `[]` in dev mode without this. Both `namespace` (already
       // baked into `reconcileClient.options.namespace`) and `taskQueue`
       // must match the daemon for poller discovery to find this host.

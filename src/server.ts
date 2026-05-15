@@ -94,7 +94,7 @@ async function main() {
   // Start the session workflow
   const workflowId = isConductor
     ? conductorWorkflowId(config.ensemble)
-    : `claude-session-${config.ensemble}-${playerId}`;
+    : `agent-session-${config.ensemble}-${playerId}`;
 
   const isBridgeMode = process.env[ENV.BRIDGE_MODE] === '1';
   // PR-B (v0.25 step 2/7): resolve the adapter descriptor through the registry.
@@ -129,17 +129,17 @@ async function main() {
     },
   };
 
-  const startedHandle = await client.workflow.start('claudeSessionWorkflow', {
+  const startedHandle = await client.workflow.start('agentSessionWorkflow', {
     workflowId,
     taskQueue: config.taskQueue,
     args: [sessionInput],
     workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
     // No execution timeout — workflows live until terminated status or stale detection.
     searchAttributes: {
-      ...(gitRoot ? { ClaudeTempoGitRoot: [gitRoot] } : {}),
-      ClaudeTempoHostname: [os.hostname()],
-      ClaudeTempoEnsemble: [config.ensemble],
-      ClaudeTempoPlayerId: [playerId],
+      ...(gitRoot ? { AgentTempoGitRoot: [gitRoot] } : {}),
+      AgentTempoHostname: [os.hostname()],
+      AgentTempoEnsemble: [config.ensemble],
+      AgentTempoPlayerId: [playerId],
     },
   });
   log(`Workflow ${workflowId} started (or reconnected)`);

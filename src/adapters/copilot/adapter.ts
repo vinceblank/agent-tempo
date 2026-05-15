@@ -225,7 +225,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
     this.configureV2(client, os.hostname());
 
     // Determine the expected workflow ID. The MCP server uses the pattern
-    // `claude-session-{ensemble}-{playerId}`, where playerId comes from
+    // `agent-session-{ensemble}-{playerId}`, where playerId comes from
     // AGENT_TEMPO_PLAYER_NAME or a random hex. We pass AGENT_TEMPO_PLAYER_NAME
     // to the MCP server env so both sides agree on the ID.
     const isConductor = process.env[ENV.CONDUCTOR] === 'true';
@@ -233,7 +233,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
     const playerIdForWorkflow = isConductor
       ? 'conductor'
       : (requestedName && requestedName !== 'conductor' ? requestedName : '') || `copilot-${Date.now()}`;
-    const expectedWorkflowId = `claude-session-${config.ensemble}-${playerIdForWorkflow}`;
+    const expectedWorkflowId = `agent-session-${config.ensemble}-${playerIdForWorkflow}`;
 
     // Build the MCP server command — always use the compiled dist/server.js
     // Run `npm run build` (or `pnpm build`) before using the bridge.

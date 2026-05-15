@@ -7,7 +7,7 @@
 # `setupTestEnv()` (exposed as `getTestEnsemble()` / the `playerMetadata()`
 # default). Literal `'test-ensemble'` re-introduces the cross-file workflow-ID
 # collisions the shared env was designed to avoid — e.g. two files both
-# starting `claude-session-test-ensemble-conductor`.
+# starting `agent-session-test-ensemble-conductor`.
 #
 # Allowed locations:
 #   - test/helpers.ts — owns the fallback default; one literal kept as safety

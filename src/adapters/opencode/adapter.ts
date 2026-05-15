@@ -185,7 +185,7 @@ export class OpenCodeAttachment extends SdkAttachment {
     const playerIdForWorkflow = isConductor
       ? 'conductor'
       : (requestedName && requestedName !== 'conductor' ? requestedName : '') || `opencode-${Date.now()}`;
-    const expectedWorkflowId = `claude-session-${config.ensemble}-${playerIdForWorkflow}`;
+    const expectedWorkflowId = `agent-session-${config.ensemble}-${playerIdForWorkflow}`;
     const workDir = process.cwd();
 
     log(`Starting opencode adapter in ${workDir} (ensemble: ${config.ensemble}, player: ${playerIdForWorkflow}, model: ${this.model})`);

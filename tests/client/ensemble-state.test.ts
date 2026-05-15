@@ -36,8 +36,8 @@ function makeClient(opts: {
 
   const sessionHandles = new Map<string, any>();
   for (const s of sessions) {
-    sessionHandles.set(`claude-session-${ensemble}-${s.playerId}`, {
-      workflowId: `claude-session-${ensemble}-${s.playerId}`,
+    sessionHandles.set(`agent-session-${ensemble}-${s.playerId}`, {
+      workflowId: `agent-session-${ensemble}-${s.playerId}`,
       async query(nameOrDef: unknown) {
         const name = asName(nameOrDef);
         if (name === 'getMetadata') {
@@ -74,9 +74,9 @@ function makeClient(opts: {
         }
         for (const s of sessions) {
           yield {
-            workflowId: `claude-session-${ensemble}-${s.playerId}`,
+            workflowId: `agent-session-${ensemble}-${s.playerId}`,
             searchAttributes: {
-              ClaudeTempoPlayerId: [s.playerId],
+              AgentTempoPlayerId: [s.playerId],
             },
           };
         }

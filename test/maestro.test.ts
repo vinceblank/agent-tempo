@@ -54,8 +54,8 @@ async function startMaestro(
     players: overrides.players,
     pollIntervalMs: FAST_POLL_MS,
   };
-  const uniqueId = `claude-maestro-${input.ensemble}-${++testCounter}`;
-  const handle = await client.workflow.start('claudeMaestroWorkflow', {
+  const uniqueId = `agent-maestro-${input.ensemble}-${++testCounter}`;
+  const handle = await client.workflow.start('agentMaestroWorkflow', {
     workflowId: uniqueId,
     taskQueue: TASK_QUEUE,
     args: [input],
@@ -68,7 +68,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-describe('claudeMaestroWorkflow', function () {
+describe('agentMaestroWorkflow', function () {
   before(async function () {
     // 120s matches `setupSharedEnv()` in helpers.ts — see issue #383 P1
     // for why 60s tipped over on contended runners. Inlined here (not

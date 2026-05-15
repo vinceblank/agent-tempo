@@ -147,10 +147,10 @@ export interface PersistedConfig {
  */
 export const DEV_HOME_DIR_NAME = '.agent-tempo-dev';
 export const PROD_HOME_DIR_NAME = '.agent-tempo';
-export const DEV_TEMPORAL_NAMESPACE = 'claude-tempo-dev';
+export const DEV_TEMPORAL_NAMESPACE = 'agent-tempo-dev';
 export const PROD_TEMPORAL_NAMESPACE = 'default';
-export const DEV_TASK_QUEUE = 'claude-tempo-dev';
-export const PROD_TASK_QUEUE = 'claude-tempo';
+export const DEV_TASK_QUEUE = 'agent-tempo-dev';
+export const PROD_TASK_QUEUE = 'agent-tempo';
 export const DEV_DAEMON_PORT = 8474;
 export const PROD_DAEMON_PORT = 8473;
 
@@ -676,25 +676,25 @@ export function hostTaskQueue(taskQueue: string, hostname: string): string {
   return `${taskQueue}-${hostname}`;
 }
 
-/** Build a workflow ID for a player session: claude-session-{ensemble}-{playerId} */
+/** Build a workflow ID for a player session: agent-session-{ensemble}-{playerId} */
 export function sessionWorkflowId(ensemble: string, playerId: string): string {
-  return `claude-session-${ensemble}-${playerId}`;
+  return `agent-session-${ensemble}-${playerId}`;
 }
 
-/** Build a workflow ID for a conductor: claude-session-{ensemble}-conductor */
+/** Build a workflow ID for a conductor: agent-session-{ensemble}-conductor */
 export function conductorWorkflowId(ensemble: string): string {
-  return `claude-session-${ensemble}-conductor`;
+  return `agent-session-${ensemble}-conductor`;
 }
 
-/** Build a workflow ID for the scheduler: claude-scheduler-{ensemble} */
+/** Build a workflow ID for the scheduler: agent-scheduler-{ensemble} */
 export function schedulerWorkflowId(ensemble: string): string {
-  return `claude-scheduler-${ensemble}`;
+  return `agent-scheduler-${ensemble}`;
 }
 
-/** Build a workflow ID for the Maestro: claude-maestro-{ensemble} */
+/** Build a workflow ID for the Maestro: agent-maestro-{ensemble} */
 export function maestroWorkflowId(ensemble: string): string {
-  return `claude-maestro-${ensemble}`;
+  return `agent-maestro-${ensemble}`;
 }
 
 /** Workflow ID for the single global Maestro instance. */
-export const GLOBAL_MAESTRO_WORKFLOW_ID = 'claude-maestro-global';
+export const GLOBAL_MAESTRO_WORKFLOW_ID = 'agent-maestro-global';

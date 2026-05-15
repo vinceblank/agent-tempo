@@ -107,7 +107,7 @@ function makeClient(fixture: MockSessionFixture) {
 const testConfig: Config = {
   temporalAddress: 'localhost:7233',
   temporalNamespace: 'default',
-  taskQueue: 'claude-tempo',
+  taskQueue: 'agent-tempo',
   ensemble: 'test-ensemble-restart-loadstate',
   defaultAgent: 'claude',
 };
@@ -141,7 +141,7 @@ describe('deliverRestart × loadFromState (#334 PR-2)', function () {
   // can be verified as substituting (or stacking) for the existing replay.
   it('control: no loadFromState → existing transcript-replay behaviour preserved', async function () {
     const { client, signals } = makeClient({
-      workflowId: 'claude-session-test-ensemble-soloist',
+      workflowId: 'agent-session-test-ensemble-soloist',
       metadata: baseMetadata,
       messages: [{ from: 'tempo-conductor', text: 'hello' }],
       playerState: { main: sampleEntry },
@@ -162,7 +162,7 @@ describe('deliverRestart × loadFromState (#334 PR-2)', function () {
 
   it('loadFromState:true with populated slot → seeds saved state, suppresses transcript replay', async function () {
     const { client, signals } = makeClient({
-      workflowId: 'claude-session-test-ensemble-soloist',
+      workflowId: 'agent-session-test-ensemble-soloist',
       metadata: baseMetadata,
       messages: [{ from: 'tempo-conductor', text: 'hello' }],
       playerState: { main: sampleEntry },
@@ -192,7 +192,7 @@ describe('deliverRestart × loadFromState (#334 PR-2)', function () {
       savedBy: 'soloist',
     };
     const { client, signals } = makeClient({
-      workflowId: 'claude-session-test-ensemble-soloist',
+      workflowId: 'agent-session-test-ensemble-soloist',
       metadata: baseMetadata,
       playerState: { main: sampleEntry, bookmark: customEntry },
     });
@@ -215,7 +215,7 @@ describe('deliverRestart × loadFromState (#334 PR-2)', function () {
 
   it('loadFromState:true with EMPTY slot → graceful fallback to transcript replay', async function () {
     const { client, signals } = makeClient({
-      workflowId: 'claude-session-test-ensemble-soloist',
+      workflowId: 'agent-session-test-ensemble-soloist',
       metadata: baseMetadata,
       messages: [{ from: 'tempo-conductor', text: 'pre-restart context' }],
       playerState: {}, // empty — nothing at 'main'
@@ -240,7 +240,7 @@ describe('deliverRestart × loadFromState (#334 PR-2)', function () {
 
   it('loadFromState:true + transcript:"replay" → STACK: saved state first, transcript second', async function () {
     const { client, signals } = makeClient({
-      workflowId: 'claude-session-test-ensemble-soloist',
+      workflowId: 'agent-session-test-ensemble-soloist',
       metadata: baseMetadata,
       messages: [{ from: 'tempo-conductor', text: 'transcript line' }],
       playerState: { main: sampleEntry },
@@ -266,7 +266,7 @@ describe('deliverRestart × loadFromState (#334 PR-2)', function () {
 
   it('loadFromState:true + fresh:true → state seeded, transcript skipped (fresh wins)', async function () {
     const { client, signals } = makeClient({
-      workflowId: 'claude-session-test-ensemble-soloist',
+      workflowId: 'agent-session-test-ensemble-soloist',
       metadata: baseMetadata,
       messages: [{ from: 'tempo-conductor', text: 'noise' }],
       playerState: { main: sampleEntry },
@@ -290,7 +290,7 @@ describe('deliverRestart × loadFromState (#334 PR-2)', function () {
 
   it('loadFromState:true + fresh:true + EMPTY slot → no messages at all', async function () {
     const { client, signals } = makeClient({
-      workflowId: 'claude-session-test-ensemble-soloist',
+      workflowId: 'agent-session-test-ensemble-soloist',
       metadata: baseMetadata,
       messages: [{ from: 'tempo-conductor', text: 'noise' }],
       playerState: {},
