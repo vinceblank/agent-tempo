@@ -74,7 +74,7 @@ describe('Orphans screen', () => {
 
   it('copy button calls navigator.clipboard.writeText with the migrate command', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(global.navigator, 'clipboard', {
+    Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: { writeText },
     });
