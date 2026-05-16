@@ -923,22 +923,9 @@ function initProject(dir: string) {
 
 const DEFAULT_DB_PATH = join(AGENT_TEMPO_HOME, 'temporal-data.db');
 
-const SEARCH_ATTRIBUTES = [
-  { name: 'AgentTempoHostname', type: 'Keyword' },
-  { name: 'AgentTempoGitRoot', type: 'Keyword' },
-  { name: 'AgentTempoEnsemble', type: 'Keyword' },
-  { name: 'AgentTempoPlayerId', type: 'Keyword' },
-  { name: 'AgentTempoPlayerType', type: 'Keyword' },
-  { name: 'AgentTempoIsConductor', type: 'Bool' },
-  // v0.25 attachment lifecycle search attrs (design §9, §11.2).
-  // Ops note: registration documented in docs/ops/v0.26-migration.md.
-  // `AgentTempoStatus` was removed in v0.26 (#175 / #178); operators on
-  // long-lived Temporal clusters must manually drop the attribute — Temporal
-  // does not auto-unregister search attributes.
-  { name: 'AgentTempoAttachedHost', type: 'Keyword' },
-  { name: 'AgentTempoAttachmentState', type: 'Keyword' },
-  { name: 'AgentTempoAttachmentId', type: 'Keyword' },
-];
+// Source of truth lives in `sa-preflight.ts` (REQUIRED_SEARCH_ATTRIBUTES) —
+// avoid drifting a second copy here.
+import { REQUIRED_SEARCH_ATTRIBUTES, registerSearchAttribute } from './sa-preflight';
 
 async function isTemporalReachable(config: { temporalAddress: string; temporalNamespace?: string; temporalApiKey?: string; temporalTlsCertPath?: string; temporalTlsKeyPath?: string }): Promise<boolean> {
   try {
@@ -969,22 +956,36 @@ function temporalCliExists(): boolean {
   }
 }
 
-function registerSearchAttributes(temporalAddress: string, namespace = 'default') {
-  for (const attr of SEARCH_ATTRIBUTES) {
-    try {
-      execFileSync('temporal', [
-        'operator', 'search-attribute', 'create',
-        '--address', temporalAddress,
-        '--namespace', namespace,
-        '--name', attr.name,
-        '--type', attr.type,
-      ], { stdio: ['ignore', 'ignore', 'ignore'] });
-      out.success(`Registered search attribute: ${attr.name}`);
-    } catch {
-      // Already exists or other error — safe to ignore
-      out.dim(`  ${attr.name} (already exists)`);
+function registerSearchAttributes(temporalAddress: string, namespace = 'default'): { failed: number } {
+  let failed = 0;
+  for (const attr of REQUIRED_SEARCH_ATTRIBUTES) {
+    const r = registerSearchAttribute(attr, temporalAddress, namespace);
+    switch (r.status) {
+      case 'created':
+        out.success(`Registered search attribute: ${attr.name}`);
+        break;
+      case 'already-exists':
+        out.dim(`  ${attr.name} (already registered)`);
+        break;
+      case 'failed':
+        // Surface the real error — pre-#605 this branch was silently
+        // labeled "already exists" and the operator only discovered the
+        // problem hours later when workflow start failed with
+        // INVALID_ARGUMENT. Most common cause on the SQLite dev server is
+        // the 10-Keyword-per-namespace cap (often hit when a namespace
+        // accumulates both old + new wire-rename attribute families).
+        failed++;
+        out.warn(`Failed to register ${attr.name}: ${r.detail}`);
+        break;
     }
   }
+  if (failed > 0) {
+    out.warn(
+      `${failed} search attribute${failed === 1 ? '' : 's'} not registered — ` +
+      `workflow starts will fail. Resolve the errors above before continuing.`,
+    );
+  }
+  return { failed };
 }
 
 interface ServerOpts extends CliOverrides {

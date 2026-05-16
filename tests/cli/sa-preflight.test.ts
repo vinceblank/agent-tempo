@@ -16,6 +16,7 @@ import {
   verifySearchAttributes,
   assertSearchAttributesOrExit,
   formatPreflightError,
+  classifyRegistrationOutput,
 } from '../../src/cli/sa-preflight';
 
 const ALL_REGISTERED = new Set(REQUIRED_SEARCH_ATTRIBUTES.map((a) => a.name));
@@ -104,6 +105,37 @@ describe('formatPreflightError', () => {
       'default',
     );
     expect(msg).toContain('temporal operator search-attribute create --name AgentTempoEnsemble --type Keyword --namespace default');
+  });
+});
+
+describe('classifyRegistrationOutput', () => {
+  it('reports `created` on exit 0', () => {
+    expect(classifyRegistrationOutput(0, '')).toEqual({ status: 'created' });
+  });
+
+  it('reports `already-exists` for the human-readable variant', () => {
+    expect(classifyRegistrationOutput(1, 'search attribute "X" already exists'))
+      .toEqual({ status: 'already-exists' });
+  });
+
+  it('reports `already-exists` for the gRPC AlreadyExists code', () => {
+    expect(classifyRegistrationOutput(1, 'code = AlreadyExists desc = ...'))
+      .toEqual({ status: 'already-exists' });
+  });
+
+  it('reports `failed` with detail for the SQLite Keyword cap (real-world regression)', () => {
+    const r = classifyRegistrationOutput(
+      1,
+      'unable to add search attributes: cannot have more than 10 search attribute of type Keyword.',
+    );
+    expect(r.status).toBe('failed');
+    expect(r.detail).toContain('more than 10');
+  });
+
+  it('falls back to a synthetic detail when no output is available', () => {
+    const r = classifyRegistrationOutput(null, '', 'ENOENT: temporal not found');
+    expect(r.status).toBe('failed');
+    expect(r.detail).toBe('ENOENT: temporal not found');
   });
 });
 
