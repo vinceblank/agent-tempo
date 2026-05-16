@@ -314,6 +314,19 @@ export function installTemporalZombieReaper(): void {
 let testEnv: TestWorkflowEnvironment | undefined;
 let workflowBundle: { code: string } | undefined;
 
+/**
+ * #596 — exposed for tests that build custom Worker pairs (e.g. ADR 0016
+ * bg-spawn coverage which needs to stub `claudeStop` on the per-host
+ * queue). Returns the pre-built workflow bundle loaded by `setupTestEnv`;
+ * throws if called before setup.
+ */
+export function getWorkflowBundle(): { code: string } {
+  if (!workflowBundle) {
+    throw new Error('getWorkflowBundle() called before setupTestEnv() — ensure your before() hook awaits setupSharedEnv/setupTestEnv first.');
+  }
+  return workflowBundle;
+}
+
 /** Opt-out switch — each `setupTestEnv` re-creates a fresh env when set. */
 const ISOLATED_MODE = process.env.TEMPO_TEST_ISOLATED === '1';
 

@@ -1,0 +1,31 @@
+name: tempo-bg-jam
+description: >
+  Experimental — every interactive claude-code player launches via
+  `claude --bg` (Anthropic per-user supervisor) instead of opening a
+  terminal window. See docs/ops/bg-spawn.md and docs/adr/0016-bg-spawn.md.
+  Requires `claude` CLI with --bg support and an interactively-accepted
+  permission dialog in each player's workDir.
+
+experimental:
+  spawn: true       # gate — required for ANY 'bg' to resolve
+
+spawn: bg           # lineup-wide default
+
+conductor:
+  type: tempo-conductor
+  instructions: >
+    You are coordinating a bg-spawn ensemble — every recruited player
+    runs under Anthropic's Claude Code supervisor (visible in `claude
+    agents`). Use cue/report normally; the MCP/Temporal channel works
+    the same. Restart-with-replay is unavailable under bg — use
+    `loadFromState` (ADR 0011) when you need to preserve context across
+    a restart.
+
+players:
+  - name: tempo-eng
+    type: my-tempo-engineer
+    instructions: >
+      Test player for the bg-spawn experiment. Confirm via `who_am_i`
+      that you are running and respond to cues. Save any working state
+      via `save_state` before reporting "ready" so the conductor can
+      exercise the restart-with-loadFromState path.

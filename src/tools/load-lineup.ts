@@ -227,6 +227,12 @@ export function registerLoadLineupTool(
               allowedTools: player.allowedTools,
               claudeBin: config.claudeBin,
               ...(hold ? { held: true } : {}),
+              // #596 / ADR 0016 — pass through the loader-resolved spawn mode.
+              // `_spawn` is set by `loadLineup` after applying precedence
+              // (per-player > lineup > 'terminal') and the experimental-gate
+              // check. Only forward to the outbox when 'bg' (terminal is the
+              // implicit default; omitting keeps the entry minimal).
+              ...((player as any)._spawn === 'bg' && agentType === 'claude' ? { spawnMode: 'bg' as const } : {}),
             } as OutboxEntryInput;
             await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
             recruited.push(playerName);

@@ -77,7 +77,7 @@ export const recordSentMessageSignal = defineSignal<[{ to: string; text: string;
 export const setPartSignal = defineSignal<[string]>('setPart');
 export const markDeliveredSignal = defineSignal<[string[]]>('markDelivered');
 export const setNameSignal = defineSignal<[string]>('setName');
-export const updateMetadataSignal = defineSignal<[{ hostname?: string; gitBranch?: string; gitRoot?: string; terminatedBy?: string; enableStaleDetection?: boolean; playerType?: string; playerTypeDescription?: string; worktreePath?: string; sessionId?: string }]>('updateMetadata');
+export const updateMetadataSignal = defineSignal<[{ hostname?: string; gitBranch?: string; gitRoot?: string; terminatedBy?: string; enableStaleDetection?: boolean; playerType?: string; playerTypeDescription?: string; worktreePath?: string; sessionId?: string; spawnMode?: 'terminal' | 'bg'; bgFullUuid?: string; bgShortId?: string }]>('updateMetadata');
 
 // ── Player Queries ──
 
@@ -202,6 +202,11 @@ export const enqueueSpawnUpdate = defineUpdate<
     nativeResolvable?: boolean;
     /** #131 Phase C — claude-api model id carried across restart. */
     model?: string;
+    /** #596 / ADR 0016 — spawn-mode override carried across restart so the
+     *  re-spawn lands on the same supervisor (`'bg'`) or terminal-window
+     *  (`'terminal'`) path as the original recruit. Additive; absent payloads
+     *  default to `'terminal'`. */
+    spawnMode?: 'terminal' | 'bg';
   }]
 >('enqueueSpawn');
 

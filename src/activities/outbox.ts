@@ -12,7 +12,8 @@ import {
 } from '../utils/validation';
 import { ENSEMBLE_SENTINEL_FLAG } from '../constants';
 import { getGitInfo } from '../git-info';
-import { spawnInTerminal, spawnCopilotBridge, spawnClaudeApiAdapter, spawnOpenCodeAdapter, spawnClaudeCodeHeadlessAdapter } from '../spawn';
+import { spawnInTerminal, spawnClaudeBg, spawnCopilotBridge, spawnClaudeApiAdapter, spawnOpenCodeAdapter, spawnClaudeCodeHeadlessAdapter } from '../spawn';
+import { bgPreflight } from '../utils/bg-preflight';
 import type { ClaudeCodeHeadlessPermissionMode } from '../adapters/claude-code-headless/types';
 import { ENV } from '../config';
 import { resolveSession } from './resolve';
@@ -184,6 +185,16 @@ export interface StartRecruitedSessionInput {
    * can recover the original choice. Ignored when `agent !== 'claude-api'`.
    */
   model?: string;
+  /**
+   * #596 / ADR 0016 — spawn mode resolved at recruit time. Persisted onto
+   * `SessionMetadata.spawnMode` so the workflow durably remembers whether
+   * this session was launched via `claude --bg` (supervisor-owned) or the
+   * legacy terminal-window path. Read by `destroy` (to choose `claude stop`
+   * vs `hard-terminate`) and by `restart` (to populate `SpawnOutboxEntry`).
+   * Absent payloads default to `'terminal'`. Silently ignored when
+   * `agent !== 'claude'`.
+   */
+  spawnMode?: 'terminal' | 'bg';
 }
 
 export interface ReleasePlayerInput {
@@ -286,6 +297,15 @@ export interface SpawnProcessInput {
    * exclusive with {@link permissionMode}.
    */
   dangerouslySkipPermissions?: boolean;
+  /**
+   * #596 / ADR 0016 — when `'bg'`, route the interactive `claude-code`
+   * spawn through `claude --bg` (Anthropic's per-user supervisor) instead
+   * of `spawnInTerminal`. Pre-assigned `sessionId` is passed as
+   * `--session-id <uuid>` so the supervisor adopts a deterministic short
+   * id (`uuid.slice(0,8)`). Silently ignored for non-claude-code adapters.
+   * Absent payloads default to `'terminal'` (existing behavior).
+   */
+  spawnMode?: 'terminal' | 'bg';
 }
 
 // ── Activity result type ──
@@ -402,7 +422,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async startRecruitedSession(input: StartRecruitedSessionInput): Promise<RecruitResult> {
-      const { ensemble, targetName, workDir, isConductor, initialMessage, fromPlayerId, agent, systemPrompt, taskQueue, agentDefinition, agentDefinitionDescription, held, model } = input;
+      const { ensemble, targetName, workDir, isConductor, initialMessage, fromPlayerId, agent, systemPrompt, taskQueue, agentDefinition, agentDefinitionDescription, held, model, spawnMode } = input;
       try {
         const workflowId = isConductor
           ? conductorWorkflowId(ensemble)
@@ -410,8 +430,15 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
 
         const { gitRoot, gitBranch } = getGitInfo(workDir);
 
-        // Generate a UUID for the session — used for deterministic --resume on encore
+        // Generate a UUID for the session — used for deterministic --resume on encore.
+        // #596 / ADR 0016 — same UUID is also the supervisor's full id when
+        // `spawnMode === 'bg'`; the supervisor's 8-char short id is `slice(0,8)`.
         const sessionId = crypto.randomUUID();
+        // #596 / ADR 0016 — only persist bg-* fields when actually launching
+        // via `claude --bg` AND the adapter is interactive claude-code.
+        const isBgClaudeCode = spawnMode === 'bg' && agent === 'claude';
+        const bgFullUuid = isBgClaudeCode ? sessionId : undefined;
+        const bgShortId = isBgClaudeCode ? sessionId.slice(0, 8) : undefined;
 
         // Warm hold: process will spawn and go active, but outbox is locked and
         // the initial message is deferred. A standby message is sent instead.
@@ -440,6 +467,9 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             // (different value shapes — bare vs `provider/model`) — the spawn
             // path inspects `metadata.agentType` to know which env var to set.
             ...((agent === 'claude-api' || agent === 'opencode') && model ? { model } : {}),
+            // #596 / ADR 0016 — persist spawn-mode + supervisor identifiers
+            // onto durable metadata so destroy/restart can read them later.
+            ...(isBgClaudeCode ? { spawnMode: 'bg' as const, bgFullUuid, bgShortId } : {}),
             ...(agentDefinition ? { playerType: agentDefinition } : {}),
             ...(agentDefinitionDescription ? { playerTypeDescription: agentDefinitionDescription } : {}),
             recruitedBy: fromPlayerId,
@@ -499,7 +529,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
-      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId, mockMode, mockScenario, model, permissionMode, dangerouslySkipPermissions } = input;
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId, mockMode, mockScenario, model, permissionMode, dangerouslySkipPermissions, spawnMode } = input;
       // Read secrets from the worker's config closure — never from workflow state
       const { temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = config;
       try {
@@ -674,8 +704,35 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           if (attachmentId) envVars[ENV.ATTACHMENT_ID] = attachmentId;
           if (attachmentRunId) envVars[ENV.ATTACHMENT_RUN_ID] = attachmentRunId;
           if (adapterId) envVars[ENV.ADAPTER_ID] = adapterId;
-          const { pid } = spawnInTerminal(spawnArgs, workDir, envVars, { claudeBin });
-          log(`Spawned claude process (pid ${pid}) in ${workDir} as "${targetName}" (resume=${!!resume}${attachmentId ? `, attachmentId=${attachmentId}` : ''})`);
+          // #596 / ADR 0016 — branch on spawn mode. `'bg'` hands the session
+          // to Anthropic's per-user supervisor via `claude --bg --session-id <uuid>`
+          // (no terminal window; appears in `claude agents`). The pre-assigned
+          // sessionId IS the supervisor's full UUID (short id = `slice(0,8)`).
+          // Permission preflight is required because the supervisor refuses
+          // bypass modes that were never accepted in the target cwd.
+          if (spawnMode === 'bg') {
+            if (!sessionId) {
+              throw ApplicationFailure.nonRetryable(
+                `spawnProcess: spawnMode='bg' requires a pre-assigned sessionId from startRecruitedSession (ADR 0016 Q1).`,
+              );
+            }
+            const preflight = bgPreflight(workDir, { claudeBin });
+            if (!preflight.ok) {
+              throw ApplicationFailure.nonRetryable(preflight.error || 'claude --bg preflight failed');
+            }
+            // `claude --bg` consumes `--session-id` itself (spawnClaudeBg prepends
+            // it); strip it from the user-arg list to avoid duplication.
+            const bgArgs = spawnArgs.filter((arg, idx, arr) => {
+              if (arg === '--session-id') return false;
+              if (idx > 0 && arr[idx - 1] === '--session-id') return false;
+              return true;
+            });
+            const { pid } = spawnClaudeBg(bgArgs, workDir, envVars, { claudeBin, sessionId });
+            log(`Spawned claude --bg (pid ${pid}, sessionId ${sessionId}, shortId ${sessionId.slice(0, 8)}) in ${workDir} as "${targetName}"${attachmentId ? `, attachmentId=${attachmentId}` : ''}${preflight.cached ? ' [preflight cached]' : ''}`);
+          } else {
+            const { pid } = spawnInTerminal(spawnArgs, workDir, envVars, { claudeBin });
+            log(`Spawned claude process (pid ${pid}) in ${workDir} as "${targetName}" (resume=${!!resume}${attachmentId ? `, attachmentId=${attachmentId}` : ''})`);
+          }
         }
 
         return { success: true };
@@ -859,6 +916,25 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
 
         // Step 3 — metadata + adapter routing.
         const metadata = await handle.query(getMetadataQuery) as SessionMetadata;
+        // #596 / ADR 0016 — restart-replay guard. `claude --bg --resume` is
+        // a known upstream limitation: the supervisor silently drops the
+        // resume and spawns a fresh UUID (dispatch.launch.mode comes back
+        // as `'prompt'`, not `'resume'`). Surface as an explicit
+        // ApplicationFailure so callers can swap to `loadFromState`
+        // (ADR 0011) rather than silently losing prior context. See
+        // docs/ops/bg-spawn.md for the full upstream behavior writeup.
+        //
+        // This lives in the activity (not the workflow) because the data we
+        // need to decide — durable metadata.spawnMode + the inbound
+        // `transcript` flag — both live on the activity input. The workflow
+        // patched() marker pattern is reserved for changes in workflow
+        // determinism; an activity-side validation throw doesn't replay.
+        if (metadata.spawnMode === 'bg' && transcript === 'replay') {
+          throw ApplicationFailure.nonRetryable(
+            `claude --bg cannot resume prior context (upstream CLI limitation: --resume is silently dropped under --bg, see docs/ops/bg-spawn.md). Use loadFromState or transcript: 'none'.`,
+            'BgSpawnReplayUnsupported',
+          );
+        }
         // ADR 0014 PR-2 — mock adapter restart path. `mock` is dev-mode only;
         // a metadata.agentType='mock' here implies the dev daemon previously
         // spawned this player and is now restarting it (encore / migrate).
@@ -993,7 +1069,22 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         // mint a new UUID on every restart, persist it to metadata, and never
         // pass `resume: true` to the spawn.
         const spawnSessionId = crypto.randomUUID();
-        await handle.signal(updateMetadataSignal, { sessionId: spawnSessionId });
+        // #596 / ADR 0016 — when the original recruit was bg, the fresh restart
+        // is ALSO bg (spawnMode is carried across), so refresh the bg
+        // supervisor identifiers on metadata. `claude --bg --resume` is broken
+        // upstream (see docs/ops/bg-spawn.md), so the new spawn is a fresh
+        // supervisor job with a new short id. Destroy of the OLD short id is
+        // intentionally NOT chained here — restart is an attachment-level
+        // operation; the legacy supervisor job is left for explicit `destroy`
+        // or operator-side `claude stop` cleanup.
+        const isBgRestart = metadata.spawnMode === 'bg' && metadata.agentType === 'claude';
+        await handle.signal(updateMetadataSignal, {
+          sessionId: spawnSessionId,
+          ...(isBgRestart ? {
+            bgFullUuid: spawnSessionId,
+            bgShortId: spawnSessionId.slice(0, 8),
+          } : {}),
+        });
 
         // Issue #184: re-resolve on the invoker host against the session's
         // workDir (NOT the daemon's process.cwd — daemon runs elsewhere than
@@ -1021,6 +1112,11 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             // metadata.model field landed (which fall back to the env / default
             // chain inside the adapter).
             ...(metadata.model !== undefined ? { model: metadata.model } : {}),
+            // #596 / ADR 0016 — carry spawn-mode across restart. The re-spawn
+            // mints a fresh UUID (because `--bg --resume` is broken upstream,
+            // see docs/ops/bg-spawn.md), but stays on the `claude --bg` path
+            // so the user's Agent View experience is consistent.
+            ...(metadata.spawnMode !== undefined ? { spawnMode: metadata.spawnMode } : {}),
             ...(resolved ? {
               agentDefinition: resolved.name,
               agentDefinitionPath: resolved.path,

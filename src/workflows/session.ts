@@ -160,6 +160,34 @@ function getHardTerminateProxyForDestroy(hostname: string) {
   }).hardTerminateAttachment;
 }
 
+/**
+ * #596 / ADR 0016 — host-routed proxy for `claude stop <shortId>` (per-user
+ * supervisor termination of a `claude --bg`-spawned session). 20s upper
+ * bound covers the supervisor's documented worst case plus Windows
+ * process-spawn overhead. `maximumAttempts: 1` — destroy is terminal, no
+ * retries: a failure here falls through to `hardTerminateAttachment` as
+ * defense in depth.
+ */
+interface ClaudeStopProxy {
+  claudeStop(input: {
+    shortId: string;
+    claudeBin?: string;
+  }): Promise<{
+    success: boolean;
+    outcome: 'stopped' | 'already-gone' | 'error';
+    detail?: string;
+    exitCode?: number;
+  }>;
+}
+function getClaudeStopProxy(hostname: string) {
+  return proxyActivities<ClaudeStopProxy>({
+    taskQueue: `agent-tempo-${hostname}`,
+    startToCloseTimeout: '20 seconds',
+    scheduleToCloseTimeout: '20 seconds',
+    retry: { maximumAttempts: 1 },
+  }).claudeStop;
+}
+
 export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   // ── v0.25 Attachment Lifecycle Timers (design §2.3, §9.5) ──
   // PR-C commit 6 (#119a): each attachment carries its own `leaseMs` (negotiated at
@@ -496,6 +524,11 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     if (update.sessionId != null || (update as any).claudeSessionId != null) {
       input.metadata.sessionId = update.sessionId ?? (update as any).claudeSessionId;
     }
+    // #596 / ADR 0016 — bg supervisor identifiers refreshed on restart so
+    // destroy can target the new supervisor job's short id.
+    if (update.spawnMode != null) input.metadata.spawnMode = update.spawnMode;
+    if (update.bgFullUuid != null) input.metadata.bgFullUuid = update.bgFullUuid;
+    if (update.bgShortId != null) input.metadata.bgShortId = update.bgShortId;
     // `update.enableStaleDetection` is silently dropped — attachment phase
     // (driven by the V2 wire surface: claimAttachment / adapterExited /
     // forceDetach / destroy) is authoritative for lifecycle state.
@@ -712,22 +745,54 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       preferredHost ??
       input.metadata.hostname;
     if (killHost) {
-      try {
-        const killResult: HardTerminateResult = await getHardTerminateProxyForDestroy(killHost)({
-          ensemble: input.metadata.ensemble,
-          playerName: input.metadata.playerId,
-          agent: (input.metadata.agentType ?? 'claude') as AgentType,
-          workDir: input.metadata.workDir,
-        });
-        workflowLog.info(
-          `destroy hard-terminate on ${killHost} (phase=${phase}): strategy=${killResult.strategy}, ` +
-          `killedPids=[${killResult.killedPids.join(',')}]`,
-        );
-      } catch (err) {
-        workflowLog.warn(
-          `destroy hard-terminate failed on ${killHost} (continuing, best-effort): ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-        );
+      // #596 / ADR 0016 — bg-spawned sessions are owned by Anthropic's
+      // per-user supervisor, not us. The supervisor's documented stop verb
+      // (`claude stop <shortId>`) is the only clean way to terminate without
+      // leaking the job from `~/.claude/daemon/roster.json`. `hardTerminate`
+      // PID-scan would always come back `strategy: 'none'` because the
+      // claude process tree is parented under the supervisor, not under our
+      // spawn. Skip hard-terminate when claude-stop reported `'stopped'` /
+      // `'already-gone'`; fall through (defense in depth) when it errored.
+      let claudeStopHandled = false;
+      if (
+        input.metadata.spawnMode === 'bg' &&
+        input.metadata.bgShortId &&
+        input.metadata.agentType === 'claude'
+      ) {
+        try {
+          const stopResult = await getClaudeStopProxy(killHost)({
+            shortId: input.metadata.bgShortId,
+          });
+          workflowLog.info(
+            `destroy claude-stop on ${killHost} (shortId=${input.metadata.bgShortId}): ` +
+            `outcome=${stopResult.outcome}, exit=${stopResult.exitCode ?? '?'}`,
+          );
+          claudeStopHandled = stopResult.success;
+        } catch (err) {
+          workflowLog.warn(
+            `destroy claude-stop failed on ${killHost} (falling back to hard-terminate): ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      if (!claudeStopHandled) {
+        try {
+          const killResult: HardTerminateResult = await getHardTerminateProxyForDestroy(killHost)({
+            ensemble: input.metadata.ensemble,
+            playerName: input.metadata.playerId,
+            agent: (input.metadata.agentType ?? 'claude') as AgentType,
+            workDir: input.metadata.workDir,
+          });
+          workflowLog.info(
+            `destroy hard-terminate on ${killHost} (phase=${phase}): strategy=${killResult.strategy}, ` +
+            `killedPids=[${killResult.killedPids.join(',')}]`,
+          );
+        } catch (err) {
+          workflowLog.warn(
+            `destroy hard-terminate failed on ${killHost} (continuing, best-effort): ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
     }
     // Flip destroyRequested AFTER the kill so the main loop stays alive for activity
@@ -945,7 +1010,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
    * `sessionId`/`adapterId` into the activity signature so the adapter boots
    * into the pre-claimed attachment.
    */
-  setHandler(enqueueSpawnUpdate, ({ host, attachmentId, runId, resume, sessionId, adapterId, agentDefinition, agentDefinitionPath, nativeResolvable, model }) => {
+  setHandler(enqueueSpawnUpdate, ({ host, attachmentId, runId, resume, sessionId, adapterId, agentDefinition, agentDefinitionPath, nativeResolvable, model, spawnMode }) => {
     const spawnEntryId = uuid4();
     const entry: SpawnOutboxEntry = {
       id: spawnEntryId,
@@ -965,6 +1030,8 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       nativeResolvable,
       // #131 Phase C — claude-api model id carried across restart.
       ...(model !== undefined ? { model } : {}),
+      // #596 / ADR 0016 — spawn-mode carried across restart.
+      ...(spawnMode !== undefined ? { spawnMode } : {}),
       createdAt: workflowNow().toISOString(),
       status: 'pending',
     };
@@ -1619,6 +1686,10 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
               // #131 Phase C — claude-api model id; activity persists it onto
               // SessionMetadata.model so restart/encore/migrate can recover it.
               ...(entry.model !== undefined ? { model: entry.model } : {}),
+              // #596 / ADR 0016 — spawn-mode persisted onto SessionMetadata
+              // so destroy can route to `claude stop` and restart can re-spawn
+              // on the same path. Silently ignored for non-claude adapters.
+              ...(entry.spawnMode !== undefined ? { spawnMode: entry.spawnMode } : {}),
             });
             // Warm hold: process always spawns. When held, the workflow's outbox
             // is locked and the initial message is deferred until release.
@@ -1644,6 +1715,9 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
               // #131 Phase C — forward to spawnProcess so spawnClaudeApiAdapter
               // can plumb it into the subprocess env (AGENT_TEMPO_API_MODEL).
               ...(entry.model !== undefined ? { model: entry.model } : {}),
+              // #596 / ADR 0016 — spawn-mode for spawnProcess branch on
+              // `claude --bg` vs spawnInTerminal.
+              ...(entry.spawnMode !== undefined ? { spawnMode: entry.spawnMode } : {}),
             });
             break;
           }
@@ -1726,6 +1800,9 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
               // spawn outbox entry (sourced from durable SessionMetadata.model
               // by deliverRestart).
               ...(entry.model !== undefined ? { model: entry.model } : {}),
+              // #596 / ADR 0016 — spawn-mode carried across restart so the
+              // re-spawn lands on the same supervisor / terminal path.
+              ...(entry.spawnMode !== undefined ? { spawnMode: entry.spawnMode } : {}),
             });
             break;
           }

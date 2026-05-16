@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, resolve } from 'path';
 import { parse as parseYaml } from 'yaml';
-import { EnsembleLineup } from './schema';
+import { EnsembleLineup, SpawnMode } from './schema';
 import { AGENT_TEMPO_HOME } from '../config';
 
 /** Walk up from a directory to find the nearest package.json. */
@@ -123,6 +123,79 @@ export function loadLineup(filePath: string): EnsembleLineup {
     }
   }
 
+  // ── ADR 0016 — experimental + spawn validation ───────────────────────
+  const SPAWN_VALUES: readonly SpawnMode[] = ['terminal', 'bg'];
+  const isSpawnMode = (v: unknown): v is SpawnMode =>
+    typeof v === 'string' && (SPAWN_VALUES as readonly string[]).includes(v);
+
+  // experimental block (open shape — only `spawn` recognised today)
+  let experimentalSpawn = false;
+  if (doc.experimental != null) {
+    if (typeof doc.experimental !== 'object' || Array.isArray(doc.experimental)) {
+      throw new Error(
+        `Invalid lineup: "experimental" must be a mapping (e.g. \`experimental:\\n  spawn: true\`).`,
+      );
+    }
+    if (doc.experimental.spawn != null) {
+      if (typeof doc.experimental.spawn !== 'boolean') {
+        throw new Error(
+          `Invalid lineup: "experimental.spawn" must be a boolean (got ${typeof doc.experimental.spawn}).`,
+        );
+      }
+      experimentalSpawn = doc.experimental.spawn === true;
+    }
+  }
+
+  // top-level spawn
+  if (doc.spawn != null && !isSpawnMode(doc.spawn)) {
+    throw new Error(
+      `Invalid lineup: "spawn" must be one of ${SPAWN_VALUES.map((v) => `"${v}"`).join(' | ')} (got "${doc.spawn}").`,
+    );
+  }
+  const lineupSpawn: SpawnMode | undefined = doc.spawn;
+
+  // per-player spawn — validate enum first, gate check below after collecting
+  for (let i = 0; i < doc.players.length; i++) {
+    const p = doc.players[i];
+    if (p.spawn != null && !isSpawnMode(p.spawn)) {
+      throw new Error(
+        `Invalid lineup: players[${i}].spawn must be one of ${SPAWN_VALUES.map((v) => `"${v}"`).join(' | ')} (got "${p.spawn}").`,
+      );
+    }
+  }
+
+  // Experimental gate: ANY resolved spawn === 'bg' requires experimental.spawn === true.
+  // Apply precedence: per-player > lineup > 'terminal' (default).
+  const resolvedSpawns: SpawnMode[] = doc.players.map((p: any): SpawnMode =>
+    (p.spawn as SpawnMode | undefined) ?? lineupSpawn ?? 'terminal',
+  );
+  const wantsBg = resolvedSpawns.some((s) => s === 'bg') || lineupSpawn === 'bg';
+  if (wantsBg && !experimentalSpawn) {
+    throw new Error(
+      `spawn: bg requires 'experimental.spawn: true' at the top of the lineup.`,
+    );
+  }
+
+  // Warning (not error) if spawn:bg resolves for a non-claude-code player.
+  // The dispatch layer silently ignores the field for non-claude-code adapters,
+  // but the warning helps users catch lineup typos early.
+  for (let i = 0; i < doc.players.length; i++) {
+    const p = doc.players[i];
+    const resolved = resolvedSpawns[i];
+    if (resolved === 'bg') {
+      const agent = (p.agent as string | undefined) ?? 'claude';
+      // 'claude' / undefined / 'default' all map to the interactive
+      // claude-code adapter at recruit time. Anything else is non-claude-code.
+      const isClaudeCode = !agent || agent === 'claude' || agent === 'default';
+      if (!isClaudeCode) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[agent-tempo:lineup] players[${i}] "${p.name}" has spawn: bg but agent: "${agent}" — bg spawn is only supported for the claude-code adapter (#596 / ADR 0016). The spawn field will be silently ignored for this player.`,
+        );
+      }
+    }
+  }
+
   // Validate conductor name if present
   if (doc.conductor?.name != null) {
     if (typeof doc.conductor.name !== 'string' || !doc.conductor.name) {
@@ -136,8 +209,10 @@ export function loadLineup(filePath: string): EnsembleLineup {
   return {
     name: doc.name,
     description: doc.description,
+    ...(doc.experimental != null && { experimental: { ...(experimentalSpawn && { spawn: true }) } }),
+    ...(lineupSpawn != null && { spawn: lineupSpawn }),
     conductor: doc.conductor,
-    players: doc.players.map((p: any) => ({
+    players: doc.players.map((p: any, i: number) => ({
       name: p.name,
       ...(p.type != null && { type: p.type }),
       ...(p.workDir != null && { workDir: p.workDir }),
@@ -149,7 +224,27 @@ export function loadLineup(filePath: string): EnsembleLineup {
       // dev-mode `agent: "mock"` requirement) and the spawn layer.
       ...(p.mockMode != null && { mockMode: p.mockMode }),
       ...(p.mockScenario != null && { mockScenario: p.mockScenario }),
+      // ADR 0016 — per-player spawn (raw, for round-trip / save_lineup)
+      ...(p.spawn != null && { spawn: p.spawn as SpawnMode }),
+      // ADR 0016 — resolved spawn after precedence; dispatcher reads this
+      _spawn: resolvedSpawns[i],
     })),
     schedules: doc.schedules,
   };
+}
+
+/**
+ * Resolve the effective spawn mode for a player. Exposed for tests and for
+ * call sites that build `RecruitOutboxEntry` instances directly without
+ * going through `loadLineup` (the lineup loader already populates the
+ * transient `_spawn` field; this helper is the single source of truth for
+ * the precedence rule).
+ *
+ * Precedence: per-player > lineup > built-in default `'terminal'`.
+ */
+export function resolveSpawnMode(
+  player: { spawn?: SpawnMode },
+  lineup: { spawn?: SpawnMode },
+): SpawnMode {
+  return player.spawn ?? lineup.spawn ?? 'terminal';
 }

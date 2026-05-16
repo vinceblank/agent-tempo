@@ -244,6 +244,28 @@ export interface SessionMetadata {
    * (the spawn falls back to `AGENT_TEMPO_API_MODEL` env / pinned default).
    */
   model?: string;
+  /**
+   * #596 / ADR 0016 — spawn mode used for the original recruit. Carried
+   * durably so `destroy` can resolve whether to invoke `claude stop`
+   * (when `'bg'`) before falling back to `hard-terminate`, and so
+   * `restart` can re-spawn under the same supervisor / terminal path.
+   * Absent on pre-#596 sessions and on every non-claude-code adapter
+   * (only the interactive claude-code adapter has a bg branch).
+   */
+  spawnMode?: 'terminal' | 'bg';
+  /**
+   * #596 / ADR 0016 — full session UUID assigned at recruit time for
+   * `claude --bg --session-id <uuid>`. Populated only when
+   * `spawnMode === 'bg'`. Stable across restart (the same UUID is
+   * passed back to `claude --bg` so the supervisor adopts the slot).
+   */
+  bgFullUuid?: string;
+  /**
+   * #596 / ADR 0016 — supervisor's 8-char short id, deterministically
+   * `bgFullUuid.slice(0, 8)`. Populated only when `spawnMode === 'bg'`.
+   * Used by `destroy` to invoke `claude stop <shortId>`.
+   */
+  bgShortId?: string;
 }
 
 export interface AgentTypeInfo {
@@ -621,6 +643,24 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
    * when `agent !== 'claude-code-headless'`.
    */
   dangerouslySkipPermissions?: boolean;
+  /**
+   * #596 / ADR 0016 — experimental spawn-mode override for the interactive
+   * `claude-code` adapter.
+   *
+   * - `'terminal'` (default when absent): existing per-recruit terminal
+   *   window via `spawnInTerminal`.
+   * - `'bg'`: route through `claude --bg` so Anthropic's per-user Claude
+   *   Code supervisor takes pty ownership. Session appears in
+   *   `claude agents` / `~/.claude/daemon/roster.json`. Requires the
+   *   operator to have accepted `--dangerously-skip-permissions`
+   *   interactively at least once in the target cwd (probed by
+   *   `bg-preflight`).
+   *
+   * Additive wire change — old workflows that omit the field land on
+   * the `'terminal'` branch unchanged. Silently ignored when
+   * `agent !== 'claude'` (only the claude-code adapter has a bg path).
+   */
+  spawnMode?: 'terminal' | 'bg';
 }
 
 export interface ReleaseOutboxEntry extends OutboxEntryBase {
@@ -755,6 +795,14 @@ export interface SpawnOutboxEntry extends OutboxEntryBase {
    * subprocess runs the same model the original recruit chose.
    */
   model?: string;
+  /**
+   * #596 / ADR 0016 — spawn-mode override carried across restart so the
+   * re-spawn lands on the same supervisor (`'bg'`) or terminal window
+   * (`'terminal'`) path as the original recruit. Read from durable
+   * {@link SessionMetadata.spawnMode} by `deliverRestart`. Additive;
+   * absent payloads default to `'terminal'`.
+   */
+  spawnMode?: 'terminal' | 'bg';
 }
 
 export type OutboxEntry =

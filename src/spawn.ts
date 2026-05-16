@@ -421,6 +421,52 @@ export function spawnInTerminal(
   return { pid: child.pid };
 }
 
+/**
+ * #596 / ADR 0016 — invoke `claude --bg <args>` directly so Anthropic's
+ * per-user Claude Code supervisor takes ownership of the new session
+ * (visible in `claude agents` / `~/.claude/daemon/roster.json`).
+ *
+ * Unlike {@link spawnInTerminal}, no terminal window opens — the supervisor
+ * owns the pty and the user views/peeks/attaches via Agent View. The session
+ * still loads the agent-tempo MCP server (via `--dangerously-load-development-channels`)
+ * and still registers itself as a tempo player on MCP boot, so
+ * cue/report/recall flow normally via Temporal.
+ *
+ * **Arg ordering** (matters for Claude Code's arg parser): `--bg` first,
+ * then `--session-id <uuid>` so the supervisor adopts the pre-assigned slot,
+ * then user args.
+ *
+ * **Pre-requisite**: the operator must have accepted
+ * `--dangerously-skip-permissions` interactively at least once in the
+ * target cwd (the supervisor refuses bypass modes that were never
+ * accepted). `bgPreflight()` (`src/utils/bg-preflight.ts`) probes for this
+ * before the spawn activity calls into here.
+ *
+ * Returns the PID of the `claude --bg` invocation itself, which exits
+ * quickly after handing the new session to the supervisor. The supervised
+ * session lives independently in the supervisor's `~/.claude/jobs/<short>/`
+ * directory; `claude stop <shortId>` is the supported termination verb.
+ */
+export function spawnClaudeBg(
+  claudeArgs: string[],
+  workDir: string,
+  envVars: Record<string, string>,
+  options: { claudeBin?: string; sessionId: string },
+): { pid: number | undefined } {
+  const claudeBin = resolveClaudePath(options?.claudeBin);
+  const finalArgs = ['--bg', '--session-id', options.sessionId, ...claudeArgs];
+  const child = spawn(claudeBin, finalArgs, {
+    cwd: workDir,
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, ...envVars },
+    shell: process.platform === 'win32',
+  });
+  child.unref();
+  log(`Spawned claude --bg (pid ${child.pid}, sessionId ${options.sessionId}) in ${workDir}`);
+  return { pid: child.pid };
+}
+
 // --- Copilot bridge spawning ---
 
 export interface CopilotBridgeOpts {

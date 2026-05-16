@@ -175,6 +175,31 @@ tick-orphan recurrence. The CAN-boundary lease extension also uses `currentAttac
 (= 3× `heartbeatMs`, negotiated at claim time) instead of a hardcoded 30s — ensuring a CAN
 between heartbeats does not prematurely reap a healthy attachment.
 
+### Spawn mode (#596 / ADR 0016, experimental)
+
+Interactive `claude-code` players can launch via two paths:
+
+- **`terminal`** (default) — `spawnInTerminal` opens a per-recruit terminal
+  window; agent-tempo owns the pty. Destroy uses `hardTerminateAttachment`
+  (PID-scan), `restart` with `transcript: 'replay'` resumes via
+  `claude --resume <sessionId>`.
+- **`bg`** (experimental, opt-in) — `claude --bg --session-id <uuid>` hands
+  the session to Anthropic's per-user Claude Code supervisor. No terminal
+  window; the session appears in `claude agents` and
+  `~/.claude/daemon/roster.json`. Destroy uses `claude stop <shortId>`
+  (per-host activity) with `hardTerminateAttachment` as the defense-in-depth
+  fallback. `restart` with `transcript: 'replay'` is **unavailable** —
+  upstream `--bg --resume` silently drops the resume; use `loadFromState`
+  (ADR 0011) instead.
+
+The lineup loader resolves the effective mode per player with precedence
+**per-player `spawn` > lineup `spawn` > `'terminal'` default**. `spawn: bg`
+requires `experimental.spawn: true` at the lineup root; absence of the gate
+is a hard validation error. The `spawn` field is silently ignored on
+non-`claude-code` adapters (a load-time warning catches typos). See
+[`docs/ops/bg-spawn.md`](ops/bg-spawn.md) for prerequisites, the
+`restart`/`loadFromState` workflow, and troubleshooting.
+
 ---
 
 ## Cross-ensemble primitives

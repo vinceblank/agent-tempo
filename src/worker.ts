@@ -9,6 +9,7 @@ import { createTemporalConnection } from './connection';
 import { createScheduleActivities } from './activities/schedule-fire';
 import { createOutboxActivities } from './activities/outbox';
 import { createMaestroActivities } from './activities/maestro';
+import { claudeStop } from './activities/claude-stop';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:worker]', ...args);
 
@@ -121,6 +122,10 @@ export async function createWorkers(config: Config): Promise<DualWorkers> {
       // #159 Gap 2: host-local OS-process kill. Must live on the per-host queue so it runs
       // on the machine where the claude.exe / bridge process actually lives.
       hardTerminateAttachment: outboxActivities.hardTerminateAttachment,
+      // #596 / ADR 0016: `claude stop <shortId>` for bg-spawned sessions.
+      // Per-host because the supervisor lives on the daemon machine; running
+      // it elsewhere just gives `No job matching` on every call.
+      claudeStop,
     },
   });
 
