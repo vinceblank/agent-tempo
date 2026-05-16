@@ -47,6 +47,7 @@ import { SdkAttachment } from '../sdk/base';
 // claude-code-headless adapter mirrors the same dialect).
 import { MAESTRO_ACK, buildSdkSystemPrompt } from '../sdk/system-prompt';
 import { updateMetadataSignal } from '../../workflows/signals';
+import { installParentDeathWatchdog } from '../../utils/parent-death-watchdog';
 
 /**
  * Descriptor for the copilot adapter. Kept colocated with the class so
@@ -720,6 +721,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
 // `node .../adapter.js` or `ts-node .../adapter.ts`. Keeps the file usable both
 // as an importable class and as a spawn target.
 if (require.main === module) {
+  installParentDeathWatchdog();
   new CopilotSdkAttachment().run().catch((err) => {
     log('Fatal error:', err);
     process.exit(1);
