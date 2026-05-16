@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ensemble-gh — run `gh` as claude-tempo[bot] instead of your personal account.
+# ensemble-gh — run `gh` as agent-tempo[bot] instead of your personal account.
 #
 # Players in the ensemble should use this wrapper for any GitHub interaction
 # that should be attributed to the bot (issue comments, PR creation, merges,

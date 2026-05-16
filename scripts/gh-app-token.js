@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Mints a short-lived GitHub App installation token for claude-tempo[bot].
+// Mints a short-lived GitHub App installation token for agent-tempo[bot].
 //
 // Usage:
 //   node scripts/gh-app-token.js           → prints installation token to stdout
