@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `agent-tempo down --destroy` no longer skips sessions and maestro/scheduler workflows that
+  were started without the `AgentTempoEnsemble` search attribute (e.g. from a partially-migrated
+  build). The previous logic derived workflow IDs from the search attribute and bailed out early
+  when the attribute was absent, leaving orphans behind. Enumeration now queries each workflow
+  type directly and terminates by ID, independent of search-attribute state.
+- Search-attribute registration errors are now surfaced instead of silently swallowed. Previously
+  every non-zero `temporal operator search-attribute create` exit was labeled "already exists",
+  hiding real failures (namespace Keyword cap exceeded, server unreachable, CLI missing) until a
+  downstream workflow start failed with a confusing `INVALID_ARGUMENT` hours later.
+
 ## [1.0.0] - 2026-05-15
 
 ### ⚠️ BREAKING — `claude-tempo` is now `agent-tempo`
