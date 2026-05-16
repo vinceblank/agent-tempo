@@ -1,4 +1,4 @@
-# GitHub App: `claude-tempo[bot]`
+# GitHub App: `agent-tempo[bot]`
 
 Players in the ensemble can interact with GitHub (issues, PRs, commits, CI) under
 a dedicated bot identity instead of the maintainer's personal account. This gives
@@ -23,8 +23,8 @@ The installed permissions match a full "shipping team":
 Deliberately **not** granted: secrets management, collaborator/settings mutation,
 repo deletion. Those stay human-only.
 
-GitHub always blocks self-approval, so a PR opened by `claude-tempo[bot]` cannot
-be approved by `claude-tempo[bot]`. That guardrail is the point — a human (or a
+GitHub always blocks self-approval, so a PR opened by `agent-tempo[bot]` cannot
+be approved by `agent-tempo[bot]`. That guardrail is the point — a human (or a
 different identity) must approve before merge.
 
 ## Credentials layout
@@ -92,7 +92,7 @@ an AI ensemble acting on behalf of @vinceblank. For a human, mention @vinceblank
 Single-line variant (for terse comments):
 
 ```markdown
-— 🎼 _claude-tempo[bot] (AI). Mention @vinceblank for a human._
+— 🎼 _agent-tempo[bot] (AI). Mention @vinceblank for a human._
 ```
 
 Include it in the body you pass to `ensemble-gh`, not via a server-side
@@ -168,7 +168,7 @@ Procedure:
 # Post and immediately delete a test comment
 url=$(./scripts/ensemble-gh issue comment <issue-number> \
   --body "smoke test — will be deleted" --repo vinceblank/agent-tempo)
-# verify identity shows as claude-tempo[bot], then:
+# verify identity shows as agent-tempo[bot], then:
 comment_id="${url##*issuecomment-}"
 ./scripts/ensemble-gh api -X DELETE \
   repos/vinceblank/agent-tempo/issues/comments/"$comment_id"
