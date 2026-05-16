@@ -62,6 +62,7 @@ import {
   buildEnsembleSnapshot,
   EnsembleNotFoundError,
 } from './snapshot';
+import { handleOrphans } from './orphans';
 import {
   ConnectionCap,
   DEFAULT_MAX_CONNECTIONS,
@@ -412,6 +413,19 @@ export async function handle(
 
   if (pathname === '/v1/hosts') {
     return handleHosts(res, ctx);
+  }
+
+  // #579 — cluster-wide cross-host orphan listing for the dashboard.
+  // Same bearer + CORS gate as `/v1/hosts`; optional `?ensemble=<name>`
+  // narrows to one ensemble.
+  if (pathname === '/v1/orphans') {
+    const ensembleFilter = url.searchParams.get('ensemble') ?? undefined;
+    return handleOrphans(res, {
+      client: ctx.client,
+      // os.hostname() is OS-cached + sub-millisecond — no need to thread
+      // through HandleContext just for one rendering site.
+      dashboardHost: require('os').hostname(),
+    }, ensembleFilter);
   }
 
   // Catalog reads (issue #400) — `listAgentTypes` / `listLineups`

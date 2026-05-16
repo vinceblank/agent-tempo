@@ -137,6 +137,21 @@ export class MockDashboardClient implements DashboardTempoClient {
     return this.hostList;
   }
 
+  /**
+   * #579 — empty orphans by default. Tests that exercise the Orphans
+   * screen or Sidebar badge override `this.orphansResponse`.
+   */
+  public orphansResponse: { v: 1; capturedAt: string; orphans: unknown[] } = {
+    v: 1,
+    capturedAt: '2026-05-16T00:00:00.000Z',
+    orphans: [],
+  };
+  public orphansError: Error | null = null;
+  async orphans(): Promise<any> {
+    if (this.orphansError) throw this.orphansError;
+    return this.orphansResponse;
+  }
+
   async agentTypes(): Promise<AgentTypeRow[]> {
     if (this.agentTypesError) throw this.agentTypesError;
     return [...this.agentTypeList];

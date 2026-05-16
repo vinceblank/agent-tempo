@@ -35,10 +35,10 @@ import { Brandmark } from './Brandmark';
 import { MaestroAvatar } from './MaestroAvatar';
 import { UnreadBadge } from './notifications/UnreadBadge';
 import { useNotifications } from '../lib/notifications';
-import { useEnsembleList } from '../lib/queries';
+import { useEnsembleList, useOrphanCount } from '../lib/queries';
 
 interface NavItem {
-  id: 'overview' | 'loadouts' | 'types' | 'schedules' | 'hosts' | 'settings';
+  id: 'overview' | 'loadouts' | 'types' | 'schedules' | 'hosts' | 'orphans' | 'settings';
   /** Mono glyph used as the row's icon — readable when the rail collapses. */
   icon: string;
   label: string;
@@ -47,13 +47,15 @@ interface NavItem {
 }
 
 /** Library section nav items, in display order. Ids match audit; paths
- * match `src/router.tsx`. Glyphs come from `workspace.jsx:160-165`. */
+ * match `src/router.tsx`. Glyphs come from `workspace.jsx:160-165`.
+ * #579 — "orphans" inserted between Hosts and Schedules per brief. */
 const LIBRARY_NAV: ReadonlyArray<NavItem> = [
   { id: 'overview', icon: '◇', label: 'Overview', to: '/' },
   { id: 'loadouts', icon: '≡', label: 'Loadouts', to: '/loadouts' },
   { id: 'types', icon: '♪', label: 'Player types', to: '/player-types' },
-  { id: 'schedules', icon: '⧗', label: 'Schedules', to: '/schedules' },
   { id: 'hosts', icon: '⌂', label: 'Hosts', to: '/hosts' },
+  { id: 'orphans', icon: '⚠', label: 'Orphans', to: '/orphans' },
+  { id: 'schedules', icon: '⧗', label: 'Schedules', to: '/schedules' },
   { id: 'settings', icon: '⚙', label: 'Settings', to: '/settings' },
 ] as const;
 
@@ -77,6 +79,10 @@ export function Sidebar() {
   // to 0 and `<UnreadBadge>` renders nothing. The Sidebar stays
   // standalone-renderable.
   const { unread, markRead } = useNotifications();
+  // #579 — Orphan badge. Falls back to 0 (badge hidden) if the
+  // count query errors. The hook is registered unconditionally so
+  // React's hook order stays stable.
+  const orphanCount = useOrphanCount().data ?? 0;
 
   return (
     <aside className="sidebar" data-testid="sidebar" aria-label="Main navigation">
@@ -188,6 +194,17 @@ export function Sidebar() {
           >
             <span className="nav-icon">{item.icon}</span>
             <span>{item.label}</span>
+            {/* #579 — Orphan-count badge. Hidden when 0 so the rail
+                stays calm in the common (cluster-tidy) case. */}
+            {item.id === 'orphans' && orphanCount > 0 && (
+              <span
+                data-testid="sidebar-orphans-badge"
+                className="notif-badge"
+                aria-label={`${orphanCount} orphan${orphanCount === 1 ? '' : 's'}`}
+              >
+                {orphanCount}
+              </span>
+            )}
           </NavLink>
         ))}
       </div>

@@ -36,6 +36,7 @@ This document is the authoritative reference for the **HTTP/SSE event source** e
 | `GET` | `/v1/ensembles` | `application/json` | `EnsembleSummary[]` — replaces existing `TempoClient.listEnsembles()` polling. |
 | `GET` | `/v1/state/:ensemble` | `application/json` | Single-ensemble snapshot, including `lastEventId` (see §7.2). |
 | `GET` | `/v1/hosts` | `application/json` | `HostInfo[]` — mirror of `TempoClient.listHosts()`. Cached 3 s server-side (matches existing TempoClient cache). |
+| `GET` | `/v1/orphans[?ensemble=<name>]` | `application/json` | `OrphansV1` — cluster-wide cross-host orphans (#579). Cached 3 s server-side; keyed by ensemble filter. Same bearer + CORS gate as `/v1/hosts`. See § 4.5. |
 | `GET` | `/v1/events/:ensemble` | `text/event-stream` | Per-ensemble SSE stream. Optional `?topics=phase,chat,flags,schedules,heartbeat` query filter. |
 | `GET` | `/v1/events` | `text/event-stream` | **Global stream** — strictly limited to cluster-shape events (`ensemble.created`, `ensemble.destroyed`, `host_profile.changed`, `heartbeat`). Never per-ensemble events; subscribers wanting those open `/v1/events/:ensemble`. |
 | `OPTIONS` | (any) | `204 No Content` | CORS preflight (see §3). |
@@ -190,6 +191,38 @@ interface PlayerSummaryV1 {
 ### 4.4 `/v1/hosts`
 
 `HostInfo[]` — shape from `src/utils/hosts.ts`.
+
+### 4.5 `/v1/orphans[?ensemble=<name>]` (#579)
+
+Cluster-wide cross-host orphan listing. Returns `OrphansV1` (defined in `src/http/event-types.ts`):
+
+```ts
+interface OrphansV1 {
+  v: 1;
+  capturedAt: string;
+  orphans: OrphanV1[];
+}
+interface OrphanV1 {
+  playerId: string;
+  ensemble: string;
+  workflowId: string;
+  preferredHost: string | null;
+  hostLiveness: 'live' | 'stale' | 'missing';
+  phase: AttachmentPhase;
+  detachedSince: string | null;
+  lastHeartbeatAt: string | null;
+  /** Render-ready TUI slash command the operator pastes to recover. */
+  migrateCommand: string;
+}
+```
+
+- **Auth**: identical bearer + CORS gates to `/v1/hosts`. Loopback bind without `--http-token`: allowed unauthenticated; non-loopback or with a token: bearer required.
+- **Filter**: optional `?ensemble=<name>` narrows to a single ensemble. Omitted → all ensembles.
+- **Cache**: 3 s server-side cache keyed by `ensembleFilter ?? '__all__'` (mirrors `/v1/hosts`). The filter and unfiltered call have independent cache entries.
+- **`hostLiveness`** is joined server-side against `listHosts()` so consumers don't have to re-issue a hosts query per row. `'live'` / `'stale'` mirror `HostInfo.freshness`; `'missing'` covers both null `preferredHost` AND absent-from-hosts cases.
+- **`migrateCommand`** is a TUI slash-command string the operator pastes into any local session. Always positional `<player> <host>`; falls back to `--force --yes-steal=<lastKnownHost>` (with `(unknown)` placeholder if even that is missing) when `preferredHost` is null. Wording matches `src/tui/commands.ts:handleMigrate` — flag form is `--yes-steal=` NOT `--confirm-steal-from-host`.
+- **Partial-tolerance**: a per-candidate `attachmentInfo` / `orphanSummary` query failure does NOT fail the request — the row is dropped silently and the remainder of the listing is returned with HTTP 200. Mirrors `queryOrphanedSessions`'s existing skip-and-log contract.
+- **View-only in v1**: no click-to-adopt / click-to-destroy on the response. Recovery is operator-side via `migrateCommand`.
 
 ---
 

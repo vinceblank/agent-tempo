@@ -82,6 +82,11 @@ export function createOverflowFixtureClient(regime: OverflowRegime): DashboardTe
       return fixtureEnsembleSnapshot(regime, ensemble);
     },
     async hosts() { return hosts; },
+    async orphans() {
+      // #579 — overflow shim never has cross-host orphans; the screen
+      // surfaces its empty-state copy and the sidebar badge stays hidden.
+      return { v: 1 as const, capturedAt: new Date().toISOString(), orphans: [] };
+    },
     async agentTypes() { return agentTypes; },
     async lineups() { return lineups; },
     subscribe(_ensemble: string, opts: SubscribeOptions = {}): AsyncIterable<TempoEvent> {

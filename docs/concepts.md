@@ -175,6 +175,33 @@ tick-orphan recurrence. The CAN-boundary lease extension also uses `currentAttac
 (= 3× `heartbeatMs`, negotiated at claim time) instead of a hardcoded 30s — ensuring a CAN
 between heartbeats does not prematurely reap a healthy attachment.
 
+### Cross-host orphans (#579)
+
+A **cross-host orphan** is a session workflow whose attachment phase is
+live (`detached` / `draining` / `attached` / `processing` / `awaiting`)
+but whose home-host daemon isn't running an adapter — typically because
+the host went down, the daemon crashed without an orderly destroy, or
+the host's process tree was killed mid-workflow. The workflow stays
+alive in Temporal; only the adapter is gone.
+
+Three surfaces expose orphans, in increasing scope:
+
+- `agent-tempo restore` — recovers orphans **on the current host** only.
+  Backed by `restoreOrphansOnce` in `mode: 'local'`.
+- `agent-tempo restore --all-hosts` — read-only cluster-view listing
+  (#151). Same query, just doesn't auto-restore — emits each row as a
+  `crossHost` skip the operator can act on with `/migrate`.
+- **Dashboard `/orphans` view** (#579) — the cluster-view rendered as a
+  table with `migrateCommand` strings the operator pastes into a TUI
+  session on the recovery host. View-only in v1.
+
+All three share `queryOrphanedSessions` (`src/reconcile/orphans.ts`) as
+the visibility query and the same `buildCrossHostDetail` formatter for
+the preferred-host fallback chain. The dashboard wire surface is
+`GET /v1/orphans[?ensemble=<name>]`; see
+[`docs/ops/cross-host-orphans.md`](ops/cross-host-orphans.md) for the
+operator runbook.
+
 ---
 
 ## Cross-ensemble primitives

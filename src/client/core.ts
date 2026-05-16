@@ -1041,6 +1041,16 @@ export function createTempoClientCore(
       });
     },
 
+    async listAllOrphans(opts: { ensemble?: string; force?: boolean } = {}) {
+      // Lazy import — `reconcile/orphans` pulls validation/visibility
+      // helpers we don't need on every TempoClient consumer.
+      const { listAllOrphansCached } = await import('../reconcile/orphans');
+      return listAllOrphansCached(client, {
+        force: Boolean(opts.force),
+        ...(opts.ensemble ? { ensemble: opts.ensemble } : {}),
+      });
+    },
+
     async recall(ensemble, playerId) {
       // #128: direct session queries, no maestro round-trip. Throws rather
       // than returning empties so the CLI / TUI wrappers can surface a
