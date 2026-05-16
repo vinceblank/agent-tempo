@@ -32,12 +32,18 @@ Spike at `fd1f3d44` (3 files, +63/-3) feature-gates `spawnInTerminal` → `spawn
 
 The full design is recorded inline below; six locked answers + a single-PR implementation plan + a documented restart-replay constraint.
 
-### Q1: Spawn / discoverability — pre-assigned UUID
+### Q1: Spawn / discoverability — ~~pre-assigned UUID~~ stdout discovery (ERRATUM 2026-05-16)
 
-- Generate the full session UUID **in the spawn activity** (`src/activities/outbox.ts`), not the workflow (workflow determinism forbids `crypto.randomUUID()`).
-- Pass `--session-id <uuid>` to `claude --bg`. The supervisor's 8-char short id is deterministically `uuid.slice(0,8)`.
-- Stash both `fullUuid` and `shortId` on the existing workflow `metadata` map at spawn time. No new query surface needed.
-- `destroy` on a bg-spawned session resolves `shortId` from `metadata` and fires a `claude stop <shortId>` activity. Existing per-host `hard-terminate` activity remains the fallback if `claude stop` exits non-zero or times out.
+> **Erratum (live-E2E discovery)**: the original `--session-id <uuid>` pre-assignment plan is **empirically broken on `claude 2.1.140`**. The supervisor ignores `--session-id` under `--bg`, emits the warning `"--bg manages the session id; ignoring --session-id (use --resume <id> to continue an existing session)"`, and assigns its own UUID. Alternative #6 below ("stdout-parse the supervisor's `backgrounded · <short>` line"), originally rejected, is now the implemented design.
+>
+> **Implemented plan**:
+
+- `claude --bg` is invoked WITHOUT `--session-id` (the supervisor would warn and ignore it anyway).
+- `spawnClaudeBg` (`src/spawn.ts`) captures stdout and regex-parses the supervisor's adoption banner (`backgrounded · <8-hex-shortId> (idle …)`, regex exported as `BG_SHORT_ID_PATTERN`).
+- The spawn activity (`src/activities/outbox.ts:spawnProcess`) calls `updateMetadataSignal({ spawnMode: 'bg', bgShortId })` on the target workflow once the parse returns.
+- `SessionMetadata.bgFullUuid` is **unused** under stdout discovery (no API takes the full UUID under `--bg`; the supervisor's full UUID lives in `roster.json` if anyone ever needs it).
+- `destroy` on a bg-spawned session reads `metadata.bgShortId` and fires a `claudeStop` activity (`src/activities/claude-stop.ts`). Per-host `hardTerminateAttachment` remains the fallback when `bgShortId` is absent (parse failed at spawn time) or when `claude stop` returns a non-`already-gone` error.
+- If `spawnClaudeBg` returns `shortId: undefined` (banner missing or supervisor surface drift), `spawnProcess` throws an `ApplicationFailure.nonRetryable` carrying the captured stdout diagnostic so the operator can file an upstream-surface-drift bug.
 
 ### Q2: Permission preflight — dry-run probe with daemon-lifetime cache
 
@@ -154,7 +160,7 @@ Single PR keeps the wire-protocol additive change (`spawnMode` on `RecruitOutbox
 3. **Per-recruit `useBg: true` recruit arg** instead of lineup-level field. Rejected: most users want this lineup-wide; per-recruit is a leakier abstraction with no carrier for "all my interactive players are bg by default."
 4. **New adapter type `claude-code-bg`.** Rejected: explodes the adapter matrix, complicates `who_am_i` semantics; `spawn:` mode is orthogonal to adapter identity.
 5. **Auto-degrade restart-replay to `terminal`** for that one restart. Rejected: silent mode-switch violates user intent; explicit error is more honest.
-6. **Stdout-parse the supervisor's `backgrounded · <short>` line** to discover short id. Rejected in favor of `--session-id <uuid>` pre-assignment — eliminates a parse step and lets the workflow own session-id allocation.
+6. **Stdout-parse the supervisor's `backgrounded · <short>` line** to discover short id. ~~Rejected in favor of `--session-id <uuid>` pre-assignment — eliminates a parse step and lets the workflow own session-id allocation.~~ **Adopted as implemented design** (see Q1 erratum above) — pre-assignment is empirically broken on `claude 2.1.140`.
 7. **File upstream bug at `anthropics/claude-code` for `--bg --resume` drop.** Out of scope per vinceblank — document the observed behavior in `docs/ops/bg-spawn.md` and move on.
 
 ---

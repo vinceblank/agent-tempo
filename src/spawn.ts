@@ -432,9 +432,15 @@ export function spawnInTerminal(
  * and still registers itself as a tempo player on MCP boot, so
  * cue/report/recall flow normally via Temporal.
  *
- * **Arg ordering** (matters for Claude Code's arg parser): `--bg` first,
- * then `--session-id <uuid>` so the supervisor adopts the pre-assigned slot,
- * then user args.
+ * **Short-id discovery via stdout** (ADR 0016 erratum):
+ * The ADR's Q1 originally proposed pre-assigning a UUID via `--session-id`
+ * and deriving the supervisor's 8-char short id deterministically as
+ * `uuid.slice(0, 8)`. Empirically broken on `claude 2.1.140`: the supervisor
+ * ignores `--session-id` under `--bg` (emits the warning `"--bg manages the
+ * session id; ignoring --session-id (use --resume <id> to continue an
+ * existing session)"` and assigns its own UUID. We therefore omit
+ * `--session-id` from the arg list and recover the supervisor's assigned
+ * short id by parsing the spawn's stdout (`backgrounded · <shortId> (idle …)`).
  *
  * **Pre-requisite**: the operator must have accepted
  * `--dangerously-skip-permissions` interactively at least once in the
@@ -442,29 +448,73 @@ export function spawnInTerminal(
  * accepted). `bgPreflight()` (`src/utils/bg-preflight.ts`) probes for this
  * before the spawn activity calls into here.
  *
- * Returns the PID of the `claude --bg` invocation itself, which exits
- * quickly after handing the new session to the supervisor. The supervised
+ * Returns the spawn PID + the supervisor-assigned short id. The supervised
  * session lives independently in the supervisor's `~/.claude/jobs/<short>/`
  * directory; `claude stop <shortId>` is the supported termination verb.
  */
-export function spawnClaudeBg(
+export interface SpawnClaudeBgResult {
+  /** PID of the `claude --bg` invocation itself (exits quickly after the supervisor adopts). */
+  pid: number | undefined;
+  /** Supervisor-assigned 8-char short id parsed from stdout, or `undefined` if parse failed. */
+  shortId: string | undefined;
+  /** Raw stdout snippet, captured for diagnostics when `shortId` is undefined. */
+  stdoutDiagnostic?: string;
+}
+
+/** Stdout pattern emitted by `claude --bg` after the supervisor adopts the session. */
+export const BG_SHORT_ID_PATTERN = /backgrounded\s*[·•]\s*([0-9a-f]{8})/i;
+
+export async function spawnClaudeBg(
   claudeArgs: string[],
   workDir: string,
   envVars: Record<string, string>,
-  options: { claudeBin?: string; sessionId: string },
-): { pid: number | undefined } {
+  options?: { claudeBin?: string },
+): Promise<SpawnClaudeBgResult> {
   const claudeBin = resolveClaudePath(options?.claudeBin);
-  const finalArgs = ['--bg', '--session-id', options.sessionId, ...claudeArgs];
-  const child = spawn(claudeBin, finalArgs, {
-    cwd: workDir,
-    detached: true,
-    stdio: 'ignore',
-    env: { ...process.env, ...envVars },
-    shell: process.platform === 'win32',
+  // No `--session-id` — the supervisor invents its own under --bg (see fn JSDoc).
+  const finalArgs = ['--bg', ...claudeArgs];
+  return new Promise<SpawnClaudeBgResult>((resolve) => {
+    const child = spawn(claudeBin, finalArgs, {
+      cwd: workDir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ...envVars },
+      shell: process.platform === 'win32',
+    });
+    let stdout = '';
+    let stderr = '';
+    let shortId: string | undefined;
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      stdout += String(chunk);
+      // Resolve as soon as the supervisor prints the adoption banner —
+      // we don't need to wait for `claude --bg` to exit (it'll close stdout
+      // and detach immediately after).
+      if (!shortId) {
+        const match = stdout.match(BG_SHORT_ID_PATTERN);
+        if (match) shortId = match[1];
+      }
+    });
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      stderr += String(chunk);
+    });
+    child.on('exit', (code) => {
+      if (!shortId) {
+        log(
+          `Spawned claude --bg (pid ${child.pid}) in ${workDir}, exit=${code}, ` +
+          `but no shortId parsed from stdout. ` +
+          `stdout=${JSON.stringify(stdout.slice(0, 400))} ` +
+          `stderr=${JSON.stringify(stderr.slice(0, 400))}`,
+        );
+        resolve({ pid: child.pid, shortId: undefined, stdoutDiagnostic: stdout.slice(0, 400) });
+      } else {
+        log(`Spawned claude --bg (pid ${child.pid}, supervisor shortId ${shortId}) in ${workDir}`);
+        resolve({ pid: child.pid, shortId });
+      }
+    });
+    child.on('error', (err) => {
+      log(`Failed to spawn claude --bg in ${workDir}: ${err.message}`);
+      resolve({ pid: undefined, shortId: undefined, stdoutDiagnostic: err.message });
+    });
   });
-  child.unref();
-  log(`Spawned claude --bg (pid ${child.pid}, sessionId ${options.sessionId}) in ${workDir}`);
-  return { pid: child.pid };
 }
 
 // --- Copilot bridge spawning ---

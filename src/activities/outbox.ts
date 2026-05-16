@@ -431,14 +431,16 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         const { gitRoot, gitBranch } = getGitInfo(workDir);
 
         // Generate a UUID for the session — used for deterministic --resume on encore.
-        // #596 / ADR 0016 — same UUID is also the supervisor's full id when
-        // `spawnMode === 'bg'`; the supervisor's 8-char short id is `slice(0,8)`.
+        // #596 / ADR 0016 erratum: under `spawn: bg` this UUID is NOT the
+        // supervisor's id — `claude --bg` ignores `--session-id` and assigns
+        // its own. The supervisor's short id is discovered post-spawn by
+        // parsing `spawnClaudeBg`'s stdout and persisted onto metadata via a
+        // follow-up `updateMetadataSignal({ bgShortId })` from the activity.
         const sessionId = crypto.randomUUID();
-        // #596 / ADR 0016 — only persist bg-* fields when actually launching
-        // via `claude --bg` AND the adapter is interactive claude-code.
+        // #596 / ADR 0016 — persist spawnMode upfront so downstream destroy
+        // can short-circuit to `claude stop` (or fall through to hard-terminate
+        // if `bgShortId` never landed because spawn-stdout-parse failed).
         const isBgClaudeCode = spawnMode === 'bg' && agent === 'claude';
-        const bgFullUuid = isBgClaudeCode ? sessionId : undefined;
-        const bgShortId = isBgClaudeCode ? sessionId.slice(0, 8) : undefined;
 
         // Warm hold: process will spawn and go active, but outbox is locked and
         // the initial message is deferred. A standby message is sent instead.
@@ -467,9 +469,10 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             // (different value shapes — bare vs `provider/model`) — the spawn
             // path inspects `metadata.agentType` to know which env var to set.
             ...((agent === 'claude-api' || agent === 'opencode') && model ? { model } : {}),
-            // #596 / ADR 0016 — persist spawn-mode + supervisor identifiers
-            // onto durable metadata so destroy/restart can read them later.
-            ...(isBgClaudeCode ? { spawnMode: 'bg' as const, bgFullUuid, bgShortId } : {}),
+            // #596 / ADR 0016 — persist spawn-mode upfront; bgShortId arrives
+            // post-spawn via `updateMetadataSignal` from spawnProcess (the
+            // supervisor invents its own id under --bg).
+            ...(isBgClaudeCode ? { spawnMode: 'bg' as const } : {}),
             ...(agentDefinition ? { playerType: agentDefinition } : {}),
             ...(agentDefinitionDescription ? { playerTypeDescription: agentDefinitionDescription } : {}),
             recruitedBy: fromPlayerId,
@@ -705,30 +708,51 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           if (attachmentRunId) envVars[ENV.ATTACHMENT_RUN_ID] = attachmentRunId;
           if (adapterId) envVars[ENV.ADAPTER_ID] = adapterId;
           // #596 / ADR 0016 — branch on spawn mode. `'bg'` hands the session
-          // to Anthropic's per-user supervisor via `claude --bg --session-id <uuid>`
-          // (no terminal window; appears in `claude agents`). The pre-assigned
-          // sessionId IS the supervisor's full UUID (short id = `slice(0,8)`).
-          // Permission preflight is required because the supervisor refuses
-          // bypass modes that were never accepted in the target cwd.
+          // to Anthropic's per-user supervisor via `claude --bg` (no terminal
+          // window; appears in `claude agents`). The supervisor invents its
+          // own UUID + short id under --bg and prints the short id to stdout;
+          // spawnClaudeBg parses it and we persist it onto SessionMetadata so
+          // destroy can `claude stop <shortId>` later. Permission preflight is
+          // required because the supervisor refuses bypass modes that were
+          // never accepted in the target cwd.
           if (spawnMode === 'bg') {
-            if (!sessionId) {
-              throw ApplicationFailure.nonRetryable(
-                `spawnProcess: spawnMode='bg' requires a pre-assigned sessionId from startRecruitedSession (ADR 0016 Q1).`,
-              );
-            }
             const preflight = bgPreflight(workDir, { claudeBin });
             if (!preflight.ok) {
               throw ApplicationFailure.nonRetryable(preflight.error || 'claude --bg preflight failed');
             }
-            // `claude --bg` consumes `--session-id` itself (spawnClaudeBg prepends
-            // it); strip it from the user-arg list to avoid duplication.
+            // Drop --session-id from the user-arg list (the supervisor ignores
+            // it under --bg, emitting a warning to that effect — see ADR 0016
+            // Q1 erratum and the `claude 2.1.140` behaviour confirmed live).
             const bgArgs = spawnArgs.filter((arg, idx, arr) => {
               if (arg === '--session-id') return false;
               if (idx > 0 && arr[idx - 1] === '--session-id') return false;
               return true;
             });
-            const { pid } = spawnClaudeBg(bgArgs, workDir, envVars, { claudeBin, sessionId });
-            log(`Spawned claude --bg (pid ${pid}, sessionId ${sessionId}, shortId ${sessionId.slice(0, 8)}) in ${workDir} as "${targetName}"${attachmentId ? `, attachmentId=${attachmentId}` : ''}${preflight.cached ? ' [preflight cached]' : ''}`);
+            const { pid, shortId, stdoutDiagnostic } = await spawnClaudeBg(bgArgs, workDir, envVars, { claudeBin });
+            if (!shortId) {
+              throw ApplicationFailure.nonRetryable(
+                `claude --bg spawn for "${targetName}" did not emit a shortId on stdout — supervisor surface may have changed. ` +
+                `Raw stdout: ${stdoutDiagnostic ?? '(empty)'}. ` +
+                `See docs/ops/bg-spawn.md troubleshooting.`,
+              );
+            }
+            // Stash the supervisor's assigned short id on durable metadata so
+            // destroy can route `claude stop <shortId>` later. `bgFullUuid`
+            // is left undefined under stdout-discovery — the supervisor's
+            // own full UUID lives in roster.json but we have no need for it
+            // (no API takes the full UUID under bg).
+            try {
+              const targetHandle = client.workflow.getHandle(
+                isConductor ? conductorWorkflowId(ensemble) : sessionWorkflowId(ensemble, targetName),
+              );
+              await targetHandle.signal(updateMetadataSignal, {
+                spawnMode: 'bg',
+                bgShortId: shortId,
+              });
+            } catch (err) {
+              log(`Warning: spawn signaled updateMetadata for "${targetName}" failed (${err instanceof Error ? err.message : String(err)}); destroy may need to fall back to hardTerminate`);
+            }
+            log(`Spawned claude --bg (pid ${pid}, supervisor shortId ${shortId}) in ${workDir} as "${targetName}"${attachmentId ? `, attachmentId=${attachmentId}` : ''}${preflight.cached ? ' [preflight cached]' : ''}`);
           } else {
             const { pid } = spawnInTerminal(spawnArgs, workDir, envVars, { claudeBin });
             log(`Spawned claude process (pid ${pid}) in ${workDir} as "${targetName}" (resume=${!!resume}${attachmentId ? `, attachmentId=${attachmentId}` : ''})`);
@@ -1069,21 +1093,18 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
         // mint a new UUID on every restart, persist it to metadata, and never
         // pass `resume: true` to the spawn.
         const spawnSessionId = crypto.randomUUID();
-        // #596 / ADR 0016 — when the original recruit was bg, the fresh restart
-        // is ALSO bg (spawnMode is carried across), so refresh the bg
-        // supervisor identifiers on metadata. `claude --bg --resume` is broken
-        // upstream (see docs/ops/bg-spawn.md), so the new spawn is a fresh
-        // supervisor job with a new short id. Destroy of the OLD short id is
-        // intentionally NOT chained here — restart is an attachment-level
-        // operation; the legacy supervisor job is left for explicit `destroy`
-        // or operator-side `claude stop` cleanup.
-        const isBgRestart = metadata.spawnMode === 'bg' && metadata.agentType === 'claude';
+        // #596 / ADR 0016 erratum: under `spawn: bg` the restart's fresh
+        // session also lives under the supervisor with a NEW short id (the
+        // upstream `--bg --resume` is broken — see docs/ops/bg-spawn.md).
+        // The supervisor invents that new short id and spawnProcess discovers
+        // it from stdout, then signals updateMetadata with it. Here we just
+        // refresh the agent-tempo-side `sessionId` (used for non-bg --resume).
+        // The OLD supervisor job for the prior bgShortId is intentionally
+        // left for explicit `destroy` or operator-side `claude stop` cleanup;
+        // restart is an attachment-level operation, not a supervisor-job
+        // termination.
         await handle.signal(updateMetadataSignal, {
           sessionId: spawnSessionId,
-          ...(isBgRestart ? {
-            bgFullUuid: spawnSessionId,
-            bgShortId: spawnSessionId.slice(0, 8),
-          } : {}),
         });
 
         // Issue #184: re-resolve on the invoker host against the session's

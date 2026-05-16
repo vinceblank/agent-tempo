@@ -7,7 +7,7 @@
 ## What it does
 
 When a player is recruited with `spawn: bg`, agent-tempo invokes
-`claude --bg --session-id <uuid>` instead of opening a terminal window via
+`claude --bg <args>` instead of opening a terminal window via
 `spawnInTerminal`. Anthropic's **per-user Claude Code supervisor** takes
 ownership of the pty and the session appears in:
 
@@ -84,6 +84,23 @@ Precedence: **per-player `spawn` > lineup `spawn` > built-in default
 ```
 spawn: bg requires 'experimental.spawn: true' at the top of the lineup.
 ```
+
+## ⚠️ Known limitation — `--session-id` is silently ignored under `--bg`
+
+`claude --bg` invents its own UUID + 8-char short id and prints the short
+id to stdout as `backgrounded · <shortId> (idle …)`. If you pass
+`--session-id <uuid>`, the supervisor emits the warning `"--bg manages the
+session id; ignoring --session-id (use --resume <id> to continue an
+existing session)"` and ignores you. Agent-tempo therefore omits
+`--session-id` from its spawn invocation and recovers the supervisor's
+assigned short id by parsing stdout. The recovered id is persisted onto
+`SessionMetadata.bgShortId` and used by `destroy` to invoke
+`claude stop <shortId>` — see [ADR 0016 Q1 erratum](../adr/0016-bg-spawn.md#q1).
+
+If a future `claude` release changes the banner format
+(`backgrounded · <id>` pattern in `BG_SHORT_ID_PATTERN`), the spawn
+activity throws `ApplicationFailure.nonRetryable` carrying the captured
+stdout so the operator can file an upstream-surface-drift bug.
 
 ## ⚠️ Known limitation — `restart` with `transcript: 'replay'`
 

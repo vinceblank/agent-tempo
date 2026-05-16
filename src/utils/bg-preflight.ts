@@ -6,13 +6,22 @@
  * in the target cwd. The bypass-consent record is NOT transparently readable
  * on disk (not in `~/.claude/settings*.json`, not in
  * `~/.claude/projects/<encoded-cwd>/`), so a behavioral probe is the most
- * robust signal. We dry-run `claude --bg --dangerously-skip-permissions --help`
- * against the cwd and treat exit-0 as "supervisor accepted us in this cwd."
+ * robust signal.
  *
- * Result is cached per `(host, cwd)` in an in-process `Map` for the daemon's
- * lifetime — once a daemon has confirmed a cwd is ok, subsequent recruits
- * in that cwd skip the probe. On failure we surface an actionable error
- * string the recruit activity logs and rethrows.
+ * **Surprise observed during live E2E** (documented for ADR follow-up):
+ * `claude --bg --dangerously-skip-permissions --help` does NOT short-circuit
+ * on `--help` — the supervisor adopts the session FIRST then processes the
+ * help flag. So a "dry-run" probe actually creates a real supervisor job
+ * (prints `backgrounded · <shortId> (idle …)` and exits 0). The probe is
+ * still our most reliable acceptance signal — we just have to immediately
+ * `claude stop <shortId>` the session we created so the probe is truly
+ * side-effect-free from the operator's perspective. Cache hits skip
+ * probe+stop entirely.
+ *
+ * Result is cached per `(host, cwd)` in an in-process `Map` for the
+ * daemon's lifetime — once a daemon has confirmed a cwd is ok, subsequent
+ * recruits in that cwd skip the probe. On failure we surface an actionable
+ * error string the recruit activity logs and rethrows.
  *
  * Cache invalidates on daemon restart (the user might have accepted in the
  * intervening time) — `__resetBgPreflightCacheForTests` exists for unit
@@ -101,6 +110,27 @@ export function bgPreflight(
   }
 
   if (result.status === 0) {
+    // The probe spawned a real supervisor job — clean it up immediately so
+    // the operator never sees a leaked `idle` session in `claude agents`.
+    // Stdout format observed: `backgrounded · <shortId> (idle — send a prompt to start)`
+    const stdoutCombined = (result.stdout || '').toString();
+    const shortIdMatch = stdoutCombined.match(/backgrounded\s*[·•]\s*([0-9a-f]{8})/i);
+    if (shortIdMatch) {
+      const probeShortId = shortIdMatch[1];
+      try {
+        spawnSync(claudeBin, ['stop', probeShortId], {
+          cwd,
+          encoding: 'utf8',
+          timeout: 10_000,
+          shell: process.platform === 'win32',
+        });
+        log(`probe stopped its own session ${probeShortId} in ${cwd}`);
+      } catch (err) {
+        log(`probe-cleanup warning: failed to stop ${probeShortId} (${err instanceof Error ? err.message : String(err)}); operator may see an idle 'agents' row`);
+      }
+    } else {
+      log(`probe in ${cwd} exit 0 but no shortId in stdout — supervisor surface may have changed; not stopping anything`);
+    }
     cache.set(key, true);
     return { ok: true, cached: false };
   }
