@@ -1,6 +1,6 @@
 {
   "name": "agent-tempo",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Many agents, one tempo. Durable coordination for multi-agent work via Temporal.",
   "keywords": [
     "mcp",
