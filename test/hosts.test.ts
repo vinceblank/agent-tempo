@@ -71,6 +71,15 @@ describe('parseIdentity (#274 AC6d)', function () {
     });
   });
 
+  it('parses the pre-v1.0 `claude-tempo:` prefix and tags it as legacy', function () {
+    expect(parseIdentity('claude-tempo:mac-alice:12345:0.26.0-beta.7')).to.deep.equal({
+      hostname: 'mac-alice',
+      pid: 12345,
+      version: '0.26.0-beta.7',
+      legacy: true,
+    });
+  });
+
   it('parses the legacy SDK default `<pid>@<hostname>`', function () {
     expect(parseIdentity('9876@win-bob')).to.deep.equal({
       hostname: 'win-bob',

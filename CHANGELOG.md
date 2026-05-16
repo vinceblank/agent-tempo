@@ -7,16 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-05-16
+
 ### Fixed
-- `agent-tempo down --destroy` no longer skips sessions and maestro/scheduler workflows that
-  were started without the `AgentTempoEnsemble` search attribute (e.g. from a partially-migrated
-  build). The previous logic derived workflow IDs from the search attribute and bailed out early
-  when the attribute was absent, leaving orphans behind. Enumeration now queries each workflow
-  type directly and terminates by ID, independent of search-attribute state.
-- Search-attribute registration errors are now surfaced instead of silently swallowed. Previously
-  every non-zero `temporal operator search-attribute create` exit was labeled "already exists",
-  hiding real failures (namespace Keyword cap exceeded, server unreachable, CLI missing) until a
-  downstream workflow start failed with a confusing `INVALID_ARGUMENT` hours later.
+- Parent-death watchdog (#604): MCP children no longer leak `node` processes after parent hosts
+  die without sending SIGTERM. Previously this blocked `npm install -g` upgrades with `EBUSY`
+  on Windows because the stale binary was still locked by an orphaned worker.
+- `agent-tempo down --destroy` now terminates every workflow type directly, including sessions
+  and maestro/scheduler workflows whose `AgentTempoEnsemble` search attribute was missing
+  (#605). Enumeration queries each workflow type independently of search-attribute state, so
+  partially-migrated builds no longer leave orphans behind.
+- Search-attribute registration errors are surfaced rather than silently swallowed (#605).
+  Previously every non-zero `temporal operator search-attribute create` exit was labeled
+  "already exists", hiding real failures (namespace Keyword cap exceeded, server unreachable,
+  CLI missing) until a downstream workflow start failed with a confusing `INVALID_ARGUMENT`
+  hours later. Closes #602 with three small cleanups: stale `assertSearchAttributesOrExit`
+  JSDoc, stale `claude-tempo` section header in `src/utils/search-attributes.ts`, and
+  `parseIdentity` now tags pre-v1.0 `claude-tempo:`-prefixed worker identities with
+  `legacy: true` so host listings can distinguish old daemons.
 
 ## [1.0.0] - 2026-05-15
 

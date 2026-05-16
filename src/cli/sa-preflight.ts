@@ -17,9 +17,9 @@
  * Wiring:
  *   - `src/cli/startup.ts` `searchAttrs` step uses the verify-or-instruct
  *     output to surface the actionable error in the TUI bootstrap surface.
- *   - `src/daemon.ts` boot path calls {@link assertSearchAttributesOrExit}
- *     to fail fast on `agent-tempo daemon start` before the worker tries
- *     to register workflows.
+ *   - `src/daemon.ts` boot path calls {@link verifySearchAttributes}
+ *     directly to fail fast on `agent-tempo daemon start` before the worker
+ *     tries to register workflows.
  */
 import { execFileSync, spawnSync } from 'child_process';
 

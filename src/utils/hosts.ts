@@ -92,18 +92,19 @@ export interface ParsedIdentity {
  * string (no colons).
  *
  * Pre-v1.0 daemons emitted a `claude-tempo:` prefix. Under the v1.0 hard
- * break those daemons can't reach v1.x task queues anyway, so we no longer
- * parse that variant — v0.x identities show up as opaque third-party skips,
- * which is the same fate they'd hit at the task-queue boundary.
+ * break those daemons can't reach v1.x task queues anyway, but if one does
+ * surface in a host listing we tag it `legacy: true` so operators can
+ * distinguish a still-running old daemon from a fresh v1.x worker.
  */
 export function parseIdentity(identity: string): ParsedIdentity | null {
-  if (identity.startsWith('agent-tempo:')) {
+  if (identity.startsWith('agent-tempo:') || identity.startsWith('claude-tempo:')) {
+    const legacy = identity.startsWith('claude-tempo:');
     const parts = identity.split(':');
     if (parts.length === 4) {
       const [, hostname, pidStr, version] = parts;
       const pid = Number(pidStr);
       if (hostname.length > 0 && Number.isFinite(pid) && pid > 0 && version.length > 0) {
-        return { hostname, pid, version, legacy: false };
+        return { hostname, pid, version, legacy };
       }
     }
     return null;
