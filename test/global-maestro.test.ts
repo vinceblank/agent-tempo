@@ -190,9 +190,19 @@ describe('agentGlobalMaestroWorkflow', function () {
           // well below the test's 15s outer timeout. The poll resolves the
           // instant the assertion is true, so the bump only costs latency
           // on the rare slow path.
+          //
+          // #583 (read-skew fix): gate on BOTH queries the assertion will
+          // read. The workflow updates `knownEnsembles` then awaits an
+          // activity before populating `playersByEnsemble`, so polling only
+          // on `maestroEnsemblesQuery` can resolve in the gap and race the
+          // `playerMap[...]` assertion below.
           await pollWithTimeout(async () => {
-            const e = await handle.query(maestroEnsemblesQuery);
-            return e.includes('team-a') && e.includes('team-b');
+            const [e, p] = await Promise.all([
+              handle.query(maestroEnsemblesQuery),
+              handle.query(maestroPlayersByEnsembleQuery),
+            ]);
+            return e.includes('team-a') && e.includes('team-b')
+                && Array.isArray(p['team-a']) && Array.isArray(p['team-b']);
           }, 10_000);
 
           const ensembles = await handle.query(maestroEnsemblesQuery);
@@ -249,9 +259,15 @@ describe('agentGlobalMaestroWorkflow', function () {
           currentEnsembles = ['team-a'];
           // #383 P3: poll for the next refresh cycle to detect the removal.
           // #583: budget bumped 5s → 10s — same reasoning as the initial poll.
+          // #583 (read-skew fix): also gate on `maestroPlayersByEnsembleQuery`
+          // dropping team-b, since the assertion below reads that map.
           await pollWithTimeout(async () => {
-            const e = await handle.query(maestroEnsemblesQuery);
-            return e.includes('team-a') && !e.includes('team-b');
+            const [e, p] = await Promise.all([
+              handle.query(maestroEnsemblesQuery),
+              handle.query(maestroPlayersByEnsembleQuery),
+            ]);
+            return e.includes('team-a') && !e.includes('team-b')
+                && !('team-b' in p);
           }, 10_000);
 
           ensembles = await handle.query(maestroEnsemblesQuery);
