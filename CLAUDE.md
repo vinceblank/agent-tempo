@@ -27,11 +27,14 @@ src/
 │   ├── dashboard-command.ts # dashboard subcommand — crash-proof; opens the web dashboard, optionally minting a QR-code pairing token (#340)
 │   ├── dev-banner.ts  # [DEV MODE] banner formatter (ADR 0014 §5.4) — gate 4 production-safety line
 │   ├── dev-mode-bootstrap.ts # pre-import side-effect: promotes top-level `--dev` flag to `CLAUDE_TEMPO_DEV_MODE=1` before any other module loads
+│   ├── dev-verbs.ts   # dev-mode scriptable CLI verbs (#432) — shell-scriptable wrappers over MCP tools for E2E validation; stripped from production surface
 │   ├── help-text.ts   # help output — crash-proof, no Temporal deps
+│   ├── legacy-migration.ts # one-shot idempotent copy `~/.claude-tempo/` → `~/.agent-tempo/` on first v1.0 boot (PR-2 of rebrand)
 │   ├── mcp.ts         # MCP server registration helpers (init, global vs project)
 │   ├── output.ts      # Shared CLI output formatting helpers
 │   ├── preflight.ts   # Environment preflight checks
 │   ├── removed-verbs.ts # lookup table for the 10 CLI verbs removed in #288 — dispatches migration hints before loading Temporal surface
+│   ├── sa-preflight.ts # search-attribute preflight — REQUIRED_SEARCH_ATTRIBUTES list (single source of truth), registerSearchAttribute, verifySearchAttributes, assertSearchAttributesOrExit
 │   ├── scenarios-command.ts # scenarios subcommand (dev mode only) — list/show shipped YAML scenario library (ADR 0014 §4.8)
 │   ├── startup.ts     # auto-provisioning bootstrap state machine (#289) — six-step idempotent sequence used by bare `agent-tempo` invocation
 │   └── upgrade-command.ts # upgrade subcommand — crash-proof; dynamic-imports Temporal only for active-session warning

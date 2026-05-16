@@ -214,23 +214,12 @@ const TTL_24H = 24 * 60 * 60 * 1000;
 const TTL_60S = 60 * 1000;
 
 // ─────────────────────────────────────────────────────────────────────────
-// Search-attribute list (single source of truth — matches src/cli/commands.ts
-// SEARCH_ATTRIBUTES until a future PR consolidates them; if that list drifts
-// it'll silently under-register here, so tests assert both contain the same
-// set via `sortedSearchAttributeNames()` helper).
+// Search-attribute list — imported from sa-preflight.ts so commands.ts,
+// startup.ts, and the daemon-boot preflight all share one source of truth
+// (#605 consolidated the two duplicated literals).
 // ─────────────────────────────────────────────────────────────────────────
 
-const SEARCH_ATTRIBUTES: ReadonlyArray<{ name: string; type: 'Keyword' | 'Bool' }> = [
-  { name: 'AgentTempoHostname', type: 'Keyword' },
-  { name: 'AgentTempoGitRoot', type: 'Keyword' },
-  { name: 'AgentTempoEnsemble', type: 'Keyword' },
-  { name: 'AgentTempoPlayerId', type: 'Keyword' },
-  { name: 'AgentTempoPlayerType', type: 'Keyword' },
-  { name: 'AgentTempoIsConductor', type: 'Bool' },
-  { name: 'AgentTempoAttachedHost', type: 'Keyword' },
-  { name: 'AgentTempoAttachmentState', type: 'Keyword' },
-  { name: 'AgentTempoAttachmentId', type: 'Keyword' },
-];
+import { REQUIRED_SEARCH_ATTRIBUTES, registerSearchAttribute } from './sa-preflight';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Semver-aware outdated-version badge rendering (#289 pin item 4)
@@ -503,29 +492,28 @@ async function stepSearchAttrs(
     return { status: 'skipped', durationMs: 0 };
   }
   const { result: outcome, durationMs } = await timed<StepOutcome>(() => {
-    // Idempotent — "already registered" errors are swallowed. Any exception
-    // from `execFileSync` (temporal CLI missing, unreachable server) caught
-    // below as a step failure.
-    try {
-      for (const attr of SEARCH_ATTRIBUTES) {
-        try {
-          execFileSync('temporal', [
-            'operator', 'search-attribute', 'create',
-            '--address', config.temporalAddress,
-            '--namespace', config.temporalNamespace,
-            '--name', attr.name,
-            '--type', attr.type,
-          ], { stdio: 'ignore' });
-        } catch { /* already registered — expected on warm systems */ }
+    // Per-attr classification via `registerSearchAttribute` (#605) —
+    // distinguishes `already-exists` (idempotent expected case) from real
+    // failures. Pre-#605 every non-zero exit was swallowed as "already
+    // registered", masking the SQLite dev-server's 10-Keyword-per-namespace
+    // cap and other genuine errors until a downstream workflow start failed
+    // with the confusing `INVALID_ARGUMENT: search attribute ... is not
+    // defined`.
+    const failures: string[] = [];
+    for (const attr of REQUIRED_SEARCH_ATTRIBUTES) {
+      const r = registerSearchAttribute(attr, config.temporalAddress, config.temporalNamespace);
+      if (r.status === 'failed') {
+        failures.push(`${attr.name}: ${r.detail ?? 'unknown error'}`);
       }
-      return { status: 'ok', durationMs: 0 };
-    } catch (err) {
+    }
+    if (failures.length > 0) {
       return {
         status: 'failed',
         durationMs: 0,
-        detail: err instanceof Error ? err.message : String(err),
+        detail: `Failed to register ${failures.length} search attribute(s):\n  ${failures.join('\n  ')}`,
       };
     }
+    return { status: 'ok', durationMs: 0 };
   });
 
   if (outcome.status !== 'failed') {

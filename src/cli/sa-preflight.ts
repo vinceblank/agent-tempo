@@ -21,7 +21,7 @@
  *     to fail fast on `agent-tempo daemon start` before the worker tries
  *     to register workflows.
  */
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 
 /** Single source of truth — must match `SEARCH_ATTRIBUTES` in `src/cli/startup.ts`. */
 export const REQUIRED_SEARCH_ATTRIBUTES: ReadonlyArray<{
@@ -154,6 +154,77 @@ export async function verifySearchAttributes(
     probeError,
     message: formatPreflightError(missing, opts.temporalNamespace, probeError),
   };
+}
+
+/**
+ * Outcome of a single `temporal operator search-attribute create` invocation.
+ *
+ * Pre-#605 the two registration call sites (`commands.ts:registerSearchAttributes`
+ * and `startup.ts:stepSearchAttrs`) ran the create command with `stdio: 'ignore'`
+ * and swallowed every non-zero exit as "already exists". That hid the
+ * SQLite dev-server's 10-Keyword-per-namespace cap (and any other genuine
+ * failure) until a downstream workflow start crashed with the confusing
+ * `INVALID_ARGUMENT: search attribute "..." is not defined` — hours later
+ * and miles away from the real cause.
+ */
+export type RegistrationStatus = 'created' | 'already-exists' | 'failed';
+
+export interface RegistrationResult {
+  attr: typeof REQUIRED_SEARCH_ATTRIBUTES[number];
+  status: RegistrationStatus;
+  /** stderr from the temporal CLI, populated when `status === 'failed'`. */
+  detail?: string;
+}
+
+/**
+ * Pure classifier — turn a temporal CLI exit into a {@link RegistrationStatus}.
+ * Extracted from {@link registerSearchAttribute} so the matching rules can
+ * be unit-tested without mocking `child_process`.
+ *
+ * Rules:
+ *   - exit code 0                  → `created`
+ *   - stderr/stdout matches the    → `already-exists` (idempotent)
+ *     standard Temporal markers
+ *   - anything else                → `failed` (with detail for the operator)
+ */
+export function classifyRegistrationOutput(
+  exitCode: number | null,
+  output: string,
+  errorMessage?: string,
+): { status: RegistrationStatus; detail?: string } {
+  if (exitCode === 0) return { status: 'created' };
+  if (/already\s*exists/i.test(output) || /AlreadyExists/.test(output)) {
+    return { status: 'already-exists' };
+  }
+  const detail =
+    output.trim() || errorMessage || `temporal CLI exited ${exitCode ?? 'with no status'}`;
+  return { status: 'failed', detail };
+}
+
+/**
+ * Register one search attribute. Captures stderr so callers can
+ * distinguish "already-exists" (idempotent expected case) from real
+ * failures (CLI missing, server unreachable, namespace cap exceeded, …).
+ */
+export function registerSearchAttribute(
+  attr: typeof REQUIRED_SEARCH_ATTRIBUTES[number],
+  temporalAddress: string,
+  namespace: string,
+): RegistrationResult {
+  const result = spawnSync('temporal', [
+    'operator', 'search-attribute', 'create',
+    '--address', temporalAddress,
+    '--namespace', namespace,
+    '--name', attr.name,
+    '--type', attr.type,
+  ], { encoding: 'utf8' });
+
+  const classified = classifyRegistrationOutput(
+    result.status,
+    (result.stderr || '') + (result.stdout || ''),
+    result.error?.message,
+  );
+  return { attr, ...classified };
 }
 
 /**
