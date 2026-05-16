@@ -1700,29 +1700,72 @@ export async function down(opts: DownOpts) {
       const connection = await createTemporalConnection(config);
       const client = new Client({ connection, namespace: config.temporalNamespace });
       try {
-        // Single enumeration pass — buffer workflowIds and ensemble names so
-        // the confirmation-display and termination loops share the same list.
-        const sessionIds: string[] = [];
-        const runningEnsembles = new Set<string>();
-        const listQuery = 'WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"';
-        for await (const wf of client.workflow.list({ query: listQuery })) {
-          sessionIds.push(wf.workflowId);
-          const name = getEnsembleName(wf);
-          if (name) runningEnsembles.add(name);
+        // Enumerate every workflow type we own, not just sessions. Previously
+        // we only listed `agentSessionWorkflow` and derived maestro/scheduler
+        // workflow IDs from each session's `AgentTempoEnsemble` search
+        // attribute. Two failure modes that left orphans behind:
+        //   1. Sessions started without the search attribute set (e.g. from
+        //      an older or partially-rebranded build) were added to
+        //      `sessionIds` but their ensemble name never made it into the
+        //      `runningEnsembles` set — and the early-return on
+        //      `runningEnsembles.size === 0` then bailed out without
+        //      terminating ANY of the buffered session IDs.
+        //   2. Maestro/scheduler workflows whose sessions had already exited
+        //      were invisible to a session-only query.
+        // Listing each type directly catches both cases.
+        const collect = async (query: string): Promise<string[]> => {
+          const ids: string[] = [];
+          for await (const wf of client.workflow.list({ query })) {
+            ids.push(wf.workflowId);
+          }
+          return ids;
+        };
+        const baseFilter = 'ExecutionStatus = "Running"';
+        const [sessionIds, maestroIds, schedulerIds, globalMaestroIds] = await Promise.all([
+          collect(`WorkflowType = "agentSessionWorkflow" AND ${baseFilter}`),
+          collect(`WorkflowType = "agentMaestroWorkflow" AND ${baseFilter}`),
+          collect(`WorkflowType = "agentSchedulerWorkflow" AND ${baseFilter}`),
+          collect(`WorkflowType = "agentGlobalMaestroWorkflow" AND ${baseFilter}`),
+        ]);
+
+        // Ensemble names are best-effort display only — derived from
+        // workflow ID prefixes when present. We terminate by ID, not by
+        // ensemble, so a missing name no longer blocks cleanup.
+        const ensemblesFromIds = new Set<string>();
+        for (const id of sessionIds) {
+          // `agent-session-<ensemble>-<playerId>` / legacy `claude-session-<ensemble>-<playerId>`
+          const m = id.match(/^(?:agent|claude)-session-(.+?)-[^-]+$/);
+          if (m) ensemblesFromIds.add(m[1]);
+        }
+        for (const id of maestroIds) {
+          // `agent-maestro-<ensemble>` (and `agent-maestro-global` which we exclude as global)
+          const m = id.match(/^(?:agent|claude)-maestro-(.+)$/);
+          if (m && m[1] !== 'global') ensemblesFromIds.add(m[1]);
         }
 
-        if (runningEnsembles.size === 0) {
+        const totalTargets =
+          sessionIds.length + maestroIds.length + schedulerIds.length + globalMaestroIds.length;
+
+        if (totalTargets === 0) {
           out.log('  No active workflows to destroy.');
         } else {
           if (!opts.yes) {
             console.log();
-            out.log('  The following ensembles will be destroyed:');
-            for (const name of [...runningEnsembles].sort()) {
-              out.log(`    - ${name}`);
+            if (ensemblesFromIds.size > 0) {
+              out.log('  The following ensembles will be destroyed:');
+              for (const name of [...ensemblesFromIds].sort()) {
+                out.log(`    - ${name}`);
+              }
             }
+            out.log(
+              `  ${sessionIds.length} session${sessionIds.length !== 1 ? 's' : ''}, ` +
+              `${maestroIds.length} maestro${maestroIds.length !== 1 ? 's' : ''}, ` +
+              `${schedulerIds.length} scheduler${schedulerIds.length !== 1 ? 's' : ''}` +
+              (globalMaestroIds.length > 0 ? `, ${globalMaestroIds.length} global maestro` : ''),
+            );
             console.log();
             const confirmed = await typedConfirmPrompt(
-              `  This terminates every workflow in every ensemble (${runningEnsembles.size}) and cannot be undone.`,
+              `  This terminates every workflow (${totalTargets}) and cannot be undone.`,
               'destroy',
             );
             if (!confirmed) {
@@ -1742,15 +1785,15 @@ export async function down(opts: DownOpts) {
               return false;
             }
           };
-          const targets: string[] = [...sessionIds];
-          for (const name of runningEnsembles) {
-            targets.push(schedulerWorkflowId(name), maestroWorkflowId(name));
-          }
-          targets.push(GLOBAL_MAESTRO_WORKFLOW_ID);
+          const targets = [...sessionIds, ...maestroIds, ...schedulerIds, ...globalMaestroIds];
           const results = await Promise.all(targets.map(terminate));
           const terminated = results.filter(Boolean).length;
 
-          out.success(`Terminated ${terminated} workflow${terminated !== 1 ? 's' : ''} across ${runningEnsembles.size} ensemble${runningEnsembles.size !== 1 ? 's' : ''}`);
+          const ensembleCount = ensemblesFromIds.size;
+          out.success(
+            `Terminated ${terminated}/${totalTargets} workflow${terminated !== 1 ? 's' : ''}` +
+            (ensembleCount > 0 ? ` across ${ensembleCount} ensemble${ensembleCount !== 1 ? 's' : ''}` : ''),
+          );
         }
       } finally {
         await connection.close();
