@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-05-19
+
+### Added
+- **Cross-host orphans dashboard view** (#579, #610) — new `GET /v1/orphans[?ensemble=<name>]`
+  HTTP endpoint surfaces cluster-wide orphan sessions (sessions whose adapters left without an
+  orderly destroy) to the dashboard, mirroring `agent-tempo restore --all-hosts`. New `/orphans`
+  dashboard screen, view-only in v1, with copy-pastable TUI `/migrate` commands. 3-second
+  daemon-edge cache, bearer auth identical to other `/v1/*` reads. Sidebar entry positioned
+  between Hosts and Schedules with count badge when > 0.
+
+### Fixed
+- **`agent-tempo migrate-from-claude-tempo` now copies `ensembles/` contents** (#612). The
+  legacy-migration helper's allowlist contained `lineups/` (a path that never existed in agent-
+  tempo or the legacy claude-tempo home dir) instead of the canonical `ensembles/`. Net effect
+  pre-fix: every user's lineup YAMLs were stranded on first v0.x→v1.x boot. Added a regression
+  test seeding the empirical 4 YAMLs and asserting SHA-256 fidelity.
+- **Deflaked `agentGlobalMaestroWorkflow > ensemble discovery and player refresh`** test on
+  Windows shard-2/node-22 (#583, #608). Root cause was a read-skew race: the test polled
+  `maestroEnsemblesQuery` then immediately asserted against `maestroPlayersByEnsembleQuery`,
+  but the workflow updates those two indices A-then-B with activity awaits between, so the poll
+  could resolve at the (A)-just-completed gap before (B) populated the assertion target.
+
+### Docs
+- **`CLAUDE.md` project-structure block** now lists 6 previously-missing `src/utils/` entries
+  (`parent-death-watchdog.ts`, `ensemble-ops.ts`, `query-timeout.ts`, `visibility-deadline.ts`,
+  `default-part.ts`, `restore-format.ts`). (#613)
+- **New `docs/ops/cross-host-orphans.md`** — operator reference for the new orphan dashboard
+  view, the safe migrate flow, and why click-to-restore is intentionally absent in v1. (#610)
+
 ## [1.0.1] - 2026-05-16
 
 ### Fixed
