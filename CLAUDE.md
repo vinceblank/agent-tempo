@@ -105,7 +105,13 @@ src/
 │   ├── validation.ts / worktree.ts / safe-path.ts / duration.ts / search-attributes.ts
 │   ├── attachment-format.ts / recall-format.ts   # Shared display formatters (attachment-info, recall)
 │   ├── hosts.ts / format-hosts.ts                # Host enumeration + shared hosts display formatter (#274)
-│   └── sdk-probe.ts   # Filesystem-walk probe for installed optional npm deps (used by opencode adapter + recruit preflight, #449)
+│   ├── sdk-probe.ts   # Filesystem-walk probe for installed optional npm deps (used by opencode adapter + recruit preflight, #449)
+│   ├── ensemble-ops.ts   # Shared pause/unpause/fan-out helpers for ensemble-scope verbs (pause, play, shutdown, restore, destroy)
+│   ├── query-timeout.ts   # Bounded WorkflowHandle.query() wrapper with in-flight deduplication; prevents hung queries from wedging snapshot endpoint (#433)
+│   ├── visibility-deadline.ts   # Iterator-level deadlines for Temporal workflow.list() scans; prevents memory growth from stalled visibility page streams (#336, #529)
+│   ├── default-part.ts   # Derives human-readable "X session" part string from a player's type name (e.g. tempo-conductor → "Conductor session")
+│   ├── restore-format.ts   # Pure formatter for restore --all-hosts cluster-view listing; no Temporal/I/O deps (#151)
+│   └── parent-death-watchdog.ts   # Self-exit watchdog (stdin EOF + PPID poll) so MCP server children don't outlive their parent host (#604)
 ├── types.ts           # Shared type definitions
 ├── git-info.ts        # Git repository detection helper
 └── config.ts          # Env var handling
