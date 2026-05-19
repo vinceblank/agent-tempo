@@ -6,11 +6,12 @@ import { homedir, hostname } from 'os';
 import { randomUUID } from 'crypto';
 import { Cron } from 'croner';
 import { Client, Connection, WorkflowIdConflictPolicy } from '@temporalio/client';
-import { spawnInTerminal, spawnCopilotBridge, spawnMockAdapter, resolveClaudePath } from '../spawn';
+import { spawnInTerminal, spawnCopilotBridge, spawnMockAdapter, spawnClaudeBg, resolveClaudePath } from '../spawn';
+import { bgPreflight } from '../utils/bg-preflight';
 import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, isDevMode, Config, CliOverrides, AGENT_TEMPO_HOME } from '../config';
 import { getGitInfo } from '../git-info';
 import { createTemporalConnection } from '../connection';
-import { releaseHeldSignal, outboxLockedQuery, setPausedSignal, destroyUpdate } from '../workflows/signals';
+import { releaseHeldSignal, outboxLockedQuery, setPausedSignal, destroyUpdate, updateMetadataSignal } from '../workflows/signals';
 import { addScheduleSignal, setSchedulerPausedSignal } from '../workflows/scheduler-signals';
 import { maestroSetPausedSignal } from '../workflows/maestro-signals';
 import { AgentType, MockMode, ScheduleEntry, SessionInput, SessionMetadata } from '../types';
@@ -78,6 +79,84 @@ function resolveConductorName(
  *  Claude Code auto-assigns on spawn. */
 function resolvePlayerName(opts: { name?: string; agent: AgentType }): string | undefined {
   return opts.name || (opts.agent === 'copilot' ? `copilot-${Date.now()}` : undefined);
+}
+
+/**
+ * #596 / ADR 0016 — bootstrap-path equivalent of the `spawnMode === 'bg'`
+ * branch in `src/activities/outbox.ts:spawnProcess`. The CLI bootstrap
+ * (`up`, `start`/`conduct --lineup`) spawns the conductor + initial-lineup
+ * players directly rather than going through the outbox `spawnProcess`
+ * activity, so the bg-spawn branch had to be lifted here too — otherwise
+ * `experimental.spawn: true` + `spawn: bg` lineups silently fall back to
+ * `spawnInTerminal` and open terminal windows.
+ *
+ * Mirrors outbox.ts:710-758 (preflight → spawnClaudeBg → stdout-parse →
+ * updateMetadataSignal) and outbox.ts:443 (`isBgClaudeCode` gate). Only the
+ * interactive `claude-code` adapter is bg-eligible; other agents always
+ * route through their dedicated spawn helpers (copilot, mock, …).
+ *
+ * Returns `{ pid }` from whichever spawn helper actually ran. On bg-path
+ * preflight failure or empty-stdout shortId, throws so the caller can
+ * surface an actionable error before the next bootstrap step.
+ */
+async function spawnClaudeProcessForBootstrap(args: {
+  client: Client;
+  ensemble: string;
+  targetName: string;
+  isConductor: boolean;
+  workDir: string;
+  claudeArgs: string[];
+  envVars: Record<string, string>;
+  spawnMode?: import('../ensemble/schema').SpawnMode;
+  agent: AgentType;
+  claudeBin?: string;
+}): Promise<{ pid: number | undefined }> {
+  const {
+    client, ensemble, targetName, isConductor, workDir,
+    claudeArgs, envVars, spawnMode, agent, claudeBin,
+  } = args;
+
+  const isBgClaudeCode = spawnMode === 'bg' && agent === 'claude';
+  if (!isBgClaudeCode) {
+    return spawnInTerminal(claudeArgs, workDir, envVars, { claudeBin });
+  }
+
+  const preflight = bgPreflight(workDir, { claudeBin });
+  if (!preflight.ok) {
+    throw new Error(preflight.error || 'claude --bg preflight failed');
+  }
+  // The supervisor ignores --session-id under --bg (ADR 0016 erratum); strip it.
+  const bgArgs = claudeArgs.filter((arg, idx, arr) => {
+    if (arg === '--session-id') return false;
+    if (idx > 0 && arr[idx - 1] === '--session-id') return false;
+    return true;
+  });
+  const { pid, shortId, stdoutDiagnostic } = await spawnClaudeBg(bgArgs, workDir, envVars, { claudeBin });
+  if (!shortId) {
+    throw new Error(
+      `claude --bg spawn for "${targetName}" did not emit a shortId on stdout — supervisor surface may have changed. ` +
+      `Raw stdout: ${stdoutDiagnostic ?? '(empty)'}. ` +
+      `See docs/ops/bg-spawn.md troubleshooting.`,
+    );
+  }
+  // Persist the supervisor's short id onto durable metadata so `destroy`
+  // can route `claude stop <shortId>` later. Best-effort: a signal failure
+  // logs a warning rather than aborting the whole bootstrap.
+  try {
+    const targetHandle = client.workflow.getHandle(
+      isConductor ? conductorWorkflowId(ensemble) : sessionWorkflowId(ensemble, targetName),
+    );
+    await targetHandle.signal(updateMetadataSignal, {
+      spawnMode: 'bg',
+      bgShortId: shortId,
+    });
+  } catch (err) {
+    out.warn(
+      `Bootstrap spawn signaled updateMetadata for "${targetName}" failed ` +
+      `(${err instanceof Error ? err.message : String(err)}); destroy may need to fall back to hardTerminate.`,
+    );
+  }
+  return { pid };
 }
 
 /**
@@ -352,7 +431,22 @@ async function applyLineupPlayersAndSchedules(args: {
         if (resolvedPlayerType) {
           playerEnvVars[ENV.PLAYER_TYPE] = resolvedPlayerType.name;
         }
-        spawnInTerminal(claudeArgs, playerWorkDir, playerEnvVars, { claudeBin: config.claudeBin });
+        // #596 / ADR 0016 — honour `experimental.spawn: true` + `spawn: bg`
+        // here too (loader populates `_spawn` after applying per-player >
+        // lineup > default precedence). Falls back to `spawnInTerminal`
+        // for non-bg / non-claude-code players.
+        await spawnClaudeProcessForBootstrap({
+          client,
+          ensemble,
+          targetName: player.name,
+          isConductor: false,
+          workDir: playerWorkDir,
+          claudeArgs,
+          envVars: playerEnvVars,
+          spawnMode: player._spawn,
+          agent: playerAgent,
+          claudeBin: config.claudeBin,
+        });
       }
       out.log(`  ${out.green('ok')} ${out.bold(player.name)} in ${playerWorkDir}`);
     } catch (err) {
@@ -610,7 +704,28 @@ async function start(opts: StartOpts) {
       [ENV.PLAYER_NAME]: sessionName || '',
     };
 
-    const { pid } = spawnInTerminal(claudeArgs, workDir, envVars, { claudeBin: config.claudeBin });
+    // #596 / ADR 0016 — when the conductor was seeded from a lineup that
+    // sets `experimental.spawn: true` + `spawn: bg`, hand the session to
+    // Anthropic's supervisor instead of opening a terminal window. For
+    // non-conductor `start` (joining as a player) we have no lineup
+    // context, so fall through to `spawnInTerminal` unconditionally.
+    let pid: number | undefined;
+    if (opts.conductor && conductorClient && startLineup?.spawn === 'bg' && opts.agent === 'claude') {
+      ({ pid } = await spawnClaudeProcessForBootstrap({
+        client: conductorClient,
+        ensemble: opts.ensemble,
+        targetName: sessionName as string,
+        isConductor: true,
+        workDir,
+        claudeArgs,
+        envVars,
+        spawnMode: 'bg',
+        agent: 'claude',
+        claudeBin: config.claudeBin,
+      }));
+    } else {
+      ({ pid } = spawnInTerminal(claudeArgs, workDir, envVars, { claudeBin: config.claudeBin }));
+    }
     out.success(`Launched ${role} session${sessionName ? ` "${sessionName}"` : ''} (pid ${pid ?? 'unknown'})`);
   }
   out.log(`  Ensemble: ${opts.ensemble}`);
@@ -1402,7 +1517,21 @@ export async function up(opts: UpOpts) {
       conductorEnvVars[ENV.PLAYER_TYPE] = resolvedConductorType?.name || conductorTypeName || '';
     }
 
-    ({ pid } = spawnInTerminal(claudeArgs, process.cwd(), conductorEnvVars, { claudeBin: config.claudeBin }));
+    // #596 / ADR 0016 — bg-spawn the conductor when the lineup opts in.
+    // Mirrors the bg branch in src/activities/outbox.ts:710-758 (preflight
+    // → spawnClaudeBg → stdout-parse → updateMetadataSignal).
+    ({ pid } = await spawnClaudeProcessForBootstrap({
+      client,
+      ensemble: opts.ensemble,
+      targetName: sessionName,
+      isConductor: true,
+      workDir: process.cwd(),
+      claudeArgs,
+      envVars: conductorEnvVars,
+      spawnMode: lineup?.spawn,
+      agent: conductorAgent,
+      claudeBin: config.claudeBin,
+    }));
   }
 
   out.success(`Conductor launched (pid ${pid ?? 'unknown'})`);

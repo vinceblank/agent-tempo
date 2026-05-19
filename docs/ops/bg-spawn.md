@@ -198,6 +198,33 @@ agent-tempo workflow will notice on its next destroy attempt and accept the
 | `destroy` logs `claude-stop … outcome=error` then `hard-terminate … strategy=none` | Supervisor wedged; PID-scan can't find the process tree (parented under supervisor) | Restart the supervisor: `pkill -f 'claude.*bg'` (POSIX) / `taskkill /F /IM claude.exe` (Windows) and `claude --bg --help` to wake it back up |
 | `~/.claude/daemon.log` shows `proto: 2` | Anthropic shipped a new roster version | Open an issue; agent-tempo gates on `proto === 1` and falls through gracefully, but UX may degrade |
 
+## Interaction with agent-tempo's worktree tool
+
+Anthropic's `claude --bg` supervisor (the same process that owns
+`~/.claude/daemon/roster.json`) defaults to auto-creating a per-session
+git worktree under `.claude/worktrees/<short>` for every backgrounded
+job. That collides with agent-tempo's `worktree` MCP tool, which
+manages its own `.ct-worktrees/<ensemble>/<player>` tree under the
+operator's control.
+
+When you drive a bg-spawn ensemble that uses the agent-tempo `worktree`
+tool, opt out of the supervisor's worktree behaviour by setting:
+
+```json
+// .claude/settings.json (per-repo) or ~/.claude/settings.json (global)
+{
+  "worktree": { "bgIsolation": "none" }
+}
+```
+
+This is a pure operator-side knob — agent-tempo does NOT touch
+`.claude/settings.json` and does NOT change its own default behaviour
+based on it. If you don't use the agent-tempo `worktree` tool you can
+leave `bgIsolation` at its supervisor default; the two tools just live
+in different directories.
+
+See `claude config --help` for the full `worktree.*` settings surface.
+
 ## Related
 
 - [ADR 0011 — player saveable state](../adr/0011-player-saveable-state.md) —
