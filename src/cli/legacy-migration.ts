@@ -17,10 +17,16 @@
  *   5. **Partial-copy resume.** Per-file SHA-256 in the marker — re-running
  *      a partially-completed run finishes only the missing/changed files.
  *   6. **Files copied.** Allowlist — `config.json`, `.bootstrap-cache.json`,
- *      any `*.yaml` user-stashed lineup files, plus subdirs `lineups/`,
+ *      any `*.yaml` user-stashed lineup files, plus subdirs `ensembles/`,
  *      `state/`, `coat-check/` (forward-compat — fine if absent). The
  *      volatile runtime trio (`daemon.pid`, `daemon.port`, `daemon.log`)
  *      is intentionally skipped — let the daemon recreate them.
+ *      (Historical note: the original brief named the lineup subdir
+ *      `lineups/`, but the actual on-disk name has always been
+ *      `ensembles/` — see `src/ensemble/{saver,loader}.ts`. The original
+ *      implementation copied the brief's typo verbatim, which silently
+ *      stranded user lineups across the v0.x → v1.x migration. Fixed by
+ *      pointing the allowlist at the real directory name.)
  *   7. **Volatile-state guard.** If `daemon.pid` is present in the legacy
  *      home (likely-running daemon), refuses unless `force: true`.
  *
@@ -47,7 +53,7 @@ const VOLATILE_FILES = new Set(['daemon.pid', 'daemon.port', 'daemon.log']);
 const ALLOWLIST_FILES = new Set(['config.json', '.bootstrap-cache.json']);
 
 /** Allowlisted top-level subdirs (recursive copy). Forward-compat — fine if absent. */
-const ALLOWLIST_SUBDIRS = ['lineups', 'state', 'coat-check'];
+const ALLOWLIST_SUBDIRS = ['ensembles', 'state', 'coat-check'];
 
 export type MigrationStatus =
   | 'no-legacy'
