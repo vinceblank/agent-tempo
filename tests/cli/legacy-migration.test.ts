@@ -16,6 +16,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import {
   migrateLegacyHome,
   MIGRATION_MARKER_FILENAME,
@@ -55,7 +56,7 @@ describe('legacy-migration', () => {
       'config.json': '{"temporalAddress":"localhost:7233"}',
       '.bootstrap-cache.json': '{"schemaVersion":1,"binaryVersion":"0.30.0","steps":{}}',
       'my-lineup.yaml': 'name: test\nplayers: []\n',
-      'lineups/team-a.yaml': 'name: team-a\n',
+      'ensembles/team-a.yaml': 'name: team-a\n',
       'state/foo.json': '{"k":"v"}',
     });
 
@@ -65,7 +66,7 @@ describe('legacy-migration', () => {
     expect(fs.existsSync(path.join(newHome, 'config.json'))).toBe(true);
     expect(fs.existsSync(path.join(newHome, '.bootstrap-cache.json'))).toBe(true);
     expect(fs.existsSync(path.join(newHome, 'my-lineup.yaml'))).toBe(true);
-    expect(fs.existsSync(path.join(newHome, 'lineups/team-a.yaml'))).toBe(true);
+    expect(fs.existsSync(path.join(newHome, 'ensembles/team-a.yaml'))).toBe(true);
     expect(fs.existsSync(path.join(newHome, 'state/foo.json'))).toBe(true);
     expect(fs.existsSync(path.join(newHome, MIGRATION_MARKER_FILENAME))).toBe(true);
     // Legacy stays in place (copy, not move).
@@ -134,14 +135,14 @@ describe('legacy-migration', () => {
   it('partial-copy resume: re-running after the marker is dropped finishes the copy', async () => {
     seedLegacyDir(tmpHome, 'prod', {
       'config.json': '{"a":1}',
-      'lineups/team-a.yaml': 'name: team-a\n',
+      'ensembles/team-a.yaml': 'name: team-a\n',
     });
     const first = await migrateLegacyHome({ homeDir: tmpHome });
     expect(first.status).toBe('migrated');
 
     // Simulate user deleting one of the copied files; the marker still claims
     // it's present. The SHA mismatch / fs.existsSync miss should trigger a re-copy.
-    fs.unlinkSync(path.join(tmpHome, '.agent-tempo', 'lineups/team-a.yaml'));
+    fs.unlinkSync(path.join(tmpHome, '.agent-tempo', 'ensembles/team-a.yaml'));
 
     const second = await migrateLegacyHome({ homeDir: tmpHome });
     // Source hash unchanged → `already-migrated` is acceptable, OR `migrated` if
@@ -149,7 +150,38 @@ describe('legacy-migration', () => {
     // resume semantics; assert the file is restored either way.
     expect(['migrated', 'already-migrated']).toContain(second.status);
     if (second.status === 'migrated') {
-      expect(fs.existsSync(path.join(tmpHome, '.agent-tempo', 'lineups/team-a.yaml'))).toBe(true);
+      expect(fs.existsSync(path.join(tmpHome, '.agent-tempo', 'ensembles/team-a.yaml'))).toBe(true);
+    }
+  });
+
+  // Regression test for the original bug — the allowlist used to say `lineups/`
+  // (matching the brief verbatim) while the actual on-disk subdir name is
+  // `ensembles/`. Result: user lineup YAMLs stranded across v0.x → v1.x. This
+  // test reproduces the observed scenario (4 custom lineups inside
+  // `~/.claude-tempo/ensembles/`) and asserts each one is copied byte-for-byte
+  // to `~/.agent-tempo/ensembles/`.
+  it('regression: ensembles/*.yaml lineups are copied (was: stranded by typo)', async () => {
+    const lineups = {
+      'ensembles/default.yaml': 'name: default\nplayers: []\n',
+      'ensembles/life-assistant-dev.yaml': 'name: life-assistant-dev\nplayers: []\n',
+      'ensembles/my-tempo-lineup.yaml': 'name: my-tempo-lineup\nplayers:\n  - name: a\n',
+      'ensembles/smoke-test-lineup.yaml': 'name: smoke-test-lineup\nplayers: []\n',
+    };
+    seedLegacyDir(tmpHome, 'prod', lineups);
+
+    const r = await migrateLegacyHome({ homeDir: tmpHome });
+    expect(r.status).toBe('migrated');
+    expect(r.copiedFiles).toEqual(expect.arrayContaining(Object.keys(lineups)));
+
+    const legacyHome = path.join(tmpHome, '.claude-tempo');
+    const newHome = path.join(tmpHome, '.agent-tempo');
+    for (const rel of Object.keys(lineups)) {
+      const dest = path.join(newHome, rel);
+      expect(fs.existsSync(dest)).toBe(true);
+      // Byte-for-byte fidelity (the contract is "copy, not transform").
+      const srcSha = crypto.createHash('sha256').update(fs.readFileSync(path.join(legacyHome, rel))).digest('hex');
+      const dstSha = crypto.createHash('sha256').update(fs.readFileSync(dest)).digest('hex');
+      expect(dstSha).toBe(srcSha);
     }
   });
 
