@@ -44,6 +44,7 @@ import {
 import { CreateEnsemble } from './screens/CreateEnsemble';
 import { Hosts } from './screens/Hosts';
 import { Loadouts } from './screens/Loadouts';
+import { Orphans } from './screens/Orphans';
 import { Overview } from './screens/Overview';
 import { Workspace } from './screens/Workspace';
 import { OverflowShim } from './screens/OverflowShim';
@@ -129,6 +130,8 @@ export const DASHBOARD_ROUTES: RouteObject[] = [
       { path: 'create-ensemble', element: <CreateEnsemble /> },
       { path: 'recruit', element: <Recruit /> },
       { path: 'hosts', element: <Hosts /> },
+      // #579 — position after Hosts and before Schedules per architect's brief.
+      { path: 'orphans', element: <Orphans /> },
       { path: 'schedules', element: <Schedules /> },
       { path: 'loadouts', element: <Loadouts /> },
       { path: 'player-types', element: <PlayerTypes /> },

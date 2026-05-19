@@ -26,6 +26,8 @@
 import type {
   EnsembleStateV1,
   HealthV1,
+  OrphansV1,
+  OrphanV1,
   TempoEvent,
   SubscribeOptions,
 } from 'agent-tempo/http/event-types';
@@ -34,7 +36,7 @@ import type { HostInfo } from 'agent-tempo/types';
 import { logEvent } from './log';
 import { getBearerToken } from './auth';
 
-export type { EnsembleStateV1, HealthV1, TempoEvent, EnsembleSummary, HostInfo };
+export type { EnsembleStateV1, HealthV1, OrphansV1, OrphanV1, TempoEvent, EnsembleSummary, HostInfo };
 
 /**
  * Surface the dashboard depends on. Strict subset of the daemon's HTTP
@@ -53,6 +55,14 @@ export interface DashboardTempoClient {
   state(ensemble: string): Promise<EnsembleStateV1>;
   /** GET `/v1/hosts` — host profiles + freshness/instance info. */
   hosts(): Promise<HostInfo[]>;
+  /**
+   * GET `/v1/orphans[?ensemble=<name>]` — cluster-wide cross-host orphan
+   * listing (#579). Returns the join of `queryOrphanedSessions` + host
+   * liveness + render-ready `migrateCommand` strings the operator can
+   * paste into their TUI to recover each row. View-only in v1 — no
+   * click-to-restore / click-to-destroy actions on the response.
+   */
+  orphans(opts?: { ensemble?: string }): Promise<OrphansV1>;
   /** GET `/v1/agent-types` — available player-type catalog (#400). */
   agentTypes(): Promise<AgentTypeRow[]>;
   /** GET `/v1/lineups` — available lineup catalog (#400). */
@@ -288,6 +298,12 @@ export function createDashboardClient(opts: DashboardClientOpts = {}): Dashboard
     },
     async hosts() {
       return getJson<HostInfo[]>('/v1/hosts');
+    },
+    async orphans(orphansOpts?: { ensemble?: string }) {
+      const qs = orphansOpts?.ensemble
+        ? `?ensemble=${encodeURIComponent(orphansOpts.ensemble)}`
+        : '';
+      return getJson<OrphansV1>(`/v1/orphans${qs}`);
     },
     async agentTypes() {
       const body = await getJson<{ agentTypes: AgentTypeRow[] }>('/v1/agent-types');

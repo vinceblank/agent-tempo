@@ -37,6 +37,7 @@ const CORE_METHOD_NAMES = [
   'listEnsembles',
   'listEnsemblesBounded', // #336/#529 site 6 — bounded variant for AggregateRunner
   'listHosts',
+  'listAllOrphans', // #579 — cluster-wide orphan listing for the dashboard's /orphans view
   'hasGlobalMaestro',
   'isConnected',
   // Per-ensemble reads

@@ -10,6 +10,7 @@ import type {
   EnsembleStateV1,
   EnsembleSummary,
   HealthV1,
+  OrphansV1,
 } from 'agent-tempo/http/event-types';
 import type { HostInfo } from 'agent-tempo/types';
 import { logEvent } from './log';
@@ -27,6 +28,16 @@ export type EnsemblesQueryKey = typeof ENSEMBLES_QUERY_KEY;
 /** Stable query key for the host list. */
 export const HOSTS_QUERY_KEY = ['hosts'] as const;
 export type HostsQueryKey = typeof HOSTS_QUERY_KEY;
+
+/**
+ * #579 — query key for the cluster-wide orphans listing. Includes the
+ * ensemble filter so `useOrphans('foo')` and `useOrphans()` get
+ * independent cache slots and refetch on filter change.
+ */
+export const ORPHANS_QUERY_KEY = ['orphans'] as const;
+export function orphansQueryKey(ensemble?: string): readonly unknown[] {
+  return ensemble ? [...ORPHANS_QUERY_KEY, ensemble] : [...ORPHANS_QUERY_KEY, '__all__'];
+}
 
 /** Stable query key for the agent-type catalog (#400). */
 export const AGENT_TYPES_QUERY_KEY = ['agent-types'] as const;
@@ -117,6 +128,64 @@ export function useEnsembleList(opts: QueriesOptions = {}): UseQueryResult<Ensem
 export function useHosts(opts: QueriesOptions = {}): UseQueryResult<HostInfo[], Error> {
   const client = opts.client ?? getDashboardClient();
   return useCatalogQuery(HOSTS_QUERY_KEY, () => client.hosts(), 'hosts');
+}
+
+/**
+ * #579 — `GET /v1/orphans[?ensemble=<name>]`. Daemon caches the
+ * underlying read for 3 s; we use a 10 s `staleTime` (matching brief)
+ * and 30 s `refetchInterval`. Query key includes the ensemble filter
+ * so a filter change triggers a refetch instead of returning the
+ * previously-cached unfiltered list.
+ */
+export function useOrphans(ensemble?: string, opts: QueriesOptions = {}): UseQueryResult<OrphansV1, Error> {
+  const client = opts.client ?? getDashboardClient();
+  return useQuery({
+    queryKey: orphansQueryKey(ensemble),
+    queryFn: async () => {
+      try {
+        return await client.orphans(ensemble ? { ensemble } : undefined);
+      } catch (err) {
+        logEvent('snapshot.error', {
+          resource: 'orphans',
+          ...(ensemble ? { ensemble } : {}),
+          error: err instanceof Error ? err.message : String(err),
+        }, 'warn');
+        throw err;
+      }
+    },
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
+  });
+}
+
+/**
+ * #579 — lighter-weight count-only hook for the sidebar badge. Same
+ * endpoint, longer refetch (60 s) so the badge poll doesn't compete
+ * with the full-list refresh when the operator is on the screen. Falls
+ * back to 0 on error (badge hides gracefully without disrupting the
+ * sidebar).
+ */
+export function useOrphanCount(opts: QueriesOptions = {}): UseQueryResult<number, Error> {
+  const client = opts.client ?? getDashboardClient();
+  return useQuery({
+    queryKey: [...ORPHANS_QUERY_KEY, '__count__'],
+    queryFn: async () => {
+      try {
+        const body = await client.orphans();
+        return body.orphans.length;
+      } catch (err) {
+        logEvent('snapshot.error', {
+          resource: 'orphans-count',
+          error: err instanceof Error ? err.message : String(err),
+        }, 'warn');
+        throw err;
+      }
+    },
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+  });
 }
 
 /**

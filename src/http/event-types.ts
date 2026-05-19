@@ -227,6 +227,51 @@ export interface PlayerSummaryV1 {
  */
 export type EventIdToken = string;
 
+// ── §4.x — `/v1/orphans` cross-host orphan listing (#579) ──────────────────
+
+/**
+ * §4.x — single row in the `/v1/orphans` cluster-wide orphan listing.
+ *
+ * An orphan is a session workflow whose `attachmentInfo.phase ∈ {detached,
+ * draining, attached, processing, awaiting}` but whose home-host daemon
+ * isn't running an adapter for it — typically because the home host is
+ * down or the adapter crashed without orderly destroy. The dashboard
+ * `/orphans` screen surfaces these so an operator on a live host can
+ * migrate the player over.
+ *
+ * `hostLiveness` is joined server-side against `listHosts()` so the
+ * dashboard doesn't have to re-issue a hosts query per row:
+ *   - `'live'`  — `preferredHost` matches a host with `freshness === 'live'`
+ *   - `'stale'` — matches a host with `freshness === 'stale'`
+ *   - `'missing'` — `preferredHost` is null OR no matching host record
+ *
+ * `migrateCommand` is the TUI slash-command the operator pastes into their
+ * own session on the migrate target. `--yes-steal=` (NOT
+ * `--confirm-steal-from-host`) is the actual flag accepted by
+ * `src/tui/commands.ts:handleMigrate`. When `preferredHost` is null the
+ * command targets the local host and includes the steal guard pre-filled
+ * with the last-known host (or a literal `'(unknown)'` when even that is
+ * missing — the operator must edit it before submit).
+ */
+export interface OrphanV1 {
+  playerId: string;
+  ensemble: string;
+  workflowId: string;
+  preferredHost: string | null;
+  hostLiveness: 'live' | 'stale' | 'missing';
+  phase: AttachmentPhase;
+  detachedSince: string | null;
+  lastHeartbeatAt: string | null;
+  migrateCommand: string;
+}
+
+/** §4.x — response shape for `GET /v1/orphans[?ensemble=<name>]`. */
+export interface OrphansV1 {
+  v: 1;
+  capturedAt: string;
+  orphans: OrphanV1[];
+}
+
 /**
  * The PR-1 sentinel `lastEventId` value — emitted on `/v1/state/:ensemble`
  * before PR-2 lights up the aggregate poll loop. Subscribers passing this

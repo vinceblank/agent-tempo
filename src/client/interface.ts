@@ -365,6 +365,24 @@ export interface TempoClientCore {
    * CLI / TUI / MCP. `force: true` bypasses the 3-second result cache.
    */
   listHosts(opts?: { force?: boolean }): Promise<HostInfo[]>;
+  /**
+   * #579 — cluster-wide cross-host orphan listing (readonly). Used by the
+   * dashboard's `/orphans` screen via the daemon's `GET /v1/orphans`
+   * endpoint. Thin wrapper over `queryOrphanedSessions` with `allHosts: true`.
+   * Returns raw `OrphanCandidate` rows so callers can join with their own
+   * host-liveness / migrate-command rendering.
+   *
+   * `opts.ensemble` narrows the visibility query to a single ensemble.
+   * `opts.force` bypasses the 3-second in-process cache (mirrors
+   * `listHosts`). Result is cached keyed on the ensemble filter so
+   * `?ensemble=foo` and the unfiltered call don't clobber each other.
+   *
+   * Never throws on per-candidate failure — partial-tolerant by design
+   * (the underlying `queryOrphanedSessions` already skips unreachable
+   * candidates and returns what it could resolve). Visibility-query timeout
+   * also returns partial.
+   */
+  listAllOrphans(opts?: { ensemble?: string; force?: boolean }): Promise<import('../reconcile/orphans').OrphanCandidate[]>;
   /** Get active schedules for an ensemble. */
   getSchedules(ensemble: string): Promise<ScheduleEntry[]>;
   /** Cancel a named schedule in an ensemble. */

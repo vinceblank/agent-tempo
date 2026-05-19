@@ -143,6 +143,7 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
     attachmentInfo: fail,
     recall: fail,
     listHosts: async () => [],
+    listAllOrphans: async () => [],
     disbandEnsemble: fail,
     // #287 ensemble-scope verbs — same offline fail-fast shape.
     pause: fail,

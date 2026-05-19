@@ -25,6 +25,7 @@
  * (design §10.6). False positives — skipping a session that needs restore —
  * are the worse failure mode.
  */
+import { hostname as osHostname } from 'os';
 import type { Client } from '@temporalio/client';
 import type { AttachmentInfo, AttachmentPhase, OrphanSummary } from '../types';
 import { attachmentInfoQuery, orphanSummaryQuery } from '../workflows/signals';
@@ -220,6 +221,86 @@ export function buildOrphanQuery(opts: BuildOrphanQueryOpts): string {
  * so the boot path can call `restoreOrphansOnce` again on a subsequent
  * cycle to pick up missed candidates.
  */
+// ─────────────────────────────────────────────────────────────────────────
+// #579 — cached cluster-wide orphan listing for the dashboard
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * 3-second cache TTL — mirrors `src/utils/hosts.ts:CACHE_TTL_MS`. Keeps
+ * rapid-fire dashboard refreshes cheap (the React query layer also has
+ * its own staleTime, this is defense in depth at the daemon edge).
+ */
+export const ORPHANS_CACHE_TTL_MS = 3_000;
+
+interface OrphansCacheEntry {
+  timestamp: number;
+  candidates: OrphanCandidate[];
+}
+
+const orphansCache = new Map<string, OrphansCacheEntry>();
+
+/**
+ * Test hook — never call from production code. Convention per
+ * `docs/adr/0006-test-hooks-naming.md`.
+ */
+export function __resetOrphansCacheForTests(): void {
+  orphansCache.clear();
+}
+
+/**
+ * Cluster-wide cross-host orphan listing for the dashboard (#579 / ADR
+ * follow-up). Thin wrapper over {@link queryOrphanedSessions} with
+ * `allHosts: true` and a 3-second in-process cache keyed by ensemble
+ * filter. Cache shape mirrors `src/utils/hosts.ts:listHosts`.
+ *
+ * Use the `cleanup` deadline (30s) rather than the `boot` deadline (60s)
+ * since this is called from a user-facing read endpoint where partial
+ * results are preferable to a 60s wait.
+ */
+export async function listAllOrphansCached(
+  client: Client,
+  opts: { ensemble?: string; force?: boolean } = {},
+  log: (...args: unknown[]) => void = () => {},
+): Promise<OrphanCandidate[]> {
+  const key = opts.ensemble ?? '__all__';
+  const now = Date.now();
+  const cached = orphansCache.get(key);
+  if (!opts.force && cached && now - cached.timestamp < ORPHANS_CACHE_TTL_MS) {
+    return cached.candidates;
+  }
+  const candidates = await queryOrphanedSessions(
+    client,
+    {
+      hostname: osHostname(),
+      allHosts: true,
+      ...(opts.ensemble !== undefined ? { ensemble: opts.ensemble } : {}),
+    },
+    log,
+    VISIBILITY_DEADLINES_MS.orphanQueryCleanup,
+  );
+  orphansCache.set(key, { timestamp: now, candidates });
+  return candidates;
+}
+
+/**
+ * Cross-host detail resolver shared by `restoreOrphansOnce`'s readonly
+ * branch (#151 `agent-tempo restore --all-hosts`) and the dashboard's
+ * `/v1/orphans` handler (#579).
+ *
+ * Returns `null` when an `ensembleFilter` is provided and the candidate
+ * is outside that ensemble (caller should `continue`). Otherwise returns
+ * the preferred-host string used by both surfaces to group / annotate:
+ * `OrphanSummary.preferredHost` first, falling back to the candidate's
+ * last-known adapter host, finally `'(unknown)'`.
+ */
+export function buildCrossHostDetail(
+  candidate: OrphanCandidate,
+  ensembleFilter?: string,
+): string | null {
+  if (ensembleFilter && candidate.summary.ensemble !== ensembleFilter) return null;
+  return candidate.summary.preferredHost ?? candidate.summary.lastAdapter?.hostname ?? '(unknown)';
+}
+
 export async function queryOrphanedSessions(
   client: Client,
   filter: OrphanQueryFilter,
@@ -504,11 +585,8 @@ export async function restoreOrphansOnce(
   // as orphan candidate) and ensemble narrowing are both applied here too.
   if (allHostsReadonly) {
     for (const o of orphans) {
-      if (opts.ensemble && o.summary.ensemble !== opts.ensemble) continue;
-      // `detail` carries the preferred host when set, falling back to the
-      // candidate's home hostname (from `OrphanSummary.lastAdapter.hostname`)
-      // and finally `(unknown)`. The CLI groups by this value.
-      const detail = o.summary.preferredHost ?? o.summary.lastAdapter?.hostname ?? '(unknown)';
+      const detail = buildCrossHostDetail(o, opts.ensemble);
+      if (detail === null) continue; // ensemble narrowing excluded it
       record(o, { kind: 'skipped', reason: 'crossHost', detail });
     }
     return summary;
