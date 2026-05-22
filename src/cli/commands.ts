@@ -1695,7 +1695,45 @@ export async function down(opts: DownOpts) {
 
   // Step 1 (destroy mode only): enumerate + terminate workflows across every
   // ensemble, after a typed confirmation showing the user what's at stake.
-  const temporalUp = await isTemporalReachable(config);
+  let temporalUp = await isTemporalReachable(config);
+
+  // `--destroy` can only terminate workflows while Temporal is reachable.
+  // Workflow state lives durably on disk in ~/.agent-tempo/, so if Temporal
+  // happens to be down when the user runs `down --destroy`, skipping the
+  // destroy step here silently leaves every workflow to be resurrected the
+  // next time anything starts the daemon (an `up`, a `status`, or the TUI).
+  // To make `--destroy` actually mean it, start Temporal temporarily just
+  // long enough to run the terminations — Step 4 below stops it again.
+  let startedTemporalForDestroy = false;
+  if (opts.destroy && !temporalUp) {
+    if (!temporalCliExists()) {
+      out.warn('temporal CLI not found — cannot destroy workflows; they will persist on disk.');
+    } else {
+      out.log(`  ${out.dim('...')} Temporal is down — starting it temporarily to destroy workflows...`);
+      mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
+      const port = config.temporalAddress.split(':')[1] || '7233';
+      const child = cpSpawn('temporal', [
+        'server', 'start-dev',
+        '--port', port,
+        '--db-filename', DEFAULT_DB_PATH,
+      ], { detached: true, stdio: 'ignore' });
+      child.unref();
+      for (let i = 0; i < 20; i++) {
+        await new Promise(r => setTimeout(r, 500));
+        if (await isTemporalReachable(config)) { temporalUp = true; break; }
+      }
+      if (temporalUp) {
+        startedTemporalForDestroy = true;
+        out.success('Temporal started for cleanup');
+      } else {
+        out.warn(
+          'Could not start Temporal within 10s — workflows may survive teardown. ' +
+          'Re-run `agent-tempo down --destroy` once Temporal is up.',
+        );
+      }
+    }
+  }
+
   if (opts.destroy && temporalUp) {
     try {
       const connection = await createTemporalConnection(config);
@@ -1825,7 +1863,12 @@ export async function down(opts: DownOpts) {
   // skips the kill when the OPPOSITE profile is likely active;
   // `--kill-shared-temporal` is the explicit opt-in to override.
   if (temporalUp) {
-    const result = stopTemporalServer({ killSharedTemporal: opts.killSharedTemporal });
+    // When we started Temporal ourselves just for the destroy step, always
+    // stop it again — the cross-profile guard is about not killing a server
+    // the *other* profile owns, but this one we own outright.
+    const result = stopTemporalServer({
+      killSharedTemporal: opts.killSharedTemporal || startedTemporalForDestroy,
+    });
     switch (result.action) {
       case 'killed':
         out.success('Temporal server stopped');
