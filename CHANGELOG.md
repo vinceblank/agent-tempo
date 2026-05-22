@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-05-22
+
+### Added
+- **SDK-based search-attribute probe for Temporal Cloud** (#616) — `up`/daemon startup now
+  auto-detects Temporal Cloud (API key set or `.tmprl.cloud` address) and verifies required
+  search attributes via Temporal SDK visibility queries instead of shelling out to
+  `temporal operator search-attribute list`, which is unauthorized on Cloud namespaces.
+  Cloud-specific error messages now show `tcld` commands and a Cloud UI link instead of the
+  CLI `temporal operator` equivalents. Skip CLI-based SA registration attempts for Cloud
+  namespaces (must use `tcld` or the Cloud UI).
+
+### Fixed
+- **`agent-tempo down --destroy` now terminates workflows even when Temporal is already stopped.**
+  (#617) Previously, if Temporal was unreachable when `down --destroy` ran, workflow
+  termination was silently skipped. Because Temporal's state is durable on disk
+  (`~/.agent-tempo/`), any subsequent `up`/`status`/TUI invocation would resurrect those
+  workflows as Running — leaving the user with a "destroyed" ensemble that came back to life.
+  `down --destroy` now starts a temporary Temporal dev server (same port/db as `up`), runs
+  terminations, then stops it. If the `temporal` CLI is missing or start times out, the
+  command warns loudly rather than skipping silently.
+- **`@temporalio/common` and `@temporalio/proto` promoted to production dependencies** (#615).
+  Both were imported in production code but declared only as `devDependencies`
+  (`@temporalio/common`) or undeclared (`@temporalio/proto`). With npm's flat `node_modules`
+  these resolved as transitive deps, but pnpm's strict isolation correctly rejects undeclared
+  dependencies — causing the daemon to crash with `MODULE_NOT_FOUND` on global installs via
+  pnpm.
+- **Dashboard create-ensemble bootstraps Maestro before recruiting conductor** (#616). The
+  `POST /v1/ensembles` endpoint now calls `ensureMaestroSession()` before conductor recruit,
+  matching the lifecycle `agent-tempo up` establishes and preventing a 500 error on
+  brand-new ensembles.
+
 ## [1.1.0] - 2026-05-19
 
 ### Added
