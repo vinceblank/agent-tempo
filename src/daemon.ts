@@ -913,6 +913,7 @@ async function main() {
     const result = await verifySearchAttributes({
       temporalAddress: config.temporalAddress,
       temporalNamespace: config.temporalNamespace,
+      temporalApiKey: config.temporalApiKey,
     });
     if (!result.ok && !result.probeError) {
       process.stderr.write('ERROR: ' + result.message + '\n');
