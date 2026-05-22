@@ -1,0 +1,206 @@
+# Release workflow — triggered by pushing a version tag (e.g. git tag v1.2.0 && git push --tags)
+#
+# Required secret:
+#   NPM_TOKEN — an npm Automation token with publish access to the agent-tempo package.
+#   Set it at: https://github.com/vinceblank/agent-tempo/settings/secrets/actions
+#
+# Test strategy mirrors CI (ci.yml):
+#   - build-and-test: 2-shard × 3-node matrix (Mocha integration suite)
+#   - test-tui:       3-node matrix (Vitest TUI + client suite)
+#   - publish:        gates on both; builds, publishes to npm, creates GitHub Release
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-test:
+    # Mocha integration suite, sharded 2-way — mirrors CI's build-and-test matrix exactly.
+    # All 6 jobs (2 shards × 3 nodes) must pass before publish runs.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22, 24]
+        shard: [1, 2]
+    name: build-and-test (shard-${{ matrix.shard }}, node-${{ matrix.node-version }})
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run Mocha shard ${{ matrix.shard }}
+        id: mocha
+        run: |
+          start=$(date +%s)
+          npm run test:shard-${{ matrix.shard }}
+          end=$(date +%s)
+          echo "duration=$(( end - start ))" >> "$GITHUB_OUTPUT"
+
+      - name: Post shard wall-clock to job summary
+        if: always()
+        run: |
+          echo "### Shard ${{ matrix.shard }} (Node ${{ matrix.node-version }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Mocha wall-clock: **${{ steps.mocha.outputs.duration }}s**" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Rebalance when per-shard wall-clock drifts >20% between \`shard-1\` and \`shard-2\`. See \`test/README.md\`." >> "$GITHUB_STEP_SUMMARY"
+
+  test-tui:
+    # Vitest suite (tests/tui + tests/client) — mirrors CI's test-tui matrix exactly.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22, 24]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run Vitest (TUI + client)
+        run: npm run test:tui
+
+  publish:
+    # Gates on all 6 Mocha shard jobs + 3 Vitest jobs passing.
+    # Builds once more (fresh artifact), then publishes to npm and creates the GitHub Release.
+    runs-on: ubuntu-latest
+    needs: [build-and-test, test-tui]
+    permissions:
+      contents: write  # needed to create GitHub Releases
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify tarball contents
+        # The publish step below uses --ignore-scripts to skip prepublishOnly
+        # (which already ran `npm run build && npm test` in the matrix jobs).
+        # That also skips the verify-tarball check, so run it explicitly here.
+        # Confirms `dashboard/dist/index.html` is in the npm tarball — the daemon
+        # 404s with `{"error":"dashboard-not-built"}` if it isn't (regression
+        # guard for the v0.28.0-beta.4 bug where dashboard/.gitignore silently
+        # excluded the SPA build output from `npm publish`).
+        run: npm run verify-tarball
+
+      - name: Determine npm dist-tag
+        id: dist-tag
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "$TAG" == *-* ]]; then
+            echo "tag=beta" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm
+        # --ignore-scripts skips prepublishOnly (build + npm test) — tests already ran in the
+        # build-and-test matrix above; re-running them sequentially here would waste ~8 min.
+        run: npm publish --access public --tag ${{ steps.dist-tag.outputs.tag }} --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Extract changelog for this version
+        id: changelog
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          # Extract the block between this version header and the next
+          NOTES=$(awk "/^## \[${VERSION}\]/{found=1; next} found && /^## \[/{exit} found{print}" CHANGELOG.md)
+          # Use a multiline-safe delimiter for GITHUB_OUTPUT
+          {
+            echo "notes<<__CHANGELOG_EOF__"
+            echo "$NOTES"
+            echo "__CHANGELOG_EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: actions/github-script@v8
+        env:
+          CHANGELOG_NOTES: ${{ steps.changelog.outputs.notes }}
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const body = (process.env.CHANGELOG_NOTES || '').trim();
+            const params = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: tag,
+              body: body || `Release ${tag}`,
+              draft: false,
+              prerelease: tag.includes('-'),
+            };
+
+            try {
+              await github.rest.repos.createRelease(params);
+              core.info(`GitHub Release created for ${tag}`);
+            } catch (err) {
+              // 422 Validation Failed: tag_name already_exists
+              // This happens when the workflow is re-run after a partial failure
+              // (e.g. the GH Release step failed but npm publish already succeeded).
+              // npm publish is the source of truth — treat an existing release as success.
+              const alreadyExists =
+                err.status === 422 &&
+                err.response?.data?.errors?.some(e => e.code === 'already_exists' && e.field === 'tag_name');
+
+              if (alreadyExists) {
+                core.warning(`GitHub Release for ${tag} already exists — updating body instead of failing.`);
+                const { data: existing } = await github.rest.repos.getReleaseByTag({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag: tag,
+                });
+                await github.rest.repos.updateRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: existing.id,
+                  body: params.body,
+                });
+                core.info(`GitHub Release for ${tag} updated.`);
+              } else {
+                throw err;
+              }
+            }
