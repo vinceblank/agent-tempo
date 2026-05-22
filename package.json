@@ -92,6 +92,8 @@
     "@modelcontextprotocol/sdk": "~1.28.0",
     "@temporalio/activity": "~1.15.0",
     "@temporalio/client": "~1.15.0",
+    "@temporalio/common": "~1.15.0",
+    "@temporalio/proto": "~1.15.0",
     "@temporalio/worker": "~1.15.0",
     "@temporalio/workflow": "~1.15.0",
     "croner": "^10.0.1",
@@ -107,7 +109,6 @@
   },
   "devDependencies": {
     "@size-limit/preset-app": "^12.1.0",
-    "@temporalio/common": "^1.15.0",
     "@temporalio/testing": "~1.15.0",
     "@types/chai": "^4.3.20",
     "@types/mocha": "^10.0.10",
