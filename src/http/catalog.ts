@@ -169,9 +169,23 @@ export async function handleCreateEnsemble(
   const held = startMode === 'hold';
   const allowed = allowedAgentsForCurrentMode();
 
-  // 1. Recruit the conductor — bootstraps maestro + scheduler. Lineup's
-  // `conductor` block (if present) wins on name + agent + part; the
-  // top-level `host` is the conductor's spawn target either way.
+  // 0. Bootstrap the maestro session + hub workflow for this ensemble.
+  // `client.recruit()` submits an outbox entry on the maestro workflow —
+  // it must exist before we can signal it. The CLI's `agent-tempo up` path
+  // pre-creates the conductor workflow which bootstraps the maestro, but
+  // the dashboard create-ensemble flow goes directly through the client.
+  try {
+    await client.ensureMaestroSession(name);
+  } catch (err) {
+    return errorResponse(res, 500, {
+      error: 'maestro-bootstrap-failed',
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // 1. Recruit the conductor — lineup's `conductor` block (if present)
+  // wins on name + agent + part; the top-level `host` is the conductor's
+  // spawn target either way.
   const conductorBlock = resolved?.conductor;
   const conductorName = conductorBlock?.name ?? 'conductor';
   const conductorAgent = pickAgent(conductorBlock?.agent, allowed);
