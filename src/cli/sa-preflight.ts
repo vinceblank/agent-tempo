@@ -112,6 +112,41 @@ export function isTemporalCloud(address: string): boolean {
 }
 
 /**
+ * Substrings Temporal servers use to signal "this search attribute is not
+ * registered". The exact wording varies across server versions and storage
+ * backends (e.g. 'is not a valid search attribute', 'is not defined',
+ * 'no mapping defined for the field'), so we match a set rather than a
+ * single phrase — a wording change must not cause the probe to misclassify
+ * an unregistered SA as an unexpected error and re-throw.
+ */
+const UNREGISTERED_SA_MARKERS = [
+  'is not a valid search attribute',
+  'is not defined',
+  'no mapping defined for the field',
+  'unknown or unindexed search attribute',
+];
+
+/** gRPC status code for INVALID_ARGUMENT. */
+const GRPC_INVALID_ARGUMENT = 3;
+
+/**
+ * Classify a visibility-query error as "search attribute not registered".
+ *
+ * A registered-but-empty attribute returns results; an unregistered one
+ * fails. Temporal reports the failure as gRPC INVALID_ARGUMENT — we key on
+ * that status code first (wording-independent) and fall back to known
+ * message substrings for transports/versions that don't surface a code.
+ */
+function isUnregisteredAttributeError(err: any): boolean {
+  const msg = (err?.message || '').toLowerCase();
+  if (UNREGISTERED_SA_MARKERS.some((m) => msg.includes(m))) return true;
+  // gRPC ServiceError exposes a numeric `code`; INVALID_ARGUMENT means the
+  // query referenced an attribute the namespace doesn't know about.
+  if (err?.code === GRPC_INVALID_ARGUMENT) return true;
+  return false;
+}
+
+/**
  * SDK-based probe — uses the Temporal Client SDK to verify search attribute
  * existence by issuing a visibility query. Works with Temporal Cloud API keys
  * where the `temporal operator` CLI commands are unauthorized.
@@ -137,6 +172,11 @@ export async function sdkProbeRegisteredAttributes(opts: {
   const registered = new Set<string>();
   try {
     for (const attr of REQUIRED_SEARCH_ATTRIBUTES) {
+      // The probe value only has to be syntactically valid for the
+      // attribute's type so the visibility query parses. We support
+      // Keyword (quoted string literal) and Bool (`true`) here — the only
+      // two types in REQUIRED_SEARCH_ATTRIBUTES. A new SA type would need
+      // its own literal form added below.
       const testValue = attr.type === 'Bool' ? 'true' : '"__probe__"';
       try {
         await conn.workflowService.listWorkflowExecutions({
@@ -146,8 +186,7 @@ export async function sdkProbeRegisteredAttributes(opts: {
         });
         registered.add(attr.name);
       } catch (err: any) {
-        const msg = err?.message || '';
-        if (msg.includes('is not a valid search attribute')) {
+        if (isUnregisteredAttributeError(err)) {
           // Attribute not registered — don't add to set
         } else {
           // Unexpected error — re-throw
