@@ -17,6 +17,7 @@ import {
   assertSearchAttributesOrExit,
   formatPreflightError,
   classifyRegistrationOutput,
+  isTemporalCloud,
 } from '../../src/cli/sa-preflight';
 
 const ALL_REGISTERED = new Set(REQUIRED_SEARCH_ATTRIBUTES.map((a) => a.name));
@@ -171,5 +172,72 @@ describe('assertSearchAttributesOrExit', () => {
     expect(exitCode).toBe(1);
     expect(logged.join('\n')).toContain('Required search attributes not registered');
     expect(logged.join('\n')).toContain('AgentTempoEnsemble');
+  });
+});
+
+describe('isTemporalCloud', () => {
+  it('detects .tmprl.cloud addresses', () => {
+    expect(isTemporalCloud('myns.abc123.tmprl.cloud:7233')).toBe(true);
+  });
+
+  it('returns false for localhost', () => {
+    expect(isTemporalCloud('localhost:7233')).toBe(false);
+  });
+
+  it('returns false for self-hosted addresses', () => {
+    expect(isTemporalCloud('temporal.internal.company.com:7233')).toBe(false);
+  });
+});
+
+describe('Temporal Cloud support', () => {
+  it('uses SDK probe when temporalApiKey is set (via custom probe seam)', async () => {
+    // When apiKey is set but a custom probe is provided, the custom probe
+    // is still honored (test seam preserved).
+    const r = await verifySearchAttributes({
+      temporalAddress: 'myns.abc.tmprl.cloud:7233',
+      temporalNamespace: 'myns.abc',
+      temporalApiKey: 'fake-key',
+      probe: async () => new Set(ALL_REGISTERED),
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('produces tcld instructions for cloud namespaces when SAs are missing', async () => {
+    const r = await verifySearchAttributes({
+      temporalAddress: 'myns.abc.tmprl.cloud:7233',
+      temporalNamespace: 'myns.abc',
+      temporalApiKey: 'fake-key',
+      probe: async () => new Set(),
+    });
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('tcld namespace search-attributes add');
+    expect(r.message).toContain('--namespace myns.abc');
+    expect(r.message).toContain('Cloud UI');
+    // Should NOT contain the self-hosted temporal operator command
+    expect(r.message).not.toContain('temporal operator search-attribute create');
+  });
+
+  it('formatPreflightError with cloud=true shows tcld command', () => {
+    const msg = formatPreflightError(
+      [{ name: 'AgentTempoEnsemble', type: 'Keyword' }],
+      'myns.abc',
+      undefined,
+      true,
+    );
+    expect(msg).toContain('tcld namespace search-attributes add');
+    expect(msg).toContain('--sa "AgentTempoEnsemble=Keyword"');
+    expect(msg).toContain('Cloud UI');
+    expect(msg).not.toContain('temporal operator');
+  });
+
+  it('formatPreflightError with cloud=false shows temporal operator command', () => {
+    const msg = formatPreflightError(
+      [{ name: 'AgentTempoEnsemble', type: 'Keyword' }],
+      'default',
+      undefined,
+      false,
+    );
+    expect(msg).toContain('temporal operator search-attribute create');
+    expect(msg).not.toContain('tcld');
   });
 });

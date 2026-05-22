@@ -219,7 +219,7 @@ const TTL_60S = 60 * 1000;
 // (#605 consolidated the two duplicated literals).
 // ─────────────────────────────────────────────────────────────────────────
 
-import { REQUIRED_SEARCH_ATTRIBUTES, registerSearchAttribute } from './sa-preflight';
+import { REQUIRED_SEARCH_ATTRIBUTES, registerSearchAttribute, isTemporalCloud, sdkProbeRegisteredAttributes } from './sa-preflight';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Semver-aware outdated-version badge rendering (#289 pin item 4)
@@ -491,14 +491,41 @@ async function stepSearchAttrs(
   if (isCacheFresh(cache.steps.searchAttrs, TTL_24H, now)) {
     return { status: 'skipped', durationMs: 0 };
   }
-  const { result: outcome, durationMs } = await timed<StepOutcome>(() => {
-    // Per-attr classification via `registerSearchAttribute` (#605) —
-    // distinguishes `already-exists` (idempotent expected case) from real
-    // failures. Pre-#605 every non-zero exit was swallowed as "already
-    // registered", masking the SQLite dev-server's 10-Keyword-per-namespace
-    // cap and other genuine errors until a downstream workflow start failed
-    // with the confusing `INVALID_ARGUMENT: search attribute ... is not
-    // defined`.
+  const cloud = isTemporalCloud(config.temporalAddress) || !!config.temporalApiKey;
+  const { result: outcome, durationMs } = await timed<StepOutcome>(async () => {
+    if (cloud) {
+      // For Temporal Cloud, use SDK probe to verify SAs are present.
+      // Registration must be done via tcld or the Cloud UI — we cannot
+      // use `temporal operator search-attribute create`.
+      try {
+        const registered = await sdkProbeRegisteredAttributes({
+          temporalAddress: config.temporalAddress,
+          temporalNamespace: config.temporalNamespace,
+          temporalApiKey: config.temporalApiKey,
+        });
+        const missing = REQUIRED_SEARCH_ATTRIBUTES.filter((a) => !registered.has(a.name));
+        if (missing.length > 0) {
+          const saFlags = missing.map((a) => `--sa "${a.name}=${a.type}"`).join(' ');
+          return {
+            status: 'failed',
+            durationMs: 0,
+            detail:
+              `${missing.length} search attribute(s) not registered on Temporal Cloud.\n` +
+              `  Register via: tcld namespace search-attributes add --namespace ${config.temporalNamespace} ${saFlags}\n` +
+              `  Or add them in the Cloud UI: https://cloud.temporal.io`,
+          };
+        }
+        return { status: 'ok', durationMs: 0 };
+      } catch (err: any) {
+        return {
+          status: 'failed',
+          durationMs: 0,
+          detail: `SDK probe failed: ${err?.message || err}`,
+        };
+      }
+    }
+
+    // Self-hosted path: per-attr classification via `registerSearchAttribute` (#605)
     const failures: string[] = [];
     for (const attr of REQUIRED_SEARCH_ATTRIBUTES) {
       const r = registerSearchAttribute(attr, config.temporalAddress, config.temporalNamespace);

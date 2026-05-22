@@ -161,7 +161,6 @@
   "engines": {
     "node": ">=20"
   },
-  "packageManager": "npm@10.9.2",
   "license": "MIT",
   "trustedDependencies": [
     "@swc/core",
@@ -169,5 +168,6 @@
   ],
   "overrides": {
     "rxjs": "^7.8.1"
-  }
+  },
+  "packageManager": "npm@10.9.2"
 }

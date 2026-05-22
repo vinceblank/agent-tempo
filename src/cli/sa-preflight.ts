@@ -20,6 +20,16 @@
  *   - `src/daemon.ts` boot path calls {@link verifySearchAttributes}
  *     directly to fail fast on `agent-tempo daemon start` before the worker
  *     tries to register workflows.
+ *
+ * Cloud support:
+ *   Temporal Cloud's operator gRPC service is not accessible with namespace
+ *   API keys, causing `temporal operator search-attribute list/create` to
+ *   fail with "Request unauthorized". When a Cloud namespace is detected
+ *   (address contains `.tmprl.cloud` or an API key is configured), the
+ *   preflight uses an SDK-based probe: issue a visibility query referencing
+ *   each required attribute — a registered attribute returns an empty result
+ *   set; an unregistered one throws INVALID_ARGUMENT. Registration
+ *   instructions surface `tcld` commands instead of `temporal operator`.
  */
 import { execFileSync, spawnSync } from 'child_process';
 
@@ -42,10 +52,13 @@ export const REQUIRED_SEARCH_ATTRIBUTES: ReadonlyArray<{
 export interface SearchAttributePreflightOpts {
   temporalAddress: string;
   temporalNamespace: string;
+  /** API key for Temporal Cloud — triggers SDK-based probe when set. */
+  temporalApiKey?: string;
   /**
    * Optional test seam — given a namespace, return the set of search
    * attribute names that ARE currently registered. Defaults to
-   * {@link defaultProbeRegisteredAttributes} which shells out to
+   * {@link sdkProbeRegisteredAttributes} when `temporalApiKey` is set,
+   * otherwise {@link defaultProbeRegisteredAttributes} which shells out to
    * `temporal operator search-attribute list`.
    */
   probe?: (opts: { temporalAddress: string; temporalNamespace: string }) => Promise<Set<string>>;
@@ -93,14 +106,111 @@ export async function defaultProbeRegisteredAttributes(opts: {
   return names;
 }
 
+/** Returns true if the address looks like a Temporal Cloud endpoint. */
+export function isTemporalCloud(address: string): boolean {
+  return address.includes('.tmprl.cloud');
+}
+
+/**
+ * Substrings Temporal servers use to signal "this search attribute is not
+ * registered". The exact wording varies across server versions and storage
+ * backends (e.g. 'is not a valid search attribute', 'is not defined',
+ * 'no mapping defined for the field'), so we match a set rather than a
+ * single phrase — a wording change must not cause the probe to misclassify
+ * an unregistered SA as an unexpected error and re-throw.
+ */
+const UNREGISTERED_SA_MARKERS = [
+  'is not a valid search attribute',
+  'is not defined',
+  'no mapping defined for the field',
+  'unknown or unindexed search attribute',
+];
+
+/** gRPC status code for INVALID_ARGUMENT. */
+const GRPC_INVALID_ARGUMENT = 3;
+
+/**
+ * Classify a visibility-query error as "search attribute not registered".
+ *
+ * A registered-but-empty attribute returns results; an unregistered one
+ * fails. Temporal reports the failure as gRPC INVALID_ARGUMENT — we key on
+ * that status code first (wording-independent) and fall back to known
+ * message substrings for transports/versions that don't surface a code.
+ */
+function isUnregisteredAttributeError(err: any): boolean {
+  const msg = (err?.message || '').toLowerCase();
+  if (UNREGISTERED_SA_MARKERS.some((m) => msg.includes(m))) return true;
+  // gRPC ServiceError exposes a numeric `code`; INVALID_ARGUMENT means the
+  // query referenced an attribute the namespace doesn't know about.
+  if (err?.code === GRPC_INVALID_ARGUMENT) return true;
+  return false;
+}
+
+/**
+ * SDK-based probe — uses the Temporal Client SDK to verify search attribute
+ * existence by issuing a visibility query. Works with Temporal Cloud API keys
+ * where the `temporal operator` CLI commands are unauthorized.
+ *
+ * Strategy: for each required attribute, issue `listWorkflowExecutions` with
+ * a query referencing that attribute. If the attribute is registered the query
+ * returns (possibly empty) results. If not registered, Temporal responds with
+ * INVALID_ARGUMENT containing "is not a valid search attribute".
+ */
+export async function sdkProbeRegisteredAttributes(opts: {
+  temporalAddress: string;
+  temporalNamespace: string;
+  temporalApiKey?: string;
+}): Promise<Set<string>> {
+  const { Connection } = await import('@temporalio/client');
+  const tls = opts.temporalApiKey ? true : undefined;
+  const conn = await Connection.connect({
+    address: opts.temporalAddress,
+    tls: tls as any,
+    apiKey: opts.temporalApiKey,
+  });
+
+  const registered = new Set<string>();
+  try {
+    for (const attr of REQUIRED_SEARCH_ATTRIBUTES) {
+      // The probe value only has to be syntactically valid for the
+      // attribute's type so the visibility query parses. We support
+      // Keyword (quoted string literal) and Bool (`true`) here — the only
+      // two types in REQUIRED_SEARCH_ATTRIBUTES. A new SA type would need
+      // its own literal form added below.
+      const testValue = attr.type === 'Bool' ? 'true' : '"__probe__"';
+      try {
+        await conn.workflowService.listWorkflowExecutions({
+          namespace: opts.temporalNamespace,
+          query: `${attr.name} = ${testValue}`,
+          pageSize: 1,
+        });
+        registered.add(attr.name);
+      } catch (err: any) {
+        if (isUnregisteredAttributeError(err)) {
+          // Attribute not registered — don't add to set
+        } else {
+          // Unexpected error — re-throw
+          throw err;
+        }
+      }
+    }
+  } finally {
+    await conn.close();
+  }
+
+  return registered;
+}
+
 /**
  * Format the missing-SA error message. Paste-friendly: operators copy the
- * `temporal operator search-attribute create` block verbatim.
+ * registration commands verbatim. Cloud-aware: shows `tcld` commands for
+ * Temporal Cloud namespaces.
  */
 export function formatPreflightError(
   missing: ReadonlyArray<typeof REQUIRED_SEARCH_ATTRIBUTES[number]>,
   namespace: string,
   probeError?: string,
+  cloud?: boolean,
 ): string {
   const lines: string[] = [];
   lines.push(`Required search attributes not registered on namespace '${namespace}'.`);
@@ -108,13 +218,24 @@ export function formatPreflightError(
     lines.push(`(Could not probe namespace state: ${probeError})`);
   }
   lines.push('');
-  lines.push('Run these commands once per Temporal namespace, then restart the daemon:');
-  lines.push('');
-  for (const attr of missing) {
-    lines.push(
-      `  temporal operator search-attribute create ` +
-      `--name ${attr.name} --type ${attr.type} --namespace ${namespace}`,
-    );
+
+  if (cloud) {
+    lines.push('Register via tcld (Temporal Cloud CLI) or the Cloud UI, then restart the daemon:');
+    lines.push('');
+    const saFlags = missing.map((attr) => `--sa "${attr.name}=${attr.type}"`).join(' \\\n    ');
+    lines.push(`  tcld namespace search-attributes add --namespace ${namespace} \\\n    ${saFlags}`);
+    lines.push('');
+    lines.push('Or add them manually in the Temporal Cloud UI:');
+    lines.push(`  https://cloud.temporal.io → Namespaces → ${namespace} → Search Attributes`);
+  } else {
+    lines.push('Run these commands once per Temporal namespace, then restart the daemon:');
+    lines.push('');
+    for (const attr of missing) {
+      lines.push(
+        `  temporal operator search-attribute create ` +
+        `--name ${attr.name} --type ${attr.type} --namespace ${namespace}`,
+      );
+    }
   }
   lines.push('');
   lines.push('(See docs/ops/v1.0-migration.md for the full upgrade walkthrough.)');
@@ -125,11 +246,25 @@ export function formatPreflightError(
  * Verify all {@link REQUIRED_SEARCH_ATTRIBUTES} are registered on the
  * given namespace. Returns a structured result — callers decide whether
  * to log+continue (boot bootstrap step) or exit non-zero (daemon start).
+ *
+ * When `temporalApiKey` is set (or address is a Cloud endpoint), uses the
+ * SDK-based probe instead of shelling out to `temporal operator`.
  */
 export async function verifySearchAttributes(
   opts: SearchAttributePreflightOpts,
 ): Promise<SearchAttributePreflightResult> {
-  const probe = opts.probe ?? defaultProbeRegisteredAttributes;
+  const cloud = isTemporalCloud(opts.temporalAddress) || !!opts.temporalApiKey;
+  const defaultProbe = cloud
+    ? () => sdkProbeRegisteredAttributes({
+        temporalAddress: opts.temporalAddress,
+        temporalNamespace: opts.temporalNamespace,
+        temporalApiKey: opts.temporalApiKey,
+      })
+    : () => defaultProbeRegisteredAttributes({
+        temporalAddress: opts.temporalAddress,
+        temporalNamespace: opts.temporalNamespace,
+      });
+  const probe = opts.probe ?? defaultProbe;
   let registered: Set<string>;
   let probeError: string | undefined;
   try {
@@ -152,7 +287,7 @@ export async function verifySearchAttributes(
     ok: false,
     missing,
     probeError,
-    message: formatPreflightError(missing, opts.temporalNamespace, probeError),
+    message: formatPreflightError(missing, opts.temporalNamespace, probeError, cloud),
   };
 }
 
