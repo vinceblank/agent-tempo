@@ -38,6 +38,7 @@ function makeMockClient(opts: MockOptions = {}): { client: TempoClient; calls: C
 
   const base = {
     listEnsembles: handler('listEnsembles', opts.ensembles ?? []),
+    ensureMaestroSession: handler('ensureMaestroSession', undefined),
     recruit: handler('recruit', { playerId: 'tempo-eng', entryId: 'entry-1' }),
     listHosts: handler('listHosts', []),
   };
