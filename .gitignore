@@ -55,3 +55,4 @@ pnpm-lock.yaml
 .claude/worktrees/
 .claude/rules/openwolf.md
 .claude/
+pnpm-workspace.yaml
