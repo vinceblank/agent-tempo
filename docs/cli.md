@@ -154,6 +154,12 @@ agent-tempo down --keep-mcp       # preserve MCP config
 agent-tempo down --keep-daemon    # stop sessions and Temporal, but leave daemon running
 ```
 
+When `--destroy` is passed and Temporal is not yet running, `down` starts a temporary Temporal
+dev server (same port and database as `up`), runs workflow terminations, then shuts it down
+again. This ensures workflows are actually gone and do not resurrect on the next `up`. If the
+`temporal` CLI is missing or the server fails to start within 10 seconds, the command warns
+loudly rather than silently skipping termination.
+
 ### `agent-tempo destroy`
 
 Terminates every workflow in an ensemble via ordered shutdown (outbox drain). Prompts for typed confirmation; use `-y` to skip:
