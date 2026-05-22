@@ -29,6 +29,7 @@ import { emitDevBannerIfActive } from './cli/dev-banner';
 import { AGENT_TYPES, AgentType } from './types';
 import { ENV, CliOverrides, getConfig, isDevMode } from './config';
 import { formatMigrationResult, type LegacyMigrationResult } from './cli/legacy-migration';
+import { refreshEntrypoint } from './cli/global-wrapper';
 
 /** Package root — cli.js compiles to dist/cli.js, so one level up. Used by the inline `version` handler. */
 const PACKAGE_ROOT = resolve(__dirname, '..');
@@ -338,6 +339,11 @@ async function main() {
   // self-identify as the dev profile. Banner emits to stderr — keeps
   // `--json` stdout consumers clean.
   emitDevBannerIfActive();
+
+  // Refresh the global wrapper entrypoint pointer so `~/.agent-tempo/bin/agent-tempo`
+  // always resolves to the currently-running binary. Cheap (single writeFileSync),
+  // idempotent, and best-effort — never blocks or throws.
+  refreshEntrypoint();
 
   // ── Crash-proof fast paths (#157 PR C) ────────────────────────────────
   // These handlers MUST NOT reach `./cli/commands`, `./cli/preflight`, or
