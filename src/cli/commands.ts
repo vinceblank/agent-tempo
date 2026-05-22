@@ -1684,6 +1684,74 @@ export function stopTemporalServer(opts: StopTemporalServerOpts): StopTemporalRe
   }
 }
 
+/**
+ * Minimal child handle {@link startTemporalForDestroy} needs — `ChildProcess`
+ * satisfies it. Kept narrow so unit tests can inject a fake without spawning.
+ *
+ * @internal
+ */
+export interface SpawnedTemporalChild {
+  kill(): void;
+  unref(): void;
+}
+
+/**
+ * Dependency seam for {@link startTemporalForDestroy} — production callers
+ * pass nothing and get the real spawn + reachability probe. Tests inject
+ * stubs plus a tiny `pollDelayMs` so the readiness loop runs instantly.
+ *
+ * @internal
+ */
+export interface StartTemporalForDestroyDeps {
+  /** Readiness probe — defaults to {@link isTemporalReachable} for `config`. */
+  isReachable?: () => Promise<boolean>;
+  /** Spawn hook — defaults to a detached `temporal server start-dev`. */
+  spawn?: () => SpawnedTemporalChild;
+  /** Readiness poll attempts. Default 20. */
+  attempts?: number;
+  /** Delay between readiness polls, ms. Default 500 (→ 20×500ms = 10s). */
+  pollDelayMs?: number;
+}
+
+/**
+ * Start a temporary Temporal dev server just long enough for `down --destroy`
+ * to terminate workflows when Temporal happened to be down. Polls for
+ * readiness; on timeout it kills the child it spawned so `down` never leaves
+ * a stray Temporal process booting in the background. Exported for unit
+ * tests — production callers pass only `config`.
+ *
+ * @internal
+ */
+export async function startTemporalForDestroy(
+  config: Config,
+  deps: StartTemporalForDestroyDeps = {},
+): Promise<{ started: boolean }> {
+  const attempts = deps.attempts ?? 20;
+  const pollDelayMs = deps.pollDelayMs ?? 500;
+  const isReachable = deps.isReachable ?? (() => isTemporalReachable(config));
+  const spawn = deps.spawn ?? ((): SpawnedTemporalChild => {
+    mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
+    const port = config.temporalAddress.split(':')[1] || '7233';
+    return cpSpawn('temporal', [
+      'server', 'start-dev',
+      '--port', port,
+      '--db-filename', DEFAULT_DB_PATH,
+    ], { detached: true, stdio: 'ignore' });
+  });
+
+  const child = spawn();
+  child.unref();
+  for (let i = 0; i < attempts; i++) {
+    await new Promise(r => setTimeout(r, pollDelayMs));
+    if (await isReachable()) return { started: true };
+  }
+  // Timed out. The detached child may still be booting and would come up
+  // orphaned moments after we give up — kill the process we spawned so
+  // `down` doesn't leave a stray Temporal server behind.
+  try { child.kill(); } catch { /* already exited */ }
+  return { started: false };
+}
+
 export async function down(opts: DownOpts) {
   const config = getConfig(opts);
 
@@ -1695,7 +1763,37 @@ export async function down(opts: DownOpts) {
 
   // Step 1 (destroy mode only): enumerate + terminate workflows across every
   // ensemble, after a typed confirmation showing the user what's at stake.
-  const temporalUp = await isTemporalReachable(config);
+  let temporalUp = await isTemporalReachable(config);
+
+  // `--destroy` can only terminate workflows while Temporal is reachable.
+  // Workflow state lives durably on disk in ~/.agent-tempo/, so if Temporal
+  // happens to be down when the user runs `down --destroy`, skipping the
+  // destroy step here silently leaves every workflow to be resurrected the
+  // next time anything starts the daemon (an `up`, a `status`, or the TUI).
+  // To make `--destroy` actually mean it, start Temporal temporarily just
+  // long enough to run the terminations — Step 4 below stops it again.
+  let startedTemporalForDestroy = false;
+  if (opts.destroy && !temporalUp) {
+    if (!temporalCliExists()) {
+      out.warn('temporal CLI not found — cannot destroy workflows; they will persist on disk.');
+    } else {
+      out.log(`  ${out.dim('...')} Temporal is down — starting it temporarily to destroy workflows...`);
+      const { started } = await startTemporalForDestroy(config);
+      if (started) {
+        temporalUp = true;
+        startedTemporalForDestroy = true;
+        out.success('Temporal started for cleanup');
+      } else {
+        out.warn(
+          'Could not start Temporal within 10s — workflows may survive teardown. ' +
+          'Re-run `agent-tempo down --destroy` once Temporal is up. ' +
+          'A stray Temporal process may have been left starting — check with ' +
+          '`agent-tempo status` and stop it manually if one is still running.',
+        );
+      }
+    }
+  }
+
   if (opts.destroy && temporalUp) {
     try {
       const connection = await createTemporalConnection(config);
@@ -1771,6 +1869,15 @@ export async function down(opts: DownOpts) {
             );
             if (!confirmed) {
               out.log('Aborted.');
+              // We may have started Temporal solely to run this destroy.
+              // Aborting at the confirmation prompt must not leave that
+              // server orphaned — stop it before the hard exit. We own it
+              // outright, so force past the cross-profile guard.
+              if (startedTemporalForDestroy) {
+                if (stopTemporalServer({ killSharedTemporal: true }).action === 'killed') {
+                  out.log(`  ${out.dim('Temporal server stopped')}`);
+                }
+              }
               process.exit(0);
             }
           }
@@ -1825,7 +1932,12 @@ export async function down(opts: DownOpts) {
   // skips the kill when the OPPOSITE profile is likely active;
   // `--kill-shared-temporal` is the explicit opt-in to override.
   if (temporalUp) {
-    const result = stopTemporalServer({ killSharedTemporal: opts.killSharedTemporal });
+    // When we started Temporal ourselves just for the destroy step, always
+    // stop it again — the cross-profile guard is about not killing a server
+    // the *other* profile owns, but this one we own outright.
+    const result = stopTemporalServer({
+      killSharedTemporal: opts.killSharedTemporal || startedTemporalForDestroy,
+    });
     switch (result.action) {
       case 'killed':
         out.success('Temporal server stopped');
