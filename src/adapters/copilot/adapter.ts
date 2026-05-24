@@ -263,6 +263,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
     // Spawn Copilot SDK client and session
     const copilotClient = new CopilotClient({
       logLevel: 'debug',
+      workingDirectory: workDir,
       env: {
         ...cleanEnv(),
         ...(process.env.GITHUB_TOKEN ? { GITHUB_TOKEN: process.env.GITHUB_TOKEN } : {}),
@@ -276,7 +277,6 @@ export class CopilotSdkAttachment extends SdkAttachment {
       // All tool calls are auto-approved by design — the bridge operator accepts
       // this when launching the bridge process.
       onPermissionRequest: approveAll,
-      workingDirectory: workDir,
       mcpServers: {
         'agent-tempo': {
           command: serverCommand,
@@ -291,6 +291,17 @@ export class CopilotSdkAttachment extends SdkAttachment {
         // so claude-code-headless can use the same template via its
         // `--append-system-prompt` argv. Behavior here is unchanged.
         content: buildSdkSystemPrompt({ ensemble: config.ensemble }),
+      },
+      hooks: {
+        // Auto-allow agent-tempo MCP tools to skip the permission prompt round-trip.
+        // This eliminates the permission.requested → handler → approval cycle for
+        // every MCP tool call, reducing latency.
+        onPreToolUse: async (input: any) => {
+          if (input.toolName?.startsWith('mcp__agent-tempo__')) {
+            return { permissionDecision: 'allow' };
+          }
+          return undefined;
+        },
       },
       excludedTools: ['write_powershell', 'read_powershell', 'list_powershell'],
       ...(model ? { model } : {}),

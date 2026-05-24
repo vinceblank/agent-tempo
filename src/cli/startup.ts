@@ -220,6 +220,7 @@ const TTL_60S = 60 * 1000;
 // ─────────────────────────────────────────────────────────────────────────
 
 import { REQUIRED_SEARCH_ATTRIBUTES, registerSearchAttribute, isTemporalCloud, sdkProbeRegisteredAttributes } from './sa-preflight';
+import { provisionWrapperScripts, getPathHint } from './global-wrapper';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Semver-aware outdated-version badge rendering (#289 pin item 4)
@@ -762,6 +763,17 @@ export async function bootstrap(args: BootstrapArgs): Promise<BootstrapResult> {
   // Steps 1–5: fail-fast on step 1 so we don't try to register MCP on an
   // incompatible Node. Each step mutates the cache in-place.
   const preflight = await stepPreflight(cache, now);
+
+  // Provision the global wrapper scripts (`~/.agent-tempo/bin/agent-tempo`)
+  // so the command is accessible without `npx`. Runs once per binary version
+  // (guarded by cache wipe on version change). Best-effort, non-blocking.
+  if (preflight.status !== 'failed') {
+    const { needsPathHint } = provisionWrapperScripts();
+    if (needsPathHint) {
+      // Emit a one-time hint to stderr (won't pollute --json output).
+      process.stderr.write(`\n  hint: ${getPathHint()}\n\n`);
+    }
+  }
 
   // Steps 2 + 3 are independent (MCP config is local fs/shell; Temporal
   // reachability is network), so run them in parallel — up to ~300ms

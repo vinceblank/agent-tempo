@@ -84,8 +84,8 @@
     "check:all": "npm run lint:test-ensemble-literals && npm run lint:skip-reasons && npm run lint:lockstep-version && npm run lint:lockfile-canonical && npm run lint:surface-drift && npm run lint:no-stale-scaffold && npm run build && npm run lint:dashboard-css-sync && npm test && npm --prefix dashboard run lint && npm --prefix dashboard run test && npm run size-limit && npm run verify-tarball"
   },
   "optionalDependencies": {
-    "@github/copilot-sdk": "^0.2.0",
     "@anthropic-ai/sdk": "~0.91.1",
+    "@github/copilot-sdk": "1.0.0-beta.6",
     "@opencode-ai/sdk": "~1.14.29"
   },
   "dependencies": {
