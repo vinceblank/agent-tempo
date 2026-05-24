@@ -14,10 +14,9 @@
  * outside `~/.agent-tempo/bin/` (e.g. npm global install), the wrapper is
  * still written but the PATH hint is suppressed.
  */
-import { existsSync, mkdirSync, writeFileSync, readFileSync, chmodSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, chmodSync, renameSync } from 'fs';
 import { join, resolve } from 'path';
 import { homedir } from 'os';
-import { execFileSync } from 'child_process';
 
 /** Resolved CLI entrypoint — the `dist/cli.js` of the running binary. */
 const THIS_CLI_JS = resolve(__dirname, '..', 'cli.js');
@@ -94,7 +93,12 @@ export function refreshEntrypoint(): void {
     const current = safeRead(pointerPath);
     // Skip write if already correct — avoids unnecessary disk churn.
     if (current === THIS_CLI_JS) return;
-    writeFileSync(pointerPath, THIS_CLI_JS, 'utf8');
+    // Atomic write-then-rename: a torn `.entrypoint` would break the wrapper
+    // until the next CLI boot, so stage into a tmp file and rename into place.
+    // `renameSync` is atomic on POSIX and at least better-than-torn on Windows.
+    const tmp = pointerPath + '.tmp';
+    writeFileSync(tmp, THIS_CLI_JS, 'utf8');
+    renameSync(tmp, pointerPath);
   } catch {
     // Best-effort — never throw from a convenience provisioning step.
   }
@@ -167,5 +171,9 @@ function isBinDirOnPath(binDir: string): boolean {
   const pathEnv = process.env.PATH || process.env.Path || '';
   const sep = process.platform === 'win32' ? ';' : ':';
   const dirs = pathEnv.split(sep);
-  return dirs.some((d) => resolve(d) === resolve(binDir));
+  // Windows filesystem paths are case-insensitive; normalize before comparing
+  // so `C:\Users\X\...` and `c:\users\x\...` don't produce a spurious PATH hint.
+  const norm = (p: string) =>
+    process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p);
+  return dirs.some((d) => norm(d) === norm(binDir));
 }
