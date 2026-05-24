@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-05-24
+
+### Added
+- **Global wrapper auto-provisioning** (#620) — `src/cli/global-wrapper.ts` auto-provisions
+  `~/.agent-tempo/bin/agent-tempo`, a wrapper resolving the CLI via a `.entrypoint` pointer
+  file refreshed on each invocation. Self-heals across npm/pnpm/yarn reinstalls; emits a
+  one-time PATH hint when the bin dir is off PATH. Atomic pointer writes (temp-file +
+  `renameSync`) survive interrupted writes. Case-insensitive PATH match on Windows.
+- **Copilot adapter `hooks.onPreToolUse`** (#620) — auto-allows `mcp__agent-tempo__*` tool
+  calls, eliminating a permission round-trip per agent-tempo MCP call.
+
+### Changed
+- **`@github/copilot-sdk` upgraded `0.2.2` → `1.0.0-beta.6`** (#620) — Fixes the
+  `[release requested]` immediate-disconnect bug: `approveAll` now returns the correct input
+  format `{ kind: "approve-once" }` per the SDK 1.0 contract. `workingDirectory` moved from
+  session config to `CopilotClient` constructor (SDK 1.0 API surface change).
+
 ## [1.2.0] - 2026-05-22
 
 ### Added
