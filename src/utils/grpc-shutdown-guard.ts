@@ -24,6 +24,20 @@
  * preserving normal crash semantics.
  *
  * Install once at CLI entry. Idempotent.
+ *
+ * Coupling notes:
+ * - The match string is grpc-js's exact `close()` error
+ *   (`@grpc/grpc-js/build/src/internal-channel.js`, the `SHUTDOWN`-state throw).
+ *   That state is reachable ONLY via an explicit `close()` — a live connection
+ *   hitting a transient error reports `TRANSIENT_FAILURE`, never this message —
+ *   so swallowing it cannot mask a failure we'd want to surface. If grpc-js ever
+ *   renames the message this guard silently becomes a no-op (crash resurfaces);
+ *   update `CHANNEL_SHUTDOWN_MESSAGE` to match.
+ * - This handler is registered first (it's installed at process entry). When it
+ *   re-throws a non-benign error, Node exits immediately and any LATER
+ *   `uncaughtException` listener is bypassed. The codebase currently registers
+ *   no other `uncaughtException` listeners, so this is benign today — revisit if
+ *   a crash reporter is ever added.
  */
 
 const CHANNEL_SHUTDOWN_MESSAGE = 'Channel has been shut down';
@@ -52,8 +66,9 @@ const handler = (err: unknown): void => {
   }
   // Not ours — restore default crash behavior. Throwing from inside an
   // 'uncaughtException' handler causes Node to print the error and exit with a
-  // non-zero code (it does not re-enter this handler), preserving the original
-  // failure's visibility and exit semantics.
+  // non-zero code (exit code 7, "Uncaught Exception Handler Error", on current
+  // Node — not 1) without re-entering this handler, preserving the original
+  // failure's visibility and crash semantics.
   throw err;
 };
 

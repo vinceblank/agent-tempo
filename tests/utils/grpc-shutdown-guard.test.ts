@@ -6,6 +6,13 @@
  * `'uncaughtException'` synchronously and asserting throw / no-throw behavior.
  * Other listeners in the test runner are stashed and restored around each case
  * so we observe only the guard's own behavior.
+ *
+ * Limitation: in production, re-throwing from the handler makes Node exit the
+ * process (code 7). That cannot be reproduced in-process without killing the
+ * test runner, so the "re-throws ..." cases below assert only that the handler
+ * does NOT swallow non-benign errors (the throw surfaces synchronously through
+ * `process.emit`). They do not — and cannot, here — verify the actual exit-code
+ * behavior; that is covered by reasoning, not by this unit.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
