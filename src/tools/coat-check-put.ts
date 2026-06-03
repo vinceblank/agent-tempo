@@ -9,11 +9,10 @@
  * structural-permission pattern as `save_state` (#334).
  */
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config, maestroWorkflowId } from '../config';
 import { coatCheckPutUpdate } from '../workflows/maestro-signals';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import {
   COAT_CHECK_CONTENT_MAX,
   COAT_CHECK_SUMMARY_MAX,
@@ -24,21 +23,19 @@ import {
   COAT_CHECK_TTL_MAX_MS,
 } from '../utils/validation';
 
-export function registerCoatCheckPutTool(
-  server: McpServer,
+export function buildCoatCheckPutTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
-) {
-  defineTool(
-    server,
-    'coat_check_put',
-    `Stash a large content body on this ensemble's coat-check (#318). Returns a ticket id any player can redeem later via \`coat_check_get\`. Pass the ticket on a \`cue\`'s \`attachmentTicket\` field so the recipient knows what to fetch.
+): TempoToolDescriptor {
+  return {
+    name: 'coat_check_put',
+    description: `Stash a large content body on this ensemble's coat-check (#318). Returns a ticket id any player can redeem later via \`coat_check_get\`. Pass the ticket on a \`cue\`'s \`attachmentTicket\` field so the recipient knows what to fetch.
 
 Use this when your message body would otherwise exceed the cue's 100 KB cap — researcher reports, review-item dumps, etc. The cue body should carry a short summary; the coat-check entry holds the full artifact.
 
 Limits: ${COAT_CHECK_CONTENT_MAX} bytes (UTF-8) per entry, max ${COAT_CHECK_SLOTS_MAX} live entries per ensemble. Saturation rejects with \`CoatCheckSlotsFull\` — wait for TTL or \`coat_check_evict\` an entry you own. TTL defaults to 7 days (configurable per put within [1h, 30d]).`,
-    {
+    params: {
       summary: z.string().min(1).max(COAT_CHECK_SUMMARY_MAX).describe(
         `Short preamble surfaced in \`coat_check_list\` and on dashboards (≤${COAT_CHECK_SUMMARY_MAX} chars). 1-2 sentences describing what the recipient gets if they redeem.`,
       ),
@@ -52,7 +49,7 @@ Limits: ${COAT_CHECK_CONTENT_MAX} bytes (UTF-8) per entry, max ${COAT_CHECK_SLOT
         `Time-to-live in milliseconds. Default ${COAT_CHECK_TTL_DEFAULT_MS} (7 days). Range [${COAT_CHECK_TTL_MIN_MS}, ${COAT_CHECK_TTL_MAX_MS}] (1h to 30d).`,
       ),
     },
-    async (args) => {
+    handler: async (args) => {
       const { summary, content, contentType, ttlMs } = args as {
         summary: string;
         content: string;
@@ -82,5 +79,5 @@ Limits: ${COAT_CHECK_CONTENT_MAX} bytes (UTF-8) per entry, max ${COAT_CHECK_SLOT
         return fail(`Failed to stash content: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

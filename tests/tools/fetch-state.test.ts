@@ -16,7 +16,8 @@ import { describe, it, expect, vi } from 'vitest';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Client, WorkflowHandle } from '@temporalio/client';
 import type { Config } from '../../src/config';
-import { registerFetchStateTool } from '../../src/tools/fetch-state';
+import { renderToMcp } from '../../src/tools/descriptor';
+import { buildFetchStateTool } from '../../src/tools/fetch-state';
 import { PLAYER_STATE_DEFAULT_KEY } from '../../src/utils/validation';
 import { captureRegistration } from './_helpers';
 
@@ -104,7 +105,7 @@ describe('fetch_state tool (#334 PR-1)', () => {
         slot: { content: 'self-content', savedAt: '2026-05-01T03:00:00Z', savedBy: 'tempo-eng' },
       });
       const call = captureHandler((server) =>
-        registerFetchStateTool(server, makeClient({}), TEST_CONFIG, ownHandle, () => 'tempo-eng'),
+        renderToMcp(server, [buildFetchStateTool(makeClient({}), TEST_CONFIG, ownHandle, () => 'tempo-eng')]),
       );
       const result = await call({});
       expect(result.isError).toBeFalsy();
@@ -117,7 +118,7 @@ describe('fetch_state tool (#334 PR-1)', () => {
     it('returns "(no state saved …)" when the slot is empty', async () => {
       const ownHandle = makeFakeHandle({ slot: null });
       const call = captureHandler((server) =>
-        registerFetchStateTool(server, makeClient({}), TEST_CONFIG, ownHandle, () => 'tempo-eng'),
+        renderToMcp(server, [buildFetchStateTool(makeClient({}), TEST_CONFIG, ownHandle, () => 'tempo-eng')]),
       );
       const result = await call({ key: 'bookmark' });
       expect(result.isError).toBeFalsy();
@@ -134,7 +135,7 @@ describe('fetch_state tool (#334 PR-1)', () => {
         }),
       } as unknown as WorkflowHandle;
       const call = captureHandler((server) =>
-        registerFetchStateTool(server, makeClient({}), TEST_CONFIG, ownHandle, () => 'tempo-eng'),
+        renderToMcp(server, [buildFetchStateTool(makeClient({}), TEST_CONFIG, ownHandle, () => 'tempo-eng')]),
       );
       await call({});
       expect(observedKey).toBe(PLAYER_STATE_DEFAULT_KEY);
@@ -145,7 +146,7 @@ describe('fetch_state tool (#334 PR-1)', () => {
     it('rejects an invalid playerId before resolving', async () => {
       const ownHandle = makeFakeHandle({});
       const call = captureHandler((server) =>
-        registerFetchStateTool(server, makeClient({}), TEST_CONFIG, ownHandle, () => 'tempo-eng'),
+        renderToMcp(server, [buildFetchStateTool(makeClient({}), TEST_CONFIG, ownHandle, () => 'tempo-eng')]),
       );
       const result = await call({ playerId: 'has space' });
       expect(result.isError).toBe(true);
@@ -156,7 +157,7 @@ describe('fetch_state tool (#334 PR-1)', () => {
       const ownHandle = makeFakeHandle({});
       // peerHandle: null → resolveSession can't match anything.
       const call = captureHandler((server) =>
-        registerFetchStateTool(server, makeClient({ peerHandle: null }), TEST_CONFIG, ownHandle, () => 'tempo-eng'),
+        renderToMcp(server, [buildFetchStateTool(makeClient({ peerHandle: null }), TEST_CONFIG, ownHandle, () => 'tempo-eng')]),
       );
       const result = await call({ playerId: 'absent-peer' });
       expect(result.isError).toBe(true);
@@ -169,13 +170,12 @@ describe('fetch_state tool (#334 PR-1)', () => {
         slot: { content: 'peer-content', savedAt: '2026-05-01T03:00:00Z', savedBy: 'peer-1' },
       });
       const call = captureHandler((server) =>
-        registerFetchStateTool(
-          server,
+        renderToMcp(server, [buildFetchStateTool(
           makeClient({ targetPlayerId: 'peer-1', peerHandle }),
           TEST_CONFIG,
           ownHandle,
           () => 'tempo-eng',
-        ),
+        )]),
       );
       const result = await call({ playerId: 'peer-1' });
       expect(result.isError).toBeFalsy();
@@ -191,7 +191,7 @@ describe('fetch_state tool (#334 PR-1)', () => {
         queryError: new Error('Workflow not found'),
       });
       const call = captureHandler((server) =>
-        registerFetchStateTool(server, makeClient({}), TEST_CONFIG, ownHandle, () => 'tempo-eng'),
+        renderToMcp(server, [buildFetchStateTool(makeClient({}), TEST_CONFIG, ownHandle, () => 'tempo-eng')]),
       );
       const result = await call({});
       expect(result.isError).toBe(true);

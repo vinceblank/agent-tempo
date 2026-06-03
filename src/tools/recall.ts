@@ -1,20 +1,17 @@
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
 import { Message, SentMessage } from '../types';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { buildTimeline, formatRecall } from '../utils/recall-format';
 
-export function registerRecallTool(
-  server: McpServer,
+export function buildRecallTool(
   handle: WorkflowHandle,
   getPlayerId: () => string,
-) {
-  defineTool(
-    server,
-    'recall',
-    'Read your own message history. Shows received messages by default; use includeSent to also see outgoing messages. `offset` pages the timeline; `previewLength` truncates bodies (unset = full text).',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'recall',
+    description: 'Read your own message history. Shows received messages by default; use includeSent to also see outgoing messages. `offset` pages the timeline; `previewLength` truncates bodies (unset = full text).',
+    params: {
       limit: z.number().min(1).max(100).optional().describe('Max messages to return (default 20, max 100)'),
       offset: z.number().int().min(0).optional().describe('Skip N messages for paging (default 0)'),
       previewLength: z.number().int().min(1).optional().describe('Truncate each body to N chars + "…"; omit for full text'),
@@ -22,7 +19,7 @@ export function registerRecallTool(
       from: z.string().optional().describe('Filter received messages by sender name'),
       includeSent: z.boolean().optional().describe('Include sent messages in the timeline (default: false)'),
     },
-    async (args) => {
+    handler: async (args) => {
       const { limit, offset, previewLength, since, from: fromFilter, includeSent } = args as {
         limit?: number;
         offset?: number;
@@ -47,5 +44,5 @@ export function registerRecallTool(
         return fail(`Failed to recall messages: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

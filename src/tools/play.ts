@@ -1,27 +1,24 @@
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config } from '../config';
 import { releaseHeldSignal, setPausedSignal } from '../workflows/signals';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { unpauseMaestroAndScheduler, signalAllSessions } from '../utils/ensemble-ops';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:play]', ...args);
 
-export function registerPlayTool(
-  server: McpServer,
+export function buildPlayTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
-) {
-  defineTool(
-    server,
-    'play',
-    'Resume all paused sessions in the ensemble — unlocks outbox dispatch and resumes the scheduler. Buffered outbox entries will be dispatched. Pass `release: true` to also release any held sessions (deliver deferred task messages and unlock their outboxes) in the same call.',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'play',
+    description: 'Resume all paused sessions in the ensemble — unlocks outbox dispatch and resumes the scheduler. Buffered outbox entries will be dispatched. Pass `release: true` to also release any held sessions (deliver deferred task messages and unlock their outboxes) in the same call.',
+    params: {
       release: z.boolean().optional().describe('Also release any held sessions (deliver deferred task messages and unlock outboxes). Safe to call when no sessions are held — it is a no-op on those. Default: false.'),
     },
-    async (args) => {
+    handler: async (args) => {
       const release = (args as { release?: boolean }).release === true;
 
       try {
@@ -69,5 +66,5 @@ export function registerPlayTool(
         return fail(`Failed to resume ensemble: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

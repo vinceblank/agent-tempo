@@ -22,16 +22,17 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Client, WorkflowHandle } from '@temporalio/client';
 import type { Config } from '../src/config';
 import type { SessionMetadata } from '../src/types';
-import { registerRecruitTool } from '../src/tools/recruit';
-import { registerScheduleTool } from '../src/tools/schedule';
-import { registerLoadLineupTool } from '../src/tools/load-lineup';
-import { registerBroadcastTool } from '../src/tools/broadcast';
-import { registerRecallTool } from '../src/tools/recall';
-import { registerRestartTool } from '../src/tools/restart';
-import { registerDestroyTool } from '../src/tools/destroy';
-import { registerMigrateTool } from '../src/tools/migrate';
-import { registerAttachmentInfoTool } from '../src/tools/attachment-info';
-import { registerPlayTool } from '../src/tools/play';
+import { renderToMcp, type TempoToolDescriptor } from '../src/tools/descriptor';
+import { buildRecruitTool } from '../src/tools/recruit';
+import { buildScheduleTool } from '../src/tools/schedule';
+import { buildLoadLineupTool } from '../src/tools/load-lineup';
+import { buildBroadcastTool } from '../src/tools/broadcast';
+import { buildRecallTool } from '../src/tools/recall';
+import { buildRestartTool } from '../src/tools/restart';
+import { buildDestroyTool } from '../src/tools/destroy';
+import { buildMigrateTool } from '../src/tools/migrate';
+import { buildAttachmentInfoTool } from '../src/tools/attachment-info';
+import { buildPlayTool } from '../src/tools/play';
 
 // ─────────────────────────────────────────────
 // Harness
@@ -43,18 +44,19 @@ type ToolHandler = (args: Record<string, any>) => Promise<{
 }>;
 
 /**
- * Extract the handler closure registered by a tool's `register*` function.
- * The fake server intercepts `server.tool(name, desc, schema, handler)` and
- * captures the handler, which we then call directly in tests.
+ * Extract the handler closure for a tool descriptor by rendering it onto a
+ * fake server. `renderToMcp` calls `server.tool(name, desc, schema, handler)`
+ * with the MCP-shaped wrapped handler; the fake server captures it, which we
+ * then call directly in tests.
  */
-function extractHandler(registerFn: (server: McpServer) => void): ToolHandler {
+function extractHandler(descriptor: TempoToolDescriptor): ToolHandler {
   let captured: Function | undefined;
   const fakeServer = {
     tool: (_name: unknown, _desc: unknown, _schema: unknown, handler: Function) => {
       captured = handler;
     },
   } as unknown as McpServer;
-  registerFn(fakeServer);
+  renderToMcp(fakeServer, [descriptor]);
   if (!captured) throw new Error('No handler captured — tool did not call server.tool()');
   return (args: Record<string, any>) => captured!(args, {});
 }
@@ -104,8 +106,8 @@ describe('recruit tool validation', function () {
   let call: ToolHandler;
 
   before(function () {
-    call = extractHandler((server) =>
-      registerRecruitTool(server, makeTestClient(), testConfig, getPlayerId, fakeHandle, 'claude'),
+    call = extractHandler(
+      buildRecruitTool(makeTestClient(), testConfig, getPlayerId, fakeHandle, 'claude'),
     );
   });
 
@@ -179,8 +181,8 @@ describe('schedule tool validation', function () {
   let call: ToolHandler;
 
   before(function () {
-    call = extractHandler((server) =>
-      registerScheduleTool(server, makeTestClient(), testConfig, getPlayerId),
+    call = extractHandler(
+      buildScheduleTool(makeTestClient(), testConfig, getPlayerId),
     );
   });
 
@@ -335,8 +337,8 @@ describe('recruit tool force-terminate existing', function () {
       },
     } as unknown as Client;
 
-    const call = extractHandler((server) =>
-      registerRecruitTool(server, clientWithSession, testConfig, getPlayerId, fakeHandle, 'claude'),
+    const call = extractHandler(
+      buildRecruitTool(clientWithSession, testConfig, getPlayerId, fakeHandle, 'claude'),
     );
 
     const result = await call({ workDir: '/tmp', name: 'existing-player', force: true });
@@ -365,8 +367,8 @@ describe('recruit tool force-terminate existing', function () {
       },
     } as unknown as Client;
 
-    const call = extractHandler((server) =>
-      registerRecruitTool(server, clientWithSession, testConfig, getPlayerId, fakeHandle, 'claude'),
+    const call = extractHandler(
+      buildRecruitTool(clientWithSession, testConfig, getPlayerId, fakeHandle, 'claude'),
     );
 
     const result = await call({ workDir: '/tmp', name: 'existing-player' });
@@ -384,8 +386,8 @@ describe('load_lineup tool validation', function () {
   let call: ToolHandler;
 
   before(function () {
-    call = extractHandler((server) =>
-      registerLoadLineupTool(server, makeTestClient(), testConfig, getPlayerId, 'claude'),
+    call = extractHandler(
+      buildLoadLineupTool(makeTestClient(), testConfig, getPlayerId, 'claude'),
     );
   });
 
@@ -449,9 +451,9 @@ describe('load_lineup conductor section', function () {
     } as unknown as Client;
 
     let updatedPlayerId = '';
-    const call = extractHandler((server) =>
-      registerLoadLineupTool(
-        server, clientForConductor, testConfig, getPlayerId, 'claude',
+    const call = extractHandler(
+      buildLoadLineupTool(
+        clientForConductor, testConfig, getPlayerId, 'claude',
         conductorHandle,
         (id: string) => { updatedPlayerId = id; },
         true, // isConductor
@@ -496,9 +498,9 @@ describe('load_lineup conductor section', function () {
       signal: async (name: string, ...args: any[]) => { signals.push({ name, args: args[0] }); },
     } as unknown as WorkflowHandle;
 
-    const call = extractHandler((server) =>
-      registerLoadLineupTool(
-        server, makeTestClient(), testConfig, getPlayerId, 'claude',
+    const call = extractHandler(
+      buildLoadLineupTool(
+        makeTestClient(), testConfig, getPlayerId, 'claude',
         handle,
         () => {},
         false, // NOT conductor
@@ -549,9 +551,9 @@ describe('load_lineup conductor section', function () {
       },
     } as unknown as Client;
 
-    const call = extractHandler((server) =>
-      registerLoadLineupTool(
-        server, clientForConductor, testConfig, getPlayerId, 'claude',
+    const call = extractHandler(
+      buildLoadLineupTool(
+        clientForConductor, testConfig, getPlayerId, 'claude',
         conductorHandle,
         () => {},
         true, // isConductor
@@ -638,9 +640,9 @@ describe('load_lineup conductor section', function () {
       },
     } as unknown as Client;
 
-    const call = extractHandler((server) =>
-      registerLoadLineupTool(
-        server, clientForConductor, testConfig, getPlayerId, 'claude',
+    const call = extractHandler(
+      buildLoadLineupTool(
+        clientForConductor, testConfig, getPlayerId, 'claude',
         conductorHandle,
         () => {},
         true, // isConductor
@@ -702,9 +704,9 @@ describe('load_lineup conductor section', function () {
       },
     } as unknown as Client;
 
-    const call = extractHandler((server) =>
-      registerLoadLineupTool(
-        server, clientForConductor, testConfig, getPlayerId, 'claude',
+    const call = extractHandler(
+      buildLoadLineupTool(
+        clientForConductor, testConfig, getPlayerId, 'claude',
         conductorHandle,
         () => {},
         true, // isConductor
@@ -787,8 +789,8 @@ function makeClientWithPlayers(
 
 describe('broadcast tool validation', function () {
   it('returns success (not error) when no active players match (empty ensemble)', async function () {
-    const call = extractHandler((server) =>
-      registerBroadcastTool(server, makeTestClient(), testConfig, getPlayerId, fakeHandle),
+    const call = extractHandler(
+      buildBroadcastTool(makeTestClient(), testConfig, getPlayerId, fakeHandle),
     );
     const result = await call({ message: 'hello everyone' });
     expect(result.isError).to.not.equal(true);
@@ -797,9 +799,8 @@ describe('broadcast tool validation', function () {
 
   it('excludes self — sender does not receive their own broadcast', async function () {
     // List includes TEST_PLAYER_ID (self) and one other player.
-    const call = extractHandler((server) =>
-      registerBroadcastTool(
-        server,
+    const call = extractHandler(
+      buildBroadcastTool(
         makeClientWithPlayers([
           { playerId: TEST_PLAYER_ID },
           { playerId: 'other-player' },
@@ -817,9 +818,8 @@ describe('broadcast tool validation', function () {
   });
 
   it('filters by player type when "type" is specified', async function () {
-    const call = extractHandler((server) =>
-      registerBroadcastTool(
-        server,
+    const call = extractHandler(
+      buildBroadcastTool(
         makeClientWithPlayers([
           { playerId: 'soloist-1', playerType: 'tempo-soloist' },
           { playerId: 'critic-1', playerType: 'tempo-critic' },
@@ -836,9 +836,8 @@ describe('broadcast tool validation', function () {
   });
 
   it('excludes stale sessions by default', async function () {
-    const call = extractHandler((server) =>
-      registerBroadcastTool(
-        server,
+    const call = extractHandler(
+      buildBroadcastTool(
         makeClientWithPlayers([
           { playerId: 'stale-player', phase: 'detached' },
           { playerId: 'active-player', phase: 'attached' },
@@ -855,9 +854,8 @@ describe('broadcast tool validation', function () {
   });
 
   it('includes stale sessions when includeStale: true', async function () {
-    const call = extractHandler((server) =>
-      registerBroadcastTool(
-        server,
+    const call = extractHandler(
+      buildBroadcastTool(
         makeClientWithPlayers([
           { playerId: 'stale-player', phase: 'detached' },
         ]),
@@ -872,9 +870,8 @@ describe('broadcast tool validation', function () {
   });
 
   it('excludes pending sessions', async function () {
-    const call = extractHandler((server) =>
-      registerBroadcastTool(
-        server,
+    const call = extractHandler(
+      buildBroadcastTool(
         makeClientWithPlayers([
           { playerId: 'pending-player', phase: 'booting' },
           { playerId: 'active-player', phase: 'attached' },
@@ -891,9 +888,8 @@ describe('broadcast tool validation', function () {
   });
 
   it('excludes terminated sessions', async function () {
-    const call = extractHandler((server) =>
-      registerBroadcastTool(
-        server,
+    const call = extractHandler(
+      buildBroadcastTool(
         makeClientWithPlayers([
           { playerId: 'terminated-player', phase: 'gone' },
           { playerId: 'active-player', phase: 'attached' },
@@ -910,9 +906,8 @@ describe('broadcast tool validation', function () {
   });
 
   it('excludes pending and terminated even when includeStale is true', async function () {
-    const call = extractHandler((server) =>
-      registerBroadcastTool(
-        server,
+    const call = extractHandler(
+      buildBroadcastTool(
         makeClientWithPlayers([
           { playerId: 'pending-player', phase: 'booting' },
           { playerId: 'terminated-player', phase: 'gone' },
@@ -932,9 +927,8 @@ describe('broadcast tool validation', function () {
   });
 
   it('reports N recipients in success response', async function () {
-    const call = extractHandler((server) =>
-      registerBroadcastTool(
-        server,
+    const call = extractHandler(
+      buildBroadcastTool(
         makeClientWithPlayers([
           { playerId: 'alice' },
           { playerId: 'bob' },
@@ -994,8 +988,8 @@ describe('recall tool validation', function () {
   let call: ToolHandler;
 
   before(function () {
-    call = extractHandler((server) =>
-      registerRecallTool(server, emptyRecallHandle, getPlayerId),
+    call = extractHandler(
+      buildRecallTool(emptyRecallHandle, getPlayerId),
     );
   });
 
@@ -1051,7 +1045,7 @@ describe('recall tool validation', function () {
         timestamp: new Date(1_000_000 + i * 1000).toISOString(),
       }));
       const h = makeRecallHandle(msgs);
-      const callWith = extractHandler((server) => registerRecallTool(server, h, getPlayerId));
+      const callWith = extractHandler(buildRecallTool(h, getPlayerId));
 
       const result = await callWith({ limit: 5 });
       expect(result.isError).to.not.equal(true);
@@ -1073,7 +1067,7 @@ describe('recall tool validation', function () {
         { from: 'bob', text: 'recent-message', timestamp: t2 },
         { from: 'carol', text: 'newest-message', timestamp: t3 },
       ]);
-      const callWith = extractHandler((server) => registerRecallTool(server, h, getPlayerId));
+      const callWith = extractHandler(buildRecallTool(h, getPlayerId));
 
       const result = await callWith({ since: cutoff });
       expect(result.isError).to.not.equal(true);
@@ -1089,7 +1083,7 @@ describe('recall tool validation', function () {
         { from: 'alice', text: 'message-from-alice', timestamp: now },
         { from: 'bob', text: 'message-from-bob', timestamp: now },
       ]);
-      const callWith = extractHandler((server) => registerRecallTool(server, h, getPlayerId));
+      const callWith = extractHandler(buildRecallTool(h, getPlayerId));
 
       const result = await callWith({ from: 'alice' });
       expect(result.isError).to.not.equal(true);
@@ -1103,7 +1097,7 @@ describe('recall tool validation', function () {
         [{ from: 'alice', text: 'received-text', timestamp: now }],
         [{ to: 'bob', text: 'sent-text', timestamp: now }],
       );
-      const callWith = extractHandler((server) => registerRecallTool(server, h, getPlayerId));
+      const callWith = extractHandler(buildRecallTool(h, getPlayerId));
 
       const result = await callWith({ includeSent: true });
       expect(result.isError).to.not.equal(true);
@@ -1229,8 +1223,8 @@ describe('attachment_info tool', function () {
       currentAttachmentId: 'attach-abc',
       hostname: 'host-1',
     });
-    const call = extractHandler((server) =>
-      registerAttachmentInfoTool(server, client, testConfig),
+    const call = extractHandler(
+      buildAttachmentInfoTool(client, testConfig),
     );
     const result = await call({ playerId: 'alice' });
     expect(result.isError).to.not.equal(true);
@@ -1262,8 +1256,8 @@ describe('destroy tool (outbox-queued, QA B2)', function () {
   it('enqueues DestroyOutboxEntry with reason + notifyConductor', async function () {
     const { client } = makeV2Client({ playerId: 'dave' });
     const { handle, entries } = makeCaptureHandle();
-    const call = extractHandler((server) =>
-      registerDestroyTool(server, client, testConfig, getPlayerId, handle),
+    const call = extractHandler(
+      buildDestroyTool(client, testConfig, getPlayerId, handle),
     );
     const result = await call({ playerId: 'dave', reason: 'debug cleanup' });
     expect(result.isError).to.not.equal(true);
@@ -1278,8 +1272,8 @@ describe('destroy tool (outbox-queued, QA B2)', function () {
   it('rejects self-destroy before enqueueing', async function () {
     const { client } = makeV2Client({ playerId: TEST_PLAYER_ID });
     const { handle, entries } = makeCaptureHandle();
-    const call = extractHandler((server) =>
-      registerDestroyTool(server, client, testConfig, getPlayerId, handle),
+    const call = extractHandler(
+      buildDestroyTool(client, testConfig, getPlayerId, handle),
     );
     const result = await call({ playerId: TEST_PLAYER_ID });
     expect(result.isError).to.be.true;
@@ -1291,8 +1285,8 @@ describe('restart tool (outbox-queued, QA B3)', function () {
   it('enqueues RestartOutboxEntry with invokerPlayerId + defaults', async function () {
     const { client } = makeV2Client({ playerId: 'eve' });
     const { handle, entries } = makeCaptureHandle();
-    const call = extractHandler((server) =>
-      registerRestartTool(server, client, testConfig, getPlayerId, handle),
+    const call = extractHandler(
+      buildRestartTool(client, testConfig, getPlayerId, handle),
     );
     const result = await call({ playerId: 'eve' });
     expect(result.isError).to.not.equal(true);
@@ -1308,8 +1302,8 @@ describe('restart tool (outbox-queued, QA B3)', function () {
   it('forwards force + fresh + host + contextMessages to the entry', async function () {
     const { client } = makeV2Client({ playerId: 'frank' });
     const { handle, entries } = makeCaptureHandle();
-    const call = extractHandler((server) =>
-      registerRestartTool(server, client, testConfig, getPlayerId, handle),
+    const call = extractHandler(
+      buildRestartTool(client, testConfig, getPlayerId, handle),
     );
     await call({ playerId: 'frank', fresh: true, force: true, host: 'h1', contextMessages: 20 });
     const entry = entries[0].args as any;
@@ -1329,8 +1323,8 @@ describe('migrate tool (outbox-queued, QA B3)', function () {
   it('enqueues RestartOutboxEntry with required host', async function () {
     const { client } = makeV2Client({ playerId: 'ian' });
     const { handle, entries } = makeCaptureHandle();
-    const call = extractHandler((server) =>
-      registerMigrateTool(server, client, testConfig, getPlayerId, handle),
+    const call = extractHandler(
+      buildMigrateTool(client, testConfig, getPlayerId, handle),
     );
     const result = await call({ playerId: 'ian', host: 'other-host' });
     expect(result.isError).to.not.equal(true);
@@ -1343,8 +1337,8 @@ describe('migrate tool (outbox-queued, QA B3)', function () {
   it('rejects empty host before enqueueing', async function () {
     const { client } = makeV2Client({ playerId: 'jen' });
     const { handle, entries } = makeCaptureHandle();
-    const call = extractHandler((server) =>
-      registerMigrateTool(server, client, testConfig, getPlayerId, handle),
+    const call = extractHandler(
+      buildMigrateTool(client, testConfig, getPlayerId, handle),
     );
     const result = await call({ playerId: 'jen', host: '   ' });
     expect(result.isError).to.be.true;
@@ -1413,8 +1407,8 @@ function makeResumeClient(players: string[]): {
 describe('play tool — release arg (Issue #172, renamed from resume_ensemble per #287)', function () {
   it('default (release omitted): unpause signals only, NO releaseHeld fan-out', async function () {
     const { client, signals } = makeResumeClient(['alice', 'bob']);
-    const call = extractHandler((server) =>
-      registerPlayTool(server, client, testConfig, getPlayerId),
+    const call = extractHandler(
+      buildPlayTool(client, testConfig, getPlayerId),
     );
 
     const result = await call({});
@@ -1440,8 +1434,8 @@ describe('play tool — release arg (Issue #172, renamed from resume_ensemble pe
 
   it('release: false explicitly: identical to default — no releaseHeld', async function () {
     const { client, signals } = makeResumeClient(['alice']);
-    const call = extractHandler((server) =>
-      registerPlayTool(server, client, testConfig, getPlayerId),
+    const call = extractHandler(
+      buildPlayTool(client, testConfig, getPlayerId),
     );
 
     await call({ release: false });
@@ -1451,8 +1445,8 @@ describe('play tool — release arg (Issue #172, renamed from resume_ensemble pe
 
   it('release: true: fans out releaseHeld to every active session', async function () {
     const { client, signals } = makeResumeClient(['alice', 'bob', 'carol']);
-    const call = extractHandler((server) =>
-      registerPlayTool(server, client, testConfig, getPlayerId),
+    const call = extractHandler(
+      buildPlayTool(client, testConfig, getPlayerId),
     );
 
     const result = await call({ release: true });
@@ -1486,8 +1480,8 @@ describe('play tool — release arg (Issue #172, renamed from resume_ensemble pe
 
   it('release: true with no active sessions: still unpauses maestro + scheduler, no fan-out', async function () {
     const { client, signals } = makeResumeClient([]);
-    const call = extractHandler((server) =>
-      registerPlayTool(server, client, testConfig, getPlayerId),
+    const call = extractHandler(
+      buildPlayTool(client, testConfig, getPlayerId),
     );
 
     const result = await call({ release: true });

@@ -12,27 +12,24 @@
  * `confirmStealFromHost` must name that hostname exactly.
  */
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { Config } from '../config';
 import type { OutboxEntryInput } from '../types';
 import { submitOutboxUpdate } from '../workflows/signals';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { enforceYesStealGuard } from './restart';
 import { PLAYER_NAME_MAX, RESTART_CONTEXT_MESSAGES_MAX, validatePlayerName } from '../utils/validation';
 
-export function registerMigrateTool(
-  server: McpServer,
+export function buildMigrateTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
   handle: WorkflowHandle,
-) {
-  defineTool(
-    server,
-    'migrate',
-    'Migrate a session to a different host — sugar for `restart` with a required `host`. Reaps the current attachment, claims fresh on the target host, spawns a new adapter. Cross-host routing (per-host task queues) is honored automatically. When `force=true` AND the target is currently on a different host, `confirmStealFromHost` must match that hostname (design §16.5).',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'migrate',
+    description: 'Migrate a session to a different host — sugar for `restart` with a required `host`. Reaps the current attachment, claims fresh on the target host, spawns a new adapter. Cross-host routing (per-host task queues) is honored automatically. When `force=true` AND the target is currently on a different host, `confirmStealFromHost` must match that hostname (design §16.5).',
+    params: {
       playerId: z.string().max(PLAYER_NAME_MAX).describe('The player name to migrate'),
       host: z.string().min(1).describe('Target hostname — required'),
       fresh: z.boolean().optional().describe('Skip context replay (default false)'),
@@ -40,7 +37,7 @@ export function registerMigrateTool(
       contextMessages: z.number().min(0).max(RESTART_CONTEXT_MESSAGES_MAX).optional().describe('Number of recent messages to include in context (default 10)'),
       confirmStealFromHost: z.string().optional().describe('Required when `force=true` and the target\'s current attachment is on a different host (design §16.5 Option B).'),
     },
-    async (args) => {
+    handler: async (args) => {
       const input = args as {
         playerId: string;
         host: string;
@@ -78,5 +75,5 @@ export function registerMigrateTool(
         return fail(`Failed to migrate: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

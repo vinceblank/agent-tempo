@@ -7,27 +7,24 @@
  * `putBy` / `prefix` / `unfetchedOnly` filters narrow the result.
  */
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config, maestroWorkflowId } from '../config';
 import { coatCheckListQuery } from '../workflows/maestro-signals';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import {
   COAT_CHECK_SLOTS_MAX,
   COAT_CHECK_SUMMARY_MAX,
   PLAYER_NAME_MAX,
 } from '../utils/validation';
 
-export function registerCoatCheckListTool(
-  server: McpServer,
+export function buildCoatCheckListTool(
   client: Client,
   config: Config,
-) {
-  defineTool(
-    server,
-    'coat_check_list',
-    `List coat-check entries (#318) for this ensemble. Read-only — does NOT bump fetch-audit counters; only \`coat_check_get\` does. Sorted newest-first. Pass \`unfetchedOnly: true\` to surface entries nobody has redeemed yet — useful for an owner cleaning up stale stashes.`,
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'coat_check_list',
+    description: `List coat-check entries (#318) for this ensemble. Read-only — does NOT bump fetch-audit counters; only \`coat_check_get\` does. Sorted newest-first. Pass \`unfetchedOnly: true\` to surface entries nobody has redeemed yet — useful for an owner cleaning up stale stashes.`,
+    params: {
       putBy: z.string().max(PLAYER_NAME_MAX).optional().describe(
         'Optional filter — only entries stashed by this player.',
       ),
@@ -38,7 +35,7 @@ export function registerCoatCheckListTool(
         'When true, only return entries with fetchCount=0 (never redeemed). Default false.',
       ),
     },
-    async (args) => {
+    handler: async (args) => {
       const { putBy, prefix, unfetchedOnly } = args as {
         putBy?: string;
         prefix?: string;
@@ -78,5 +75,5 @@ export function registerCoatCheckListTool(
         return fail(`Failed to list coat-check entries: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

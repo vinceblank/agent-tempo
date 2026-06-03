@@ -1,7 +1,6 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowNotFoundError } from '@temporalio/client';
 import { Config, schedulerWorkflowId } from '../config';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 
 import type { ScheduleEntry } from '../types';
 
@@ -12,17 +11,15 @@ function formatDuration(ms: number): string {
   return `${ms / 1000}s`;
 }
 
-export function registerSchedulesTool(
-  server: McpServer,
+export function buildSchedulesTool(
   client: Client,
   config: Config,
-) {
-  defineTool(
-    server,
-    'schedules',
-    'List all active schedules in this ensemble.',
-    {},
-    async () => {
+): TempoToolDescriptor {
+  return {
+    name: 'schedules',
+    description: 'List all active schedules in this ensemble.',
+    params: {},
+    handler: async () => {
       try {
         const wfId = schedulerWorkflowId(config.ensemble);
         const handle = client.workflow.getHandle(wfId);
@@ -59,5 +56,5 @@ export function registerSchedulesTool(
         return fail(`Failed to query schedules: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

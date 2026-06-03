@@ -1,11 +1,10 @@
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import * as os from 'os';
 import { Config } from '../config';
 import { SessionMetadata, AttachmentPhase } from '../types';
 import { scanEnsembleSessions, type EnsembleSessionInfo } from '../activities/resolve';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { formatTimeAgo } from '../utils/duration';
 
 /**
@@ -51,18 +50,16 @@ export function classifyDormancy(
   return 'active';
 }
 
-export function registerEnsembleTool(
-  server: McpServer,
+export function buildEnsembleTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
   ownWorkflowId: string,
-) {
-  defineTool(
-    server,
-    'ensemble',
-    `Discover active Claude Code sessions in the "${config.ensemble}" ensemble. Returns player IDs, descriptions, and metadata. NOTE: returns tempo-registered players only — does NOT include Claude Code Agent-tool sub-agents (spawned via the Agent tool / subagent_type). Those are ephemeral and process-local; call TaskList separately to enumerate them. Tempo players are addressable via cue; Agent-tool sub-agents are not.`,
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'ensemble',
+    description: `Discover active Claude Code sessions in the "${config.ensemble}" ensemble. Returns player IDs, descriptions, and metadata. NOTE: returns tempo-registered players only — does NOT include Claude Code Agent-tool sub-agents (spawned via the Agent tool / subagent_type). Those are ephemeral and process-local; call TaskList separately to enumerate them. Tempo players are addressable via cue; Agent-tool sub-agents are not.`,
+    params: {
       scope: z.string().optional().describe('Filter scope: "machine" (same hostname), "repo" (same git root), "all" (default). All scopes are within the current ensemble.'),
       // #563: dormancy filter. Default `show` preserves the pre-#563 listing
       // (everything visible) but groups gone/long-detached players into a
@@ -70,7 +67,7 @@ export function registerEnsembleTool(
       // entirely; `show-only` is the inverse, useful for cleanup workflows.
       dormant: z.enum(['show', 'hide', 'show-only']).optional().describe('Dormancy filter: "show" (default — group dormant in a separate section), "hide" (suppress dormant entries), "show-only" (only show dormant). A player is dormant when phase=gone, or phase=detached with no activity in the last hour.'),
     },
-    async (args) => {
+    handler: async (args) => {
       const scope = (args.scope ?? 'all') as 'machine' | 'repo' | 'all';
       const dormantFilter = (args.dormant ?? 'show') as DormantFilter;
 
@@ -137,7 +134,7 @@ export function registerEnsembleTool(
 
       return ok(sections.join('\n'));
     },
-  );
+  };
 }
 
 /**

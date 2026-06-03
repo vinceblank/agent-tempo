@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { Cron } from 'croner';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { Config, schedulerWorkflowId, maestroWorkflowId } from '../config';
 import { AgentType } from '../types';
@@ -12,14 +11,13 @@ import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
 import { parseDuration } from '../utils/duration';
 import { safeLineupPath } from '../utils/safe-path';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { PLAYER_NAME_MAX, PATH_MAX } from '../utils/validation';
 import { ensembleReadyDirective } from '../constants';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:load-lineup]', ...args);
 
-export function registerLoadLineupTool(
-  server: McpServer,
+export function buildLoadLineupTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
@@ -27,18 +25,17 @@ export function registerLoadLineupTool(
   handle?: WorkflowHandle,
   setPlayerId?: (id: string) => void,
   isConductor?: boolean,
-) {
-  defineTool(
-    server,
-    'load_lineup',
-    'Load an ensemble lineup — recruits players and creates schedules.',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'load_lineup',
+    description: 'Load an ensemble lineup — recruits players and creates schedules.',
+    params: {
       name: z.string().max(PLAYER_NAME_MAX).optional().describe('Name of a lineup — resolves saved lineups, then shipped examples (e.g. "tempo-dev-team")'),
       path: z.string().max(PATH_MAX).optional().describe('Explicit file path to a lineup YAML file'),
       hold: z.boolean().optional().describe('When true, spawn players in "warm hold": processes start and attach but their outbox is locked, so they receive a standby message and defer their initial task until `release` is called.'),
       initialStartup: z.boolean().optional().describe('Issue #172: when true, the lineup was loaded as part of initial ensemble startup (`up --lineup` / `conduct --lineup`). Conductor instructions are stored as pending context and combined with the user\'s first message instead of firing immediately. Also recruits players with `hold: true`. Defaults to false — conductor-invoked mid-work `load_lineup` keeps the legacy behavior.'),
     },
-    async (args) => {
+    handler: async (args) => {
       const lineupName = (args as any).name as string | undefined;
       const lineupPath = (args as any).path as string | undefined;
       const initialStartup = (args as any).initialStartup === true;
@@ -390,5 +387,5 @@ export function registerLoadLineupTool(
         return fail(`Failed to load lineup: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

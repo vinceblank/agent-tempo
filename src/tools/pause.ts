@@ -1,24 +1,21 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config } from '../config';
 import { setPausedSignal } from '../workflows/signals';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { pauseMaestroAndScheduler, signalAllSessions } from '../utils/ensemble-ops';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:pause]', ...args);
 
-export function registerPauseTool(
-  server: McpServer,
+export function buildPauseTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
-) {
-  defineTool(
-    server,
-    'pause',
-    'Pause all sessions in the ensemble — locks outbox dispatch and pauses the scheduler. Stop commands still go through. Use `play` to unpause.',
-    {},
-    async () => {
+): TempoToolDescriptor {
+  return {
+    name: 'pause',
+    description: 'Pause all sessions in the ensemble — locks outbox dispatch and pauses the scheduler. Stop commands still go through. Use `play` to unpause.',
+    params: {},
+    handler: async () => {
       try {
         const [toggle, sessions] = await Promise.all([
           pauseMaestroAndScheduler(client, config.ensemble),
@@ -44,5 +41,5 @@ export function registerPauseTool(
         return fail(`Failed to pause ensemble: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

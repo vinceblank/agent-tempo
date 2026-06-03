@@ -1,29 +1,26 @@
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { Config } from '../config';
 import { scanEnsembleSessions } from '../activities/resolve';
 import { submitOutboxUpdate, outboxLockedQuery } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { PLAYER_NAME_MAX, validatePlayerName } from '../utils/validation';
 
-export function registerReleaseTool(
-  server: McpServer,
+export function buildReleaseTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
   handle: WorkflowHandle,
-) {
-  defineTool(
-    server,
-    'release',
-    'Release held player sessions — unlocks their outboxes and delivers deferred task messages. Without a player name, releases all held sessions.',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'release',
+    description: 'Release held player sessions — unlocks their outboxes and delivers deferred task messages. Without a player name, releases all held sessions.',
+    params: {
       player: z.string().max(PLAYER_NAME_MAX).optional()
         .describe('Name of a specific held player to release. Omit to release all held players.'),
     },
-    async (args) => {
+    handler: async (args) => {
       const { player } = args as {
         player?: string;
       };
@@ -114,5 +111,5 @@ export function registerReleaseTool(
         return fail(`Failed to release: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

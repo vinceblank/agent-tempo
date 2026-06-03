@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { Config } from '../config';
 import { resolveSession } from './resolve';
@@ -7,7 +6,7 @@ import { scanEnsembleSessions } from '../activities/resolve';
 import { attachmentInfoQuery, submitOutboxUpdate } from '../workflows/signals';
 import { queryHandleWithTimeout } from '../utils/query-timeout';
 import type { AttachmentInfo, AttachmentPhase, OutboxEntryInput } from '../types';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import {
   PLAYER_NAME_MAX,
   MESSAGE_MAX,
@@ -69,25 +68,23 @@ export function formatDetachedDeliveryError(
   );
 }
 
-export function registerCueTool(
-  server: McpServer,
+export function buildCueTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
   handle: WorkflowHandle,
-) {
-  defineTool(
-    server,
-    'cue',
-    'Send a message to another Claude Code session by player name. Delivered instantly via Temporal signal. For content larger than ~100 KB, use `coat_check_put` to stash the body and pass the returned ticket via `attachmentTicket` — the cue body itself should carry a short summary the recipient can act on without fetching.',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'cue',
+    description: 'Send a message to another Claude Code session by player name. Delivered instantly via Temporal signal. For content larger than ~100 KB, use `coat_check_put` to stash the body and pass the returned ticket via `attachmentTicket` — the cue body itself should carry a short summary the recipient can act on without fetching.',
+    params: {
       playerId: z.string().max(PLAYER_NAME_MAX).describe('The player name of the target session'),
       message: z.string().max(MESSAGE_MAX).describe('The message to send'),
       attachmentTicket: z.string().regex(COAT_CHECK_TICKET_REGEX).max(COAT_CHECK_TICKET_MAX).optional().describe(
         'Optional coat-check ticket (#318). Reference content stashed via `coat_check_put`; the receiver sees the ticket on their `recall` message and can pull the body via `coat_check_get`. Backward-compatible — omit for normal cues.',
       ),
     },
-    async (args) => {
+    handler: async (args) => {
       const { playerId, message, attachmentTicket } = args as {
         playerId: string;
         message: string;
@@ -150,7 +147,7 @@ export function registerCueTool(
         return fail(`Failed to send message to ${playerId}: ${formatError(err)}`);
       }
     },
-  );
+  };
 }
 
 /**

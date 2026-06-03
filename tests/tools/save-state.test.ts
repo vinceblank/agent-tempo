@@ -18,7 +18,8 @@
  *     into the tool's error response with the structured marker preserved
  */
 import { describe, it, expect } from 'vitest';
-import { registerSaveStateTool } from '../../src/tools/save-state';
+import { renderToMcp } from '../../src/tools/descriptor';
+import { buildSaveStateTool } from '../../src/tools/save-state';
 import {
   PLAYER_STATE_DEFAULT_KEY,
   PLAYER_STATE_CONTENT_MAX,
@@ -34,7 +35,7 @@ describe('save_state tool (#334 PR-1)', () => {
   it('returns ok with savedAt on successful save', async () => {
     const { handle } = makeFakeHandle();
     const { call } = captureRegistration((server) =>
-      registerSaveStateTool(server, handle, () => 'tempo-eng'),
+      renderToMcp(server, [buildSaveStateTool(handle, () => 'tempo-eng')]),
     );
     const result = await call({ content: 'hello world' });
     expect(result.isError).toBeFalsy();
@@ -45,7 +46,7 @@ describe('save_state tool (#334 PR-1)', () => {
   it('uses PLAYER_STATE_DEFAULT_KEY when key is omitted', async () => {
     const { handle, calls } = makeFakeHandle();
     const { call } = captureRegistration((server) =>
-      registerSaveStateTool(server, handle, () => 'tempo-eng'),
+      renderToMcp(server, [buildSaveStateTool(handle, () => 'tempo-eng')]),
     );
     await call({ content: 'payload' });
     expect(calls).toHaveLength(1);
@@ -59,7 +60,7 @@ describe('save_state tool (#334 PR-1)', () => {
   it('threads explicit key + content + savedBy through to the workflow update', async () => {
     const { handle, calls } = makeFakeHandle();
     const { call } = captureRegistration((server) =>
-      registerSaveStateTool(server, handle, () => 'alice'),
+      renderToMcp(server, [buildSaveStateTool(handle, () => 'alice')]),
     );
     await call({ key: 'bookmark', content: 'snapshot' });
     expect(calls[0].payload).toEqual({
@@ -73,7 +74,7 @@ describe('save_state tool (#334 PR-1)', () => {
     // Validate via the captured Zod schema directly — this is the same
     // shape the MCP SDK applies before invoking the handler.
     const { schemas } = captureRegistration((server) =>
-      registerSaveStateTool(server, makeFakeHandle().handle, () => 'tempo-eng'),
+      renderToMcp(server, [buildSaveStateTool(makeFakeHandle().handle, () => 'tempo-eng')]),
     );
     expect(schemas.key.safeParse('has space').success).toBe(false);
     expect(schemas.key.safeParse('bad/slash').success).toBe(false);
@@ -83,7 +84,7 @@ describe('save_state tool (#334 PR-1)', () => {
 
   it('Zod schema rejects content larger than PLAYER_STATE_CONTENT_MAX', () => {
     const { schemas } = captureRegistration((server) =>
-      registerSaveStateTool(server, makeFakeHandle().handle, () => 'tempo-eng'),
+      renderToMcp(server, [buildSaveStateTool(makeFakeHandle().handle, () => 'tempo-eng')]),
     );
     const oversized = 'A'.repeat(PLAYER_STATE_CONTENT_MAX + 1);
     expect(schemas.content.safeParse(oversized).success).toBe(false);
@@ -97,7 +98,7 @@ describe('save_state tool (#334 PR-1)', () => {
       throw new Error('PlayerStateSlotsFull: playerState slots full (4). Existing slots: a, b, c, main');
     });
     const { call } = captureRegistration((server) =>
-      registerSaveStateTool(server, handle, () => 'tempo-eng'),
+      renderToMcp(server, [buildSaveStateTool(handle, () => 'tempo-eng')]),
     );
     const result = await call({ key: 'fifth', content: 'overflow' });
     expect(result.isError).toBe(true);
@@ -111,7 +112,7 @@ describe('save_state tool (#334 PR-1)', () => {
       throw new Error('PlayerStateContentTooLarge: playerState content exceeds 32768 bytes');
     });
     const { call } = captureRegistration((server) =>
-      registerSaveStateTool(server, handle, () => 'tempo-eng'),
+      renderToMcp(server, [buildSaveStateTool(handle, () => 'tempo-eng')]),
     );
     const result = await call({ content: 'something' });
     expect(result.isError).toBe(true);

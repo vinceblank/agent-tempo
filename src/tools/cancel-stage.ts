@@ -1,21 +1,18 @@
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { STAGE_NAME_MAX } from '../utils/validation';
 
-export function registerCancelStageTool(
-  server: McpServer,
+export function buildCancelStageTool(
   handle: WorkflowHandle,
-) {
-  defineTool(
-    server,
-    'cancel_stage',
-    'Cancel an active pipeline stage. Players are no longer tracked. Conductor only.',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'cancel_stage',
+    description: 'Cancel an active pipeline stage. Players are no longer tracked. Conductor only.',
+    params: {
       name: z.string().max(STAGE_NAME_MAX).describe('Name of the stage to cancel'),
     },
-    async (args) => {
+    handler: async (args) => {
       const { name } = args as { name: string };
 
       try {
@@ -26,5 +23,5 @@ export function registerCancelStageTool(
         return fail(`Failed to cancel stage: ${formatError(err)}`);
       }
     },
-  );
+  };
 }
