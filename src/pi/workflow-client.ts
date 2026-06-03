@@ -26,6 +26,7 @@ import {
   submitOutboxUpdate,
   pendingMessagesQuery,
   markDeliveredSignal,
+  updateMetadataSignal,
 } from '../workflows/signals';
 import type {
   AttachmentToken,
@@ -38,9 +39,16 @@ import type { WorkflowAction } from './phase-driver';
 
 /** Adapter identity advertised on claim. Pi interactive players are `interactive`-class. */
 const PI_ADAPTER_ID = 'pi';
-/** Default lease window. Heartbeat cadence is half this so a single missed beat doesn't expire. */
-const DEFAULT_LEASE_MS = 60_000;
-const HEARTBEAT_MS = 30_000;
+/**
+ * MD-A liveness timings (Phase 2, maintainer-approved): 30s heartbeat / 90s
+ * lease, holding the **lease = 3×heartbeat** invariant — a single (or even
+ * second) missed beat never expires the lease, but a dead process is reaped
+ * within ~one lease window. Parity with the other SDK adapters' `heartbeatMs`.
+ * Overridable per-session via `PiWorkflowClientOptions.{leaseMs,heartbeatMs}`.
+ * Exported so a guard test can assert the invariant doesn't silently drift.
+ */
+export const PI_HEARTBEAT_MS = 30_000;
+export const PI_LEASE_MS = 90_000;
 /** Graceful-detach drain window. */
 const DETACH_DEADLINE_MS = 5_000;
 
@@ -55,6 +63,15 @@ export interface PiWorkflowClientOptions {
   metadata: SessionMetadata;
   leaseMs?: number;
   heartbeatMs?: number;
+  /**
+   * Restart/migrate handoff token (`AGENT_TEMPO_ATTACHMENT_ID`). When present,
+   * `claim()` ADOPTS the pre-created attachment via the renewal branch instead of
+   * racing a fresh claim — the clean anti-flap path the restart tool will use
+   * (the read side of that spawn wiring is a tracked Phase 3 / restart carry-item;
+   * this is the forward-compatible plumbing). Absent on a fresh recruit / manual
+   * launch → fresh claim. Mirrors the existing adapters (`base.ts` startV2Lifecycle).
+   */
+  expectedAttachmentId?: string;
 }
 
 /**
@@ -68,6 +85,7 @@ export class PiWorkflowClient {
   private readonly metadata: SessionMetadata;
   private readonly leaseMs: number;
   private readonly heartbeatMs: number;
+  private readonly expectedAttachmentId?: string;
 
   private wfHandle: WorkflowHandle | null = null;
   private token: AttachmentToken | null = null;
@@ -77,8 +95,9 @@ export class PiWorkflowClient {
     this.client = opts.client;
     this.config = opts.config;
     this.metadata = opts.metadata;
-    this.leaseMs = opts.leaseMs ?? DEFAULT_LEASE_MS;
-    this.heartbeatMs = opts.heartbeatMs ?? HEARTBEAT_MS;
+    this.leaseMs = opts.leaseMs ?? PI_LEASE_MS;
+    this.heartbeatMs = opts.heartbeatMs ?? PI_HEARTBEAT_MS;
+    this.expectedAttachmentId = opts.expectedAttachmentId;
   }
 
   /** Build a client from config (connection-pooled; safe to share — see D12a). */
@@ -128,7 +147,11 @@ export class PiWorkflowClient {
     return this.wfHandle;
   }
 
-  /** First claim: phase `booting → attached`. Stores the lease token. */
+  /**
+   * Claim (or, with a handoff token, ADOPT) the attachment: phase
+   * `booting → attached`. Fresh claim when `expectedAttachmentId` is absent;
+   * renewal/adoption branch when the restart tool handed one in. Stores the token.
+   */
   async claim(): Promise<AttachmentToken> {
     const handle = this.requireHandle();
     this.token = await handle.executeUpdate(claimAttachmentUpdate, {
@@ -138,10 +161,14 @@ export class PiWorkflowClient {
           adapterId: PI_ADAPTER_ID,
           adapterClass: 'interactive',
           leaseMs: this.leaseMs,
+          ...(this.expectedAttachmentId ? { expectedAttachmentId: this.expectedAttachmentId } : {}),
         },
       ],
     });
-    log(`claimed attachment ${this.token.attachmentId} (lease ${this.leaseMs}ms)`);
+    log(
+      `${this.expectedAttachmentId ? 'renewed' : 'claimed'} attachment ` +
+      `${this.token.attachmentId} (lease ${this.leaseMs}ms)`,
+    );
     return this.token;
   }
 
@@ -204,6 +231,19 @@ export class PiWorkflowClient {
       reason,
     });
     log(`detached (${reason})`);
+  }
+
+  /**
+   * Stash the currently-active Pi SessionManager session id onto durable
+   * workflow metadata (`metadata.sessionId`). This is the MUTABLE resume pointer
+   * — SEPARATE from the fixed workflowId (identity). A later restart of this
+   * player reads it to resume the same conversation via Pi `continueSession`
+   * (reuses the #334 sessionId resume field). No-op when the id is absent.
+   */
+  async updateSessionId(sessionId: string | undefined): Promise<void> {
+    if (!sessionId) return;
+    const handle = this.requireHandle();
+    await handle.signal(updateMetadataSignal, { sessionId });
   }
 
   // ── Outbox ──

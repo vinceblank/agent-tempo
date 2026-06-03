@@ -3,24 +3,36 @@
  *
  *   export default function(pi: ExtensionAPI) { ... }
  *
- * Registers the FULL agent-tempo tool surface natively on Pi (via the shared
+ * Registers the FULL agent-tempo tool surface natively on Pi (shared
  * transport-neutral descriptors + `renderToPi`), drives the attachment phase
- * from Pi lifecycle events, claims/renews an attachment lease, and pumps cues
- * into the live session.
+ * from Pi lifecycle events, holds an attachment lease + heartbeat, and pumps
+ * cues into the live session.
  *
- * D11 (lazy-proxy binding): Pi tools are registered ONCE at extension load, but
- * a tool's handler needs the player's live Temporal `Client` and session
- * `WorkflowHandle` — which only exist after connect + claim, and which advance
- * across continueAsNew / reconnect. So we build the tool surface with LAZY
- * proxies (`createLazyProxy`) that resolve the current client/handle per call.
- * This is additive: the descriptor + MCP contract is unchanged (the proxy IS a
- * Client / WorkflowHandle structurally).
+ * ── Module-scope singleton (CRITICAL — researcher finding) ──
+ * Pi REBUILDS the extension instance on every SessionManager switch
+ * (newSession/fork/switch fire `session_shutdown` then `session_start`, and a
+ * fresh `piExtension(pi)` runs). So per-INSTANCE state does NOT survive a
+ * switch. Everything that must survive — the Temporal `Client`, the fixed
+ * `workflowId`, the pinned session handle, the heartbeat timer, the cue pump,
+ * the current-session pointer — lives in a MODULE-SCOPE singleton
+ * (`runtimes`, keyed by workflowId; one entry for interactive Pi, N for the
+ * Phase 3 headless daemon — D12a). The rebuilt instance RE-BINDS to the
+ * existing runtime; it never recreates it. This singleton IS the
+ * implementation of the fixed-workflowId-per-process identity ruling: the
+ * workflow never sees the instance churn — same player, same attachment,
+ * unbroken lease.
  *
- * Identity (architect's ruling): ONE interactive `pi` process = ONE player =
- * ONE FIXED workflowId for the process lifetime. Pi SessionManager
- * newSession/fork/switch are INTERNAL conversation management, invisible to the
- * ensemble — they do NOT repoint the workflow. `set_name` updates the display
- * id, never the workflowId. (metadata.sessionId tracking + resume is P2-5.)
+ * ── Teardown (Option C — reason-discriminated, architect ruling) ──
+ * `session_shutdown` carries a `reason` {quit|reload|new|resume|fork}. We detach
+ * ONLY on a known clean `quit`; ANY switch reason — or an unknown/missing reason
+ * — does NOT detach (rebind case). Allowlist by design: a spurious detach
+ * (ensemble flap) is worse than a missed immediate detach, so a future Pi reason
+ * value can never cause a flap (and surfaces as a D6 version-floor review item).
+ * The `quit` detach is BEST-EFFORT — Pi may not await this handler long enough
+ * for the async `adapterExited` to land — so we never gate exit on it. The MD-A
+ * lease reaper is the PERMANENT floor: it covers SIGKILL/crash (no event) AND a
+ * `quit` whose graceful signal didn't land. Strictly better than never-detach:
+ * fast clean-exit detach when it lands, reaper-correct otherwise.
  *
  * Determinism boundary: this module (and all of src/pi/) is CLIENT-SIDE only —
  * never bundled into the workflow sandbox.
@@ -47,17 +59,44 @@ const nowIso = (): string => new Date().toISOString();
 
 const PI_AGENT_TYPE: AgentType = 'claude'; // Pi is not yet a first-class AgentType.
 
-/**
- * Per-session runtime bundle. Created fresh on each `session_start`, torn down
- * on `session_shutdown`. The lazy handle proxy resolves `ctx.wf.handle`, so when
- * `ctx` is null (no session) tool handlers fail cleanly rather than mis-route.
- */
-interface SessionContext {
-  session: PiAgentSession | null;
-  driver: PhaseDriver;
-  wf: PiWorkflowClient;
-  pump: CuePump;
+// ── Module-scope Temporal Client singleton (D12a: one Client per OS process) ──
+let sharedClientPromise: Promise<Client> | null = null;
+let connectedClient: Client | null = null;
+function getSharedClient(config: Config): Promise<Client> {
+  if (!sharedClientPromise) {
+    sharedClientPromise = PiWorkflowClient.connect(config)
+      .then((c) => { connectedClient = c; return c; })
+      .catch((err) => { sharedClientPromise = null; log('Temporal connect failed:', err); throw err; });
+  }
+  return sharedClientPromise;
 }
+
+/**
+ * Connection factory used by the extension. Defaults to the module-scope shared
+ * connection; overridable via `__setPiClientFactoryForTests` so the rebuild
+ * invariant can be exercised without a live Temporal server.
+ */
+let clientFactory: (config: Config) => Promise<Client> = getSharedClient;
+
+/**
+ * Per-PLAYER runtime — lives in the module-scope `runtimes` map and SURVIVES Pi
+ * extension-instance rebuilds (a switch re-binds to it). Holds the durable
+ * attachment (handle + lease + heartbeat, inside `wf`), the phase driver (phase
+ * continuity across switches), the cue pump, and the current Pi session pointer.
+ */
+interface PiPlayerRuntime {
+  readonly workflowId: string;
+  readonly wf: PiWorkflowClient;
+  readonly driver: PhaseDriver;
+  readonly pump: CuePump;
+  /** The currently-active Pi session (null during a switch gap). */
+  session: PiAgentSession | null;
+  /** Last Pi conversation id persisted to metadata.sessionId (resume pointer). */
+  lastSessionId?: string;
+}
+
+/** One runtime per player, keyed by fixed workflowId. Survives instance rebuilds. */
+const runtimes = new Map<string, PiPlayerRuntime>();
 
 const piExtension = function (pi: ExtensionAPI): void {
   // Soft preflight: warn (don't crash the human's Pi session) if Pi packages
@@ -68,26 +107,26 @@ const piExtension = function (pi: ExtensionAPI): void {
   const config: Config = getConfig();
   const isConductor = process.env[ENV.CONDUCTOR] === '1' || process.env[ENV.CONDUCTOR] === 'true';
 
-  // Player identity — FIXED workflowId for the process lifetime (architect's
-  // ruling). `currentPlayerId` is the mutable DISPLAY id (set_name updates it);
-  // the workflowId is computed once and never repointed.
+  // Identity — FIXED workflowId for the process lifetime (architect's ruling).
+  // `currentPlayerId` is the mutable DISPLAY id (set_name updates it); the
+  // workflowId is computed once and never repointed (a Pi switch is invisible to
+  // the ensemble). Stable across instance rebuilds → the same map key.
   let currentPlayerId = process.env[ENV.PLAYER_NAME] || `pi-${process.pid}`;
   const workflowId = sessionWorkflowId(config.ensemble, currentPlayerId);
 
-  let ctx: SessionContext | null = null;
-  let sharedClient: Client | null = null;
+  // Kick off (or reuse) the module-scope shared connection.
+  void clientFactory(config);
 
-  // Connect once at load (D12a: one Client serves every in-process session).
-  // session_start awaits this; tool handlers reach it via the lazy client proxy.
-  const connectPromise: Promise<Client> = PiWorkflowClient.connect(config)
-    .then((c) => { sharedClient = c; return c; })
-    .catch((err) => { log('Temporal connect failed:', err); throw err; });
+  // ── D11 lazy proxies: resolve MODULE-SCOPE state per call (instance-independent) ──
+  const clientProxy = createLazyProxy<Client>(() => connectedClient, 'Temporal client');
+  const handleProxy = createLazyProxy<WorkflowHandle>(
+    () => runtimes.get(workflowId)?.wf.handle ?? null,
+    'workflow handle',
+  );
 
-  // ── D11 lazy proxies: resolve the live client / current session handle per call ──
-  const clientProxy = createLazyProxy<Client>(() => sharedClient, 'Temporal client');
-  const handleProxy = createLazyProxy<WorkflowHandle>(() => ctx?.wf.handle ?? null, 'workflow handle');
-
-  // ── Register the FULL tool surface ONCE, over the lazy proxies ──
+  // ── Register the FULL tool surface on THIS instance's `pi` ──
+  // (Re-registered on each rebuild — correct: the new `pi` needs its tools. The
+  // handlers resolve module-scope state, so they hit the surviving runtime.)
   const toolOpts: RegisterAllTempoToolsOpts = {
     client: clientProxy,
     config,
@@ -114,42 +153,78 @@ const piExtension = function (pi: ExtensionAPI): void {
     };
   }
 
-  // ── Lifecycle: session_start → connect + attach + claim + start loops ──
+  /**
+   * Persist the active Pi conversation id to `metadata.sessionId` IF it changed
+   * (P2-5 resume pointer). Event-independent: called at attach AND per turn so a
+   * silent SessionManager switch is caught without depending on a switch event.
+   */
+  async function refreshSessionId(rt: PiPlayerRuntime, sessionId: string | undefined): Promise<void> {
+    if (!sessionId || sessionId === rt.lastSessionId) return;
+    await rt.wf.updateSessionId(sessionId);
+    rt.lastSessionId = sessionId;
+  }
+
+  /**
+   * Get-or-create the runtime for this player. FIRST attach claims the lease +
+   * starts the heartbeat + cue pump. A subsequent `session_start` (instance
+   * rebuild on a switch) RE-BINDS the surviving runtime — updates the session
+   * pointer ONLY; no re-claim, no second heartbeat timer (the lease is unbroken).
+   */
+  async function attachOrRebind(payload: PiEventPayload): Promise<PiPlayerRuntime> {
+    const existing = runtimes.get(workflowId);
+    if (existing) {
+      existing.session = payload.session ?? existing.session;
+      log(`re-bound ${currentPlayerId} (Pi instance rebuilt; lease intact)`);
+      return existing;
+    }
+    const client = await clientFactory(config);
+    const wf = new PiWorkflowClient({
+      client,
+      config,
+      metadata: buildMetadata(),
+      // Restart/migrate handoff token if the spawn provided one; absent on a
+      // fresh recruit / manual launch → fresh claim. (Read side of the
+      // restart-spawn wiring is a tracked Phase 3 / restart-tool carry-item.)
+      expectedAttachmentId: process.env[ENV.ATTACHMENT_ID] || undefined,
+    });
+    const driver = new PhaseDriver();
+    const pump = new CuePump({
+      source: wf,
+      resolveSession: () => runtimes.get(workflowId)?.session ?? null,
+    });
+    const rt: PiPlayerRuntime = { workflowId, wf, driver, pump, session: payload.session ?? null };
+    runtimes.set(workflowId, rt);
+
+    await wf.ensureSessionWorkflow();
+    const result = driver.handle('session_start', payload, nowIso());
+    await wf.performAction(result.action); // claim → attached, starts heartbeat
+    pump.start();
+    log(`attached ${currentPlayerId} (wf ${workflowId})`);
+    return rt;
+  }
+
+  // ── Lifecycle: session_start → first attach OR re-bind ──
   pi.on('session_start', async (payload: PiEventPayload) => {
     try {
-      const client = await connectPromise;
-      const wf = new PiWorkflowClient({ client, config, metadata: buildMetadata() });
-      const driver = new PhaseDriver();
-
-      // Fresh context — re-acquire the live session from THIS payload.
-      ctx = {
-        session: payload.session ?? null,
-        driver,
-        wf,
-        pump: new CuePump({
-          source: wf,
-          resolveSession: () => ctx?.session ?? null,
-        }),
-      };
-
-      await wf.ensureSessionWorkflow();
-      const result = driver.handle('session_start', payload, nowIso());
-      await wf.performAction(result.action); // claim → attached, starts heartbeat
-      ctx.pump.start();
-      log(`attached as ${currentPlayerId} (ensemble ${config.ensemble})`);
+      const rt = await attachOrRebind(payload);
+      await refreshSessionId(rt, rt.session?.id);
     } catch (err) {
       log('session_start wiring failed:', err);
     }
   });
 
-  // ── Lifecycle: phase-affecting events ──
+  // ── Lifecycle: phase-affecting events (drive the SURVIVING runtime's driver) ──
   for (const event of ['agent_start', 'agent_end'] as const) {
     pi.on(event, async (payload: PiEventPayload) => {
-      if (!ctx) return;
-      if (payload.session) ctx.session = payload.session;
-      const result = ctx.driver.handle(event, payload, nowIso());
+      const rt = runtimes.get(workflowId);
+      if (!rt) return;
+      if (payload.session) rt.session = payload.session;
+      const result = rt.driver.handle(event, payload, nowIso());
       try {
-        await ctx.wf.performAction(result.action);
+        await rt.wf.performAction(result.action);
+        // Event-independent resume-pointer refresh — catches a silent switch at
+        // the per-turn boundary.
+        if (event === 'agent_start') await refreshSessionId(rt, rt.session?.id);
       } catch (err) {
         log(`${event} → ${result.action.kind} failed:`, err);
       }
@@ -164,26 +239,55 @@ const piExtension = function (pi: ExtensionAPI): void {
     'tool_execution_end',
   ] as const) {
     pi.on(event, (payload: PiEventPayload) => {
-      if (!ctx) return;
-      if (payload.session) ctx.session = payload.session;
+      const rt = runtimes.get(workflowId);
+      if (!rt) return;
+      if (payload.session) rt.session = payload.session;
       // Stamp activity only; action is guaranteed `none` for these events.
-      ctx.driver.handle(event, payload, nowIso());
+      rt.driver.handle(event, payload, nowIso());
     });
   }
 
-  // ── Lifecycle: session_shutdown → draining → detached ──
+  // ── Lifecycle: session_shutdown → Option C (reason-discriminated teardown) ──
+  // Drop the session pointer first (cue pump's resolveSession → null → no
+  // injection during the switch gap; also dodges the Pi #2860
+  // inject-right-after-newSession drop). Then detach ONLY on a known clean
+  // 'quit'; any switch reason (new/resume/fork/reload) or unknown/missing reason
+  // → NO detach, leave the runtime mapped for the next rebuild to rebind. The
+  // 'quit' detach is best-effort; the MD-A reaper backstops every other path.
   pi.on('session_shutdown', async (payload: PiEventPayload) => {
-    if (!ctx) return;
-    const result = ctx.driver.handle('session_shutdown', payload, nowIso());
-    try {
-      ctx.pump.stop();
-      await ctx.wf.performAction(result.action); // requestDetach + adapterExited
-    } catch (err) {
-      log('session_shutdown detach failed:', err);
-    } finally {
-      ctx = null; // drop the session context.
+    const rt = runtimes.get(workflowId);
+    if (!rt) return;
+    rt.session = null;
+    if (payload.reason === 'quit') {
+      try {
+        await rt.wf.detach('agent-exited'); // requestDetach + adapterExited + stopHeartbeat
+        runtimes.delete(workflowId);
+      } catch (err) {
+        log('quit detach (best-effort) failed — reaper will backstop:', err);
+      }
     }
   });
 };
+
+// ── Test-only hooks (ADR 0006 `__<verb><Noun>ForTests` convention) ──
+// Reset the module-scope singletons between tests and inject a fake connection.
+// NEVER called from production code; not surfaced through any barrel.
+
+/** Override the Temporal connection factory (inject a fake Client). */
+export function __setPiClientFactoryForTests(factory: (config: Config) => Promise<Client>): void {
+  clientFactory = factory;
+}
+
+/** Stop timers, clear the per-player runtime map + shared-client singletons + factory. */
+export function __resetPiRuntimesForTests(): void {
+  for (const rt of runtimes.values()) {
+    rt.pump.stop();
+    rt.wf.stopHeartbeat();
+  }
+  runtimes.clear();
+  sharedClientPromise = null;
+  connectedClient = null;
+  clientFactory = getSharedClient;
+}
 
 export default piExtension;

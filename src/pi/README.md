@@ -84,8 +84,8 @@ deadline race reaps the attachment.
 **Result / learning:**
 
 - **With the heartbeat (as implemented):** an abrupt death IS detected — after **≤ `leaseMs`**
-  (default 60s; detection latency ≈ one lease window). The phase transitions out of
-  `attached`/`awaiting` once the lease expires.
+  (Phase 2 / MD-A: 90s lease, 30s heartbeat, lease = 3×heartbeat; detection latency ≈ one lease
+  window). The phase transitions out of `attached`/`awaiting` once the lease expires.
 - **Without a heartbeat:** there would be **no detection at all** — the workflow cannot
   distinguish a dead Pi process from an idle-but-alive one. The lease would never lapse
   (nothing renews *or* expires it on a fixed deadline absent the heartbeat contract).
@@ -117,6 +117,27 @@ that callers may share; each attached session constructs its own `PiWorkflowClie
 
 ---
 
+## Phase 2 — interactive runtime
+
+- **Full native tool surface.** `extension.ts` registers EVERY agent-tempo tool on
+  Pi via `renderToPi(buildAllTempoTools(...))` over D11 lazy proxies — `set_name`,
+  `set_part`, `who_am_i`, `cue`, `recruit`, … all work natively. The Phase 0
+  hand-wired `report-tool.ts` is retired.
+- **Module-scope singleton (survives instance rebuild).** Pi rebuilds the extension
+  INSTANCE on every SessionManager switch (`session_shutdown` → `session_start`).
+  The Temporal `Client`, fixed `workflowId`, pinned handle, heartbeat timer, cue
+  pump, and current-session pointer live in a module-scope `Map<workflowId,
+  PiPlayerRuntime>` (one entry interactive; N for Phase 3 headless — D12a). A
+  rebuild RE-BINDS to the surviving runtime — **no re-claim, no duplicate
+  heartbeat, unbroken lease** (test: `pi-extension-rebuild.test.ts`).
+- **Identity.** ONE `pi` process = ONE fixed workflowId; `set_name` updates the
+  display id only; `metadata.sessionId` is the mutable resume pointer (refreshed at
+  attach + per turn, event-independent).
+- **MD-A liveness.** 30s heartbeat / 90s lease (3× invariant; `pi-liveness.test.ts`).
+- **Teardown (Option C).** `session_shutdown` detaches ONLY on `reason === 'quit'`
+  (best-effort — Pi may not await the handler); switch/unknown reasons → no detach.
+  The lease reaper is the permanent floor for SIGKILL/crash/un-landed-quit.
+
 ## Known limitations (carry forward)
 
 1. **`pi-types.ts` is hand-written → API-drift risk.** These structural decls mirror Pi's
@@ -134,7 +155,21 @@ that callers may share; each attached session constructs its own `PiWorkflowClie
    `{ text, isError }` to `{ output, isError }` — sufficient for non-streaming tools. The exact
    streaming/`onUpdate` shape (spike gap D12b) still wants confirmation against a live `pi`.
 4. **No live `pi` run performed.** Validated with a structural `ExtensionAPI` fake; a manual
-   `pi` smoke run remains the recommended end-to-end check.
+   `pi` smoke run remains the recommended end-to-end check (see below).
+
+### Carry-items (tracked for later phases)
+
+- **Restart `--continue` read side.** The extension WRITES `metadata.sessionId` (resume
+  pointer) and accepts an optional `expectedAttachmentId` handoff (`AGENT_TEMPO_ATTACHMENT_ID`).
+  The CONSUMPTION — a Pi-aware spawn building `pi --continue <sessionId>` + passing the
+  handoff token on restart — is a daemon/restart-tool concern (Phase 3 / restart follow-up).
+- **Headless reliable detach (Phase 3).** Interactive quit-detach is best-effort (Pi owns the
+  process; can't sequence our async signal before exit). Headless owns its exit loop, so the
+  headless teardown should `await adapterExited` THEN `dispose()` for reliable clean detach —
+  designed signal-then-dispose, not copying interactive's best-effort handler.
+- **Pi switch event / `reason` discriminators.** Adopted `session_start`/`session_shutdown`
+  `{reason}` per researcher confirmation; pin a Pi version floor (≥ #2860, #5080, #5115) as a
+  D6 "behaviors-to-revalidate-on-bump" item.
 
 ## Dependencies (⚠️ flagged for human review — not pre-approved)
 
@@ -157,6 +192,16 @@ npm run build       # produces dist/ + workflow-bundle.js (required by the Tempo
 npm test            # mocha + vitest
 
 # Just the Pi unit tests (no Temporal/Pi needed):
-npx mocha --no-config dist-test/test/pi-phase-driver.test.js dist-test/test/pi-lazy-proxy.test.js \
-  dist-test/test/pi-zod-to-typebox.test.js dist-test/test/pi-tool-parity.test.js
+npx mocha --no-config dist-test/test/pi-*.test.js
 ```
+
+### Manual verification (live `pi` — Phase 2/3, NOT a unit test)
+
+- **D10 cue semantics (mid-turn):** (a) a PEER cue (`isMaestro=false`) delivered while a turn
+  is in flight QUEUES and does NOT preempt the running turn (drains at idle); (b) an OPERATOR
+  cue (`isMaestro=true`) mid-turn lands same-turn priority (after the current tool batch,
+  before the next LLM call) — NOT a hard tool abort.
+- **Rebuild survival:** trigger a Pi session switch (newSession/fork) and confirm the player
+  stays attached in `ensemble` (no detach/re-attach flap), one continuous heartbeat.
+- **Clean quit vs abrupt kill:** `quit` detaches promptly; `kill -9` detaches within the lease
+  window (≤90s) via the reaper.

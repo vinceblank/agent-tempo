@@ -113,11 +113,25 @@ export class CuePump {
 
   /**
    * Inject one cue into the live session (D10 — see file header). Operator cues
-   * `steer` (interrupt); peer cues `followUp` (queue). `triggerTurn` is always
-   * set: a no-op mid-turn, the required cold-idle wake otherwise.
+   * `steer` (same-turn priority); peer cues `followUp` (queue). `triggerTurn` is
+   * always set: a no-op mid-turn, the required cold-idle wake otherwise.
    */
   private async injectCue(session: PiAgentSession, msg: Message): Promise<void> {
     const content = msg.from ? `[cue from ${msg.from}] ${msg.text}` : msg.text;
+    // LOAD-BEARING Pi-runtime invariant (D10) — confirmed sound through Pi 0.78.x
+    // (researcher-cited; a D6 "behaviors-to-revalidate-on-bump" item):
+    //   peer cue     = { deliverAs: 'followUp', triggerTurn: true } → QUEUES; drains
+    //     when the agent goes idle, NEVER preempts a running turn. triggerTurn only
+    //     wakes a cold-idle session (followUp alone won't start one); it is a no-op
+    //     while a turn is in flight.
+    //   operator cue = { deliverAs: 'steer', triggerTurn: true } → same-turn PRIORITY:
+    //     injected after the current tool batch, before the next LLM call. NOT a hard
+    //     mid-tool abort (only RPC abort / AbortSignal hard-interrupts a running tool).
+    // The guarantee this comment protects: a future Pi version MUST keep followUp
+    // non-interrupting AND triggerTurn a no-op-while-busy. If that regresses, peer
+    // cues silently become preemptions, defeating operator-vs-peer. Not unit-testable
+    // here (the session is mocked) — locked by researcher confirmation + the D6 Pi
+    // version floor (≥ #2860 + #5115) + a real-Pi mid-turn integration smoke.
     await session.sendMessage(
       { customType: 'cue', content, display: true },
       { deliverAs: msg.isMaestro ? 'steer' : 'followUp', triggerTurn: true },
