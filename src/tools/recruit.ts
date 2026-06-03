@@ -111,8 +111,13 @@ export function buildRecruitTool(
       dangerouslySkipPermissions: z.boolean().optional()
         .describe('claude-code-headless only. When true, passes `--dangerously-skip-permissions` to `claude -p` instead of `--permission-mode`. Use only in sandboxed/trusted contexts. Mutually exclusive with `permissionMode`.'),
       // Phase 3a / MD-C — headless Pi tool-access policy. Ignored for other agents.
+      // NOTE: stays `.optional()` (NOT `.default('restricted')`): this tool's
+      // params are rendered to the Pi front-end via renderToPi → the zod→TypeBox
+      // converter, which is fail-loud on `.default()` (D1). A schema default would
+      // throw at Pi tool registration ("Pi missing tool: recruit"). The concrete
+      // 'restricted' default is applied once at the read site below instead.
       toolAccess: z.enum(['restricted', 'standard', 'full']).optional()
-        .describe('pi only. Headless Pi tool-class policy. "restricted" (default): agent-tempo tools + Read/Edit/Write; Bash/shell/exec HARD-BLOCKED. "standard": adds scoped Bash. "full": unsandboxed — requires force: true (admin confirmation). Ignored for other agents.'),
+        .describe('pi only. Headless Pi tool-class policy. "restricted" (default): agent-tempo tools + Read/Edit/Write; Bash/shell/exec HARD-BLOCKED. "standard": Bash enabled; no tool-level scope restriction (operator/container responsible for scoping). "full": unsandboxed — requires force: true (admin confirmation). Ignored for other agents.'),
     },
     handler: async (args) => {
       const { workDir, name, initialMessage } = args as {
@@ -130,7 +135,7 @@ export function buildRecruitTool(
         mockScenario?: string;
         permissionMode?: typeof CLAUDE_CODE_PERMISSION_MODES[number];
         dangerouslySkipPermissions?: boolean;
-        toolAccess?: 'restricted' | 'standard' | 'full';
+        toolAccess?: 'restricted' | 'standard' | 'full'; // Zod-defaulted to 'restricted' at parse
       };
       const isConductor = (args as any).conductor === true;
       const agent: AgentType = (args as any).agent || ownAgentType;
@@ -143,7 +148,11 @@ export function buildRecruitTool(
       const mockScenario = (args as any).mockScenario as string | undefined;
       const permissionMode = (args as any).permissionMode as typeof CLAUDE_CODE_PERMISSION_MODES[number] | undefined;
       const dangerouslySkipPermissions = (args as any).dangerouslySkipPermissions === true;
-      const toolAccess = (args as any).toolAccess as 'restricted' | 'standard' | 'full' | undefined;
+      // N1 (adapted): normalize to a concrete value ONCE here so the guard below
+      // and the outbox entry both see a real value with no scattered `?? 'restricted'`.
+      // (A schema `.default()` would be cleaner but the Pi converter rejects it —
+      // see the toolAccess param note above.) Omitted → 'restricted'.
+      const toolAccess = ((args as any).toolAccess ?? 'restricted') as 'restricted' | 'standard' | 'full';
 
       // ADR 0014 §7 gate 3 — recruit-time rejection of `agent: 'mock'`
       // outside dev mode. Defense-in-depth: even if a hand-edited install
@@ -195,7 +204,11 @@ export function buildRecruitTool(
       if (dangerouslySkipPermissions && agent !== 'claude-code-headless') {
         return fail(`dangerouslySkipPermissions is only valid when agent: "claude-code-headless" (got agent: "${agent}").`);
       }
-      if (toolAccess != null && agent !== 'pi') {
+      // Reject an EXPLICIT non-default toolAccess on a non-pi agent. With Zod
+      // `.default('restricted')` the omitted case is indistinguishable from an
+      // explicit `'restricted'`, so we only flag a non-default value — that is
+      // unambiguously a user mistake (toolAccess is ignored for non-pi agents).
+      if (toolAccess !== 'restricted' && agent !== 'pi') {
         return fail(`toolAccess is only valid when agent: "pi" (got agent: "${agent}").`);
       }
       if (toolAccess === 'full' && !force) {
@@ -421,9 +434,10 @@ export function buildRecruitTool(
           // `dangerouslySkipPermissions` fields in PR-2.
           ...(agent === 'claude-code-headless' && permissionMode ? { permissionMode } : {}),
           ...(agent === 'claude-code-headless' && dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
-          // Phase 3a / MD-C — explicit toolAccess on the entry (default 'restricted'
-          // so the spawned gate + audit always see a concrete value).
-          ...(agent === 'pi' ? { toolAccess: toolAccess ?? 'restricted' } : {}),
+          // Phase 3a / MD-C — explicit toolAccess on the entry. Normalized at the
+          // read site (above) to a concrete value, so the spawned gate + audit
+          // always see one without a fallback here.
+          ...(agent === 'pi' ? { toolAccess } : {}),
         } as OutboxEntryInput;
         const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 

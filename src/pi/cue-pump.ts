@@ -1,6 +1,6 @@
 /**
  * Cue pump — pulls cues queued on the session workflow and injects them into
- * the LIVE Pi session via `sendMessage`, then acks them.
+ * the LIVE Pi session via `sendCustomMessage`, then acks them.
  *
  * Pi has no reverse-RPC into a running session from Temporal, so (like the
  * existing adapters) we poll `pendingMessages` and ack via `markDelivered`.

@@ -93,6 +93,60 @@ export interface RunHeadlessPiOptions {
 }
 
 /**
+ * Build the `DefaultResourceLoader` options for a headless Pi player.
+ *
+ * SECURITY — S2 (MD-C deny-list soundness). The `restricted` tool gate is a
+ * DENY-LIST over shell/exec tool *names* (extension.ts SHELL_TOOL_NAMES). That
+ * guarantee — "restricted = no host execution" — holds ONLY IF no third-party
+ * extension can register an un-blacklisted execution tool (e.g. a custom
+ * `python` / `npm` / `run` tool). It therefore depends on a hard structural
+ * fact: which extensions Pi loads.
+ *
+ * Verified against the installed Pi SDK 0.78 source (NOT assumed):
+ *   - `DefaultResourceLoader.reload()` (resource-loader.js:271-276) builds
+ *     `extensionPaths = noExtensions ? cliEnabledExtensions
+ *                                     : merge(cliEnabledExtensions, enabledExtensions)`
+ *     where `enabledExtensions` (line 229) are the DISK/package extensions from
+ *     `packageManager.resolve()` (`~/.pi/agent/extensions/`, `<cwd>/.pi/extensions/`,
+ *     installed packages). `loadExtensions(extensionPaths)` then loads them and
+ *     MERGES with our inline factories (lines 274-276).
+ *   - `noExtensions` defaults to `false` (constructor, line 132) — so the naive
+ *     loader DOES load disk extensions. That is the S2 gap.
+ *
+ * Fix (= security's "exclude the extensions dir", done structurally):
+ *   - `noExtensions: true` → `extensionPaths` collapses to `cliEnabledExtensions`,
+ *     which is empty because we pass NO `additionalExtensionPaths`. So
+ *     `loadExtensions([])` registers nothing from disk/packages.
+ *   - Inline `extensionFactories` load UNCONDITIONALLY (reload() line 275 is not
+ *     gated by `noExtensions`), so our agent-tempo extension still attaches.
+ * Net: the ONLY tools present are Pi's built-ins (bash/read/edit/write/grep —
+ * all covered by the deny-list) + our agent-tempo MCP tools (no exec). No
+ * third-party tool can slip past the deny-list. Skills/prompts/themes cannot
+ * register tools, so they are not a vector and are left at defaults.
+ *
+ * Kept as a pure, exported helper so the `noExtensions: true` invariant has a
+ * unit regression test (test/pi-headless-loader.test.ts) without needing the Pi
+ * SDK installed.
+ */
+export function buildPiResourceLoaderOptions(params: {
+  cwd: string;
+  agentDir: string;
+  /** The inline agent-tempo extension factory (`createPiExtension(...)`). Typed
+   *  with a bottom param so any concrete factory arity is assignable. */
+  extensionFactory: (pi: never) => void;
+}): Record<string, unknown> {
+  return {
+    cwd: params.cwd,
+    agentDir: params.agentDir,
+    extensionFactories: [params.extensionFactory],
+    // SECURITY (S2): hard-exclude all disk/package extensions. Do NOT add
+    // `additionalExtensionPaths` here — that would re-introduce the exec-tool
+    // vector this flag closes.
+    noExtensions: true,
+  };
+}
+
+/**
  * Boot + run a headless Pi player until shutdown. Resolves when the process has
  * cleanly detached + disposed (it also calls process.exit on the terminal path).
  */
@@ -129,17 +183,17 @@ export async function runHeadlessPi(opts: RunHeadlessPiOptions = {}): Promise<vo
   const getAgentDir = piSdk.getAgentDir as () => string;
   const agentDir = getAgentDir();
 
-  const resourceLoader = new DefaultResourceLoader({
-    cwd: process.cwd(),
-    agentDir,
-    extensionFactories: [extensionFactory],
-  });
+  const resourceLoader = new DefaultResourceLoader(
+    buildPiResourceLoaderOptions({ cwd: process.cwd(), agentDir, extensionFactory }),
+  );
   // CRITICAL (3a live smoke — devops): createAgentSession only calls
-  // resourceLoader.reload() when IT constructs the loader (sdk.js). When we pass
-  // our OWN loader, reload() is skipped — and DefaultResourceLoader inits
-  // `extensions: []` and ONLY loads the inline `extensionFactories` during
-  // reload(). So without this explicit reload our extension never registers, and
-  // session_start fires into an empty handler list (no claim, no heartbeat).
+  // resourceLoader.reload() when IT constructs the loader (sdk.js:99-101). When we
+  // pass our OWN loader, reload() is skipped — and DefaultResourceLoader inits
+  // `extensionsResult.extensions = []` (resource-loader.js:146) and only populates
+  // it during reload(). So without this explicit reload our extension never
+  // registers, and session_start fires into an empty handler list (no claim, no
+  // heartbeat). The SDK's own doc comment (sdk.js:74-83) prescribes this exact
+  // construct → reload() → pass-as-resourceLoader sequence.
   await resourceLoader.reload();
 
   const { session } = await createAgentSession({

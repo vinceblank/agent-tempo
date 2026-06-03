@@ -46,7 +46,7 @@ via a module-scope singleton.
 | `zod-to-typebox.ts` | zod→TypeBox tool-schema converter (fail-loud on unsupported constructs; Phase 1 / D1) | **Pure** — unit-tested |
 | `lazy-proxy.ts` | D11 lazy `Client` / `WorkflowHandle` proxy — resolves the live target per call | **Pure** — unit-tested |
 | `workflow-client.ts` | Thin client-side Temporal wrapper (lease, heartbeat, lifecycle, outbox, cue intake) | Compile-checked (needs Temporal at runtime) |
-| `cue-pump.ts` | Polls `pendingMessages`, injects via `sendMessage`, acks via `markDelivered` | Compile-checked |
+| `cue-pump.ts` | Polls `pendingMessages`, injects via `sendCustomMessage`, acks via `markDelivered` | Compile-checked |
 | `extension.ts` | `export default function(pi)` — registers the FULL tool surface via `renderToPi(buildAllTempoTools(...))` over lazy proxies; wires events → driver → client | Compile-checked |
 | `probe.ts` | Optional-dep preflight for the Pi packages (sdk-probe pattern) | Compile-checked |
 | `pi-types.ts` | Hand-written structural decls of Pi's `ExtensionAPI` surface | — (see limitation below) |
@@ -161,6 +161,17 @@ with the agent-tempo extension injected inline (`createPiExtension({ mode:
 - **MD-C tool gate** (headless only): `toolAccess` `restricted` (default; bash
   hard-blocked) | `standard` | `full`. Recruit knob → `AGENT_TEMPO_TOOL_ACCESS` →
   the extension's `tool_call` gate (tool-class check first).
+- **MD-C deny-list soundness (S2).** The `restricted` gate is a DENY-LIST over
+  shell/exec tool *names*, so it is sound only if no third-party extension can
+  register an un-blacklisted exec tool. Verified against Pi SDK 0.78 source:
+  `DefaultResourceLoader.reload()` loads DISK/package extensions
+  (`~/.pi/agent/extensions/`, `<cwd>/.pi/extensions/`) by default
+  (`noExtensions` defaults to `false`, `resource-loader.js:132`/`271-276`). The
+  headless loader therefore passes **`noExtensions: true`** (and NO
+  `additionalExtensionPaths`) via `buildPiResourceLoaderOptions` — disk/package
+  extensions are hard-excluded while our inline factory still loads (factories
+  are not gated by `noExtensions`). Locked by `test/pi-headless-loader.test.ts`.
+  *(security, 3a review.)*
 - **Model:** `provider/model` recruit arg → pi-ai `getModel(provider, name)` →
   Pi `Model` object (NOT a string). Copilot via `probeCopilotPiPreflight`.
 
@@ -217,6 +228,19 @@ with the agent-tempo extension injected inline (`createPiExtension({ mode:
 - **Pi switch event / `reason` discriminators.** Adopted `session_start`/`session_shutdown`
   `{reason}` per researcher confirmation; pin a Pi version floor (≥ #2860, #5080, #5115) as a
   D6 "behaviors-to-revalidate-on-bump" item.
+- **D6 revalidate-on-bump — `bindExtensions` await ordering (`setRuntimeSession`).** The
+  headless boot (`headless.ts`) calls `setRuntimeSession(...)` only AFTER
+  `await session.bindExtensions({})` resolves, RELYING ON `bindExtensions` awaiting the async
+  `session_start` handlers (which run the claim + map the module-scope runtime) before it
+  returns. If a Pi bump makes `bindExtensions` resolve BEFORE those handlers finish, the
+  runtime won't be mapped yet, `setRuntimeSession` finds nothing to set the session on, and the
+  cue pump never acquires a live session → cues SILENTLY drop. Re-verify this await ordering on
+  every Pi bump (add to the D6 revalidate set). *(QA, 3a review.)*
+- **Phase-2 interactive cue-injection — implicit live smoke.** There is no standalone unit test
+  for the interactive (`extension.ts` default) cue-injection path; the first real interactive Pi
+  session that takes a cue exercises it live (and fix #5 — `sendCustomMessage` — is what makes
+  that path actually deliver). Treat the first interactive session per Pi bump as the smoke for
+  this path until a dedicated harness exists. *(QA, 3a review.)*
 
 ## Dependencies (⚠️ flagged for human review — not pre-approved)
 

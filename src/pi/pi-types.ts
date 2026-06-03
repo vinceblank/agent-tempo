@@ -15,7 +15,7 @@
  *
  * Surface mirrored against `badlogic/pi-mono` @ 564ad70 (packages 0.78.0):
  *   - `core/extensions/types.ts` (ExtensionAPI, ToolDefinition, events)
- *   - `core/agent-session.ts` (sendMessage / steer / followUp)
+ *   - `core/agent-session.ts` (sendCustomMessage / steer / followUp)
  */
 
 /**
@@ -37,8 +37,8 @@ export type PiLifecycleEvent =
   | 'tool_execution_end'
   | 'session_shutdown';
 
-/** Options for `sendMessage` — D10 (FLIPPED): default `steer` + `triggerTurn`. */
-export interface PiSendMessageOptions {
+/** Options for `sendCustomMessage` — D10 (FLIPPED): default `steer` + `triggerTurn`. */
+export interface PiCustomMessageOptions {
   /** Start a new agent turn after delivery. */
   triggerTurn?: boolean;
   /**
@@ -58,7 +58,7 @@ export interface PiOutboundMessage {
 }
 
 /**
- * The live, human-attached agent session. `sendMessage` is bound in the
+ * The live, human-attached agent session. `sendCustomMessage` is bound in the
  * `AgentSession` constructor (no mode gate) — confirmed by the spike — so a
  * cue can be injected into a running interactive session.
  */
@@ -69,7 +69,7 @@ export interface PiAgentSession {
    * `agent-session.d.ts` during the 3a live smoke). The earlier spike modeled it
    * as `sendMessage`; the real method name is `sendCustomMessage`.
    */
-  sendCustomMessage(msg: PiOutboundMessage, opts?: PiSendMessageOptions): void | Promise<void>;
+  sendCustomMessage(msg: PiOutboundMessage, opts?: PiCustomMessageOptions): void | Promise<void>;
   /** Pi's stable session identifier (reconciled with workflow metadata — D11). */
   readonly id?: string;
 }
