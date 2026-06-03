@@ -24,10 +24,11 @@
  *
  * Determinism boundary: client-side only.
  */
-import { getConfig, type Config } from '../config';
+import { getConfig, sessionWorkflowId, ENV, type Config } from '../config';
 import { probeSdkInstall } from '../utils/sdk-probe';
-import { createPiExtension, detachAllPiRuntimesForExit, type PiToolAccess } from './extension';
+import { createPiExtension, detachAllPiRuntimesForExit, setRuntimeSession, type PiToolAccess } from './extension';
 import { PI_PACKAGE, PI_AI_PACKAGE } from './probe';
+import type { PiAgentSession } from './pi-types';
 
 const log = (...args: unknown[]): void => {
   // eslint-disable-next-line no-console
@@ -153,6 +154,12 @@ export async function runHeadlessPi(opts: RunHeadlessPiOptions = {}): Promise<vo
 
   // 5) Explicit bootstrap — fires session_start → the singleton claims/attaches.
   await session.bindExtensions({});
+  // Headless session_start carries NO `session` field (interactive does), so the
+  // extension can't wire the cue pump's session ref itself. We hold the SDK
+  // session here — set it on the now-claimed runtime so the cue pump can inject.
+  // (3a live smoke — devops; the headless-vs-interactive session-wiring gap.)
+  const playerId = process.env[ENV.PLAYER_NAME] || `pi-${process.pid}`;
+  setRuntimeSession(sessionWorkflowId(config.ensemble, playerId), session as unknown as PiAgentSession);
   log(
     `headless Pi session bound (toolAccess=${toolAccess}, ` +
     `model=${opts.model ?? 'pi-default'}${opts.continueSessionId ? `, continue=${opts.continueSessionId}` : ''}, ` +

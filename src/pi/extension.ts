@@ -306,6 +306,26 @@ export async function detachAllPiRuntimesForExit(): Promise<void> {
   runtimes.clear();
 }
 
+/**
+ * Headless-only: wire the live Pi SDK session onto a runtime so the cue pump can
+ * inject into it. The interactive CLI's `session_start` payload carries
+ * `session`, but the headless SDK's DEFAULT session_start payload does NOT (it's
+ * `{ type, reason }`) — so `attachOrRebind` sets `rt.session = null` and the cue
+ * pump's `resolveSession` returns null (every cue is dropped). The headless entry
+ * HOLDS the session from `createAgentSession`, so it calls this after
+ * `bindExtensions` (by which point the runtime exists + has claimed) to set it.
+ * (3a live smoke — devops.)
+ */
+export function setRuntimeSession(workflowId: string, session: PiAgentSession): void {
+  const rt = runtimes.get(workflowId);
+  if (rt) {
+    rt.session = session;
+    log(`headless session wired to runtime (wf ${workflowId})`);
+  } else {
+    log(`setRuntimeSession: no runtime for ${workflowId} yet (session_start may not have fired)`);
+  }
+}
+
 // ── Test-only hooks (ADR 0006 `__<verb><Noun>ForTests` convention) ──
 
 /** Override the Temporal connection factory (inject a fake Client). */
