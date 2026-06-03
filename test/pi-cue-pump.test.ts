@@ -37,10 +37,10 @@ class FakeSource implements CueSource {
   }
 }
 
-/** Captures every sendMessage(msg, opts) the pump performs. */
+/** Captures every sendCustomMessage(msg, opts) the pump performs. */
 class FakeSession implements PiAgentSession {
   public readonly sent: Array<{ msg: PiOutboundMessage; opts?: PiSendMessageOptions }> = [];
-  sendMessage(msg: PiOutboundMessage, opts?: PiSendMessageOptions): void {
+  sendCustomMessage(msg: PiOutboundMessage, opts?: PiSendMessageOptions): void {
     this.sent.push({ msg, opts });
   }
 }

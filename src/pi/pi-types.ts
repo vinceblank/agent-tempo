@@ -63,7 +63,13 @@ export interface PiOutboundMessage {
  * cue can be injected into a running interactive session.
  */
 export interface PiAgentSession {
-  sendMessage(msg: PiOutboundMessage, opts?: PiSendMessageOptions): void | Promise<void>;
+  /**
+   * Inject a message into the live session. Pi's `AgentSession` exposes this as
+   * `sendCustomMessage` (NOT `sendMessage` — verified against the installed SDK's
+   * `agent-session.d.ts` during the 3a live smoke). The earlier spike modeled it
+   * as `sendMessage`; the real method name is `sendCustomMessage`.
+   */
+  sendCustomMessage(msg: PiOutboundMessage, opts?: PiSendMessageOptions): void | Promise<void>;
   /** Pi's stable session identifier (reconciled with workflow metadata — D11). */
   readonly id?: string;
 }
