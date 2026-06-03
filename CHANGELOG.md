@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **`agent-tempo` no longer crashes with `Error: Channel has been shut down`** during
+  the bare-invocation bootstrap (and any other Temporal-touching command). Root cause:
+  `@temporalio/client`'s gRPC retry interceptor schedules call retries via `setTimeout`,
+  but `Connection.close()` does not clear those pending timers. When a retry timer fired
+  *after* the channel was closed, `InternalChannel.createCall` threw synchronously **inside
+  the timer callback** — off any awaited path, so the `try/catch` around `connection.close()`
+  could not catch it, and it escaped to `uncaughtException` and killed the process. New
+  `src/utils/grpc-shutdown-guard.ts` installs a single process-level guard at CLI/daemon/MCP-
+  server entry that swallows exactly this benign post-shutdown error (the connection's result
+  was already captured or degraded) and re-throws everything else, preserving normal crash
+  semantics. The guard imports no Temporal/grpc modules, so it does not regress the #157
+  crash-proof-module isolation guarantee.
+
 ## [1.3.0] - 2026-05-24
 
 ### Added

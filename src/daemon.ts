@@ -27,6 +27,7 @@ import {
 import { emitDevBannerIfActive } from './cli/dev-banner';
 import { createWorkers } from './worker';
 import { createTemporalConnection } from './connection';
+import { installGrpcShutdownGuard } from './utils/grpc-shutdown-guard';
 import { DAEMON_PID_PATH, DAEMON_LOG_PATH, DAEMON_HEARTBEAT_PATH, HEARTBEAT_INTERVAL_MS } from './cli/daemon';
 import { createTempoClient } from './client';
 import { queryOrphanedSessions, restoreOrphansOnce, type OrphanCandidate } from './reconcile/orphans';
@@ -821,6 +822,11 @@ export function startCleanupLoop(
 }
 
 async function main() {
+  // Neutralize the Temporal/grpc-js "Channel has been shut down" retry-after-
+  // close race so a stray retry timer can't kill the long-lived daemon. See
+  // src/utils/grpc-shutdown-guard.ts.
+  installGrpcShutdownGuard();
+
   // ADR 0014 §5.4 / gate 4 — dev daemon log self-identifies. Banner fires
   // first so it lands at the top of `~/.agent-tempo-dev/daemon.log` for
   // grep-friendly identification regardless of subsequent log volume.

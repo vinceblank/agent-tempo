@@ -30,6 +30,7 @@ import { AGENT_TYPES, AgentType } from './types';
 import { ENV, CliOverrides, getConfig, isDevMode } from './config';
 import { formatMigrationResult, type LegacyMigrationResult } from './cli/legacy-migration';
 import { refreshEntrypoint } from './cli/global-wrapper';
+import { installGrpcShutdownGuard } from './utils/grpc-shutdown-guard';
 
 /** Package root — cli.js compiles to dist/cli.js, so one level up. Used by the inline `version` handler. */
 const PACKAGE_ROOT = resolve(__dirname, '..');
@@ -331,6 +332,13 @@ function reportMigrationResult(result: LegacyMigrationResult): void {
 }
 
 async function main() {
+  // Neutralize the Temporal/grpc-js "Channel has been shut down" retry-after-
+  // close race before any Temporal-touching command runs. See
+  // src/utils/grpc-shutdown-guard.ts. Cheap, import-clean, and idempotent — it
+  // attaches a single `uncaughtException` listener and pulls in no Temporal/grpc
+  // modules, so it is safe above the crash-proof fast paths below.
+  installGrpcShutdownGuard();
+
   const args = parseArgs(process.argv.slice(2));
   const overrides = cliOverrides(args);
 

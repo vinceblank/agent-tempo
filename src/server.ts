@@ -23,11 +23,15 @@ import { buildServerInstructions, registerAllTempoTools } from './server-tools';
 import { registry, InteractiveAttachment } from './adapters';
 import { resolveAgentType } from './ensemble/agent-types';
 import { installParentDeathWatchdog } from './utils/parent-death-watchdog';
+import { installGrpcShutdownGuard } from './utils/grpc-shutdown-guard';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo]', ...args);
 
 async function main() {
   installParentDeathWatchdog();
+  // Neutralize the Temporal/grpc-js "Channel has been shut down" retry-after-
+  // close race. See src/utils/grpc-shutdown-guard.ts.
+  installGrpcShutdownGuard();
 
   // Only activate when explicitly opted in via AGENT_TEMPO_ENSEMBLE
   if (!process.env[ENV.ENSEMBLE]) {
