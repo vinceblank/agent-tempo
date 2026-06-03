@@ -50,8 +50,8 @@ describe('CLI --agent parser allowlist (#476)', function () {
     // also editing AGENT_TYPES, this assertion catches the drift before
     // the CLI parser does. The runtime tuple drives both the type and the
     // CLI allowlist; they cannot diverge by construction.
-    expect(AGENT_TYPES).to.have.members(['claude', 'copilot', 'mock', 'claude-api', 'opencode', 'claude-code-headless']);
-    expect(AGENT_TYPES.length).to.equal(6);
+    expect(AGENT_TYPES).to.have.members(['claude', 'copilot', 'mock', 'claude-api', 'opencode', 'claude-code-headless', 'pi']);
+    expect(AGENT_TYPES.length).to.equal(7);
   });
 
   // One case per valid agent type — pins the allowlist surface so adding
