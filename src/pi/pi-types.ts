@@ -92,6 +92,25 @@ export interface PiEventPayload {
 export type PiEventHandler = (payload: PiEventPayload) => void | Promise<void>;
 
 /**
+ * `tool_call` pre-execution event — Pi fires this before running a tool, letting
+ * an extension allow/deny it. `toolName` is Pi's built-in or registered tool id
+ * (`bash` | `read` | `edit` | `write` | `grep` | …). The MD-C headless gate reads
+ * it to hard-block the shell/exec class at `toolAccess='restricted'`.
+ */
+export interface PiToolCallEvent {
+  type?: 'tool_call';
+  toolCallId?: string;
+  toolName: string;
+  input?: Record<string, unknown>;
+}
+
+/** Result of a `tool_call` handler: `block:true` denies the tool (with a reason). */
+export interface PiToolCallResult {
+  block?: boolean;
+  reason?: string;
+}
+
+/**
  * Pi tool result (`AgentToolResult`). The exact streaming shape is UNCONFIRMED
  * (spike gap D12b) — Phase 0 uses the minimal `{ output, isError }` form, which
  * is sufficient for a non-streaming tool like `report`.

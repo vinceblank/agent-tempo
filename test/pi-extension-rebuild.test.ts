@@ -19,7 +19,6 @@ import piExtension, {
 } from '../src/pi/extension';
 import {
   claimAttachmentUpdate,
-  requestDetachSignal,
   adapterExitedSignal,
 } from '../src/workflows/signals';
 import { ENV } from '../src/config';
@@ -101,7 +100,7 @@ describe('Pi extension — Option-C reason-discriminated teardown', () => {
   beforeEach(() => { process.env[ENV.PLAYER_NAME] = 'pi-teardown-test'; });
   afterEach(() => { __resetPiRuntimesForTests(); delete process.env[ENV.PLAYER_NAME]; });
 
-  it("session_shutdown reason='quit' → graceful detach (requestDetach + adapterExited)", async () => {
+  it("session_shutdown reason='quit' → graceful detach (adapterExited alone)", async () => {
     const rec: Recorder = { updates: [], signals: [] };
     __setPiClientFactoryForTests(async () => makeFakeClient(rec));
     const a = makeFakePi();
@@ -109,7 +108,8 @@ describe('Pi extension — Option-C reason-discriminated teardown', () => {
     await a.fire('session_start', { session: { id: 's1' }, reason: 'new' });
     await a.fire('session_shutdown', { reason: 'quit' });
 
-    expect(signalCount(rec, requestDetachSignal)).to.equal(1);
+    // adapterExited alone collapses any live phase → detached (no requestDetach
+    // needed for a self-exit; matches BaseAttachment.stopV2Lifecycle).
     expect(signalCount(rec, adapterExitedSignal)).to.equal(1);
   });
 
@@ -121,7 +121,6 @@ describe('Pi extension — Option-C reason-discriminated teardown', () => {
     await a.fire('session_start', { session: { id: 's1' }, reason: 'new' });
     await a.fire('session_shutdown', { reason: 'new' });
 
-    expect(signalCount(rec, requestDetachSignal)).to.equal(0);
     expect(signalCount(rec, adapterExitedSignal)).to.equal(0);
   });
 
@@ -133,7 +132,6 @@ describe('Pi extension — Option-C reason-discriminated teardown', () => {
     await a.fire('session_start', { session: { id: 's1' }, reason: 'new' });
     await a.fire('session_shutdown', { reason: 'some-future-reason' });
 
-    expect(signalCount(rec, requestDetachSignal)).to.equal(0);
     expect(signalCount(rec, adapterExitedSignal)).to.equal(0);
   });
 });

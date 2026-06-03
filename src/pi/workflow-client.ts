@@ -21,7 +21,6 @@ import {
   heartbeatSignal,
   processingStartUpdate,
   processingEndUpdate,
-  requestDetachSignal,
   adapterExitedSignal,
   submitOutboxUpdate,
   pendingMessagesQuery,
@@ -49,8 +48,6 @@ const PI_ADAPTER_ID = 'pi';
  */
 export const PI_HEARTBEAT_MS = 30_000;
 export const PI_LEASE_MS = 90_000;
-/** Graceful-detach drain window. */
-const DETACH_DEADLINE_MS = 5_000;
 
 const log = (...args: unknown[]): void => {
   // eslint-disable-next-line no-console
@@ -219,13 +216,19 @@ export class PiWorkflowClient {
   }
 
   /**
-   * Graceful detach: requestDetach (→ draining) then adapterExited (→ detached).
-   * Idempotent-safe to call on `session_shutdown`.
+   * Graceful self-initiated detach: stopHeartbeat → adapterExited (→ detached).
+   *
+   * `adapterExited` ALONE collapses any live phase (attached/processing/awaiting/
+   * draining) straight to `detached` — see the workflow handler at
+   * `session.ts` adapterExitedSignal (returns early only on detached/gone). No
+   * `requestDetach` is needed for a self-exit; that signal is the EXTERNAL ask to
+   * drain a running adapter someone else controls. This matches the proven
+   * `BaseAttachment.stopV2Lifecycle(graceful)` path. Idempotent-safe to call on
+   * `session_shutdown` and from the headless exit sequence.
    */
   async detach(reason: DetachReason = 'agent-exited'): Promise<void> {
     if (!this.wfHandle || !this.token) return;
     this.stopHeartbeat();
-    await this.wfHandle.signal(requestDetachSignal, { reason, deadlineMs: DETACH_DEADLINE_MS });
     await this.wfHandle.signal(adapterExitedSignal, {
       attachmentId: this.token.attachmentId,
       reason,
