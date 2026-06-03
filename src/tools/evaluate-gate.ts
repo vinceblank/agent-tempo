@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { WorkflowHandle } from '@temporalio/client';
 import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
+import { evaluateGateCriteriaSignal } from '../workflows/signals';
 import { GATE_TASK_MAX, GATE_NOTES_MAX } from '../utils/validation';
 
 export function buildEvaluateGateTool(
@@ -24,7 +25,7 @@ export function buildEvaluateGateTool(
         evaluations: Array<{ index: number; status: 'passed' | 'failed'; notes?: string }>;
       };
       try {
-        await handle.signal('evaluateGateCriteria', {
+        await handle.signal(evaluateGateCriteriaSignal, {
           task,
           evaluations,
           evaluatedBy: getPlayerId(),
