@@ -163,7 +163,8 @@ export interface PlayerSummaryV1 {
     | 'mock'
     | 'claude-api'
     | 'opencode'
-    | 'claude-code-headless';
+    | 'claude-code-headless'
+    | 'pi';
   playerType?: string;
   /** Authoritative attachment phase (post-v0.26 — see WIRE-PROTOCOL.md). */
   phase?: AttachmentPhase;

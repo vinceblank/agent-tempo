@@ -1370,6 +1370,10 @@ export class AdapterRegistry {
     // `recruit({ agent: 'claude-code-headless' })`. Uses the host's existing
     // Claude Code OAuth login so turns bill against subscription extra-usage.
     if (agent === 'claude-code-headless') return 'claude-code-headless';
+    // Phase 3a — headless Pi runtime. The 'pi' descriptor is registry/identity
+    // ONLY: the module-scope Pi extension singleton owns claim/heartbeat/phase
+    // (no BaseAttachment subprocess driver). Opt-in via `recruit({ agent: 'pi' })`.
+    if (agent === 'pi') return 'pi';
     return 'claude-code';
   }
 }
