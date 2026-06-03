@@ -6,8 +6,9 @@ source files below rather than grepping multiple directories.
 
 > **Drift check commands** (run from repo root):
 > ```bash
-> # MCP tools
-> grep -rh "defineTool(" src/tools/*.ts | grep -v helpers
+> # MCP tools — post-MD-B each tool file exports `build<X>Tool(): TempoToolDescriptor`.
+> # Canonical check: `node scripts/check-surface-drift.js` (keep the regex below in sync with it):
+> #   /name:\s*'([^']+)',\s*description:/  over src/tools/*.ts (excluding descriptor.ts)
 > # CLI commands
 > grep -E "^\s+\\\$\{out\.cyan\('[a-z]" src/cli/help-text.ts
 > # TUI slash commands
@@ -22,7 +23,7 @@ source files below rather than grepping multiple directories.
 
 ## 1. MCP Tools
 
-Source: `src/tools/*.ts` — each file calls `defineTool(server, '<name>', '<description>', …)`.
+Source: `src/tools/*.ts` — each file exports a `build<X>Tool(...): TempoToolDescriptor` factory returning `{ name, description, params, handler }`. MCP registration is performed by `renderToMcp` in `src/tools/descriptor.ts` (MD-B, Phase 1); the former `defineTool` / `helpers.ts` wrapper was retired.
 
 | Tool name | Source file | Description |
 |-----------|-------------|-------------|
@@ -68,7 +69,7 @@ Source: `src/tools/*.ts` — each file calls `defineTool(server, '<name>', '<des
 | `who_am_i` | `who-am-i.ts` | Get your identity, role, player type, and session details |
 | `worktree` | `worktree.ts` | Manage git worktrees for player isolation (conductor only) |
 
-**Count:** 37 tools  
+**Count:** 41 tools  
 **Full reference:** [docs/tools.md](tools.md)  
 **Note:** `detach` was removed from the MCP surface in v0.27 (#287) — its plumbing is used internally by `shutdown`.
 
