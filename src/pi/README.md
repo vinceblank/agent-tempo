@@ -1,24 +1,31 @@
-# agent-tempo × Pi — Phase 0 conductor-cue PoC
+# agent-tempo × Pi — native integration
 
-> **Status:** Phase 0 PoC (de-risking spike). **Not** a finished runtime.
+> **Status:** Phase 2 — interactive runtime landed (Phases 0–2 complete; headless = Phase 3).
 > Design: [`docs/design/pi-native-integration.md`](../../docs/design/pi-native-integration.md).
 
-This directory is the Phase 0 proof that a [Pi](https://github.com/badlogic/pi-mono)
-session can be a first-class agent-tempo player **natively** — no MCP stdio bridge, no
-"dev channels" terminal-injection hacks, no heartbeat-inferred attachment phase. The Pi
-extension holds a thin **client-side** Temporal `WorkflowClient` and drives the existing
-session workflow directly.
+This directory makes a [Pi](https://github.com/badlogic/pi-mono) session a first-class
+agent-tempo player **natively** — no MCP stdio bridge, no "dev channels" terminal-injection
+hacks, no heartbeat-inferred attachment phase. The Pi extension holds a thin **client-side**
+Temporal `WorkflowClient`, registers the FULL agent-tempo tool surface on Pi, drives the
+attachment phase from real Pi lifecycle events, and survives Pi's per-switch instance rebuild
+via a module-scope singleton.
 
-## What Phase 0 proves
+## What it delivers
 
-1. **Interactive cue injection** — a cue queued on the session workflow is injected into a
-   *live, human-attached* Pi session via `session.sendMessage(..., { deliverAs: 'steer',
-   triggerTurn: true })` (D10's flipped default). This was the make-or-break unknown.
-2. **Native tool over the existing core** — one native `report` tool registered via
-   `pi.registerTool` with a **TypeBox** schema (not zod), whose handler routes through the
-   **outbox** (`submitOutbox`) exactly like the MCP tool — zero direct peer `.signal()`.
-3. **Event-driven attachment phase** — the phase is driven from real Pi lifecycle events,
-   replacing the #249 heartbeat-inference machinery (for Pi players).
+1. **Full native tool surface** — every agent-tempo tool registered via
+   `renderToPi(buildAllTempoTools(...))` with **TypeBox** schemas derived from the shared zod
+   descriptors; handlers route through the **outbox** exactly like the MCP surface — zero
+   direct peer `.signal()`.
+2. **Interactive cue injection** — cues queued on the session workflow are injected into the
+   *live* Pi session with D10 semantics (operator `steer` / peer `followUp`, `triggerTurn`).
+3. **Event-driven attachment phase** — driven from real Pi lifecycle events, replacing the
+   #249 heartbeat-inference machinery (for Pi players).
+4. **Survives Pi's instance rebuild** — a module-scope `Map<workflowId, PiPlayerRuntime>` keeps
+   the attachment / lease / heartbeat alive across the per-switch teardown (rebind, not
+   re-claim).
+5. **MD-A liveness** (90s lease / 30s heartbeat), **D11 identity** (fixed workflowId per
+   process; mutable `sessionId` resume pointer), and **Option-C teardown** (detach only on a
+   clean `quit`; lease reaper backstop).
 
 ## Architecture & boundaries
 
@@ -112,8 +119,10 @@ that callers may share; each attached session constructs its own `PiWorkflowClie
 
 - **Implication:** the headless Pi runtime (Phase 3) can host several `createAgentSession`
   loops in one OS process sharing a single connection — no connection-per-session overhead.
-- **Not implemented in Phase 0:** the multi-loop host itself. This is a documented finding,
-  not a shipped capability. The PoC runs one session per process.
+- **Phase 2 status:** the singleton container exists and is keyed by `workflowId`
+  (`Map<workflowId, PiPlayerRuntime>`), so the shape is ready for N players. Interactive Pi
+  populates exactly one entry per process; the multi-loop host that fills the map with N
+  concurrent `createAgentSession` loops is Phase 3 (headless).
 
 ---
 
@@ -181,7 +190,7 @@ Added to `package.json`:
   **optionalDependencies** (declarative; gated behind the `probeSdkInstall` pattern).
 
 > **Open maintainer decision (D6):** Pi requires **Node ≥ 22.19**, but agent-tempo's
-> `engines` is `>=20`. This PoC deliberately does **not** bump `engines` (that would force
+> `engines` is `>=20`. This integration deliberately does **not** bump `engines` (that would force
 > Node 22 on all consumers, including non-Pi users). Whether/how to reconcile the Node floor
 > — peer-dep range, preflight hard-fail vs warn — is left for the maintainer.
 
