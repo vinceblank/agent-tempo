@@ -151,11 +151,21 @@ export async function runHeadlessPi(opts: RunHeadlessPiOptions = {}): Promise<vo
   );
 
   // 6) Stay alive until a shutdown signal, then RELIABLE detach → dispose → exit.
-  await new Promise<void>((resolveShutdown) => {
-    const onSignal = (sig: string) => { log(`received ${sig} — shutting down`); resolveShutdown(); };
-    process.once('SIGTERM', () => onSignal('SIGTERM'));
-    process.once('SIGINT', () => onSignal('SIGINT'));
-  });
+  // Keep the event loop alive with a REF'd timer: the heartbeat + cue-pump timers
+  // are `.unref()`'d by design (so they never block a clean exit), and the
+  // SIGTERM/SIGINT once-listeners aren't active handles — so WITHOUT this the loop
+  // drains and Node exits code 0 immediately after bindExtensions in headless mode.
+  // (Found in the 3a live smoke — devops.)
+  const keepAlive = setInterval(() => { /* hold the loop */ }, 30_000);
+  try {
+    await new Promise<void>((resolveShutdown) => {
+      const onSignal = (sig: string) => { log(`received ${sig} — shutting down`); resolveShutdown(); };
+      process.once('SIGTERM', () => onSignal('SIGTERM'));
+      process.once('SIGINT', () => onSignal('SIGINT'));
+    });
+  } finally {
+    clearInterval(keepAlive);
+  }
 
   // Headless owns the exit sequence: await adapterExited (unmaps the runtime)
   // THEN dispose the SDK session (the dispose-fired session_shutdown finds no
