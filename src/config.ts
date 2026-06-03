@@ -62,6 +62,28 @@ export const ENV = {
    */
   DANGEROUSLY_SKIP_PERMISSIONS: 'AGENT_TEMPO_DANGEROUSLY_SKIP_PERMISSIONS',
   /**
+   * Phase 3a — headless Pi runtime model selector. Pi takes a `provider/model`
+   * string (e.g. `anthropic/claude-opus-4-7`); absent → Pi's own default
+   * provider/model (the 3a anthropic-default path). Recruit `model` arg →
+   * this env → Pi default.
+   */
+  PI_MODEL: 'AGENT_TEMPO_PI_MODEL',
+  /**
+   * Phase 3a — headless Pi restart-resume. The daemon reads `metadata.sessionId`
+   * (the Pi conversation id the player was in when it died) and passes it here;
+   * the headless entry resumes via Pi `continueSession(<id>)`. Absent on a fresh
+   * recruit → a new Pi session.
+   */
+  PI_CONTINUE_SESSION: 'AGENT_TEMPO_PI_CONTINUE_SESSION',
+  /**
+   * Phase 3a / MD-C — headless Pi tool-access policy. One of
+   * `restricted` (default; Bash/shell/exec HARD-BLOCKED) | `standard` (scoped
+   * Bash) | `full` (unsandboxed; admin-gated at recruit). Read by the Pi
+   * extension's `tool_call` gate (mode='headless' only). Mirrors
+   * {@link PERMISSION_MODE}'s threading.
+   */
+  TOOL_ACCESS: 'AGENT_TEMPO_TOOL_ACCESS',
+  /**
    * v0.25 PR-D attachment resume plumbing. When `restart` / `migrate`
    * enqueues a spawn outbox entry, the workflow passes the pre-claimed
    * `attachmentId` + pinned `runId` + resolved `adapterId` through the spawn

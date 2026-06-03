@@ -12,7 +12,7 @@ import {
 } from '../utils/validation';
 import { ENSEMBLE_SENTINEL_FLAG } from '../constants';
 import { getGitInfo } from '../git-info';
-import { spawnInTerminal, spawnCopilotBridge, spawnClaudeApiAdapter, spawnOpenCodeAdapter, spawnClaudeCodeHeadlessAdapter } from '../spawn';
+import { spawnInTerminal, spawnCopilotBridge, spawnClaudeApiAdapter, spawnOpenCodeAdapter, spawnClaudeCodeHeadlessAdapter, spawnPiHeadless } from '../spawn';
 import type { ClaudeCodeHeadlessPermissionMode } from '../adapters/claude-code-headless/types';
 import { ENV } from '../config';
 import { resolveSession } from './resolve';
@@ -286,6 +286,14 @@ export interface SpawnProcessInput {
    * exclusive with {@link permissionMode}.
    */
   dangerouslySkipPermissions?: boolean;
+  /**
+   * Phase 3a / MD-C — headless Pi tool-class policy. Forwarded as
+   * `AGENT_TEMPO_TOOL_ACCESS`. Only meaningful when `agent === 'pi'`. One of
+   * `'restricted'` (default; Bash hard-blocked) | `'standard'` | `'full'`.
+   * Inline literal — kept off the workflow-sandbox import path (see the
+   * RecruitOutboxEntry note in src/types.ts).
+   */
+  toolAccess?: 'restricted' | 'standard' | 'full';
 }
 
 // ── Activity result type ──
@@ -439,7 +447,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             // across CAN. Both adapters use the same `model` metadata field
             // (different value shapes — bare vs `provider/model`) — the spawn
             // path inspects `metadata.agentType` to know which env var to set.
-            ...((agent === 'claude-api' || agent === 'opencode') && model ? { model } : {}),
+            ...((agent === 'claude-api' || agent === 'opencode' || agent === 'pi') && model ? { model } : {}),
             ...(agentDefinition ? { playerType: agentDefinition } : {}),
             ...(agentDefinitionDescription ? { playerTypeDescription: agentDefinitionDescription } : {}),
             recruitedBy: fromPlayerId,
@@ -499,7 +507,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
     },
 
     async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
-      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId, mockMode, mockScenario, model, permissionMode, dangerouslySkipPermissions } = input;
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId, mockMode, mockScenario, model, permissionMode, dangerouslySkipPermissions, toolAccess } = input;
       // Read secrets from the worker's config closure — never from workflow state
       const { temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = config;
       try {
@@ -625,6 +633,35 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             adapterId,
           });
           log(`Spawned claude-code-headless adapter (pid ${pid}) in ${workDir} as "${targetName}"${permissionMode ? ` (permissionMode=${permissionMode})` : ''}${dangerouslySkipPermissions ? ' (dangerouslySkipPermissions=true)' : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
+        } else if (agent === 'pi') {
+          // Phase 3a — headless Pi runtime. Injects the src/pi extension into
+          // Pi's createAgentSession; the module-scope singleton owns the
+          // lifecycle (claim/heartbeat/tools/cue-pump). Tool access is governed
+          // by the MD-C `toolAccess` policy (restricted hard-blocks Bash via the
+          // extension's tool_call gate), NOT per-tool allowlists.
+          if (allowedTools && allowedTools.length > 0) {
+            log(`Warning: allowedTools [${allowedTools.join(', ')}] specified for pi agent "${targetName}" — Pi tool access is governed by toolAccess (MD-C), skipping allowedTools`);
+          }
+          const { pid } = spawnPiHeadless({
+            name: targetName,
+            ensemble,
+            temporalAddress,
+            temporalNamespace,
+            temporalApiKey,
+            temporalTlsCertPath,
+            temporalTlsKeyPath,
+            isConductor,
+            workDir,
+            model,
+            // Restart-resume: continue the prior Pi conversation only on a
+            // restart (resume=true); a fresh recruit starts a new Pi session.
+            continueSessionId: resume ? sessionId : undefined,
+            toolAccess,
+            attachmentId,
+            attachmentRunId,
+            adapterId,
+          });
+          log(`Spawned pi headless adapter (pid ${pid}) in ${workDir} as "${targetName}" (toolAccess=${toolAccess ?? 'restricted'})${model ? ` (model=${model})` : ''}${resume && sessionId ? ` (continue=${sessionId})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else {
           // Resolve agent flags: --agent (native) > --system-prompt (shipped/legacy)
           let agentFlags: string[] = [];

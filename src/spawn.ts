@@ -862,6 +862,122 @@ export function spawnOpenCodeAdapter(opts: OpenCodeAdapterOpts): OpenCodeAdapter
   return { pid: child.pid, logPath, pidPath };
 }
 
+// ── Pi headless adapter (Phase 3a) ─────────────────────────────────────────
+
+/**
+ * Options for {@link spawnPiHeadless}. Mirrors {@link OpenCodeAdapterOpts} for
+ * identity + Temporal connection + attachment handoff; adds Pi-specific knobs:
+ * `model` (provider/model via `AGENT_TEMPO_PI_MODEL`), `continueSessionId`
+ * (restart-resume via `AGENT_TEMPO_PI_CONTINUE_SESSION` → Pi `continueSession`),
+ * and `toolAccess` (MD-C tool-class policy via `AGENT_TEMPO_TOOL_ACCESS`).
+ *
+ * Unlike the other headless adapters, the Pi entry does NOT drive a
+ * `BaseAttachment` loop — it injects the `src/pi` extension into Pi's
+ * `createAgentSession`; the module-scope extension singleton owns the lifecycle.
+ */
+export interface PiHeadlessAdapterOpts {
+  name: string;
+  ensemble: string;
+  temporalAddress: string;
+  temporalNamespace?: string;
+  temporalApiKey?: string;
+  temporalTlsCertPath?: string;
+  temporalTlsKeyPath?: string;
+  isConductor?: boolean;
+  workDir: string;
+  /** Directory for log + PID files. Defaults to `logs/` inside workDir. */
+  logDir?: string;
+  /** Pi provider/model selector (e.g. `anthropic/claude-opus-4-7`); absent → Pi default. */
+  model?: string;
+  /** Restart-resume: the Pi conversation id to continue (from `metadata.sessionId`). */
+  continueSessionId?: string;
+  /** MD-C tool-class policy: `restricted` (default) | `standard` | `full`. */
+  toolAccess?: string;
+  /** PR-D attachment-lease handoff (renew rather than fresh-claim on boot). */
+  attachmentId?: string;
+  attachmentRunId?: string;
+  adapterId?: string;
+}
+
+export interface PiHeadlessAdapterResult {
+  pid: number | undefined;
+  logPath: string;
+  pidPath: string;
+}
+
+/**
+ * Resolve the path to the Pi headless adapter entry point. Mirrors
+ * {@link resolveOpenCodePath} — dev (ts-node) + prod (compiled .js) both launch
+ * the same code through the same `require.main === module` gate.
+ */
+function resolvePiPath(): { cmd: string; args: string[] } {
+  const isDev = __filename.endsWith('.ts');
+  if (isDev) {
+    return { cmd: 'npx', args: ['ts-node', resolve(__dirname, 'adapters', 'pi', 'adapter.ts')] };
+  }
+  return { cmd: 'node', args: [resolve(__dirname, 'adapters', 'pi', 'adapter.js')] };
+}
+
+/**
+ * Spawn the headless Pi runtime as a detached subprocess. Pattern matches
+ * {@link spawnOpenCodeAdapter} — no TTY, log + PID files, env carries identity +
+ * Temporal settings + attachment handoff + the Pi model / continue-session /
+ * tool-access knobs. The entry constructs `createAgentSession` with the `src/pi`
+ * extension injected inline; the singleton claims + heartbeats + registers tools.
+ */
+export function spawnPiHeadless(opts: PiHeadlessAdapterOpts): PiHeadlessAdapterResult {
+  const { cmd, args } = resolvePiPath();
+  const logDirPath = opts.logDir || join(opts.workDir, 'logs');
+  const logName = opts.name || `pi-${Date.now()}`;
+  const logPath = join(logDirPath, `${logName}.log`);
+  const pidPath = join(logDirPath, `${logName}.pid`);
+
+  mkdirSync(logDirPath, { recursive: true });
+  const logFd = openSync(logPath, 'a');
+
+  const toolAccess = opts.toolAccess || 'restricted';
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(cmd, args, {
+      cwd: opts.workDir,
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+      env: {
+        ...process.env,
+        [ENV.ENSEMBLE]: opts.ensemble,
+        [ENV.PLAYER_NAME]: opts.name,
+        [ENV.CONDUCTOR]: opts.isConductor ? 'true' : '',
+        [ENV.TEMPORAL_ADDRESS]: opts.temporalAddress,
+        ...(opts.temporalNamespace ? { [ENV.TEMPORAL_NAMESPACE]: opts.temporalNamespace } : {}),
+        ...(opts.temporalApiKey ? { [ENV.TEMPORAL_API_KEY]: opts.temporalApiKey } : {}),
+        ...(opts.temporalTlsCertPath ? { [ENV.TEMPORAL_TLS_CERT_PATH]: opts.temporalTlsCertPath } : {}),
+        ...(opts.temporalTlsKeyPath ? { [ENV.TEMPORAL_TLS_KEY_PATH]: opts.temporalTlsKeyPath } : {}),
+        // Model selection: recruit-arg → AGENT_TEMPO_PI_MODEL → Pi default.
+        ...(opts.model ? { [ENV.PI_MODEL]: opts.model } : {}),
+        // Restart-resume: continue the prior Pi conversation.
+        ...(opts.continueSessionId ? { [ENV.PI_CONTINUE_SESSION]: opts.continueSessionId } : {}),
+        // MD-C: tool-class policy. ALWAYS set (default 'restricted' — the safe
+        // unsupervised default + an explicit value for the gate + audit trail).
+        [ENV.TOOL_ACCESS]: toolAccess,
+        // Attachment handoff — extension renews via claimAttachment(expectedAttachmentId).
+        ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
+        ...(opts.attachmentRunId ? { [ENV.ATTACHMENT_RUN_ID]: opts.attachmentRunId } : {}),
+        ...(opts.adapterId ? { [ENV.ADAPTER_ID]: opts.adapterId } : {}),
+      },
+    });
+    child.unref();
+  } finally {
+    closeSync(logFd);
+  }
+
+  if (child.pid != null) {
+    writeFileSync(pidPath, String(child.pid));
+  }
+
+  log(`Spawned pi headless adapter (pid ${child.pid}) in ${opts.workDir} as "${opts.name}" (toolAccess=${toolAccess})${opts.model ? ` (model=${opts.model})` : ''}${opts.continueSessionId ? ` (continue=${opts.continueSessionId})` : ''}${opts.attachmentId ? ` (attachmentId=${opts.attachmentId})` : ''}`);
+  return { pid: child.pid, logPath, pidPath };
+}
+
 // ── claude-code-headless adapter (#520) ────────────────────────────────────
 
 /**
