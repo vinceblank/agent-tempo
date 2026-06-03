@@ -621,6 +621,14 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
    * when `agent !== 'claude-code-headless'`.
    */
   dangerouslySkipPermissions?: boolean;
+  /**
+   * Phase 3a / MD-C — headless Pi tool-class policy. `'restricted'` (default;
+   * Bash/shell/exec hard-blocked) | `'standard'` (scoped Bash) | `'full'`
+   * (unsandboxed; admin/force-gated at recruit). Ignored when `agent !== 'pi'`.
+   * Inline literal — types.ts is the V8-sandbox-safe shared module; do NOT import
+   * the type from src/pi or src/adapters.
+   */
+  toolAccess?: 'restricted' | 'standard' | 'full';
 }
 
 export interface ReleaseOutboxEntry extends OutboxEntryBase {
