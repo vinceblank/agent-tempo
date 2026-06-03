@@ -91,6 +91,46 @@ agent-tempo destroy pi-smoke
 - `ensemble` shows pi-smoke `detached` promptly (the reliable signal-then-dispose
   path fired adapterExited before exit — not the ≤90s reaper fallback).
 
+## Variant B — self-contained, DEV namespace, no recruit tool
+
+The `recruit` CLI verb was removed (#285/#288) and there is no `--dev recruit`
+wrapper. Run ISOLATED on `agent-tempo-dev` (NOT the prod daemon). The headless
+adapter SELF-CREATES its session workflow (`runHeadlessPi` →
+`ensureSessionWorkflow` USE_EXISTING) + claims, so it needs no recruit tool.
+
+**Terminal 1 — attach (direct adapter, dev namespace):**
+```bash
+AGENT_TEMPO_DEV_MODE=1 \
+AGENT_TEMPO_ENSEMBLE=pi-smoke AGENT_TEMPO_PLAYER_NAME=pi-smoke \
+AGENT_TEMPO_TOOL_ACCESS=restricted \
+AGENT_TEMPO_PI_MODEL=anthropic/<indexed-model> \
+ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+node dist/adapters/pi/adapter.js
+# DEV_MODE=1 → getConfig() resolves the agent-tempo-dev namespace + queue (the dev
+# daemon's workers run the Phase 3a build). Attach logs as in §2.
+```
+
+**Terminal 2 — cue via the dev verb:**
+```bash
+node dist/cli.js --dev cue pi-smoke "Reply by calling the report tool: report({text:'alive'})"
+```
+
+**Report observation (no conductor) — query the workflow outbox:**
+```bash
+node -e "const {Connection,Client}=require('@temporalio/client');const {getConfig,sessionWorkflowId}=require('./dist/config');const {outboxQuery,attachmentInfoQuery}=require('./dist/workflows/signals');(async()=>{process.env.AGENT_TEMPO_DEV_MODE='1';const cfg=getConfig();const c=await Connection.connect({address:'localhost:7233'});const cl=new Client({connection:c,namespace:cfg.temporalNamespace});const h=cl.workflow.getHandle(sessionWorkflowId('pi-smoke','pi-smoke'));console.log('OUTBOX:',JSON.stringify((await h.query(outboxQuery)).map(e=>({type:e.type,text:e.text}))));console.log('PHASE:',(await h.query(attachmentInfoQuery)).phase);await c.close();})()"
+# ~15s after the cue → expect a {type:'report',text:'alive'} entry = cue→report loop.
+```
+
+MD-C bonus: `--dev cue pi-smoke "Run ls using the Bash tool"` → Terminal-1 logs
+`MD-C: blocked 'bash' (toolAccess=restricted)`. Detach: Ctrl-C Terminal 1 →
+`received SIGTERM` → `detached (agent-exited)` → re-query `attachmentInfo` → phase
+`detached` promptly (reliable detach, not the 90s reaper).
+
+> Variant B exercises the RUNTIME (adapter → extension → singleton → claim →
+> MD-C gate → reliable detach). The recruit→entry→workflow→spawn→`toolAccess`
+> plumbing (A4) is unit-covered (compile + recruit validation/preflight tests);
+> the live gate validates the runtime loop.
+
 ## Pass criteria
 
 1. Attaches (phase `attached`, lease 90s, MD-C gate logged).
