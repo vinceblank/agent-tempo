@@ -122,12 +122,19 @@ export async function runHeadlessPi(opts: RunHeadlessPiOptions = {}): Promise<vo
   const piSdk = await esmImport(PI_PACKAGE);
   const createAgentSession = piSdk.createAgentSession as (o: Record<string, unknown>) => Promise<{ session: PiSdkSession }>;
   const DefaultResourceLoader = piSdk.DefaultResourceLoader as new (o: Record<string, unknown>) => unknown;
+  // Pi's DefaultResourceLoader REQUIRES agentDir (normalizePath does
+  // `.startsWith()` on it) — getAgentDir() resolves ~/.pi/agent. Pass it to BOTH
+  // createAgentSession and the loader. (Found in the 3a live smoke — devops.)
+  const getAgentDir = piSdk.getAgentDir as () => string;
+  const agentDir = getAgentDir();
 
   const { session } = await createAgentSession({
     cwd: process.cwd(),
+    agentDir,
     ...(model ? { model } : {}),
     resourceLoader: new DefaultResourceLoader({
       cwd: process.cwd(),
+      agentDir,
       extensionFactories: [extensionFactory],
     }),
     // NOTE (A4): restart-resume via a SessionManager seeded from
