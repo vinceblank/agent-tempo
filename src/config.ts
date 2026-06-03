@@ -452,6 +452,47 @@ export function parseAgent(value: string | undefined, source: ConfigSource): Age
 }
 
 /**
+ * Result of {@link parsePiProviderModel}: the parsed parts, OR an `{ error }`
+ * describing why the selector is malformed. Non-throwing by design — a pure
+ * mapper returning a discriminated union (the recruit wiring branches
+ * `if ('error' in r) return fail(r.error)`, no try/catch).
+ */
+export type ProviderModel = { provider: string; model: string } | { error: string };
+
+/**
+ * Parse a Pi provider/model selector (e.g. `"github-copilot/gpt-4o"`) into its
+ * `{ provider, model }` parts for Pi's `createAgentSession` model option.
+ *
+ * Provider-agnostic: the segment before the FIRST `/` is the provider id,
+ * passed through VERBATIM (Copilot's pi-ai provider id is literally
+ * `github-copilot` — no normalization needed); everything after is the model
+ * id, which may itself contain `/` (e.g. `openrouter/anthropic/claude`).
+ *
+ * Fail-loud (no silent default): returns `{ error }` — never a fallback model —
+ * when the selector has no `/`, an empty provider, or an empty model. A bare
+ * provider with no model is rejected here; omitting the recruit `model` arg
+ * ENTIRELY is a different path (Pi's own default), handled upstream, not here.
+ */
+export function parsePiProviderModel(model: string): ProviderModel {
+  const raw = model.trim();
+  const slash = raw.indexOf('/');
+  if (slash < 0) {
+    return {
+      error: `model "${model}" must be a "provider/model" selector (e.g. "github-copilot/gpt-4o") — no "/" found.`,
+    };
+  }
+  const provider = raw.slice(0, slash).trim();
+  const modelId = raw.slice(slash + 1).trim();
+  if (!provider) {
+    return { error: `model "${model}" has an empty provider before "/" — expected e.g. "github-copilot/gpt-4o".` };
+  }
+  if (!modelId) {
+    return { error: `model "${model}" has an empty model after "/" — specify a model, e.g. "github-copilot/gpt-4o".` };
+  }
+  return { provider, model: modelId };
+}
+
+/**
  * Resolve `defaultAgent` through the standard precedence chain and validate
  * against the {@link AgentType} union. Each step passes its own source tag
  * so `parseAgent` error messages point at the offending origin.
