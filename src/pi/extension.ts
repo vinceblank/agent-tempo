@@ -1,28 +1,41 @@
 /**
- * agent-tempo Pi extension — Phase 0 conductor-cue PoC.
+ * agent-tempo Pi extension — interactive runtime (Phase 2).
  *
  *   export default function(pi: ExtensionAPI) { ... }
  *
- * On `session_start` it opens a client-side `WorkflowClient`, ensures/attaches
- * the session workflow (reusing existing workflow code), claims the attachment
- * lease, starts the heartbeat + cue pump, and registers the native `report`
- * tool. Pi lifecycle events drive the attachment phase via `PhaseDriver`.
+ * Registers the FULL agent-tempo tool surface natively on Pi (via the shared
+ * transport-neutral descriptors + `renderToPi`), drives the attachment phase
+ * from Pi lifecycle events, claims/renews an attachment lease, and pumps cues
+ * into the live session.
+ *
+ * D11 (lazy-proxy binding): Pi tools are registered ONCE at extension load, but
+ * a tool's handler needs the player's live Temporal `Client` and session
+ * `WorkflowHandle` — which only exist after connect + claim, and which advance
+ * across continueAsNew / reconnect. So we build the tool surface with LAZY
+ * proxies (`createLazyProxy`) that resolve the current client/handle per call.
+ * This is additive: the descriptor + MCP contract is unchanged (the proxy IS a
+ * Client / WorkflowHandle structurally).
+ *
+ * Identity (architect's ruling): ONE interactive `pi` process = ONE player =
+ * ONE FIXED workflowId for the process lifetime. Pi SessionManager
+ * newSession/fork/switch are INTERNAL conversation management, invisible to the
+ * ensemble — they do NOT repoint the workflow. `set_name` updates the display
+ * id, never the workflowId. (metadata.sessionId tracking + resume is P2-5.)
  *
  * Determinism boundary: this module (and all of src/pi/) is CLIENT-SIDE only —
- * it is never bundled into the workflow sandbox.
- *
- * D11: the live session and phase driver are RE-ACQUIRED per session — a
- * `session_start` always starts a fresh `PhaseDriver` and `WorkflowClient`;
- * nothing is cached across session switches.
+ * never bundled into the workflow sandbox.
  */
 import * as os from 'os';
-import { getConfig, ENV } from '../config';
-import type { SessionMetadata } from '../types';
+import type { Client, WorkflowHandle } from '@temporalio/client';
+import { getConfig, ENV, sessionWorkflowId, type Config } from '../config';
+import type { AgentType, SessionMetadata } from '../types';
+import { buildAllTempoTools, type RegisterAllTempoToolsOpts } from '../server-tools';
 import type { ExtensionAPI, PiAgentSession, PiEventPayload } from './pi-types';
 import { PhaseDriver } from './phase-driver';
 import { PiWorkflowClient } from './workflow-client';
 import { CuePump } from './cue-pump';
-import { registerReportTool } from './report-tool';
+import { renderToPi } from './render-tools';
+import { createLazyProxy } from './lazy-proxy';
 import { probePi } from './probe';
 
 const log = (...args: unknown[]): void => {
@@ -32,25 +45,12 @@ const log = (...args: unknown[]): void => {
 
 const nowIso = (): string => new Date().toISOString();
 
-/** Build minimal session metadata from config + env + host. */
-function buildMetadata(): SessionMetadata {
-  const config = getConfig();
-  const playerId = process.env[ENV.PLAYER_NAME] || `pi-${process.pid}`;
-  const isConductor = process.env[ENV.CONDUCTOR] === '1' || process.env[ENV.CONDUCTOR] === 'true';
-  return {
-    playerId,
-    ensemble: config.ensemble,
-    hostname: os.hostname(),
-    workDir: process.cwd(),
-    isConductor,
-    agentType: 'claude', // Pi is not yet a first-class AgentType; placeholder for Phase 0.
-    adapterId: 'pi',
-  };
-}
+const PI_AGENT_TYPE: AgentType = 'claude'; // Pi is not yet a first-class AgentType.
 
 /**
  * Per-session runtime bundle. Created fresh on each `session_start`, torn down
- * on `session_shutdown`. Never reused across sessions (D11).
+ * on `session_shutdown`. The lazy handle proxy resolves `ctx.wf.handle`, so when
+ * `ctx` is null (no session) tool handlers fail cleanly rather than mis-route.
  */
 interface SessionContext {
   session: PiAgentSession | null;
@@ -61,22 +61,67 @@ interface SessionContext {
 
 const piExtension = function (pi: ExtensionAPI): void {
   // Soft preflight: warn (don't crash the human's Pi session) if Pi packages
-  // look absent — the extension is loaded BY Pi so this should never trip, but
-  // it surfaces a clear message in the misconfigured/headless case.
+  // look absent — the extension is loaded BY Pi so this should never trip.
   const probe = probePi();
   if (!probe.available) log('WARNING:', probe.reason);
 
-  let ctx: SessionContext | null = null;
+  const config: Config = getConfig();
+  const isConductor = process.env[ENV.CONDUCTOR] === '1' || process.env[ENV.CONDUCTOR] === 'true';
 
-  // ── Lifecycle: session_start → attach + claim + start loops ──
+  // Player identity — FIXED workflowId for the process lifetime (architect's
+  // ruling). `currentPlayerId` is the mutable DISPLAY id (set_name updates it);
+  // the workflowId is computed once and never repointed.
+  let currentPlayerId = process.env[ENV.PLAYER_NAME] || `pi-${process.pid}`;
+  const workflowId = sessionWorkflowId(config.ensemble, currentPlayerId);
+
+  let ctx: SessionContext | null = null;
+  let sharedClient: Client | null = null;
+
+  // Connect once at load (D12a: one Client serves every in-process session).
+  // session_start awaits this; tool handlers reach it via the lazy client proxy.
+  const connectPromise: Promise<Client> = PiWorkflowClient.connect(config)
+    .then((c) => { sharedClient = c; return c; })
+    .catch((err) => { log('Temporal connect failed:', err); throw err; });
+
+  // ── D11 lazy proxies: resolve the live client / current session handle per call ──
+  const clientProxy = createLazyProxy<Client>(() => sharedClient, 'Temporal client');
+  const handleProxy = createLazyProxy<WorkflowHandle>(() => ctx?.wf.handle ?? null, 'workflow handle');
+
+  // ── Register the FULL tool surface ONCE, over the lazy proxies ──
+  const toolOpts: RegisterAllTempoToolsOpts = {
+    client: clientProxy,
+    config,
+    getPlayerId: () => currentPlayerId,
+    setPlayerId: (id: string) => { currentPlayerId = id; },
+    handle: handleProxy,
+    workflowId,
+    ownAgentType: PI_AGENT_TYPE,
+    isConductor,
+  };
+  renderToPi(pi, buildAllTempoTools(toolOpts));
+  log(`registered tools (player=${currentPlayerId}, conductor=${isConductor})`);
+
+  /** Build session metadata from the (current) identity + host. */
+  function buildMetadata(): SessionMetadata {
+    return {
+      playerId: currentPlayerId,
+      ensemble: config.ensemble,
+      hostname: os.hostname(),
+      workDir: process.cwd(),
+      isConductor,
+      agentType: PI_AGENT_TYPE,
+      adapterId: 'pi',
+    };
+  }
+
+  // ── Lifecycle: session_start → connect + attach + claim + start loops ──
   pi.on('session_start', async (payload: PiEventPayload) => {
     try {
-      const metadata = buildMetadata();
-      const client = await PiWorkflowClient.connect(getConfig());
-      const wf = new PiWorkflowClient({ client, config: getConfig(), metadata });
+      const client = await connectPromise;
+      const wf = new PiWorkflowClient({ client, config, metadata: buildMetadata() });
       const driver = new PhaseDriver();
 
-      // Fresh context — D11: re-acquire session from THIS payload, don't cache.
+      // Fresh context — re-acquire the live session from THIS payload.
       ctx = {
         session: payload.session ?? null,
         driver,
@@ -91,7 +136,7 @@ const piExtension = function (pi: ExtensionAPI): void {
       const result = driver.handle('session_start', payload, nowIso());
       await wf.performAction(result.action); // claim → attached, starts heartbeat
       ctx.pump.start();
-      log(`attached as ${metadata.playerId} (ensemble ${metadata.ensemble})`);
+      log(`attached as ${currentPlayerId} (ensemble ${config.ensemble})`);
     } catch (err) {
       log('session_start wiring failed:', err);
     }
@@ -101,7 +146,6 @@ const piExtension = function (pi: ExtensionAPI): void {
   for (const event of ['agent_start', 'agent_end'] as const) {
     pi.on(event, async (payload: PiEventPayload) => {
       if (!ctx) return;
-      // D11: refresh the live session ref from each event payload.
       if (payload.session) ctx.session = payload.session;
       const result = ctx.driver.handle(event, payload, nowIso());
       try {
@@ -137,18 +181,8 @@ const piExtension = function (pi: ExtensionAPI): void {
     } catch (err) {
       log('session_shutdown detach failed:', err);
     } finally {
-      ctx = null; // D11: drop the session context.
+      ctx = null; // drop the session context.
     }
-  });
-
-  // ── Native tool: report (routes through outbox; zero peer signals) ──
-  // The tool's submitter resolves the CURRENT session's workflow client lazily,
-  // so the report always routes through the live attachment.
-  registerReportTool(pi, {
-    submitOutbox: (entry) => {
-      if (!ctx) throw new Error('report: no active session');
-      return ctx.wf.submitOutbox(entry);
-    },
   });
 };
 

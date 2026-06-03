@@ -34,7 +34,6 @@ import type {
   OutboxEntryInput,
   SessionMetadata,
 } from '../types';
-import type { OutboxSubmitter } from './report-tool';
 import type { WorkflowAction } from './phase-driver';
 
 /** Adapter identity advertised on claim. Pi interactive players are `interactive`-class. */
@@ -59,17 +58,18 @@ export interface PiWorkflowClientOptions {
 }
 
 /**
- * One instance per attached Pi session. `OutboxSubmitter` is implemented here so
- * the `report` tool routes through `submitOutbox` and nothing else.
+ * One instance per attached Pi session — holds the session `WorkflowHandle`,
+ * lease token, and heartbeat timer for one fixed-workflowId player. Tool
+ * handlers reach this player's handle via the D11 lazy proxy (`get handle()`).
  */
-export class PiWorkflowClient implements OutboxSubmitter {
+export class PiWorkflowClient {
   private readonly client: Client;
   private readonly config: Config;
   private readonly metadata: SessionMetadata;
   private readonly leaseMs: number;
   private readonly heartbeatMs: number;
 
-  private handle: WorkflowHandle | null = null;
+  private wfHandle: WorkflowHandle | null = null;
   private token: AttachmentToken | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -91,6 +91,16 @@ export class PiWorkflowClient implements OutboxSubmitter {
     return this.token?.attachmentId ?? null;
   }
 
+  /**
+   * The live session `WorkflowHandle`, or `null` before {@link ensureSessionWorkflow}.
+   * Exposed so the D11 lazy-proxy (src/pi/lazy-proxy.ts) can resolve the player's
+   * OWN handle per tool call — tool handlers route through it (e.g. `submitOutbox`)
+   * and never `.signal()` a peer workflow directly.
+   */
+  get handle(): WorkflowHandle | null {
+    return this.wfHandle;
+  }
+
   private get workflowId(): string {
     return sessionWorkflowId(this.metadata.ensemble, this.metadata.playerId);
   }
@@ -101,21 +111,21 @@ export class PiWorkflowClient implements OutboxSubmitter {
    * when `agent-tempo up`/recruit already started it.
    */
   async ensureSessionWorkflow(): Promise<WorkflowHandle> {
-    if (this.handle) return this.handle;
-    this.handle = await this.client.workflow.start('agentSessionWorkflow', {
+    if (this.wfHandle) return this.wfHandle;
+    this.wfHandle = await this.client.workflow.start('agentSessionWorkflow', {
       workflowId: this.workflowId,
       taskQueue: this.config.taskQueue,
       workflowIdConflictPolicy: 'USE_EXISTING',
       args: [{ metadata: this.metadata, phase: 'booting' }],
     });
-    return this.handle;
+    return this.wfHandle;
   }
 
   private requireHandle(): WorkflowHandle {
-    if (!this.handle) {
+    if (!this.wfHandle) {
       throw new Error('PiWorkflowClient: call ensureSessionWorkflow() before lifecycle ops');
     }
-    return this.handle;
+    return this.wfHandle;
   }
 
   /** First claim: phase `booting → attached`. Stores the lease token. */
@@ -186,19 +196,19 @@ export class PiWorkflowClient implements OutboxSubmitter {
    * Idempotent-safe to call on `session_shutdown`.
    */
   async detach(reason: DetachReason = 'agent-exited'): Promise<void> {
-    if (!this.handle || !this.token) return;
+    if (!this.wfHandle || !this.token) return;
     this.stopHeartbeat();
-    await this.handle.signal(requestDetachSignal, { reason, deadlineMs: DETACH_DEADLINE_MS });
-    await this.handle.signal(adapterExitedSignal, {
+    await this.wfHandle.signal(requestDetachSignal, { reason, deadlineMs: DETACH_DEADLINE_MS });
+    await this.wfHandle.signal(adapterExitedSignal, {
       attachmentId: this.token.attachmentId,
       reason,
     });
     log(`detached (${reason})`);
   }
 
-  // ── OutboxSubmitter ──
+  // ── Outbox ──
 
-  /** Route a report (or any outbox entry) through the workflow outbox. */
+  /** Route an outbox entry through the workflow outbox (player's own handle). */
   async submitOutbox(entry: OutboxEntryInput): Promise<string> {
     const handle = this.requireHandle();
     return handle.executeUpdate(submitOutboxUpdate, { args: [entry] });

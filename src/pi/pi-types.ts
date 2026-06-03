@@ -97,7 +97,7 @@ export interface PiToolResult {
 
 /**
  * Pi native tool definition. `parameters` is a TypeBox schema (NOT zod) — see
- * `report-tool.ts` for construction.
+ * `render-tools.ts` (derives it from the zod descriptor via the converter).
  */
 export interface PiToolDefinition {
   name: string;
