@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-06-02
+
 ### Fixed
 - **`agent-tempo` no longer crashes with `Error: Channel has been shut down`** during
   the bare-invocation bootstrap (and any other Temporal-touching command). Root cause:
