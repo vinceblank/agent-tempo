@@ -128,4 +128,47 @@ describe('PhaseDriver — Pi event → attachment phase', () => {
     expect(r.activityStamped).to.equal(false);
     expect(d.lastActivityAt).to.equal(before);
   });
+
+  // ── P2-4 lifecycle hardening: out-of-order / duplicate / late events ──
+  describe('hardening: agent_end with no in-flight turn', () => {
+    it('is INERT after session_start (no agent_start) — no bogus processingEnd, no phase flip', () => {
+      const d = new PhaseDriver();
+      d.handle('session_start', {}, T0);
+      const r = d.handle('agent_end', { messageId: 'stray' }, T1);
+      expect(r.action).to.deep.equal({ kind: 'none' });
+      expect(r.phase).to.equal('attached'); // NOT forced to 'awaiting'
+      expect(r.activityStamped).to.equal(false);
+    });
+
+    it('a SECOND agent_end (after a paired start/end) is inert', () => {
+      const d = new PhaseDriver();
+      d.handle('session_start', {}, T0);
+      d.handle('agent_start', { messageId: 'm1' }, T1);
+      const first = d.handle('agent_end', {}, T2);
+      expect(first.action).to.deep.equal({ kind: 'processingEnd', messageId: 'm1' });
+      const second = d.handle('agent_end', {}, T2);
+      expect(second.action).to.deep.equal({ kind: 'none' });
+      expect(second.phase).to.equal('awaiting');
+    });
+  });
+
+  it('agent_end pairs to the START id, ignoring a mismatched payload id', () => {
+    const d = new PhaseDriver();
+    d.handle('session_start', {}, T0);
+    d.handle('agent_start', { messageId: 'start-id' }, T1);
+    // Pi delivers a different id on end — the driver must still end the turn it
+    // started, so processingStart/End pair exactly on the workflow's in-flight set.
+    const r = d.handle('agent_end', { messageId: 'different-id' }, T2);
+    expect(r.action).to.deep.equal({ kind: 'processingEnd', messageId: 'start-id' });
+  });
+
+  it('session_shutdown clears the in-flight turn — a late agent_end is then inert', () => {
+    const d = new PhaseDriver();
+    d.handle('session_start', {}, T0);
+    d.handle('agent_start', { messageId: 'm1' }, T1);
+    d.handle('session_shutdown', {}, T2); // mid-turn shutdown
+    const late = d.handle('agent_end', {}, T2);
+    expect(late.action).to.deep.equal({ kind: 'none' });
+    expect(late.phase).to.equal('draining');
+  });
 });

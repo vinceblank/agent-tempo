@@ -78,6 +78,13 @@ export interface PiEventPayload {
   session?: PiAgentSession;
   /** A per-message/per-turn identifier when the event carries one. */
   messageId?: string;
+  /**
+   * Discriminator on `session_start` / `session_shutdown`:
+   * `{ new | resume | fork | reload | quit }`. Drives Option-C teardown — only
+   * `quit` detaches; switch reasons rebind. Unknown/missing → treated as a
+   * switch (no detach), so a future Pi value can't cause a flap.
+   */
+  reason?: string;
   /** Open for forward-compat with Pi event fields we don't consume yet. */
   [key: string]: unknown;
 }
@@ -97,7 +104,7 @@ export interface PiToolResult {
 
 /**
  * Pi native tool definition. `parameters` is a TypeBox schema (NOT zod) — see
- * `report-tool.ts` for construction.
+ * `render-tools.ts` (derives it from the zod descriptor via the converter).
  */
 export interface PiToolDefinition {
   name: string;

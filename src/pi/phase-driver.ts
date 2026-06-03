@@ -100,6 +100,7 @@ export class PhaseDriver {
 
     switch (event) {
       case 'session_start': {
+        this._currentMessageId = null; // defensive: fresh attach has no in-flight turn.
         this._phase = 'attached';
         return { action: { kind: 'claim' }, phase: this._phase, activityStamped: false };
       }
@@ -119,15 +120,24 @@ export class PhaseDriver {
       }
 
       case 'agent_end': {
-        // Pair with the agent_start messageId so processingEnd matches the
-        // in-flight entry. agent_end means the agent finished THIS run and is
-        // now waiting for input → `awaiting`, NOT `detached`.
-        const messageId = payload.messageId ?? this._currentMessageId ?? `pi-turn-${now}`;
+        // End the IN-FLIGHT turn. agent_end means the agent finished THIS run and
+        // is now waiting for input → `awaiting`, NOT `detached`.
+        //
+        // Hardening (P2-4): end with the id we STARTED the turn with — NOT the
+        // payload — so processingStart/End pair EXACTLY (the workflow keys its
+        // in-flight set on that id; a mismatched end would orphan the entry). And
+        // a spurious / duplicate agent_end with no turn in flight is INERT: it
+        // must not synthesize a bogus processingEnd nor flip the phase (which
+        // could mask a genuine `processing` state or spuriously leave `awaiting`).
+        const inFlightId = this._currentMessageId;
+        if (inFlightId === null) {
+          return { action: { kind: 'none' }, phase: this._phase, activityStamped: false };
+        }
         this._currentMessageId = null;
         this._phase = 'awaiting';
         this._lastActivityAt = now;
         return {
-          action: { kind: 'processingEnd', messageId },
+          action: { kind: 'processingEnd', messageId: inFlightId },
           phase: this._phase,
           activityStamped: true,
         };
@@ -138,6 +148,8 @@ export class PhaseDriver {
         // requestDetach (→ draining) then adapterExited (→ detached). The
         // `detached` collapse is authoritative WORKFLOW-side; the driver's
         // local view rests at `draining` because the process is exiting.
+        // Clear any in-flight turn so a late stray event after shutdown is inert.
+        this._currentMessageId = null;
         this._phase = 'draining';
         return { action: { kind: 'detach' }, phase: this._phase, activityStamped: false };
       }

@@ -26,6 +26,7 @@ import {
   submitOutboxUpdate,
   pendingMessagesQuery,
   markDeliveredSignal,
+  updateMetadataSignal,
 } from '../workflows/signals';
 import type {
   AttachmentToken,
@@ -34,14 +35,20 @@ import type {
   OutboxEntryInput,
   SessionMetadata,
 } from '../types';
-import type { OutboxSubmitter } from './report-tool';
 import type { WorkflowAction } from './phase-driver';
 
 /** Adapter identity advertised on claim. Pi interactive players are `interactive`-class. */
 const PI_ADAPTER_ID = 'pi';
-/** Default lease window. Heartbeat cadence is half this so a single missed beat doesn't expire. */
-const DEFAULT_LEASE_MS = 60_000;
-const HEARTBEAT_MS = 30_000;
+/**
+ * MD-A liveness timings (Phase 2, maintainer-approved): 30s heartbeat / 90s
+ * lease, holding the **lease = 3×heartbeat** invariant — a single (or even
+ * second) missed beat never expires the lease, but a dead process is reaped
+ * within ~one lease window. Parity with the other SDK adapters' `heartbeatMs`.
+ * Overridable per-session via `PiWorkflowClientOptions.{leaseMs,heartbeatMs}`.
+ * Exported so a guard test can assert the invariant doesn't silently drift.
+ */
+export const PI_HEARTBEAT_MS = 30_000;
+export const PI_LEASE_MS = 90_000;
 /** Graceful-detach drain window. */
 const DETACH_DEADLINE_MS = 5_000;
 
@@ -56,20 +63,31 @@ export interface PiWorkflowClientOptions {
   metadata: SessionMetadata;
   leaseMs?: number;
   heartbeatMs?: number;
+  /**
+   * Restart/migrate handoff token (`AGENT_TEMPO_ATTACHMENT_ID`). When present,
+   * `claim()` ADOPTS the pre-created attachment via the renewal branch instead of
+   * racing a fresh claim — the clean anti-flap path the restart tool will use
+   * (the read side of that spawn wiring is a tracked Phase 3 / restart carry-item;
+   * this is the forward-compatible plumbing). Absent on a fresh recruit / manual
+   * launch → fresh claim. Mirrors the existing adapters (`base.ts` startV2Lifecycle).
+   */
+  expectedAttachmentId?: string;
 }
 
 /**
- * One instance per attached Pi session. `OutboxSubmitter` is implemented here so
- * the `report` tool routes through `submitOutbox` and nothing else.
+ * One instance per attached Pi session — holds the session `WorkflowHandle`,
+ * lease token, and heartbeat timer for one fixed-workflowId player. Tool
+ * handlers reach this player's handle via the D11 lazy proxy (`get handle()`).
  */
-export class PiWorkflowClient implements OutboxSubmitter {
+export class PiWorkflowClient {
   private readonly client: Client;
   private readonly config: Config;
   private readonly metadata: SessionMetadata;
   private readonly leaseMs: number;
   private readonly heartbeatMs: number;
+  private readonly expectedAttachmentId?: string;
 
-  private handle: WorkflowHandle | null = null;
+  private wfHandle: WorkflowHandle | null = null;
   private token: AttachmentToken | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -77,8 +95,9 @@ export class PiWorkflowClient implements OutboxSubmitter {
     this.client = opts.client;
     this.config = opts.config;
     this.metadata = opts.metadata;
-    this.leaseMs = opts.leaseMs ?? DEFAULT_LEASE_MS;
-    this.heartbeatMs = opts.heartbeatMs ?? HEARTBEAT_MS;
+    this.leaseMs = opts.leaseMs ?? PI_LEASE_MS;
+    this.heartbeatMs = opts.heartbeatMs ?? PI_HEARTBEAT_MS;
+    this.expectedAttachmentId = opts.expectedAttachmentId;
   }
 
   /** Build a client from config (connection-pooled; safe to share — see D12a). */
@@ -91,6 +110,16 @@ export class PiWorkflowClient implements OutboxSubmitter {
     return this.token?.attachmentId ?? null;
   }
 
+  /**
+   * The live session `WorkflowHandle`, or `null` before {@link ensureSessionWorkflow}.
+   * Exposed so the D11 lazy-proxy (src/pi/lazy-proxy.ts) can resolve the player's
+   * OWN handle per tool call — tool handlers route through it (e.g. `submitOutbox`)
+   * and never `.signal()` a peer workflow directly.
+   */
+  get handle(): WorkflowHandle | null {
+    return this.wfHandle;
+  }
+
   private get workflowId(): string {
     return sessionWorkflowId(this.metadata.ensemble, this.metadata.playerId);
   }
@@ -101,24 +130,28 @@ export class PiWorkflowClient implements OutboxSubmitter {
    * when `agent-tempo up`/recruit already started it.
    */
   async ensureSessionWorkflow(): Promise<WorkflowHandle> {
-    if (this.handle) return this.handle;
-    this.handle = await this.client.workflow.start('agentSessionWorkflow', {
+    if (this.wfHandle) return this.wfHandle;
+    this.wfHandle = await this.client.workflow.start('agentSessionWorkflow', {
       workflowId: this.workflowId,
       taskQueue: this.config.taskQueue,
       workflowIdConflictPolicy: 'USE_EXISTING',
       args: [{ metadata: this.metadata, phase: 'booting' }],
     });
-    return this.handle;
+    return this.wfHandle;
   }
 
   private requireHandle(): WorkflowHandle {
-    if (!this.handle) {
+    if (!this.wfHandle) {
       throw new Error('PiWorkflowClient: call ensureSessionWorkflow() before lifecycle ops');
     }
-    return this.handle;
+    return this.wfHandle;
   }
 
-  /** First claim: phase `booting → attached`. Stores the lease token. */
+  /**
+   * Claim (or, with a handoff token, ADOPT) the attachment: phase
+   * `booting → attached`. Fresh claim when `expectedAttachmentId` is absent;
+   * renewal/adoption branch when the restart tool handed one in. Stores the token.
+   */
   async claim(): Promise<AttachmentToken> {
     const handle = this.requireHandle();
     this.token = await handle.executeUpdate(claimAttachmentUpdate, {
@@ -128,10 +161,14 @@ export class PiWorkflowClient implements OutboxSubmitter {
           adapterId: PI_ADAPTER_ID,
           adapterClass: 'interactive',
           leaseMs: this.leaseMs,
+          ...(this.expectedAttachmentId ? { expectedAttachmentId: this.expectedAttachmentId } : {}),
         },
       ],
     });
-    log(`claimed attachment ${this.token.attachmentId} (lease ${this.leaseMs}ms)`);
+    log(
+      `${this.expectedAttachmentId ? 'renewed' : 'claimed'} attachment ` +
+      `${this.token.attachmentId} (lease ${this.leaseMs}ms)`,
+    );
     return this.token;
   }
 
@@ -186,19 +223,32 @@ export class PiWorkflowClient implements OutboxSubmitter {
    * Idempotent-safe to call on `session_shutdown`.
    */
   async detach(reason: DetachReason = 'agent-exited'): Promise<void> {
-    if (!this.handle || !this.token) return;
+    if (!this.wfHandle || !this.token) return;
     this.stopHeartbeat();
-    await this.handle.signal(requestDetachSignal, { reason, deadlineMs: DETACH_DEADLINE_MS });
-    await this.handle.signal(adapterExitedSignal, {
+    await this.wfHandle.signal(requestDetachSignal, { reason, deadlineMs: DETACH_DEADLINE_MS });
+    await this.wfHandle.signal(adapterExitedSignal, {
       attachmentId: this.token.attachmentId,
       reason,
     });
     log(`detached (${reason})`);
   }
 
-  // ── OutboxSubmitter ──
+  /**
+   * Stash the currently-active Pi SessionManager session id onto durable
+   * workflow metadata (`metadata.sessionId`). This is the MUTABLE resume pointer
+   * — SEPARATE from the fixed workflowId (identity). A later restart of this
+   * player reads it to resume the same conversation via Pi `continueSession`
+   * (reuses the #334 sessionId resume field). No-op when the id is absent.
+   */
+  async updateSessionId(sessionId: string | undefined): Promise<void> {
+    if (!sessionId) return;
+    const handle = this.requireHandle();
+    await handle.signal(updateMetadataSignal, { sessionId });
+  }
 
-  /** Route a report (or any outbox entry) through the workflow outbox. */
+  // ── Outbox ──
+
+  /** Route an outbox entry through the workflow outbox (player's own handle). */
   async submitOutbox(entry: OutboxEntryInput): Promise<string> {
     const handle = this.requireHandle();
     return handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
