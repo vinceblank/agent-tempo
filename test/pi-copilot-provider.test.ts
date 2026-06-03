@@ -168,6 +168,61 @@ describe('B2 probeCopilotPiPreflight — injected deps', () => {
   });
 });
 
+describe('B2 probeCopilotPiPreflight — model-indexability gate (catch-early)', () => {
+  const baseDeps = (over: Partial<Parameters<typeof probeCopilotPiPreflight>[0]> = {}) => ({
+    isInstalled: () => true,
+    installedVersion: () => '0.78.0',
+    env: { COPILOT_GITHUB_TOKEN: 'gho_test' } as NodeJS.ProcessEnv,
+    authFileExists: () => false,
+    ...over,
+  });
+
+  it('passes when the requested model resolves (getModel returns a Model object)', () => {
+    const r = probeCopilotPiPreflight(baseDeps({
+      requestedModel: { provider: 'github-copilot', model: 'gpt-4o' },
+      resolveModel: () => ({ id: 'gpt-4o' }), // truthy = indexed
+    }));
+    expect(r.available).to.equal(true);
+  });
+
+  it('fails when the requested model is NOT indexed (getModel returns undefined)', () => {
+    const r = probeCopilotPiPreflight(baseDeps({
+      requestedModel: { provider: 'github-copilot', model: 'totally-bogus' },
+      resolveModel: () => undefined, // unindexed
+    }));
+    expect(r.available).to.equal(false);
+    expect(r.reason).to.contain('github-copilot/totally-bogus');
+    expect(r.reason).to.contain('not in Pi');
+    expect(r.reason).to.contain('force: true');
+  });
+
+  it('skips the gate when no resolver is supplied (A4 backstop covers it)', () => {
+    const r = probeCopilotPiPreflight(baseDeps({
+      requestedModel: { provider: 'github-copilot', model: 'totally-bogus' },
+      // resolveModel omitted → gate skipped
+    }));
+    expect(r.available).to.equal(true);
+  });
+
+  it('skips the gate when no requestedModel is supplied (Pi-default path)', () => {
+    const r = probeCopilotPiPreflight(baseDeps({
+      resolveModel: () => undefined, // would fail IF a model were requested
+    }));
+    expect(r.available).to.equal(true);
+  });
+
+  it('only reaches the model gate after dep/version/auth pass', () => {
+    // Unindexed model but ALSO a missing dep → the earlier dep gate wins.
+    const r = probeCopilotPiPreflight(baseDeps({
+      isInstalled: (p) => p !== PI_PACKAGE,
+      requestedModel: { provider: 'github-copilot', model: 'totally-bogus' },
+      resolveModel: () => undefined,
+    }));
+    expect(r.available).to.equal(false);
+    expect(r.reason).to.contain(PI_PACKAGE); // dep reason, not the model reason
+  });
+});
+
 describe('B2 sdk-probe refactor — findSdkPackageJson / readSdkPackageVersion', () => {
   // `chai` is a real installed dependency — a stable fixture for the fs walk.
   it('findSdkPackageJson resolves an installed package to its package.json path', () => {

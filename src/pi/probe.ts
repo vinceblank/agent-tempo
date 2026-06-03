@@ -89,6 +89,22 @@ export interface CopilotPiPreflightDeps {
   env?: NodeJS.ProcessEnv;
   /** Whether the mounted `~/.pi/agent/auth.json` exists. Default: real `existsSync`. */
   authFileExists?: () => boolean;
+  /**
+   * The parsed recruit selector to validate against Pi's model index (the
+   * `{ provider, model }` from {@link parsePiProviderModel}). Omit it — e.g. no
+   * `model` recruit arg, the Pi-default path — to SKIP the model-index gate.
+   */
+  requestedModel?: { provider: string; model: string };
+  /**
+   * Resolve a `(provider, modelName)` against Pi's build-time model index,
+   * returning a truthy Model when indexed and `undefined` when not (the
+   * empirically-confirmed contract of pi-ai's `getModel`). The recruit caller
+   * (A4) injects pi-ai's `getModel` here — B2 deliberately does NOT import the
+   * ESM-only `@earendil-works/pi-ai` from the CJS recruit context. Omit it to
+   * SKIP the model-index gate (e.g. unit tests, or callers without pi-ai); the
+   * A4 `getModel` backstop then covers an unindexed model.
+   */
+  resolveModel?: (provider: string, modelName: string) => unknown;
 }
 
 /** Default `~/.pi/agent/auth.json` presence check. */
@@ -155,6 +171,27 @@ export function probeCopilotPiPreflight(deps: CopilotPiPreflightDeps = {}): PiPr
         `to write ~/.pi/agent/auth.json.\n` +
         `Or recruit with force: true to bypass this pre-flight.`,
     };
+  }
+
+  // 4. Model indexability (catch-early; runs only when BOTH the requested model
+  //    and a resolver are supplied — A4 injects pi-ai's getModel). Pi's Copilot
+  //    model set is compiled at build time from models.dev, so a model on the
+  //    user's subscription but unindexed resolves to `undefined` (NOT a throw,
+  //    NOT null — empirically confirmed). Fail the recruit cleanly here rather
+  //    than spawning a process getModel kills at the headless entry. A4's
+  //    getModel backstop covers the skip cases (no resolver / session-only).
+  if (deps.requestedModel && deps.resolveModel) {
+    const { provider, model } = deps.requestedModel;
+    if (deps.resolveModel(provider, model) === undefined) {
+      return {
+        available: false,
+        reason:
+          `model "${provider}/${model}" is not in Pi's model index (getModel returned undefined).\n` +
+          `Run \`pi --list-models\` for valid ids; the Copilot set is compiled from models.dev, ` +
+          `so a model on your subscription but unindexed is rejected (Pi #4599/#2891).\n` +
+          `Or recruit with force: true to bypass this pre-flight.`,
+      };
+    }
   }
 
   return { available: true };
