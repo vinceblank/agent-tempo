@@ -121,22 +121,31 @@ export async function runHeadlessPi(opts: RunHeadlessPiOptions = {}): Promise<vo
   // 4) Construct the Pi SDK session with the extension injected inline.
   const piSdk = await esmImport(PI_PACKAGE);
   const createAgentSession = piSdk.createAgentSession as (o: Record<string, unknown>) => Promise<{ session: PiSdkSession }>;
-  const DefaultResourceLoader = piSdk.DefaultResourceLoader as new (o: Record<string, unknown>) => unknown;
+  const DefaultResourceLoader = piSdk.DefaultResourceLoader as new (o: Record<string, unknown>) => { reload(): Promise<void> };
   // Pi's DefaultResourceLoader REQUIRES agentDir (normalizePath does
   // `.startsWith()` on it) — getAgentDir() resolves ~/.pi/agent. Pass it to BOTH
   // createAgentSession and the loader. (Found in the 3a live smoke — devops.)
   const getAgentDir = piSdk.getAgentDir as () => string;
   const agentDir = getAgentDir();
 
+  const resourceLoader = new DefaultResourceLoader({
+    cwd: process.cwd(),
+    agentDir,
+    extensionFactories: [extensionFactory],
+  });
+  // CRITICAL (3a live smoke — devops): createAgentSession only calls
+  // resourceLoader.reload() when IT constructs the loader (sdk.js). When we pass
+  // our OWN loader, reload() is skipped — and DefaultResourceLoader inits
+  // `extensions: []` and ONLY loads the inline `extensionFactories` during
+  // reload(). So without this explicit reload our extension never registers, and
+  // session_start fires into an empty handler list (no claim, no heartbeat).
+  await resourceLoader.reload();
+
   const { session } = await createAgentSession({
     cwd: process.cwd(),
     agentDir,
     ...(model ? { model } : {}),
-    resourceLoader: new DefaultResourceLoader({
-      cwd: process.cwd(),
-      agentDir,
-      extensionFactories: [extensionFactory],
-    }),
+    resourceLoader,
     // NOTE (A4): restart-resume via a SessionManager seeded from
     // opts.continueSessionId / ENV.PI_CONTINUE_SESSION lands in A4; 3a proves the
     // loop on a fresh session.
