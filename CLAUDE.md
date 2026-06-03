@@ -97,12 +97,13 @@ src/
 │   ├── coat-check-put.ts / coat-check-get.ts / coat-check-list.ts / coat-check-evict.ts
 │   └── descriptor.ts  # Transport-neutral tool descriptor (TempoToolDescriptor) + renderToMcp; per-tool `build*Tool` factories live in each tool file (MD-B, Phase 1)
 ├── pi/                # Pi-native integration — a Pi session as a first-class player over the Temporal core
-│   ├── extension.ts   # `export default function(pi)` — Phase 0 conductor-cue PoC entry (event→phase, cue injection)
-│   ├── phase-driver.ts / workflow-client.ts / cue-pump.ts   # Pi-event→attachment-phase machine, thin client-side WorkflowClient, cue pump (sendMessage steer)
+│   ├── extension.ts   # `export default function(pi)` — interactive runtime entry. Holds the MODULE-SCOPE singleton `Map<workflowId, PiPlayerRuntime>` that survives Pi's per-switch instance rebuild (rebind, not re-claim); full tool surface via renderToPi; Option-C reason-discriminated teardown
+│   ├── phase-driver.ts / workflow-client.ts / cue-pump.ts   # Pi-event→attachment-phase machine, thin client-side WorkflowClient (lease/heartbeat 90/30, handle getter), cue pump (D10 steer/followUp)
+│   ├── lazy-proxy.ts  # D11 createLazyProxy — Client/WorkflowHandle proxy resolving the live module-scope target per call (survives instance rebuild)
 │   ├── render-tools.ts # renderToPi — registers the shared tool descriptors on Pi's ExtensionAPI (TypeBox params via the converter)
 │   ├── zod-to-typebox.ts # zod→TypeBox tool-schema converter (fail-loud on unsupported constructs; Phase 1 / D1)
-│   ├── report-tool.ts / probe.ts / pi-types.ts / index.ts   # report PoC tool, optional-dep preflight, hand-written ExtensionAPI decls, barrel
-│   └── README.md      # Pi integration findings (abrupt-death/MD-A, D12a) + known limitations
+│   ├── probe.ts / pi-types.ts / index.ts   # optional-dep preflight, hand-written ExtensionAPI decls, barrel
+│   └── README.md      # Pi integration findings (abrupt-death/MD-A, D12a, Phase 2 singleton/teardown) + carry-items
 ├── tui/
 │   ├── App.tsx / store.ts / commands.ts   # TUI root, state, slash commands
 │   ├── sse-handler.ts # SSE event → TUI store dispatch mapping (PR-4a of #94/#95)
