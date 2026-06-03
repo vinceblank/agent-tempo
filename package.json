@@ -85,6 +85,8 @@
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "~0.91.1",
+    "@earendil-works/pi-ai": "~0.78",
+    "@earendil-works/pi-coding-agent": "~0.78",
     "@github/copilot-sdk": "1.0.0-beta.6",
     "@opencode-ai/sdk": "~1.14.29"
   },
@@ -104,6 +106,7 @@
     "qrcode-terminal": "^0.12.0",
     "react": "^19.2.4",
     "semver": "^7.7.4",
+    "typebox": "^1.0.1",
     "yaml": "^2.8.3",
     "zod": "~3.25.76"
   },

@@ -1,0 +1,245 @@
+/**
+ * Thin CLIENT-SIDE Temporal wrapper for the Pi extension (D4 = (a)).
+ *
+ * The durable Temporal `Worker` stays in the daemon. This holds only a
+ * `WorkflowClient` that signals/queries/updates the session workflow — it never
+ * runs workflow code, so NOTHING here (or anywhere in src/pi/) is imported into
+ * the V8 workflow sandbox. The determinism boundary is preserved.
+ *
+ * Reuses the existing wire surface verbatim:
+ *   - `claimAttachment` / `heartbeat`        — lease lifecycle (drives `attached`)
+ *   - `processingStart` / `processingEnd`    — drives `processing` / `awaiting`
+ *   - `requestDetach` + `adapterExited`      — drives `draining` → `detached`
+ *   - `submitOutbox`                         — report routing (outbox compliance)
+ *   - `pendingMessages` + `markDelivered`    — cue intake + ack
+ */
+import { Client, type WorkflowHandle } from '@temporalio/client';
+import { createTemporalConnection } from '../connection';
+import { getConfig, sessionWorkflowId, type Config } from '../config';
+import {
+  claimAttachmentUpdate,
+  heartbeatSignal,
+  processingStartUpdate,
+  processingEndUpdate,
+  requestDetachSignal,
+  adapterExitedSignal,
+  submitOutboxUpdate,
+  pendingMessagesQuery,
+  markDeliveredSignal,
+} from '../workflows/signals';
+import type {
+  AttachmentToken,
+  DetachReason,
+  Message,
+  OutboxEntryInput,
+  SessionMetadata,
+} from '../types';
+import type { OutboxSubmitter } from './report-tool';
+import type { WorkflowAction } from './phase-driver';
+
+/** Adapter identity advertised on claim. Pi interactive players are `interactive`-class. */
+const PI_ADAPTER_ID = 'pi';
+/** Default lease window. Heartbeat cadence is half this so a single missed beat doesn't expire. */
+const DEFAULT_LEASE_MS = 60_000;
+const HEARTBEAT_MS = 30_000;
+/** Graceful-detach drain window. */
+const DETACH_DEADLINE_MS = 5_000;
+
+const log = (...args: unknown[]): void => {
+  // eslint-disable-next-line no-console
+  console.error('[agent-tempo:pi]', ...args);
+};
+
+export interface PiWorkflowClientOptions {
+  client: Client;
+  config: Config;
+  metadata: SessionMetadata;
+  leaseMs?: number;
+  heartbeatMs?: number;
+}
+
+/**
+ * One instance per attached Pi session. `OutboxSubmitter` is implemented here so
+ * the `report` tool routes through `submitOutbox` and nothing else.
+ */
+export class PiWorkflowClient implements OutboxSubmitter {
+  private readonly client: Client;
+  private readonly config: Config;
+  private readonly metadata: SessionMetadata;
+  private readonly leaseMs: number;
+  private readonly heartbeatMs: number;
+
+  private handle: WorkflowHandle | null = null;
+  private token: AttachmentToken | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(opts: PiWorkflowClientOptions) {
+    this.client = opts.client;
+    this.config = opts.config;
+    this.metadata = opts.metadata;
+    this.leaseMs = opts.leaseMs ?? DEFAULT_LEASE_MS;
+    this.heartbeatMs = opts.heartbeatMs ?? HEARTBEAT_MS;
+  }
+
+  /** Build a client from config (connection-pooled; safe to share — see D12a). */
+  static async connect(config: Config = getConfig()): Promise<Client> {
+    const connection = await createTemporalConnection(config);
+    return new Client({ connection, namespace: config.temporalNamespace });
+  }
+
+  get attachmentId(): string | null {
+    return this.token?.attachmentId ?? null;
+  }
+
+  private get workflowId(): string {
+    return sessionWorkflowId(this.metadata.ensemble, this.metadata.playerId);
+  }
+
+  /**
+   * Ensure the session workflow exists and grab a handle. For a human-launched
+   * `pi`, the workflow may not exist yet; `USE_EXISTING` makes this idempotent
+   * when `agent-tempo up`/recruit already started it.
+   */
+  async ensureSessionWorkflow(): Promise<WorkflowHandle> {
+    if (this.handle) return this.handle;
+    this.handle = await this.client.workflow.start('agentSessionWorkflow', {
+      workflowId: this.workflowId,
+      taskQueue: this.config.taskQueue,
+      workflowIdConflictPolicy: 'USE_EXISTING',
+      args: [{ metadata: this.metadata, phase: 'booting' }],
+    });
+    return this.handle;
+  }
+
+  private requireHandle(): WorkflowHandle {
+    if (!this.handle) {
+      throw new Error('PiWorkflowClient: call ensureSessionWorkflow() before lifecycle ops');
+    }
+    return this.handle;
+  }
+
+  /** First claim: phase `booting → attached`. Stores the lease token. */
+  async claim(): Promise<AttachmentToken> {
+    const handle = this.requireHandle();
+    this.token = await handle.executeUpdate(claimAttachmentUpdate, {
+      args: [
+        {
+          host: this.metadata.hostname,
+          adapterId: PI_ADAPTER_ID,
+          adapterClass: 'interactive',
+          leaseMs: this.leaseMs,
+        },
+      ],
+    });
+    log(`claimed attachment ${this.token.attachmentId} (lease ${this.leaseMs}ms)`);
+    return this.token;
+  }
+
+  /**
+   * Liveness heartbeat — renews the lease. This is the ENTIRE reason an abrupt
+   * Pi death is detectable: stop heart-beating and `expiresAt` lapses (see
+   * src/pi/README.md "Abrupt-death finding" / MD-A).
+   */
+  async heartbeat(): Promise<void> {
+    if (!this.token) return;
+    const handle = this.requireHandle();
+    await handle.signal(heartbeatSignal, {
+      attachmentId: this.token.attachmentId,
+      at: new Date().toISOString(),
+    });
+  }
+
+  /** Start the heartbeat loop. The timer is `unref`'d so it never holds the process open. */
+  startHeartbeat(): void {
+    if (this.heartbeatTimer) return;
+    this.heartbeatTimer = setInterval(() => {
+      this.heartbeat().catch((err) => log('heartbeat failed:', err));
+    }, this.heartbeatMs);
+    if (typeof this.heartbeatTimer.unref === 'function') this.heartbeatTimer.unref();
+  }
+
+  stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  /** agent_start → phase `processing`. */
+  async processingStart(messageId: string): Promise<void> {
+    const handle = this.requireHandle();
+    await handle.executeUpdate(processingStartUpdate, {
+      args: [{ messageId, expectedAttachmentId: this.token?.attachmentId }],
+    });
+  }
+
+  /** agent_end → phase `awaiting`. */
+  async processingEnd(messageId: string): Promise<void> {
+    const handle = this.requireHandle();
+    await handle.executeUpdate(processingEndUpdate, {
+      args: [{ messageId, expectedAttachmentId: this.token?.attachmentId }],
+    });
+  }
+
+  /**
+   * Graceful detach: requestDetach (→ draining) then adapterExited (→ detached).
+   * Idempotent-safe to call on `session_shutdown`.
+   */
+  async detach(reason: DetachReason = 'agent-exited'): Promise<void> {
+    if (!this.handle || !this.token) return;
+    this.stopHeartbeat();
+    await this.handle.signal(requestDetachSignal, { reason, deadlineMs: DETACH_DEADLINE_MS });
+    await this.handle.signal(adapterExitedSignal, {
+      attachmentId: this.token.attachmentId,
+      reason,
+    });
+    log(`detached (${reason})`);
+  }
+
+  // ── OutboxSubmitter ──
+
+  /** Route a report (or any outbox entry) through the workflow outbox. */
+  async submitOutbox(entry: OutboxEntryInput): Promise<string> {
+    const handle = this.requireHandle();
+    return handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
+  }
+
+  // ── Cue intake ──
+
+  /** Pull undelivered messages (cues) queued on the workflow. */
+  async fetchPending(): Promise<Message[]> {
+    const handle = this.requireHandle();
+    return handle.query(pendingMessagesQuery);
+  }
+
+  /** Acknowledge delivered cue ids so the workflow stops re-serving them. */
+  async ackDelivered(messageIds: string[]): Promise<void> {
+    if (messageIds.length === 0) return;
+    const handle = this.requireHandle();
+    await handle.signal(markDeliveredSignal, messageIds);
+  }
+
+  /**
+   * Dispatch a {@link WorkflowAction} produced by {@link PhaseDriver}. Centralizes
+   * the action→wire-call mapping so the extension wiring stays declarative.
+   */
+  async performAction(action: WorkflowAction): Promise<void> {
+    switch (action.kind) {
+      case 'claim':
+        await this.claim();
+        this.startHeartbeat();
+        return;
+      case 'processingStart':
+        await this.processingStart(action.messageId);
+        return;
+      case 'processingEnd':
+        await this.processingEnd(action.messageId);
+        return;
+      case 'detach':
+        await this.detach();
+        return;
+      case 'none':
+        return;
+    }
+  }
+}
