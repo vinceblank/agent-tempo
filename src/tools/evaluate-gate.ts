@@ -1,19 +1,16 @@
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { GATE_TASK_MAX, GATE_NOTES_MAX } from '../utils/validation';
 
-export function registerEvaluateGateTool(
-  server: McpServer,
+export function buildEvaluateGateTool(
   handle: WorkflowHandle,
   getPlayerId: () => string,
-) {
-  defineTool(
-    server,
-    'evaluate_gate',
-    'Mark one or more criteria on a quality gate as passed or failed. Conductor only.',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'evaluate_gate',
+    description: 'Mark one or more criteria on a quality gate as passed or failed. Conductor only.',
+    params: {
       task: z.string().max(GATE_TASK_MAX).describe('The task name of the gate to evaluate'),
       evaluations: z.array(z.object({
         index: z.number().int().min(0).describe('Zero-based index of the criterion'),
@@ -21,7 +18,7 @@ export function registerEvaluateGateTool(
         notes: z.string().max(GATE_NOTES_MAX).optional().describe('Optional notes explaining the evaluation'),
       })).min(1).describe('List of criterion evaluations'),
     },
-    async (args) => {
+    handler: async (args) => {
       const { task, evaluations } = args as {
         task: string;
         evaluations: Array<{ index: number; status: 'passed' | 'failed'; notes?: string }>;
@@ -41,5 +38,5 @@ export function registerEvaluateGateTool(
         return fail(`Failed to evaluate gate: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

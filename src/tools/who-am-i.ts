@@ -1,14 +1,16 @@
 import { WorkflowHandle } from '@temporalio/client';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SessionMetadata, AttachmentInfo } from '../types';
-import { defineTool, ok } from './helpers';
+import { ok, type TempoToolDescriptor } from './descriptor';
 
-export function registerWhoAmITool(
-  server: McpServer,
+export function buildWhoAmITool(
   handle: WorkflowHandle,
   getPlayerId: () => string,
-) {
-  defineTool(server, 'who_am_i', 'Get your identity, role, and session details', {}, async () => {
+): TempoToolDescriptor {
+  return {
+    name: 'who_am_i',
+    description: 'Get your identity, role, and session details',
+    params: {},
+    handler: async () => {
     const metadata: SessionMetadata = await handle.query('getMetadata');
     const part: string = await handle.query('getPart');
 
@@ -37,5 +39,6 @@ export function registerWhoAmITool(
     ].filter(Boolean);
 
     return ok(lines.join('\n'));
-  });
+    },
+  };
 }

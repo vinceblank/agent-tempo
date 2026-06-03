@@ -1,18 +1,15 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import type { StageEntry } from '../types';
 
-export function registerStagesTool(
-  server: McpServer,
+export function buildStagesTool(
   handle: WorkflowHandle,
-) {
-  defineTool(
-    server,
-    'stages',
-    'List all pipeline stages and their status. Shows which players have reported, who is still waiting, and stage completion status. Conductor only.',
-    {},
-    async () => {
+): TempoToolDescriptor {
+  return {
+    name: 'stages',
+    description: 'List all pipeline stages and their status. Shows which players have reported, who is still waiting, and stage completion status. Conductor only.',
+    params: {},
+    handler: async () => {
       try {
         const stages: StageEntry[] = await handle.query('stages');
 
@@ -45,5 +42,5 @@ export function registerStagesTool(
         return fail(`Failed to query stages: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

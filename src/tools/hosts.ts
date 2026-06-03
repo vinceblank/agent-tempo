@@ -13,23 +13,21 @@
  * Thin wrapper — all the logic is in `listHosts`.
  */
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config } from '../config';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { listHosts } from '../utils/hosts';
 import { formatHostList } from '../utils/format-hosts';
 
-export function registerHostsTool(server: McpServer, client: Client, config: Config) {
-  defineTool(
-    server,
-    'hosts',
-    'Show all daemons polling this Temporal namespace, with their advertised capabilities. Returns liveness (live/stale), recruit-readiness, and each daemon\'s profile (default agent, available player types, platform) when it signaled one at boot. Read-only diagnostic.',
-    {
+export function buildHostsTool(client: Client, config: Config): TempoToolDescriptor {
+  return {
+    name: 'hosts',
+    description: 'Show all daemons polling this Temporal namespace, with their advertised capabilities. Returns liveness (live/stale), recruit-readiness, and each daemon\'s profile (default agent, available player types, platform) when it signaled one at boot. Read-only diagnostic.',
+    params: {
       includeStale: z.boolean().optional().describe('Include hosts not seen in the last minute (default: false).'),
       force: z.boolean().optional().describe('Bypass the 3-second result cache (default: false).'),
     },
-    async (args) => {
+    handler: async (args) => {
       const { includeStale, force } = args as { includeStale?: boolean; force?: boolean };
       try {
         const hosts = await listHosts(client, {
@@ -42,5 +40,5 @@ export function registerHostsTool(server: McpServer, client: Client, config: Con
         return fail(`Failed to list hosts: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

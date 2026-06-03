@@ -1,18 +1,15 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
 import { Message } from '../types';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 
-export function registerListenTool(
-  server: McpServer,
+export function buildListenTool(
   handle: WorkflowHandle,
-) {
-  defineTool(
-    server,
-    'listen',
-    'Check for pending messages from other sessions. Use this if you want to manually check for new messages.',
-    {},
-    async () => {
+): TempoToolDescriptor {
+  return {
+    name: 'listen',
+    description: 'Check for pending messages from other sessions. Use this if you want to manually check for new messages.',
+    params: {},
+    handler: async () => {
       try {
         const messages: Message[] = await handle.query('pendingMessages');
 
@@ -32,5 +29,5 @@ export function registerListenTool(
         return fail(`Failed to check messages: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

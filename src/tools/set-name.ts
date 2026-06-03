@@ -1,30 +1,27 @@
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle, Client } from '@temporalio/client';
 import { Config, schedulerWorkflowId } from '../config';
 import { updateScheduleTargetSignal } from '../workflows/scheduler-signals';
 import { resolveSession } from './resolve';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { PLAYER_NAME_MAX, validatePlayerName } from '../utils/validation';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:set-name]', ...args);
 
-export function registerSetNameTool(
-  server: McpServer,
+export function buildSetNameTool(
   client: Client,
   config: Config,
   handle: WorkflowHandle,
   getPlayerId: () => string,
   setPlayerId: (id: string) => void,
-) {
-  defineTool(
-    server,
-    'set_name',
-    'Set a human-readable name for this session. Visible to other players in the ensemble.',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'set_name',
+    description: 'Set a human-readable name for this session. Visible to other players in the ensemble.',
+    params: {
       name: z.string().max(PLAYER_NAME_MAX).describe('The name for this session (e.g., "UX", "API", "test-runner")'),
     },
-    async (args) => {
+    handler: async (args) => {
       const { name } = args as { name: string };
 
       // Validate name to prevent search attribute query injection
@@ -58,5 +55,5 @@ export function registerSetNameTool(
         return fail(`Failed to set name: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

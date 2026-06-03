@@ -10,30 +10,27 @@
  * the no-op as an error.
  */
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
 import { clearPlayerStateUpdate } from '../workflows/signals';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import {
   PLAYER_STATE_KEY_REGEX,
   PLAYER_STATE_KEY_MAX,
   PLAYER_STATE_DEFAULT_KEY,
 } from '../utils/validation';
 
-export function registerClearStateTool(
-  server: McpServer,
+export function buildClearStateTool(
   handle: WorkflowHandle,
-) {
-  defineTool(
-    server,
-    'clear_state',
-    `Clear one of your saved-state slots. Owner-only — you can only clear your own state. Idempotent (clearing an empty slot is a no-op). Returns whether the slot was non-empty before the clear.`,
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'clear_state',
+    description: `Clear one of your saved-state slots. Owner-only — you can only clear your own state. Idempotent (clearing an empty slot is a no-op). Returns whether the slot was non-empty before the clear.`,
+    params: {
       key: z.string().regex(PLAYER_STATE_KEY_REGEX).max(PLAYER_STATE_KEY_MAX).optional().describe(
         `Slot name (default "${PLAYER_STATE_DEFAULT_KEY}").`,
       ),
     },
-    async (args) => {
+    handler: async (args) => {
       const { key } = args as { key?: string };
       const slotKey = key ?? PLAYER_STATE_DEFAULT_KEY;
 
@@ -50,5 +47,5 @@ export function registerClearStateTool(
         return fail(`Failed to clear state: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

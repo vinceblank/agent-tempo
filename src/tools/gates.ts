@@ -1,23 +1,20 @@
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
 import { QualityGate } from '../types';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { GATE_TASK_MAX } from '../utils/validation';
 
-export function registerGatesTool(
-  server: McpServer,
+export function buildGatesTool(
   handle: WorkflowHandle,
-) {
-  defineTool(
-    server,
-    'gates',
-    'List quality gates and their status. Optionally filter by task name or status. Conductor only.',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'gates',
+    description: 'List quality gates and their status. Optionally filter by task name or status. Conductor only.',
+    params: {
       task: z.string().max(GATE_TASK_MAX).optional().describe('Filter by specific task name'),
       status: z.enum(['open', 'passed', 'failed']).optional().describe('Filter by gate status'),
     },
-    async (args) => {
+    handler: async (args) => {
       const { task, status } = args as { task?: string; status?: 'open' | 'passed' | 'failed' };
       try {
         const gates: QualityGate[] = await handle.query('qualityGates');
@@ -50,5 +47,5 @@ export function registerGatesTool(
         return fail(`Failed to query gates: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

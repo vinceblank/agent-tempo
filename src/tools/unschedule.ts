@@ -1,23 +1,20 @@
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { WorkflowNotFoundError } from '@temporalio/common';
 import { Config, schedulerWorkflowId } from '../config';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 
-export function registerUnscheduleTool(
-  server: McpServer,
+export function buildUnscheduleTool(
   client: Client,
   config: Config,
-) {
-  defineTool(
-    server,
-    'unschedule',
-    'Remove a named schedule. The schedule stops firing immediately.',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'unschedule',
+    description: 'Remove a named schedule. The schedule stops firing immediately.',
+    params: {
       name: z.string().describe('Name of the schedule to remove'),
     },
-    async (args) => {
+    handler: async (args) => {
       const { name } = args as { name: string };
       try {
         const wfId = schedulerWorkflowId(config.ensemble);
@@ -41,5 +38,5 @@ export function registerUnscheduleTool(
         return fail(`Failed to remove schedule: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

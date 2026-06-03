@@ -67,13 +67,18 @@ function normalizeTui(s) {
 function extractMcpToolsFromSource() {
   const dir = path.join(ROOT, 'src', 'tools');
   const files = fs.readdirSync(dir)
-    .filter(f => f.endsWith('.ts') && f !== 'helpers.ts');
+    .filter(f => f.endsWith('.ts') && f !== 'descriptor.ts');
 
   const tools = new Set();
   for (const file of files) {
     const src = fs.readFileSync(path.join(dir, file), 'utf8');
-    // Handles both inline and multi-line defineTool( server, 'name', ... ) calls.
-    for (const m of src.matchAll(/defineTool\(\s*server\s*,\s*'([^']+)'/gs)) {
+    // Post-MD-B (Phase 1): each tool is a `build<X>Tool(...): TempoToolDescriptor`
+    // factory returning `{ name: '<tool>', description: ... }`. Match the
+    // descriptor's `name` field anchored by the immediately-following
+    // `description:` key — this avoids picking up unrelated `name:` properties
+    // (e.g. inside handler bodies or param schemas). Replaces the pre-MD-B
+    // `defineTool(server, 'name', …)` extraction (defineTool no longer exists).
+    for (const m of src.matchAll(/name:\s*'([^']+)',\s*description:/g)) {
       tools.add(m[1]);
     }
   }

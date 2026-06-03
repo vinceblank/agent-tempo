@@ -1,14 +1,12 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { defineTool, ok } from './helpers';
+import { ok, type TempoToolDescriptor } from './descriptor';
 import { listAgentTypes } from '../ensemble/agent-types';
 
-export function registerAgentTypesTool(server: McpServer) {
-  defineTool(
-    server,
-    'agent_types',
-    'List available player types (agent definitions) that can be used when recruiting',
-    {},
-    async () => {
+export function buildAgentTypesTool(): TempoToolDescriptor {
+  return {
+    name: 'agent_types',
+    description: 'List available player types (agent definitions) that can be used when recruiting',
+    params: {},
+    handler: async () => {
       const types = listAgentTypes();
       if (types.length === 0) {
         return ok('No agent types found.');
@@ -22,5 +20,5 @@ export function registerAgentTypesTool(server: McpServer) {
       });
       return ok(lines.join('\n\n'));
     },
-  );
+  };
 }

@@ -13,31 +13,28 @@
  * counters mutate state — Queries cannot mutate.
  */
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config, maestroWorkflowId } from '../config';
 import { coatCheckGetUpdate } from '../workflows/maestro-signals';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { COAT_CHECK_TICKET_MAX, COAT_CHECK_TICKET_REGEX } from '../utils/validation';
 
-export function registerCoatCheckGetTool(
-  server: McpServer,
+export function buildCoatCheckGetTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
-) {
-  defineTool(
-    server,
-    'coat_check_get',
-    `Redeem a coat-check ticket (#318) and pull the stashed content. Returns the entry's summary, content body, and audit info — or "not found" when the ticket is missing / expired / evicted (no error, just empty).
+): TempoToolDescriptor {
+  return {
+    name: 'coat_check_get',
+    description: `Redeem a coat-check ticket (#318) and pull the stashed content. Returns the entry's summary, content body, and audit info — or "not found" when the ticket is missing / expired / evicted (no error, just empty).
 
 Successful redemptions bump the entry's fetch-audit counters (\`lastFetchedAt\` / \`lastFetchedBy\` / \`fetchCount\`) so the putter can later see whether anyone has redeemed. \`coat_check_list\` won't bump these — only an actual redemption counts.`,
-    {
+    params: {
       ticket: z.string().regex(COAT_CHECK_TICKET_REGEX).max(COAT_CHECK_TICKET_MAX).describe(
         `The ticket id returned by an earlier \`coat_check_put\` (≤${COAT_CHECK_TICKET_MAX} chars).`,
       ),
     },
-    async (args) => {
+    handler: async (args) => {
       const { ticket } = args as { ticket: string };
       const fetchedBy = getPlayerId();
       try {
@@ -63,5 +60,5 @@ Successful redemptions bump the entry's fetch-audit counters (\`lastFetchedAt\` 
         return fail(`Failed to redeem ticket: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

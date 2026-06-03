@@ -48,7 +48,8 @@ vi.mock('../../src/adapters/claude-code-headless/pre-flight', () => ({
 }));
 
 // SUT + mocked symbols (typed via `vi.mocked` for autocomplete).
-import { registerRecruitTool } from '../../src/tools/recruit';
+import { renderToMcp } from '../../src/tools/descriptor';
+import { buildRecruitTool } from '../../src/tools/recruit';
 import { probeSdkInstall } from '../../src/utils/sdk-probe';
 import {
   probeClaudeBinary,
@@ -155,15 +156,14 @@ function setup(): SetupResult {
   const client = makeFakeClient();
   const { handle, outboxEntries } = makeFakeHandle();
   // Stub listHostsFn to a no-op — local-spawn tests never set `host`.
-  registerRecruitTool(
-    server,
+  renderToMcp(server, [buildRecruitTool(
     client,
     cfg,
     () => 'test-player',
     handle,
     'claude',
     { listHostsFn: async () => [] },
-  );
+  )]);
   return { capture, outboxEntries };
 }
 

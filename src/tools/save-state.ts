@@ -12,10 +12,9 @@
  * itself is opaque — no enforced typing.
  */
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle } from '@temporalio/client';
 import { savePlayerStateUpdate } from '../workflows/signals';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import {
   PLAYER_STATE_KEY_REGEX,
   PLAYER_STATE_KEY_MAX,
@@ -24,15 +23,13 @@ import {
   PLAYER_STATE_DEFAULT_KEY,
 } from '../utils/validation';
 
-export function registerSaveStateTool(
-  server: McpServer,
+export function buildSaveStateTool(
   handle: WorkflowHandle,
   getPlayerId: () => string,
-) {
-  defineTool(
-    server,
-    'save_state',
-    `Save curated state for yourself into a named slot — a peer can later read it via \`fetch_state\`, and a future restart can seed itself from this artifact instead of replaying the transcript.
+): TempoToolDescriptor {
+  return {
+    name: 'save_state',
+    description: `Save curated state for yourself into a named slot — a peer can later read it via \`fetch_state\`, and a future restart can seed itself from this artifact instead of replaying the transcript.
 
 Recommended structure (markdown, not enforced):
 
@@ -46,7 +43,7 @@ Recommended structure (markdown, not enforced):
   ...
 
 Limits: ${PLAYER_STATE_CONTENT_MAX} bytes per slot, max ${PLAYER_STATE_SLOTS_MAX} slots per player. Slot key defaults to "${PLAYER_STATE_DEFAULT_KEY}". When all ${PLAYER_STATE_SLOTS_MAX} slots are full, saving a new key fails with \`PlayerStateSlotsFull\` — call \`clear_state\` to free a slot.`,
-    {
+    params: {
       content: z.string().min(1).max(PLAYER_STATE_CONTENT_MAX).describe(
         `The state content — markdown encouraged, opaque to the system. Max ${PLAYER_STATE_CONTENT_MAX} bytes (UTF-8).`,
       ),
@@ -54,7 +51,7 @@ Limits: ${PLAYER_STATE_CONTENT_MAX} bytes per slot, max ${PLAYER_STATE_SLOTS_MAX
         `Slot name (default "${PLAYER_STATE_DEFAULT_KEY}"). Alphanumeric + underscore + hyphen, max ${PLAYER_STATE_KEY_MAX} chars.`,
       ),
     },
-    async (args) => {
+    handler: async (args) => {
       const { content, key } = args as { content: string; key?: string };
       const slotKey = key ?? PLAYER_STATE_DEFAULT_KEY;
       const savedBy = getPlayerId();
@@ -73,5 +70,5 @@ Limits: ${PLAYER_STATE_CONTENT_MAX} bytes per slot, max ${PLAYER_STATE_SLOTS_MAX
         return fail(`Failed to save state: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

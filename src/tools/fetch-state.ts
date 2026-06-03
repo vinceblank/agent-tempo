@@ -21,12 +21,11 @@
  * surfaces a "no session found" error.
  */
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WorkflowHandle, Client } from '@temporalio/client';
 import { Config } from '../config';
 import { resolveSession } from './resolve';
 import { playerStateQuery } from '../workflows/signals';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import type { PlayerStateEntry } from '../types';
 import {
   PLAYER_NAME_MAX,
@@ -45,20 +44,18 @@ import {
  * playerStateKeys`; v2 can graduate a dedicated `list_state` MCP tool if
  * telemetry shows real demand.
  */
-export function registerFetchStateTool(
-  server: McpServer,
+export function buildFetchStateTool(
   client: Client,
   config: Config,
   handle: WorkflowHandle,
   getPlayerId: () => string,
-) {
-  defineTool(
-    server,
-    'fetch_state',
-    `Read a saved-state slot for yourself or a peer. Defaults to your own "${PLAYER_STATE_DEFAULT_KEY}" slot.
+): TempoToolDescriptor {
+  return {
+    name: 'fetch_state',
+    description: `Read a saved-state slot for yourself or a peer. Defaults to your own "${PLAYER_STATE_DEFAULT_KEY}" slot.
 
 Pass \`playerId\` to read a peer's slot (any player in the ensemble can read any other player's state — audit identity is recorded on each slot via \`savedBy\`). Returns a "(no state saved …)" message when the slot is empty.`,
-    {
+    params: {
       key: z.string().regex(PLAYER_STATE_KEY_REGEX).max(PLAYER_STATE_KEY_MAX).optional().describe(
         `Slot name (default "${PLAYER_STATE_DEFAULT_KEY}").`,
       ),
@@ -66,7 +63,7 @@ Pass \`playerId\` to read a peer's slot (any player in the ensemble can read any
         'Target player name (default: self).',
       ),
     },
-    async (args) => {
+    handler: async (args) => {
       const { key, playerId } = args as { key?: string; playerId?: string };
       const targetId = playerId ?? getPlayerId();
 
@@ -101,5 +98,5 @@ Pass \`playerId\` to read a peer's slot (any player in the ensemble can read any
         return fail(`Failed to fetch state: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

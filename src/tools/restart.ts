@@ -29,13 +29,12 @@
  */
 import { z } from 'zod';
 import { hostname as osHostname } from 'os';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { Config } from '../config';
 import type { OutboxEntryInput, AttachmentInfo } from '../types';
 import { submitOutboxUpdate, attachmentInfoQuery } from '../workflows/signals';
 import { resolveSession } from './resolve';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import {
   PLAYER_NAME_MAX,
   RESTART_CONTEXT_MESSAGES_MAX,
@@ -118,18 +117,16 @@ export async function enforceYesStealGuard(
   return null;
 }
 
-export function registerRestartTool(
-  server: McpServer,
+export function buildRestartTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
   handle: WorkflowHandle,
-) {
-  defineTool(
-    server,
-    'restart',
-    'Restart a session — reap the current attachment (gracefully, or with force=true), claim a fresh attachment, spawn a new adapter, and optionally replay recent context. Replaces `encore`, `recruit --force`, and `stop`-then-`recruit`. Pass `host` to restart on a different machine; when `force=true` AND the target is currently on a different host, pass `confirmStealFromHost` matching that hostname (design §16.5). Pass `loadFromState` to seed the restarted session from a saved-state slot (#334) instead of (or alongside) transcript replay.',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'restart',
+    description: 'Restart a session — reap the current attachment (gracefully, or with force=true), claim a fresh attachment, spawn a new adapter, and optionally replay recent context. Replaces `encore`, `recruit --force`, and `stop`-then-`recruit`. Pass `host` to restart on a different machine; when `force=true` AND the target is currently on a different host, pass `confirmStealFromHost` matching that hostname (design §16.5). Pass `loadFromState` to seed the restarted session from a saved-state slot (#334) instead of (or alongside) transcript replay.',
+    params: {
       playerId: z.string().max(PLAYER_NAME_MAX).describe('The player name to restart'),
       host: z.string().optional().describe('Target host for the new attachment (defaults to the session\'s preferredHost or last-known hostname). When set, the spawn is routed to the per-host task queue `agent-tempo-{host}`.'),
       fresh: z.boolean().optional().describe('Skip context replay — spawn a clean slate (default false)'),
@@ -147,8 +144,8 @@ export function registerRestartTool(
         'When `loadFromState` is set, controls transcript-replay interaction: `suppress` (default) seeds only the saved state; `replay` seeds the saved state and then replays the recent transcript on top of it. Ignored when `loadFromState` is absent.',
       ),
     },
-    async (args) => {
-      const input = args as RestartToolArgs;
+    handler: async (args) => {
+      const input = args as unknown as RestartToolArgs;
 
       const nameError = validatePlayerName(input.playerId);
       if (nameError) return fail(nameError);
@@ -179,5 +176,5 @@ export function registerRestartTool(
         return fail(`Failed to restart: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

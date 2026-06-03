@@ -1,32 +1,29 @@
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { Config } from '../config';
 import { SessionMetadata } from '../types';
 import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput } from '../types';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { MESSAGE_MAX, shouldIncludeInBroadcast } from '../utils/validation';
 import { getAttachmentPhase } from '../utils/search-attributes';
 
-export function registerBroadcastTool(
-  server: McpServer,
+export function buildBroadcastTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
   handle: WorkflowHandle,
-) {
-  defineTool(
-    server,
-    'broadcast',
-    'Send a message to all active players in the ensemble. Optionally filter by player type.',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'broadcast',
+    description: 'Send a message to all active players in the ensemble. Optionally filter by player type.',
+    params: {
       message: z.string().max(MESSAGE_MAX).describe('The message to broadcast'),
       type: z.string().optional().describe('Only send to players of this type (e.g., "tempo-soloist")'),
       includeStale: z.boolean().optional().describe('Include disconnected sessions (draining/detached phases; default: false). Argument name kept for backward compatibility.'),
     },
-    async (args) => {
+    handler: async (args) => {
       const { message, type: playerType, includeStale: rawIncludeStale } = args as {
         message: string;
         type?: string;
@@ -96,5 +93,5 @@ export function registerBroadcastTool(
         return fail(`Failed to broadcast: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

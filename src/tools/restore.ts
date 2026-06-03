@@ -23,7 +23,6 @@
  */
 import { hostname as osHostname } from 'os';
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config } from '../config';
 import {
@@ -32,22 +31,20 @@ import {
   type RestoreOrphansSummary,
 } from '../reconcile/orphans';
 import { setPausedSignal } from '../workflows/signals';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { unpauseMaestroAndScheduler, signalAllSessions } from '../utils/ensemble-ops';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:restore]', ...args);
 
-export function registerRestoreTool(
-  server: McpServer,
+export function buildRestoreTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
-) {
-  defineTool(
-    server,
-    'restore',
-    'Revive the ensemble after `shutdown`: reattach orphaned sessions and unpause the maestro + scheduler. Defaults to scanning the local host; pass `hostname` to target a remote machine in distributed setups (per-host task queues). Does NOT spawn a conductor terminal — use the CLI for that.',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'restore',
+    description: 'Revive the ensemble after `shutdown`: reattach orphaned sessions and unpause the maestro + scheduler. Defaults to scanning the local host; pass `hostname` to target a remote machine in distributed setups (per-host task queues). Does NOT spawn a conductor terminal — use the CLI for that.',
+    params: {
       // #306 follow-up: cross-host restore. The default (omitted) preserves
       // the original behavior — scan the local daemon's host. When supplied,
       // we route the orphan-visibility query against the named host's
@@ -60,7 +57,7 @@ export function registerRestoreTool(
         'Target host whose orphans should be restored. Defaults to the local OS hostname. Use this when the conductor / TUI is on a different machine than the workers that owned the parked sessions.',
       ),
     },
-    async (args) => {
+    handler: async (args) => {
       const { hostname: explicitHostname } = args as { hostname?: string };
       const targetHostname = explicitHostname ?? osHostname();
 
@@ -131,5 +128,5 @@ export function registerRestoreTool(
         return fail(`Failed to restore ensemble: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

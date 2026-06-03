@@ -1,31 +1,28 @@
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { Config } from '../config';
 import { WorktreeEntry } from '../types';
 import { resolveSession } from './resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { createWorktree, installDependencies, removeWorktree } from '../utils/worktree';
 import { PLAYER_NAME_MAX } from '../utils/validation';
 
-export function registerWorktreeTool(
-  server: McpServer,
+export function buildWorktreeTool(
   client: Client,
   config: Config,
   handle: WorkflowHandle,
   getPlayerId: () => string,
-) {
-  defineTool(
-    server,
-    'worktree',
-    'Manage git worktrees for player isolation. Conductor only. Actions: create (provision worktree for a player), remove (clean up), list (show active worktrees). Use when multiple players commit to different branches of the same repo simultaneously; skip for read-only work, sequential work, or tasks under ~5 min. IMPORTANT: before `remove`, have the player stop any long-running processes inside the worktree (dev servers, file watchers) — on Windows a memory-mapped native module will block directory removal and `remove` will fail. See docs/orchestration.md#when-to-use-worktrees.',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'worktree',
+    description: 'Manage git worktrees for player isolation. Conductor only. Actions: create (provision worktree for a player), remove (clean up), list (show active worktrees). Use when multiple players commit to different branches of the same repo simultaneously; skip for read-only work, sequential work, or tasks under ~5 min. IMPORTANT: before `remove`, have the player stop any long-running processes inside the worktree (dev servers, file watchers) — on Windows a memory-mapped native module will block directory removal and `remove` will fail. See docs/orchestration.md#when-to-use-worktrees.',
+    params: {
       action: z.enum(['create', 'remove', 'list']).describe('Action to perform'),
       player: z.string().max(PLAYER_NAME_MAX).optional().describe('Player name (required for create/remove)'),
       branch: z.string().optional().describe('Git branch for the worktree (defaults to {ensemble}/{player-name})'),
     },
-    async (args) => {
+    handler: async (args) => {
       const { action, player, branch } = args as {
         action: 'create' | 'remove' | 'list';
         player?: string;
@@ -180,5 +177,5 @@ export function registerWorktreeTool(
         return fail(`Worktree operation failed: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

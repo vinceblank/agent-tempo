@@ -16,22 +16,23 @@ import { expect } from 'chai';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Client, WorkflowHandle } from '@temporalio/client';
 import type { Config } from '../src/config';
-import { registerShutdownTool } from '../src/tools/shutdown';
-import { registerRestoreTool } from '../src/tools/restore';
-import { registerDestroyTool } from '../src/tools/destroy';
-import { registerPauseTool } from '../src/tools/pause';
+import { renderToMcp, type TempoToolDescriptor } from '../src/tools/descriptor';
+import { buildShutdownTool } from '../src/tools/shutdown';
+import { buildRestoreTool } from '../src/tools/restore';
+import { buildDestroyTool } from '../src/tools/destroy';
+import { buildPauseTool } from '../src/tools/pause';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 type ToolHandler = (args: Record<string, any>) => Promise<ToolResult>;
 
-function extractHandler(registerFn: (server: McpServer) => void): ToolHandler {
+function extractHandler(descriptor: TempoToolDescriptor): ToolHandler {
   let captured: Function | undefined;
   const fakeServer = {
     tool: (_name: unknown, _desc: unknown, _schema: unknown, handler: Function) => {
       captured = handler;
     },
   } as unknown as McpServer;
-  registerFn(fakeServer);
+  renderToMcp(fakeServer, [descriptor]);
   if (!captured) throw new Error('No handler captured — tool did not call server.tool()');
   return (args: Record<string, any>) => captured!(args, {}) as Promise<ToolResult>;
 }
@@ -164,8 +165,8 @@ describe('shutdown tool (#287)', function () {
   it('signals requestDetach on every peer session + pauses scheduler + maestro', async function () {
     const ensemble = 'shutdown-basic';
     const { client, calls } = makeClient({ ensemble, players: ['alice', 'bob'] });
-    const call = extractHandler((server) =>
-      registerShutdownTool(server, client, testConfig(ensemble), () => 'operator'),
+    const call = extractHandler(
+      buildShutdownTool(client, testConfig(ensemble), () => 'operator'),
     );
 
     const result = await call({});
@@ -183,8 +184,8 @@ describe('shutdown tool (#287)', function () {
   it('skips the caller session (self-skip)', async function () {
     const ensemble = 'shutdown-self';
     const { client, calls } = makeClient({ ensemble, players: ['operator', 'alice'] });
-    const call = extractHandler((server) =>
-      registerShutdownTool(server, client, testConfig(ensemble), () => 'operator'),
+    const call = extractHandler(
+      buildShutdownTool(client, testConfig(ensemble), () => 'operator'),
     );
     await call({});
 
@@ -198,8 +199,8 @@ describe('shutdown tool (#287)', function () {
   it('forwards custom deadlineMs onto requestDetach payload', async function () {
     const ensemble = 'shutdown-deadline';
     const { client, calls } = makeClient({ ensemble, players: ['alice'] });
-    const call = extractHandler((server) =>
-      registerShutdownTool(server, client, testConfig(ensemble), () => 'operator'),
+    const call = extractHandler(
+      buildShutdownTool(client, testConfig(ensemble), () => 'operator'),
     );
     await call({ deadlineMs: 8_000 });
 
@@ -212,8 +213,8 @@ describe('shutdown tool (#287)', function () {
     const { client, calls } = makeClient({
       ensemble, players: ['alice'], hasScheduler: false, hasMaestroHub: false,
     });
-    const call = extractHandler((server) =>
-      registerShutdownTool(server, client, testConfig(ensemble), () => 'operator'),
+    const call = extractHandler(
+      buildShutdownTool(client, testConfig(ensemble), () => 'operator'),
     );
     const result = await call({});
     expect(result.isError).to.not.equal(true);
@@ -248,8 +249,8 @@ describe('restore tool (#287)', function () {
 
     try {
       const { client, calls } = makeClient({ ensemble, players: [] });
-      const call = extractHandler((server) =>
-        registerRestoreTool(server, client, testConfig(ensemble), () => 'operator'),
+      const call = extractHandler(
+        buildRestoreTool(client, testConfig(ensemble), () => 'operator'),
       );
       const result = await call({});
       expect(result.isError).to.not.equal(true);
@@ -275,8 +276,8 @@ describe('restore tool (#287)', function () {
 
     try {
       const { client } = makeClient({ ensemble, players: [] });
-      const call = extractHandler((server) =>
-        registerRestoreTool(server, client, testConfig(ensemble), () => 'operator'),
+      const call = extractHandler(
+        buildRestoreTool(client, testConfig(ensemble), () => 'operator'),
       );
       const result = await call({});
       expect(result.isError).to.equal(true);
@@ -309,8 +310,8 @@ describe('restore tool (#287)', function () {
         players: ['alice', 'bob'],
         includeConductor: true,
       });
-      const call = extractHandler((server) =>
-        registerRestoreTool(server, client, testConfig(ensemble), () => 'operator'),
+      const call = extractHandler(
+        buildRestoreTool(client, testConfig(ensemble), () => 'operator'),
       );
       const result = await call({});
       expect(result.isError).to.not.equal(true);
@@ -367,8 +368,8 @@ describe('restore tool (#287)', function () {
       expect(calls.filter((c) => c.name === 'setPaused' && c.payload === true)).to.have.lengthOf(1);
 
       // Now restore.
-      const call = extractHandler((server) =>
-        registerRestoreTool(server, client, testConfig(ensemble), () => 'operator'),
+      const call = extractHandler(
+        buildRestoreTool(client, testConfig(ensemble), () => 'operator'),
       );
       const result = await call({});
       expect(result.isError).to.not.equal(true);
@@ -420,8 +421,8 @@ describe('restore tool (#287)', function () {
 
     try {
       const { client } = makeClient({ ensemble, players: [] });
-      const call = extractHandler((server) =>
-        registerRestoreTool(server, client, testConfig(ensemble), () => 'operator'),
+      const call = extractHandler(
+        buildRestoreTool(client, testConfig(ensemble), () => 'operator'),
       );
       const result = await call({ hostname: 'remote-host-b' });
       expect(result.isError).to.not.equal(true);
@@ -450,8 +451,8 @@ describe('restore tool (#287)', function () {
 
     try {
       const { client } = makeClient({ ensemble, players: [] });
-      const call = extractHandler((server) =>
-        registerRestoreTool(server, client, testConfig(ensemble), () => 'operator'),
+      const call = extractHandler(
+        buildRestoreTool(client, testConfig(ensemble), () => 'operator'),
       );
       const result = await call({});
       expect(result.isError).to.not.equal(true);
@@ -480,8 +481,8 @@ describe('destroy tool — ensemble scope (#287)', function () {
       players: ['alice', 'bob'],
       includeConductor: true,
     });
-    const call = extractHandler((server) =>
-      registerDestroyTool(server, client, testConfig(ensemble), () => 'operator', fakeHandle),
+    const call = extractHandler(
+      buildDestroyTool(client, testConfig(ensemble), () => 'operator', fakeHandle),
     );
     const result = await call({});
     expect(result.isError).to.not.equal(true);
@@ -515,8 +516,8 @@ describe('destroy tool — ensemble scope (#287)', function () {
       players: ['operator', 'alice'],
       includeConductor: false,
     });
-    const call = extractHandler((server) =>
-      registerDestroyTool(server, client, testConfig(ensemble), () => 'operator', fakeHandle),
+    const call = extractHandler(
+      buildDestroyTool(client, testConfig(ensemble), () => 'operator', fakeHandle),
     );
     await call({});
 
@@ -534,8 +535,8 @@ describe('destroy tool — ensemble scope (#287)', function () {
       players: ['alice'],
       includeConductor: true,
     });
-    const call = extractHandler((server) =>
-      registerDestroyTool(server, client, testConfig(ensemble), () => 'conductor', fakeHandle),
+    const call = extractHandler(
+      buildDestroyTool(client, testConfig(ensemble), () => 'conductor', fakeHandle),
     );
     await call({});
 
@@ -561,8 +562,8 @@ describe('destroy tool — ensemble scope (#287)', function () {
       },
     } as unknown as WorkflowHandle;
 
-    const call = extractHandler((server) =>
-      registerDestroyTool(server, client, testConfig(ensemble), () => 'operator', callerHandle),
+    const call = extractHandler(
+      buildDestroyTool(client, testConfig(ensemble), () => 'operator', callerHandle),
     );
     const result = await call({ playerId: 'alice', reason: 'cleanup' });
     expect(result.isError).to.not.equal(true);
@@ -575,8 +576,8 @@ describe('destroy tool — ensemble scope (#287)', function () {
   it('single-player mode refuses self-destroy', async function () {
     const ensemble = 'destroy-single-self';
     const { client } = makeClient({ ensemble, players: ['operator'] });
-    const call = extractHandler((server) =>
-      registerDestroyTool(server, client, testConfig(ensemble), () => 'operator', fakeHandle),
+    const call = extractHandler(
+      buildDestroyTool(client, testConfig(ensemble), () => 'operator', fakeHandle),
     );
     const result = await call({ playerId: 'operator' });
     expect(result.isError).to.equal(true);
@@ -595,8 +596,8 @@ describe('destroy tool — ensemble scope (#287)', function () {
       players: ['alice', 'bob'],
       includeConductor: true,
     });
-    const call = extractHandler((server) =>
-      registerDestroyTool(server, client, testConfig(ensemble), () => 'operator', fakeHandle),
+    const call = extractHandler(
+      buildDestroyTool(client, testConfig(ensemble), () => 'operator', fakeHandle),
     );
     const result = await call({ playerId: '' });
     expect(result.isError).to.equal(true);
@@ -623,8 +624,8 @@ describe('destroy tool — ensemble scope (#287)', function () {
       includeConductor: true,
       failOnUpdate: new Set([aliceWfId]),
     });
-    const call = extractHandler((server) =>
-      registerDestroyTool(server, client, testConfig(ensemble), () => 'operator', fakeHandle),
+    const call = extractHandler(
+      buildDestroyTool(client, testConfig(ensemble), () => 'operator', fakeHandle),
     );
     const result = await call({});
     // The tool itself succeeds — `Promise.allSettled` doesn't throw, and
@@ -657,8 +658,8 @@ describe('destroy tool — ensemble scope (#287)', function () {
       includeConductor: true,
       failOnUpdate: new Set([aliceWfId, bobWfId]),
     });
-    const call = extractHandler((server) =>
-      registerDestroyTool(server, client, testConfig(ensemble), () => 'operator', fakeHandle),
+    const call = extractHandler(
+      buildDestroyTool(client, testConfig(ensemble), () => 'operator', fakeHandle),
     );
     const result = await call({});
     expect(result.isError).to.not.equal(true);
@@ -679,8 +680,8 @@ describe('pause tool (#287)', function () {
   it('signals setPaused=true on every session and pauses maestro + scheduler', async function () {
     const ensemble = 'pause-basic';
     const { client, calls } = makeClient({ ensemble, players: ['alice', 'bob'] });
-    const call = extractHandler((server) =>
-      registerPauseTool(server, client, testConfig(ensemble), () => 'conductor'),
+    const call = extractHandler(
+      buildPauseTool(client, testConfig(ensemble), () => 'conductor'),
     );
     const result = await call({});
     expect(result.isError).to.not.equal(true);
@@ -703,8 +704,8 @@ describe('pause tool (#287)', function () {
   it('surfaces maestro + scheduler in the response when both are present', async function () {
     const ensemble = 'pause-bits';
     const { client } = makeClient({ ensemble, players: ['alice'] });
-    const call = extractHandler((server) =>
-      registerPauseTool(server, client, testConfig(ensemble), () => 'conductor'),
+    const call = extractHandler(
+      buildPauseTool(client, testConfig(ensemble), () => 'conductor'),
     );
     const result = await call({});
     expect(result.isError).to.not.equal(true);
@@ -723,8 +724,8 @@ describe('pause tool (#287)', function () {
       hasScheduler: false,
       hasMaestroHub: false,
     });
-    const call = extractHandler((server) =>
-      registerPauseTool(server, client, testConfig(ensemble), () => 'conductor'),
+    const call = extractHandler(
+      buildPauseTool(client, testConfig(ensemble), () => 'conductor'),
     );
     const result = await call({});
     expect(result.isError).to.not.equal(true);
@@ -744,8 +745,8 @@ describe('pause tool (#287)', function () {
       players: ['alice', 'bob'],
       failOnSignal: new Set([`agent-session-${ensemble}-alice`]),
     });
-    const call = extractHandler((server) =>
-      registerPauseTool(server, client, testConfig(ensemble), () => 'conductor'),
+    const call = extractHandler(
+      buildPauseTool(client, testConfig(ensemble), () => 'conductor'),
     );
     const result = await call({});
     // Tool itself succeeds — allSettled absorbs individual failures.

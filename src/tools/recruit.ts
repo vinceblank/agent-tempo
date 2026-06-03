@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { spawnSync } from 'child_process';
 import { Config, conductorWorkflowId, isDevMode } from '../config';
@@ -7,7 +6,7 @@ import { AGENT_TYPES, AgentType, MOCK_MODES } from '../types';
 import { resolveSession } from './resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
 import type { OutboxEntryInput, HostInfo, MockMode } from '../types';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { resolveAgentType, listAgentTypes } from '../ensemble/agent-types';
 import { PLAYER_NAME_MAX, MESSAGE_MAX, PATH_MAX, validatePlayerName } from '../utils/validation';
 import { probeSdkInstall } from '../utils/sdk-probe';
@@ -52,15 +51,14 @@ export interface RegisterRecruitToolDeps {
   listHostsFn?: (client: Client) => Promise<HostInfo[]>;
 }
 
-export function registerRecruitTool(
-  server: McpServer,
+export function buildRecruitTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
   handle: WorkflowHandle,
   ownAgentType: AgentType = 'claude',
   deps: RegisterRecruitToolDeps = {},
-) {
+): TempoToolDescriptor {
   // Lazy default — only imports utils/hosts when actually called, so the
   // MCP server's module load graph doesn't drag the whole join layer
   // into every consumer at import time.
@@ -73,11 +71,10 @@ export function registerRecruitTool(
         taskQueue: config.taskQueue,
       });
     });
-  defineTool(
-    server,
-    'recruit',
-    `Start a new named session in a directory. Rejects if the name is already active. Supports Claude Code or Copilot CLI agents. Defaults to "${ownAgentType}" (same as this session).`,
-    {
+  return {
+    name: 'recruit',
+    description: `Start a new named session in a directory. Rejects if the name is already active. Supports Claude Code or Copilot CLI agents. Defaults to "${ownAgentType}" (same as this session).`,
+    params: {
       workDir: z.string().max(PATH_MAX).describe('The working directory for the new session'),
       name: z.string().max(PLAYER_NAME_MAX).describe('Name for the new session'),
       conductor: z.boolean().optional()
@@ -106,7 +103,7 @@ export function registerRecruitTool(
       dangerouslySkipPermissions: z.boolean().optional()
         .describe('claude-code-headless only. When true, passes `--dangerously-skip-permissions` to `claude -p` instead of `--permission-mode`. Use only in sandboxed/trusted contexts. Mutually exclusive with `permissionMode`.'),
     },
-    async (args) => {
+    handler: async (args) => {
       const { workDir, name, initialMessage } = args as {
         workDir: string;
         name: string;
@@ -385,7 +382,7 @@ export function registerRecruitTool(
         return fail(`Failed to recruit: ${formatError(err)}`);
       }
     },
-  );
+  };
 }
 
 // ────────────────────────────────────────────────────────────────────────

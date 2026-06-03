@@ -6,28 +6,25 @@
  * attachment holder, preferred host, and in-flight count.
  */
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config } from '../config';
 import type { AttachmentInfo } from '../types';
 import { resolveSession } from './resolve';
 import { attachmentInfoQuery } from '../workflows/signals';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { PLAYER_NAME_MAX, validatePlayerName } from '../utils/validation';
 
-export function registerAttachmentInfoTool(
-  server: McpServer,
+export function buildAttachmentInfoTool(
   client: Client,
   config: Config,
-) {
-  defineTool(
-    server,
-    'attachment_info',
-    'Query the V2 attachment lifecycle state of a session — phase (booting/attached/processing/awaiting/draining/detached/gone), current attachment holder (host + adapter + lease expiry), preferred host, and in-flight message count. Read-only diagnostic.',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'attachment_info',
+    description: 'Query the V2 attachment lifecycle state of a session — phase (booting/attached/processing/awaiting/draining/detached/gone), current attachment holder (host + adapter + lease expiry), preferred host, and in-flight message count. Read-only diagnostic.',
+    params: {
       playerId: z.string().max(PLAYER_NAME_MAX).describe('The player name to inspect'),
     },
-    async (args) => {
+    handler: async (args) => {
       const { playerId } = args as { playerId: string };
 
       const nameError = validatePlayerName(playerId);
@@ -58,5 +55,5 @@ export function registerAttachmentInfoTool(
         return fail(`Failed to query attachment info: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

@@ -20,7 +20,8 @@
 import { expect } from 'chai';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Client, WorkflowHandle } from '@temporalio/client';
-import { registerRestartTool } from '../src/tools/restart';
+import { renderToMcp, type TempoToolDescriptor } from '../src/tools/descriptor';
+import { buildRestartTool } from '../src/tools/restart';
 import type { AttachmentInfo } from '../src/types';
 
 type ToolHandler = (args: Record<string, any>) => Promise<{
@@ -30,12 +31,12 @@ type ToolHandler = (args: Record<string, any>) => Promise<{
 
 const asName = (n: unknown) => typeof n === 'string' ? n : (n as any).name;
 
-function extractHandler(reg: (server: McpServer) => void): ToolHandler {
+function extractHandler(descriptor: TempoToolDescriptor): ToolHandler {
   let captured: Function | undefined;
   const fake = {
     tool: (_n: unknown, _d: unknown, _s: unknown, h: Function) => { captured = h; },
   } as unknown as McpServer;
-  reg(fake);
+  renderToMcp(fake, [descriptor]);
   if (!captured) throw new Error('No handler captured');
   return (args) => captured!(args, {});
 }
@@ -99,8 +100,8 @@ describe('restart tool host routing (PR-F)', function () {
   it('threads `host` into RestartOutboxEntry.host when supplied', async function () {
     const client = makeTargetClient({ attachedHost: 'localhost-test' });
     const { handle, entries } = makeCaptureHandle();
-    const call = extractHandler((s) =>
-      registerRestartTool(s, client, testConfig as any, () => 'invoker', handle),
+    const call = extractHandler(
+      buildRestartTool(client, testConfig as any, () => 'invoker', handle),
     );
     const result = await call({ playerId: 'target', host: 'other-host' });
     expect(result.isError).to.not.equal(true);
@@ -113,8 +114,8 @@ describe('restart tool host routing (PR-F)', function () {
   it('omits `host` from the entry when not supplied (downstream chooses)', async function () {
     const client = makeTargetClient();
     const { handle, entries } = makeCaptureHandle();
-    const call = extractHandler((s) =>
-      registerRestartTool(s, client, testConfig as any, () => 'invoker', handle),
+    const call = extractHandler(
+      buildRestartTool(client, testConfig as any, () => 'invoker', handle),
     );
     await call({ playerId: 'target' });
     const entry = entries[0].args as any;
@@ -124,8 +125,8 @@ describe('restart tool host routing (PR-F)', function () {
   it('forwards invokerPlayerId from getPlayerId()', async function () {
     const client = makeTargetClient();
     const { handle, entries } = makeCaptureHandle();
-    const call = extractHandler((s) =>
-      registerRestartTool(s, client, testConfig as any, () => 'my-tempo-eng', handle),
+    const call = extractHandler(
+      buildRestartTool(client, testConfig as any, () => 'my-tempo-eng', handle),
     );
     await call({ playerId: 'target' });
     expect((entries[0].args as any).invokerPlayerId).to.equal('my-tempo-eng');
@@ -134,8 +135,8 @@ describe('restart tool host routing (PR-F)', function () {
   it('rejects cross-host force without confirmStealFromHost (guard fires before enqueue)', async function () {
     const client = makeTargetClient({ attachedHost: 'remote-host' });
     const { handle, entries } = makeCaptureHandle();
-    const call = extractHandler((s) =>
-      registerRestartTool(s, client, testConfig as any, () => 'invoker', handle),
+    const call = extractHandler(
+      buildRestartTool(client, testConfig as any, () => 'invoker', handle),
     );
     const result = await call({ playerId: 'target', force: true });
     expect(result.isError).to.be.true;
@@ -146,8 +147,8 @@ describe('restart tool host routing (PR-F)', function () {
   it('allows cross-host force with matching confirmStealFromHost', async function () {
     const client = makeTargetClient({ attachedHost: 'remote-host' });
     const { handle, entries } = makeCaptureHandle();
-    const call = extractHandler((s) =>
-      registerRestartTool(s, client, testConfig as any, () => 'invoker', handle),
+    const call = extractHandler(
+      buildRestartTool(client, testConfig as any, () => 'invoker', handle),
     );
     const result = await call({
       playerId: 'target',

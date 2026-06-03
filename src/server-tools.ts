@@ -20,49 +20,50 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { Config } from './config';
 import { AgentType } from './types';
-import { registerEnsembleTool } from './tools/ensemble';
-import { registerCueTool } from './tools/cue';
-import { registerSetPartTool } from './tools/set-part';
-import { registerListenTool } from './tools/listen';
-import { registerRecruitTool } from './tools/recruit';
-import { registerReportTool } from './tools/report';
-import { registerSetNameTool } from './tools/set-name';
-import { registerScheduleTool } from './tools/schedule';
-import { registerUnscheduleTool } from './tools/unschedule';
-import { registerSchedulesTool } from './tools/schedules';
-import { registerSaveLineupTool } from './tools/save-lineup';
-import { registerLoadLineupTool } from './tools/load-lineup';
-import { registerAgentTypesTool } from './tools/agent-types';
-import { registerWhoAmITool } from './tools/who-am-i';
-import { registerBroadcastTool } from './tools/broadcast';
-import { registerRecallTool } from './tools/recall';
-import { registerReleaseTool } from './tools/release';
-import { registerPauseTool } from './tools/pause';
-import { registerPlayTool } from './tools/play';
-import { registerShutdownTool } from './tools/shutdown';
-import { registerRestoreTool } from './tools/restore';
-import { registerQualityGateTool } from './tools/quality-gate';
-import { registerEvaluateGateTool } from './tools/evaluate-gate';
-import { registerGatesTool } from './tools/gates';
-import { registerWorktreeTool } from './tools/worktree';
-import { registerStageTool } from './tools/stage';
-import { registerStagesTool } from './tools/stages';
-import { registerCancelStageTool } from './tools/cancel-stage';
-import { registerRestartTool } from './tools/restart';
-import { registerDestroyTool } from './tools/destroy';
-import { registerMigrateTool } from './tools/migrate';
-import { registerAttachmentInfoTool } from './tools/attachment-info';
-import { registerHostsTool } from './tools/hosts';
-import { registerSetEnsembleDescriptionTool } from './tools/set-ensemble-description';
+import { renderToMcp, type TempoToolDescriptor } from './tools/descriptor';
+import { buildEnsembleTool } from './tools/ensemble';
+import { buildCueTool } from './tools/cue';
+import { buildSetPartTool } from './tools/set-part';
+import { buildListenTool } from './tools/listen';
+import { buildRecruitTool } from './tools/recruit';
+import { buildReportTool } from './tools/report';
+import { buildSetNameTool } from './tools/set-name';
+import { buildScheduleTool } from './tools/schedule';
+import { buildUnscheduleTool } from './tools/unschedule';
+import { buildSchedulesTool } from './tools/schedules';
+import { buildSaveLineupTool } from './tools/save-lineup';
+import { buildLoadLineupTool } from './tools/load-lineup';
+import { buildAgentTypesTool } from './tools/agent-types';
+import { buildWhoAmITool } from './tools/who-am-i';
+import { buildBroadcastTool } from './tools/broadcast';
+import { buildRecallTool } from './tools/recall';
+import { buildReleaseTool } from './tools/release';
+import { buildPauseTool } from './tools/pause';
+import { buildPlayTool } from './tools/play';
+import { buildShutdownTool } from './tools/shutdown';
+import { buildRestoreTool } from './tools/restore';
+import { buildQualityGateTool } from './tools/quality-gate';
+import { buildEvaluateGateTool } from './tools/evaluate-gate';
+import { buildGatesTool } from './tools/gates';
+import { buildWorktreeTool } from './tools/worktree';
+import { buildStageTool } from './tools/stage';
+import { buildStagesTool } from './tools/stages';
+import { buildCancelStageTool } from './tools/cancel-stage';
+import { buildRestartTool } from './tools/restart';
+import { buildDestroyTool } from './tools/destroy';
+import { buildMigrateTool } from './tools/migrate';
+import { buildAttachmentInfoTool } from './tools/attachment-info';
+import { buildHostsTool } from './tools/hosts';
+import { buildSetEnsembleDescriptionTool } from './tools/set-ensemble-description';
 // #334 PR-1 — player saveable state (save_state / fetch_state / clear_state).
-import { registerSaveStateTool } from './tools/save-state';
-import { registerFetchStateTool } from './tools/fetch-state';
-import { registerClearStateTool } from './tools/clear-state';
+import { buildSaveStateTool } from './tools/save-state';
+import { buildFetchStateTool } from './tools/fetch-state';
+import { buildClearStateTool } from './tools/clear-state';
 // #318 — ensemble-shared coat-check (put / get / list / evict).
-import { registerCoatCheckPutTool } from './tools/coat-check-put';
-import { registerCoatCheckGetTool } from './tools/coat-check-get';
-import { registerCoatCheckListTool } from './tools/coat-check-list';
-import { registerCoatCheckEvictTool } from './tools/coat-check-evict';
+import { buildCoatCheckPutTool } from './tools/coat-check-put';
+import { buildCoatCheckGetTool } from './tools/coat-check-get';
+import { buildCoatCheckListTool } from './tools/coat-check-list';
+import { buildCoatCheckEvictTool } from './tools/coat-check-evict';
 
 /**
  * Identity + state context every tool registration consumes. The two
@@ -102,60 +103,70 @@ export interface RegisterAllTempoToolsOpts {
  * `opts.isConductor` — non-conductor players don't see them on either
  * surface.
  */
+export function buildAllTempoTools(opts: RegisterAllTempoToolsOpts): TempoToolDescriptor[] {
+  const { client, config, getPlayerId, setPlayerId, handle, workflowId, ownAgentType, isConductor } = opts;
+
+  const tools: TempoToolDescriptor[] = [
+    buildEnsembleTool(client, config, getPlayerId, workflowId),
+    buildCueTool(client, config, getPlayerId, handle),
+    buildSetPartTool(handle),
+    buildSetNameTool(client, config, handle, getPlayerId, setPlayerId),
+    buildListenTool(handle),
+    buildRecruitTool(client, config, getPlayerId, handle, ownAgentType),
+    buildReportTool(handle),
+    buildScheduleTool(client, config, getPlayerId),
+    buildUnscheduleTool(client, config),
+    buildSchedulesTool(client, config),
+    buildSaveLineupTool(client, config, getPlayerId, isConductor),
+    buildLoadLineupTool(client, config, getPlayerId, ownAgentType, handle, setPlayerId, isConductor),
+    buildAgentTypesTool(),
+    buildWhoAmITool(handle, getPlayerId),
+    buildBroadcastTool(client, config, getPlayerId, handle),
+    buildRecallTool(handle, getPlayerId),
+    buildReleaseTool(client, config, getPlayerId, handle),
+    buildPauseTool(client, config, getPlayerId),
+    buildPlayTool(client, config, getPlayerId),
+    buildShutdownTool(client, config, getPlayerId),
+    buildRestoreTool(client, config, getPlayerId),
+    buildRestartTool(client, config, getPlayerId, handle),
+    buildDestroyTool(client, config, getPlayerId, handle),
+    buildMigrateTool(client, config, getPlayerId, handle),
+    buildAttachmentInfoTool(client, config),
+    buildHostsTool(client, config),
+    buildSetEnsembleDescriptionTool(client, config),
+    // #334 PR-1 — owner-write / peer-read player saveable state.
+    buildSaveStateTool(handle, getPlayerId),
+    buildFetchStateTool(client, config, handle, getPlayerId),
+    buildClearStateTool(handle),
+    // #318 — ensemble-shared coat-check (put/get/list/evict). Any player can put;
+    // any player can get/list; owner-or-conductor can evict. Audit identity is
+    // set at the tool layer via getPlayerId() — no playerId arg on any schema.
+    buildCoatCheckPutTool(client, config, getPlayerId),
+    buildCoatCheckGetTool(client, config, getPlayerId),
+    buildCoatCheckListTool(client, config),
+    buildCoatCheckEvictTool(client, config, getPlayerId),
+  ];
+
+  if (isConductor) {
+    tools.push(
+      buildQualityGateTool(handle, getPlayerId),
+      buildEvaluateGateTool(handle, getPlayerId),
+      buildGatesTool(handle),
+      buildWorktreeTool(client, config, handle, getPlayerId),
+      buildStageTool(handle, getPlayerId),
+      buildStagesTool(handle),
+      buildCancelStageTool(handle),
+    );
+  }
+
+  return tools;
+}
+
 export function registerAllTempoTools(
   server: McpServer,
   opts: RegisterAllTempoToolsOpts,
 ): void {
-  const { client, config, getPlayerId, setPlayerId, handle, workflowId, ownAgentType, isConductor } = opts;
-
-  registerEnsembleTool(server, client, config, getPlayerId, workflowId);
-  registerCueTool(server, client, config, getPlayerId, handle);
-  registerSetPartTool(server, handle);
-  registerSetNameTool(server, client, config, handle, getPlayerId, setPlayerId);
-  registerListenTool(server, handle);
-  registerRecruitTool(server, client, config, getPlayerId, handle, ownAgentType);
-  registerReportTool(server, handle);
-  registerScheduleTool(server, client, config, getPlayerId);
-  registerUnscheduleTool(server, client, config);
-  registerSchedulesTool(server, client, config);
-  registerSaveLineupTool(server, client, config, getPlayerId, isConductor);
-  registerLoadLineupTool(server, client, config, getPlayerId, ownAgentType, handle, setPlayerId, isConductor);
-  registerAgentTypesTool(server);
-  registerWhoAmITool(server, handle, getPlayerId);
-  registerBroadcastTool(server, client, config, getPlayerId, handle);
-  registerRecallTool(server, handle, getPlayerId);
-  registerReleaseTool(server, client, config, getPlayerId, handle);
-  registerPauseTool(server, client, config, getPlayerId);
-  registerPlayTool(server, client, config, getPlayerId);
-  registerShutdownTool(server, client, config, getPlayerId);
-  registerRestoreTool(server, client, config, getPlayerId);
-  registerRestartTool(server, client, config, getPlayerId, handle);
-  registerDestroyTool(server, client, config, getPlayerId, handle);
-  registerMigrateTool(server, client, config, getPlayerId, handle);
-  registerAttachmentInfoTool(server, client, config);
-  registerHostsTool(server, client, config);
-  registerSetEnsembleDescriptionTool(server, client, config);
-  // #334 PR-1 — owner-write / peer-read player saveable state.
-  registerSaveStateTool(server, handle, getPlayerId);
-  registerFetchStateTool(server, client, config, handle, getPlayerId);
-  registerClearStateTool(server, handle);
-  // #318 — ensemble-shared coat-check (put/get/list/evict). Any player can put;
-  // any player can get/list; owner-or-conductor can evict. Audit identity is
-  // set at the tool layer via getPlayerId() — no playerId arg on any schema.
-  registerCoatCheckPutTool(server, client, config, getPlayerId);
-  registerCoatCheckGetTool(server, client, config, getPlayerId);
-  registerCoatCheckListTool(server, client, config);
-  registerCoatCheckEvictTool(server, client, config, getPlayerId);
-
-  if (isConductor) {
-    registerQualityGateTool(server, handle, getPlayerId);
-    registerEvaluateGateTool(server, handle, getPlayerId);
-    registerGatesTool(server, handle);
-    registerWorktreeTool(server, client, config, handle, getPlayerId);
-    registerStageTool(server, handle, getPlayerId);
-    registerStagesTool(server, handle);
-    registerCancelStageTool(server, handle);
-  }
+  renderToMcp(server, buildAllTempoTools(opts));
 }
 
 /**

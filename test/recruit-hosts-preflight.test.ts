@@ -15,10 +15,11 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Client, WorkflowHandle } from '@temporalio/client';
 import type { HostInfo, HostProfile } from '../src/types';
 import { getTestEnsemble } from './helpers';
+import { renderToMcp } from '../src/tools/descriptor';
 import {
   checkHostPreflight,
   nearestHostname,
-  registerRecruitTool,
+  buildRecruitTool,
 } from '../src/tools/recruit';
 
 // ────────────────────────────────────────────────────────────────────────
@@ -225,7 +226,7 @@ describe('registerRecruitTool host pre-flight (M15)', function () {
     const { handle, captures: outboxEntries } = makeFakeHandle();
     const listHostsFn = async () =>
       typeof hosts === 'function' ? hosts() : hosts;
-    registerRecruitTool(server, client, cfg, () => 'test-player', handle, 'claude', { listHostsFn });
+    renderToMcp(server, [buildRecruitTool(client, cfg, () => 'test-player', handle, 'claude', { listHostsFn })]);
     return { capture, outboxEntries };
   }
 

@@ -14,7 +14,8 @@
 import { describe, it, expect } from 'vitest';
 import type { Client } from '@temporalio/client';
 import type { Config } from '../../src/config';
-import { registerRestartTool } from '../../src/tools/restart';
+import { renderToMcp } from '../../src/tools/descriptor';
+import { buildRestartTool } from '../../src/tools/restart';
 import { captureRegistration, makeFakeUpdateHandle } from './_helpers';
 
 const TEST_CONFIG: Config = {
@@ -53,7 +54,7 @@ function makeFakeClient(): Client {
 describe('restart tool — loadFromState + transcript Zod schema (#334 PR-2)', () => {
   it('Zod schema accepts loadFromState: true', () => {
     const { schemas } = captureRegistration((server) =>
-      registerRestartTool(server, makeFakeClient(), TEST_CONFIG, () => 'tempo-eng', makeFakeOwnHandle().handle),
+      renderToMcp(server, [buildRestartTool(makeFakeClient(), TEST_CONFIG, () => 'tempo-eng', makeFakeOwnHandle().handle)]),
     );
     expect(schemas.loadFromState.safeParse(true).success).toBe(true);
     expect(schemas.loadFromState.safeParse(false).success).toBe(true);
@@ -61,7 +62,7 @@ describe('restart tool — loadFromState + transcript Zod schema (#334 PR-2)', (
 
   it('Zod schema accepts loadFromState: "valid_-key1"', () => {
     const { schemas } = captureRegistration((server) =>
-      registerRestartTool(server, makeFakeClient(), TEST_CONFIG, () => 'tempo-eng', makeFakeOwnHandle().handle),
+      renderToMcp(server, [buildRestartTool(makeFakeClient(), TEST_CONFIG, () => 'tempo-eng', makeFakeOwnHandle().handle)]),
     );
     expect(schemas.loadFromState.safeParse('main').success).toBe(true);
     expect(schemas.loadFromState.safeParse('valid_-key1').success).toBe(true);
@@ -69,7 +70,7 @@ describe('restart tool — loadFromState + transcript Zod schema (#334 PR-2)', (
 
   it('Zod schema rejects loadFromState slot keys with bad characters', () => {
     const { schemas } = captureRegistration((server) =>
-      registerRestartTool(server, makeFakeClient(), TEST_CONFIG, () => 'tempo-eng', makeFakeOwnHandle().handle),
+      renderToMcp(server, [buildRestartTool(makeFakeClient(), TEST_CONFIG, () => 'tempo-eng', makeFakeOwnHandle().handle)]),
     );
     expect(schemas.loadFromState.safeParse('has space').success).toBe(false);
     expect(schemas.loadFromState.safeParse('bad/slash').success).toBe(false);
@@ -78,7 +79,7 @@ describe('restart tool — loadFromState + transcript Zod schema (#334 PR-2)', (
 
   it('Zod schema rejects loadFromState slot keys longer than 32 chars', () => {
     const { schemas } = captureRegistration((server) =>
-      registerRestartTool(server, makeFakeClient(), TEST_CONFIG, () => 'tempo-eng', makeFakeOwnHandle().handle),
+      renderToMcp(server, [buildRestartTool(makeFakeClient(), TEST_CONFIG, () => 'tempo-eng', makeFakeOwnHandle().handle)]),
     );
     const tooLong = 'a'.repeat(33);
     expect(schemas.loadFromState.safeParse(tooLong).success).toBe(false);
@@ -87,7 +88,7 @@ describe('restart tool — loadFromState + transcript Zod schema (#334 PR-2)', (
 
   it('Zod schema accepts transcript: "suppress" | "replay" only', () => {
     const { schemas } = captureRegistration((server) =>
-      registerRestartTool(server, makeFakeClient(), TEST_CONFIG, () => 'tempo-eng', makeFakeOwnHandle().handle),
+      renderToMcp(server, [buildRestartTool(makeFakeClient(), TEST_CONFIG, () => 'tempo-eng', makeFakeOwnHandle().handle)]),
     );
     expect(schemas.transcript.safeParse('suppress').success).toBe(true);
     expect(schemas.transcript.safeParse('replay').success).toBe(true);
@@ -98,7 +99,7 @@ describe('restart tool — loadFromState + transcript Zod schema (#334 PR-2)', (
   it('threads loadFromState + transcript through to the submitOutbox payload', async () => {
     const { handle, calls } = makeFakeOwnHandle();
     const { call } = captureRegistration((server) =>
-      registerRestartTool(server, makeFakeClient(), TEST_CONFIG, () => 'tempo-eng', handle),
+      renderToMcp(server, [buildRestartTool(makeFakeClient(), TEST_CONFIG, () => 'tempo-eng', handle)]),
     );
     const result = await call({
       playerId: 'peer',
@@ -120,7 +121,7 @@ describe('restart tool — loadFromState + transcript Zod schema (#334 PR-2)', (
   it('omits loadFromState + transcript from the payload when not passed (backward compat)', async () => {
     const { handle, calls } = makeFakeOwnHandle();
     const { call } = captureRegistration((server) =>
-      registerRestartTool(server, makeFakeClient(), TEST_CONFIG, () => 'tempo-eng', handle),
+      renderToMcp(server, [buildRestartTool(makeFakeClient(), TEST_CONFIG, () => 'tempo-eng', handle)]),
     );
     await call({ playerId: 'peer' });
     expect(calls).toHaveLength(1);
@@ -131,7 +132,7 @@ describe('restart tool — loadFromState + transcript Zod schema (#334 PR-2)', (
   it('handles loadFromState: true (boolean form, not string)', async () => {
     const { handle, calls } = makeFakeOwnHandle();
     const { call } = captureRegistration((server) =>
-      registerRestartTool(server, makeFakeClient(), TEST_CONFIG, () => 'tempo-eng', handle),
+      renderToMcp(server, [buildRestartTool(makeFakeClient(), TEST_CONFIG, () => 'tempo-eng', handle)]),
     );
     await call({ playerId: 'peer', loadFromState: true });
     expect(calls[0].payload.loadFromState).toBe(true);

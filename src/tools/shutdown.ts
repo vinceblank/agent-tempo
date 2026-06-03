@@ -10,32 +10,29 @@
  * parallel; a slow / dead session can't block peers from draining.
  */
 import { z } from 'zod';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@temporalio/client';
 import { Config } from '../config';
 import { requestDetachSignal } from '../workflows/signals';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { MAX_DETACH_DEADLINE_MS, DEFAULT_RESTART_DETACH_DEADLINE_MS } from '../utils/validation';
 import { pauseMaestroAndScheduler, signalAllSessions } from '../utils/ensemble-ops';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:shutdown]', ...args);
 
-export function registerShutdownTool(
-  server: McpServer,
+export function buildShutdownTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
-) {
-  defineTool(
-    server,
-    'shutdown',
-    'Gracefully shut down the ensemble: request detach on every session, pause the scheduler, and pause the maestro. Workflows survive in `detached` phase. Pair with `restore` to come back up, or `destroy` (no player arg) to terminate. Does not touch your own session.',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'shutdown',
+    description: 'Gracefully shut down the ensemble: request detach on every session, pause the scheduler, and pause the maestro. Workflows survive in `detached` phase. Pair with `restore` to come back up, or `destroy` (no player arg) to terminate. Does not touch your own session.',
+    params: {
       deadlineMs: z.number().min(0).max(MAX_DETACH_DEADLINE_MS).optional().describe(
         `Max drain time per session before force-detach (default ${DEFAULT_RESTART_DETACH_DEADLINE_MS}, max ${MAX_DETACH_DEADLINE_MS}).`,
       ),
     },
-    async (args) => {
+    handler: async (args) => {
       const { deadlineMs = DEFAULT_RESTART_DETACH_DEADLINE_MS } = args as { deadlineMs?: number };
       const callerId = getPlayerId();
 
@@ -71,5 +68,5 @@ export function registerShutdownTool(
         return fail(`Failed to shut down ensemble: ${formatError(err)}`);
       }
     },
-  );
+  };
 }

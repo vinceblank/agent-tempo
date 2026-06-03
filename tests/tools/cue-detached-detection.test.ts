@@ -34,7 +34,8 @@ vi.mock('../../src/activities/resolve', () => ({
   scanEnsembleSessions: vi.fn().mockResolvedValue([]),
 }));
 
-import { registerCueTool, formatDetachedDeliveryError } from '../../src/tools/cue';
+import { renderToMcp } from '../../src/tools/descriptor';
+import { buildCueTool, formatDetachedDeliveryError } from '../../src/tools/cue';
 import { resolveSession } from '../../src/tools/resolve';
 import { queryHandleWithTimeout } from '../../src/utils/query-timeout';
 import { scanEnsembleSessions } from '../../src/activities/resolve';
@@ -69,7 +70,7 @@ function captureTool(): {
   const fakeClient = {} as Client;
   const fakeConfig: Config = { ensemble: 'test-ensemble' } as Config;
 
-  registerCueTool(fakeServer, fakeClient, fakeConfig, () => 'cue-sender', ownHandle);
+  renderToMcp(fakeServer, [buildCueTool(fakeClient, fakeConfig, () => 'cue-sender', ownHandle)]);
 
   if (!captured) throw new Error('cue did not register a handler');
   return { call: captured, executeUpdate };

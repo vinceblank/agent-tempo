@@ -1,26 +1,23 @@
 import { z } from 'zod';
 import { Cron } from 'croner';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { Config, schedulerWorkflowId } from '../config';
 import { parseDuration } from '../utils/duration';
 import { resolveSession } from './resolve';
-import { defineTool, ok, fail, formatError } from './helpers';
+import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { SCHEDULE_NAME_MAX, SCHEDULE_MESSAGE_MAX, PLAYER_NAME_MAX, CRON_EXPRESSION_MAX } from '../utils/validation';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:schedule]', ...args);
 
-export function registerScheduleTool(
-  server: McpServer,
+export function buildScheduleTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
-) {
-  defineTool(
-    server,
-    'schedule',
-    'Schedule a message to be sent to a player at a specific time, after a delay, on a recurring interval, or via cron expression.',
-    {
+): TempoToolDescriptor {
+  return {
+    name: 'schedule',
+    description: 'Schedule a message to be sent to a player at a specific time, after a delay, on a recurring interval, or via cron expression.',
+    params: {
       name: z.string().max(SCHEDULE_NAME_MAX).describe('Unique name for this schedule'),
       message: z.string().max(SCHEDULE_MESSAGE_MAX).describe('The message to deliver'),
       target: z.string().max(PLAYER_NAME_MAX).describe('Player name to deliver to ("self" = this session)'),
@@ -32,7 +29,7 @@ export function registerScheduleTool(
       until: z.string().optional().describe('ISO datetime — stop recurring after this time'),
       count: z.number().optional().describe('Max number of deliveries for recurring schedules'),
     },
-    async (args) => {
+    handler: async (args) => {
       const { name, message, at, delay, every, cron, timezone, until, count } = args as {
         name: string;
         message: string;
@@ -174,5 +171,5 @@ export function registerScheduleTool(
         return fail(`Failed to create schedule: ${formatError(err)}`);
       }
     },
-  );
+  };
 }
