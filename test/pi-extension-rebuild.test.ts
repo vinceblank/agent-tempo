@@ -14,6 +14,7 @@ import { expect } from 'chai';
 import type { Client } from '@temporalio/client';
 import type { ExtensionAPI } from '../src/pi/pi-types';
 import piExtension, {
+  createPiExtension,
   __setPiClientFactoryForTests,
   __resetPiRuntimesForTests,
 } from '../src/pi/extension';
@@ -133,5 +134,49 @@ describe('Pi extension — Option-C reason-discriminated teardown', () => {
     await a.fire('session_shutdown', { reason: 'some-future-reason' });
 
     expect(signalCount(rec, adapterExitedSignal)).to.equal(0);
+  });
+});
+
+describe('Pi extension — MD-C tool_call gate (headless only)', () => {
+  beforeEach(() => { process.env[ENV.PLAYER_NAME] = 'pi-gate-test'; });
+  afterEach(() => { __resetPiRuntimesForTests(); delete process.env[ENV.PLAYER_NAME]; });
+
+  /** Build a headless/interactive extension and return a `fire('tool_call', toolName)`. */
+  function gateFor(mode: 'headless' | 'interactive', toolAccess: 'restricted' | 'standard' | 'full') {
+    const rec: Recorder = { updates: [], signals: [] };
+    __setPiClientFactoryForTests(async () => makeFakeClient(rec));
+    const p = makeFakePi();
+    createPiExtension({ mode, toolAccess })(p.pi);
+    return (toolName: string) => p.fire('tool_call', { toolName }) as { block?: boolean } | undefined;
+  }
+
+  it("restricted: HARD-BLOCKS the shell/exec class (bash, …) — MD-C floor", () => {
+    const fire = gateFor('headless', 'restricted');
+    for (const t of ['bash', 'shell', 'exec', 'sh', 'run_command']) {
+      const r = fire(t);
+      expect(r, `tool=${t}`).to.include({ block: true });
+    }
+  });
+
+  it('restricted: ALLOWS read/edit/write + agent-tempo tools', () => {
+    const fire = gateFor('headless', 'restricted');
+    for (const t of ['read', 'edit', 'write', 'grep', 'report', 'cue']) {
+      expect((fire(t) ?? {}).block, `tool=${t}`).to.not.equal(true);
+    }
+  });
+
+  it('standard: bash is NOT blocked by the MD-C floor', () => {
+    const fire = gateFor('headless', 'standard');
+    expect((fire('bash') ?? {}).block).to.not.equal(true);
+  });
+
+  it('full: bash is NOT blocked by the MD-C floor', () => {
+    const fire = gateFor('headless', 'full');
+    expect((fire('bash') ?? {}).block).to.not.equal(true);
+  });
+
+  it('interactive: installs NO tool_call gate (human owns their machine)', () => {
+    const fire = gateFor('interactive', 'restricted');
+    expect(fire('bash')).to.equal(undefined); // no handler registered
   });
 });
