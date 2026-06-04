@@ -206,6 +206,20 @@ export interface PlayerSummaryV1 {
   /** Q5.6 — ISO timestamp of the most recent activity. Already on
    * `MaestroPlayerInfo`; passed through verbatim by `toPlayerSummaryV1`. */
   lastActivityAt?: string;
+  /**
+   * 3c Tier-1 coarse observability — the tool the player is currently
+   * executing, or `null` when idle/between tools. Sourced from session
+   * metadata via the heartbeat piggyback (~30s freshness); the live,
+   * fine-grained tail is the off-wire `/inner` side-channel (MD-F). Additive.
+   */
+  currentTool?: string | null;
+  /**
+   * 3c Tier-1 coarse — estimated context tokens in use (pull-only, from Pi's
+   * `getContextUsage()`; `null`/absent right after compaction). Additive.
+   */
+  contextTokens?: number;
+  /** 3c Tier-1 coarse — context usage as a percentage of the model window. Additive. */
+  contextPercent?: number;
 }
 
 // ── §5. SSE framing — event-id token format ─────────────────────────────
@@ -307,6 +321,7 @@ export const SSE_EVENT_KINDS = [
   'flags.changed',
   'schedules.changed',
   'host_profile.changed',
+  'player.activity',
 ] as const;
 
 export type SseEventKind = (typeof SSE_EVENT_KINDS)[number];
@@ -376,7 +391,26 @@ export type TempoEvent =
       type: 'schedules.changed';
       payload: { ensemble: string; schedules: ScheduleEntry[]; at: string };
     })
-  | (SseEventBase & { type: 'host_profile.changed'; payload: HostProfile });
+  | (SseEventBase & { type: 'host_profile.changed'; payload: HostProfile })
+  | (SseEventBase & {
+      type: 'player.activity';
+      /**
+       * 3c Tier-1 coarse activity (MD-F). Emitted by the aggregate poll/diff
+       * when a player's `currentTool` or context usage changes between polls.
+       * `busy/idle` is DERIVED consumer-side from the player's phase
+       * (busy = phase==='processing'); `activityCount`/`lastActivityAt` already
+       * ride `PlayerSummaryV1`. This is the ON-wire coarse tier; the fine,
+       * live inner tail is the off-wire `/inner` side-channel.
+       */
+      payload: {
+        playerId: string;
+        ensemble: string;
+        currentTool: string | null;
+        contextTokens?: number;
+        contextPercent?: number;
+        at: string;
+      };
+    });
 
 // ── §6.1 — `TempoClient.subscribe` API surface ───────────────────────────
 

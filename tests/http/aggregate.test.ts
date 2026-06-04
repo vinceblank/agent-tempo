@@ -110,6 +110,8 @@ describe('diffHostProfiles', () => {
 describe('diffEnsembleSnapshot', () => {
   const baseTrack = () => ({
     playerPhases: new Map<string, string | undefined>(),
+    // 3c Tier-1 — last-seen coarse activity per playerId (currentTool + context).
+    playerCoarse: new Map<string, { currentTool: string | null; contextTokens?: number; contextPercent?: number }>(),
     // #535 — parallel agentType Map. Set on `player.added`, deleted on
     // `player.removed`, consumed by the prior reconstruction in
     // `tick()` so the prior carries the player's real adapter family
@@ -161,6 +163,83 @@ describe('diffEnsembleSnapshot', () => {
     const events = diffEnsembleSnapshot(prev, next, track, at);
     expect(events.find((e) => e.type === 'player.phase_changed')).toBeDefined();
     expect(track.playerPhases.get('a')).toBe('processing');
+  });
+
+  // ── 3c Tier-1 — player.activity (coarse currentTool + context usage) ──────
+  const coarsePlayer = (over: Record<string, unknown> = {}) => ({
+    playerId: 'a', ensemble: 'demo', hostname: 'h', isConductor: false,
+    agentType: 'claude' as const, part: '', workDir: '', phase: 'processing' as const,
+    ...over,
+  });
+  const snapWith = (player: Record<string, unknown>): AggregateEnsembleSnapshot => ({
+    ensemble: 'demo', hasConductor: true,
+    flags: { paused: false, held: false },
+    players: [player as AggregateEnsembleSnapshot['players'][number]],
+    schedules: [],
+    chat: [],
+  });
+
+  it('seeds coarse on player.added WITHOUT a separate player.activity (the add payload carries it)', () => {
+    const track = baseTrack();
+    const next = snapWith(coarsePlayer({ currentTool: 'bash', contextTokens: 1200, contextPercent: 3 }));
+    const events = diffEnsembleSnapshot(null, next, track, at);
+    expect(events.find((e) => e.type === 'player.added')).toBeDefined();
+    expect(events.find((e) => e.type === 'player.activity')).toBeUndefined();
+    expect(track.playerCoarse.get('a')).toEqual({ currentTool: 'bash', contextTokens: 1200, contextPercent: 3 });
+  });
+
+  it('emits player.activity when currentTool changes', () => {
+    const track = baseTrack();
+    track.playerPhases.set('a', 'processing');
+    track.playerCoarse.set('a', { currentTool: 'bash', contextTokens: 1200, contextPercent: 3 });
+    track.flags = { paused: false, held: false };
+    track.schedulesHash = hashOf([]);
+    const prev = snapWith(coarsePlayer({ currentTool: 'bash' }));
+    const next = snapWith(coarsePlayer({ currentTool: 'edit', contextTokens: 1500, contextPercent: 4 }));
+    const events = diffEnsembleSnapshot(prev, next, track, at);
+    const ev = events.find((e) => e.type === 'player.activity');
+    expect(ev).toBeDefined();
+    expect(ev!.payload).toEqual({
+      playerId: 'a', ensemble: 'demo', currentTool: 'edit', contextTokens: 1500, contextPercent: 4, at,
+    });
+    expect(track.playerCoarse.get('a')).toEqual({ currentTool: 'edit', contextTokens: 1500, contextPercent: 4 });
+  });
+
+  it('normalizes idle (currentTool absent) to null and emits on tool→idle', () => {
+    const track = baseTrack();
+    track.playerPhases.set('a', 'processing');
+    track.playerCoarse.set('a', { currentTool: 'bash' });
+    track.flags = { paused: false, held: false };
+    track.schedulesHash = hashOf([]);
+    const next = snapWith(coarsePlayer({})); // no currentTool → idle
+    const events = diffEnsembleSnapshot(snapWith(coarsePlayer({ currentTool: 'bash' })), next, track, at);
+    const ev = events.find((e) => e.type === 'player.activity');
+    expect(ev).toBeDefined();
+    expect((ev!.payload as { currentTool: string | null }).currentTool).toBeNull();
+  });
+
+  it('does NOT emit player.activity when coarse is unchanged', () => {
+    const track = baseTrack();
+    track.playerPhases.set('a', 'processing');
+    track.playerCoarse.set('a', { currentTool: 'bash', contextTokens: 1200, contextPercent: 3 });
+    track.flags = { paused: false, held: false };
+    track.schedulesHash = hashOf([]);
+    const same = snapWith(coarsePlayer({ currentTool: 'bash', contextTokens: 1200, contextPercent: 3 }));
+    const events = diffEnsembleSnapshot(same, same, track, at);
+    expect(events.find((e) => e.type === 'player.activity')).toBeUndefined();
+  });
+
+  it('drops coarse state on player.removed', () => {
+    const track = baseTrack();
+    track.playerPhases.set('a', 'processing');
+    track.playerCoarse.set('a', { currentTool: 'bash' });
+    track.flags = { paused: false, held: false };
+    track.schedulesHash = hashOf([]);
+    const prev = snapWith(coarsePlayer({ currentTool: 'bash' }));
+    const empty: AggregateEnsembleSnapshot = { ...prev, players: [] };
+    const events = diffEnsembleSnapshot(prev, empty, track, at);
+    expect(events.find((e) => e.type === 'player.removed')).toBeDefined();
+    expect(track.playerCoarse.has('a')).toBe(false);
   });
 
   it('emits player.removed when a player drops', () => {

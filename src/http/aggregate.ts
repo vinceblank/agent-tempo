@@ -83,6 +83,37 @@ export class TickSkipped extends Error {
   constructor(reason: string) { super(reason); }
 }
 
+/**
+ * 3c Tier-1 coarse activity snapshot for a single player — the bits the
+ * aggregate diffs to decide whether to emit `player.activity`. `currentTool`
+ * is normalized to `null` when idle/absent; the context fields are `undefined`
+ * when Pi can't report usage (e.g. right after compaction).
+ */
+export interface PlayerCoarse {
+  currentTool: string | null;
+  contextTokens?: number;
+  contextPercent?: number;
+}
+
+/** Extract the coarse-activity tuple from a player summary, normalizing idle → null. */
+export function coarseOf(p: PlayerSummaryV1): PlayerCoarse {
+  return {
+    currentTool: p.currentTool ?? null,
+    ...(p.contextTokens !== undefined ? { contextTokens: p.contextTokens } : {}),
+    ...(p.contextPercent !== undefined ? { contextPercent: p.contextPercent } : {}),
+  };
+}
+
+/** True when two coarse snapshots differ in any field. */
+export function coarseChanged(a: PlayerCoarse | undefined, b: PlayerCoarse): boolean {
+  return (
+    !a ||
+    a.currentTool !== b.currentTool ||
+    a.contextTokens !== b.contextTokens ||
+    a.contextPercent !== b.contextPercent
+  );
+}
+
 /** Per-ensemble tracking state across ticks. */
 interface EnsembleTrack {
   bus: EnsembleEventBus;
@@ -98,6 +129,12 @@ interface EnsembleTrack {
   consecutiveFailures: number;
   /** Last seen player phase, keyed by playerId. */
   playerPhases: Map<string, string | undefined>;
+  /**
+   * 3c Tier-1 — last-seen coarse activity per playerId (currentTool + context
+   * usage). Diffed each poll to emit `player.activity` on change. Seeded on
+   * `player.added`, dropped on `player.removed` — lockstep with `playerPhases`.
+   */
+  playerCoarse: Map<string, PlayerCoarse>;
   /**
    * Adapter family per playerId — used to faithfully reconstruct the
    * prior `AggregateEnsembleSnapshot` view at tick boundaries (see #535).
@@ -222,7 +259,7 @@ export interface DiffEvent {
 export function diffEnsembleSnapshot(
   prev: AggregateEnsembleSnapshot | null,
   next: AggregateEnsembleSnapshot,
-  track: Pick<EnsembleTrack, 'playerPhases' | 'playerAgentTypes' | 'flags' | 'schedulesHash' | 'chatIds' | 'chatIdOrder'>,
+  track: Pick<EnsembleTrack, 'playerPhases' | 'playerCoarse' | 'playerAgentTypes' | 'flags' | 'schedulesHash' | 'chatIds' | 'chatIdOrder'>,
   capturedAt: string,
 ): DiffEvent[] {
   const events: DiffEvent[] = [];
@@ -239,6 +276,9 @@ export function diffEnsembleSnapshot(
     if (!prevPlayers.has(p.playerId)) {
       events.push({ type: 'player.added', payload: p });
       track.playerPhases.set(p.playerId, p.phase);
+      // 3c — seed coarse so the first real change (not the add itself, whose
+      // payload already carries currentTool/context) emits player.activity.
+      track.playerCoarse.set(p.playerId, coarseOf(p));
       // #535 — record the adapter family so the prior reconstruction at
       // the next tick (aggregate.ts ~L600) carries the real agentType
       // instead of a hardcoded `'claude'` stand-in. Treated as immutable
@@ -261,6 +301,25 @@ export function diffEnsembleSnapshot(
       });
       track.playerPhases.set(p.playerId, p.phase);
     }
+    // player.activity (3c Tier-1) — emit when coarse currentTool/context
+    // changes between polls. Distinct from phase_changed (phase vs activity).
+    // Source freshness ~30s (heartbeat metadata piggyback); the live, fine
+    // tail is the off-wire /inner side-channel.
+    const nextCoarse = coarseOf(p);
+    if (coarseChanged(track.playerCoarse.get(p.playerId), nextCoarse)) {
+      events.push({
+        type: 'player.activity',
+        payload: {
+          playerId: p.playerId,
+          ensemble,
+          currentTool: nextCoarse.currentTool,
+          ...(nextCoarse.contextTokens !== undefined ? { contextTokens: nextCoarse.contextTokens } : {}),
+          ...(nextCoarse.contextPercent !== undefined ? { contextPercent: nextCoarse.contextPercent } : {}),
+          at: capturedAt,
+        },
+      });
+      track.playerCoarse.set(p.playerId, nextCoarse);
+    }
   }
 
   // player.removed — iterate prev.
@@ -281,6 +340,7 @@ export function diffEnsembleSnapshot(
           },
         });
         track.playerPhases.delete(p.playerId);
+        track.playerCoarse.delete(p.playerId);
         track.playerAgentTypes.delete(p.playerId);
       }
     }
@@ -541,6 +601,7 @@ export class AggregateRunner {
         bus,
         consecutiveFailures: 0,
         playerPhases: new Map(),
+        playerCoarse: new Map(),
         playerAgentTypes: new Map(),
         flags: null,
         schedulesHash: null,
