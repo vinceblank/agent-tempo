@@ -103,6 +103,7 @@ async function boot(opts: {
   mock?: MockOptions;
   bindAddr?: string;
   httpToken?: string;
+  adminToken?: string;
   allowedOrigins?: string[];
 } = {}): Promise<Bootstrapped> {
   const { client, calls } = makeMockClient(opts.mock);
@@ -115,6 +116,7 @@ async function boot(opts: {
     bindAddr: opts.bindAddr ?? '127.0.0.1',
     port: 0,
     httpToken: opts.httpToken,
+    adminToken: opts.adminToken,
     allowedOrigins: opts.allowedOrigins,
     portFilePath: portFile,
   });
@@ -613,19 +615,55 @@ describe('Auth posture — parity with reads', () => {
     expect(res.status).toBe(401);
   });
 
-  it('non-loopback origin with valid bearer → success', async () => {
+  it('non-loopback origin with the ADMIN bearer → success (writes are Tier 2)', async () => {
     const b = await boot({
-      httpToken: 'good-token',
+      httpToken: 'read-token',
+      adminToken: 'admin-token',
       allowedOrigins: ['https://dash.example.com'],
     });
     const res = await fetch(`${b.url}/v1/ensembles/demo/pause`, {
       method: 'POST',
       headers: {
         origin: 'https://dash.example.com',
-        authorization: 'Bearer good-token',
+        authorization: 'Bearer admin-token',
       },
     });
     expect(res.status).toBe(202);
+  });
+
+  it('non-loopback origin with a READ token → 403 insufficient-tier (writes need admin)', async () => {
+    const b = await boot({
+      httpToken: 'read-token',
+      adminToken: 'admin-token',
+      allowedOrigins: ['https://dash.example.com'],
+    });
+    const res = await fetch(`${b.url}/v1/ensembles/demo/pause`, {
+      method: 'POST',
+      headers: {
+        origin: 'https://dash.example.com',
+        authorization: 'Bearer read-token',
+      },
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'insufficient-tier' });
+  });
+
+  it('non-loopback write with admin UNSET → 503 admin-token-not-configured', async () => {
+    // A valid READ token clears the L2 token-validity floor; the write route's
+    // Tier-2 guard then reports the honest 503 (no admin token configured).
+    const b = await boot({
+      httpToken: 'read-token',
+      allowedOrigins: ['https://dash.example.com'],
+    });
+    const res = await fetch(`${b.url}/v1/ensembles/demo/pause`, {
+      method: 'POST',
+      headers: {
+        origin: 'https://dash.example.com',
+        authorization: 'Bearer read-token',
+      },
+    });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'admin-token-not-configured' });
   });
 
   it('loopback no-Origin → no auth required (parity with reads)', async () => {
