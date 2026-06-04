@@ -56,6 +56,11 @@ function renderInnerFrame(f: InnerFrame): string {
       return `  · ctx ${f.contextTokens ?? '?'} tok${f.contextPercent !== undefined ? ` (${pct(f.contextPercent)})` : ''}`;
     case 'inner.turn':
       return `  -- turn ${f.phase} #${f.turnIndex}`;
+    case 'inner.gate_pending':
+      // requestId front-and-center — the operator types it into `/gate <requestId> allow|deny`.
+      return `  [GATE ${f.requestId} ${f.tool} (${f.classification}, ${Math.round(f.timeoutMs / 1000)}s)]`;
+    case 'inner.gate_resolved':
+      return `  [GATE ${f.requestId} -> ${f.decision}]`;
     default:
       return '  ·';
   }
