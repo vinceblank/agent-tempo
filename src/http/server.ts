@@ -378,7 +378,7 @@ export async function handle(
   // reaches them regardless of the daemon's bind address. Only live when the
   // daemon wired the registries; else they fall through to the 404/405 path.
   if (ctx.innerLoop && ctx.ingestTokens) {
-    const innerDeps = { innerLoop: ctx.innerLoop, ingestTokens: ctx.ingestTokens };
+    const innerDeps = { innerLoop: ctx.innerLoop, ingestTokens: ctx.ingestTokens, ...(ctx.gate ? { gate: ctx.gate } : {}) };
     const ingestMatch = pathname.match(/^\/v1\/players\/([^/]+)\/([^/]+)\/inner\/ingest$/);
     if (ingestMatch) {
       if (method !== 'POST') {
