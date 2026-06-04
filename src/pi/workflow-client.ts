@@ -26,12 +26,15 @@ import {
   pendingMessagesQuery,
   markDeliveredSignal,
   updateMetadataSignal,
+  pendingResetQuery,
+  ackResetSignal,
 } from '../workflows/signals';
 import type {
   AttachmentToken,
   DetachReason,
   Message,
   OutboxEntryInput,
+  PendingReset,
   SessionMetadata,
 } from '../types';
 import type { WorkflowAction } from './phase-driver';
@@ -297,6 +300,23 @@ export class PiWorkflowClient {
     if (messageIds.length === 0) return;
     const handle = this.requireHandle();
     await handle.signal(markDeliveredSignal, messageIds);
+  }
+
+  // ── Reset intake (3d D14) ──
+
+  /** Poll the workflow's single-slot pending reset (null = none). */
+  async fetchPendingReset(): Promise<PendingReset | null> {
+    const handle = this.requireHandle();
+    return handle.query(pendingResetQuery);
+  }
+
+  /**
+   * Ack a performed reset by id — the workflow clears the slot ONLY if the id
+   * still matches (race-safe: a newer reset that landed mid-wipe is preserved).
+   */
+  async ackReset(resetId: string): Promise<void> {
+    const handle = this.requireHandle();
+    await handle.signal(ackResetSignal, resetId);
   }
 
   /**

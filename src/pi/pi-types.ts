@@ -72,6 +72,12 @@ export interface PiAgentSession {
    * as `sendMessage`; the real method name is `sendCustomMessage`.
    */
   sendCustomMessage(msg: PiOutboundMessage, opts?: PiCustomMessageOptions): void | Promise<void>;
+  /**
+   * 3d D14 — wipe the conversation and start a FRESH context (no replay). The
+   * reset handler calls this on a clean-wipe reset. Optional in the slice (Pi
+   * provides it; older Pi / a fake session in tests may not).
+   */
+  newSession?(): void | Promise<void>;
   /** Pi's stable session identifier (reconciled with workflow metadata — D11). */
   readonly id?: string;
 }

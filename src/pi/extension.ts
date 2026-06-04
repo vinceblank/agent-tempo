@@ -41,6 +41,7 @@ import type {
 import { PhaseDriver } from './phase-driver';
 import { PiWorkflowClient } from './workflow-client';
 import { CuePump } from './cue-pump';
+import { ResetPump } from './reset-pump';
 import { renderToPi } from './render-tools';
 import { createLazyProxy } from './lazy-proxy';
 import { probePi } from './probe';
@@ -109,6 +110,8 @@ interface PiPlayerRuntime {
    * stopped on teardown.
    */
   readonly pub: InnerLoopPublisher;
+  /** 3d D14 — polls the workflow's pending reset → clean-wipe (newSession) + ack. */
+  readonly reset: ResetPump;
   session: PiAgentSession | null;
   lastSessionId?: string;
 }
@@ -280,7 +283,14 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
       // Tier-2 forwarding. URL keyed to the FIXED playerId (matches workflowId).
       const registry = new InnerLoopHttpClient({ ensemble: config.ensemble, playerId: fixedPlayerId });
       const pub = new InnerLoopPublisher({ workflowId, registry });
-      const rt: PiPlayerRuntime = { workflowId, wf, driver, pump, pub, session: payload.session ?? null };
+      // 3d D14 — reset poll-tick (sibling to the cue pump): polls pendingReset →
+      // session.newSession() clean-wipe + ack. resolveSession re-acquired each
+      // tick so a session switch never wipes a stale session.
+      const reset = new ResetPump({
+        source: wf,
+        resolveSession: () => runtimes.get(workflowId)?.session ?? null,
+      });
+      const rt: PiPlayerRuntime = { workflowId, wf, driver, pump, pub, reset, session: payload.session ?? null };
       runtimes.set(workflowId, rt);
 
       await wf.ensureSessionWorkflow();
@@ -292,6 +302,7 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
       // bound method is wrapped so `this` survives the provider call.
       pub.start(pi);
       wf.setCoarseProvider(() => pub.getCoarseState());
+      reset.start(); // 3d D14 — begin polling for pending resets
       log(`attached ${currentPlayerId} (wf ${workflowId})`);
       return rt;
     }
@@ -341,6 +352,7 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
       rt.session = null; // switch gap: cue pump stops injecting (dodges Pi #2860)
       if (payload.reason === 'quit') {
         rt.pub.stop(); // 3c — stop observing + flush the trailing coalesce buffer
+        rt.reset.stop(); // 3d — stop the reset poll
         try {
           await rt.wf.detach('agent-exited'); // requestDetach + adapterExited + stopHeartbeat
           runtimes.delete(workflowId);
@@ -364,6 +376,7 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
 export async function detachAllPiRuntimesForExit(): Promise<void> {
   for (const rt of runtimes.values()) {
     rt.pub.stop(); // 3c — stop the inner-loop publisher before detaching
+    rt.reset.stop(); // 3d — stop the reset poll before detaching
     try {
       await rt.wf.detach('agent-exited');
     } catch (err) {
@@ -404,6 +417,7 @@ export function __setPiClientFactoryForTests(factory: (config: Config) => Promis
 export function __resetPiRuntimesForTests(): void {
   for (const rt of runtimes.values()) {
     rt.pub.stop();
+    rt.reset.stop();
     rt.pump.stop();
     rt.wf.stopHeartbeat();
   }
