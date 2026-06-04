@@ -43,6 +43,8 @@ import { CuePump } from './cue-pump';
 import { renderToPi } from './render-tools';
 import { createLazyProxy } from './lazy-proxy';
 import { probePi } from './probe';
+import { InnerLoopPublisher } from './inner-loop-publisher';
+import { InnerLoopHttpClient } from './inner-loop-client';
 
 const log = (...args: unknown[]): void => {
   // eslint-disable-next-line no-console
@@ -100,6 +102,13 @@ interface PiPlayerRuntime {
   readonly wf: PiWorkflowClient;
   readonly driver: PhaseDriver;
   readonly pump: CuePump;
+  /**
+   * 3c — inner-loop publisher: observes Pi events to maintain Tier-1 coarse state
+   * (sampled by the heartbeat via `wf.setCoarseProvider`) and forward Tier-2 fine
+   * frames to the daemon (presence-gated, off-wire). Started on first attach,
+   * stopped on teardown.
+   */
+  readonly pub: InnerLoopPublisher;
   session: PiAgentSession | null;
   lastSessionId?: string;
 }
@@ -126,6 +135,11 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
     // the mutable DISPLAY id (set_name updates it); the workflowId never repoints.
     let currentPlayerId = process.env[ENV.PLAYER_NAME] || `pi-${process.pid}`;
     const workflowId = sessionWorkflowId(config.ensemble, currentPlayerId);
+    // 3c — the inner-loop URL + ingest token are keyed to the player's FIXED
+    // identity (the daemon minted the token for sessionWorkflowId(ensemble,
+    // <recruit name>)). `currentPlayerId` is mutable (set_name), so capture the
+    // original here — the publisher's HTTP client URL must match the workflowId.
+    const fixedPlayerId = currentPlayerId;
 
     // Kick off (or reuse) the module-scope shared connection.
     void clientFactory(config);
@@ -220,13 +234,24 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
         source: wf,
         resolveSession: () => runtimes.get(workflowId)?.session ?? null,
       });
-      const rt: PiPlayerRuntime = { workflowId, wf, driver, pump, session: payload.session ?? null };
+      // 3c — inner-loop publisher + its loopback-HTTP sink. The client no-ops
+      // unless AGENT_TEMPO_INGEST_TOKEN is present (daemon-spawned headless
+      // players only), so interactive Pi gets Tier-1 coarse for free and zero
+      // Tier-2 forwarding. URL keyed to the FIXED playerId (matches workflowId).
+      const registry = new InnerLoopHttpClient({ ensemble: config.ensemble, playerId: fixedPlayerId });
+      const pub = new InnerLoopPublisher({ workflowId, registry });
+      const rt: PiPlayerRuntime = { workflowId, wf, driver, pump, pub, session: payload.session ?? null };
       runtimes.set(workflowId, rt);
 
       await wf.ensureSessionWorkflow();
       const result = driver.handle('session_start', payload, nowIso());
       await wf.performAction(result.action); // claim → attached, starts heartbeat
       pump.start();
+      // Start the publisher AFTER the claim (heartbeat is live → coarse samples
+      // have a delivery path) and wire its coarse state into the heartbeat. The
+      // bound method is wrapped so `this` survives the provider call.
+      pub.start(pi);
+      wf.setCoarseProvider(() => pub.getCoarseState());
       log(`attached ${currentPlayerId} (wf ${workflowId})`);
       return rt;
     }
@@ -275,6 +300,7 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
       if (!rt) return;
       rt.session = null; // switch gap: cue pump stops injecting (dodges Pi #2860)
       if (payload.reason === 'quit') {
+        rt.pub.stop(); // 3c — stop observing + flush the trailing coalesce buffer
         try {
           await rt.wf.detach('agent-exited'); // requestDetach + adapterExited + stopHeartbeat
           runtimes.delete(workflowId);
@@ -297,6 +323,7 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
  */
 export async function detachAllPiRuntimesForExit(): Promise<void> {
   for (const rt of runtimes.values()) {
+    rt.pub.stop(); // 3c — stop the inner-loop publisher before detaching
     try {
       await rt.wf.detach('agent-exited');
     } catch (err) {
@@ -336,6 +363,7 @@ export function __setPiClientFactoryForTests(factory: (config: Config) => Promis
 /** Stop timers, clear the per-player runtime map + shared-client singletons + factory. */
 export function __resetPiRuntimesForTests(): void {
   for (const rt of runtimes.values()) {
+    rt.pub.stop();
     rt.pump.stop();
     rt.wf.stopHeartbeat();
   }

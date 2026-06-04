@@ -152,6 +152,11 @@ export async function handleInnerSse(
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
+  // Flush headers immediately so the operator's stream OPENS now, not on the
+  // first frame/keepalive — otherwise Node buffers the head until the first
+  // body write and a fetch/EventSource client blocks up to INNER_KEEPALIVE_MS.
+  // (Mirrors the main SSE handler in sse-handler.ts.)
+  res.flushHeaders?.();
 
   const sub = deps.innerLoop.subscribe(workflowId);
   let cleanedUp = false;
