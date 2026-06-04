@@ -798,6 +798,9 @@ export function createOutboxActivities(
           );
         }
         await handle.signal(requestDetachSignal, { reason, deadlineMs });
+        // TODO(Phase 4): revoke ingest token on detach (see deliverDestroy TODO)
+        // — deferred as hygiene; residual surface negligible (single-token
+        // replacement on re-attach + loopback-only + dead holder).
         log(`Detach signaled for "${targetPlayerId}" (deadline=${deadlineMs}ms)`);
         return { success: true };
       } catch (err) {

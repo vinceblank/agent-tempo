@@ -107,6 +107,14 @@ export async function handleInnerIngest(
   if (typeof type !== 'string' || !type.startsWith('inner.')) {
     return errorResponse(res, 403, { error: 'forbidden' });
   }
+  // S1 (security): `type` is interpolated RAW into the operator SSE `event:`
+  // line (handleInnerSse) — a CR/LF here would let an authenticated source
+  // inject/garble frames in the operator's stream. Reject at the INGRESS
+  // boundary so a malformed type never enters the registry. (Every other frame
+  // field is JSON.stringify'd into `data:`, which escapes control chars.)
+  if (/[\r\n]/.test(type)) {
+    return errorResponse(res, 403, { error: 'forbidden' });
+  }
   // Trust the authenticated publisher's frame shape (it owns the schema +
   // truncation). Publish to local subscribers and ack with no body.
   deps.innerLoop.publish(workflowId, body as unknown as InnerFrame);

@@ -122,6 +122,24 @@ describe('handleInnerIngest — gates + publish', () => {
     expect(res.statusCode).toBe(403);
   });
 
+  it('S1: CR/LF in an inner.* frame type → 403 (SSE event-line injection guard)', async () => {
+    const { innerLoop, token, deps } = setup();
+    const sub = innerLoop.subscribe(WF);
+    const res = fakeRes();
+    // Starts with `inner.` (passes the prefix check) but smuggles CRLF that would
+    // break out of the operator SSE `event:` line — must be rejected pre-registry.
+    await handleInnerIngest(
+      fakeReq({
+        headers: { [INGEST_TOKEN_HEADER]: token },
+        body: JSON.stringify({ type: 'inner.tool_call\r\nevent: spoofed', tool: 'x', argsSummary: '', ts: 1 }),
+      }),
+      res, deps, E, P,
+    );
+    expect(res.statusCode).toBe(403);
+    // nothing published — the malformed frame never reached the registry
+    expect(await Promise.race([sub.next().then(() => 'got'), Promise.resolve('pending')])).toBe('pending');
+  });
+
   it('non-inner frame type → 403', async () => {
     const { deps, token } = setup();
     const res = fakeRes();
