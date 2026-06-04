@@ -29,6 +29,7 @@ import {
   requireTier,
   type Tier,
   type TierGuardInput,
+  type TierGuardResult,
 } from './auth';
 import type { InnerLoopRegistry } from './inner-loop';
 import type { IngestTokenRegistry } from './ingest-registry';
@@ -505,6 +506,20 @@ export async function handle(
     adminToken: ctx.adminToken,
   };
   /**
+   * Write a tier-denial response, surfacing requireTier's actionable `detail`
+   * hint on 403 (insufficient-tier) / 503 (admin-unset) when present (3e ruling
+   * #3). The hint is operator guidance — e.g. "set AGENT_TEMPO_HTTP_ADMIN_TOKEN"
+   * — NOT a sensitive leak (security-confirmed). Shared by `gateTier` and the
+   * inline T3 gate/inner sites so every tier denial carries the same body shape.
+   */
+  const denyTier = (r: Exclude<TierGuardResult, { ok: true }>): void => {
+    errorResponse(
+      res,
+      r.status,
+      'detail' in r ? { error: r.error, detail: r.detail } : { error: r.error },
+    );
+  };
+  /**
    * Apply a per-route tier guard against the L2-resolved input. On failure it
    * writes the 401/403/503 response and returns `false` (caller returns); on
    * success returns `true`. Loopback requests short-circuit to PASS inside
@@ -513,7 +528,7 @@ export async function handle(
   const gateTier = (n: Tier): boolean => {
     const g = requireTier(n, tierInput);
     if (g.ok) return true;
-    errorResponse(res, g.status, { error: g.error });
+    denyTier(g);
     return false;
   };
 
@@ -575,7 +590,7 @@ export async function handle(
         readToken: ctx.readToken,
         adminToken: ctx.adminToken,
       });
-      if (!tier.ok) return errorResponse(res, tier.status, { error: tier.error });
+      if (!tier.ok) { denyTier(tier); return; }
       if (armMatch) {
         const [, e, p, verb] = armMatch;
         return verb === 'arm'

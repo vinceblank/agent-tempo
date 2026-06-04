@@ -645,7 +645,11 @@ describe('Auth posture — parity with reads', () => {
       },
     });
     expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: 'insufficient-tier' });
+    const body = await res.json();
+    expect(body.error).toBe('insufficient-tier');
+    // 3e ruling #3 — the denial carries requireTier's actionable hint so a
+    // read-tier operator knows to set the admin token.
+    expect(body.detail).toContain('AGENT_TEMPO_HTTP_ADMIN_TOKEN');
   });
 
   it('non-loopback write with admin UNSET → 503 admin-token-not-configured', async () => {
@@ -663,7 +667,10 @@ describe('Auth posture — parity with reads', () => {
       },
     });
     expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: 'admin-token-not-configured' });
+    const body = await res.json();
+    expect(body.error).toBe('admin-token-not-configured');
+    // 3e ruling #3 — the 503 carries the actionable hint too.
+    expect(body.detail).toContain('AGENT_TEMPO_HTTP_ADMIN_TOKEN');
   });
 
   it('loopback no-Origin → no auth required (parity with reads)', async () => {
