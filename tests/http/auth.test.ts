@@ -11,6 +11,10 @@ import {
   extractBearerToken,
   isLoopbackBindAddr,
   loadOrGenerateHttpToken,
+  loadReadToken,
+  loadAdminToken,
+  loadRbacTokens,
+  tierForToken,
   originHost,
   tokensMatch,
   requireTier,
@@ -139,33 +143,89 @@ describe('loadOrGenerateHttpToken', () => {
   });
 });
 
-describe('requireTier (3c — single bearer = T1–T3 today; bearer-keyed, no Origin gate)', () => {
-  const TOKEN = 'a'.repeat(43);
+const READ = 'r'.repeat(43);
+const ADMIN = 'a'.repeat(43);
 
-  it('loopback bind + no/loopback Origin → authorized without a bearer (loopback trust)', () => {
-    expect(requireTier(3, { bindAddr: '127.0.0.1', originHeader: undefined, authHeader: undefined, httpToken: TOKEN }).ok).toBe(true);
-    expect(requireTier(3, { bindAddr: '::1', originHeader: 'http://localhost:3000', authHeader: undefined, httpToken: TOKEN }).ok).toBe(true);
+describe('tierForToken (3e — token→tier map)', () => {
+  it('admin grants T3 (the full ladder); read grants T1; unknown → 0', () => {
+    expect(tierForToken(ADMIN, { readToken: READ, adminToken: ADMIN })).toBe(3);
+    expect(tierForToken(READ, { readToken: READ, adminToken: ADMIN })).toBe(1);
+    expect(tierForToken('nope', { readToken: READ, adminToken: ADMIN })).toBe(0);
+  });
+  it('null tokens never match', () => {
+    expect(tierForToken(READ, { readToken: null, adminToken: null })).toBe(0);
+    expect(tierForToken(ADMIN, { readToken: READ, adminToken: null })).toBe(0);
+  });
+});
+
+describe('requireTier (3e RBAC matrix — Layer-3 authZ)', () => {
+  const base = (over: Partial<Parameters<typeof requireTier>[1]> = {}) => ({
+    bindAddr: '0.0.0.0', originHeader: undefined, authHeader: undefined,
+    readToken: READ, adminToken: ADMIN, ...over,
   });
 
-  it('non-loopback bind → requires a valid bearer; 401 when missing/wrong', () => {
-    expect(requireTier(3, { bindAddr: '0.0.0.0', originHeader: undefined, authHeader: undefined, httpToken: TOKEN })).toEqual({ ok: false, status: 401, error: 'unauthorized' });
-    expect(requireTier(3, { bindAddr: '0.0.0.0', originHeader: undefined, authHeader: 'Bearer wrong', httpToken: TOKEN }).ok).toBe(false);
-    expect(requireTier(3, { bindAddr: '0.0.0.0', originHeader: undefined, authHeader: `Bearer ${TOKEN}`, httpToken: TOKEN }).ok).toBe(true);
+  it('loopback (no bearer required) → PASS all tiers (local-trust short-circuit)', () => {
+    expect(requireTier(3, { ...base(), bindAddr: '127.0.0.1' }).ok).toBe(true);
+    expect(requireTier(3, { ...base(), bindAddr: '::1', originHeader: 'http://localhost:3000' }).ok).toBe(true);
   });
 
-  it('a valid bearer satisfies EVERY tier today (god-mode)', () => {
-    const base = { bindAddr: '0.0.0.0', originHeader: undefined, authHeader: `Bearer ${TOKEN}`, httpToken: TOKEN } as const;
-    expect(requireTier(1, base).ok).toBe(true);
-    expect(requireTier(2, base).ok).toBe(true);
-    expect(requireTier(3, base).ok).toBe(true);
+  it('T1: read OR admin token passes; no/invalid → 401', () => {
+    expect(requireTier(1, base({ authHeader: `Bearer ${READ}` })).ok).toBe(true);
+    expect(requireTier(1, base({ authHeader: `Bearer ${ADMIN}` })).ok).toBe(true);
+    expect(requireTier(1, base({ authHeader: undefined }))).toEqual({ ok: false, status: 401, error: 'unauthorized' });
+    expect(requireTier(1, base({ authHeader: 'Bearer wrong' }))).toEqual({ ok: false, status: 401, error: 'unauthorized' });
   });
 
-  it('bearer WITHOUT an Origin passes (non-browser Node client / Pi widget — guardrail #4)', () => {
-    // No Origin header, non-loopback bind, valid bearer → authorized.
-    expect(requireTier(3, { bindAddr: '0.0.0.0', originHeader: undefined, authHeader: `Bearer ${TOKEN}`, httpToken: TOKEN }).ok).toBe(true);
+  it('T2/T3: admin passes; a READ token → 403 insufficient-tier (+ migration hint)', () => {
+    expect(requireTier(2, base({ authHeader: `Bearer ${ADMIN}` })).ok).toBe(true);
+    expect(requireTier(3, base({ authHeader: `Bearer ${ADMIN}` })).ok).toBe(true);
+    const r = requireTier(2, base({ authHeader: `Bearer ${READ}` }));
+    expect(r.ok).toBe(false);
+    expect(r).toMatchObject({ status: 403, error: 'insufficient-tier' });
+    expect((r as { detail: string }).detail).toMatch(/admin token/i);
   });
 
-  it('non-loopback bind with no configured httpToken → 401 (cannot satisfy the guard)', () => {
-    expect(requireTier(3, { bindAddr: '0.0.0.0', originHeader: undefined, authHeader: `Bearer ${TOKEN}`, httpToken: null }).ok).toBe(false);
+  it('T2/T3 with admin UNSET → 503 admin-token-not-configured (before any token check)', () => {
+    const r = requireTier(2, base({ adminToken: null, authHeader: `Bearer ${READ}` }));
+    expect(r).toMatchObject({ ok: false, status: 503, error: 'admin-token-not-configured' });
+    // even with NO bearer presented, an admin-gated route with admin unset → 503
+    expect(requireTier(3, base({ adminToken: null }))).toMatchObject({ status: 503 });
+  });
+
+  it('bearer WITHOUT an Origin passes (headless Node client — guardrail #4)', () => {
+    expect(requireTier(1, base({ originHeader: undefined, authHeader: `Bearer ${READ}` })).ok).toBe(true);
+    expect(requireTier(3, base({ originHeader: undefined, authHeader: `Bearer ${ADMIN}` })).ok).toBe(true);
+  });
+});
+
+describe('loadReadToken / loadAdminToken / loadRbacTokens (3e)', () => {
+  it('read: env > config.readToken > legacy httpToken (legacy:true) > auto-gen', () => {
+    // env wins
+    expect(loadReadToken({ bearerRequired: true, env: { AGENT_TEMPO_HTTP_READ_TOKEN: 'envtok' }, load: () => ({}) }))
+      .toEqual({ token: 'envtok', legacy: false });
+    // config.readToken
+    expect(loadReadToken({ bearerRequired: true, env: {}, load: () => ({ readToken: 'cfgread' }) }))
+      .toEqual({ token: 'cfgread', legacy: false });
+    // legacy httpToken adopted as read (legacy:true)
+    expect(loadReadToken({ bearerRequired: true, env: {}, load: () => ({ httpToken: 'legacy' }) }))
+      .toEqual({ token: 'legacy', legacy: true });
+    // auto-gen when nothing set + bearer required
+    let saved: PersistedConfig | null = null;
+    const gen = loadReadToken({ bearerRequired: true, env: {}, load: () => ({}), save: (c) => { saved = c; } });
+    expect(typeof gen.token).toBe('string');
+    expect((gen.token as string).length).toBeGreaterThan(20);
+    expect((saved as unknown as PersistedConfig).readToken).toBe(gen.token);
+    // no auto-gen when bearer not required
+    expect(loadReadToken({ bearerRequired: false, env: {}, load: () => ({}) })).toEqual({ token: null, legacy: false });
+  });
+
+  it('admin: env-var ONLY, never config/disk; null when unset', () => {
+    expect(loadAdminToken({ AGENT_TEMPO_HTTP_ADMIN_TOKEN: 'admintok' })).toBe('admintok');
+    expect(loadAdminToken({})).toBeNull();
+  });
+
+  it('loadRbacTokens combines + flags legacyMigrated', () => {
+    const r = loadRbacTokens({ bearerRequired: true, env: { AGENT_TEMPO_HTTP_ADMIN_TOKEN: 'A' }, load: () => ({ httpToken: 'L' }) });
+    expect(r).toEqual({ readToken: 'L', adminToken: 'A', legacyMigrated: true });
   });
 });

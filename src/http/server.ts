@@ -23,8 +23,9 @@ import {
   bearerRequired,
   extractBearerToken,
   isLoopbackBindAddr,
-  loadOrGenerateHttpToken,
-  tokensMatch,
+  loadReadToken,
+  loadAdminToken,
+  tierForToken,
   requireTier,
 } from './auth';
 import type { InnerLoopRegistry } from './inner-loop';
@@ -121,10 +122,14 @@ export interface HttpServerOptions {
    */
   portFilePath?: string;
   /**
-   * Inject the bearer token directly. Production callers pass `undefined`
-   * so the server reads/auto-generates from `~/.agent-tempo/config.json`.
+   * @deprecated 3e — back-compat alias for {@link readToken}. A single injected
+   * bearer is treated as the READ token (T1). Prefer `readToken`/`adminToken`.
    */
   httpToken?: string;
+  /** 3e — inject the read-tier (T1) token directly (tests). Overrides config/env. */
+  readToken?: string;
+  /** 3e — inject the admin (T1+T2+T3) token directly (tests). Overrides env. */
+  adminToken?: string;
   /**
    * Test seam — lets unit tests stub `process.uptime`-style readings.
    */
@@ -197,12 +202,18 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
   // generation now so the daemon doesn't crash mid-request when the first
   // bearer-required call shows up.
   const bindIsLoopback = isLoopbackBindAddr(bindAddr);
-  const httpToken =
-    opts.httpToken ?? loadOrGenerateHttpToken({ bearerRequired: !bindIsLoopback });
-  if (!bindIsLoopback && !httpToken) {
+  // 3e RBAC token resolution. Back-compat: a single `httpToken` option (or a
+  // legacy config.json `httpToken`) is adopted as the READ token (T1); the ADMIN
+  // token is env-var-only. Explicit `readToken`/`adminToken` options override
+  // (used by tests). loopback bind ⇒ no bearer required ⇒ tokens may be null.
+  const readToken =
+    opts.readToken ?? opts.httpToken ?? loadReadToken({ bearerRequired: !bindIsLoopback }).token;
+  const adminToken = opts.adminToken ?? loadAdminToken();
+  if (!bindIsLoopback && !readToken) {
     throw new Error(
       'Bearer token required for non-loopback bind but none configured. ' +
-      'Set httpToken in ~/.agent-tempo/config.json or unset AGENT_TEMPO_HTTP_BIND.',
+      'Set AGENT_TEMPO_HTTP_READ_TOKEN (or readToken in ~/.agent-tempo/config.json), ' +
+      'or unset AGENT_TEMPO_HTTP_BIND.',
     );
   }
 
@@ -229,7 +240,8 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
       version: opts.version,
       bindAddr,
       corsConfig,
-      httpToken,
+      readToken,
+      adminToken,
       startedAt,
       subscriberCount,
       aggregate: opts.aggregate ?? null,
@@ -318,7 +330,10 @@ interface HandleContext {
   version: string;
   bindAddr: string;
   corsConfig: CorsConfig;
-  httpToken: string | null;
+  /** 3e RBAC read-tier token (T1), or null. */
+  readToken: string | null;
+  /** 3e RBAC admin token (T1+T2+T3) — env-var-only, or null when unset. */
+  adminToken: string | null;
   startedAt: number;
   subscriberCount: () => number;
   /** Present when PR-2 streaming is wired; null on PR-1-only deployments. */
@@ -413,12 +428,16 @@ export async function handle(
     }
   }
 
-  // Authentication gate.
+  // Layer 2 — shared AUTHENTICATION + Origin/DNS-rebind defense (architect's
+  // decomposition). bearerRequired() carries the Origin-rebind logic; a request
+  // in bearer mode must present a token granting at LEAST a tier (read or admin).
+  // The per-route TIER authorization (Layer 3, requireTier(N)) refines this; the
+  // read→T1 / write→T2 guard placement lands at the route-map step.
   const originHeader = headerString(req.headers.origin);
   const reqBearer = bearerRequired(ctx.bindAddr, originHeader);
   if (reqBearer) {
     const provided = extractBearerToken(headerString(req.headers.authorization));
-    if (!provided || !ctx.httpToken || !tokensMatch(provided, ctx.httpToken)) {
+    if (!provided || tierForToken(provided, ctx) === 0) {
       writeCorsHeaders(res, originHeader, ctx, reqBearer);
       return errorResponse(res, 401, { error: 'unauthorized' });
     }
@@ -482,7 +501,8 @@ export async function handle(
         bindAddr: ctx.bindAddr,
         originHeader,
         authHeader: headerString(req.headers.authorization),
-        httpToken: ctx.httpToken,
+        readToken: ctx.readToken,
+        adminToken: ctx.adminToken,
       });
       if (!tier.ok) return errorResponse(res, tier.status, { error: tier.error });
       if (armMatch) {
@@ -616,7 +636,8 @@ export async function handle(
       bindAddr: ctx.bindAddr,
       originHeader,
       authHeader: headerString(req.headers.authorization),
-      httpToken: ctx.httpToken,
+      readToken: ctx.readToken,
+      adminToken: ctx.adminToken,
     });
     if (!tier.ok) return errorResponse(res, tier.status, { error: tier.error });
     return handleInnerSse(

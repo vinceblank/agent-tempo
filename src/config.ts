@@ -117,6 +117,16 @@ export const ENV = {
   CORS_ORIGINS: 'AGENT_TEMPO_CORS_ORIGINS',
   SSE_MAX_CONNECTIONS: 'AGENT_TEMPO_SSE_MAX_CONNECTIONS',
   /**
+   * 3e RBAC (MD-E). Two-token model: the READ token (T1 — observe) may live in
+   * env or config.json and auto-generates; the ADMIN token (T1+T2+T3 — mutate +
+   * supervisory gate/inner) is ENV-VAR-ONLY (never config.json/disk, never
+   * auto-generated). `TLS_ACKNOWLEDGED=1` suppresses the non-loopback-bind
+   * plaintext-HTTP startup warning.
+   */
+  HTTP_READ_TOKEN: 'AGENT_TEMPO_HTTP_READ_TOKEN',
+  HTTP_ADMIN_TOKEN: 'AGENT_TEMPO_HTTP_ADMIN_TOKEN',
+  TLS_ACKNOWLEDGED: 'AGENT_TEMPO_TLS_ACKNOWLEDGED',
+  /**
    * Dev profile gate (ADR 0014 §5.2). One source of truth — every layer
    * (paths, namespace, port, task queue, banner, registry gating) consults
    * `isDevMode()` rather than reading the env var directly. The `--dev`
@@ -165,8 +175,19 @@ export interface PersistedConfig {
    * a request with a non-loopback `Origin`) and no token is set:
    * `crypto.randomBytes(32).toString('base64url')`, 0600 on POSIX.
    * Rotation = delete this field; next daemon boot regenerates.
+   *
+   * 3e: this LEGACY single token is migrated to the READ tier (T1) — a daemon
+   * with only `httpToken` set keeps read access and emits a one-time startup
+   * warning to set an admin token for writes/gate/inner. Prefer `readToken`.
    */
   httpToken?: string;
+  /**
+   * 3e RBAC — the READ-tier (T1) bearer token. Env `AGENT_TEMPO_HTTP_READ_TOKEN`
+   * takes precedence over this; auto-generated here on first bearer-mode boot if
+   * neither is set. The ADMIN token is deliberately ABSENT from this file (it is
+   * env-var-only, never persisted).
+   */
+  readToken?: string;
 }
 
 // ── Dev profile (ADR 0014 §5) ──
