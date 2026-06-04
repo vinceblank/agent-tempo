@@ -25,7 +25,11 @@ import {
   isLoopbackBindAddr,
   loadOrGenerateHttpToken,
   tokensMatch,
+  requireTier,
 } from './auth';
+import type { InnerLoopRegistry } from './inner-loop';
+import type { IngestTokenRegistry } from './ingest-registry';
+import { handleInnerIngest, handleInnerPresence, handleInnerSse } from './inner-loop-routes';
 import {
   corsResponseHeaders,
   evaluateOrigin,
@@ -134,6 +138,16 @@ export interface HttpServerOptions {
    * low value in tests to exercise the 503 path.
    */
   maxSseConnections?: number;
+  /**
+   * 3c Tier-2 — the inner-loop fine-tail registry (off-wire SSE sink) and the
+   * ingest-token registry (source-plane auth). When both are provided the
+   * `/v1/players/:e/:p/inner` egress + `/inner/ingest` + `/inner/presence`
+   * ingress routes light up; absent → those routes 404/503. The daemon
+   * constructs + shares these (the outbox mints ingest tokens into the same
+   * `ingestTokens` instance the server validates against).
+   */
+  innerLoop?: InnerLoopRegistry;
+  ingestTokens?: IngestTokenRegistry;
 }
 
 export interface HttpServerHandle {
@@ -207,6 +221,8 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
       subscriberCount,
       aggregate: opts.aggregate ?? null,
       sseConnectionCap,
+      innerLoop: opts.innerLoop ?? null,
+      ingestTokens: opts.ingestTokens ?? null,
     }).catch((err) => {
       log('unhandled handler error:', err instanceof Error ? err.message : err);
       if (!res.headersSent) {
@@ -295,6 +311,10 @@ interface HandleContext {
   aggregate: AggregateRunner | null;
   /** Process-wide SSE subscriber cap (§7.3). */
   sseConnectionCap: ConnectionCap;
+  /** 3c Tier-2 inner-loop fine-tail sink (off-wire) — null when unwired. */
+  innerLoop: InnerLoopRegistry | null;
+  /** 3c Tier-2 ingest-token registry (source-plane auth) — null when unwired. */
+  ingestTokens: IngestTokenRegistry | null;
 }
 
 /**
@@ -334,6 +354,29 @@ export async function handle(
   const pairConsumeMatch = pathname.match(/^\/dashboard\/api\/pair\/([^/]+)$/);
   if (method === 'GET' && pairConsumeMatch) {
     return handlePairConsume(req, res, pairConsumeMatch[1]);
+  }
+
+  // 3c Tier-2 INGRESS (publisher → daemon). Matched BEFORE the outer bearer
+  // gate: these use their OWN source-plane auth (loopback `socket.remoteAddress`
+  // + `X-Ingest-Token` vs the URL workflowId), so a localhost Pi subprocess
+  // reaches them regardless of the daemon's bind address. Only live when the
+  // daemon wired the registries; else they fall through to the 404/405 path.
+  if (ctx.innerLoop && ctx.ingestTokens) {
+    const innerDeps = { innerLoop: ctx.innerLoop, ingestTokens: ctx.ingestTokens };
+    const ingestMatch = pathname.match(/^\/v1\/players\/([^/]+)\/([^/]+)\/inner\/ingest$/);
+    if (ingestMatch) {
+      if (method !== 'POST') {
+        return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'POST' });
+      }
+      return handleInnerIngest(req, res, innerDeps, decodeURIComponent(ingestMatch[1]), decodeURIComponent(ingestMatch[2]));
+    }
+    const presenceMatch = pathname.match(/^\/v1\/players\/([^/]+)\/([^/]+)\/inner\/presence$/);
+    if (presenceMatch) {
+      if (method !== 'GET') {
+        return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'GET' });
+      }
+      return handleInnerPresence(req, res, innerDeps, decodeURIComponent(presenceMatch[1]), decodeURIComponent(presenceMatch[2]));
+    }
   }
 
   // Authentication gate.
@@ -492,6 +535,32 @@ export async function handle(
       ensemble,
       cap: ctx.sseConnectionCap,
     });
+  }
+
+  // 3c Tier-2 EGRESS — operator/widget inner-loop SSE fine tail. After the outer
+  // bearer gate (so it's already authenticated); the explicit `requireTier(3)`
+  // marks the tier for 3e (today the outer bearer already satisfied it — 3e
+  // relaxes the outer gate to a read token and this guard demands the admin
+  // token, no call-site change). View-agnostic: bearer-keyed, NO Origin
+  // requirement, plain `event:`/`data:` framing (fetch + Node-client consumable).
+  const innerSseMatch = pathname.match(/^\/v1\/players\/([^/]+)\/([^/]+)\/inner$/);
+  if (innerSseMatch) {
+    if (!ctx.innerLoop || !ctx.ingestTokens) {
+      return errorResponse(res, 503, { error: 'streaming-not-implemented' }, { 'Retry-After': '60' });
+    }
+    const tier = requireTier(3, {
+      bindAddr: ctx.bindAddr,
+      originHeader,
+      authHeader: headerString(req.headers.authorization),
+      httpToken: ctx.httpToken,
+    });
+    if (!tier.ok) return errorResponse(res, tier.status, { error: tier.error });
+    return handleInnerSse(
+      req, res,
+      { innerLoop: ctx.innerLoop, ingestTokens: ctx.ingestTokens },
+      decodeURIComponent(innerSseMatch[1]),
+      decodeURIComponent(innerSseMatch[2]),
+    );
   }
 
   return errorResponse(res, 404, { error: 'not-found' });
