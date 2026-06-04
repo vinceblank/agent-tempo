@@ -30,6 +30,10 @@ import {
 import type { InnerLoopRegistry } from './inner-loop';
 import type { IngestTokenRegistry } from './ingest-registry';
 import { handleInnerIngest, handleInnerPresence, handleInnerSse } from './inner-loop-routes';
+import type { GateRegistry } from './gate-registry';
+import {
+  handleGateArm, handleGateDisarm, handleGateDecide, handleGateResolution,
+} from './gate-routes';
 import {
   corsResponseHeaders,
   evaluateOrigin,
@@ -148,6 +152,15 @@ export interface HttpServerOptions {
    */
   innerLoop?: InnerLoopRegistry;
   ingestTokens?: IngestTokenRegistry;
+  /**
+   * 3d MD-G — the operator-gate registry. When provided (with `ingestTokens`)
+   * the `/v1/players/:e/:p/gate-arm` + `/gate-disarm` + `/gate/:requestId`
+   * operator routes (requireTier(3)) and the `/gate/:requestId/resolution`
+   * subprocess-poll route (ingest-token) light up; absent → those routes 404.
+   * The daemon constructs + shares this with the worker (auto-disarm on
+   * detach/destroy) — same singleton pattern as the inner-loop registries.
+   */
+  gate?: GateRegistry;
 }
 
 export interface HttpServerHandle {
@@ -223,6 +236,7 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
       sseConnectionCap,
       innerLoop: opts.innerLoop ?? null,
       ingestTokens: opts.ingestTokens ?? null,
+      gate: opts.gate ?? null,
     }).catch((err) => {
       log('unhandled handler error:', err instanceof Error ? err.message : err);
       if (!res.headersSent) {
@@ -315,6 +329,8 @@ interface HandleContext {
   innerLoop: InnerLoopRegistry | null;
   /** 3c Tier-2 ingest-token registry (source-plane auth) — null when unwired. */
   ingestTokens: IngestTokenRegistry | null;
+  /** 3d MD-G operator-gate registry — null when unwired. */
+  gate: GateRegistry | null;
 }
 
 /**
@@ -362,7 +378,7 @@ export async function handle(
   // reaches them regardless of the daemon's bind address. Only live when the
   // daemon wired the registries; else they fall through to the 404/405 path.
   if (ctx.innerLoop && ctx.ingestTokens) {
-    const innerDeps = { innerLoop: ctx.innerLoop, ingestTokens: ctx.ingestTokens };
+    const innerDeps = { innerLoop: ctx.innerLoop, ingestTokens: ctx.ingestTokens, ...(ctx.gate ? { gate: ctx.gate } : {}) };
     const ingestMatch = pathname.match(/^\/v1\/players\/([^/]+)\/([^/]+)\/inner\/ingest$/);
     if (ingestMatch) {
       if (method !== 'POST') {
@@ -376,6 +392,24 @@ export async function handle(
         return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'GET' });
       }
       return handleInnerPresence(req, res, innerDeps, decodeURIComponent(presenceMatch[1]), decodeURIComponent(presenceMatch[2]));
+    }
+  }
+
+  // 3d MD-G INGRESS (Pi subprocess → daemon poll). Same source-plane auth as the
+  // inner-loop ingest (loopback `socket.remoteAddress` + `X-Ingest-Token` vs the
+  // URL workflowId), matched BEFORE the bearer gate. Live only when the daemon
+  // wired the gate + ingest registries.
+  if (ctx.gate && ctx.ingestTokens) {
+    const gateDeps = { gate: ctx.gate, ingestTokens: ctx.ingestTokens };
+    const resolutionMatch = pathname.match(/^\/v1\/players\/([^/]+)\/([^/]+)\/gate\/([^/]+)\/resolution$/);
+    if (resolutionMatch) {
+      if (method !== 'GET') {
+        return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'GET' });
+      }
+      return handleGateResolution(
+        req, res, gateDeps,
+        decodeURIComponent(resolutionMatch[1]), decodeURIComponent(resolutionMatch[2]), decodeURIComponent(resolutionMatch[3]),
+      );
     }
   }
 
@@ -433,6 +467,36 @@ export async function handle(
   if (method === 'POST' && pathname === '/dashboard/api/pair') {
     const provided = extractBearerToken(headerString(req.headers.authorization));
     return handlePairCreate(req, res, provided);
+  }
+
+  // 3d MD-G OPERATOR plane (operator/dashboard → daemon) — POST routes, so they
+  // sit BEFORE the GET-only method gate below (alongside the other POST routes).
+  // `requireTier(3)` — only an admin-token holder may arm/disarm or decide
+  // (MD-E highest tier). Live only when the daemon wired the gate registries.
+  if (ctx.gate && ctx.ingestTokens && method === 'POST') {
+    const gateDeps = { gate: ctx.gate, ingestTokens: ctx.ingestTokens };
+    const armMatch = pathname.match(/^\/v1\/players\/([^/]+)\/([^/]+)\/gate-(arm|disarm)$/);
+    const decideMatch = pathname.match(/^\/v1\/players\/([^/]+)\/([^/]+)\/gate\/([^/]+)$/);
+    if (armMatch || decideMatch) {
+      const tier = requireTier(3, {
+        bindAddr: ctx.bindAddr,
+        originHeader,
+        authHeader: headerString(req.headers.authorization),
+        httpToken: ctx.httpToken,
+      });
+      if (!tier.ok) return errorResponse(res, tier.status, { error: tier.error });
+      if (armMatch) {
+        const [, e, p, verb] = armMatch;
+        return verb === 'arm'
+          ? handleGateArm(req, res, gateDeps, decodeURIComponent(e), decodeURIComponent(p))
+          : handleGateDisarm(req, res, gateDeps, decodeURIComponent(e), decodeURIComponent(p));
+      }
+      // decideMatch — POST /gate/:requestId { decision }
+      return handleGateDecide(
+        req, res, gateDeps,
+        decodeURIComponent(decideMatch![1]), decodeURIComponent(decideMatch![2]), decodeURIComponent(decideMatch![3]),
+      );
+    }
   }
 
   // Method gate — read endpoints are GET-only. Both POST paths above

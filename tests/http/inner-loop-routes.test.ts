@@ -13,6 +13,7 @@ import {
 } from '../../src/http/inner-loop-routes';
 import { InnerLoopRegistry } from '../../src/http/inner-loop';
 import { IngestTokenRegistry } from '../../src/http/ingest-registry';
+import { GateRegistry } from '../../src/http/gate-registry';
 import { sessionWorkflowId } from '../../src/config';
 import type { InnerFrame } from '../../src/pi/inner-loop-publisher';
 
@@ -180,14 +181,14 @@ describe('handleInnerPresence — gates + count', () => {
     const res = fakeRes();
     handleInnerPresence(fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token } }), res, deps, E, P);
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body as string)).toEqual({ subscribers: 2 });
+    expect(JSON.parse(res.body as string)).toEqual({ subscribers: 2, gateArmed: false });
   });
 
   it('zero subscribers → 200 { subscribers: 0 }', () => {
     const { token, deps } = setup();
     const res = fakeRes();
     handleInnerPresence(fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token } }), res, deps, E, P);
-    expect(JSON.parse(res.body as string)).toEqual({ subscribers: 0 });
+    expect(JSON.parse(res.body as string)).toEqual({ subscribers: 0, gateArmed: false });
   });
 
   it('bad token → 403 (presence is publisher-only — no covert channel)', () => {
@@ -202,5 +203,72 @@ describe('handleInnerPresence — gates + count', () => {
     const res = fakeRes();
     handleInnerPresence(fakeReq({ remoteAddress: '10.0.0.5', headers: { [INGEST_TOKEN_HEADER]: token } }), res, deps, E, P);
     expect(res.statusCode).toBe(403);
+  });
+});
+
+describe('3d MD-G coupling — gate_pending registers + presence carries gateArmed', () => {
+  function gateSetup() {
+    const innerLoop = new InnerLoopRegistry();
+    const ingestTokens = new IngestTokenRegistry();
+    const gate = new GateRegistry();
+    const token = ingestTokens.mint(WF);
+    return { gate, token, deps: { innerLoop, ingestTokens, gate } };
+  }
+
+  const GATE_PENDING = {
+    type: 'inner.gate_pending', requestId: 'req-9', tool: 'bash',
+    argsSummary: '{"cmd":"ls"}', classification: 'exec', timeoutMs: 45000, ts: 1,
+  };
+
+  it('an inner.gate_pending ingest registers the pending request in the gate (open)', async () => {
+    const { gate, token, deps } = gateSetup();
+    const res = fakeRes();
+    await handleInnerIngest(
+      fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token }, body: JSON.stringify(GATE_PENDING) }),
+      res, deps, E, P,
+    );
+    expect(res.statusCode).toBe(204);
+    // The pending is now registered → resolution is pending (not 404/null).
+    expect(gate.getResolution(WF, 'req-9')).toEqual({ status: 'pending' });
+  });
+
+  it('an ordinary inner frame does NOT register anything in the gate', async () => {
+    const { gate, token, deps } = gateSetup();
+    const res = fakeRes();
+    await handleInnerIngest(
+      fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token }, body: JSON.stringify(FRAME) }),
+      res, deps, E, P,
+    );
+    expect(res.statusCode).toBe(204);
+    expect(gate.pendingCount(WF)).toBe(0);
+  });
+
+  it('gate_pending ingest with NO gate wired is a no-op (still 204)', async () => {
+    const { token, deps } = setup(); // deps WITHOUT a gate
+    const res = fakeRes();
+    await handleInnerIngest(
+      fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token }, body: JSON.stringify(GATE_PENDING) }),
+      res, deps, E, P,
+    );
+    expect(res.statusCode).toBe(204);
+  });
+
+  it('presence response carries gateArmed reflecting the gate state', () => {
+    const { gate, token, deps } = gateSetup();
+    const r1 = fakeRes();
+    handleInnerPresence(fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token } }), r1, deps, E, P);
+    expect(JSON.parse(r1.body as string)).toEqual({ subscribers: 0, gateArmed: false });
+
+    gate.arm(WF, E);
+    const r2 = fakeRes();
+    handleInnerPresence(fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token } }), r2, deps, E, P);
+    expect(JSON.parse(r2.body as string)).toEqual({ subscribers: 0, gateArmed: true });
+  });
+
+  it('presence without a gate wired → gateArmed:false', () => {
+    const { token, deps } = setup();
+    const res = fakeRes();
+    handleInnerPresence(fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token } }), res, deps, E, P);
+    expect(JSON.parse(res.body as string)).toEqual({ subscribers: 0, gateArmed: false });
   });
 });

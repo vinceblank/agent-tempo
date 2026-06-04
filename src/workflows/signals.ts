@@ -21,6 +21,7 @@ import type {
   DetachReason,
   OrphanSummary,
   PlayerStateEntry,
+  PendingReset,
 } from '../types';
 
 // Re-export types for convenience within workflow code
@@ -41,6 +42,7 @@ export type {
   StopOutboxEntry,
   ReleaseOutboxEntry,
   SpawnOutboxEntry,
+  PendingReset,
   AgentType,
   QualityGate,
   QualityGateCriterion,
@@ -86,6 +88,16 @@ export const getMetadataQuery = defineQuery<SessionMetadata>('getMetadata');
 export const pendingMessagesQuery = defineQuery<Message[]>('pendingMessages');
 export const allMessagesQuery = defineQuery<Message[]>('allMessages');
 export const allSentMessagesQuery = defineQuery<SentMessage[]>('allSentMessages');
+
+// ── Reset (D14) — context clean-wipe poll-delivery ──
+// `deliverReset` sets the pending flag via `setPendingResetSignal`; the Pi
+// extension polls `pendingResetQuery`, performs the wipe (newSession), then
+// clears it via `ackResetSignal(resetId)`. Single-slot, latest-wins. The
+// workflow stamps `requestedAt` (deterministic). See WIRE-PROTOCOL.md.
+export const setPendingResetSignal =
+  defineSignal<[{ resetId: string; fresh: boolean; reason?: string; requestedBy?: string }]>('setPendingReset');
+export const pendingResetQuery = defineQuery<PendingReset | null>('pendingReset');
+export const ackResetSignal = defineSignal<[string]>('ackReset');
 
 // ── Hold / Release ──
 

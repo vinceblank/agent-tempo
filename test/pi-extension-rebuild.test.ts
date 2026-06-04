@@ -141,42 +141,61 @@ describe('Pi extension — MD-C tool_call gate (headless only)', () => {
   beforeEach(() => { process.env[ENV.PLAYER_NAME] = 'pi-gate-test'; });
   afterEach(() => { __resetPiRuntimesForTests(); delete process.env[ENV.PLAYER_NAME]; });
 
-  /** Build a headless/interactive extension and return a `fire('tool_call', toolName)`. */
+  /**
+   * Build a headless/interactive extension and return an async
+   * `fire('tool_call', toolName)`. The 3d handler is ASYNC (the gate branch
+   * awaits a poll) — but with NO ingest token in the unit env the gate clients
+   * are disabled (gateArmed/present both false), so engagement never triggers and
+   * only the MD-C floor + permit paths run (each resolved through the Promise).
+   */
   function gateFor(mode: 'headless' | 'interactive', toolAccess: 'restricted' | 'standard' | 'full') {
     const rec: Recorder = { updates: [], signals: [] };
     __setPiClientFactoryForTests(async () => makeFakeClient(rec));
     const p = makeFakePi();
     createPiExtension({ mode, toolAccess })(p.pi);
-    return (toolName: string) => p.fire('tool_call', { toolName }) as { block?: boolean } | undefined;
+    return async (toolName: string): Promise<{ block?: boolean } | undefined> =>
+      (await p.fire('tool_call', { toolName })) as { block?: boolean } | undefined;
   }
 
-  it("restricted: HARD-BLOCKS the shell/exec class (bash, …) — MD-C floor", () => {
+  it("restricted: HARD-BLOCKS the shell/exec class (bash, …) — MD-C floor", async () => {
     const fire = gateFor('headless', 'restricted');
     for (const t of ['bash', 'shell', 'exec', 'sh', 'run_command']) {
-      const r = fire(t);
+      const r = await fire(t);
       expect(r, `tool=${t}`).to.include({ block: true });
     }
   });
 
-  it('restricted: ALLOWS read/edit/write + agent-tempo tools', () => {
+  it("F1: restricted ALSO blocks powershell/pwsh/cmd/run + command/process (EXEC_TOOLS superset)", async () => {
+    // F1 import-refactor — the MD-C floor now uses classify()==='exec' (the
+    // canonical EXEC_TOOLS set), which is a SUPERSET of the old local list. These
+    // names were the gap the local SHELL_TOOL_NAMES left OPEN before 3d.
     const fire = gateFor('headless', 'restricted');
-    for (const t of ['read', 'edit', 'write', 'grep', 'report', 'cue']) {
-      expect((fire(t) ?? {}).block, `tool=${t}`).to.not.equal(true);
+    // 'PowerShell' / ' BASH ' also assert classify()'s trim + case-insensitivity.
+    for (const t of ['powershell', 'pwsh', 'cmd', 'run', 'command', 'process', 'PowerShell', ' BASH ']) {
+      const r = await fire(t);
+      expect(r, `tool=${t}`).to.include({ block: true });
     }
   });
 
-  it('standard: bash is NOT blocked by the MD-C floor', () => {
+  it('restricted: ALLOWS read/edit/write + agent-tempo tools', async () => {
+    const fire = gateFor('headless', 'restricted');
+    for (const t of ['read', 'edit', 'write', 'grep', 'report', 'cue']) {
+      expect(((await fire(t)) ?? {}).block, `tool=${t}`).to.not.equal(true);
+    }
+  });
+
+  it('standard: bash is NOT blocked by the MD-C floor', async () => {
     const fire = gateFor('headless', 'standard');
-    expect((fire('bash') ?? {}).block).to.not.equal(true);
+    expect(((await fire('bash')) ?? {}).block).to.not.equal(true);
   });
 
-  it('full: bash is NOT blocked by the MD-C floor', () => {
+  it('full: bash is NOT blocked by the MD-C floor', async () => {
     const fire = gateFor('headless', 'full');
-    expect((fire('bash') ?? {}).block).to.not.equal(true);
+    expect(((await fire('bash')) ?? {}).block).to.not.equal(true);
   });
 
-  it('interactive: installs NO tool_call gate (human owns their machine)', () => {
+  it('interactive: installs NO tool_call gate (human owns their machine)', async () => {
     const fire = gateFor('interactive', 'restricted');
-    expect(fire('bash')).to.equal(undefined); // no handler registered
+    expect(await fire('bash')).to.equal(undefined); // no handler registered
   });
 });

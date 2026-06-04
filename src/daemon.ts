@@ -29,6 +29,8 @@ import { createWorkers } from './worker';
 import { createTemporalConnection } from './connection';
 import { InnerLoopRegistry } from './http/inner-loop';
 import { IngestTokenRegistry } from './http/ingest-registry';
+import { GateRegistry } from './http/gate-registry';
+import { createGateAuditSink } from './http/gate-audit';
 import { installGrpcShutdownGuard } from './utils/grpc-shutdown-guard';
 import { DAEMON_PID_PATH, DAEMON_LOG_PATH, DAEMON_HEARTBEAT_PATH, HEARTBEAT_INTERVAL_MS } from './cli/daemon';
 import { createTempoClient } from './client';
@@ -973,6 +975,16 @@ async function main() {
   // so the shutdown handler — declared just below — can drain them.
   const innerLoop = new InnerLoopRegistry();
   const ingestTokens = new IngestTokenRegistry();
+  // 3d MD-G — the operator-gate registry, same daemon-owned-singleton pattern.
+  // Audit sink = the append-only JSONL writer; publishToInner = innerLoop.publish
+  // (the DI that emits gate_resolved on the player's /inner stream without a
+  // GateRegistry↔inner-loop circular import).
+  const gate = new GateRegistry(
+    createGateAuditSink(),
+    Date.now,
+    undefined, // default 45s auto-allow
+    (workflowId, frame) => innerLoop.publish(workflowId, frame),
+  );
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -1009,6 +1021,7 @@ async function main() {
     // (streams end cleanly rather than dangling).
     ingestTokens.revokeAll();
     innerLoop.close();
+    gate.clear();
     sharedWorker?.shutdown();
     hostWorker?.shutdown();
   };
@@ -1017,7 +1030,7 @@ async function main() {
 
   // Create workers (signal handlers already active via mutable refs)
   log(`Connecting to Temporal at ${config.temporalAddress} (namespace: ${config.temporalNamespace})`);
-  const workers = await createWorkers(config, ingestTokens);
+  const workers = await createWorkers(config, ingestTokens, gate);
   sharedWorker = workers.sharedWorker;
   hostWorker = workers.hostWorker;
   log('Workers created — processing tasks');
@@ -1111,6 +1124,9 @@ async function main() {
         // and /inner/ingest validates against the tokens the spawn path minted.
         innerLoop,
         ingestTokens,
+        // 3d MD-G — the same gate registry the worker's outbox auto-disarms on
+        // detach/destroy; the HTTP server serves arm/disarm/decide + resolution.
+        gate,
       });
       log(`HTTP listening on http://${httpServerHandle.bindAddr}:${httpServerHandle.port}`);
       log(`Aggregate poll loop running (bootEpoch=${bootEpoch})`);

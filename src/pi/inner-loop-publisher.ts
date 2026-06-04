@@ -44,13 +44,27 @@ import type {
   PiTurnPayload,
 } from './pi-types';
 
-/** A fine-tail frame (Tier 2). Matches lead's InnerLoopRegistry frame schema. */
+/**
+ * A fine-tail frame (Tier 2). Matches lead's InnerLoopRegistry frame schema.
+ *
+ * 3d adds the two MD-G operator-gate frames. They ride the SAME /inner stream the
+ * operator already watches (per-player, so workflowId/playerId are implicit):
+ *   - `inner.gate_pending`  — emitted by the Pi tool_call handler when the gate
+ *     engages; the ingest route's side-effect registers the pending in the
+ *     GateRegistry (the "engagement IS registration" path). `argsSummary` is
+ *     source-truncated (~2KB). `timeoutMs` lets the operator UI render a countdown.
+ *   - `inner.gate_resolved` — emitted by the GateRegistry (via an injected
+ *     publishToInner callback) when a decision lands (operator) or the 45s
+ *     auto-allow fires (timeout), so the operator sees the outcome.
+ */
 export type InnerFrame =
   | { type: 'inner.thinking'; delta: string; kind: 'thinking' | 'text' }
   | { type: 'inner.tool_call'; tool: string; argsSummary: string; ts: number }
   | { type: 'inner.tool_result'; tool: string; resultSummary: string; isError: boolean; ts: number }
   | { type: 'inner.token'; contextTokens?: number; contextPercent?: number }
-  | { type: 'inner.turn'; phase: 'start' | 'end'; turnIndex: number; ts: number };
+  | { type: 'inner.turn'; phase: 'start' | 'end'; turnIndex: number; ts: number }
+  | { type: 'inner.gate_pending'; requestId: string; tool: string; argsSummary: string; classification: 'exec' | 'high-blast'; timeoutMs: number; ts: number }
+  | { type: 'inner.gate_resolved'; requestId: string; decision: 'allow' | 'deny' | 'auto-allow'; source: 'operator' | 'timeout'; ts: number };
 
 /**
  * The daemon-side fine-tail sink (lead's `http/inner-loop.ts`). Injected so the

@@ -16,6 +16,7 @@ import { spawnInTerminal, spawnCopilotBridge, spawnClaudeApiAdapter, spawnOpenCo
 import type { ClaudeCodeHeadlessPermissionMode } from '../adapters/claude-code-headless/types';
 import { ENV } from '../config';
 import type { IngestTokenRegistry } from '../http/ingest-registry';
+import type { GateRegistry } from '../http/gate-registry';
 import { resolveSession } from './resolve';
 import { resolveAgentType } from '../ensemble/agent-types';
 import { defaultPart } from '../utils/default-part';
@@ -34,6 +35,7 @@ import {
   receiveMessageSignal,
   updateMetadataSignal,
   playerStateQuery,
+  setPendingResetSignal,
 } from '../workflows/signals';
 import { PLAYER_STATE_DEFAULT_KEY } from '../utils/validation';
 import type { PlayerStateEntry } from '../types';
@@ -207,6 +209,18 @@ export interface DeliverDestroyInput {
   notifyConductor?: boolean;
 }
 
+export interface DeliverResetInput {
+  ensemble: string;
+  targetPlayerId: string;
+  /** Correlation id (the originating outbox entry id) — the extension acks with it. */
+  resetId: string;
+  /** Clean-wipe (D14 default true). */
+  fresh: boolean;
+  reason?: string;
+  /** Who requested the reset (audit). */
+  requestedBy?: string;
+}
+
 export interface DeliverRestartInput {
   ensemble: string;
   targetPlayerId: string;
@@ -321,6 +335,7 @@ export interface OutboxActivities {
   deliverDetach(input: DeliverDetachInput): Promise<OutboxActivityResult>;
   deliverDestroy(input: DeliverDestroyInput): Promise<OutboxActivityResult>;
   deliverRestart(input: DeliverRestartInput): Promise<OutboxActivityResult>;
+  deliverReset(input: DeliverResetInput): Promise<OutboxActivityResult>;
   /**
    * OS-level child-process-tree kill for the target session. Runs on the per-host
    * task queue (`agent-tempo-{hostname}`) so the kill happens where the process
@@ -344,6 +359,7 @@ export function createOutboxActivities(
   client: Client,
   config: Config,
   ingestTokens?: IngestTokenRegistry,
+  gate?: GateRegistry,
 ): OutboxActivities {
   return {
     async deliverCue(input: DeliverCueInput): Promise<OutboxActivityResult> {
@@ -801,6 +817,9 @@ export function createOutboxActivities(
         // TODO(Phase 4): revoke ingest token on detach (see deliverDestroy TODO)
         // — deferred as hygiene; residual surface negligible (single-token
         // replacement on re-attach + loopback-only + dead holder).
+        // 3d MD-G — auto-disarm the gate on detach (the operator's gate posture
+        // shouldn't survive the player going away; re-attach re-arms). Idempotent.
+        gate?.clearPlayer(sessionWorkflowId(ensemble, targetPlayerId));
         log(`Detach signaled for "${targetPlayerId}" (deadline=${deadlineMs}ms)`);
         return { success: true };
       } catch (err) {
@@ -843,6 +862,9 @@ export function createOutboxActivities(
         // revokeIngestToken(workflowId) on detach — deferred; residual surface
         // negligible (dead holder + loopback-only + single-token replacement).
         ingestTokens?.revoke(sessionWorkflowId(ensemble, targetPlayerId));
+        // 3d MD-G — auto-disarm: drop the gate's armed-state + any pending
+        // requests for the destroyed player (idempotent; no-op for non-Pi).
+        gate?.clearPlayer(sessionWorkflowId(ensemble, targetPlayerId));
 
         if (notifyConductor) {
           try {
@@ -863,6 +885,32 @@ export function createOutboxActivities(
         // permanent cases (WorkflowNotFound, validator rejection) stay
         // non-retryable. Unknown errors default to non-retryable.
         classifyAndRethrow(err, `Destroy failed for "${targetPlayerId}"`);
+      }
+    },
+
+    /**
+     * D14 `deliverReset` — set a `pendingReset` flag on the target via
+     * `setPendingResetSignal` (a signal, like deliverCue — NOT a direct
+     * subprocess call). The Pi extension polls `pendingResetQuery`, performs the
+     * clean-wipe (`newSession`), then clears it via `ackResetSignal(resetId)`.
+     */
+    async deliverReset(input: DeliverResetInput): Promise<OutboxActivityResult> {
+      const { ensemble, targetPlayerId, resetId, fresh, reason, requestedBy } = input;
+      try {
+        const handle = await resolveSession(client, ensemble, targetPlayerId);
+        if (!handle) {
+          throw ApplicationFailure.nonRetryable(`No session found for "${targetPlayerId}"`);
+        }
+        await handle.signal(setPendingResetSignal, {
+          resetId,
+          fresh,
+          ...(reason !== undefined ? { reason } : {}),
+          ...(requestedBy !== undefined ? { requestedBy } : {}),
+        });
+        log(`Reset queued for "${targetPlayerId}"${reason ? ` (reason: ${reason})` : ''}`);
+        return { success: true };
+      } catch (err) {
+        classifyAndRethrow(err, `Reset failed for "${targetPlayerId}"`);
       }
     },
 

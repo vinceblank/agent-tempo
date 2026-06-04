@@ -72,6 +72,12 @@ export interface PiAgentSession {
    * as `sendMessage`; the real method name is `sendCustomMessage`.
    */
   sendCustomMessage(msg: PiOutboundMessage, opts?: PiCustomMessageOptions): void | Promise<void>;
+  /**
+   * 3d D14 — wipe the conversation and start a FRESH context (no replay). The
+   * reset handler calls this on a clean-wipe reset. Optional in the slice (Pi
+   * provides it; older Pi / a fake session in tests may not).
+   */
+  newSession?(): void | Promise<void>;
   /** Pi's stable session identifier (reconciled with workflow metadata — D11). */
   readonly id?: string;
 }
@@ -120,6 +126,14 @@ export interface PiContextUsage {
 export interface PiExtensionContext {
   getContextUsage(): PiContextUsage | undefined;
   isIdle(): boolean;
+  /**
+   * 3d — the in-flight turn's AbortSignal (Esc / cancel). Pi passes it to handlers
+   * (the shipped `permission-gate.ts` precedent threads it into an awaited gate);
+   * the operator-gate await uses it to cancel a pending poll so a cancelled turn
+   * never hangs on an unresolved decision (Pi #2381). Optional — absent on older
+   * Pi / non-turn handlers.
+   */
+  signal?: AbortSignal;
 }
 
 /**

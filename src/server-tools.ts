@@ -51,6 +51,7 @@ import { buildStagesTool } from './tools/stages';
 import { buildCancelStageTool } from './tools/cancel-stage';
 import { buildRestartTool } from './tools/restart';
 import { buildDestroyTool } from './tools/destroy';
+import { buildResetTool } from './tools/reset';
 import { buildMigrateTool } from './tools/migrate';
 import { buildAttachmentInfoTool } from './tools/attachment-info';
 import { buildHostsTool } from './tools/hosts';
@@ -130,6 +131,7 @@ export function buildAllTempoTools(opts: RegisterAllTempoToolsOpts): TempoToolDe
     buildRestoreTool(client, config, getPlayerId),
     buildRestartTool(client, config, getPlayerId, handle),
     buildDestroyTool(client, config, getPlayerId, handle),
+    buildResetTool(handle, getPlayerId),
     buildMigrateTool(client, config, getPlayerId, handle),
     buildAttachmentInfoTool(client, config),
     buildHostsTool(client, config),
