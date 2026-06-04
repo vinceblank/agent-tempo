@@ -22,8 +22,9 @@ import { createOutboxActivities, type OutboxActivities } from '../src/activities
 import { resolveSession, scanEnsembleSessions } from '../src/activities/resolve';
 import { createScheduleActivities, type ScheduleActivities } from '../src/activities/schedule-fire';
 import { createMaestroActivities, type MaestroActivities } from '../src/activities/maestro';
-import { conductorWorkflowId } from '../src/config';
+import { conductorWorkflowId, sessionWorkflowId } from '../src/config';
 import type { Config } from '../src/config';
+import { IngestTokenRegistry } from '../src/http/ingest-registry';
 import type { SessionMetadata } from '../src/types';
 
 // ── Mock helpers ──
@@ -542,6 +543,35 @@ describe('deliverDetach — error classification (#140)', function () {
     }
     expect(caught).to.be.instanceOf(ApplicationFailure);
     expect((caught as ApplicationFailure).nonRetryable).to.equal(true);
+  });
+});
+
+describe('deliverDetach — ingest-token revoke hygiene (Item 1 / #627)', function () {
+  it('revokes the player ingest token on a successful detach (parity with destroy)', async function () {
+    const aliceMeta: SessionMetadata = {
+      playerId: 'alice', ensemble: 'e1', hostname: 'h', workDir: '/w',
+      isConductor: false, agentType: 'claude',
+    };
+    const ingestTokens = new IngestTokenRegistry();
+    const wf = sessionWorkflowId('e1', 'alice');
+    const token = ingestTokens.mint(wf);
+    expect(ingestTokens.validate(wf, token)).to.equal(true);
+
+    const handle = mockHandle({
+      metadata: aliceMeta,
+      attachmentInfo: { phase: 'attached', inFlightCount: 0 },
+    });
+    const client = mockClient([handle]);
+    const activities = createOutboxActivities(client as any, mockConfig(), ingestTokens);
+
+    const res = await activities.deliverDetach({ ensemble: 'e1', targetPlayerId: 'alice' });
+
+    expect(res.success).to.equal(true);
+    // The lingering token must no longer authenticate once the player detaches —
+    // previously it survived in daemon memory until destroy/shutdown.
+    expect(ingestTokens.validate(wf, token)).to.equal(false);
+    // Revoke is ADDITIVE: the detach signal still fired (not replaced by the revoke).
+    expect(handle.signals.length).to.be.greaterThan(0);
   });
 });
 
