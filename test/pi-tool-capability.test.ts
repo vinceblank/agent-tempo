@@ -35,6 +35,40 @@ describe('tool-capability classify — by class (representative names)', () => {
   });
 });
 
+describe('tool-capability classify — security boundary rulings', () => {
+  it('web_search is low-risk but web_fetch is high-blast (read vs exfil surface)', () => {
+    expect(classify('web_search')).to.equal('low-risk');
+    expect(classify('websearch')).to.equal('low-risk');
+    expect(classify('web_fetch')).to.equal('high-blast');
+    expect(classify('webfetch')).to.equal('high-blast');
+    expect(classify('fetch')).to.equal('high-blast');
+  });
+
+  it('pause/play/release are high-blast (peer state changes); fetch_state is low-risk', () => {
+    expect(classify('pause')).to.equal('high-blast');
+    expect(classify('play')).to.equal('high-blast');
+    expect(classify('release')).to.equal('high-blast');
+    expect(classify('fetch_state')).to.equal('low-risk');
+  });
+
+  it('schedule is high-blast but unschedule is low-risk (blast is at schedule-time)', () => {
+    expect(classify('schedule')).to.equal('high-blast');
+    expect(classify('unschedule')).to.equal('low-risk');
+  });
+
+  it('quality_gate/evaluate_gate are high-blast; gates (list) is low-risk', () => {
+    expect(classify('quality_gate')).to.equal('high-blast');
+    expect(classify('evaluate_gate')).to.equal('high-blast');
+    expect(classify('gates')).to.equal('low-risk');
+  });
+
+  it('classifies the EXEC superset (incl. powershell/cmd/command/run_command)', () => {
+    for (const t of ['powershell', 'pwsh', 'cmd', 'run', 'command', 'run_command']) {
+      expect(classify(t), t).to.equal('exec');
+    }
+  });
+});
+
 describe('tool-capability classify — unknown default (fail-safe)', () => {
   it('returns UNKNOWN_DEFAULT for an unrecognized tool', () => {
     expect(classify('some_future_tool_xyz')).to.equal(UNKNOWN_DEFAULT);

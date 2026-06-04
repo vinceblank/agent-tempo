@@ -37,7 +37,14 @@ export const UNKNOWN_DEFAULT: ToolCapability = 'high-blast';
 
 /**
  * Shell / arbitrary-code execution — hard-blocked at `restricted` (MD-C).
- * CONTENT owned by tempo-security (pending sign-off).
+ * CONTENT owned by tempo-security (signed off 2026-06-04).
+ *
+ * ⚠️ SYNC + GATE-GAP: this is the CANONICAL exec denylist and is a SUPERSET of
+ * the current `SHELL_TOOL_NAMES` in `src/pi/extension.ts` — it adds
+ * `powershell`/`pwsh`/`cmd`/`run`, which the live restricted-mode gate does NOT
+ * yet block. 3d MUST refactor extension.ts to IMPORT `EXEC_TOOLS` from here
+ * (single source, dedup) — that closes the gap. Do NOT edit extension.ts now
+ * (lead's lane); flagged to lead + security.
  */
 export const EXEC_TOOLS: ReadonlySet<string> = new Set([
   'bash',
@@ -49,34 +56,58 @@ export const EXEC_TOOLS: ReadonlySet<string> = new Set([
   'cmd',
   'run',
   'process',
+  'command',
+  'run_command',
 ]);
 
 /**
  * Destructive / exfiltration-capable — gated when an operator is armed.
- * CONTENT owned by tempo-security (pending sign-off).
+ * CONTENT owned by tempo-security (signed off 2026-06-04).
  */
 export const HIGH_BLAST_TOOLS: ReadonlySet<string> = new Set([
-  // Pi built-in mutating / network tools.
+  // Pi built-in mutating tools.
   'write',
   'edit',
   'multiedit',
+  // Network exfiltration surface (arbitrary HTTP incl. POST). NOTE: `websearch`
+  // is LOW_RISK (read-only results) — only the fetch/browse family gates.
   'webfetch',
-  'websearch',
-  // agent-tempo coordination tools that mutate the ensemble / spawn / tear down.
+  'web_fetch',
+  'fetch',
+  'http_request',
+  'browser',
+  // agent-tempo tools that mutate the ensemble / spawn / tear down / control peers.
   'recruit',
   'destroy',
   'restart',
   'migrate',
   'shutdown',
-  'release',
-  'broadcast',
-  'schedule',
-  'unschedule',
+  'release',       // releases a held player — state change on a peer
+  'broadcast',     // fans out to ALL players (amplification)
+  'schedule',      // creates a durable autonomous trigger (unschedule is LOW_RISK)
+  'pause',
+  'play',
+  'restore',       // re-spawns a detached player (process spawn)
+  // State / artifact destruction (irreversible).
+  'save_state',
+  'clear_state',
+  'coat_check_evict',
+  // Lineup spawn (full ensemble from YAML; save_lineup is LOW_RISK).
+  'load_lineup',
+  // Git state + disk mutation.
+  'worktree',
+  'stage',
+  'cancel_stage',  // discards staged work (irreversible)
+  // Quality gates that block/unblock ensemble workflow progress.
+  'quality_gate',
+  'evaluate_gate',
+  // Drive/file mutation.
+  'copy_file',
 ]);
 
 /**
  * Read-only / coordination — always bypasses the gate.
- * CONTENT owned by tempo-security (pending sign-off).
+ * CONTENT owned by tempo-security (signed off 2026-06-04).
  */
 export const LOW_RISK_TOOLS: ReadonlySet<string> = new Set([
   // Pi built-in read tools.
@@ -84,6 +115,9 @@ export const LOW_RISK_TOOLS: ReadonlySet<string> = new Set([
   'grep',
   'glob',
   'ls',
+  // Read-only web search (no arbitrary POST — distinct from the web_fetch family).
+  'websearch',
+  'web_search',
   // agent-tempo read-only / status / messaging coordination tools.
   'cue',
   'report',
@@ -93,12 +127,22 @@ export const LOW_RISK_TOOLS: ReadonlySet<string> = new Set([
   'who_am_i',
   'set_name',
   'set_part',
+  'set_ensemble_description', // metadata only, no blast radius
   'hosts',
   'attachment_info',
   'agent_types',
   'schedules',
-  'gates',
   'stages',
+  'gates',
+  // Read-only state / coat-check (coat_check_put is bounded 32KB + TTL'd + visible).
+  'fetch_state',
+  'coat_check_put',
+  'coat_check_get',
+  'coat_check_list',
+  // Removes a future trigger — blast was at schedule-time, not here.
+  'unschedule',
+  // Writes the coordinator YAML (not arbitrary file write; blast is at load_lineup).
+  'save_lineup',
 ]);
 
 /**
