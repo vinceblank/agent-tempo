@@ -82,6 +82,9 @@ src/
 │   ├── inner-loop.ts  # InnerLoopRegistry + InnerSubscription — daemon-local fine-tail sink (3c MD-F); drop-oldest bounded queue (256) + `compacted{dropped,sinceTs}` marker; NOT on Temporal/bus, ephemeral no-replay
 │   ├── ingest-registry.ts # IngestTokenRegistry — per-player ingest token (mint-on-pi-spawn / revoke-on-destroy / revokeAll-on-shutdown); timing-safe validation; cross-player-spoof guard
 │   ├── inner-loop-routes.ts # 3 inner-loop HTTP routes: POST /inner/ingest + GET /inner/presence (INGRESS, loopback + X-Ingest-Token, uniform 403); GET /inner (EGRESS operator SSE, requireTier(3))
+│   ├── gate-registry.ts   # GateRegistry (3d MD-G) — per-player armed-gate + pending-request store; 45s lazy auto-allow (R3 locked); arm/disarm/decide/getResolution; injected auditSink + publishToInner callback
+│   ├── gate-routes.ts     # Gate HTTP routes: POST /gate-arm + /gate-disarm + /gate/:requestId (OPERATOR, Tier 3); GET /gate/:requestId/resolution (SOURCE, loopback + X-Ingest-Token); uniform 403 no-leak
+│   ├── gate-audit.ts      # createGateAuditSink — append-only JSONL at ~/.agent-tempo/gate-audit/<ensemble>/<workflowId>.jsonl; sync write (R5 durable-before-return); whitelisted path segments; swallows I/O errors
 │   ├── auth.ts / cors.ts / responses.ts / event-id.ts / port-file.ts / index.ts
 ├── reconcile/
 │   └── orphans.ts     # Shared orphan-query helper (daemon reconcile-on-boot + CLI restore)
@@ -96,7 +99,7 @@ src/
 │   ├── worktree.ts / stage.ts / stages.ts / cancel-stage.ts
 │   ├── load-lineup.ts / save-lineup.ts / agent-types.ts / resolve.ts
 │   ├── set-name.ts / set-part.ts / who-am-i.ts / release.ts
-│   ├── pause.ts / play.ts / shutdown.ts / restore.ts
+│   ├── pause.ts / play.ts / shutdown.ts / restore.ts / reset.ts
 │   ├── hosts.ts / set-ensemble-description.ts
 │   ├── save-state.ts / fetch-state.ts / clear-state.ts
 │   ├── coat-check-put.ts / coat-check-get.ts / coat-check-list.ts / coat-check-evict.ts
@@ -109,7 +112,10 @@ src/
 │   ├── render-tools.ts # renderToPi — registers the shared tool descriptors on Pi's ExtensionAPI (TypeBox params via the converter)
 │   ├── zod-to-typebox.ts # zod→TypeBox tool-schema converter (fail-loud on unsupported constructs; Phase 1 / D1)
 │   ├── inner-loop-publisher.ts # InnerLoopPublisher (3c MD-F) — single Pi-source observer; Tier-1 coarse via heartbeat piggyback (currentTool + context pressure), Tier-2 fine presence-gated; source coalescing (100ms/2KB) + 2KB truncation
-│   ├── inner-loop-client.ts # InnerLoopHttpClient — production InnerLoopRegistry impl: thin loopback-HTTP calls (publish→POST ingest, subscriberCount→cached presence GET); no-ops without AGENT_TEMPO_INGEST_TOKEN
+│   ├── inner-loop-client.ts # InnerLoopHttpClient — production InnerLoopRegistry impl: thin loopback-HTTP calls (publish→POST ingest, subscriberCount→cached presence GET); no-ops without AGENT_TEMPO_INGEST_TOKEN; 3d: also caches gateArmed from presence response
+│   ├── gate-client.ts     # GateClient (3d MD-G) — Pi-subprocess poll client for operator gate resolution; awaitDecision(requestId) polls GET /gate/:id/resolution until resolved or timeout; fail-open (allow on timeout/error/auto-allow)
+│   ├── reset-pump.ts      # ResetPump (3d D14) — polls pendingReset query every 1s; on result calls session.newSession() (clean-wipe); sends system notice; acks via ackReset signal
+│   ├── tool-capability.ts # classify(toolName) → ToolCapability ('exec' | 'high-blast' | 'low-risk'); EXEC_TOOLS denylist (F1 locked: bash/shell/exec/sh/powershell/pwsh/cmd/…); unknown → 'high-blast' (fail-safe)
 │   ├── probe.ts / pi-types.ts / index.ts   # optional-dep preflight, hand-written ExtensionAPI decls, barrel
 │   └── README.md      # Pi integration findings (abrupt-death/MD-A, D12a, Phase 2 singleton/teardown) + carry-items
 ├── tui/
