@@ -158,6 +158,18 @@ describe('Pi extension — MD-C tool_call gate (headless only)', () => {
     }
   });
 
+  it("F1: restricted ALSO blocks powershell/pwsh/cmd/run + command/process (EXEC_TOOLS superset)", () => {
+    // F1 import-refactor — the MD-C floor now uses classify()==='exec' (the
+    // canonical EXEC_TOOLS set), which is a SUPERSET of the old local list. These
+    // names were the gap the local SHELL_TOOL_NAMES left OPEN before 3d.
+    const fire = gateFor('headless', 'restricted');
+    // 'PowerShell' / ' BASH ' also assert classify()'s trim + case-insensitivity.
+    for (const t of ['powershell', 'pwsh', 'cmd', 'run', 'command', 'process', 'PowerShell', ' BASH ']) {
+      const r = fire(t);
+      expect(r, `tool=${t}`).to.include({ block: true });
+    }
+  });
+
   it('restricted: ALLOWS read/edit/write + agent-tempo tools', () => {
     const fire = gateFor('headless', 'restricted');
     for (const t of ['read', 'edit', 'write', 'grep', 'report', 'cue']) {

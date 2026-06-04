@@ -45,6 +45,7 @@ import { createLazyProxy } from './lazy-proxy';
 import { probePi } from './probe';
 import { InnerLoopPublisher } from './inner-loop-publisher';
 import { InnerLoopHttpClient } from './inner-loop-client';
+import { classify } from './tool-capability';
 
 const log = (...args: unknown[]): void => {
   // eslint-disable-next-line no-console
@@ -66,16 +67,12 @@ export interface PiExtensionOptions {
   toolAccess?: PiToolAccess;
 }
 
-/**
- * Shell/exec tool class (MD-C). Hard-blocked at `toolAccess='restricted'`. Pi's
- * built-in is `bash`; aliases are included defensively against future Pi tools.
- */
-const SHELL_TOOL_NAMES: ReadonlySet<string> = new Set([
-  'bash', 'shell', 'exec', 'sh', 'command', 'run_command', 'process',
-]);
-function isShellClassTool(toolName: string): boolean {
-  return SHELL_TOOL_NAMES.has(String(toolName).toLowerCase());
-}
+// MD-C shell/exec tool-class membership is owned by `tool-capability.ts`
+// (`classify(name) === 'exec'`, content signed off by tempo-security). F1
+// import-refactor (3d): this REPLACES the former local `SHELL_TOOL_NAMES` set —
+// the canonical EXEC_TOOLS set is a SUPERSET that also blocks
+// powershell/pwsh/cmd/run, closing the gap the local list left open. Single
+// source of truth: never re-declare a shell denylist here.
 
 // ── Module-scope Temporal Client singleton (D12a: one Client per OS process) ──
 let sharedClientPromise: Promise<Client> | null = null;
@@ -175,8 +172,11 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
       (pi.on as unknown as (e: string, h: (ev: PiToolCallEvent) => PiToolCallResult) => void)(
         'tool_call',
         (event: PiToolCallEvent): PiToolCallResult => {
-          // 1) MD-C tool-class floor (fires FIRST, before any gate-engagement check).
-          if (isShellClassTool(event.toolName) && toolAccess === 'restricted') {
+          // 1) MD-C tool-class floor (fires FIRST, before any gate-engagement
+          //    check). F1: classify()==='exec' is the canonical EXEC set from
+          //    tool-capability.ts — a SUPERSET of the old local list, so
+          //    powershell/pwsh/cmd/run are now hard-blocked at restricted too.
+          if (classify(event.toolName) === 'exec' && toolAccess === 'restricted') {
             log(`MD-C: blocked '${event.toolName}' (toolAccess=restricted)`);
             return {
               block: true,
