@@ -13,6 +13,7 @@ import {
   loadOrGenerateHttpToken,
   originHost,
   tokensMatch,
+  requireTier,
 } from '../../src/http/auth';
 import type { PersistedConfig } from '../../src/config';
 
@@ -135,5 +136,36 @@ describe('loadOrGenerateHttpToken', () => {
     });
     expect(token).toBeNull();
     expect(saved).toBeNull();
+  });
+});
+
+describe('requireTier (3c — single bearer = T1–T3 today; bearer-keyed, no Origin gate)', () => {
+  const TOKEN = 'a'.repeat(43);
+
+  it('loopback bind + no/loopback Origin → authorized without a bearer (loopback trust)', () => {
+    expect(requireTier(3, { bindAddr: '127.0.0.1', originHeader: undefined, authHeader: undefined, httpToken: TOKEN }).ok).toBe(true);
+    expect(requireTier(3, { bindAddr: '::1', originHeader: 'http://localhost:3000', authHeader: undefined, httpToken: TOKEN }).ok).toBe(true);
+  });
+
+  it('non-loopback bind → requires a valid bearer; 401 when missing/wrong', () => {
+    expect(requireTier(3, { bindAddr: '0.0.0.0', originHeader: undefined, authHeader: undefined, httpToken: TOKEN })).toEqual({ ok: false, status: 401, error: 'unauthorized' });
+    expect(requireTier(3, { bindAddr: '0.0.0.0', originHeader: undefined, authHeader: 'Bearer wrong', httpToken: TOKEN }).ok).toBe(false);
+    expect(requireTier(3, { bindAddr: '0.0.0.0', originHeader: undefined, authHeader: `Bearer ${TOKEN}`, httpToken: TOKEN }).ok).toBe(true);
+  });
+
+  it('a valid bearer satisfies EVERY tier today (god-mode)', () => {
+    const base = { bindAddr: '0.0.0.0', originHeader: undefined, authHeader: `Bearer ${TOKEN}`, httpToken: TOKEN } as const;
+    expect(requireTier(1, base).ok).toBe(true);
+    expect(requireTier(2, base).ok).toBe(true);
+    expect(requireTier(3, base).ok).toBe(true);
+  });
+
+  it('bearer WITHOUT an Origin passes (non-browser Node client / Pi widget — guardrail #4)', () => {
+    // No Origin header, non-loopback bind, valid bearer → authorized.
+    expect(requireTier(3, { bindAddr: '0.0.0.0', originHeader: undefined, authHeader: `Bearer ${TOKEN}`, httpToken: TOKEN }).ok).toBe(true);
+  });
+
+  it('non-loopback bind with no configured httpToken → 401 (cannot satisfy the guard)', () => {
+    expect(requireTier(3, { bindAddr: '0.0.0.0', originHeader: undefined, authHeader: `Bearer ${TOKEN}`, httpToken: null }).ok).toBe(false);
   });
 });

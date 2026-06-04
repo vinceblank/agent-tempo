@@ -140,3 +140,47 @@ export function loadOrGenerateHttpToken(opts: {
   save({ ...cfg, httpToken: token });
   return token;
 }
+
+/** Access tiers (MD-E). 3c uses T3 for the operator inner-tail; 3e splits tokens. */
+export type Tier = 1 | 2 | 3;
+
+export interface TierGuardInput {
+  /** Daemon bind address — decides loopback trust. */
+  bindAddr: string;
+  /** Request `Origin` header (may be absent for a non-browser client). */
+  originHeader: string | undefined;
+  /** Request `Authorization` header. */
+  authHeader: string | undefined;
+  /** The daemon's configured bearer token, or `null` when none is set. */
+  httpToken: string | null;
+}
+
+export type TierGuardResult =
+  | { ok: true }
+  | { ok: false; status: 401; error: 'unauthorized' };
+
+/**
+ * Tier-gated bearer auth (3c Tier-2 `/inner` operator stream; the `tier` arg is
+ * the forward-compat hook for 3e RBAC). **Today a single valid bearer satisfies
+ * T1–T3** (status-quo god-mode); 3e introduces the token→tier map
+ * (readToken→T1, adminToken→T2/T3) and ONLY that map changes — every call site's
+ * `requireTier(n, …)` guard stays correct.
+ *
+ * Mirrors the existing bearer flow exactly: bearer is required iff
+ * {@link bearerRequired} (non-loopback bind, or loopback bind with a non-loopback
+ * Origin); loopback connections keep today's trust posture (3e tightens). Keyed
+ * off the `Authorization` bearer — NOT cookies / pairing-sessions (#340 QR is
+ * token ACQUISITION, not a presentation requirement) — and adds NO `Origin`
+ * requirement, so a remote Node client (e.g. a Pi mission-control widget) that
+ * sends no `Origin` passes once its bearer validates. View-agnostic by design.
+ */
+export function requireTier(tier: Tier, input: TierGuardInput): TierGuardResult {
+  void tier; // 3e: compare `tier` against the presented token's granted tier.
+  const needBearer = bearerRequired(input.bindAddr, input.originHeader);
+  if (!needBearer) return { ok: true }; // loopback trust (3e adds per-tier gating)
+  const provided = extractBearerToken(input.authHeader);
+  if (!provided || !input.httpToken || !tokensMatch(provided, input.httpToken)) {
+    return { ok: false, status: 401, error: 'unauthorized' };
+  }
+  return { ok: true }; // valid bearer → all tiers today
+}
