@@ -1,6 +1,6 @@
 # Inner-Loop Protocol
 
-> **Status:** Stub / Placeholder · **Author:** TBD · **Created:** 2026-06-03
+> **Status:** Phase 3c (MD-F) · **Implemented:** `src/http/inner-loop.ts`, `src/http/inner-loop-routes.ts`, `src/pi/inner-loop-publisher.ts`, `src/pi/inner-loop-client.ts`
 > **Design decision:** MD-F in [docs/design/pi-native-integration.md](design/pi-native-integration.md)
 >
 > **IMPORTANT:** This is a **daemon-local, ephemeral, per-player side-channel** — it is
@@ -8,45 +8,201 @@
 > [docs/WIRE-PROTOCOL.md](WIRE-PROTOCOL.md). Signal names, event shapes, and transport
 > details here carry no stability guarantee and are not subject to the breaking-change rules
 > that govern Temporal signals/queries/updates.
+>
+> **SSE framing** follows the same `event:`/`data:` convention as the coordination stream
+> ([docs/SSE-PROTOCOL.md](SSE-PROTOCOL.md)), but the inner endpoint has no ring buffer,
+> no `Last-Event-ID` replay, no sequence numbers, and no shared event bus — see
+> [Differences from the coordination SSE](#differences-from-the-coordination-sse) below.
 
 ---
 
 ## Overview
 
-The inner-loop protocol defines the `GET /v1/players/:ensemble/:player/inner` SSE endpoint
-and its event shape. It exists to expose **fine-grained per-player observability** (token
-deltas, individual tool calls, turn boundaries) to human operators on demand — without
-flooding the coordination event-bus or Temporal history.
+The inner-loop protocol provides **fine-grained per-player observability** for headless Pi players — thinking/text deltas, individual tool calls and results, turn boundaries, and context-pressure — served to operators on demand without flooding the coordination event-bus or Temporal history.
 
-This document is a stub. Full content follows Phase 3+ implementation (MD-F).
+Two tiers:
 
----
+- **Tier 1 — coarse, always-on.** The current tool name and context-token pressure are piggybacked onto the existing `heartbeat` Temporal signal (~30 s freshness). The aggregate poll diffs this metadata and emits a `player.activity` event on the coordination SSE bus. No new endpoints or auth required. See [docs/SSE-PROTOCOL.md](SSE-PROTOCOL.md#playeractivity).
 
-## Design constraints (from MD-F)
-
-- **No ring buffer, no replay, no sequence numbers.** Subscribers receive events from the
-  moment of subscription only; there is no Last-Event-ID catch-up.
-- **NOT on the coordination SSE bus** (`/v1/events/:ensemble`). The inner loop is a separate
-  endpoint. Adding inner-loop events to `SSE_EVENT_KINDS` is explicitly rejected.
-- **Tier 1 — coarse, always-on.** Busy/idle state, tool-call name, token-count deltas.
-  Mostly already surfaced via `player.phase_changed` + `activityCount` on the coordination
-  bus; the inner endpoint aggregates these cheaply.
-- **Tier 2 — fine, on-demand.** Full token streaming, tool input/output bodies. Activated by
-  subscription presence (first subscriber = start; last unsubscribe = stop). The Pi extension
-  gates fine emission behind `hasInnerSubscribers()`.
-- **Bounded queue + compaction.** Per-subscriber queue is bounded; a slow subscriber receives
-  a `compacted` marker with `dropped: N` rather than unbounded backpressure.
-- **Token-delta coalescing.** Source coalesces token deltas over ~100 ms windows before
-  emitting, preventing per-token SSE storms.
+- **Tier 2 — fine, on-demand.** The `/inner` SSE endpoint streams live `InnerFrame` events. The publisher gates emission behind subscriber presence — zero watchers means zero forwarding, zero extra work in the Pi subprocess. Transport is loopback HTTP between the Pi subprocess and the daemon (not Temporal, not the coordination bus).
 
 ---
 
-## Planned sections (TBD)
+## Endpoints
 
-- Transport details (SSE framing, auth, reconnect behavior)
-- Event schema (`InnerLoopEvent` union type)
-- `compacted` marker shape
-- Tier-1 vs Tier-2 event inventory
-- Extension integration (Pi `onUpdate` → inner-loop emit)
-- Gate request/response events (MD-G integration)
-- RBAC tier required (MD-E: inner-tail tier or higher)
+### `GET /v1/players/:ensemble/:playerId/inner` — operator SSE stream (Tier 2)
+
+**Auth:** daemon bearer token, `Tier 3` (`adminToken`). Mounted **after** the outer bearer gate.
+
+Streams `InnerFrame` events as SSE. No ring buffer, no `Last-Event-ID`, no sequence numbers — subscribers receive frames from the moment of connection; a disconnect loses in-flight deltas by design.
+
+**Response headers:**
+```
+Content-Type: text/event-stream; charset=utf-8
+Cache-Control: no-cache, no-transform
+Connection: keep-alive
+X-Accel-Buffering: no
+```
+
+**SSE framing:**
+```
+event: inner.tool_call
+data: {"type":"inner.tool_call","tool":"Bash","argsSummary":"ls -la","ts":1717500000000}
+
+:ka
+
+event: compacted
+data: {"type":"compacted","dropped":3,"sinceTs":1717500001000}
+
+:closed
+```
+
+- `:ka` keepalive comments every 15 s on idle streams.
+- `:closed` comment when the player goes away (`closePlayer` drains all subscriptions).
+- If the operator's socket write buffer exceeds 1 MiB the connection is dropped (reconnect re-tails live).
+
+---
+
+### `POST /v1/players/:ensemble/:playerId/inner/ingest` — publisher ingest (loopback only)
+
+**Auth:** loopback remote address (`127.0.0.1` / `::1`) **AND** `X-Ingest-Token: <token>` header matching the daemon-minted per-player token. Mounted **before** the outer bearer gate.
+
+The Pi subprocess's `InnerLoopHttpClient` calls this to forward one `InnerFrame`. On success: `204 No Content`. On any gate/shape/oversize failure: uniform `403 {"error":"forbidden"}` (no detail — prevents info leakage about which gate tripped).
+
+**Request body:** a single `InnerFrame` JSON object (no wrapper), max 32 KiB.
+
+---
+
+### `GET /v1/players/:ensemble/:playerId/inner/presence` — publisher presence probe (loopback only)
+
+**Auth:** same as ingest (loopback + `X-Ingest-Token`). This endpoint is publisher-only — the operator must not probe it (leaking "is someone watching X?" is a covert channel).
+
+Returns `200 { "subscribers": <number> }` or `403`.
+
+The publisher polls this (at most once per second, rate-limited) to decide whether to forward fine frames. Zero subscribers → no forwarding → no extra work.
+
+---
+
+## Ingest Auth Model
+
+Each headless Pi player is minted a **per-player, single-use ingest token** at spawn:
+
+- **Mint:** daemon's `IngestTokenRegistry.mint(workflowId)` is called before `spawnPiHeadless`. The token is injected into the subprocess environment as `AGENT_TEMPO_INGEST_TOKEN`.
+- **Scope:** the token is bound to the player's `workflowId` (derived from ensemble + playerId). A player presenting its own token for another player's URL is rejected (cross-player-spoof guard).
+- **Revoke:** token is revoked on destroy. Detach does **not** revoke (deferred hygiene, security-approved — residual surface is bounded by the next spawn re-minting the token and the destroy-side revoke).
+- **Revoke-all:** on daemon shutdown.
+- **Not user-set.** `AGENT_TEMPO_INGEST_TOKEN` is a daemon-minted internal credential; operators must not set it manually.
+
+The token is validated timing-safely (constant-time comparison) against the registry. Every failure path returns a uniform `403` with no diagnostic detail.
+
+---
+
+## Event Schema (`InnerFrame`)
+
+All frames carry `"type"` as a discriminant. SSE framing: `event: <type>\ndata: <JSON>\n\n`.
+
+### `inner.thinking`
+
+Coalesced thinking/text delta from the model's stream. Source coalesces deltas over ~100 ms windows OR ~2 KiB of accumulated characters before emitting (whichever comes first), preventing per-token SSE storms. Kind-switches (thinking → text) flush the pending buffer immediately to preserve ordering.
+
+```ts
+{ type: 'inner.thinking'; delta: string; kind: 'thinking' | 'text' }
+```
+
+### `inner.tool_call`
+
+Pre-execution tool call with a summarized argument body (truncated to ~2 KiB).
+
+```ts
+{ type: 'inner.tool_call'; tool: string; argsSummary: string; ts: number }
+```
+
+### `inner.tool_result`
+
+Post-execution tool result with a summarized output body (truncated to ~2 KiB). `isError` mirrors the tool's error flag.
+
+```ts
+{ type: 'inner.tool_result'; tool: string; resultSummary: string; isError: boolean; ts: number }
+```
+
+### `inner.token`
+
+Context-window pressure sampled at `turn_end` via Pi's `getContextUsage()` (pull-only — no per-token streaming). Absent fields mean the value was not available from the model context (e.g. right after `continueAsNew` compaction).
+
+```ts
+{ type: 'inner.token'; contextTokens?: number; contextPercent?: number }
+```
+
+### `inner.turn`
+
+Turn lifecycle marker.
+
+```ts
+{ type: 'inner.turn'; phase: 'start' | 'end'; turnIndex: number; ts: number }
+```
+
+### `compacted` (sink-injected, never from publisher)
+
+Backpressure marker injected by the `InnerSubscription` before the next real frame whenever frames were dropped from the bounded queue (drop-oldest, max 256 frames). The publisher never emits this type.
+
+```ts
+{ type: 'compacted'; dropped: number; sinceTs: number }
+```
+
+`sinceTs` is the epoch-ms timestamp of the first drop in this compaction window.
+
+---
+
+## Differences from the Coordination SSE
+
+| Property | Coordination SSE (`/v1/events/:ensemble`) | Inner-loop SSE (`/v1/players/:e/:p/inner`) |
+|---|---|---|
+| Ring buffer | 256-event ring; `Last-Event-ID` replay | **None** — live-tail only |
+| Sequence numbers | `eventId` on every event | **None** |
+| Gap detection | `gap` event on ring overflow | **None** — disconnect loses in-flight deltas |
+| Reconnect | Resume from last event id | Re-tail from reconnect moment |
+| Auth | Tier 1 read token | Tier 3 admin token |
+| Ingest auth | N/A | Loopback + `X-Ingest-Token` (publisher only) |
+| On Temporal? | Coordination layer (workflow metadata) | **No** — loopback HTTP between subprocess and daemon |
+| Stability guarantee | Stable wire contract (breaking = semver major) | **None** — internal side-channel |
+| Event bus | `EnsembleEventBus` (in-process fan-out) | `InnerLoopRegistry` (per-daemon, per-player) |
+| Zero-subscriber cost | Always running | Zero forwarding when no subscribers |
+
+---
+
+## Publisher Architecture
+
+```
+Pi subprocess                           Daemon
+─────────────────                       ─────────────────────────────────────
+InnerLoopPublisher                      InnerLoopRegistry
+  pi.on('message_update') ──coalesce──▶  InnerSubscription × N
+  pi.on('tool_call')      ──gate──────▶    drop-oldest queue (256)
+  pi.on('tool_execution_start/end')         compacted marker on drain
+  pi.on('turn_start/end') ──truncate──▶  SSE write loop (handleInnerSse)
+
+InnerLoopHttpClient (prod DI)
+  publish()  ──POST /inner/ingest──────▶ handleInnerIngest
+  subscriberCount() ──GET /presence─────▶ handleInnerPresence (cached, rate-limited)
+```
+
+**Source-side gates (publisher):**
+- `isPresent()` — rate-limited `subscriberCount` check (cached ≤1/s). Zero → no forwarding, no buffering, no stringify on fine frames.
+- Source coalescing — thinking/text deltas buffered up to ~100 ms / ~2 KiB before emit.
+- Summary truncation — args + results capped at ~2 KiB with a `…[truncated]` marker.
+
+**Sink-side backpressure (registry):**
+- Per-subscriber bounded queue: 256 frames, drop-oldest when full.
+- `compacted{dropped,sinceTs}` injected before the next real frame on drain.
+- Slow operator socket: connection dropped if write buffer exceeds 1 MiB (reconnect re-tails).
+
+---
+
+## Carry-Items (Phase 4+)
+
+- **Token rotation** — ingest tokens are currently single-issue for the player's lifetime. Periodic rotation is deferred.
+- **Per-token rate limiting** — no per-ingest-token rate limit yet.
+- **Durable ingest audit** — ingest calls are not logged; deferred.
+- **Detach revoke** — detach does not currently revoke the ingest token (bounded risk; destroy-side revoke is in place). Revoke-on-detach is a deferred hygiene item.
+- **MD-G gate integration** — gate-block/allow events on the inner stream; deferred to Phase 3d.
+- **RBAC per tier (MD-E)** — Tier 3 currently uses `adminToken`; 3e will split tokens. The `/inner` endpoint's `requireTier(3)` call is correct and will stay correct after the split.
