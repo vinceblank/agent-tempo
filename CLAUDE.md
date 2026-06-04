@@ -79,6 +79,9 @@ src/
 │   ├── ring-buffer.ts # Fixed-size event ring buffer (256 events) for Last-Event-ID replay
 │   ├── snapshot.ts    # On-demand ensemble state snapshot (prelude + poll)
 │   ├── aggregate.ts   # AggregateRunner — wires bus + snapshot + HTTP server startup
+│   ├── inner-loop.ts  # InnerLoopRegistry + InnerSubscription — daemon-local fine-tail sink (3c MD-F); drop-oldest bounded queue (256) + `compacted{dropped,sinceTs}` marker; NOT on Temporal/bus, ephemeral no-replay
+│   ├── ingest-registry.ts # IngestTokenRegistry — per-player ingest token (mint-on-pi-spawn / revoke-on-destroy / revokeAll-on-shutdown); timing-safe validation; cross-player-spoof guard
+│   ├── inner-loop-routes.ts # 3 inner-loop HTTP routes: POST /inner/ingest + GET /inner/presence (INGRESS, loopback + X-Ingest-Token, uniform 403); GET /inner (EGRESS operator SSE, requireTier(3))
 │   ├── auth.ts / cors.ts / responses.ts / event-id.ts / port-file.ts / index.ts
 ├── reconcile/
 │   └── orphans.ts     # Shared orphan-query helper (daemon reconcile-on-boot + CLI restore)
@@ -105,6 +108,8 @@ src/
 │   ├── headless.ts    # Headless Pi runtime (Phase 3a) — boots Pi's createAgentSession with inline extension; `noExtensions: true` closes S2 exec-tool bypass; SIGTERM/SIGINT shutdown → reliable detach + dispose
 │   ├── render-tools.ts # renderToPi — registers the shared tool descriptors on Pi's ExtensionAPI (TypeBox params via the converter)
 │   ├── zod-to-typebox.ts # zod→TypeBox tool-schema converter (fail-loud on unsupported constructs; Phase 1 / D1)
+│   ├── inner-loop-publisher.ts # InnerLoopPublisher (3c MD-F) — single Pi-source observer; Tier-1 coarse via heartbeat piggyback (currentTool + context pressure), Tier-2 fine presence-gated; source coalescing (100ms/2KB) + 2KB truncation
+│   ├── inner-loop-client.ts # InnerLoopHttpClient — production InnerLoopRegistry impl: thin loopback-HTTP calls (publish→POST ingest, subscriberCount→cached presence GET); no-ops without AGENT_TEMPO_INGEST_TOKEN
 │   ├── probe.ts / pi-types.ts / index.ts   # optional-dep preflight, hand-written ExtensionAPI decls, barrel
 │   └── README.md      # Pi integration findings (abrupt-death/MD-A, D12a, Phase 2 singleton/teardown) + carry-items
 ├── tui/

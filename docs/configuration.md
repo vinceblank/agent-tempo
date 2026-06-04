@@ -52,6 +52,12 @@ Settings are resolved in this order (first match wins):
 | `CLAUDE_TEMPO_CLAUDE_BIN` | *(auto-detected)* | Path to a custom `claude` executable. Takes precedence over the config file setting and `which`/`where` auto-detection. Useful when multiple Claude versions are installed or the binary is not on `PATH`. |
 | `CLAUDE_TEMPO_DEV_MODE` | `false` | Enable dev profile (`1` or `true`). Flips home dir to `~/.agent-tempo-dev/`, HTTP port to 8474, Temporal namespace to `agent-tempo-dev`, task queue to `agent-tempo-dev`. Also enables the mock adapter (`agent: 'mock'`). Same effect as the `--dev` CLI flag. |
 
+**Headless Pi adapter — inner-loop ingest (daemon-minted; do NOT set manually):**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENT_TEMPO_INGEST_TOKEN` | *(daemon-minted)* | Per-player ingest token for the Tier-2 inner-loop side-channel. Minted by the daemon before `spawnPiHeadless`, injected into the subprocess env, scoped to the player's `workflowId`. Validated alongside a loopback remote-address check on `POST /inner/ingest` and `GET /inner/presence`. Revoked on destroy; revoked-all on daemon shutdown. **Never set this manually** — it is an internal credential, not a user-configurable setting. |
+
 **Headless Pi adapter** (`agent: 'pi'`, requires `pi-ai` optional dependency on Node 22.19+):
 
 | Variable | Default | Description |
