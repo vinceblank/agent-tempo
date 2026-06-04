@@ -35,6 +35,7 @@ import {
   HistoryEntry,
   OutboxEntry,
   OutboxEntryInput,
+  PendingReset,
   QualityGate,
   WorktreeEntry,
   receiveMessageSignal,
@@ -42,6 +43,9 @@ import {
   setNameSignal,
   markDeliveredSignal,
   updateMetadataSignal,
+  setPendingResetSignal,
+  pendingResetQuery,
+  ackResetSignal,
   getPartQuery,
   getMetadataQuery,
   pendingMessagesQuery,
@@ -117,7 +121,7 @@ import type {
 } from '../types';
 // ── Outbox Activity Proxies ──
 
-const { deliverCue, deliverReport, terminateSession, startRecruitedSession, releasePlayer, deliverDetach, deliverDestroy, deliverRestart } =
+const { deliverCue, deliverReport, terminateSession, startRecruitedSession, releasePlayer, deliverDetach, deliverDestroy, deliverRestart, deliverReset } =
   proxyActivities<OutboxActivities>({
     startToCloseTimeout: '30 seconds',
     retry: { maximumAttempts: 3 },
@@ -226,6 +230,9 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   const messages: Message[] = input.messages ?? [];
   const sentMessages: SentMessage[] = input.sentMessages ?? [];
   const outbox: OutboxEntry[] = input.outbox ?? [];
+  // D14 — pending context-reset flag, polled + acked by the Pi extension. Single
+  // slot, latest-wins; survives continue-as-new until the extension acks it.
+  let pendingReset: PendingReset | null = input.pendingReset ?? null;
   let lastActivityTime = workflowNow().getTime();
   let lastOutboundTime = input.lastOutboundTime ?? workflowNow().getTime();
   let lastInboundRRTime = input.lastInboundRRTime ?? 0;
@@ -427,6 +434,8 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[restart requested]', timestamp: entry.createdAt });
     } else if (entry.type === 'release') {
       sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[release requested]', timestamp: entry.createdAt });
+    } else if (entry.type === 'reset') {
+      sentMessages.push({ id: entry.id, to: entry.targetPlayerId, text: '[reset requested]', timestamp: entry.createdAt });
     }
 
     lastActivityTime = workflowNow().getTime();
@@ -491,6 +500,30 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       }
     }
     // Any delivery proves the session is alive
+    lastActivityTime = workflowNow().getTime();
+    activityCount++;
+  });
+
+  // ── Reset (D14) — set by deliverReset, polled + acked by the Pi extension ──
+  setHandler(setPendingResetSignal, (r) => {
+    // Latest-wins; stamp requestedAt deterministically (workflowNow, not the activity's clock).
+    pendingReset = {
+      resetId: r.resetId,
+      fresh: r.fresh,
+      ...(r.reason !== undefined ? { reason: r.reason } : {}),
+      ...(r.requestedBy !== undefined ? { requestedBy: r.requestedBy } : {}),
+      requestedAt: workflowNow().toISOString(),
+    };
+    lastActivityTime = workflowNow().getTime();
+    activityCount++;
+  });
+  setHandler(pendingResetQuery, () => pendingReset);
+  setHandler(ackResetSignal, (resetId) => {
+    // Race-safe: only clear if the ack matches the current pending reset, so a
+    // newer reset landing during the extension's wipe isn't silently dropped.
+    if (pendingReset?.resetId === resetId) {
+      pendingReset = null;
+    }
     lastActivityTime = workflowNow().getTime();
     activityCount++;
   });
@@ -1719,6 +1752,21 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
             });
             break;
           }
+          case 'reset': {
+            // D14: operator/conductor CLEAN-WIPE. Sets a pendingReset flag the
+            // Pi extension polls + acts on (newSession). POLL-delivery, not a
+            // direct subprocess signal. resetId = this outbox entry id (the
+            // extension acks with it). Does NOT route through the MD-G gate.
+            await deliverReset({
+              ensemble: input.metadata.ensemble,
+              targetPlayerId: entry.targetPlayerId,
+              resetId: entry.id,
+              fresh: entry.fresh ?? true,
+              ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+              requestedBy: entry.invokerPlayerId ?? input.metadata.playerId,
+            });
+            break;
+          }
           case 'spawn': {
             // PR-D: forward the pre-claimed attachment token + pinned runId +
             // resolved adapterId to the spawn activity. The child process picks
@@ -1864,6 +1912,8 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
         messages: messages.filter((m) => !m.delivered),
         sentMessages: sentMessages.slice(-50),
         outbox: outbox.filter((e) => e.status === 'pending' || e.status === 'processing'),
+        // D14 — carry an un-acked pending reset across CAN (omit when null).
+        ...(pendingReset ? { pendingReset } : {}),
         lastInboundRRTime,
         lastOutboundTime,
         // #399 W2 — counters carried across continueAsNew so the
