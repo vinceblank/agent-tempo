@@ -18,8 +18,8 @@ This document is the authoritative reference for the **HTTP/SSE event source** e
 |---|---|---|
 | Wire format | HTTP/1.1 + Server-Sent Events | One-way push, native browser/EventSource support, trivial Node consumption. WebSocket rejected (bidi unnecessary; commands flow over MCP). Long-poll rejected (hides reconnect semantics). |
 | Default bind | `127.0.0.1:8473` | Loopback only by default. Port: `t-e-m-p-o` mnemonic; not IANA-registered — operators MAY override. |
-| Bind override | `CLAUDE_TEMPO_HTTP_BIND=0.0.0.0` | Forces token mode (see §3). Daemon refuses to start if token mode prerequisites unmet. |
-| Port override | `CLAUDE_TEMPO_DAEMON_PORT` | |
+| Bind override | `AGENT_TEMPO_HTTP_BIND=0.0.0.0` | Forces token mode (see §3). Daemon refuses to start if token mode prerequisites unmet. |
+| Port override | `AGENT_TEMPO_DAEMON_PORT` | |
 | Port discovery | `~/.agent-tempo/daemon.port` | Atomic-write file containing the bound port. TUI reads this on startup so the port is config-free for local consumers. Removed on daemon shutdown. |
 | Snapshot Content-Type | `application/json; charset=utf-8` | |
 | Stream Content-Type | `text/event-stream; charset=utf-8` | |
@@ -78,7 +78,7 @@ T2 and T3 both require the admin token — there is no T2-only token. The admin 
 | Mode | Trigger | Behavior |
 |---|---|---|
 | **Loopback (no auth)** | `Origin` is loopback (`127.0.0.1`, `::1`, `localhost`) AND bind addr is loopback | Auth check skipped. Default for single-user dev workflows. |
-| **Bearer mode** | Any non-loopback `Origin` OR `CLAUDE_TEMPO_HTTP_BIND=0.0.0.0` | `Authorization: Bearer <token>` required on every endpoint except `/v1/health`. Mismatch → `401`. Missing → `401`. |
+| **Bearer mode** | Any non-loopback `Origin` OR `AGENT_TEMPO_HTTP_BIND=0.0.0.0` | `Authorization: Bearer <token>` required on every endpoint except `/v1/health`. Mismatch → `401`. Missing → `401`. |
 
 ### 3.1 Two-token model (3e MD-E)
 
@@ -111,7 +111,7 @@ If `config.json` contains `httpToken` but no `readToken`, the daemon adopts it a
 
 | Property | Default | Override |
 |---|---|---|
-| Allowlist | `localhost:*`, `127.0.0.1:*` echoed in `Access-Control-Allow-Origin` | `CLAUDE_TEMPO_CORS_ORIGINS` (comma-separated explicit origins, no wildcards) |
+| Allowlist | `localhost:*`, `127.0.0.1:*` echoed in `Access-Control-Allow-Origin` | `AGENT_TEMPO_CORS_ORIGINS` (comma-separated explicit origins, no wildcards) |
 | `Access-Control-Allow-Credentials` | `false` | non-configurable (bearer in header makes cookies unnecessary; `*` Origin is incompatible with credentials) |
 | `Access-Control-Allow-Methods` | `GET, OPTIONS` | non-configurable |
 | `Access-Control-Allow-Headers` | `Authorization, Last-Event-ID` | non-configurable |
@@ -388,7 +388,7 @@ then live   /v1/state/:ensemble
 
 - Each connection has a 1 MiB write buffer.
 - If a TCP write would block AND buffer is full, the daemon drops the connection. The consumer auto-reconnects, and the client's recorded `Last-Event-ID` either lands in the ring (replay) or triggers `gap`.
-- Per-process connection cap: `CLAUDE_TEMPO_SSE_MAX_CONNECTIONS` (default `100`). Above the cap → `503 Service Unavailable` with `Retry-After: 5`.
+- Per-process connection cap: `AGENT_TEMPO_SSE_MAX_CONNECTIONS` (default `100`). Above the cap → `503 Service Unavailable` with `Retry-After: 5`.
 
 ### 7.4 Cancellation contract (consumer side)
 
