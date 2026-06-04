@@ -23,9 +23,13 @@ import {
   bearerRequired,
   extractBearerToken,
   isLoopbackBindAddr,
-  loadOrGenerateHttpToken,
-  tokensMatch,
+  loadReadToken,
+  loadAdminToken,
+  tierForToken,
   requireTier,
+  type Tier,
+  type TierGuardInput,
+  type TierGuardResult,
 } from './auth';
 import type { InnerLoopRegistry } from './inner-loop';
 import type { IngestTokenRegistry } from './ingest-registry';
@@ -121,10 +125,14 @@ export interface HttpServerOptions {
    */
   portFilePath?: string;
   /**
-   * Inject the bearer token directly. Production callers pass `undefined`
-   * so the server reads/auto-generates from `~/.agent-tempo/config.json`.
+   * @deprecated 3e — back-compat alias for {@link readToken}. A single injected
+   * bearer is treated as the READ token (T1). Prefer `readToken`/`adminToken`.
    */
   httpToken?: string;
+  /** 3e — inject the read-tier (T1) token directly (tests). Overrides config/env. */
+  readToken?: string;
+  /** 3e — inject the admin (T1+T2+T3) token directly (tests). Overrides env. */
+  adminToken?: string;
   /**
    * Test seam — lets unit tests stub `process.uptime`-style readings.
    */
@@ -197,12 +205,49 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
   // generation now so the daemon doesn't crash mid-request when the first
   // bearer-required call shows up.
   const bindIsLoopback = isLoopbackBindAddr(bindAddr);
-  const httpToken =
-    opts.httpToken ?? loadOrGenerateHttpToken({ bearerRequired: !bindIsLoopback });
-  if (!bindIsLoopback && !httpToken) {
+  // 3e RBAC token resolution. Back-compat: a single `httpToken` option (or a
+  // legacy config.json `httpToken`) is adopted as the READ token (T1); the ADMIN
+  // token is env-var-only. Explicit `readToken`/`adminToken` options override
+  // (used by tests). loopback bind ⇒ no bearer required ⇒ tokens may be null.
+  let readToken: string | null;
+  let legacyMigrated = false;
+  if (opts.readToken !== undefined) {
+    readToken = opts.readToken;
+  } else if (opts.httpToken !== undefined) {
+    // Back-compat: a single injected bearer is treated as the READ token (T1).
+    readToken = opts.httpToken;
+  } else {
+    const loaded = loadReadToken({ bearerRequired: !bindIsLoopback });
+    readToken = loaded.token;
+    legacyMigrated = loaded.legacy;
+  }
+  const adminToken = opts.adminToken ?? loadAdminToken();
+  if (!bindIsLoopback && !readToken) {
     throw new Error(
       'Bearer token required for non-loopback bind but none configured. ' +
-      'Set httpToken in ~/.agent-tempo/config.json or unset AGENT_TEMPO_HTTP_BIND.',
+      'Set AGENT_TEMPO_HTTP_READ_TOKEN (or readToken in ~/.agent-tempo/config.json), ' +
+      'or unset AGENT_TEMPO_HTTP_BIND.',
+    );
+  }
+  // 3e MD-E — one-time startup warnings (non-blocking).
+  //
+  // (1) Legacy migration: a pre-3e single `httpToken` was adopted as the READ
+  //     token (T1) and no admin token is configured, so writes / operator gate /
+  //     inner-tail (all Tier ≥ 2) will 503 until an admin token is set.
+  if (legacyMigrated && adminToken === null) {
+    log(
+      'NOTICE: adopted legacy config.json `httpToken` as the read-tier token. ' +
+      'Writes, the operator gate, and the inner-tail are admin-only and will return ' +
+      '503 until you set AGENT_TEMPO_HTTP_ADMIN_TOKEN (env-var only).',
+    );
+  }
+  // (2) Plaintext-bearer exposure: binding to a non-loopback address serves the
+  //     bearer token over cleartext HTTP. Suppressible, never blocking.
+  if (!bindIsLoopback && process.env[ENV.TLS_ACKNOWLEDGED] !== '1') {
+    log(
+      `WARNING: binding to non-loopback ${bindAddr} serves the bearer token over ` +
+      'plaintext HTTP. Terminate TLS at a reverse proxy, or tunnel via SSH/Tailscale. ' +
+      `Set ${ENV.TLS_ACKNOWLEDGED}=1 to acknowledge and suppress this warning.`,
     );
   }
 
@@ -229,7 +274,8 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
       version: opts.version,
       bindAddr,
       corsConfig,
-      httpToken,
+      readToken,
+      adminToken,
       startedAt,
       subscriberCount,
       aggregate: opts.aggregate ?? null,
@@ -318,7 +364,10 @@ interface HandleContext {
   version: string;
   bindAddr: string;
   corsConfig: CorsConfig;
-  httpToken: string | null;
+  /** 3e RBAC read-tier token (T1), or null. */
+  readToken: string | null;
+  /** 3e RBAC admin token (T1+T2+T3) — env-var-only, or null when unset. */
+  adminToken: string | null;
   startedAt: number;
   subscriberCount: () => number;
   /** Present when PR-2 streaming is wired; null on PR-1-only deployments. */
@@ -413,12 +462,17 @@ export async function handle(
     }
   }
 
-  // Authentication gate.
+  // Layer 2 — shared AUTHENTICATION + Origin/DNS-rebind defense (architect's
+  // decomposition). bearerRequired() carries the Origin-rebind logic; a request
+  // in bearer mode must present a token granting at LEAST a tier (read or admin).
+  // This is the single shared upstream pass — the per-route TIER authorization
+  // (Layer 3, `gateTier(N)` / inline `requireTier(3)`) refines it below: reads → T1,
+  // writes/pair-mint → T2 (admin), gate/inner → T3 (admin).
   const originHeader = headerString(req.headers.origin);
   const reqBearer = bearerRequired(ctx.bindAddr, originHeader);
   if (reqBearer) {
     const provided = extractBearerToken(headerString(req.headers.authorization));
-    if (!provided || !ctx.httpToken || !tokensMatch(provided, ctx.httpToken)) {
+    if (!provided || tierForToken(provided, ctx) === 0) {
       writeCorsHeaders(res, originHeader, ctx, reqBearer);
       return errorResponse(res, 401, { error: 'unauthorized' });
     }
@@ -434,6 +488,50 @@ export async function handle(
     res.setHeader('Vary', 'Origin');
   }
 
+  // Layer 3 — per-route AUTHORIZATION (3e MD-E). The tier-guard input is
+  // resolved ONCE here off the shared L2 pass (bindAddr + Origin + the two
+  // RBAC tokens) and reused by every `gateTier(N)` call below — reads require
+  // T1, the write/pair-mint surface requires T2 (admin). The grandfathered T3
+  // gate/inner sites (3c/3d) keep their own inline `requireTier(3)` by design.
+  //
+  // This is defense-in-depth ON TOP of the L2 token-validity floor above (which
+  // already rejects an unrecognized bearer with 401): the explicit per-route
+  // guard keeps each surface protected at its declared tier even if the L2 floor
+  // is later relaxed, and makes the required tier self-documenting + greppable.
+  const tierInput: TierGuardInput = {
+    bindAddr: ctx.bindAddr,
+    originHeader,
+    authHeader: headerString(req.headers.authorization),
+    readToken: ctx.readToken,
+    adminToken: ctx.adminToken,
+  };
+  /**
+   * Write a tier-denial response, surfacing requireTier's actionable `detail`
+   * hint on 403 (insufficient-tier) / 503 (admin-unset) when present (3e ruling
+   * #3). The hint is operator guidance — e.g. "set AGENT_TEMPO_HTTP_ADMIN_TOKEN"
+   * — NOT a sensitive leak (security-confirmed). Shared by `gateTier` and the
+   * inline T3 gate/inner sites so every tier denial carries the same body shape.
+   */
+  const denyTier = (r: Exclude<TierGuardResult, { ok: true }>): void => {
+    errorResponse(
+      res,
+      r.status,
+      'detail' in r ? { error: r.error, detail: r.detail } : { error: r.error },
+    );
+  };
+  /**
+   * Apply a per-route tier guard against the L2-resolved input. On failure it
+   * writes the 401/403/503 response and returns `false` (caller returns); on
+   * success returns `true`. Loopback requests short-circuit to PASS inside
+   * {@link requireTier} (local-trust → full tier).
+   */
+  const gateTier = (n: Tier): boolean => {
+    const g = requireTier(n, tierInput);
+    if (g.ok) return true;
+    denyTier(g);
+    return false;
+  };
+
   // Write surface (PR-7a of #340) — POST `/v1/ensembles/:ensemble/<action>`
   // Match BEFORE the GET-only method gate; everything else (POST to a
   // read endpoint, GET to a write endpoint) flows into the 405 fallback
@@ -443,6 +541,9 @@ export async function handle(
     const ensemble = decodeURIComponent(writeMatch[1]);
     const action = writeMatch[2];
     if (isWriteAction(action)) {
+      // L3 — the mutate surface is admin-only (Tier 2). Gate before the method
+      // check so an under-privileged caller can't probe the write verbs via 405.
+      if (!gateTier(2)) return;
       if (method !== 'POST') {
         return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'POST, OPTIONS' });
       }
@@ -457,6 +558,7 @@ export async function handle(
   // alongside the writeMatch above so it's reached before the GET-only
   // gate; the GET on the same path (list ensembles) is handled below.
   if (pathname === '/v1/ensembles' && method === 'POST') {
+    if (!gateTier(2)) return; // L3 — create-ensemble is a write (Tier 2).
     return handleCreateEnsemble(req, res, ctx.client);
   }
 
@@ -465,6 +567,9 @@ export async function handle(
   // proves authority before issuing a token; the token's GET-side consume
   // is the carve-out above the auth gate.
   if (method === 'POST' && pathname === '/dashboard/api/pair') {
+    // L3 — minting a cross-device pairing token is an admin operation (Tier 2):
+    // it grants a bearer-equivalent capability, so it must require the admin token.
+    if (!gateTier(2)) return;
     const provided = extractBearerToken(headerString(req.headers.authorization));
     return handlePairCreate(req, res, provided);
   }
@@ -482,9 +587,10 @@ export async function handle(
         bindAddr: ctx.bindAddr,
         originHeader,
         authHeader: headerString(req.headers.authorization),
-        httpToken: ctx.httpToken,
+        readToken: ctx.readToken,
+        adminToken: ctx.adminToken,
       });
-      if (!tier.ok) return errorResponse(res, tier.status, { error: tier.error });
+      if (!tier.ok) { denyTier(tier); return; }
       if (armMatch) {
         const [, e, p, verb] = armMatch;
         return verb === 'arm'
@@ -511,14 +617,17 @@ export async function handle(
   // `/v1/*` API uses. The pre-auth pair-token carve-out above is the
   // single exception that bootstraps cross-device pairing.
   if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) {
+    if (!gateTier(1)) return; // L3 — the dashboard SPA is read-tier (Tier 1).
     return handleDashboardStatic(req, res, pathname);
   }
 
   if (pathname === '/v1/ensembles') {
+    if (!gateTier(1)) return; // L3 — read (Tier 1).
     return handleListEnsembles(res, ctx);
   }
 
   if (pathname === '/v1/hosts') {
+    if (!gateTier(1)) return; // L3 — read (Tier 1).
     return handleHosts(res, ctx);
   }
 
@@ -526,6 +635,7 @@ export async function handle(
   // Same bearer + CORS gate as `/v1/hosts`; optional `?ensemble=<name>`
   // narrows to one ensemble.
   if (pathname === '/v1/orphans') {
+    if (!gateTier(1)) return; // L3 — read (Tier 1).
     const ensembleFilter = url.searchParams.get('ensemble') ?? undefined;
     return handleOrphans(res, {
       client: ctx.client,
@@ -538,15 +648,18 @@ export async function handle(
   // Catalog reads (issue #400) — `listAgentTypes` / `listLineups`
   // touch local fs only, no Temporal calls; cheap to serve per-request.
   if (pathname === '/v1/agent-types') {
+    if (!gateTier(1)) return; // L3 — read (Tier 1).
     return handleListAgentTypes(res);
   }
   if (pathname === '/v1/lineups') {
+    if (!gateTier(1)) return; // L3 — read (Tier 1).
     return handleListLineups(res);
   }
 
   // /v1/state/:ensemble — single capture group.
   const stateMatch = pathname.match(/^\/v1\/state\/([^/]+)$/);
   if (stateMatch) {
+    if (!gateTier(1)) return; // L3 — read (Tier 1); covers the fixture path too.
     const ensemble = decodeURIComponent(stateMatch[1]);
     // Fixture mode (PR-3 of #340) — `?fixture=<name>` short-circuits the
     // live snapshot with canned data. Sits behind the bearer-auth gate.
@@ -562,6 +675,7 @@ export async function handle(
   // signals "feature exists, not yet wired" rather than "ensemble
   // doesn't exist".
   if (pathname === '/v1/events') {
+    if (!gateTier(1)) return; // L3 — read/observe stream (Tier 1).
     if (!ctx.aggregate) {
       return errorResponse(res, 503, { error: 'streaming-not-implemented' }, { 'Retry-After': '60' });
     }
@@ -574,6 +688,7 @@ export async function handle(
   }
   const evtMatch = pathname.match(/^\/v1\/events\/([^/]+)$/);
   if (evtMatch) {
+    if (!gateTier(1)) return; // L3 — read/observe stream (Tier 1); covers fixture too.
     const ensemble = decodeURIComponent(evtMatch[1]);
     // Fixture mode (PR-3 of #340) — `?fixture=<name>` short-circuits both
     // the existence check and the aggregate poll loop with a canned event
@@ -616,9 +731,10 @@ export async function handle(
       bindAddr: ctx.bindAddr,
       originHeader,
       authHeader: headerString(req.headers.authorization),
-      httpToken: ctx.httpToken,
+      readToken: ctx.readToken,
+      adminToken: ctx.adminToken,
     });
-    if (!tier.ok) return errorResponse(res, tier.status, { error: tier.error });
+    if (!tier.ok) { denyTier(tier); return; }
     return handleInnerSse(
       req, res,
       { innerLoop: ctx.innerLoop, ingestTokens: ctx.ingestTokens },

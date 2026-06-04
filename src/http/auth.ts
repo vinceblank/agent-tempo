@@ -22,7 +22,7 @@
  * 0600 on POSIX. Rotation = delete the field; next daemon boot regenerates.
  */
 import * as crypto from 'crypto';
-import { loadConfigFile, saveConfigFile, type PersistedConfig } from '../config';
+import { ENV, loadConfigFile, saveConfigFile, type PersistedConfig } from '../config';
 
 /** Hostnames that count as loopback for §3 mode determination. */
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', '[::1]', 'localhost']);
@@ -113,14 +113,9 @@ export function tokensMatch(received: string, expected: string): boolean {
 }
 
 /**
- * Load (or auto-generate) the daemon's HTTP bearer token.
- *
- * - When `bearerRequired` is true and the persisted config has no
- *   `httpToken`, generate one (`crypto.randomBytes(32).toString('base64url')`)
- *   and persist it via `saveConfigFile` (which sets 0600 on POSIX).
- * - When `bearerRequired` is false, return whatever is in the config
- *   without generating — operators may still want a token saved for
- *   future use, and we shouldn't write secrets the user didn't request.
+ * @deprecated 3e — superseded by {@link loadRbacTokens} (read + admin split).
+ * Kept only until every caller migrates; do NOT add new callers. Resolves the
+ * legacy single `httpToken` (env-less) for back-compat shims.
  */
 export function loadOrGenerateHttpToken(opts: {
   bearerRequired: boolean;
@@ -129,20 +124,94 @@ export function loadOrGenerateHttpToken(opts: {
 }): string | null {
   const load = opts.load ?? loadConfigFile;
   const save = opts.save ?? saveConfigFile;
-
   const cfg = load();
   if (cfg.httpToken && typeof cfg.httpToken === 'string' && cfg.httpToken.length > 0) {
     return cfg.httpToken;
   }
   if (!opts.bearerRequired) return null;
-  // Auto-generate. base64url chars are safe inside Authorization values.
   const token = crypto.randomBytes(32).toString('base64url');
   save({ ...cfg, httpToken: token });
   return token;
 }
 
-/** Access tiers (MD-E). 3c uses T3 for the operator inner-tail; 3e splits tokens. */
+// ── 3e RBAC token model (MD-E) ──────────────────────────────────────────────
+
+/** Resolved RBAC tokens for the daemon HTTP surface (3e). */
+export interface RbacTokens {
+  /** T1 read token (env > config.json > auto-gen), or `null` when none + not required. */
+  readToken: string | null;
+  /** T1+T2+T3 admin token — ENV-VAR-ONLY, or `null` when unset (→ 503 on T≥2). */
+  adminToken: string | null;
+  /**
+   * True when a LEGACY `httpToken` (no `readToken`) was adopted as the read token.
+   * The daemon emits a one-time startup warning so the operator sets an admin token.
+   */
+  legacyMigrated: boolean;
+}
+
+/** Admin token — ENV-VAR-ONLY (never config.json/disk, never auto-generated). */
+export function loadAdminToken(env: NodeJS.ProcessEnv = process.env): string | null {
+  const t = env[ENV.HTTP_ADMIN_TOKEN];
+  return t && t.length > 0 ? t : null;
+}
+
+/**
+ * Read token (T1). Priority: env `AGENT_TEMPO_HTTP_READ_TOKEN` > config.json
+ * `readToken` > LEGACY config.json `httpToken` (adopted → `legacy:true`) >
+ * auto-generate when bearer mode is required (persisted as `readToken`).
+ */
+export function loadReadToken(opts: {
+  bearerRequired: boolean;
+  env?: NodeJS.ProcessEnv;
+  load?: () => PersistedConfig;
+  save?: (cfg: PersistedConfig) => void;
+}): { token: string | null; legacy: boolean } {
+  const env = opts.env ?? process.env;
+  const load = opts.load ?? loadConfigFile;
+  const save = opts.save ?? saveConfigFile;
+
+  const envTok = env[ENV.HTTP_READ_TOKEN];
+  if (envTok && envTok.length > 0) return { token: envTok, legacy: false };
+
+  const cfg = load();
+  if (cfg.readToken && cfg.readToken.length > 0) return { token: cfg.readToken, legacy: false };
+  // LEGACY: a pre-3e single `httpToken` becomes the READ token (T1) — NOT admin.
+  if (cfg.httpToken && cfg.httpToken.length > 0) return { token: cfg.httpToken, legacy: true };
+
+  if (!opts.bearerRequired) return { token: null, legacy: false };
+  const token = crypto.randomBytes(32).toString('base64url');
+  save({ ...cfg, readToken: token });
+  return { token, legacy: false };
+}
+
+/** Load both RBAC tokens. The daemon calls this once at startup. */
+export function loadRbacTokens(opts: {
+  bearerRequired: boolean;
+  env?: NodeJS.ProcessEnv;
+  load?: () => PersistedConfig;
+  save?: (cfg: PersistedConfig) => void;
+}): RbacTokens {
+  const { token: readToken, legacy } = loadReadToken(opts);
+  const adminToken = loadAdminToken(opts.env);
+  return { readToken, adminToken, legacyMigrated: legacy };
+}
+
+/** Access tiers (MD-E): 1 = read/observe, 2 = write/mutate, 3 = supervisory (gate/inner). */
 export type Tier = 1 | 2 | 3;
+
+/**
+ * Granted tier for a presented bearer, given the RBAC tokens (timing-safe).
+ * Admin grants the FULL ladder (3 ⊇ 2 ⊇ 1); read grants T1 only; no match → 0.
+ * There is no T2-only token — T2 and T3 are both "admin required".
+ */
+export function tierForToken(
+  presented: string,
+  tokens: { readToken: string | null; adminToken: string | null },
+): 0 | 1 | 3 {
+  if (tokens.adminToken && tokensMatch(presented, tokens.adminToken)) return 3;
+  if (tokens.readToken && tokensMatch(presented, tokens.readToken)) return 1;
+  return 0;
+}
 
 export interface TierGuardInput {
   /** Daemon bind address — decides loopback trust. */
@@ -151,36 +220,53 @@ export interface TierGuardInput {
   originHeader: string | undefined;
   /** Request `Authorization` header. */
   authHeader: string | undefined;
-  /** The daemon's configured bearer token, or `null` when none is set. */
-  httpToken: string | null;
+  /** Read-tier token, or `null`. */
+  readToken: string | null;
+  /** Admin token, or `null` when unset (→ 503 on T≥2). */
+  adminToken: string | null;
 }
 
 export type TierGuardResult =
   | { ok: true }
-  | { ok: false; status: 401; error: 'unauthorized' };
+  | { ok: false; status: 401; error: 'unauthorized' }
+  | { ok: false; status: 403; error: 'insufficient-tier'; detail: string }
+  | { ok: false; status: 503; error: 'admin-token-not-configured'; detail: string };
+
+/** Migration hint surfaced in the 403 body so a read-token holder knows what's missing. */
+const INSUFFICIENT_TIER_HINT =
+  'This token is read-tier. Writes, the operator gate, and the inner-tail require the admin token (set AGENT_TEMPO_HTTP_ADMIN_TOKEN).';
+const ADMIN_UNSET_HINT =
+  'Set AGENT_TEMPO_HTTP_ADMIN_TOKEN (env-var only) to enable writes / gate / inner-tail.';
 
 /**
- * Tier-gated bearer auth (3c Tier-2 `/inner` operator stream; the `tier` arg is
- * the forward-compat hook for 3e RBAC). **Today a single valid bearer satisfies
- * T1–T3** (status-quo god-mode); 3e introduces the token→tier map
- * (readToken→T1, adminToken→T2/T3) and ONLY that map changes — every call site's
- * `requireTier(n, …)` guard stays correct.
+ * Authorization guard (3e MD-E). Assumes the shared upstream pass already settled
+ * AUTHENTICATION + CORS + the DNS-rebind/Origin defense (architect's Layer 2);
+ * this is Layer-3 authZ — it ONLY decides tier ≥ N and emits 503/403/401.
  *
- * Mirrors the existing bearer flow exactly: bearer is required iff
- * {@link bearerRequired} (non-loopback bind, or loopback bind with a non-loopback
- * Origin); loopback connections keep today's trust posture (3e tightens). Keyed
- * off the `Authorization` bearer — NOT cookies / pairing-sessions (#340 QR is
- * token ACQUISITION, not a presentation requirement) — and adds NO `Origin`
- * requirement, so a remote Node client (e.g. a Pi mission-control widget) that
- * sends no `Origin` passes once its bearer validates. View-agnostic by design.
+ * Matrix (bearer mode):
+ *   - loopback (`!bearerRequired`)        → PASS all tiers (local-trust short-circuit).
+ *   - N ≥ 2 AND adminToken unset          → 503 admin-token-not-configured.
+ *   - no/invalid bearer (granted 0)       → 401 unauthorized.
+ *   - granted < N (read token on T≥2)     → 403 insufficient-tier (+ migration hint).
+ *   - granted ≥ N (admin, or read on T1)  → PASS.
+ *
+ * Keyed off the `Authorization` bearer only (no `Origin`/cookie requirement) so a
+ * headless Node client passes once its token validates. View-agnostic by design.
  */
 export function requireTier(tier: Tier, input: TierGuardInput): TierGuardResult {
-  void tier; // 3e: compare `tier` against the presented token's granted tier.
-  const needBearer = bearerRequired(input.bindAddr, input.originHeader);
-  if (!needBearer) return { ok: true }; // loopback trust (3e adds per-tier gating)
-  const provided = extractBearerToken(input.authHeader);
-  if (!provided || !input.httpToken || !tokensMatch(provided, input.httpToken)) {
-    return { ok: false, status: 401, error: 'unauthorized' };
+  // Loopback trust: local clients (TUI / CLI / future Pi widget) get full access.
+  if (!bearerRequired(input.bindAddr, input.originHeader)) return { ok: true };
+  // A tier that needs admin is UNAVAILABLE when no admin token is configured —
+  // the honest answer is 503, regardless of what the caller presents.
+  if (tier >= 2 && input.adminToken === null) {
+    return { ok: false, status: 503, error: 'admin-token-not-configured', detail: ADMIN_UNSET_HINT };
   }
-  return { ok: true }; // valid bearer → all tiers today
+  const provided = extractBearerToken(input.authHeader);
+  if (!provided) return { ok: false, status: 401, error: 'unauthorized' };
+  const granted = tierForToken(provided, input);
+  if (granted === 0) return { ok: false, status: 401, error: 'unauthorized' };
+  if (granted < tier) {
+    return { ok: false, status: 403, error: 'insufficient-tier', detail: INSUFFICIENT_TIER_HINT };
+  }
+  return { ok: true };
 }
