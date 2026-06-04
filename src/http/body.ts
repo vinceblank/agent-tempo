@@ -18,6 +18,10 @@ import { validatePlayerName } from '../utils/validation';
 /** Hard cap on incoming JSON body size (1 MiB). */
 export const WRITE_BODY_MAX = 1024 * 1024;
 
+/** 3c Tier-2 ingest cap (32 KiB) — the DOS backstop for `/inner/ingest`; the
+ *  source already ~2KB-truncates summaries, so real frames are far smaller. */
+export const INGEST_BODY_MAX = 32 * 1024;
+
 export const BODY_TOO_LARGE = Symbol('body-too-large');
 export const BODY_INVALID_JSON = Symbol('body-invalid-json');
 
@@ -36,13 +40,16 @@ export type ReadJsonBodyResult =
  * handler ends. Explicit `req.destroy()` would race the response
  * write — left alone.
  */
-export async function readJsonBody(req: IncomingMessage): Promise<ReadJsonBodyResult> {
+export async function readJsonBody(
+  req: IncomingMessage,
+  maxBytes: number = WRITE_BODY_MAX,
+): Promise<ReadJsonBodyResult> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
     total += buf.length;
-    if (total > WRITE_BODY_MAX) return BODY_TOO_LARGE;
+    if (total > maxBytes) return BODY_TOO_LARGE;
     chunks.push(buf);
   }
   if (total === 0) return {};

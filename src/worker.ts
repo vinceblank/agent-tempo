@@ -9,6 +9,7 @@ import { createTemporalConnection } from './connection';
 import { createScheduleActivities } from './activities/schedule-fire';
 import { createOutboxActivities } from './activities/outbox';
 import { createMaestroActivities } from './activities/maestro';
+import type { IngestTokenRegistry } from './http/ingest-registry';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:worker]', ...args);
 
@@ -69,14 +70,21 @@ export interface DualWorkers {
  * - Shared queue: workflows + all delivery activities (deliverCue, deliverReport, terminateSession, startRecruitedSession) + schedule activities
  * - Per-host queue: spawnProcess only (routes recruit spawns to the correct machine)
  */
-export async function createWorkers(config: Config): Promise<DualWorkers> {
+export async function createWorkers(
+  config: Config,
+  ingestTokens?: IngestTokenRegistry,
+): Promise<DualWorkers> {
   const connection = await createTemporalNativeConnection(config);
 
   // Create a Client connection for activities that need to interact with Temporal
   const clientConnection = await createTemporalConnection(config);
   const client = new Client({ connection: clientConnection, namespace: config.temporalNamespace });
   const scheduleActivities = createScheduleActivities(client);
-  const outboxActivities = createOutboxActivities(client, config);
+  // 3c Tier-2 — thread the daemon's shared IngestTokenRegistry into the outbox
+  // activities so the pi spawn branch can mint per-player ingest tokens and the
+  // destroy path can revoke them. Same singleton the HTTP server validates
+  // against (both run in this daemon process).
+  const outboxActivities = createOutboxActivities(client, config, ingestTokens);
   const maestroActivities = createMaestroActivities(client);
 
   const workflowBundle = await getWorkflowBundle();

@@ -893,6 +893,14 @@ export interface PiHeadlessAdapterOpts {
   continueSessionId?: string;
   /** MD-C tool-class policy: `restricted` (default) | `standard` | `full`. */
   toolAccess?: string;
+  /**
+   * 3c Tier-2 ingest token (minted by the daemon outbox, scoped to this player's
+   * workflowId). Threaded into the subprocess env as `AGENT_TEMPO_INGEST_TOKEN`
+   * so the inner-loop publisher can authenticate `POST /inner/ingest`. NOTE:
+   * spawn.ts only THREADS the token — minting lives in the daemon-only outbox
+   * (this module runs outside the daemon and must not import the registry).
+   */
+  ingestToken?: string;
   /** PR-D attachment-lease handoff (renew rather than fresh-claim on boot). */
   attachmentId?: string;
   attachmentRunId?: string;
@@ -959,6 +967,9 @@ export function spawnPiHeadless(opts: PiHeadlessAdapterOpts): PiHeadlessAdapterR
         // MD-C: tool-class policy. ALWAYS set (default 'restricted' — the safe
         // unsupervised default + an explicit value for the gate + audit trail).
         [ENV.TOOL_ACCESS]: toolAccess,
+        // 3c Tier-2: per-player ingest token (minted by the daemon outbox).
+        // Absent → the inner-loop publisher's HTTP client no-ops (no fine tail).
+        ...(opts.ingestToken ? { [ENV.INGEST_TOKEN]: opts.ingestToken } : {}),
         // Attachment handoff — extension renews via claimAttachment(expectedAttachmentId).
         ...(opts.attachmentId ? { [ENV.ATTACHMENT_ID]: opts.attachmentId } : {}),
         ...(opts.attachmentRunId ? { [ENV.ATTACHMENT_RUN_ID]: opts.attachmentRunId } : {}),

@@ -84,6 +84,15 @@ export const ENV = {
    */
   TOOL_ACCESS: 'AGENT_TEMPO_TOOL_ACCESS',
   /**
+   * 3c Tier-2 ingest auth. The daemon mints a per-player ingest token (scoped to
+   * the session workflowId) BEFORE spawning a headless Pi player and threads it
+   * into the subprocess env here. The player's inner-loop publisher presents it
+   * on `POST /inner/ingest` + `GET /inner/presence` (loopback), where the daemon
+   * validates it against the URL-derived workflowId (cross-player-spoof guard).
+   * Absent → the publisher's HTTP client is a no-op (no fine-tail forwarding).
+   */
+  INGEST_TOKEN: 'AGENT_TEMPO_INGEST_TOKEN',
+  /**
    * v0.25 PR-D attachment resume plumbing. When `restart` / `migrate`
    * enqueues a spawn outbox entry, the workflow passes the pre-claimed
    * `attachmentId` + pinned `runId` + resolved `adapterId` through the spawn

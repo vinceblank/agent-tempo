@@ -88,6 +88,8 @@ export interface PlayerWireMeta {
   runId?: string;
   messaging?: { received: number; sent: number; outbox: string };
   lease?: { expiresAt: number | null; leaseMs: number | null };
+  /** 3c Tier-1 — coarse activity (currentTool + context usage), merged onto the summary. */
+  coarse?: { currentTool: string | null; contextTokens?: number; contextPercent?: number };
 }
 
 /**
@@ -146,6 +148,12 @@ export function toPlayerSummaryV1(
     ...(wireMeta?.runId !== undefined ? { runId: wireMeta.runId } : {}),
     ...(wireMeta?.messaging !== undefined ? { messaging: wireMeta.messaging } : {}),
     ...(wireMeta?.lease !== undefined ? { lease: wireMeta.lease } : {}),
+    // 3c Tier-1 — coarse activity merged onto the summary so the aggregate
+    // poll/diff can emit player.activity. currentTool is always present on the
+    // coarse object (null = idle); context fields are conditionally included.
+    ...(wireMeta?.coarse?.currentTool !== undefined ? { currentTool: wireMeta.coarse.currentTool } : {}),
+    ...(wireMeta?.coarse?.contextTokens !== undefined ? { contextTokens: wireMeta.coarse.contextTokens } : {}),
+    ...(wireMeta?.coarse?.contextPercent !== undefined ? { contextPercent: wireMeta.coarse.contextPercent } : {}),
   };
 }
 

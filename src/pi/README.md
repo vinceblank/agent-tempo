@@ -241,6 +241,15 @@ with the agent-tempo extension injected inline (`createPiExtension({ mode:
   session that takes a cue exercises it live (and fix #5 — `sendCustomMessage` — is what makes
   that path actually deliver). Treat the first interactive session per Pi bump as the smoke for
   this path until a dedicated harness exists. *(QA, 3a review.)*
+- **Interactive coarse-staleness on SessionManager switch (3c inner-loop).** The inner-loop
+  `InnerLoopPublisher` registers its `pi.on(...)` observers once, on FIRST attach, bound to that
+  Pi extension instance. Because Pi REBUILDS the extension instance on every SessionManager switch
+  (the module-scope-singleton finding), after an interactive switch those observers stay bound to
+  the dead instance, so Tier-1 coarse state (currentTool / context pressure) goes STALE until the
+  player re-attaches. HEADLESS is fully correct — one session per process, no rebuild — so this is
+  interactive-only and NOT a 3c-headless concern. Revisit by re-binding the publisher's observers
+  on each `session_start` rebuild (call `pub.start(pi)` in the rebind branch of `attachOrRebind`),
+  the way the durable runtime singleton re-binds. *(QA Gate-7, 3c review.)*
 
 ## Dependencies (⚠️ flagged for human review — not pre-approved)
 

@@ -213,8 +213,20 @@ export const setPreferredHostUpdate = defineUpdate<void, [{ host: string }]>('se
 /**
  * Liveness heartbeat from the adapter. Resets `lastHeartbeatAt` and extends `expiresAt` to
  * `workflow.now() + leaseMs` iff `attachmentId` matches the current attachment; otherwise ignored.
+ *
+ * 3c Tier-1 (additive, optional, non-breaking): the heartbeat doubles as the
+ * coarse-activity piggyback. `currentTool` (null = idle), `contextTokens`, and
+ * `contextPercent` (Pi `getContextUsage`, pull-only — no token event exists)
+ * refresh the workflow's queryable coarse state read by `getCoarseActivityQuery`.
+ * Omitted by senders that don't report coarse — the handler merges field-wise.
  */
-export const heartbeatSignal = defineSignal<[{ attachmentId: string; at: string }]>('heartbeat');
+export const heartbeatSignal = defineSignal<[{
+  attachmentId: string;
+  at: string;
+  currentTool?: string | null;
+  contextTokens?: number;
+  contextPercent?: number;
+}]>('heartbeat');
 
 /**
  * Adapter-, conductor-, or operator-initiated request to detach gracefully.
@@ -364,6 +376,20 @@ export const getLeaseStateQuery = defineQuery<{
   expiresAt: number | null;
   leaseMs: number | null;
 }>('getLeaseState');
+
+/**
+ * 3c Tier-1 coarse activity — the player's current tool + context-token usage,
+ * refreshed by the heartbeat piggyback (`heartbeatSignal`). Read by the snapshot
+ * fan-out (`getPlayerWireMeta`) → projected onto `PlayerSummaryV1` → the aggregate
+ * poll/diff emits `player.activity`. `currentTool` is `null` when idle/between
+ * tools; the context fields are absent when Pi can't report usage (e.g. right
+ * after compaction). A live read of volatile state — NOT durable metadata.
+ */
+export const getCoarseActivityQuery = defineQuery<{
+  currentTool: string | null;
+  contextTokens?: number;
+  contextPercent?: number;
+}>('getCoarseActivity');
 
 // ── Test-only Signals ──
 //

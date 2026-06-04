@@ -27,6 +27,8 @@ import {
 import { emitDevBannerIfActive } from './cli/dev-banner';
 import { createWorkers } from './worker';
 import { createTemporalConnection } from './connection';
+import { InnerLoopRegistry } from './http/inner-loop';
+import { IngestTokenRegistry } from './http/ingest-registry';
 import { installGrpcShutdownGuard } from './utils/grpc-shutdown-guard';
 import { DAEMON_PID_PATH, DAEMON_LOG_PATH, DAEMON_HEARTBEAT_PATH, HEARTBEAT_INTERVAL_MS } from './cli/daemon';
 import { createTempoClient } from './client';
@@ -964,6 +966,13 @@ async function main() {
   // #94/#95 PR-2 — aggregate poll loop + per-ensemble buses. Owned by
   // the daemon process; `close()` drains every per-ensemble bus.
   let aggregateRunner: import('./http/aggregate').AggregateRunner | null = null;
+  // 3c Tier-2 — daemon-owned singletons shared between the Temporal worker
+  // (outbox pi-spawn mints / destroy revokes) and the HTTP server (/inner SSE
+  // + /inner/ingest validation). Both the worker and startHttpServer run in
+  // THIS process, so one instance each suffices. Constructed eagerly (no I/O)
+  // so the shutdown handler — declared just below — can drain them.
+  const innerLoop = new InnerLoopRegistry();
+  const ingestTokens = new IngestTokenRegistry();
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -995,6 +1004,11 @@ async function main() {
     httpServerHandle?.close().catch((err) =>
       log('http close error (non-fatal):', err instanceof Error ? err.message : err),
     );
+    // 3c Tier-2 — clear-all on shutdown: drop every minted ingest token (no
+    // dead token outlives the daemon) and close every open /inner subscriber
+    // (streams end cleanly rather than dangling).
+    ingestTokens.revokeAll();
+    innerLoop.close();
     sharedWorker?.shutdown();
     hostWorker?.shutdown();
   };
@@ -1003,7 +1017,7 @@ async function main() {
 
   // Create workers (signal handlers already active via mutable refs)
   log(`Connecting to Temporal at ${config.temporalAddress} (namespace: ${config.temporalNamespace})`);
-  const workers = await createWorkers(config);
+  const workers = await createWorkers(config, ingestTokens);
   sharedWorker = workers.sharedWorker;
   hostWorker = workers.hostWorker;
   log('Workers created — processing tasks');
@@ -1092,6 +1106,11 @@ async function main() {
         taskQueue: config.taskQueue,
         version: daemonVersion(),
         aggregate: aggregateRunner,
+        // 3c Tier-2 — same singletons the worker's outbox activities use, so
+        // the operator /inner SSE reads the registry the publisher POSTs into
+        // and /inner/ingest validates against the tokens the spawn path minted.
+        innerLoop,
+        ingestTokens,
       });
       log(`HTTP listening on http://${httpServerHandle.bindAddr}:${httpServerHandle.port}`);
       log(`Aggregate poll loop running (bootEpoch=${bootEpoch})`);

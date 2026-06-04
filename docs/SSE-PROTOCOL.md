@@ -262,6 +262,7 @@ All event payloads carry `v: 1`. Field types reference WIRE-PROTOCOL.md §Type R
 | `flags.changed` | per-ensemble | `{ ensemble: string; paused: boolean; held: boolean; at: string }` | Diff-only — suppress if both bools equal previous emitted state |
 | `schedules.changed` | per-ensemble | `{ ensemble: string; schedules: ScheduleEntry[]; at: string }` | Hash-diff — suppress if SHA-256 of sorted-by-name JSON unchanged |
 | `host_profile.changed` | global only | `HostProfile` | Diff-only — hash compare against last emitted (uses scrubbed profile per `scrubHostProfile`) |
+| `player.activity` | per-ensemble | `{ playerId: string; ensemble: string; currentTool: string \| null; contextTokens?: number; contextPercent?: number; at: string }` | **3c Tier-1 coarse.** Diff-only — emitted by the aggregate poll when `currentTool` or context usage changes. `currentTool: null` = idle/between tools. `contextTokens`/`contextPercent` are absent until Pi's `getContextUsage()` first returns a value. Sourced from the heartbeat piggyback (~30 s freshness). For live fine-grained observability (thinking deltas, tool I/O, per-turn events) see the off-wire [`/inner` side-channel](INNER-LOOP-PROTOCOL.md). |
 
 **Adding new event types is non-breaking.** Consumers MUST gracefully ignore unknown `event:` lines.
 
@@ -292,7 +293,8 @@ export type TempoEvent =
   | (BaseEvent & { type: 'chat.compressed';     payload: { dropped: number; since: string } })
   | (BaseEvent & { type: 'flags.changed';       payload: { ensemble: string; paused: boolean; held: boolean; at: string } })
   | (BaseEvent & { type: 'schedules.changed';   payload: { ensemble: string; schedules: ScheduleEntry[]; at: string } })
-  | (BaseEvent & { type: 'host_profile.changed'; payload: HostProfile });
+  | (BaseEvent & { type: 'host_profile.changed'; payload: HostProfile })
+  | (BaseEvent & { type: 'player.activity';     payload: { playerId: string; ensemble: string; currentTool: string | null; contextTokens?: number; contextPercent?: number; at: string } });
 
 export interface SubscribeOptions {
   /** Aborts the iterator and tears down the underlying transport. See §7.4. */

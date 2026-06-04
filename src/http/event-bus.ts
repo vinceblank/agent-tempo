@@ -103,6 +103,7 @@ export type TopicCategory = 'phase' | 'chat' | 'flags' | 'schedules' | 'heartbea
 export function topicOf(kind: SseEventKind): TopicCategory | null {
   switch (kind) {
     case 'player.phase_changed': return 'phase';
+    case 'player.activity':      return 'phase';
     case 'chat.appended':
     case 'chat.compressed':     return 'chat';
     case 'flags.changed':       return 'flags';

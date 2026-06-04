@@ -58,6 +58,7 @@ import {
   getMessagingStateQuery,
   getActivityStateQuery,
   getLeaseStateQuery,
+  getCoarseActivityQuery,
   setQualityGateSignal,
   evaluateGateCriteriaSignal,
   qualityGatesQuery,
@@ -237,6 +238,14 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   let activityCount = input.activityCount ?? 0;
   let receivedCount = input.receivedCount ?? 0;
   let sentCount = input.sentCount ?? 0;
+
+  // ── 3c Tier-1 — coarse activity (currentTool + context usage) ──
+  // Refreshed by the heartbeat piggyback; surfaced by `getCoarseActivityQuery`.
+  // Deliberately volatile/live — NOT carried across continueAsNew (no input
+  // field), so a fresh run reports `{currentTool:null}` until the next ~30s
+  // heartbeat repopulates it. Acceptable for coarse observability; the live,
+  // fine-grained tail is the off-wire /inner side-channel.
+  let coarseActivity: { currentTool: string | null; contextTokens?: number; contextPercent?: number } = { currentTool: null };
 
   // ── Warm Hold + Pause State ──
   let outboxLocked = input.outboxLocked ?? false;
@@ -553,6 +562,9 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       leaseMs: currentAttachment.leaseMs,
     };
   });
+
+  // 3c Tier-1 — surface the latest coarse activity for the snapshot fan-out.
+  setHandler(getCoarseActivityQuery, () => ({ ...coarseActivity }));
 
   // ── Hold / Release Handlers ──
 
@@ -986,7 +998,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
    * `heartbeat` signal — extend the lease. Last-write-wins via the `attachmentId` guard;
    * heartbeats for superseded attachments are ignored.
    */
-  setHandler(heartbeatSignal, ({ attachmentId }) => {
+  setHandler(heartbeatSignal, ({ attachmentId, currentTool, contextTokens, contextPercent }) => {
     if (!currentAttachment || currentAttachment.attachmentId !== attachmentId) return;
     const now = workflowNow();
     currentAttachment.lastHeartbeatAt = now.toISOString();
@@ -996,6 +1008,13 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     currentAttachment.expiresAt = new Date(now.getTime() + currentAttachment.leaseMs).toISOString();
     lastActivityTime = now.getTime();
     activityCount++;
+    // 3c Tier-1 — refresh coarse activity from the heartbeat piggyback. Field-wise
+    // merge: only fields the sender included are updated. `currentTool` can be a
+    // legitimate `null` (idle), so `!== undefined` distinguishes "sent null" from
+    // "not sent" (a non-reporting sender leaves prior coarse intact).
+    if (currentTool !== undefined) coarseActivity.currentTool = currentTool;
+    if (contextTokens !== undefined) coarseActivity.contextTokens = contextTokens;
+    if (contextPercent !== undefined) coarseActivity.contextPercent = contextPercent;
   });
 
   /**

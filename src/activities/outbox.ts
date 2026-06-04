@@ -15,6 +15,7 @@ import { getGitInfo } from '../git-info';
 import { spawnInTerminal, spawnCopilotBridge, spawnClaudeApiAdapter, spawnOpenCodeAdapter, spawnClaudeCodeHeadlessAdapter, spawnPiHeadless } from '../spawn';
 import type { ClaudeCodeHeadlessPermissionMode } from '../adapters/claude-code-headless/types';
 import { ENV } from '../config';
+import type { IngestTokenRegistry } from '../http/ingest-registry';
 import { resolveSession } from './resolve';
 import { resolveAgentType } from '../ensemble/agent-types';
 import { defaultPart } from '../utils/default-part';
@@ -331,8 +332,19 @@ export interface OutboxActivities {
 /**
  * Create outbox delivery activities bound to a Temporal client and config.
  * The returned object is registered with the worker as activities.
+ *
+ * @param ingestTokens 3c Tier-2 ingest-auth registry (daemon-owned singleton,
+ *   shared with the HTTP `/inner/ingest` + `/inner/presence` validators). The pi
+ *   spawn branch MINTS a per-player token here (single-token-per-workflowId —
+ *   re-mint REPLACES, so a restart naturally revokes the stale token); the
+ *   destroy path REVOKES it. Optional: undefined disables ingest-token minting
+ *   (e.g. the dev test harness that constructs activities without the daemon).
  */
-export function createOutboxActivities(client: Client, config: Config): OutboxActivities {
+export function createOutboxActivities(
+  client: Client,
+  config: Config,
+  ingestTokens?: IngestTokenRegistry,
+): OutboxActivities {
   return {
     async deliverCue(input: DeliverCueInput): Promise<OutboxActivityResult> {
       const { ensemble, fromPlayerId, targetPlayerId, message, broadcastId, attachmentTicket } = input;
@@ -642,6 +654,12 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           if (allowedTools && allowedTools.length > 0) {
             log(`Warning: allowedTools [${allowedTools.join(', ')}] specified for pi agent "${targetName}" — Pi tool access is governed by toolAccess (MD-C), skipping allowedTools`);
           }
+          // 3c Tier-2 — mint a per-player ingest token scoped to this player's
+          // session workflowId so the headless Pi subprocess can authenticate its
+          // `POST /inner/ingest` frames. Single-token-per-workflowId (mint
+          // REPLACES) means a restart re-mints and naturally revokes the stale
+          // token. Injected into the subprocess env as AGENT_TEMPO_INGEST_TOKEN.
+          const ingestToken = ingestTokens?.mint(sessionWorkflowId(ensemble, targetName));
           const { pid } = spawnPiHeadless({
             name: targetName,
             ensemble,
@@ -660,6 +678,7 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
             attachmentId,
             attachmentRunId,
             adapterId,
+            ingestToken,
           });
           log(`Spawned pi headless adapter (pid ${pid}) in ${workDir} as "${targetName}" (toolAccess=${toolAccess ?? 'restricted'})${model ? ` (model=${model})` : ''}${resume && sessionId ? ` (continue=${sessionId})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else {
@@ -779,6 +798,9 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           );
         }
         await handle.signal(requestDetachSignal, { reason, deadlineMs });
+        // TODO(Phase 4): revoke ingest token on detach (see deliverDestroy TODO)
+        // — deferred as hygiene; residual surface negligible (single-token
+        // replacement on re-attach + loopback-only + dead holder).
         log(`Detach signaled for "${targetPlayerId}" (deadline=${deadlineMs}ms)`);
         return { success: true };
       } catch (err) {
@@ -808,6 +830,19 @@ export function createOutboxActivities(client: Client, config: Config): OutboxAc
           }],
         });
         log(`Destroyed "${targetPlayerId}"${reason ? ` (reason: ${reason})` : ''}`);
+
+        // 3c Tier-2 — revoke the player's ingest token on destroy so a dead
+        // holder's loopback POST /inner/ingest can no longer authenticate.
+        // Idempotent; a no-op for non-Pi players (they never minted one).
+        // NOTE (security cond. 2): the ingest endpoint authenticates on TOKEN
+        // ALONE — it does not inspect workflow phase (neither rejects nor
+        // buffers detached-phase players). So the residual surface is bounded
+        // not by phase-checking but by (a) this destroy-revoke and (b) the
+        // single-token-per-workflowId replacement on re-attach/restart.
+        // TODO(Phase 4): wire aggregate player-gone detection →
+        // revokeIngestToken(workflowId) on detach — deferred; residual surface
+        // negligible (dead holder + loopback-only + single-token replacement).
+        ingestTokens?.revoke(sessionWorkflowId(ensemble, targetPlayerId));
 
         if (notifyConductor) {
           try {

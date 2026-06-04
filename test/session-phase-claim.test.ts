@@ -29,6 +29,7 @@ import {
   forceDetachUpdate,
   heartbeatSignal,
   attachmentInfoQuery,
+  getCoarseActivityQuery,
 } from '../src/workflows/signals';
 
 describe('session phase machine — claim/lease (v0.25 PR-A)', function () {
@@ -214,6 +215,55 @@ describe('session phase machine — claim/lease (v0.25 PR-A)', function () {
       expect(delta).to.be.lessThan(PRIOR_DEFAULT_MS, 'heartbeat must not extend by workflow default LEASE_MS');
       expect(delta).to.be.greaterThan(NEGOTIATED_LEASE_MS - 5_000, 'heartbeat must extend by at least leaseMs - jitter');
       expect(delta).to.be.lessThan(NEGOTIATED_LEASE_MS + 5_000, 'heartbeat must extend by at most leaseMs + jitter');
+
+      await handle.executeUpdate(destroyUpdate, { args: [{}] });
+      await handle.result().catch(() => {});
+    });
+  });
+
+  it('heartbeat piggyback stores coarse activity; getCoarseActivity reflects it (3c Tier-1)', async function () {
+    this.timeout(10_000);
+    await withWorker(async () => {
+      const handle = await startFreshSession(`hb-coarse-${Date.now()}`);
+
+      // Default before any coarse-bearing heartbeat: idle, no context.
+      const before = await handle.query(getCoarseActivityQuery);
+      expect(before).to.deep.equal({ currentTool: null });
+
+      const token = await handle.executeUpdate(claimAttachmentUpdate, {
+        args: [{ host: 'host-A', adapterId: 'pi', adapterClass: 'sdk', leaseMs: 90_000 }],
+      });
+
+      // Heartbeat carrying coarse fields → stored field-wise.
+      await handle.signal(heartbeatSignal, {
+        attachmentId: token.attachmentId,
+        at: new Date().toISOString(),
+        currentTool: 'bash',
+        contextTokens: 1200,
+        contextPercent: 3,
+      });
+      expect(await handle.query(getCoarseActivityQuery)).to.deep.equal({
+        currentTool: 'bash', contextTokens: 1200, contextPercent: 3,
+      });
+
+      // A heartbeat that only updates currentTool merges field-wise (context kept).
+      await handle.signal(heartbeatSignal, {
+        attachmentId: token.attachmentId,
+        at: new Date().toISOString(),
+        currentTool: null, // back to idle
+      });
+      expect(await handle.query(getCoarseActivityQuery)).to.deep.equal({
+        currentTool: null, contextTokens: 1200, contextPercent: 3,
+      });
+
+      // A plain heartbeat (no coarse fields) leaves coarse state untouched.
+      await handle.signal(heartbeatSignal, {
+        attachmentId: token.attachmentId,
+        at: new Date().toISOString(),
+      });
+      expect(await handle.query(getCoarseActivityQuery)).to.deep.equal({
+        currentTool: null, contextTokens: 1200, contextPercent: 3,
+      });
 
       await handle.executeUpdate(destroyUpdate, { args: [{}] });
       await handle.result().catch(() => {});
