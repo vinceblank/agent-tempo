@@ -1,6 +1,6 @@
 /**
  * Cue pump — pulls cues queued on the session workflow and injects them into
- * the LIVE Pi session via `sendMessage`, then acks them.
+ * the LIVE Pi session via `sendCustomMessage`, then acks them.
  *
  * Pi has no reverse-RPC into a running session from Temporal, so (like the
  * existing adapters) we poll `pendingMessages` and ack via `markDelivered`.
@@ -132,7 +132,7 @@ export class CuePump {
     // cues silently become preemptions, defeating operator-vs-peer. Not unit-testable
     // here (the session is mocked) — locked by researcher confirmation + the D6 Pi
     // version floor (≥ #2860 + #5115) + a real-Pi mid-turn integration smoke.
-    await session.sendMessage(
+    await session.sendCustomMessage(
       { customType: 'cue', content, display: true },
       { deliverAs: msg.isMaestro ? 'steer' : 'followUp', triggerTurn: true },
     );

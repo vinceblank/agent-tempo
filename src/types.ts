@@ -18,7 +18,7 @@
  * editing one line — see #476 (the `claude-api` allowlist drift bug
  * that motivated centralising this).
  */
-export const AGENT_TYPES = ['claude', 'copilot', 'mock', 'claude-api', 'opencode', 'claude-code-headless'] as const;
+export const AGENT_TYPES = ['claude', 'copilot', 'mock', 'claude-api', 'opencode', 'claude-code-headless', 'pi'] as const;
 export type AgentType = typeof AGENT_TYPES[number];
 
 /**
@@ -621,6 +621,14 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
    * when `agent !== 'claude-code-headless'`.
    */
   dangerouslySkipPermissions?: boolean;
+  /**
+   * Phase 3a / MD-C — headless Pi tool-class policy. `'restricted'` (default;
+   * Bash/shell/exec hard-blocked) | `'standard'` (scoped Bash) | `'full'`
+   * (unsandboxed; admin/force-gated at recruit). Ignored when `agent !== 'pi'`.
+   * Inline literal — types.ts is the V8-sandbox-safe shared module; do NOT import
+   * the type from src/pi or src/adapters.
+   */
+  toolAccess?: 'restricted' | 'standard' | 'full';
 }
 
 export interface ReleaseOutboxEntry extends OutboxEntryBase {

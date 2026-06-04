@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { spawnSync } from 'child_process';
-import { Config, conductorWorkflowId, isDevMode } from '../config';
+import { Config, conductorWorkflowId, isDevMode, parsePiProviderModel } from '../config';
 import { AGENT_TYPES, AgentType, MOCK_MODES } from '../types';
 import { resolveSession } from './resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
@@ -15,8 +15,16 @@ import {
   probeClaudeAuth,
 } from '../adapters/claude-code-headless/pre-flight';
 import { CLAUDE_CODE_PERMISSION_MODES } from '../adapters/claude-code-headless/types';
+import { probeCopilotPiPreflight, PI_PACKAGE, PI_AI_PACKAGE } from '../pi/probe';
 
 const toolLog = (...args: unknown[]) => console.error('[agent-tempo:recruit]', ...args);
+
+/**
+ * True dynamic ESM import (survives tsc's commonjs downlevel) — used to load
+ * pi-ai's sessionless `getModel` for the Copilot model-index pre-flight gate.
+ */
+// eslint-disable-next-line @typescript-eslint/no-implied-eval
+const esmImport = new Function('s', 'return import(s)') as (s: string) => Promise<Record<string, unknown>>;
 
 /**
  * #449 Phase C — check whether the `opencode` binary is on PATH. Used by
@@ -102,6 +110,14 @@ export function buildRecruitTool(
         .describe('claude-code-headless only. Permission mode forwarded to `claude -p --permission-mode`. Default "acceptEdits" auto-approves writes + common fs commands. "bypassPermissions" / "dangerouslySkipPermissions" trades safety for speed in trusted contexts. "plan" plans without executing — not useful for headless players. Mutually exclusive with `dangerouslySkipPermissions`.'),
       dangerouslySkipPermissions: z.boolean().optional()
         .describe('claude-code-headless only. When true, passes `--dangerously-skip-permissions` to `claude -p` instead of `--permission-mode`. Use only in sandboxed/trusted contexts. Mutually exclusive with `permissionMode`.'),
+      // Phase 3a / MD-C — headless Pi tool-access policy. Ignored for other agents.
+      // NOTE: stays `.optional()` (NOT `.default('restricted')`): this tool's
+      // params are rendered to the Pi front-end via renderToPi → the zod→TypeBox
+      // converter, which is fail-loud on `.default()` (D1). A schema default would
+      // throw at Pi tool registration ("Pi missing tool: recruit"). The concrete
+      // 'restricted' default is applied once at the read site below instead.
+      toolAccess: z.enum(['restricted', 'standard', 'full']).optional()
+        .describe('pi only. Headless Pi tool-class policy. "restricted" (default): agent-tempo tools + Read/Edit/Write; Bash/shell/exec HARD-BLOCKED. "standard": Bash enabled; no tool-level scope restriction (operator/container responsible for scoping). "full": unsandboxed — requires force: true (admin confirmation). Ignored for other agents.'),
     },
     handler: async (args) => {
       const { workDir, name, initialMessage } = args as {
@@ -119,6 +135,7 @@ export function buildRecruitTool(
         mockScenario?: string;
         permissionMode?: typeof CLAUDE_CODE_PERMISSION_MODES[number];
         dangerouslySkipPermissions?: boolean;
+        toolAccess?: 'restricted' | 'standard' | 'full'; // Zod-defaulted to 'restricted' at parse
       };
       const isConductor = (args as any).conductor === true;
       const agent: AgentType = (args as any).agent || ownAgentType;
@@ -131,6 +148,11 @@ export function buildRecruitTool(
       const mockScenario = (args as any).mockScenario as string | undefined;
       const permissionMode = (args as any).permissionMode as typeof CLAUDE_CODE_PERMISSION_MODES[number] | undefined;
       const dangerouslySkipPermissions = (args as any).dangerouslySkipPermissions === true;
+      // N1 (adapted): normalize to a concrete value ONCE here so the guard below
+      // and the outbox entry both see a real value with no scattered `?? 'restricted'`.
+      // (A schema `.default()` would be cleaner but the Pi converter rejects it —
+      // see the toolAccess param note above.) Omitted → 'restricted'.
+      const toolAccess = ((args as any).toolAccess ?? 'restricted') as 'restricted' | 'standard' | 'full';
 
       // ADR 0014 §7 gate 3 — recruit-time rejection of `agent: 'mock'`
       // outside dev mode. Defense-in-depth: even if a hand-edited install
@@ -181,6 +203,16 @@ export function buildRecruitTool(
       }
       if (dangerouslySkipPermissions && agent !== 'claude-code-headless') {
         return fail(`dangerouslySkipPermissions is only valid when agent: "claude-code-headless" (got agent: "${agent}").`);
+      }
+      // Reject an EXPLICIT non-default toolAccess on a non-pi agent. With Zod
+      // `.default('restricted')` the omitted case is indistinguishable from an
+      // explicit `'restricted'`, so we only flag a non-default value — that is
+      // unambiguously a user mistake (toolAccess is ignored for non-pi agents).
+      if (toolAccess !== 'restricted' && agent !== 'pi') {
+        return fail(`toolAccess is only valid when agent: "pi" (got agent: "${agent}").`);
+      }
+      if (toolAccess === 'full' && !force) {
+        return fail(`toolAccess: "full" (unsandboxed Pi) requires force: true (admin confirmation). "restricted" (default) and "standard" do not.`);
       }
       if (permissionMode != null && dangerouslySkipPermissions) {
         return fail(`permissionMode and dangerouslySkipPermissions are mutually exclusive — pass at most one.`);
@@ -250,6 +282,34 @@ export function buildRecruitTool(
         if (!probeSdkInstall('@github/copilot-sdk')) {
           return fail(
             `agent: "copilot" requires the @github/copilot-sdk optional dependency. Install with \`npm install @github/copilot-sdk\` and retry, or use \`force: true\` to bypass this check.`,
+          );
+        }
+      }
+      // Phase 3a — headless Pi pre-flight. The Pi SDK is an optional Node-22.19+
+      // dep required at the headless entry; gate at recruit (cross-host skips —
+      // the target daemon's availableAgentTypes is the gate there).
+      if (agent === 'pi' && !host && !force) {
+        // Validate the model selector format up front (provider/model).
+        let parsedModel: { provider: string; model: string } | undefined;
+        if (model) {
+          const r = parsePiProviderModel(model);
+          if ('error' in r) return fail(`agent: "pi" — ${r.error} Or use \`force: true\` to bypass.`);
+          parsedModel = r;
+        }
+        if (parsedModel?.provider === 'github-copilot') {
+          // Copilot-via-Pi: full pre-flight (deps + version floor + Copilot auth +
+          // model-index Gate 4 via pi-ai's sessionless getModel, injected here).
+          let resolveModel: ((p: string, m: string) => unknown) | undefined;
+          try {
+            const piAi = await esmImport(PI_AI_PACKAGE);
+            resolveModel = piAi.getModel as (p: string, m: string) => unknown;
+          } catch { /* dep-present gate inside the preflight fails first if pi-ai is unimportable */ }
+          const pf = probeCopilotPiPreflight({ requestedModel: parsedModel, resolveModel });
+          if (!pf.available) return fail(`agent: "pi" (Copilot) pre-flight failed: ${pf.reason}`);
+        } else if (!probeSdkInstall(PI_PACKAGE)) {
+          // Anthropic / Pi-default path: just require the Pi SDK installed.
+          return fail(
+            `agent: "pi" requires the ${PI_PACKAGE} optional dependency (Node >= 22.19). Install with \`npm install -g ${PI_PACKAGE}\` and retry, or use \`force: true\` to bypass.`,
           );
         }
       }
@@ -374,6 +434,10 @@ export function buildRecruitTool(
           // `dangerouslySkipPermissions` fields in PR-2.
           ...(agent === 'claude-code-headless' && permissionMode ? { permissionMode } : {}),
           ...(agent === 'claude-code-headless' && dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
+          // Phase 3a / MD-C — explicit toolAccess on the entry. Normalized at the
+          // read site (above) to a concrete value, so the spawned gate + audit
+          // always see one without a fallback here.
+          ...(agent === 'pi' ? { toolAccess } : {}),
         } as OutboxEntryInput;
         const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 

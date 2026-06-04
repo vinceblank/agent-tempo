@@ -42,6 +42,7 @@ export const HEADLESS_ADAPTERS = new Set([
   'opencode',
   'claude-api',
   'mock',
+  'pi',
 ]);
 
 /**

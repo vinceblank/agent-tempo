@@ -18,7 +18,7 @@
 import { expect } from 'chai';
 import { CuePump, type CueSource } from '../src/pi/cue-pump';
 import type { Message } from '../src/types';
-import type { PiAgentSession, PiOutboundMessage, PiSendMessageOptions } from '../src/pi/pi-types';
+import type { PiAgentSession, PiOutboundMessage, PiCustomMessageOptions } from '../src/pi/pi-types';
 
 /** Records ack calls; yields its queued cues exactly once. */
 class FakeSource implements CueSource {
@@ -37,10 +37,10 @@ class FakeSource implements CueSource {
   }
 }
 
-/** Captures every sendMessage(msg, opts) the pump performs. */
+/** Captures every sendCustomMessage(msg, opts) the pump performs. */
 class FakeSession implements PiAgentSession {
-  public readonly sent: Array<{ msg: PiOutboundMessage; opts?: PiSendMessageOptions }> = [];
-  sendMessage(msg: PiOutboundMessage, opts?: PiSendMessageOptions): void {
+  public readonly sent: Array<{ msg: PiOutboundMessage; opts?: PiCustomMessageOptions }> = [];
+  sendCustomMessage(msg: PiOutboundMessage, opts?: PiCustomMessageOptions): void {
     this.sent.push({ msg, opts });
   }
 }

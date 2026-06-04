@@ -62,6 +62,28 @@ export const ENV = {
    */
   DANGEROUSLY_SKIP_PERMISSIONS: 'AGENT_TEMPO_DANGEROUSLY_SKIP_PERMISSIONS',
   /**
+   * Phase 3a — headless Pi runtime model selector. Pi takes a `provider/model`
+   * string (e.g. `anthropic/claude-opus-4-7`); absent → Pi's own default
+   * provider/model (the 3a anthropic-default path). Recruit `model` arg →
+   * this env → Pi default.
+   */
+  PI_MODEL: 'AGENT_TEMPO_PI_MODEL',
+  /**
+   * Phase 3a — headless Pi restart-resume. The daemon reads `metadata.sessionId`
+   * (the Pi conversation id the player was in when it died) and passes it here;
+   * the headless entry resumes via Pi `continueSession(<id>)`. Absent on a fresh
+   * recruit → a new Pi session.
+   */
+  PI_CONTINUE_SESSION: 'AGENT_TEMPO_PI_CONTINUE_SESSION',
+  /**
+   * Phase 3a / MD-C — headless Pi tool-access policy. One of
+   * `restricted` (default; Bash/shell/exec HARD-BLOCKED) | `standard` (scoped
+   * Bash) | `full` (unsandboxed; admin-gated at recruit). Read by the Pi
+   * extension's `tool_call` gate (mode='headless' only). Mirrors
+   * {@link PERMISSION_MODE}'s threading.
+   */
+  TOOL_ACCESS: 'AGENT_TEMPO_TOOL_ACCESS',
+  /**
    * v0.25 PR-D attachment resume plumbing. When `restart` / `migrate`
    * enqueues a spawn outbox entry, the workflow passes the pre-claimed
    * `attachmentId` + pinned `runId` + resolved `adapterId` through the spawn
@@ -449,6 +471,47 @@ export function parseAgent(value: string | undefined, source: ConfigSource): Age
     );
   }
   return value as AgentType;
+}
+
+/**
+ * Result of {@link parsePiProviderModel}: the parsed parts, OR an `{ error }`
+ * describing why the selector is malformed. Non-throwing by design — a pure
+ * mapper returning a discriminated union (the recruit wiring branches
+ * `if ('error' in r) return fail(r.error)`, no try/catch).
+ */
+export type ProviderModel = { provider: string; model: string } | { error: string };
+
+/**
+ * Parse a Pi provider/model selector (e.g. `"github-copilot/gpt-4o"`) into its
+ * `{ provider, model }` parts for Pi's `createAgentSession` model option.
+ *
+ * Provider-agnostic: the segment before the FIRST `/` is the provider id,
+ * passed through VERBATIM (Copilot's pi-ai provider id is literally
+ * `github-copilot` — no normalization needed); everything after is the model
+ * id, which may itself contain `/` (e.g. `openrouter/anthropic/claude`).
+ *
+ * Fail-loud (no silent default): returns `{ error }` — never a fallback model —
+ * when the selector has no `/`, an empty provider, or an empty model. A bare
+ * provider with no model is rejected here; omitting the recruit `model` arg
+ * ENTIRELY is a different path (Pi's own default), handled upstream, not here.
+ */
+export function parsePiProviderModel(model: string): ProviderModel {
+  const raw = model.trim();
+  const slash = raw.indexOf('/');
+  if (slash < 0) {
+    return {
+      error: `model "${model}" must be a "provider/model" selector (e.g. "github-copilot/gpt-4o") — no "/" found.`,
+    };
+  }
+  const provider = raw.slice(0, slash).trim();
+  const modelId = raw.slice(slash + 1).trim();
+  if (!provider) {
+    return { error: `model "${model}" has an empty provider before "/" — expected e.g. "github-copilot/gpt-4o".` };
+  }
+  if (!modelId) {
+    return { error: `model "${model}" has an empty model after "/" — specify a model, e.g. "github-copilot/gpt-4o".` };
+  }
+  return { provider, model: modelId };
 }
 
 /**

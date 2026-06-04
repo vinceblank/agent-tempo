@@ -21,6 +21,7 @@ import { copilotDescriptor } from './copilot';
 import { claudeApiDescriptor } from './claude-api';
 import { opencodeDescriptor } from './opencode';
 import { claudeCodeHeadlessDescriptor } from './claude-code-headless';
+import { piDescriptor } from './pi';
 import { isDevMode } from '../config';
 
 export const registry = new AdapterRegistry();
@@ -44,6 +45,11 @@ registry.register(opencodeDescriptor);
 // `claude` binary is a system binary, not an npm dep; recruit pre-flight
 // probes for installation + login state via `pre-flight.ts`.
 registry.register(claudeCodeHeadlessDescriptor);
+// Phase 3a — headless Pi runtime. Registry/identity descriptor ONLY: the Pi
+// extension singleton (Phase 2) owns the lifecycle, not a BaseAttachment driver
+// (MD-D). Always-registered — the optional `@earendil-works/pi-coding-agent` SDK
+// only matters at spawn time; recruit pre-flight gates on it (or `force: true`).
+registry.register(piDescriptor);
 
 /**
  * Canonical list of production adapters registered at module-import time.
@@ -65,6 +71,7 @@ export const CANONICAL_ADAPTER_IDS = [
   'claude-api',
   'opencode',
   'claude-code-headless',
+  'pi',
 ] as const;
 
 // ADR 0014 §7 gate 2 — import-time registration gate. The mock adapter's

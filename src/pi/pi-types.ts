@@ -15,7 +15,7 @@
  *
  * Surface mirrored against `badlogic/pi-mono` @ 564ad70 (packages 0.78.0):
  *   - `core/extensions/types.ts` (ExtensionAPI, ToolDefinition, events)
- *   - `core/agent-session.ts` (sendMessage / steer / followUp)
+ *   - `core/agent-session.ts` (sendCustomMessage / steer / followUp)
  */
 
 /**
@@ -37,8 +37,8 @@ export type PiLifecycleEvent =
   | 'tool_execution_end'
   | 'session_shutdown';
 
-/** Options for `sendMessage` — D10 (FLIPPED): default `steer` + `triggerTurn`. */
-export interface PiSendMessageOptions {
+/** Options for `sendCustomMessage` — D10 (FLIPPED): default `steer` + `triggerTurn`. */
+export interface PiCustomMessageOptions {
   /** Start a new agent turn after delivery. */
   triggerTurn?: boolean;
   /**
@@ -58,12 +58,18 @@ export interface PiOutboundMessage {
 }
 
 /**
- * The live, human-attached agent session. `sendMessage` is bound in the
+ * The live, human-attached agent session. `sendCustomMessage` is bound in the
  * `AgentSession` constructor (no mode gate) — confirmed by the spike — so a
  * cue can be injected into a running interactive session.
  */
 export interface PiAgentSession {
-  sendMessage(msg: PiOutboundMessage, opts?: PiSendMessageOptions): void | Promise<void>;
+  /**
+   * Inject a message into the live session. Pi's `AgentSession` exposes this as
+   * `sendCustomMessage` (NOT `sendMessage` — verified against the installed SDK's
+   * `agent-session.d.ts` during the 3a live smoke). The earlier spike modeled it
+   * as `sendMessage`; the real method name is `sendCustomMessage`.
+   */
+  sendCustomMessage(msg: PiOutboundMessage, opts?: PiCustomMessageOptions): void | Promise<void>;
   /** Pi's stable session identifier (reconciled with workflow metadata — D11). */
   readonly id?: string;
 }
@@ -90,6 +96,25 @@ export interface PiEventPayload {
 }
 
 export type PiEventHandler = (payload: PiEventPayload) => void | Promise<void>;
+
+/**
+ * `tool_call` pre-execution event — Pi fires this before running a tool, letting
+ * an extension allow/deny it. `toolName` is Pi's built-in or registered tool id
+ * (`bash` | `read` | `edit` | `write` | `grep` | …). The MD-C headless gate reads
+ * it to hard-block the shell/exec class at `toolAccess='restricted'`.
+ */
+export interface PiToolCallEvent {
+  type?: 'tool_call';
+  toolCallId?: string;
+  toolName: string;
+  input?: Record<string, unknown>;
+}
+
+/** Result of a `tool_call` handler: `block:true` denies the tool (with a reason). */
+export interface PiToolCallResult {
+  block?: boolean;
+  reason?: string;
+}
 
 /**
  * Pi tool result (`AgentToolResult`). The exact streaming shape is UNCONFIRMED

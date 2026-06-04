@@ -115,6 +115,11 @@ describe('AdapterRegistry', function () {
       expect(r.resolveFromAgentType('copilot')).to.equal('copilot');
     });
 
+    it('maps "pi" → "pi" (Phase 3a headless)', function () {
+      const r = new AdapterRegistry();
+      expect(r.resolveFromAgentType('pi')).to.equal('pi');
+    });
+
     it('defaults undefined → "claude-code" (pre-v0.25 sessions with no agentType)', function () {
       const r = new AdapterRegistry();
       expect(r.resolveFromAgentType(undefined)).to.equal('claude-code');
@@ -178,6 +183,16 @@ describe('shipped descriptors (registry singleton)', function () {
     expect(desc.adapterClass).to.equal('sdk');
     expect(desc.blocksOnLLMTurn).to.equal(true);
     // SDK class — 30s cadence per design §4.3.
+    expect(desc.heartbeatMs).to.equal(30_000);
+  });
+
+  it('pi is registered and matches the §4.3 sdk shape (Phase 3a)', function () {
+    expect(registry.has('pi')).to.equal(true);
+    const desc = registry.get('pi');
+    expect(desc.adapterId).to.equal('pi');
+    expect(desc.adapterClass).to.equal('sdk');
+    expect(desc.blocksOnLLMTurn).to.equal(true);
+    // SDK class — 30s cadence (MD-A: lease = 3× heartbeat = 90s).
     expect(desc.heartbeatMs).to.equal(30_000);
   });
 

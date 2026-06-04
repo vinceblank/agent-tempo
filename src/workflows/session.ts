@@ -1644,6 +1644,9 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
               // #131 Phase C — forward to spawnProcess so spawnClaudeApiAdapter
               // can plumb it into the subprocess env (AGENT_TEMPO_API_MODEL).
               ...(entry.model !== undefined ? { model: entry.model } : {}),
+              // Phase 3a / MD-C — forward the headless Pi tool-access policy so
+              // spawnPiHeadless plumbs AGENT_TEMPO_TOOL_ACCESS into the subprocess.
+              ...(entry.toolAccess !== undefined ? { toolAccess: entry.toolAccess } : {}),
             });
             break;
           }
