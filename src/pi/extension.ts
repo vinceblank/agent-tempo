@@ -30,12 +30,13 @@
  * Determinism boundary: this module (and all of src/pi/) is CLIENT-SIDE only.
  */
 import * as os from 'os';
+import * as crypto from 'crypto';
 import type { Client, WorkflowHandle } from '@temporalio/client';
 import { getConfig, ENV, sessionWorkflowId, type Config } from '../config';
 import type { AgentType, SessionMetadata } from '../types';
 import { buildAllTempoTools, type RegisterAllTempoToolsOpts } from '../server-tools';
 import type {
-  ExtensionAPI, PiAgentSession, PiEventPayload, PiToolCallEvent, PiToolCallResult,
+  ExtensionAPI, PiAgentSession, PiEventPayload, PiToolCallEvent, PiToolCallResult, PiExtensionContext,
 } from './pi-types';
 import { PhaseDriver } from './phase-driver';
 import { PiWorkflowClient } from './workflow-client';
@@ -43,9 +44,11 @@ import { CuePump } from './cue-pump';
 import { renderToPi } from './render-tools';
 import { createLazyProxy } from './lazy-proxy';
 import { probePi } from './probe';
-import { InnerLoopPublisher } from './inner-loop-publisher';
+import { InnerLoopPublisher, truncateSummary } from './inner-loop-publisher';
 import { InnerLoopHttpClient } from './inner-loop-client';
+import { GateClient } from './gate-client';
 import { classify } from './tool-capability';
+import { GATE_AUTO_ALLOW_MS } from '../http/gate-registry';
 
 const log = (...args: unknown[]): void => {
   // eslint-disable-next-line no-console
@@ -169,25 +172,62 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
     // default) regardless of any later gate logic. The supervised gate (3d) slots
     // in AFTER this MD-C floor — for now, anything MD-C permits is allowed.
     if (mode === 'headless') {
-      (pi.on as unknown as (e: string, h: (ev: PiToolCallEvent) => PiToolCallResult) => void)(
+      // 3d MD-G — the operator gate's two loopback clients, keyed to the FIXED
+      // player identity (matches the ingest token + workflowId). `gateInner`
+      // emits the gate_pending frame (the daemon's ingest side-effect registers
+      // the pending) and reports presence {subscribers, gateArmed}; `gateClient`
+      // polls the daemon for the operator's decision. Both no-op without the
+      // ingest token (so this is inert for a manually-launched headless Pi).
+      const gateInner = new InnerLoopHttpClient({ ensemble: config.ensemble, playerId: fixedPlayerId });
+      const gateClient = new GateClient({ ensemble: config.ensemble, playerId: fixedPlayerId });
+
+      (pi.on as unknown as (
+        e: string,
+        h: (ev: PiToolCallEvent, ctx?: PiExtensionContext) => PiToolCallResult | Promise<PiToolCallResult>,
+      ) => void)(
         'tool_call',
-        (event: PiToolCallEvent): PiToolCallResult => {
-          // 1) MD-C tool-class floor (fires FIRST, before any gate-engagement
-          //    check). F1: classify()==='exec' is the canonical EXEC set from
-          //    tool-capability.ts — a SUPERSET of the old local list, so
-          //    powershell/pwsh/cmd/run are now hard-blocked at restricted too.
-          if (classify(event.toolName) === 'exec' && toolAccess === 'restricted') {
+        async (event: PiToolCallEvent, ctx?: PiExtensionContext): Promise<PiToolCallResult> => {
+          const cls = classify(event.toolName);
+          // 1) MD-C tool-class FLOOR (fires FIRST). classify()==='exec' is the
+          //    canonical EXEC set (F1) — a SUPERSET that hard-blocks
+          //    powershell/pwsh/cmd/run at restricted. HARD-block, never gated.
+          if (cls === 'exec' && toolAccess === 'restricted') {
             log(`MD-C: blocked '${event.toolName}' (toolAccess=restricted)`);
             return {
               block: true,
               reason: `toolAccess=restricted: shell/exec tools are disabled for this headless Pi player`,
             };
           }
-          // 2) toolAccess permits this tool. (3d operator-gate check slots in here.)
+          // 2) MD-G OPERATOR GATE — engage for any non-low-risk tool WHEN an
+          //    operator is armed AND present (both read from the short-poll
+          //    cached presence). low-risk bypasses; unknown→high-blast is gated-
+          //    when-armed (R2). The await resolves on the operator's decision,
+          //    the daemon's 45s auto-allow, ctx.signal cancel, or the bounded
+          //    poll deadline — all FAIL-OPEN except an explicit deny.
+          if (cls !== 'low-risk' && gateInner.gateArmed(workflowId) && gateInner.subscriberCount(workflowId) > 0) {
+            const requestId = crypto.randomUUID();
+            gateInner.publish(workflowId, {
+              type: 'inner.gate_pending',
+              requestId,
+              tool: event.toolName,
+              argsSummary: truncateSummary(event.input, 2048),
+              classification: cls as 'exec' | 'high-blast', // low-risk already returned above
+              timeoutMs: GATE_AUTO_ALLOW_MS,
+              ts: Date.now(),
+            });
+            const effect = await gateClient.awaitDecision(requestId, { signal: ctx?.signal });
+            if (effect === 'deny') {
+              log(`MD-G: operator DENIED '${event.toolName}' (req ${requestId})`);
+              return { block: true, reason: `operator denied ${event.toolName}` };
+            }
+            log(`MD-G: '${event.toolName}' permitted (req ${requestId})`);
+            return {};
+          }
+          // 3) not gated → permit.
           return {};
         },
       );
-      log(`MD-C tool gate active (mode=headless, toolAccess=${toolAccess})`);
+      log(`MD-C+MD-G tool gate active (mode=headless, toolAccess=${toolAccess})`);
     }
 
     /** Build session metadata from the (current) identity + host. */

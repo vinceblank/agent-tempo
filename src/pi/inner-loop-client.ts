@@ -87,6 +87,8 @@ export class InnerLoopHttpClient implements InnerLoopRegistry {
 
   /** Last presence count from the daemon. 0 until the first GET resolves / on failure. */
   private cachedSubscribers = 0;
+  /** 3d — last gateArmed flag from the daemon (folded into the presence response). */
+  private cachedGateArmed = false;
   private lastPresenceRefresh = -Infinity;
 
   constructor(opts: InnerLoopHttpClientOptions) {
@@ -145,6 +147,17 @@ export class InnerLoopHttpClient implements InnerLoopRegistry {
     return this.cachedSubscribers;
   }
 
+  /**
+   * 3d — synchronous cached `gateArmed` (same stale-while-revalidate presence GET
+   * that feeds subscriberCount; short-poll keeps it within ~1s). Default false /
+   * fail-safe false (a missed/failed presence read never spuriously engages the
+   * gate). The engagement check reads this together with subscriberCount.
+   */
+  gateArmed(_workflowId: string): boolean {
+    this.maybeRefreshPresence();
+    return this.cachedGateArmed;
+  }
+
   /** Fire a rate-limited background presence GET that updates the cache. */
   private maybeRefreshPresence(): void {
     if (!this.enabled) return;
@@ -161,15 +174,18 @@ export class InnerLoopHttpClient implements InnerLoopRegistry {
       .then(async (res) => {
         if (res.status !== 200) {
           this.cachedSubscribers = 0; // 403/etc → treat as no subscribers
+          this.cachedGateArmed = false;
           return;
         }
         try {
-          const data = (await res.json()) as { subscribers?: unknown };
+          const data = (await res.json()) as { subscribers?: unknown; gateArmed?: unknown };
           this.cachedSubscribers = typeof data.subscribers === 'number' ? data.subscribers : 0;
+          this.cachedGateArmed = data.gateArmed === true;
         } catch {
           this.cachedSubscribers = 0;
+          this.cachedGateArmed = false;
         }
       })
-      .catch(() => { this.cachedSubscribers = 0; });
+      .catch(() => { this.cachedSubscribers = 0; this.cachedGateArmed = false; });
   }
 }
