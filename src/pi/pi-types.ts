@@ -33,8 +33,10 @@ export type PiLifecycleEvent =
   | 'agent_end'
   | 'turn_start'
   | 'turn_end'
+  | 'tool_call'
   | 'tool_execution_start'
   | 'tool_execution_end'
+  | 'message_update'
   | 'session_shutdown';
 
 /** Options for `sendCustomMessage` — D10 (FLIPPED): default `steer` + `triggerTurn`. */
@@ -95,7 +97,82 @@ export interface PiEventPayload {
   [key: string]: unknown;
 }
 
-export type PiEventHandler = (payload: PiEventPayload) => void | Promise<void>;
+/**
+ * Pi context-window usage — the PULL-only token signal (3c). There is NO token
+ * event in Pi 0.78; usage is queried on demand via `ExtensionContext.getContextUsage()`.
+ * Mirrors pi-ai's `ContextUsage` (verified against the installed 0.78 `.d.ts`).
+ */
+export interface PiContextUsage {
+  /** Estimated context tokens in use, or `null` when unknown. */
+  tokens: number | null;
+  /** Model context-window size. */
+  contextWindow: number;
+  /** Usage as a fraction/percent of the window, or `null` when unknown. */
+  percent: number | null;
+}
+
+/**
+ * Second argument Pi passes to every `pi.on(event, handler)` callback
+ * (`ExtensionHandler<E,R> = (event, ctx) => …`). Minimal structural slice — only
+ * the members 3c consumes. `getContextUsage()` is the sole source of token/usage
+ * data (pull-only — see {@link PiContextUsage}).
+ */
+export interface PiExtensionContext {
+  getContextUsage(): PiContextUsage | undefined;
+  isIdle(): boolean;
+}
+
+/**
+ * Handlers may take an optional second `ctx` arg (3c — needed for
+ * `getContextUsage()`). Optional so existing one-arg handlers (Phase 0-2) still
+ * satisfy the type — widening is additive/backward-compatible.
+ */
+export type PiEventHandler = (
+  payload: PiEventPayload,
+  ctx?: PiExtensionContext,
+) => void | Promise<void>;
+
+/**
+ * One streaming delta inside a `message_update` event's `assistantMessageEvent`
+ * (a discriminated union in pi-ai). 3c forwards `thinking_delta` / `text_delta`
+ * as `inner.thinking` frames; `.delta` is the incremental string.
+ */
+export interface PiAssistantDelta {
+  /** `'text_delta'` | `'thinking_delta'` | `'toolcall_delta'` | … */
+  type?: string;
+  /** Orders multi-block content within a turn. */
+  contentIndex?: number;
+  /** The incremental text fragment. */
+  delta?: string;
+  /** Cumulative `AssistantMessage` so far (unused by 3c). */
+  partial?: unknown;
+}
+
+/** `message_update` payload — carries the streaming `assistantMessageEvent`. */
+export interface PiMessageUpdatePayload extends PiEventPayload {
+  assistantMessageEvent?: PiAssistantDelta;
+}
+
+/** `tool_execution_start` payload. `toolName` is a bare string (NOT a literal union). */
+export interface PiToolExecutionStartPayload extends PiEventPayload {
+  toolCallId?: string;
+  toolName?: string;
+  args?: unknown;
+}
+
+/** `tool_execution_end` payload — structured result + error flag. */
+export interface PiToolExecutionEndPayload extends PiEventPayload {
+  toolCallId?: string;
+  toolName?: string;
+  result?: unknown;
+  isError?: boolean;
+}
+
+/** `turn_start` / `turn_end` payload. No phase field, no token counts (3c finding). */
+export interface PiTurnPayload extends PiEventPayload {
+  turnIndex?: number;
+  timestamp?: number;
+}
 
 /**
  * `tool_call` pre-execution event — Pi fires this before running a tool, letting
