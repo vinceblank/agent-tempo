@@ -69,10 +69,24 @@ describe('applyEvent — coverage of SSE_EVENT_KINDS', () => {
       'flags.changed': true,
       'schedules.changed': true,
       'host_profile.changed': true,
+      'player.activity': true,
     };
     for (const kind of SSE_EVENT_KINDS) {
       expect(KIND_COVERAGE[kind]).toBe(true);
     }
+  });
+});
+
+describe('applyEvent — player.activity (3c Tier-1, coarse — dashboard ignores for now)', () => {
+  it('returns the same reference (graceful-ignore until Phase-5 dashboard rendering)', () => {
+    const ev: TempoEvent = {
+      v: 1, type: 'player.activity', eventId: id(7),
+      payload: {
+        playerId: 'soloist', ensemble: 'demo', currentTool: 'bash',
+        contextTokens: 1200, contextPercent: 3, at: '2026-04-27T00:00:00.000Z',
+      },
+    };
+    expect(applyEvent(baseSnapshot, ev)).toBe(baseSnapshot);
   });
 });
 

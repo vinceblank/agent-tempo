@@ -42,6 +42,7 @@ import {
   getRunIdQuery,
   getMessagingStateQuery,
   getLeaseStateQuery,
+  getCoarseActivityQuery,
 } from '../workflows/signals';
 import {
   maestroPausedQuery,
@@ -501,6 +502,7 @@ export function createTempoClientCore(
       runId?: string;
       messaging?: { received: number; sent: number; outbox: string };
       lease?: { expiresAt: number | null; leaseMs: number | null };
+      coarse?: { currentTool: string | null; contextTokens?: number; contextPercent?: number };
     } | null> {
       // Issue #399 W2 — fan-out three queries against the session
       // workflow. The handle is opened by workflow ID directly; if the
@@ -517,17 +519,22 @@ export function createTempoClientCore(
       // queries reject as `QueryTimeoutError`, `Promise.allSettled` sees
       // three rejections and the existing all-rejected branch returns
       // `null` — caller treats this player's wireMeta as missing.
-      const [runIdR, messagingR, leaseR] = await Promise.allSettled([
+      const [runIdR, messagingR, leaseR, coarseR] = await Promise.allSettled([
         queryHandleWithTimeout(h, getRunIdQuery),
         queryHandleWithTimeout(h, getMessagingStateQuery),
         queryHandleWithTimeout(h, getLeaseStateQuery),
+        // 3c Tier-1 — coarse activity (currentTool + context usage). Bounded like
+        // the others; an older session workflow without the handler rejects and
+        // is simply absent (additive/non-breaking).
+        queryHandleWithTimeout(h, getCoarseActivityQuery),
       ]);
       // If every query rejected, treat this as "session unreachable" —
       // the caller renders no wire-meta rather than partial sentinels.
       if (
         runIdR.status === 'rejected' &&
         messagingR.status === 'rejected' &&
-        leaseR.status === 'rejected'
+        leaseR.status === 'rejected' &&
+        coarseR.status === 'rejected'
       ) {
         return null;
       }
@@ -535,10 +542,12 @@ export function createTempoClientCore(
         runId?: string;
         messaging?: { received: number; sent: number; outbox: string };
         lease?: { expiresAt: number | null; leaseMs: number | null };
+        coarse?: { currentTool: string | null; contextTokens?: number; contextPercent?: number };
       } = {};
       if (runIdR.status === 'fulfilled') out.runId = runIdR.value;
       if (messagingR.status === 'fulfilled') out.messaging = messagingR.value;
       if (leaseR.status === 'fulfilled') out.lease = leaseR.value;
+      if (coarseR.status === 'fulfilled') out.coarse = coarseR.value;
       return out;
     },
 

@@ -54,12 +54,24 @@ const log = (...args: unknown[]): void => {
   console.error('[agent-tempo:pi]', ...args);
 };
 
+/** 3c Tier-1 — coarse activity sample piggybacked onto each heartbeat. */
+export type CoarseSample = { currentTool: string | null; contextTokens?: number; contextPercent?: number };
+/**
+ * Supplies the latest coarse sample at heartbeat time. eng's inner-loop
+ * publisher exposes exactly this via `getCoarseState()`; the extension wires it
+ * in after constructing the publisher. Absent (default) → heartbeats carry no
+ * coarse fields (backward-compatible with the 3a sender).
+ */
+export type CoarseProvider = () => CoarseSample | undefined;
+
 export interface PiWorkflowClientOptions {
   client: Client;
   config: Config;
   metadata: SessionMetadata;
   leaseMs?: number;
   heartbeatMs?: number;
+  /** 3c — optional coarse-activity provider (eng's `publisher.getCoarseState`). */
+  coarseProvider?: CoarseProvider;
   /**
    * Restart/migrate handoff token (`AGENT_TEMPO_ATTACHMENT_ID`). When present,
    * `claim()` ADOPTS the pre-created attachment via the renewal branch instead of
@@ -83,6 +95,7 @@ export class PiWorkflowClient {
   private readonly leaseMs: number;
   private readonly heartbeatMs: number;
   private readonly expectedAttachmentId?: string;
+  private coarseProvider?: CoarseProvider;
 
   private wfHandle: WorkflowHandle | null = null;
   private token: AttachmentToken | null = null;
@@ -95,6 +108,15 @@ export class PiWorkflowClient {
     this.leaseMs = opts.leaseMs ?? PI_LEASE_MS;
     this.heartbeatMs = opts.heartbeatMs ?? PI_HEARTBEAT_MS;
     this.expectedAttachmentId = opts.expectedAttachmentId;
+    this.coarseProvider = opts.coarseProvider;
+  }
+
+  /**
+   * 3c — wire the coarse-activity provider after construction (the inner-loop
+   * publisher is created alongside, then handed in). Each heartbeat samples it.
+   */
+  setCoarseProvider(provider: CoarseProvider): void {
+    this.coarseProvider = provider;
   }
 
   /** Build a client from config (connection-pooled; safe to share — see D12a). */
@@ -177,9 +199,14 @@ export class PiWorkflowClient {
   async heartbeat(): Promise<void> {
     if (!this.token) return;
     const handle = this.requireHandle();
+    // 3c Tier-1 — piggyback the latest coarse sample (currentTool + context).
+    // Sampled per-beat; a throwing/absent provider degrades to a plain heartbeat.
+    let coarse: CoarseSample | undefined;
+    try { coarse = this.coarseProvider?.(); } catch { coarse = undefined; }
     await handle.signal(heartbeatSignal, {
       attachmentId: this.token.attachmentId,
       at: new Date().toISOString(),
+      ...(coarse ? coarse : {}),
     });
   }
 

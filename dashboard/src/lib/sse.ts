@@ -219,6 +219,14 @@ export function applyEvent(
         hostProfiles: { ...prev.hostProfiles, [profile.hostname]: profile },
       };
     }
+
+    case 'player.activity': {
+      // 3c Tier-1 coarse activity (currentTool + context usage). The dashboard
+      // does not render the coarse tier yet — that's Phase-5 dashboard work — so
+      // we gracefully ignore it for now (the protocol mandates ignoring unused
+      // event kinds). Handled here only to satisfy the exhaustiveness sentinel.
+      return prev;
+    }
   }
 
   // Exhaustiveness sentinel — adding a new SseEventKind without a case

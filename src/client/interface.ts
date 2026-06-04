@@ -283,6 +283,8 @@ export interface TempoClientCore {
     runId?: string;
     messaging?: { received: number; sent: number; outbox: string };
     lease?: { expiresAt: number | null; leaseMs: number | null };
+    /** 3c Tier-1 — coarse activity (currentTool + context usage) from `getCoarseActivityQuery`. */
+    coarse?: { currentTool: string | null; contextTokens?: number; contextPercent?: number };
   } | null>;
   /** Get recent messages for an ensemble. */
   getMessages(ensemble: string, limit?: number): Promise<MaestroRelayMessage[]>;

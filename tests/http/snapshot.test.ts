@@ -118,6 +118,27 @@ describe('toPlayerSummaryV1', () => {
     expect(out).not.toHaveProperty('playerType');
     expect(out).not.toHaveProperty('gitBranch');
   });
+
+  // ── 3c Tier-1 — coarse activity merge from getPlayerWireMeta ──
+  it('merges coarse activity (currentTool + context) from wireMeta', () => {
+    const out = toPlayerSummaryV1(samplePlayer, {
+      coarse: { currentTool: 'bash', contextTokens: 1200, contextPercent: 3 },
+    });
+    expect(out.currentTool).toBe('bash');
+    expect(out.contextTokens).toBe(1200);
+    expect(out.contextPercent).toBe(3);
+  });
+  it('projects idle currentTool=null, omitting absent context fields', () => {
+    const out = toPlayerSummaryV1(samplePlayer, { coarse: { currentTool: null } });
+    expect(out.currentTool).toBeNull();
+    expect(out).not.toHaveProperty('contextTokens');
+    expect(out).not.toHaveProperty('contextPercent');
+  });
+  it('omits coarse fields entirely when wireMeta has no coarse block', () => {
+    const out = toPlayerSummaryV1(samplePlayer, { lease: { expiresAt: null, leaseMs: null } });
+    expect(out).not.toHaveProperty('currentTool');
+    expect(out).not.toHaveProperty('contextTokens');
+  });
 });
 
 describe('buildEnsembleSnapshot', () => {
