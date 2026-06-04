@@ -85,7 +85,8 @@ src/
 │   ├── gate-registry.ts   # GateRegistry (3d MD-G) — per-player armed-gate + pending-request store; 45s lazy auto-allow (R3 locked); arm/disarm/decide/getResolution; injected auditSink + publishToInner callback
 │   ├── gate-routes.ts     # Gate HTTP routes: POST /gate-arm + /gate-disarm + /gate/:requestId (OPERATOR, Tier 3); GET /gate/:requestId/resolution (SOURCE, loopback + X-Ingest-Token); uniform 403 no-leak
 │   ├── gate-audit.ts      # createGateAuditSink — append-only JSONL at ~/.agent-tempo/gate-audit/<ensemble>/<workflowId>.jsonl; sync write (R5 durable-before-return); whitelisted path segments; swallows I/O errors
-│   ├── auth.ts / cors.ts / responses.ts / event-id.ts / port-file.ts / index.ts
+│   ├── auth.ts        # 3e MD-E RBAC: two-token model (readToken T1 / adminToken T1+T2+T3 env-var-only); loadRbacTokens; requireTier(tier, input) → TierGuardResult; tierForToken; loadReadToken (env>config>legacy httpToken>auto-gen); loadAdminToken (env-only); TLS/legacy startup warnings in startHttpServer
+│   ├── cors.ts / responses.ts / event-id.ts / port-file.ts / index.ts
 ├── reconcile/
 │   └── orphans.ts     # Shared orphan-query helper (daemon reconcile-on-boot + CLI restore)
 ├── ensemble/

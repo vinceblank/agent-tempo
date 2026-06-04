@@ -51,6 +51,19 @@ write-side endpoints (PR-7a) are explicitly non-cached, bearer-gated on
 non-loopback binds, and translate to the daemon's existing TempoClient
 calls (which carry their own Temporal-backed durability).
 
+**Auth tiers (3e MD-E):** loopback bind → no auth required (all tiers pass). Non-loopback bearer mode:
+
+| Route group | Required tier | Token |
+|---|---|---|
+| `GET /v1/health` | None — always open | — |
+| All other `GET` reads | **T1** (read or admin) | `AGENT_TEMPO_HTTP_READ_TOKEN` or admin |
+| `POST` write surface | **T2** (admin required) | `AGENT_TEMPO_HTTP_ADMIN_TOKEN` |
+| `POST` gate arm/disarm/decide | **T3** (admin required) | `AGENT_TEMPO_HTTP_ADMIN_TOKEN` |
+| `GET /v1/players/:e/:p/inner` SSE | **T3** (admin required) | `AGENT_TEMPO_HTTP_ADMIN_TOKEN` |
+| `POST /inner/ingest`, `GET /inner/presence`, `GET /gate/:id/resolution` | Source plane (loopback + `X-Ingest-Token`) | Daemon-minted per-player `AGENT_TEMPO_INGEST_TOKEN` |
+
+T2 and T3 both require the admin token — there is no T2-only token. The admin token grants all tiers (3 ⊇ 2 ⊇ 1). See §3.1 for the full two-token model.
+
 **Deliberately out of scope** (keep on TempoClient → Temporal direct):
 
 - `/v1/players/:ensemble/:playerId` — per-player drill-ins are user-invoked, not background streams
@@ -67,20 +80,32 @@ calls (which carry their own Temporal-backed durability).
 | **Loopback (no auth)** | `Origin` is loopback (`127.0.0.1`, `::1`, `localhost`) AND bind addr is loopback | Auth check skipped. Default for single-user dev workflows. |
 | **Bearer mode** | Any non-loopback `Origin` OR `CLAUDE_TEMPO_HTTP_BIND=0.0.0.0` | `Authorization: Bearer <token>` required on every endpoint except `/v1/health`. Mismatch → `401`. Missing → `401`. |
 
-### 3.1 Token storage
+### 3.1 Two-token model (3e MD-E)
 
-| Field | Value |
-|---|---|
-| Path | `~/.agent-tempo/config.json` |
-| Field | `httpToken: string` |
-| Auto-generation | First daemon boot with bearer mode required AND no `httpToken` set: daemon writes `crypto.randomBytes(32).toString('base64url')` to the file (mode `0600`). |
-| Rotation | Delete the field; next daemon boot regenerates. Live SSE connections retain their grant; new connections must present the new token. |
+Two separate tokens, each scoped to a specific access tier:
+
+| Token | Env var | Config field | Tier granted | Auto-gen? |
+|---|---|---|---|---|
+| **Read token** | `AGENT_TEMPO_HTTP_READ_TOKEN` | `readToken` in `~/.agent-tempo/config.json` | T1 (observe) | Yes — auto-generated on first non-loopback boot if unset |
+| **Admin token** | `AGENT_TEMPO_HTTP_ADMIN_TOKEN` | **none — env-var-only, never persisted to disk** | T1 + T2 + T3 (full) | No — never auto-generated |
+
+**Resolution order for the read token:** env `AGENT_TEMPO_HTTP_READ_TOKEN` → `config.json#readToken` → legacy `config.json#httpToken` (adopted as T1; daemon emits a one-time startup notice to set an admin token) → auto-generate and persist.
+
+**The admin token is ENV-VAR-ONLY.** It is never written to `config.json` and never auto-generated. An operator who needs write/gate/inner access must set `AGENT_TEMPO_HTTP_ADMIN_TOKEN` explicitly in the environment (e.g. container env, Tailscale ACL, systemd override).
+
+**Token rotation:**
+- Read token: delete `readToken` from `config.json` (and unset the env var); next daemon boot regenerates.
+- Admin token: update the env var and restart.
 
 > **Bearer mode requires the fetch transport.** Native browser `EventSource`
 > cannot set custom request headers on the initial connect, so any
 > consumer that supplies a token (or whose request `Origin` triggers
 > bearer mode) must use the `TempoClient.subscribe` fetch path. The
 > wrapper picks transports automatically — see Appendix A and ADR 0010.
+
+#### Legacy `httpToken` migration
+
+If `config.json` contains `httpToken` but no `readToken`, the daemon adopts it as the read token (T1) and emits a startup notice recommending the operator set `AGENT_TEMPO_HTTP_ADMIN_TOKEN`. No data migration is required — the existing token continues to work for read access. To gain write/gate/inner access, set the admin env var separately.
 
 ### 3.2 CORS (only enforced when bearer mode is active)
 
@@ -429,11 +454,13 @@ Contrast with `event: gap`, which is a **hard gap** spanning all event kinds and
 
 | Code | Body | When |
 |---|---|---|
-| `401` | `{ error: 'unauthorized' }` | Missing/invalid bearer when bearer mode is active |
+| `401` | `{ error: 'unauthorized' }` | Missing or invalid bearer when bearer mode is active. **L2 floor — checked before tier enforcement.** An unauthenticated request to any tier-gated route (T1 read, T2 write, T3 supervisory) gets `401`, not `403`. `401` bodies carry no `detail` — unauthenticated callers don't learn config state. |
+| `403` | `{ error: 'insufficient-tier', detail: string }` | **Surface-wide** — emitted by the shared `denyTier` helper for any tier-gated route (T1 reads, T2 writes, T3 gate/inner) when the presented bearer's granted tier is below the route's requirement. The `detail` field carries an actionable migration hint on every denial, e.g. `"This token is read-tier. Writes, the operator gate, and the inner-tail require the admin token (set AGENT_TEMPO_HTTP_ADMIN_TOKEN)."` |
 | `404` | `{ error: 'ensemble-not-found', ensemble }` | `/v1/state/:ensemble` or `/v1/events/:ensemble` for unknown ensemble |
+| `503` | `{ error: 'admin-token-not-configured', detail: string }` | **Misconfiguration / safety-net** — a T≥2 route was reached but `AGENT_TEMPO_HTTP_ADMIN_TOKEN` is not set. Not reachable in a correctly configured deployment (no token resolves T≥2 when admin is absent). Emitted by `denyTier` alongside `403` via the same surface-wide helper. Detail: `"Set AGENT_TEMPO_HTTP_ADMIN_TOKEN (env-var only) to enable writes / gate / inner-tail."` |
 | `503` | `{ error: 'connection-cap-exceeded' }` | Per-process SSE cap hit; `Retry-After: 5` |
 
-`403` is reserved — no role tiers in v1; CORS rejection sends a normal CORS-failure response (browser handles it).
+CORS rejection sends a normal CORS-failure response (browser handles it). `/v1/health` is never authenticated and never returns `401`/`403`/`503`.
 
 ---
 
@@ -538,10 +565,10 @@ Nine POST routes under `/v1/ensembles/:ensemble/<action>` give the dashboard a b
 | `GET` | known write path | `405 method-not-allowed`, `Allow: POST, OPTIONS` |
 | `POST` | known read path | `405 method-not-allowed`, `Allow: GET, OPTIONS` |
 
-### Auth posture (parity with reads)
+### Auth posture (3e MD-E)
 
 - Loopback bind + no `Origin` header → no auth (TUI/CLI parity; the TUI already writes via Temporal directly).
-- Non-loopback bind OR cross-origin browser → bearer required, identical to `/v1/state/:ensemble`.
+- Non-loopback bind OR cross-origin browser → **T2 (admin token) required**. A read token holder gets `403 { error: 'insufficient-tier', detail: '…set AGENT_TEMPO_HTTP_ADMIN_TOKEN' }`. An unauthenticated request gets `401 { error: 'unauthorized' }` (L2 floor, checked before tier enforcement).
 
 ### Error mapping
 

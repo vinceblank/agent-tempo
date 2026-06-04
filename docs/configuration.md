@@ -52,6 +52,37 @@ Settings are resolved in this order (first match wins):
 | `CLAUDE_TEMPO_CLAUDE_BIN` | *(auto-detected)* | Path to a custom `claude` executable. Takes precedence over the config file setting and `which`/`where` auto-detection. Useful when multiple Claude versions are installed or the binary is not on `PATH`. |
 | `CLAUDE_TEMPO_DEV_MODE` | `false` | Enable dev profile (`1` or `true`). Flips home dir to `~/.agent-tempo-dev/`, HTTP port to 8474, Temporal namespace to `agent-tempo-dev`, task queue to `agent-tempo-dev`. Also enables the mock adapter (`agent: 'mock'`). Same effect as the `--dev` CLI flag. |
 
+**Daemon HTTP — authentication (3e MD-E):**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENT_TEMPO_HTTP_READ_TOKEN` | *(auto-generated)* | T1 read-tier bearer token. Grants observe-only access: all `GET` endpoints. Resolution order: this env var → `config.json#readToken` → legacy `config.json#httpToken` → auto-generate and persist. When auto-generated, the value is written to `~/.agent-tempo/config.json` as `readToken` (mode `0600`). |
+| `AGENT_TEMPO_HTTP_ADMIN_TOKEN` | *(none)* | T1+T2+T3 admin bearer token. Grants full access including writes, gate arm/disarm/decide, and the `/inner` SSE fine-tail. **ENV-VAR-ONLY** — never auto-generated, never written to `config.json`. Must be set explicitly in the environment for non-loopback deployments that need write or supervisory access. |
+| `AGENT_TEMPO_TLS_ACKNOWLEDGED` | `false` | Set to `1` or `true` to suppress the daemon's plaintext-HTTP startup warning when `AGENT_TEMPO_HTTP_BIND` exposes the daemon on a non-loopback address without TLS. Only suppress if you have transport security at a higher layer (Tailscale, mTLS proxy, WireGuard). |
+
+**Token model summary:**
+
+- Loopback bind (default `127.0.0.1`) → auth skipped; all tiers pass.
+- Non-loopback: any token grants T1; admin token additionally grants T2 (writes) and T3 (gate + inner-tail).
+- No token → `401`. Read token on T≥2 route → `403 { error: 'insufficient-tier', detail: '…set AGENT_TEMPO_HTTP_ADMIN_TOKEN' }`. Admin unset on T≥2 route → `503 { error: 'admin-token-not-configured', detail: '…' }` (misconfiguration / safety-net).
+
+**Single operator / remote deploy:**
+
+To expose the daemon on a LAN or container (e.g. a Tailscale mesh, a remote Pi ensemble):
+
+```bash
+export AGENT_TEMPO_HTTP_BIND=0.0.0.0
+export AGENT_TEMPO_HTTP_ADMIN_TOKEN=<strong-secret>   # write + gate + inner access
+# AGENT_TEMPO_HTTP_READ_TOKEN auto-generates; show it with:
+agent-tempo daemon status
+```
+
+The read token is safe to share with any human observer (TUI, dashboard, read-only integrations). The admin token grants full control — gate arm/disarm, ensemble writes, inner-loop tail. Keep it out of repos; pass via env in your container/systemd override.
+
+**Legacy `httpToken` upgrade path:**
+
+If `~/.agent-tempo/config.json` has `httpToken` but no `readToken`, the daemon adopts it as the T1 read token and prints a one-time notice at startup. No migration action is required for read-only access. To enable writes and supervisory access, set `AGENT_TEMPO_HTTP_ADMIN_TOKEN` in the environment.
+
 **Headless Pi adapter — inner-loop ingest (daemon-minted; do NOT set manually):**
 
 | Variable | Default | Description |
