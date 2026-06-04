@@ -58,6 +58,16 @@ Settings are resolved in this order (first match wins):
 |----------|---------|-------------|
 | `AGENT_TEMPO_INGEST_TOKEN` | *(daemon-minted)* | Per-player ingest token for the Tier-2 inner-loop side-channel. Minted by the daemon before `spawnPiHeadless`, injected into the subprocess env, scoped to the player's `workflowId`. Validated alongside a loopback remote-address check on `POST /inner/ingest` and `GET /inner/presence`. Revoked on destroy; revoked-all on daemon shutdown. **Never set this manually** — it is an internal credential, not a user-configurable setting. |
 
+**Headless Pi adapter — gate audit (daemon-written; no env var):**
+
+The MD-G operator gate writes an append-only JSONL audit log per player:
+
+```
+~/.agent-tempo/gate-audit/<ensemble>/<workflowId>.jsonl
+```
+
+Each line is a `GateAuditRecord` with `kind: 'arm' | 'disarm' | 'decision'`, ISO timestamp, `workflowId`, `requestId` (decision records), `tool`, `decision`, `source`, and `operatorTokenHint` (last 6 chars of the bearer token). The path is daemon-derived; there is no user-settable env var for it. Use `--dev` to route audit files to `~/.agent-tempo-dev/gate-audit/` in dev mode.
+
 **Headless Pi adapter** (`agent: 'pi'`, requires `pi-ai` optional dependency on Node 22.19+):
 
 | Variable | Default | Description |

@@ -45,6 +45,7 @@ These tools are available inside Claude Code sessions connected to agent-tempo.
 | `play` | Resume a paused ensemble — unlocks outbox dispatch and resumes the scheduler. Buffered outbox entries are dispatched. Pass `release: true` to also release any held sessions in the same call — idempotent on non-held sessions. (#287) |
 | `shutdown` | Gracefully shut down the entire ensemble — signals all players to drain and detach, then stops the conductor. Use instead of per-player `detach` calls when tearing down. (#287) |
 | `restore` | Restore orphaned sessions in one ensemble — re-attaches a fresh adapter to every `detached` session whose preferred host matches. Defaults to scanning the local OS hostname. Pass `hostname: "<other-host>"` for cross-host setups (per-host task queues, #274) where the operator's daemon runs on a different machine than the parked sessions. (#287, #288, #306 follow-up) |
+| `reset` | **Phase 3d.** Clean-wipe a headless Pi player's conversation context — the target starts a FRESH session (no transcript replay). Params: `playerId` (required), `reason` (optional, max 500 chars). Gate-bypassing: the reset is delivered via `setPendingReset` signal and is not subject to the MD-G operator gate. Any player can reset a peer; the conductor is not required. Wire protocol: `setPendingReset` signal → `pendingReset` query polled by the player's `ResetPump` → `ackReset` signal on completion. |
 
 ## Version History
 
