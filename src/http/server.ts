@@ -734,7 +734,7 @@ export async function handle(
       readToken: ctx.readToken,
       adminToken: ctx.adminToken,
     });
-    if (!tier.ok) return errorResponse(res, tier.status, { error: tier.error });
+    if (!tier.ok) { denyTier(tier); return; }
     return handleInnerSse(
       req, res,
       { innerLoop: ctx.innerLoop, ingestTokens: ctx.ingestTokens },

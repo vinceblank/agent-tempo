@@ -57,7 +57,11 @@ afterEach(async () => {
   booted = [];
 });
 
-async function boot(innerLoop: InnerLoopRegistry, ingestTokens: IngestTokenRegistry): Promise<HttpServerHandle> {
+async function boot(
+  innerLoop: InnerLoopRegistry,
+  ingestTokens: IngestTokenRegistry,
+  opts: { readToken?: string; adminToken?: string; allowedOrigins?: string[] } = {},
+): Promise<HttpServerHandle> {
   const handle = await startHttpServer({
     client: makeFakeClient(),
     namespace: 'default',
@@ -69,6 +73,9 @@ async function boot(innerLoop: InnerLoopRegistry, ingestTokens: IngestTokenRegis
     portFilePath: path.join(tmpDir, `daemon-${process.hrtime.bigint().toString(36)}.port`),
     innerLoop,
     ingestTokens,
+    readToken: opts.readToken,
+    adminToken: opts.adminToken,
+    allowedOrigins: opts.allowedOrigins,
   });
   booted.push(handle);
   return handle;
@@ -170,6 +177,43 @@ describe('inner-loop integration — publisher → client → ingest → registr
       try { await reader.cancel(); } catch { /* ignore */ }
     }
   }, 10000);
+
+  // 3e ruling #3 — the /inner operator-SSE tier denial must carry requireTier's
+  // actionable hint (this was the QA-caught gap: the GET /inner site used the bare
+  // errorResponse form and dropped `detail`). Bearer mode is forced via a
+  // non-loopback Origin so the tier guard actually runs (loopback → PASS).
+  describe('tier-denial hint on GET /inner (ruling #3 surface-wide consistency)', () => {
+    const ORIGIN = 'https://dash.example.com';
+
+    it('read token on the admin-only inner tail → 403 with the admin-token hint', async () => {
+      const server = await boot(new InnerLoopRegistry(), new IngestTokenRegistry(), {
+        readToken: 'read-token',
+        adminToken: 'admin-token',
+        allowedOrigins: [ORIGIN],
+      });
+      const res = await fetch(`http://127.0.0.1:${server.port}/v1/players/${E}/${P}/inner`, {
+        headers: { origin: ORIGIN, authorization: 'Bearer read-token' },
+      });
+      expect(res.status).toBe(403);
+      const body = await res.json();
+      expect(body.error).toBe('insufficient-tier');
+      expect(body.detail).toContain('AGENT_TEMPO_HTTP_ADMIN_TOKEN');
+    });
+
+    it('admin unset → 503 with the admin-token hint', async () => {
+      const server = await boot(new InnerLoopRegistry(), new IngestTokenRegistry(), {
+        readToken: 'read-token',
+        allowedOrigins: [ORIGIN],
+      });
+      const res = await fetch(`http://127.0.0.1:${server.port}/v1/players/${E}/${P}/inner`, {
+        headers: { origin: ORIGIN, authorization: 'Bearer read-token' },
+      });
+      expect(res.status).toBe(503);
+      const body = await res.json();
+      expect(body.error).toBe('admin-token-not-configured');
+      expect(body.detail).toContain('AGENT_TEMPO_HTTP_ADMIN_TOKEN');
+    });
+  });
 
   it('PRESENCE GATE: with zero operators the publisher never POSTs an ingest frame', async () => {
     // Pure source-side seam with a spy transport — no operator ever subscribes, so
