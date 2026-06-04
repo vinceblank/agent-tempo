@@ -83,7 +83,7 @@ export function handleGateArm(
   req: IncomingMessage, res: ServerResponse, deps: GateDeps, ensemble: string, playerId: string,
 ): void {
   const workflowId = sessionWorkflowId(ensemble, playerId);
-  deps.gate.arm(workflowId, operatorTokenHint(req));
+  deps.gate.arm(workflowId, ensemble, operatorTokenHint(req));
   res.writeHead(204); res.end();
 }
 

@@ -141,6 +141,7 @@ export async function handleInnerIngest(
       deps.gate.open(workflowId, f.requestId, {
         tool: f.tool,
         argsSummary: typeof f.argsSummary === 'string' ? f.argsSummary : '',
+        ensemble,
       });
     }
   }

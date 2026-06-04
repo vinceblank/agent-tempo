@@ -16,6 +16,7 @@ import { spawnInTerminal, spawnCopilotBridge, spawnClaudeApiAdapter, spawnOpenCo
 import type { ClaudeCodeHeadlessPermissionMode } from '../adapters/claude-code-headless/types';
 import { ENV } from '../config';
 import type { IngestTokenRegistry } from '../http/ingest-registry';
+import type { GateRegistry } from '../http/gate-registry';
 import { resolveSession } from './resolve';
 import { resolveAgentType } from '../ensemble/agent-types';
 import { defaultPart } from '../utils/default-part';
@@ -344,6 +345,7 @@ export function createOutboxActivities(
   client: Client,
   config: Config,
   ingestTokens?: IngestTokenRegistry,
+  gate?: GateRegistry,
 ): OutboxActivities {
   return {
     async deliverCue(input: DeliverCueInput): Promise<OutboxActivityResult> {
@@ -801,6 +803,9 @@ export function createOutboxActivities(
         // TODO(Phase 4): revoke ingest token on detach (see deliverDestroy TODO)
         // — deferred as hygiene; residual surface negligible (single-token
         // replacement on re-attach + loopback-only + dead holder).
+        // 3d MD-G — auto-disarm the gate on detach (the operator's gate posture
+        // shouldn't survive the player going away; re-attach re-arms). Idempotent.
+        gate?.clearPlayer(sessionWorkflowId(ensemble, targetPlayerId));
         log(`Detach signaled for "${targetPlayerId}" (deadline=${deadlineMs}ms)`);
         return { success: true };
       } catch (err) {
@@ -843,6 +848,9 @@ export function createOutboxActivities(
         // revokeIngestToken(workflowId) on detach — deferred; residual surface
         // negligible (dead holder + loopback-only + single-token replacement).
         ingestTokens?.revoke(sessionWorkflowId(ensemble, targetPlayerId));
+        // 3d MD-G — auto-disarm: drop the gate's armed-state + any pending
+        // requests for the destroyed player (idempotent; no-op for non-Pi).
+        gate?.clearPlayer(sessionWorkflowId(ensemble, targetPlayerId));
 
         if (notifyConductor) {
           try {

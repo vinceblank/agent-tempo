@@ -259,7 +259,7 @@ describe('3d MD-G coupling — gate_pending registers + presence carries gateArm
     handleInnerPresence(fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token } }), r1, deps, E, P);
     expect(JSON.parse(r1.body as string)).toEqual({ subscribers: 0, gateArmed: false });
 
-    gate.arm(WF);
+    gate.arm(WF, E);
     const r2 = fakeRes();
     handleInnerPresence(fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token } }), r2, deps, E, P);
     expect(JSON.parse(r2.body as string)).toEqual({ subscribers: 0, gateArmed: true });

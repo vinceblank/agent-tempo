@@ -58,6 +58,12 @@ export interface GateRequestMeta {
   argsSummary: string;
   /** The player's Pi conversation id, if known (audit only). */
   sessionId?: string;
+  /**
+   * The player's ensemble — stashed per-player so the audit sink can path the
+   * JSONL under `<ensemble>/<workflowId>.jsonl` (workflowId is not cleanly
+   * splittable since both ensemble + playerId may contain hyphens).
+   */
+  ensemble?: string;
 }
 
 /** The poll answer the Pi subprocess receives from GET /gate/:requestId/resolution. */
@@ -87,8 +93,12 @@ export type GateAuditRecord =
       operatorTokenHint?: string;
     };
 
-/** Append-only audit sink (daemon wires the JSONL writer; tests inject a spy). */
-export type GateAuditSink = (record: GateAuditRecord) => void;
+/**
+ * Append-only audit sink (daemon wires the JSONL writer; tests inject a spy).
+ * `ensemble` is a SIDECAR (not part of the locked record schema) the writer uses
+ * to path `<ensemble>/<workflowId>.jsonl`; `''` when unknown.
+ */
+export type GateAuditSink = (record: GateAuditRecord, ensemble: string) => void;
 
 /**
  * Injected publish path for the `inner.gate_resolved` outcome frame (architect's
@@ -114,6 +124,8 @@ interface PendingRequest {
 
 interface PlayerGate {
   armed: boolean;
+  /** Stashed for audit pathing — set on the first arm()/open() that names it. */
+  ensemble: string;
   readonly pending: Map<string, PendingRequest>;
 }
 
@@ -141,7 +153,7 @@ export class GateRegistry {
   private gate(workflowId: string): PlayerGate {
     let g = this.gates.get(workflowId);
     if (!g) {
-      g = { armed: false, pending: new Map() };
+      g = { armed: false, ensemble: '', pending: new Map() };
       this.gates.set(workflowId, g);
     }
     return g;
@@ -156,15 +168,18 @@ export class GateRegistry {
   // ── Arm / disarm (operator posture; audited) ───────────────────────────────
 
   /** Arm the gate for a player — subsequent non-`low-risk` tools route to the operator. */
-  arm(workflowId: string, operatorTokenHint?: string): void {
-    this.gate(workflowId).armed = true;
-    this.audit({ kind: 'arm', ts: this.nowIso(), workflowId, source: 'operator', ...(operatorTokenHint ? { operatorTokenHint } : {}) });
+  arm(workflowId: string, ensemble: string, operatorTokenHint?: string): void {
+    const g = this.gate(workflowId);
+    g.armed = true;
+    if (ensemble) g.ensemble = ensemble;
+    this.audit({ kind: 'arm', ts: this.nowIso(), workflowId, source: 'operator', ...(operatorTokenHint ? { operatorTokenHint } : {}) }, g.ensemble);
   }
 
   /** Disarm the gate — new tools no longer engage it (in-flight pending still resolvable / auto-allow). */
   disarm(workflowId: string, operatorTokenHint?: string): void {
-    this.gate(workflowId).armed = false;
-    this.audit({ kind: 'disarm', ts: this.nowIso(), workflowId, source: 'operator', ...(operatorTokenHint ? { operatorTokenHint } : {}) });
+    const g = this.gate(workflowId);
+    g.armed = false;
+    this.audit({ kind: 'disarm', ts: this.nowIso(), workflowId, source: 'operator', ...(operatorTokenHint ? { operatorTokenHint } : {}) }, g.ensemble);
   }
 
   /** Whether the gate is currently armed for a player (the engagement predicate reads this). */
@@ -182,6 +197,7 @@ export class GateRegistry {
    */
   open(workflowId: string, requestId: string, meta: GateRequestMeta): void {
     const g = this.gate(workflowId);
+    if (meta.ensemble) g.ensemble = meta.ensemble;
     if (g.pending.has(requestId)) return;
     g.pending.set(requestId, {
       tool: meta.tool,
@@ -204,7 +220,8 @@ export class GateRegistry {
     decision: 'allow' | 'deny',
     operatorTokenHint?: string,
   ): DecideResult {
-    const req = this.gates.get(workflowId)?.pending.get(requestId);
+    const g = this.gates.get(workflowId);
+    const req = g?.pending.get(requestId);
     if (!req) return { ok: false, reason: 'not-found' };
     if (req.decision !== null) return { ok: false, reason: 'already-decided' };
     req.decision = decision;
@@ -220,7 +237,7 @@ export class GateRegistry {
       decision,
       source: 'operator',
       ...(operatorTokenHint ? { operatorTokenHint } : {}),
-    });
+    }, g?.ensemble ?? '');
     this.emitResolved(workflowId, requestId, decision, 'operator');
     return { ok: true };
   }
@@ -233,7 +250,8 @@ export class GateRegistry {
    * timeout clock), OR `pending`.
    */
   getResolution(workflowId: string, requestId: string): GateResolution | null {
-    const req = this.gates.get(workflowId)?.pending.get(requestId);
+    const g = this.gates.get(workflowId);
+    const req = g?.pending.get(requestId);
     if (!req) return null;
     if (req.decision !== null) {
       return { status: 'resolved', decision: req.decision, source: req.source ?? 'operator' };
@@ -251,7 +269,7 @@ export class GateRegistry {
         argsSummary: req.argsSummary,
         decision: 'auto-allow',
         source: 'timeout',
-      });
+      }, g?.ensemble ?? '');
       this.emitResolved(workflowId, requestId, 'auto-allow', 'timeout');
       return { status: 'resolved', decision: 'auto-allow', source: 'timeout' };
     }

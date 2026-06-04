@@ -11,17 +11,19 @@ import {
   type GateAuditRecord,
 } from '../../src/http/gate-registry';
 
+const E = 'demo';
 const WF = 'agent-session-demo-tempo-pi';
 const RID = 'req-1';
-const META = { tool: 'bash', argsSummary: '{"cmd":"ls"}', sessionId: 'sess-abc' };
+const META = { tool: 'bash', argsSummary: '{"cmd":"ls"}', sessionId: 'sess-abc', ensemble: E };
 
 /** A registry with a controllable clock + audit + publishToInner spies. */
 function setup(startMs = 1_000_000) {
   let nowMs = startMs;
   const audit: GateAuditRecord[] = [];
+  const auditEnsembles: string[] = [];
   const published: { workflowId: string; frame: { type: string; [k: string]: unknown } }[] = [];
   const reg = new GateRegistry(
-    (r) => audit.push(r),
+    (r, ens) => { audit.push(r); auditEnsembles.push(ens); },
     () => nowMs,
     undefined, // default 45s
     (workflowId, frame) => published.push({ workflowId, frame: frame as { type: string } }),
@@ -29,6 +31,7 @@ function setup(startMs = 1_000_000) {
   return {
     reg,
     audit,
+    auditEnsembles,
     published,
     advance: (ms: number) => { nowMs += ms; },
     set: (ms: number) => { nowMs = ms; },
@@ -37,14 +40,16 @@ function setup(startMs = 1_000_000) {
 
 describe('GateRegistry — arm / disarm', () => {
   it('defaults disarmed; arm flips it; disarm flips back; audited each time', () => {
-    const { reg, audit } = setup();
+    const { reg, audit, auditEnsembles } = setup();
     expect(reg.isArmed(WF)).toBe(false);
-    reg.arm(WF, 'tok1234');
+    reg.arm(WF, E, 'tok1234');
     expect(reg.isArmed(WF)).toBe(true);
     reg.disarm(WF);
     expect(reg.isArmed(WF)).toBe(false);
     expect(audit.map((a) => a.kind)).toEqual(['arm', 'disarm']);
     expect(audit[0]).toMatchObject({ kind: 'arm', workflowId: WF, source: 'operator', operatorTokenHint: 'tok1234' });
+    // ensemble sidecar (for audit pathing) flows on both records, stashed from arm.
+    expect(auditEnsembles).toEqual([E, E]);
   });
 });
 
@@ -148,7 +153,7 @@ describe('GateRegistry — 45s auto-allow (lazy on poll)', () => {
 describe('GateRegistry — lifecycle', () => {
   it('clearPlayer drops armed + pending (auto-disarm on detach/destroy)', () => {
     const { reg } = setup();
-    reg.arm(WF);
+    reg.arm(WF, E);
     reg.open(WF, RID, META);
     expect(reg.pendingCount(WF)).toBe(1);
     reg.clearPlayer(WF);
@@ -159,8 +164,8 @@ describe('GateRegistry — lifecycle', () => {
 
   it('clear() drops every player', () => {
     const { reg } = setup();
-    reg.arm(WF);
-    reg.arm('other-wf');
+    reg.arm(WF, E);
+    reg.arm('other-wf', E);
     reg.clear();
     expect(reg.isArmed(WF)).toBe(false);
     expect(reg.isArmed('other-wf')).toBe(false);
