@@ -394,6 +394,8 @@ export interface SessionInput {
   reportHistory?: PlayerReport[];
   /** Restored from continue-as-new (pending/processing entries only) */
   outbox?: OutboxEntry[];
+  /** Restored from continue-as-new (D14) — an un-acked pending reset survives a CAN. */
+  pendingReset?: PendingReset | null;
   autoSummary?: string;
   /** Disable stale session detection (for passive mailbox workflows like maestro) */
   disableStaleDetection?: boolean;
@@ -765,6 +767,25 @@ export interface SpawnOutboxEntry extends OutboxEntryBase {
   model?: string;
 }
 
+/**
+ * Reset outbox entry (D14) — enqueued by the `reset` tool so the dispatch loop
+ * runs `deliverReset` on the target, which sets a `pendingReset` flag the Pi
+ * extension polls + acts on (CLEAN-WIPE → Pi `newSession()`). POLL-delivery
+ * (mirrors cue/pendingMessages), NOT a direct signal into the subprocess.
+ * Operator-initiated → does NOT route through the MD-G tool gate.
+ */
+export interface ResetOutboxEntry extends OutboxEntryBase {
+  type: 'reset';
+  /** Player whose context is wiped. */
+  targetPlayerId: string;
+  /** Who requested the reset (owner or conductor). Recorded for audit. */
+  invokerPlayerId?: string;
+  /** Clean-wipe (D14 default `true` → `newSession`). `false` reserved for a softer reset. */
+  fresh?: boolean;
+  /** Optional human-readable reason, surfaced to the wiped session + audit. */
+  reason?: string;
+}
+
 export type OutboxEntry =
   | CueOutboxEntry
   | RecruitOutboxEntry
@@ -774,7 +795,26 @@ export type OutboxEntry =
   | SpawnOutboxEntry
   | DetachOutboxEntry
   | DestroyOutboxEntry
-  | RestartOutboxEntry;
+  | RestartOutboxEntry
+  | ResetOutboxEntry;
+
+/**
+ * Pending reset flag set on a session workflow by `deliverReset`, polled by the
+ * Pi extension via `pendingResetQuery` and cleared via `ackResetSignal(resetId)`
+ * after the extension performs the wipe. Single-slot, latest-wins.
+ */
+export interface PendingReset {
+  /** Correlation id (the originating outbox entry id). Ack clears only on match. */
+  resetId: string;
+  /** Clean-wipe (`newSession`) when true (D14 default). */
+  fresh: boolean;
+  /** Optional reason. */
+  reason?: string;
+  /** Who requested it (audit). */
+  requestedBy?: string;
+  /** ISO timestamp, stamped by the workflow (`workflow.now()`) — deterministic. */
+  requestedAt: string;
+}
 
 /** Distributive Omit that works correctly on union types. */
 type DistributiveOmit<T, K extends keyof any> = T extends any ? Omit<T, K> : never;

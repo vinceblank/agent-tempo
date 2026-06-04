@@ -35,6 +35,7 @@ import {
   receiveMessageSignal,
   updateMetadataSignal,
   playerStateQuery,
+  setPendingResetSignal,
 } from '../workflows/signals';
 import { PLAYER_STATE_DEFAULT_KEY } from '../utils/validation';
 import type { PlayerStateEntry } from '../types';
@@ -208,6 +209,18 @@ export interface DeliverDestroyInput {
   notifyConductor?: boolean;
 }
 
+export interface DeliverResetInput {
+  ensemble: string;
+  targetPlayerId: string;
+  /** Correlation id (the originating outbox entry id) — the extension acks with it. */
+  resetId: string;
+  /** Clean-wipe (D14 default true). */
+  fresh: boolean;
+  reason?: string;
+  /** Who requested the reset (audit). */
+  requestedBy?: string;
+}
+
 export interface DeliverRestartInput {
   ensemble: string;
   targetPlayerId: string;
@@ -322,6 +335,7 @@ export interface OutboxActivities {
   deliverDetach(input: DeliverDetachInput): Promise<OutboxActivityResult>;
   deliverDestroy(input: DeliverDestroyInput): Promise<OutboxActivityResult>;
   deliverRestart(input: DeliverRestartInput): Promise<OutboxActivityResult>;
+  deliverReset(input: DeliverResetInput): Promise<OutboxActivityResult>;
   /**
    * OS-level child-process-tree kill for the target session. Runs on the per-host
    * task queue (`agent-tempo-{hostname}`) so the kill happens where the process
@@ -871,6 +885,32 @@ export function createOutboxActivities(
         // permanent cases (WorkflowNotFound, validator rejection) stay
         // non-retryable. Unknown errors default to non-retryable.
         classifyAndRethrow(err, `Destroy failed for "${targetPlayerId}"`);
+      }
+    },
+
+    /**
+     * D14 `deliverReset` — set a `pendingReset` flag on the target via
+     * `setPendingResetSignal` (a signal, like deliverCue — NOT a direct
+     * subprocess call). The Pi extension polls `pendingResetQuery`, performs the
+     * clean-wipe (`newSession`), then clears it via `ackResetSignal(resetId)`.
+     */
+    async deliverReset(input: DeliverResetInput): Promise<OutboxActivityResult> {
+      const { ensemble, targetPlayerId, resetId, fresh, reason, requestedBy } = input;
+      try {
+        const handle = await resolveSession(client, ensemble, targetPlayerId);
+        if (!handle) {
+          throw ApplicationFailure.nonRetryable(`No session found for "${targetPlayerId}"`);
+        }
+        await handle.signal(setPendingResetSignal, {
+          resetId,
+          fresh,
+          ...(reason !== undefined ? { reason } : {}),
+          ...(requestedBy !== undefined ? { requestedBy } : {}),
+        });
+        log(`Reset queued for "${targetPlayerId}"${reason ? ` (reason: ${reason})` : ''}`);
+        return { success: true };
+      } catch (err) {
+        classifyAndRethrow(err, `Reset failed for "${targetPlayerId}"`);
       }
     },
 
