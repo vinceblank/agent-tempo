@@ -37,15 +37,19 @@ Each session registers as a **player** in Temporal. Players discover each other 
 | 🖥️ **Terminal UI** | Chat-focused TUI with slash commands, overlays, and interactive wizards |
 | 🌐 **Cross-machine** | Any session that can reach your Temporal server can join the ensemble |
 | ⏸️ **Hold / Pause / Resume** | Pre-warm a full team before delivering tasks; pause and resume mid-session |
-| 🤖 **Headless adapters** | Copilot bridge, Claude API, OpenCode, and Claude Code headless (`claude -p` subprocess — bills against your Claude Code subscription, no Console API key needed) — mix providers and headless agents in the same ensemble |
+| 🤖 **Headless adapters** | Copilot bridge, Claude API, OpenCode, Claude Code headless (`claude -p` — bills against your Claude Code subscription), and Pi AI — mix providers and headless agents in the same ensemble |
 
 ## Installation
 
 ```bash
 npm install -g agent-tempo
+# or without a global install:
+npx agent-tempo
 ```
 
 **Prerequisites**: [Node.js](https://nodejs.org/) 20 LTS, 22 LTS, or 24 LTS, [Temporal CLI](https://docs.temporal.io/cli), [Claude Code](https://claude.ai/code)
+
+> **No-global-install path**: On first run, `agent-tempo` auto-provisions `~/.agent-tempo/bin/agent-tempo` so subsequent invocations don't need `npx`. If that directory isn't on your PATH, a one-time hint is printed to stderr with the exact export line to add to your shell profile.
 
 ## Quick Start
 
