@@ -52,6 +52,14 @@ Settings are resolved in this order (first match wins):
 | `CLAUDE_TEMPO_CLAUDE_BIN` | *(auto-detected)* | Path to a custom `claude` executable. Takes precedence over the config file setting and `which`/`where` auto-detection. Useful when multiple Claude versions are installed or the binary is not on `PATH`. |
 | `CLAUDE_TEMPO_DEV_MODE` | `false` | Enable dev profile (`1` or `true`). Flips home dir to `~/.agent-tempo-dev/`, HTTP port to 8474, Temporal namespace to `agent-tempo-dev`, task queue to `agent-tempo-dev`. Also enables the mock adapter (`agent: 'mock'`). Same effect as the `--dev` CLI flag. |
 
+**Headless Pi adapter** (`agent: 'pi'`, requires `pi-ai` optional dependency on Node 22.19+):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENT_TEMPO_PI_MODEL` | *(Pi default)* | Pi provider/model selector (e.g. `anthropic/claude-opus-4-7`, `github-copilot/gpt-4o`). Absent → Pi's own default. `recruit` `model` arg takes precedence. |
+| `AGENT_TEMPO_PI_CONTINUE_SESSION` | *(none)* | Pi conversation id to resume on restart (from `metadata.sessionId`). Set automatically by the daemon on restart. |
+| `AGENT_TEMPO_TOOL_ACCESS` | `restricted` | Headless Pi MD-C tool-access policy. `restricted` (default) — Bash/shell/exec HARD-BLOCKED. `standard` — scoped Bash enabled. `full` — unsandboxed; requires `force: true` on recruit. Set by the daemon from the `toolAccess` recruit arg. |
+
 **Dev-mode mock adapter** (requires `CLAUDE_TEMPO_DEV_MODE=1`):
 
 | Variable | Default | Description |
