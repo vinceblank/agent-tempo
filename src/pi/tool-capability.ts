@@ -39,12 +39,11 @@ export const UNKNOWN_DEFAULT: ToolCapability = 'high-blast';
  * Shell / arbitrary-code execution — hard-blocked at `restricted` (MD-C).
  * CONTENT owned by tempo-security (signed off 2026-06-04).
  *
- * ⚠️ SYNC + GATE-GAP: this is the CANONICAL exec denylist and is a SUPERSET of
- * the current `SHELL_TOOL_NAMES` in `src/pi/extension.ts` — it adds
- * `powershell`/`pwsh`/`cmd`/`run`, which the live restricted-mode gate does NOT
- * yet block. 3d MUST refactor extension.ts to IMPORT `EXEC_TOOLS` from here
- * (single source, dedup) — that closes the gap. Do NOT edit extension.ts now
- * (lead's lane); flagged to lead + security.
+ * CANONICAL exec denylist (single source of truth). The F1 refactor (3d) made
+ * `src/pi/extension.ts` import this set via `classify(name) === 'exec'` and
+ * REMOVED its former local `SHELL_TOOL_NAMES` — so the live restricted-mode gate
+ * now hard-blocks the full set including `powershell`/`pwsh`/`cmd`/`run` (the gap
+ * the old local list left open). Never re-declare a shell denylist elsewhere.
  */
 export const EXEC_TOOLS: ReadonlySet<string> = new Set([
   'bash',

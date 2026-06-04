@@ -96,7 +96,8 @@ export interface RunHeadlessPiOptions {
  * Build the `DefaultResourceLoader` options for a headless Pi player.
  *
  * SECURITY — S2 (MD-C deny-list soundness). The `restricted` tool gate is a
- * DENY-LIST over shell/exec tool *names* (extension.ts SHELL_TOOL_NAMES). That
+ * DENY-LIST over shell/exec tool *names* (tool-capability.ts EXEC_TOOLS, via
+ * `classify(name) === 'exec'` — F1 replaced extension.ts's former local set). That
  * guarantee — "restricted = no host execution" — holds ONLY IF no third-party
  * extension can register an un-blacklisted execution tool (e.g. a custom
  * `python` / `npm` / `run` tool). It therefore depends on a hard structural
