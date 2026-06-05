@@ -9,5 +9,6 @@
     "./**/*.ts",
     "../src/**/*.ts"
   ],
-  "exclude": ["../node_modules", "../dist"]
+  "//exclude": "pi-drift/ is the Pi type-drift gate (#645 H4): assert.ts imports the REAL @earendil-works/pi-coding-agent, ABSENT on Node<22.19 CI lanes (Pi's floor). This broad build:test compile runs on ALL node versions, so compiling assert.ts here throws TS2307 on Node-20. The drift file must be compiled ONLY by its own gated tsconfig (test/pi-drift/tsconfig.json via scripts/check-pi-drift.js, which skips when Pi is absent). Excluded here so build:test never touches it.",
+  "exclude": ["../node_modules", "../dist", "./pi-drift"]
 }
