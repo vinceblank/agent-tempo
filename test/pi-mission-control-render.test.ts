@@ -86,6 +86,23 @@ describe('mission-control renderBoard', () => {
     for (const l of gateLines) expect(l.trim()).to.not.equal('·');
   });
 
+  it('tags cross-host players with @host when localHost is known (H3a)', () => {
+    const m = initBoard('demo');
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'local', hostname: 'box-1' })));
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'remote', hostname: 'box-2' })));
+    const lines = renderBoard(m, 'box-1');
+    const localRow = lines.find((l) => l.includes('local'))!;
+    const remoteRow = lines.find((l) => l.includes('remote'))!;
+    expect(remoteRow).to.contain('@box-2'); // cross-host → tagged
+    expect(localRow).to.not.contain('@');    // same-host → no tag
+  });
+
+  it('omits the @host tag entirely when localHost is not provided', () => {
+    const m = initBoard('demo');
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'remote', hostname: 'box-2' })));
+    expect(renderBoard(m).join('\n')).to.not.contain('@box-2');
+  });
+
   it('normalizes a 0..100 contextPercent the same as a 0..1 fraction', () => {
     const m = initBoard('demo');
     applyTempoEvent(m, ev('player.added', summary({ playerId: 'a' })));
