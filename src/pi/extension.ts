@@ -64,6 +64,31 @@ const PI_AGENT_TYPE: AgentType = 'claude'; // Pi is not yet a first-class AgentT
 export type PiExtensionMode = 'interactive' | 'headless';
 export type PiToolAccess = 'restricted' | 'standard' | 'full';
 
+/**
+ * B1 runtime guard (#645 H4) — the type gate's blind spot.
+ *
+ * `PiEventPayload.session` is UNDECLARED in Pi 0.78's `.d.ts` — it's an
+ * interactive-only RUNTIME field, so the pi-drift type gate can't assert it. In
+ * INTERACTIVE mode the `session_start` payload MUST carry `session` (the cue +
+ * reset pumps inject into it); a null session there means injection is silently
+ * inert — a likely Pi API drift. (Headless legitimately omits it — it wires
+ * `rt.session` via `setRuntimeSession` — so the guard is interactive-only.)
+ *
+ * Pure + injected `warn` so it unit-tests without the workflow harness.
+ */
+export function warnIfInteractiveSessionMissing(
+  mode: PiExtensionMode,
+  payload: { session?: unknown },
+  warn: (msg: string) => void,
+): void {
+  if (mode === 'interactive' && payload.session == null) {
+    warn(
+      'WARNING: interactive session_start carried no session — cue/reset injection inert; ' +
+        'possible Pi API drift (#645)',
+    );
+  }
+}
+
 export interface PiExtensionOptions {
   /** Default `'interactive'`. Headless installs the MD-C tool_call gate. */
   mode?: PiExtensionMode;
@@ -309,6 +334,8 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
 
     // ── Lifecycle: session_start → first attach OR re-bind ──
     pi.on('session_start', async (payload: PiEventPayload) => {
+      // B1 (#645 H4): warn loudly if interactive session_start lost its session.
+      warnIfInteractiveSessionMissing(mode, payload, log);
       try {
         const rt = await attachOrRebind(payload);
         await refreshSessionId(rt, rt.session?.id);

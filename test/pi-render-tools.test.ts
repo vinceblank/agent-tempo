@@ -46,6 +46,11 @@ describe('renderToPi — execute arg-order + result-shape contract (v1.4.1 + v1.
 
     renderToPi(fakePi, [descriptor]);
     expect(registered, 'one tool registered').to.have.length(1);
+    // Real ToolDefinition REQUIRES `label` (#645 H4). The drift gate asserts a
+    // hand-modeled AdapterToolOutput WITH label, but only THIS checks renderToPi's
+    // ACTUAL output sets it — so a future edit dropping label fails here, not just
+    // at runtime. (render-tools.ts sets label = tool name.)
+    expect(registered[0].label, 'registered tool carries a label').to.equal('demo');
 
     // Pi invokes execute POSITIONALLY: (toolCallId, params, signal, onUpdate, ctx).
     const result = await registered[0].execute('tc-1', { real: 'params' }, undefined, undefined, undefined);
