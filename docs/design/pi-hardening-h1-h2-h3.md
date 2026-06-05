@@ -194,6 +194,10 @@ H1 (inMemory + session-seed.ts WITH sanitizer + Node-floor-B preflight at spawn 
 ## H4 — Pi SDK type-gate
 
 > **Status:** in-flight — gate PR pending the v1.4.1 render-tools fix merge (imminent).
+>
+> **Runtime/semantic drift** the gate cannot catch is covered by the companion
+> **[Pi version bump checklist](../pi-version-bump-checklist.md)** (10 items; run alongside
+> `npm run lint:pi-drift` on every Pi bump).
 
 ### H4 lesson — a type drift-gate is necessary but not sufficient
 
@@ -205,7 +209,7 @@ The H4 effort surfaced a shipped, type-masked, never-model-executed native-Pi-to
 
   > **Bug chain:** `render-tools.ts:48` registered `execute: (args) => handler(args)` (1-arg). Pi invokes positionally: `agent-loop.js:419` `execute(toolCall.id, args, …)` → `tool-definition-wrapper.js:10` `definition.execute(toolCallId, params, …)`. So `args` bound to `toolCallId` (string), not params. TypeScript missed it: a 1-arg fn is assignable to the real 5-arg `execute(toolCallId, params, signal, onUpdate, ctx)`. Fixed in v1.4.1 (`(_toolCallId, params) => handler(params)` + a positional regression test).
 
-- **OUTPUT** (v1.4.2, in progress): `toPiResult` returned `{ output, isError }` but Pi's `AgentToolResult` requires `{ content[], details }` — so the model saw no tool output. Additionally, tool errors must be signaled by **throwing** (Pi doc: "Throw on failure instead of encoding errors in content"), not by an `isError` return field. Type-masked because the shim's old `PiToolResult` return type was itself the lie. The **H4 gate** caught it.
+- **OUTPUT** (#653, fixed v1.4.2): `toPiResult` returned `{ output, isError }` but Pi's `AgentToolResult` requires `{ content[], details }` — so the model saw no tool output. Additionally, tool errors must be signaled by **throwing** (Pi doc: "Throw on failure instead of encoding errors in content"), not by an `isError` return field. Type-masked because the shim's old `PiToolResult` return type was itself the lie. The **H4 gate** caught it.
 
 A gate-only or ship-as-is approach would have missed both. The v1.4.1 fix corrected `PiToolDefinition.execute` to the real positional signature, making the arg-order bug a compile error going forward. The H4 drift-gate is the durable complement — it stops this class of type-lie from recurring on a future Pi bump by asserting our shim against the real Pi types in CI. Fix-the-lie-now + gate-prevents-recurrence.
 
