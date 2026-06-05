@@ -814,9 +814,11 @@ export function createOutboxActivities(
           );
         }
         await handle.signal(requestDetachSignal, { reason, deadlineMs });
-        // TODO(Phase 4): revoke ingest token on detach (see deliverDestroy TODO)
-        // — deferred as hygiene; residual surface negligible (single-token
-        // replacement on re-attach + loopback-only + dead holder).
+        // 3c Tier-2 — revoke the player's ingest token on detach so a dead
+        // holder's loopback POST /inner/ingest can no longer authenticate once
+        // the player goes away. Mirrors the destroy-side revoke; idempotent and a
+        // no-op for non-Pi players (they never minted one). Re-attach re-mints.
+        ingestTokens?.revoke(sessionWorkflowId(ensemble, targetPlayerId));
         // 3d MD-G — auto-disarm the gate on detach (the operator's gate posture
         // shouldn't survive the player going away; re-attach re-arms). Idempotent.
         gate?.clearPlayer(sessionWorkflowId(ensemble, targetPlayerId));
