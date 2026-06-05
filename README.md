@@ -37,7 +37,7 @@ Each session registers as a **player** in Temporal. Players discover each other 
 | 🖥️ **Terminal UI** | Chat-focused TUI with slash commands, overlays, and interactive wizards |
 | 🌐 **Cross-machine** | Any session that can reach your Temporal server can join the ensemble |
 | ⏸️ **Hold / Pause / Resume** | Pre-warm a full team before delivering tasks; pause and resume mid-session |
-| 🤖 **Headless adapters** | Copilot bridge, Claude API, OpenCode, Claude Code headless (`claude -p` — bills against your Claude Code subscription), and Pi AI — mix providers and headless agents in the same ensemble |
+| 🤖 **Headless adapters** | Copilot bridge, Claude API, OpenCode, Claude Code headless (`claude -p` — bills against your Claude Code subscription), and Pi AI (headless player or interactive conductor) — mix providers and headless agents in the same ensemble |
 
 ## Installation
 
@@ -260,6 +260,26 @@ GitHub Copilot CLI sessions can join an ensemble using `--agent copilot`. Recrui
 ```
 
 📖 [Copilot bridge setup and limitations → docs/copilot.md](docs/copilot.md)
+
+## Pi AI Integration
+
+Pi AI sessions can join an ensemble in two modes:
+
+**Interactive conductor** — launch Pi in a real terminal with the agent-tempo extension auto-loaded:
+
+```
+agent-tempo up --agent pi --ensemble <name>
+```
+
+The Pi session self-bootstraps its Temporal workflow and attaches as a conductor or player. The `AGENT_TEMPO_*` environment is wired automatically. For power users, the underlying extension path is `dist/pi/extension.js` — invoke directly with `pi -e dist/pi/extension.js`.
+
+From the TUI, `/recruit-conductor` relaunches the active ensemble's conductor — set `conductor.agent: pi` in that ensemble's lineup to make it a Pi conductor.
+
+**Prerequisites:** `@earendil-works/pi-coding-agent` on Node ≥ 22.19. Recommended: `ANTHROPIC_API_KEY` (without it the session falls back to Pi's own auth/default model).
+
+**Headless Pi players** — recruit as a background agent slot using `agent: 'pi'` (see [docs/design/pi-hardening-h1-h2-h3.md](docs/design/pi-hardening-h1-h2-h3.md)).
+
+📖 [Pi integration reference → docs/design/pi-hardening-h1-h2-h3.md](docs/design/pi-hardening-h1-h2-h3.md)
 
 ## Worker Daemon
 
