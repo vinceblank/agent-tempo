@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-06-05
+
+### Fixed
+- **Pi native tool execution broken since v1.4.0** (#650) — every agent-tempo tool invoked by a Pi player (`report`, `cue`, `recall`, `ensemble`, `save_state`, …) received the tool-call ID string instead of its parameters. Root cause: `render-tools.ts` registered each tool's `execute` as a 1-arg `(args) => handler(args)`, but Pi 0.78 invokes `execute` positionally as `(toolCallId, params, …)`, binding `args` to `toolCallId`. TypeScript missed it because a 1-arg function is assignable to the real 5-arg signature. The adapter now forwards `params` correctly (`(_toolCallId, params) => handler(params)`), and a corrected `PiToolDefinition` type makes this class of error a compile error going forward. Latent since v1.4.0; only triggered when a Pi model actually executed an agent-tempo tool.
+
 ## [1.4.0] - 2026-06-05
 
 ### Added
