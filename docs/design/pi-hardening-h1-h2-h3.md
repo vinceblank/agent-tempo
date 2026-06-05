@@ -199,11 +199,15 @@ H1 (inMemory + session-seed.ts WITH sanitizer + Node-floor-B preflight at spawn 
 
 A type-only drift gate has structural blind spots: TypeScript's "fewer-params-assignable-to-more" rule, open index signatures, and undeclared runtime fields all let **semantic** drift pass a type check green.
 
-The H4 manual mapping (reading the real Pi 0.78 `.d.ts` + runtime call sites member-by-member) caught a **shipped v1.4.0 bug**: `render-tools.ts` registered each tool's `execute` as a 1-arg `(args) => handler(args)`, but Pi invokes `execute(toolCallId, params, …)` **positionally** (`tool-definition-wrapper.js` → `agent-loop.js:419`), so every native agent-tempo tool handler received the `toolCallId` string instead of its params. A 1-arg function is type-assignable to the real 5-arg signature, so a gate-only approach would have shipped GREEN over it (fixed in v1.4.1).
+The H4 effort surfaced a shipped, type-masked, never-model-executed native-Pi-tool bug in **both directions** on the same `render-tools.ts` execute line — both latent for the same reason (Pi-model tool execution was never smoke-tested end-to-end), and both requiring reading the real `.d.ts` + runtime call sites to catch:
 
-> **Bug chain:** `render-tools.ts:48` registered `execute: (args) => handler(args)` (1-arg). Pi invokes positionally: `agent-loop.js:419` `execute(toolCall.id, args, …)` → `tool-definition-wrapper.js:10` `definition.execute(toolCallId, params, …)`. So `args` bound to `toolCallId` (string), not params. TypeScript missed it: a 1-arg fn is assignable to the real 5-arg `execute(toolCallId, params, signal, onUpdate, ctx)`. Fixed in v1.4.1 (`(_toolCallId, params) => handler(params)` + a positional regression test).
+- **INPUT** (#651, fixed v1.4.1): `execute` was 1-arg `(args) => handler(args)`; Pi calls `(toolCallId, params, …)` positionally, so handlers received the `toolCallId` string instead of params. Type-masked by fewer-params-assignable. The **manual mapping** caught it.
 
-The v1.4.1 fix corrected `PiToolDefinition.execute` to the real positional signature, which makes the arg-order bug a **compile error now** (the old 1-arg declaration was the mask that let it ship). The H4 drift-gate is the durable complement: it stops this class of type-lie from **recurring on a future Pi bump** by asserting our shim against the real Pi types in CI. Fix-the-lie-now + gate-prevents-recurrence.
+  > **Bug chain:** `render-tools.ts:48` registered `execute: (args) => handler(args)` (1-arg). Pi invokes positionally: `agent-loop.js:419` `execute(toolCall.id, args, …)` → `tool-definition-wrapper.js:10` `definition.execute(toolCallId, params, …)`. So `args` bound to `toolCallId` (string), not params. TypeScript missed it: a 1-arg fn is assignable to the real 5-arg `execute(toolCallId, params, signal, onUpdate, ctx)`. Fixed in v1.4.1 (`(_toolCallId, params) => handler(params)` + a positional regression test).
+
+- **OUTPUT** (v1.4.2, in progress): `toPiResult` returned `{ output, isError }` but Pi's `AgentToolResult` requires `{ content[], details }` — so the model saw no tool output. Additionally, tool errors must be signaled by **throwing** (Pi doc: "Throw on failure instead of encoding errors in content"), not by an `isError` return field. Type-masked because the shim's old `PiToolResult` return type was itself the lie. The **H4 gate** caught it.
+
+A gate-only or ship-as-is approach would have missed both. The v1.4.1 fix corrected `PiToolDefinition.execute` to the real positional signature, making the arg-order bug a compile error going forward. The H4 drift-gate is the durable complement — it stops this class of type-lie from recurring on a future Pi bump by asserting our shim against the real Pi types in CI. Fix-the-lie-now + gate-prevents-recurrence.
 
 The same mapping surfaced a gate-coverage gap — `PiEventPayload.session` models an interactive-only **runtime** field Pi's 0.78 `.d.ts` doesn't declare; it's not type-assertable, so it's covered by a runtime guard instead.
 
@@ -212,7 +216,7 @@ The same mapping surfaced a gate-coverage gap — `PiEventPayload.session` model
 1. **Manual mapping** on each Pi version bump — semantic drift is caught here, not in the gate.
 2. **Runtime guards** for the type-masked blind spots (undeclared fields, positional-arity mismatches).
 
-The gate is the cheap regression net; the mapping is where semantic drift is actually caught.
+Necessary-but-not-sufficient, doubly confirmed. The gate is the cheap regression net; the mapping is where semantic drift is actually caught.
 
 ---
 
