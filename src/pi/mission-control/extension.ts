@@ -13,6 +13,7 @@
  * Node `subscribe` path), starts the render tick, and registers operator
  * commands; `session_shutdown` tears all of it down + clears the widget.
  */
+import * as os from 'os';
 import { getConfig } from '../../config';
 import { readPortFile } from '../../http/port-file';
 import { createSubscribe } from '../../client/subscribe';
@@ -22,6 +23,7 @@ import {
   applyInnerFrame,
   selectPlayer,
   sortedPlayerIds,
+  tailability,
   type BoardModel,
 } from './board';
 import { renderBoard } from './render';
@@ -39,6 +41,8 @@ export interface MissionControlDeps {
   adminToken?: string;
   baseUrl?: string;
   renderThrottleMs?: number;
+  /** Local daemon host for tailability (test override; defaults to `os.hostname()`). */
+  localHost?: string;
 }
 
 /**
@@ -49,12 +53,18 @@ export interface MissionControlDeps {
 export class Controller {
   readonly model: BoardModel;
   readonly actions: MissionControlActions;
+  /**
+   * This daemon's host (`os.hostname()`). The fine /inner tail is daemon-local,
+   * so only same-host players are tailable — see {@link tailability}.
+   */
+  readonly localHost: string;
   /** Set by the extension so /tail can (re)open the fine SSE; null in unit tests. */
   onTailRequest: ((playerId: string | null) => void) | null = null;
 
-  constructor(ensemble: string, actions: MissionControlActions) {
+  constructor(ensemble: string, actions: MissionControlActions, localHost: string = os.hostname()) {
     this.model = initBoard(ensemble);
     this.actions = actions;
+    this.localHost = localHost;
   }
 
   private notify(ctx: McExtensionContext, msg: string): void {
@@ -85,10 +95,21 @@ export class Controller {
       this.notify(ctx, 'Inner-loop tail off.');
       return;
     }
-    if (!selectPlayer(this.model, target)) {
-      this.notify(ctx, `No such player: ${target}`);
+    // H3a: the /inner tail is daemon-local — refuse a cross-host tail with an
+    // actionable message rather than silently selecting a player that would only
+    // ever show "(no inner-loop activity yet)". Decided BEFORE select/open so a
+    // cross-host player is never selected and no tail SSE is opened.
+    const t = tailability(this.model, target, this.localHost);
+    if (!t.ok) {
+      this.notify(
+        ctx,
+        t.reason === 'cross-host'
+          ? `Inner tail unavailable: ${target} runs on host ${t.playerHost}, not this daemon's host (${this.localHost}). Cross-host tail is a tracked follow-up (#645 / H3b).`
+          : `No such player: ${target}`,
+      );
       return;
     }
+    selectPlayer(this.model, target);
     this.onTailRequest?.(target);
     this.notify(ctx, `Tailing ${target}.`);
   }
@@ -171,9 +192,13 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
     const adminToken = deps.adminToken ?? process.env[ADMIN_TOKEN_ENV];
     const baseUrl = resolveBaseUrl(deps.baseUrl);
     const throttleMs = deps.renderThrottleMs ?? DEFAULT_RENDER_THROTTLE_MS;
+    // H3a: mission-control is co-located with its 127.0.0.1 daemon, so this
+    // process's hostname IS the daemon's host. (HealthV1.hostname is the noted
+    // future upgrade for a baseUrl pointing at a remote daemon — not built here.)
+    const localHost = deps.localHost ?? os.hostname();
 
     const actions = new MissionControlActions({ ensemble, ...(adminToken ? { adminToken } : {}), baseUrl });
-    const ctrl = new Controller(ensemble, actions);
+    const ctrl = new Controller(ensemble, actions, localHost);
 
     // Per-session lifecycle state (re-created on each session_start).
     let coarseAbort: AbortController | null = null;
@@ -186,7 +211,7 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
       if (!activeCtx?.hasUI) return;
       if (ctrl.model.revision === lastRenderedRevision) return; // throttle: skip no-op ticks
       lastRenderedRevision = ctrl.model.revision;
-      activeCtx.ui.setWidget(WIDGET_KEY, renderBoard(ctrl.model), { placement: 'aboveEditor' });
+      activeCtx.ui.setWidget(WIDGET_KEY, renderBoard(ctrl.model, ctrl.localHost), { placement: 'aboveEditor' });
     };
 
     const startCoarse = (): void => {

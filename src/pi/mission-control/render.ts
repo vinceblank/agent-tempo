@@ -30,14 +30,17 @@ function pct(contextPercent: number | undefined): string {
   return `${Math.round(p)}%`;
 }
 
-function renderRow(row: PlayerRow, selected: boolean): string {
+function renderRow(row: PlayerRow, selected: boolean, localHost?: string): string {
   const sel = selected ? '>' : ' ';
   const glyph = phaseGlyph(row.phase);
   const tool = row.currentTool ? `[${row.currentTool}]` : '';
   const ctx = pct(row.contextPercent);
   const part = row.part ? ` ${row.part}` : '';
-  // sel glyph id  part  tool  ctx
-  return [`${sel}${glyph} ${row.playerId}`, part, tool, ctx]
+  // H3a: flag cross-host players (`@host`) so the operator sees at a glance which
+  // are non-tailable (the /inner tail is daemon-local). Only when localHost is known.
+  const host = localHost && row.hostname && row.hostname !== localHost ? `@${row.hostname}` : '';
+  // sel glyph id  part  tool  ctx  @host
+  return [`${sel}${glyph} ${row.playerId}`, part, tool, ctx, host]
     .filter((s) => s !== '')
     .join('  ')
     .trimEnd();
@@ -76,7 +79,7 @@ function oneLine(s: string, max: number): string {
  * Render the full board. Header + player rows (conductor first), then — when a
  * player is selected — a fine inner-loop tail (last {@link TAIL_RENDER_LINES}).
  */
-export function renderBoard(model: BoardModel): string[] {
+export function renderBoard(model: BoardModel, localHost?: string): string[] {
   const ids = sortedPlayerIds(model);
   const lines: string[] = [];
   lines.push(`MISSION CONTROL · ${model.ensemble} · ${ids.length} player${ids.length === 1 ? '' : 's'}`);
@@ -86,7 +89,7 @@ export function renderBoard(model: BoardModel): string[] {
   } else {
     for (const id of ids) {
       const row = model.players.get(id)!;
-      lines.push(renderRow(row, id === model.selected));
+      lines.push(renderRow(row, id === model.selected, localHost));
     }
   }
 

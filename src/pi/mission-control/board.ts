@@ -15,6 +15,12 @@ import type { InnerFrame } from '../inner-loop-publisher';
 export interface PlayerRow {
   playerId: string;
   isConductor: boolean;
+  /**
+   * Daemon host the player runs on (carried from `PlayerSummaryV1.hostname`,
+   * 3f/H3a). Undefined on older pre-hostname snapshots → treated as tailable
+   * (never block on absent data). Drives {@link tailability}.
+   */
+  hostname?: string;
   phase?: AttachmentPhase;
   part: string;
   /** Tool currently executing (3c coarse), `null`/undefined = idle. */
@@ -51,6 +57,9 @@ function rowFromSummary(p: PlayerSummaryV1): PlayerRow {
   return {
     playerId: p.playerId,
     isConductor: p.isConductor,
+    // H3a: carry the host through — the board previously DROPPED it. Drives
+    // cross-host tail refusal in `tailability`.
+    ...(p.hostname !== undefined ? { hostname: p.hostname } : {}),
     ...(p.phase !== undefined ? { phase: p.phase } : {}),
     part: p.part ?? '',
     ...(p.currentTool !== undefined ? { currentTool: p.currentTool } : {}),
@@ -127,6 +136,29 @@ export function selectPlayer(model: BoardModel, playerId: string | null): boolea
   model.innerTail = [];
   model.revision++;
   return true;
+}
+
+/** Result of a {@link tailability} check — whether the operator can open a fine /inner tail. */
+export type Tailability =
+  | { ok: true }
+  | { ok: false; reason: 'no-such-player' }
+  | { ok: false; reason: 'cross-host'; playerHost: string };
+
+/**
+ * Pure: can the local operator open `playerId`'s fine inner-loop tail? The 3f
+ * inner-loop tail is DAEMON-LOCAL — only players on this daemon's host are
+ * tailable. A player on another host is refused with `cross-host` (carrying
+ * `playerHost` for the operator message); actual cross-host routing is the
+ * deferred H3(b) (#645). A missing/older-snapshot `hostname` (undefined) is
+ * treated as tailable — never block on absent data.
+ */
+export function tailability(model: BoardModel, playerId: string, localHost: string): Tailability {
+  const row = model.players.get(playerId);
+  if (!row) return { ok: false, reason: 'no-such-player' };
+  if (row.hostname && row.hostname !== localHost) {
+    return { ok: false, reason: 'cross-host', playerHost: row.hostname };
+  }
+  return { ok: true };
 }
 
 /** Sorted player ids — conductor first, then alphabetical (stable board ordering). */

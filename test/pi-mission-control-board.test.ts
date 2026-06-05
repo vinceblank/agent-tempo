@@ -8,6 +8,7 @@ import {
   applyInnerFrame,
   selectPlayer,
   sortedPlayerIds,
+  tailability,
 } from '../src/pi/mission-control/board';
 import { parseInnerSse } from '../src/pi/mission-control/inner-tail';
 import type { TempoEvent, PlayerSummaryV1 } from '../src/http/event-types';
@@ -100,6 +101,50 @@ describe('mission-control board — selectPlayer + tail', () => {
     applyTempoEvent(m, ev('player.added', summary({ playerId: 'alpha' })));
     applyTempoEvent(m, ev('player.added', summary({ playerId: 'cond', isConductor: true })));
     expect(sortedPlayerIds(m)).to.deep.equal(['cond', 'alpha', 'zeta']);
+  });
+});
+
+describe('mission-control board — hostname projection (H3a)', () => {
+  it('rowFromSummary carries PlayerSummaryV1.hostname (snapshot + player.added)', () => {
+    const m = initBoard('ens');
+    applyTempoEvent(m, ev('snapshot', { players: [summary({ playerId: 'a', hostname: 'box-1' })] }));
+    expect(m.players.get('a')?.hostname).to.equal('box-1');
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'b', hostname: 'box-2' })));
+    expect(m.players.get('b')?.hostname).to.equal('box-2');
+  });
+
+  it('leaves hostname undefined when the summary omits it (older snapshot)', () => {
+    const m = initBoard('ens');
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'a' })));
+    expect(m.players.get('a')?.hostname).to.equal(undefined);
+  });
+});
+
+describe('mission-control board — tailability (H3a)', () => {
+  const withPlayer = (over: Partial<PlayerSummaryV1>) => {
+    const m = initBoard('ens');
+    applyTempoEvent(m, ev('player.added', summary(over)));
+    return m;
+  };
+
+  it('no-such-player when the id is absent', () => {
+    const m = initBoard('ens');
+    expect(tailability(m, 'ghost', 'box-1')).to.deep.equal({ ok: false, reason: 'no-such-player' });
+  });
+
+  it('ok when the player is on the local host', () => {
+    const m = withPlayer({ playerId: 'a', hostname: 'box-1' });
+    expect(tailability(m, 'a', 'box-1')).to.deep.equal({ ok: true });
+  });
+
+  it('cross-host (carrying playerHost) when the player runs elsewhere', () => {
+    const m = withPlayer({ playerId: 'a', hostname: 'box-2' });
+    expect(tailability(m, 'a', 'box-1')).to.deep.equal({ ok: false, reason: 'cross-host', playerHost: 'box-2' });
+  });
+
+  it('treats an undefined hostname as tailable — never block on absent data', () => {
+    const m = withPlayer({ playerId: 'a' }); // no hostname (older snapshot)
+    expect(tailability(m, 'a', 'box-1')).to.deep.equal({ ok: true });
   });
 });
 
