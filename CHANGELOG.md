@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-06-05
+
+### Added
+- **Pi mission-control widget** (#639) — an observer-only Pi extension that turns one interactive Pi TUI into a live ensemble mission-control board. Shows all players in real time (phase, part, current tool, context pressure) via the daemon SSE event source, and tails the selected player's fine-grained inner-loop events on demand. Operator controls — cue, pause, play, restart, destroy, gate arm/disarm/decide — POST directly to the daemon HTTP write surface. Never claims an attachment or appears in the ensemble roster. Requires `AGENT_TEMPO_HTTP_ADMIN_TOKEN` for write-surface and inner-tail access. See `src/pi/mission-control/`.
+
+### Fixed
+- **Ingest token revoked on player detach** (#638) — the per-player inner-loop ingest token is now revoked when a player detaches, matching the existing destroy-side behavior. Previously the token lingered in daemon memory until destroy or daemon shutdown.
+
 ## [1.3.1] - 2026-06-02
 
 ### Fixed
