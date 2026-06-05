@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-06-05
+
+### Fixed
+- **Pi native tool results broken since v1.4.0** (#653) — companion to the v1.4.1 input fix. After a Pi player's model executed an agent-tempo tool, the adapter returned `{ output, isError }` but Pi 0.78 expects `AgentToolResult { content[], details }`, so the model received a malformed/empty result and saw no tool output. Additionally, Pi requires tool errors to be signaled by throwing from `execute`, not via a return field — the adapter now throws on error per Pi's convention. **v1.4.1 + v1.4.2 together make native Pi tools (`report`, `cue`, `recall`, `ensemble`, `save_state`, …) function end-to-end.** Both halves were latent since v1.4.0 and only triggered when a Pi model actually executed an agent-tempo tool.
+
 ## [1.4.1] - 2026-06-05
 
 ### Fixed
