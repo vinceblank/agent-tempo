@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-06-05
+
+### Added
+- **Interactive Pi conductor** (#666) — Pi AI sessions can now be launched as a live conductor or player directly from the CLI (`agent-tempo up --agent pi --ensemble <name>`) or the TUI (`/recruit-conductor` → pi). Pi opens in a real terminal with the agent-tempo extension auto-loaded; the session self-bootstraps its Temporal workflow and attaches without a separate recruiter step. The `AGENT_TEMPO_*` environment is wired automatically by `up`; power users can invoke `pi -e <bundled-extension>` directly. Requires `@earendil-works/pi-coding-agent` on Node ≥ 22.19 and `ANTHROPIC_API_KEY` (MVP default model; `--model provider/model` selector incl. github-copilot is a flagged fast-follow). Complements the existing headless Pi player path — interactive conductor for human-in-the-loop workflows, headless player for unattended agent slots.
+
 ## [1.4.2] - 2026-06-05
 
 ### Fixed
