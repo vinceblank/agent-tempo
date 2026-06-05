@@ -16,8 +16,10 @@
 1. Run `npm run lint:pi-drift` — the type-gate must pass first. Runtime checks on a type-broken
    shim produce misleading results.
 2. Pin the new Pi package version in a throwaway branch and install it (`npm install`).
-3. Run each item below against the installed Pi. Source references are to Pi's installed files
-   under `node_modules/@earendil-works/pi-coding-agent/`.
+3. Run each item below against the installed Pi. Source references are under
+   `node_modules/@earendil-works/pi-coding-agent/` and
+   `node_modules/@earendil-works/pi-agent-core/` (the runtime loop + `AgentToolResult`
+   are in `pi-agent-core`).
 
 ---
 
@@ -42,8 +44,9 @@
   AND Pi requires tool errors to be signaled by **throwing** from `execute` — not a return
   field, not content-encoding. Pi doc: *"Throw on failure instead of encoding errors in content"*.
 
-  - **Source:** `AgentToolResult` definition in `types.d.ts:327` + `agent-loop.js` catch →
-    `createErrorToolResult` + `isError: true`
+  - **Source:** `AgentToolResult` def (`pi-agent-core types.d.ts:305`) + throw-doc on
+    `execute` (`types.d.ts:327`) + `agent-loop.js` catch → `createErrorToolResult` +
+    `isError: true`
   - **Why the gate misses it:** a structurally-different return type was masked by the old
     shim's lying `PiToolResult` declaration.
 
