@@ -14,8 +14,13 @@
  *   `appendMessage`, and it runs every entry through {@link sanitizeTranscriptEntry}
  *   first. `headless.ts` MUST NOT call `appendMessage` directly.
  *
- * H1 ships this gate even though H2 (restart-resume read side) is the first
- * consumer — the gate must exist before any replay path can feed it.
+ * RESERVED CHOKEPOINT (#645 / H2 OPT-A outcome): no live caller passes a
+ * non-empty transcript today — Pi's `loadFromState` resume rides the existing
+ * `deliverRestart` → `receiveMessage('self-restart')` → cue-pump path (the
+ * restored-state cue lands on the in-memory session; verified by smoke +
+ * test/pi-cue-pump-restore.test.ts). `seedSessionManager` is retained as (1) the
+ * tested safety chokepoint and (2) the reserved seed gate for the DEFERRED
+ * verbatim-transcript epic; the sanitizer is defense-in-depth. NOT dead code.
  *
  * PURE module: no Pi SDK import. Unit-tested with a fake recording
  * `SessionManager` (test/pi-session-seed.test.ts), mirroring
