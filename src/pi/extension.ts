@@ -427,6 +427,24 @@ export function __resetPiRuntimesForTests(): void {
   clientFactory = getSharedClient;
 }
 
+/**
+ * Seed a fake runtime into the module-scope `runtimes` map. TEST ESCAPE HATCH —
+ * do NOT call from production code. The map is otherwise unreachable from a test;
+ * this is the seam for covering lifecycle paths like {@link detachAllPiRuntimesForExit}.
+ */
+export function __seedRuntimeForTests(workflowId: string, rt: PiPlayerRuntime): void {
+  runtimes.set(workflowId, rt);
+}
+
+/**
+ * Clear the module-scope `runtimes` map WITHOUT timer/heartbeat teardown (for
+ * afterEach isolation in runtime-seeding tests; use {@link __resetPiRuntimesForTests}
+ * for the full singleton reset). TEST ESCAPE HATCH — do NOT call from production code.
+ */
+export function __clearRuntimesForTests(): void {
+  runtimes.clear();
+}
+
 /** Default export — interactive-mode extension (the human `pi` CLI entry). */
 const piExtension = createPiExtension();
 export default piExtension;
