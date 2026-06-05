@@ -23,14 +23,14 @@ import type { TempoToolDescriptor, TempoToolResult } from '../tools/descriptor';
 import type { ExtensionAPI, PiToolResult } from './pi-types';
 
 /**
- * Map a neutral {@link TempoToolResult} onto Pi's `AgentToolResult` shape.
- *
- * Phase 0 confirmed Pi's result is `{ output, isError }` for a non-streaming
- * tool (D12). The neutral `{ text, isError? }` maps directly: `text → output`,
- * `isError` passes through.
+ * Map a SUCCESSFUL neutral {@link TempoToolResult} onto Pi's `AgentToolResult`
+ * shape (#653, 1.4.2): the text becomes a single text-content block. ERRORS are
+ * NOT mapped here — they are thrown from `execute` (Pi's sanctioned error path),
+ * so callers must check `r.isError` BEFORE calling this. `details` is an empty
+ * object (we surface no structured details); `terminate` is left unset.
  */
 export function toPiResult(r: TempoToolResult): PiToolResult {
-  return r.isError ? { output: r.text, isError: true } : { output: r.text };
+  return { content: [{ type: 'text', text: r.text }], details: {} };
 }
 
 /**
@@ -50,7 +50,15 @@ export function renderToPi(pi: ExtensionAPI, descriptors: TempoToolDescriptor[])
       // toolCallId string (1st) and hand `params` to the descriptor handler.
       // (Passing the 1st positional was the v1.4.0 arg-order bug: handlers got the
       // toolCallId string instead of params.) See PiToolDefinition.execute.
-      execute: async (_toolCallId, params) => toPiResult(await d.handler(params)),
+      execute: async (_toolCallId, params) => {
+        const r = await d.handler(params);
+        // Pi's sanctioned error path (#653): THROW on failure — the agent loop
+        // catches it → createErrorToolResult (message → content) + isError:true.
+        // Content-encoding an error WITHOUT throwing would make the model think
+        // the tool SUCCEEDED (Pi types.d.ts:327). So errors never reach toPiResult.
+        if (r.isError) throw new Error(r.text);
+        return toPiResult(r);
+      },
     });
   }
 }
