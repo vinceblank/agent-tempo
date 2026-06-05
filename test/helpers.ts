@@ -492,6 +492,100 @@ export async function createLocalWithRetry(
 export const _ACCESS_DENIED_RE = ACCESS_DENIED_RE;
 export const _isAccessDeniedError = isAccessDeniedError;
 
+// ── #642: worker-slot-overlap retry ──────────────────────────────────────
+//
+// Under CPU starvation (a busy multi-process box) the Rust core bridge's
+// SlotKey release LAGS past the prior worker's run-promise resolution, so the
+// next describe's `Worker.create` races the not-yet-released slot and throws
+// "Registration of multiple workers with overlapping worker task types …".
+// It's a within-process timing race on the SHARED env's fixed task queue — NOT
+// a real conflict — so a short backoff rides out exactly that release lag. We
+// retry ONLY this signature and RETHROW everything else immediately so genuine
+// worker-init failures are never masked. (Researcher-pinned root cause, #642.)
+
+const SLOT_RETRY_DEFAULT_ATTEMPTS = 4;
+const SLOT_RETRY_DEFAULT_BASE_MS = 100;
+const SLOT_RETRY_DEFAULT_FACTOR = 2;
+const SLOT_RETRY_DEFAULT_JITTER_MS = 100;
+
+/** The SlotKey-overlap signature — retryable. Tolerant to phrasing drift. */
+const SLOT_OVERLAP_RE = /Registration of multiple workers with overlapping worker task types|SlotKey \{/;
+
+function isSlotOverlapError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return SLOT_OVERLAP_RE.test(msg);
+}
+
+export interface CreateWorkerRetryOpts {
+  attempts?: number;
+  baseDelayMs?: number;
+  factor?: number;
+  jitterMs?: number;
+  /** Dep injection — production passes `Worker.create`. */
+  create?: (opts: Parameters<typeof Worker.create>[0]) => Promise<Worker>;
+  /** Dep injection — production uses `setTimeout`. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Dep injection — production uses `console.error`. */
+  log?: (msg: string) => void;
+  /** Deterministic jitter for tests; defaults to `Math.random`. */
+  random?: () => number;
+}
+
+/**
+ * Retry-wrapped `Worker.create` (#642). Retries ONLY on the SlotKey-overlap
+ * signature (the within-process slot-release lag under CPU starvation), with
+ * exponential backoff + jitter; RETHROWS any other error immediately so real
+ * worker-init failures surface unmasked. Exported for unit testing
+ * (`test/worker-slot-retry.test.ts`); all `withWorker*` helpers call it.
+ *
+ * Resolves with the worker on first success. Rejects with the last attempt's
+ * error if every attempt hits the overlap.
+ */
+export async function createWorkerWithSlotRetry(
+  workerOpts: Parameters<typeof Worker.create>[0],
+  retryOpts: CreateWorkerRetryOpts = {},
+): Promise<Worker> {
+  const attempts = retryOpts.attempts ?? SLOT_RETRY_DEFAULT_ATTEMPTS;
+  const baseMs = retryOpts.baseDelayMs ?? SLOT_RETRY_DEFAULT_BASE_MS;
+  const factor = retryOpts.factor ?? SLOT_RETRY_DEFAULT_FACTOR;
+  const jitterMs = retryOpts.jitterMs ?? SLOT_RETRY_DEFAULT_JITTER_MS;
+  const create = retryOpts.create ?? ((o) => Worker.create(o));
+  const sleep = retryOpts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const log = retryOpts.log ?? ((m: string) => console.error(m));
+  const random = retryOpts.random ?? Math.random;
+
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const worker = await create(workerOpts);
+      if (i > 0) {
+        log(`[test:createWorker] succeeded on attempt ${i + 1}/${attempts} (rode out slot-overlap lag)`);
+      }
+      return worker;
+    } catch (err) {
+      // Only the SlotKey-overlap race is retryable — rethrow everything else
+      // immediately so a genuine worker-init failure is never masked by retries.
+      if (!isSlotOverlapError(err)) throw err;
+      lastErr = err;
+      const isLast = i === attempts - 1;
+      const reason = err instanceof Error ? err.message : String(err);
+      log(
+        `[test:createWorker] attempt ${i + 1}/${attempts} hit worker-slot overlap` +
+        (isLast ? `: ${reason}` : '; retrying'),
+      );
+      if (isLast) break;
+      const backoff = baseMs * Math.pow(factor, i);
+      const jitter = jitterMs > 0 ? Math.floor(random() * jitterMs) : 0;
+      await sleep(backoff + jitter);
+    }
+  }
+  throw lastErr;
+}
+
+/** Test-only — exposed for the unit test's signature-match coverage. */
+export const _SLOT_OVERLAP_RE = SLOT_OVERLAP_RE;
+export const _isSlotOverlapError = isSlotOverlapError;
+
 /**
  * Initialize the test environment. In shared mode (default), the first call
  * creates a process-wide `TestWorkflowEnvironment` that all subsequent test
@@ -737,12 +831,12 @@ export async function skipTime(durationMs: number): Promise<void> {
  * `destroyUpdate` (#164) which schedule the activity on the per-host queue.
  */
 export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
-  const worker = await Worker.create({
+  const worker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
     taskQueue: TASK_QUEUE,
     workflowBundle,
   });
-  const hostWorker = await Worker.create({
+  const hostWorker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
     taskQueue: HOST_TASK_QUEUE,
     activities: {
@@ -774,7 +868,7 @@ export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
 export async function withWorkerAndActivities<T>(fn: () => Promise<T>): Promise<T> {
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
   const scheduleActivities = createScheduleActivities(requireTestEnv().client);
-  const worker = await Worker.create({
+  const worker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
     taskQueue: TASK_QUEUE,
     workflowBundle,
@@ -974,7 +1068,7 @@ export async function withWorkerAndOutboxActivities<T>(fn: () => Promise<T>): Pr
     defaultAgent: 'claude',
   });
 
-  const worker = await Worker.create({
+  const worker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
     taskQueue: TASK_QUEUE,
     workflowBundle,
@@ -993,7 +1087,7 @@ export async function withWorkerAndOutboxActivities<T>(fn: () => Promise<T>): Pr
     },
   });
   // Per-host worker — same stub so activities routed via the per-host queue also resolve.
-  const hostWorker = await Worker.create({
+  const hostWorker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
     taskQueue: HOST_TASK_QUEUE,
     activities: {
@@ -1038,7 +1132,7 @@ export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): P
   });
 
   // Main worker: workflow execution + all outbox + schedule activities
-  const mainWorker = await Worker.create({
+  const mainWorker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
     taskQueue: TASK_QUEUE,
     workflowBundle,
@@ -1053,7 +1147,7 @@ export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): P
   // spawnProcess is routed to `agent-tempo-{hostname}` by the session workflow.
   // No workflowBundle — this worker only polls for activity tasks, matching
   // the production per-host worker config in src/worker.ts.
-  const hostWorker = await Worker.create({
+  const hostWorker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
     taskQueue: `agent-tempo-test-host`,
     activities: {
@@ -1112,7 +1206,7 @@ async function startWorkerPair(
     notes: ['test stub'],
   });
 
-  const mainWorker = await Worker.create({
+  const mainWorker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
     taskQueue: TASK_QUEUE,
     workflowBundle,
@@ -1123,7 +1217,7 @@ async function startWorkerPair(
       ...(opts.includeHardTerminateOnMain ? { hardTerminateAttachment: hardTerminateStub } : {}),
     },
   });
-  const hostWorker = await Worker.create({
+  const hostWorker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
     taskQueue: HOST_TASK_QUEUE,
     activities: {
@@ -1206,7 +1300,7 @@ export async function withWorkerAndRecruitCapture<T>(
     return { success: true };
   };
 
-  const mainWorker = await Worker.create({
+  const mainWorker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
     taskQueue: TASK_QUEUE,
     workflowBundle,
@@ -1217,7 +1311,7 @@ export async function withWorkerAndRecruitCapture<T>(
     },
   });
 
-  const hostWorker = await Worker.create({
+  const hostWorker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
     taskQueue: `agent-tempo-test-host`,
     activities: {
@@ -1260,7 +1354,7 @@ export async function withWorkerAndMaestroActivities<T>(
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
   const scheduleActivities = createScheduleActivities(requireTestEnv().client);
 
-  const worker = await Worker.create({
+  const worker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
     taskQueue: TASK_QUEUE,
     workflowBundle,
@@ -1313,7 +1407,7 @@ export async function withWorkerAndGlobalMaestroActivities<T>(
   const { createScheduleActivities } = await import('../src/activities/schedule-fire');
   const scheduleActivities = createScheduleActivities(requireTestEnv().client);
 
-  const worker = await Worker.create({
+  const worker = await createWorkerWithSlotRetry({
     connection: requireTestEnv().nativeConnection,
     taskQueue: TASK_QUEUE,
     workflowBundle,
