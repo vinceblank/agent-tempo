@@ -82,6 +82,20 @@ describe('mission-control Controller.cmdTail — tailability gating (H3a)', () =
     expect(ctrl.model.selected).to.equal('legacy');
   });
 
+  it('refuses the maestro/dashboard UI player with a UI-player message (no tail opened)', async () => {
+    const ctrl = new Controller('ens', noActions, 'box-1');
+    addPlayer(ctrl, { playerId: 'maestro', hostname: 'dashboard' });
+    const calls: (string | null)[] = [];
+    ctrl.onTailRequest = (p) => calls.push(p);
+    const msgs: string[] = [];
+
+    await ctrl.cmdTail('maestro', fakeCtx(msgs));
+
+    expect(calls).to.have.length(0); // never opened
+    expect(ctrl.model.selected).to.equal(null); // never selected
+    expect(msgs).to.deep.equal(['maestro is a UI player — nothing to tail.']);
+  });
+
   it('reports no-such-player for an unknown id (no tail opened)', async () => {
     const ctrl = new Controller('ens', noActions, 'box-1');
     const calls: (string | null)[] = [];

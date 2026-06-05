@@ -138,23 +138,40 @@ export function selectPlayer(model: BoardModel, playerId: string | null): boolea
   return true;
 }
 
+/**
+ * Sentinel hostname the TUI's own maestro/dashboard session stamps on its
+ * metadata (see `ensureMaestroSession` in `client/core.ts`). It's a UI player
+ * with NO /inner stream — non-tailable, but NOT a cross-host case (the sentinel
+ * is not a real daemon host). Mirrored locally to avoid a client→mission-control
+ * import; the maestro-tail test trips if it ever drifts. (H5)
+ */
+const UI_PLAYER_HOSTNAME = 'dashboard';
+
 /** Result of a {@link tailability} check — whether the operator can open a fine /inner tail. */
 export type Tailability =
   | { ok: true }
   | { ok: false; reason: 'no-such-player' }
+  | { ok: false; reason: 'ui-player' }
   | { ok: false; reason: 'cross-host'; playerHost: string };
 
 /**
  * Pure: can the local operator open `playerId`'s fine inner-loop tail? The 3f
  * inner-loop tail is DAEMON-LOCAL — only players on this daemon's host are
- * tailable. A player on another host is refused with `cross-host` (carrying
- * `playerHost` for the operator message); actual cross-host routing is the
- * deferred H3(b) (#645). A missing/older-snapshot `hostname` (undefined) is
- * treated as tailable — never block on absent data.
+ * tailable.
+ *
+ * - missing player → `no-such-player`
+ * - the maestro/dashboard UI player (no /inner stream) → `ui-player` (H5; checked
+ *   BEFORE the host comparison so its `dashboard` sentinel isn't mis-framed as
+ *   cross-host)
+ * - a real player on another host → `cross-host` (carrying `playerHost`); actual
+ *   cross-host routing is the deferred H3(b) (#645)
+ * - a missing/older-snapshot `hostname` (undefined) → tailable; never block on
+ *   absent data
  */
 export function tailability(model: BoardModel, playerId: string, localHost: string): Tailability {
   const row = model.players.get(playerId);
   if (!row) return { ok: false, reason: 'no-such-player' };
+  if (row.hostname === UI_PLAYER_HOSTNAME) return { ok: false, reason: 'ui-player' };
   if (row.hostname && row.hostname !== localHost) {
     return { ok: false, reason: 'cross-host', playerHost: row.hostname };
   }
