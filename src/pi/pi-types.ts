@@ -227,7 +227,27 @@ export interface PiToolDefinition {
   description?: string;
   /** TypeBox schema object. Typed `unknown` to avoid coupling pi-types to typebox. */
   parameters: unknown;
-  execute: (args: Record<string, unknown>) => Promise<PiToolResult> | PiToolResult;
+  /**
+   * Pi invokes `execute` POSITIONALLY at runtime:
+   *   execute(toolCallId, params, signal?, onUpdate?, ctx?)
+   * (installed Pi 0.78 `core/extensions/types.d.ts:354` + the wrapper at
+   * `core/tools/tool-definition-wrapper.js:10,31`). The VALIDATED params object
+   * is the SECOND positional — the FIRST is the `toolCallId` string.
+   *
+   * Declaring the full positional shape (not a single `args`) is LOAD-BEARING: a
+   * one-arg signature silently accepts `(args) => handler(args)`, which binds the
+   * toolCallId string to what the handler treats as the params object — the
+   * shipped arg-order bug (v1.4.0) this corrected type now makes a compile error.
+   * `signal`/`onUpdate`/`ctx` are optional + `unknown`: we don't consume them and
+   * avoid coupling to Pi's internal callback/context types.
+   */
+  execute: (
+    toolCallId: string,
+    params: Record<string, unknown>,
+    signal?: unknown,
+    onUpdate?: unknown,
+    ctx?: unknown,
+  ) => Promise<PiToolResult> | PiToolResult;
 }
 
 /** The `pi` object passed to `export default function(pi: ExtensionAPI) {}`. */

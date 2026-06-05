@@ -45,7 +45,12 @@ export function renderToPi(pi: ExtensionAPI, descriptors: TempoToolDescriptor[])
       name: d.name,
       description: d.description,
       parameters: zodShapeToTypeBox(d.params, d.name),
-      execute: async (args) => toPiResult(await d.handler(args)),
+      // Pi calls execute POSITIONALLY: (toolCallId, params, signal, onUpdate, ctx).
+      // The validated params object is the SECOND positional — ignore the
+      // toolCallId string (1st) and hand `params` to the descriptor handler.
+      // (Passing the 1st positional was the v1.4.0 arg-order bug: handlers got the
+      // toolCallId string instead of params.) See PiToolDefinition.execute.
+      execute: async (_toolCallId, params) => toPiResult(await d.handler(params)),
     });
   }
 }
