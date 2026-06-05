@@ -76,6 +76,33 @@ export function meetsVersionFloor(installed: string, floor: string = PI_VERSION_
 }
 
 /**
+ * Node-floor preflight (Decision B, #645). The Pi optional deps require
+ * Node >= {@link PI_NODE_FLOOR} (22.19). Enforced ONLY at the Pi recruit/spawn
+ * boundary — `package.json#engines` stays `>=20` so non-Pi users are untouched.
+ *
+ * Pure + injectable (`nodeVersion` defaults to the live runtime) so it is the
+ * single source of truth shared by the recruit pre-flight (authoritative,
+ * pre-spawn) AND the {@link runHeadlessPi} backstop (direct/manual launches).
+ * Reuses {@link meetsVersionFloor}'s major.minor.patch comparison.
+ *
+ * @returns `{ ok: true }` when the floor is met, else `{ ok: false, reason }`
+ *   with an actionable, fail-clean message (mirrors the `probeSdkInstall` /
+ *   `resolveModel` style). The `reason` omits any `force: true` hint so each
+ *   caller can frame the bypass in its own voice.
+ */
+export function checkPiNodeFloor(
+  nodeVersion: string = process.versions.node,
+): { ok: boolean; reason?: string } {
+  if (meetsVersionFloor(nodeVersion, PI_NODE_FLOOR)) return { ok: true };
+  return {
+    ok: false,
+    reason:
+      `agent: "pi" requires Node >= ${PI_NODE_FLOOR}, but this host runs Node ${nodeVersion}. ` +
+      `Upgrade Node (e.g. via nvm/fnm) and retry.`,
+  };
+}
+
+/**
  * Injectable collaborators for {@link probeCopilotPiPreflight}. All default to
  * real implementations; tests override them to exercise each branch without a
  * live Pi install or real `~/.pi` / env.

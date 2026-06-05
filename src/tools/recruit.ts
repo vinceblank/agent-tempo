@@ -15,7 +15,7 @@ import {
   probeClaudeAuth,
 } from '../adapters/claude-code-headless/pre-flight';
 import { CLAUDE_CODE_PERMISSION_MODES } from '../adapters/claude-code-headless/types';
-import { probeCopilotPiPreflight, PI_PACKAGE, PI_AI_PACKAGE } from '../pi/probe';
+import { probeCopilotPiPreflight, checkPiNodeFloor, PI_PACKAGE, PI_AI_PACKAGE } from '../pi/probe';
 
 const toolLog = (...args: unknown[]) => console.error('[agent-tempo:recruit]', ...args);
 
@@ -284,6 +284,20 @@ export function buildRecruitTool(
             `agent: "copilot" requires the @github/copilot-sdk optional dependency. Install with \`npm install @github/copilot-sdk\` and retry, or use \`force: true\` to bypass this check.`,
           );
         }
+      }
+      // Node-floor (Decision B, #645) — AUTHORITATIVE, NON-BYPASSABLE gate, so it
+      // sits ABOVE the `&& !force` block below. Unlike sdk-probe (a filesystem
+      // heuristic with possible false-negatives, where `force` stays legitimate),
+      // the Node floor has NO false-negative — `process.versions.node` is
+      // authoritative and Pi literally cannot import on sub-22.19 — so there is no
+      // legitimate override. Checked even under `force: true`, matching the
+      // unconditional runHeadlessPi backstop, so recruit fails clean BEFORE spawn
+      // in ALL local cases. Local recruit only — cross-host (`host` set) defers to
+      // the target daemon's availableAgentTypes. Gates BOTH the Copilot and
+      // Anthropic/Pi-default paths below.
+      if (agent === 'pi' && !host) {
+        const nodeFloor = checkPiNodeFloor();
+        if (!nodeFloor.ok) return fail(`agent: "pi" — ${nodeFloor.reason}`);
       }
       // Phase 3a — headless Pi pre-flight. The Pi SDK is an optional Node-22.19+
       // dep required at the headless entry; gate at recruit (cross-host skips —
