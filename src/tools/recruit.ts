@@ -285,17 +285,24 @@ export function buildRecruitTool(
           );
         }
       }
+      // Node-floor (Decision B, #645) — AUTHORITATIVE, NON-BYPASSABLE gate, so it
+      // sits ABOVE the `&& !force` block below. Unlike sdk-probe (a filesystem
+      // heuristic with possible false-negatives, where `force` stays legitimate),
+      // the Node floor has NO false-negative — `process.versions.node` is
+      // authoritative and Pi literally cannot import on sub-22.19 — so there is no
+      // legitimate override. Checked even under `force: true`, matching the
+      // unconditional runHeadlessPi backstop, so recruit fails clean BEFORE spawn
+      // in ALL local cases. Local recruit only — cross-host (`host` set) defers to
+      // the target daemon's availableAgentTypes. Gates BOTH the Copilot and
+      // Anthropic/Pi-default paths below.
+      if (agent === 'pi' && !host) {
+        const nodeFloor = checkPiNodeFloor();
+        if (!nodeFloor.ok) return fail(`agent: "pi" — ${nodeFloor.reason}`);
+      }
       // Phase 3a — headless Pi pre-flight. The Pi SDK is an optional Node-22.19+
       // dep required at the headless entry; gate at recruit (cross-host skips —
       // the target daemon's availableAgentTypes is the gate there).
       if (agent === 'pi' && !host && !force) {
-        // Node-floor (Decision B, #645) — AUTHORITATIVE gate. The Pi optional deps
-        // require Node >= 22.19; fail clean BEFORE spawn (the headless entry has a
-        // backstop). Local recruit only — cross-host (`host` set) defers to the
-        // target daemon's availableAgentTypes. Gates BOTH the Copilot and
-        // Anthropic/Pi-default paths below.
-        const nodeFloor = checkPiNodeFloor();
-        if (!nodeFloor.ok) return fail(`agent: "pi" — ${nodeFloor.reason} Or use \`force: true\` to bypass.`);
         // Validate the model selector format up front (provider/model).
         let parsedModel: { provider: string; model: string } | undefined;
         if (model) {
