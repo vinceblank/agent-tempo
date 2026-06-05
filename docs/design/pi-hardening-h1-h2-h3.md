@@ -191,15 +191,17 @@ H1 (inMemory + session-seed.ts WITH sanitizer + Node-floor-B preflight at spawn 
 
 ---
 
-## H4 — Pi SDK type-gate (carry-forward)
+## H4 — Pi SDK type-gate
 
-_Out of scope for this pass; recorded here as a design lesson from the v1.4.1 regression._
+> **Status:** in-flight — gate PR pending the v1.4.1 render-tools fix merge (imminent).
 
 ### H4 lesson — a type drift-gate is necessary but not sufficient
 
 A type-only drift gate has structural blind spots: TypeScript's "fewer-params-assignable-to-more" rule, open index signatures, and undeclared runtime fields all let **semantic** drift pass a type check green.
 
 The H4 manual mapping (reading the real Pi 0.78 `.d.ts` + runtime call sites member-by-member) caught a **shipped v1.4.0 bug**: `render-tools.ts` registered each tool's `execute` as a 1-arg `(args) => handler(args)`, but Pi invokes `execute(toolCallId, params, …)` **positionally** (`tool-definition-wrapper.js` → `agent-loop.js:419`), so every native agent-tempo tool handler received the `toolCallId` string instead of its params. A 1-arg function is type-assignable to the real 5-arg signature, so a gate-only approach would have shipped GREEN over it (fixed in v1.4.1).
+
+> **Bug chain:** `render-tools.ts:48` registered `execute: (args) => handler(args)` (1-arg). Pi invokes positionally: `agent-loop.js:419` `execute(toolCall.id, args, …)` → `tool-definition-wrapper.js:10` `definition.execute(toolCallId, params, …)`. So `args` bound to `toolCallId` (string), not params. TypeScript missed it: a 1-arg fn is assignable to the real 5-arg `execute(toolCallId, params, signal, onUpdate, ctx)`. Fixed in v1.4.1 (`(_toolCallId, params) => handler(params)` + a positional regression test).
 
 The same mapping surfaced a gate-coverage gap — `PiEventPayload.session` models an interactive-only **runtime** field Pi's 0.78 `.d.ts` doesn't declare; it's not type-assertable, so it's covered by a runtime guard instead.
 
@@ -215,5 +217,4 @@ The gate is the cheap regression net; the mapping is where semantic drift is act
 ## Deferred epics
 
 - **H3(b)** — cross-host `/inner` routing (remote-daemon HTTP mesh; new `hostProfile` signal field; cross-daemon auth)
-- **H4** — formal Pi SDK type drift-gate (CI gate on every Pi bump; pairs with the manual-mapping discipline above)
 - **Verbatim Pi-transcript durable resume** — extension→workflow transcript streaming (wire/determinism touch; separate epic)
