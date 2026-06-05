@@ -43,6 +43,8 @@ export function renderToPi(pi: ExtensionAPI, descriptors: TempoToolDescriptor[])
   for (const d of descriptors) {
     pi.registerTool({
       name: d.name,
+      // Real ToolDefinition REQUIRES `label` (C4, #645 H4) — use the tool name.
+      label: d.name,
       description: d.description,
       parameters: zodShapeToTypeBox(d.params, d.name),
       // Pi calls execute POSITIONALLY: (toolCallId, params, signal, onUpdate, ctx).

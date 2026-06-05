@@ -50,13 +50,19 @@ export interface PiCustomMessageOptions {
   deliverAs?: 'steer' | 'followUp';
 }
 
-/** A message injected into a live Pi session. */
+/**
+ * A message injected into a live Pi session. Real `sendCustomMessage` msg param =
+ * `Pick<CustomMessage, "customType" | "content" | "display" | "details">` — so
+ * `customType` + `display` are REQUIRED (C1, #645 H4). `content` is kept
+ * `string` (narrower than the real `string | (TextContent | ImageContent)[]`,
+ * still assignable — we only ever inject text).
+ */
 export interface PiOutboundMessage {
   /** Free-form tag Pi surfaces to the agent (we use `'cue'`). */
-  customType?: string;
+  customType: string;
   content: string;
   /** Render the injected content in the human-visible transcript. */
-  display?: boolean;
+  display: boolean;
 }
 
 /**
@@ -88,7 +94,13 @@ export interface PiAgentSession {
  * RE-ACQUIRE the session from each payload (never cache across switches — D11).
  */
 export interface PiEventPayload {
-  /** The live session, present on most lifecycle events. */
+  /**
+   * UNDECLARED in Pi 0.78 `.d.ts` — an interactive-only RUNTIME field; headless
+   * populates `rt.session` via `setRuntimeSession` instead. NOT type-assertable,
+   * so the pi-drift gate EXCLUDES it (see test/pi-drift/assert.ts) and the
+   * runtime guard B1 (extension.ts) covers it: a null session on interactive
+   * `session_start` warns of possible Pi API drift.
+   */
   session?: PiAgentSession;
   /** A per-message/per-turn identifier when the event carries one. */
   messageId?: string;
@@ -106,7 +118,8 @@ export interface PiEventPayload {
 /**
  * Pi context-window usage — the PULL-only token signal (3c). There is NO token
  * event in Pi 0.78; usage is queried on demand via `ExtensionContext.getContextUsage()`.
- * Mirrors pi-ai's `ContextUsage` (verified against the installed 0.78 `.d.ts`).
+ * Mirrors `ContextUsage`, exported from `@earendil-works/pi-coding-agent`
+ * (extensions surface), NOT pi-ai (verified against the installed 0.78 `.d.ts`).
  */
 export interface PiContextUsage {
   /** Estimated context tokens in use, or `null` when unknown. */
@@ -232,6 +245,12 @@ export interface PiToolResult {
  */
 export interface PiToolDefinition {
   name: string;
+  /**
+   * Human-facing label. The real `ToolDefinition` REQUIRES `label` (C4, #645 H4);
+   * render-tools sets it to the tool name. Omitting it would RED the gate's
+   * ToolDefinition row.
+   */
+  label: string;
   description?: string;
   /** TypeBox schema object. Typed `unknown` to avoid coupling pi-types to typebox. */
   parameters: unknown;

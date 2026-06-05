@@ -25,6 +25,7 @@ dashboard/dist/*
 !scripts/gh-app-token.js
 !scripts/check-surface-drift.js
 !scripts/check-no-stale-scaffold.js
+!scripts/check-pi-drift.js
 !scripts/strip-mock-adapter.js
 !scripts/verify-tarball.js
 # Dashboard ESLint flat config — JS module, intentionally committed.

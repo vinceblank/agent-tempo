@@ -81,7 +81,8 @@
     "lint:lockstep-version": "node -e \"const r=require('./package.json').version,d=require('./dashboard/package.json').version;if(r!==d){console.error('Version drift: root='+r+' dashboard='+d+'. Bump dashboard/package.json#version to match root.');process.exit(1);}console.log('Lockstep OK: '+r);\"",
     "lint:lockfile-canonical": "bash scripts/check-lockfile-canonical.sh",
     "lint:dashboard-css-sync": "npm run build:scripts && node dist/scripts/check-components-css-sync.js",
-    "check:all": "npm run lint:test-ensemble-literals && npm run lint:skip-reasons && npm run lint:lockstep-version && npm run lint:lockfile-canonical && npm run lint:surface-drift && npm run lint:no-stale-scaffold && npm run build && npm run lint:dashboard-css-sync && npm test && npm --prefix dashboard run lint && npm --prefix dashboard run test && npm run size-limit && npm run verify-tarball"
+    "lint:pi-drift": "node scripts/check-pi-drift.js",
+    "check:all": "npm run lint:test-ensemble-literals && npm run lint:skip-reasons && npm run lint:lockstep-version && npm run lint:lockfile-canonical && npm run lint:surface-drift && npm run lint:no-stale-scaffold && npm run build && npm run lint:pi-drift && npm run lint:dashboard-css-sync && npm test && npm --prefix dashboard run lint && npm --prefix dashboard run test && npm run size-limit && npm run verify-tarball"
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "~0.91.1",

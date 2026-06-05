@@ -1,0 +1,12 @@
+{
+  "//": "Pi type-drift gate (#645 H4). Compiled with --noEmit, NEVER executed. assert.ts imports the REAL Pi 0.78 types and our shims and fails to COMPILE if a shim drifts out of assignability. Run via scripts/check-pi-drift.js (which only invokes tsc when Pi is installed). Extends the root tsconfig for identical strictness.",
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "../..",
+    "skipLibCheck": true
+  },
+  "//exclude": "Clear the root config's inherited exclude (which lists `test/`) — otherwise assert.ts (under test/) is excluded and tsc finds no inputs.",
+  "exclude": [],
+  "include": ["assert.ts"]
+}
