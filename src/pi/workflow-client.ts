@@ -259,6 +259,15 @@ export class PiWorkflowClient {
   async detach(reason: DetachReason = 'agent-exited'): Promise<void> {
     if (!this.wfHandle || !this.token) return;
     this.stopHeartbeat();
+    // Signal-DELIVERY (not a processing-ack) is sufficient by design, ruled won't-fix:
+    // the session workflow runs in the DAEMON worker, not this Pi process, so once
+    // signal() resolves the exit is durably in history and the worker transitions to
+    // `detached` regardless of this process disposing/exiting. stopHeartbeat() above is
+    // the independent backstop — a missed transition still reaps via lease expiry. No
+    // caller reads phase synchronously at detach()-return, so an executeUpdate ack would
+    // only add shutdown latency + drag determinism-sensitive workflow code into scope.
+    // If a future synchronous re-claim/migrate ever needs an OBSERVED `detached`, poll the
+    // existing attachmentInfoQuery client-side — never add an adapterExitedUpdate.
     await this.wfHandle.signal(adapterExitedSignal, {
       attachmentId: this.token.attachmentId,
       reason,
