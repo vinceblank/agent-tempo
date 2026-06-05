@@ -1,7 +1,23 @@
 import * as readline from 'readline';
 import { loadConfigFile, saveConfigFile, CONFIG_FILE_PATH, PersistedConfig, getConfigWithSources } from '../config';
 import { getConfig } from '../config';
+import type { AgentType } from '../types';
 import * as out from './output';
+
+/**
+ * Agents valid as a persistent `defaultAgent` — the conductor-capable PRODUCTION
+ * agents. `defaultAgent` drives the conductor that `up` / `start` / `conduct`
+ * spawn when no `--agent` is given (`cli.ts` `resolvedAgent`), and the
+ * conductor-spawn branch only realises `copilot` / `pi` / else→`claude`. So:
+ *   - `mock` is DEV-ONLY (recruit pre-flight rejects it outside dev mode) — never
+ *     a persistent default.
+ *   - the headless adapters (`claude-api` / `opencode` / `claude-code-headless`)
+ *     can't be a conductor — they'd silently fall through to `claude` — so they
+ *     are not offered here.
+ * Single source of truth for the interactive selector + `config set` validation
+ * (#666 — adds `pi` so the new interactive Pi conductor can be the default).
+ */
+export const VALID_DEFAULT_AGENTS: readonly AgentType[] = ['claude', 'copilot', 'pi'];
 
 // NOTE: `createTemporalConnection` is dynamic-imported inside `configInteractive`'s
 // connection-test step (issue #157 PR C). Top-level static import would pull in
@@ -105,11 +121,11 @@ export async function configInteractive(): Promise<void> {
   }
 
   // Default agent type
-  const agentChoice = await choose('Default agent', ['claude', 'copilot']);
-  if (agentChoice === 'copilot') {
-    config.defaultAgent = 'copilot';
+  const agentChoice = await choose('Default agent', [...VALID_DEFAULT_AGENTS]);
+  if (agentChoice !== 'claude') {
+    config.defaultAgent = agentChoice as AgentType;
   }
-  // Don't set defaultAgent if claude — it's the default, keeps config clean
+  // Don't set defaultAgent if claude — it's the implicit default, keeps config clean
 
   saveConfigFile(config);
   out.success(`Saved to ${CONFIG_FILE_PATH}`);
@@ -170,9 +186,9 @@ export function configSet(key: string, value: string): void {
     process.exit(1);
   }
 
-  // Validate agent type
-  if (configKey === 'defaultAgent' && value !== 'claude' && value !== 'copilot') {
-    out.error(`Invalid agent type: "${value}". Must be "claude" or "copilot".`);
+  // Validate agent type — restrict to the conductor-capable production agents.
+  if (configKey === 'defaultAgent' && !(VALID_DEFAULT_AGENTS as readonly string[]).includes(value)) {
+    out.error(`Invalid agent type: "${value}". Must be one of: ${VALID_DEFAULT_AGENTS.join(', ')}.`);
     process.exit(1);
   }
 
