@@ -1,6 +1,6 @@
 import { spawn, execFileSync, execSync } from 'child_process';
 import { existsSync, mkdirSync, openSync, closeSync, writeFileSync, readFileSync } from 'fs';
-import { join, resolve } from 'path';
+import { join, resolve, dirname } from 'path';
 import { tmpdir } from 'os';
 import { ENV } from './config';
 import type { MockMode } from './types';
@@ -219,22 +219,25 @@ export function findLinuxTerminal(): string | null {
  * Build a shell command string that sets env vars and runs claude.
  * Uses inline `KEY=val` syntax which works in bash, zsh, AND fish.
  */
-export function buildClaudeCommand(
-  claudeBin: string,
-  claudeArgs: string[],
+export function buildTerminalCommand(
+  bin: string,
+  binArgs: string[],
   envVars: Record<string, string>,
 ): string {
   const envInline = Object.entries(envVars)
     .map(([k, v]) => `${k}=${shellQuote(v)}`)
     .join(' ');
   // Quote the binary path if it contains spaces (e.g., "C:\Program Files\...")
-  const quotedBin = claudeBin.includes(' ') ? shellQuote(claudeBin) : claudeBin;
-  const args = claudeArgs.map(a => shellQuote(a)).join(' ');
+  const quotedBin = bin.includes(' ') ? shellQuote(bin) : bin;
+  const args = binArgs.map(a => shellQuote(a)).join(' ');
   return envInline ? `${envInline} ${quotedBin} ${args}` : `${quotedBin} ${args}`;
 }
 
 /**
- * Spawn a Claude Code session in a visible terminal window.
+ * Launch ANY binary in a visible terminal window (the cross-platform core
+ * extracted from `spawnInTerminal`, #666 C1). Generic over `bin`/`args` so it
+ * drives both Claude (via the {@link spawnInTerminal} wrapper) and the
+ * interactive Pi conductor (`pi -e <ext>`).
  *
  * Strategy per terminal:
  *  - Ghostty: `initial input` into a normal window (preserves full shell env)
@@ -243,14 +246,19 @@ export function buildClaudeCommand(
  *  - Windows: shell:true with env vars
  *  - Linux: terminal emulator with -e flag
  */
-export function spawnInTerminal(
-  claudeArgs: string[],
+export function launchInTerminal(
+  bin: string,
+  args: string[],
   workDir: string,
   envVars: Record<string, string>,
-  options?: { claudeBin?: string },
 ): { pid: number | undefined } {
-  const claudeBin = resolveClaudePath(options?.claudeBin);
-  const claudeInvocation = buildClaudeCommand(claudeBin, claudeArgs, envVars);
+  // Internal aliases keep the platform body below byte-identical to the original
+  // spawnInTerminal (behavior-preserving extraction, #666 C1 — minimal blast
+  // radius; the existing terminal-spawn tests are the proof). The terminal logic
+  // is bin/args-agnostic; the `claude*` names are historical.
+  const claudeBin = bin;
+  const claudeArgs = args;
+  const claudeInvocation = buildTerminalCommand(claudeBin, claudeArgs, envVars);
 
   if (process.platform === 'darwin') {
     const detected = detectMacTerminal();
@@ -419,6 +427,143 @@ export function spawnInTerminal(
   }
   child.unref();
   return { pid: child.pid };
+}
+
+/**
+ * Spawn a Claude Code session in a visible terminal window — a thin, unchanged
+ * wrapper over {@link launchInTerminal} (resolves the claude binary, forwards
+ * the rest). Signature preserved for the existing callers (commands.ts conductor
+ * + outbox.ts recruit-spawn) + the spawn-route regression tests (#666 C1).
+ */
+export function spawnInTerminal(
+  claudeArgs: string[],
+  workDir: string,
+  envVars: Record<string, string>,
+  options?: { claudeBin?: string },
+): { pid: number | undefined } {
+  return launchInTerminal(resolveClaudePath(options?.claudeBin), claudeArgs, workDir, envVars);
+}
+
+// --- Interactive Pi conductor (#666) ---
+
+/** Is `bin` resolvable on PATH? (where/which, mirrors resolveClaudePath.) */
+function binaryOnPath(bin: string): boolean {
+  const cmd = process.platform === 'win32' ? 'where' : 'which';
+  try {
+    execFileSync(cmd, [bin], { stdio: ['ignore', 'ignore', 'ignore'] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Walk up from `__dirname` for the installed Pi package's CLI entry. */
+function findPiPackageCli(exists: (p: string) => boolean): string | null {
+  let dir = __dirname;
+  for (let i = 0; i < 8; i += 1) {
+    const candidate = join(dir, 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'cli.js');
+    if (exists(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/**
+ * Resolve the INTERACTIVE Pi CLI binary (#666) — the human-TTY `pi`, DISTINCT
+ * from {@link resolvePiPath} (the headless adapter entry). Interactive TTY mode
+ * is REQUIRED for a conductor: Pi only fires `session_start` / attaches in a real
+ * terminal (non-TTY / `--print` → print-mode → tools register but NO attach).
+ *
+ * `pi` on PATH wins; else fall back to the installed package CLI via `node`.
+ * THROWS fail-clean if neither resolves, so the caller never launches a terminal
+ * that would immediately die. Collaborators injectable for unit tests.
+ */
+export function resolvePiInteractiveBinary(deps: {
+  onPath?: (bin: string) => boolean;
+  exists?: (p: string) => boolean;
+} = {}): { cmd: string; args: string[] } {
+  const onPath = deps.onPath ?? binaryOnPath;
+  const exists = deps.exists ?? existsSync;
+  if (onPath('pi')) return { cmd: 'pi', args: [] };
+  const cli = findPiPackageCli(exists);
+  if (cli) return { cmd: 'node', args: [cli] };
+  throw new Error(
+    'Pi CLI not found. Install it with `npm install -g pi-ai` and ensure `pi` is on PATH ' +
+    '(or add the @earendil-works/pi-coding-agent package). The conductor needs the interactive Pi CLI.',
+  );
+}
+
+/**
+ * Resolve the absolute path to the BUNDLED `dist/pi/extension.js` for `pi -e <abs>`
+ * (#666). Pi loads the BUILT CommonJS extension even in dev. Mirrors
+ * {@link resolvePiPath}'s dev/prod `__dirname` split: prod `__dirname` = `dist/`
+ * (→ `dist/pi/extension.js`); dev `__dirname` = `src/` (→ sibling `dist/pi/…`).
+ * Existence-checked + fail-clean ("run npm run build"). Injectable for tests.
+ */
+export function resolvePiExtensionPath(deps: {
+  exists?: (p: string) => boolean;
+  isDev?: boolean;
+  baseDir?: string;
+} = {}): string {
+  const exists = deps.exists ?? existsSync;
+  const isDev = deps.isDev ?? __filename.endsWith('.ts');
+  const base = deps.baseDir ?? __dirname;
+  const extPath = isDev
+    ? resolve(base, '..', 'dist', 'pi', 'extension.js') // dev: src/ → repo/dist/pi/extension.js
+    : resolve(base, 'pi', 'extension.js');               // prod: dist/ → dist/pi/extension.js
+  if (!exists(extPath)) {
+    throw new Error(`Pi conductor extension not found at ${extPath}. Run \`npm run build\` first.`);
+  }
+  return extPath;
+}
+
+/** Inputs for {@link buildPiConductorSpawn} (pure — unit-tested without spawning). */
+export interface PiConductorSpawnOpts {
+  ensemble: string;
+  sessionName: string;
+  /** Temporal env (address/namespace/api-key/tls) built by the caller. */
+  temporalEnvVars: Record<string, string>;
+  /** Temporal task queue — the Pi extension's PiWorkflowClient needs it (confirm #1). */
+  taskQueue: string;
+  devMode: boolean;
+  /** Conductor agent-type name → AGENT_TEMPO_PLAYER_TYPE, when typed. */
+  conductorTypeName?: string;
+  /** Forwarded if set (warn-not-fail upstream when unset). */
+  anthropicApiKey?: string;
+  /** Injectable resolvers (default to the real ones, which fail-clean on miss). */
+  resolveBinary?: () => { cmd: string; args: string[] };
+  resolveExtension?: () => string;
+}
+
+/**
+ * Build the interactive Pi conductor spawn spec — `{ cmd, args, env }` for
+ * {@link launchInTerminal} (#666 C3). PURE + injectable so the env/args mapping is
+ * unit-tested. The default resolvers THROW fail-clean (binary missing / extension
+ * unbuilt) BEFORE a terminal is launched. `args` = `[...binArgs, '-e', <ext>]`;
+ * conductor INSTRUCTIONS arrive via the lineup-baked workflow messages → cue pump
+ * (no `--system-prompt` for the MVP).
+ */
+export function buildPiConductorSpawn(opts: PiConductorSpawnOpts): {
+  cmd: string;
+  args: string[];
+  env: Record<string, string>;
+} {
+  const { cmd, args: binArgs } = (opts.resolveBinary ?? resolvePiInteractiveBinary)();
+  const extPath = (opts.resolveExtension ?? resolvePiExtensionPath)();
+  const args = [...binArgs, '-e', extPath];
+  const env: Record<string, string> = {
+    ...opts.temporalEnvVars,
+    [ENV.TASK_QUEUE]: opts.taskQueue,
+    [ENV.ENSEMBLE]: opts.ensemble,
+    [ENV.CONDUCTOR]: 'true', // codebase-consistent; the Pi extension accepts '1'|'true'
+    [ENV.PLAYER_NAME]: opts.sessionName,
+    ...(opts.devMode ? { [ENV.DEV_MODE]: '1' } : {}),
+    ...(opts.anthropicApiKey ? { ANTHROPIC_API_KEY: opts.anthropicApiKey } : {}),
+    ...(opts.conductorTypeName ? { [ENV.PLAYER_TYPE]: opts.conductorTypeName } : {}),
+  };
+  return { cmd, args, env };
 }
 
 // --- Copilot bridge spawning ---
