@@ -191,7 +191,29 @@ H1 (inMemory + session-seed.ts WITH sanitizer + Node-floor-B preflight at spawn 
 
 ---
 
+## H4 — Pi SDK type-gate (carry-forward)
+
+_Out of scope for this pass; recorded here as a design lesson from the v1.4.1 regression._
+
+### H4 lesson — a type drift-gate is necessary but not sufficient
+
+A type-only drift gate has structural blind spots: TypeScript's "fewer-params-assignable-to-more" rule, open index signatures, and undeclared runtime fields all let **semantic** drift pass a type check green.
+
+The H4 manual mapping (reading the real Pi 0.78 `.d.ts` + runtime call sites member-by-member) caught a **shipped v1.4.0 bug**: `render-tools.ts` registered each tool's `execute` as a 1-arg `(args) => handler(args)`, but Pi invokes `execute(toolCallId, params, …)` **positionally** (`tool-definition-wrapper.js` → `agent-loop.js:419`), so every native agent-tempo tool handler received the `toolCallId` string instead of its params. A 1-arg function is type-assignable to the real 5-arg signature, so a gate-only approach would have shipped GREEN over it (fixed in v1.4.1).
+
+The same mapping surfaced a gate-coverage gap — `PiEventPayload.session` models an interactive-only **runtime** field Pi's 0.78 `.d.ts` doesn't declare; it's not type-assertable, so it's covered by a runtime guard instead.
+
+**Takeaway:** keep the type-gate (it catches structural renames/removals cheaply in CI on every Pi bump), but pair it with:
+
+1. **Manual mapping** on each Pi version bump — semantic drift is caught here, not in the gate.
+2. **Runtime guards** for the type-masked blind spots (undeclared fields, positional-arity mismatches).
+
+The gate is the cheap regression net; the mapping is where semantic drift is actually caught.
+
+---
+
 ## Deferred epics
 
 - **H3(b)** — cross-host `/inner` routing (remote-daemon HTTP mesh; new `hostProfile` signal field; cross-daemon auth)
+- **H4** — formal Pi SDK type drift-gate (CI gate on every Pi bump; pairs with the manual-mapping discipline above)
 - **Verbatim Pi-transcript durable resume** — extension→workflow transcript streaming (wire/determinism touch; separate epic)
