@@ -208,14 +208,22 @@ export interface PiToolCallResult {
 }
 
 /**
- * Pi tool result (`AgentToolResult`). The exact streaming shape is UNCONFIRMED
- * (spike gap D12b) — Phase 0 uses the minimal `{ output, isError }` form, which
- * is sufficient for a non-streaming tool like `report`.
+ * Pi tool result — a Pi-free structural mirror of the real `AgentToolResult`
+ * (#653, 1.4.2). The Phase-0 `{ output, isError }` guess was WRONG: Pi's real
+ * `AgentToolResult` is `{ content: (TextContent|ImageContent)[]; details; terminate? }`
+ * (pi-agent-core types.d.ts:305), so `{ output, isError }` made every native
+ * agent-tempo tool result malformed for a Pi model (no `content[]` — the
+ * RESULT-shape mirror of #651's INPUT-shape bug).
+ *
+ * We only ever emit TEXT content. Errors are NOT content-encoded — they are
+ * THROWN from `execute` (Pi's sanctioned error path; the loop catches → sets
+ * isError + folds the message into content). So this success-shape carries no
+ * error flag. See `toPiResult` / `renderToPi` in render-tools.ts.
  */
 export interface PiToolResult {
-  output?: string;
-  isError?: boolean;
-  [key: string]: unknown;
+  content: Array<{ type: 'text'; text: string }>;
+  details: Record<string, unknown>;
+  terminate?: boolean;
 }
 
 /**

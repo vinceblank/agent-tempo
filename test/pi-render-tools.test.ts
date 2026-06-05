@@ -23,7 +23,7 @@ import { renderToPi } from '../src/pi/render-tools';
 import type { TempoToolDescriptor } from '../src/tools/descriptor';
 import type { ExtensionAPI, PiToolDefinition } from '../src/pi/pi-types';
 
-describe('renderToPi — execute arg-order contract (v1.4.1 regression)', () => {
+describe('renderToPi — execute arg-order + result-shape contract (v1.4.1 + v1.4.2 regression)', () => {
   it('passes the 2nd positional (params), NOT the toolCallId, to the descriptor handler', async () => {
     let received: unknown = Symbol('unset');
     const descriptor: TempoToolDescriptor = {
@@ -53,11 +53,12 @@ describe('renderToPi — execute arg-order contract (v1.4.1 regression)', () => 
     // The handler must receive the PARAMS object — never the toolCallId string.
     expect(received).to.deep.equal({ real: 'params' });
     expect(received, 'must not be the toolCallId').to.not.equal('tc-1');
-    // And the neutral handler result maps onto Pi's { output } shape.
-    expect(result).to.deep.equal({ output: 'ok' });
+    // SUCCESS maps onto Pi's real AgentToolResult shape (#653): the neutral text
+    // becomes a single text-content block; no { output } field, no isError flag.
+    expect(result).to.deep.equal({ content: [{ type: 'text', text: 'ok' }], details: {} });
   });
 
-  it('maps an isError handler result onto Pi { output, isError }', async () => {
+  it('THROWS Error(r.text) on an isError handler result — Pi error convention (#653), not content-encoded', async () => {
     const descriptor: TempoToolDescriptor = {
       name: 'demo',
       description: 'demo tool',
@@ -68,7 +69,16 @@ describe('renderToPi — execute arg-order contract (v1.4.1 regression)', () => 
     const fakePi: ExtensionAPI = { on: () => {}, registerTool: (def) => { registered.push(def); } };
 
     renderToPi(fakePi, [descriptor]);
-    const result = await registered[0].execute('tc-2', { real: 'x' }, undefined, undefined, undefined);
-    expect(result).to.deep.equal({ output: 'boom', isError: true });
+    // execute must REJECT with Error(r.text): Pi's agent loop catches the throw →
+    // createErrorToolResult (message → content) + isError:true. A RESOLVED
+    // (content-encoded) error would make the model think the tool SUCCEEDED.
+    let thrown: unknown;
+    try {
+      await registered[0].execute('tc-2', { real: 'x' }, undefined, undefined, undefined);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown, 'execute must reject, not resolve').to.be.instanceOf(Error);
+    expect((thrown as Error).message).to.equal('boom');
   });
 });
