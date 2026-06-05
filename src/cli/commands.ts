@@ -6,7 +6,8 @@ import { homedir, hostname } from 'os';
 import { randomUUID } from 'crypto';
 import { Cron } from 'croner';
 import { Client, Connection, WorkflowIdConflictPolicy } from '@temporalio/client';
-import { spawnInTerminal, spawnCopilotBridge, spawnMockAdapter, resolveClaudePath } from '../spawn';
+import { spawnInTerminal, spawnCopilotBridge, spawnMockAdapter, resolveClaudePath, launchInTerminal, buildPiConductorSpawn } from '../spawn';
+import { checkPiNodeFloor } from '../pi/probe';
 import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, isDevMode, Config, CliOverrides, AGENT_TEMPO_HOME } from '../config';
 import { getGitInfo } from '../git-info';
 import { createTemporalConnection } from '../connection';
@@ -1234,6 +1235,7 @@ export async function up(opts: UpOpts) {
   // unexpectedly (mirrors the player-level guard at ~line 209).
   const conductorAgent: AgentType =
     lineup?.conductor?.agent === 'copilot' ? 'copilot' :
+    lineup?.conductor?.agent === 'pi' ? 'pi' :
     lineup?.conductor?.agent === 'mock' && isDevMode() ? 'mock' :
     opts.agent;
 
@@ -1378,6 +1380,39 @@ export async function up(opts: UpOpts) {
       isConductor: true,
       workDir: process.cwd(),
     }));
+  } else if (conductorAgent === 'pi') {
+    // Interactive Pi conductor (#666). MUST launch `pi` in a REAL TERMINAL —
+    // Pi only fires session_start / attaches in a TTY (headless/print-mode does
+    // NOT). So this uses launchInTerminal, NOT spawnPiHeadless (that's recruited
+    // players). One branch serves `up --agent pi` AND TUI /recruit-conductor.
+    //
+    // PREFLIGHT — fail clean BEFORE launching a terminal that would die:
+    const nodeFloor = checkPiNodeFloor(); // best-effort proxy on the daemon's Node
+    if (!nodeFloor.ok) {
+      out.error(`Cannot start Pi conductor — ${nodeFloor.reason}`);
+      process.exit(1);
+    }
+    if (!process.env.ANTHROPIC_API_KEY) {
+      out.warn('ANTHROPIC_API_KEY is not set — the Pi conductor will fall back to Pi\'s own auth/default model. Set it if Pi needs an Anthropic key.');
+    }
+    let piSpawn: { cmd: string; args: string[]; env: Record<string, string> };
+    try {
+      // resolvePiInteractiveBinary / resolvePiExtensionPath throw fail-clean
+      // (Pi CLI missing / extension unbuilt) — caught here, no terminal launched.
+      piSpawn = buildPiConductorSpawn({
+        ensemble: opts.ensemble,
+        sessionName,
+        temporalEnvVars,
+        taskQueue: config.taskQueue,
+        devMode: isDevMode(),
+        conductorTypeName: resolvedConductorType?.name || conductorTypeName,
+        anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+      });
+    } catch (err) {
+      out.error(`Cannot start Pi conductor — ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+    ({ pid } = launchInTerminal(piSpawn.cmd, piSpawn.args, process.cwd(), piSpawn.env));
   } else {
     const claudeArgs = [
       '--dangerously-skip-permissions',
