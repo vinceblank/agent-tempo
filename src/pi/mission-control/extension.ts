@@ -101,12 +101,15 @@ export class Controller {
     // cross-host player is never selected and no tail SSE is opened.
     const t = tailability(this.model, target, this.localHost);
     if (!t.ok) {
-      this.notify(
-        ctx,
-        t.reason === 'cross-host'
-          ? `Inner tail unavailable: ${target} runs on host ${t.playerHost}, not this daemon's host (${this.localHost}). Cross-host tail is a tracked follow-up (#645 / H3b).`
-          : `No such player: ${target}`,
-      );
+      let msg: string;
+      if (t.reason === 'cross-host') {
+        msg = `Inner tail unavailable: ${target} runs on host ${t.playerHost}, not this daemon's host (${this.localHost}). Cross-host tail is a tracked follow-up (#645 / H3b).`;
+      } else if (t.reason === 'ui-player') {
+        msg = `${target} is a UI player — nothing to tail.`;
+      } else {
+        msg = `No such player: ${target}`;
+      }
+      this.notify(ctx, msg);
       return;
     }
     selectPlayer(this.model, target);
@@ -190,14 +193,21 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
   return (pi: McExtensionAPI): void => {
     const ensemble = deps.ensemble ?? getConfig().ensemble;
     const adminToken = deps.adminToken ?? process.env[ADMIN_TOKEN_ENV];
-    const baseUrl = resolveBaseUrl(deps.baseUrl);
     const throttleMs = deps.renderThrottleMs ?? DEFAULT_RENDER_THROTTLE_MS;
     // H3a: mission-control is co-located with its 127.0.0.1 daemon, so this
     // process's hostname IS the daemon's host. (HealthV1.hostname is the noted
     // future upgrade for a baseUrl pointing at a remote daemon — not built here.)
     const localHost = deps.localHost ?? os.hostname();
 
-    const actions = new MissionControlActions({ ensemble, ...(adminToken ? { adminToken } : {}), baseUrl });
+    // H5: do NOT pre-resolve baseUrl. createSubscribe + MissionControlActions both
+    // re-read ~/.agent-tempo/daemon.port per-call when baseUrl is undefined, so a
+    // daemon restart on a new port self-heals (a once-resolved URL wedges the
+    // board). A `deps.baseUrl` override (tests / future remote daemon) still wins.
+    const actions = new MissionControlActions({
+      ensemble,
+      ...(adminToken ? { adminToken } : {}),
+      ...(deps.baseUrl ? { baseUrl: deps.baseUrl } : {}),
+    });
     const ctrl = new Controller(ensemble, actions, localHost);
 
     // Per-session lifecycle state (re-created on each session_start).
@@ -216,15 +226,24 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
 
     const startCoarse = (): void => {
       if (!adminToken) { log(`no admin token (${ADMIN_TOKEN_ENV}) — board limited / disabled`); }
-      coarseAbort = new AbortController();
-      const subscribe = createSubscribe({ baseUrl, ...(adminToken ? { token: adminToken } : {}) });
+      // H5: capture the controller locally. teardown nulls the outer `coarseAbort`,
+      // so the catch must check THIS signal — checking the nulled outer ref made an
+      // expected teardown abort log a spurious "coarse SSE ended: AbortError".
+      const ac = new AbortController();
+      coarseAbort = ac;
+      // H5: omit baseUrl → createSubscribe re-resolves the daemon port per
+      // (re)connect, so a daemon restart on a new port self-heals.
+      const subscribe = createSubscribe({
+        ...(deps.baseUrl ? { baseUrl: deps.baseUrl } : {}),
+        ...(adminToken ? { token: adminToken } : {}),
+      });
       void (async () => {
         try {
-          for await (const ev of subscribe(ensemble, { signal: coarseAbort.signal })) {
+          for await (const ev of subscribe(ensemble, { signal: ac.signal })) {
             applyTempoEvent(ctrl.model, ev);
           }
         } catch (err) {
-          if (!coarseAbort?.signal.aborted) log('coarse SSE ended:', err instanceof Error ? err.message : err);
+          if (!ac.signal.aborted) log('coarse SSE ended:', err instanceof Error ? err.message : err);
         }
       })();
     };
@@ -234,6 +253,9 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
       tailAbort = null;
       if (playerId === null || !adminToken) return;
       tailAbort = new AbortController();
+      // H5: resolve the daemon base URL HERE (per /tail) so a port change is
+      // picked up on the next tail instead of being pinned at session start.
+      const baseUrl = resolveBaseUrl(deps.baseUrl);
       const fetchFn = (globalThis as { fetch?: unknown }).fetch as
         | ((u: string, i: { method: string; headers: Record<string, string>; signal?: AbortSignal }) => Promise<{ status: number; body: AsyncIterable<Uint8Array> | null }>)
         | undefined;

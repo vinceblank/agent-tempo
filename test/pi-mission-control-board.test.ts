@@ -146,6 +146,12 @@ describe('mission-control board — tailability (H3a)', () => {
     const m = withPlayer({ playerId: 'a' }); // no hostname (older snapshot)
     expect(tailability(m, 'a', 'box-1')).to.deep.equal({ ok: true });
   });
+
+  it('flags the maestro/dashboard UI player as ui-player (not cross-host)', () => {
+    // The TUI's own maestro session stamps hostname:'dashboard' (client/core.ts).
+    const m = withPlayer({ playerId: 'maestro', hostname: 'dashboard' });
+    expect(tailability(m, 'maestro', 'box-1')).to.deep.equal({ ok: false, reason: 'ui-player' });
+  });
 });
 
 describe('mission-control — parseInnerSse', () => {
