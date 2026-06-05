@@ -203,6 +203,8 @@ The H4 manual mapping (reading the real Pi 0.78 `.d.ts` + runtime call sites mem
 
 > **Bug chain:** `render-tools.ts:48` registered `execute: (args) => handler(args)` (1-arg). Pi invokes positionally: `agent-loop.js:419` `execute(toolCall.id, args, …)` → `tool-definition-wrapper.js:10` `definition.execute(toolCallId, params, …)`. So `args` bound to `toolCallId` (string), not params. TypeScript missed it: a 1-arg fn is assignable to the real 5-arg `execute(toolCallId, params, signal, onUpdate, ctx)`. Fixed in v1.4.1 (`(_toolCallId, params) => handler(params)` + a positional regression test).
 
+The v1.4.1 fix corrected `PiToolDefinition.execute` to the real positional signature, which makes the arg-order bug a **compile error now** (the old 1-arg declaration was the mask that let it ship). The H4 drift-gate is the durable complement: it stops this class of type-lie from **recurring on a future Pi bump** by asserting our shim against the real Pi types in CI. Fix-the-lie-now + gate-prevents-recurrence.
+
 The same mapping surfaced a gate-coverage gap — `PiEventPayload.session` models an interactive-only **runtime** field Pi's 0.78 `.d.ts` doesn't declare; it's not type-assertable, so it's covered by a runtime guard instead.
 
 **Takeaway:** keep the type-gate (it catches structural renames/removals cheaply in CI on every Pi bump), but pair it with:
