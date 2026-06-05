@@ -251,7 +251,7 @@ with the agent-tempo extension injected inline (`createPiExtension({ mode:
   on each `session_start` rebuild (call `pub.start(pi)` in the rebind branch of `attachOrRebind`),
   the way the durable runtime singleton re-binds. *(QA Gate-7, 3c review.)*
 
-## Dependencies (⚠️ flagged for human review — not pre-approved)
+## Dependencies (approved)
 
 Added to `package.json`:
 
@@ -260,10 +260,11 @@ Added to `package.json`:
 - `@earendil-works/pi-coding-agent` `~0.78` and `@earendil-works/pi-ai` `~0.78` →
   **optionalDependencies** (declarative; gated behind the `probeSdkInstall` pattern).
 
-> **Open maintainer decision (D6):** Pi requires **Node ≥ 22.19**, but agent-tempo's
-> `engines` is `>=20`. This integration deliberately does **not** bump `engines` (that would force
-> Node 22 on all consumers, including non-Pi users). Whether/how to reconcile the Node floor
-> — peer-dep range, preflight hard-fail vs warn — is left for the maintainer.
+> **Decision B (ratified):** Pi requires **Node ≥ 22.19**, but agent-tempo's `engines` stays
+> `>=20` (non-Pi users are untouched). The Node floor is enforced at the **Pi recruit/spawn
+> boundary only** — preflight hard-fails with a clean error message, mirroring the
+> `probeSdkInstall`/`resolveModel` fail-clean pattern. See
+> [docs/design/pi-hardening-h1-h2-h3.md](../docs/design/pi-hardening-h1-h2-h3.md#node-floor-decision-b--ratified-by-user).
 
 ## Running the tests
 
