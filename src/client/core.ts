@@ -833,6 +833,25 @@ export function createTempoClientCore(
       };
     },
 
+    async reset(ensemble, playerId, reason) {
+      // H5b: HTTP-route counterpart to the `reset` MCP tool (D14). Enqueues the
+      // SAME `'reset'` outbox entry on the maestro outbox — no new wire. D14:
+      // reset is clean-wipe only (always `fresh: true`); `invokerPlayerId:
+      // 'maestro'` is the operator identity, surfaced to the wiped session as
+      // `requestedBy`. The caller (HTTP handler) ensures the maestro exists.
+      const maestroId = sessionWorkflowId(ensemble, 'maestro');
+      const h = handle(maestroId);
+      const entry: OutboxEntryInput = {
+        type: 'reset',
+        targetPlayerId: playerId,
+        invokerPlayerId: 'maestro',
+        fresh: true,
+        ...(reason !== undefined ? { reason } : {}),
+      };
+      const entryId = await h.executeUpdate(submitOutboxUpdate, { args: [entry] });
+      return { playerId, entryId };
+    },
+
     async detach(ensemble, playerId, deadlineMs = 5_000) {
       const maestroId = sessionWorkflowId(ensemble, 'maestro');
       const h = handle(maestroId);

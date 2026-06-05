@@ -68,6 +68,7 @@ export const WRITE_ACTIONS = [
   'release',
   'recruit',
   'restart',
+  'reset',
   'destroy',
   'detach',
   'recall',
@@ -115,6 +116,7 @@ export async function handleWriteRoute(
       case 'release': return await handleRelease(res, client, ensemble, body);
       case 'recruit': return await handleRecruit(res, client, ensemble, body);
       case 'restart': return await handleRestart(res, client, ensemble, body);
+      case 'reset':   return await handleReset(res, client, ensemble, body);
       case 'destroy': return await handleDestroy(res, client, ensemble, body);
       case 'detach':  return await handleDetach(res, client, ensemble, body);
       case 'recall':  return await handleRecall(res, client, ensemble, body);
@@ -254,6 +256,23 @@ async function handleRestart(
   // Surface remains future-compatible — if `reason` lands in
   // RestartClientOpts later, the field is already accepted.
   const result = await client.restart(ensemble, playerId);
+  jsonResponse(res, 202, result);
+}
+
+async function handleReset(
+  res: ServerResponse,
+  client: TempoClient,
+  ensemble: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const playerId = requirePlayerId(res, body);
+  if (!playerId) return;
+  const reason = stringField(body, 'reason');
+  // Reset (D14 clean-wipe) enqueues on the maestro outbox — ensure the maestro
+  // exists first (like `cue`) so a reset before it's up doesn't 500. Idempotent
+  // (USE_EXISTING). 202 + the queued entry id, mirroring `restart`.
+  await client.ensureMaestroSession(ensemble);
+  const result = await client.reset(ensemble, playerId, reason);
   jsonResponse(res, 202, result);
 }
 

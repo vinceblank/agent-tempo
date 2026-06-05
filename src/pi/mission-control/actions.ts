@@ -101,6 +101,9 @@ export class MissionControlActions {
   destroy(playerId: string, reason?: string): Promise<ActionResult> {
     return this.post(`/v1/ensembles/${this.ens()}/destroy`, { playerId, ...(reason ? { reason } : {}) });
   }
+  reset(playerId: string, reason?: string): Promise<ActionResult> {
+    return this.post(`/v1/ensembles/${this.ens()}/reset`, { playerId, ...(reason ? { reason } : {}) });
+  }
 
   // ── Operator gate plane (T3) ──
   gateArm(playerId: string): Promise<ActionResult> {

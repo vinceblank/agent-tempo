@@ -145,12 +145,10 @@ export class Controller {
   }
 
   async cmdReset(args: string, ctx: McExtensionContext): Promise<void> {
-    const p = args.trim();
-    if (!p) { this.notify(ctx, 'Usage: /reset <player>'); return; }
-    // D14 reset has NO daemon HTTP route yet (MCP/outbox only). Surface clearly
-    // rather than silently fail. Wiring a POST /v1/ensembles/:e/reset is a daemon
-    // follow-up (flagged to the conductor).
-    this.notify(ctx, `reset ${p}: not available over the daemon HTTP surface yet (MCP/outbox only). Flagged for a daemon route.`);
+    // H5b: real POST /v1/ensembles/:e/reset (D14 clean-wipe) — mirrors cmdRestart.
+    const [p, reason] = Controller.splitFirst(args);
+    if (!p) { this.notify(ctx, 'Usage: /reset <player> [reason]'); return; }
+    this.report(ctx, `reset ${p}`, await this.actions.reset(p, reason || undefined));
   }
 
   async cmdArm(args: string, ctx: McExtensionContext): Promise<void> {
@@ -296,7 +294,7 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
     pi.registerCommand('play', { description: 'Resume the ensemble (/play [release])', handler: (a, ctx) => ctrl.cmdPlay(a, ctx) });
     pi.registerCommand('restart', { description: 'Restart a player (/restart <player> [reason])', handler: (a, ctx) => ctrl.cmdRestart(a, ctx) });
     pi.registerCommand('destroy', { description: 'Destroy a player (/destroy <player> [reason])', handler: (a, ctx) => ctrl.cmdDestroy(a, ctx) });
-    pi.registerCommand('reset', { description: 'Clean-wipe a player (/reset <player>)', handler: (a, ctx) => ctrl.cmdReset(a, ctx) });
+    pi.registerCommand('reset', { description: 'Clean-wipe a player (/reset <player> [reason])', handler: (a, ctx) => ctrl.cmdReset(a, ctx) });
     pi.registerCommand('arm', { description: 'Arm/disarm the operator gate for a player (/arm <player> [off])', handler: (a, ctx) => ctrl.cmdArm(a, ctx) });
     pi.registerCommand('gate', { description: 'Decide a gate request for the tailed player (/gate <reqId> allow|deny)', handler: (a, ctx) => ctrl.cmdGate(a, ctx) });
   };
