@@ -137,6 +137,7 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
     recruit: fail,
     release: fail,
     restart: fail,
+    reset: fail,
     detach: fail,
     destroy: fail,
     migrate: fail,

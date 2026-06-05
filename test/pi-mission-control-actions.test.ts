@@ -55,6 +55,25 @@ describe('MissionControlActions — write surface', () => {
     expect(JSON.parse(fake.calls[1].body!)).to.deep.equal({ playerId: 'eng' });
   });
 
+  it('reset POSTs /reset with playerId + optional reason (H5b D14 clean-wipe)', async () => {
+    const fake = new FakeFetch();
+    const a = actions(fake);
+    await a.reset('eng', 'off-track');
+    await a.reset('eng');
+    expect(fake.calls[0].url).to.equal('http://127.0.0.1:8473/v1/ensembles/ens/reset');
+    expect(fake.calls[0].headers.Authorization).to.equal('Bearer tok');
+    expect(JSON.parse(fake.calls[0].body!)).to.deep.equal({ playerId: 'eng', reason: 'off-track' });
+    expect(JSON.parse(fake.calls[1].body!)).to.deep.equal({ playerId: 'eng' });
+  });
+
+  it('reset surfaces a non-2xx as an error (no throw)', async () => {
+    const fake = new FakeFetch();
+    fake.nextStatus = 404;
+    const a = actions(fake);
+    const r = await a.reset('ghost');
+    expect(r.ok).to.equal(false);
+  });
+
   it('gate arm/disarm/decide hit the player gate plane', async () => {
     const fake = new FakeFetch();
     fake.nextStatus = 204;
@@ -155,12 +174,23 @@ describe('mission-control Controller — commands', () => {
     expect(fake.calls.some((x) => x.url.endsWith('/gate/req-1'))).to.equal(true);
   });
 
-  it('cmdReset surfaces the no-HTTP-route gap (does not silently fail)', async () => {
+  it('cmdReset POSTs the reset route + reports success (H5b — mirrors restart)', async () => {
     const fake = new FakeFetch();
     const c = new Controller('ens', actions(fake));
     const ctx = fakeCtx();
-    await c.cmdReset('eng', ctx);
+    await c.cmdReset('eng wedged', ctx);
+    expect(fake.calls).to.have.length(1);
+    expect(fake.calls[0].url).to.equal('http://127.0.0.1:8473/v1/ensembles/ens/reset');
+    expect(JSON.parse(fake.calls[0].body!)).to.deep.equal({ playerId: 'eng', reason: 'wedged' });
+    expect(ctx.notes[0]).to.contain('✓');
+  });
+
+  it('cmdReset with no player shows usage (no POST)', async () => {
+    const fake = new FakeFetch();
+    const c = new Controller('ens', actions(fake));
+    const ctx = fakeCtx();
+    await c.cmdReset('', ctx);
     expect(fake.calls).to.have.length(0);
-    expect(ctx.notes[0]).to.contain('not available');
+    expect(ctx.notes[0]).to.contain('Usage');
   });
 });

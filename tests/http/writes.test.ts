@@ -54,6 +54,7 @@ function makeMockClient(opts: MockOptions = {}): { client: TempoClient; calls: C
     release: handler('release', { released: ['p1'], errors: [] }),
     recruit: handler('recruit', { playerId: 'tempo-eng', entryId: 'entry-1' }),
     restart: handler('restart', { playerId: 'tempo-eng', entryId: 'restart-1' }),
+    reset: handler('reset', { playerId: 'tempo-eng', entryId: 'reset-1' }),
     destroy: handler('destroy', undefined),
     detach: handler('detach', undefined),
     recall: handler('recall', { received: [], sent: [] }),
@@ -392,6 +393,53 @@ describe('POST /v1/ensembles/:ensemble/restart', () => {
       mock: { throws: { restart: new Error('No session found with name "ghost" in ensemble "demo".') } },
     });
     const res = await postJson(`${b.url}/v1/ensembles/demo/restart`, { playerId: 'ghost' });
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('session-not-found');
+  });
+});
+
+describe('POST /v1/ensembles/:ensemble/reset', () => {
+  it('ensures the maestro + routes to client.reset (ensemble, playerId, reason?) and returns 202', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/reset`, {
+      playerId: 'tempo-eng',
+      reason: 'stuck',
+    });
+    expect(res.status).toBe(202);
+    // Maestro is ensured before the reset enqueue (parity with cue — no 500
+    // when the maestro isn't up yet).
+    expect(b.calls.find((c) => c.method === 'ensureMaestroSession')?.args).toEqual(['demo']);
+    expect(b.calls.find((c) => c.method === 'reset')?.args).toEqual(['demo', 'tempo-eng', 'stuck']);
+    expect(await res.json()).toEqual({ playerId: 'tempo-eng', entryId: 'reset-1' });
+  });
+
+  it('reason is optional (undefined passed through)', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/reset`, { playerId: 'tempo-eng' });
+    expect(res.status).toBe(202);
+    expect(b.calls.find((c) => c.method === 'reset')?.args).toEqual(['demo', 'tempo-eng', undefined]);
+  });
+
+  it('400 missing-field on absent playerId (no reset, no ensure)', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/reset`, {});
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'missing-field', field: 'playerId' });
+    expect(b.calls.find((c) => c.method === 'reset')).toBeUndefined();
+  });
+
+  it('400 invalid-player-name on bad playerId', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/reset`, { playerId: 'has spaces' });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('invalid-player-name');
+  });
+
+  it('404 session-not-found when client throws "No session found"', async () => {
+    const b = await boot({
+      mock: { throws: { reset: new Error('No session found with name "ghost" in ensemble "demo".') } },
+    });
+    const res = await postJson(`${b.url}/v1/ensembles/demo/reset`, { playerId: 'ghost' });
     expect(res.status).toBe(404);
     expect((await res.json()).error).toBe('session-not-found');
   });

@@ -62,6 +62,7 @@ const CORE_METHOD_NAMES = [
   'recruit',
   'release',
   'restart',
+  'reset', // H5b/#645 — D14 clean-wipe via maestro outbox (HTTP-route counterpart of the `reset` MCP tool)
   'detach',
   'destroy',
   'migrate',

@@ -124,6 +124,13 @@ export interface RestartClientResult {
   entryId: string;
 }
 
+export interface ResetClientResult {
+  /** Player the reset (clean-wipe) was queued for. */
+  playerId: string;
+  /** Outbox entry id; callers can poll `submitOutbox` history or `outboxQuery` for status. */
+  entryId: string;
+}
+
 // ── #287: ensemble-scope verb summaries ──
 
 /** Per-target outcome returned by `shutdown`. */
@@ -318,6 +325,15 @@ export interface TempoClientCore {
   release(ensemble: string, playerId?: string): Promise<ReleaseClientResult>;
   /** PR-D: Restart a player — §8.2 algorithm. Works on any non-`gone` phase. */
   restart(ensemble: string, playerId: string, opts?: RestartClientOpts): Promise<RestartClientResult>;
+  /**
+   * H5b: Clean-wipe a player's conversation context (D14 reset) via the maestro
+   * outbox — the HTTP-route counterpart to the `reset` MCP tool. Always
+   * `fresh: true`; the operator identity (`invokerPlayerId: 'maestro'`) is
+   * surfaced to the wiped session. Reuses the existing reset machinery — no new
+   * wire. The caller must ensure the maestro session exists first (the daemon
+   * HTTP handler does, mirroring `cue`).
+   */
+  reset(ensemble: string, playerId: string, reason?: string): Promise<ResetClientResult>;
   /** PR-D: Gracefully detach a player's adapter. Workflow survives in `detached`. */
   detach(ensemble: string, playerId: string, deadlineMs?: number): Promise<void>;
   /**
