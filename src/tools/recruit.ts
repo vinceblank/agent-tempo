@@ -15,7 +15,7 @@ import {
   probeClaudeAuth,
 } from '../adapters/claude-code-headless/pre-flight';
 import { CLAUDE_CODE_PERMISSION_MODES } from '../adapters/claude-code-headless/types';
-import { probeCopilotPiPreflight, PI_PACKAGE, PI_AI_PACKAGE } from '../pi/probe';
+import { probeCopilotPiPreflight, checkPiNodeFloor, PI_PACKAGE, PI_AI_PACKAGE } from '../pi/probe';
 
 const toolLog = (...args: unknown[]) => console.error('[agent-tempo:recruit]', ...args);
 
@@ -289,6 +289,13 @@ export function buildRecruitTool(
       // dep required at the headless entry; gate at recruit (cross-host skips —
       // the target daemon's availableAgentTypes is the gate there).
       if (agent === 'pi' && !host && !force) {
+        // Node-floor (Decision B, #645) — AUTHORITATIVE gate. The Pi optional deps
+        // require Node >= 22.19; fail clean BEFORE spawn (the headless entry has a
+        // backstop). Local recruit only — cross-host (`host` set) defers to the
+        // target daemon's availableAgentTypes. Gates BOTH the Copilot and
+        // Anthropic/Pi-default paths below.
+        const nodeFloor = checkPiNodeFloor();
+        if (!nodeFloor.ok) return fail(`agent: "pi" — ${nodeFloor.reason} Or use \`force: true\` to bypass.`);
         // Validate the model selector format up front (provider/model).
         let parsedModel: { provider: string; model: string } | undefined;
         if (model) {

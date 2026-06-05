@@ -27,7 +27,8 @@
 import { getConfig, sessionWorkflowId, ENV, type Config } from '../config';
 import { probeSdkInstall } from '../utils/sdk-probe';
 import { createPiExtension, detachAllPiRuntimesForExit, setRuntimeSession, type PiToolAccess } from './extension';
-import { PI_PACKAGE, PI_AI_PACKAGE } from './probe';
+import { PI_PACKAGE, PI_AI_PACKAGE, checkPiNodeFloor } from './probe';
+import { seedSessionManager, type SeedableSessionManager } from './session-seed';
 import type { PiAgentSession } from './pi-types';
 
 const log = (...args: unknown[]): void => {
@@ -155,6 +156,17 @@ export async function runHeadlessPi(opts: RunHeadlessPiOptions = {}): Promise<vo
   const config = opts.config ?? getConfig();
   const toolAccess: PiToolAccess = opts.toolAccess ?? 'restricted';
 
+  // 0) Node-floor backstop (Decision B, #645). The recruit pre-flight is the
+  //    AUTHORITATIVE gate; this covers direct/manual launches that bypass recruit.
+  //    Checked before the SDK probe because Pi's ESM packages can't even import on
+  //    sub-22.19 Node — a clean floor message beats a cryptic import failure.
+  const nodeFloor = checkPiNodeFloor();
+  if (!nodeFloor.ok) {
+    log(`FATAL: ${nodeFloor.reason} Exiting.`);
+    process.exit(3);
+    return;
+  }
+
   // 1) Probe — the spawn entry is the only place the Pi SDK is REQUIRED.
   if (!probeSdkInstall(PI_PACKAGE)) {
     log(`FATAL: ${PI_PACKAGE} is not installed — cannot run headless Pi. Exiting.`);
@@ -178,6 +190,21 @@ export async function runHeadlessPi(opts: RunHeadlessPiOptions = {}): Promise<vo
   const piSdk = await esmImport(PI_PACKAGE);
   const createAgentSession = piSdk.createAgentSession as (o: Record<string, unknown>) => Promise<{ session: PiSdkSession }>;
   const DefaultResourceLoader = piSdk.DefaultResourceLoader as new (o: Record<string, unknown>) => { reload(): Promise<void> };
+
+  // H1 (#645): ALWAYS run in-memory. A disk-backed SessionManager loads
+  // ~/.pi/agent/sessions/<cwd>/*.jsonl on startup; a stale/partial entry with
+  // malformed `content` throws "content is not iterable" during Pi's
+  // compaction/consumption scan (agent-session.js:2486/2493). inMemory loads
+  // nothing from disk → that crash vector is gone. `sessionManager` and
+  // `resourceLoader` are INDEPENDENT createAgentSession options (no conflict with
+  // the noExtensions/reload() path above).
+  const SessionManager = piSdk.SessionManager as { inMemory(cwd?: string): unknown };
+  const sessionManager = SessionManager.inMemory(process.cwd());
+  // Single appendMessage chokepoint (session-seed.ts). For a fresh recruit the
+  // transcript is empty → no-op; H2 supplies the durable replay read here
+  // (fetch_state on ENV.PI_CONTINUE_SESSION). headless.ts NEVER calls
+  // appendMessage directly — sanitization is the only crash lever we control.
+  seedSessionManager(sessionManager as SeedableSessionManager, undefined /* H2: durable replay transcript */);
   // Pi's DefaultResourceLoader REQUIRES agentDir (normalizePath does
   // `.startsWith()` on it) — getAgentDir() resolves ~/.pi/agent. Pass it to BOTH
   // createAgentSession and the loader. (Found in the 3a live smoke — devops.)
@@ -202,9 +229,10 @@ export async function runHeadlessPi(opts: RunHeadlessPiOptions = {}): Promise<vo
     agentDir,
     ...(model ? { model } : {}),
     resourceLoader,
-    // NOTE (A4): restart-resume via a SessionManager seeded from
-    // opts.continueSessionId / ENV.PI_CONTINUE_SESSION lands in A4; 3a proves the
-    // loop on a fresh session.
+    // H1 (#645): in-memory session (seeded above via the session-seed chokepoint).
+    // H2 will seed it from agent-tempo durable state (ENV.PI_CONTINUE_SESSION
+    // saveable-state key) before this call — a true continuation, not a cue.
+    sessionManager,
   });
 
   // 5) Explicit bootstrap — fires session_start → the singleton claims/attaches.
