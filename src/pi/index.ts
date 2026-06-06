@@ -18,8 +18,14 @@ export { PhaseDriver } from './phase-driver';
 export type { PiPhase, WorkflowAction, PhaseDriverResult } from './phase-driver';
 export { PiWorkflowClient } from './workflow-client';
 export type { PiWorkflowClientOptions } from './workflow-client';
-export { CuePump } from './cue-pump';
-export type { CueSource, SessionResolver, CuePumpOptions } from './cue-pump';
+export { CuePump, buildPiInjector } from './cue-pump';
+export type {
+  CueSource,
+  MessageInjector,
+  InjectorResolver,
+  InjectorRuntime,
+  CuePumpOptions,
+} from './cue-pump';
 export { renderToPi, toPiResult } from './render-tools';
 export { createLazyProxy } from './lazy-proxy';
 export { zodShapeToTypeBox, UnsupportedZodFeatureError } from './zod-to-typebox';

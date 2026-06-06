@@ -281,6 +281,26 @@ export interface PiToolDefinition {
 export interface ExtensionAPI {
   on(event: PiLifecycleEvent | string, handler: PiEventHandler): void;
   registerTool(def: PiToolDefinition): void;
+  /**
+   * Inject a custom message into the live session through the STABLE `pi` handle
+   * (#677). Same message shape as `PiAgentSession.sendCustomMessage`'s param0
+   * (`Pick<CustomMessage, "customType"|"content"|"display"|"details">`). This is
+   * the interactive cue-injection path: Pi 0.78.1's `SessionStartEvent` carries
+   * NO `session` field, so `PiEventPayload.session` is null in interactive mode —
+   * routing cues through `pi.sendMessage` (re-resolved per tick from the surviving
+   * runtime) injects reliably regardless. Optional in the slice (Pi provides it; a
+   * fake/older Pi may not — the cue pump feature-detects with `typeof`).
+   */
+  sendMessage?(message: PiOutboundMessage, options?: PiCustomMessageOptions): void;
+  /**
+   * Inject a USER-role message — ALWAYS triggers a turn (#677 escalation path).
+   * When `sendMessage`'s `triggerTurn` fails to wake a cold-idle agent, the cue
+   * pump re-injects the SAME cue via this user-role call (a user message always
+   * starts a turn). It LOSES the `cue` customType + operator-vs-peer steer/followUp
+   * semantics, so it is FALLBACK-ONLY (never the primary route). Optional in the
+   * slice for the same reason as `sendMessage`.
+   */
+  sendUserMessage?(content: string, options?: { deliverAs?: 'steer' | 'followUp' }): void;
 }
 
 /** An extension is a default-exported function receiving the `ExtensionAPI`. */

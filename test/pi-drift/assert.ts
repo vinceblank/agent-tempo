@@ -81,6 +81,26 @@ export const _passOpts: AssertAssignable<
   NonNullable<Parameters<RealAgentSession['sendCustomMessage']>[1]>
 > = true;
 
+// #677 — interactive cue-injection routes through the STABLE `pi` ExtensionAPI
+// handle (pi.sendMessage / pi.sendUserMessage) because Pi 0.78.1's
+// SessionStartEvent carries no `session` field. Lock our shim's params assignable
+// to the REAL ExtensionAPI methods (we hand the values TO Pi → PASS rows).
+//   - sendMessage takes the SAME Pick<CustomMessage,…> shape as sendCustomMessage,
+//   - sendMessage opts {steer|followUp|triggerTurn} ⊂ real {…|nextTurn},
+//   - sendUserMessage takes a plain string (always triggers a turn).
+export const _passSendMsg: AssertAssignable<
+  PiOutboundMessage,
+  Parameters<RealExtensionAPI['sendMessage']>[0]
+> = true;
+export const _passSendOpts: AssertAssignable<
+  PiCustomMessageOptions,
+  NonNullable<Parameters<RealExtensionAPI['sendMessage']>[1]>
+> = true;
+export const _passSendUserContent: AssertAssignable<
+  string,
+  Parameters<RealExtensionAPI['sendUserMessage']>[0]
+> = true;
+
 // Our widget placement union is EXACTLY the real WidgetPlacement (both directions).
 export const _placementSubset: AssertAssignable<'aboveEditor' | 'belowEditor', RealWidgetPlacement> = true;
 export const _placementSuperset: AssertAssignable<RealWidgetPlacement, 'aboveEditor' | 'belowEditor'> = true;
@@ -186,4 +206,11 @@ export function _registerSurfaceExists(pi: RealExtensionAPI): void {
   const _rs: RealExtensionAPI['registerShortcut'] = pi.registerShortcut;
   const _rt: RealExtensionAPI['registerTool'] = pi.registerTool;
   void _rc, _rs, _rt;
+}
+
+// #677 — our exact cue-injection calls COMPILE against the real ExtensionAPI
+// (catches removal/rename + param drift of sendMessage/sendUserMessage in one row).
+export function _sendSurfaceCallShape(pi: RealExtensionAPI): void {
+  pi.sendMessage({ customType: 'cue', content: 'x', display: true }, { deliverAs: 'followUp', triggerTurn: true });
+  pi.sendUserMessage('x', { deliverAs: 'followUp' });
 }
