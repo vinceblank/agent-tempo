@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.0-beta.2] - 2026-06-06
+
+> **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
+
+### Added
+- **Command-center P2** — mission-control Q&A and handoff layer, Closes #700:
+  - Maestro Q&A mailbox — durable question/answer store on workflow state
+  - `respond` MCP tool — lets players answer questions directed at them
+  - Daemon `ask`/`answer` HTTP routes + SSE wake for real-time Q&A notification
+  - Planner Q&A and handoff support — conductors can hand off mid-plan with context
+  - Unified guardrails with client-cooperative supervised mode
+  - Dashboard answer-consumer fix — UI correctly surfaces pending questions
+  - `ensureInfra` logging improvements
+
 ## [1.7.0-beta.1] - 2026-06-06
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
