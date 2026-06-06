@@ -732,6 +732,85 @@ No renames, no removals — additive only.
 
 ---
 
+## 7B. P2 BUILD SPEC — authoritative, self-contained handoff
+
+> **This section is the SINGLE authoritative build source for P2.** The implementing engineer builds
+> from this doc with no channel history. Design rationale lives in §4 (maestro Q&A), §5 (operating
+> model), §6 (guardrails — incl. the full failMode tables + `awaitDecision` shape), §7A (build surface).
+> Workstream review domains: **[TA]** = tempo-architect (maestro/workflow/wire/determinism); **[GA]** =
+> greenfield-architect (planner tool-surface + guardrails). Both halves reviewed GREEN 2026-06-06.
+
+### Cross-cutting invariants (READ FIRST)
+
+- **TWO workflow/metadata touches → each needs `npm run build` (workflow-bundle.js rebuild) +
+  `docs/WIRE-PROTOCOL.md` in the SAME commit:** (1) the maestro **answers mailbox** (commit 1 / A), and
+  (2) the **`guardrailPolicy` SessionMetadata field** (commit 5 / G). These are the only determinism-
+  sensitive changes; everything else is client/daemon-side.
+- **Determinism (the maestro change, A):** use `workflowNow()` / the SDK-intercepted `new Date()` —
+  **never `Date.now()`**; **no `Math.random()` / no workflow-side id generation** (the `questionId` is
+  **caller-supplied** by the planner, passed in — the workflow never mints it); the TTL **sweep stays a
+  PURE function called from the existing 5s refresh tick** (no new timer); **NO `patched()` marker** —
+  the change is additive AND replay-safe ONLY while the sweep stays pure (if a future change makes it
+  impure, it then needs a patch). Mirror the #318 coat-check patterns exactly.
+- **All wire additions are ADDITIVE** — no renames, no removals. `WIRE-PROTOCOL.md` updated same-commit.
+- **Per-commit gates (every commit):** strict `tsc` BOTH configs (`tsconfig.json` + `test/tsconfig.json`);
+  CI-collection on any new test dir (mocha `test/` + vitest `tests/` — grep BOTH, verify count rises);
+  `lint:surface-drift` (new tools) + `lint:pi-drift` (pi-ui changes); `npm run build` after A and G's
+  metadata touch.
+
+### Single-source constants (anti-drift — one home, derive the rest)
+
+| Constant | Value | Home / note |
+|---|---|---|
+| `MAESTRO_ANSWER_TTL_MS` | **1h** (fixed) | answers mailbox TTL (shorter than coat-check's 7d — Q&A is transient) |
+| `MAESTRO_ANSWERS_MAX` | **20** | answers-full reject AFTER sweep (mirror coat-check `SLOTS_MAX`) |
+| answer text cap | `MESSAGE_MAX` | `utils/validation` |
+| `GATE_AUTO_ALLOW_MS` | **45s** | daemon MONITORED (open) auto-allow — **existing, unchanged** |
+| `GATE_CLOSED_DENY_MS` | **300s** | daemon SUPERVISED (closed) auto-deny — **new**; same constants home |
+| client closed deadline | **≥ `GATE_CLOSED_DENY_MS` + buffer (≥310s)** | **DERIVED** from the daemon constant (invariant `client_closed > daemon_closed`) — never hard-code stale |
+
+### The 6-commit sequence (from lead's plan; per-commit files + flags)
+
+**Commit 1 — [TA] A: maestro Q&A mailbox** ★ determinism + wire + bundle
+- `types.ts`: `AnswerEntry { questionId; from; text; answeredAt }`.
+- `workflows/maestro-signals.ts` (additive): `maestroPostAnswerUpdate` (`<{stored:true},[{questionId,from,text}]>`) + `maestroGetAnswerQuery` (`<AnswerEntry|null,[questionId]>`). (`maestroPostQuestion` audit update = DEFER.)
+- `workflows/maestro.ts`: `answers: Record<questionId,AnswerEntry>` on state; both setHandlers; **pure TTL-sweep** in every handler entry + the 5s tick (clone `sweepExpired*`); CAN-carry `MaestroInput.answers` **only-when-non-empty**; `answeredAt` via `workflowNow()`. Caps: `MAESTRO_ANSWERS_MAX` reject-after-sweep, text ≤ `MESSAGE_MAX`.
+- `docs/WIRE-PROTOCOL.md` (both names) + `npm run build`.
+- Tests `test/` (TestWorkflowEnvironment): post→query roundtrip; null-before-present; TTL expiry; CAN-carry; caps.
+
+**Commit 2 — [TA] B: player `respond` tool**
+- `tools/respond.ts` + `descriptor.ts`: `respond({questionId,text})` → `maestroHandle.executeUpdate(maestroPostAnswerUpdate, {args:[{questionId, from: getPlayerId(), text}]})` — **direct maestro-handle write** (like `coat_check_*`; NOT outbox/peer-signal → outbox invariant intact). Resolve handle via `maestroWorkflowId(ensemble)`. `from = getPlayerId()` (no spoofable arg). Validate `questionId`/`text` via `utils/validation` (`MESSAGE_MAX`).
+- Register in `server-tools.ts` (lands on BOTH renderToPi + classic MCP). `docs/SURFACE-REGISTRY.md` + `docs/tools.md`. `respond` is **low-risk** in `classify()` (it answers, doesn't act).
+- Tests `tests/tools/` (vitest): schema, from=getPlayerId, executeUpdate shape.
+
+**Commit 3 — [GA] C+D: daemon ask/answer routes + SSE answer-wake**
+- C: `POST /v1/ensembles/:e/ask {target,question,questionId}` → cue `target` carrying **`[Q <questionId>]`** marker + "respond via `respond`" instruction; 202. **Validate `questionId` shape at the route** (regex/length, like coat-check tickets). `GET /v1/ensembles/:e/answer/:questionId` → proxy `maestroGetAnswerQuery`. Auth: ask=T2 (write), answer=T1/loopback (read). Route in `http/server.ts`.
+- D: `http/event-types.ts` add `TempoEvent` `{type:'answer', questionId, from, ts}` (text fetched on read). **`http/aggregate.ts`: daemon TRACKS OUTSTANDING asks in-memory** (it served `/ask`, so it knows `{questionId,ensemble}`) and **polls `maestroGetAnswer(questionId)` per-outstanding** — NOT a whole-map diff (would need a new list-query). On resolve → emit `answer` event + drop. Daemon-restart degrades to read-on-reconnect (the `GET` is source of truth). Add `answer` to `docs/SSE-PROTOCOL.md`.
+- Mission-control SSE handler: on `answer` → wake planner `session.sendCustomMessage({customType:'answer',content},{triggerTurn:true})`.
+- Tests `tests/http/`: ask cues with marker+questionId; outstanding-poll emits once; answer proxies query; 404/validation.
+
+**Commit 4 — [GA] E+F: planner tool surface + handoff**
+- E: `pi-ui.ts` add `registerTool` to the McExtensionAPI slice (verify vs Pi 0.78 types; pi-drift gate). `actions.ts`: `ask({target,question,questionId})` + `readAnswer(questionId)`. `extension.ts`: register Pi TOOLS (`ask`, `handoff`, `cue`, `recruit`, `observe_board` → returns BoardModel snapshot as text, **CAPPED** top-N+summary) alongside the human commands. **`ask` tool = YIELD-NOT-POLL** (POST + return "dispatched; you'll be woken"; SSE wake resumes the turn). Human `/ask` (cmdAsk) polls `readAnswer` **with a BOUNDED timeout + cancel** (don't wedge the TUI).
+- F: `cmdHandoff` + `handoff` tool: push plan to the durable headless conductor via cue (small) or coat-check ticket (large), `customType:'plan-handoff'` (§5.4 skeleton). Update the **shipped `examples/agents/tempo-conductor.md`** (the one a Pi conductor resolves) with the "on plan-handoff → set_ensemble_description → recruit/assign → quality_gate/stage → orchestrate" instruction. Document the `plan-handoff` customType.
+- Tests `test/` (mocha): ask routes+yields; observe_board capped; handoff cue/coat-check; both tool+command land on actions.
+
+**Commit 5 — [GA] G: unified guardrails** ★ second metadata touch (policy-storage) + bundle + wire
+- **Policy-storage [TA-ruled]:** `guardrailPolicy` in **durable `SessionMetadata`** (NOT the env-path `toolAccess` uses) — values **`autonomous` (default) | `monitored` | `supervised` | `observe-only`**. Additive; recruit-arg → metadata-set → persisted; **arm-at-boot reads it on attach**. **Durable specifically so a restart re-reads the persisted policy at arm-at-boot and does NOT silently downgrade to autonomous** (restart-downgrade is bypassed — unlike an env-path value a restart could lose). Additive wire → `WIRE-PROTOCOL.md` + `npm run build` (the SECOND bundle-rebuild touch). *(Confirm exact semantics with tempo-architect — its ruling.)*
+- **classify() extraction:** move `src/pi/tool-capability.ts` → **`src/security/tool-capability.ts`** (neutral, importable by the non-Pi planner). **Atomic — re-point ALL consumers in ONE commit**: both `extension.ts` usages (the `import` + the `classify(event.toolName)` gate call) + the new planner import; parity tests follow the move; strict tsc both = the dangling-import gate. Phase-3d is merged (#636) → extract against main, no wait. **tempo-architect reviews the gate-import hunk.**
+- **failMode — BOTH gate halves, SAME commit** (full detail + `awaitDecision` shape + client return-point table in §6): daemon `gate-registry` (per-arm `failMode`, `getResolution` auto-DENY for closed, new **`'auto-deny'` GateDecision**) AND subprocess `gate-client.ts` (`awaitDecision` failMode-threaded, `pollOnce` maps `auto-deny`→deny, client closed deadline ≥ daemon+buffer, `!enabled`/deadline/daemon-down → deny). `failMode` **defaults `'open'`** (preserves MD-G). `supervised` arms `closed`; transports headless→gate / interactive→`ctx.ui.confirm`.
+- **(b) no-token backstop:** spawn **preflight guarantees** the ingest token for a supervised agent; runtime `closed`+no-token → DENY (never silent allow).
+- Tests: classify-extraction parity (existing pi tool-capability tests follow); failMode closed→deny on timeout (both halves); policy→arm-at-boot mapping; restart preserves policy.
+
+**Commit 6 — [GA] H: fold the P1 ensureInfra-logging nit**
+- `ensureInfra`'s `registerSearchAttributes` writes via raw `out.*` → route through `onStep` (or a `quiet` flag) when called from the extension TUI path, so `/ensemble-up` doesn't spew console lines into Pi's render.
+
+### Q1 / Q4 (ruled — restated here for the self-contained handoff)
+
+- **Q1 admin-token:** extension-SPAWNED daemon → `ensureInfra` **generates** the admin token, passes it via `AGENT_TEMPO_HTTP_ADMIN_TOKEN` env at spawn + **holds it in-process** for `MissionControlActions` (**zero disk persist** — the admin token is env-only by security design; persisting is a regression). Already-running daemon → **require `AGENT_TEMPO_HTTP_ADMIN_TOKEN` in the operator env** + clear error if absent. Full auto-discovery handshake = **P2.1**.
+- **Q4 supervised timeout/notify:** `GATE_CLOSED_DENY_MS = 300s` auto-DENY (vs 45s monitored auto-allow); **operator-notify = reuse the existing inner-loop `gate_pending` publish → mission-control board** (no new mechanism). Headless MD-G path only; the interactive planner uses `ctx.ui.confirm` (blocks on the local human — no timeout).
+
+---
+
 ## 8. Distribution — installing the extensions the `.pi` way (resolved)
 
 All `[VERIFY]` items here are now **resolved** against tempo-researcher's Pi 0.78.1 install-model
