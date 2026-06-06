@@ -333,6 +333,30 @@ held (locked) but not paused, or paused but not locked.
 
 ---
 
+## Command-center and player supervision
+
+**Command-center planner** (#700 P2) — An inbox-less interactive Pi session (the operator's planning seat) that routes questions through the maestro Q&A mailbox instead of Temporal inbox signals. The planner is not a registered player — it has no Temporal inbox, which is why Q&A routes through the maestro. The planner sends a `cue` tagged `[Q <questionId>]` to a player; the player calls `respond` (passes `questionId` + answer `text`) to park the answer on the maestro via `maestroPostAnswer`; the planner reads it back via `maestroGetAnswer` and is woken by the `answer` SSE event when the answer lands (see [SSE-PROTOCOL.md §6](SSE-PROTOCOL.md)). Cap: 20-slot mailbox, TTL 1h per answer. `/handoff` cues hand active work to a conductor — a registered player with a Temporal inbox that executes the plan.
+
+**Guardrail policy** (`guardrailPolicy` on `SessionMetadata`) — Durable per-player posture set at `recruit`; re-sourced from `getMetadata` at each `(re)attach` so it survives restarts. Controls how the operator gate engages for headless Pi players.
+
+| Value | Operator gate | Fail posture on absence |
+|---|---|---|
+| `autonomous` | Off (default) | — |
+| `monitored` | Armed when operator present | **Open** — auto-allow after 45 s |
+| `supervised` | Always armed (self-arming) | **Closed** — auto-deny after 300 s |
+| `observe-only` | Not a gate — non-`low-risk` tools hard-blocked outright | — |
+
+> **`supervised` is client-cooperative in P2, not tamper-proof.** The headless Pi agent honors its own declared policy; a compromised or policy-ignoring agent is not blocked by the P2 gate alone. Daemon-side enforcement (intercepting tool calls before they reach the agent) is the P2.1 follow-up (#44). Do not model `supervised` as a security boundary until P2.1 ships.
+
+**Operator gate / failMode** — When the gate is engaged (`monitored` or `supervised`), non-`low-risk` Pi tool calls pause before execution and emit an `inner.gate_pending` frame. The operator approves or denies via the mission-control board or `POST /gate/:requestId`. If no decision arrives within the timeout, `failMode` resolves it:
+
+- `open` (`monitored`): 45 000 ms → **auto-allow**. The agent proceeds autonomously when no operator is watching.
+- `closed` (`supervised`): 300 000 ms → **auto-deny**. The tool is blocked when no operator is present.
+
+Tool capability classes (fixed): `exec` tools (bash/shell/powershell/etc.) are always hard-blocked at `restricted` toolAccess regardless of gate posture; `high-blast` tools (broad reads/writes/web) route to the gate when armed; `low-risk` tools (targeted reads, annotations) always pass through.
+
+---
+
 ## Infrastructure
 
 **Maestro** — Two Temporal workflow variants that aggregate ensemble state:
