@@ -22,7 +22,24 @@
 // we falsely conclude the parent is alive. The stdin EOF path catches
 // that case immediately, so this is purely a fallback.
 
+import { ENV } from '../config';
+
 const log = (...args: unknown[]) => console.error('[agent-tempo:watchdog]', ...args);
+
+/**
+ * Should the ppid-poll signal be installed? FALSE only when a TRANSIENT-CLI
+ * spawner set {@link ENV.NO_PPID_WATCHDOG} on a process it intentionally detached
+ * to OUTLIVE it (#672 — e.g. the short-lived `up` conductor: polling its dead pid
+ * would self-kill the conductor seconds after launch). Pure + injectable.
+ *
+ * Skipping ppid-poll is propagation-SAFE: the flag inherits down the spawn tree,
+ * but stdin-EOF (always installed) protects any child — its stdin IS this
+ * process's pipe, so it fires the instant THIS process dies. Only the ppid-poll
+ * (which keys on the SPAWNER, not the immediate parent) is the harmful signal.
+ */
+export function shouldInstallPpidPoll(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[ENV.NO_PPID_WATCHDOG] !== '1';
+}
 
 export function installParentDeathWatchdog(): void {
   const exit = (reason: string) => {
@@ -30,9 +47,17 @@ export function installParentDeathWatchdog(): void {
     process.exit(0);
   };
 
+  // stdin-EOF — UNIVERSALLY correct + ALWAYS installed: a closed stdin pipe means
+  // the IMMEDIATE parent is gone. This is what reaps a detached process's OWN
+  // children even when ppid-poll is skipped (the child's stdin is our pipe).
   process.stdin.on('end', () => exit('stdin end'));
   process.stdin.on('close', () => exit('stdin close'));
 
+  // ppid-poll — keys on the SPAWNER's death. Correct for a long-lived daemon
+  // spawner (#604 anti-leak), HARMFUL for a transient CLI that detached us to
+  // outlive it (#672). Skipped when the spawner marked itself transient; the
+  // Temporal lease TTL reaps a genuinely-orphaned detached process instead.
+  if (!shouldInstallPpidPoll()) return;
   const parentPid = process.ppid;
   if (parentPid && parentPid > 1) {
     const timer = setInterval(() => {

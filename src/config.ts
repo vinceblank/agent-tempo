@@ -135,6 +135,15 @@ export const ENV = {
    */
   DEV_MODE: 'AGENT_TEMPO_DEV_MODE',
   /**
+   * #672 — set to `'1'` by a TRANSIENT-CLI spawner (e.g. the short-lived `up`
+   * conductor) on a process it intentionally DETACHES to outlive that spawner.
+   * Tells the parent-death watchdog to skip ONLY the ppid-poll signal (which
+   * would otherwise self-kill the detached process when the transient spawner
+   * exits); the universally-correct stdin-EOF signal stays. Daemon-recruit
+   * spawns do NOT set it, so recruited adapters keep the #604 anti-leak ppid-poll.
+   */
+  NO_PPID_WATCHDOG: 'AGENT_TEMPO_NO_PPID_WATCHDOG',
+  /**
    * Escape hatch for triple-isolated environments (ADR 0014 §5.3). When
    * set, `resolveTempoHome()` returns this path verbatim — bypassing both
    * the production default and the dev-mode default. Lets a power user

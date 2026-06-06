@@ -86,6 +86,9 @@ describe('buildPiConductorSpawn (#666 — args + env mapping)', () => {
     expect(env[ENV.ENSEMBLE]).toBe('demo');
     expect(env[ENV.CONDUCTOR]).toBe('true');
     expect(env[ENV.PLAYER_NAME]).toBe('conductor');
+    // #672: the pi conductor is a transient-CLI detached spawn → ppid-poll skipped
+    // (inert today since pi installs no watchdog, but principled + propagation-safe).
+    expect(env[ENV.NO_PPID_WATCHDOG]).toBe('1');
     // Optional fields ABSENT when not provided.
     expect(env[ENV.DEV_MODE]).toBeUndefined();
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();

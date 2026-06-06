@@ -558,6 +558,10 @@ export function buildPiConductorSpawn(opts: PiConductorSpawnOpts): {
     [ENV.TASK_QUEUE]: opts.taskQueue,
     [ENV.ENSEMBLE]: opts.ensemble,
     [ENV.CONDUCTOR]: 'true', // codebase-consistent; the Pi extension accepts '1'|'true'
+    // #672 — the Pi conductor is launched detached by the transient `up` CLI:
+    // skip the ppid-poll (no current pi process installs the watchdog, but this is
+    // propagation-safe + principled if a pi subprocess ever does; stdin-EOF stays).
+    [ENV.NO_PPID_WATCHDOG]: '1',
     [ENV.PLAYER_NAME]: opts.sessionName,
     ...(opts.devMode ? { [ENV.DEV_MODE]: '1' } : {}),
     ...(opts.anthropicApiKey ? { ANTHROPIC_API_KEY: opts.anthropicApiKey } : {}),
@@ -590,6 +594,16 @@ export interface CopilotBridgeOpts {
   attachmentId?: string;
   attachmentRunId?: string;
   adapterId?: string;
+  /**
+   * #672 — set true by a TRANSIENT-CLI spawner that launches this bridge DETACHED
+   * to outlive it: BOTH the `up` conductor (commands.ts) AND the `up --lineup`
+   * copilot PLAYER loop (commands.ts applyLineupPlayersAndSchedules) — both spawn
+   * the bridge directly (no terminal), so its ppid is the short-lived CLI. When
+   * set, the bridge skips the ppid-poll that would self-kill it on the CLI's exit
+   * (stdin-EOF stays). The DAEMON-recruit path (outbox.ts) OMITS it → the bridge
+   * keeps the ppid-poll (#604 anti-leak on daemon death; ppid = persistent daemon).
+   */
+  transientSpawner?: boolean;
 }
 
 export interface CopilotBridgeResult {
@@ -641,6 +655,9 @@ export function spawnCopilotBridge(opts: CopilotBridgeOpts): CopilotBridgeResult
         [ENV.BRIDGE_MODE]: '', // Clear parent's bridge mode
         [ENV.TEMPORAL_ADDRESS]: opts.temporalAddress,
         [ENV.CONDUCTOR]: opts.isConductor ? 'true' : '',
+        // #672 — transient-CLI spawner: the detached bridge skips the ppid-poll
+        // (would self-kill on the short-lived `up` exit). Daemon recruit omits it.
+        ...(opts.transientSpawner ? { [ENV.NO_PPID_WATCHDOG]: '1' } : {}),
         // Forward Temporal connection settings so child processes can connect
         ...(opts.temporalNamespace ? { [ENV.TEMPORAL_NAMESPACE]: opts.temporalNamespace } : {}),
         ...(opts.temporalApiKey ? { [ENV.TEMPORAL_API_KEY]: opts.temporalApiKey } : {}),
