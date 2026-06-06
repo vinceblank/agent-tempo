@@ -2127,11 +2127,17 @@ function getBridgePidInfo(ensemble: string, name: string): string {
  * #690 — bridge pid files moved to the CENTRAL `~/.agent-tempo/logs/<ensemble>/`
  * dirs. `down` is a GLOBAL teardown (it stops the daemon + Temporal for EVERY
  * ensemble), so this scans ALL central ensemble subdirs — NOT a single ensemble.
- * (The architect's spec line "scope killBridge to the ensemble" assumed an
- * ensemble-scoped caller; the sole caller, `down()`, is cluster-wide, so scanning
- * all is the behavior-preserving + correct choice for a global stop. Flagged for
- * review.) Plus a transitional READ-of the legacy per-cwd `./logs` for a
- * pre-upgrade bridge. TODO(v1.7): drop the legacy `./logs` dir.
+ *
+ * ⚠️ GLOBAL-TEARDOWN ONLY. The sole caller is `down()`, which has no ensemble (it
+ * stops everything), so scanning all ensembles is correct HERE. A FUTURE
+ * ensemble-scoped teardown (e.g. `down --ensemble X` / a per-ensemble `destroy`)
+ * MUST add an `ensemble` param and scope this to `bridgeLogPaths(ensemble, '').dir`
+ * — do NOT reuse this global scan-all from a scoped op: it would kill OTHER live
+ * ensembles' bridges. The param is intentionally NOT added now (no caller needs it
+ * = speculative; backlogged per the architect's deviation ruling).
+ *
+ * Plus a transitional READ of the legacy per-cwd `./logs` for a pre-upgrade
+ * bridge. TODO(v1.7): drop the legacy `./logs` dir.
  */
 function killBridgeProcesses() {
   const centralRoot = bridgeLogsRoot();
