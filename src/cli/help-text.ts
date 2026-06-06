@@ -55,6 +55,7 @@ ${out.bold('Commands:')}
   ${out.cyan('upgrade')}  [version]       Upgrade agent-tempo to latest (or specific version)
   ${out.cyan('config')}                   Configure Temporal connection settings
   ${out.cyan('init')}                     Register MCP server globally (or --project for .mcp.json)
+  ${out.cyan('install-pi')}               Install the Pi extensions into Pi settings (or --project for .pi/settings.json)
   ${out.cyan('preflight')}                Run preflight checks only
   ${out.cyan('help')}                     Show this help message
 
