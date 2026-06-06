@@ -4,7 +4,11 @@
  */
 import { expect } from 'chai';
 import { MissionControlActions, type ActionFetch } from '../src/pi/mission-control/actions';
-import { Controller } from '../src/pi/mission-control/extension';
+import {
+  Controller,
+  parseEnsembleUpArgs,
+  parseRecruitArgs,
+} from '../src/pi/mission-control/extension';
 import { applyTempoEvent } from '../src/pi/mission-control/board';
 import type { TempoEvent, PlayerSummaryV1 } from '../src/http/event-types';
 import type { McExtensionContext } from '../src/pi/mission-control/pi-ui';
@@ -101,6 +105,55 @@ describe('MissionControlActions — write surface', () => {
     expect(r.ok).to.equal(false);
     expect(fake.calls).to.have.length(0);
   });
+
+  // ── Bootstrap surface (#700 P1) ──
+  it('createEnsemble POSTs /v1/ensembles with the bound name + opts', async () => {
+    const fake = new FakeFetch();
+    fake.nextStatus = 201;
+    await actions(fake).createEnsemble({ lineup: 'tempo-dev-team', startMode: 'hold', conductorAgent: 'pi' });
+    expect(fake.calls[0].url).to.equal('http://127.0.0.1:8473/v1/ensembles');
+    expect(JSON.parse(fake.calls[0].body!)).to.deep.equal({
+      name: 'ens', lineup: 'tempo-dev-team', startMode: 'hold', conductorAgent: 'pi',
+    });
+  });
+
+  it('createEnsemble lets an explicit name override the bound ensemble', async () => {
+    const fake = new FakeFetch();
+    fake.nextStatus = 201;
+    await actions(fake).createEnsemble({ name: 'myband' });
+    expect(JSON.parse(fake.calls[0].body!)).to.deep.equal({ name: 'myband' });
+  });
+
+  it('recruit POSTs /v1/ensembles/:e/recruit with name+workDir+opts', async () => {
+    const fake = new FakeFetch();
+    await actions(fake).recruit({ name: 'eng', workDir: '/w', playerType: 'tempo-soloist', agent: 'pi' });
+    expect(fake.calls[0].url).to.equal('http://127.0.0.1:8473/v1/ensembles/ens/recruit');
+    expect(JSON.parse(fake.calls[0].body!)).to.deep.equal({ name: 'eng', workDir: '/w', playerType: 'tempo-soloist', agent: 'pi' });
+  });
+
+  it('shutdownEnsemble POSTs /shutdown — empty body graceful, {destroy} on destroy', async () => {
+    const fake = new FakeFetch();
+    const a = actions(fake);
+    await a.shutdownEnsemble();
+    await a.shutdownEnsemble(true);
+    expect(fake.calls[0].url).to.equal('http://127.0.0.1:8473/v1/ensembles/ens/shutdown');
+    expect(JSON.parse(fake.calls[0].body!)).to.deep.equal({});
+    expect(JSON.parse(fake.calls[1].body!)).to.deep.equal({ destroy: true });
+  });
+});
+
+describe('mission-control bootstrap arg parsers (#700 P1)', () => {
+  it('parseEnsembleUpArgs handles name / --lineup / --hold (and = forms)', () => {
+    expect(parseEnsembleUpArgs('')).to.deep.equal({ hold: false });
+    expect(parseEnsembleUpArgs('myband --lineup tempo-dev-team --hold')).to.deep.equal({ name: 'myband', lineup: 'tempo-dev-team', hold: true });
+    expect(parseEnsembleUpArgs('myband --lineup=foo')).to.deep.equal({ name: 'myband', lineup: 'foo', hold: false });
+  });
+
+  it('parseRecruitArgs handles name + --type/--host/--agent (and = forms)', () => {
+    expect(parseRecruitArgs('eng --type tempo-soloist --host h1 --agent pi')).to.deep.equal({ name: 'eng', type: 'tempo-soloist', host: 'h1', agent: 'pi' });
+    expect(parseRecruitArgs('eng --agent=claude')).to.deep.equal({ name: 'eng', agent: 'claude' });
+    expect(parseRecruitArgs('')).to.deep.equal({});
+  });
 });
 
 // ── Controller command handlers (fake actions via the real client + fake ctx) ──
@@ -192,5 +245,73 @@ describe('mission-control Controller — commands', () => {
     await c.cmdReset('', ctx);
     expect(fake.calls).to.have.length(0);
     expect(ctx.notes[0]).to.contain('Usage');
+  });
+});
+
+describe('mission-control Controller — bootstrap commands (#700 P1)', () => {
+  // Injected ensureInfra that just resolves (no Temporal / daemon spawn).
+  const okInfra = async () => ({});
+
+  it('cmdEnsembleUp ensures infra then POSTs create with conductorAgent=pi (headless default)', async () => {
+    const fake = new FakeFetch();
+    fake.nextStatus = 201;
+    let infraCalls = 0;
+    const c = new Controller('ens', actions(fake), 'host', async () => { infraCalls++; return {}; });
+    const ctx = fakeCtx();
+    await c.cmdEnsembleUp('--lineup tempo-dev-team', ctx);
+    expect(infraCalls).to.equal(1);
+    expect(fake.calls[0].url).to.equal('http://127.0.0.1:8473/v1/ensembles');
+    expect(JSON.parse(fake.calls[0].body!)).to.deep.equal({ name: 'ens', lineup: 'tempo-dev-team', startMode: 'release', conductorAgent: 'pi' });
+    expect(ctx.notes.pop()).to.contain('✓');
+  });
+
+  it('cmdEnsembleUp --hold maps to startMode:hold and honors a name arg', async () => {
+    const fake = new FakeFetch();
+    fake.nextStatus = 201;
+    const c = new Controller('ens', actions(fake), 'host', okInfra);
+    await c.cmdEnsembleUp('myband --hold', fakeCtx());
+    expect(JSON.parse(fake.calls[0].body!)).to.deep.equal({ name: 'myband', startMode: 'hold', conductorAgent: 'pi' });
+  });
+
+  it('cmdEnsembleUp aborts (no POST) when ensureInfra fails', async () => {
+    const fake = new FakeFetch();
+    const c = new Controller('ens', actions(fake), 'host', async () => { throw new Error('temporal down'); });
+    const ctx = fakeCtx();
+    await c.cmdEnsembleUp('', ctx);
+    expect(fake.calls).to.have.length(0);
+    expect(ctx.notes.some((n) => n.includes('infra failed'))).to.equal(true);
+  });
+
+  it('cmdRecruit ensures infra then POSTs recruit with workDir + opts', async () => {
+    const fake = new FakeFetch();
+    const c = new Controller('ens', actions(fake), 'host', okInfra);
+    await c.cmdRecruit('eng --type tempo-soloist --agent pi', fakeCtx());
+    expect(fake.calls[0].url).to.equal('http://127.0.0.1:8473/v1/ensembles/ens/recruit');
+    const body = JSON.parse(fake.calls[0].body!);
+    expect(body.name).to.equal('eng');
+    expect(body.playerType).to.equal('tempo-soloist');
+    expect(body.agent).to.equal('pi');
+    expect(typeof body.workDir).to.equal('string'); // process.cwd()
+  });
+
+  it('cmdRecruit with no name shows usage (no infra, no POST)', async () => {
+    const fake = new FakeFetch();
+    let infraCalls = 0;
+    const c = new Controller('ens', actions(fake), 'host', async () => { infraCalls++; return {}; });
+    const ctx = fakeCtx();
+    await c.cmdRecruit('', ctx);
+    expect(infraCalls).to.equal(0);
+    expect(fake.calls).to.have.length(0);
+    expect(ctx.notes[0]).to.contain('Usage');
+  });
+
+  it('cmdEnsembleDown POSTs /shutdown — graceful by default, {destroy} with --destroy', async () => {
+    const fake = new FakeFetch();
+    const c = new Controller('ens', actions(fake), 'host', okInfra);
+    await c.cmdEnsembleDown('', fakeCtx());
+    await c.cmdEnsembleDown('--destroy', fakeCtx());
+    expect(fake.calls[0].url).to.equal('http://127.0.0.1:8473/v1/ensembles/ens/shutdown');
+    expect(JSON.parse(fake.calls[0].body!)).to.deep.equal({});
+    expect(JSON.parse(fake.calls[1].body!)).to.deep.equal({ destroy: true });
   });
 });

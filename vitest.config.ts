@@ -33,6 +33,9 @@ export default defineConfig({
       'tests/spawn/**/*.test.ts',
       // #695 — buildServerInstructions yield-norm content regression guard.
       'tests/server-tools/**/*.test.ts',
+      // #700 P1 — Pi extension install helper (install-by-reference idempotency,
+      // no-loose-copy invariant, __dirname-direct path resolution). Pure fs.
+      'tests/pi/**/*.test.ts',
     ],
     environment: 'node',
     globals: false,

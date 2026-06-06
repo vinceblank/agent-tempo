@@ -104,6 +104,7 @@ Source: `src/cli/help-text.ts` Commands section and `src/cli.ts` switch statemen
 | `upgrade [version]` | Upgrade agent-tempo to latest or a specific version |
 | `config` | Configure Temporal connection settings (interactive or `set` / `show`) |
 | `init` | Register MCP server globally (`--project` for per-directory) |
+| `install-pi` | Install the agent-tempo Pi extensions (player + command-center) into Pi's `settings.json` by reference (`--project` for `.pi/settings.json`) |
 | `migrate-from-claude-tempo` | One-shot copy `~/.agent-tempo/` → `~/.agent-tempo/` (`--dry-run` / `--force` / `--dev`). Auto-runs on first boot of v1.0+. |
 | `preflight` | Run environment preflight checks |
 | `version` | Print the installed version |

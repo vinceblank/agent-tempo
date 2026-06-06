@@ -58,6 +58,7 @@ function makeMockClient(opts: MockOptions = {}): { client: TempoClient; calls: C
     destroy: handler('destroy', undefined),
     detach: handler('detach', undefined),
     recall: handler('recall', { received: [], sent: [] }),
+    shutdown: handler('shutdown', { state: 'offline', details: [] }),
     listEnsembles: handler('listEnsembles', []),
     getPlayers: handler('getPlayers', []),
     getEnsembleChat: handler('getEnsembleChat', { messages: [], total: 0, hasMore: false, hasConductor: false }),
@@ -218,6 +219,34 @@ describe('POST /v1/ensembles/:ensemble/pause + /play + /release', () => {
     const res = await postJson(`${b.url}/v1/ensembles/demo/release`, {});
     expect(res.status).toBe(200);
     expect(b.calls.find((c) => c.method === 'release')?.args).toEqual(['demo', undefined]);
+  });
+});
+
+describe('POST /v1/ensembles/:ensemble/shutdown (#700 P1)', () => {
+  it('graceful (empty body) routes to client.shutdown', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/shutdown`, {});
+    expect(res.status).toBe(202);
+    expect(b.calls.find((c) => c.method === 'shutdown')?.args).toEqual(['demo']);
+    expect(b.calls.find((c) => c.method === 'destroy')).toBeUndefined();
+    const body = await res.json();
+    expect(body.mode).toBe('shutdown');
+  });
+
+  it('{destroy:true} routes to ensemble-scope client.destroy (no playerId)', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles/demo/shutdown`, { destroy: true });
+    expect(res.status).toBe(202);
+    expect(b.calls.find((c) => c.method === 'destroy')?.args).toEqual(['demo']);
+    expect(b.calls.find((c) => c.method === 'shutdown')).toBeUndefined();
+    const body = await res.json();
+    expect(body.mode).toBe('destroy');
+  });
+
+  it('maps a "workflow not found" throw to 404', async () => {
+    const b = await boot({ mock: { throws: { shutdown: new Error('workflow not found') } } });
+    const res = await postJson(`${b.url}/v1/ensembles/demo/shutdown`, {});
+    expect(res.status).toBe(404);
   });
 });
 

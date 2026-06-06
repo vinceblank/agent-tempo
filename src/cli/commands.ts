@@ -26,6 +26,8 @@ import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
 import { shouldIncludeInBroadcast, validateEnsembleName } from '../utils/validation';
 import { getAttachmentPhase, getEnsembleName } from '../utils/search-attributes';
 import { isDaemonRunning, startDaemon, stopDaemon, getDaemonStatus, isOtherProfileLikelyRunning, DAEMON_LOG_PATH } from './daemon';
+// #700 P1 — infra bootstrap moved to a shared helper (CLI `up` + `/ensemble-up`).
+import { ensureInfra, isTemporalReachable, registerSearchAttributes, DEFAULT_DB_PATH } from './ensure-infra';
 import { createTempoClient } from '../client';
 import { ENSEMBLE_SENTINEL_FLAG, ensembleReadyBanner, ensembleReadyDirective } from '../constants';
 import { buildTimeline, formatRecall } from '../utils/recall-format';
@@ -929,30 +931,9 @@ function initProject(dir: string) {
 
 // --- Temporal server management ---
 
-const DEFAULT_DB_PATH = join(AGENT_TEMPO_HOME, 'temporal-data.db');
-
-// Source of truth lives in `sa-preflight.ts` (REQUIRED_SEARCH_ATTRIBUTES) —
-// avoid drifting a second copy here.
-import { REQUIRED_SEARCH_ATTRIBUTES, registerSearchAttribute, isPermissionError } from './sa-preflight';
-
-async function isTemporalReachable(config: { temporalAddress: string; temporalNamespace?: string; temporalApiKey?: string; temporalTlsCertPath?: string; temporalTlsKeyPath?: string }): Promise<boolean> {
-  try {
-    const conn = await createTemporalConnection(config as any);
-    try {
-      // Verify namespace is ready — a gRPC connection alone doesn't guarantee the server can serve requests
-      const client = new Client({ connection: conn, namespace: config.temporalNamespace || 'default' });
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      for await (const _ of client.workflow.list({ query: 'WorkflowId = "__readiness_probe__"' })) {
-        break;
-      }
-    } finally {
-      await conn.close();
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
+// #700 P1 — DEFAULT_DB_PATH, isTemporalReachable, and registerSearchAttributes
+// MOVED to ./ensure-infra (the shared infra home; imported back below) so the CLI
+// `up` path and the mission-control `/ensemble-up` extension call ONE bootstrap.
 
 function temporalCliExists(): boolean {
   const cmd = process.platform === 'win32' ? 'where' : 'which';
@@ -964,55 +945,6 @@ function temporalCliExists(): boolean {
   }
 }
 
-function registerSearchAttributes(temporalAddress: string, namespace = 'default'): { failed: number } {
-  let failed = 0;
-  let permissionBlocked = 0;
-  for (const attr of REQUIRED_SEARCH_ATTRIBUTES) {
-    const r = registerSearchAttribute(attr, temporalAddress, namespace);
-    switch (r.status) {
-      case 'created':
-        out.success(`Registered search attribute: ${attr.name}`);
-        break;
-      case 'already-exists':
-        out.dim(`  ${attr.name} (already registered)`);
-        break;
-      case 'failed':
-        // A PERMISSION error (Temporal Cloud namespace API keys can't reach the
-        // operator service) means we can't tell whether the SA exists — NOT that
-        // it's missing. Don't print a scary per-attr "Failed to register" or count
-        // it as a failure; collapse to ONE soft line below and PROCEED. Reserve
-        // the per-attr warning + hard "will fail" conclusion for DEFINITIVE
-        // failures (e.g. the SQLite dev server's 10-Keyword-per-namespace cap).
-        if (isPermissionError(r.detail)) {
-          permissionBlocked++;
-        } else {
-          failed++;
-          out.warn(`Failed to register ${attr.name}: ${r.detail}`);
-        }
-        break;
-    }
-  }
-  // Permission-blocked (normal on Temporal Cloud): one accurate, non-alarming
-  // line — we couldn't manage the SAs, but that doesn't mean they're missing.
-  if (permissionBlocked > 0) {
-    const saList = REQUIRED_SEARCH_ATTRIBUTES.map((a) => `${a.name}:${a.type}`).join(', ');
-    out.warn(
-      `Couldn't verify search attributes — this credential lacks permission to manage them ` +
-      `(normal on Temporal Cloud, where search attributes are managed via the Cloud UI or tcld). ` +
-      `If workflow starts fail with "search attribute ... is not defined", create these ` +
-      `${REQUIRED_SEARCH_ATTRIBUTES.length} via the Cloud UI / tcld: ${saList}. ` +
-      `Otherwise this is safe to ignore.`,
-    );
-  }
-  // DEFINITIVE failures genuinely block — keep the hard, actionable conclusion.
-  if (failed > 0) {
-    out.warn(
-      `${failed} search attribute${failed === 1 ? '' : 's'} not registered — ` +
-      `workflow starts will fail. Resolve the errors above before continuing.`,
-    );
-  }
-  return { failed };
-}
 
 interface ServerOpts extends CliOverrides {
   background: boolean;
@@ -1152,72 +1084,30 @@ export async function up(opts: UpOpts) {
   }
   out.check('temporal CLI installed', true);
 
-  // Step 2: Start Temporal if needed
-  const temporalUp = await isTemporalReachable(config);
-  if (temporalUp) {
-    out.check('Temporal running', true, config.temporalAddress);
-  } else {
-    out.log(`  ${out.dim('...')} Starting Temporal dev server...`);
-    mkdirSync(AGENT_TEMPO_HOME, { recursive: true });
-    const port = config.temporalAddress.split(':')[1] || '7233';
-    const child = cpSpawn('temporal', [
-      'server', 'start-dev',
-      '--port', port,
-      '--db-filename', DEFAULT_DB_PATH,
-    ], { detached: true, stdio: 'ignore' });
-    child.unref();
-
-    // Wait for ready
-    let ready = false;
-    for (let i = 0; i < 20; i++) {
-      await new Promise(r => setTimeout(r, 500));
-      if (await isTemporalReachable(config)) { ready = true; break; }
-    }
-    if (!ready) {
-      out.error('Temporal did not start within 10 seconds');
-      process.exit(1);
-    }
-    out.check('Temporal started', true, `pid ${child.pid}, data in ~/.agent-tempo/`);
-  }
-
-  // Step 3: Register search attributes
-  registerSearchAttributes(config.temporalAddress, config.temporalNamespace);
-
-  // Step 3.5: Install shipped agent types to ~/.claude/agents/ (if not already there)
-  const userAgentsDir = join(homedir(), '.claude', 'agents');
-  const shippedAgentsPath = join(PACKAGE_ROOT, 'examples', 'agents');
-  if (existsSync(shippedAgentsPath)) {
-    mkdirSync(userAgentsDir, { recursive: true });
-    const shipped = readdirSync(shippedAgentsPath).filter(f => f.endsWith('.md'));
-    let installed = 0;
-    for (const file of shipped) {
-      const dest = join(userAgentsDir, file);
-      if (!existsSync(dest)) {
-        copyFileSync(join(shippedAgentsPath, file), dest);
-        installed++;
-      }
-    }
-    if (installed > 0) {
-      out.success(`Installed ${installed} agent type${installed !== 1 ? 's' : ''} to ~/.claude/agents/`);
-    } else {
-      out.dim(`  Agent types already installed (${shipped.length} in ~/.claude/agents/)`);
-    }
-  }
-
-  // Step 3.7: Start worker daemon if not already running
-  if (isDaemonRunning()) {
-    const daemonStatus = getDaemonStatus();
-    out.check('Worker daemon running', true, `pid ${daemonStatus.pid}`);
-  } else {
-    out.log(`  ${out.dim('...')} Starting worker daemon...`);
-    try {
-      const daemonPid = await startDaemon(config);
-      out.check('Worker daemon started', true, `pid ${daemonPid}`);
-    } catch (err: any) {
-      out.error(`Failed to start worker daemon: ${err.message || err}`);
-      out.log(`  ${out.dim('You can start it manually: agent-tempo daemon start')}`);
-      process.exit(1);
-    }
+  // Steps 2–3.7: bring infra up via the SHARED ensureInfra — the same path
+  // `/ensemble-up` uses, so CLI + extension can't drift (#700 P1). Order:
+  // Temporal → search attributes → agent types → daemon (SA BEFORE daemon — the
+  // daemon refuses to boot without them). `onStep` renders the same out.check
+  // sequence `up()` showed before the extraction.
+  try {
+    await ensureInfra({
+      config,
+      onStep: (p) => {
+        if (p.step === 'temporal') {
+          out.check(p.status === 'ok' ? 'Temporal running' : 'Temporal started', true, p.detail);
+        } else if (p.step === 'agent-types') {
+          if (p.detail?.startsWith('installed')) out.success(`Agent types: ${p.detail} → ~/.claude/agents/`);
+          else if (p.detail) out.dim(`  Agent types already installed (${p.detail})`);
+        } else if (p.step === 'daemon') {
+          out.check(p.status === 'ok' ? 'Worker daemon running' : 'Worker daemon started', true, p.detail);
+        }
+        // 'search-attributes' logs per-attribute internally via registerSearchAttributes.
+      },
+    });
+  } catch (err: any) {
+    out.error(`Infra startup failed: ${err?.message || err}`);
+    out.log(`  ${out.dim('You can start it manually: agent-tempo daemon start')}`);
+    process.exit(1);
   }
 
   // Step 4: Register MCP server if needed

@@ -652,6 +652,23 @@ async function main() {
       await init({ dir: args.dir, project: args.project });
       break;
 
+    case 'install-pi': {
+      // #700 P1 — install agent-tempo's two Pi extensions (player +
+      // command-center) the normal `.pi` way: an idempotent, install-by-reference
+      // merge of their absolute dist paths into Pi's settings.json. Pure fs
+      // (no Temporal) — dynamic-imported so it doesn't bloat the crash-proof
+      // top-level module graph. `--project` writes `.pi/settings.json` instead
+      // of the global `~/.pi/agent/settings.json`.
+      const { installPiExtensions } = await import('./pi/install');
+      const result = installPiExtensions({ project: args.project });
+      out.success(`Pi extensions installed → ${result.settingsPath}`);
+      for (const p of result.added) out.log(`  ${out.green('+')} ${p}`);
+      for (const p of result.alreadyPresent) out.log(out.dim(`  · ${p} (already installed)`));
+      out.log('');
+      out.log('  Restart `pi` to load the agent-tempo extensions.');
+      break;
+    }
+
     case 'migrate-from-claude-tempo': {
       // PR-2 of the v1.0 rebrand — one-shot copy of `~/.agent-tempo/` →
       // `~/.agent-tempo/`. Crash-proof (no Temporal deps). The `--dev`

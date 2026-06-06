@@ -72,6 +72,7 @@ export const WRITE_ACTIONS = [
   'destroy',
   'detach',
   'recall',
+  'shutdown',
 ] as const;
 export type WriteAction = (typeof WRITE_ACTIONS)[number];
 
@@ -120,6 +121,7 @@ export async function handleWriteRoute(
       case 'destroy': return await handleDestroy(res, client, ensemble, body);
       case 'detach':  return await handleDetach(res, client, ensemble, body);
       case 'recall':  return await handleRecall(res, client, ensemble, body);
+      case 'shutdown': return await handleShutdown(res, client, ensemble, body);
     }
   } catch (err) {
     return mapWriteError(res, action, ensemble, err);
@@ -341,6 +343,28 @@ async function handleRecall(
   const result = await client.recall(ensemble, playerId);
   const messages = result.received.length + result.sent.length;
   jsonResponse(res, 200, { ok: true, ensemble, playerId, messages });
+}
+
+/**
+ * Ensemble teardown (#700 P1) — the HTTP verb the command-center `/ensemble-down`
+ * needs (the CLI `down` + the `shutdown` MCP tool cover this, but neither was
+ * HTTP). Graceful by default: `client.shutdown(ensemble)` fans out detach + pauses
+ * the scheduler + maestro; workflows survive in `detached` (pair with `restore`).
+ * `{ destroy: true }` (`/ensemble-down --destroy`) escalates to the ensemble-scope
+ * `client.destroy(ensemble)` (no `playerId`) — terminate, not graceful.
+ */
+async function handleShutdown(
+  res: ServerResponse,
+  client: TempoClient,
+  ensemble: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  if (body.destroy === true) {
+    const summary = await client.destroy(ensemble);
+    return jsonResponse(res, 202, { ok: true, ensemble, mode: 'destroy', summary: summary ?? null });
+  }
+  const summary = await client.shutdown(ensemble);
+  jsonResponse(res, 202, { ok: true, ensemble, mode: 'shutdown', summary });
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────

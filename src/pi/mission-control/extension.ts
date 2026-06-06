@@ -29,6 +29,7 @@ import {
 import { renderBoard } from './render';
 import { MissionControlActions, ADMIN_TOKEN_ENV, type ActionResult } from './actions';
 import { openInnerTail } from './inner-tail';
+import { ensureInfra, type InfraProgress } from '../../cli/ensure-infra';
 import type { McExtensionAPI, McExtensionContext } from './pi-ui';
 
 const WIDGET_KEY = 'mission-control';
@@ -46,6 +47,46 @@ export interface MissionControlDeps {
 }
 
 /**
+ * Infra-bootstrap seam (#700 P1). Defaults to the real {@link ensureInfra}; the
+ * extension command tests inject a fake so `/ensemble-up` etc. don't spawn
+ * Temporal / the daemon. Accepts only the `onStep` opt the controller passes.
+ */
+export type EnsureInfraFn = (opts?: { onStep?: (p: InfraProgress) => void }) => Promise<unknown>;
+
+/** Parsed `/ensemble-up [name] [--lineup X] [--hold]` args. */
+export function parseEnsembleUpArgs(args: string): { name?: string; lineup?: string; hold: boolean } {
+  const tokens = args.trim().split(/\s+/).filter(Boolean);
+  let name: string | undefined;
+  let lineup: string | undefined;
+  let hold = false;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t === '--hold') hold = true;
+    else if (t === '--lineup') lineup = tokens[++i];
+    else if (t.startsWith('--lineup=')) lineup = t.slice('--lineup='.length);
+    else if (!t.startsWith('--') && name === undefined) name = t;
+  }
+  return { ...(name !== undefined ? { name } : {}), ...(lineup !== undefined ? { lineup } : {}), hold };
+}
+
+/** Parsed `/recruit <name> [--type T] [--host H] [--agent A]` args. */
+export function parseRecruitArgs(args: string): { name?: string; type?: string; host?: string; agent?: string } {
+  const tokens = args.trim().split(/\s+/).filter(Boolean);
+  const out: { name?: string; type?: string; host?: string; agent?: string } = {};
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t === '--type') out.type = tokens[++i];
+    else if (t.startsWith('--type=')) out.type = t.slice('--type='.length);
+    else if (t === '--host') out.host = tokens[++i];
+    else if (t.startsWith('--host=')) out.host = t.slice('--host='.length);
+    else if (t === '--agent') out.agent = tokens[++i];
+    else if (t.startsWith('--agent=')) out.agent = t.slice('--agent='.length);
+    else if (!t.startsWith('--') && out.name === undefined) out.name = t;
+  }
+  return out;
+}
+
+/**
  * The operator-command + board controller. Holds the model + the action client;
  * command methods are independently unit-testable with a fake actions + ctx.
  * The lifecycle (SSE/render/teardown) lives in {@link createMissionControlExtension}.
@@ -60,11 +101,19 @@ export class Controller {
   readonly localHost: string;
   /** Set by the extension so /tail can (re)open the fine SSE; null in unit tests. */
   onTailRequest: ((playerId: string | null) => void) | null = null;
+  /** Infra bootstrap fn (#700 P1); injectable for tests. */
+  private readonly ensureInfraFn: EnsureInfraFn;
 
-  constructor(ensemble: string, actions: MissionControlActions, localHost: string = os.hostname()) {
+  constructor(
+    ensemble: string,
+    actions: MissionControlActions,
+    localHost: string = os.hostname(),
+    ensureInfraFn: EnsureInfraFn = ensureInfra,
+  ) {
     this.model = initBoard(ensemble);
     this.actions = actions;
     this.localHost = localHost;
+    this.ensureInfraFn = ensureInfraFn;
   }
 
   private notify(ctx: McExtensionContext, msg: string): void {
@@ -170,6 +219,64 @@ export class Controller {
       return;
     }
     this.report(ctx, `gate ${reqId} ${decision}`, await this.actions.gateDecide(this.model.selected, reqId, decision));
+  }
+
+  // ── Bootstrap commands (#700 P1) ──
+
+  /**
+   * Ensure local infra is up (Temporal + SAs + agent types + daemon), streaming
+   * each step to the UI. Returns false (and notifies) if bootstrap fails, so the
+   * caller can bail before the HTTP action. Idempotent — a no-op when infra is
+   * already live.
+   */
+  private async ensureInfraReady(ctx: McExtensionContext): Promise<boolean> {
+    try {
+      await this.ensureInfraFn({
+        onStep: (p: InfraProgress) =>
+          this.notify(ctx, `infra: ${p.step} ${p.status}${p.detail ? ` (${p.detail})` : ''}`),
+      });
+      return true;
+    } catch (err) {
+      this.notify(ctx, `infra failed: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
+
+  async cmdEnsembleUp(args: string, ctx: McExtensionContext): Promise<void> {
+    const { name, lineup, hold } = parseEnsembleUpArgs(args);
+    if (!(await this.ensureInfraReady(ctx))) return;
+    // Conductor defaults to a HEADLESS Pi (design §3) — the human's seat is this
+    // command-center planner, so a second interactive conductor window is
+    // redundant. `conductorAgent: 'pi'` overrides any lineup conductor agent.
+    const r = await this.actions.createEnsemble({
+      ...(name !== undefined ? { name } : {}),
+      ...(lineup !== undefined ? { lineup } : {}),
+      startMode: hold ? 'hold' : 'release',
+      conductorAgent: 'pi',
+    });
+    this.report(ctx, `ensemble-up${name ? ` ${name}` : ''}`, r);
+  }
+
+  async cmdRecruit(args: string, ctx: McExtensionContext): Promise<void> {
+    const { name, type, host, agent } = parseRecruitArgs(args);
+    if (!name) { this.notify(ctx, 'Usage: /recruit <name> [--type T] [--host H] [--agent A]'); return; }
+    if (!(await this.ensureInfraReady(ctx))) return;
+    const r = await this.actions.recruit({
+      name,
+      // The extension runs in the Pi process; its cwd is the project dir.
+      workDir: process.cwd(),
+      ...(type !== undefined ? { playerType: type } : {}),
+      ...(host !== undefined ? { host } : {}),
+      ...(agent !== undefined ? { agent } : {}),
+    });
+    this.report(ctx, `recruit ${name}`, r);
+  }
+
+  async cmdEnsembleDown(args: string, ctx: McExtensionContext): Promise<void> {
+    const destroy = args.trim().split(/\s+/).includes('--destroy');
+    if (!(await this.ensureInfraReady(ctx))) return;
+    const r = await this.actions.shutdownEnsemble(destroy);
+    this.report(ctx, `ensemble-down${destroy ? ' --destroy' : ''}`, r);
   }
 }
 
@@ -297,6 +404,11 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
     pi.registerCommand('reset', { description: 'Clean-wipe a player (/reset <player> [reason])', handler: (a, ctx) => ctrl.cmdReset(a, ctx) });
     pi.registerCommand('arm', { description: 'Arm/disarm the operator gate for a player (/arm <player> [off])', handler: (a, ctx) => ctrl.cmdArm(a, ctx) });
     pi.registerCommand('gate', { description: 'Decide a gate request for the tailed player (/gate <reqId> allow|deny)', handler: (a, ctx) => ctrl.cmdGate(a, ctx) });
+
+    // #700 P1 — bootstrap commands (ensureInfra → daemon HTTP action).
+    pi.registerCommand('ensemble-up', { description: 'Bootstrap the ensemble (/ensemble-up [name] [--lineup X] [--hold])', handler: (a, ctx) => ctrl.cmdEnsembleUp(a, ctx) });
+    pi.registerCommand('recruit', { description: 'Recruit a player (/recruit <name> [--type T] [--host H] [--agent A])', handler: (a, ctx) => ctrl.cmdRecruit(a, ctx) });
+    pi.registerCommand('ensemble-down', { description: 'Tear down the ensemble (/ensemble-down [--destroy])', handler: (a, ctx) => ctrl.cmdEnsembleDown(a, ctx) });
   };
 }
 
