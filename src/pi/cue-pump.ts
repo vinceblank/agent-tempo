@@ -99,7 +99,15 @@ export function buildPiInjector(rt: InjectorRuntime | null | undefined): Message
     const sendUser = typeof pi?.sendUserMessage === 'function' ? pi.sendUserMessage.bind(pi) : null;
     return {
       inject: (msg, opts) => send(msg, opts),
-      ...(sendUser ? { escalate: (text: string) => sendUser(text) } : {}),
+      // #688 — escalate with `deliverAs: 'followUp'`. maybeEscalate can fire while a
+      // turn is ALREADY in flight (one that started BEFORE the inject — a busy
+      // false-positive), and a bare sendUserMessage (no deliverAs) while Pi is
+      // streaming throws "Agent is already processing". followUp is correct in BOTH
+      // cases: cold-idle (behavior ignored → the user message still starts a turn,
+      // escalation works) and busy (queues + drains in order, no throw). NOT 'steer'
+      // — steer would let a peer cue preempt the operator's in-flight turn, breaking
+      // the operator-vs-peer guarantee (see file header).
+      ...(sendUser ? { escalate: (text: string) => sendUser(text, { deliverAs: 'followUp' }) } : {}),
       lastTurnStartAt: () => rt.lastTurnStartAt,
     };
   }

@@ -205,11 +205,43 @@ describe('Pi cue pump — escalation (#677 turn-started → sendUserMessage)', (
     await pump.tick();
     expect(pi.userSent, 'escalated once').to.have.length(1);
     expect(pi.userSent[0].content).to.equal('[cue from tempo-lead] wake up');
+    // #688 — escalation MUST pass deliverAs:'followUp' (queues when busy/streaming;
+    // a bare sendUserMessage throws "Agent is already processing" mid-turn).
+    expect(pi.userSent[0].opts).to.deep.equal({ deliverAs: 'followUp' });
 
     // Tick 3 — escalate-once invariant: no second escalation.
     clock = 3000;
     await pump.tick();
     expect(pi.userSent, 'does not loop').to.have.length(1);
+  });
+
+  it('#688: escalation does not throw when the agent is busy mid-turn (followUp queues)', async () => {
+    const source = new FakeSource();
+    // A pi mimicking Pi's runtime: a bare sendUserMessage (no deliverAs) while a
+    // turn is streaming THROWS "Agent is already processing"; followUp queues fine.
+    const calls: Array<{ content: string; opts?: { deliverAs?: 'steer' | 'followUp' } }> = [];
+    const pi = {
+      on() { /* unused */ },
+      registerTool() { /* unused */ },
+      sendMessage() { /* primary route — unused in this assertion */ },
+      sendUserMessage(content: string, opts?: { deliverAs?: 'steer' | 'followUp' }) {
+        if (!opts || opts.deliverAs == null) throw new Error('Agent is already processing');
+        calls.push({ content, opts });
+      },
+    } as unknown as ExtensionAPI;
+    // A turn was ALREADY in flight BEFORE the inject (the busy false-positive that
+    // makes maybeEscalate fire): lastTurnStartAt (500) < injectedAt (1000).
+    const rt: InjectorRuntime = { pi, session: null, lastTurnStartAt: 500 };
+    let clock = 1000;
+    const pump = new CuePump({ source, resolveInjector: () => buildPiInjector(rt), now: () => clock });
+
+    source.enqueue(mkMsg({ text: 'busy cue' }));
+    await pump.tick();   // inject via sendMessage (injectedAt = 1000)
+    clock = 2000;
+    await pump.tick();   // escalates — must NOT throw, and must land via followUp
+
+    expect(calls, 'escalation landed (would be empty if the bare call had thrown)').to.have.length(1);
+    expect(calls[0].opts).to.deep.equal({ deliverAs: 'followUp' });
   });
 
   it('does NOT escalate when a turn started after the inject', async () => {
