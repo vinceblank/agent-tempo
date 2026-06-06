@@ -37,6 +37,7 @@ import type { AgentType, SessionMetadata } from '../types';
 import { buildAllTempoTools, type RegisterAllTempoToolsOpts } from '../server-tools';
 import type {
   ExtensionAPI, PiAgentSession, PiEventPayload, PiToolCallEvent, PiToolCallResult, PiExtensionContext,
+  PiBeforeAgentStartEvent, PiBeforeAgentStartResult,
 } from './pi-types';
 import { PhaseDriver } from './phase-driver';
 import { PiWorkflowClient } from './workflow-client';
@@ -62,6 +63,21 @@ const nowIso = (): string => new Date().toISOString();
 // placeholder — that made a Pi session misreport its agentType metadata AND
 // recruit's mirror-fallback resolve to 'claude'.
 const PI_AGENT_TYPE: AgentType = 'pi';
+
+/**
+ * #695 — yield-don't-poll norms appended to the Pi system prompt via
+ * `before_agent_start` (the Pi equivalent of buildServerInstructions'
+ * Communication-discipline block). Module-level constant (defined once);
+ * idempotent content, safe to re-append on Pi's per-turn system-prompt rebuild.
+ * Wording owned by tempo-docs (#695).
+ */
+const YIELD_NORMS = `
+## Message Delivery
+- After cueing a player and expecting a reply, end your turn. The runtime wakes you when the reply arrives — there is nothing to poll.
+- \`listen\` reads messages already queued at call time. It cannot wait for future messages. Do not use a sleep+listen loop; it burns tokens without advancing work. To wait for a reply, end your turn.
+- If a player sends a status update or acknowledgment without asking a question or requesting action, do not respond. Replying starts a ping-pong that wastes turns on both sides.
+- A cue sent to you while you are busy arrives at your next turn boundary. A burst from several players arrives together — process the batch in one turn.
+`.trim();
 
 /** Runtime mode. Headless = recruited unsupervised player (MD-C gate active). */
 export type PiExtensionMode = 'interactive' | 'headless';
@@ -216,6 +232,24 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
     };
     renderToPi(pi, buildAllTempoTools(toolOpts));
     log(`registered tools (player=${currentPlayerId}, conductor=${isConductor}, mode=${mode})`);
+
+    // ── #695 — yield-don't-poll norms into the Pi system prompt ──
+    // The Pi equivalent of buildServerInstructions' Communication-discipline block.
+    // `before_agent_start` exposes the fully-assembled systemPrompt and accepts a
+    // replacement (chained across extensions), so we APPEND the norms — injected
+    // into the model's system prompt every turn, invisibly (NOT a sendMessage, which
+    // would spam the transcript). Applies to ALL Pi players (interactive + headless).
+    // Cast mirrors the tool_call returning-handler pattern (the shim's `on` is
+    // void-typed; the real ExtensionAPI before_agent_start handler returns a result).
+    (pi.on as unknown as (
+      e: string,
+      h: (ev: PiBeforeAgentStartEvent) => PiBeforeAgentStartResult,
+    ) => void)(
+      'before_agent_start',
+      (ev: PiBeforeAgentStartEvent): PiBeforeAgentStartResult => ({
+        systemPrompt: `${ev.systemPrompt ?? ''}\n\n${YIELD_NORMS}`,
+      }),
+    );
 
     // ── #677 PART B — interactive-only `/tempo-reset` command ──
     // Pi's `newSession` (clean-wipe) is ExtensionCommandContext-ONLY (not on the
