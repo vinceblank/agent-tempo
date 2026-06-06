@@ -441,6 +441,15 @@ export interface TempoClientCore {
   isConnected(): Promise<boolean>;
   /** Check if the Global Maestro workflow is running. */
   hasGlobalMaestro(): Promise<boolean>;
+  /**
+   * #673 — STRONGLY-CONSISTENT existence check for an ensemble: `describe()` the
+   * per-ensemble maestro hub workflow (started at `up`/creation) and report
+   * whether it's RUNNING. Unlike {@link listEnsembles} (Temporal VISIBILITY,
+   * eventually consistent on Cloud), `describe` reflects a just-started workflow
+   * immediately — the SSE existence gate uses it as a fallback so a fresh
+   * ensemble isn't 404'd before visibility catches up.
+   */
+  ensembleExists(ensemble: string): Promise<boolean>;
 
   // ── #94/#95 PR-3: Subscribe to the daemon's SSE event stream ──
 

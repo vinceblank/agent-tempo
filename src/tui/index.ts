@@ -153,6 +153,7 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
     restore: fail,
     isConnected: async () => false,
     hasGlobalMaestro: async () => false,
+    ensembleExists: async () => false,
     getSchedules: async () => [],
     cancelSchedule: fail,
     getEnsembleChat: async () => ({ messages: [], total: 0, hasMore: false, hasConductor: false }),

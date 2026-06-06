@@ -39,6 +39,7 @@ const CORE_METHOD_NAMES = [
   'listHosts',
   'listAllOrphans', // #579 — cluster-wide orphan listing for the dashboard's /orphans view
   'hasGlobalMaestro',
+  'ensembleExists', // #673 — strongly-consistent maestro-hub describe (SSE existence-gate fallback)
   'isConnected',
   // Per-ensemble reads
   'getPlayers',
