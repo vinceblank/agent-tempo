@@ -389,6 +389,9 @@ sign-off** (they own the content; the module owns the mechanism).
 > `src/pi/tool-capability.ts` today; if the planner isn't a Pi agent, importing from `src/pi/` is a
 > layering violation. Move it to e.g. `src/security/tool-capability.ts` — one taxonomy importable by any
 > autonomous agent (same anti-drift move as extracting `isSecretKey` out of `cli/` into `utils/`).
+> **Build coordination:** this extraction touches the **phase-3d MD-G gate's import** of
+> `tool-capability.ts` — when the P2 build lands the move, coordinate with **tempo-architect** (already
+> pre-flagged to their conductor, so it's a planned re-point, not a surprise).
 
 ### Three GATE postures (architect's key reframing) — `armed ≠ supervised`
 
