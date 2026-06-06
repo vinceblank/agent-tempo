@@ -2,6 +2,19 @@
 
 These features are conductor-only tools for tracking and coordinating parallel work.
 
+## Turn Mechanics and Yielding
+
+The cue delivery model is pull-based. Understanding it prevents the most common conductor anti-pattern — busy-waiting for replies with `sleep`+`listen` loops.
+
+| Rule | Why |
+|---|---|
+| **Yield after dispatch** — after cueing and expecting a reply, end your turn | Inbound cues wake you at the next turn boundary automatically; staying awake gains nothing |
+| **`listen` is a one-shot inbox drain** — not a blocking wait | It reads whatever is already queued; a `sleep`+`listen` loop burns tokens without advancing work |
+| **Don't reply to ack/FYI cues** — respond only to questions or action requests | Replying to an ack starts a ping-pong that wastes turns on both sides |
+| **Cues queue, they don't interrupt** — bursts arrive together at the next boundary | Process the batch in one turn; don't start a separate turn per cue |
+
+The `stage` tool is the structured alternative to polling: define a stage with a set of players, cue them, and you're notified automatically when all have reported — no loop required.
+
 ## Quality Gates
 
 Conductors can define named checklists of criteria to verify task completion. Three conductor-only tools are available: `quality_gate` (create or replace a gate), `evaluate_gate` (mark criteria as passed or failed), and `gates` (list all gates with optional filters).
