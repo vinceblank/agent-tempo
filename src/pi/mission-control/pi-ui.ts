@@ -54,11 +54,44 @@ export interface McMessageOptions {
   deliverAs?: 'steer' | 'followUp';
 }
 
+/** Result of a planner LLM tool — mirrors Pi's `PiToolResult`. (#700 P2) */
+export interface McToolResult {
+  content: Array<{ type: 'text'; text: string }>;
+  details: Record<string, unknown>;
+  terminate?: boolean;
+}
+
+/**
+ * A planner LLM tool registered via {@link McExtensionAPI.registerTool} — mirrors
+ * Pi's `PiToolDefinition` slice. `parameters` is a TypeBox schema (derived from a
+ * zod shape via the shared converter). `execute` is called POSITIONALLY by Pi:
+ * `(toolCallId, params, signal?, onUpdate?, ctx?)`. (#700 P2)
+ */
+export interface McToolDefinition {
+  name: string;
+  label: string;
+  description?: string;
+  parameters: unknown;
+  execute: (
+    toolCallId: string,
+    params: Record<string, unknown>,
+    signal?: unknown,
+    onUpdate?: unknown,
+    ctx?: unknown,
+  ) => Promise<McToolResult> | McToolResult;
+}
+
 /** The `pi` object passed to the extension's default export — slice we use. */
 export interface McExtensionAPI {
   on(event: string, handler: McEventHandler): void;
   registerCommand(name: string, options: { description?: string; handler: McCommandHandler }): void;
   registerShortcut(shortcut: unknown, options: { description?: string; handler: McShortcutHandler }): void;
+  /**
+   * Register a planner LLM tool (#700 P2 — the "planner thinks with tools" half).
+   * Optional in the slice: only the interactive Pi CLI exposes a tool surface to
+   * its own LLM. Mirrors Pi's `ExtensionAPI.registerTool`.
+   */
+  registerTool?(def: McToolDefinition): void;
   /**
    * Inject a message into the live planner session — the #700 P2 answer-wake
    * path (the planner has no Temporal inbox; its inbound channel is the SSE

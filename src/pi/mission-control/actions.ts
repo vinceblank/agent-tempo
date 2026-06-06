@@ -7,6 +7,7 @@
  * Injected fetch / readPort / token so it's unit-testable without a daemon.
  */
 import { readPortFile } from '../../http/port-file';
+import type { AnswerEntry } from '../../types';
 
 /** Env var holding the daemon admin (T3) token (writes + gate + inner tail). */
 export const ADMIN_TOKEN_ENV = 'AGENT_TEMPO_HTTP_ADMIN_TOKEN';
@@ -78,6 +79,25 @@ export class MissionControlActions {
     }
   }
 
+  /** GET a JSON body from the daemon (bearer-authed). Used by the read surface (#700 readAnswer). */
+  private async getJson<T>(pathSuffix: string): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+    if (!this.adminToken) return { ok: false, error: `no admin token (set ${ADMIN_TOKEN_ENV})` };
+    if (!this.fetchFn) return { ok: false, error: 'no fetch transport available' };
+    const base = this.baseUrl();
+    if (base === null) return { ok: false, error: 'daemon HTTP not reachable (no port)' };
+    try {
+      const res = await this.fetchFn(`${base}${pathSuffix}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${this.adminToken}` },
+      });
+      const text = await res.text().catch(() => '');
+      if (res.status < 200 || res.status >= 300) return { ok: false, error: `HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ''}` };
+      return { ok: true, data: JSON.parse(text) as T };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   private ens(): string {
     return encodeURIComponent(this.ensemble);
   }
@@ -142,6 +162,28 @@ export class MissionControlActions {
    */
   shutdownEnsemble(destroy?: boolean): Promise<ActionResult> {
     return this.post(`/v1/ensembles/${this.ens()}/shutdown`, destroy ? { destroy: true } : {});
+  }
+
+  // ── Q&A surface (#700 P2) ──
+  /**
+   * Ask a player a correlated question (`POST /v1/ensembles/:e/ask`). The daemon
+   * cues the target with a `[Q questionId]` marker; the answer lands on the
+   * maestro mailbox and is read back via {@link readAnswer} (or the SSE wake).
+   */
+  ask(opts: { target: string; question: string; questionId: string }): Promise<ActionResult> {
+    return this.post(`/v1/ensembles/${this.ens()}/ask`, opts);
+  }
+
+  /**
+   * Read a parked answer by `questionId` (`GET .../answer/:questionId`). Returns
+   * the {@link AnswerEntry} when present, or `null` (not answered yet / expired /
+   * transport error) — the caller polls or waits for the SSE `answer` wake.
+   */
+  async readAnswer(questionId: string): Promise<AnswerEntry | null> {
+    const res = await this.getJson<{ answer: AnswerEntry | null }>(
+      `/v1/ensembles/${this.ens()}/answer/${encodeURIComponent(questionId)}`,
+    );
+    return res.ok ? (res.data.answer ?? null) : null;
   }
 
   // ── Operator gate plane (T3) ──
