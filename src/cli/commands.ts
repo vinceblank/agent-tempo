@@ -933,7 +933,7 @@ const DEFAULT_DB_PATH = join(AGENT_TEMPO_HOME, 'temporal-data.db');
 
 // Source of truth lives in `sa-preflight.ts` (REQUIRED_SEARCH_ATTRIBUTES) —
 // avoid drifting a second copy here.
-import { REQUIRED_SEARCH_ATTRIBUTES, registerSearchAttribute } from './sa-preflight';
+import { REQUIRED_SEARCH_ATTRIBUTES, registerSearchAttribute, isPermissionError } from './sa-preflight';
 
 async function isTemporalReachable(config: { temporalAddress: string; temporalNamespace?: string; temporalApiKey?: string; temporalTlsCertPath?: string; temporalTlsKeyPath?: string }): Promise<boolean> {
   try {
@@ -966,6 +966,7 @@ function temporalCliExists(): boolean {
 
 function registerSearchAttributes(temporalAddress: string, namespace = 'default'): { failed: number } {
   let failed = 0;
+  let permissionBlocked = 0;
   for (const attr of REQUIRED_SEARCH_ATTRIBUTES) {
     const r = registerSearchAttribute(attr, temporalAddress, namespace);
     switch (r.status) {
@@ -976,17 +977,34 @@ function registerSearchAttributes(temporalAddress: string, namespace = 'default'
         out.dim(`  ${attr.name} (already registered)`);
         break;
       case 'failed':
-        // Surface the real error — pre-#605 this branch was silently
-        // labeled "already exists" and the operator only discovered the
-        // problem hours later when workflow start failed with
-        // INVALID_ARGUMENT. Most common cause on the SQLite dev server is
-        // the 10-Keyword-per-namespace cap (often hit when a namespace
-        // accumulates both old + new wire-rename attribute families).
-        failed++;
-        out.warn(`Failed to register ${attr.name}: ${r.detail}`);
+        // A PERMISSION error (Temporal Cloud namespace API keys can't reach the
+        // operator service) means we can't tell whether the SA exists — NOT that
+        // it's missing. Don't print a scary per-attr "Failed to register" or count
+        // it as a failure; collapse to ONE soft line below and PROCEED. Reserve
+        // the per-attr warning + hard "will fail" conclusion for DEFINITIVE
+        // failures (e.g. the SQLite dev server's 10-Keyword-per-namespace cap).
+        if (isPermissionError(r.detail)) {
+          permissionBlocked++;
+        } else {
+          failed++;
+          out.warn(`Failed to register ${attr.name}: ${r.detail}`);
+        }
         break;
     }
   }
+  // Permission-blocked (normal on Temporal Cloud): one accurate, non-alarming
+  // line — we couldn't manage the SAs, but that doesn't mean they're missing.
+  if (permissionBlocked > 0) {
+    const saList = REQUIRED_SEARCH_ATTRIBUTES.map((a) => `${a.name}:${a.type}`).join(', ');
+    out.warn(
+      `Couldn't verify search attributes — this credential lacks permission to manage them ` +
+      `(normal on Temporal Cloud, where search attributes are managed via the Cloud UI or tcld). ` +
+      `If workflow starts fail with "search attribute ... is not defined", create these ` +
+      `${REQUIRED_SEARCH_ATTRIBUTES.length} via the Cloud UI / tcld: ${saList}. ` +
+      `Otherwise this is safe to ignore.`,
+    );
+  }
+  // DEFINITIVE failures genuinely block — keep the hard, actionable conclusion.
   if (failed > 0) {
     out.warn(
       `${failed} search attribute${failed === 1 ? '' : 's'} not registered — ` +

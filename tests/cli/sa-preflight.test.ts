@@ -18,6 +18,7 @@ import {
   formatPreflightError,
   classifyRegistrationOutput,
   isTemporalCloud,
+  isPermissionError,
 } from '../../src/cli/sa-preflight';
 
 const ALL_REGISTERED = new Set(REQUIRED_SEARCH_ATTRIBUTES.map((a) => a.name));
@@ -172,6 +173,33 @@ describe('assertSearchAttributesOrExit', () => {
     expect(exitCode).toBe(1);
     expect(logged.join('\n')).toContain('Required search attributes not registered');
     expect(logged.join('\n')).toContain('AgentTempoEnsemble');
+  });
+});
+
+describe('isPermissionError (Temporal Cloud unauthorized-vs-missing discrimination)', () => {
+  it('flags permission/authorization failures (we CANNOT determine SA state)', () => {
+    for (const d of [
+      'unable to get existing search attributes: Request unauthorized',
+      'Request unauthorized',
+      'PermissionDenied: ...',
+      'permission denied',
+      'rpc error: code = PermissionDenied desc = not authorized',
+    ]) {
+      expect(isPermissionError(d), d).toBe(true);
+    }
+  });
+
+  it('does NOT flag definitive registration failures (those genuinely block)', () => {
+    for (const d of [
+      'number of search attributes 10 exceeds limit', // SQLite dev-server cap
+      'connection refused',
+      'ENOENT: temporal not found',
+      'invalid type',
+      undefined,
+      '',
+    ]) {
+      expect(isPermissionError(d), String(d)).toBe(false);
+    }
   });
 });
 
