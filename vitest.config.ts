@@ -31,6 +31,8 @@ export default defineConfig({
       // fishQuote + the secret-not-in-command-string regression guard). Pure, no
       // process spawning.
       'tests/spawn/**/*.test.ts',
+      // #695 — buildServerInstructions yield-norm content regression guard.
+      'tests/server-tools/**/*.test.ts',
     ],
     environment: 'node',
     globals: false,
