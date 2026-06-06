@@ -34,7 +34,12 @@ import * as crypto from 'crypto';
 import type { Client, WorkflowHandle } from '@temporalio/client';
 import { getConfig, ENV, sessionWorkflowId, type Config } from '../config';
 import type { AgentType, SessionMetadata } from '../types';
-import { buildAllTempoTools, type RegisterAllTempoToolsOpts } from '../server-tools';
+import {
+  buildAllTempoTools,
+  buildServerInstructions,
+  type RegisterAllTempoToolsOpts,
+  type BuildServerInstructionsOpts,
+} from '../server-tools';
 import type {
   ExtensionAPI, PiAgentSession, PiEventPayload, PiToolCallEvent, PiToolCallResult, PiExtensionContext,
   PiBeforeAgentStartEvent, PiBeforeAgentStartResult,
@@ -63,21 +68,6 @@ const nowIso = (): string => new Date().toISOString();
 // placeholder — that made a Pi session misreport its agentType metadata AND
 // recruit's mirror-fallback resolve to 'claude'.
 const PI_AGENT_TYPE: AgentType = 'pi';
-
-/**
- * #695 — yield-don't-poll norms appended to the Pi system prompt via
- * `before_agent_start` (the Pi equivalent of buildServerInstructions'
- * Communication-discipline block). Module-level constant (defined once);
- * idempotent content, safe to re-append on Pi's per-turn system-prompt rebuild.
- * Wording owned by tempo-docs (#695).
- */
-const YIELD_NORMS = `
-## Message Delivery
-- After cueing a player and expecting a reply, end your turn. The runtime wakes you when the reply arrives — there is nothing to poll.
-- \`listen\` reads messages already queued at call time. It cannot wait for future messages. Do not use a sleep+listen loop; it burns tokens without advancing work. To wait for a reply, end your turn.
-- If a player sends a status update or acknowledgment without asking a question or requesting action, do not respond. Replying starts a ping-pong that wastes turns on both sides.
-- A cue sent to you while you are busy arrives at your next turn boundary. A burst from several players arrives together — process the batch in one turn.
-`.trim();
 
 /** Runtime mode. Headless = recruited unsupervised player (MD-C gate active). */
 export type PiExtensionMode = 'interactive' | 'headless';
@@ -233,12 +223,29 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
     renderToPi(pi, buildAllTempoTools(toolOpts));
     log(`registered tools (player=${currentPlayerId}, conductor=${isConductor}, mode=${mode})`);
 
-    // ── #695 — yield-don't-poll norms into the Pi system prompt ──
-    // The Pi equivalent of buildServerInstructions' Communication-discipline block.
+    // ── #698 — FULL server-instruction preamble into the Pi system prompt ──
+    // The Pi equivalent of MCP players' `buildServerInstructions` (#695 S2 seeded
+    // this hook with just the 4 yield-norms; #698 widens it to the WHOLE preamble —
+    // identity, cue/report/recruit guidance, Communication-discipline, and the
+    // conductor/player operational rules). SINGLE-SOURCED off `buildServerInstructions`
+    // so MCP + Pi guidance can't drift; the yield-norms now arrive FOLDED IN (they
+    // live inside that builder since #695 S1), so there is no separate const.
     // `before_agent_start` exposes the fully-assembled systemPrompt and accepts a
-    // replacement (chained across extensions), so we APPEND the norms — injected
-    // into the model's system prompt every turn, invisibly (NOT a sendMessage, which
-    // would spam the transcript). Applies to ALL Pi players (interactive + headless).
+    // replacement (chained across extensions), so we APPEND — injected into the
+    // model's system prompt every turn, invisibly (NOT a sendMessage, which would
+    // spam the transcript). Applies to ALL Pi players (interactive + headless).
+    //
+    // Opts are built PER FIRE (before_agent_start fires every turn): playerId and
+    // hasRequestedName must reflect CURRENT state, so a `set_name`-renamed player
+    // gets the right identity rather than the boot-time one.
+    const piInstructionOpts = (): BuildServerInstructionsOpts => ({
+      ensemble: config.ensemble,
+      playerId: toolOpts.getPlayerId(),
+      isConductor,
+      playerType: process.env[ENV.PLAYER_TYPE] || undefined,
+      // playerTypeDescription omitted (MVP — not threaded into the Pi runtime).
+      hasRequestedName: Boolean(process.env[ENV.PLAYER_NAME]),
+    });
     // Cast mirrors the tool_call returning-handler pattern (the shim's `on` is
     // void-typed; the real ExtensionAPI before_agent_start handler returns a result).
     (pi.on as unknown as (
@@ -247,7 +254,7 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
     ) => void)(
       'before_agent_start',
       (ev: PiBeforeAgentStartEvent): PiBeforeAgentStartResult => ({
-        systemPrompt: `${ev.systemPrompt ?? ''}\n\n${YIELD_NORMS}`,
+        systemPrompt: `${ev.systemPrompt ?? ''}\n\n${buildServerInstructions(piInstructionOpts())}`,
       }),
     );
 
