@@ -331,6 +331,10 @@ async function applyLineupPlayersAndSchedules(args: {
           temporalTlsKeyPath: config.temporalTlsKeyPath,
           isConductor: false,
           workDir: playerWorkDir,
+          // #672 — a `up --lineup` copilot PLAYER is also spawned directly (no
+          // terminal) by the transient CLI → same self-kill bug as the conductor.
+          // Skip the ppid-poll; daemon-recruit copilot (outbox.ts) keeps it.
+          transientSpawner: true,
         });
       } else {
         const claudeArgs = [
@@ -586,6 +590,9 @@ async function start(opts: StartOpts) {
       temporalTlsKeyPath: config.temporalTlsKeyPath,
       isConductor: opts.conductor,
       workDir,
+      // #672 — CLI-direct copilot spawn (start path): transient `up`/`conduct`
+      // spawner → skip the ppid-poll. Daemon-recruit copilot (outbox.ts) omits it.
+      transientSpawner: true,
     });
     out.success(`Launched copilot bridge "${sessionName}" (pid ${pid ?? 'unknown'})`);
   } else {
@@ -1379,6 +1386,10 @@ export async function up(opts: UpOpts) {
       temporalTlsKeyPath: config.temporalTlsKeyPath,
       isConductor: true,
       workDir: process.cwd(),
+      // #672 — the `up` CLI is a TRANSIENT spawner; the detached bridge must NOT
+      // ppid-poll it (would self-kill seconds after launch → lease never renews →
+      // all players detach). The daemon-recruit path (outbox.ts) omits this.
+      transientSpawner: true,
     }));
   } else if (conductorAgent === 'pi') {
     // Interactive Pi conductor (#666). MUST launch `pi` in a REAL TERMINAL —
