@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-06-06
+
+### Fixed
+- **SECURITY: terminal conductor spawn no longer leaks `TEMPORAL_API_KEY` into scrollback/history** (#689) — secrets (API keys, tokens) passed to terminal-launched conductors were previously embedded in the process command line, visible in shell history and `ps` output. Secrets are now written to a 0600 temp env-file and passed via the environment, not the command line.
+- **Bridge log/PID files relocated from CWD `./logs/` to `~/.agent-tempo/logs/<ensemble>/`** (#690) — Copilot bridge log and PID files were written to a `./logs/` directory relative to the working directory, polluting project trees. They are now written to `~/.agent-tempo/logs/<ensemble>/`, consistent with other agent-tempo state files.
+
 ## [1.6.1] - 2026-06-06
 
 ### Fixed
