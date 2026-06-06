@@ -8,7 +8,7 @@ import { Cron } from 'croner';
 import { Client, Connection, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { spawnInTerminal, spawnCopilotBridge, spawnMockAdapter, resolveClaudePath, launchInTerminal, buildPiConductorSpawn, sweepStaleSecretEnvFiles } from '../spawn';
 import { checkPiNodeFloor } from '../pi/probe';
-import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, isDevMode, Config, CliOverrides, AGENT_TEMPO_HOME } from '../config';
+import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, isDevMode, Config, CliOverrides, AGENT_TEMPO_HOME, bridgeLogPaths, bridgeLogsRoot } from '../config';
 import { getGitInfo } from '../git-info';
 import { createTemporalConnection } from '../connection';
 import { releaseHeldSignal, outboxLockedQuery, setPausedSignal, destroyUpdate } from '../workflows/signals';
@@ -821,7 +821,7 @@ export async function status(opts: StatusOpts) {
       const agent = s.agentType === 'copilot' ? out.dim(' [copilot]') : '';
       const statusLabel = phaseLabel(s.phase);
       // Show PID info for copilot bridge sessions
-      const pidInfo = s.agentType === 'copilot' ? getBridgePidInfo(s.name) : '';
+      const pidInfo = s.agentType === 'copilot' ? getBridgePidInfo(ensemble, s.name) : '';
       const name = out.bold(s.name);
       out.log(`  ${name}${role}${statusLabel}${agent}${pidInfo}`);
       if (s.part) out.log(`    ${out.dim(s.part)}`);
@@ -2098,8 +2098,13 @@ export async function down(opts: DownOpts) {
  * Read PID info for a copilot bridge session from its PID file.
  * Returns a formatted string like " (pid 12345)" or "" if no PID file found.
  */
-function getBridgePidInfo(name: string): string {
-  const pidPath = join(process.cwd(), 'logs', `${name}.pid`);
+function getBridgePidInfo(ensemble: string, name: string): string {
+  // #690 — pid lives at the CENTRAL ~/.agent-tempo/logs/<ensemble>/ path; transitional
+  // READ-ONLY fallback to the legacy per-cwd ./logs for a pre-upgrade bridge.
+  // TODO(v1.7): drop the legacy fallback.
+  const centralPid = bridgeLogPaths(ensemble, name).pidPath;
+  const legacyPid = join(process.cwd(), 'logs', `${name}.pid`);
+  const pidPath = existsSync(centralPid) ? centralPid : legacyPid;
   if (!existsSync(pidPath)) return '';
   try {
     const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
@@ -2117,33 +2122,52 @@ function getBridgePidInfo(name: string): string {
 }
 
 /**
- * Kill all bridge processes found in logs/*.pid and clean up PID files.
+ * Kill all bridge processes found in `*.pid` files and clean up the pid files.
+ *
+ * #690 — bridge pid files moved to the CENTRAL `~/.agent-tempo/logs/<ensemble>/`
+ * dirs. `down` is a GLOBAL teardown (it stops the daemon + Temporal for EVERY
+ * ensemble), so this scans ALL central ensemble subdirs — NOT a single ensemble.
+ * (The architect's spec line "scope killBridge to the ensemble" assumed an
+ * ensemble-scoped caller; the sole caller, `down()`, is cluster-wide, so scanning
+ * all is the behavior-preserving + correct choice for a global stop. Flagged for
+ * review.) Plus a transitional READ-of the legacy per-cwd `./logs` for a
+ * pre-upgrade bridge. TODO(v1.7): drop the legacy `./logs` dir.
  */
 function killBridgeProcesses() {
-  const logsDir = join(process.cwd(), 'logs');
-  if (!existsSync(logsDir)) return;
-
+  const centralRoot = bridgeLogsRoot();
+  const dirs: string[] = [join(process.cwd(), 'logs')]; // legacy (transitional)
   try {
-    const pidFiles = readdirSync(logsDir).filter(f => f.endsWith('.pid'));
-    for (const pidFile of pidFiles) {
-      const pidPath = join(logsDir, pidFile);
-      try {
-        const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
-        if (!isNaN(pid)) {
-          try {
-            process.kill(pid);
-            out.log(`  ${out.dim(`Killed bridge process ${pidFile.replace('.pid', '')} (pid ${pid})`)}`);
-          } catch {
-            // already dead
-          }
-        }
-        unlinkSync(pidPath);
-      } catch {
-        // unreadable — skip
-      }
+    for (const ent of readdirSync(centralRoot, { withFileTypes: true })) {
+      if (ent.isDirectory()) dirs.push(join(centralRoot, ent.name));
     }
   } catch {
-    // logs dir unreadable
+    // no central logs root yet — nothing central to scan
+  }
+
+  for (const logsDir of dirs) {
+    if (!existsSync(logsDir)) continue;
+    try {
+      const pidFiles = readdirSync(logsDir).filter(f => f.endsWith('.pid'));
+      for (const pidFile of pidFiles) {
+        const pidPath = join(logsDir, pidFile);
+        try {
+          const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
+          if (!isNaN(pid)) {
+            try {
+              process.kill(pid);
+              out.log(`  ${out.dim(`Killed bridge process ${pidFile.replace('.pid', '')} (pid ${pid})`)}`);
+            } catch {
+              // already dead
+            }
+          }
+          unlinkSync(pidPath);
+        } catch {
+          // unreadable — skip
+        }
+      }
+    } catch {
+      // logs dir unreadable
+    }
   }
 }
 
