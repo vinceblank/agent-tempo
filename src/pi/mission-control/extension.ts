@@ -30,7 +30,30 @@ import { renderBoard } from './render';
 import { MissionControlActions, ADMIN_TOKEN_ENV, type ActionResult } from './actions';
 import { openInnerTail } from './inner-tail';
 import { ensureInfra, type InfraProgress } from '../../cli/ensure-infra';
-import type { McExtensionAPI, McExtensionContext } from './pi-ui';
+import type { McExtensionAPI, McExtensionContext, McOutboundMessage, McMessageOptions } from './pi-ui';
+
+/**
+ * #700 P2 — build the planner-wake injection from a resolved `answer` SSE event.
+ * Pure (testable). The planner has no inbox; the SSE `answer` event is turned
+ * into a `triggerTurn` session injection — the planner-side mirror of the
+ * cue-pump waking an idle player. Text is fetched on read (the answer route /
+ * the planner's `readAnswer` tool, commit 4); the wake just announces arrival.
+ */
+export function buildAnswerWake(
+  payload: { questionId: string; from: string; ts: string },
+): { message: McOutboundMessage; options: McMessageOptions } {
+  return {
+    message: {
+      customType: 'answer',
+      content:
+        `[answer to ${payload.questionId} from ${payload.from}] ` +
+        `Your question was answered — read the full text via the answer route ` +
+        `(questionId: ${payload.questionId}).`,
+      display: true,
+    },
+    options: { deliverAs: 'followUp', triggerTurn: true },
+  };
+}
 
 const WIDGET_KEY = 'mission-control';
 const DEFAULT_RENDER_THROTTLE_MS = 200;
@@ -345,6 +368,17 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
       void (async () => {
         try {
           for await (const ev of subscribe(ensemble, { signal: ac.signal })) {
+            // #700 P2 — an `answer` event isn't a board event; it WAKES the
+            // planner (its only inbound channel is this SSE stream). Inject via
+            // pi.sendMessage(triggerTurn) — feature-detected (a fake/older Pi
+            // may not provide it). Everything else folds into the board model.
+            if (ev.type === 'answer') {
+              if (typeof pi.sendMessage === 'function') {
+                const { message, options } = buildAnswerWake(ev.payload);
+                pi.sendMessage(message, options);
+              }
+              continue;
+            }
             applyTempoEvent(ctrl.model, ev);
           }
         } catch (err) {

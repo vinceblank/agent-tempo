@@ -19,6 +19,7 @@ import type {
   EnsembleChatResult,
   AttachmentInfo,
   HostInfo,
+  AnswerEntry,
 } from '../types';
 import type { RestoreOrphansSummary } from '../reconcile/orphans';
 import type { SubscribeOptions, TempoEvent } from '../http/event-types';
@@ -435,6 +436,13 @@ export interface TempoClientCore {
    * session query fails (treat absence as "not held").
    */
   isAnySessionHeld(ensemble: string): Promise<boolean>;
+  /**
+   * #700 P2 — read a parked Q&A answer from the per-ensemble maestro mailbox by
+   * `questionId`. Returns the entry, or `null` when not answered yet / expired /
+   * the hub isn't reachable. Used by `GET /v1/ensembles/:e/answer/:id` and the
+   * aggregate's outstanding-ask poll (which emits the `answer` SSE event).
+   */
+  getAnswer(ensemble: string, questionId: string): Promise<AnswerEntry | null>;
   /** Disband an ensemble: terminate all sessions, scheduler, and maestro workflows. */
   disbandEnsemble(ensemble: string): Promise<{ terminated: number }>;
   /** Check if the Temporal connection is alive. */

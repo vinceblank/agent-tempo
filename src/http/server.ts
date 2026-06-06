@@ -64,6 +64,7 @@ import {
   handleListAgentTypes,
   handleListLineups,
 } from './catalog';
+import { handleAsk, handleAnswer } from './qa';
 import {
   DAEMON_PORT_PATH,
   removePortFile,
@@ -531,6 +532,29 @@ export async function handle(
     denyTier(g);
     return false;
   };
+
+  // #700 P2 — Q&A ask/answer routes. Matched BEFORE the generic 2-segment
+  // writeMatch below (which would otherwise 404 `/ask` as an unknown write
+  // action). `ask` is a write (Tier 2); `answer` is a read (covered by the
+  // global bearer/loopback gate already applied upstream).
+  const askMatch = pathname.match(/^\/v1\/ensembles\/([^/]+)\/ask$/);
+  if (askMatch) {
+    const ensemble = decodeURIComponent(askMatch[1]);
+    if (!gateTier(2)) return; // write
+    if (method !== 'POST') {
+      return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'POST, OPTIONS' });
+    }
+    return handleAsk(req, res, ctx.client, ctx.aggregate, ensemble);
+  }
+  const answerMatch = pathname.match(/^\/v1\/ensembles\/([^/]+)\/answer\/([^/]+)$/);
+  if (answerMatch) {
+    const ensemble = decodeURIComponent(answerMatch[1]);
+    const questionId = decodeURIComponent(answerMatch[2]);
+    if (method !== 'GET') {
+      return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'GET, OPTIONS' });
+    }
+    return handleAnswer(res, ctx.client, ensemble, questionId);
+  }
 
   // Write surface (PR-7a of #340) — POST `/v1/ensembles/:ensemble/<action>`
   // Match BEFORE the GET-only method gate; everything else (POST to a

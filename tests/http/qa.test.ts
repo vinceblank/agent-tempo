@@ -1,0 +1,136 @@
+/**
+ * Daemon Q&A routes (#700 P2) — POST /ask + GET /answer/:questionId.
+ *
+ * Boots a real listener with a recording mock client (no aggregate → the ask
+ * route still cues + 202s; `trackAsk` is safely skipped, exercised separately
+ * in the aggregate unit test). Verifies: ask cues the target with the
+ * `[Q <id>]` marker, answer proxies `getAnswer`, validation + error mapping.
+ */
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { startHttpServer, type HttpServerHandle } from '../../src/http/server';
+import type { TempoClient } from '../../src/client/interface';
+import type { AnswerEntry } from '../../src/types';
+
+interface CallLog { method: string; args: unknown[] }
+
+function makeMockClient(opts: { throws?: Partial<Record<string, Error>>; answer?: AnswerEntry | null } = {}):
+  { client: TempoClient; calls: CallLog[] } {
+  const calls: CallLog[] = [];
+  const handler = (method: string, ret: unknown) => async (...args: unknown[]) => {
+    calls.push({ method, args });
+    if (opts.throws?.[method]) throw opts.throws[method];
+    return ret;
+  };
+  const base: Record<string, unknown> = {
+    ensureMaestroSession: handler('ensureMaestroSession', 'maestro-wf'),
+    sendAsMaestro: handler('sendAsMaestro', undefined),
+    getAnswer: handler('getAnswer', opts.answer ?? null),
+  };
+  const proxy = new Proxy(base, {
+    get(target, prop: string) {
+      if (prop in target) return target[prop];
+      return () => { throw new Error(`unstubbed TempoClient.${prop}`); };
+    },
+  });
+  return { client: proxy as unknown as TempoClient, calls };
+}
+
+let tmpDir: string;
+beforeAll(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-qa-')); });
+afterAll(() => { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ } });
+
+let booted: HttpServerHandle[] = [];
+afterEach(async () => {
+  for (const h of booted) { try { await h.close(); } catch { /* ignore */ } }
+  booted = [];
+});
+
+async function boot(mock: ReturnType<typeof makeMockClient>): Promise<{ url: string; calls: CallLog[] }> {
+  const handle = await startHttpServer({
+    client: mock.client,
+    namespace: 'default',
+    taskQueue: 'agent-tempo-test',
+    version: '0.0.0-test',
+    bindAddr: '127.0.0.1',
+    port: 0,
+    portFilePath: path.join(tmpDir, `daemon-${process.hrtime.bigint().toString(36)}.port`),
+  });
+  booted.push(handle);
+  return { url: `http://${handle.bindAddr}:${handle.port}`, calls: mock.calls };
+}
+
+describe('POST /v1/ensembles/:e/ask (#700 P2)', () => {
+  it('cues the target with a [Q id] marker + respond instruction and returns 202', async () => {
+    const b = await boot(makeMockClient());
+    const res = await fetch(`${b.url}/v1/ensembles/demo/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: 'tempo-eng', question: 'migration done?', questionId: 'q-1' }),
+    });
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body).toMatchObject({ ok: true, ensemble: 'demo', target: 'tempo-eng', questionId: 'q-1' });
+    expect(b.calls.find((c) => c.method === 'ensureMaestroSession')?.args).toEqual(['demo']);
+    const sent = b.calls.find((c) => c.method === 'sendAsMaestro');
+    expect(sent?.args[0]).toBe('demo');
+    expect(sent?.args[1]).toBe('tempo-eng');
+    expect(sent?.args[2]).toContain('[Q q-1]');
+    expect(sent?.args[2]).toContain('respond');
+  });
+
+  it('400 missing-field / invalid-question-id / invalid-player-name', async () => {
+    const b = await boot(makeMockClient());
+    const post = (body: unknown) => fetch(`${b.url}/v1/ensembles/demo/ask`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    expect((await post({ question: 'q', questionId: 'q-1' })).status).toBe(400); // no target
+    expect((await post({ target: 't', questionId: 'q-1' })).status).toBe(400); // no question
+    expect((await post({ target: 't', question: 'q' })).status).toBe(400);     // no questionId
+    expect((await post({ target: 't', question: 'q', questionId: 'bad id!' })).status).toBe(400); // bad qid
+    expect((await post({ target: 'has space', question: 'q', questionId: 'q1' })).status).toBe(400); // bad target
+  });
+
+  it('maps a "workflow not found" throw to 404', async () => {
+    const b = await boot(makeMockClient({ throws: { sendAsMaestro: new Error('workflow not found') } }));
+    const res = await fetch(`${b.url}/v1/ensembles/demo/ask`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: 'tempo-eng', question: 'q', questionId: 'q-1' }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('405 on GET to the ask route', async () => {
+    const b = await boot(makeMockClient());
+    const res = await fetch(`${b.url}/v1/ensembles/demo/ask`);
+    expect(res.status).toBe(405);
+  });
+});
+
+describe('GET /v1/ensembles/:e/answer/:questionId (#700 P2)', () => {
+  it('returns answered:false + answer:null when unanswered', async () => {
+    const b = await boot(makeMockClient({ answer: null }));
+    const res = await fetch(`${b.url}/v1/ensembles/demo/answer/q-1`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ ok: true, ensemble: 'demo', questionId: 'q-1', answered: false, answer: null });
+    expect(b.calls.find((c) => c.method === 'getAnswer')?.args).toEqual(['demo', 'q-1']);
+  });
+
+  it('returns the entry when answered', async () => {
+    const entry: AnswerEntry = { questionId: 'q-1', from: 'tempo-eng', text: 'done', answeredAt: '2026-01-01T00:00:00.000Z' };
+    const b = await boot(makeMockClient({ answer: entry }));
+    const res = await fetch(`${b.url}/v1/ensembles/demo/answer/q-1`);
+    const body = await res.json();
+    expect(body.answered).toBe(true);
+    expect(body.answer).toEqual(entry);
+  });
+
+  it('400 on an invalid questionId shape', async () => {
+    const b = await boot(makeMockClient());
+    const res = await fetch(`${b.url}/v1/ensembles/demo/answer/${encodeURIComponent('bad id!')}`);
+    expect(res.status).toBe(400);
+  });
+});

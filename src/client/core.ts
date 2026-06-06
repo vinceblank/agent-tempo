@@ -30,6 +30,7 @@ import type {
   WorktreeEntry,
   EnsembleChatResult,
   OutboxEntryInput,
+  AnswerEntry,
 } from '../types';
 import {
   submitOutboxUpdate,
@@ -50,10 +51,11 @@ import {
   getEnsembleStartTimeQuery,
   getCurrentBpmQuery,
   getTempoSeriesQuery,
+  maestroGetAnswerQuery,
 } from '../workflows/maestro-signals';
 import { resolveSession, scanEnsembleSessions } from '../activities/resolve';
 import { restoreOrphansOnce, type RestoreOrphansSummary } from '../reconcile/orphans';
-import { queryHandleWithTimeout } from '../utils/query-timeout';
+import { queryHandleWithTimeout, DEFAULT_QUERY_TIMEOUT_MS } from '../utils/query-timeout';
 import { iterateWithDeadline, isVisibilityTimeout } from '../utils/visibility-deadline';
 import {
   pauseMaestroAndScheduler,
@@ -1195,6 +1197,34 @@ export function createTempoClientCore(
         return !!paused;
       } catch {
         return false;
+      }
+    },
+
+    async getAnswer(ensemble: string, questionId: string): Promise<AnswerEntry | null> {
+      // #700 P2 — read a parked Q&A answer from the maestro mailbox. Used by
+      // both the daemon `GET /v1/ensembles/:e/answer/:id` route and the
+      // aggregate's outstanding-ask poll. Hub-not-running / not-yet-answered →
+      // null (mirrors isMaestroPaused's tolerant catch).
+      //
+      // Deliberately NOT `queryHandleWithTimeout`: its in-flight dedup is keyed
+      // by (workflowId, queryName) and is ARG-BLIND, so concurrent getAnswer
+      // calls for DIFFERENT questionIds (route vs aggregate poll) would collide
+      // and cross-return. Run a direct bounded query instead.
+      try {
+        const h = handle(maestroWorkflowId(ensemble));
+        const result = await Promise.race<AnswerEntry | null>([
+          h.query(maestroGetAnswerQuery, questionId),
+          new Promise<never>((_, reject) => {
+            const t = setTimeout(
+              () => reject(new Error(`getAnswer query timeout (${DEFAULT_QUERY_TIMEOUT_MS}ms)`)),
+              DEFAULT_QUERY_TIMEOUT_MS,
+            );
+            t.unref?.();
+          }),
+        ]);
+        return result ?? null;
+      } catch {
+        return null;
       }
     },
 

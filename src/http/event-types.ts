@@ -322,6 +322,7 @@ export const SSE_EVENT_KINDS = [
   'schedules.changed',
   'host_profile.changed',
   'player.activity',
+  'answer',
 ] as const;
 
 export type SseEventKind = (typeof SSE_EVENT_KINDS)[number];
@@ -410,6 +411,18 @@ export type TempoEvent =
         contextPercent?: number;
         at: string;
       };
+    })
+  | (SseEventBase & {
+      /**
+       * #700 P2 — a parked Q&A answer resolved. Emitted by the aggregate's
+       * outstanding-ask poll when `maestroGetAnswer(questionId)` first returns
+       * non-null. Wakes the inbox-less command-center planner (which consumes
+       * this ensemble stream) — the planner-side mirror of how a cue wakes a
+       * player. Payload is intentionally small (`text` is fetched on read via
+       * `GET /v1/ensembles/:e/answer/:questionId`).
+       */
+      type: 'answer';
+      payload: { questionId: string; from: string; ts: string };
     });
 
 // ── §6.1 — `TempoClient.subscribe` API surface ───────────────────────────
