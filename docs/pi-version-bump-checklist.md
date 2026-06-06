@@ -61,14 +61,15 @@
   surviving runtime (`rt.pi`). **DO NOT reintroduce a `payload.session` dependency** in the cue
   pump, reset pump, or any interactive path — the handle is the contract, not the event payload.
 
-  - **Consequence:** the B1 guard (`extension.ts` `warnIfInteractiveSessionMissing`) now fires
-    on EVERY interactive boot (`"carried no session"`). Post-#677 that is **EXPECTED and benign**
-    — injection works via `pi.sendMessage`. The guard's message still says "injection inert,"
-    which is now stale; treat a single boot-time warning as informational, not a failure.
-    (Tracked: whether to downgrade/retire the guard message is an open follow-up.)
+  - **Boot breadcrumb:** `extension.ts` `noteInteractiveSessionAbsent` emits a **one-time INFO**
+    line on the first interactive `session_start` with no session — *"interactive session_start
+    has no `session` field — expected on Pi ≥0.78.1; cues/reset route via pi.sendMessage."* This
+    is **expected and benign** (NOT a warning, NOT "inert", NOT "drift") — it confirms you're on
+    the normal 0.78.1 path. It fires once per process (not per switch/tick). (#677 reworded the
+    former B1 WARNING, which had become misleading post-fix, down to this breadcrumb.)
   - **Verification:** run an interactive Pi conductor, `cue` it from a peer, and confirm the cue
     LANDS (via `pi.sendMessage`) and — if no turn starts — escalates via `pi.sendUserMessage`.
-    The presence of the B1 warning does NOT indicate breakage anymore; the cue landing does.
+    The one-time breadcrumb is informational; the cue landing is what proves the path.
   - **If a future Pi RE-ADDS `session` to `SessionStartEvent`:** still don't depend on it —
     `rt.pi` is the stable handle across instance rebuilds (a captured `session`/`pi` goes stale
     on a session switch; per-tick re-resolution from `rt.pi` is the invariant).

@@ -68,28 +68,36 @@ export type PiExtensionMode = 'interactive' | 'headless';
 export type PiToolAccess = 'restricted' | 'standard' | 'full';
 
 /**
- * B1 runtime guard (#645 H4) — the type gate's blind spot.
+ * Interactive-session breadcrumb (#645 H4 → reworded for #677).
  *
- * `PiEventPayload.session` is UNDECLARED in Pi 0.78's `.d.ts` — it's an
- * interactive-only RUNTIME field, so the pi-drift type gate can't assert it. In
- * INTERACTIVE mode the `session_start` payload MUST carry `session` (the cue +
- * reset pumps inject into it); a null session there means injection is silently
- * inert — a likely Pi API drift. (Headless legitimately omits it — it wires
- * `rt.session` via `setRuntimeSession` — so the guard is interactive-only.)
+ * Pi 0.78.1's `SessionStartEvent` carries NO `session` field, so in INTERACTIVE
+ * mode `payload.session` is null. Pre-#677 that meant cue/reset injection was inert
+ * (it read `payload.session`), so this was a WARNING. Post-#677 injection routes
+ * through the stable `pi.sendMessage` handle (re-resolved per tick) and a missing
+ * session is the EXPECTED path — NOT an error. The "is `pi.sendMessage` still
+ * wired?" correctness signal now lives at BUILD time in the H4 drift gate
+ * (`test/pi-drift/assert.ts` `_passSendMsg` / `_sendSurfaceCallShape`), so this
+ * runtime check's correctness role is redundant.
  *
- * Pure + injected `warn` so it unit-tests without the workflow harness.
+ * What remains is value as a ONE-TIME, non-alarming boot breadcrumb: during Pi
+ * bring-up it confirms at a glance "you're on the expected 0.78.1 no-session path;
+ * cues route via pi.sendMessage." Fires AT MOST ONCE per process (the
+ * module-scope `notedInteractiveSessionAbsent` flag) — not per switch, not per
+ * tick. Pure + injected `note` so it unit-tests without the workflow harness.
  */
-export function warnIfInteractiveSessionMissing(
+let notedInteractiveSessionAbsent = false;
+export function noteInteractiveSessionAbsent(
   mode: PiExtensionMode,
   payload: { session?: unknown },
-  warn: (msg: string) => void,
+  note: (msg: string) => void,
 ): void {
-  if (mode === 'interactive' && payload.session == null) {
-    warn(
-      'WARNING: interactive session_start carried no session — cue/reset injection inert; ' +
-        'possible Pi API drift (#645)',
-    );
-  }
+  if (mode !== 'interactive' || payload.session != null) return;
+  if (notedInteractiveSessionAbsent) return;
+  notedInteractiveSessionAbsent = true;
+  note(
+    'interactive session_start has no `session` field — expected on Pi ≥0.78.1; ' +
+      'cues/reset route via pi.sendMessage (re-resolved per tick).',
+  );
 }
 
 export interface PiExtensionOptions {
@@ -388,8 +396,9 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
 
     // ── Lifecycle: session_start → first attach OR re-bind ──
     pi.on('session_start', async (payload: PiEventPayload) => {
-      // B1 (#645 H4): warn loudly if interactive session_start lost its session.
-      warnIfInteractiveSessionMissing(mode, payload, log);
+      // #677: one-time INFO breadcrumb when interactive session_start has no
+      // `session` field (the expected 0.78.1 path — injection routes via pi.sendMessage).
+      noteInteractiveSessionAbsent(mode, payload, log);
       try {
         const rt = await attachOrRebind(payload);
         await refreshSessionId(rt, rt.session?.id);
@@ -539,6 +548,15 @@ export function __clearRuntimesForTests(): void {
  */
 export function __getPiRuntimeForTests(workflowId: string): PiPlayerRuntime | undefined {
   return runtimes.get(workflowId);
+}
+
+/**
+ * Reset the one-time interactive-session breadcrumb flag (#677). TEST ESCAPE HATCH
+ * — do NOT call from production code. The flag is module-scope and fires at most
+ * once per process, so tests asserting the note must reset it between cases.
+ */
+export function __resetInteractiveSessionNoteForTests(): void {
+  notedInteractiveSessionAbsent = false;
 }
 
 /** Default export — interactive-mode extension (the human `pi` CLI entry). */

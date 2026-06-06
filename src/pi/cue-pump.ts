@@ -187,7 +187,10 @@ export class CuePump {
       if (pending.length === 0) return;
 
       if (!injector) {
-        // No live injection target yet — leave cues queued; next tick retries.
+        // No live injection target yet (no `pi` handle / session) — leave cues
+        // queued; next tick retries once an instance attaches/rebinds. Logged so a
+        // live bring-up can see cues are HELD (not lost) while waiting to attach.
+        log(`no live injector — holding ${pending.length} cue(s) for next tick`);
         return;
       }
 
@@ -207,9 +210,13 @@ export class CuePump {
       }
       await this.source.ackDelivered(delivered);
 
-      // Track the last cue injected via the escalation-eligible route (escalate
-      // present) so the NEXT tick can re-inject it as a user message if no turn
-      // started. The session-fallback route omits `escalate` → no tracking.
+      // Track ONLY the LAST cue injected via the escalation-eligible route so the
+      // NEXT tick can re-inject it as a user message if no turn started. Tracking
+      // just the last is intentional and does NOT drop earlier cues' delivery:
+      // every cue in this batch was already injected via pi.sendMessage (queued in
+      // Pi), so they ALL drain once any turn starts — escalation only needs to WAKE
+      // a turn, and re-injecting one cue as a user message does exactly that. The
+      // session-fallback route omits `escalate` → no tracking.
       if (injector.escalate && lastDeliveredText !== null) {
         this.lastInject = { text: lastDeliveredText, injectedAt: this.now(), escalated: false };
       }

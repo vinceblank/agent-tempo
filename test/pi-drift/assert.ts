@@ -20,8 +20,10 @@
  *
  * BLIND-SPOT CLASSES this gate CANNOT cover (B3, #645 H4 — covered elsewhere):
  *   1. Undeclared RUNTIME fields. `PiEventPayload.session` is not in Pi's `.d.ts`
- *      (interactive-only runtime field) → not type-assertable. Covered by the B1
- *      runtime guard (src/pi/extension.ts warnIfInteractiveSessionMissing).
+ *      (and, since Pi 0.78.1, absent at runtime in interactive too). Post-#677 the
+ *      "is pi.sendMessage wired?" correctness signal is owned HERE at build time
+ *      (`_passSendMsg` / `_sendSurfaceCallShape` below); the runtime side is now
+ *      just a one-time breadcrumb (src/pi/extension.ts noteInteractiveSessionAbsent).
  *   2. Positional arg-ORDER at a call we author. The corrected
  *      PiToolDefinition.execute (#651) is locked by the runtime regression test
  *      (test/pi-render-tools.test.ts), not just by types.
