@@ -162,6 +162,9 @@ function setup(): SetupResult {
     () => 'test-player',
     handle,
     'claude',
+    // #676 FIX-1 added `defaultAgentSource?` as the 6th positional param (before
+    // `deps`); pass `undefined` so the deps object lands in the right slot.
+    undefined,
     { listHostsFn: async () => [] },
   )]);
   return { capture, outboxEntries };

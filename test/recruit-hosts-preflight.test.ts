@@ -226,7 +226,9 @@ describe('registerRecruitTool host pre-flight (M15)', function () {
     const { handle, captures: outboxEntries } = makeFakeHandle();
     const listHostsFn = async () =>
       typeof hosts === 'function' ? hosts() : hosts;
-    renderToMcp(server, [buildRecruitTool(client, cfg, () => 'test-player', handle, 'claude', { listHostsFn })]);
+    // #676 FIX-1 added `defaultAgentSource?` as the 6th positional param (before
+    // `deps`); pass `undefined` (not operator-set) so the deps object lands correctly.
+    renderToMcp(server, [buildRecruitTool(client, cfg, () => 'test-player', handle, 'claude', undefined, { listHostsFn })]);
     return { capture, outboxEntries };
   }
 
