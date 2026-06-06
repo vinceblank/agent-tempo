@@ -244,7 +244,50 @@ export interface SessionMetadata {
    * (the spawn falls back to `AGENT_TEMPO_API_MODEL` env / pinned default).
    */
   model?: string;
+  /**
+   * #700 (P2 / G) — the durable guardrail posture for this autonomous agent.
+   * One knob, applied consistently to any autonomous LLM agent (headless
+   * conductor + interactive planner alike):
+   *
+   *   - `autonomous` (**default**, absent ⇒ this) — no gate; every op runs
+   *     free. vinceblank's hard requirement: hands-off orchestration is the
+   *     point, so supervision is strictly opt-in.
+   *   - `monitored` — gate armed, **fail-OPEN** (today's MD-G): a non-low-risk
+   *     op auto-ALLOWs after {@link GATE_AUTO_ALLOW_MS} if the operator doesn't
+   *     intervene. "Let the operator catch + override," not "block until yes."
+   *   - `supervised` — gate armed, **fail-CLOSED**: a non-low-risk op auto-DENIES
+   *     after `GATE_CLOSED_DENY_MS` (300s) on operator absence / daemon-down.
+   *     Silence ≠ consent.
+   *   - `observe-only` — a separate *no-act* axis (tool-access denial, MD-C
+   *     style), not a gate state; the agent may read/observe/advise but cannot
+   *     act.
+   *
+   * **Why DURABLE (not the env-path `toolAccess` uses):** a policy delivered
+   * only via spawn-env that a restart / re-attach failed to re-thread would
+   * silently DOWNGRADE a supervised agent to autonomous — that downgrade IS the
+   * guardrail bypass. Persisting it on session metadata means arm-at-boot reads
+   * the real posture on EVERY attach (across restart / migrate / re-attach), so
+   * a previously-`supervised` agent stays supervised. (tempo-architect ruling.)
+   *
+   * **★ P2 scope — CLIENT-COOPERATIVE, not tamper-proof (conductor ruling).**
+   * The agent stamps the per-request `failMode` from THIS policy in its own
+   * extension (`src/pi/extension.ts`), so `supervised` is only as strong as the
+   * agent HONORING its own policy — exactly MD-C tool-access parity (also
+   * client-enforced). It is NOT a hard security boundary against a compromised /
+   * prompt-injected agent that stamps `'open'` to self-downgrade. The tamper-
+   * proof form (the daemon cross-checks the request's `failMode` against this
+   * durable policy and FORCES `closed` for a supervised player) is **P2.1**, and
+   * is additive — it reads `failMode` off the same per-request seam. Do not
+   * describe `supervised` as a hard guarantee until daemon-side enforcement lands.
+   */
+  guardrailPolicy?: GuardrailPolicy;
 }
+
+/**
+ * #700 (P2 / G) — the durable guardrail posture for an autonomous agent.
+ * See {@link SessionMetadata.guardrailPolicy}. Absent ⇒ `autonomous`.
+ */
+export type GuardrailPolicy = 'autonomous' | 'monitored' | 'supervised' | 'observe-only';
 
 export interface AgentTypeInfo {
   name: string;
@@ -631,6 +674,15 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
    * the type from src/pi or src/adapters.
    */
   toolAccess?: 'restricted' | 'standard' | 'full';
+  /**
+   * #700 (P2 / G) — headless Pi guardrail posture (recruit-arg). Persisted onto
+   * durable {@link SessionMetadata.guardrailPolicy} by `startRecruitedSession`,
+   * so restart / migrate / re-attach recover it from metadata (NOT this entry,
+   * which is dropped after dispatch). Ignored when `agent !== 'pi'`. Absent ⇒
+   * `autonomous`. {@link GuardrailPolicy} is defined in THIS module, so the
+   * reference is in-file (no cross-module import — sandbox-safe).
+   */
+  guardrailPolicy?: GuardrailPolicy;
 }
 
 export interface ReleaseOutboxEntry extends OutboxEntryBase {
@@ -765,6 +817,13 @@ export interface SpawnOutboxEntry extends OutboxEntryBase {
    * subprocess runs the same model the original recruit chose.
    */
   model?: string;
+  /**
+   * #700 (P2 / G) — guardrail posture carried across restart / encore / migrate.
+   * Read from durable {@link SessionMetadata.guardrailPolicy} by `deliverRestart`
+   * and forwarded into the spawn so the restarted subprocess re-arms the SAME
+   * posture (the no-silent-downgrade durability point). Absent ⇒ `autonomous`.
+   */
+  guardrailPolicy?: GuardrailPolicy;
 }
 
 /**

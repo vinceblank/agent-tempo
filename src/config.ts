@@ -76,6 +76,18 @@ export const ENV = {
    */
   TOOL_ACCESS: 'AGENT_TEMPO_TOOL_ACCESS',
   /**
+   * #700 (P2 / G) — headless Pi guardrail posture. One of `autonomous`
+   * (default; no gate) | `monitored` (operator-armed, fail-OPEN) | `supervised`
+   * (fail-CLOSED, self-arming) | `observe-only` (no-act). Read by the Pi
+   * extension's `tool_call` gate (mode='headless'). The DURABLE source of truth
+   * is {@link SessionMetadata.guardrailPolicy}; this env var is just the per-boot
+   * transport — the (re)spawn always re-derives it from metadata, so a restart
+   * can never silently downgrade a supervised player (mirrors how `model` is
+   * re-threaded from durable metadata across restart, NOT the ephemeral
+   * `TOOL_ACCESS` env-only path).
+   */
+  GUARDRAIL_POLICY: 'AGENT_TEMPO_GUARDRAIL_POLICY',
+  /**
    * 3c Tier-2 ingest auth. The daemon mints a per-player ingest token (scoped to
    * the session workflowId) BEFORE spawning a headless Pi player and threads it
    * into the subprocess env here. The player's inner-loop publisher presents it

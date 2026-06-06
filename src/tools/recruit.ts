@@ -5,7 +5,7 @@ import { Config, ConfigSource, conductorWorkflowId, isDevMode, parsePiProviderMo
 import { AGENT_TYPES, AgentType, MOCK_MODES } from '../types';
 import { resolveSession } from './resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
-import type { OutboxEntryInput, HostInfo, MockMode } from '../types';
+import type { OutboxEntryInput, HostInfo, MockMode, GuardrailPolicy } from '../types';
 import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { resolveAgentType, listAgentTypes } from '../ensemble/agent-types';
 import { PLAYER_NAME_MAX, MESSAGE_MAX, PATH_MAX, validatePlayerName } from '../utils/validation';
@@ -146,6 +146,11 @@ export function buildRecruitTool(
       // 'restricted' default is applied once at the read site below instead.
       toolAccess: z.enum(['restricted', 'standard', 'full']).optional()
         .describe('pi only. Headless Pi tool-class policy. "restricted" (default): agent-tempo tools + Read/Edit/Write; Bash/shell/exec HARD-BLOCKED. "standard": Bash enabled; no tool-level scope restriction (operator/container responsible for scoping). "full": unsandboxed — requires force: true (admin confirmation). Ignored for other agents.'),
+      // #700 (P2 / G) — durable guardrail posture. `.optional()` (NOT
+      // `.default()`) for the same Pi zod→TypeBox fail-loud reason as toolAccess;
+      // absent ⇒ autonomous (the absent-default lives on SessionMetadata).
+      guardrailPolicy: z.enum(['autonomous', 'monitored', 'supervised', 'observe-only']).optional()
+        .describe('pi only. Durable guardrail posture (#700). "autonomous" (default): no gate, runs free. "monitored": operator-armed observability gate, fail-OPEN (auto-allow on absence). "supervised": fail-CLOSED — dangerous (non-low-risk) ops require human approval, auto-DENY on operator absence. "observe-only": may read/observe/advise but cannot act. P2 is client-cooperative (agent honors its own policy; not tamper-proof — daemon-enforcement is P2.1). Ignored for other agents.'),
     },
     handler: async (args) => {
       const { workDir, name, initialMessage } = args as {
@@ -164,6 +169,7 @@ export function buildRecruitTool(
         permissionMode?: typeof CLAUDE_CODE_PERMISSION_MODES[number];
         dangerouslySkipPermissions?: boolean;
         toolAccess?: 'restricted' | 'standard' | 'full'; // Zod-defaulted to 'restricted' at parse
+        guardrailPolicy?: GuardrailPolicy; // #700 — absent ⇒ autonomous
       };
       const isConductor = (args as any).conductor === true;
       const agent: AgentType = resolveRecruitAgent(
@@ -183,6 +189,9 @@ export function buildRecruitTool(
       // (A schema `.default()` would be cleaner but the Pi converter rejects it —
       // see the toolAccess param note above.) Omitted → 'restricted'.
       const toolAccess = ((args as any).toolAccess ?? 'restricted') as 'restricted' | 'standard' | 'full';
+      // #700 — leave undefined when not supplied (absent ⇒ autonomous on
+      // SessionMetadata). Only placed on the entry below when set + agent==='pi'.
+      const guardrailPolicy = (args as any).guardrailPolicy as GuardrailPolicy | undefined;
 
       // ADR 0014 §7 gate 3 — recruit-time rejection of `agent: 'mock'`
       // outside dev mode. Defense-in-depth: even if a hand-edited install
@@ -482,6 +491,9 @@ export function buildRecruitTool(
           // read site (above) to a concrete value, so the spawned gate + audit
           // always see one without a fallback here.
           ...(agent === 'pi' ? { toolAccess } : {}),
+          // #700 (P2 / G) — durable guardrail posture; only when explicitly set
+          // (absent ⇒ autonomous default on SessionMetadata).
+          ...(agent === 'pi' && guardrailPolicy ? { guardrailPolicy } : {}),
         } as OutboxEntryInput;
         const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 

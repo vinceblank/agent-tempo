@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import {
   GateRegistry,
   GATE_AUTO_ALLOW_MS,
+  GATE_CLOSED_DENY_MS,
   type GateAuditRecord,
 } from '../../src/http/gate-registry';
 
@@ -147,6 +148,66 @@ describe('GateRegistry — 45s auto-allow (lazy on poll)', () => {
     reg.getResolution(WF, RID);
     reg.getResolution(WF, RID);
     expect(audit.filter((a) => a.kind === 'decision')).toHaveLength(1);
+  });
+});
+
+describe('GateRegistry — per-request failMode (#700 / G)', () => {
+  const CLOSED_META = { ...META, failMode: 'closed' as const };
+
+  it('closed request stays pending past the 45s open fuse, then auto-DENIES at GATE_CLOSED_DENY_MS', () => {
+    const { reg, audit, advance } = setup();
+    reg.open(WF, RID, CLOSED_META);
+
+    // Past the OPEN fuse (45s) — a closed request must NOT auto-allow.
+    advance(GATE_AUTO_ALLOW_MS);
+    expect(reg.getResolution(WF, RID)).toEqual({ status: 'pending' });
+
+    // Just before the CLOSED fuse — still pending.
+    advance(GATE_CLOSED_DENY_MS - GATE_AUTO_ALLOW_MS - 1);
+    expect(reg.getResolution(WF, RID)).toEqual({ status: 'pending' });
+    expect(audit.some((a) => a.kind === 'decision')).toBe(false);
+
+    // At the closed fuse — auto-DENY (source timeout), audited like auto-allow.
+    advance(1);
+    expect(reg.getResolution(WF, RID)).toEqual({ status: 'resolved', decision: 'auto-deny', source: 'timeout' });
+    const dec = audit.find((a) => a.kind === 'decision');
+    expect(dec).toMatchObject({ decision: 'auto-deny', source: 'timeout', requestId: RID, tool: 'bash' });
+  });
+
+  it('emits inner.gate_resolved (auto-deny, source timeout) on the closed fuse', () => {
+    const { reg, published, advance } = setup();
+    reg.open(WF, RID, CLOSED_META);
+    advance(GATE_CLOSED_DENY_MS);
+    reg.getResolution(WF, RID);
+    expect(published.at(-1)?.frame).toMatchObject({ type: 'inner.gate_resolved', requestId: RID, decision: 'auto-deny', source: 'timeout' });
+  });
+
+  it('absent failMode ⇒ open: still auto-ALLOWS at the 45s fuse (MD-G unchanged)', () => {
+    const { reg, advance } = setup();
+    reg.open(WF, RID, META); // no failMode → defaults open
+    advance(GATE_AUTO_ALLOW_MS);
+    expect(reg.getResolution(WF, RID)).toEqual({ status: 'resolved', decision: 'auto-allow', source: 'timeout' });
+  });
+
+  it('failMode is PER-REQUEST: an open and a closed request on the same player resolve at their own fuses', () => {
+    const { reg, advance } = setup();
+    reg.open(WF, 'open-req', META);
+    reg.open(WF, 'closed-req', CLOSED_META);
+
+    advance(GATE_AUTO_ALLOW_MS); // open fuse only
+    expect(reg.getResolution(WF, 'open-req')).toEqual({ status: 'resolved', decision: 'auto-allow', source: 'timeout' });
+    expect(reg.getResolution(WF, 'closed-req')).toEqual({ status: 'pending' });
+
+    advance(GATE_CLOSED_DENY_MS - GATE_AUTO_ALLOW_MS); // now past the closed fuse too
+    expect(reg.getResolution(WF, 'closed-req')).toEqual({ status: 'resolved', decision: 'auto-deny', source: 'timeout' });
+  });
+
+  it('an operator decision on a closed request still wins before the fuse', () => {
+    const { reg, advance } = setup();
+    reg.open(WF, RID, CLOSED_META);
+    reg.decide(WF, RID, 'allow');
+    advance(GATE_CLOSED_DENY_MS * 2);
+    expect(reg.getResolution(WF, RID)).toEqual({ status: 'resolved', decision: 'allow', source: 'operator' });
   });
 });
 

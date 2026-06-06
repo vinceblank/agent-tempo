@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { Config, conductorWorkflowId, sessionWorkflowId } from '../config';
-import { AgentType, SessionInput, AdapterClass, AttachmentInfo, AttachmentPhase, MockMode, SessionMetadata, Message, DetachReason } from '../types';
+import { AgentType, SessionInput, AdapterClass, AttachmentInfo, AttachmentPhase, MockMode, SessionMetadata, Message, DetachReason, GuardrailPolicy } from '../types';
 import {
   PREVIEW_MAX_LENGTH,
   DEFAULT_RESTART_DETACH_DEADLINE_MS,
@@ -187,6 +187,12 @@ export interface StartRecruitedSessionInput {
    * can recover the original choice. Ignored when `agent !== 'claude-api'`.
    */
   model?: string;
+  /**
+   * #700 (P2 / G) — guardrail posture. Persisted onto
+   * `SessionMetadata.guardrailPolicy` so restart recovers it. Ignored when
+   * `agent !== 'pi'`. Absent ⇒ autonomous.
+   */
+  guardrailPolicy?: GuardrailPolicy;
 }
 
 export interface ReleasePlayerInput {
@@ -309,6 +315,13 @@ export interface SpawnProcessInput {
    * RecruitOutboxEntry note in src/types.ts).
    */
   toolAccess?: 'restricted' | 'standard' | 'full';
+  /**
+   * #700 (P2 / G) — headless Pi guardrail posture. Forwarded as
+   * `AGENT_TEMPO_GUARDRAIL_POLICY`. Sourced from durable
+   * `SessionMetadata.guardrailPolicy` on (re)spawn. Only meaningful when
+   * `agent === 'pi'`. Absent ⇒ autonomous (the extension default).
+   */
+  guardrailPolicy?: GuardrailPolicy;
 }
 
 // ── Activity result type ──
@@ -458,7 +471,7 @@ export function createOutboxActivities(
     },
 
     async startRecruitedSession(input: StartRecruitedSessionInput): Promise<RecruitResult> {
-      const { ensemble, targetName, workDir, isConductor, initialMessage, fromPlayerId, agent, systemPrompt, taskQueue, agentDefinition, agentDefinitionDescription, held, model } = input;
+      const { ensemble, targetName, workDir, isConductor, initialMessage, fromPlayerId, agent, systemPrompt, taskQueue, agentDefinition, agentDefinitionDescription, held, model, guardrailPolicy } = input;
       try {
         const workflowId = isConductor
           ? conductorWorkflowId(ensemble)
@@ -496,6 +509,11 @@ export function createOutboxActivities(
             // (different value shapes — bare vs `provider/model`) — the spawn
             // path inspects `metadata.agentType` to know which env var to set.
             ...((agent === 'claude-api' || agent === 'opencode' || agent === 'pi') && model ? { model } : {}),
+            // #700 (P2 / G) — persist the guardrail posture on DURABLE metadata so
+            // arm-at-boot reads the real posture on every (re)attach; a restart
+            // can't silently downgrade a supervised player. Only when explicitly
+            // set (absent ⇒ autonomous). Pi-only for P2.
+            ...(agent === 'pi' && guardrailPolicy ? { guardrailPolicy } : {}),
             ...(agentDefinition ? { playerType: agentDefinition } : {}),
             ...(agentDefinitionDescription ? { playerTypeDescription: agentDefinitionDescription } : {}),
             recruitedBy: fromPlayerId,
@@ -555,7 +573,7 @@ export function createOutboxActivities(
     },
 
     async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
-      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId, mockMode, mockScenario, model, permissionMode, dangerouslySkipPermissions, toolAccess } = input;
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId, mockMode, mockScenario, model, permissionMode, dangerouslySkipPermissions, toolAccess, guardrailPolicy } = input;
       // Read secrets from the worker's config closure — never from workflow state
       const { temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = config;
 
@@ -742,12 +760,13 @@ export function createOutboxActivities(
             // restart (resume=true); a fresh recruit starts a new Pi session.
             continueSessionId: resume ? sessionId : undefined,
             toolAccess,
+            guardrailPolicy,
             attachmentId,
             attachmentRunId,
             adapterId,
             ingestToken,
           });
-          log(`Spawned pi headless adapter (pid ${pid}) in ${workDir} as "${targetName}" (toolAccess=${toolAccess ?? 'restricted'})${model ? ` (model=${model})` : ''}${resume && sessionId ? ` (continue=${sessionId})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
+          log(`Spawned pi headless adapter (pid ${pid}) in ${workDir} as "${targetName}" (toolAccess=${toolAccess ?? 'restricted'})${guardrailPolicy ? ` (guardrailPolicy=${guardrailPolicy})` : ''}${model ? ` (model=${model})` : ''}${resume && sessionId ? ` (continue=${sessionId})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else {
           // Resolve agent flags: --agent (native) > --system-prompt (shipped/legacy)
           let agentFlags: string[] = [];
@@ -1194,6 +1213,10 @@ export function createOutboxActivities(
             // metadata.model field landed (which fall back to the env / default
             // chain inside the adapter).
             ...(metadata.model !== undefined ? { model: metadata.model } : {}),
+            // #700 (P2 / G) — guardrail posture carried across restart, read from
+            // DURABLE SessionMetadata so the restarted player re-arms the SAME
+            // posture (no silent downgrade). Absent ⇒ autonomous.
+            ...(metadata.guardrailPolicy !== undefined ? { guardrailPolicy: metadata.guardrailPolicy } : {}),
             ...(resolved ? {
               agentDefinition: resolved.name,
               agentDefinitionPath: resolved.path,

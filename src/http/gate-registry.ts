@@ -12,11 +12,18 @@
  *      the Pi subprocess POLLS for the resolution (GET /gate/:id/resolution) and
  *      resolves its awaited `tool_call` Promise on a non-pending answer.
  *
- * ── 45s auto-allow (R3, autonomous-first, maintainer-LOCKED) ──
- * A pending request with no operator decision after {@link GATE_AUTO_ALLOW_MS}
- * resolves to `auto-allow` so an unsupervised run never stalls (and Pi #2381 — a
- * `tool_call` handler that never resolves hangs the loop — can't bite). Expiry is
- * LAZY-ON-POLL (computed from `createdAt` vs the injected clock at
+ * ── Per-request fail-mode timeout (R3 + #700 / G) ──
+ * Every pending request carries a `failMode` (sourced from the agent's durable
+ * `guardrailPolicy`, defaulting `'open'`):
+ *   - `'open'` (monitored, autonomous-first, R3 maintainer-LOCKED) — no operator
+ *     decision after {@link GATE_AUTO_ALLOW_MS} resolves to `auto-allow` so an
+ *     unsupervised run never stalls (and Pi #2381 — a `tool_call` handler that
+ *     never resolves hangs the loop — can't bite).
+ *   - `'closed'` (supervised) — no operator decision after
+ *     {@link GATE_CLOSED_DENY_MS} resolves to `auto-deny`: opting into
+ *     supervision means silence ≠ consent, so a dangerous op is DENIED (not
+ *     hung — liveness preserved) when the operator is absent.
+ * Expiry is LAZY-ON-POLL (computed from `createdAt` vs the injected clock at
  * {@link GateRegistry.getResolution} time) — no daemon timer, fully
  * deterministic under test. The Pi-side poll loop additionally bounds itself +
  * honors `ctx.signal`, so the loop is bounded on BOTH sides.
@@ -41,11 +48,45 @@
  */
 import type { InnerFrame } from '../pi/inner-loop-publisher';
 
-/** Operator-gate timeout: a pending request auto-ALLOWS after this long (R3, locked). */
+/**
+ * MONITORED (fail-OPEN) timeout: a pending request auto-ALLOWS after this long
+ * (R3, locked). The cheap-if-wrong fuse for an otherwise-autonomous agent the
+ * operator is merely watching.
+ *
+ * ★ SINGLE-SOURCE HOME for the gate timeouts (#700 / G anti-drift). The
+ * subprocess gate-client DERIVES its client-side closed deadline from
+ * {@link GATE_CLOSED_DENY_MS} (+ buffer) so the invariant
+ * `client_closed > daemon_closed` can't drift — see `src/pi/gate-client.ts`.
+ */
 export const GATE_AUTO_ALLOW_MS = 45_000;
 
-/** Terminal decision on a gated tool call. `auto-allow` = the R3 timeout fired. */
-export type GateDecision = 'allow' | 'deny' | 'auto-allow';
+/**
+ * SUPERVISED (fail-CLOSED) timeout (#700 / G): a `closed` pending request
+ * auto-DENIES after this long on operator absence / daemon-down. Deliberately
+ * MUCH longer than the 45s monitored fuse — auto-deny is destructive (it kills a
+ * legit op the operator was about to approve), so it pairs with the inner-loop
+ * `gate_pending` notify and a generous 5-min window. Do NOT reuse the 45s
+ * constant for closed.
+ */
+export const GATE_CLOSED_DENY_MS = 300_000;
+
+/**
+ * Per-request fail posture (#700 / G). Sourced from the requesting agent's
+ * durable `guardrailPolicy` and carried on the `gate_pending` frame — NOT an
+ * operator-arm property (a headless supervised player holds only the ingest
+ * token and can't operator-arm). `'open'` = today's MD-G monitored behavior
+ * (auto-ALLOW); `'closed'` = supervised (auto-DENY).
+ */
+export type GateFailMode = 'open' | 'closed';
+
+/**
+ * Terminal decision on a gated tool call. `auto-allow` = the open (monitored)
+ * timeout fired; `auto-deny` = the closed (supervised) timeout fired. The two
+ * timeout outcomes are kept DISTINCT (not collapsed into plain allow/deny) so
+ * the audit sink can tell an operator decision from a timeout, and a monitored
+ * auto-allow from a supervised auto-deny.
+ */
+export type GateDecision = 'allow' | 'deny' | 'auto-allow' | 'auto-deny';
 
 /** Who/what produced a decision. */
 export type GateDecisionSource = 'operator' | 'timeout';
@@ -64,6 +105,13 @@ export interface GateRequestMeta {
    * splittable since both ensemble + playerId may contain hyphens).
    */
   ensemble?: string;
+  /**
+   * Per-request fail posture (#700 / G). `'closed'` (supervised) → auto-DENY
+   * after {@link GATE_CLOSED_DENY_MS}; `'open'` (monitored, **default**) →
+   * auto-ALLOW after {@link GATE_AUTO_ALLOW_MS}. Carried on the `gate_pending`
+   * frame from the agent's durable `guardrailPolicy`; omitted ⇒ `'open'`.
+   */
+  failMode?: GateFailMode;
 }
 
 /** The poll answer the Pi subprocess receives from GET /gate/:requestId/resolution. */
@@ -118,6 +166,8 @@ interface PendingRequest {
   readonly argsSummary: string;
   readonly sessionId?: string;
   readonly createdAt: number;
+  /** Per-request fail posture (#700 / G); set at open() from the gate_pending frame. */
+  readonly failMode: GateFailMode;
   decision: GateDecision | null;
   source: GateDecisionSource | null;
 }
@@ -143,6 +193,7 @@ export class GateRegistry {
     private readonly now: () => number = Date.now,
     private readonly autoAllowMs: number = GATE_AUTO_ALLOW_MS,
     private readonly publishToInner: PublishToInner = () => {},
+    private readonly closedDenyMs: number = GATE_CLOSED_DENY_MS,
   ) {}
 
   /** Emit an `inner.gate_resolved` outcome frame on the player's /inner stream. */
@@ -204,6 +255,7 @@ export class GateRegistry {
       argsSummary: meta.argsSummary,
       sessionId: meta.sessionId,
       createdAt: this.now(),
+      failMode: meta.failMode ?? 'open',
       decision: null,
       source: null,
     });
@@ -245,9 +297,14 @@ export class GateRegistry {
   /**
    * The Pi subprocess's poll answer. Returns `null` for an unknown request
    * (route → 404). For a known request: an already-recorded decision, OR — if no
-   * decision and `now - createdAt >= autoAllowMs` — a freshly-recorded `auto-allow`
-   * (R3 timeout, source `timeout`, audited HERE since the registry owns the
-   * timeout clock), OR `pending`.
+   * decision and the request's fail-mode fuse has elapsed — a freshly-recorded
+   * TIMEOUT decision (audited HERE since the registry owns the timeout clock),
+   * OR `pending`.
+   *
+   * The fuse is PER-REQUEST (#700 / G): `open` (monitored, default) auto-ALLOWS
+   * after {@link GATE_AUTO_ALLOW_MS}; `closed` (supervised) auto-DENIES after
+   * {@link GATE_CLOSED_DENY_MS}. Both are LAZY-ON-POLL (computed from `createdAt`
+   * vs the injected clock — no daemon timer, deterministic under test).
    */
   getResolution(workflowId: string, requestId: string): GateResolution | null {
     const g = this.gates.get(workflowId);
@@ -256,8 +313,11 @@ export class GateRegistry {
     if (req.decision !== null) {
       return { status: 'resolved', decision: req.decision, source: req.source ?? 'operator' };
     }
-    if (this.now() - req.createdAt >= this.autoAllowMs) {
-      req.decision = 'auto-allow';
+    const closed = req.failMode === 'closed';
+    const fuseMs = closed ? this.closedDenyMs : this.autoAllowMs;
+    if (this.now() - req.createdAt >= fuseMs) {
+      const decision: GateDecision = closed ? 'auto-deny' : 'auto-allow';
+      req.decision = decision;
       req.source = 'timeout';
       this.audit({
         kind: 'decision',
@@ -267,11 +327,11 @@ export class GateRegistry {
         requestId,
         tool: req.tool,
         argsSummary: req.argsSummary,
-        decision: 'auto-allow',
+        decision,
         source: 'timeout',
       }, g?.ensemble ?? '');
-      this.emitResolved(workflowId, requestId, 'auto-allow', 'timeout');
-      return { status: 'resolved', decision: 'auto-allow', source: 'timeout' };
+      this.emitResolved(workflowId, requestId, decision, 'timeout');
+      return { status: 'resolved', decision, source: 'timeout' };
     }
     return { status: 'pending' };
   }

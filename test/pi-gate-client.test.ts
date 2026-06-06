@@ -116,4 +116,52 @@ describe('GateClient.awaitDecision', () => {
     const { gc } = client({ fetchFn: fn, readPort: () => null, timeoutMs: 3000 });
     expect(await gc.awaitDecision(RID)).to.equal('allow');
   });
+
+  // ── #700 (P2 / G) — supervised fail-CLOSED mode ──────────────────────────
+  it('resolved auto-deny → deny (bug-2 fix: auto-deny ≠ deny must still block)', async () => {
+    // The mapping is failMode-INDEPENDENT — even an open-mode poll that sees the
+    // daemon's supervised auto-deny must map it to deny, never allow.
+    const { fn } = fakeFetch([{ status: 200, json: { status: 'resolved', decision: 'auto-deny', source: 'timeout' } }]);
+    const { gc } = client({ fetchFn: fn });
+    expect(await gc.awaitDecision(RID)).to.equal('deny');
+  });
+
+  it('closed + deadline (daemon unreachable / always pending) → DENY (fail-closed), bounded', async () => {
+    const { fn, calls } = fakeFetch([{ status: 200, json: { status: 'pending' } }]);
+    const { gc } = client({ fetchFn: fn, pollIntervalMs: 1000, closedTimeoutMs: 5000 });
+    expect(await gc.awaitDecision(RID, { failMode: 'closed' })).to.equal('deny');
+    expect(calls.length).to.be.greaterThan(0).and.lessThan(8); // bounded, not infinite
+  });
+
+  it('closed + no ingest token → DENY (the (b) backstop — never silent allow)', async () => {
+    const { fn, calls } = fakeFetch([{ status: 200, json: { status: 'pending' } }]);
+    const { gc } = client({ fetchFn: fn, ingestToken: undefined });
+    expect(await gc.awaitDecision(RID, { failMode: 'closed' })).to.equal('deny');
+    expect(calls.length).to.equal(0); // never hit the wire — short-circuits to deny
+  });
+
+  it('closed + aborted signal → allow (moot in BOTH modes — the tool won\'t run)', async () => {
+    const { fn, calls } = fakeFetch([{ status: 200, json: { status: 'pending' } }]);
+    const { gc } = client({ fetchFn: fn });
+    const ac = new AbortController();
+    ac.abort();
+    expect(await gc.awaitDecision(RID, { signal: ac.signal, failMode: 'closed' })).to.equal('allow');
+    expect(calls.length).to.equal(0);
+  });
+
+  it('closed + operator allow → allow (an explicit allow still permits under supervision)', async () => {
+    const { fn } = fakeFetch([{ status: 200, json: { status: 'resolved', decision: 'allow', source: 'operator' } }]);
+    const { gc } = client({ fetchFn: fn });
+    expect(await gc.awaitDecision(RID, { failMode: 'closed' })).to.equal('allow');
+  });
+
+  it('closed deadline derives from the daemon constant (≥310s) — open 50s deadline does NOT cut it short', async () => {
+    // Always-pending: in closed mode the client must keep polling well past the
+    // 50s open deadline (≥310s) so the daemon's 300s auto-deny is RECEIVED. With
+    // a 1s poll, that's ≥300 polls before the client's own fallback fires.
+    const { fn, calls } = fakeFetch([{ status: 200, json: { status: 'pending' } }]);
+    const { gc } = client({ fetchFn: fn, pollIntervalMs: 1000 }); // default closedTimeoutMs (≥310s)
+    expect(await gc.awaitDecision(RID, { failMode: 'closed' })).to.equal('deny');
+    expect(calls.length).to.be.greaterThan(60); // far beyond the 50s open deadline
+  });
 });
