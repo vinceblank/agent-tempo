@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { getConfig, parseAgent, ENV } from '../../src/config';
+import { AGENT_TYPES } from '../../src/types';
 
 describe('parseAgent', () => {
   it('returns "claude" for undefined and empty string', () => {
@@ -20,9 +21,16 @@ describe('parseAgent', () => {
     expect(parseAgent('', 'flag')).toBe('claude');
   });
 
-  it('accepts the two known agent types', () => {
-    expect(parseAgent('claude', 'flag')).toBe('claude');
-    expect(parseAgent('copilot', 'flag')).toBe('copilot');
+  // #683: parseAgent must accept EVERY AGENT_TYPES member (it's a pure
+  // type-validity check; capability subsetting is downstream). The former
+  // hardcoded ['claude','copilot'] list rejected `pi` (+ claude-api/opencode/
+  // claude-code-headless/mock) at config LOAD, poisoning every command.
+  it.each([...AGENT_TYPES])('accepts the canonical agent type "%s"', (agent) => {
+    expect(parseAgent(agent, 'flag')).toBe(agent);
+  });
+
+  it('accepts "pi" specifically (the #683 regression)', () => {
+    expect(parseAgent('pi', 'config')).toBe('pi');
   });
 
   it('throws with the source label from each origin', () => {
@@ -31,9 +39,11 @@ describe('parseAgent', () => {
     expect(() => parseAgent('gpt-4o', 'config')).toThrow(/config\.json/);
   });
 
-  it('throws with the offending value and the list of valid values', () => {
+  it('throws with the offending value and the FULL list of valid values (incl pi)', () => {
     expect(() => parseAgent('gpt-4o', 'flag')).toThrow(/Invalid agent "gpt-4o"/);
-    expect(() => parseAgent('gpt-4o', 'flag')).toThrow(/claude, copilot/);
+    // The error now lists the canonical AGENT_TYPES — pi must appear.
+    expect(() => parseAgent('gpt-4o', 'flag')).toThrow(/pi/);
+    expect(() => parseAgent('gpt-4o', 'flag')).toThrow(new RegExp(AGENT_TYPES.join(', ')));
   });
 });
 
