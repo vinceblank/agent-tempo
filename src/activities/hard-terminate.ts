@@ -28,6 +28,7 @@ import { execFileSync, spawnSync } from 'child_process';
 import { existsSync, readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import type { AgentType } from '../types';
+import { bridgeLogPaths } from '../config';
 import { ENSEMBLE_SENTINEL_FLAG, escapeNameForRegex } from '../constants';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:hard-terminate]', ...args);
@@ -73,8 +74,13 @@ export async function hardTerminateAttachment(input: HardTerminateInput): Promis
 
   // ── Copilot bridge: PID file is authoritative ──
   if (agent === 'copilot') {
-    const pidDir = logDir || join(workDir, 'logs');
-    const pidPath = join(pidDir, `${playerName}.pid`);
+    // #690 — pid lives at the CENTRAL ~/.agent-tempo/logs/<ensemble>/ path now.
+    // Transitional (one version, v1.6.2) READ-ONLY fallback to the legacy per-cwd
+    // <workDir>/logs so we can still find+kill an orphan from a pre-upgrade spawn.
+    // TODO(v1.7): drop the legacy fallback.
+    const centralPid = bridgeLogPaths(ensemble, playerName, logDir).pidPath;
+    const legacyPid = join(logDir || join(workDir, 'logs'), `${playerName}.pid`);
+    const pidPath = existsSync(centralPid) ? centralPid : legacyPid;
     if (existsSync(pidPath)) {
       try {
         const pidStr = readFileSync(pidPath, 'utf8').trim();

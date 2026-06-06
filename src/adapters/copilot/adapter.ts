@@ -37,7 +37,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Client } from '@temporalio/client';
-import { getConfig, ENV } from '../../config';
+import { getConfig, ENV, resolveAdapterPidFile } from '../../config';
 import { createTemporalConnection } from '../../connection';
 import { Message } from '../../types';
 import type { AdapterDescriptor } from '../../types';
@@ -374,8 +374,13 @@ export class CopilotSdkAttachment extends SdkAttachment {
     }
 
     // PID file paths — computed early so early-exit paths can clean up
-    const pidDir = path.join(workDir, 'logs');
-    const pidFile = path.join(pidDir, `${playerName || playerIdForWorkflow}.pid`);
+    // #690 — write/unlink the EXACT path the spawner computed (ENV.PID_FILE), so this
+    // adapter's pid file can't diverge from the spawner's. The copilot split-brain was
+    // here: spawnCopilotBridge sets PLAYER_NAME='' + BRIDGE_NAME=name, so this
+    // re-derivation fell to `playerIdForWorkflow` (→ `copilot-${Date.now()}`) ≠ the
+    // spawner's logName. Consuming the passed path removes the re-derivation entirely.
+    // Helper fallback only for a manual launch with no env.
+    const pidFile = resolveAdapterPidFile(config.ensemble, playerName || playerIdForWorkflow);
 
     // Wait for the MCP server's workflow to register in Temporal.
     // We know the exact workflow ID because we pass AGENT_TEMPO_PLAYER_NAME to the
@@ -473,7 +478,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
 
     // Write PID file so callers can find/kill orphaned bridge processes
     try {
-      fs.mkdirSync(pidDir, { recursive: true });
+      fs.mkdirSync(path.dirname(pidFile), { recursive: true });
       fs.writeFileSync(pidFile, String(process.pid));
       log(`PID file written: ${pidFile}`);
     } catch (err: any) {

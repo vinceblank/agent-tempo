@@ -34,7 +34,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import type { Message, AdapterDescriptor } from '../../types';
 import { SdkAttachment, type SdkDeliverResult } from '../sdk/base';
-import { ENV, getConfig } from '../../config';
+import { ENV, getConfig, bridgeLogPaths } from '../../config';
 import { createTemporalConnection } from '../../connection';
 import {
   pendingMessagesQuery,
@@ -212,7 +212,9 @@ export class OpenCodeAttachment extends SdkAttachment {
 
     // (3) Spawn opencode serve. Stdio redirected to a per-player log file
     // so terminal noise from opencode doesn't clutter the adapter's log.
-    const logDir = path.join(workDir, 'logs');
+    // #690 — central ~/.agent-tempo/logs/<ensemble>/ (the opencode serve subprocess
+    // log sits beside the adapter's own log, not in a per-cwd ./logs).
+    const logDir = bridgeLogPaths(config.ensemble, playerIdForWorkflow).dir;
     fs.mkdirSync(logDir, { recursive: true });
     const opencodeLogFile = path.join(logDir, `opencode-${playerIdForWorkflow}.log`);
     const logFd = fs.openSync(opencodeLogFile, 'a');

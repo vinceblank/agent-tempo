@@ -36,7 +36,7 @@ import * as path from 'path';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import type { Message, AdapterDescriptor } from '../../types';
 import { SdkAttachment, type SdkDeliverResult } from '../sdk/base';
-import { ENV, getConfig } from '../../config';
+import { ENV, getConfig, resolveAdapterPidFile } from '../../config';
 import { createTemporalConnection } from '../../connection';
 import { pendingMessagesQuery, allMessagesQuery, allSentMessagesQuery, isDestroyedQuery, receiveMessageSignal } from '../../workflows/signals';
 import { buildServerInstructions } from '../../server-tools';
@@ -299,10 +299,11 @@ export class DirectApiAttachment extends SdkAttachment {
     }
 
     // PID file so callers can find / kill orphaned adapter processes.
-    const pidDir = path.join(workDir, 'logs');
-    const pidFile = path.join(pidDir, `${playerIdForWorkflow}.pid`);
+    // #690 — write/unlink the EXACT path the spawner computed (ENV.PID_FILE) so the
+    // adapter pid can't diverge from the spawner's; helper fallback for a manual launch.
+    const pidFile = resolveAdapterPidFile(config.ensemble, playerIdForWorkflow);
     try {
-      fs.mkdirSync(pidDir, { recursive: true });
+      fs.mkdirSync(path.dirname(pidFile), { recursive: true });
       fs.writeFileSync(pidFile, String(process.pid));
     } catch (err) {
       log(`Warning: PID file write failed: ${(err as Error)?.message ?? err}`);

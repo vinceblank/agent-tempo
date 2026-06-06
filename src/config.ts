@@ -136,6 +136,15 @@ export const ENV = {
    */
   NO_PPID_WATCHDOG: 'AGENT_TEMPO_NO_PPID_WATCHDOG',
   /**
+   * #690 — absolute path to the bridge pid file, computed ONCE by the spawn
+   * helper (`bridgeLogPaths(ensemble, name).pidPath`) and passed to the adapter
+   * child. The adapter writes/unlinks THIS path rather than re-deriving its own
+   * (which diverged from the spawner's when PLAYER_NAME was empty — the
+   * split-brain orphan). PLAIN (non-secret): it's a file location, not a
+   * credential — must stay inline under #689's `partitionEnv`.
+   */
+  PID_FILE: 'AGENT_TEMPO_PID_FILE',
+  /**
    * Escape hatch for triple-isolated environments (ADR 0014 §5.3). When
    * set, `resolveTempoHome()` returns this path verbatim — bypassing both
    * the production default and the dev-mode default. Lets a power user
@@ -253,6 +262,64 @@ export function resolveTempoHome(): string {
 
 export const AGENT_TEMPO_HOME = resolveTempoHome();
 export const CONFIG_FILE_PATH = join(AGENT_TEMPO_HOME, 'config.json');
+
+/** Resolved log + pid paths for a recruited bridge/adapter player (#690). */
+export interface BridgeLogPaths {
+  /** The directory holding the player's log + pid files. */
+  dir: string;
+  /** `<dir>/<player>.log`. */
+  logPath: string;
+  /** `<dir>/<player>.pid`. */
+  pidPath: string;
+}
+
+/**
+ * SINGLE source of truth for where a recruited bridge/adapter's `.log` + `.pid`
+ * live (#690). Default is CENTRAL — `~/.agent-tempo/logs/<ensemble>/<player>.*` —
+ * NOT the old per-cwd `<workDir>/logs` (which scattered pid files across every
+ * recruit directory and orphaned them on `down`). No call site should construct
+ * its own `join(..., 'logs', ...)`; route everything through here so the writer
+ * (spawn helper) and the readers (status / down / hard-terminate) compute the
+ * SAME path and can't split-brain.
+ *
+ * `overrideDir` is the existing per-spawn `opts.logDir` escape hatch (rarely set);
+ * when present it wins over the central default. `ensemble`/`player` are
+ * regex-validated upstream (ENSEMBLE_NAME_REGEX / PLAYER_NAME_REGEX — no slashes),
+ * but a defensive guard rejects path-traversal as insurance.
+ */
+/**
+ * Root of the central bridge-log tree: `~/.agent-tempo/logs`. Per-ensemble dirs
+ * live under it. Exposed so a cluster-wide reader (e.g. `down`'s
+ * killBridgeProcesses) can enumerate every ensemble's dir without re-constructing
+ * the `'logs'` segment itself — {@link bridgeLogPaths} is the only other place
+ * that names it.
+ */
+export function bridgeLogsRoot(): string {
+  return join(AGENT_TEMPO_HOME, 'logs');
+}
+
+export function bridgeLogPaths(ensemble: string, player: string, overrideDir?: string): BridgeLogPaths {
+  for (const [label, seg] of [['ensemble', ensemble], ['player', player]] as const) {
+    if (/[/\\]|\.\./.test(seg)) {
+      throw new Error(`bridgeLogPaths: ${label} "${seg}" must not contain path separators or "..".`);
+    }
+  }
+  const dir = overrideDir ?? join(bridgeLogsRoot(), ensemble);
+  return { dir, logPath: join(dir, `${player}.log`), pidPath: join(dir, `${player}.pid`) };
+}
+
+/**
+ * The pid path an ADAPTER subprocess should write/unlink (#690). The SPAWNER
+ * computes the path once via {@link bridgeLogPaths} and passes it as
+ * `ENV.PID_FILE`; the adapter consumes THAT — it does NOT re-derive its own from
+ * a (possibly divergent) player identifier. The `bridgeLogPaths` fallback is used
+ * ONLY when the env is absent (a manual adapter launch outside the spawner). This
+ * is the by-construction fix for the copilot split-brain (PLAYER_NAME='' →
+ * `copilot-${Date.now()}` ≠ the spawner's logName).
+ */
+export function resolveAdapterPidFile(ensemble: string, fallbackPlayer: string): string {
+  return process.env[ENV.PID_FILE] || bridgeLogPaths(ensemble, fallbackPlayer).pidPath;
+}
 
 // ── Daemon config (PR-E design §10.2) ──
 

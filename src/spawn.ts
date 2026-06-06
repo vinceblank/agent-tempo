@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, openSync, closeSync, writeSync, writeFileSync, r
 import { join, resolve, dirname } from 'path';
 import { tmpdir } from 'os';
 import { randomBytes } from 'crypto';
-import { ENV } from './config';
+import { ENV, bridgeLogPaths } from './config';
 import { isSecretKey } from './utils/secrets';
 import type { MockMode } from './types';
 import type { ClaudeCodeHeadlessPermissionMode } from './adapters/claude-code-headless/types';
@@ -788,10 +788,9 @@ function resolveBridgePath(): { cmd: string; args: string[] } {
  */
 export function spawnCopilotBridge(opts: CopilotBridgeOpts): CopilotBridgeResult {
   const { cmd, args } = resolveBridgePath();
-  const logDirPath = opts.logDir || join(opts.workDir, 'logs');
   const logName = opts.name || `copilot-${Date.now()}`;
-  const logPath = join(logDirPath, `${logName}.log`);
-  const pidPath = join(logDirPath, `${logName}.pid`);
+  // #690 — central ~/.agent-tempo/logs/<ensemble>/ (overrideDir = opts.logDir wins).
+  const { dir: logDirPath, logPath, pidPath } = bridgeLogPaths(opts.ensemble, logName, opts.logDir);
 
   mkdirSync(logDirPath, { recursive: true });
   const logFd = openSync(logPath, 'a');
@@ -805,6 +804,7 @@ export function spawnCopilotBridge(opts: CopilotBridgeOpts): CopilotBridgeResult
       env: {
         ...process.env,
         [ENV.ENSEMBLE]: opts.ensemble,
+        [ENV.PID_FILE]: pidPath, // #690 — adapter writes/unlinks THIS exact path (no re-derive → no split-brain)
         [ENV.BRIDGE_NAME]: opts.name,
         [ENV.PLAYER_NAME]: '', // Clear parent's player name so child uses BRIDGE_NAME
         [ENV.BRIDGE_MODE]: '', // Clear parent's bridge mode
@@ -902,10 +902,9 @@ function resolveMockAdapterPath(): { cmd: string; args: string[] } {
  */
 export function spawnMockAdapter(opts: MockAdapterOpts): MockAdapterResult {
   const { cmd, args } = resolveMockAdapterPath();
-  const logDirPath = opts.logDir || join(opts.workDir, 'logs');
   const logName = opts.name || `mock-${Date.now()}`;
-  const logPath = join(logDirPath, `${logName}.log`);
-  const pidPath = join(logDirPath, `${logName}.pid`);
+  // #690 — central ~/.agent-tempo/logs/<ensemble>/ (overrideDir = opts.logDir wins).
+  const { dir: logDirPath, logPath, pidPath } = bridgeLogPaths(opts.ensemble, logName, opts.logDir);
 
   mkdirSync(logDirPath, { recursive: true });
   const logFd = openSync(logPath, 'a');
@@ -919,6 +918,7 @@ export function spawnMockAdapter(opts: MockAdapterOpts): MockAdapterResult {
       env: {
         ...process.env,
         [ENV.ENSEMBLE]: opts.ensemble,
+        [ENV.PID_FILE]: pidPath, // #690 — adapter writes/unlinks THIS exact path (no re-derive → no split-brain)
         [ENV.PLAYER_NAME]: opts.name,
         [ENV.CONDUCTOR]: opts.isConductor ? 'true' : '',
         [ENV.TEMPORAL_ADDRESS]: opts.temporalAddress,
@@ -1019,10 +1019,9 @@ function resolveClaudeApiPath(): { cmd: string; args: string[] } {
  */
 export function spawnClaudeApiAdapter(opts: ClaudeApiAdapterOpts): ClaudeApiAdapterResult {
   const { cmd, args } = resolveClaudeApiPath();
-  const logDirPath = opts.logDir || join(opts.workDir, 'logs');
   const logName = opts.name || `claude-api-${Date.now()}`;
-  const logPath = join(logDirPath, `${logName}.log`);
-  const pidPath = join(logDirPath, `${logName}.pid`);
+  // #690 — central ~/.agent-tempo/logs/<ensemble>/ (overrideDir = opts.logDir wins).
+  const { dir: logDirPath, logPath, pidPath } = bridgeLogPaths(opts.ensemble, logName, opts.logDir);
 
   mkdirSync(logDirPath, { recursive: true });
   const logFd = openSync(logPath, 'a');
@@ -1036,6 +1035,7 @@ export function spawnClaudeApiAdapter(opts: ClaudeApiAdapterOpts): ClaudeApiAdap
       env: {
         ...process.env,
         [ENV.ENSEMBLE]: opts.ensemble,
+        [ENV.PID_FILE]: pidPath, // #690 — adapter writes/unlinks THIS exact path (no re-derive → no split-brain)
         [ENV.PLAYER_NAME]: opts.name,
         [ENV.CONDUCTOR]: opts.isConductor ? 'true' : '',
         [ENV.TEMPORAL_ADDRESS]: opts.temporalAddress,
@@ -1134,10 +1134,9 @@ function resolveOpenCodePath(): { cmd: string; args: string[] } {
  */
 export function spawnOpenCodeAdapter(opts: OpenCodeAdapterOpts): OpenCodeAdapterResult {
   const { cmd, args } = resolveOpenCodePath();
-  const logDirPath = opts.logDir || join(opts.workDir, 'logs');
   const logName = opts.name || `opencode-${Date.now()}`;
-  const logPath = join(logDirPath, `${logName}.log`);
-  const pidPath = join(logDirPath, `${logName}.pid`);
+  // #690 — central ~/.agent-tempo/logs/<ensemble>/ (overrideDir = opts.logDir wins).
+  const { dir: logDirPath, logPath, pidPath } = bridgeLogPaths(opts.ensemble, logName, opts.logDir);
 
   mkdirSync(logDirPath, { recursive: true });
   const logFd = openSync(logPath, 'a');
@@ -1151,6 +1150,7 @@ export function spawnOpenCodeAdapter(opts: OpenCodeAdapterOpts): OpenCodeAdapter
       env: {
         ...process.env,
         [ENV.ENSEMBLE]: opts.ensemble,
+        [ENV.PID_FILE]: pidPath, // #690 — adapter writes/unlinks THIS exact path (no re-derive → no split-brain)
         [ENV.PLAYER_NAME]: opts.name,
         [ENV.CONDUCTOR]: opts.isConductor ? 'true' : '',
         [ENV.TEMPORAL_ADDRESS]: opts.temporalAddress,
@@ -1252,10 +1252,9 @@ function resolvePiPath(): { cmd: string; args: string[] } {
  */
 export function spawnPiHeadless(opts: PiHeadlessAdapterOpts): PiHeadlessAdapterResult {
   const { cmd, args } = resolvePiPath();
-  const logDirPath = opts.logDir || join(opts.workDir, 'logs');
   const logName = opts.name || `pi-${Date.now()}`;
-  const logPath = join(logDirPath, `${logName}.log`);
-  const pidPath = join(logDirPath, `${logName}.pid`);
+  // #690 — central ~/.agent-tempo/logs/<ensemble>/ (overrideDir = opts.logDir wins).
+  const { dir: logDirPath, logPath, pidPath } = bridgeLogPaths(opts.ensemble, logName, opts.logDir);
 
   mkdirSync(logDirPath, { recursive: true });
   const logFd = openSync(logPath, 'a');
@@ -1270,6 +1269,7 @@ export function spawnPiHeadless(opts: PiHeadlessAdapterOpts): PiHeadlessAdapterR
       env: {
         ...process.env,
         [ENV.ENSEMBLE]: opts.ensemble,
+        [ENV.PID_FILE]: pidPath, // #690 — adapter writes/unlinks THIS exact path (no re-derive → no split-brain)
         [ENV.PLAYER_NAME]: opts.name,
         [ENV.CONDUCTOR]: opts.isConductor ? 'true' : '',
         [ENV.TEMPORAL_ADDRESS]: opts.temporalAddress,
@@ -1385,10 +1385,9 @@ export function spawnClaudeCodeHeadlessAdapter(
   opts: ClaudeCodeHeadlessAdapterOpts,
 ): ClaudeCodeHeadlessAdapterResult {
   const { cmd, args } = resolveClaudeCodeHeadlessPath();
-  const logDirPath = opts.logDir || join(opts.workDir, 'logs');
   const logName = opts.name || `claude-code-headless-${Date.now()}`;
-  const logPath = join(logDirPath, `${logName}.log`);
-  const pidPath = join(logDirPath, `${logName}.pid`);
+  // #690 — central ~/.agent-tempo/logs/<ensemble>/ (overrideDir = opts.logDir wins).
+  const { dir: logDirPath, logPath, pidPath } = bridgeLogPaths(opts.ensemble, logName, opts.logDir);
 
   mkdirSync(logDirPath, { recursive: true });
   const logFd = openSync(logPath, 'a');
@@ -1402,6 +1401,7 @@ export function spawnClaudeCodeHeadlessAdapter(
       env: {
         ...process.env,
         [ENV.ENSEMBLE]: opts.ensemble,
+        [ENV.PID_FILE]: pidPath, // #690 — adapter writes/unlinks THIS exact path (no re-derive → no split-brain)
         [ENV.PLAYER_NAME]: opts.name,
         [ENV.CONDUCTOR]: opts.isConductor ? 'true' : '',
         [ENV.TEMPORAL_ADDRESS]: opts.temporalAddress,
