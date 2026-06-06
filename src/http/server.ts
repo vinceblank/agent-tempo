@@ -550,6 +550,11 @@ export async function handle(
   if (answerMatch) {
     const ensemble = decodeURIComponent(answerMatch[1]);
     const questionId = decodeURIComponent(answerMatch[2]);
+    // Read-tier gate (T1) — answer content is per-player data; enforce the read
+    // bearer per-route like every other GET (/v1/ensembles, /hosts, /orphans, …).
+    // Without this, a non-loopback bind (LAN/Tailscale) would serve answers with
+    // no auth. (greenfield review catch.)
+    if (!gateTier(1)) return;
     if (method !== 'GET') {
       return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'GET, OPTIONS' });
     }

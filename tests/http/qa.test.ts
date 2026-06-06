@@ -48,7 +48,10 @@ afterEach(async () => {
   booted = [];
 });
 
-async function boot(mock: ReturnType<typeof makeMockClient>): Promise<{ url: string; calls: CallLog[] }> {
+async function boot(
+  mock: ReturnType<typeof makeMockClient>,
+  auth: { httpToken?: string; adminToken?: string; allowedOrigins?: string[] } = {},
+): Promise<{ url: string; calls: CallLog[] }> {
   const handle = await startHttpServer({
     client: mock.client,
     namespace: 'default',
@@ -56,6 +59,9 @@ async function boot(mock: ReturnType<typeof makeMockClient>): Promise<{ url: str
     version: '0.0.0-test',
     bindAddr: '127.0.0.1',
     port: 0,
+    httpToken: auth.httpToken,
+    adminToken: auth.adminToken,
+    allowedOrigins: auth.allowedOrigins,
     portFilePath: path.join(tmpDir, `daemon-${process.hrtime.bigint().toString(36)}.port`),
   });
   booted.push(handle);
@@ -132,5 +138,38 @@ describe('GET /v1/ensembles/:e/answer/:questionId (#700 P2)', () => {
     const b = await boot(makeMockClient());
     const res = await fetch(`${b.url}/v1/ensembles/demo/answer/${encodeURIComponent('bad id!')}`);
     expect(res.status).toBe(400);
+  });
+});
+
+describe('Q&A auth posture (#700 P2 — read/write tiers)', () => {
+  // The answer GET is a READ (Tier 1); the ask POST is a WRITE (Tier 2). Both
+  // enforce per-route on a non-loopback (cross-origin) request — the read-gate
+  // is the greenfield must-fix (without it, GET /answer leaked content unauthed).
+  it('GET /answer cross-origin WITHOUT a bearer → 401 (read-gate enforced)', async () => {
+    const b = await boot(makeMockClient(), { httpToken: 'read-token' });
+    const res = await fetch(`${b.url}/v1/ensembles/demo/answer/q-1`, { headers: { origin: 'https://evil.com' } });
+    expect(res.status).toBe(401);
+  });
+
+  it('GET /answer cross-origin WITH the read bearer → 200 (read = Tier 1)', async () => {
+    const b = await boot(makeMockClient({ answer: null }), {
+      httpToken: 'read-token', adminToken: 'admin-token', allowedOrigins: ['https://dash.example.com'],
+    });
+    const res = await fetch(`${b.url}/v1/ensembles/demo/answer/q-1`, {
+      headers: { origin: 'https://dash.example.com', authorization: 'Bearer read-token' },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('POST /ask cross-origin with only the READ bearer → 403 (ask is Tier 2, needs admin)', async () => {
+    const b = await boot(makeMockClient(), {
+      httpToken: 'read-token', adminToken: 'admin-token', allowedOrigins: ['https://dash.example.com'],
+    });
+    const res = await fetch(`${b.url}/v1/ensembles/demo/ask`, {
+      method: 'POST',
+      headers: { origin: 'https://dash.example.com', authorization: 'Bearer read-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ target: 'eng', question: 'q', questionId: 'q-1' }),
+    });
+    expect(res.status).toBe(403);
   });
 });
