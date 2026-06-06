@@ -58,7 +58,10 @@ const log = (...args: unknown[]): void => {
 
 const nowIso = (): string => new Date().toISOString();
 
-const PI_AGENT_TYPE: AgentType = 'claude'; // Pi is not yet a first-class AgentType.
+// Pi IS a first-class AgentType (#666). #676 FIX-2: was a stale 'claude'
+// placeholder — that made a Pi session misreport its agentType metadata AND
+// recruit's mirror-fallback resolve to 'claude'.
+const PI_AGENT_TYPE: AgentType = 'pi';
 
 /** Runtime mode. Headless = recruited unsupervised player (MD-C gate active). */
 export type PiExtensionMode = 'interactive' | 'headless';
