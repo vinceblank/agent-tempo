@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { spawnSync } from 'child_process';
-import { Config, conductorWorkflowId, isDevMode, parsePiProviderModel } from '../config';
+import { Config, ConfigSource, conductorWorkflowId, isDevMode, parsePiProviderModel } from '../config';
 import { AGENT_TYPES, AgentType, MOCK_MODES } from '../types';
 import { resolveSession } from './resolve';
 import { submitOutboxUpdate } from '../workflows/signals';
@@ -59,12 +59,40 @@ export interface RegisterRecruitToolDeps {
   listHostsFn?: (client: Client) => Promise<HostInfo[]>;
 }
 
+/**
+ * #676 FIX-1 — recruit agent precedence: explicit `argAgent` > operator-SET
+ * `configDefault` > `ownAgentType` (this player's mirror-fallback). The
+ * `defaultAgentSource` distinguishes an operator-set default (origin
+ * flag/env/config/temporal-cli) from the built-in 'claude' default (source
+ * 'default') / truly-unset ('none') — only an operator-set default wins over the
+ * mirror, so a copilot/pi conductor recruits its own kind by default. Pure +
+ * exported for unit testing.
+ */
+export function resolveRecruitAgent(
+  argAgent: AgentType | undefined,
+  configDefault: AgentType,
+  defaultAgentSource: ConfigSource | undefined,
+  ownAgentType: AgentType,
+): AgentType {
+  if (argAgent) return argAgent;
+  const operatorSet = !!defaultAgentSource
+    && ['flag', 'env', 'config', 'temporal-cli'].includes(defaultAgentSource);
+  return operatorSet ? configDefault : ownAgentType;
+}
+
 export function buildRecruitTool(
   client: Client,
   config: Config,
   getPlayerId: () => string,
   handle: WorkflowHandle,
   ownAgentType: AgentType = 'claude',
+  /**
+   * #676 FIX-1 — the SOURCE of `config.defaultAgent` (from getConfigWithSources),
+   * used to distinguish an operator-SET default from the built-in 'claude'
+   * default (source 'default'). Undefined → treated as not-operator-set →
+   * recruit falls back to `ownAgentType` (preserves the pre-FIX-1 mirror).
+   */
+  defaultAgentSource?: ConfigSource,
   deps: RegisterRecruitToolDeps = {},
 ): TempoToolDescriptor {
   // Lazy default — only imports utils/hosts when actually called, so the
@@ -138,7 +166,9 @@ export function buildRecruitTool(
         toolAccess?: 'restricted' | 'standard' | 'full'; // Zod-defaulted to 'restricted' at parse
       };
       const isConductor = (args as any).conductor === true;
-      const agent: AgentType = (args as any).agent || ownAgentType;
+      const agent: AgentType = resolveRecruitAgent(
+        (args as any).agent, config.defaultAgent, defaultAgentSource, ownAgentType,
+      );
       const model = (args as any).model as string | undefined;
       const agentTypeName = (args as any).type as string | undefined;
       const systemPrompt = (args as any).systemPrompt as string | undefined;

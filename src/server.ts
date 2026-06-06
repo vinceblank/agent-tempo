@@ -5,7 +5,7 @@ import * as path from 'path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
-import { getConfig, conductorWorkflowId, maestroWorkflowId, ENV } from './config';
+import { getConfigWithSources, conductorWorkflowId, maestroWorkflowId, ENV } from './config';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { version: PKG_VERSION } = require('../package.json');
 import { createTemporalConnection } from './connection';
@@ -43,7 +43,10 @@ async function main() {
     return;
   }
 
-  const config = getConfig();
+  // #676 FIX-1 — resolve config WITH sources so recruit can tell an operator-SET
+  // defaultAgent from the built-in 'claude' default. `.config` is the same Config
+  // getConfig() returns (behavior-preserving); `.sources.defaultAgent` is the origin.
+  const { config, sources } = getConfigWithSources();
   const isConductor = process.env[ENV.CONDUCTOR] === 'true';
   const requestedName = process.env[ENV.PLAYER_NAME] || '';
   // Conductors use their requested name or fall back to 'conductor'.
@@ -266,7 +269,7 @@ async function main() {
   // the same call. Adding a new tool? Add it once in `server-tools.ts`.
   registerAllTempoTools(mcpServer, {
     client, config, getPlayerId, setPlayerId, handle, workflowId,
-    ownAgentType, isConductor,
+    ownAgentType, defaultAgentSource: sources.defaultAgent, isConductor,
   });
 
   const MAESTRO_ACK = '\n\n[IMPORTANT: This message is from a human (Maestro). Immediately cue the sender back with a brief acknowledgment and your planned next step before doing the work.]';

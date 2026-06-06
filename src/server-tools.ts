@@ -18,7 +18,7 @@
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client, WorkflowHandle } from '@temporalio/client';
-import { Config } from './config';
+import { Config, ConfigSource } from './config';
 import { AgentType } from './types';
 import { renderToMcp, type TempoToolDescriptor } from './tools/descriptor';
 import { buildEnsembleTool } from './tools/ensemble';
@@ -90,6 +90,12 @@ export interface RegisterAllTempoToolsOpts {
   workflowId: string;
   /** Default agent for `recruit` when the caller doesn't override. */
   ownAgentType: AgentType;
+  /**
+   * #676 FIX-1 — the SOURCE of `config.defaultAgent` (getConfigWithSources().sources),
+   * so recruit can prefer an operator-SET default over the `ownAgentType` mirror.
+   * Optional → undefined preserves the pre-FIX-1 mirror fallback.
+   */
+  defaultAgentSource?: ConfigSource;
   /** Whether this player is the ensemble's conductor (gates conductor-only tools). */
   isConductor: boolean;
 }
@@ -105,7 +111,7 @@ export interface RegisterAllTempoToolsOpts {
  * surface.
  */
 export function buildAllTempoTools(opts: RegisterAllTempoToolsOpts): TempoToolDescriptor[] {
-  const { client, config, getPlayerId, setPlayerId, handle, workflowId, ownAgentType, isConductor } = opts;
+  const { client, config, getPlayerId, setPlayerId, handle, workflowId, ownAgentType, defaultAgentSource, isConductor } = opts;
 
   const tools: TempoToolDescriptor[] = [
     buildEnsembleTool(client, config, getPlayerId, workflowId),
@@ -113,7 +119,7 @@ export function buildAllTempoTools(opts: RegisterAllTempoToolsOpts): TempoToolDe
     buildSetPartTool(handle),
     buildSetNameTool(client, config, handle, getPlayerId, setPlayerId),
     buildListenTool(handle),
-    buildRecruitTool(client, config, getPlayerId, handle, ownAgentType),
+    buildRecruitTool(client, config, getPlayerId, handle, ownAgentType, defaultAgentSource),
     buildReportTool(handle),
     buildScheduleTool(client, config, getPlayerId),
     buildUnscheduleTool(client, config),
