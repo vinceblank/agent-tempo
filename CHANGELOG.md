@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.0-beta.0] - 2026-06-06
+
+> **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
+
+### Added
+- **Pi conductor preamble** — full ensemble guidance injected into the Pi system prompt so Pi-based conductors receive the complete coordination context from boot (#698)
+- **Yield-don't-poll norms in conductor prompts** — Communication discipline block in server tools and Pi extension now encodes the yield-don't-poll rule, preventing busy-wait patterns in recruited sessions (#695)
+
 ## [1.6.2] - 2026-06-06
 
 ### Fixed
