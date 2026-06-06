@@ -227,6 +227,15 @@ export function applyEvent(
       // event kinds). Handled here only to satisfy the exhaustiveness sentinel.
       return prev;
     }
+
+    case 'answer': {
+      // #700 P2 (command-center Q&A) — a player answered a planner's correlated
+      // question. This wakes the interactive PLANNER (mission-control), not the
+      // dashboard — it is not a dashboard surface. Gracefully ignored here (the
+      // protocol mandates ignoring unused event kinds); handled only to satisfy
+      // the exhaustiveness sentinel. Closes commit 3's dashboard-consumer gap.
+      return prev;
+    }
   }
 
   // Exhaustiveness sentinel — adding a new SseEventKind without a case
