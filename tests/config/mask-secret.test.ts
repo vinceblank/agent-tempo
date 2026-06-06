@@ -4,7 +4,8 @@
  * NEVER contains the full raw value (terminal scrollback / screen-share / logs).
  */
 import { describe, it, expect } from 'vitest';
-import { maskSecret, isSecretKey } from '../../src/cli/config-command';
+import { maskSecret } from '../../src/cli/config-command';
+import { isSecretKey } from '../../src/utils/secrets';
 
 describe('maskSecret', () => {
   it('renders "(not set)" for empty / undefined / null', () => {

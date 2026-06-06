@@ -2,6 +2,7 @@ import * as readline from 'readline';
 import { loadConfigFile, saveConfigFile, CONFIG_FILE_PATH, PersistedConfig, getConfigWithSources } from '../config';
 import { getConfig } from '../config';
 import type { AgentType } from '../types';
+import { isSecretKey } from '../utils/secrets';
 import * as out from './output';
 
 /**
@@ -33,18 +34,9 @@ export const VALID_DEFAULT_AGENTS: readonly AgentType[] = ['claude', 'copilot', 
 
 // #684 — secret-masking. Any config field whose name looks like a credential is
 // masked in EVERY display path (show / interactive default / set echo) so a key is
-// never printed raw (terminal scrollback, screen-share, logs). Generalized on
-// purpose: a future secret added to the config is masked BY DEFAULT, not leaked.
-const SECRET_KEYS = new Set(['temporalApiKey', 'httpToken', 'readToken', 'adminToken']);
-// Matches *_API_KEY / *ApiKey / *Token / *Secret / *Password but NOT path fields
-// (e.g. temporalTlsKeyPath is a file path, not the key — it must stay visible).
-const SECRET_KEY_PATTERN = /(api[_-]?key|token|secret|password)/i;
-
-/** True when a config key holds a credential value that must be masked on display. */
-export function isSecretKey(key: string): boolean {
-  if (/path$/i.test(key)) return false; // *Path fields are file locations, not secrets
-  return SECRET_KEYS.has(key) || SECRET_KEY_PATTERN.test(key);
-}
+// never printed raw (terminal scrollback, screen-share, logs). The classifier
+// (`isSecretKey`) was extracted to `utils/secrets.ts` in #689 so `spawn.ts` shares
+// it — a future secret masks AND stays off the command line everywhere at once.
 
 /**
  * Render a secret for display: a short non-sensitive prefix (when the value is
