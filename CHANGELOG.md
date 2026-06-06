@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-06-06
+
+### Added
+- **`/tempo-reset` operator command** (#677 PART B) — operators can now issue a clean-wipe session reset to a headless Pi player via the MCP `reset` tool or the mission-control board. The daemon arms the reset flag on the player's workflow; the Pi reset-pump polls and calls `newSession()` on detect, sends a system notice breadcrumb, then acks via signal. Enables operator-mediated recovery without destroying the workflow.
+
+### Fixed
+- **Interactive Pi conductor now receives cues while idle** (#677 PART A) — after a SessionManager switch (newSession/fork), the InnerLoopPublisher re-binds its observers on every `session_start` rebuild, so Tier-1 coarse state (currentTool / context pressure) no longer goes stale. Cues delivered while the conductor was idle (between turns) are now reliably processed.
+- **Recruit default-agent precedence fix + double-dispatch guard** (#676) — `recruit` now correctly applies precedence: explicit `agent` arg > lineup default > config `defaultAgent` > hardcoded fallback. Previously the config `defaultAgent` was ignored when a lineup had no per-player agent. Also adds a double-dispatch guard so a recruit that is already in-flight (pre-created workflow) cannot be dispatched a second spawn.
+
 ## [1.5.1] - 2026-06-05
 
 ### Fixed
