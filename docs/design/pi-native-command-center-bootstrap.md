@@ -466,6 +466,41 @@ Five refinements so `failMode` lands clean against `gate-client.ts` / `gate-regi
 - **(e) Everything else clean:** `failMode` param on `awaitDecision` **defaults `'open'`** (preserves
   today's behavior); supervised-arm sets `'closed'`; transports headless→gate / interactive→`ctx.ui.confirm`.
 
+#### ★★ Gate-CLIENT co-change — `src/pi/gate-client.ts` (the subprocess poll-bridge) MUST change too
+
+`failMode` is **NOT daemon-only.** The gate has two halves: the daemon (`gate-registry` resolution,
+covered above) AND the **client** (`gate-client.ts`, the headless subprocess that polls for the
+decision). If only the daemon changes, **`closed` silently degrades to fail-OPEN** — the gate owner
+verified two client-side bugs against main. Both MUST be fixed in the same `failMode` work:
+
+- **Bug 1 — timeout mismatch (the big one).** `gate-client` `DEFAULT_TIMEOUT_MS = 50_000` (50s, set
+  "slightly beyond the daemon's 45s auto-allow"), and on its own deadline it returns **`allow`** (the
+  autonomous-first backstop). Against a **300s daemon closed-deny**, the client gives up at 50s and
+  returns **ALLOW — 250s before the daemon's auto-deny ever lands.** A supervised op fail-opens at 50s.
+  FIX: thread `failMode` into `awaitDecision` (today it takes only `{signal, timeoutMs}`): for `closed`,
+  the **client deadline ≥ daemon-closed-timeout + buffer (≥ 310s)** so the 300s auto-deny is actually
+  *received*, AND the client's own deadline-fallback returns **`deny`**, not `allow`. `open` keeps 50s →
+  `allow`.
+- **Bug 2 — decision mapping drops `auto-deny`.** `pollOnce` maps `decision === 'deny' ? 'deny' :
+  'allow'`, so the **new `'auto-deny'` decision (≠ `'deny'`) maps to ALLOW** — even when the daemon
+  *does* send auto-deny at 300s, the client mis-maps it to allow. FIX:
+  `(decision === 'deny' || decision === 'auto-deny') ? 'deny' : 'allow'`.
+
+**Client `closed`-mode at its return points** (mirrors the daemon failMode; `open` = today's behavior):
+
+| gate-client return point | `open` (today) | `closed` (supervised) |
+|---|---|---|
+| `!enabled` (no ingest token) | `allow` | **`deny`** — the (b) runtime backstop lives on this exact line |
+| abort (turn cancelled) | `allow` | `allow` — (a): moot, the tool won't run |
+| deadline / daemon-down | `allow` | **`deny`** |
+| `pollOnce` decision | `deny`→deny else allow | `deny` **or `auto-deny`** → deny |
+| client `timeoutMs` | 50s | **≥ daemon-closed-timeout + buffer (≥310s)** |
+
+This is the cross-file interaction the gate-owner review caught at spec time (not in a "why did my
+supervised agent run a denied op" incident): the **same `failMode` flag, threaded through the client end
+too** — `awaitDecision` + `pollOnce` + the timeout calibration — or the 300s daemon auto-deny is defeated
+by the 50s client fail-open. **Both files co-change in the same commit.**
+
 **Sequencing (verified):** phase-3d is **already merged to main (#636)** — the `classify()` extraction
 re-points settled imports, so it lands **against main anytime, no phase-3d wait** (the
 `docs/phase-3d-gate-reset` branch is stale / 39 behind — ignore). The extraction commit re-points **both**
