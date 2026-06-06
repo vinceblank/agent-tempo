@@ -432,13 +432,46 @@ current monitored role; **add** fail-closed as a per-arm option that the `superv
   `failMode: 'open' | 'closed'` through `awaitDecision` + the daemon resolution; supervised-arm sets
   `closed` (timeout/daemon-down → `deny`, currently hardcoded `allow`). **Do not flip MD-G's global
   default** — monitored uses stay fail-open.
-- **Longer / notify-augmented timeout (architect sub-decision (ii)):** MD-G's 45s is too short for a
-  remote human to approve, and under fail-closed a too-short timeout auto-denies *legit* ops. Supervised
-  wants a longer timeout + an operator notification on a pending request. (Exact value TBD in P2 build —
-  flagged.)
+- **Longer / notify-augmented timeout — LOCKED at 300s + reuse the inner-loop notify.** MD-G's 45s is
+  the *monitored* auto-ALLOW fuse (cheap-if-wrong; operator can still intervene). For *supervised*
+  auto-DENY, 45s is **destructive** — it would kill a legit op the operator was about to approve. So
+  supervised uses a **substantially longer fuse: 300s (5 min), configurable**, paired with a **push
+  notification** via the **existing inner-loop `gate_pending` publish** (no new mechanism — the 3d gate
+  already publishes `gate_pending` and the mission-control board already renders it persistently). Net:
+  open = fast auto-allow (45s); closed = slow auto-deny-after-notify (300s). Do **not** reuse the 45s
+  constant for closed.
 - **Fail-closed on daemon-DOWN safes the whole dangerous surface** when the approval channel is
   unreachable — correct guardrail posture (safety > liveness for the dangerous subset). Stated explicitly
   so it's a chosen property, not a surprise.
+
+### Fail-mode build precision (gate-owner / tempo-architect — verified against gate internals)
+
+Five refinements so `failMode` lands clean against `gate-client.ts` / `gate-registry.ts`:
+- **(a) ABORT stays `allow` even in `closed`.** `awaitDecision` returns `allow` on `signal.aborted`
+  (the turn was cancelled — the tool won't run anyway). `closed` changes **only** the *timeout* and
+  *daemon-down* returns to `deny` — **not** abort (denying a dead turn is moot + spuriously audits a deny).
+- **(b) ★ `closed` + no-ingest-token must NOT silently `allow`.** `gate-client` returns `allow`
+  immediately when `!enabled` (no ingest token) — for a *supervised headless* agent that's exactly the
+  fail-OPEN leak supervised exists to prevent. **RULING — both, defense-in-depth:** *(primary)* spawn
+  **preflight guarantees** the ingest token for a supervised agent (the gate can't function without it —
+  refuse/repair at spawn); *(backstop)* if `closed` + no-token is ever hit at runtime → **DENY + a loud
+  config-error log**, never `allow`. Never let `closed` degrade to fail-open.
+- **(c) `gate-registry` stores `failMode` per-arm** (`arm()` sets it; the armed record gains `failMode`);
+  `getResolution` reads it → at the fuse, compute auto-**DENY** for `closed`. Add **`'auto-deny'`** to
+  `GateDecision` (parallel to `'auto-allow'`) — do **not** collapse into plain `deny`; the gate-audit
+  sink (R5 durable-before-return) must distinguish operator-deny from timeout-auto-deny (different
+  operational meaning), audited the same way `auto-allow` is today.
+- **(d) The timeout asymmetry is REQUIRED** (the §6 ruling above): open = 45s auto-allow; closed = 300s
+  auto-deny + inner-loop notify. Not optional, not the same constant.
+- **(e) Everything else clean:** `failMode` param on `awaitDecision` **defaults `'open'`** (preserves
+  today's behavior); supervised-arm sets `'closed'`; transports headless→gate / interactive→`ctx.ui.confirm`.
+
+**Sequencing (verified):** phase-3d is **already merged to main (#636)** — the `classify()` extraction
+re-points settled imports, so it lands **against main anytime, no phase-3d wait** (the
+`docs/phase-3d-gate-reset` branch is stale / 39 behind — ignore). The extraction commit re-points **both**
+`extension.ts` usages (the `import` + the `classify(event.toolName)` gate call) + the new planner import
+in **one commit**, tests follow (parity), strict tsc both = the dangling-import gate. tempo-architect
+reviews the gate-import hunk.
 
 ### Planner nuance (note, not imposed)
 
