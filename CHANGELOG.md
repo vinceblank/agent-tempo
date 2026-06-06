@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-06-05
+
+### Fixed
+- **Copilot bridge killed immediately on macOS when spawned from a transient CLI** (#672) — the #604 parent-death watchdog's ppid-poll killed a correctly-detached Copilot bridge the moment its one-shot CLI spawner exited (by design). Fix: `spawnCopilotBridge` gains a `transientSpawner` option; when set, the bridge installs the stdin-EOF watchdog (universal) but skips the ppid-poll watchdog. All three CLI-direct copilot spawn sites pass it; the daemon-recruit path keeps ppid-poll unchanged.
+- **SSE subscribe / TUI "Loading messages…" hang on a live ensemble immediately after creation (Temporal Cloud)** (#673) — the SSE existence gate used an eventually-consistent Temporal visibility query, so a just-created ensemble 404'd before it was indexed; the subscribe client treats 404 as permanent and never retried. Fix: gate now falls back to a strongly-consistent `describe` of the per-ensemble maestro hub before returning 404 — covers the visibility lag window without changing behaviour for non-existent ensembles.
+
 ## [1.5.0] - 2026-06-05
 
 ### Added
