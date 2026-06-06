@@ -34,6 +34,7 @@ import {
 } from '../src/workflows/signals';
 import type { Message } from '../src/types';
 import { ENV, getConfig, sessionWorkflowId } from '../src/config';
+import { buildServerInstructions, type BuildServerInstructionsOpts } from '../src/server-tools';
 
 interface Recorded { def: unknown; arg: unknown; }
 interface Recorder { updates: Recorded[]; signals: Recorded[]; }
@@ -322,28 +323,82 @@ describe('Pi extension — MD-C tool_call gate (headless only)', () => {
   });
 });
 
-describe('Pi extension — #695 before_agent_start yield-norms injection', () => {
-  beforeEach(() => { process.env[ENV.PLAYER_NAME] = 'pi-norms-test'; });
-  afterEach(() => { __resetPiRuntimesForTests(); delete process.env[ENV.PLAYER_NAME]; });
-
-  it('appends the yield norms to the assembled systemPrompt (base preserved)', () => {
-    const rec: Recorder = { updates: [], signals: [] };
-    __setPiClientFactoryForTests(async () => makeFakeClient(rec));
-    const p = makeFakePi();
-    createPiExtension({ mode: 'interactive' })(p.pi);
-    const result = p.fire('before_agent_start', { systemPrompt: 'BASE PROMPT' }) as { systemPrompt: string };
-    expect(result.systemPrompt).to.contain('BASE PROMPT');             // base kept
-    expect(result.systemPrompt).to.contain('## Message Delivery');     // norms appended
-    expect(result.systemPrompt).to.contain('there is nothing to poll');
-    expect(result.systemPrompt).to.contain('ping-pong');
+describe('Pi extension — #698 before_agent_start FULL server-instruction preamble', () => {
+  const PLAYER = 'pi-preamble-test';
+  beforeEach(() => { process.env[ENV.PLAYER_NAME] = PLAYER; });
+  afterEach(() => {
+    __resetPiRuntimesForTests();
+    delete process.env[ENV.PLAYER_NAME];
+    delete process.env[ENV.CONDUCTOR];
+    delete process.env[ENV.PLAYER_TYPE];
   });
 
-  it('handles a missing systemPrompt + applies to headless too (norms only)', () => {
+  /**
+   * Mirror of extension.ts `piInstructionOpts()` — used by the single-source
+   * containment lock to call the canonical builder with the SAME opts the handler
+   * builds per-fire. PLAYER_NAME is set in beforeEach (no set_name) so playerId =
+   * PLAYER and hasRequestedName = true.
+   */
+  const optsFor = (isConductor: boolean): BuildServerInstructionsOpts => ({
+    ensemble: getConfig().ensemble,
+    playerId: PLAYER,
+    isConductor,
+    playerType: process.env[ENV.PLAYER_TYPE] || undefined,
+    hasRequestedName: Boolean(process.env[ENV.PLAYER_NAME]),
+  });
+
+  /** Build the extension, fire before_agent_start, return the resulting systemPrompt. */
+  const fireBefore = (mode: 'interactive' | 'headless', base?: string): string => {
     const rec: Recorder = { updates: [], signals: [] };
     __setPiClientFactoryForTests(async () => makeFakeClient(rec));
     const p = makeFakePi();
-    createPiExtension({ mode: 'headless' })(p.pi);
-    const result = p.fire('before_agent_start', {}) as { systemPrompt: string };
-    expect(result.systemPrompt).to.contain('## Message Delivery');
+    createPiExtension({ mode })(p.pi);
+    const payload = base === undefined ? {} : { systemPrompt: base };
+    const result = p.fire('before_agent_start', payload) as { systemPrompt: string };
+    return result.systemPrompt;
+  };
+
+  it('appends the FULL preamble (identity + ensemble + playerId + guidance); base preserved', () => {
+    const out = fireBefore('interactive', 'BASE PROMPT');
+    expect(out).to.contain('BASE PROMPT');                  // base kept
+    expect(out).to.contain('You are part of the');          // identity framing
+    expect(out).to.contain(getConfig().ensemble);           // ensemble name
+    expect(out).to.contain(PLAYER);                         // playerId
+    expect(out).to.contain('cue');                          // cue/report/recruit guidance
+    expect(out).to.contain('report');
+    expect(out).to.contain('recruit');
+    expect(out).to.contain('Communication discipline');
+    // Yield-norms STILL present — they live INSIDE buildServerInstructions now (#695 S1).
+    expect(out).to.contain('there is nothing to poll');
+  });
+
+  it('non-conductor → "Player rules" branch (CONDUCTOR unset)', () => {
+    const out = fireBefore('interactive', 'BASE');
+    expect(out).to.contain('Player rules');
+    expect(out).to.not.contain('Operational rules');
+  });
+
+  it('conductor → "Operational rules" branch (CONDUCTOR=1)', () => {
+    process.env[ENV.CONDUCTOR] = '1';
+    const out = fireBefore('interactive', 'BASE');
+    expect(out).to.contain('Operational rules');
+    expect(out).to.not.contain('Player rules');
+  });
+
+  it('handles a missing systemPrompt + applies to headless too', () => {
+    const out = fireBefore('headless', undefined);
+    expect(out).to.contain('You are part of the');
+    expect(out).to.contain('Communication discipline');
+  });
+
+  it('SINGLE-SOURCE: appended content CONTAINS buildServerInstructions(sameOpts) verbatim', () => {
+    // The anti-drift lock (the point of #698): Pi injects the canonical builder
+    // output, not a copy. Assert containment for BOTH role branches.
+    const outPlayer = fireBefore('interactive', 'BASE PROMPT');
+    expect(outPlayer).to.contain(buildServerInstructions(optsFor(false)));
+
+    process.env[ENV.CONDUCTOR] = '1';
+    const outConductor = fireBefore('interactive', 'BASE PROMPT');
+    expect(outConductor).to.contain(buildServerInstructions(optsFor(true)));
   });
 });
