@@ -61,6 +61,9 @@ import {
   coatCheckGetUpdate,
   coatCheckListQuery,
   coatCheckEvictUpdate,
+  // #700 P2 — maestro Q&A answer mailbox
+  maestroPostAnswerUpdate,
+  maestroGetAnswerQuery,
   // Global Maestro signals/queries/updates
   maestroNotifyMessageSignal,
   maestroEnsemblesQuery,
@@ -77,7 +80,7 @@ import {
   hostProfilesWithExistenceQuery,
 } from './maestro-signals';
 import { ApplicationFailure } from '@temporalio/workflow';
-import type { HostProfile, CoatCheckEntry, CoatCheckEntryHeader } from '../types';
+import type { HostProfile, CoatCheckEntry, CoatCheckEntryHeader, AnswerEntry } from '../types';
 import {
   COAT_CHECK_CONTENT_MAX,
   COAT_CHECK_SUMMARY_MAX,
@@ -88,6 +91,9 @@ import {
   COAT_CHECK_TTL_MIN_MS,
   COAT_CHECK_TTL_MAX_MS,
   COAT_CHECK_TTL_DEFAULT_MS,
+  MAESTRO_ANSWER_TTL_MS,
+  MAESTRO_ANSWERS_MAX,
+  MESSAGE_MAX,
 } from '../utils/validation';
 
 // ── Activity Proxies ──
@@ -185,6 +191,30 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
           bucket.delete(ticket);
           if (bucket.size === 0) putByIndex.delete(entry.putBy);
         }
+      }
+    }
+  }
+
+  // ── Maestro Q&A answer mailbox (#700 P2) ─────────────────────────────
+  //
+  // Correlated answers parked by players (via `respond`) for the inbox-less
+  // planner to read back by `questionId`. A coat-check clone: keyed map,
+  // restored across CAN (non-empty only), pure TTL-sweep folded into the same
+  // handler-entry + 5s-tick GC. Expiry is DERIVED from `answeredAt`
+  // (`+ MAESTRO_ANSWER_TTL_MS`) — no stored `expiresAt`.
+  const answers: Record<string, AnswerEntry> = { ...(input.answers ?? {}) };
+
+  /**
+   * Drop answers older than `MAESTRO_ANSWER_TTL_MS`. Pure + deterministic
+   * (`workflowNow()`); called at the head of the answer handlers and in the 5s
+   * refresh tick. Mutates `answers` in place. NO `patched()` — additive and
+   * replay-safe while this stays pure.
+   */
+  function sweepExpiredAnswers(): void {
+    const nowMs = workflowNow().getTime();
+    for (const [qid, entry] of Object.entries(answers)) {
+      if (nowMs - Date.parse(entry.answeredAt) > MAESTRO_ANSWER_TTL_MS) {
+        delete answers[qid];
       }
     }
   }
@@ -450,6 +480,70 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
     },
   });
 
+  // ── Maestro Q&A answer mailbox Handlers (#700 P2) ────────────────────
+
+  setHandler(maestroPostAnswerUpdate, ({ questionId, from, text }) => {
+    // Sweep first so a saturation rejection reflects fresh state (mirrors
+    // coat-check). Overwriting an existing questionId (a retry) reuses its slot.
+    sweepExpiredAnswers();
+    answers[questionId] = {
+      questionId,
+      from,
+      text,
+      answeredAt: workflowNow().toISOString(),
+    };
+    return { stored: true };
+  }, {
+    validator: ({ questionId, from, text }) => {
+      if (typeof questionId !== 'string' || questionId.length === 0) {
+        throw ApplicationFailure.nonRetryable(
+          'answer questionId must be a non-empty string',
+          'MaestroAnswerInvalidQuestionId',
+        );
+      }
+      if (typeof from !== 'string' || from.length === 0) {
+        throw ApplicationFailure.nonRetryable(
+          'answer from must be a non-empty string',
+          'MaestroAnswerInvalidFrom',
+        );
+      }
+      if (typeof text !== 'string' || text.length === 0) {
+        throw ApplicationFailure.nonRetryable(
+          'answer text must be a non-empty string',
+          'MaestroAnswerInvalidText',
+        );
+      }
+      if (text.length > MESSAGE_MAX) {
+        throw ApplicationFailure.nonRetryable(
+          `answer text exceeds ${MESSAGE_MAX} chars`,
+          'MaestroAnswerTooLarge',
+        );
+      }
+      // Saturation runs LAST on a post-sweep view. A retry that overwrites an
+      // existing questionId does NOT consume a new slot, so it's exempt.
+      const probe = { ...answers };
+      const nowMs = workflowNow().getTime();
+      for (const [q, e] of Object.entries(probe)) {
+        if (nowMs - Date.parse(e.answeredAt) > MAESTRO_ANSWER_TTL_MS) delete probe[q];
+      }
+      if (!(questionId in probe) && Object.keys(probe).length >= MAESTRO_ANSWERS_MAX) {
+        throw ApplicationFailure.nonRetryable(
+          `answer mailbox full (${MAESTRO_ANSWERS_MAX}); wait for TTL (${MAESTRO_ANSWER_TTL_MS}ms) or re-ask`,
+          'MaestroAnswersFull',
+        );
+      }
+    },
+  });
+
+  setHandler(maestroGetAnswerQuery, (questionId) => {
+    // Queries can't mutate; filter against a post-sweep VIEW so an expired
+    // answer doesn't surface even before the next physical sweep.
+    const entry = answers[questionId];
+    if (!entry) return null;
+    if (workflowNow().getTime() - Date.parse(entry.answeredAt) > MAESTRO_ANSWER_TTL_MS) return null;
+    return entry;
+  });
+
   // ── Main Loop ──
 
   while (!shutdownRequested) {
@@ -605,6 +699,10 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
     // and idempotent, so it's safe to call on every refresh tick.
     sweepExpiredCoatCheck();
 
+    // ── Q&A answer-mailbox opportunistic TTL sweep (#700 P2) ──
+    // Same idiom — pure, cheap, idempotent; trims expired answers on idle.
+    sweepExpiredAnswers();
+
     // ── Auto-terminate if idle ──
     // #318: was `Date.now() - lastActiveSessionTime` — non-deterministic on
     // replay. `workflowNow()` reads the SDK-intercepted clock; idle decision
@@ -621,6 +719,8 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
       // `playerState` carry idiom in `src/workflows/session.ts:1617-1638`
       // — keeps the wire small for the common no-coat-check case.
       const carryCoatCheck = Object.keys(coatCheck).length > 0;
+      // #700 P2 — carry the answer mailbox only when populated (same idiom).
+      const carryAnswers = Object.keys(answers).length > 0;
       await continueAsNew<typeof agentMaestroWorkflow>({
         ensemble: input.ensemble,
         players,
@@ -640,6 +740,8 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
         tempoCurrentBucket,
         // #318 — carry the coat-check map only when populated.
         ...(carryCoatCheck ? { coatCheck } : {}),
+        // #700 P2 — carry the answer mailbox only when populated.
+        ...(carryAnswers ? { answers } : {}),
       });
     }
   }

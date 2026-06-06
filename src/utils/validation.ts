@@ -91,6 +91,18 @@ export const COAT_CHECK_TTL_MAX_MS = 30 * 24 * 60 * 60 * 1000;
 /** Default `ttlMs` when caller omits the argument — 7 days. */
 export const COAT_CHECK_TTL_DEFAULT_MS = 7 * 24 * 60 * 60 * 1000;
 
+// ── Maestro Q&A answer mailbox (#700 P2) ───────────────────────────────────
+
+/**
+ * TTL for a parked Q&A answer — fixed 1 hour (shorter than coat-check's 7d;
+ * a correlated Q&A answer is transient). Expiry is derived from `answeredAt`,
+ * swept by the pure sweep in the maestro 5s refresh tick.
+ */
+export const MAESTRO_ANSWER_TTL_MS = 60 * 60 * 1000;
+
+/** Maximum populated answer slots per ensemble. Saturation rejects after sweep (mirrors `COAT_CHECK_SLOTS_MAX`). */
+export const MAESTRO_ANSWERS_MAX = 20;
+
 /**
  * Maximum length of the ensemble description set via
  * `set_ensemble_description` (#399 W1, Q5.1). Soft cap — the MCP tool

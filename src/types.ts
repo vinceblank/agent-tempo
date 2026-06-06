@@ -1108,6 +1108,34 @@ export interface MaestroInput {
    * carry idiom in `src/workflows/session.ts:1617-1638`).
    */
   coatCheck?: Record<string, CoatCheckEntry>;
+  /**
+   * #700 P2 — maestro Q&A answer mailbox (the planner asks an inbox-less
+   * question; a player answers via `respond`). Keyed by the CALLER-supplied
+   * `questionId`. Mirrors the coat-check carry idiom — carried across CAN only
+   * when the map is non-empty. TTL-swept (`MAESTRO_ANSWER_TTL_MS`).
+   */
+  answers?: Record<string, AnswerEntry>;
+}
+
+// ── Maestro Q&A answer mailbox (#700 P2) ───────────────────────────────────
+
+/**
+ * A single correlated answer parked on per-ensemble Maestro state. The planner
+ * (command center) has no Temporal inbox, so a player routes its answer here
+ * via the `respond` tool (a direct maestro-handle write, like coat-check); the
+ * planner reads it back by `questionId`. `answeredAt` is `workflowNow()`-stamped
+ * for replay determinism; expiry is derived (`answeredAt + MAESTRO_ANSWER_TTL_MS`),
+ * so no separate `expiresAt` field is stored.
+ */
+export interface AnswerEntry {
+  /** Caller-supplied correlation id (the planner mints it; the workflow never does). */
+  questionId: string;
+  /** Audit identity — the answering player (`getPlayerId()`); not a spoofable arg. */
+  from: string;
+  /** The answer body (≤ `MESSAGE_MAX`). */
+  text: string;
+  /** When the answer landed, `workflowNow().toISOString()`. */
+  answeredAt: string;
 }
 
 // ── Coat-check (#318, ADR 0008) ────────────────────────────────────────────
