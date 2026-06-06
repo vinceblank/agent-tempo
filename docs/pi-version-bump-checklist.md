@@ -52,15 +52,27 @@
 
 ---
 
-- [ ] **3. Interactive `session_start` payload — undeclared `session` field** (Finding-2, B1 guard)
+- [ ] **3. Interactive `session_start` payload — NO `session` field as of 0.78.1** (#677, B1 guard)
 
-  Interactive `session_start` STILL carries `session` at runtime — this field is **not declared
-  in Pi's `.d.ts`**. The B1 guard (`extension.ts` `warnIfInteractiveSessionMissing`) warns on
-  regression.
+  **As of Pi 0.78.1, `SessionStartEvent` carries NO `session` field** (it was undeclared in the
+  `.d.ts` and is now absent at runtime too). This broke interactive cue/reset injection, fixed in
+  **#677**: injection NO LONGER reads `payload.session` — it routes through the stable
+  **`pi.sendMessage` / `pi.sendUserMessage`** ExtensionAPI handle, re-resolved per tick from the
+  surviving runtime (`rt.pi`). **DO NOT reintroduce a `payload.session` dependency** in the cue
+  pump, reset pump, or any interactive path — the handle is the contract, not the event payload.
 
-  - **Verification:** run an interactive Pi session, inject a cue, confirm no
-    `"carried no session"` warning appears.
-  - **Why the gate misses it:** undeclared runtime field — not type-assertable.
+  - **Consequence:** the B1 guard (`extension.ts` `warnIfInteractiveSessionMissing`) now fires
+    on EVERY interactive boot (`"carried no session"`). Post-#677 that is **EXPECTED and benign**
+    — injection works via `pi.sendMessage`. The guard's message still says "injection inert,"
+    which is now stale; treat a single boot-time warning as informational, not a failure.
+    (Tracked: whether to downgrade/retire the guard message is an open follow-up.)
+  - **Verification:** run an interactive Pi conductor, `cue` it from a peer, and confirm the cue
+    LANDS (via `pi.sendMessage`) and — if no turn starts — escalates via `pi.sendUserMessage`.
+    The presence of the B1 warning does NOT indicate breakage anymore; the cue landing does.
+  - **If a future Pi RE-ADDS `session` to `SessionStartEvent`:** still don't depend on it —
+    `rt.pi` is the stable handle across instance rebuilds (a captured `session`/`pi` goes stale
+    on a session switch; per-tick re-resolution from `rt.pi` is the invariant).
+  - **Why the gate misses it:** undeclared/removed runtime field — not type-assertable.
 
 ---
 
@@ -75,15 +87,20 @@
 
 ---
 
-- [ ] **5. Cue-pump injection invariants** (D10, `src/pi/cue-pump.ts:121–134`)
+- [ ] **5. Cue-pump injection invariants** (D10 + #677 escalation, `src/pi/cue-pump.ts` `injectCue`)
 
   `followUp` is non-interrupting; `triggerTurn` wakes a cold-idle session and is a
-  no-op while busy.
+  no-op while busy. **#677 adds a belt-and-suspenders escalation:** a cue injected via
+  `pi.sendMessage` that is NOT followed by a `turn_start` by the next tick is re-injected ONCE
+  via `pi.sendUserMessage` (a user message always starts a turn). This relies on
+  `pi.sendUserMessage` keeping its "always triggers a turn" semantic and `turn_start`/`agent_start`
+  still firing (they stamp `rt.lastTurnStartAt`).
 
   - **Verification:** run a mid-turn cue smoke — confirm peer cues are not preempted and
-    idle cues are not dropped.
-  - **Why the gate misses it:** a regression silently turns peer cues into preemptions or
-    drops idle cues — behavioral, not typed.
+    idle cues are not dropped; then cue a COLD-IDLE interactive conductor and confirm it wakes
+    (via the `sendMessage` `triggerTurn`, or the `sendUserMessage` escalation if that misses).
+  - **Why the gate misses it:** a regression silently turns peer cues into preemptions, drops
+    idle cues, or breaks the escalation wake — behavioral, not typed.
 
 ---
 
@@ -139,6 +156,28 @@
   if the new version raises either floor.
 
   - **Source:** `src/pi/probe.ts` constant declarations
+
+---
+
+- [ ] **11. Reset surface — asymmetric clean-wipe** (#677 PART B, `src/pi/reset-pump.ts`, `extension.ts`)
+
+  Reset delivery is a **capability branch**, and the two halves depend on different Pi APIs:
+  - **Headless** — `session.newSession()` (on the SDK session) still performs a clean-wipe
+    (fresh context, no replay). The reset pump auto-wipes + acks.
+  - **Interactive** — `newSession` is **`ExtensionCommandContext`-ONLY** (NOT on the SDK
+    session), so the pump CANNOT auto-reset an interactive conductor. It registers a
+    `pi.registerCommand('tempo-reset', { handler })` whose handler calls `ctx.newSession()`, and
+    the pump's interactive branch NOTIFIES the operator (via `pi.sendMessage`) to run it
+    (ACK-ON-NOTIFY, id-matched notify-once). **Auto-reset of an interactive conductor is
+    impossible by design — operator-mediated is the ceiling.**
+
+  - **Re-verify on bump:** `ExtensionCommandContext.newSession()` still exists with the
+    `() => Promise<{ cancelled }>` shape (locked by the pi-drift `_recvCommandCtx` row);
+    `registerCommand(name, { description, handler })` still exists; `session.newSession()` still
+    clean-wipes headless. Run `/tempo-reset` in an interactive Pi and confirm a context wipe;
+    `reset` an interactive conductor from a peer and confirm the operator notice appears once.
+  - **Why the gate misses it:** the command-registration option shape stays loose (architect
+    ruling) and the wipe/notice behaviors are runtime, not typed.
 
 ---
 

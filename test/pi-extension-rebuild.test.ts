@@ -12,7 +12,13 @@
  */
 import { expect } from 'chai';
 import type { Client } from '@temporalio/client';
-import type { ExtensionAPI, PiOutboundMessage, PiCustomMessageOptions } from '../src/pi/pi-types';
+import type {
+  ExtensionAPI,
+  PiOutboundMessage,
+  PiCustomMessageOptions,
+  PiCommandOptions,
+  PiCommandContext,
+} from '../src/pi/pi-types';
 import piExtension, {
   createPiExtension,
   __setPiClientFactoryForTests,
@@ -66,20 +72,24 @@ interface FakePi {
   userSent: string[];
   /** Event names this instance has an `on(...)` handler for. */
   registered: () => string[];
+  /** Registered slash commands by name (#677 PART B — /tempo-reset). */
+  commands: Map<string, PiCommandOptions>;
 }
 
-/** Fake ExtensionAPI capturing on-handlers + the #677 send surface; `fire` invokes a handler. */
+/** Fake ExtensionAPI capturing on-handlers + the #677 send/command surface; `fire` invokes a handler. */
 function makeFakePi(): FakePi {
   const handlers = new Map<string, (p: unknown) => unknown>();
+  const commands = new Map<string, PiCommandOptions>();
   const sent: Array<{ msg: PiOutboundMessage; opts?: PiCustomMessageOptions }> = [];
   const userSent: string[] = [];
   const pi = {
     on: (event: string, h: (p: unknown) => unknown) => { handlers.set(event, h); },
     registerTool: () => { /* no-op */ },
+    registerCommand: (name: string, options: PiCommandOptions) => { commands.set(name, options); },
     sendMessage: (msg: PiOutboundMessage, opts?: PiCustomMessageOptions) => { sent.push({ msg, opts }); },
     sendUserMessage: (content: string) => { userSent.push(content); },
   } as unknown as ExtensionAPI;
-  return { pi, fire: (event, payload) => handlers.get(event)?.(payload), sent, userSent, registered: () => [...handlers.keys()] };
+  return { pi, fire: (event, payload) => handlers.get(event)?.(payload), sent, userSent, registered: () => [...handlers.keys()], commands };
 }
 
 const claimCount = (rec: Recorder): number =>
@@ -176,6 +186,36 @@ describe('Pi extension — #677 post-switch tick uses the NEW pi (cue inject + i
     expect(pi1.sent, 'stale pi1 never used after the switch').to.have.length(0);
     // Operator-vs-peer D10 semantics preserved on the pi.sendMessage route.
     expect(pi2.sent[0].opts).to.deep.equal({ deliverAs: 'followUp', triggerTurn: true });
+  });
+});
+
+describe('Pi extension — /tempo-reset command (#677 PART B)', () => {
+  beforeEach(() => { process.env[ENV.PLAYER_NAME] = 'pi-reset-cmd-test'; });
+  afterEach(() => { __resetPiRuntimesForTests(); delete process.env[ENV.PLAYER_NAME]; });
+
+  it('interactive registers /tempo-reset whose handler clean-wipes via ctx.newSession()', async () => {
+    const rec: Recorder = { updates: [], signals: [] };
+    __setPiClientFactoryForTests(async () => makeFakeClient(rec));
+    const p = makeFakePi();
+    createPiExtension({ mode: 'interactive' })(p.pi);
+
+    const cmd = p.commands.get('tempo-reset');
+    expect(cmd, 'tempo-reset registered in interactive mode').to.not.equal(undefined);
+
+    let newSessionCalls = 0;
+    const ctx: PiCommandContext = {
+      newSession: async () => { newSessionCalls += 1; return { cancelled: false }; },
+    };
+    await cmd!.handler('', ctx);
+    expect(newSessionCalls, 'handler clean-wipes via ctx.newSession()').to.equal(1);
+  });
+
+  it('headless does NOT register /tempo-reset (no operator command surface)', async () => {
+    const rec: Recorder = { updates: [], signals: [] };
+    __setPiClientFactoryForTests(async () => makeFakeClient(rec));
+    const p = makeFakePi();
+    createPiExtension({ mode: 'headless' })(p.pi);
+    expect(p.commands.has('tempo-reset')).to.equal(false);
   });
 });
 

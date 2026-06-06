@@ -33,6 +33,7 @@
 import type {
   AgentSession as RealAgentSession,
   ExtensionContext as RealExtensionContext,
+  ExtensionCommandContext as RealExtensionCommandContext,
   ExtensionUIContext as RealExtensionUIContext,
   ExtensionAPI as RealExtensionAPI,
   WidgetPlacement as RealWidgetPlacement,
@@ -48,6 +49,7 @@ import type {
   PiCustomMessageOptions,
   PiContextUsage,
   PiExtensionContext,
+  PiCommandContext,
   PiToolCallEvent,
   PiToolCallResult,
   PiToolResult,
@@ -110,6 +112,12 @@ export const _placementSuperset: AssertAssignable<RealWidgetPlacement, 'aboveEdi
 // The real handler ctx is usable as our narrowed PiExtensionContext
 // (real has getContextUsage()/isIdle()/signal + extras like sessionManager).
 export const _recvCtx: AssertAssignable<RealExtensionContext, PiExtensionContext> = true;
+
+// #677 PART B — the real command-handler ctx is usable as our narrowed
+// PiCommandContext. We only call `ctx.newSession()` in the `/tempo-reset` handler,
+// so this locks that one method's presence/shape (REGISTER itself stays loose —
+// see _registerSurfaceExists). If Pi renames/removes command-ctx newSession, RED.
+export const _recvCommandCtx: AssertAssignable<RealExtensionCommandContext, PiCommandContext> = true;
 
 // mission-control shims (pi-ui.ts): Pi hands us the real ctx.ui / ctx, which our
 // code consumes through the narrower Mc shims — so real must be assignable to ours.

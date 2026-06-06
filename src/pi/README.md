@@ -46,7 +46,8 @@ via a module-scope singleton.
 | `zod-to-typebox.ts` | zod→TypeBox tool-schema converter (fail-loud on unsupported constructs; Phase 1 / D1) | **Pure** — unit-tested |
 | `lazy-proxy.ts` | D11 lazy `Client` / `WorkflowHandle` proxy — resolves the live target per call | **Pure** — unit-tested |
 | `workflow-client.ts` | Thin client-side Temporal wrapper (lease, heartbeat, lifecycle, outbox, cue intake) | Compile-checked (needs Temporal at runtime) |
-| `cue-pump.ts` | Polls `pendingMessages`, injects via `sendCustomMessage`, acks via `markDelivered` | Compile-checked |
+| `cue-pump.ts` | Polls `pendingMessages`, injects via the **per-tick re-resolved `pi.sendMessage`** handle (#677; `session.sendCustomMessage` fallback), acks via `markDelivered`; escalates an un-woken cue via `pi.sendUserMessage` | **Pure** — unit-tested |
+| `reset-pump.ts` | Polls `pendingReset`; **capability branch** — headless `session.newSession()` auto clean-wipe, interactive `pi.sendMessage` operator-notice "run `/tempo-reset`" (#677 PART B) | **Pure** — unit-tested |
 | `extension.ts` | `export default function(pi)` — registers the FULL tool surface via `renderToPi(buildAllTempoTools(...))` over lazy proxies; wires events → driver → client | Compile-checked |
 | `probe.ts` | Optional-dep preflight for the Pi packages (sdk-probe pattern) | Compile-checked |
 | `pi-types.ts` | Hand-written structural decls of Pi's `ExtensionAPI` surface | — (see limitation below) |
@@ -236,20 +237,39 @@ with the agent-tempo extension injected inline (`createPiExtension({ mode:
   runtime won't be mapped yet, `setRuntimeSession` finds nothing to set the session on, and the
   cue pump never acquires a live session → cues SILENTLY drop. Re-verify this await ordering on
   every Pi bump (add to the D6 revalidate set). *(QA, 3a review.)*
-- **Phase-2 interactive cue-injection — implicit live smoke.** There is no standalone unit test
-  for the interactive (`extension.ts` default) cue-injection path; the first real interactive Pi
-  session that takes a cue exercises it live (and fix #5 — `sendCustomMessage` — is what makes
-  that path actually deliver). Treat the first interactive session per Pi bump as the smoke for
-  this path until a dedicated harness exists. *(QA, 3a review.)*
-- **Interactive coarse-staleness on SessionManager switch (3c inner-loop).** The inner-loop
-  `InnerLoopPublisher` registers its `pi.on(...)` observers once, on FIRST attach, bound to that
-  Pi extension instance. Because Pi REBUILDS the extension instance on every SessionManager switch
-  (the module-scope-singleton finding), after an interactive switch those observers stay bound to
-  the dead instance, so Tier-1 coarse state (currentTool / context pressure) goes STALE until the
-  player re-attaches. HEADLESS is fully correct — one session per process, no rebuild — so this is
-  interactive-only and NOT a 3c-headless concern. Revisit by re-binding the publisher's observers
-  on each `session_start` rebuild (call `pub.start(pi)` in the rebind branch of `attachOrRebind`),
-  the way the durable runtime singleton re-binds. *(QA Gate-7, 3c review.)*
+- **Phase-2 interactive cue-injection — ~~implicit live smoke~~ NOW UNIT-TESTED (#677).** Root
+  cause found + fixed: Pi 0.78.1's `SessionStartEvent` carries NO `session` field, so the old
+  `resolveSession`-based cue pump injected into `null` every tick → an interactive conductor never
+  got cues. #677 routes injection through the stable `pi.sendMessage` handle, **re-resolved per
+  tick** from the surviving runtime (`rt.pi`), with a `pi.sendUserMessage` escalation if a cue
+  doesn't wake a turn. Covered by `test/pi-extension-rebuild.test.ts` (post-switch tick uses the
+  NEW pi) + `test/pi-cue-pump.test.ts`. The live smoke is still wise per Pi bump (see checklist
+  item 5), but the path is no longer test-blind. *(eng, #677.)*
+- **~~Interactive coarse-staleness on SessionManager switch (3c inner-loop)~~ RESOLVED (#677).**
+  The `InnerLoopPublisher` registered its `pi.on(...)` observers once, on first attach, bound to
+  the Pi instance — so after an interactive SessionManager switch (Pi rebuilds the extension
+  instance) the observers stayed bound to the dead instance and Tier-1 coarse state went STALE.
+  Fixed: the rebind branch of `attachOrRebind` now calls `existing.pub.start(pi)`, re-binding the
+  publisher's observers to the live instance (same root cause + fix as the cue pump's per-tick
+  `rt.pi` re-resolution). Headless was always correct (one session/process, no rebuild).
+  Locked by the rebind test (asserts the publisher rebinds to the new `pi`). *(eng, #677 — was QA Gate-7.)*
+
+### Reset asymmetry (#677 PART B) — interactive cannot self-reset
+
+Reset (`reset` MCP tool → workflow `pendingReset` slot → `reset-pump.ts`) is a **capability
+branch**, and the two halves are genuinely asymmetric:
+
+- **Headless** can clean-wipe ITSELF: `session.newSession()` exists on the SDK session, so the
+  reset pump auto-wipes in place + acks. Fully autonomous.
+- **Interactive CANNOT auto-reset.** Pi's `newSession` is `ExtensionCommandContext`-ONLY — it is
+  not on the SDK session object, and (post-#677) `rt.session` is null in interactive anyway. So
+  the reset pump can do no more than NOTIFY the operator (via `pi.sendMessage`) to run the
+  `/tempo-reset` command themselves (registered interactive-only; its handler calls
+  `ctx.newSession()`). The notice is id-matched (fires once per resetId) and ACK-ON-NOTIFY (the
+  request is considered delivered once surfaced). **Operator-mediated is the architectural
+  ceiling — there is no API by which an extension can force a fresh context on a running
+  interactive Pi conductor.** Don't try to "fix" this by reaching for a session-level wipe; it
+  doesn't exist.
 
 ## Dependencies (approved)
 

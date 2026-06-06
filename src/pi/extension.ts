@@ -209,6 +209,22 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
     renderToPi(pi, buildAllTempoTools(toolOpts));
     log(`registered tools (player=${currentPlayerId}, conductor=${isConductor}, mode=${mode})`);
 
+    // ── #677 PART B — interactive-only `/tempo-reset` command ──
+    // Pi's `newSession` (clean-wipe) is ExtensionCommandContext-ONLY (not on the
+    // SDK session), so an interactive Pi conductor can ONLY be reset by the operator
+    // running this command. The reset pump's interactive branch notifies the
+    // operator to run it when a peer/conductor requests a reset (operator-mediated
+    // is the ceiling). Headless players have no command surface → not registered.
+    if (mode === 'interactive' && typeof pi.registerCommand === 'function') {
+      pi.registerCommand('tempo-reset', {
+        description: "Clean-wipe this Pi session's context (agent-tempo reset).",
+        handler: async (_args, ctx) => {
+          log('/tempo-reset — clean-wiping session context (newSession)');
+          await ctx.newSession();
+        },
+      });
+    }
+
     // ── MD-C tool-access gate (HEADLESS ONLY) ──
     // Interactive Pi = a human owns their machine → no gate. Headless = recruited
     // unsupervised → MD-C governs tool access. TOOL-CLASS CHECK FIRST: shell/exec
@@ -344,6 +360,9 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
       const reset = new ResetPump({
         source: wf,
         resolveSession: () => runtimes.get(workflowId)?.session ?? null,
+        // #677 PART B — interactive can't auto-wipe (no session field / newSession is
+        // command-context-only); the reset pump notifies the operator via this handle.
+        resolvePi: () => runtimes.get(workflowId)?.pi ?? null,
       });
       const rt: PiPlayerRuntime = {
         workflowId, wf, driver, pump, pub, reset,
