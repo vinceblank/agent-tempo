@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-06-06
+
+### Fixed
+- **Config loader rejects `pi` as a valid agent at load time** (#683) — the config schema allowlist only had `claude`/`copilot`; loading a config with `defaultAgent: "pi"` (valid since v1.5.0 #666 / v1.5.2 #670) threw a validation error. Updated allowlist matches the `VALID_DEFAULT_AGENTS` constant.
+- **Config `show` / `get` masked secret fields in output** (#684) — `apiKey`, `npx_token`, and similar secret fields were printed in plaintext by `agent-tempo config show`. Secrets are now redacted as `[set]` / `[not set]`.
+- **`up` ignored `--ensemble` flag** (#685) — the `--ensemble` CLI flag was parsed but not forwarded to the ensemble-start path; `up --ensemble my-ensemble` silently used the default ensemble name. Fixed.
+- **SA preflight false-positive cry-wolf on Temporal Cloud insufficient permissions** (#686) — when the Temporal Cloud API key lacked `namespace:write` (a normal read-only key), the search-attribute preflight logged an alarming warning suggesting SAs were missing, when the real issue was a permissions gap. Error message now distinguishes the two cases.
+- **Cue escalation `deliverAs: followUp` ignored** (#688) — when a cue was escalated via the outbox with `deliverAs: "followUp"`, the delivery path dropped the field and delivered as a normal cue. Fixed.
+
 ## [1.6.0] - 2026-06-06
 
 ### Added
