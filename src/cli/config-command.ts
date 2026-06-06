@@ -16,6 +16,12 @@ import * as out from './output';
  *     are not offered here.
  * Single source of truth for the interactive selector + `config set` validation
  * (#666 — adds `pi` so the new interactive Pi conductor can be the default).
+ *
+ * DELIBERATE SUBSET of `AGENT_TYPES` (NOT derived from it): this is a CAPABILITY
+ * allowlist (conductor-capable production agents), distinct from `parseAgent`'s
+ * type-VALIDITY check, which accepts all of `AGENT_TYPES`. Keep the two separate —
+ * #683 was caused by a validity check (`config.ts`) that had been hardcoded to a
+ * stale subset; this one is intentionally narrow and must stay that way.
  */
 export const VALID_DEFAULT_AGENTS: readonly AgentType[] = ['claude', 'copilot', 'pi'];
 
@@ -25,7 +31,38 @@ export const VALID_DEFAULT_AGENTS: readonly AgentType[] = ['claude', 'copilot', 
 // `config set` — both of which are pure fs operations and must remain operable
 // under a broken Temporal SDK install.
 
-const SECRET_KEYS = new Set(['temporalApiKey']);
+// #684 — secret-masking. Any config field whose name looks like a credential is
+// masked in EVERY display path (show / interactive default / set echo) so a key is
+// never printed raw (terminal scrollback, screen-share, logs). Generalized on
+// purpose: a future secret added to the config is masked BY DEFAULT, not leaked.
+const SECRET_KEYS = new Set(['temporalApiKey', 'httpToken', 'readToken', 'adminToken']);
+// Matches *_API_KEY / *ApiKey / *Token / *Secret / *Password but NOT path fields
+// (e.g. temporalTlsKeyPath is a file path, not the key — it must stay visible).
+const SECRET_KEY_PATTERN = /(api[_-]?key|token|secret|password)/i;
+
+/** True when a config key holds a credential value that must be masked on display. */
+export function isSecretKey(key: string): boolean {
+  if (/path$/i.test(key)) return false; // *Path fields are file locations, not secrets
+  return SECRET_KEYS.has(key) || SECRET_KEY_PATTERN.test(key);
+}
+
+/**
+ * Render a secret for display: a short non-sensitive prefix (when the value is
+ * long enough that the prefix reveals only a small fraction) + a masked tail +
+ * the char count. NEVER returns the full value. Empty/unset → "(not set)".
+ *
+ * Examples: `sk-ant-…•••• (set, 47 chars)` · short secret → `•••• (set, 6 chars)`.
+ */
+export function maskSecret(value: string | undefined | null): string {
+  if (value == null || value === '') return '(not set)';
+  const len = value.length;
+  // Reveal a prefix only when it's a small fraction of the whole; never for short
+  // secrets (so the output can never contain the full input — see the unit test).
+  const prefixLen = len >= 12 ? 6 : len >= 8 ? 3 : 0;
+  const prefix = value.slice(0, prefixLen);
+  const masked = prefixLen > 0 ? `${prefix}…••••` : '••••';
+  return `${masked} (set, ${len} chars)`;
+}
 
 /** Read a line from stdin with a prompt and optional default value. */
 function ask(prompt: string, defaultVal?: string, mask = false): Promise<string> {
@@ -35,7 +72,11 @@ function ask(prompt: string, defaultVal?: string, mask = false): Promise<string>
       output: process.stdout,
     });
 
-    const display = defaultVal ? `${prompt} (${defaultVal}): ` : `${prompt}: `;
+    // #684 — for masked (secret) prompts NEVER echo the raw existing value as the
+    // shown default; render a masked hint instead. The real `defaultVal` is still
+    // returned on empty input, so an existing key is preserved without exposing it.
+    const shownDefault = mask ? maskSecret(defaultVal) : defaultVal;
+    const display = defaultVal ? `${prompt} (${shownDefault}): ` : `${prompt}: `;
 
     if (mask) {
       // For secret input: write prompt manually, mute output
@@ -194,7 +235,9 @@ export function configSet(key: string, value: string): void {
 
   (config as any)[configKey] = value;
   saveConfigFile(config);
-  out.success(`Set ${configKey} = ${configKey.includes('Key') ? '****' : value}`);
+  // #684 — echo through the same secret-masking path so `config set temporalApiKey …`
+  // never prints the value back raw (and a *Path field still shows its location).
+  out.success(`Set ${configKey} = ${isSecretKey(configKey) ? maskSecret(value) : value}`);
 }
 
 /** Show current config: `agent-tempo config show` */
@@ -220,8 +263,9 @@ export function configShow(): void {
   for (const { key, configKey } of keys) {
     const value = (config as any)[configKey];
     const source = sources[configKey];
-    const isSecret = SECRET_KEYS.has(key);
-    const display = !value ? '(not set)' : isSecret ? '****' : value;
+    // #684 — secret-like fields go through maskSecret (prefix + masked tail + char
+    // count); everything else shows its value or "(not set)".
+    const display = isSecretKey(key) ? maskSecret(value) : (!value ? '(not set)' : value);
     out.log(`  ${key.padEnd(22)} ${display.padEnd(30)} ${out.dim(source)}`);
   }
   console.log();
