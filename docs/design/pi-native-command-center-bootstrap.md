@@ -501,6 +501,37 @@ supervised agent run a denied op" incident): the **same `failMode` flag, threade
 too** — `awaitDecision` + `pollOnce` + the timeout calibration — or the 300s daemon auto-deny is defeated
 by the 50s client fail-open. **Both files co-change in the same commit.**
 
+**Exact `awaitDecision` shape (gate-owner — build this directly):**
+```ts
+async awaitDecision(
+  requestId: string,
+  opts: { signal?: AbortSignal; timeoutMs?: number; failMode?: 'open' | 'closed' } = {},
+): Promise<GateEffect> {
+  const closed = opts.failMode === 'closed';                    // defaults 'open' → today's behavior verbatim
+  if (!this.enabled) return closed ? 'deny' : 'allow';          // (b) backstop: no token + supervised must NOT allow
+  const deadline = now() + (opts.timeoutMs ?? (closed ? CLOSED_TIMEOUT_MS : DEFAULT_TIMEOUT_MS));
+  while (now() < deadline) {
+    if (opts.signal?.aborted) return 'allow';                   // (a) cancelled turn — moot, allow in BOTH modes
+    const effect = await this.pollOnce(requestId);              // pollOnce maps auto-deny → deny (bug 2)
+    if (effect !== null) return effect;
+    await this.sleep(this.pollIntervalMs, opts.signal);
+  }
+  return closed ? 'deny' : 'allow';                             // deadline/daemon-down — closed denies (bug 1)
+}
+// pollOnce(:130): (decision === 'deny' || decision === 'auto-deny') ? 'deny' : 'allow'
+```
+
+**★ Anti-drift: SINGLE-SOURCE the timeout constants, DERIVE the client deadline.** The client's
+`CLOSED_TIMEOUT_MS` is *coupled* to the daemon's closed auto-deny — the invariant is
+**`client_closed_timeout > daemon_closed_timeout`** (so the daemon's *audited* auto-deny is RECEIVED
+before the client's own fallback fires; the fallback is `deny` anyway, but losing the daemon's audit
+record is a regression). Same coupling already holds for open (client 50s > daemon 45s). So put **both
+daemon timeouts in ONE shared constants home** — `GATE_AUTO_ALLOW_MS = 45_000` + the new
+`GATE_CLOSED_DENY_MS = 300_000` — and **derive** the client deadlines from them (`+ buffer`). Otherwise a
+future bump of the daemon's closed timeout (e.g. to 600s) that forgets the client reincarnates the exact
+fail-open-via-drift bug we just killed. (This is the same single-source discipline as `classify()` and
+`REQUIRED_SEARCH_ATTRIBUTES` — one home, derive the rest.)
+
 **Sequencing (verified):** phase-3d is **already merged to main (#636)** — the `classify()` extraction
 re-points settled imports, so it lands **against main anytime, no phase-3d wait** (the
 `docs/phase-3d-gate-reset` branch is stale / 39 behind — ignore). The extraction commit re-points **both**
