@@ -77,18 +77,26 @@ export async function isTemporalReachable(config: {
  * failures — collapsed to one soft line (#686). Definitive failures (e.g. the
  * SQLite 10-Keyword cap) keep the hard "will fail" conclusion. MOVED from
  * commands.ts; re-imported there.
+ *
+ * `quiet` (#700 P2 / H) suppresses the per-attribute success/already-registered
+ * lines — the ~20-line spew that would otherwise scroll into a Pi TUI's render
+ * when bootstrap runs from `/ensemble-up`. The `ensureInfra` default dep passes
+ * `quiet: true` and surfaces the outcome through its `onStep` progress callback
+ * instead; standalone CLI callers keep the verbose default. Error warnings
+ * (permission-blocked / definitive failures) are NEVER suppressed — they are
+ * rare + actionable, so they print in both modes.
  */
-export function registerSearchAttributes(temporalAddress: string, namespace = 'default'): { failed: number } {
+export function registerSearchAttributes(temporalAddress: string, namespace = 'default', quiet = false): { failed: number } {
   let failed = 0;
   let permissionBlocked = 0;
   for (const attr of REQUIRED_SEARCH_ATTRIBUTES) {
     const r = registerSearchAttribute(attr, temporalAddress, namespace);
     switch (r.status) {
       case 'created':
-        out.success(`Registered search attribute: ${attr.name}`);
+        if (!quiet) out.success(`Registered search attribute: ${attr.name}`);
         break;
       case 'already-exists':
-        out.dim(`  ${attr.name} (already registered)`);
+        if (!quiet) out.dim(`  ${attr.name} (already registered)`);
         break;
       case 'failed':
         if (isPermissionError(r.detail)) {
@@ -188,7 +196,9 @@ async function startTemporalDevServer(config: Config): Promise<{ pid?: number }>
 const defaultDeps: EnsureInfraDeps = {
   isTemporalReachable,
   startTemporalDevServer,
-  registerSearchAttributes,
+  // #700 P2 / H — bootstrap reports SA progress via onStep, so suppress the
+  // per-attribute console spew (it would scroll into a Pi TUI's render).
+  registerSearchAttributes: (addr, ns) => registerSearchAttributes(addr, ns, true),
   installAgentTypes,
   isDaemonRunning,
   startDaemon,
