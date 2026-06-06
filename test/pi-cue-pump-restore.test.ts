@@ -20,7 +20,7 @@
  * Verified WITHOUT Temporal or Pi installed (fake CueSource + recording session).
  */
 import { expect } from 'chai';
-import { CuePump, type CueSource } from '../src/pi/cue-pump';
+import { CuePump, buildPiInjector, type CueSource } from '../src/pi/cue-pump';
 import type { Message } from '../src/types';
 import type { PiAgentSession, PiOutboundMessage, PiCustomMessageOptions } from '../src/pi/pi-types';
 
@@ -68,7 +68,12 @@ describe('Pi cue pump — in-memory restore (H2 / self-restart composition)', ()
   it('injects the self-restart cue once as followUp + triggerTurn, then acks it', async () => {
     const source = new FakeSource([selfRestartCue()]);
     const session = new FakeSession();
-    const pump = new CuePump({ source, resolveSession: () => session });
+    // No `pi.sendMessage` here → buildPiInjector resolves the legacy
+    // session.sendCustomMessage fallback (the path this restore test locks).
+    const pump = new CuePump({
+      source,
+      resolveInjector: () => buildPiInjector({ pi: null, session, lastTurnStartAt: null }),
+    });
 
     await pump.tick();
 

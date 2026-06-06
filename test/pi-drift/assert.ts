@@ -20,8 +20,10 @@
  *
  * BLIND-SPOT CLASSES this gate CANNOT cover (B3, #645 H4 — covered elsewhere):
  *   1. Undeclared RUNTIME fields. `PiEventPayload.session` is not in Pi's `.d.ts`
- *      (interactive-only runtime field) → not type-assertable. Covered by the B1
- *      runtime guard (src/pi/extension.ts warnIfInteractiveSessionMissing).
+ *      (and, since Pi 0.78.1, absent at runtime in interactive too). Post-#677 the
+ *      "is pi.sendMessage wired?" correctness signal is owned HERE at build time
+ *      (`_passSendMsg` / `_sendSurfaceCallShape` below); the runtime side is now
+ *      just a one-time breadcrumb (src/pi/extension.ts noteInteractiveSessionAbsent).
  *   2. Positional arg-ORDER at a call we author. The corrected
  *      PiToolDefinition.execute (#651) is locked by the runtime regression test
  *      (test/pi-render-tools.test.ts), not just by types.
@@ -33,6 +35,7 @@
 import type {
   AgentSession as RealAgentSession,
   ExtensionContext as RealExtensionContext,
+  ExtensionCommandContext as RealExtensionCommandContext,
   ExtensionUIContext as RealExtensionUIContext,
   ExtensionAPI as RealExtensionAPI,
   WidgetPlacement as RealWidgetPlacement,
@@ -48,6 +51,7 @@ import type {
   PiCustomMessageOptions,
   PiContextUsage,
   PiExtensionContext,
+  PiCommandContext,
   PiToolCallEvent,
   PiToolCallResult,
   PiToolResult,
@@ -81,6 +85,26 @@ export const _passOpts: AssertAssignable<
   NonNullable<Parameters<RealAgentSession['sendCustomMessage']>[1]>
 > = true;
 
+// #677 — interactive cue-injection routes through the STABLE `pi` ExtensionAPI
+// handle (pi.sendMessage / pi.sendUserMessage) because Pi 0.78.1's
+// SessionStartEvent carries no `session` field. Lock our shim's params assignable
+// to the REAL ExtensionAPI methods (we hand the values TO Pi → PASS rows).
+//   - sendMessage takes the SAME Pick<CustomMessage,…> shape as sendCustomMessage,
+//   - sendMessage opts {steer|followUp|triggerTurn} ⊂ real {…|nextTurn},
+//   - sendUserMessage takes a plain string (always triggers a turn).
+export const _passSendMsg: AssertAssignable<
+  PiOutboundMessage,
+  Parameters<RealExtensionAPI['sendMessage']>[0]
+> = true;
+export const _passSendOpts: AssertAssignable<
+  PiCustomMessageOptions,
+  NonNullable<Parameters<RealExtensionAPI['sendMessage']>[1]>
+> = true;
+export const _passSendUserContent: AssertAssignable<
+  string,
+  Parameters<RealExtensionAPI['sendUserMessage']>[0]
+> = true;
+
 // Our widget placement union is EXACTLY the real WidgetPlacement (both directions).
 export const _placementSubset: AssertAssignable<'aboveEditor' | 'belowEditor', RealWidgetPlacement> = true;
 export const _placementSuperset: AssertAssignable<RealWidgetPlacement, 'aboveEditor' | 'belowEditor'> = true;
@@ -90,6 +114,12 @@ export const _placementSuperset: AssertAssignable<RealWidgetPlacement, 'aboveEdi
 // The real handler ctx is usable as our narrowed PiExtensionContext
 // (real has getContextUsage()/isIdle()/signal + extras like sessionManager).
 export const _recvCtx: AssertAssignable<RealExtensionContext, PiExtensionContext> = true;
+
+// #677 PART B — the real command-handler ctx is usable as our narrowed
+// PiCommandContext. We only call `ctx.newSession()` in the `/tempo-reset` handler,
+// so this locks that one method's presence/shape (REGISTER itself stays loose —
+// see _registerSurfaceExists). If Pi renames/removes command-ctx newSession, RED.
+export const _recvCommandCtx: AssertAssignable<RealExtensionCommandContext, PiCommandContext> = true;
 
 // mission-control shims (pi-ui.ts): Pi hands us the real ctx.ui / ctx, which our
 // code consumes through the narrower Mc shims — so real must be assignable to ours.
@@ -186,4 +216,11 @@ export function _registerSurfaceExists(pi: RealExtensionAPI): void {
   const _rs: RealExtensionAPI['registerShortcut'] = pi.registerShortcut;
   const _rt: RealExtensionAPI['registerTool'] = pi.registerTool;
   void _rc, _rs, _rt;
+}
+
+// #677 — our exact cue-injection calls COMPILE against the real ExtensionAPI
+// (catches removal/rename + param drift of sendMessage/sendUserMessage in one row).
+export function _sendSurfaceCallShape(pi: RealExtensionAPI): void {
+  pi.sendMessage({ customType: 'cue', content: 'x', display: true }, { deliverAs: 'followUp', triggerTurn: true });
+  pi.sendUserMessage('x', { deliverAs: 'followUp' });
 }

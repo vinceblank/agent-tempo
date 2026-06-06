@@ -277,10 +277,58 @@ export interface PiToolDefinition {
   ) => Promise<PiToolResult> | PiToolResult;
 }
 
+/**
+ * The context Pi passes to a registered command handler (#677 PART B). NARROW
+ * structural slice — `/tempo-reset` only calls `newSession()` (clean-wipe).
+ * Pi's real `ExtensionCommandContext` (much larger) is assignable to this.
+ *
+ * `newSession` is command-context-ONLY in Pi — it is NOT on the SDK session
+ * object — which is exactly why an interactive Pi conductor CANNOT be auto-reset:
+ * the reset pump can only NOTIFY the operator to run `/tempo-reset` themselves
+ * (operator-mediated is the ceiling; see reset-pump.ts).
+ */
+export interface PiCommandContext {
+  /** Start a FRESH session (clean-wipe, no replay). */
+  newSession(): Promise<{ cancelled: boolean }>;
+}
+
+/** Options for {@link ExtensionAPI.registerCommand} (#677 PART B) — the slice we set. */
+export interface PiCommandOptions {
+  description?: string;
+  handler: (args: string, ctx: PiCommandContext) => Promise<void>;
+}
+
 /** The `pi` object passed to `export default function(pi: ExtensionAPI) {}`. */
 export interface ExtensionAPI {
   on(event: PiLifecycleEvent | string, handler: PiEventHandler): void;
   registerTool(def: PiToolDefinition): void;
+  /**
+   * Register an interactive slash command (#677 PART B — `/tempo-reset`). Optional
+   * in the slice: only the interactive Pi CLI surfaces commands (headless has no
+   * command surface). Kept loose by the architect's registerCommand ruling — see
+   * test/pi-drift/assert.ts `_registerSurfaceExists`.
+   */
+  registerCommand?(name: string, options: PiCommandOptions): void;
+  /**
+   * Inject a custom message into the live session through the STABLE `pi` handle
+   * (#677). Same message shape as `PiAgentSession.sendCustomMessage`'s param0
+   * (`Pick<CustomMessage, "customType"|"content"|"display"|"details">`). This is
+   * the interactive cue-injection path: Pi 0.78.1's `SessionStartEvent` carries
+   * NO `session` field, so `PiEventPayload.session` is null in interactive mode —
+   * routing cues through `pi.sendMessage` (re-resolved per tick from the surviving
+   * runtime) injects reliably regardless. Optional in the slice (Pi provides it; a
+   * fake/older Pi may not — the cue pump feature-detects with `typeof`).
+   */
+  sendMessage?(message: PiOutboundMessage, options?: PiCustomMessageOptions): void;
+  /**
+   * Inject a USER-role message — ALWAYS triggers a turn (#677 escalation path).
+   * When `sendMessage`'s `triggerTurn` fails to wake a cold-idle agent, the cue
+   * pump re-injects the SAME cue via this user-role call (a user message always
+   * starts a turn). It LOSES the `cue` customType + operator-vs-peer steer/followUp
+   * semantics, so it is FALLBACK-ONLY (never the primary route). Optional in the
+   * slice for the same reason as `sendMessage`.
+   */
+  sendUserMessage?(content: string, options?: { deliverAs?: 'steer' | 'followUp' }): void;
 }
 
 /** An extension is a default-exported function receiving the `ExtensionAPI`. */

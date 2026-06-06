@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { Config, conductorWorkflowId, sessionWorkflowId } from '../config';
-import { AgentType, SessionInput, AdapterClass, AttachmentInfo, MockMode, SessionMetadata, Message, DetachReason } from '../types';
+import { AgentType, SessionInput, AdapterClass, AttachmentInfo, AttachmentPhase, MockMode, SessionMetadata, Message, DetachReason } from '../types';
 import {
   PREVIEW_MAX_LENGTH,
   DEFAULT_RESTART_DETACH_DEADLINE_MS,
@@ -316,6 +316,12 @@ export interface SpawnProcessInput {
 export interface OutboxActivityResult {
   success: boolean;
   error?: string;
+  /**
+   * Human-readable note for a non-failure outcome the caller may surface — e.g.
+   * #676 FIX-3's "skipped duplicate spawn" no-op. Floor today is the daemon log;
+   * structured here so a future workflow-side relay can surface it to the operator.
+   */
+  note?: string;
 }
 
 export interface RecruitResult extends OutboxActivityResult {
@@ -355,6 +361,20 @@ export interface OutboxActivities {
  *   destroy path REVOKES it. Optional: undefined disables ingest-token minting
  *   (e.g. the dev test harness that constructs activities without the daemon).
  */
+/**
+ * #676 FIX-3 — should spawnProcess SKIP as a duplicate dispatch? TRUE iff this is
+ * a FRESH recruit (no `attachmentId` handoff) AND a live adapter is already
+ * attached. A restart/migrate carries `attachmentId` (the handoff to its fresh
+ * claim — phase is legitimately live) → never skipped. Pure + exported for tests.
+ */
+export function shouldSkipDuplicateSpawn(
+  attachmentId: string | undefined,
+  phase: AttachmentPhase,
+): boolean {
+  if (attachmentId) return false; // restart/migrate handoff — must spawn
+  return phase === 'attached' || phase === 'processing' || phase === 'awaiting';
+}
+
 export function createOutboxActivities(
   client: Client,
   config: Config,
@@ -538,6 +558,37 @@ export function createOutboxActivities(
       const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId, mockMode, mockScenario, model, permissionMode, dangerouslySkipPermissions, toolAccess } = input;
       // Read secrets from the worker's config closure — never from workflow state
       const { temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = config;
+
+      // #676 FIX-3 — double-dispatch backstop (ACTIVITY-level; no workflow/bundle
+      // touch). A FRESH recruit (NO attachmentId) of a name that ALREADY has a live
+      // adapter is a duplicate dispatch → skip the spawn so we don't race a second
+      // adapter for the lease. attachmentId PRESENT = a restart/migrate HANDOFF to a
+      // fresh claim (phase is legitimately {attached|processing|awaiting} from that
+      // claim) → MUST NOT skip, or restart attaches to a non-existent adapter.
+      // Guard ABOVE the agent switch so it covers every agent. TOCTOU best-effort —
+      // claimAttachment's expectedAttachmentId arbitrates the rare race.
+      if (!attachmentId) {
+        const checkWorkflowId = isConductor ? conductorWorkflowId(ensemble) : sessionWorkflowId(ensemble, targetName);
+        try {
+          const info = await client.workflow.getHandle(checkWorkflowId).query(attachmentInfoQuery) as AttachmentInfo;
+          if (shouldSkipDuplicateSpawn(attachmentId, info.phase)) {
+            // Corrected message (architect): force does NOT bypass this skip under
+            // FIX-3(a), so do NOT tell the operator to pass force. Replace-a-live-
+            // adapter is restart/migrate's lane; a stale session self-heals in ~90s.
+            const note =
+              `recruit skipped: player "${targetName}" is already attached (phase=${info.phase}) — ` +
+              `spawning now would create a duplicate adapter racing the live session. To replace it, ` +
+              `use \`restart\` (same host) or \`migrate\` (other host). If the session is actually stale, ` +
+              `its lease expires and it's reaped within ~90s, after which recruit spawns normally.`;
+            log(`[#676 FIX-3] ${note}`);
+            return { success: true, note };
+          }
+        } catch (err) {
+          // Not-queryable-yet / transient → fall through to spawn (best-effort guard).
+          log(`FIX-3 attachment pre-check inconclusive for "${targetName}" — proceeding to spawn: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
       try {
         if (agent === 'mock') {
           // ADR 0014 PR-2 — mock adapter spawns headless. No terminal,

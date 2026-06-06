@@ -40,7 +40,7 @@ import type {
 } from './pi-types';
 import { PhaseDriver } from './phase-driver';
 import { PiWorkflowClient } from './workflow-client';
-import { CuePump } from './cue-pump';
+import { CuePump, buildPiInjector } from './cue-pump';
 import { ResetPump } from './reset-pump';
 import { renderToPi } from './render-tools';
 import { createLazyProxy } from './lazy-proxy';
@@ -58,35 +58,46 @@ const log = (...args: unknown[]): void => {
 
 const nowIso = (): string => new Date().toISOString();
 
-const PI_AGENT_TYPE: AgentType = 'claude'; // Pi is not yet a first-class AgentType.
+// Pi IS a first-class AgentType (#666). #676 FIX-2: was a stale 'claude'
+// placeholder — that made a Pi session misreport its agentType metadata AND
+// recruit's mirror-fallback resolve to 'claude'.
+const PI_AGENT_TYPE: AgentType = 'pi';
 
 /** Runtime mode. Headless = recruited unsupervised player (MD-C gate active). */
 export type PiExtensionMode = 'interactive' | 'headless';
 export type PiToolAccess = 'restricted' | 'standard' | 'full';
 
 /**
- * B1 runtime guard (#645 H4) — the type gate's blind spot.
+ * Interactive-session breadcrumb (#645 H4 → reworded for #677).
  *
- * `PiEventPayload.session` is UNDECLARED in Pi 0.78's `.d.ts` — it's an
- * interactive-only RUNTIME field, so the pi-drift type gate can't assert it. In
- * INTERACTIVE mode the `session_start` payload MUST carry `session` (the cue +
- * reset pumps inject into it); a null session there means injection is silently
- * inert — a likely Pi API drift. (Headless legitimately omits it — it wires
- * `rt.session` via `setRuntimeSession` — so the guard is interactive-only.)
+ * Pi 0.78.1's `SessionStartEvent` carries NO `session` field, so in INTERACTIVE
+ * mode `payload.session` is null. Pre-#677 that meant cue/reset injection was inert
+ * (it read `payload.session`), so this was a WARNING. Post-#677 injection routes
+ * through the stable `pi.sendMessage` handle (re-resolved per tick) and a missing
+ * session is the EXPECTED path — NOT an error. The "is `pi.sendMessage` still
+ * wired?" correctness signal now lives at BUILD time in the H4 drift gate
+ * (`test/pi-drift/assert.ts` `_passSendMsg` / `_sendSurfaceCallShape`), so this
+ * runtime check's correctness role is redundant.
  *
- * Pure + injected `warn` so it unit-tests without the workflow harness.
+ * What remains is value as a ONE-TIME, non-alarming boot breadcrumb: during Pi
+ * bring-up it confirms at a glance "you're on the expected 0.78.1 no-session path;
+ * cues route via pi.sendMessage." Fires AT MOST ONCE per process (the
+ * module-scope `notedInteractiveSessionAbsent` flag) — not per switch, not per
+ * tick. Pure + injected `note` so it unit-tests without the workflow harness.
  */
-export function warnIfInteractiveSessionMissing(
+let notedInteractiveSessionAbsent = false;
+export function noteInteractiveSessionAbsent(
   mode: PiExtensionMode,
   payload: { session?: unknown },
-  warn: (msg: string) => void,
+  note: (msg: string) => void,
 ): void {
-  if (mode === 'interactive' && payload.session == null) {
-    warn(
-      'WARNING: interactive session_start carried no session — cue/reset injection inert; ' +
-        'possible Pi API drift (#645)',
-    );
-  }
+  if (mode !== 'interactive' || payload.session != null) return;
+  if (notedInteractiveSessionAbsent) return;
+  notedInteractiveSessionAbsent = true;
+  note(
+    'interactive session_start has no `session` field — expected on Pi ≥0.78.1; ' +
+      'cues/reset route via pi.sendMessage (re-resolved per tick).',
+  );
 }
 
 export interface PiExtensionOptions {
@@ -123,7 +134,7 @@ let clientFactory: (config: Config) => Promise<Client> = getSharedClient;
  * extension-instance rebuilds. Holds the durable attachment (handle + lease +
  * heartbeat, inside `wf`), the phase driver, the cue pump, and the session ptr.
  */
-interface PiPlayerRuntime {
+export interface PiPlayerRuntime {
   readonly workflowId: string;
   readonly wf: PiWorkflowClient;
   readonly driver: PhaseDriver;
@@ -138,6 +149,19 @@ interface PiPlayerRuntime {
   /** 3d D14 — polls the workflow's pending reset → clean-wipe (newSession) + ack. */
   readonly reset: ResetPump;
   session: PiAgentSession | null;
+  /**
+   * #677 — THIS player's CURRENT Pi `ExtensionAPI` handle. Repointed on every
+   * instance rebuild (`session_start` re-bind) so the cue pump injects through the
+   * live `pi.sendMessage` (the stable interactive-injection path; Pi 0.78.1's
+   * SessionStartEvent has no `session` field). Re-resolved per tick — never captured.
+   */
+  pi: ExtensionAPI | null;
+  /**
+   * #677 — epoch-ms of the last observed `turn_start`/`agent_start`. The cue pump
+   * reads it to decide whether a sendMessage-injected cue actually woke a turn; if
+   * not, it escalates to `sendUserMessage`. `null` until the first turn starts.
+   */
+  lastTurnStartAt: number | null;
   lastSessionId?: string;
 }
 
@@ -192,6 +216,22 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
     };
     renderToPi(pi, buildAllTempoTools(toolOpts));
     log(`registered tools (player=${currentPlayerId}, conductor=${isConductor}, mode=${mode})`);
+
+    // ── #677 PART B — interactive-only `/tempo-reset` command ──
+    // Pi's `newSession` (clean-wipe) is ExtensionCommandContext-ONLY (not on the
+    // SDK session), so an interactive Pi conductor can ONLY be reset by the operator
+    // running this command. The reset pump's interactive branch notifies the
+    // operator to run it when a peer/conductor requests a reset (operator-mediated
+    // is the ceiling). Headless players have no command surface → not registered.
+    if (mode === 'interactive' && typeof pi.registerCommand === 'function') {
+      pi.registerCommand('tempo-reset', {
+        description: "Clean-wipe this Pi session's context (agent-tempo reset).",
+        handler: async (_args, ctx) => {
+          log('/tempo-reset — clean-wiping session context (newSession)');
+          await ctx.newSession();
+        },
+      });
+    }
 
     // ── MD-C tool-access gate (HEADLESS ONLY) ──
     // Interactive Pi = a human owns their machine → no gate. Headless = recruited
@@ -287,6 +327,16 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
       const existing = runtimes.get(workflowId);
       if (existing) {
         existing.session = payload.session ?? existing.session;
+        // #677 — repoint to THIS instance's `pi`. Pi rebuilds the extension
+        // instance on every session switch; the surviving runtime + its cue pump
+        // (created on first attach) re-resolve the injector from `rt.pi` each tick,
+        // so the cue pump injects through the LIVE handle, not the stale one.
+        existing.pi = pi;
+        // #677 FREEBIE — the InnerLoopPublisher was captured-once on the FIRST pi
+        // and goes stale after a switch (README:251 carry-item — same root cause).
+        // Re-start it on the new pi so its `pi.on(...)` observers track the live
+        // instance. `start()` re-registers handlers; its flush timer is idempotent.
+        existing.pub.start(pi);
         log(`re-bound ${currentPlayerId} (Pi instance rebuilt; lease intact)`);
         return existing;
       }
@@ -300,7 +350,11 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
       const driver = new PhaseDriver();
       const pump = new CuePump({
         source: wf,
-        resolveSession: () => runtimes.get(workflowId)?.session ?? null,
+        // #677 — re-resolve the injector from the SURVIVING runtime each tick:
+        // prefer `rt.pi.sendMessage` (stable interactive path), fall back to
+        // `rt.session.sendCustomMessage`. Reading `runtimes.get(workflowId)` (not a
+        // captured `rt`) is what makes a post-rebind tick use the NEW pi.
+        resolveInjector: () => buildPiInjector(runtimes.get(workflowId) ?? null),
       });
       // 3c — inner-loop publisher + its loopback-HTTP sink. The client no-ops
       // unless AGENT_TEMPO_INGEST_TOKEN is present (daemon-spawned headless
@@ -314,8 +368,16 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
       const reset = new ResetPump({
         source: wf,
         resolveSession: () => runtimes.get(workflowId)?.session ?? null,
+        // #677 PART B — interactive can't auto-wipe (no session field / newSession is
+        // command-context-only); the reset pump notifies the operator via this handle.
+        resolvePi: () => runtimes.get(workflowId)?.pi ?? null,
       });
-      const rt: PiPlayerRuntime = { workflowId, wf, driver, pump, pub, reset, session: payload.session ?? null };
+      const rt: PiPlayerRuntime = {
+        workflowId, wf, driver, pump, pub, reset,
+        session: payload.session ?? null,
+        pi, // #677 — first-attach instance's pi (repointed on each rebind)
+        lastTurnStartAt: null,
+      };
       runtimes.set(workflowId, rt);
 
       await wf.ensureSessionWorkflow();
@@ -334,8 +396,9 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
 
     // ── Lifecycle: session_start → first attach OR re-bind ──
     pi.on('session_start', async (payload: PiEventPayload) => {
-      // B1 (#645 H4): warn loudly if interactive session_start lost its session.
-      warnIfInteractiveSessionMissing(mode, payload, log);
+      // #677: one-time INFO breadcrumb when interactive session_start has no
+      // `session` field (the expected 0.78.1 path — injection routes via pi.sendMessage).
+      noteInteractiveSessionAbsent(mode, payload, log);
       try {
         const rt = await attachOrRebind(payload);
         await refreshSessionId(rt, rt.session?.id);
@@ -350,6 +413,9 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
         const rt = runtimes.get(workflowId);
         if (!rt) return;
         if (payload.session) rt.session = payload.session;
+        // #677 — a turn has begun → stamp for the cue pump's escalation check (so
+        // a sendMessage-injected cue that DID wake a turn is not re-escalated).
+        if (event === 'agent_start') rt.lastTurnStartAt = Date.now();
         const result = rt.driver.handle(event, payload, nowIso());
         try {
           await rt.wf.performAction(result.action);
@@ -368,6 +434,8 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
         const rt = runtimes.get(workflowId);
         if (!rt) return;
         if (payload.session) rt.session = payload.session;
+        // #677 — turn_start marks a live turn for the cue pump's escalation check.
+        if (event === 'turn_start') rt.lastTurnStartAt = Date.now();
         rt.driver.handle(event, payload, nowIso());
       });
     }
@@ -470,6 +538,25 @@ export function __seedRuntimeForTests(workflowId: string, rt: PiPlayerRuntime): 
  */
 export function __clearRuntimesForTests(): void {
   runtimes.clear();
+}
+
+/**
+ * Read the live runtime for a workflowId out of the module-scope map. TEST ESCAPE
+ * HATCH — do NOT call from production code. Used by the #677 rebind test to assert
+ * the post-switch tick injects through the NEW pi (cue pump) AND that the
+ * InnerLoopPublisher rebound to it.
+ */
+export function __getPiRuntimeForTests(workflowId: string): PiPlayerRuntime | undefined {
+  return runtimes.get(workflowId);
+}
+
+/**
+ * Reset the one-time interactive-session breadcrumb flag (#677). TEST ESCAPE HATCH
+ * — do NOT call from production code. The flag is module-scope and fires at most
+ * once per process, so tests asserting the note must reset it between cases.
+ */
+export function __resetInteractiveSessionNoteForTests(): void {
+  notedInteractiveSessionAbsent = false;
 }
 
 /** Default export — interactive-mode extension (the human `pi` CLI entry). */

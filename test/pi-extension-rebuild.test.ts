@@ -12,42 +12,84 @@
  */
 import { expect } from 'chai';
 import type { Client } from '@temporalio/client';
-import type { ExtensionAPI } from '../src/pi/pi-types';
+import type {
+  ExtensionAPI,
+  PiOutboundMessage,
+  PiCustomMessageOptions,
+  PiCommandOptions,
+  PiCommandContext,
+} from '../src/pi/pi-types';
 import piExtension, {
   createPiExtension,
   __setPiClientFactoryForTests,
   __resetPiRuntimesForTests,
+  __getPiRuntimeForTests,
 } from '../src/pi/extension';
 import {
   claimAttachmentUpdate,
   adapterExitedSignal,
+  pendingMessagesQuery,
+  pendingResetQuery,
+  markDeliveredSignal,
 } from '../src/workflows/signals';
-import { ENV } from '../src/config';
+import type { Message } from '../src/types';
+import { ENV, getConfig, sessionWorkflowId } from '../src/config';
 
 interface Recorded { def: unknown; arg: unknown; }
 interface Recorder { updates: Recorded[]; signals: Recorded[]; }
 
 const TOKEN = { attachmentId: 'att-1', runId: 'run-1', expiresAt: '2026-01-01T00:01:30.000Z', leaseMs: 90_000 };
 
-function makeFakeClient(rec: Recorder): Client {
+/** A mutable cue queue the fake workflow serves to the cue pump's `fetchPending`. */
+interface PendingBox { cues: Message[]; }
+
+function makeFakeClient(rec: Recorder, pendingBox: PendingBox = { cues: [] }): Client {
   const fakeHandle = {
     async executeUpdate(def: unknown, opts: { args: unknown[] }) {
       rec.updates.push({ def, arg: opts.args[0] });
       return TOKEN;
     },
-    async signal(def: unknown, arg: unknown) { rec.signals.push({ def, arg }); },
+    async signal(def: unknown, arg: unknown) {
+      rec.signals.push({ def, arg });
+      // markDelivered → the workflow stops re-serving those cues.
+      if (def === markDeliveredSignal) pendingBox.cues = [];
+    },
+    async query(def: unknown) {
+      if (def === pendingMessagesQuery) return pendingBox.cues;
+      if (def === pendingResetQuery) return null;
+      return undefined;
+    },
   };
   return { workflow: { async start() { return fakeHandle; } } } as unknown as Client;
 }
 
-/** Fake ExtensionAPI capturing on-handlers; `fire` invokes one and returns its (possibly async) result. */
-function makeFakePi(): { pi: ExtensionAPI; fire: (event: string, payload: unknown) => unknown } {
+interface FakePi {
+  pi: ExtensionAPI;
+  fire: (event: string, payload: unknown) => unknown;
+  /** Recorded pi.sendMessage(msg, opts) calls (the #677 primary cue route). */
+  sent: Array<{ msg: PiOutboundMessage; opts?: PiCustomMessageOptions }>;
+  /** Recorded pi.sendUserMessage(content) calls (the #677 escalation route). */
+  userSent: string[];
+  /** Event names this instance has an `on(...)` handler for. */
+  registered: () => string[];
+  /** Registered slash commands by name (#677 PART B — /tempo-reset). */
+  commands: Map<string, PiCommandOptions>;
+}
+
+/** Fake ExtensionAPI capturing on-handlers + the #677 send/command surface; `fire` invokes a handler. */
+function makeFakePi(): FakePi {
   const handlers = new Map<string, (p: unknown) => unknown>();
+  const commands = new Map<string, PiCommandOptions>();
+  const sent: Array<{ msg: PiOutboundMessage; opts?: PiCustomMessageOptions }> = [];
+  const userSent: string[] = [];
   const pi = {
     on: (event: string, h: (p: unknown) => unknown) => { handlers.set(event, h); },
     registerTool: () => { /* no-op */ },
+    registerCommand: (name: string, options: PiCommandOptions) => { commands.set(name, options); },
+    sendMessage: (msg: PiOutboundMessage, opts?: PiCustomMessageOptions) => { sent.push({ msg, opts }); },
+    sendUserMessage: (content: string) => { userSent.push(content); },
   } as unknown as ExtensionAPI;
-  return { pi, fire: (event, payload) => handlers.get(event)?.(payload) };
+  return { pi, fire: (event, payload) => handlers.get(event)?.(payload), sent, userSent, registered: () => [...handlers.keys()], commands };
 }
 
 const claimCount = (rec: Recorder): number =>
@@ -94,6 +136,86 @@ describe('Pi extension — module-scope singleton survives instance rebuild', ()
     expect(rec.signals.length).to.be.greaterThan(0);
     // …but still only one attachment claim total.
     expect(claimCount(rec)).to.equal(1);
+  });
+});
+
+describe('Pi extension — #677 post-switch tick uses the NEW pi (cue inject + inner-loop)', () => {
+  const PLAYER = 'pi-rebind-inject-test';
+  beforeEach(() => { process.env[ENV.PLAYER_NAME] = PLAYER; });
+  afterEach(() => { __resetPiRuntimesForTests(); delete process.env[ENV.PLAYER_NAME]; });
+
+  const mkCue = (over: Partial<Message> = {}): Message => ({
+    id: 'c1', from: 'tempo-lead', text: 'status?', timestamp: '2026-01-01T00:00:00.000Z',
+    delivered: false, ...over,
+  });
+
+  it('after a rebind, the cue pump injects through pi2 AND the InnerLoopPublisher rebound to pi2', async () => {
+    const rec: Recorder = { updates: [], signals: [] };
+    const pendingBox: PendingBox = { cues: [] };
+    __setPiClientFactoryForTests(async () => makeFakeClient(rec, pendingBox));
+
+    // Instance #1 — first attach. ROOT-CAUSE shape: interactive session_start
+    // carries NO `session` field (Pi 0.78.1) — the cue pump must NOT depend on it.
+    const pi1 = makeFakePi();
+    piExtension(pi1.pi);
+    await pi1.fire('session_start', { reason: 'new' });
+    expect(claimCount(rec)).to.equal(1);
+
+    // Pi rebuilds the instance on a session switch → fresh piExtension(pi2) + session_start.
+    const pi2 = makeFakePi();
+    piExtension(pi2.pi);
+    await pi2.fire('session_start', { reason: 'fork' });
+    expect(claimCount(rec), 'rebind, not re-claim').to.equal(1);
+
+    const workflowId = sessionWorkflowId(getConfig().ensemble, PLAYER);
+    const rt = __getPiRuntimeForTests(workflowId);
+    expect(rt, 'runtime survived the rebuild').to.not.equal(undefined);
+
+    // (A) rt.pi repointed to the NEW instance's pi.
+    expect(rt!.pi, 'runtime pi repointed to pi2').to.equal(pi2.pi);
+
+    // (B) InnerLoopPublisher rebound to pi2 — pub.start(pi2) re-registered its
+    // observers on the new instance (message_update is a publisher-only handler).
+    expect(pi2.registered(), 'publisher rebound onto pi2').to.include('message_update');
+
+    // (C) A post-switch cue-pump TICK injects through pi2, NOT the stale pi1.
+    pendingBox.cues = [mkCue({ text: 'after switch' })];
+    await rt!.pump.tick();
+    expect(pi2.sent.map((s) => s.msg.content), 'cue injected via pi2.sendMessage')
+      .to.deep.equal(['[cue from tempo-lead] after switch']);
+    expect(pi1.sent, 'stale pi1 never used after the switch').to.have.length(0);
+    // Operator-vs-peer D10 semantics preserved on the pi.sendMessage route.
+    expect(pi2.sent[0].opts).to.deep.equal({ deliverAs: 'followUp', triggerTurn: true });
+  });
+});
+
+describe('Pi extension — /tempo-reset command (#677 PART B)', () => {
+  beforeEach(() => { process.env[ENV.PLAYER_NAME] = 'pi-reset-cmd-test'; });
+  afterEach(() => { __resetPiRuntimesForTests(); delete process.env[ENV.PLAYER_NAME]; });
+
+  it('interactive registers /tempo-reset whose handler clean-wipes via ctx.newSession()', async () => {
+    const rec: Recorder = { updates: [], signals: [] };
+    __setPiClientFactoryForTests(async () => makeFakeClient(rec));
+    const p = makeFakePi();
+    createPiExtension({ mode: 'interactive' })(p.pi);
+
+    const cmd = p.commands.get('tempo-reset');
+    expect(cmd, 'tempo-reset registered in interactive mode').to.not.equal(undefined);
+
+    let newSessionCalls = 0;
+    const ctx: PiCommandContext = {
+      newSession: async () => { newSessionCalls += 1; return { cancelled: false }; },
+    };
+    await cmd!.handler('', ctx);
+    expect(newSessionCalls, 'handler clean-wipes via ctx.newSession()').to.equal(1);
+  });
+
+  it('headless does NOT register /tempo-reset (no operator command surface)', async () => {
+    const rec: Recorder = { updates: [], signals: [] };
+    __setPiClientFactoryForTests(async () => makeFakeClient(rec));
+    const p = makeFakePi();
+    createPiExtension({ mode: 'headless' })(p.pi);
+    expect(p.commands.has('tempo-reset')).to.equal(false);
   });
 });
 
