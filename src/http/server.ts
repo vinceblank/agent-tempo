@@ -702,9 +702,20 @@ export async function handle(
     }
     // Validate existence before opening the SSE stream — clean 404 when
     // the ensemble was never live, instead of an empty stream.
+    //
+    // #673 — `listEnsembles` is a Temporal VISIBILITY query (eventually
+    // consistent; ~seconds behind on Temporal Cloud), so immediately after
+    // `up`/creation the just-started maestro hub isn't indexed yet and this
+    // gate would 404 — which the subscribe client classes as PERMANENT, leaving
+    // the TUI stuck on "Loading messages…". Before 404'ing, fall back to a
+    // STRONGLY-CONSISTENT describe of the maestro hub (`ensembleExists`): a
+    // RUNNING hub means the ensemble is live even if visibility hasn't caught up.
     const list = await ctx.client.listEnsembles().catch(() => []);
     if (!list.find((e) => e.name === ensemble)) {
-      return errorResponse(res, 404, { error: 'ensemble-not-found', ensemble });
+      const existsStrong = await ctx.client.ensembleExists(ensemble).catch(() => false);
+      if (!existsStrong) {
+        return errorResponse(res, 404, { error: 'ensemble-not-found', ensemble });
+      }
     }
     const bus = ctx.aggregate.getOrCreateEnsembleBus(ensemble);
     return handleSseRequest(req, res, {

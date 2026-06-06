@@ -1278,6 +1278,21 @@ export function createTempoClientCore(
       }
     },
 
+    async ensembleExists(ensemble): Promise<boolean> {
+      // #673 — STRONGLY-CONSISTENT existence check. `describe()` the per-ensemble
+      // maestro HUB (started at `up`/creation via `ensureMaestroWorkflow`) — it
+      // reflects a just-started workflow IMMEDIATELY, unlike `listEnsembles`
+      // (Temporal visibility, eventually consistent on Cloud). Only RUNNING
+      // counts as "exists": a TERMINATED/COMPLETED hub (destroyed ensemble) → false,
+      // and a never-created hub throws WorkflowNotFoundError → false.
+      try {
+        const desc = await handle(maestroWorkflowId(ensemble)).describe();
+        return desc.status.name === 'RUNNING';
+      } catch {
+        return false;
+      }
+    },
+
     // ── Maestro session (TUI-owned workflow for two-way messaging) ──
 
     async ensureMaestroSession(ensemble: string): Promise<string> {
