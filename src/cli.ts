@@ -30,6 +30,7 @@ import { AGENT_TYPES, AgentType } from './types';
 import { ENV, CliOverrides, getConfig, isDevMode } from './config';
 import { formatMigrationResult, type LegacyMigrationResult } from './cli/legacy-migration';
 import { refreshEntrypoint } from './cli/global-wrapper';
+import { resolveEnsemble } from './cli/resolve-ensemble';
 import { installGrpcShutdownGuard } from './utils/grpc-shutdown-guard';
 
 /** Package root — cli.js compiles to dist/cli.js, so one level up. Used by the inline `version` handler. */
@@ -496,7 +497,10 @@ async function main() {
 
     case 'up':
       await up({
-        ensemble,
+        // #685 — honor `--ensemble` (flag > positional > env > 'default'), via the
+        // shared resolver. Previously `up` passed the bare positional-derived
+        // `ensemble`, so `--ensemble <name>` was silently ignored → launched in `default`.
+        ensemble: resolveEnsemble(args),
         name: args.name,
         lineup: args.lineup,
         noHold: args.noHold,

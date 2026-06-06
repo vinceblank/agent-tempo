@@ -2,16 +2,8 @@ import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { z } from 'zod';
-import { AgentType } from './types';
+import { AgentType, AGENT_TYPES } from './types';
 import { validateEnsembleName } from './utils/validation';
-
-// `'mock'` is a valid `AgentType` value but intentionally NOT in the resolved
-// `defaultAgent` set — recruit pre-flight rejects it outside dev mode anyway,
-// and it's never a sensible *default* (each mock spawn is configured per call
-// via the `agent: 'mock'` flag, not via the resolved chain). Listing it here
-// would only enable users to set `defaultAgent=mock` in `~/.agent-tempo/config.json`,
-// which the recruit gate would then turn around and reject in production.
-const VALID_AGENTS: readonly AgentType[] = ['claude', 'copilot'] as const;
 
 /** Environment variable name constants — use these instead of string literals. */
 export const ENV = {
@@ -497,16 +489,25 @@ const AGENT_SOURCE_LABELS: Record<ConfigSource, string> = {
 };
 
 /**
- * Parse an agent value against the {@link AgentType} union.
- * Throws when `value` is present but not a valid agent; returns `'claude'`
- * for empty/unset values so callers can use it as a source-aware default.
+ * Parse an agent value against the canonical {@link AGENT_TYPES} union — the
+ * SINGLE SOURCE OF TRUTH for agent validity (shared with `cli.ts`'s `--agent`
+ * parser). Throws when `value` is present but not a known agent; returns
+ * `'claude'` for empty/unset values so callers can use it as a source-aware default.
+ *
+ * This is a pure type-VALIDITY check — it accepts EVERY `AgentType` (including
+ * `mock` and the headless adapters). Narrower CAPABILITY constraints are gated
+ * separately downstream: the recruit pre-flight rejects `mock` outside dev mode,
+ * and `config`'s `VALID_DEFAULT_AGENTS` restricts the persistent default to the
+ * conductor-capable subset. (#683: the former hardcoded `['claude','copilot']`
+ * list was stale — it rejected `defaultAgent=pi` at config LOAD, poisoning every
+ * command before the `--agent` flag was even read.)
  */
 export function parseAgent(value: string | undefined, source: ConfigSource): AgentType {
   if (value == null || value === '') return 'claude';
-  if (!VALID_AGENTS.includes(value as AgentType)) {
+  if (!(AGENT_TYPES as readonly string[]).includes(value)) {
     throw new Error(
       `Invalid agent "${value}" from ${AGENT_SOURCE_LABELS[source]}. ` +
-      `Valid values: ${VALID_AGENTS.join(', ')}.`,
+      `Valid values: ${AGENT_TYPES.join(', ')}.`,
     );
   }
   return value as AgentType;

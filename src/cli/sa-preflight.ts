@@ -312,6 +312,37 @@ export interface RegistrationResult {
 }
 
 /**
+ * Substrings signalling the credential lacks PERMISSION to manage search
+ * attributes — distinct from a definitive registration failure. Temporal Cloud
+ * namespace API keys can't reach the operator service (Cloud manages SAs via its
+ * UI / `tcld`), so `temporal operator search-attribute create/list` returns
+ * "Request unauthorized" / PermissionDenied. That means we CANNOT determine
+ * whether the SAs are registered — NOT that they're missing. Concluding
+ * "not registered → workflow starts will fail" from a permission error is a
+ * false alarm: on Cloud the SAs are typically already present and starts succeed.
+ */
+const PERMISSION_ERROR_MARKERS = [
+  'request unauthorized',
+  'permission denied',
+  'permissiondenied',
+  'unauthorized',
+  'not authorized',
+];
+
+/**
+ * True when a registration error means "this credential can't manage search
+ * attributes" (a permission/authorization failure) rather than a definitive
+ * registration failure (e.g. the SQLite dev server's 10-Keyword cap). Used to
+ * avoid the false "not registered → starts will fail" conclusion on Temporal
+ * Cloud, where SA management lives behind the Cloud UI / `tcld`.
+ */
+export function isPermissionError(detail: string | undefined): boolean {
+  if (!detail) return false;
+  const d = detail.toLowerCase();
+  return PERMISSION_ERROR_MARKERS.some((m) => d.includes(m));
+}
+
+/**
  * Pure classifier — turn a temporal CLI exit into a {@link RegistrationStatus}.
  * Extracted from {@link registerSearchAttribute} so the matching rules can
  * be unit-tested without mocking `child_process`.
