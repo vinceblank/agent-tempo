@@ -27,6 +27,10 @@ export default defineConfig({
       // #334 PR-1 — player saveable state MCP tools (Zod schema validation,
       // error mapping, args propagation; no Temporal worker, no network).
       'tests/tools/**/*.test.ts',
+      // #689 — no-echo spawn secret-env helpers (partition / writeSecretEnvFile /
+      // fishQuote + the secret-not-in-command-string regression guard). Pure, no
+      // process spawning.
+      'tests/spawn/**/*.test.ts',
     ],
     environment: 'node',
     globals: false,

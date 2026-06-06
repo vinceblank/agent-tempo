@@ -6,7 +6,7 @@ import { homedir, hostname } from 'os';
 import { randomUUID } from 'crypto';
 import { Cron } from 'croner';
 import { Client, Connection, WorkflowIdConflictPolicy } from '@temporalio/client';
-import { spawnInTerminal, spawnCopilotBridge, spawnMockAdapter, resolveClaudePath, launchInTerminal, buildPiConductorSpawn } from '../spawn';
+import { spawnInTerminal, spawnCopilotBridge, spawnMockAdapter, resolveClaudePath, launchInTerminal, buildPiConductorSpawn, sweepStaleSecretEnvFiles } from '../spawn';
 import { checkPiNodeFloor } from '../pi/probe';
 import { conductorWorkflowId, sessionWorkflowId, schedulerWorkflowId, maestroWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID, ENV, getConfig, isDevMode, Config, CliOverrides, AGENT_TEMPO_HOME } from '../config';
 import { getGitInfo } from '../git-info';
@@ -1136,6 +1136,10 @@ interface UpOpts extends CliOverrides {
 
 export async function up(opts: UpOpts) {
   const config = getConfig(opts);
+
+  // #689 — best-effort sweep of stale 0600 secret env files (residual from a shell
+  // that died between `source` and `rm`). Owner-only, swallows errors.
+  sweepStaleSecretEnvFiles();
 
   out.heading('agent-tempo setup');
 

@@ -1,8 +1,10 @@
 import { spawn, execFileSync, execSync } from 'child_process';
-import { existsSync, mkdirSync, openSync, closeSync, writeFileSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, openSync, closeSync, writeSync, writeFileSync, readFileSync, readdirSync, statSync, rmSync } from 'fs';
 import { join, resolve, dirname } from 'path';
 import { tmpdir } from 'os';
+import { randomBytes } from 'crypto';
 import { ENV } from './config';
+import { isSecretKey } from './utils/secrets';
 import type { MockMode } from './types';
 import type { ClaudeCodeHeadlessPermissionMode } from './adapters/claude-code-headless/types';
 
@@ -215,22 +217,145 @@ export function findLinuxTerminal(): string | null {
   return null;
 }
 
+// ── #689 no-echo spawn: keep secret env values OUT of the echoed command ──────
+//
+// Terminal launches (claude conductor/recruit via spawnInTerminal, pi conductor
+// via buildPiConductorSpawn) INLINE env into the command string that gets typed/
+// echoed into the terminal — so `TEMPORAL_API_KEY='<JWT>' … pi …` lands in
+// scrollback + shell history. Fix: partition env by name; SECRET values are
+// written to a 0600 file in a 0700 owner-only dir and `source`d (then the
+// launcher self-`rm`s it) so the value never appears on the command line. Plain
+// (non-secret) env keeps the existing inline form. Headless adapters
+// (copilot/claude-api/opencode/*-headless) pass env via child_process `env:{}`
+// inheritance — no terminal, no inline — so they're unaffected.
+
+/** Owner-only (0700) dir holding short-lived 0600 secret env files. */
+const SECRET_ENV_DIR = join(tmpdir(), 'agent-tempo-spawn');
+
+/** Escape a value for `cmd.exe` (wrap-in-quotes callers add the quotes). */
+function cmdEscape(s: string): string {
+  return s.replace(/([&|<>^"%])/g, '^$1');
+}
+
 /**
- * Build a shell command string that sets env vars and runs claude.
- * Uses inline `KEY=val` syntax which works in bash, zsh, AND fish.
+ * fish single-quote escaping. Inside fish `'...'` only `\` and `'` are special
+ * (`\\` and `\'`) — POSIX `shellQuote`'s `'\''` trick is WRONG in fish, so the
+ * secret file's `set -gx` lines need this. Plain inline env keeps `shellQuote`
+ * (safe there: plain values are regex-validated names with no embedded quotes).
+ */
+export function fishQuote(s: string): string {
+  return `'${s.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+}
+
+/** Split env into non-secret (inline-able) and secret (file-only) by key name. */
+export function partitionEnv(env: Record<string, string>): {
+  plainEnv: Record<string, string>;
+  secretEnv: Record<string, string>;
+} {
+  const plainEnv: Record<string, string> = {};
+  const secretEnv: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (isSecretKey(k)) secretEnv[k] = v;
+    else plainEnv[k] = v;
+  }
+  return { plainEnv, secretEnv };
+}
+
+export interface SecretEnvFile {
+  /** Absolute path to the 0600 env file, or '' when there were no secrets. */
+  path: string;
+  /** Chain prefix that sources THEN deletes the file before the bin runs (or ''). */
+  sourcePrefix: string;
+  /** Standalone delete command for the file (or ''). */
+  cleanup: string;
+}
+
+/**
+ * Write secret env to a 0600 file in the 0700 {@link SECRET_ENV_DIR} and return a
+ * `sourcePrefix` that sources + deletes it before exec. Empty `secretEnv` → no
+ * file, empty strings (no behavior change when there are no secrets, e.g. local
+ * dev with no Cloud key).
+ *
+ * Security: `openSync(path, 'wx', 0o600)` (O_EXCL → fails if the path exists,
+ * defeating symlink pre-creation in a shared tmp), a `crypto.randomBytes` name
+ * (NOT a predictable `Date.now()`), and the 0700 dir + 0600 file = owner-only
+ * twice over. The LAUNCHER self-deletes (sourcePrefix `… && rm -f <f> && …`) — the
+ * spawner does NOT, so there's no race: Node writes synchronously before the
+ * terminal launches, only the shell reads the file, and after `rm` the value
+ * lives only in the process env.
+ */
+export function writeSecretEnvFile(
+  secretEnv: Record<string, string>,
+  opts: { syntax: 'posix' | 'fish' | 'cmd' },
+): SecretEnvFile {
+  const keys = Object.keys(secretEnv);
+  if (keys.length === 0) return { path: '', sourcePrefix: '', cleanup: '' };
+
+  mkdirSync(SECRET_ENV_DIR, { recursive: true, mode: 0o700 });
+  const ext = opts.syntax === 'cmd' ? 'cmd' : 'sh';
+  const path = join(SECRET_ENV_DIR, `env-${randomBytes(9).toString('hex')}.${ext}`);
+
+  let content: string;
+  if (opts.syntax === 'fish') {
+    content = keys.map((k) => `set -gx ${k} ${fishQuote(secretEnv[k])}`).join('\n') + '\n';
+  } else if (opts.syntax === 'cmd') {
+    content = keys.map((k) => `set "${k}=${cmdEscape(secretEnv[k])}"`).join('\r\n') + '\r\n';
+  } else {
+    content = keys.map((k) => `export ${k}=${shellQuote(secretEnv[k])}`).join('\n') + '\n';
+  }
+
+  // O_EXCL create with 0600 — fails (no follow) if a symlink/file pre-exists.
+  const fd = openSync(path, 'wx', 0o600);
+  try { writeSync(fd, content); } finally { closeSync(fd); }
+
+  if (opts.syntax === 'cmd') {
+    const q = `"${cmdEscape(path)}"`;
+    return { path, sourcePrefix: `call ${q} && del ${q} && `, cleanup: `del ${q}` };
+  }
+  const q = shellQuote(path);
+  return { path, sourcePrefix: `source ${q} && rm -f ${q} && `, cleanup: `rm -f ${q}` };
+}
+
+/**
+ * Best-effort sweep of secret env files older than `maxAgeMs` (default 5 min) —
+ * a backstop for the accepted residual when a shell dies between `source` and
+ * `rm`. Owner-only files in our 0700 dir; swallow all errors. Call at `up` start.
+ */
+export function sweepStaleSecretEnvFiles(maxAgeMs = 5 * 60_000, now = Date.now()): void {
+  try {
+    for (const name of readdirSync(SECRET_ENV_DIR)) {
+      if (!name.startsWith('env-')) continue;
+      const p = join(SECRET_ENV_DIR, name);
+      try {
+        if (now - statSync(p).mtimeMs > maxAgeMs) rmSync(p, { force: true });
+      } catch { /* per-file best-effort */ }
+    }
+  } catch { /* dir absent / unreadable — nothing to sweep */ }
+}
+
+/**
+ * Build a shell command string that sets env vars and runs `bin` (#689).
+ * Plain env keeps the inline `KEY=val` form (works in bash/zsh/fish); SECRET env
+ * is routed to a sourced 0600 file via {@link writeSecretEnvFile}, so secret
+ * VALUES never appear in the returned command string. `syntax` picks the secret
+ * file's dialect (the inline plain form is identical across posix/fish).
  */
 export function buildTerminalCommand(
   bin: string,
   binArgs: string[],
   envVars: Record<string, string>,
+  syntax: 'posix' | 'fish' = 'posix',
 ): string {
-  const envInline = Object.entries(envVars)
+  const { plainEnv, secretEnv } = partitionEnv(envVars);
+  const { sourcePrefix } = writeSecretEnvFile(secretEnv, { syntax });
+  const envInline = Object.entries(plainEnv)
     .map(([k, v]) => `${k}=${shellQuote(v)}`)
     .join(' ');
   // Quote the binary path if it contains spaces (e.g., "C:\Program Files\...")
   const quotedBin = bin.includes(' ') ? shellQuote(bin) : bin;
   const args = binArgs.map(a => shellQuote(a)).join(' ');
-  return envInline ? `${envInline} ${quotedBin} ${args}` : `${quotedBin} ${args}`;
+  const invocation = envInline ? `${envInline} ${quotedBin} ${args}` : `${quotedBin} ${args}`;
+  return `${sourcePrefix}${invocation}`;
 }
 
 /**
@@ -258,13 +383,19 @@ export function launchInTerminal(
   // is bin/args-agnostic; the `claude*` names are historical.
   const claudeBin = bin;
   const claudeArgs = args;
-  const claudeInvocation = buildTerminalCommand(claudeBin, claudeArgs, envVars);
 
   if (process.platform === 'darwin') {
     const detected = detectMacTerminal();
     log(`Terminal detection: TERM_PROGRAM=${JSON.stringify(process.env.TERM_PROGRAM)}, detected=${detected}`);
+    // #689 — secret env routes through a sourced 0600 file (buildTerminalCommand /
+    // the .command body); pick the file dialect from the user's shell since
+    // Ghostty/iTerm2 type the command into it. Computed per-branch below so only
+    // the branch that runs writes a secret file (no orphan).
+    const macSyntax: 'posix' | 'fish' =
+      (process.env.SHELL || '').endsWith('/fish') ? 'fish' : 'posix';
 
     if (detected === 'ghostty') {
+      const claudeInvocation = buildTerminalCommand(claudeBin, claudeArgs, envVars, macSyntax);
       // Append `; exit` so the wrapping shell exits when claude does (clean or killed).
       // Without it, claude exit returns control to the shell prompt and the tab lingers —
       // parity with the Windows WT `closeOnExit: 'always'` + parent-walk fix from #166.
@@ -286,6 +417,7 @@ export function launchInTerminal(
     }
 
     if (detected === 'iterm2') {
+      const claudeInvocation = buildTerminalCommand(claudeBin, claudeArgs, envVars, macSyntax);
       // Append `; exit` so the wrapping shell exits when claude does. `;` rather than
       // `&&` so exit runs regardless of claude's exit code (force-kill returns non-zero).
       // JSON.stringify embeds the full shell command as a properly-escaped string literal
@@ -308,37 +440,50 @@ export function launchInTerminal(
       return { pid: child.pid };
     }
 
-    // Terminal.app: .command file with shell profile sourcing
+    // Terminal.app: .command file with shell profile sourcing.
     const userShell = process.env.SHELL || '/bin/zsh';
-    const scriptPath = join(tmpdir(), `agent-tempo-recruit-${Date.now()}.command`);
-    let profileSource: string;
+    // #689 — the .command file is mode 0700 (was 0755 — it should never have been
+    // world/group-readable). The secret env lives in a SEPARATE sourced 0600 file,
+    // never inlined into this .command body.
+    const scriptPath = join(SECRET_ENV_DIR, `recruit-${randomBytes(9).toString('hex')}.command`);
+    mkdirSync(SECRET_ENV_DIR, { recursive: true, mode: 0o700 });
+
+    let lines: string[];
     if (userShell.endsWith('/fish')) {
-      profileSource = `exec fish -c "cd ${shellQuote(workDir)} && ${claudeInvocation}"`;
+      // claudeInvocation (fish) already carries the plain inline env + the fish
+      // secret-file source+rm — just exec fish with it.
+      const claudeInvocation = buildTerminalCommand(claudeBin, claudeArgs, envVars, 'fish');
+      lines = ['#!/bin/bash', `exec fish -c "cd ${shellQuote(workDir)} && ${claudeInvocation}"`];
     } else {
-      profileSource = [
+      const { plainEnv, secretEnv } = partitionEnv(envVars);
+      const secretFile = writeSecretEnvFile(secretEnv, { syntax: 'posix' });
+      const plainExports = Object.entries(plainEnv)
+        .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
+        .join('\n');
+      const profileSource = [
         `[ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc" 2>/dev/null`,
         `[ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null`,
         `[ -f "$HOME/.nvm/nvm.sh" ] && source "$HOME/.nvm/nvm.sh" 2>/dev/null`,
         `command -v fnm >/dev/null && eval "$(fnm env)" 2>/dev/null`,
       ].join('\n');
+      lines = [
+        '#!/bin/bash',
+        // Secret env from the sourced 0600 file (self-deleted), BEFORE profile
+        // sourcing — same ordering rationale as the plain exports (#98).
+        ...(secretFile.path ? [`source ${shellQuote(secretFile.path)} && rm -f ${shellQuote(secretFile.path)}`] : []),
+        // Plain env vars BEFORE profile sourcing — profiles that call `exec` (e.g.
+        // oh-my-zsh) would otherwise lose the exports and the claude command (#98)
+        plainExports,
+        profileSource,
+        `cd ${shellQuote(workDir)}`,
+        // `exec` so the shell is replaced by claude — when claude exits (clean or killed),
+        // the script process ends and Terminal.app closes the window per its settings.
+        // Without `exec`, bash waits for claude and then returns to prompt, leaving the
+        // window open. Parity with the WT `closeOnExit: 'always'` fix from #166.
+        `exec ${shellQuote(claudeBin)} ${claudeArgs.map(a => shellQuote(a)).join(' ')}`,
+      ];
     }
-    const envExports = Object.entries(envVars)
-      .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
-      .join('\n');
-    const lines = [
-      '#!/bin/bash',
-      // Env vars BEFORE profile sourcing — profiles that call `exec` (e.g. oh-my-zsh)
-      // would otherwise lose the exports and the claude command (#98)
-      envExports,
-      profileSource,
-      `cd ${shellQuote(workDir)}`,
-      // `exec` so the shell is replaced by claude — when claude exits (clean or killed),
-      // the script process ends and Terminal.app closes the window per its settings.
-      // Without `exec`, bash waits for claude and then returns to prompt, leaving the
-      // window open. Parity with the WT `closeOnExit: 'always'` fix from #166.
-      `exec ${shellQuote(claudeBin)} ${claudeArgs.map(a => shellQuote(a)).join(' ')}`,
-    ];
-    writeFileSync(scriptPath, lines.join('\n') + '\n', { mode: 0o755 });
+    writeFileSync(scriptPath, lines.join('\n') + '\n', { mode: 0o700 });
     log('Using Terminal.app .command path:', scriptPath);
     const child = spawn('open', [scriptPath], { detached: true, stdio: 'ignore' });
     child.unref();
@@ -362,18 +507,20 @@ export function launchInTerminal(
       const hasProfile = ensureWindowsTerminalProfile();
 
       // Build inline env var assignments for cmd /c since wt.exe spawns
-      // a new process that won't inherit our env.
-      // Escape values for cmd.exe: wrap in quotes and escape inner special chars.
-      const cmdEscape = (s: string) => s.replace(/([&|<>^"%])/g, '^$1');
-      const setCmds = Object.entries(envVars)
+      // a new process that won't inherit our env. (cmdEscape is module-level.)
+      // #689 — SECRET env goes to a sourced 0600 .cmd file (call + del before the
+      // bin runs) so JWTs never land in the wt.exe command / cmd history; PLAIN env
+      // stays inline as `set "K=v"`.
+      const { plainEnv, secretEnv } = partitionEnv(envVars);
+      const secretFile = writeSecretEnvFile(secretEnv, { syntax: 'cmd' });
+      const setCmds = Object.entries(plainEnv)
         .map(([k, v]) => `set "${k}=${cmdEscape(v)}"`)
         .join(' && ');
       // Quote the binary path if it contains spaces (e.g., "C:\Program Files\...")
       const quotedWinBin = claudeBin.includes(' ') ? `"${cmdEscape(claudeBin)}"` : cmdEscape(claudeBin);
       const claudeCmd = `${quotedWinBin} ${claudeArgs.map(a => `"${cmdEscape(a)}"`).join(' ')}`;
-      const innerCmd = setCmds
-        ? `${setCmds} && ${claudeCmd}`
-        : claudeCmd;
+      const inlinePart = setCmds ? `${setCmds} && ${claudeCmd}` : claudeCmd;
+      const innerCmd = `${secretFile.sourcePrefix}${inlinePart}`;
 
       // Use `cmd.exe /c start "" wt.exe ...` to resolve the UWP app alias
       // When our profile exists, use --profile to get the tab icon
@@ -405,11 +552,19 @@ export function launchInTerminal(
     return { pid: child.pid };
   }
 
-  // Linux
-  const envExports = Object.entries(envVars)
+  // Linux — #689: SECRET env → sourced 0600 file (source+rm before the bin); PLAIN
+  // env stays inline `export`. One fullCmd covers both the terminal `-e` path and
+  // the headless `bash -c` fallback below (also closes the gnome-terminal-server
+  // env-inheritance gap for free).
+  const { plainEnv, secretEnv } = partitionEnv(envVars);
+  const secretFile = writeSecretEnvFile(secretEnv, { syntax: 'posix' });
+  const secretSource = secretFile.path
+    ? `source ${shellQuote(secretFile.path)}; rm -f ${shellQuote(secretFile.path)}; `
+    : '';
+  const plainExports = Object.entries(plainEnv)
     .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
     .join('; ');
-  const fullCmd = `${envExports}; cd ${shellQuote(workDir)} && ${shellQuote(claudeBin)} ${claudeArgs.map(a => shellQuote(a)).join(' ')}`;
+  const fullCmd = `${secretSource}${plainExports ? `${plainExports}; ` : ''}cd ${shellQuote(workDir)} && ${shellQuote(claudeBin)} ${claudeArgs.map(a => shellQuote(a)).join(' ')}`;
 
   const terminal = findLinuxTerminal();
   if (!terminal) {
