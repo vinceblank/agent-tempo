@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.0-beta.1] - 2026-06-06
+
+> **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
+
+### Added
+- **Command-center P1** — mission-control bootstrap foundation (#700 P1):
+  - Pi installs via package reference (by-reference) for reliable extension loading
+  - `/ensemble-up` and `/ensemble-down` commands bootstrap via `ensureInfra` for reliable conductor lifecycle
+  - Conductor headless mode improvements for non-interactive Pi sessions
+
 ## [1.7.0-beta.0] - 2026-06-06
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
