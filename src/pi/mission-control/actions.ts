@@ -105,6 +105,45 @@ export class MissionControlActions {
     return this.post(`/v1/ensembles/${this.ens()}/reset`, { playerId, ...(reason ? { reason } : {}) });
   }
 
+  // ── Bootstrap surface (#700 P1) ──
+  /**
+   * Create a fresh ensemble via `POST /v1/ensembles` (the catalog route, NOT
+   * ensemble-scoped). Defaults `name` to this client's bound ensemble — the one
+   * the command-center board observes. `conductorAgent` lets `/ensemble-up`
+   * default the conductor to a headless Pi (design §3).
+   */
+  createEnsemble(opts: {
+    name?: string;
+    lineup?: string;
+    host?: string;
+    startMode?: 'hold' | 'release';
+    conductorInstructions?: string;
+    conductorAgent?: string;
+  } = {}): Promise<ActionResult> {
+    const { name, ...rest } = opts;
+    return this.post('/v1/ensembles', { name: name ?? this.ensemble, ...rest });
+  }
+
+  /** Recruit a player into the bound ensemble (`POST /v1/ensembles/:e/recruit`). */
+  recruit(opts: {
+    name: string;
+    workDir: string;
+    playerType?: string;
+    host?: string;
+    agent?: string;
+  }): Promise<ActionResult> {
+    return this.post(`/v1/ensembles/${this.ens()}/recruit`, opts);
+  }
+
+  /**
+   * Tear down the bound ensemble (`POST /v1/ensembles/:e/shutdown`). Graceful by
+   * default (detach + pause, survives in `detached`); `destroy: true` escalates
+   * to ensemble-scope destroy (terminate).
+   */
+  shutdownEnsemble(destroy?: boolean): Promise<ActionResult> {
+    return this.post(`/v1/ensembles/${this.ens()}/shutdown`, destroy ? { destroy: true } : {});
+  }
+
   // ── Operator gate plane (T3) ──
   gateArm(playerId: string): Promise<ActionResult> {
     return this.post(`/v1/players/${this.player(playerId)}/gate-arm`, {});

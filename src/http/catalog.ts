@@ -92,6 +92,14 @@ interface CreateEnsembleBody {
   host?: string;
   startMode?: StartMode;
   conductorInstructions?: string;
+  /**
+   * #700 P1 — optional override for the conductor's agent type. When provided it
+   * takes precedence over the lineup's `conductor.agent`; when OMITTED, behavior
+   * is unchanged (lineup-derived). Lets the command-center `/ensemble-up` default
+   * the conductor to a headless Pi (`'pi'`) without disturbing existing callers
+   * (the dashboard create-ensemble wizard omits it).
+   */
+  conductorAgent?: string;
 }
 
 /**
@@ -135,7 +143,7 @@ export async function handleCreateEnsemble(
 
   const parsed = parseBody(body);
   if ('error' in parsed) return errorResponse(res, 400, parsed.error);
-  const { name, lineup, host, startMode, conductorInstructions } = parsed.body;
+  const { name, lineup, host, startMode, conductorInstructions, conductorAgent: conductorAgentOverride } = parsed.body;
 
   // 409 — ensemble already exists. `listEnsembles()` returns live
   // ensembles by Temporal workflow; matches what the dashboard's
@@ -188,7 +196,11 @@ export async function handleCreateEnsemble(
   // spawn target either way.
   const conductorBlock = resolved?.conductor;
   const conductorName = conductorBlock?.name ?? 'conductor';
-  const conductorAgent = pickAgent(conductorBlock?.agent, allowed);
+  // #700 P1: a body-supplied `conductorAgent` wins; fall back to the lineup's
+  // conductor agent. Each candidate is run through `pickAgent` (allowed-only),
+  // so an invalid override is dropped and we still fall back to the lineup —
+  // and OMITTING `conductorAgent` reproduces today's behavior exactly.
+  const conductorAgent = pickAgent(conductorAgentOverride, allowed) ?? pickAgent(conductorBlock?.agent, allowed);
   try {
     await client.recruit(name, {
       name: conductorName,
@@ -270,6 +282,9 @@ function parseBody(body: Record<string, unknown>): ParseError | ParseOk {
     return { error: { error: 'invalid-start-mode', allowed: ALLOWED_START_MODES } };
   }
   const conductorInstructions = stringField(body, 'conductorInstructions', { requireNonEmpty: true });
+  // #700 P1 — additive optional override (validated against allowed agents at
+  // recruit time via pickAgent, like the lineup's conductor agent).
+  const conductorAgent = stringField(body, 'conductorAgent', { requireNonEmpty: true });
 
   // Lightweight host-name shape check (matches the daemon's existing
   // hostname rules used by recruit). Skips when omitted.
@@ -284,6 +299,7 @@ function parseBody(body: Record<string, unknown>): ParseError | ParseOk {
       ...(host !== undefined && { host }),
       ...(startMode !== undefined && { startMode: startMode as StartMode }),
       ...(conductorInstructions !== undefined && { conductorInstructions }),
+      ...(conductorAgent !== undefined && { conductorAgent }),
     },
   };
 }

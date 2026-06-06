@@ -245,6 +245,29 @@ describe('POST /v1/ensembles', () => {
     );
   });
 
+  // ── #700 P1 — conductorAgent override (MUST-FIX 3) ──
+  it('OMITTING conductorAgent preserves today behavior (conductor recruited with no agent)', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles`, { name: 'fresh' });
+    expect(res.status).toBe(201);
+    const conductor = b.calls.find(
+      (c) => c.method === 'recruit' && (c.args[1] as { isConductor?: boolean }).isConductor === true,
+    )!;
+    const opts = conductor.args[1] as Record<string, unknown>;
+    // No agent threaded → lineup-derived / default, exactly as before this change.
+    expect('agent' in opts).toBe(false);
+  });
+
+  it('conductorAgent:"pi" threads onto the conductor recruit (headless Pi conductor)', async () => {
+    const b = await boot();
+    const res = await postJson(`${b.url}/v1/ensembles`, { name: 'fresh', conductorAgent: 'pi' });
+    expect(res.status).toBe(201);
+    const conductor = b.calls.find(
+      (c) => c.method === 'recruit' && (c.args[1] as { isConductor?: boolean }).isConductor === true,
+    )!;
+    expect((conductor.args[1] as Record<string, unknown>).agent).toBe('pi');
+  });
+
   it('500 conductor-recruit-failed when client.recruit throws', async () => {
     const b = await boot({
       throws: { recruit: new Error('temporal unreachable') },
