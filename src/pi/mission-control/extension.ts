@@ -14,6 +14,8 @@
  * commands; `session_shutdown` tears all of it down + clears the widget.
  */
 import * as os from 'os';
+import * as crypto from 'crypto';
+import { z } from 'zod';
 import { getConfig } from '../../config';
 import { readPortFile } from '../../http/port-file';
 import { createSubscribe } from '../../client/subscribe';
@@ -30,7 +32,42 @@ import { renderBoard } from './render';
 import { MissionControlActions, ADMIN_TOKEN_ENV, type ActionResult } from './actions';
 import { openInnerTail } from './inner-tail';
 import { ensureInfra, type InfraProgress } from '../../cli/ensure-infra';
-import type { McExtensionAPI, McExtensionContext } from './pi-ui';
+import { zodShapeToTypeBox } from '../zod-to-typebox';
+import type { McExtensionAPI, McExtensionContext, McOutboundMessage, McMessageOptions, McToolResult } from './pi-ui';
+
+/** The durable conductor a `/handoff` targets by default (matches catalog's conductorName default). */
+const DEFAULT_CONDUCTOR = 'conductor';
+/** Bounded human-`/ask` poll: total wait + interval. The LLM `ask` tool yields instead (SSE wake). */
+const ASK_POLL_TIMEOUT_MS = 30_000;
+const ASK_POLL_INTERVAL_MS = 1_000;
+
+/** Mint a url/path-safe correlation id for a Q&A ask (client-side; not workflow code). */
+function mintQuestionId(): string {
+  return `q-${crypto.randomUUID()}`;
+}
+
+/**
+ * #700 P2 — build the planner-wake injection from a resolved `answer` SSE event.
+ * Pure (testable). The planner has no inbox; the SSE `answer` event is turned
+ * into a `triggerTurn` session injection — the planner-side mirror of the
+ * cue-pump waking an idle player. Text is fetched on read (the answer route /
+ * the planner's `readAnswer` tool, commit 4); the wake just announces arrival.
+ */
+export function buildAnswerWake(
+  payload: { questionId: string; from: string; ts: string },
+): { message: McOutboundMessage; options: McMessageOptions } {
+  return {
+    message: {
+      customType: 'answer',
+      content:
+        `[answer to ${payload.questionId} from ${payload.from}] ` +
+        `Your question was answered — read the full text via the answer route ` +
+        `(questionId: ${payload.questionId}).`,
+      display: true,
+    },
+    options: { deliverAs: 'followUp', triggerTurn: true },
+  };
+}
 
 const WIDGET_KEY = 'mission-control';
 const DEFAULT_RENDER_THROTTLE_MS = 200;
@@ -278,6 +315,126 @@ export class Controller {
     const r = await this.actions.shutdownEnsemble(destroy);
     this.report(ctx, `ensemble-down${destroy ? ' --destroy' : ''}`, r);
   }
+
+  // ── Planner Q&A + handoff commands (#700 P2) ──
+
+  async cmdAsk(args: string, ctx: McExtensionContext): Promise<void> {
+    const [target, question] = Controller.splitFirst(args);
+    if (!target || !question) { this.notify(ctx, 'Usage: /ask <player> <question>'); return; }
+    const questionId = mintQuestionId();
+    const r = await this.actions.ask({ target, question, questionId });
+    if (!r.ok) { this.report(ctx, `ask ${target}`, r); return; }
+    // Human path: poll (the operator is watching). The LLM `ask` TOOL yields
+    // instead and is woken by the SSE `answer` event.
+    this.notify(ctx, `Asked ${target} (q=${questionId}); waiting up to ${ASK_POLL_TIMEOUT_MS / 1000}s…`);
+    const answer = await this.pollAnswer(questionId);
+    if (answer) this.notify(ctx, `${answer.from} → ${answer.text}`);
+    else this.notify(ctx, `No answer yet for ${questionId}. It'll surface when ${target} responds (re-run /ask to re-check).`);
+  }
+
+  /** Bounded poll of the answer mailbox (human `/ask` path). Resolves null on timeout. */
+  private async pollAnswer(questionId: string): Promise<{ from: string; text: string } | null> {
+    const deadline = Date.now() + ASK_POLL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const a = await this.actions.readAnswer(questionId);
+      if (a) return a;
+      await new Promise((res) => setTimeout(res, ASK_POLL_INTERVAL_MS));
+    }
+    return null;
+  }
+
+  async cmdHandoff(args: string, ctx: McExtensionContext): Promise<void> {
+    const plan = args.trim();
+    if (!plan) { this.notify(ctx, 'Usage: /handoff <plan> — pushes the plan to the durable conductor.'); return; }
+    // Inline cue (a §5.4 brief is small markdown). Large-plan-via-coat-check is a
+    // P2.1 follow-up (coat_check_put has no HTTP route yet).
+    this.report(ctx, `handoff → ${DEFAULT_CONDUCTOR}`, await this.actions.cue(DEFAULT_CONDUCTOR, `[PLAN HANDOFF]\n${plan}`));
+  }
+}
+
+/**
+ * #700 P2 — register the planner LLM tools (the "think with tools" half) on an
+ * interactive Pi's tool surface, alongside the human slash-commands. Each tool
+ * lands on the SAME {@link MissionControlActions} the commands use. `ask` is
+ * YIELD-NOT-POLL (dispatch + return; the SSE `answer` wake resumes the turn).
+ * No-op when `pi.registerTool` is absent (non-interactive / fake Pi).
+ */
+export function registerPlannerTools(pi: McExtensionAPI, ctrl: Controller): void {
+  if (typeof pi.registerTool !== 'function') return;
+  const ok = (text: string): McToolResult => ({ content: [{ type: 'text', text }], details: {} });
+
+  pi.registerTool({
+    name: 'ask', label: 'ask',
+    description: 'Ask a player a correlated question. Returns IMMEDIATELY — end your turn; you will be woken when the answer lands. Do NOT poll. Use observe_board to see who is active.',
+    parameters: zodShapeToTypeBox({
+      target: z.string().describe('Player name to ask.'),
+      question: z.string().describe('The question to ask.'),
+    }, 'ask'),
+    execute: async (_id, params) => {
+      const { target, question } = params as { target: string; question: string };
+      const questionId = mintQuestionId();
+      const r = await ctrl.actions.ask({ target, question, questionId });
+      if (!r.ok) throw new Error(`ask failed: ${r.error}`);
+      return ok(`Dispatched to ${target} (questionId=${questionId}). End your turn — you'll be woken when the answer lands; do not poll.`);
+    },
+  });
+
+  pi.registerTool({
+    name: 'handoff', label: 'handoff',
+    description: 'Hand off a plan to the durable headless conductor for execution. It keeps orchestrating after you close this window.',
+    parameters: zodShapeToTypeBox({
+      plan: z.string().describe('The plan brief (Objective / Assignments / Constraints / Success criteria).'),
+      to: z.string().optional().describe(`Conductor to hand to (default "${DEFAULT_CONDUCTOR}").`),
+    }, 'handoff'),
+    execute: async (_id, params) => {
+      const { plan, to } = params as { plan: string; to?: string };
+      const target = to ?? DEFAULT_CONDUCTOR;
+      const r = await ctrl.actions.cue(target, `[PLAN HANDOFF]\n${plan}`);
+      if (!r.ok) throw new Error(`handoff failed: ${r.error}`);
+      return ok(`Plan handed off to ${target}.`);
+    },
+  });
+
+  pi.registerTool({
+    name: 'cue', label: 'cue',
+    description: 'Send a message to a player by name.',
+    parameters: zodShapeToTypeBox({ to: z.string().describe('Player name.'), message: z.string().describe('Message body.') }, 'cue'),
+    execute: async (_id, params) => {
+      const { to, message } = params as { to: string; message: string };
+      const r = await ctrl.actions.cue(to, message);
+      if (!r.ok) throw new Error(`cue failed: ${r.error}`);
+      return ok(`Cued ${to}.`);
+    },
+  });
+
+  pi.registerTool({
+    name: 'recruit', label: 'recruit',
+    description: 'Recruit a new player into the ensemble.',
+    parameters: zodShapeToTypeBox({
+      name: z.string().describe('Player name.'),
+      type: z.string().optional().describe('Player type (agent-type name, e.g. tempo-soloist).'),
+      host: z.string().optional().describe('Target host.'),
+      agent: z.string().optional().describe('Agent backend (e.g. pi, claude).'),
+    }, 'recruit'),
+    execute: async (_id, params) => {
+      const { name, type, host, agent } = params as { name: string; type?: string; host?: string; agent?: string };
+      const r = await ctrl.actions.recruit({
+        name, workDir: process.cwd(),
+        ...(type !== undefined ? { playerType: type } : {}),
+        ...(host !== undefined ? { host } : {}),
+        ...(agent !== undefined ? { agent } : {}),
+      });
+      if (!r.ok) throw new Error(`recruit failed: ${r.error}`);
+      return ok(`Recruited ${name}.`);
+    },
+  });
+
+  pi.registerTool({
+    name: 'observe_board', label: 'observe_board',
+    description: 'Get the current ensemble board as text — players, phases, parts, current tool, context%. Your read path; no need to scrape the widget.',
+    parameters: zodShapeToTypeBox({}, 'observe_board'),
+    execute: () => ok(renderBoard(ctrl.model, ctrl.localHost).join('\n')),
+  });
 }
 
 function resolveBaseUrl(override: string | undefined): string {
@@ -345,6 +502,17 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
       void (async () => {
         try {
           for await (const ev of subscribe(ensemble, { signal: ac.signal })) {
+            // #700 P2 — an `answer` event isn't a board event; it WAKES the
+            // planner (its only inbound channel is this SSE stream). Inject via
+            // pi.sendMessage(triggerTurn) — feature-detected (a fake/older Pi
+            // may not provide it). Everything else folds into the board model.
+            if (ev.type === 'answer') {
+              if (typeof pi.sendMessage === 'function') {
+                const { message, options } = buildAnswerWake(ev.payload);
+                pi.sendMessage(message, options);
+              }
+              continue;
+            }
             applyTempoEvent(ctrl.model, ev);
           }
         } catch (err) {
@@ -409,6 +577,14 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
     pi.registerCommand('ensemble-up', { description: 'Bootstrap the ensemble (/ensemble-up [name] [--lineup X] [--hold])', handler: (a, ctx) => ctrl.cmdEnsembleUp(a, ctx) });
     pi.registerCommand('recruit', { description: 'Recruit a player (/recruit <name> [--type T] [--host H] [--agent A])', handler: (a, ctx) => ctrl.cmdRecruit(a, ctx) });
     pi.registerCommand('ensemble-down', { description: 'Tear down the ensemble (/ensemble-down [--destroy])', handler: (a, ctx) => ctrl.cmdEnsembleDown(a, ctx) });
+
+    // #700 P2 — planner Q&A + handoff (human slash-commands).
+    pi.registerCommand('ask', { description: 'Ask a player a question and wait for the answer (/ask <player> <question>)', handler: (a, ctx) => ctrl.cmdAsk(a, ctx) });
+    pi.registerCommand('handoff', { description: 'Hand off a plan to the durable conductor (/handoff <plan>)', handler: (a, ctx) => ctrl.cmdHandoff(a, ctx) });
+
+    // #700 P2 — planner LLM tools (the "think with tools" half), alongside the
+    // human commands. No-op on a non-interactive / fake Pi (registerTool absent).
+    registerPlannerTools(pi, ctrl);
   };
 }
 

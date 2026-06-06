@@ -11,6 +11,7 @@ import type {
   HostProfile,
   CoatCheckEntry,
   CoatCheckEntryHeader,
+  AnswerEntry,
 } from '../types';
 
 // Re-export types for convenience within workflow code
@@ -188,6 +189,39 @@ export const coatCheckListQuery = defineQuery<CoatCheckEntryHeader[], [CoatCheck
  * call landed.
  */
 export const coatCheckEvictUpdate = defineUpdate<{ evicted: boolean }, [CoatCheckEvictInput]>('coatCheckEvict');
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Maestro Q&A answer mailbox (#700 P2) — the coat-check clone for correlated
+// answers. The planner (command center) has no Temporal inbox, so a player
+// routes its answer through maestro keyed by the planner-supplied `questionId`.
+// Audit identity (`from`) is set by the `respond` tool via `getPlayerId()` — no
+// spoofable arg, matching coat-check's `putBy` pattern.
+// ══════════════════════════════════════════════════════════════════════════════
+
+export interface AnswerPostInput {
+  /** Caller-supplied correlation id (the planner mints it; the workflow never does). */
+  questionId: string;
+  /** Audit identity — set by the `respond` tool layer (`getPlayerId()`), NOT a caller arg. */
+  from: string;
+  /** The answer body (≤ `MESSAGE_MAX`). */
+  text: string;
+}
+
+/**
+ * Park a correlated answer (player → maestro). Overwriting an existing
+ * `questionId` (a retry) does NOT consume a new slot. Saturation
+ * (`MAESTRO_ANSWERS_MAX`, post-sweep) rejects with `MaestroAnswersFull`;
+ * invalid input rejects with `MaestroAnswerInvalid*`.
+ */
+export const maestroPostAnswerUpdate = defineUpdate<{ stored: true }, [AnswerPostInput]>('maestroPostAnswer');
+
+/**
+ * Read a parked answer by `questionId` (planner → maestro, via the daemon).
+ * Returns the entry or `null` when missing / expired (no error class for the
+ * common "not answered yet" case). QUERY + TTL (idempotent, reconnect-safe) —
+ * a reconnecting planner can re-read its answer until TTL.
+ */
+export const maestroGetAnswerQuery = defineQuery<AnswerEntry | null, [string]>('maestroGetAnswer');
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Global Maestro — single instance handling ALL ensembles

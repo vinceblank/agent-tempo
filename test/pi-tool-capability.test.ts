@@ -1,5 +1,5 @@
 /**
- * Unit tests for the tool capability classifier (src/pi/tool-capability.ts,
+ * Unit tests for the tool capability classifier (src/security/tool-capability.ts,
  * 3d / MD-C). Tests the MECHANISM — keyed on representative names the conductor
  * named (bash/write/read) + content-agnostic invariants (disjoint sets, each
  * member classifies to its own class) — so tempo-security amending the name-set
@@ -13,7 +13,7 @@ import {
   HIGH_BLAST_TOOLS,
   LOW_RISK_TOOLS,
   type ToolCapability,
-} from '../src/pi/tool-capability';
+} from '../src/security/tool-capability';
 
 describe('tool-capability classify — by class (representative names)', () => {
   it('classifies shell/exec tools as "exec"', () => {

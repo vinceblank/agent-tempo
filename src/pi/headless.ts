@@ -27,6 +27,7 @@
 import { getConfig, sessionWorkflowId, ENV, type Config } from '../config';
 import { probeSdkInstall } from '../utils/sdk-probe';
 import { createPiExtension, detachAllPiRuntimesForExit, setRuntimeSession, type PiToolAccess } from './extension';
+import type { GuardrailPolicy } from '../types';
 import { PI_PACKAGE, PI_AI_PACKAGE, checkPiNodeFloor } from './probe';
 import { seedSessionManager, type SeedableSessionManager } from './session-seed';
 import type { PiAgentSession } from './pi-types';
@@ -87,6 +88,8 @@ async function resolveModel(modelStr: string | undefined): Promise<{ model?: unk
 export interface RunHeadlessPiOptions {
   config?: Config;
   toolAccess?: PiToolAccess;
+  /** #700 (P2 / G) — durable guardrail posture; absent ⇒ autonomous. */
+  guardrailPolicy?: GuardrailPolicy;
   /** `provider/model` selector; absent → Pi default. */
   model?: string;
   /** Restart-resume: prior Pi conversation id (A4 wires SessionManager). */
@@ -184,7 +187,8 @@ export async function runHeadlessPi(opts: RunHeadlessPiOptions = {}): Promise<vo
   }
 
   // 3) Inline extension factory — headless mode → the MD-C tool gate is active.
-  const extensionFactory = createPiExtension({ mode: 'headless', toolAccess });
+  //    #700 (P2 / G) — the guardrail posture drives the MD-G gate's failMode.
+  const extensionFactory = createPiExtension({ mode: 'headless', toolAccess, guardrailPolicy: opts.guardrailPolicy });
 
   // 4) Construct the Pi SDK session with the extension injected inline.
   const piSdk = await esmImport(PI_PACKAGE);

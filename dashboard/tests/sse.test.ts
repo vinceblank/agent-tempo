@@ -70,6 +70,7 @@ describe('applyEvent — coverage of SSE_EVENT_KINDS', () => {
       'schedules.changed': true,
       'host_profile.changed': true,
       'player.activity': true,
+      answer: true,
     };
     for (const kind of SSE_EVENT_KINDS) {
       expect(KIND_COVERAGE[kind]).toBe(true);
@@ -85,6 +86,16 @@ describe('applyEvent — player.activity (3c Tier-1, coarse — dashboard ignore
         playerId: 'soloist', ensemble: 'demo', currentTool: 'bash',
         contextTokens: 1200, contextPercent: 3, at: '2026-04-27T00:00:00.000Z',
       },
+    };
+    expect(applyEvent(baseSnapshot, ev)).toBe(baseSnapshot);
+  });
+});
+
+describe('applyEvent — answer (#700 P2 command-center Q&A — dashboard ignores)', () => {
+  it('returns the same reference (the answer wakes the planner, not the dashboard)', () => {
+    const ev: TempoEvent = {
+      v: 1, type: 'answer', eventId: id(8),
+      payload: { questionId: 'q-1', from: 'soloist', ts: '2026-06-06T00:00:00.000Z' },
     };
     expect(applyEvent(baseSnapshot, ev)).toBe(baseSnapshot);
   });

@@ -200,7 +200,10 @@ InnerLoopHttpClient (prod DI)
 
 ## Operator Gate (MD-G, Phase 3d)
 
-An optional live approve/deny gate on headless Pi tool calls. When armed, non-`low-risk` tools pause before execution so an operator can allow or deny them. Fail-open: any path that can't reach the daemon (network error, timeout, auto-allow) resolves as `allow`.
+An optional live approve/deny gate on headless Pi tool calls. When engaged, non-`low-risk` tools pause before execution so an operator can allow or deny them. The fail posture is **per-request** (`failMode`, #700 P2/G), sourced from the agent's durable `guardrailPolicy`:
+
+- **`open`** (monitored, default) — fail-OPEN: any path that can't reach the daemon (network error, timeout, `auto-allow`) resolves as `allow`. This is the original MD-G posture, unchanged.
+- **`closed`** (supervised) — fail-CLOSED: timeout / daemon-down / no-ingest-token resolves as `deny` (`auto-deny`). Opting into supervision means silence ≠ consent.
 
 ### Tool Capability Classes
 
@@ -212,16 +215,18 @@ Every tool call is classified before the gate engages:
 | `high-blast` | Routed to the gate when armed. Tools that write, delete, network-fetch, recruit, or broadly affect ensemble state. Unknown tool names default to `high-blast` (fail-safe). |
 | `low-risk` | Always allowed; never routed to the gate. Read-only and read-ensemble tools. |
 
-Classification logic lives in `src/pi/tool-capability.ts` (`classify(toolName)`, case-insensitive).
+Classification logic lives in `src/security/tool-capability.ts` (`classify(toolName)`, case-insensitive) — moved from `src/pi/` in #700 P2/G so any autonomous agent (not just Pi) can import the one taxonomy.
 
 ### Engagement Model
 
-The tool-call handler in the Pi extension checks two conditions before engaging the gate:
+For a non-`low-risk` tool (exec-class tools are hard-blocked first by the MD-C exec-floor at `restricted` access), the gate engages when EITHER:
 
-1. `classify(toolName) !== 'exec'` — exec-class tools are hard-blocked by MD-C before the gate.
-2. `gateArmed(workflowId)` — reads the cached `gateArmed` field from the last `/inner/presence` poll (staleness ≤ ~1–2 s post-arm).
+1. **Supervised (#700 P2/G)** — `guardrailPolicy === 'supervised'`: SELF-ARMING, engages **regardless of operator arm/presence** (fail-closed must fire precisely when no operator is watching). The frame carries `failMode: 'closed'`. Supervised is the floor — an operator arm can't downgrade it to `open`.
+2. **Monitored** — `gateArmed(workflowId)` AND a present subscriber (both read from the cached `/inner/presence` poll, staleness ≤ ~1–2 s post-arm). The frame carries `failMode: 'open'` (today's MD-G, unchanged).
 
-When both conditions are true, the handler emits an `inner.gate_pending` frame (which simultaneously registers the request in the `GateRegistry` via the `/inner/ingest` side-effect — the "engagement IS registration" path) and calls `GateClient.awaitDecision(requestId)`. The decision poll loop returns a `GateEffect` (`'allow'` or `'deny'`); the handler proceeds or throws accordingly.
+(`guardrailPolicy === 'observe-only'` is a separate NO-ACT axis: ANY non-`low-risk` tool is hard-blocked outright — not gated.)
+
+When engaged, the handler emits an `inner.gate_pending` frame (which simultaneously registers the request in the `GateRegistry` via the `/inner/ingest` side-effect — the "engagement IS registration" path) and calls `GateClient.awaitDecision(requestId, { failMode })`. The decision poll loop returns a `GateEffect` (`'allow'` or `'deny'`); the handler proceeds or throws accordingly. `failMode` is **client-asserted** in P2 (the agent stamps it from its own policy — MD-C parity; daemon-side enforcement is P2.1).
 
 ### Gate Frames on the `/inner` Stream
 
@@ -234,7 +239,8 @@ When both conditions are true, the handler emits an `inner.gate_pending` frame (
   tool: string;
   argsSummary: string;        // source-truncated ≤ ~2 KiB
   classification: 'exec' | 'high-blast';
-  timeoutMs: number;          // 45 000 ms (the auto-allow window)
+  timeoutMs: number;          // open: 45 000 ms (auto-allow window); closed: 300 000 ms (auto-deny window)
+  failMode?: 'open' | 'closed'; // #700 P2/G — from guardrailPolicy; absent ⇒ open
   ts: number;
 }
 ```
@@ -245,13 +251,13 @@ When both conditions are true, the handler emits an `inner.gate_pending` frame (
 {
   type: 'inner.gate_resolved';
   requestId: string;
-  decision: 'allow' | 'deny' | 'auto-allow';
+  decision: 'allow' | 'deny' | 'auto-allow' | 'auto-deny';
   source: 'operator' | 'timeout';
   ts: number;
 }
 ```
 
-`auto-allow` fires after 45 s with no operator decision (R3, autonomous-first, maintainer-locked). The registry computes expiry lazily on poll — no daemon timer.
+`auto-allow` fires after 45 s on an `open` request with no operator decision (R3, autonomous-first, maintainer-locked). `auto-deny` (#700 P2/G) fires after 300 s on a `closed` (supervised) request — kept distinct from a plain operator `deny` so the audit can tell a timeout from an explicit decision. The registry computes expiry lazily on poll — no daemon timer.
 
 ### Gate HTTP Endpoints
 
@@ -275,11 +281,21 @@ The source plane reuses the same auth as `/inner/ingest` (loopback remote addres
 
 `GET /inner/presence` now returns `{ subscribers: number; gateArmed: boolean }`. The subprocess reads both engagement inputs from one fetch, avoiding a stale-armed / fresh-present mismatch.
 
-### Auto-Allow (R3, Maintainer-Locked)
+### Timeout posture — Auto-Allow (open) / Auto-Deny (closed)
 
-A pending gate request with no operator decision after **45 000 ms** resolves to `auto-allow` (`source: 'timeout'`). This is an autonomous-first design invariant — a run with no operator present must never stall. The Pi-side `GateClient.awaitDecision` poll loop additionally bounds itself with `DEFAULT_TIMEOUT_MS = 50 000` ms and honours an `AbortSignal`, ensuring the loop is bounded on both sides.
+**`open` (monitored, R3, maintainer-locked):** a pending request with no operator decision after **45 000 ms** resolves to `auto-allow` (`source: 'timeout'`). Autonomous-first — a run with no operator present must never stall. The Pi-side `GateClient.awaitDecision` poll loop bounds itself with `DEFAULT_TIMEOUT_MS = 50 000` ms and honours an `AbortSignal`.
 
-Fail-open posture: `'deny'` is returned only on an explicit operator decision. Network errors, timeouts, and `auto-allow` all resolve as `'allow'`.
+**`closed` (supervised, #700 P2/G):** a pending request with no operator decision after **`GATE_CLOSED_DENY_MS = 300 000` ms** resolves to `auto-deny` (`source: 'timeout'`). The client `closed` deadline is **DERIVED** from `GATE_CLOSED_DENY_MS` (+ buffer, ≥ 310 000 ms; invariant `client_closed > daemon_closed`) so the daemon's *audited* `auto-deny` is received before the client's own fallback fires. Both constants single-home in `src/http/gate-registry.ts`.
+
+Fail posture by `failMode`:
+
+| `GateClient.awaitDecision` return point | `open` | `closed` |
+|---|---|---|
+| explicit operator `allow`/`deny` | as decided | as decided |
+| no ingest token (`!enabled`) | `allow` | **`deny`** (the no-silent-allow backstop) |
+| abort (turn cancelled) | `allow` | `allow` (moot — the tool won't run) |
+| deadline / daemon-down | `allow` | **`deny`** |
+| `pollOnce` decision mapping | `deny`→deny, else allow | `deny` **or `auto-deny`** → deny |
 
 ### Gate Audit (R5, Security-Locked)
 

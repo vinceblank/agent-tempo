@@ -12,29 +12,50 @@
  *   - `signal` (Pi's `ctx.signal`): if the turn is cancelled (Esc/abort), the
  *     poll stops immediately and resolves `allow` (the tool won't run anyway —
  *     never leave the loop hung; Pi #2381).
- *   - `timeoutMs` (default just beyond the daemon's 45s): a safety net for an
- *     UNREACHABLE daemon — autonomous-first, so a timeout resolves `allow`.
+ *   - `timeoutMs`: a safety net for an UNREACHABLE daemon. `open` (monitored) is
+ *     autonomous-first → timeout resolves `allow`; `closed` (supervised) is
+ *     fail-closed → timeout resolves `deny`.
  * In the normal case the daemon answers first (operator decision, or its lazy
- * 45s auto-allow), so this subprocess deadline is only the daemon-down backstop.
+ * auto-allow / auto-deny), so this subprocess deadline is only the daemon-down
+ * backstop. The `closed` deadline is DERIVED from the daemon's 300s auto-deny
+ * (+ buffer, ≥310s) so the daemon's *audited* auto-deny is RECEIVED first.
  *
- * Effect mapping: operator `deny` → `deny` (block the tool); `allow` /
- * `auto-allow` / timeout / abort → `allow` (permit). Network/transport errors on
- * a single poll are swallowed (retry next tick); only the bounds end the loop.
+ * Effect mapping (#700 / G): operator `deny` + supervised timeout `auto-deny` →
+ * `deny` (block the tool); `allow` / `auto-allow` / abort → `allow` (permit);
+ * deadline/daemon-down → `allow` (open) or `deny` (closed). The (b) backstop:
+ * `closed` + no ingest token → `deny`, never the silent-allow no-op. Network/
+ * transport errors on a single poll are swallowed (retry next tick).
  *
  * Client-side ONLY (src/pi). Not imported by workflows.
  */
 import { readPortFile } from '../http/port-file';
+import { GATE_CLOSED_DENY_MS } from '../http/gate-registry';
+import type { GateFailMode } from '../http/gate-registry';
 
 /** Env var carrying the per-player ingest token (threaded in at spawn, shared w/ inner-loop). */
 export const INGEST_TOKEN_ENV = 'AGENT_TEMPO_INGEST_TOKEN';
 /** Default poll cadence — reuse the inner-loop short-poll so a fresh decision lands within ~1s. */
 const DEFAULT_POLL_MS = 1_000;
 /**
- * Subprocess deadline — slightly beyond the daemon's 45s auto-allow so, when the
- * daemon is reachable, its authoritative answer always wins; this only fires when
- * the daemon is unreachable.
+ * Subprocess deadline for `open` (monitored) — slightly beyond the daemon's 45s
+ * auto-allow so, when the daemon is reachable, its authoritative answer always
+ * wins; this only fires when the daemon is unreachable.
  */
 const DEFAULT_TIMEOUT_MS = 50_000;
+/**
+ * Buffer added to the daemon's closed-deny fuse to DERIVE the client `closed`
+ * deadline. Keeps the invariant `client_closed > daemon_closed` so the daemon's
+ * *audited* `auto-deny` is RECEIVED before the client's own fallback fires (the
+ * fallback denies anyway, but losing the daemon's audit record is a regression).
+ */
+const CLOSED_TIMEOUT_BUFFER_MS = 10_000;
+/**
+ * ★ Subprocess deadline for `closed` (supervised) — DERIVED from the daemon's
+ * single-source {@link GATE_CLOSED_DENY_MS} (never hard-coded), so a future bump
+ * of the daemon timeout can't silently reincarnate the fail-open-via-drift bug.
+ * Invariant: `CLOSED_TIMEOUT_MS (≥310s) > GATE_CLOSED_DENY_MS (300s)`.
+ */
+const CLOSED_TIMEOUT_MS = GATE_CLOSED_DENY_MS + CLOSED_TIMEOUT_BUFFER_MS;
 
 /** What the handler does with the result. */
 export type GateEffect = 'allow' | 'deny';
@@ -52,7 +73,10 @@ export interface GateClientOptions {
   readPort?: () => number | null;
   fetchFn?: GateFetch;
   pollIntervalMs?: number;
+  /** `open`-mode (monitored) deadline. Defaults to {@link DEFAULT_TIMEOUT_MS} (50s). */
   timeoutMs?: number;
+  /** `closed`-mode (supervised) deadline. Defaults to the DERIVED {@link CLOSED_TIMEOUT_MS} (≥310s). */
+  closedTimeoutMs?: number;
   now?: () => number;
   /** Cancellable wait (tests inject a synchronous/controllable one). */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -90,6 +114,7 @@ export class GateClient {
   private readonly fetchFn: GateFetch | null;
   private readonly pollIntervalMs: number;
   private readonly timeoutMs: number;
+  private readonly closedTimeoutMs: number;
   private readonly now: () => number;
   private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
 
@@ -101,6 +126,7 @@ export class GateClient {
     this.fetchFn = opts.fetchFn ?? resolveFetch();
     this.pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_MS;
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.closedTimeoutMs = opts.closedTimeoutMs ?? CLOSED_TIMEOUT_MS;
     this.now = opts.now ?? Date.now;
     this.sleep = opts.sleep ?? defaultSleep;
   }
@@ -127,7 +153,10 @@ export class GateClient {
       if (res.status !== 200) return null; // 404 (not-yet-registered race) / 403 → retry
       const data = (await res.json()) as { status?: unknown; decision?: unknown };
       if (data.status !== 'resolved') return null;
-      return data.decision === 'deny' ? 'deny' : 'allow'; // allow + auto-allow → allow
+      // operator deny + supervised timeout auto-deny → deny; allow + auto-allow → allow.
+      // (#700 / G bug-2 fix: 'auto-deny' ≠ 'deny' must still map to deny, or a
+      // supervised closed-deny silently fail-opens at the client.)
+      return data.decision === 'deny' || data.decision === 'auto-deny' ? 'deny' : 'allow';
     } catch {
       return null; // transport error → retry next tick
     }
@@ -135,18 +164,37 @@ export class GateClient {
 
   /**
    * Poll the daemon for the operator's decision on `requestId`, blocking until
-   * resolved / timeout / abort. FAIL-OPEN: `allow` unless the operator explicitly
-   * denied. Without a token/transport (e.g. interactive Pi, daemon HTTP off) →
-   * immediate `allow` (the gate is a daemon-mediated feature).
+   * resolved / timeout / abort. The fail posture is per-request (#700 / G),
+   * threaded via `opts.failMode` (defaults `'open'` → today's behavior verbatim):
+   *
+   *   - `'open'` (monitored) — FAIL-OPEN: `allow` unless the operator explicitly
+   *     denied; without a token/transport, deadline, or daemon-down → `allow`.
+   *   - `'closed'` (supervised) — FAIL-CLOSED: `deny` on deadline / daemon-down,
+   *     and the (b) no-token BACKSTOP — a supervised player MUST have an ingest
+   *     token to poll; `!enabled` + `closed` → `deny`, never the silent-allow
+   *     no-op (that would be the exact fail-open leak supervised exists to
+   *     prevent). The closed deadline is DERIVED to be ≥ the daemon's 300s
+   *     auto-deny + buffer, so the daemon's *audited* auto-deny is received first.
+   *
+   * ABORT (turn cancelled) returns `allow` in BOTH modes — the tool won't run
+   * anyway; denying a dead turn is moot + would spuriously audit a deny.
    */
-  async awaitDecision(requestId: string, opts: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<GateEffect> {
-    if (!this.enabled) return 'allow';
-    const deadline = this.now() + (opts.timeoutMs ?? this.timeoutMs);
+  async awaitDecision(
+    requestId: string,
+    opts: { signal?: AbortSignal; timeoutMs?: number; failMode?: GateFailMode } = {},
+  ): Promise<GateEffect> {
+    const closed = opts.failMode === 'closed';
+    if (!this.enabled) return closed ? 'deny' : 'allow'; // (b) backstop: no token + supervised must NOT allow
+    const deadline = this.now() + (opts.timeoutMs ?? (closed ? this.closedTimeoutMs : this.timeoutMs));
     while (this.now() < deadline) {
-      if (opts.signal?.aborted) return 'allow'; // turn cancelled — don't block a dying turn
+      if (opts.signal?.aborted) return 'allow'; // (a) cancelled turn — moot, allow in BOTH modes
       const effect = await this.pollOnce(requestId);
       if (effect !== null) return effect;
       await this.sleep(this.pollIntervalMs, opts.signal);
+    }
+    if (closed) {
+      log(`gate decision timed out for ${requestId} (supervised, daemon unreachable?) — auto-DENY`);
+      return 'deny'; // fail-closed backstop (daemon-down / deadline)
     }
     log(`gate decision timed out for ${requestId} (daemon unreachable?) — auto-allow`);
     return 'allow'; // autonomous-first backstop (daemon-down)

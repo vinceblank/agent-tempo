@@ -35,6 +35,7 @@ import { EnsembleEventBus, type EventBus } from './event-bus';
 import { SeqAllocator } from './event-id';
 import type { EnsembleStateV1, PlayerSummaryV1 } from './event-types';
 import { buildEnsembleSnapshot, EnsembleNotFoundError } from './snapshot';
+import { MAESTRO_ANSWER_TTL_MS } from '../utils/validation';
 
 /** Default cadence per spec §8. */
 export const DEFAULT_POLL_INTERVAL_MS = 750;
@@ -501,6 +502,18 @@ export class AggregateRunner {
   private knownEnsembles: Set<string> = new Set();
   private hostHashes: Map<string, string> = new Map();
 
+  /**
+   * #700 P2 — outstanding Q&A asks the daemon is watching for an answer. The
+   * daemon served `POST /ask`, so it knows `{ensemble, questionId}`; each tick
+   * it polls `getAnswer(questionId)` per-outstanding (NOT a whole-map diff —
+   * that would need a new list-query) and emits the `answer` event + drops the
+   * entry on first resolve. Keyed by `${ensemble} ${questionId}`. Daemon
+   * restart loses this in-memory set → degrades to read-on-reconnect (the
+   * `GET /answer/:id` route is the source of truth). `since` bounds the set:
+   * an unanswered ask is dropped past the mailbox TTL (no answer readable after).
+   */
+  private readonly outstandingAsks = new Map<string, { ensemble: string; questionId: string; since: number }>();
+
   /** Loop state. */
   private timer: NodeJS.Timeout | null = null;
   private inFlight = false;
@@ -618,6 +631,52 @@ export class AggregateRunner {
     return this.tracks.get(ensemble)?.bus ?? null;
   }
 
+  /**
+   * #700 P2 — register an outstanding Q&A ask. Called by the `POST /ask` route
+   * after it cues the target player; the next ticks poll for the answer and
+   * emit the `answer` event when it lands. Idempotent (re-asking the same
+   * questionId just refreshes `since`).
+   */
+  trackAsk(ensemble: string, questionId: string): void {
+    this.outstandingAsks.set(`${ensemble} ${questionId}`, {
+      ensemble, questionId, since: this.now(),
+    });
+  }
+
+  /** Test seam — number of outstanding asks awaiting an answer. */
+  get _outstandingAskCount(): number { return this.outstandingAsks.size; }
+
+  /**
+   * #700 P2 — poll each outstanding ask's answer mailbox; emit `answer` + drop
+   * on first resolve. Sequential (the set is small + transient); `getAnswer`
+   * is collision-safe (direct bounded query). Drops asks older than the mailbox
+   * TTL — no answer is readable past it, so polling forever is pointless.
+   */
+  async pollOutstandingAnswers(): Promise<void> {
+    if (this.outstandingAsks.size === 0) return;
+    const nowMs = this.now();
+    for (const [key, ask] of [...this.outstandingAsks]) {
+      if (nowMs - ask.since > MAESTRO_ANSWER_TTL_MS) {
+        this.outstandingAsks.delete(key);
+        continue;
+      }
+      let answer;
+      try {
+        answer = await this.client.getAnswer(ask.ensemble, ask.questionId);
+      } catch {
+        continue; // transient — retry next tick
+      }
+      if (answer) {
+        this.getOrCreateEnsembleBus(ask.ensemble).emit('answer', {
+          questionId: ask.questionId,
+          from: answer.from,
+          ts: answer.answeredAt,
+        });
+        this.outstandingAsks.delete(key);
+      }
+    }
+  }
+
   /** Total live subscriber count across all buses — `/v1/health.subscriberCount`. */
   totalSubscriberCount(): number {
     let n = this._globalBus.subscriberCount();
@@ -674,6 +733,10 @@ export class AggregateRunner {
     try {
       const snapshot = await this.collect();
       this.applyDiff(snapshot);
+      // #700 P2 — resolve any outstanding Q&A asks (emits `answer` events that
+      // wake the inbox-less planner). Kept inside the tick's single-flight
+      // guard; bounded by the (transient, small) outstanding set.
+      await this.pollOutstandingAnswers();
     } catch (err) {
       // #336/#529 site 6 — `TickSkipped` is the architect-approved
       // signal that `collect()` deliberately bailed before applying

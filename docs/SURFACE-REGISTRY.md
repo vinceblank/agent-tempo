@@ -56,6 +56,7 @@ Source: `src/tools/*.ts` — each file exports a `build<X>Tool(...): TempoToolDe
 | `reset` | `reset.ts` | Clean-wipe a player's context — target starts a fresh session, no replay (D14) |
 | `restart` | `restart.ts` | Restart a session — reap current attachment, claim fresh, spawn new adapter |
 | `restore` | `restore.ts` | Revive ensemble after `shutdown` — reattach orphans, unpause maestro + scheduler |
+| `respond` | `respond.ts` | Answer a planner's correlated `[Q <id>]` question — parks the answer on the maestro Q&A mailbox for the inbox-less command center (#700) |
 | `save_lineup` | `save-lineup.ts` | Save current ensemble state as a YAML lineup (conductor only) |
 | `save_state` | `save-state.ts` | Save curated state for yourself into a named slot — peers can read it via `fetch_state` |
 | `schedule` | `schedule.ts` | Schedule a message to a player: one-shot, recurring, delay, or cron |

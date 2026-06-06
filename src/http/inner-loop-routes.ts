@@ -142,6 +142,9 @@ export async function handleInnerIngest(
         tool: f.tool,
         argsSummary: typeof f.argsSummary === 'string' ? f.argsSummary : '',
         ensemble,
+        // #700 / G — per-request fail posture from the agent's guardrailPolicy.
+        // Only 'closed' is meaningful; anything else (incl. absent) ⇒ 'open'.
+        failMode: f.failMode === 'closed' ? 'closed' : 'open',
       });
     }
   }

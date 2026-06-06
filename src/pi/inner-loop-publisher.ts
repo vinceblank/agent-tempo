@@ -53,9 +53,14 @@ import type {
  *     engages; the ingest route's side-effect registers the pending in the
  *     GateRegistry (the "engagement IS registration" path). `argsSummary` is
  *     source-truncated (~2KB). `timeoutMs` lets the operator UI render a countdown.
+ *     `failMode` (#700 / G) is the per-request fail posture sourced from the
+ *     agent's durable `guardrailPolicy`: `'open'` (default — monitored/operator-
+ *     armed, auto-ALLOW on absence) | `'closed'` (supervised, auto-DENY on
+ *     absence). The daemon stores it on the pending request; absent ⇒ open.
  *   - `inner.gate_resolved` — emitted by the GateRegistry (via an injected
- *     publishToInner callback) when a decision lands (operator) or the 45s
- *     auto-allow fires (timeout), so the operator sees the outcome.
+ *     publishToInner callback) when a decision lands (operator) or a timeout
+ *     fires: `auto-allow` (open, 45s) | `auto-deny` (closed, 300s), so the
+ *     operator sees the outcome.
  */
 export type InnerFrame =
   | { type: 'inner.thinking'; delta: string; kind: 'thinking' | 'text' }
@@ -63,8 +68,8 @@ export type InnerFrame =
   | { type: 'inner.tool_result'; tool: string; resultSummary: string; isError: boolean; ts: number }
   | { type: 'inner.token'; contextTokens?: number; contextPercent?: number }
   | { type: 'inner.turn'; phase: 'start' | 'end'; turnIndex: number; ts: number }
-  | { type: 'inner.gate_pending'; requestId: string; tool: string; argsSummary: string; classification: 'exec' | 'high-blast'; timeoutMs: number; ts: number }
-  | { type: 'inner.gate_resolved'; requestId: string; decision: 'allow' | 'deny' | 'auto-allow'; source: 'operator' | 'timeout'; ts: number };
+  | { type: 'inner.gate_pending'; requestId: string; tool: string; argsSummary: string; classification: 'exec' | 'high-blast'; timeoutMs: number; ts: number; failMode?: 'open' | 'closed' }
+  | { type: 'inner.gate_resolved'; requestId: string; decision: 'allow' | 'deny' | 'auto-allow' | 'auto-deny'; source: 'operator' | 'timeout'; ts: number };
 
 /**
  * The daemon-side fine-tail sink (lead's `http/inner-loop.ts`). Injected so the

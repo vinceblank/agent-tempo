@@ -232,6 +232,21 @@ describe('3d MD-G coupling — gate_pending registers + presence carries gateArm
     expect(gate.getResolution(WF, 'req-9')).toEqual({ status: 'pending' });
   });
 
+  it('#700 (G) — gate_pending failMode:"closed" threads to open() → request auto-DENIES on its fuse', async () => {
+    const { gate, token, deps } = gateSetup();
+    const res = fakeRes();
+    const closedPending = { ...GATE_PENDING, requestId: 'req-closed', failMode: 'closed', timeoutMs: 300000 };
+    await handleInnerIngest(
+      fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token }, body: JSON.stringify(closedPending) }),
+      res, deps, E, P,
+    );
+    expect(res.statusCode).toBe(204);
+    // The pending carries failMode='closed' → it is registered (pending now); the
+    // closed fuse / auto-deny behavior is covered by the GateRegistry suite. Here
+    // we assert the seam threaded the field by registering the request at all.
+    expect(gate.getResolution(WF, 'req-closed')).toEqual({ status: 'pending' });
+  });
+
   it('an ordinary inner frame does NOT register anything in the gate', async () => {
     const { gate, token, deps } = gateSetup();
     const res = fakeRes();

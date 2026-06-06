@@ -1211,6 +1211,13 @@ export interface PiHeadlessAdapterOpts {
   /** MD-C tool-class policy: `restricted` (default) | `standard` | `full`. */
   toolAccess?: string;
   /**
+   * #700 (P2 / G) — guardrail posture: `autonomous` (default) | `monitored` |
+   * `supervised` | `observe-only`. Threaded as `AGENT_TEMPO_GUARDRAIL_POLICY`.
+   * Sourced from durable SessionMetadata on (re)spawn; absent ⇒ autonomous.
+   * String-typed (like {@link toolAccess}) to keep src/pi types off spawn.ts.
+   */
+  guardrailPolicy?: string;
+  /**
    * 3c Tier-2 ingest token (minted by the daemon outbox, scoped to this player's
    * workflowId). Threaded into the subprocess env as `AGENT_TEMPO_INGEST_TOKEN`
    * so the inner-loop publisher can authenticate `POST /inner/ingest`. NOTE:
@@ -1284,6 +1291,10 @@ export function spawnPiHeadless(opts: PiHeadlessAdapterOpts): PiHeadlessAdapterR
         // MD-C: tool-class policy. ALWAYS set (default 'restricted' — the safe
         // unsupervised default + an explicit value for the gate + audit trail).
         [ENV.TOOL_ACCESS]: toolAccess,
+        // #700 (P2 / G): guardrail posture. Set only when non-autonomous (absent
+        // ⇒ autonomous, the extension default) — the durable source is
+        // SessionMetadata, re-derived on every (re)spawn (no silent downgrade).
+        ...(opts.guardrailPolicy ? { [ENV.GUARDRAIL_POLICY]: opts.guardrailPolicy } : {}),
         // 3c Tier-2: per-player ingest token (minted by the daemon outbox).
         // Absent → the inner-loop publisher's HTTP client no-ops (no fine tail).
         ...(opts.ingestToken ? { [ENV.INGEST_TOKEN]: opts.ingestToken } : {}),

@@ -8,10 +8,11 @@ import {
   Controller,
   parseEnsembleUpArgs,
   parseRecruitArgs,
+  registerPlannerTools,
 } from '../src/pi/mission-control/extension';
 import { applyTempoEvent } from '../src/pi/mission-control/board';
 import type { TempoEvent, PlayerSummaryV1 } from '../src/http/event-types';
-import type { McExtensionContext } from '../src/pi/mission-control/pi-ui';
+import type { McExtensionContext, McExtensionAPI, McToolDefinition } from '../src/pi/mission-control/pi-ui';
 
 interface Recorded { url: string; method: string; headers: Record<string, string>; body?: string }
 
@@ -313,5 +314,117 @@ describe('mission-control Controller — bootstrap commands (#700 P1)', () => {
     expect(fake.calls[0].url).to.equal('http://127.0.0.1:8473/v1/ensembles/ens/shutdown');
     expect(JSON.parse(fake.calls[0].body!)).to.deep.equal({});
     expect(JSON.parse(fake.calls[1].body!)).to.deep.equal({ destroy: true });
+  });
+});
+
+describe('MissionControlActions — Q&A surface (#700 P2)', () => {
+  it('ask POSTs /ask with {target, question, questionId}', async () => {
+    const fake = new FakeFetch();
+    await actions(fake).ask({ target: 'eng', question: 'done?', questionId: 'q-1' });
+    expect(fake.calls[0].url).to.equal('http://127.0.0.1:8473/v1/ensembles/ens/ask');
+    expect(JSON.parse(fake.calls[0].body!)).to.deep.equal({ target: 'eng', question: 'done?', questionId: 'q-1' });
+  });
+
+  it('readAnswer GETs /answer and returns the entry', async () => {
+    const fake = new FakeFetch();
+    fake.nextStatus = 200;
+    fake.nextText = JSON.stringify({ answer: { questionId: 'q-1', from: 'eng', text: 'done', answeredAt: '2026-01-01T00:00:00.000Z' } });
+    const a = await actions(fake).readAnswer('q-1');
+    expect(fake.calls[0].method).to.equal('GET');
+    expect(fake.calls[0].url).to.equal('http://127.0.0.1:8473/v1/ensembles/ens/answer/q-1');
+    expect(a).to.deep.equal({ questionId: 'q-1', from: 'eng', text: 'done', answeredAt: '2026-01-01T00:00:00.000Z' });
+  });
+
+  it('readAnswer returns null when the mailbox is empty', async () => {
+    const fake = new FakeFetch();
+    fake.nextStatus = 200; fake.nextText = JSON.stringify({ answer: null });
+    expect(await actions(fake).readAnswer('q-x')).to.equal(null);
+  });
+});
+
+describe('mission-control Controller — Q&A + handoff commands (#700 P2)', () => {
+  it('cmdAsk POSTs /ask then reports the answer (human poll path)', async () => {
+    const fake = new FakeFetch();
+    fake.nextStatus = 200;
+    fake.nextText = JSON.stringify({ answer: { questionId: 'q', from: 'eng', text: 'all green', answeredAt: '2026-01-01T00:00:00.000Z' } });
+    const c = new Controller('ens', actions(fake));
+    const ctx = fakeCtx();
+    await c.cmdAsk('eng is the migration done?', ctx);
+    const ask = fake.calls.find((x) => x.url.endsWith('/ask'));
+    expect(ask, 'ask POST fired').to.not.equal(undefined);
+    const body = JSON.parse(ask!.body!);
+    expect(body.target).to.equal('eng');
+    expect(body.question).to.equal('is the migration done?');
+    expect(body.questionId).to.be.a('string').with.length.greaterThan(0);
+    expect(ctx.notes.some((n) => n.includes('all green'))).to.equal(true);
+  });
+
+  it('cmdAsk with no question shows usage (no POST)', async () => {
+    const fake = new FakeFetch();
+    const c = new Controller('ens', actions(fake));
+    const ctx = fakeCtx();
+    await c.cmdAsk('eng', ctx);
+    expect(fake.calls).to.have.length(0);
+    expect(ctx.notes[0]).to.contain('Usage');
+  });
+
+  it('cmdHandoff cues the conductor with a [PLAN HANDOFF] prefix', async () => {
+    const fake = new FakeFetch();
+    const c = new Controller('ens', actions(fake));
+    await c.cmdHandoff('## Objective\nship it', fakeCtx());
+    expect(fake.calls[0].url).to.equal('http://127.0.0.1:8473/v1/ensembles/ens/cue');
+    const body = JSON.parse(fake.calls[0].body!);
+    expect(body.to).to.equal('conductor');
+    expect(body.message).to.contain('[PLAN HANDOFF]');
+    expect(body.message).to.contain('ship it');
+  });
+});
+
+describe('mission-control planner LLM tools (#700 P2)', () => {
+  function fakePiTools(): { pi: McExtensionAPI; tools: Map<string, McToolDefinition> } {
+    const tools = new Map<string, McToolDefinition>();
+    const pi = {
+      on: () => { /* no-op */ },
+      registerCommand: () => { /* no-op */ },
+      registerShortcut: () => { /* no-op */ },
+      registerTool: (def: McToolDefinition) => { tools.set(def.name, def); },
+    } as unknown as McExtensionAPI;
+    return { pi, tools };
+  }
+
+  it('registers ask / handoff / cue / recruit / observe_board', () => {
+    const { pi, tools } = fakePiTools();
+    registerPlannerTools(pi, new Controller('ens', actions(new FakeFetch())));
+    expect([...tools.keys()].sort()).to.deep.equal(['ask', 'cue', 'handoff', 'observe_board', 'recruit']);
+  });
+
+  it('observe_board returns the board as text', async () => {
+    const c = new Controller('ens', actions(new FakeFetch()));
+    addPlayer(c, 'eng');
+    const { pi, tools } = fakePiTools();
+    registerPlannerTools(pi, c);
+    const r = await tools.get('observe_board')!.execute('id', {});
+    expect(r.content[0].text).to.contain('eng');
+  });
+
+  it('ask tool dispatches + yields (POSTs /ask, no /answer poll in the tool path)', async () => {
+    const fake = new FakeFetch();
+    const c = new Controller('ens', actions(fake));
+    const { pi, tools } = fakePiTools();
+    registerPlannerTools(pi, c);
+    const r = await tools.get('ask')!.execute('id', { target: 'eng', question: 'q?' });
+    expect(fake.calls.some((x) => x.url.endsWith('/ask'))).to.equal(true);
+    expect(fake.calls.some((x) => x.url.includes('/answer/'))).to.equal(false); // yield, not poll
+    expect(r.content[0].text.toLowerCase()).to.contain('woken');
+  });
+
+  it('cue tool THROWS on failure (Pi sanctioned error path)', async () => {
+    const fake = new FakeFetch();
+    fake.nextStatus = 500;
+    const { pi, tools } = fakePiTools();
+    registerPlannerTools(pi, new Controller('ens', actions(fake)));
+    let threw = false;
+    try { await tools.get('cue')!.execute('id', { to: 'eng', message: 'hi' }); } catch { threw = true; }
+    expect(threw).to.equal(true);
   });
 });

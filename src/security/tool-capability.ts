@@ -121,6 +121,7 @@ export const LOW_RISK_TOOLS: ReadonlySet<string> = new Set([
   'cue',
   'report',
   'recall',
+  'respond',     // #700 — answers a planner question; parks text on maestro, no blast radius
   'listen',
   'ensemble',
   'who_am_i',

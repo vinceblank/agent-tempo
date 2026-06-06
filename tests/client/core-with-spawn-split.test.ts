@@ -53,6 +53,7 @@ const CORE_METHOD_NAMES = [
   'getWorktrees',
   'isMaestroPaused',
   'isAnySessionHeld',
+  'getAnswer', // #700 P2 — read a parked Q&A answer from the maestro mailbox
   // Per-player reads
   'getPlayerMessages',
   'getPlayerMetadata',
