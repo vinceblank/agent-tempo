@@ -65,6 +65,7 @@ import { buildCoatCheckPutTool } from './tools/coat-check-put';
 import { buildCoatCheckGetTool } from './tools/coat-check-get';
 import { buildCoatCheckListTool } from './tools/coat-check-list';
 import { buildCoatCheckEvictTool } from './tools/coat-check-evict';
+import { buildRespondTool } from './tools/respond';
 
 /**
  * Identity + state context every tool registration consumes. The two
@@ -153,6 +154,9 @@ export function buildAllTempoTools(opts: RegisterAllTempoToolsOpts): TempoToolDe
     buildCoatCheckGetTool(client, config, getPlayerId),
     buildCoatCheckListTool(client, config),
     buildCoatCheckEvictTool(client, config, getPlayerId),
+    // #700 P2 — answer a planner's correlated `[Q <id>]` question (writes the
+    // maestro Q&A mailbox directly; from = getPlayerId(), no spoofable arg).
+    buildRespondTool(client, config, getPlayerId),
   ];
 
   if (isConductor) {

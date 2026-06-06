@@ -103,6 +103,12 @@ export const MAESTRO_ANSWER_TTL_MS = 60 * 60 * 1000;
 /** Maximum populated answer slots per ensemble. Saturation rejects after sweep (mirrors `COAT_CHECK_SLOTS_MAX`). */
 export const MAESTRO_ANSWERS_MAX = 20;
 
+/** Maximum length of a planner-supplied Q&A `questionId` (correlation id). */
+export const QUESTION_ID_MAX = 128;
+
+/** Allowed shape for a `questionId` — url/path-safe so it rides a cue marker + a GET route segment. */
+export const QUESTION_ID_REGEX = /^[a-zA-Z0-9_-]+$/;
+
 /**
  * Maximum length of the ensemble description set via
  * `set_ensemble_description` (#399 W1, Q5.1). Soft cap — the MCP tool
