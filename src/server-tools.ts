@@ -222,6 +222,11 @@ export function buildServerInstructions(opts: BuildServerInstructionsOpts): stri
     `Use \`report\` to notify the conductor of task completion, blockers, or questions — always report when you finish a recruited task.` +
     `\n\nCommunication discipline:\n` +
     `- Drafting a response in your turn is not the same as sending one. The conductor and other players cannot read your reasoning — only your \`cue\` and \`report\` tool calls cross the channel boundary. If you reach a decision, ruling, or status update, fire the appropriate tool before moving on. If you find yourself thinking "I already answered that," verify the tool was actually invoked.` +
+    // #695 — yield-don't-poll norms (apply to all MCP players).
+    `\n- Yield after dispatch — after cueing a player and expecting a reply, end your turn. Inbound cues wake you automatically at the next turn boundary; there is nothing to poll.` +
+    `\n- \`listen\` is a one-shot inbox drain, not a wait primitive — it reads whatever is already queued at call time. A \`sleep\`+\`listen\` loop does not work as a wait and is an anti-pattern that burns tokens across the ensemble. If you're waiting for a reply, end your turn.` +
+    `\n- Don't reply to ack/FYI cues — if a player sends a status update or acknowledgment without asking a question or requesting action, do not respond. Responding starts a ping-pong that wastes turns on both sides.` +
+    `\n- Cues queue, they don't interrupt — a cue sent to you while you're processing arrives at your next turn boundary, not mid-turn. A burst from multiple players arrives together; process the batch in one turn.` +
     (isConductor
       ? `\n\nOperational rules:\n` +
         `- Before assigning parallel work on different branches, provision git worktrees via the \`worktree\` tool so each player has an isolated checkout.\n` +

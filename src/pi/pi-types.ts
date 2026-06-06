@@ -221,6 +221,30 @@ export interface PiToolCallResult {
 }
 
 /**
+ * `before_agent_start` payload (#695). Pi fires this after the user prompt is
+ * assembled but before the agent loop; it carries the fully-built `systemPrompt`.
+ * A handler returns {@link PiBeforeAgentStartResult} to replace it. We read only
+ * `systemPrompt` (to append the yield norms); kept open for forward-compat.
+ */
+export interface PiBeforeAgentStartEvent {
+  /** The fully-assembled system prompt string for this turn. */
+  systemPrompt?: string;
+  // NOTE: no `[key: string]: unknown` index signature — a named interface (the
+  // real BeforeAgentStartEvent) is NOT assignable to a type WITH an index sig, so
+  // the pi-drift RECV row would RED. We only read `systemPrompt`; extra real props
+  // are allowed by structural assignability (Real has more → assignable to this).
+}
+
+/**
+ * Result of a `before_agent_start` handler (#695). Returning `systemPrompt`
+ * REPLACES the system prompt for the turn ("If multiple extensions return this,
+ * they are chained" — Pi 0.78). We append the yield norms and return it.
+ */
+export interface PiBeforeAgentStartResult {
+  systemPrompt?: string;
+}
+
+/**
  * Pi tool result — a Pi-free structural mirror of the real `AgentToolResult`
  * (#653, 1.4.2). The Phase-0 `{ output, isError }` guess was WRONG: Pi's real
  * `AgentToolResult` is `{ content: (TextContent|ImageContent)[]; details; terminate? }`

@@ -321,3 +321,29 @@ describe('Pi extension — MD-C tool_call gate (headless only)', () => {
     expect(await fire('bash')).to.equal(undefined); // no handler registered
   });
 });
+
+describe('Pi extension — #695 before_agent_start yield-norms injection', () => {
+  beforeEach(() => { process.env[ENV.PLAYER_NAME] = 'pi-norms-test'; });
+  afterEach(() => { __resetPiRuntimesForTests(); delete process.env[ENV.PLAYER_NAME]; });
+
+  it('appends the yield norms to the assembled systemPrompt (base preserved)', () => {
+    const rec: Recorder = { updates: [], signals: [] };
+    __setPiClientFactoryForTests(async () => makeFakeClient(rec));
+    const p = makeFakePi();
+    createPiExtension({ mode: 'interactive' })(p.pi);
+    const result = p.fire('before_agent_start', { systemPrompt: 'BASE PROMPT' }) as { systemPrompt: string };
+    expect(result.systemPrompt).to.contain('BASE PROMPT');             // base kept
+    expect(result.systemPrompt).to.contain('## Message Delivery');     // norms appended
+    expect(result.systemPrompt).to.contain('there is nothing to poll');
+    expect(result.systemPrompt).to.contain('ping-pong');
+  });
+
+  it('handles a missing systemPrompt + applies to headless too (norms only)', () => {
+    const rec: Recorder = { updates: [], signals: [] };
+    __setPiClientFactoryForTests(async () => makeFakeClient(rec));
+    const p = makeFakePi();
+    createPiExtension({ mode: 'headless' })(p.pi);
+    const result = p.fire('before_agent_start', {}) as { systemPrompt: string };
+    expect(result.systemPrompt).to.contain('## Message Delivery');
+  });
+});

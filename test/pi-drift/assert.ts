@@ -44,6 +44,8 @@ import type {
   AgentToolResult as RealAgentToolResult,
   ContextUsage as RealContextUsage,
   CustomToolCallEvent as RealCustomToolCallEvent,
+  BeforeAgentStartEvent as RealBeforeAgentStartEvent,
+  BeforeAgentStartEventResult as RealBeforeAgentStartEventResult,
 } from '@earendil-works/pi-coding-agent';
 import type { TObject } from 'typebox';
 import type {
@@ -55,6 +57,8 @@ import type {
   PiToolCallEvent,
   PiToolCallResult,
   PiToolResult,
+  PiBeforeAgentStartEvent,
+  PiBeforeAgentStartResult,
 } from '../../src/pi/pi-types';
 import type {
   ExtensionUIContext as OurMcUI,
@@ -140,6 +144,13 @@ export const _recvToolCall: AssertAssignable<RealCustomToolCallEvent, PiToolCall
 export const _recvToolResult: AssertAssignable<RealToolCallEventResult, PiToolCallResult> = true;
 export const _passToolResult: AssertAssignable<PiToolCallResult, RealToolCallEventResult> = true;
 
+// #695 — before_agent_start system-prompt injection. RECV: the real event is
+// usable as our narrowed PiBeforeAgentStartEvent (we read `systemPrompt`). PASS:
+// our handler result is assignable to the real result (we hand it back to Pi to
+// replace the prompt). If Pi renames/retypes either, the matching row REDs.
+export const _recvBeforeAgentStart: AssertAssignable<RealBeforeAgentStartEvent, PiBeforeAgentStartEvent> = true;
+export const _passBeforeAgentStartResult: AssertAssignable<PiBeforeAgentStartResult, RealBeforeAgentStartEventResult> = true;
+
 /* ── ToolDefinition row — adapter output (render-tools.ts, post-C4) ─────────── */
 
 /** The object shape render-tools.ts hands to `pi.registerTool` (post-C4 `label`). */
@@ -190,6 +201,7 @@ export const _execReturn: AssertAssignable<PiToolResult, RealAgentToolResult<unk
 // _recvCtx row above.)
 export function _onEventNamesExist(pi: RealExtensionAPI): void {
   pi.on('session_start', (_e, _ctx) => {});
+  pi.on('before_agent_start', (_e, _ctx) => {}); // #695 — system-prompt injection hook
   pi.on('agent_start', (_e, _ctx) => {});
   pi.on('agent_end', (_e, _ctx) => {});
   pi.on('turn_start', (_e, _ctx) => {});
