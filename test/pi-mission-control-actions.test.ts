@@ -342,6 +342,27 @@ describe('MissionControlActions — Q&A surface (#700 P2)', () => {
   });
 });
 
+describe('MissionControlActions — coat-check surface (#713)', () => {
+  it('coatCheckPut POSTs /coat-check and returns the ticket from the body', async () => {
+    const fake = new FakeFetch();
+    fake.nextStatus = 200;
+    fake.nextText = JSON.stringify({ ok: true, ticket: 'tkt-1', slotsUsed: 1, slotsTotal: 20 });
+    const r = await actions(fake).coatCheckPut({ summary: 's', content: 'body', contentType: 'text/markdown' });
+    expect(fake.calls[0].method).to.equal('POST');
+    expect(fake.calls[0].url).to.equal('http://127.0.0.1:8473/v1/ensembles/ens/coat-check');
+    expect(JSON.parse(fake.calls[0].body!)).to.deep.equal({ summary: 's', content: 'body', contentType: 'text/markdown' });
+    expect(r.ok).to.equal(true);
+    if (r.ok) expect(r.ticket).to.equal('tkt-1');
+  });
+
+  it('coatCheckPut surfaces a non-2xx as an error (no throw)', async () => {
+    const fake = new FakeFetch();
+    fake.nextStatus = 409; fake.nextText = JSON.stringify({ error: 'coat-check-slots-full' });
+    const r = await actions(fake).coatCheckPut({ summary: 's', content: 'b' });
+    expect(r.ok).to.equal(false);
+  });
+});
+
 describe('mission-control Controller — Q&A + handoff commands (#700 P2)', () => {
   it('cmdAsk POSTs /ask then reports the answer (human poll path)', async () => {
     const fake = new FakeFetch();
@@ -368,15 +389,52 @@ describe('mission-control Controller — Q&A + handoff commands (#700 P2)', () =
     expect(ctx.notes[0]).to.contain('Usage');
   });
 
-  it('cmdHandoff cues the conductor with a [PLAN HANDOFF] prefix', async () => {
+  it('cmdHandoff cues the conductor INLINE with a [PLAN HANDOFF] prefix (small plan)', async () => {
     const fake = new FakeFetch();
     const c = new Controller('ens', actions(fake));
     await c.cmdHandoff('## Objective\nship it', fakeCtx());
+    expect(fake.calls).to.have.length(1); // inline cue only — no coat-check stash
     expect(fake.calls[0].url).to.equal('http://127.0.0.1:8473/v1/ensembles/ens/cue');
     const body = JSON.parse(fake.calls[0].body!);
     expect(body.to).to.equal('conductor');
     expect(body.message).to.contain('[PLAN HANDOFF]');
     expect(body.message).to.contain('ship it');
+  });
+
+  it('cmdHandoff STASHES a medium plan (8–32KiB) and cues a ticket, not the body (#713)', async () => {
+    const fake = new FakeFetch();
+    fake.nextStatus = 200;
+    fake.nextText = JSON.stringify({ ok: true, ticket: 'tkt-xyz', slotsUsed: 1, slotsTotal: 20 });
+    const c = new Controller('ens', actions(fake));
+    const bigPlan = '# Plan\n' + 'x'.repeat(10 * 1024); // > 8KiB, ≤ 32KiB → stash band
+    await c.cmdHandoff(bigPlan, fakeCtx());
+    // First: stash to the coat-check with the full plan as content.
+    const stash = fake.calls.find((x) => x.url.endsWith('/coat-check'));
+    expect(stash, 'coat-check POST fired').to.not.equal(undefined);
+    expect(stash!.method).to.equal('POST');
+    const stashBody = JSON.parse(stash!.body!);
+    expect(stashBody.content).to.equal(bigPlan);
+    expect(stashBody.contentType).to.equal('text/markdown');
+    // Then: cue carries the redeem instruction + ticket, NOT the full plan body.
+    const cue = fake.calls.find((x) => x.url.endsWith('/cue'));
+    expect(cue, 'cue POST fired').to.not.equal(undefined);
+    const cueBody = JSON.parse(cue!.body!);
+    expect(cueBody.to).to.equal('conductor');
+    expect(cueBody.message).to.contain('tkt-xyz');
+    expect(cueBody.message).to.contain('coat_check_get');
+    expect(cueBody.message).to.not.contain('x'.repeat(200)); // body stayed out of the cue
+  });
+
+  it('cmdHandoff falls back to an INLINE cue when the stash fails (#713)', async () => {
+    const fake = new FakeFetch();
+    fake.nextStatus = 409; fake.nextText = JSON.stringify({ error: 'coat-check-slots-full' });
+    const c = new Controller('ens', actions(fake));
+    const bigPlan = '# Plan\n' + 'y'.repeat(10 * 1024);
+    await c.cmdHandoff(bigPlan, fakeCtx());
+    expect(fake.calls.some((x) => x.url.endsWith('/coat-check'))).to.equal(true); // stash attempted
+    const cue = fake.calls.find((x) => x.url.endsWith('/cue'));
+    expect(cue, 'fallback inline cue fired').to.not.equal(undefined);
+    expect(JSON.parse(cue!.body!).message).to.contain('y'.repeat(200)); // full plan inlined as fallback
   });
 });
 

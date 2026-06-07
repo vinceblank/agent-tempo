@@ -54,6 +54,8 @@ const CORE_METHOD_NAMES = [
   'isMaestroPaused',
   'isAnySessionHeld',
   'getAnswer', // #700 P2 — read a parked Q&A answer from the maestro mailbox
+  'coatCheckPut', // #713 — stash a coat-check entry (HTTP coat-check route shim)
+  'coatCheckGet', // #713 — redeem a coat-check ticket (HTTP coat-check route shim)
   // Per-player reads
   'getPlayerMessages',
   'getPlayerMetadata',

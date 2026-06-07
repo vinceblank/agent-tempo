@@ -65,6 +65,7 @@ import {
   handleListLineups,
 } from './catalog';
 import { handleAsk, handleAnswer } from './qa';
+import { handleCoatCheckPut, handleCoatCheckGet } from './coat-check';
 import {
   DAEMON_PORT_PATH,
   removePortFile,
@@ -559,6 +560,30 @@ export async function handle(
       return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'GET, OPTIONS' });
     }
     return handleAnswer(res, ctx.client, ensemble, questionId);
+  }
+
+  // #713 — coat-check HTTP routes. The POST (2-segment) MUST be matched BEFORE
+  // the generic writeMatch below, which would otherwise 404 `coat-check` as an
+  // unknown write action. Both are Tier 2 (admin): `put` is a write; `get`
+  // REDEEMS via a maestro Update that bumps fetch-audit counters (not a pure read).
+  const coatCheckPutMatch = pathname.match(/^\/v1\/ensembles\/([^/]+)\/coat-check$/);
+  if (coatCheckPutMatch) {
+    const ensemble = decodeURIComponent(coatCheckPutMatch[1]);
+    if (!gateTier(2)) return; // write
+    if (method !== 'POST') {
+      return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'POST, OPTIONS' });
+    }
+    return handleCoatCheckPut(req, res, ctx.client, ensemble);
+  }
+  const coatCheckGetMatch = pathname.match(/^\/v1\/ensembles\/([^/]+)\/coat-check\/([^/]+)$/);
+  if (coatCheckGetMatch) {
+    const ensemble = decodeURIComponent(coatCheckGetMatch[1]);
+    const ticket = decodeURIComponent(coatCheckGetMatch[2]);
+    if (!gateTier(2)) return; // redeem mutates fetch-audit counters → Tier 2
+    if (method !== 'GET') {
+      return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'GET, OPTIONS' });
+    }
+    return handleCoatCheckGet(res, ctx.client, ensemble, ticket);
   }
 
   // Write surface (PR-7a of #340) — POST `/v1/ensembles/:ensemble/<action>`

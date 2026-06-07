@@ -33,10 +33,25 @@ import { MissionControlActions, ADMIN_TOKEN_ENV, type ActionResult } from './act
 import { openInnerTail } from './inner-tail';
 import { ensureInfra, type InfraProgress } from '../../cli/ensure-infra';
 import { zodShapeToTypeBox } from '../zod-to-typebox';
+import { COAT_CHECK_CONTENT_MAX } from '../../utils/validation';
 import type { McExtensionAPI, McExtensionContext, McOutboundMessage, McMessageOptions, McToolResult } from './pi-ui';
 
 /** The durable conductor a `/handoff` targets by default (matches catalog's conductorName default). */
 const DEFAULT_CONDUCTOR = 'conductor';
+
+/**
+ * #713 — handoff stash band (UTF-8 bytes). A plan in `(MIN, MAX]` stashes to the
+ * coat-check so the cue body stays lean; below MIN an inline cue is fine; above
+ * MAX (the coat-check entry cap) we stay inline up to the 100 KB cue cap.
+ *
+ * HONEST FRAMING (#713): MAX === the coat-check entry cap (32 KiB), which is
+ * BELOW the 100 KB cue cap. Coat-check stashing keeps cues lean and lets the
+ * inbox-less planner park artifacts — it does NOT raise the handoff ceiling. A
+ * plan over 100 KB still cannot be handed off; that would need a coat-check cap
+ * increase (a separate decision with Temporal continue-as-new state implications).
+ */
+const HANDOFF_STASH_MIN_BYTES = 8 * 1024;
+const HANDOFF_STASH_MAX_BYTES = COAT_CHECK_CONTENT_MAX;
 /** Bounded human-`/ask` poll: total wait + interval. The LLM `ask` tool yields instead (SSE wake). */
 const ASK_POLL_TIMEOUT_MS = 30_000;
 const ASK_POLL_INTERVAL_MS = 1_000;
@@ -346,9 +361,39 @@ export class Controller {
   async cmdHandoff(args: string, ctx: McExtensionContext): Promise<void> {
     const plan = args.trim();
     if (!plan) { this.notify(ctx, 'Usage: /handoff <plan> — pushes the plan to the durable conductor.'); return; }
-    // Inline cue (a §5.4 brief is small markdown). Large-plan-via-coat-check is a
-    // P2.1 follow-up (coat_check_put has no HTTP route yet).
-    this.report(ctx, `handoff → ${DEFAULT_CONDUCTOR}`, await this.actions.cue(DEFAULT_CONDUCTOR, `[PLAN HANDOFF]\n${plan}`));
+    this.report(ctx, `handoff → ${DEFAULT_CONDUCTOR}`, await this.handoffPlan(DEFAULT_CONDUCTOR, plan));
+  }
+
+  /**
+   * #713 — hand a plan to `target`. Plans in the stash band `(8 KiB, 32 KiB]`
+   * are parked on the coat-check (`coatCheckPut`) and the cue carries only a
+   * short summary + the redeem instruction, keeping the cue body lean. Smaller
+   * plans cue inline; larger ones (> 32 KiB) ALSO cue inline up to the 100 KB cue
+   * cap — the coat-check entry cap is below the cue cap, so it can't hold them.
+   *
+   * Public so both the `/handoff` slash command and the planner `handoff` tool
+   * share one path. If a stash fails (saturation / transport), falls back to an
+   * inline cue so the handoff still lands (a ≤ 32 KiB plan always fits a cue).
+   */
+  async handoffPlan(target: string, plan: string): Promise<ActionResult> {
+    const bytes = Buffer.byteLength(plan, 'utf8');
+    if (bytes > HANDOFF_STASH_MIN_BYTES && bytes <= HANDOFF_STASH_MAX_BYTES) {
+      const preview = plan.replace(/\s+/g, ' ').trim().slice(0, 160);
+      const stash = await this.actions.coatCheckPut({
+        summary: `[PLAN HANDOFF] ${preview}`,
+        content: plan,
+        contentType: 'text/markdown',
+      });
+      if (stash.ok) {
+        return this.actions.cue(
+          target,
+          `[PLAN HANDOFF] Full plan stashed on the coat-check (${bytes} bytes) — redeem with the ` +
+          `\`coat_check_get\` tool:\ncoat_check_get({ ticket: "${stash.ticket}" })`,
+        );
+      }
+      // Stash failed — fall through to inline (the plan fits the 100 KB cue cap).
+    }
+    return this.actions.cue(target, `[PLAN HANDOFF]\n${plan}`);
   }
 }
 
@@ -389,7 +434,9 @@ export function registerPlannerTools(pi: McExtensionAPI, ctrl: Controller): void
     execute: async (_id, params) => {
       const { plan, to } = params as { plan: string; to?: string };
       const target = to ?? DEFAULT_CONDUCTOR;
-      const r = await ctrl.actions.cue(target, `[PLAN HANDOFF]\n${plan}`);
+      // #713 — large plans stash to the coat-check (cue carries the ticket);
+      // small plans inline. Shared with the `/handoff` slash command.
+      const r = await ctrl.handoffPlan(target, plan);
       if (!r.ok) throw new Error(`handoff failed: ${r.error}`);
       return ok(`Plan handed off to ${target}.`);
     },
