@@ -63,6 +63,20 @@ describe('ensureInfra (#700 P1)', () => {
     expect(steps).toEqual(['temporal', 'search-attributes', 'agent-types', 'daemon']);
   });
 
+  it('search-attributes onStep detail: undefined on success, "N failed" on failure (#46 — drives up()s CLI SA line)', async () => {
+    // The CLI `up` onStep renders `out.check('Search attributes registered', !detail, detail)`
+    // — so the contract it relies on is: detail absent ⇒ success (pass), detail
+    // present ⇒ failure count. Lock both via the injectable deps seam (no Temporal).
+    const okSteps: Array<{ step: string; detail?: string }> = [];
+    await ensureInfra({ config: cfg, deps: makeDeps().deps, onStep: (p) => okSteps.push({ step: p.step, detail: p.detail }) });
+    expect(okSteps.find((s) => s.step === 'search-attributes')?.detail).toBeUndefined();
+
+    const failSteps: Array<{ step: string; detail?: string }> = [];
+    const { deps } = makeDeps({ registerSearchAttributes: () => ({ failed: 2 }) });
+    await ensureInfra({ config: cfg, deps, onStep: (p) => failSteps.push({ step: p.step, detail: p.detail }) });
+    expect(failSteps.find((s) => s.step === 'search-attributes')?.detail).toBe('2 failed');
+  });
+
   it('is CONNECT-ONLY — the dependency surface exposes no MCP/init register hook', () => {
     const { deps } = makeDeps();
     const keys = Object.keys(deps);
