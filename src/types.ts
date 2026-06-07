@@ -269,22 +269,33 @@ export interface SessionMetadata {
    * the real posture on EVERY attach (across restart / migrate / re-attach), so
    * a previously-`supervised` agent stays supervised. (tempo-architect ruling.)
    *
-   * **★ Enforcement scope (#715).** `supervised` is the daemon-enforced approval
-   * boundary for the realistic threat: a prompt-injected agent. A manipulated LLM
-   * can only *emit* tool-call requests — Pi routes every one to agent-tempo's
-   * `tool_call` handler, which engages the gate (non-`low-risk`) or hard-blocks
-   * (exec tools at `toolAccess: 'restricted'`). The agent **cannot** skip the gate
-   * or run a dangerous tool directly — it doesn't control the hook. The daemon also
-   * derives `failMode` from this durable policy (populated at spawn, falling
-   * `closed` on any lookup failure — no-fail-open), so an engaging agent can't
-   * self-downgrade a supervised player out of fail-closed.
+   * **★ Enforcement scope (#712/#715).** `supervised` is the daemon-enforced
+   * approval boundary for the realistic threat: a prompt-injected agent. A
+   * manipulated LLM can only *emit* tool-call requests — Pi routes every one to
+   * agent-tempo's `tool_call` handler, which engages the gate (non-`low-risk`;
+   * #712 daemon-computes `failMode` from this durable policy, falling `closed` on
+   * any lookup failure — no-fail-open, so an engaging agent can't self-downgrade).
+   * The agent **cannot** skip the gate — it doesn't control the hook.
    *
-   * The **residual** is *process compromise*: code execution **inside** the Pi
-   * process (host RCE bypassing the handler entirely). No client-side gate defends
-   * that — it requires OS-level process sandboxing, tracked as a separate future
-   * `'sandboxed'` posture (#724). That is **not a gap in `supervised`'s scope**:
-   * supervised targets prompt-injection, and against that threat it **is** a real
-   * enforcement boundary.
+   * **#715 adds a registration-level floor.** For `toolAccess: 'restricted'` (and
+   * `observe-only`'s act tools) the exec/act tools are EXCLUDED at
+   * `createAgentSession` (`excludeTools`) → **absent** from the model's toolset and
+   * system prompt entirely; the LLM cannot request what it never sees. That is
+   * stronger than a call-time block — it holds even if the call-time gate had a bug
+   * (the tool simply isn't there). `supervised` with exec present keeps exec
+   * **present + gated** (approve-per-use), so this floor applies to the exec/no-act
+   * postures, not to a `supervised`+`standard` player.
+   *
+   * **Residual (all postures): process compromise** — code execution *inside* the
+   * Pi process (in-process syscalls; host RCE bypassing the handler), OR a
+   * tampered / modified extension that un-excludes or re-registers tools.
+   * `excludeTools` is OUR code passing a denylist; an attacker who modifies that
+   * code or the process bypasses it. The only defense is OS-level sandboxing +
+   * supply-chain integrity, a separate future `'sandboxed'` posture (#724). So:
+   * **tamper-RESISTANT** vs prompt-injection + an honest gate bug; **NOT
+   * tamper-PROOF** vs a compromised process. Against prompt-injection — the
+   * realistic threat — it **is** a real enforcement boundary; #724 is not a gap in
+   * that scope.
    *
    * **Post-restart window:** on daemon restart the in-memory ingest tokens are
    * invalidated, so existing players' gate engagements are rejected (403) until a
