@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.0-beta.4] - 2026-06-07
+
+> **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
+
+### Fixed
+- **Temporal binary pre-cache + stale-lock reap in CI** — `actions/cache@v4` now pre-warms the Temporal test-server binary (Linux `/tmp/temporal-sdk-typescript-1.15.0` and Windows `%TEMP%\...-1.15.0.exe`) before each Mocha shard run; a stale `.downloading` lock from a prior crashed runner is swept on cold runs. Eliminates the 20-second timeout cascade that flaked `session-phase-detach.test.ts`. Applied to both `ci.yml` and `release.yml`. Refs #694
+- **Atomic `setupTestEnv` helper** — consolidates Temporal `TestWorkflowEnvironment.createLocal()` + worker start into a single `setupTestEnv(t, activities)` helper, preventing races between `before`/`after` hooks and isolated-test teardown. Fixes #694
+- **`SlotKey` worker-slot retry + barrier** — slots that fail to register on first try are retried with exponential back-off; a `Promise.all` barrier ensures all slots are live before any test assertion runs. Fixes #694
+- **Worktree bundle-guard** — `scripts/check-bundle-present.js` pre-gate enforced before every shard; aborts with an actionable error if `workflow-bundle.js` is absent (regression guard for worktree runs where `npm run build` was skipped). Fixes #694
+
 ## [1.7.0-beta.3] - 2026-06-07
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
