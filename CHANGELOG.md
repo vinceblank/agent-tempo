@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.0-beta.5] - 2026-06-07
+
+> **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
+
+### Added
+- **Registration-level exec/act tool restriction for `restricted` and `observe-only` headless Pi players** — `toolAccess: 'restricted'` blocks all exec-class tools (Bash/shell/exec/sh/powershell/pwsh/cmd and equivalents) at the Pi registration layer before they reach the operator gate; `observe-only` additionally blocks high-blast tools. Denial is applied at spawn time, independent of gate state. Documents honest policy boundaries: client-cooperative in P2, daemon-side enforcement tracked in #45. Closes #715
+
 ## [1.7.0-beta.4] - 2026-06-07
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
