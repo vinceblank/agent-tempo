@@ -4,7 +4,7 @@
  *
  *   <AGENT_TEMPO_HOME>/gate-audit/<ensemble>/<workflowId>.jsonl
  *
- * Each {@link GateAuditRecord} (arm | disarm | decision) is one JSON line,
+ * Each {@link GateAuditRecord} (arm | disarm | decision | failmode-override) is one JSON line,
  * appended SYNCHRONOUSLY at the decision/posture-change point so the durable
  * record lands before the daemon hands back control (no buffering window where a
  * crash loses an allow/deny). The `ensemble` sidecar (not part of the locked

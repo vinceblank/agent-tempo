@@ -269,16 +269,24 @@ export interface SessionMetadata {
    * the real posture on EVERY attach (across restart / migrate / re-attach), so
    * a previously-`supervised` agent stays supervised. (tempo-architect ruling.)
    *
-   * **★ P2 scope — CLIENT-COOPERATIVE, not tamper-proof (conductor ruling).**
-   * The agent stamps the per-request `failMode` from THIS policy in its own
-   * extension (`src/pi/extension.ts`), so `supervised` is only as strong as the
-   * agent HONORING its own policy — exactly MD-C tool-access parity (also
-   * client-enforced). It is NOT a hard security boundary against a compromised /
-   * prompt-injected agent that stamps `'open'` to self-downgrade. The tamper-
-   * proof form (the daemon cross-checks the request's `failMode` against this
-   * durable policy and FORCES `closed` for a supervised player) is **P2.1**, and
-   * is additive — it reads `failMode` off the same per-request seam. Do not
-   * describe `supervised` as a hard guarantee until daemon-side enforcement lands.
+   * **★ Enforcement scope (#712 — claims EXACTLY this, no more).** The daemon
+   * enforces fail-closed for a `supervised` player's gate ENGAGEMENTS: the gate's
+   * `open()` cross-check derives the `failMode` from THIS durable policy (read by
+   * the daemon, populated at spawn + lazily resolved on a cache-miss), so the
+   * `failMode` an engaging agent stamps on its `gate_pending` frame can't
+   * self-downgrade a supervised player out of fail-closed (a `'open'` claim against
+   * a `supervised` policy is overridden to `closed` and a `failmode-override`
+   * audit record is written). This is **NOT a hard boundary** against an agent
+   * that SKIPS gate-engagement entirely (runs the tool without emitting a
+   * `gate_pending` frame) or bypasses the client-side MD-C exec-block — a true
+   * boundary requires spawn-time tool-restriction (the agent physically lacks the
+   * tools), tracked separately in **#715**.
+   *
+   * **Post-restart window:** on daemon restart the in-memory ingest tokens are
+   * invalidated, so existing players' gate engagements are rejected (403) until a
+   * re-spawn re-mints. In that window a `supervised` player's gate-client
+   * fail-closes on its own derived deadline (client-side safety holds), but the
+   * gate is NOT daemon-mediated — the #715 client-cooperative residual.
    */
   guardrailPolicy?: GuardrailPolicy;
 }

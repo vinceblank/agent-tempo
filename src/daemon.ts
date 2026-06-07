@@ -35,13 +35,15 @@ import { installGrpcShutdownGuard } from './utils/grpc-shutdown-guard';
 import { DAEMON_PID_PATH, DAEMON_LOG_PATH, DAEMON_HEARTBEAT_PATH, HEARTBEAT_INTERVAL_MS } from './cli/daemon';
 import { createTempoClient } from './client';
 import { queryOrphanedSessions, restoreOrphansOnce, type OrphanCandidate } from './reconcile/orphans';
+import { queryHandleWithTimeout } from './utils/query-timeout';
+import { getMetadataQuery } from './workflows/signals';
 import { listAgentTypes } from './ensemble/agent-types';
 import { probeClaudeBinary, probeClaudeAuth } from './adapters/claude-code-headless/pre-flight';
 import {
   probeAdapterVersions,
   resolveCopilotSdkVersionSync,
 } from './daemon-adapter-versions';
-import type { GlobalMaestroInput, HostProfile } from './types';
+import type { GlobalMaestroInput, HostProfile, GuardrailPolicy, SessionMetadata } from './types';
 
 const log = (...args: unknown[]) => console.error(`[agent-tempo:daemon ${new Date().toISOString()}]`, ...args);
 
@@ -1113,6 +1115,23 @@ async function main() {
       const bootEpoch = Date.now();
       aggregateRunner = new AggregateRunner({ client: httpClient, bootEpoch });
       aggregateRunner.start();
+      // #712 — BOUNDED durable-policy resolver for the gate failMode cross-check.
+      // The gate is normally policy-populated at spawn (sync, no query); this is
+      // the rare-cache-miss fallback the ingest gate_pending path awaits. It MUST
+      // be bounded (utils/query-timeout) so it can never hang gate engagement. A
+      // successful query with an absent metadata field ⇒ 'autonomous' (a real,
+      // open posture). Timeout / error / workflow-gone ⇒ undefined ⇒ the route
+      // leaves the policy unresolved ⇒ open() enforces 'closed' (NO-FAIL-OPEN).
+      const reconcileClientForPolicy = reconcileClient;
+      const resolveGuardrailPolicy = async (workflowId: string): Promise<GuardrailPolicy | undefined> => {
+        try {
+          const handle = reconcileClientForPolicy.workflow.getHandle(workflowId);
+          const md = await queryHandleWithTimeout(handle, getMetadataQuery) as SessionMetadata;
+          return md?.guardrailPolicy ?? 'autonomous';
+        } catch {
+          return undefined; // timeout / error / gone → indeterminate → open() enforces closed
+        }
+      };
       httpServerHandle = await startHttpServer({
         client: httpClient,
         namespace: config.temporalNamespace,
@@ -1127,6 +1146,8 @@ async function main() {
         // 3d MD-G — the same gate registry the worker's outbox auto-disarms on
         // detach/destroy; the HTTP server serves arm/disarm/decide + resolution.
         gate,
+        // #712 — bounded durable-policy resolver for the failMode cross-check.
+        resolveGuardrailPolicy,
       });
       log(`HTTP listening on http://${httpServerHandle.bindAddr}:${httpServerHandle.port}`);
       log(`Aggregate poll loop running (bootEpoch=${bootEpoch})`);

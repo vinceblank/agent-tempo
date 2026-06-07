@@ -745,6 +745,13 @@ export function createOutboxActivities(
           // REPLACES) means a restart re-mints and naturally revokes the stale
           // token. Injected into the subprocess env as AGENT_TEMPO_INGEST_TOKEN.
           const ingestToken = ingestTokens?.mint(sessionWorkflowId(ensemble, targetName));
+          // #712 — record the DURABLE guardrail policy on the daemon gate at spawn
+          // (beside the ingest-token mint, same daemon process + lifecycle) so the
+          // gate's failMode cross-check is daemon-authoritative from the FIRST
+          // engagement — no lazy metadata query on the common path. Absent ⇒
+          // autonomous (the extension default). Mint REPLACES on restart; setPolicy
+          // likewise re-stamps the current durable posture (no silent downgrade).
+          gate?.setPolicy(sessionWorkflowId(ensemble, targetName), guardrailPolicy ?? 'autonomous');
           const { pid } = spawnPiHeadless({
             name: targetName,
             ensemble,
