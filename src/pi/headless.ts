@@ -28,6 +28,7 @@ import { getConfig, sessionWorkflowId, ENV, type Config } from '../config';
 import { probeSdkInstall } from '../utils/sdk-probe';
 import { createPiExtension, detachAllPiRuntimesForExit, setRuntimeSession, type PiToolAccess } from './extension';
 import type { GuardrailPolicy } from '../types';
+import { EXEC_TOOLS } from '../security/tool-capability';
 import { PI_PACKAGE, PI_AI_PACKAGE, checkPiNodeFloor } from './probe';
 import { seedSessionManager, type SeedableSessionManager } from './session-seed';
 import type { PiAgentSession } from './pi-types';
@@ -133,6 +134,63 @@ export interface RunHeadlessPiOptions {
  * unit regression test (test/pi-headless-loader.test.ts) without needing the Pi
  * SDK installed.
  */
+/**
+ * Pi BUILT-IN mutating ("act") tool names, excluded at registration for the
+ * `observe-only` no-act posture (#715). Pi's default built-ins are
+ * read/bash/edit/write; `multiedit` is listed defensively (a no-op if Pi doesn't
+ * register it). `bash`/exec are covered by {@link EXEC_TOOLS}. We keep the READ
+ * built-ins (read/grep/glob/ls). These are Pi BUILT-IN names — deliberately NOT
+ * agent-tempo MCP tool names, so excluding them never removes an agent-tempo
+ * coordination tool (those stay handler-gated, commit 5).
+ */
+const PI_BUILTIN_ACT_TOOLS: readonly string[] = ['write', 'edit', 'multiedit'];
+
+/**
+ * #715 — compute the registration-level `excludeTools` denylist for
+ * `createAgentSession`. Excluded tools are never registered → ABSENT from the
+ * model's toolset AND system prompt: the LLM cannot request what it never sees.
+ *
+ * This is a registration-level FLOOR beneath the call-time MD-C handler + #712
+ * gate. It is tamper-RESISTANT, NOT tamper-PROOF: it defends a PROMPT-INJECTED
+ * agent (and holds even if the call-time gate had a bug — the tool simply isn't
+ * there), but it does NOT defend against PROCESS COMPROMISE — a tampered /
+ * modified extension can re-register or un-exclude tools (this is OUR code
+ * passing a denylist; an attacker who modifies the code/process bypasses it).
+ * That residual is OS-sandbox + supply-chain integrity, tracked as #724.
+ *
+ * `excludeTools` is matched by NAME against BOTH Pi built-ins AND
+ * extension-registered tools (incl. agent-tempo's MCP tools via `renderToPi`), so
+ * this list contains ONLY Pi-built-in / exec names — never agent-tempo tool names
+ * (`cue`/`report`/`recruit`/…). Posture:
+ *   - `toolAccess === 'restricted'` → exclude {@link EXEC_TOOLS} (exec/bash
+ *     registration-absent; a strict upgrade of the prior call-time block, and the
+ *     headless default → the model never even sees exec).
+ *   - `guardrailPolicy === 'observe-only'` → also exclude the Pi built-in act
+ *     tools ({@link PI_BUILTIN_ACT_TOOLS}); read/grep/glob stay. The agent-tempo
+ *     MCP act tools (recruit/destroy/…) stay covered by the client-side no-act
+ *     handler (commit 5) — excludeTools handles the Pi built-ins only.
+ *   - `monitored` / `supervised` / `autonomous` → NO exec exclusion: those tools
+ *     stay REGISTERED so they can be gated/approved per-use (#712). (`supervised`
+ *     = approve-and-run, NOT exec-absent.)
+ *
+ * Pure + exported so the registration-absence invariant has a unit regression
+ * test without the Pi SDK (mirrors {@link buildPiResourceLoaderOptions}).
+ */
+export function computeExcludeTools(
+  toolAccess: PiToolAccess,
+  guardrailPolicy: GuardrailPolicy | undefined,
+): string[] {
+  const exclude = new Set<string>();
+  if (toolAccess === 'restricted') {
+    for (const t of EXEC_TOOLS) exclude.add(t);
+  }
+  if (guardrailPolicy === 'observe-only') {
+    for (const t of EXEC_TOOLS) exclude.add(t); // no-act ⊇ no-exec
+    for (const t of PI_BUILTIN_ACT_TOOLS) exclude.add(t);
+  }
+  return [...exclude];
+}
+
 export function buildPiResourceLoaderOptions(params: {
   cwd: string;
   agentDir: string;
@@ -228,10 +286,20 @@ export async function runHeadlessPi(opts: RunHeadlessPiOptions = {}): Promise<vo
   // construct → reload() → pass-as-resourceLoader sequence.
   await resourceLoader.reload();
 
+  // #715 — registration-level exec/act exclusion (the true "agent physically
+  // lacks the tools" boundary; see computeExcludeTools). Excluded tools are never
+  // registered, so they're absent from the model's toolset + system prompt — a
+  // hard layer beyond the call-time MD-C handler + #712 gate (kept as
+  // belt-and-suspenders). Empty for monitored/supervised/autonomous+standard.
+  const excludeTools = computeExcludeTools(toolAccess, opts.guardrailPolicy);
+  if (excludeTools.length > 0) {
+    log(`#715: excluding ${excludeTools.length} tool(s) at registration (toolAccess=${toolAccess}, guardrailPolicy=${opts.guardrailPolicy ?? 'autonomous'}): ${excludeTools.join(', ')}`);
+  }
   const { session } = await createAgentSession({
     cwd: process.cwd(),
     agentDir,
     ...(model ? { model } : {}),
+    ...(excludeTools.length > 0 ? { excludeTools } : {}),
     resourceLoader,
     // H1 (#645): in-memory session (seeded above via the session-seed chokepoint).
     // H2 will seed it from agent-tempo durable state (ENV.PI_CONTINUE_SESSION
