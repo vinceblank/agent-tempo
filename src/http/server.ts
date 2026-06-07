@@ -17,6 +17,7 @@
  */
 import * as http from 'http';
 import type { TempoClient } from '../client/interface';
+import type { GuardrailPolicy } from '../types';
 import { DEV_DAEMON_PORT, ENV, PROD_DAEMON_PORT, isDevMode } from '../config';
 import type { AggregateRunner } from './aggregate';
 import {
@@ -171,6 +172,14 @@ export interface HttpServerOptions {
    * detach/destroy) — same singleton pattern as the inner-loop registries.
    */
   gate?: GateRegistry;
+  /**
+   * #712 — bounded resolver for a player's durable `guardrailPolicy`, used by the
+   * ingest gate_pending path on a {@link GateRegistry.getPolicy} cache-miss to
+   * keep the failMode cross-check daemon-authoritative. The daemon wires it to a
+   * `getMetadataQuery` behind `utils/query-timeout`; absent → the route skips the
+   * miss-resolve (an unresolved policy then enforces `closed`, no-fail-open).
+   */
+  resolveGuardrailPolicy?: (workflowId: string) => Promise<GuardrailPolicy | undefined>;
 }
 
 export interface HttpServerHandle {
@@ -285,6 +294,7 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
       innerLoop: opts.innerLoop ?? null,
       ingestTokens: opts.ingestTokens ?? null,
       gate: opts.gate ?? null,
+      resolveGuardrailPolicy: opts.resolveGuardrailPolicy ?? null,
     }).catch((err) => {
       log('unhandled handler error:', err instanceof Error ? err.message : err);
       if (!res.headersSent) {
@@ -382,6 +392,8 @@ interface HandleContext {
   ingestTokens: IngestTokenRegistry | null;
   /** 3d MD-G operator-gate registry — null when unwired. */
   gate: GateRegistry | null;
+  /** #712 — bounded durable-policy resolver for the failMode cross-check — null when unwired. */
+  resolveGuardrailPolicy: ((workflowId: string) => Promise<GuardrailPolicy | undefined>) | null;
 }
 
 /**
@@ -429,7 +441,7 @@ export async function handle(
   // reaches them regardless of the daemon's bind address. Only live when the
   // daemon wired the registries; else they fall through to the 404/405 path.
   if (ctx.innerLoop && ctx.ingestTokens) {
-    const innerDeps = { innerLoop: ctx.innerLoop, ingestTokens: ctx.ingestTokens, ...(ctx.gate ? { gate: ctx.gate } : {}) };
+    const innerDeps = { innerLoop: ctx.innerLoop, ingestTokens: ctx.ingestTokens, ...(ctx.gate ? { gate: ctx.gate } : {}), ...(ctx.resolveGuardrailPolicy ? { resolveGuardrailPolicy: ctx.resolveGuardrailPolicy } : {}) };
     const ingestMatch = pathname.match(/^\/v1\/players\/([^/]+)\/([^/]+)\/inner\/ingest$/);
     if (ingestMatch) {
       if (method !== 'POST') {

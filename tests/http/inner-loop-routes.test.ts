@@ -287,3 +287,69 @@ describe('3d MD-G coupling — gate_pending registers + presence carries gateArm
     expect(JSON.parse(res.body as string)).toEqual({ subscribers: 0, gateArmed: false });
   });
 });
+
+describe('#712 — daemon failMode cross-check at the ingest seam', () => {
+  // The route's GateRegistry uses real Date.now, so we assert the ENFORCED
+  // failMode via the override-audit spy (a failmode-override record proves the
+  // daemon forced 'closed' over the frame's 'open' claim) + gate.getPolicy.
+  function setupX(opts: { policy?: 'supervised' | 'monitored'; resolver?: (wf: string) => Promise<'supervised' | 'monitored' | 'autonomous' | 'observe-only' | undefined> } = {}) {
+    const audit: Array<{ kind: string; [k: string]: unknown }> = [];
+    const innerLoop = new InnerLoopRegistry();
+    const ingestTokens = new IngestTokenRegistry();
+    const gate = new GateRegistry((r) => audit.push(r as { kind: string }));
+    const token = ingestTokens.mint(WF);
+    if (opts.policy) gate.setPolicy(WF, opts.policy);
+    const deps = { innerLoop, ingestTokens, gate, ...(opts.resolver ? { resolveGuardrailPolicy: opts.resolver } : {}) };
+    return { gate, token, deps, audit };
+  }
+
+  const OPEN_CLAIM = {
+    type: 'inner.gate_pending', requestId: 'req-x', tool: 'bash',
+    argsSummary: '{"cmd":"rm -rf"}', classification: 'exec', timeoutMs: 45000, ts: 1,
+    failMode: 'open', // the self-downgrade claim the cross-check defeats
+  };
+
+  async function ingest(deps: ReturnType<typeof setupX>['deps'], token: string, frame: object) {
+    const res = fakeRes();
+    await handleInnerIngest(fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token }, body: JSON.stringify(frame) }), res, deps, E, P);
+    return res;
+  }
+
+  it('★ supervised player (policy pre-populated): frame claims open → daemon enforces closed (override audited)', async () => {
+    const { token, deps, audit } = setupX({ policy: 'supervised' });
+    const res = await ingest(deps, token, OPEN_CLAIM);
+    expect(res.statusCode).toBe(204);
+    expect(audit.find((a) => a.kind === 'failmode-override')).toMatchObject({
+      claimedFailMode: 'open', enforcedFailMode: 'closed', policy: 'supervised', tool: 'bash',
+    });
+  });
+
+  it('★ lazy miss-resolve SUCCESS: unset policy → bounded resolver returns supervised → populated + enforced closed', async () => {
+    const { gate, token, deps, audit } = setupX({ resolver: async () => 'supervised' });
+    expect(gate.getPolicy(WF)).toBeUndefined();
+    await ingest(deps, token, OPEN_CLAIM);
+    expect(gate.getPolicy(WF)).toBe('supervised'); // resolver populated the gate
+    expect(audit.some((a) => a.kind === 'failmode-override')).toBe(true);
+  });
+
+  it('★ lazy miss-resolve INDETERMINATE (resolver → undefined): NO-FAIL-OPEN — policy stays unset, enforced closed', async () => {
+    const { gate, token, deps, audit } = setupX({ resolver: async () => undefined });
+    await ingest(deps, token, OPEN_CLAIM);
+    expect(gate.getPolicy(WF)).toBeUndefined(); // never populated on a failed resolve
+    // unknown policy → enforcedFailMode closed → override audited with policy:'unknown'
+    expect(audit.find((a) => a.kind === 'failmode-override')).toMatchObject({ policy: 'unknown', enforcedFailMode: 'closed' });
+  });
+
+  it('monitored player: frame claims open → honored open, NO override audited (legit MD-G)', async () => {
+    const { token, deps, audit } = setupX({ policy: 'monitored' });
+    await ingest(deps, token, OPEN_CLAIM);
+    expect(audit.some((a) => a.kind === 'failmode-override')).toBe(false);
+  });
+
+  it('resolver is NOT called when the policy is already populated (sync fast path)', async () => {
+    let called = 0;
+    const { token, deps } = setupX({ policy: 'supervised', resolver: async () => { called++; return 'supervised'; } });
+    await ingest(deps, token, OPEN_CLAIM);
+    expect(called).toBe(0); // getPolicy hit → no metadata query
+  });
+});

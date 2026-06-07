@@ -47,6 +47,7 @@
  * coordination bus). Nothing here is imported by `src/workflows/`.
  */
 import type { InnerFrame } from '../pi/inner-loop-publisher';
+import type { GuardrailPolicy } from '../types';
 
 /**
  * MONITORED (fail-OPEN) timeout: a pending request auto-ALLOWS after this long
@@ -80,6 +81,29 @@ export const GATE_CLOSED_DENY_MS = 300_000;
 export type GateFailMode = 'open' | 'closed';
 
 /**
+ * #712 — the daemon-AUTHORITATIVE fail posture for a player, derived from its
+ * DURABLE `guardrailPolicy` (the source of truth on SessionMetadata). The
+ * `gate_pending` frame's `failMode` claim is ADVISORY only: the daemon enforces
+ * THIS regardless, so an engaging agent can't self-downgrade a supervised player
+ * out of fail-closed by stamping `'open'`.
+ *
+ * Posture — **fail-CLOSED except an EXPLICITLY `monitored`/`autonomous` player**:
+ *   - `monitored`  → `'open'`  (operator-armed observability gate; fail-OPEN is its point)
+ *   - `autonomous` → `'open'`  (never engages the gate on its own; if an operator
+ *                               arms it, it behaves as monitored → fail-open)
+ *   - `supervised`   → `'closed'`
+ *   - `observe-only` → `'closed'`  (most-restrictive no-act posture; if the client
+ *                                   no-act block is ever bypassed and it reaches the
+ *                                   gate, auto-ALLOW would be backwards — defense-in-depth)
+ *   - `undefined` (policy not yet resolved — e.g. post-daemon-restart pre-reconcile,
+ *                  or a bounded metadata query that timed out/errored) → `'closed'`
+ *                  (NO-FAIL-OPEN: uncertainty resolves to the safe posture).
+ */
+export function enforcedFailMode(policy: GuardrailPolicy | undefined): GateFailMode {
+  return policy === 'monitored' || policy === 'autonomous' ? 'open' : 'closed';
+}
+
+/**
  * Terminal decision on a gated tool call. `auto-allow` = the open (monitored)
  * timeout fired; `auto-deny` = the closed (supervised) timeout fired. The two
  * timeout outcomes are kept DISTINCT (not collapsed into plain allow/deny) so
@@ -106,10 +130,12 @@ export interface GateRequestMeta {
    */
   ensemble?: string;
   /**
-   * Per-request fail posture (#700 / G). `'closed'` (supervised) → auto-DENY
-   * after {@link GATE_CLOSED_DENY_MS}; `'open'` (monitored, **default**) →
-   * auto-ALLOW after {@link GATE_AUTO_ALLOW_MS}. Carried on the `gate_pending`
-   * frame from the agent's durable `guardrailPolicy`; omitted ⇒ `'open'`.
+   * The engaging agent's ADVISORY failMode claim from the `gate_pending` frame
+   * (#700). **#712: advisory only** — {@link GateRegistry.open} ENFORCES the
+   * failMode from the player's durable policy ({@link enforcedFailMode}), not
+   * from this field. It is retained solely to DETECT a self-downgrade (frame
+   * claimed the weaker `open` while the policy enforces `closed` → a
+   * `failmode-override` audit record). Omitted ⇒ treated as the claim `'open'`.
    */
   failMode?: GateFailMode;
 }
@@ -139,6 +165,27 @@ export type GateAuditRecord =
       workflowId: string;
       source: 'operator';
       operatorTokenHint?: string;
+    }
+  | {
+      /**
+       * #712 — the daemon enforced a STRICTER failMode than the gate_pending
+       * frame claimed (frame `open`, policy-enforced `closed`). An
+       * override-detected OBSERVABILITY signal — NEUTRAL-FACTUAL: it could be a
+       * client bug, a stale client, or an injection self-downgrade attempt; the
+       * operator/security interprets. This is exactly the self-downgrade vector
+       * the #712 cross-check closes.
+       */
+      kind: 'failmode-override';
+      ts: string;
+      workflowId: string;
+      sessionId?: string;
+      requestId: string;
+      tool: string;
+      argsSummary: string;
+      claimedFailMode: GateFailMode;
+      enforcedFailMode: GateFailMode;
+      /** The durable policy that drove enforcement; `'unknown'` when unresolved. */
+      policy: GuardrailPolicy | 'unknown';
     };
 
 /**
@@ -166,7 +213,7 @@ interface PendingRequest {
   readonly argsSummary: string;
   readonly sessionId?: string;
   readonly createdAt: number;
-  /** Per-request fail posture (#700 / G); set at open() from the gate_pending frame. */
+  /** Per-request fail posture; #712: computed by open() from the durable policy ({@link enforcedFailMode}), NOT the frame claim. */
   readonly failMode: GateFailMode;
   decision: GateDecision | null;
   source: GateDecisionSource | null;
@@ -176,6 +223,14 @@ interface PlayerGate {
   armed: boolean;
   /** Stashed for audit pathing — set on the first arm()/open() that names it. */
   ensemble: string;
+  /**
+   * #712 — the player's DURABLE guardrailPolicy (daemon-authoritative source for
+   * failMode). Populated by {@link GateRegistry.setPolicy} (spawn / reconcile /
+   * lazy miss-resolve). `undefined` ⇒ not yet resolved ⇒ {@link enforcedFailMode}
+   * treats it as `closed` (no-fail-open). Dropped with the rest of the per-player
+   * state by {@link GateRegistry.clearPlayer}.
+   */
+  policy?: GuardrailPolicy;
   readonly pending: Map<string, PendingRequest>;
 }
 
@@ -238,24 +293,65 @@ export class GateRegistry {
     return this.gates.get(workflowId)?.armed ?? false;
   }
 
+  // ── #712 durable-policy source of truth (daemon-authoritative failMode) ──────
+
+  /**
+   * #712 — record the player's DURABLE `guardrailPolicy` so {@link open} can
+   * enforce its failMode authoritatively (frame claim ignored). Populated at
+   * spawn (beside the ingest-token mint), reconstructed at reconcile-on-boot, and
+   * lazily back-filled by the ingest route on a cache-miss. Cleared by
+   * {@link clearPlayer} (detach/destroy) like all per-player state.
+   */
+  setPolicy(workflowId: string, policy: GuardrailPolicy): void {
+    this.gate(workflowId).policy = policy;
+  }
+
+  /** #712 — the recorded durable policy, or `undefined` if not yet resolved. */
+  getPolicy(workflowId: string): GuardrailPolicy | undefined {
+    return this.gates.get(workflowId)?.policy;
+  }
+
   // ── Pending requests (source opens; operator decides; source polls) ─────────
 
   /**
    * Open (or return the existing) pending request for a gated tool call.
    * Idempotent on `requestId` — a retried open returns the existing entry so the
-   * source can safely re-register before polling. Does NOT audit (the request
-   * isn't a decision); the decision/auto-allow audit records carry tool+args.
+   * source can safely re-register before polling.
+   *
+   * #712 — DAEMON-AUTHORITATIVE failMode: the stored failMode is computed from the
+   * player's DURABLE policy ({@link enforcedFailMode}), NOT from `meta.failMode`
+   * (which is now an ADVISORY claim from the engaging agent). The route resolves +
+   * stores the policy (spawn / reconcile / lazy miss-resolve) before this call; an
+   * unresolved policy enforces `closed` (no-fail-open). When the frame claimed the
+   * weaker `open` but the policy enforces `closed`, a NEUTRAL-FACTUAL
+   * `failmode-override` audit record is emitted (the self-downgrade #712 closes).
    */
   open(workflowId: string, requestId: string, meta: GateRequestMeta): void {
     const g = this.gate(workflowId);
     if (meta.ensemble) g.ensemble = meta.ensemble;
     if (g.pending.has(requestId)) return;
+    const enforced = enforcedFailMode(g.policy);
+    const claimed: GateFailMode = meta.failMode ?? 'open';
+    if (enforced === 'closed' && claimed === 'open') {
+      this.audit({
+        kind: 'failmode-override',
+        ts: this.nowIso(),
+        workflowId,
+        ...(meta.sessionId ? { sessionId: meta.sessionId } : {}),
+        requestId,
+        tool: meta.tool,
+        argsSummary: meta.argsSummary,
+        claimedFailMode: claimed,
+        enforcedFailMode: enforced,
+        policy: g.policy ?? 'unknown',
+      }, g.ensemble);
+    }
     g.pending.set(requestId, {
       tool: meta.tool,
       argsSummary: meta.argsSummary,
       sessionId: meta.sessionId,
       createdAt: this.now(),
-      failMode: meta.failMode ?? 'open',
+      failMode: enforced,
       decision: null,
       source: null,
     });

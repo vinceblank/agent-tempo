@@ -9,6 +9,7 @@ import {
   GateRegistry,
   GATE_AUTO_ALLOW_MS,
   GATE_CLOSED_DENY_MS,
+  enforcedFailMode,
   type GateAuditRecord,
 } from '../../src/http/gate-registry';
 
@@ -113,6 +114,7 @@ describe('GateRegistry — pending + operator decide', () => {
 describe('GateRegistry — 45s auto-allow (lazy on poll)', () => {
   it('stays pending before the deadline, then auto-allows (source timeout) and audits it', () => {
     const { reg, audit, advance } = setup();
+    reg.setPolicy(WF, 'monitored'); // #712: failMode is policy-driven — monitored ⇒ open ⇒ auto-allow
     reg.open(WF, RID, META);
 
     advance(GATE_AUTO_ALLOW_MS - 1);
@@ -127,6 +129,7 @@ describe('GateRegistry — 45s auto-allow (lazy on poll)', () => {
 
   it('emits inner.gate_resolved (source timeout) on auto-allow', () => {
     const { reg, published, advance } = setup();
+    reg.setPolicy(WF, 'monitored');
     reg.open(WF, RID, META);
     advance(GATE_AUTO_ALLOW_MS);
     reg.getResolution(WF, RID);
@@ -143,6 +146,7 @@ describe('GateRegistry — 45s auto-allow (lazy on poll)', () => {
 
   it('auto-allow is recorded once — a second poll returns the same resolved answer without re-auditing', () => {
     const { reg, audit, advance } = setup();
+    reg.setPolicy(WF, 'monitored');
     reg.open(WF, RID, META);
     advance(GATE_AUTO_ALLOW_MS);
     reg.getResolution(WF, RID);
@@ -151,12 +155,14 @@ describe('GateRegistry — 45s auto-allow (lazy on poll)', () => {
   });
 });
 
-describe('GateRegistry — per-request failMode (#700 / G)', () => {
-  const CLOSED_META = { ...META, failMode: 'closed' as const };
+describe('GateRegistry — policy-driven failMode fuses (#700 fuses, #712 source)', () => {
+  // #712: the stored failMode is computed from the player's DURABLE policy
+  // (set via setPolicy), NOT the frame claim. supervised → closed; monitored → open.
 
-  it('closed request stays pending past the 45s open fuse, then auto-DENIES at GATE_CLOSED_DENY_MS', () => {
+  it('supervised → stays pending past the 45s open fuse, then auto-DENIES at GATE_CLOSED_DENY_MS', () => {
     const { reg, audit, advance } = setup();
-    reg.open(WF, RID, CLOSED_META);
+    reg.setPolicy(WF, 'supervised');
+    reg.open(WF, RID, META);
 
     // Past the OPEN fuse (45s) — a closed request must NOT auto-allow.
     advance(GATE_AUTO_ALLOW_MS);
@@ -174,37 +180,43 @@ describe('GateRegistry — per-request failMode (#700 / G)', () => {
     expect(dec).toMatchObject({ decision: 'auto-deny', source: 'timeout', requestId: RID, tool: 'bash' });
   });
 
-  it('emits inner.gate_resolved (auto-deny, source timeout) on the closed fuse', () => {
+  it('supervised → emits inner.gate_resolved (auto-deny, source timeout) on the closed fuse', () => {
     const { reg, published, advance } = setup();
-    reg.open(WF, RID, CLOSED_META);
+    reg.setPolicy(WF, 'supervised');
+    reg.open(WF, RID, META);
     advance(GATE_CLOSED_DENY_MS);
     reg.getResolution(WF, RID);
     expect(published.at(-1)?.frame).toMatchObject({ type: 'inner.gate_resolved', requestId: RID, decision: 'auto-deny', source: 'timeout' });
   });
 
-  it('absent failMode ⇒ open: still auto-ALLOWS at the 45s fuse (MD-G unchanged)', () => {
+  it('monitored → auto-ALLOWS at the 45s fuse (MD-G unchanged)', () => {
     const { reg, advance } = setup();
-    reg.open(WF, RID, META); // no failMode → defaults open
+    reg.setPolicy(WF, 'monitored');
+    reg.open(WF, RID, META);
     advance(GATE_AUTO_ALLOW_MS);
     expect(reg.getResolution(WF, RID)).toEqual({ status: 'resolved', decision: 'auto-allow', source: 'timeout' });
   });
 
-  it('failMode is PER-REQUEST: an open and a closed request on the same player resolve at their own fuses', () => {
+  it('#712: the player policy drives ALL its requests UNIFORMLY (no per-request frame mixing)', () => {
     const { reg, advance } = setup();
-    reg.open(WF, 'open-req', META);
-    reg.open(WF, 'closed-req', CLOSED_META);
+    reg.setPolicy(WF, 'supervised');
+    // Even a frame claiming 'open' is enforced closed — both requests go closed.
+    reg.open(WF, 'r1', { ...META, failMode: 'open' });
+    reg.open(WF, 'r2', { ...META, failMode: 'closed' });
 
-    advance(GATE_AUTO_ALLOW_MS); // open fuse only
-    expect(reg.getResolution(WF, 'open-req')).toEqual({ status: 'resolved', decision: 'auto-allow', source: 'timeout' });
-    expect(reg.getResolution(WF, 'closed-req')).toEqual({ status: 'pending' });
+    advance(GATE_AUTO_ALLOW_MS); // the open fuse — neither resolves (both enforced closed)
+    expect(reg.getResolution(WF, 'r1')).toEqual({ status: 'pending' });
+    expect(reg.getResolution(WF, 'r2')).toEqual({ status: 'pending' });
 
-    advance(GATE_CLOSED_DENY_MS - GATE_AUTO_ALLOW_MS); // now past the closed fuse too
-    expect(reg.getResolution(WF, 'closed-req')).toEqual({ status: 'resolved', decision: 'auto-deny', source: 'timeout' });
+    advance(GATE_CLOSED_DENY_MS - GATE_AUTO_ALLOW_MS);
+    expect(reg.getResolution(WF, 'r1')).toMatchObject({ decision: 'auto-deny' });
+    expect(reg.getResolution(WF, 'r2')).toMatchObject({ decision: 'auto-deny' });
   });
 
-  it('an operator decision on a closed request still wins before the fuse', () => {
+  it('an operator decision on a supervised request still wins before the fuse', () => {
     const { reg, advance } = setup();
-    reg.open(WF, RID, CLOSED_META);
+    reg.setPolicy(WF, 'supervised');
+    reg.open(WF, RID, META);
     reg.decide(WF, RID, 'allow');
     advance(GATE_CLOSED_DENY_MS * 2);
     expect(reg.getResolution(WF, RID)).toEqual({ status: 'resolved', decision: 'allow', source: 'operator' });
@@ -236,5 +248,88 @@ describe('GateRegistry — lifecycle', () => {
     const { reg } = setup();
     reg.open(WF, RID, META);
     expect(reg.getResolution('other-wf', RID)).toBeNull();
+  });
+});
+
+describe('GateRegistry — #712 daemon failMode cross-check (durable-policy-authoritative)', () => {
+  it('enforcedFailMode: monitored/autonomous → open; supervised/observe-only/unknown → closed', () => {
+    expect(enforcedFailMode('monitored')).toBe('open');
+    expect(enforcedFailMode('autonomous')).toBe('open');
+    expect(enforcedFailMode('supervised')).toBe('closed');
+    expect(enforcedFailMode('observe-only')).toBe('closed');
+    expect(enforcedFailMode(undefined)).toBe('closed'); // no-fail-open
+  });
+
+  it('setPolicy/getPolicy round-trips; clearPlayer drops it (per-player lifecycle)', () => {
+    const { reg } = setup();
+    expect(reg.getPolicy(WF)).toBeUndefined();
+    reg.setPolicy(WF, 'supervised');
+    expect(reg.getPolicy(WF)).toBe('supervised');
+    reg.clearPlayer(WF);
+    expect(reg.getPolicy(WF)).toBeUndefined();
+  });
+
+  it('★ supervised: open() FORCES closed regardless of the frame claim (open | absent | closed) → auto-deny', () => {
+    for (const claim of ['open', 'closed', undefined] as const) {
+      const { reg, advance } = setup();
+      reg.setPolicy(WF, 'supervised');
+      reg.open(WF, RID, { ...META, ...(claim ? { failMode: claim } : {}) });
+      advance(GATE_CLOSED_DENY_MS); // closed fuse
+      expect(reg.getResolution(WF, RID)).toMatchObject({ status: 'resolved', decision: 'auto-deny', source: 'timeout' });
+    }
+  });
+
+  it('monitored: open() resolves open (auto-allow @45s, MD-G unchanged)', () => {
+    const { reg, advance } = setup();
+    reg.setPolicy(WF, 'monitored');
+    reg.open(WF, RID, { ...META, failMode: 'open' });
+    advance(GATE_AUTO_ALLOW_MS);
+    expect(reg.getResolution(WF, RID)).toMatchObject({ status: 'resolved', decision: 'auto-allow' });
+  });
+
+  it('observe-only: open() forces closed (most-restrictive; defense-in-depth)', () => {
+    const { reg, advance } = setup();
+    reg.setPolicy(WF, 'observe-only');
+    reg.open(WF, RID, { ...META, failMode: 'open' });
+    advance(GATE_CLOSED_DENY_MS);
+    expect(reg.getResolution(WF, RID)).toMatchObject({ decision: 'auto-deny' });
+  });
+
+  it('★ UNKNOWN policy (never set — post-restart pre-resolve): open() enforces closed (NO-FAIL-OPEN)', () => {
+    const { reg, advance } = setup();
+    reg.open(WF, RID, { ...META, failMode: 'open' }); // no setPolicy
+    advance(GATE_CLOSED_DENY_MS);
+    expect(reg.getResolution(WF, RID)).toMatchObject({ decision: 'auto-deny' });
+  });
+
+  it('★ override-audit: frame claims open but policy enforces closed → NEUTRAL-FACTUAL failmode-override record', () => {
+    const { reg, audit } = setup();
+    reg.setPolicy(WF, 'supervised');
+    reg.open(WF, RID, { ...META, failMode: 'open' });
+    const override = audit.find((a) => a.kind === 'failmode-override');
+    expect(override).toMatchObject({
+      kind: 'failmode-override', workflowId: WF, requestId: RID, tool: 'bash',
+      claimedFailMode: 'open', enforcedFailMode: 'closed', policy: 'supervised',
+    });
+  });
+
+  it('override-audit records policy:"unknown" when the policy was never resolved', () => {
+    const { reg, audit } = setup();
+    reg.open(WF, RID, { ...META, failMode: 'open' }); // unknown → enforced closed
+    expect(audit.find((a) => a.kind === 'failmode-override')).toMatchObject({ policy: 'unknown', enforcedFailMode: 'closed' });
+  });
+
+  it('NO override-audit when the frame already claims closed (agent honored its policy)', () => {
+    const { reg, audit } = setup();
+    reg.setPolicy(WF, 'supervised');
+    reg.open(WF, RID, { ...META, failMode: 'closed' });
+    expect(audit.some((a) => a.kind === 'failmode-override')).toBe(false);
+  });
+
+  it('NO override-audit for a monitored player claiming open (legitimate, no downgrade)', () => {
+    const { reg, audit } = setup();
+    reg.setPolicy(WF, 'monitored');
+    reg.open(WF, RID, { ...META, failMode: 'open' });
+    expect(audit.some((a) => a.kind === 'failmode-override')).toBe(false);
   });
 });
