@@ -28,6 +28,7 @@ dashboard/dist/*
 !scripts/check-pi-drift.js
 !scripts/strip-mock-adapter.js
 !scripts/verify-tarball.js
+!scripts/check-bundle-present.js
 # Dashboard ESLint flat config — JS module, intentionally committed.
 !dashboard/eslint.config.js
 temporal-data.db
