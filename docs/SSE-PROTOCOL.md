@@ -42,6 +42,8 @@ This document is the authoritative reference for the **HTTP/SSE event source** e
 | `OPTIONS` | (any) | `204 No Content` | CORS preflight (see §3). |
 | `POST` | `/v1/ensembles/:ensemble/{cue,pause,play,release,recruit,restart,reset,destroy,detach,recall}` | `application/json` | Safe-write endpoints (PR-7a of #340; per-player destructive verbs added by `feat/daemon-action-http-endpoints`; `reset` added by H5b/#645). See § 11b for full request/response shapes. |
 | `POST` | `/v1/ensembles` | `application/json` | Create a fresh ensemble (issue #400) — recruits the conductor + lineup players. See § 11c. |
+| `POST` | `/v1/ensembles/:ensemble/coat-check` | `application/json` | **#713.** Stash a content body on the per-ensemble coat-check (#318). Body `{ summary, content, contentType?, ttlMs? }` → `{ ok, ensemble, ticket, expiresAt, slotsUsed, slotsTotal }`. Lets the inbox-less command-center planner park a plan + hand off a ticket. **Does NOT raise the handoff ceiling** — the coat-check entry cap (32 KiB) is *below* the 100 KB cue cap; this keeps cues lean, it does not enable >100 KB plans. See § 11d. |
+| `GET` | `/v1/ensembles/:ensemble/coat-check/:ticket` | `application/json` | **#713.** Redeem a coat-check ticket → `{ ok, ensemble, ticket, found, entry }` (`entry` includes `content`, or `null`/`found:false` when missing/expired/evicted). **Mutates fetch-audit counters** (`fetchCount` / `lastFetched*`) — it is NOT a pure read, so it is gated at **T2**, not the usual T1 read tier. See § 11d. |
 | `GET` | `/v1/agent-types` | `application/json` | Available player-type catalog (project + user + shipped, three-tier dedup). See § 11c. |
 | `GET` | `/v1/lineups` | `application/json` | Available lineup catalog (saved + shipped). See § 11c. |
 
@@ -58,6 +60,7 @@ calls (which carry their own Temporal-backed durability).
 | `GET /v1/health` | None — always open | — |
 | All other `GET` reads | **T1** (read or admin) | `AGENT_TEMPO_HTTP_READ_TOKEN` or admin |
 | `POST` write surface | **T2** (admin required) | `AGENT_TEMPO_HTTP_ADMIN_TOKEN` |
+| `POST` / `GET` coat-check (#713) | **T2** (admin required) | `AGENT_TEMPO_HTTP_ADMIN_TOKEN` — note the GET redeem is T2 (it mutates fetch-audit counters), not the usual T1 read tier |
 | `POST` gate arm/disarm/decide | **T3** (admin required) | `AGENT_TEMPO_HTTP_ADMIN_TOKEN` |
 | `GET /v1/players/:e/:p/inner` SSE | **T3** (admin required) | `AGENT_TEMPO_HTTP_ADMIN_TOKEN` |
 | `POST /inner/ingest`, `GET /inner/presence`, `GET /gate/:id/resolution` | Source plane (loopback + `X-Ingest-Token`) | Daemon-minted per-player `AGENT_TEMPO_INGEST_TOKEN` |
@@ -620,6 +623,60 @@ Three endpoints surface on-disk catalog data so the dashboard's CreateEnsemble +
 ### Method gates + auth
 
 Same as §11b — POST/GET method-not-allowed surfaces fall through to the standard 405 with `Allow:` header. Loopback bind no-auth; non-loopback or cross-origin → bearer required.
+
+---
+
+## 11d. Coat-check endpoints (#713)
+
+Expose the per-ensemble coat-check store (#318, ADR 0008) over HTTP so the
+mission-control **command-center planner** — a Pi extension that drives the
+daemon over HTTP and has **no Temporal inbox** — can stash a large plan and hand
+off a *ticket* on a cue instead of inlining the whole body. Both routes are thin
+shims over `TempoClient.coatCheckPut` / `coatCheckGet` (the `coatCheckPut` /
+`coatCheckGet` maestro Updates documented in WIRE-PROTOCOL.md) — **zero new
+Temporal signals/queries/updates**.
+
+> **★ Honest framing — this does NOT raise the handoff ceiling.** The coat-check
+> entry cap (`COAT_CHECK_CONTENT_MAX` = 32 KiB) is *smaller* than the cue body cap
+> (`MESSAGE_MAX` = 100 KB). So coat-check cannot rescue a plan that is too big to
+> cue — a >100 KB plan still cannot be handed off. What this buys: (1) the
+> inbox-less planner gains an HTTP way to stash artifacts at all, and (2) medium
+> plans (~8–32 KiB) keep the cue body lean by riding a ticket. Raising the cap to
+> exceed the cue cap is a *separate* decision with Temporal continue-as-new
+> state-size implications (coat-check lives on Maestro state) and is deliberately
+> out of scope for #713.
+
+### Routes
+
+| Method | Path | Tier | Request | Response |
+|---|---|---|---|---|
+| `POST` | `/v1/ensembles/:e/coat-check` | T2 | `{ summary, content, contentType?, ttlMs? }` | `200 { ok, ensemble, ticket, expiresAt, slotsUsed, slotsTotal }` |
+| `GET` | `/v1/ensembles/:e/coat-check/:ticket` | T2 | — | `200 { ok, ensemble, ticket, found, entry }` (`entry: CoatCheckEntry \| null`) |
+
+### Audit identity
+
+Stashes/redeems are attributed to the operator (`putBy` / `fetchedBy` = `maestro`),
+NOT caller-supplied — same anti-spoof posture as the `/cue` + `/ask` routes (which
+write as the maestro) and the MCP coat-check tools (audit identity from
+`getPlayerId()`, never a request field).
+
+### Validation + error mapping
+
+- Strict body validation before the Temporal layer: missing `summary`/`content` →
+  `400`; `content` over the 32 KiB UTF-8 cap → `413` (the HTTP layer caps before
+  calling Temporal); over-long `summary`/`contentType` → `400`; non-integer or
+  out-of-range `ttlMs` → `400`; bad `:ticket` shape → `400`.
+- `CoatCheckSlotsFull` (20-slot saturation) → `409`; `CoatCheckEntryTooLarge`
+  (defense-in-depth) → `413`; maestro hub not running → `404`; else `500`.
+- The GET redeem returns `200 { found:false, entry:null }` (mirroring the
+  `/answer` route) for the common "ticket already gone" case rather than `404`.
+
+### Method gates + auth
+
+`POST` to the 2-segment put path is matched **before** the generic write-action
+router (§11b), which would otherwise `404` `coat-check` as an unknown action.
+Both routes are **T2 (admin)** — `put` is a write; the GET `get` redeems via a
+fetch-audit-**mutating** Update, so it is deliberately NOT the usual T1 read tier.
 
 ---
 

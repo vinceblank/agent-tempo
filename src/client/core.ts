@@ -31,6 +31,7 @@ import type {
   EnsembleChatResult,
   OutboxEntryInput,
   AnswerEntry,
+  CoatCheckEntry,
 } from '../types';
 import {
   submitOutboxUpdate,
@@ -52,6 +53,13 @@ import {
   getCurrentBpmQuery,
   getTempoSeriesQuery,
   maestroGetAnswerQuery,
+  coatCheckPutUpdate,
+  coatCheckGetUpdate,
+} from '../workflows/maestro-signals';
+import type {
+  CoatCheckPutInput,
+  CoatCheckPutResult,
+  CoatCheckGetInput,
 } from '../workflows/maestro-signals';
 import { resolveSession, scanEnsembleSessions } from '../activities/resolve';
 import { restoreOrphansOnce, type RestoreOrphansSummary } from '../reconcile/orphans';
@@ -1226,6 +1234,24 @@ export function createTempoClientCore(
       } catch {
         return null;
       }
+    },
+
+    async coatCheckPut(ensemble: string, input: CoatCheckPutInput): Promise<CoatCheckPutResult> {
+      // #713 — thin wrapper over the maestro `coatCheckPut` Update so the daemon
+      // HTTP route can stash on behalf of the inbox-less command-center planner.
+      // Errors PROPAGATE (unlike getAnswer's tolerant catch): the workflow's
+      // structured `CoatCheckSlotsFull` / `CoatCheckEntryTooLarge` failures must
+      // reach the HTTP layer so it can map them to a 4xx instead of swallowing.
+      const h = handle(maestroWorkflowId(ensemble));
+      return await h.executeUpdate(coatCheckPutUpdate, { args: [input] });
+    },
+
+    async coatCheckGet(ensemble: string, input: CoatCheckGetInput): Promise<CoatCheckEntry | null> {
+      // #713 — redeem a ticket over the maestro `coatCheckGet` Update. `null` is
+      // the workflow's normal "missing / expired / evicted" return (not an
+      // error); genuine failures propagate to the HTTP layer.
+      const h = handle(maestroWorkflowId(ensemble));
+      return await h.executeUpdate(coatCheckGetUpdate, { args: [input] });
     },
 
     async isAnySessionHeld(ensemble: string): Promise<boolean> {

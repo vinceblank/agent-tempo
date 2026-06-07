@@ -160,6 +160,8 @@ function createDummyClient(): ReturnType<typeof createTempoClient> {
     isMaestroPaused: async () => false,
     isAnySessionHeld: async () => false,
     getAnswer: async () => null,
+    coatCheckPut: fail,
+    coatCheckGet: async () => null,
     getGates: async () => [],
     getStages: async () => [],
     getWorktrees: async () => [],

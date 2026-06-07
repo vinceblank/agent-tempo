@@ -79,6 +79,27 @@ export class MissionControlActions {
     }
   }
 
+  /** POST and parse a JSON response body (bearer-authed). Used when the caller
+   *  needs the response payload, not just success — e.g. the coat-check ticket. */
+  private async postJson<T>(pathSuffix: string, body: unknown): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+    if (!this.adminToken) return { ok: false, error: `no admin token (set ${ADMIN_TOKEN_ENV})` };
+    if (!this.fetchFn) return { ok: false, error: 'no fetch transport available' };
+    const base = this.baseUrl();
+    if (base === null) return { ok: false, error: 'daemon HTTP not reachable (no port)' };
+    try {
+      const res = await this.fetchFn(`${base}${pathSuffix}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${this.adminToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+      });
+      const text = await res.text().catch(() => '');
+      if (res.status < 200 || res.status >= 300) return { ok: false, error: `HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ''}` };
+      return { ok: true, data: JSON.parse(text) as T };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   /** GET a JSON body from the daemon (bearer-authed). Used by the read surface (#700 readAnswer). */
   private async getJson<T>(pathSuffix: string): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
     if (!this.adminToken) return { ok: false, error: `no admin token (set ${ADMIN_TOKEN_ENV})` };
@@ -184,6 +205,24 @@ export class MissionControlActions {
       `/v1/ensembles/${this.ens()}/answer/${encodeURIComponent(questionId)}`,
     );
     return res.ok ? (res.data.answer ?? null) : null;
+  }
+
+  // ── Coat-check surface (#713) ──
+  /**
+   * Stash a content body on the ensemble coat-check (`POST /v1/ensembles/:e/coat-check`)
+   * and return the ticket. Lets the inbox-less planner park a large plan and hand
+   * off a ticket instead of inlining it on a cue. NOTE (#713): the coat-check entry
+   * cap (32 KiB) is BELOW the 100 KB cue cap, so this keeps cues lean — it does NOT
+   * raise the handoff ceiling.
+   */
+  async coatCheckPut(opts: {
+    summary: string;
+    content: string;
+    contentType?: string;
+    ttlMs?: number;
+  }): Promise<{ ok: true; ticket: string } | { ok: false; error: string }> {
+    const res = await this.postJson<{ ticket: string }>(`/v1/ensembles/${this.ens()}/coat-check`, opts);
+    return res.ok ? { ok: true, ticket: res.data.ticket } : res;
   }
 
   // ── Operator gate plane (T3) ──

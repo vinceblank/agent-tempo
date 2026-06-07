@@ -20,7 +20,13 @@ import type {
   AttachmentInfo,
   HostInfo,
   AnswerEntry,
+  CoatCheckEntry,
 } from '../types';
+import type {
+  CoatCheckPutInput,
+  CoatCheckPutResult,
+  CoatCheckGetInput,
+} from '../workflows/maestro-signals';
 import type { RestoreOrphansSummary } from '../reconcile/orphans';
 import type { SubscribeOptions, TempoEvent } from '../http/event-types';
 
@@ -443,6 +449,23 @@ export interface TempoClientCore {
    * aggregate's outstanding-ask poll (which emits the `answer` SSE event).
    */
   getAnswer(ensemble: string, questionId: string): Promise<AnswerEntry | null>;
+  /**
+   * #713 — stash a large content body on the per-ensemble coat-check (#318) over
+   * a maestro Update. Thin client wrapper around `coatCheckPutUpdate` so the
+   * daemon HTTP route (`POST /v1/ensembles/:e/coat-check`) can let the inbox-less
+   * command-center planner park a plan and hand off a ticket. `putBy` is the
+   * audit identity (set by the caller — the HTTP layer stamps the operator).
+   * Throws the workflow's structured ApplicationFailure on saturation /
+   * oversize (`CoatCheckSlotsFull` / `CoatCheckEntryTooLarge`).
+   */
+  coatCheckPut(ensemble: string, input: CoatCheckPutInput): Promise<CoatCheckPutResult>;
+  /**
+   * #713 — redeem a coat-check ticket (#318) over a maestro Update. Returns the
+   * full entry (incl. content body) or `null` when the ticket is missing /
+   * expired / evicted. A successful redemption bumps the entry's fetch-audit
+   * counters (`fetchedBy` is the audit identity), so this is NOT a pure read.
+   */
+  coatCheckGet(ensemble: string, input: CoatCheckGetInput): Promise<CoatCheckEntry | null>;
   /** Disband an ensemble: terminate all sessions, scheduler, and maestro workflows. */
   disbandEnsemble(ensemble: string): Promise<{ terminated: number }>;
   /** Check if the Temporal connection is alive. */
