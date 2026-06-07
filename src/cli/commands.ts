@@ -1098,10 +1098,16 @@ export async function up(opts: UpOpts) {
         } else if (p.step === 'agent-types') {
           if (p.detail?.startsWith('installed')) out.success(`Agent types: ${p.detail} → ~/.claude/agents/`);
           else if (p.detail) out.dim(`  Agent types already installed (${p.detail})`);
+        } else if (p.step === 'search-attributes') {
+          // #46 — ensureInfra registers SAs with `quiet: true` (the per-attribute
+          // success lines are suppressed for the extension TUI path). The CLI
+          // restores visibility with a one-line summary here. `detail` is
+          // "N failed" only when registration failed (errors/permission warnings
+          // still print from registerSearchAttributes regardless of `quiet`).
+          out.check('Search attributes registered', !p.detail, p.detail);
         } else if (p.step === 'daemon') {
           out.check(p.status === 'ok' ? 'Worker daemon running' : 'Worker daemon started', true, p.detail);
         }
-        // 'search-attributes' logs per-attribute internally via registerSearchAttributes.
       },
     });
   } catch (err: any) {
