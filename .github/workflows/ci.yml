@@ -378,15 +378,17 @@ jobs:
         # is always a filesystem hit during tests — eliminates the in-test download race that
         # leaves stale `.downloading` lock files and trips the 20s timeout (#694 / #642).
         # Cache key includes SDK version so a @temporalio/testing bump auto-invalidates.
+        # ⚠️  VERSION NOTE: update "1.15.0" in path + key when bumping @temporalio/testing.
         uses: actions/cache@v4
         with:
-          path: /tmp/temporal-sdk-typescript-1.15.0
-          key: temporal-test-server-linux-1.15.0
+          path: /tmp/temporal-sdk-typescript-1.15.0  # update on @temporalio/testing bump
+          key: temporal-test-server-linux-1.15.0     # update on @temporalio/testing bump
 
       - name: Remove stale Temporal download lock
         # Safety sweep: if a prior run crashed mid-download the `.downloading` lock file
         # persists on the runner image and causes a 20s stall + failure on the next run.
         # This is a no-op when no stale lock exists (the binary is cache-restored above).
+        # ⚠️  VERSION NOTE: update "1.15.0" here when bumping @temporalio/testing.
         run: rm -f /tmp/temporal-sdk-typescript-1.15.0.downloading
 
       - name: Run Mocha shard ${{ matrix.shard }}
@@ -595,13 +597,15 @@ jobs:
         # Mirror of the Linux cache step above — binary name includes .exe on Windows.
         # Path uses ${{ env.TEMP }} which maps to os.tmpdir() on Windows runners (not
         # runner.temp which is a different Actions-specific dir).
+        # ⚠️  VERSION NOTE: update "1.15.0" in path + key when bumping @temporalio/testing.
         uses: actions/cache@v4
         with:
-          path: ${{ env.TEMP }}\temporal-sdk-typescript-1.15.0.exe
-          key: temporal-test-server-windows-1.15.0
+          path: ${{ env.TEMP }}\temporal-sdk-typescript-1.15.0.exe  # update on @temporalio/testing bump
+          key: temporal-test-server-windows-1.15.0                  # update on @temporalio/testing bump
 
       - name: Remove stale Temporal download lock (Windows)
         # Node-based sweep so it works regardless of which shell is active.
+        # ⚠️  VERSION NOTE: update "1.15.0" here when bumping @temporalio/testing.
         shell: bash
         run: |
           node -e "
