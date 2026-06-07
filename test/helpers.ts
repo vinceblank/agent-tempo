@@ -24,6 +24,7 @@ import { Client, WorkflowHandle, WorkflowIdConflictPolicy } from '@temporalio/cl
 import { execFileSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as crypto from 'crypto';
 import { SessionInput, SessionMetadata, MaestroPlayerInfo } from '../src/types';
 import {
@@ -199,7 +200,59 @@ function reapOrphanTemporalServersSync(): number[] {
  * Never throws — a failed reap must not block the test suite from starting
  * or finishing.
  */
+/**
+ * A `temporal-sdk-typescript-*.downloading` lock older than this is an orphaned
+ * extraction (a crashed/killed prior run) and is safe to remove. Anything
+ * younger may be an ACTIVE download by a concurrent shard on the same machine —
+ * left untouched. The SDK's own download-acquire wait is ~90s, so a 2-minute
+ * floor comfortably exceeds any legitimate in-progress download.
+ */
+const STALE_DOWNLOAD_LOCK_MS = 2 * 60 * 1000;
+
+/**
+ * Remove stale `temporal-sdk-typescript-*.downloading` lock files left in the OS
+ * temp dir by a crashed/killed binary extraction (#694 symptom 1/3 defense).
+ *
+ * When a prior run dies mid-download, the `.downloading` lock lingers; the NEXT
+ * acquirer blocks on it (the SDK waits ~90s for the lock to clear, but the local
+ * `createLocal` retry's ~20s window times out first → an "Access is denied" /
+ * server-start flake). Clearing orphaned locks at suite start closes that window.
+ *
+ * Age-gated (see {@link STALE_DOWNLOAD_LOCK_MS}) so a concurrent shard's active
+ * download is never disturbed. Never throws — a cleanup hiccup must not block the
+ * suite from starting or finishing.
+ */
+function reapStaleTemporalDownloadLocks(): void {
+  const dir = os.tmpdir();
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return; // tmpdir unreadable — nothing we can (or should) do
+  }
+  const now = Date.now();
+  for (const name of entries) {
+    if (!/^temporal-sdk-typescript-.*\.downloading$/.test(name)) continue;
+    const full = path.join(dir, name);
+    try {
+      const age = now - fs.statSync(full).mtimeMs;
+      if (age < STALE_DOWNLOAD_LOCK_MS) continue; // possibly an active download — leave it
+      fs.rmSync(full, { force: true });
+      console.log(
+        `[test:cleanup] removed stale temporal download lock: ${name} ` +
+        `(age ${Math.round(age / 1000)}s)`,
+      );
+    } catch {
+      /* racing another reaper / perms / vanished — non-fatal */
+    }
+  }
+}
+
 export async function reapOrphanTemporalServers(): Promise<void> {
+  // #694 — clear orphaned `.downloading` extraction locks before reaping orphan
+  // server processes, so a stale lock from a crashed run can't wedge the next
+  // ephemeral-server start.
+  reapStaleTemporalDownloadLocks();
   try {
     const pids = findOrphanTemporalServers();
     if (pids.length === 0) return;
@@ -503,10 +556,48 @@ export const _isAccessDeniedError = isAccessDeniedError;
 // retry ONLY this signature and RETHROW everything else immediately so genuine
 // worker-init failures are never masked. (Researcher-pinned root cause, #642.)
 
-const SLOT_RETRY_DEFAULT_ATTEMPTS = 4;
-const SLOT_RETRY_DEFAULT_BASE_MS = 100;
+// #694 symptom 2 (beta.4 band-aid) — budget bumped 4→6 attempts / 100→200ms base
+// per QA's diagnosis. Old max wait ~900ms (100+200+400+jitter); new max ~6.6s
+// (200+400+800+1600+3200 + jitter×5) — covers the Rust-bridge slot-release lag on
+// a loaded Windows runner. The STRUCTURAL fix (per-test unique task queue) is
+// tracked separately; this only widens the retry window.
+const SLOT_RETRY_DEFAULT_ATTEMPTS = 6;
+const SLOT_RETRY_DEFAULT_BASE_MS = 200;
 const SLOT_RETRY_DEFAULT_FACTOR = 2;
 const SLOT_RETRY_DEFAULT_JITTER_MS = 100;
+
+/**
+ * #694 symptom 2 — post-`runUntil` slot-release barrier (~20ms wall-clock).
+ *
+ * After a worker reaches STOPPED, the Rust core bridge's Tokio runtime releases
+ * the SlotKey on ANOTHER thread — so a `setImmediate`/microtask (one Node
+ * event-loop cycle) is NOT enough; a real wall-clock delay is required to let the
+ * cross-thread deallocation land before the next `Worker.create` on the same task
+ * queue. 20ms also clears the Windows timer resolution (~15ms) with margin. The
+ * `withWorker*` helpers await this right after their `runUntil` resolves, so the
+ * NEXT caller's create is far less likely to race the not-yet-released slot (the
+ * retry above is the backstop). ~223 withWorker calls × 20ms ≈ 4.5s/shard —
+ * negligible vs. total test runtime. Not injectable: always wanted post-shutdown.
+ */
+const SLOT_RELEASE_BARRIER_MS = 20;
+async function awaitWorkerSlotRelease(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, SLOT_RELEASE_BARRIER_MS));
+}
+
+/**
+ * Run `fn` under `worker` (`worker.runUntil`), then await the slot-release
+ * barrier before resolving — the single shared definition every `withWorker*`
+ * helper routes through, so the post-`runUntil` barrier is applied uniformly
+ * (#694 symptom 2). `runUntil` already awaits the full STOPPED transition; the
+ * barrier just follows it, on the success path (a rejecting `fn` propagates
+ * immediately — that test is already failing, and the next create still has the
+ * widened slot-retry as its backstop).
+ */
+async function runWorkerUntil<T>(worker: Worker, fn: () => Promise<T>): Promise<T> {
+  const result = await worker.runUntil(fn);
+  await awaitWorkerSlotRelease();
+  return result;
+}
 
 /** The SlotKey-overlap signature — retryable. Tolerant to phrasing drift. */
 const SLOT_OVERLAP_RE = /Registration of multiple workers with overlapping worker task types|SlotKey \{/;
@@ -607,7 +698,31 @@ export async function setupTestEnv(): Promise<void> {
     workflowBundle = undefined;
   }
   if (!testEnv) {
-    testEnv = await createLocalWithRetry({
+    // #694 symptom 4 — ATOMIC init. Load + read the workflow bundle FIRST, into a
+    // local, BEFORE booting Temporal or assigning `testEnv`. The two module
+    // globals (`testEnv`, `workflowBundle`) are then assigned together only after
+    // BOTH succeed — so any failure leaves BOTH undefined and the next file's
+    // `if (!testEnv)` re-runs init (failing loudly + repeatably) instead of
+    // skipping it.
+    //
+    // The old order — assign `testEnv`, THEN load the bundle — left `testEnv` set
+    // with `workflowBundle` undefined whenever the bundle was missing: every later
+    // file saw `testEnv` truthy, skipped this block, and called `Worker.create`
+    // with neither `workflowBundle` nor activities → the cascading, opaque
+    // "task_types: At least one task type must be enabled in `task_types`" worker
+    // error that masked the real cause. Loading the bundle first also means a
+    // missing build fails BEFORE booting a Temporal env (nothing to leak/teardown).
+    let loadedBundle: { code: string };
+    try {
+      loadedBundle = { code: fs.readFileSync(findWorkflowBundle(), 'utf-8') };
+    } catch (err) {
+      throw new Error(
+        '[test:setupTestEnv] workflow-bundle.js is missing or unreadable — run `npm run build` ' +
+        'before the tests (worktree builders need BOTH: `npm run build && npm run build:test`). ' +
+        `Underlying: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    const env = await createLocalWithRetry({
       server: {
         // Register custom search attributes at server startup.
         // `AgentTempoStatus` removed in v0.26 (#175 / #178).
@@ -625,8 +740,9 @@ export async function setupTestEnv(): Promise<void> {
         ],
       },
     });
-    const bundlePath = findWorkflowBundle();
-    workflowBundle = { code: fs.readFileSync(bundlePath, 'utf-8') };
+    // Commit both module globals together — atomic, after env + bundle succeeded.
+    testEnv = env;
+    workflowBundle = loadedBundle;
   }
   // Re-seed per-file suffix. Short hex keeps workflow IDs readable in Temporal UI.
   currentEnsemblePrefix = `test-ensemble-${crypto.randomBytes(4).toString('hex')}`;
@@ -847,7 +963,7 @@ export async function withWorker<T>(fn: () => Promise<T>): Promise<T> {
       }),
     },
   });
-  return worker.runUntil(async () => {
+  return runWorkerUntil(worker, async () => {
     const hostWorkerPromise = hostWorker.run();
     try {
       return await fn();
@@ -874,7 +990,7 @@ export async function withWorkerAndActivities<T>(fn: () => Promise<T>): Promise<
     workflowBundle,
     activities: scheduleActivities,
   });
-  return worker.runUntil(fn);
+  return runWorkerUntil(worker, fn);
 }
 
 /**
@@ -1099,7 +1215,7 @@ export async function withWorkerAndOutboxActivities<T>(fn: () => Promise<T>): Pr
       }),
     },
   });
-  return worker.runUntil(async () => {
+  return runWorkerUntil(worker, async () => {
     const hostWorkerPromise = hostWorker.run();
     try {
       return await fn();
@@ -1161,7 +1277,7 @@ export async function withWorkerAndRecruitActivities<T>(fn: () => Promise<T>): P
     },
   });
 
-  return mainWorker.runUntil(async () => {
+  return runWorkerUntil(mainWorker, async () => {
     const hostWorkerPromise = hostWorker.run();
     try {
       return await fn();
@@ -1324,7 +1440,7 @@ export async function withWorkerAndRecruitCapture<T>(
     },
   });
 
-  return mainWorker.runUntil(async () => {
+  return runWorkerUntil(mainWorker, async () => {
     const hostWorkerPromise = hostWorker.run();
     try {
       return await fn();
@@ -1378,7 +1494,7 @@ export async function withWorkerAndMaestroActivities<T>(
       spawnProcess: async () => ({ success: true }),
     },
   });
-  return worker.runUntil(() => fn(relayedCommands));
+  return runWorkerUntil(worker, () => fn(relayedCommands));
 }
 
 /**
@@ -1431,7 +1547,7 @@ export async function withWorkerAndGlobalMaestroActivities<T>(
       spawnProcess: async () => ({ success: true }),
     },
   });
-  return worker.runUntil(() => fn(relayedCommands));
+  return runWorkerUntil(worker, () => fn(relayedCommands));
 }
 
 export async function reconnectSession(

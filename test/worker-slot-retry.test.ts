@@ -95,10 +95,11 @@ describe('createWorkerWithSlotRetry — slot-overlap retry path', () => {
     expect(worker).to.equal(sentinelWorker);
     expect(attempts).to.equal(2);
     expect(rec.sleeps).to.have.lengthOf(1);
-    // base 100 * 2^0 + floor(0.5 * 100) = 150
-    expect(rec.sleeps[0].ms).to.equal(150);
-    expect(rec.logs.some((l) => l.includes('attempt 1/4 hit worker-slot overlap'))).to.equal(true);
-    expect(rec.logs.some((l) => l.includes('succeeded on attempt 2/4'))).to.equal(true);
+    // #694 — default base bumped 100→200ms: base 200 * 2^0 + floor(0.5 * 100 jitter) = 250
+    expect(rec.sleeps[0].ms).to.equal(250);
+    // #694 — default attempts bumped 4→6.
+    expect(rec.logs.some((l) => l.includes('attempt 1/6 hit worker-slot overlap'))).to.equal(true);
+    expect(rec.logs.some((l) => l.includes('succeeded on attempt 2/6'))).to.equal(true);
   });
 });
 
