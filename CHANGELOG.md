@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.0-beta.3] - 2026-06-07
+
+> **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
+
+### Fixed
+- **Restore `agent-tempo up` search-attribute visibility** — commit-6 quiet flag had silenced SA registration output in CLI `up`; SAs still registered but progress was invisible. `up()` now renders one-line SA progress on the `search-attributes` step; extension TUI path remains quiet. Closes #714
+
+### Added
+- **Daemon `failMode` cross-check for supervised players** — daemon now validates the gate request's `failMode` against the player's durable `guardrailPolicy` (SessionMetadata) and forces `closed` for supervised-policy players regardless of what the agent stamps. Closes the supervised self-downgrade vector. Honest scope: not a hard tamper-proof boundary (spawn-time tool-restriction, tracked in #715, is the real boundary). Closes #712
+- **`coat_check` HTTP route for large-plan `/handoff`** — daemon write-surface now exposes `PUT /v1/coat-check` (T2 auth), mirroring the MCP tool, so the command-center planner can stash large plans and pass a ticket rather than inlining. Does not raise the handoff ceiling (still cue-bounded); enables cue-lean large-plan flow. Closes #713
+
 ## [1.7.0-beta.2] - 2026-06-06
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
