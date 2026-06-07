@@ -269,24 +269,28 @@ export interface SessionMetadata {
    * the real posture on EVERY attach (across restart / migrate / re-attach), so
    * a previously-`supervised` agent stays supervised. (tempo-architect ruling.)
    *
-   * **★ Enforcement scope (#712 — claims EXACTLY this, no more).** The daemon
-   * enforces fail-closed for a `supervised` player's gate ENGAGEMENTS: the gate's
-   * `open()` cross-check derives the `failMode` from THIS durable policy (read by
-   * the daemon, populated at spawn + lazily resolved on a cache-miss), so the
-   * `failMode` an engaging agent stamps on its `gate_pending` frame can't
-   * self-downgrade a supervised player out of fail-closed (a `'open'` claim against
-   * a `supervised` policy is overridden to `closed` and a `failmode-override`
-   * audit record is written). This is **NOT a hard boundary** against an agent
-   * that SKIPS gate-engagement entirely (runs the tool without emitting a
-   * `gate_pending` frame) or bypasses the client-side MD-C exec-block — a true
-   * boundary requires spawn-time tool-restriction (the agent physically lacks the
-   * tools), tracked separately in **#715**.
+   * **★ Enforcement scope (#715).** `supervised` is the daemon-enforced approval
+   * boundary for the realistic threat: a prompt-injected agent. A manipulated LLM
+   * can only *emit* tool-call requests — Pi routes every one to agent-tempo's
+   * `tool_call` handler, which engages the gate (non-`low-risk`) or hard-blocks
+   * (exec tools at `toolAccess: 'restricted'`). The agent **cannot** skip the gate
+   * or run a dangerous tool directly — it doesn't control the hook. The daemon also
+   * derives `failMode` from this durable policy (populated at spawn, falling
+   * `closed` on any lookup failure — no-fail-open), so an engaging agent can't
+   * self-downgrade a supervised player out of fail-closed.
+   *
+   * The **residual** is *process compromise*: code execution **inside** the Pi
+   * process (host RCE bypassing the handler entirely). No client-side gate defends
+   * that — it requires OS-level process sandboxing, tracked as a separate future
+   * `'sandboxed'` posture (#724). That is **not a gap in `supervised`'s scope**:
+   * supervised targets prompt-injection, and against that threat it **is** a real
+   * enforcement boundary.
    *
    * **Post-restart window:** on daemon restart the in-memory ingest tokens are
    * invalidated, so existing players' gate engagements are rejected (403) until a
    * re-spawn re-mints. In that window a `supervised` player's gate-client
-   * fail-closes on its own derived deadline (client-side safety holds), but the
-   * gate is NOT daemon-mediated — the #715 client-cooperative residual.
+   * fail-closes on its own derived deadline (client-side safety holds, not
+   * daemon-mediated) — same process-compromise residual, not a distinct gap.
    */
   guardrailPolicy?: GuardrailPolicy;
 }
