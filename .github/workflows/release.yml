@@ -47,6 +47,21 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Cache Temporal test server binary
+        # Pre-cache the Temporal test server binary so TestWorkflowEnvironment.createLocal()
+        # is always a filesystem hit during tests — eliminates the in-test download race that
+        # leaves stale `.downloading` lock files and trips the 20s timeout (#694 / #642).
+        # Mirrors the same step in ci.yml build-and-test — must stay in sync.
+        # ⚠️  VERSION NOTE: update "1.15.0" in path + key when bumping @temporalio/testing.
+        uses: actions/cache@v4
+        with:
+          path: /tmp/temporal-sdk-typescript-1.15.0  # update on @temporalio/testing bump
+          key: temporal-test-server-linux-1.15.0     # update on @temporalio/testing bump
+
+      - name: Remove stale Temporal download lock
+        # ⚠️  VERSION NOTE: update "1.15.0" here when bumping @temporalio/testing.
+        run: rm -f /tmp/temporal-sdk-typescript-1.15.0.downloading
+
       - name: Run Mocha shard ${{ matrix.shard }}
         id: mocha
         run: |
