@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.0-beta.6] - 2026-06-08
+
+> **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
+
+### Added
+- **Pi extension role-gating — `agent-tempo command-center`** — command-center mode now only activates when launched via `agent-tempo command-center` (aliases: `cc`, `board`); bare `pi` sessions stay dormant and pristine. Fixes phantom-player orphan that appeared when a bare Pi session exited without claiming attachment. §3f docs refreshed. Closes #729
+
 ## [1.7.0-beta.5] - 2026-06-07
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
