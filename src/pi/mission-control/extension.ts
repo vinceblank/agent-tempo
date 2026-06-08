@@ -16,7 +16,7 @@
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { z } from 'zod';
-import { getConfig } from '../../config';
+import { getConfig, resolvePiRole, type PiRole } from '../../config';
 import { readPortFile } from '../../http/port-file';
 import { createSubscribe } from '../../client/subscribe';
 import {
@@ -96,6 +96,12 @@ export interface MissionControlDeps {
   renderThrottleMs?: number;
   /** Local daemon host for tailability (test override; defaults to `os.hostname()`). */
   localHost?: string;
+  /**
+   * #729 — session-role override for the dormancy gate (test seam). Defaults to
+   * {@link resolvePiRole}. The board activates ONLY for `'command-center'`;
+   * `'player'` and `'none'` both keep it dormant.
+   */
+  role?: PiRole;
 }
 
 /**
@@ -500,6 +506,22 @@ const log = (...args: unknown[]): void => {
  */
 export function createMissionControlExtension(deps: MissionControlDeps = {}): (pi: McExtensionAPI) => void {
   return (pi: McExtensionAPI): void => {
+    // ── #729 role gate (MUST stay first — before any registerCommand /
+    // registerTool / session_start SSE) ──
+    //
+    // The board activates ONLY in the command-center role (the operator's
+    // `agent-tempo command-center` seat, which sets AGENT_TEMPO_MISSION_CONTROL).
+    // A player session ('player') AND a bare coding `pi` ('none') both keep the
+    // board DORMANT — no commands/tools registered, no coarse SSE opened. This is
+    // the other half of #729 mutual exclusion: exactly one extension registers
+    // tools per session (no cue/recruit name collision with the player surface),
+    // and a plain `pi` stays pristine (A2 — affirmative opt-in only).
+    const role = deps.role ?? resolvePiRole();
+    if (role !== 'command-center') {
+      log(`dormant — session role is '${role}', not command-center: board not activated.`);
+      return;
+    }
+
     const ensemble = deps.ensemble ?? getConfig().ensemble;
     const adminToken = deps.adminToken ?? process.env[ADMIN_TOKEN_ENV];
     const throttleMs = deps.renderThrottleMs ?? DEFAULT_RENDER_THROTTLE_MS;

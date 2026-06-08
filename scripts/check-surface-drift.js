@@ -93,6 +93,8 @@ function extractMcpToolsFromSource() {
  */
 const CLI_KNOWN_ALIASES = new Set([
   'attachment', // falls through to 'attachment-info'
+  'cc',         // alias for 'command-center' (#729)
+  'board',      // alias for 'command-center' (#729)
 ]);
 
 function extractCliCommandsFromSource() {
@@ -108,7 +110,7 @@ function extractCliCommandsFromSource() {
   // If you add a new pre-switch verb in src/cli.ts (e.g. an `if` branch before
   // the main `switch (args.command)`), add it here too or the drift detector
   // will report it as "in docs but not in source".
-  for (const c of ['version', 'help', 'daemon', 'upgrade', 'config', 'dashboard']) {
+  for (const c of ['version', 'help', 'daemon', 'upgrade', 'config', 'dashboard', 'command-center']) {
     commands.add(c);
   }
 

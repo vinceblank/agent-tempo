@@ -163,7 +163,62 @@ export const ENV = {
    * coordinate three or more parallel agent-tempo profiles on one box.
    */
   DEV_HOME_OVERRIDE: 'AGENT_TEMPO_HOME_OVERRIDE',
+  /**
+   * #729 — explicit Pi session-role override for {@link resolvePiRole}. Accepts
+   * `'player'` | `'command-center'`. A future escape hatch: the heuristic
+   * (PLAYER_NAME presence) already classifies every current launch correctly, so
+   * this is intentionally NOT wired into any spawn site — it exists so an operator
+   * can force a role if a new launch path ever defeats the heuristic.
+   */
+  PI_ROLE: 'AGENT_TEMPO_PI_ROLE',
+  /**
+   * #729 (A2) — affirmative opt-in for the mission-control command-center board.
+   * Set by the `agent-tempo command-center` launcher (NOT by bare `pi`), so a
+   * plain coding `pi` stays pristine (both extensions dormant). Lower precedence
+   * than {@link PLAYER_NAME} in {@link resolvePiRole} — a session that must CLAIM
+   * never silently degrades to a passive board.
+   */
+  MISSION_CONTROL: 'AGENT_TEMPO_MISSION_CONTROL',
 } as const;
+
+/**
+ * The role of a Pi session (#729). A session is at most ONE of these — the two
+ * auto-loaded Pi extensions gate on it so they're mutually exclusive:
+ * - `player` — the player extension's full MCP surface (cue/recruit/report/…).
+ * - `command-center` — mission-control's operator board + planner tools.
+ * - `none` — neither (a bare `pi` used for plain coding); both stay dormant.
+ *
+ * `player` and `command-center` both register `cue`/`recruit` by name, so loading
+ * both in one session collides and the command-center never starts (#729).
+ */
+export type PiRole = 'player' | 'command-center' | 'none';
+
+/**
+ * Resolve the role of a Pi session (#729) — the single discriminator both
+ * auto-loaded Pi extensions gate on.
+ *
+ * Precedence (deterministic, #729 A2):
+ * 1. Explicit {@link ENV.PI_ROLE} (`'player'` | `'command-center'`) wins — a future
+ *    escape hatch, intentionally NOT wired into any spawn site.
+ * 2. {@link ENV.PLAYER_NAME} present (every `up`/`recruit` player spawn) → `'player'`.
+ *    Checked BEFORE the board opt-in ON PURPOSE: a session that must CLAIM must
+ *    never silently degrade to a passive board.
+ * 3. {@link ENV.MISSION_CONTROL} opt-in (set by `agent-tempo command-center`) →
+ *    `'command-center'`.
+ * 4. Otherwise `'none'` — a bare `pi` for plain coding: BOTH extensions stay
+ *    dormant (the A2 clean-pi guarantee).
+ *
+ * Pure (env injectable) so the dormancy matrix is unit-testable without spawning.
+ * NOTE: headless Pi is definitionally a recruited player and must NOT rely on this
+ * heuristic — its caller forces `'player'` directly (env-weirdness immune).
+ */
+export function resolvePiRole(env: NodeJS.ProcessEnv = process.env): PiRole {
+  const explicit = env[ENV.PI_ROLE];
+  if (explicit === 'player' || explicit === 'command-center') return explicit;
+  if (env[ENV.PLAYER_NAME]) return 'player';
+  if (env[ENV.MISSION_CONTROL]) return 'command-center';
+  return 'none';
+}
 
 // PR-H (#132): `lifecycleV2Enabled()` removed. The V2 attachment-lease path
 // is unconditional in v0.25.0-beta.1; the rollback flag was an emergency
