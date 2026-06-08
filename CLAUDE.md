@@ -104,6 +104,7 @@ src/
 │   ├── hosts.ts / set-ensemble-description.ts
 │   ├── save-state.ts / fetch-state.ts / clear-state.ts
 │   ├── coat-check-put.ts / coat-check-get.ts / coat-check-list.ts / coat-check-evict.ts
+│   ├── respond.ts
 │   └── descriptor.ts  # Transport-neutral tool descriptor (TempoToolDescriptor) + renderToMcp; per-tool `build*Tool` factories live in each tool file (MD-B, Phase 1)
 ├── pi/                # Pi-native integration — a Pi session as a first-class player over the Temporal core
 │   ├── extension.ts   # `export default function(pi)` — interactive runtime entry. Holds the MODULE-SCOPE singleton `Map<workflowId, PiPlayerRuntime>` that survives Pi's per-switch instance rebuild (rebind, not re-claim); full tool surface via renderToPi; Option-C reason-discriminated teardown
