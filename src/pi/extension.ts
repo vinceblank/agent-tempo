@@ -32,7 +32,7 @@
 import * as os from 'os';
 import * as crypto from 'crypto';
 import type { Client, WorkflowHandle } from '@temporalio/client';
-import { getConfig, ENV, sessionWorkflowId, type Config } from '../config';
+import { getConfig, ENV, resolvePiRole, sessionWorkflowId, type Config } from '../config';
 import type { AgentType, SessionMetadata, GuardrailPolicy } from '../types';
 import {
   buildAllTempoTools,
@@ -195,6 +195,30 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
   const guardrailPolicy: GuardrailPolicy = options.guardrailPolicy ?? 'autonomous';
 
   return function piExtension(pi: ExtensionAPI): void {
+    // ── #729 role gate (MUST stay first — before probePi / getConfig /
+    // clientFactory / renderToPi / before_agent_start / any session_start claim) ──
+    //
+    // Headless Pi is definitionally a recruited player, so force 'player' on it —
+    // never trust the env heuristic there (env-weirdness immune). Every INTERACTIVE
+    // player spawn (conductor `up --agent pi`, `recruit`) sets PLAYER_NAME; a bare
+    // `pi` does not. When this session is NOT a player, the player extension goes
+    // FULLY DORMANT: it registers NO tools, opens NO Temporal connection (the
+    // `clientFactory(config)` kickoff below is skipped), and starts NO workflow.
+    //
+    // This is load-bearing for two things at once: (1) it resolves the cue/recruit
+    // tool-name COLLISION with mission-control (exactly one extension registers
+    // tools per session), and (2) it kills the phantom `pi-${process.pid}` orphan
+    // workflow a bare `pi` used to self-bootstrap (the `pi-${pid}` fallback id below
+    // is now never reached in a non-player session).
+    const role = mode === 'headless' ? 'player' : resolvePiRole();
+    if (role !== 'player') {
+      log(
+        `dormant — session role is '${role}', not a player: registering no player ` +
+        'surface (no tools, no Temporal connection, no workflow).',
+      );
+      return;
+    }
+
     const probe = probePi();
     if (!probe.available) log('WARNING:', probe.reason);
 

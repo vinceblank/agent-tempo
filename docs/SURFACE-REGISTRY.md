@@ -101,6 +101,7 @@ Source: `src/cli/help-text.ts` Commands section and `src/cli.ts` switch statemen
 | `agent-types <sub>` | Manage player type definitions (`list` / `show` / `init`) |
 | `daemon <sub>` | Manage the worker daemon (`start` / `stop` / `status` / `logs` / `stats`) |
 | `dashboard` | Open the web dashboard in the default browser (`--no-open` / `--pair` / `--json`) |
+| `command-center [ensemble]` | Launch the interactive Pi mission-control board (operator seat; sets the `command-center` role opt-in). Aliases: `cc` / `board` |
 | `scenarios <sub>` | Discover mock-adapter scenarios shipped at `<package>/scenarios/` (`list` / `show <name>`). Available outside `--dev`; the recruit gate (`agent: 'mock'`) still requires it. |
 | `upgrade [version]` | Upgrade agent-tempo to latest or a specific version |
 | `config` | Configure Temporal connection settings (interactive or `set` / `show`) |

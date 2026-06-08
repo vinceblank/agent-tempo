@@ -52,6 +52,7 @@ ${out.bold('Commands:')}
   ${out.cyan('agent-types')} <sub>        Manage player type definitions (list/show/init)
   ${out.cyan('daemon')}    <sub>          Manage the worker daemon (start/stop/status/logs)
   ${out.cyan('dashboard')}                Open the web dashboard (--no-open / --pair / --json)
+  ${out.cyan('command-center')} [ensemble] Launch the interactive Pi mission-control board (operator seat; alias: cc/board)
   ${out.cyan('upgrade')}  [version]       Upgrade agent-tempo to latest (or specific version)
   ${out.cyan('config')}                   Configure Temporal connection settings
   ${out.cyan('init')}                     Register MCP server globally (or --project for .mcp.json)

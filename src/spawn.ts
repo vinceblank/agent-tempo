@@ -725,6 +725,58 @@ export function buildPiConductorSpawn(opts: PiConductorSpawnOpts): {
   return { cmd, args, env };
 }
 
+/** Inputs for {@link buildPiCommandCenterSpawn} (pure — unit-tested without spawning). */
+export interface PiCommandCenterSpawnOpts {
+  ensemble: string;
+  /** Temporal env (address/namespace/api-key/tls) built by the caller. */
+  temporalEnvVars: Record<string, string>;
+  /** Temporal task queue (forwarded for config parity; the board drives the daemon via HTTP). */
+  taskQueue: string;
+  devMode: boolean;
+  /** Daemon admin (T3) token → `AGENT_TEMPO_HTTP_ADMIN_TOKEN` (mission-control's write/gate surface). */
+  adminToken?: string;
+  /** Forwarded if set (Pi's own model auth). */
+  anthropicApiKey?: string;
+  /** Injectable resolver (defaults to the real one, which fails clean on miss). */
+  resolveBinary?: () => { cmd: string; args: string[] };
+}
+
+/**
+ * Build the interactive Pi COMMAND-CENTER (mission-control) spawn spec —
+ * `{ cmd, args, env }` for {@link launchInTerminal} (#729). PURE + injectable.
+ *
+ * Unlike {@link buildPiConductorSpawn}, this passes NO `-e <ext>`: install-pi
+ * registers BOTH Pi extensions in `~/.pi/agent/settings.json`, so a plain `pi`
+ * auto-loads them and {@link resolvePiRole} (via the env below) picks exactly one.
+ * Passing `-e` here would DOUBLE-LOAD mission-control (settings.json + `-e`) → a
+ * command re-registration error. The env carries the OPERATOR subset only:
+ *   - `AGENT_TEMPO_MISSION_CONTROL=1` → the role opt-in (resolver → `command-center`).
+ *   - `AGENT_TEMPO_ENSEMBLE` → which ensemble the board observes.
+ *   - `AGENT_TEMPO_HTTP_ADMIN_TOKEN` → the daemon write/gate surface the board POSTs to.
+ *
+ * ★ It MUST NOT set `PLAYER_NAME` or `CONDUCTOR` — either flips {@link resolvePiRole}
+ * to `'player'`, which would keep the board dormant (and self-bootstrap a player).
+ */
+export function buildPiCommandCenterSpawn(opts: PiCommandCenterSpawnOpts): {
+  cmd: string;
+  args: string[];
+  env: Record<string, string>;
+} {
+  const { cmd, args } = (opts.resolveBinary ?? resolvePiInteractiveBinary)();
+  const env: Record<string, string> = {
+    ...opts.temporalEnvVars,
+    [ENV.TASK_QUEUE]: opts.taskQueue,
+    [ENV.ENSEMBLE]: opts.ensemble,
+    [ENV.MISSION_CONTROL]: '1', // #729 A2 role opt-in → resolver picks 'command-center'
+    [ENV.NO_PPID_WATCHDOG]: '1', // launched detached by the transient CLI (mirrors the conductor)
+    ...(opts.devMode ? { [ENV.DEV_MODE]: '1' } : {}),
+    ...(opts.adminToken ? { [ENV.HTTP_ADMIN_TOKEN]: opts.adminToken } : {}),
+    ...(opts.anthropicApiKey ? { ANTHROPIC_API_KEY: opts.anthropicApiKey } : {}),
+  };
+  // Deliberately NO ENV.PLAYER_NAME / ENV.CONDUCTOR — they'd flip the role to player.
+  return { cmd, args, env };
+}
+
 // --- Copilot bridge spawning ---
 
 export interface CopilotBridgeOpts {

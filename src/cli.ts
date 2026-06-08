@@ -428,6 +428,19 @@ async function main() {
     return;
   }
 
+  if (args.command === 'command-center' || args.command === 'cc' || args.command === 'board') {
+    // #729 — launch the interactive Pi mission-control board. Lightweight + does
+    // NOT touch Temporal (it spawns `pi` with the operator opt-in env and drives
+    // the daemon over HTTP), so it stays out of the Temporal-loading `./cli/commands`
+    // import — an operator can open the board even when the Temporal SDK is broken.
+    const { commandCenterCommand } = await import('./cli/command-center-command');
+    await commandCenterCommand({
+      ensemble: args.positional[1],
+      ...overrides,
+    });
+    return;
+  }
+
   // Dev-mode scriptable verbs (#432). Gated on `isDevMode()` AND an explicit
   // allowlist (`DEV_VERBS`); intercepts BEFORE the removed-verbs check so
   // verbs like `pause` (collapsed by #288) can act on the live ensemble in
@@ -665,7 +678,13 @@ async function main() {
       for (const p of result.added) out.log(`  ${out.green('+')} ${p}`);
       for (const p of result.alreadyPresent) out.log(out.dim(`  · ${p} (already installed)`));
       out.log('');
-      out.log('  Restart `pi` to load the agent-tempo extensions.');
+      // #729 — the extensions are role-gated: exactly one activates per session.
+      // Point operators at the DELIBERATE launches, not a bare `pi` (which now
+      // intentionally keeps BOTH dormant so plain coding sessions stay pristine).
+      out.log('  Launch a session with one of:');
+      out.log(`    ${out.cyan('agent-tempo up --agent pi')}        a conductor/player in this ensemble`);
+      out.log(`    ${out.cyan('agent-tempo command-center')}       the operator mission-control board`);
+      out.log(out.dim('  A bare `pi` stays a plain coding session (neither extension activates).'));
       break;
     }
 
