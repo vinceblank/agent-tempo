@@ -55,9 +55,13 @@ interface PiSdkSession {
 /**
  * Resolve a Pi `Model` object from a `provider/model` string via pi-ai's
  * `getModel`. Returns `{ model }` on success, `{ fatal }` with an actionable
- * message on an invalid/unindexed model (getModel returns `undefined` — a plain
- * check, no throw), or `{}` when no model was requested (Pi uses its own default
- * — the 3a anthropic-default path).
+ * message on an unresolvable model, or `{}` when no model was requested (Pi
+ * uses its own default — the 3a anthropic-default path).
+ *
+ * Resolution order:
+ *   1. pi-ai built-in index (`getModel`) — fast, no disk I/O.
+ *   2. ModelRegistry from models.json — covers custom local providers
+ *      (lmstudio, ollama, vllm, etc.) registered via ~/.pi/agent/models.json.
  */
 async function resolveModel(modelStr: string | undefined): Promise<{ model?: unknown; fatal?: string }> {
   if (!modelStr) return {};
@@ -68,17 +72,32 @@ async function resolveModel(modelStr: string | undefined): Promise<{ model?: unk
   const provider = modelStr.slice(0, slash);
   const modelName = modelStr.slice(slash + 1);
   try {
+    // 1) Try built-in index first (fast, no disk I/O).
     const piAi = await esmImport(PI_AI_PACKAGE);
     const getModel = piAi.getModel as (p: string, m: string) => unknown;
-    const model = getModel(provider, modelName);
-    if (model === undefined || model === null) {
-      return {
-        fatal:
-          `Pi model "${modelStr}" not found in Pi's provider index (provider="${provider}"). ` +
-          `Check the model id against \`pi --list-models\` / models.dev.`,
+    const builtIn = getModel(provider, modelName);
+    if (builtIn !== undefined && builtIn !== null) return { model: builtIn };
+
+    // 2) Not a built-in — try custom providers from models.json.
+    //    Covers local providers like lmstudio, ollama, vllm, etc.
+    try {
+      const piSdk = await esmImport(PI_PACKAGE);
+      const ModelRegistry = piSdk.ModelRegistry as {
+        create(auth: unknown): { find(provider: string, modelId: string): unknown };
       };
+      const AuthStorage = piSdk.AuthStorage as { create(): unknown };
+      const custom = ModelRegistry.create(AuthStorage.create()).find(provider, modelName);
+      if (custom !== undefined && custom !== null) return { model: custom };
+    } catch {
+      // ModelRegistry unavailable — fall through to the fatal below.
     }
-    return { model };
+
+    return {
+      fatal:
+        `Pi model "${modelStr}" not found (not in built-in index or models.json). ` +
+        `Run \`pi --list-models\` or check ~/.pi/agent/models.json for custom providers. ` +
+        `Omit the model arg to use Pi's configured default.`,
+    };
   } catch (err) {
     return { fatal: `Failed to resolve Pi model "${modelStr}": ${err instanceof Error ? err.message : String(err)}` };
   }
