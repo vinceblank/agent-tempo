@@ -51,7 +51,13 @@ export type TailFetch = (
 
 export interface OpenInnerTailOptions {
   baseUrl: string;
-  adminToken: string;
+  /**
+   * Admin (T3) token. OPTIONAL (#54): a loopback daemon serves the `/inner`
+   * egress tokenless (full-trust short-circuit). When absent, no `Authorization`
+   * header is sent and the daemon decides — a remote / `0.0.0.0` daemon 401s
+   * (surfaced via `onError`).
+   */
+  adminToken?: string;
   ensemble: string;
   playerId: string;
   onFrame: (frame: InnerFrame) => void;
@@ -72,7 +78,11 @@ export async function openInnerTail(opts: OpenInnerTailOptions): Promise<void> {
   try {
     res = await opts.fetchFn(url, {
       method: 'GET',
-      headers: { Authorization: `Bearer ${opts.adminToken}`, Accept: 'text/event-stream' },
+      headers: {
+        Accept: 'text/event-stream',
+        // #54 — bearer ONLY when a token is set; loopback serves tokenless.
+        ...(opts.adminToken ? { Authorization: `Bearer ${opts.adminToken}` } : {}),
+      },
       signal: opts.signal,
     });
   } catch (err) {
@@ -80,7 +90,11 @@ export async function openInnerTail(opts: OpenInnerTailOptions): Promise<void> {
     return;
   }
   if (res.status !== 200 || !res.body) {
-    opts.onError?.(`inner tail HTTP ${res.status}`);
+    // #54 — a tokenless 401/403 means a remote / 0.0.0.0 daemon that needs the token.
+    const hint = !opts.adminToken && (res.status === 401 || res.status === 403)
+      ? ' (set AGENT_TEMPO_HTTP_ADMIN_TOKEN for a remote/0.0.0.0 daemon; loopback needs none)'
+      : '';
+    opts.onError?.(`inner tail HTTP ${res.status}${hint}`);
     return;
   }
   const decoder = new TextDecoder();

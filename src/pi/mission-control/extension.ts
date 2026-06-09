@@ -556,7 +556,12 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
     };
 
     const startCoarse = (): void => {
-      if (!adminToken) { log(`no admin token (${ADMIN_TOKEN_ENV}) — board limited / disabled`); }
+      // #54 — accurate posture: a tokenless board is FULLY functional against a
+      // local (loopback) daemon, which grants full trust. Only a REMOTE / 0.0.0.0
+      // daemon requires the admin token (it 401s tokenless reads + actions).
+      if (!adminToken) {
+        log(`no ${ADMIN_TOKEN_ENV} — OK for a local loopback daemon (full trust); a remote / 0.0.0.0 daemon will require it`);
+      }
       // H5: capture the controller locally. teardown nulls the outer `coarseAbort`,
       // so the catch must check THIS signal — checking the nulled outer ref made an
       // expected teardown abort log a spurious "coarse SSE ended: AbortError".
@@ -593,7 +598,9 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
     const openTail = (playerId: string | null): void => {
       tailAbort?.abort();
       tailAbort = null;
-      if (playerId === null || !adminToken) return;
+      // #54 — do NOT gate on the token: the loopback daemon serves /inner tokenless.
+      // openInnerTail sends the bearer iff present; a remote/0.0.0.0 daemon 401s → onError.
+      if (playerId === null) return;
       tailAbort = new AbortController();
       // H5: resolve the daemon base URL HERE (per /tail) so a port change is
       // picked up on the next tail instead of being pinned at session start.
