@@ -675,6 +675,8 @@ async function main() {
       const { installPiExtensions } = await import('./pi/install');
       const result = installPiExtensions({ project: args.project });
       out.success(`Pi extensions installed → ${result.settingsPath}`);
+      // #52 — show pruned stale/old-version entries so an upgrade is legible.
+      for (const p of result.removed) out.log(`  ${out.yellow('-')} ${p} ${out.dim('(removed stale/old-version entry)')}`);
       for (const p of result.added) out.log(`  ${out.green('+')} ${p}`);
       for (const p of result.alreadyPresent) out.log(out.dim(`  · ${p} (already installed)`));
       out.log('');

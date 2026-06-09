@@ -61,8 +61,40 @@ export interface InstallPiResult {
   added: string[];
   /** Extension paths already present before this run. */
   alreadyPresent: string[];
+  /**
+   * #52 — STALE agent-tempo extension paths PRUNED by this run (old-version /
+   * moved-install entries that pointed at an agent-tempo extension but are no
+   * longer the current path). Empty on a clean re-run.
+   */
+  removed: string[];
   /** The final `extensions` array written to settings.json. */
   extensions: string[];
+}
+
+/**
+ * #52 — does this settings `extensions` entry point at an agent-tempo Pi
+ * extension (player or command-center), of ANY version / install location?
+ *
+ * The motivating bug: a `pnpm` global install version-hashes the package dir
+ * (`.../.pnpm/agent-tempo@<version>_<hash>/node_modules/agent-tempo/...`), so on
+ * UPGRADE the recorded absolute path goes stale — and a naive add-only install
+ * leaves BOTH the old and new paths in `settings.json`, which makes `pi` fail on
+ * the now-missing stale entry. {@link installPiExtensions} prunes every match of
+ * this predicate (except the current paths) before re-adding, so a re-run
+ * REPLACES rather than duplicates.
+ *
+ * Match = an agent-tempo package marker (`/agent-tempo@…` version dir, or the
+ * `/node_modules/agent-tempo/` package dir) AND an agent-tempo extension suffix
+ * (`dist/pi/extension.js` or `dist/pi/mission-control/extension.js`). Both halves
+ * are required so a user's own unrelated extension is never pruned. Separators
+ * are normalised so the predicate holds on Windows paths too.
+ */
+export function isAgentTempoExtensionPath(p: string): boolean {
+  const n = p.replace(/\\/g, '/');
+  const fromAgentTempo = n.includes('/agent-tempo@') || n.includes('/node_modules/agent-tempo/');
+  const isExtensionEntry =
+    n.endsWith('/dist/pi/extension.js') || n.endsWith('/dist/pi/mission-control/extension.js');
+  return fromAgentTempo && isExtensionEntry;
 }
 
 /** Resolve the Pi settings.json path for the chosen scope. */
@@ -76,6 +108,13 @@ export function piSettingsPath(opts: InstallPiOptions = {}): string {
  * `settings.json` `"extensions"` array. Re-running is a no-op (no duplicates, no
  * write when nothing changed). Never copies any extension file — install by
  * reference only (see file header).
+ *
+ * #52 — REPLACE, don't accumulate: before adding the current paths, PRUNE any
+ * STALE agent-tempo extension entries ({@link isAgentTempoExtensionPath}, minus
+ * the current paths). On a `pnpm` upgrade the package dir is version-hashed, so
+ * the recorded absolute path changes — without pruning, `settings.json` would
+ * list both the old (now-missing) and new paths and `pi` would fail on the stale
+ * one. A user's own unrelated extensions and other settings keys are preserved.
  *
  * Tolerates a missing / empty / corrupt settings file: a missing file is
  * created; an unparseable one is replaced with a fresh object carrying just the
@@ -106,9 +145,16 @@ export function installPiExtensions(opts: InstallPiOptions = {}): InstallPiResul
     ? (settings.extensions as unknown[]).filter((x): x is string => typeof x === 'string')
     : [];
 
+  // #52 — prune STALE agent-tempo extension entries (an agent-tempo extension
+  // path that is NOT one of the current `want` paths — e.g. an old version-hashed
+  // pnpm dir). The current paths and all non-agent-tempo entries keep their
+  // original positions.
+  const removed = current.filter((p) => !want.includes(p) && isAgentTempoExtensionPath(p));
+  const removedSet = new Set(removed);
+
   const added: string[] = [];
   const alreadyPresent: string[] = [];
-  const merged = [...current];
+  const merged = current.filter((p) => !removedSet.has(p));
   for (const p of want) {
     if (merged.includes(p)) {
       alreadyPresent.push(p);
@@ -119,12 +165,12 @@ export function installPiExtensions(opts: InstallPiOptions = {}): InstallPiResul
   }
   settings.extensions = merged;
 
-  // Idempotent: only write when something actually changed (or the file is
-  // absent and must be created). A clean repeat run touches nothing.
-  if (added.length > 0 || !fileExists) {
+  // Idempotent: only write when something actually changed (added, pruned, or the
+  // file is absent and must be created). A clean repeat run touches nothing.
+  if (added.length > 0 || removed.length > 0 || !fileExists) {
     mkdirSync(dirname(settingsPath), { recursive: true });
     writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
   }
 
-  return { settingsPath, added, alreadyPresent, extensions: merged };
+  return { settingsPath, added, alreadyPresent, removed, extensions: merged };
 }
