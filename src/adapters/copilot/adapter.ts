@@ -41,6 +41,7 @@ import { getConfig, ENV, resolveAdapterPidFile } from '../../config';
 import { createTemporalConnection } from '../../connection';
 import { Message } from '../../types';
 import type { AdapterDescriptor } from '../../types';
+import { consolidateQuestionCue } from '../../utils/cue-format';
 import { SdkAttachment } from '../sdk/base';
 // #536 — shared SDK-class system-prompt + MAESTRO_ACK (was inline
 // here pre-#536; moved to the shared module so the post-#536
@@ -654,7 +655,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
         // Format messages into a single prompt, appending ack instruction for Maestro messages
         const prompt = messages
           .map((m) => {
-            const line = `[Message from ${m.from}]: ${m.text}`;
+            const line = consolidateQuestionCue(m.from, m.text) ?? `[Message from ${m.from}]: ${m.text}`; // #53
             return m.isMaestro ? line + MAESTRO_ACK : line;
           })
           .join('\n\n');

@@ -26,6 +26,7 @@
  *      turn driver focused on the I/O side.
  */
 import type { Message } from '../../types';
+import { consolidateQuestionCue } from '../../utils/cue-format';
 import { MAESTRO_ACK, buildSdkSystemPrompt } from '../sdk/system-prompt';
 import type { ClaudeCodeHeadlessPermissionMode } from './types';
 
@@ -46,7 +47,7 @@ import type { ClaudeCodeHeadlessPermissionMode } from './types';
 export function buildPromptText(messages: Message[]): string {
   return messages
     .map((m) => {
-      const line = `[from ${m.from}]: ${m.text}`;
+      const line = consolidateQuestionCue(m.from, m.text) ?? `[from ${m.from}]: ${m.text}`; // #53
       return m.isMaestro ? line + MAESTRO_ACK : line;
     })
     .join('\n\n');

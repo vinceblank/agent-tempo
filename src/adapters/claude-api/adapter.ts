@@ -39,6 +39,7 @@ import { SdkAttachment, type SdkDeliverResult } from '../sdk/base';
 import { ENV, getConfig, resolveAdapterPidFile } from '../../config';
 import { createTemporalConnection } from '../../connection';
 import { pendingMessagesQuery, allMessagesQuery, allSentMessagesQuery, isDestroyedQuery, receiveMessageSignal } from '../../workflows/signals';
+import { consolidateQuestionCue } from '../../utils/cue-format';
 import { buildServerInstructions } from '../../server-tools';
 import { bootMcpBridge, type McpBridge } from './mcp-bridge';
 import { classifyApiError, computeBackoffMs, DEFAULT_RETRY_BUDGET } from './api-error';
@@ -777,7 +778,7 @@ export function buildAnthropicMessages(
 ): Array<{ role: 'user' | 'assistant'; content: string }> {
   type Row = { role: 'user' | 'assistant'; text: string; ts: string };
   const rows: Row[] = [];
-  for (const m of received) rows.push({ role: 'user', text: `[from ${m.from}]: ${m.text}`, ts: m.timestamp });
+  for (const m of received) rows.push({ role: 'user', text: consolidateQuestionCue(m.from, m.text) ?? `[from ${m.from}]: ${m.text}`, ts: m.timestamp }); // #53
   for (const m of sent) rows.push({ role: 'assistant', text: m.text, ts: m.timestamp });
   rows.sort((a, b) => a.ts.localeCompare(b.ts));
 

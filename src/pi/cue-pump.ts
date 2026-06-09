@@ -42,6 +42,7 @@
  * Adapted from Pi's `examples/extensions/file-trigger.ts`.
  */
 import type { Message } from '../types';
+import { consolidateQuestionCue } from '../utils/cue-format';
 import type { ExtensionAPI, PiAgentSession, PiOutboundMessage, PiCustomMessageOptions } from './pi-types';
 
 /** Source of pending cues + ack — satisfied by `PiWorkflowClient`. */
@@ -205,7 +206,10 @@ export class CuePump {
       const delivered: string[] = [];
       let lastDeliveredText: string | null = null;
       for (const msg of pending) {
-        const content = msg.from ? `[cue from ${msg.from}] ${msg.text}` : msg.text;
+        // #53 — a planner question consolidates to a single `[Q <id> · from …]`
+        // header (no doubled prefix); a normal cue keeps the `[cue from …]` envelope.
+        const content = consolidateQuestionCue(msg.from, msg.text)
+          ?? (msg.from ? `[cue from ${msg.from}] ${msg.text}` : msg.text);
         try {
           await this.injectCue(injector, msg, content);
           delivered.push(msg.id);
