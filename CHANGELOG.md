@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.0-beta.7] - 2026-06-09
+
+> **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
+
+### Added
+- **Command-center loopback auto-token** — `agent-tempo command-center` no longer requires a manually set `AGENT_TEMPO_HTTP_ADMIN_TOKEN` when the daemon is on localhost; the admin token is injected automatically. Remote daemons still require explicit token configuration. Closes #736
+- **`install-pi` prunes stale extension paths on re-run** — `installPiExtensions` now replaces outdated agent-tempo extension entries (e.g. stale version-hashed pnpm paths) instead of accumulating both old and new, preventing Pi from failing to load a now-missing path after upgrade. Closes #738
+
 ## [1.7.0-beta.6] - 2026-06-08
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
