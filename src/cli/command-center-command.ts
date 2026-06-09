@@ -44,13 +44,17 @@ export async function commandCenterCommand(args: CommandCenterArgs): Promise<voi
   }
 
   // Admin (T3) token — mission-control's operator write/gate surface reads it.
-  // Without it the board still OBSERVES (coarse SSE), but operator actions return
-  // 401; warn rather than block so a read-only board is still useful.
+  // #54: a LOCAL (loopback) daemon grants full trust tokenless, so a tokenless
+  // board is fully functional locally; only a REMOTE / 0.0.0.0 daemon requires the
+  // token. Informational (not a warning, not a block) — accurate to the daemon's
+  // own auth posture.
   const adminToken = process.env[ENV.HTTP_ADMIN_TOKEN];
   if (!adminToken) {
-    out.warn(
-      `${ENV.HTTP_ADMIN_TOKEN} is not set — the board will observe read-only; operator ` +
-      'actions (cue/pause/restart/gate) need the admin token. Export it before launching for full control.',
+    out.log(
+      out.dim(
+        `  ${ENV.HTTP_ADMIN_TOKEN} not set — fine for a local (loopback) daemon (full trust). ` +
+        'Set it only if this board drives a remote / 0.0.0.0 daemon.',
+      ),
     );
   }
   if (!process.env.ANTHROPIC_API_KEY) {

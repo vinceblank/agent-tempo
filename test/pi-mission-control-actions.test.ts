@@ -98,13 +98,40 @@ describe('MissionControlActions — write surface', () => {
     if (!r.ok) expect(r.error).to.contain('403');
   });
 
-  it('is unusable (clear error) when no admin token is set', async () => {
-    const fake = new FakeFetch();
+  // #54 — tokenless is NO LONGER a hard pre-block. A loopback daemon grants full
+  // trust tokenless, so the client ATTEMPTS the request (no Authorization header)
+  // and lets the daemon decide; the token is only required by a remote/0.0.0.0
+  // daemon (which 401s). auth.ts is untouched — remote stays enforced server-side.
+  it('without a token → ATTEMPTS tokenless (no Authorization header) and succeeds on 2xx (#54 loopback)', async () => {
+    const fake = new FakeFetch(); // default nextStatus 202 (2xx)
     const a = new MissionControlActions({ ensemble: 'ens', adminToken: undefined, baseUrl: 'http://x', fetchFn: fake.fn });
-    expect(a.ready).to.equal(false);
+    expect(a.ready, 'ready no longer gates on the token').to.equal(true);
     const r = await a.cue('b', 'm');
-    expect(r.ok).to.equal(false);
-    expect(fake.calls).to.have.length(0);
+    expect(r.ok).to.equal(true);
+    expect(fake.calls, 'it DID contact the daemon').to.have.length(1);
+    expect(fake.calls[0].headers.Authorization, 'no Bearer sent tokenless').to.equal(undefined);
+    expect(fake.calls[0].headers['Content-Type']).to.equal('application/json');
+  });
+
+  it('without a token → a 401/403/503 surfaces an ACTIONABLE error naming the admin token (#54 remote)', async () => {
+    for (const status of [401, 403, 503]) {
+      const fake = new FakeFetch();
+      fake.nextStatus = status; fake.nextText = 'denied';
+      const a = new MissionControlActions({ ensemble: 'ens', adminToken: undefined, baseUrl: 'http://x', fetchFn: fake.fn });
+      const r = await a.cue('b', 'm');
+      expect(r.ok, `status ${status}`).to.equal(false);
+      if (!r.ok) {
+        expect(r.error, `status ${status} in error`).to.contain(String(status));
+        expect(r.error, `status ${status} actionable`).to.contain('AGENT_TEMPO_HTTP_ADMIN_TOKEN');
+      }
+    }
+  });
+
+  it('with a token → sends the Bearer header (#54 — non-loopback path preserved)', async () => {
+    const fake = new FakeFetch();
+    const r = await actions(fake).cue('b', 'm'); // actions() injects adminToken: 'tok'
+    expect(r.ok).to.equal(true);
+    expect(fake.calls[0].headers.Authorization).to.equal('Bearer tok');
   });
 
   // ── Bootstrap surface (#700 P1) ──

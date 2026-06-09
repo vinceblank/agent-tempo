@@ -49,9 +49,14 @@ export class MissionControlActions {
     this.fetchFn = opts.fetchFn ?? resolveFetch();
   }
 
-  /** Whether the client is usable (token + transport present). */
+  /**
+   * Whether the client has a usable transport. (#54) NO LONGER gates on the admin
+   * token: a loopback daemon grants full trust tokenless, so token presence does
+   * NOT determine usability — the daemon decides per request. Token-required is
+   * enforced by the daemon (it 401s a remote/0.0.0.0 caller), not pre-empted here.
+   */
   get ready(): boolean {
-    return Boolean(this.adminToken) && this.fetchFn !== null;
+    return this.fetchFn !== null;
   }
 
   private baseUrl(): string | null {
@@ -60,59 +65,86 @@ export class MissionControlActions {
     return `http://127.0.0.1:${port}`;
   }
 
+  /**
+   * Request headers — include the admin bearer ONLY when a token is set (#54). A
+   * loopback daemon grants full trust tokenless (it short-circuits all tiers), so
+   * we attempt tokenless and never send a literal "Bearer undefined". Mirrors how
+   * `createSubscribe` already spreads its token only when present.
+   */
+  private authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+    return { ...extra, ...(this.adminToken ? { Authorization: `Bearer ${this.adminToken}` } : {}) };
+  }
+
+  /**
+   * Map a non-2xx daemon response to an error string (#54). When NO token was sent
+   * and the daemon rejected on auth (401/403) or admin-unset (503), the cause is a
+   * remote / `0.0.0.0` daemon that requires the admin token — surface that
+   * actionably (a local loopback daemon needs none). Token-present failures keep
+   * the daemon's own body detail (it already returns good 403/503 hints).
+   */
+  private httpError(status: number, detail: string): string {
+    if (!this.adminToken && (status === 401 || status === 403 || status === 503)) {
+      return (
+        `HTTP ${status}: operator actions need ${ADMIN_TOKEN_ENV} for a remote / 0.0.0.0 daemon ` +
+        `(a local loopback daemon needs none)${detail ? ` — ${detail}` : ''}`
+      );
+    }
+    return `HTTP ${status}${detail ? `: ${detail}` : ''}`;
+  }
+
   private async post(pathSuffix: string, body: unknown): Promise<ActionResult> {
-    if (!this.adminToken) return { ok: false, error: `no admin token (set ${ADMIN_TOKEN_ENV})` };
+    // #54 — do NOT pre-block on a missing token: attempt the request and let the
+    // daemon decide (loopback grants full trust tokenless; remote/0.0.0.0 401s).
     if (!this.fetchFn) return { ok: false, error: 'no fetch transport available' };
     const base = this.baseUrl();
     if (base === null) return { ok: false, error: 'daemon HTTP not reachable (no port)' };
     try {
       const res = await this.fetchFn(`${base}${pathSuffix}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${this.adminToken}`, 'Content-Type': 'application/json' },
+        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(body ?? {}),
       });
       if (res.status >= 200 && res.status < 300) return { ok: true, status: res.status };
       const detail = (await res.text().catch(() => '')).slice(0, 200);
-      return { ok: false, error: `HTTP ${res.status}${detail ? `: ${detail}` : ''}` };
+      return { ok: false, error: this.httpError(res.status, detail) };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
 
-  /** POST and parse a JSON response body (bearer-authed). Used when the caller
-   *  needs the response payload, not just success — e.g. the coat-check ticket. */
+  /** POST and parse a JSON response body. Used when the caller needs the response
+   *  payload, not just success — e.g. the coat-check ticket. Bearer iff token set (#54). */
   private async postJson<T>(pathSuffix: string, body: unknown): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
-    if (!this.adminToken) return { ok: false, error: `no admin token (set ${ADMIN_TOKEN_ENV})` };
     if (!this.fetchFn) return { ok: false, error: 'no fetch transport available' };
     const base = this.baseUrl();
     if (base === null) return { ok: false, error: 'daemon HTTP not reachable (no port)' };
     try {
       const res = await this.fetchFn(`${base}${pathSuffix}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${this.adminToken}`, 'Content-Type': 'application/json' },
+        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(body ?? {}),
       });
       const text = await res.text().catch(() => '');
-      if (res.status < 200 || res.status >= 300) return { ok: false, error: `HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ''}` };
+      if (res.status < 200 || res.status >= 300) return { ok: false, error: this.httpError(res.status, text.slice(0, 200)) };
       return { ok: true, data: JSON.parse(text) as T };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
 
-  /** GET a JSON body from the daemon (bearer-authed). Used by the read surface (#700 readAnswer). */
+  /** GET a JSON body from the daemon. Used by the read surface (#700 readAnswer).
+   *  Bearer iff token set (#54). */
   private async getJson<T>(pathSuffix: string): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
-    if (!this.adminToken) return { ok: false, error: `no admin token (set ${ADMIN_TOKEN_ENV})` };
     if (!this.fetchFn) return { ok: false, error: 'no fetch transport available' };
     const base = this.baseUrl();
     if (base === null) return { ok: false, error: 'daemon HTTP not reachable (no port)' };
     try {
       const res = await this.fetchFn(`${base}${pathSuffix}`, {
         method: 'GET',
-        headers: { Authorization: `Bearer ${this.adminToken}` },
+        headers: this.authHeaders(),
       });
       const text = await res.text().catch(() => '');
-      if (res.status < 200 || res.status >= 300) return { ok: false, error: `HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ''}` };
+      if (res.status < 200 || res.status >= 300) return { ok: false, error: this.httpError(res.status, text.slice(0, 200)) };
       return { ok: true, data: JSON.parse(text) as T };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
