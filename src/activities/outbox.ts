@@ -571,7 +571,7 @@ export function createOutboxActivities(
     },
 
     async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
-      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId, mockMode, mockScenario, model, permissionMode, dangerouslySkipPermissions, toolAccess, guardrailPolicy } = input;
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId, mockMode, mockScenario, model, permissionMode, dangerouslySkipPermissions } = input;
       // Read secrets from the worker's config closure — never from workflow state
       const { temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = config;
 
@@ -731,11 +731,10 @@ export function createOutboxActivities(
         } else if (agent === 'pi') {
           // Phase 3a — headless Pi runtime. Injects the src/pi extension into
           // Pi's createAgentSession; the module-scope singleton owns the
-          // lifecycle (claim/heartbeat/tools/cue-pump). Tool access is governed
-          // by the MD-C `toolAccess` policy (restricted hard-blocks Bash via the
-          // extension's tool_call gate), NOT per-tool allowlists.
+          // lifecycle (claim/heartbeat/tools/cue-pump). Pi players run the full
+          // Pi tool surface — per-tool allowlists are not supported.
           if (allowedTools && allowedTools.length > 0) {
-            log(`Warning: allowedTools [${allowedTools.join(', ')}] specified for pi agent "${targetName}" — Pi tool access is governed by toolAccess (MD-C), skipping allowedTools`);
+            log(`Warning: allowedTools [${allowedTools.join(', ')}] specified for pi agent "${targetName}" — Pi players run the full tool surface, skipping allowedTools`);
           }
           // 3c Tier-2 — mint a per-player ingest token scoped to this player's
           // session workflowId so the headless Pi subprocess can authenticate its
@@ -757,14 +756,12 @@ export function createOutboxActivities(
             // Restart-resume: continue the prior Pi conversation only on a
             // restart (resume=true); a fresh recruit starts a new Pi session.
             continueSessionId: resume ? sessionId : undefined,
-            toolAccess,
-            guardrailPolicy,
             attachmentId,
             attachmentRunId,
             adapterId,
             ingestToken,
           });
-          log(`Spawned pi headless adapter (pid ${pid}) in ${workDir} as "${targetName}" (toolAccess=${toolAccess ?? 'restricted'})${guardrailPolicy ? ` (guardrailPolicy=${guardrailPolicy})` : ''}${model ? ` (model=${model})` : ''}${resume && sessionId ? ` (continue=${sessionId})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
+          log(`Spawned pi headless adapter (pid ${pid}) in ${workDir} as "${targetName}"${model ? ` (model=${model})` : ''}${resume && sessionId ? ` (continue=${sessionId})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else {
           // Resolve agent flags: --agent (native) > --system-prompt (shipped/legacy)
           let agentFlags: string[] = [];

@@ -1236,9 +1236,8 @@ export function spawnOpenCodeAdapter(opts: OpenCodeAdapterOpts): OpenCodeAdapter
 /**
  * Options for {@link spawnPiHeadless}. Mirrors {@link OpenCodeAdapterOpts} for
  * identity + Temporal connection + attachment handoff; adds Pi-specific knobs:
- * `model` (provider/model via `AGENT_TEMPO_PI_MODEL`), `continueSessionId`
- * (restart-resume via `AGENT_TEMPO_PI_CONTINUE_SESSION` → Pi `continueSession`),
- * and `toolAccess` (MD-C tool-class policy via `AGENT_TEMPO_TOOL_ACCESS`).
+ * `model` (provider/model via `AGENT_TEMPO_PI_MODEL`) and `continueSessionId`
+ * (restart-resume via `AGENT_TEMPO_PI_CONTINUE_SESSION` → Pi `continueSession`).
  *
  * Unlike the other headless adapters, the Pi entry does NOT drive a
  * `BaseAttachment` loop — it injects the `src/pi` extension into Pi's
@@ -1260,15 +1259,6 @@ export interface PiHeadlessAdapterOpts {
   model?: string;
   /** Restart-resume: the Pi conversation id to continue (from `metadata.sessionId`). */
   continueSessionId?: string;
-  /** MD-C tool-class policy: `restricted` (default) | `standard` | `full`. */
-  toolAccess?: string;
-  /**
-   * #700 (P2 / G) — guardrail posture: `autonomous` (default) | `monitored` |
-   * `supervised` | `observe-only`. Threaded as `AGENT_TEMPO_GUARDRAIL_POLICY`.
-   * Sourced from durable SessionMetadata on (re)spawn; absent ⇒ autonomous.
-   * String-typed (like {@link toolAccess}) to keep src/pi types off spawn.ts.
-   */
-  guardrailPolicy?: string;
   /**
    * 3c Tier-2 ingest token (minted by the daemon outbox, scoped to this player's
    * workflowId). Threaded into the subprocess env as `AGENT_TEMPO_INGEST_TOKEN`
@@ -1305,8 +1295,8 @@ function resolvePiPath(): { cmd: string; args: string[] } {
 /**
  * Spawn the headless Pi runtime as a detached subprocess. Pattern matches
  * {@link spawnOpenCodeAdapter} — no TTY, log + PID files, env carries identity +
- * Temporal settings + attachment handoff + the Pi model / continue-session /
- * tool-access knobs. The entry constructs `createAgentSession` with the `src/pi`
+ * Temporal settings + attachment handoff + the Pi model / continue-session
+ * knobs. The entry constructs `createAgentSession` with the `src/pi`
  * extension injected inline; the singleton claims + heartbeats + registers tools.
  */
 export function spawnPiHeadless(opts: PiHeadlessAdapterOpts): PiHeadlessAdapterResult {
@@ -1318,7 +1308,6 @@ export function spawnPiHeadless(opts: PiHeadlessAdapterOpts): PiHeadlessAdapterR
   mkdirSync(logDirPath, { recursive: true });
   const logFd = openSync(logPath, 'a');
 
-  const toolAccess = opts.toolAccess || 'restricted';
   let child: ReturnType<typeof spawn>;
   try {
     child = spawn(cmd, args, {
@@ -1340,13 +1329,6 @@ export function spawnPiHeadless(opts: PiHeadlessAdapterOpts): PiHeadlessAdapterR
         ...(opts.model ? { [ENV.PI_MODEL]: opts.model } : {}),
         // Restart-resume: continue the prior Pi conversation.
         ...(opts.continueSessionId ? { [ENV.PI_CONTINUE_SESSION]: opts.continueSessionId } : {}),
-        // MD-C: tool-class policy. ALWAYS set (default 'restricted' — the safe
-        // unsupervised default + an explicit value for the gate + audit trail).
-        [ENV.TOOL_ACCESS]: toolAccess,
-        // #700 (P2 / G): guardrail posture. Set only when non-autonomous (absent
-        // ⇒ autonomous, the extension default) — the durable source is
-        // SessionMetadata, re-derived on every (re)spawn (no silent downgrade).
-        ...(opts.guardrailPolicy ? { [ENV.GUARDRAIL_POLICY]: opts.guardrailPolicy } : {}),
         // 3c Tier-2: per-player ingest token (minted by the daemon outbox).
         // Absent → the inner-loop publisher's HTTP client no-ops (no fine tail).
         ...(opts.ingestToken ? { [ENV.INGEST_TOKEN]: opts.ingestToken } : {}),
@@ -1365,7 +1347,7 @@ export function spawnPiHeadless(opts: PiHeadlessAdapterOpts): PiHeadlessAdapterR
     writeFileSync(pidPath, String(child.pid));
   }
 
-  log(`Spawned pi headless adapter (pid ${child.pid}) in ${opts.workDir} as "${opts.name}" (toolAccess=${toolAccess})${opts.model ? ` (model=${opts.model})` : ''}${opts.continueSessionId ? ` (continue=${opts.continueSessionId})` : ''}${opts.attachmentId ? ` (attachmentId=${opts.attachmentId})` : ''}`);
+  log(`Spawned pi headless adapter (pid ${child.pid}) in ${opts.workDir} as "${opts.name}"${opts.model ? ` (model=${opts.model})` : ''}${opts.continueSessionId ? ` (continue=${opts.continueSessionId})` : ''}${opts.attachmentId ? ` (attachmentId=${opts.attachmentId})` : ''}`);
   return { pid: child.pid, logPath, pidPath };
 }
 
