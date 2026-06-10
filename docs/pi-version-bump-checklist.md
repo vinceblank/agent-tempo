@@ -129,14 +129,14 @@
 
 ---
 
-- [ ] **8. MD-C tool-gate / `noExtensions` security invariant** (S2, `src/pi/headless.ts`)
+- [ ] **8. `noExtensions` supply-chain invariant** (S2, `src/pi/headless.ts`)
 
   `noExtensions: true` still hard-excludes disk/package extensions. Re-check
   `buildPiResourceLoaderOptions` and `resource-loader.js` `reload()` merge behavior to
   confirm no extension-loading path reopened.
 
-  - **Why the gate misses it:** security invariant (`restricted` = no host exec) — behavioral,
-    not typed.
+  - **Why the gate misses it:** security invariant (recruited players load ONLY the inline
+    agent-tempo extension) — behavioral, not typed.
 
 ---
 

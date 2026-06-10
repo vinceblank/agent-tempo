@@ -61,9 +61,8 @@ calls (which carry their own Temporal-backed durability).
 | All other `GET` reads | **T1** (read or admin) | `AGENT_TEMPO_HTTP_READ_TOKEN` or admin |
 | `POST` write surface | **T2** (admin required) | `AGENT_TEMPO_HTTP_ADMIN_TOKEN` |
 | `POST` / `GET` coat-check (#713) | **T2** (admin required) | `AGENT_TEMPO_HTTP_ADMIN_TOKEN` — note the GET redeem is T2 (it mutates fetch-audit counters), not the usual T1 read tier |
-| `POST` gate arm/disarm/decide | **T3** (admin required) | `AGENT_TEMPO_HTTP_ADMIN_TOKEN` |
 | `GET /v1/players/:e/:p/inner` SSE | **T3** (admin required) | `AGENT_TEMPO_HTTP_ADMIN_TOKEN` |
-| `POST /inner/ingest`, `GET /inner/presence`, `GET /gate/:id/resolution` | Source plane (loopback + `X-Ingest-Token`) | Daemon-minted per-player `AGENT_TEMPO_INGEST_TOKEN` |
+| `POST /inner/ingest`, `GET /inner/presence` | Source plane (loopback + `X-Ingest-Token`) | Daemon-minted per-player `AGENT_TEMPO_INGEST_TOKEN` |
 
 T2 and T3 both require the admin token — there is no T2-only token. The admin token grants all tiers (3 ⊇ 2 ⊇ 1). See §3.1 for the full two-token model.
 
@@ -94,7 +93,7 @@ Two separate tokens, each scoped to a specific access tier:
 
 **Resolution order for the read token:** env `AGENT_TEMPO_HTTP_READ_TOKEN` → `config.json#readToken` → legacy `config.json#httpToken` (adopted as T1; daemon emits a one-time startup notice to set an admin token) → auto-generate and persist.
 
-**The admin token is ENV-VAR-ONLY.** It is never written to `config.json` and never auto-generated. An operator who needs write/gate/inner access must set `AGENT_TEMPO_HTTP_ADMIN_TOKEN` explicitly in the environment (e.g. container env, Tailscale ACL, systemd override).
+**The admin token is ENV-VAR-ONLY.** It is never written to `config.json` and never auto-generated. An operator who needs write/inner access must set `AGENT_TEMPO_HTTP_ADMIN_TOKEN` explicitly in the environment (e.g. container env, Tailscale ACL, systemd override).
 
 **Token rotation:**
 - Read token: delete `readToken` from `config.json` (and unset the env var); next daemon boot regenerates.
@@ -108,7 +107,7 @@ Two separate tokens, each scoped to a specific access tier:
 
 #### Legacy `httpToken` migration
 
-If `config.json` contains `httpToken` but no `readToken`, the daemon adopts it as the read token (T1) and emits a startup notice recommending the operator set `AGENT_TEMPO_HTTP_ADMIN_TOKEN`. No data migration is required — the existing token continues to work for read access. To gain write/gate/inner access, set the admin env var separately.
+If `config.json` contains `httpToken` but no `readToken`, the daemon adopts it as the read token (T1) and emits a startup notice recommending the operator set `AGENT_TEMPO_HTTP_ADMIN_TOKEN`. No data migration is required — the existing token continues to work for read access. To gain write/inner access, set the admin env var separately.
 
 ### 3.2 CORS (only enforced when bearer mode is active)
 
@@ -460,9 +459,9 @@ Contrast with `event: gap`, which is a **hard gap** spanning all event kinds and
 | Code | Body | When |
 |---|---|---|
 | `401` | `{ error: 'unauthorized' }` | Missing or invalid bearer when bearer mode is active. **L2 floor — checked before tier enforcement.** An unauthenticated request to any tier-gated route (T1 read, T2 write, T3 supervisory) gets `401`, not `403`. `401` bodies carry no `detail` — unauthenticated callers don't learn config state. |
-| `403` | `{ error: 'insufficient-tier', detail: string }` | **Surface-wide** — emitted by the shared `denyTier` helper for any tier-gated route (T1 reads, T2 writes, T3 gate/inner) when the presented bearer's granted tier is below the route's requirement. The `detail` field carries an actionable migration hint on every denial, e.g. `"This token is read-tier. Writes, the operator gate, and the inner-tail require the admin token (set AGENT_TEMPO_HTTP_ADMIN_TOKEN)."` |
+| `403` | `{ error: 'insufficient-tier', detail: string }` | **Surface-wide** — emitted by the shared `denyTier` helper for any tier-gated route (T1 reads, T2 writes, T3 inner-tail) when the presented bearer's granted tier is below the route's requirement. The `detail` field carries an actionable migration hint on every denial, e.g. `"This token is read-tier. Writes and the inner-tail require the admin token (set AGENT_TEMPO_HTTP_ADMIN_TOKEN)."` |
 | `404` | `{ error: 'ensemble-not-found', ensemble }` | `/v1/state/:ensemble` or `/v1/events/:ensemble` for unknown ensemble |
-| `503` | `{ error: 'admin-token-not-configured', detail: string }` | **Misconfiguration / safety-net** — a T≥2 route was reached but `AGENT_TEMPO_HTTP_ADMIN_TOKEN` is not set. Not reachable in a correctly configured deployment (no token resolves T≥2 when admin is absent). Emitted by `denyTier` alongside `403` via the same surface-wide helper. Detail: `"Set AGENT_TEMPO_HTTP_ADMIN_TOKEN (env-var only) to enable writes / gate / inner-tail."` |
+| `503` | `{ error: 'admin-token-not-configured', detail: string }` | **Misconfiguration / safety-net** — a T≥2 route was reached but `AGENT_TEMPO_HTTP_ADMIN_TOKEN` is not set. Not reachable in a correctly configured deployment (no token resolves T≥2 when admin is absent). Emitted by `denyTier` alongside `403` via the same surface-wide helper. Detail: `"Set AGENT_TEMPO_HTTP_ADMIN_TOKEN (env-var only) to enable writes / inner-tail."` |
 | `503` | `{ error: 'connection-cap-exceeded' }` | Per-process SSE cap hit; `Retry-After: 5` |
 
 CORS rejection sends a normal CORS-failure response (browser handles it). `/v1/health` is never authenticated and never returns `401`/`403`/`503`.

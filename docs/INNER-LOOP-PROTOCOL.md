@@ -1,6 +1,6 @@
 # Inner-Loop Protocol
 
-> **Status:** Phase 3d (MD-F + MD-G) · **Implemented:** `src/http/inner-loop.ts`, `src/http/inner-loop-routes.ts`, `src/http/gate-registry.ts`, `src/http/gate-routes.ts`, `src/http/gate-audit.ts`, `src/pi/inner-loop-publisher.ts`, `src/pi/inner-loop-client.ts`, `src/pi/gate-client.ts`, `src/pi/tool-capability.ts`
+> **Status:** Phase 3c (MD-F) · **Implemented:** `src/http/inner-loop.ts`, `src/http/inner-loop-routes.ts`, `src/pi/inner-loop-publisher.ts`, `src/pi/inner-loop-client.ts`
 > **Design decision:** MD-F in [docs/design/pi-native-integration.md](design/pi-native-integration.md)
 >
 > **IMPORTANT:** This is a **daemon-local, ephemeral, per-player side-channel** — it is
@@ -198,130 +198,13 @@ InnerLoopHttpClient (prod DI)
 
 ---
 
-## Operator Gate (MD-G, Phase 3d)
-
-An optional live approve/deny gate on headless Pi tool calls. When engaged, non-`low-risk` tools pause before execution so an operator can allow or deny them. The fail posture is **per-request** (`failMode`, #700 P2/G), sourced from the agent's durable `guardrailPolicy`:
-
-- **`open`** (monitored, default) — fail-OPEN: any path that can't reach the daemon (network error, timeout, `auto-allow`) resolves as `allow`. This is the original MD-G posture, unchanged.
-- **`closed`** (supervised) — fail-CLOSED: timeout / daemon-down / no-ingest-token resolves as `deny` (`auto-deny`). Opting into supervision means silence ≠ consent.
-
-### Tool Capability Classes
-
-Every tool call is classified before the gate engages:
-
-| Class | Behaviour |
-|---|---|
-| `exec` | **Registration-excluded at `restricted` access level** (#715 — passed to `createAgentSession` as `excludeTools` so the tools are absent from the model's toolset/system prompt entirely; the MD-C call-time exec-floor is retained as a backstop). Excluded regardless of gate armed state. Tools: `bash`, `shell`, `exec`, `sh`, `powershell`, `pwsh`, `cmd`, `run`, `process`, `command`, `run_command`. |
-| `high-blast` | Routed to the gate when armed. Tools that write, delete, network-fetch, recruit, or broadly affect ensemble state. Unknown tool names default to `high-blast` (fail-safe). |
-| `low-risk` | Always allowed; never routed to the gate. Read-only and read-ensemble tools. |
-
-Classification logic lives in `src/security/tool-capability.ts` (`classify(toolName)`, case-insensitive) — moved from `src/pi/` in #700 P2/G so any autonomous agent (not just Pi) can import the one taxonomy.
-
-### Engagement Model
-
-For a non-`low-risk` tool (exec-class tools are registration-excluded at `restricted` access — #715, absent from the model — with the MD-C call-time exec-floor retained as a backstop), the gate engages when EITHER:
-
-1. **Supervised (#700 P2/G)** — `guardrailPolicy === 'supervised'`: SELF-ARMING, engages **regardless of operator arm/presence** (fail-closed must fire precisely when no operator is watching). The frame carries `failMode: 'closed'`. Supervised is the floor — an operator arm can't downgrade it to `open`.
-2. **Monitored** — `gateArmed(workflowId)` AND a present subscriber (both read from the cached `/inner/presence` poll, staleness ≤ ~1–2 s post-arm). The frame carries `failMode: 'open'` (today's MD-G, unchanged).
-
-(`guardrailPolicy === 'observe-only'` is a separate NO-ACT axis: the Pi built-in act tools (write/edit/multiedit + exec) are registration-excluded at `createAgentSession` (#715 — absent from the model), and the agent-tempo act tools are hard-blocked at call-time by the handler; read/grep/glob stay.)
-
-When engaged, the handler emits an `inner.gate_pending` frame (which simultaneously registers the request in the `GateRegistry` via the `/inner/ingest` side-effect — the "engagement IS registration" path) and calls `GateClient.awaitDecision(requestId, { failMode })`. The decision poll loop returns a `GateEffect` (`'allow'` or `'deny'`); the handler proceeds or throws accordingly.
-
-**#712/#715 — enforcement scope of `supervised`.** `supervised` is the daemon-enforced approval boundary for the realistic threat: a prompt-injected agent. A manipulated LLM can only *emit* tool-call requests — Pi routes every one to agent-tempo's `tool_call` handler, which engages the gate (non-`low-risk`). The agent cannot skip the gate — it doesn't control the hook. The `failMode` the engaging agent stamps on its `gate_pending` frame is **advisory only**: `GateRegistry.open()` derives the authoritative `failMode` from the player's durable `guardrailPolicy` (daemon-read; populated at spawn and lazily resolved via a bounded `getMetadataQuery` on a cache-miss, falling **closed** on timeout/error — no-fail-open). Posture: `monitored`/`autonomous` → `open`; `supervised`/`observe-only`/unknown → `closed`. An engaging agent therefore can't self-downgrade a `supervised` player — the daemon overrides `'open'` claims to `closed` and writes a `failmode-override` audit record. **#715 adds a registration-level floor:** for `toolAccess: 'restricted'` (and `observe-only`'s act tools) the exec/act tools are **excluded at `createAgentSession`** (`excludeTools`) → absent from the model's toolset and system prompt entirely; the LLM cannot request what it never sees. That is stronger than the call-time block — it holds even if the call-time gate had a bug (the tool simply isn't there). `supervised` with exec present keeps exec **present + gated** (approve-per-use). **Residual (all postures):** *process compromise* — code execution inside the Pi process (in-process syscalls; host RCE), OR a tampered/modified extension that un-excludes or re-registers tools (`excludeTools` is our code passing a denylist — modify the code/process and it's bypassed). The only defense is OS-level sandboxing + supply-chain integrity, a separate future `'sandboxed'` posture (**#724**). So: **tamper-resistant** vs prompt-injection + an honest gate bug; **not tamper-proof** vs a compromised process. Against prompt-injection — the realistic threat — it is a real enforcement boundary; #724 is not a gap in that scope. *Post-restart:* on daemon restart the in-memory ingest tokens are invalidated; existing players' engagements are 403'd until re-spawn re-mints; a `supervised` player's gate-client still fail-closes on its own derived deadline in that window (same process-compromise residual, not a distinct gap).
-
-### Gate Frames on the `/inner` Stream
-
-**`inner.gate_pending`** — emitted by the Pi tool-call handler when the gate engages. The `inner.gate_pending` frame arriving at `/inner/ingest` also calls `gate.open()` atomically (no separate open route).
-
-```ts
-{
-  type: 'inner.gate_pending';
-  requestId: string;          // caller-supplied UUID, unique per tool call
-  tool: string;
-  argsSummary: string;        // source-truncated ≤ ~2 KiB
-  classification: 'exec' | 'high-blast';
-  timeoutMs: number;          // open: 45 000 ms (auto-allow window); closed: 300 000 ms (auto-deny window)
-  failMode?: 'open' | 'closed'; // #700 P2/G — from guardrailPolicy; absent ⇒ open
-  ts: number;
-}
-```
-
-**`inner.gate_resolved`** — emitted by the `GateRegistry` (via injected `publishToInner` callback) when a decision lands.
-
-```ts
-{
-  type: 'inner.gate_resolved';
-  requestId: string;
-  decision: 'allow' | 'deny' | 'auto-allow' | 'auto-deny';
-  source: 'operator' | 'timeout';
-  ts: number;
-}
-```
-
-`auto-allow` fires after 45 s on an `open` request with no operator decision (R3, autonomous-first, maintainer-locked). `auto-deny` (#700 P2/G) fires after 300 s on a `closed` (supervised) request — kept distinct from a plain operator `deny` so the audit can tell a timeout from an explicit decision. The registry computes expiry lazily on poll — no daemon timer.
-
-### Gate HTTP Endpoints
-
-#### Operator plane (Tier 3, `adminToken`)
-
-| Method | Path | Body | Description |
-|---|---|---|---|
-| `POST` | `/v1/players/:ensemble/:playerId/gate-arm` | *(none)* | Arm the gate — subsequent non-`low-risk` tool calls engage the gate. |
-| `POST` | `/v1/players/:ensemble/:playerId/gate-disarm` | *(none)* | Disarm — new tool calls proceed without gate engagement. In-flight pending requests remain resolvable (or auto-allow). |
-| `POST` | `/v1/players/:ensemble/:playerId/gate/:requestId` | `{ "decision": "allow" \| "deny" }` max 4 KiB | Submit an operator decision. `204` on success; `404` unknown request; `409` already decided (idempotency guard). |
-
-#### Source plane (loopback + `X-Ingest-Token`)
-
-| Method | Path | Response | Description |
-|---|---|---|---|
-| `GET` | `/v1/players/:ensemble/:playerId/gate/:requestId/resolution` | `{ status, decision?, source? }` | Pi subprocess polls here until resolved. `200 { status: "pending" }` while waiting; `200 { status: "resolved", decision, source }` when done; `403` on auth failure; `404` unknown request. |
-
-The source plane reuses the same auth as `/inner/ingest` (loopback remote address + `X-Ingest-Token`).
-
-#### Presence response (extended in 3d)
-
-`GET /inner/presence` now returns `{ subscribers: number; gateArmed: boolean }`. The subprocess reads both engagement inputs from one fetch, avoiding a stale-armed / fresh-present mismatch.
-
-### Timeout posture — Auto-Allow (open) / Auto-Deny (closed)
-
-**`open` (monitored, R3, maintainer-locked):** a pending request with no operator decision after **45 000 ms** resolves to `auto-allow` (`source: 'timeout'`). Autonomous-first — a run with no operator present must never stall. The Pi-side `GateClient.awaitDecision` poll loop bounds itself with `DEFAULT_TIMEOUT_MS = 50 000` ms and honours an `AbortSignal`.
-
-**`closed` (supervised, #700 P2/G):** a pending request with no operator decision after **`GATE_CLOSED_DENY_MS = 300 000` ms** resolves to `auto-deny` (`source: 'timeout'`). The client `closed` deadline is **DERIVED** from `GATE_CLOSED_DENY_MS` (+ buffer, ≥ 310 000 ms; invariant `client_closed > daemon_closed`) so the daemon's *audited* `auto-deny` is received before the client's own fallback fires. Both constants single-home in `src/http/gate-registry.ts`.
-
-Fail posture by `failMode`:
-
-| `GateClient.awaitDecision` return point | `open` | `closed` |
-|---|---|---|
-| explicit operator `allow`/`deny` | as decided | as decided |
-| no ingest token (`!enabled`) | `allow` | **`deny`** (the no-silent-allow backstop) |
-| abort (turn cancelled) | `allow` | `allow` (moot — the tool won't run) |
-| deadline / daemon-down | `allow` | **`deny`** |
-| `pollOnce` decision mapping | `deny`→deny, else allow | `deny` **or `auto-deny`** → deny |
-
-### Gate Audit (R5, Security-Locked)
-
-Every posture change and every decision is appended synchronously to an append-only JSONL file:
-
-```
-~/.agent-tempo/gate-audit/<ensemble>/<workflowId>.jsonl
-```
-
-Segment characters are whitelisted (`[A-Za-z0-9._-]`) before path construction. I/O errors are swallowed (non-fatal — the gate decision is not blocked on audit write success), but the write is synchronous: durable-before-return when the write does not error.
-
-**`kind: 'arm'` / `kind: 'disarm'` record:**
-```json
-{ "kind": "arm", "ts": "2026-06-03T12:00:00.000Z", "workflowId": "e/p", "source": "operator", "operatorTokenHint": "…XXXXXX" }
-```
-
-**`kind: 'decision'` record:**
-```json
-{ "kind": "decision", "ts": "2026-06-03T12:00:01.000Z", "workflowId": "e/p", "requestId": "uuid", "tool": "Write", "argsSummary": "…", "decision": "allow", "source": "operator", "operatorTokenHint": "…XXXXXX" }
-```
-
-`operatorTokenHint` is the last 6 characters of the bearer token (operator plane); absent on `auto-allow` (source `timeout`). `sessionId` is included when the Pi conversation id is known.
-
----
+> **Removed (2026-06, Pi permission-layer removal):** the MD-G operator gate
+> (gate-arm/disarm/decide routes, gate frames, gate audit, `gateArmed` presence
+> field, `GATE_AUTO_ALLOW_MS`/`GATE_CLOSED_DENY_MS`) and the MD-C
+> `toolAccess`/tool-capability classification were removed along with the
+> `guardrailPolicy` postures — headless Pi players run the full tool surface
+> like every other adapter. See
+> [docs/design/pi-streamline-gate-removal-cc.md](design/pi-streamline-gate-removal-cc.md).
 
 ## Carry-Items (Phase 4+)
 
@@ -329,6 +212,4 @@ Segment characters are whitelisted (`[A-Za-z0-9._-]`) before path construction. 
 - **Per-token rate limiting** — no per-ingest-token rate limit yet.
 - **Durable ingest audit** — ingest calls are not logged; deferred.
 - **Detach revoke** — detach does not currently revoke the ingest token (bounded risk; destroy-side revoke is in place). Revoke-on-detach is a deferred hygiene item.
-- **Gate: cached-`gateArmed` staleness** — there is a ~1–2 s window after arm where the subprocess's presence cache hasn't refreshed yet; a tool call in that window misses the gate (bounded, documented). Shorter-interval refresh or push notification is deferred.
-- **Gate: per-token rate limiting** — no per-ingest-token rate limit on gate resolution polls yet.
-- **RBAC per tier (MD-E)** — Tier 3 currently uses `adminToken`; 3e will split tokens. The `/inner` endpoint's `requireTier(3)` call and gate operator routes are correct and will stay correct after the split.
+- **RBAC per tier (MD-E)** — Tier 3 currently uses `adminToken`; 3e will split tokens. The `/inner` endpoint's `requireTier(3)` call is correct and will stay correct after the split.

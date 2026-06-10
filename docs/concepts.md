@@ -337,23 +337,7 @@ held (locked) but not paused, or paused but not locked.
 
 **Command-center planner** (#700 P2) — An inbox-less interactive Pi session (the operator's planning seat) that routes questions through the maestro Q&A mailbox instead of Temporal inbox signals. The planner is not a registered player — it has no Temporal inbox, which is why Q&A routes through the maestro. The planner sends a `cue` tagged `[Q <questionId>]` to a player; the player calls `respond` (passes `questionId` + answer `text`) to park the answer on the maestro via `maestroPostAnswer`; the planner reads it back via `maestroGetAnswer` and is woken by the `answer` SSE event when the answer lands (see [SSE-PROTOCOL.md §6](SSE-PROTOCOL.md)). Cap: 20-slot mailbox, TTL 1h per answer. `/handoff` cues hand active work to a conductor — a registered player with a Temporal inbox that executes the plan.
 
-**Guardrail policy** (`guardrailPolicy` on `SessionMetadata`) — Durable per-player posture set at `recruit`; re-sourced from `getMetadata` at each `(re)attach` so it survives restarts. Controls how the operator gate engages for headless Pi players.
-
-| Value | Operator gate | Fail posture on absence |
-|---|---|---|
-| `autonomous` | Off (default) | — |
-| `monitored` | Armed when operator present | **Open** — auto-allow after 45 s |
-| `supervised` | Always armed (self-arming) | **Closed** — auto-deny after 300 s |
-| `observe-only` | Not a gate — non-`low-risk` Pi built-in act tools registration-excluded; agent-tempo act tools handler-blocked | — |
-
-> **Enforcement scope (#712/#715).** `supervised` is the daemon-enforced approval boundary for the realistic threat — a prompt-injected agent. A manipulated LLM can only *emit* tool-call requests; Pi routes every one to agent-tempo's `tool_call` handler, which engages the gate (non-`low-risk`; #712 daemon-computes `failMode` from the durable policy, falling `closed` on any lookup failure — no-fail-open, so an engaging agent can't self-downgrade). The agent cannot skip the gate — it doesn't control the hook. **#715 adds a registration-level floor:** for `toolAccess='restricted'` (and `observe-only`'s act tools) the exec/act tools are **excluded at `createAgentSession`** (`excludeTools`) → absent from the model's toolset and system prompt entirely; the LLM cannot request what it never sees. That is stronger than the call-time block — it holds even if the call-time gate had a bug (the tool simply isn't there). `supervised` with exec present keeps exec **present + gated** (approve-per-use). The **residual (all postures)** is *process compromise*: code execution inside the Pi process (in-process syscalls; host RCE), OR a tampered/modified extension that un-excludes or re-registers tools — `excludeTools` is our code passing a denylist, so modifying the code/process bypasses it. That requires OS-level sandboxing + supply-chain integrity, a separate future `'sandboxed'` posture (**#724**). So: **tamper-resistant** vs prompt-injection + an honest gate bug; **not tamper-proof** vs a compromised process. Against prompt-injection — the realistic threat — it is a real enforcement boundary; #724 is not a gap in that scope.
-
-**Operator gate / failMode** — When the gate is engaged (`monitored` or `supervised`), non-`low-risk` Pi tool calls pause before execution and emit an `inner.gate_pending` frame. The operator approves or denies via the mission-control board or `POST /gate/:requestId`. If no decision arrives within the timeout, `failMode` resolves it:
-
-- `open` (`monitored`): 45 000 ms → **auto-allow**. The agent proceeds autonomously when no operator is watching.
-- `closed` (`supervised`): 300 000 ms → **auto-deny**. The tool is blocked when no operator is present.
-
-Tool capability classes (fixed): `exec` tools (bash/shell/powershell/etc.) are **registration-excluded** at `restricted` toolAccess (#715 — absent from the model's toolset entirely, not merely call-time-blocked) regardless of gate posture, with the call-time handler retained as a backstop; `high-blast` tools (broad reads/writes/web) route to the gate when armed; `low-risk` tools (targeted reads, annotations) always pass through.
+**Player supervision** — none. The former Pi permission layers (the MD-G operator gate with its `guardrailPolicy` postures and the MD-C `toolAccess` axis) were **removed** (2026-06): a recruited headless Pi player executes any tool — **including shell** — without operator approval, exactly like the other adapters (`claude-code-headless`, `opencode`). Observability remains via the mission-control board (coarse SSE + fine `/inner` tail); control remains via `cue` / `pause` / `restart` / `destroy` / `reset`. See [docs/design/pi-streamline-gate-removal-cc.md](design/pi-streamline-gate-removal-cc.md) for the rationale and removal record.
 
 ---
 

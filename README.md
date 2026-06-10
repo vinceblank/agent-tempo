@@ -277,7 +277,7 @@ From the TUI, `/recruit-conductor` relaunches the active ensemble's conductor �
 
 **Prerequisites:** `@earendil-works/pi-coding-agent` on Node ≥ 22.19. Recommended: `ANTHROPIC_API_KEY` (without it the session falls back to Pi's own auth/default model).
 
-**Headless Pi players** — recruit as a background agent slot using `agent: 'pi'`. Pass `guardrailPolicy: 'monitored' | 'supervised' | 'observe-only'` to control the operator gate (default `'autonomous'` — no gate). See [docs/concepts.md](docs/concepts.md#command-center-and-player-supervision) for the gate mechanics and the supervised caveat.
+**Headless Pi players** — recruit as a background agent slot using `agent: 'pi'`. Pi players run the full tool surface — including shell — without an approval layer, exactly like the other adapters. Observe them live via the mission-control board (coarse SSE + fine `/inner` tail); control via `cue`/`pause`/`restart`/`destroy`/`reset`. See [docs/concepts.md](docs/concepts.md#command-center-and-player-supervision).
 
 📖 [Pi integration reference → docs/design/pi-hardening-h1-h2-h3.md](docs/design/pi-hardening-h1-h2-h3.md)
 
