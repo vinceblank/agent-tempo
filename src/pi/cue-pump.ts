@@ -1,9 +1,29 @@
 /**
- * Cue pump — pulls cues queued on the session workflow and injects them into the
- * LIVE Pi agent, then acks them.
+ * Cue pump — ONE generic 1 s poll loop with TWO intakes per tick:
+ *   (a) the single-slot pending RESET (3d D14 + #677 PART B — formerly the
+ *       separate `ResetPump`, merged here per S3 of
+ *       docs/design/pi-streamline-gate-removal-cc.md), then
+ *   (b) pending CUES, injected into the LIVE Pi agent and acked.
  *
  * Pi has no reverse-RPC into a running session from Temporal, so (like the
- * existing adapters) we poll `pendingMessages` and ack via `markDelivered`.
+ * existing adapters) we poll `pendingMessages` / `pendingReset` and ack via
+ * `markDelivered` / `ackReset`.
+ *
+ * ── Reset intake (D14 + #677 PART B capability branch) ──
+ * D14 (maintainer-ruled): reset = clean-wipe (fresh context, NO replay). Seeded
+ * reset is a separate concern (`restart` + `loadFromState`), so `fresh:false` is
+ * defensively logged + acked. Delivery depends on what's attached, NOT a mode flag:
+ *   1. HEADLESS / session-capable — `session.newSession()` exists → AUTO
+ *      clean-wipe in place, then ack (race-safe `ackReset(resetId)`: the workflow
+ *      clears the slot only if the id still matches).
+ *   2. INTERACTIVE — Pi 0.78.1's SessionStartEvent has no `session` field, so
+ *      `rt.session` is null AND `newSession` is command-context-ONLY: the pump
+ *      CANNOT auto-wipe an interactive conductor. It NOTIFIES the operator (via
+ *      the stable `pi.sendMessage` handle) to run `/tempo-reset` — ACK-ON-NOTIFY,
+ *      id-matched so the notice fires ONCE per resetId.
+ *   3. Nothing attached yet — leave pending; retry next tick.
+ * The reset intake runs BEFORE the cue intake so a wipe lands before any cue
+ * injected in the same tick (cues then arrive into the fresh context).
  *
  * ── Injection target: the STABLE `pi` handle, re-resolved per tick (#677) ──
  * Pi 0.78.1's `SessionStartEvent` carries NO `session` field, so in INTERACTIVE
@@ -41,7 +61,7 @@
  *
  * Adapted from Pi's `examples/extensions/file-trigger.ts`.
  */
-import type { Message } from '../types';
+import type { Message, PendingReset } from '../types';
 import type { ExtensionAPI, PiAgentSession, PiOutboundMessage, PiCustomMessageOptions } from './pi-types';
 
 /** Source of pending cues + ack — satisfied by `PiWorkflowClient`. */
@@ -49,6 +69,18 @@ export interface CueSource {
   fetchPending(): Promise<Message[]>;
   ackDelivered(messageIds: string[]): Promise<void>;
 }
+
+/** Source of the pending reset + ack — satisfied by `PiWorkflowClient`. */
+export interface ResetSource {
+  fetchPendingReset(): Promise<PendingReset | null>;
+  ackReset(resetId: string): Promise<void>;
+}
+
+/** Resolves the CURRENT live Pi session at wipe time (re-acquired each tick — D11). */
+export type SessionResolver = () => PiAgentSession | null;
+
+/** Resolves the CURRENT Pi `ExtensionAPI` handle (interactive operator-notice route — D11). */
+export type PiResolver = () => ExtensionAPI | null;
 
 /**
  * The live cue-injection capability, RE-RESOLVED each tick from the surviving
@@ -124,6 +156,20 @@ export function buildPiInjector(rt: InjectorRuntime | null | undefined): Message
 export interface CuePumpOptions {
   source: CueSource;
   resolveInjector: InjectorResolver;
+  /**
+   * S3 merge — optional reset intake (the former ResetPump). When present, each
+   * tick FIRST drains the single-slot pending reset (clean-wipe / operator
+   * notice), then the cue intake. Absent → cue-only pump (legacy callers, tests).
+   */
+  resetSource?: ResetSource;
+  /** Live Pi session for the auto clean-wipe route (re-resolved each tick). */
+  resolveSession?: SessionResolver;
+  /**
+   * #677 PART B — the live `pi` handle for the interactive operator-notice route.
+   * Re-resolved each tick (repointed on instance rebuild). Absent → no notify
+   * path; the pump still auto-wipes when a session with `newSession()` is present.
+   */
+  resolvePi?: PiResolver;
   /** Poll interval (ms). */
   intervalMs?: number;
   /** Injected clock (tests). Defaults to `Date.now`. */
@@ -140,6 +186,9 @@ const log = (...args: unknown[]): void => {
 export class CuePump {
   private readonly source: CueSource;
   private readonly resolveInjector: InjectorResolver;
+  private readonly resetSource: ResetSource | null;
+  private readonly resolveSession: SessionResolver;
+  private readonly resolvePi: PiResolver;
   private readonly intervalMs: number;
   private readonly now: () => number;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -150,10 +199,19 @@ export class CuePump {
    * once escalated (escalate-once invariant).
    */
   private lastInject: { text: string; injectedAt: number; escalated: boolean } | null = null;
+  /**
+   * #677 PART B — the resetId we've already surfaced as an operator notice, so
+   * the "run /tempo-reset" notice fires ONCE per request (id-matched). Cleared
+   * when the slot empties or a wipe happens.
+   */
+  private lastNotifiedResetId: string | null = null;
 
   constructor(opts: CuePumpOptions) {
     this.source = opts.source;
     this.resolveInjector = opts.resolveInjector;
+    this.resetSource = opts.resetSource ?? null;
+    this.resolveSession = opts.resolveSession ?? (() => null);
+    this.resolvePi = opts.resolvePi ?? (() => null);
     this.intervalMs = opts.intervalMs ?? DEFAULT_POLL_MS;
     this.now = opts.now ?? Date.now;
   }
@@ -174,15 +232,26 @@ export class CuePump {
   }
 
   /**
-   * One poll cycle: (1) escalate a previously-injected cue that never woke a turn,
-   * then (2) fetch pending cues, inject each into the live agent, ack the ones
-   * successfully injected. Re-entrancy guarded so a slow tick never overlaps the
-   * next interval.
+   * One poll cycle, two intakes: (0) the pending RESET (clean-wipe / operator
+   * notice — see file header), then the cue intake: (1) escalate a
+   * previously-injected cue that never woke a turn, (2) fetch pending cues,
+   * inject each into the live agent, ack the ones successfully injected.
+   * Re-entrancy guarded so a slow tick never overlaps the next interval. A reset
+   * intake failure never starves the cue intake (logged, non-fatal).
    */
   async tick(): Promise<void> {
     if (this.draining) return;
     this.draining = true;
     try {
+      // (0) Reset intake FIRST — a wipe lands before any cue injected this tick.
+      if (this.resetSource) {
+        try {
+          await this.tickReset(this.resetSource);
+        } catch (err) {
+          log('reset intake failed (cue intake continues):', err);
+        }
+      }
+
       const injector = this.resolveInjector();
 
       // (1) Escalation check — runs even with no new pending. If the previous
@@ -230,6 +299,100 @@ export class CuePump {
       }
     } finally {
       this.draining = false;
+    }
+  }
+
+  /**
+   * Reset intake (#677 PART B capability branch — the former ResetPump.tick):
+   *
+   *   1. no pending                 → clear dedup, done.
+   *   2. fresh=false                → log + ack (clear slot; seeded reset is restart's job).
+   *   3. session.newSession() avail → AUTO clean-wipe + ack (headless / session-capable).
+   *   4. else pi.sendMessage avail  → operator notice (once per id) + ack (interactive).
+   *   5. else                       → nothing attached yet; leave pending, retry.
+   */
+  private async tickReset(resetSource: ResetSource): Promise<void> {
+    const pr = await resetSource.fetchPendingReset();
+    if (!pr) {
+      this.lastNotifiedResetId = null; // slot empty → forget the last notice
+      return;
+    }
+
+    if (!pr.fresh) {
+      // D14: reset is clean-wipe ONLY. A seeded reset is restart+loadFromState
+      // (not this path). Don't guess — log + ack (clear the slot).
+      log(`reset ${pr.resetId}: fresh=false — no wipe (seeded reset is restart's job)`);
+      await resetSource.ackReset(pr.resetId);
+      this.lastNotifiedResetId = null;
+      return;
+    }
+
+    // (3) Session-capable (headless) → auto clean-wipe in place.
+    const session = this.resolveSession();
+    if (session && typeof session.newSession === 'function') {
+      await this.performWipe(session, pr);
+      await resetSource.ackReset(pr.resetId);
+      this.lastNotifiedResetId = null;
+      return;
+    }
+
+    // (4) Interactive → can't auto-wipe; notify the operator to run /tempo-reset.
+    const pi = this.resolvePi();
+    if (pi && typeof pi.sendMessage === 'function') {
+      if (this.lastNotifiedResetId !== pr.resetId) {
+        this.notifyOperator(pi, pr); // ONCE per resetId (no per-tick spam)
+        this.lastNotifiedResetId = pr.resetId;
+      }
+      // ACK-ON-NOTIFY: the request has been DELIVERED to the operator (the most
+      // an interactive conductor can do); clear the slot so it doesn't re-poll.
+      await resetSource.ackReset(pr.resetId);
+      return;
+    }
+
+    // (5) Nothing attached yet — leave it pending; next tick retries.
+  }
+
+  /** D14 clean-wipe (caller guarantees `fresh` + `newSession`) + the "context wiped" notice. */
+  private async performWipe(session: PiAgentSession, pr: PendingReset): Promise<void> {
+    // `newSession` is optional on the slice; tickReset gated `typeof === 'function'`
+    // before calling, so the assertion is sound (the doc-comment states the contract).
+    await session.newSession!(); // clean-wipe: fresh context, no replay
+    const by = pr.requestedBy ? ` (requested by ${pr.requestedBy})` : '';
+    const notice = `[reset] context wiped — fresh start${by}.${pr.reason ? ` reason: ${pr.reason}` : ''}`;
+    log(notice);
+    // Surface the notice INTO the fresh session (after the wipe, so it survives),
+    // non-triggering so it doesn't kick off an unsolicited turn — the agent reads
+    // it on its next cue.
+    try {
+      await session.sendCustomMessage(
+        { customType: 'system', content: notice, display: true },
+        { deliverAs: 'followUp', triggerTurn: false },
+      );
+    } catch (err) {
+      log(`reset ${pr.resetId}: notice injection failed (non-fatal):`, err);
+    }
+  }
+
+  /**
+   * Interactive operator notice (#677 PART B). The pump can't reach `newSession`
+   * (command-context-only), so it asks the human to run `/tempo-reset`. Sent via
+   * the stable `pi.sendMessage` handle, non-triggering (it's an instruction, not a
+   * turn). Best-effort: a failed notice never throws the tick.
+   */
+  private notifyOperator(pi: ExtensionAPI, pr: PendingReset): void {
+    const by = pr.requestedBy ? ` by ${pr.requestedBy}` : '';
+    const reason = pr.reason ? ` (reason: ${pr.reason})` : '';
+    const notice =
+      `⟳ context reset requested${by}${reason} — run /tempo-reset to clean-wipe this ` +
+      `session's context. agent-tempo can't auto-reset an interactive Pi conductor.`;
+    try {
+      pi.sendMessage?.(
+        { customType: 'system', content: notice, display: true },
+        { deliverAs: 'followUp', triggerTurn: false },
+      );
+      log(`reset ${pr.resetId}: interactive — notified operator to run /tempo-reset`);
+    } catch (err) {
+      log(`reset ${pr.resetId}: operator notice failed (non-fatal):`, err);
     }
   }
 

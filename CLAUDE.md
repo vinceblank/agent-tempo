@@ -105,14 +105,13 @@ src/
 │   └── descriptor.ts  # Transport-neutral tool descriptor (TempoToolDescriptor) + renderToMcp; per-tool `build*Tool` factories live in each tool file (MD-B, Phase 1)
 ├── pi/                # Pi-native integration — a Pi session as a first-class player over the Temporal core
 │   ├── extension.ts   # `export default function(pi)` — interactive runtime entry. Holds the MODULE-SCOPE singleton `Map<workflowId, PiPlayerRuntime>` that survives Pi's per-switch instance rebuild (rebind, not re-claim); full tool surface via renderToPi; Option-C reason-discriminated teardown
-│   ├── phase-driver.ts / workflow-client.ts / cue-pump.ts   # Pi-event→attachment-phase machine, thin client-side WorkflowClient (lease/heartbeat 90/30, handle getter), cue pump (D10 steer/followUp)
+│   ├── phase-driver.ts / workflow-client.ts / cue-pump.ts   # Pi-event→attachment-phase machine, thin client-side WorkflowClient (lease/heartbeat 90/30, handle getter), cue pump (D10 steer/followUp; one 1s loop with a second pendingReset intake — S3 merge, D14 clean-wipe + /tempo-reset operator notice)
 │   ├── lazy-proxy.ts  # D11 createLazyProxy — Client/WorkflowHandle proxy resolving the live module-scope target per call (survives instance rebuild)
 │   ├── headless.ts    # Headless Pi runtime (Phase 3a) — boots Pi's createAgentSession with inline extension; `noExtensions: true` closes S2 exec-tool bypass; SIGTERM/SIGINT shutdown → reliable detach + dispose
 │   ├── render-tools.ts # renderToPi — registers the shared tool descriptors on Pi's ExtensionAPI (TypeBox params via the converter)
 │   ├── zod-to-typebox.ts # zod→TypeBox tool-schema converter (fail-loud on unsupported constructs; Phase 1 / D1)
 │   ├── inner-loop-publisher.ts # InnerLoopPublisher (3c MD-F) — single Pi-source observer; Tier-1 coarse via heartbeat piggyback (currentTool + context pressure), Tier-2 fine presence-gated; source coalescing (100ms/2KB) + 2KB truncation
 │   ├── inner-loop-client.ts # InnerLoopHttpClient — production InnerLoopRegistry impl: thin loopback-HTTP calls (publish→POST ingest, subscriberCount→cached presence GET); no-ops without AGENT_TEMPO_INGEST_TOKEN
-│   ├── reset-pump.ts      # ResetPump (3d D14) — polls pendingReset query every 1s; on result calls session.newSession() (clean-wipe); sends system notice; acks via ackReset signal
 │   ├── mission-control/   # 3f — observer-only Pi extension that turns one interactive Pi TUI into an ensemble mission-control board + operator controller. HTTP-driven (NOT MCP tools). Never claims attachment or registers as a player.
 │   │   ├── extension.ts   # Controller (testable command handlers) + Pi extension lifecycle: session_start opens coarse SSE + ~200ms render tick + registers /players /tail /cue /pause /play /restart /destroy /reset; session_shutdown tears down SSE + widget
 │   │   ├── board.ts       # Pure BoardModel + reducers: applyTempoEvent (coarse /events SSE) + applyInnerFrame (selected-player inner tail); revision counter drives render throttle

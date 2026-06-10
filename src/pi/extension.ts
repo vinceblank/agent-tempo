@@ -46,7 +46,6 @@ import type {
 import { PhaseDriver } from './phase-driver';
 import { PiWorkflowClient } from './workflow-client';
 import { CuePump, buildPiInjector } from './cue-pump';
-import { ResetPump } from './reset-pump';
 import { renderToPi } from './render-tools';
 import { createLazyProxy } from './lazy-proxy';
 import { probePi } from './probe';
@@ -138,8 +137,6 @@ export interface PiPlayerRuntime {
    * stopped on teardown.
    */
   readonly pub: InnerLoopPublisher;
-  /** 3d D14 — polls the workflow's pending reset → clean-wipe (newSession) + ack. */
-  readonly reset: ResetPump;
   session: PiAgentSession | null;
   /**
    * #677 — THIS player's CURRENT Pi `ExtensionAPI` handle. Repointed on every
@@ -340,6 +337,14 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
         // `rt.session.sendCustomMessage`. Reading `runtimes.get(workflowId)` (not a
         // captured `rt`) is what makes a post-rebind tick use the NEW pi.
         resolveInjector: () => buildPiInjector(runtimes.get(workflowId) ?? null),
+        // 3d D14 — reset intake on the SAME poll loop (S3 merge): each tick first
+        // drains pendingReset → session.newSession() clean-wipe + ack. Session/pi
+        // re-acquired each tick so a session switch never wipes a stale session.
+        // #677 PART B — interactive can't auto-wipe (no session field / newSession
+        // is command-context-only); the pump notifies the operator via `pi`.
+        resetSource: wf,
+        resolveSession: () => runtimes.get(workflowId)?.session ?? null,
+        resolvePi: () => runtimes.get(workflowId)?.pi ?? null,
       });
       // 3c — inner-loop publisher + its loopback-HTTP sink. The client no-ops
       // unless AGENT_TEMPO_INGEST_TOKEN is present (daemon-spawned headless
@@ -347,18 +352,8 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
       // Tier-2 forwarding. URL keyed to the FIXED playerId (matches workflowId).
       const registry = new InnerLoopHttpClient({ ensemble: config.ensemble, playerId: fixedPlayerId });
       const pub = new InnerLoopPublisher({ workflowId, registry });
-      // 3d D14 — reset poll-tick (sibling to the cue pump): polls pendingReset →
-      // session.newSession() clean-wipe + ack. resolveSession re-acquired each
-      // tick so a session switch never wipes a stale session.
-      const reset = new ResetPump({
-        source: wf,
-        resolveSession: () => runtimes.get(workflowId)?.session ?? null,
-        // #677 PART B — interactive can't auto-wipe (no session field / newSession is
-        // command-context-only); the reset pump notifies the operator via this handle.
-        resolvePi: () => runtimes.get(workflowId)?.pi ?? null,
-      });
       const rt: PiPlayerRuntime = {
-        workflowId, wf, driver, pump, pub, reset,
+        workflowId, wf, driver, pump, pub,
         session: payload.session ?? null,
         pi, // #677 — first-attach instance's pi (repointed on each rebind)
         lastTurnStartAt: null,
@@ -374,7 +369,6 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
       // bound method is wrapped so `this` survives the provider call.
       pub.start(pi);
       wf.setCoarseProvider(() => pub.getCoarseState());
-      reset.start(); // 3d D14 — begin polling for pending resets
       log(`attached ${currentPlayerId} (wf ${workflowId})`);
       return rt;
     }
@@ -432,7 +426,7 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
       rt.session = null; // switch gap: cue pump stops injecting (dodges Pi #2860)
       if (payload.reason === 'quit') {
         rt.pub.stop(); // 3c — stop observing + flush the trailing coalesce buffer
-        rt.reset.stop(); // 3d — stop the reset poll
+        rt.pump.stop(); // S3 — stop the cue+reset poll loop (workflow detaches below)
         try {
           await rt.wf.detach('agent-exited'); // requestDetach + adapterExited + stopHeartbeat
           runtimes.delete(workflowId);
@@ -456,7 +450,7 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
 export async function detachAllPiRuntimesForExit(): Promise<void> {
   for (const rt of runtimes.values()) {
     rt.pub.stop(); // 3c — stop the inner-loop publisher before detaching
-    rt.reset.stop(); // 3d — stop the reset poll before detaching
+    rt.pump.stop(); // S3 — stop the cue+reset poll loop before detaching
     try {
       await rt.wf.detach('agent-exited');
     } catch (err) {
@@ -497,7 +491,6 @@ export function __setPiClientFactoryForTests(factory: (config: Config) => Promis
 export function __resetPiRuntimesForTests(): void {
   for (const rt of runtimes.values()) {
     rt.pub.stop();
-    rt.reset.stop();
     rt.pump.stop();
     rt.wf.stopHeartbeat();
   }

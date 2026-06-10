@@ -160,7 +160,7 @@
 
 ---
 
-- [ ] **11. Reset surface — asymmetric clean-wipe** (#677 PART B, `src/pi/reset-pump.ts`, `extension.ts`)
+- [ ] **11. Reset surface — asymmetric clean-wipe** (#677 PART B, the reset intake in `src/pi/cue-pump.ts`, `extension.ts`)
 
   Reset delivery is a **capability branch**, and the two halves depend on different Pi APIs:
   - **Headless** — `session.newSession()` (on the SDK session) still performs a clean-wipe

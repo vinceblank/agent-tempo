@@ -46,8 +46,7 @@ via a module-scope singleton.
 | `zod-to-typebox.ts` | zod→TypeBox tool-schema converter (fail-loud on unsupported constructs; Phase 1 / D1) | **Pure** — unit-tested |
 | `lazy-proxy.ts` | D11 lazy `Client` / `WorkflowHandle` proxy — resolves the live target per call | **Pure** — unit-tested |
 | `workflow-client.ts` | Thin client-side Temporal wrapper (lease, heartbeat, lifecycle, outbox, cue intake) | Compile-checked (needs Temporal at runtime) |
-| `cue-pump.ts` | Polls `pendingMessages`, injects via the **per-tick re-resolved `pi.sendMessage`** handle (#677; `session.sendCustomMessage` fallback), acks via `markDelivered`; escalates an un-woken cue via `pi.sendUserMessage` | **Pure** — unit-tested |
-| `reset-pump.ts` | Polls `pendingReset`; **capability branch** — headless `session.newSession()` auto clean-wipe, interactive `pi.sendMessage` operator-notice "run `/tempo-reset`" (#677 PART B) | **Pure** — unit-tested |
+| `cue-pump.ts` | ONE 1 s poll loop, TWO intakes (S3 merge): (a) `pendingReset` — **capability branch**: headless `session.newSession()` auto clean-wipe, interactive `pi.sendMessage` operator-notice "run `/tempo-reset`" (#677 PART B); (b) `pendingMessages` — injects via the **per-tick re-resolved `pi.sendMessage`** handle (#677; `session.sendCustomMessage` fallback), acks via `markDelivered`; escalates an un-woken cue via `pi.sendUserMessage` | **Pure** — unit-tested |
 | `extension.ts` | `export default function(pi)` — registers the FULL tool surface via `renderToPi(buildAllTempoTools(...))` over lazy proxies; wires events → driver → client | Compile-checked |
 | `probe.ts` | Optional-dep preflight for the Pi packages (sdk-probe pattern) | Compile-checked |
 | `pi-types.ts` | Hand-written structural decls of Pi's `ExtensionAPI` surface | — (see limitation below) |
@@ -257,8 +256,8 @@ with the agent-tempo extension injected inline (`createPiExtension({ mode:
 
 ### Reset asymmetry (#677 PART B) — interactive cannot self-reset
 
-Reset (`reset` MCP tool → workflow `pendingReset` slot → `reset-pump.ts`) is a **capability
-branch**, and the two halves are genuinely asymmetric:
+Reset (`reset` MCP tool → workflow `pendingReset` slot → the cue pump's reset intake in
+`cue-pump.ts`) is a **capability branch**, and the two halves are genuinely asymmetric:
 
 - **Headless** can clean-wipe ITSELF: `session.newSession()` exists on the SDK session, so the
   reset pump auto-wipes in place + acks. Fully autonomous.

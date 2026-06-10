@@ -310,7 +310,7 @@ export interface PiToolDefinition {
  * `newSession` is command-context-ONLY in Pi — it is NOT on the SDK session
  * object — which is exactly why an interactive Pi conductor CANNOT be auto-reset:
  * the reset pump can only NOTIFY the operator to run `/tempo-reset` themselves
- * (operator-mediated is the ceiling; see reset-pump.ts).
+ * (operator-mediated is the ceiling; see the cue pump's reset intake in cue-pump.ts).
  */
 export interface PiCommandContext {
   /** Start a FRESH session (clean-wipe, no replay). */
