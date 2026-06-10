@@ -28,6 +28,9 @@ agent-tempo <command> [options]
 | `agent-types <sub>` | Manage player types (`list`, `show <name>`, `init`) |
 | `daemon <sub>` | Manage the worker daemon (`start [--force]`, `stop`, `status`, `logs`, `stats`) |
 | `dashboard` | Open the web dashboard in the default browser. Flags: `--port`, `--bind`, `--no-open` (print URL, skip launch), `--pair` (mint a one-time QR-code pairing token for cross-device access), `--json` (machine-parseable output). Requires the daemon to be running. (#340) |
+| `command-center [ensemble]` (aliases: `cc`, `board`) | Launch the interactive Pi mission-control board for an ensemble. Operator-only — never claims attachment or registers as a player. Requires `@earendil-works/pi-coding-agent` and Node ≥ 22.19. See [Command-center](#agent-tempo-command-center) below. (#729) |
+| `install-pi` | Install agent-tempo's Pi extensions (player + command-center) into Pi's settings.json. Idempotent; prunes stale/old-version paths on re-run. Use `--project` for per-directory installation. (#700, #738) |
+| `migrate-from-claude-tempo` | One-shot home-directory migration from `~/.claude-tempo/` → `~/.agent-tempo/`. Use `--dry-run` to preview without writing; `--force` to bypass conflict and volatile-state guards. |
 | `scenarios <sub>` | **Dev mode only.** Browse the shipped scenario library (`list`, `show <name>`). Requires `--dev`. See [dev-mode.md](dev-mode.md). |
 | `upgrade [version]` | Graceful self-update — stops daemon, installs new version, restarts daemon |
 | `version` | Print the installed version |
@@ -189,6 +192,47 @@ Graceful self-update — stops the daemon, installs the latest (or specified) ve
 ```bash
 agent-tempo upgrade            # install latest version
 agent-tempo upgrade 0.20.0     # install a specific version
+```
+
+### `agent-tempo command-center`
+
+Launches the interactive Pi mission-control board (aliases: `cc`, `board`). The board is the **operator seat** — it observes the ensemble via the daemon SSE stream and POSTs operator actions (cue, pause, play, restart, gate arm/disarm/decide) to the daemon write surface. It is **not a player** and never registers as an ensemble member.
+
+```bash
+agent-tempo command-center              # observe + control the default ensemble
+agent-tempo command-center myband       # target a named ensemble
+agent-tempo cc myband                   # alias
+agent-tempo board myband                # alias
+```
+
+Requirements:
+- `@earendil-works/pi-coding-agent` installed and Node ≥ 22.19
+- Daemon running (`agent-tempo daemon start`)
+- `AGENT_TEMPO_HTTP_ADMIN_TOKEN` for a **remote** daemon; loopback daemons grant full trust automatically (no token required) (#736)
+
+Install the Pi extensions first (once per machine or per project):
+
+```bash
+agent-tempo install-pi            # global install
+agent-tempo install-pi --project  # per-directory .pi/settings.json
+```
+
+See [concepts.md](concepts.md) for the Q&A mechanics and operator gate details.
+
+### `agent-tempo install-pi`
+
+Installs agent-tempo's two Pi extensions (player + command-center) into Pi's settings.json. The install is idempotent — re-running prunes stale or old-version extension paths and adds the current ones:
+
+```bash
+agent-tempo install-pi            # global ~/.pi/agent/settings.json
+agent-tempo install-pi --project  # per-directory .pi/settings.json
+```
+
+After installation, use the deliberate launch paths — a bare `pi` keeps both extensions dormant:
+
+```
+agent-tempo up --agent pi         # conductor/player session
+agent-tempo command-center        # operator mission-control board
 ```
 
 ## Related
