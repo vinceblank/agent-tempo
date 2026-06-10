@@ -17,7 +17,6 @@
  */
 import * as http from 'http';
 import type { TempoClient } from '../client/interface';
-import type { GuardrailPolicy } from '../types';
 import { DEV_DAEMON_PORT, ENV, PROD_DAEMON_PORT, isDevMode } from '../config';
 import type { AggregateRunner } from './aggregate';
 import {
@@ -35,10 +34,6 @@ import {
 import type { InnerLoopRegistry } from './inner-loop';
 import type { IngestTokenRegistry } from './ingest-registry';
 import { handleInnerIngest, handleInnerPresence, handleInnerSse } from './inner-loop-routes';
-import type { GateRegistry } from './gate-registry';
-import {
-  handleGateArm, handleGateDisarm, handleGateDecide, handleGateResolution,
-} from './gate-routes';
 import {
   corsResponseHeaders,
   evaluateOrigin,
@@ -163,23 +158,6 @@ export interface HttpServerOptions {
    */
   innerLoop?: InnerLoopRegistry;
   ingestTokens?: IngestTokenRegistry;
-  /**
-   * 3d MD-G — the operator-gate registry. When provided (with `ingestTokens`)
-   * the `/v1/players/:e/:p/gate-arm` + `/gate-disarm` + `/gate/:requestId`
-   * operator routes (requireTier(3)) and the `/gate/:requestId/resolution`
-   * subprocess-poll route (ingest-token) light up; absent → those routes 404.
-   * The daemon constructs + shares this with the worker (auto-disarm on
-   * detach/destroy) — same singleton pattern as the inner-loop registries.
-   */
-  gate?: GateRegistry;
-  /**
-   * #712 — bounded resolver for a player's durable `guardrailPolicy`, used by the
-   * ingest gate_pending path on a {@link GateRegistry.getPolicy} cache-miss to
-   * keep the failMode cross-check daemon-authoritative. The daemon wires it to a
-   * `getMetadataQuery` behind `utils/query-timeout`; absent → the route skips the
-   * miss-resolve (an unresolved policy then enforces `closed`, no-fail-open).
-   */
-  resolveGuardrailPolicy?: (workflowId: string) => Promise<GuardrailPolicy | undefined>;
 }
 
 export interface HttpServerHandle {
@@ -243,12 +221,12 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
   // 3e MD-E — one-time startup warnings (non-blocking).
   //
   // (1) Legacy migration: a pre-3e single `httpToken` was adopted as the READ
-  //     token (T1) and no admin token is configured, so writes / operator gate /
-  //     inner-tail (all Tier ≥ 2) will 503 until an admin token is set.
+  //     token (T1) and no admin token is configured, so writes / inner-tail
+  //     (all Tier ≥ 2) will 503 until an admin token is set.
   if (legacyMigrated && adminToken === null) {
     log(
       'NOTICE: adopted legacy config.json `httpToken` as the read-tier token. ' +
-      'Writes, the operator gate, and the inner-tail are admin-only and will return ' +
+      'Writes and the inner-tail are admin-only and will return ' +
       '503 until you set AGENT_TEMPO_HTTP_ADMIN_TOKEN (env-var only).',
     );
   }
@@ -293,8 +271,6 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<HttpServ
       sseConnectionCap,
       innerLoop: opts.innerLoop ?? null,
       ingestTokens: opts.ingestTokens ?? null,
-      gate: opts.gate ?? null,
-      resolveGuardrailPolicy: opts.resolveGuardrailPolicy ?? null,
     }).catch((err) => {
       log('unhandled handler error:', err instanceof Error ? err.message : err);
       if (!res.headersSent) {
@@ -390,10 +366,6 @@ interface HandleContext {
   innerLoop: InnerLoopRegistry | null;
   /** 3c Tier-2 ingest-token registry (source-plane auth) — null when unwired. */
   ingestTokens: IngestTokenRegistry | null;
-  /** 3d MD-G operator-gate registry — null when unwired. */
-  gate: GateRegistry | null;
-  /** #712 — bounded durable-policy resolver for the failMode cross-check — null when unwired. */
-  resolveGuardrailPolicy: ((workflowId: string) => Promise<GuardrailPolicy | undefined>) | null;
 }
 
 /**
@@ -441,7 +413,7 @@ export async function handle(
   // reaches them regardless of the daemon's bind address. Only live when the
   // daemon wired the registries; else they fall through to the 404/405 path.
   if (ctx.innerLoop && ctx.ingestTokens) {
-    const innerDeps = { innerLoop: ctx.innerLoop, ingestTokens: ctx.ingestTokens, ...(ctx.gate ? { gate: ctx.gate } : {}), ...(ctx.resolveGuardrailPolicy ? { resolveGuardrailPolicy: ctx.resolveGuardrailPolicy } : {}) };
+    const innerDeps = { innerLoop: ctx.innerLoop, ingestTokens: ctx.ingestTokens };
     const ingestMatch = pathname.match(/^\/v1\/players\/([^/]+)\/([^/]+)\/inner\/ingest$/);
     if (ingestMatch) {
       if (method !== 'POST') {
@@ -458,30 +430,12 @@ export async function handle(
     }
   }
 
-  // 3d MD-G INGRESS (Pi subprocess → daemon poll). Same source-plane auth as the
-  // inner-loop ingest (loopback `socket.remoteAddress` + `X-Ingest-Token` vs the
-  // URL workflowId), matched BEFORE the bearer gate. Live only when the daemon
-  // wired the gate + ingest registries.
-  if (ctx.gate && ctx.ingestTokens) {
-    const gateDeps = { gate: ctx.gate, ingestTokens: ctx.ingestTokens };
-    const resolutionMatch = pathname.match(/^\/v1\/players\/([^/]+)\/([^/]+)\/gate\/([^/]+)\/resolution$/);
-    if (resolutionMatch) {
-      if (method !== 'GET') {
-        return errorResponse(res, 405, { error: 'method-not-allowed' }, { Allow: 'GET' });
-      }
-      return handleGateResolution(
-        req, res, gateDeps,
-        decodeURIComponent(resolutionMatch[1]), decodeURIComponent(resolutionMatch[2]), decodeURIComponent(resolutionMatch[3]),
-      );
-    }
-  }
-
   // Layer 2 — shared AUTHENTICATION + Origin/DNS-rebind defense (architect's
   // decomposition). bearerRequired() carries the Origin-rebind logic; a request
   // in bearer mode must present a token granting at LEAST a tier (read or admin).
   // This is the single shared upstream pass — the per-route TIER authorization
   // (Layer 3, `gateTier(N)` / inline `requireTier(3)`) refines it below: reads → T1,
-  // writes/pair-mint → T2 (admin), gate/inner → T3 (admin).
+  // writes/pair-mint → T2 (admin), the /inner tail → T3 (admin).
   const originHeader = headerString(req.headers.origin);
   const reqBearer = bearerRequired(ctx.bindAddr, originHeader);
   if (reqBearer) {
@@ -506,7 +460,7 @@ export async function handle(
   // resolved ONCE here off the shared L2 pass (bindAddr + Origin + the two
   // RBAC tokens) and reused by every `gateTier(N)` call below — reads require
   // T1, the write/pair-mint surface requires T2 (admin). The grandfathered T3
-  // gate/inner sites (3c/3d) keep their own inline `requireTier(3)` by design.
+  // /inner egress site (3c) keeps its own inline `requireTier(3)` by design.
   //
   // This is defense-in-depth ON TOP of the L2 token-validity floor above (which
   // already rejects an unrecognized bearer with 401): the explicit per-route
@@ -524,7 +478,7 @@ export async function handle(
    * hint on 403 (insufficient-tier) / 503 (admin-unset) when present (3e ruling
    * #3). The hint is operator guidance — e.g. "set AGENT_TEMPO_HTTP_ADMIN_TOKEN"
    * — NOT a sensitive leak (security-confirmed). Shared by `gateTier` and the
-   * inline T3 gate/inner sites so every tier denial carries the same body shape.
+   * inline T3 /inner egress site so every tier denial carries the same body shape.
    */
   const denyTier = (r: Exclude<TierGuardResult, { ok: true }>): void => {
     errorResponse(
@@ -638,37 +592,6 @@ export async function handle(
     if (!gateTier(2)) return;
     const provided = extractBearerToken(headerString(req.headers.authorization));
     return handlePairCreate(req, res, provided);
-  }
-
-  // 3d MD-G OPERATOR plane (operator/dashboard → daemon) — POST routes, so they
-  // sit BEFORE the GET-only method gate below (alongside the other POST routes).
-  // `requireTier(3)` — only an admin-token holder may arm/disarm or decide
-  // (MD-E highest tier). Live only when the daemon wired the gate registries.
-  if (ctx.gate && ctx.ingestTokens && method === 'POST') {
-    const gateDeps = { gate: ctx.gate, ingestTokens: ctx.ingestTokens };
-    const armMatch = pathname.match(/^\/v1\/players\/([^/]+)\/([^/]+)\/gate-(arm|disarm)$/);
-    const decideMatch = pathname.match(/^\/v1\/players\/([^/]+)\/([^/]+)\/gate\/([^/]+)$/);
-    if (armMatch || decideMatch) {
-      const tier = requireTier(3, {
-        bindAddr: ctx.bindAddr,
-        originHeader,
-        authHeader: headerString(req.headers.authorization),
-        readToken: ctx.readToken,
-        adminToken: ctx.adminToken,
-      });
-      if (!tier.ok) { denyTier(tier); return; }
-      if (armMatch) {
-        const [, e, p, verb] = armMatch;
-        return verb === 'arm'
-          ? handleGateArm(req, res, gateDeps, decodeURIComponent(e), decodeURIComponent(p))
-          : handleGateDisarm(req, res, gateDeps, decodeURIComponent(e), decodeURIComponent(p));
-      }
-      // decideMatch — POST /gate/:requestId { decision }
-      return handleGateDecide(
-        req, res, gateDeps,
-        decodeURIComponent(decideMatch![1]), decodeURIComponent(decideMatch![2]), decodeURIComponent(decideMatch![3]),
-      );
-    }
   }
 
   // Method gate — read endpoints are GET-only. Both POST paths above

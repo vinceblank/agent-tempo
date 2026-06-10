@@ -50,13 +50,7 @@ export type InnerFrame =
   | { type: 'inner.tool_call'; tool: string; argsSummary: string; ts: number }
   | { type: 'inner.tool_result'; tool: string; resultSummary: string; isError: boolean; ts: number }
   | { type: 'inner.token'; contextTokens?: number; contextPercent?: number }
-  | { type: 'inner.turn'; phase: 'start' | 'end'; turnIndex: number; ts: number }
-  // The two operator-gate members below are emitted ONLY by http/gate-registry.ts
-  // and are removed together with it in C3 of the gate removal
-  // (docs/design/pi-streamline-gate-removal-cc.md — consumers strip before
-  // providers delete; no client emits them anymore).
-  | { type: 'inner.gate_pending'; requestId: string; tool: string; argsSummary: string; classification: 'exec' | 'high-blast'; timeoutMs: number; ts: number; failMode?: 'open' | 'closed' }
-  | { type: 'inner.gate_resolved'; requestId: string; decision: 'allow' | 'deny' | 'auto-allow' | 'auto-deny'; source: 'operator' | 'timeout'; ts: number };
+  | { type: 'inner.turn'; phase: 'start' | 'end'; turnIndex: number; ts: number };
 
 /**
  * The daemon-side fine-tail sink (lead's `http/inner-loop.ts`). Injected so the

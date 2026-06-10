@@ -26,9 +26,7 @@ import { errorResponse, jsonResponse } from './responses';
 import { readJsonBody, BODY_TOO_LARGE, BODY_INVALID_JSON, INGEST_BODY_MAX } from './body';
 import type { InnerLoopRegistry } from './inner-loop';
 import type { IngestTokenRegistry } from './ingest-registry';
-import type { GateRegistry } from './gate-registry';
 import type { InnerFrame } from '../pi/inner-loop-publisher';
-import type { GuardrailPolicy } from '../types';
 
 /** Loopback remote addresses Node may report for a same-host connection. */
 const LOOPBACK_REMOTES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -45,28 +43,6 @@ const INNER_KEEPALIVE_MS = 15_000;
 export interface InnerLoopDeps {
   innerLoop: InnerLoopRegistry;
   ingestTokens: IngestTokenRegistry;
-  /**
-   * 3d MD-G — the operator-gate registry, when wired. Two narrow couplings:
-   *   - ingest: an `inner.gate_pending` frame ALSO registers the pending request
-   *     in the gate (`open()`) — atomic register-and-surface from one POST (the
-   *     "engagement IS registration" path; no separate open-route).
-   *   - presence: the response carries `gateArmed` so the polling subprocess
-   *     evaluates engagement (armed + present) from one fetch.
-   * The coupling is one-directional (inner-routes → GateRegistry); the gate's
-   * `gate_resolved` emission flows back via its injected publishToInner.
-   */
-  gate?: GateRegistry;
-  /**
-   * #712 — BOUNDED resolver for a player's DURABLE `guardrailPolicy` (daemon
-   * wires it to a `getMetadataQuery` behind `utils/query-timeout`). Used by the
-   * ingest gate_pending path ONLY on a {@link GateRegistry.getPolicy} cache-miss
-   * (the common path is spawn/reconcile-populated → sync, no query). Returns the
-   * resolved policy (absent metadata field ⇒ `'autonomous'`), or `undefined` when
-   * the query TIMES OUT / ERRORS / the workflow is gone — the caller then leaves
-   * the gate policy unresolved so `open()` enforces `closed` (NO-FAIL-OPEN). The
-   * resolver MUST be bounded so it can never hang gate engagement.
-   */
-  resolveGuardrailPolicy?: (workflowId: string) => Promise<GuardrailPolicy | undefined>;
 }
 
 /** True when the request originates from the same host (loopback). */
@@ -142,35 +118,6 @@ export async function handleInnerIngest(
   // Trust the authenticated publisher's frame shape (it owns the schema +
   // truncation). Publish to local subscribers and ack with no body.
   deps.innerLoop.publish(workflowId, body as unknown as InnerFrame);
-  // 3d MD-G — a gate_pending frame ALSO registers the pending request in the
-  // gate (atomic register-and-surface from one POST; the "engagement IS
-  // registration" path, no separate open-route). Narrow, one-directional
-  // coupling: inner-routes → GateRegistry.open(). Guarded on the type so it
-  // never fires for ordinary inner frames. `open` is idempotent on requestId.
-  if (type === 'inner.gate_pending' && deps.gate) {
-    const f = body as Record<string, unknown>;
-    if (typeof f.requestId === 'string' && typeof f.tool === 'string') {
-      // #712 — ensure the gate knows the player's DURABLE guardrailPolicy BEFORE
-      // registering, so open() enforces failMode from policy (daemon-authoritative),
-      // not the frame's advisory claim. Fast path: already populated at spawn /
-      // reconcile (sync, no query). Miss (post-restart pre-reconcile): a BOUNDED
-      // getMetadataQuery; on success populate the gate. On timeout/error/gone the
-      // resolver returns undefined → we leave it unresolved → open() enforces
-      // 'closed' (NO-FAIL-OPEN).
-      if (deps.resolveGuardrailPolicy && deps.gate.getPolicy(workflowId) === undefined) {
-        const resolved = await deps.resolveGuardrailPolicy(workflowId);
-        if (resolved !== undefined) deps.gate.setPolicy(workflowId, resolved);
-      }
-      deps.gate.open(workflowId, f.requestId, {
-        tool: f.tool,
-        argsSummary: typeof f.argsSummary === 'string' ? f.argsSummary : '',
-        ensemble,
-        // #712 — ADVISORY claim only (open() enforces from policy); retained so a
-        // self-downgrade (frame 'open' vs policy-enforced 'closed') is auditable.
-        failMode: f.failMode === 'closed' ? 'closed' : 'open',
-      });
-    }
-  }
   res.writeHead(204);
   res.end();
 }
@@ -189,13 +136,8 @@ export function handleInnerPresence(
 ): void {
   const workflowId = gateIngress(req, res, deps, ensemble, playerId);
   if (workflowId === null) return;
-  // 3d MD-G — fold `gateArmed` into the presence response so the polling
-  // subprocess reads BOTH engagement inputs (operator-present + armed) from one
-  // fetch (avoids a stale-armed / fresh-present mismatch). `false` when the gate
-  // is unwired or unarmed.
   jsonResponse(res, 200, {
     subscribers: deps.innerLoop.subscriberCount(workflowId),
-    gateArmed: deps.gate?.isArmed(workflowId) ?? false,
   });
 }
 

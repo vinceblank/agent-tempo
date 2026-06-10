@@ -16,7 +16,6 @@ import { spawnInTerminal, spawnCopilotBridge, spawnClaudeApiAdapter, spawnOpenCo
 import type { ClaudeCodeHeadlessPermissionMode } from '../adapters/claude-code-headless/types';
 import { ENV } from '../config';
 import type { IngestTokenRegistry } from '../http/ingest-registry';
-import type { GateRegistry } from '../http/gate-registry';
 import { resolveSession } from './resolve';
 import { resolveAgentType } from '../ensemble/agent-types';
 import { defaultPart } from '../utils/default-part';
@@ -392,7 +391,6 @@ export function createOutboxActivities(
   client: Client,
   config: Config,
   ingestTokens?: IngestTokenRegistry,
-  gate?: GateRegistry,
 ): OutboxActivities {
   return {
     async deliverCue(input: DeliverCueInput): Promise<OutboxActivityResult> {
@@ -745,13 +743,6 @@ export function createOutboxActivities(
           // REPLACES) means a restart re-mints and naturally revokes the stale
           // token. Injected into the subprocess env as AGENT_TEMPO_INGEST_TOKEN.
           const ingestToken = ingestTokens?.mint(sessionWorkflowId(ensemble, targetName));
-          // #712 — record the DURABLE guardrail policy on the daemon gate at spawn
-          // (beside the ingest-token mint, same daemon process + lifecycle) so the
-          // gate's failMode cross-check is daemon-authoritative from the FIRST
-          // engagement — no lazy metadata query on the common path. Absent ⇒
-          // autonomous (the extension default). Mint REPLACES on restart; setPolicy
-          // likewise re-stamps the current durable posture (no silent downgrade).
-          gate?.setPolicy(sessionWorkflowId(ensemble, targetName), guardrailPolicy ?? 'autonomous');
           const { pid } = spawnPiHeadless({
             name: targetName,
             ensemble,
@@ -896,9 +887,6 @@ export function createOutboxActivities(
         // the player goes away. Mirrors the destroy-side revoke; idempotent and a
         // no-op for non-Pi players (they never minted one). Re-attach re-mints.
         ingestTokens?.revoke(sessionWorkflowId(ensemble, targetPlayerId));
-        // 3d MD-G — auto-disarm the gate on detach (the operator's gate posture
-        // shouldn't survive the player going away; re-attach re-arms). Idempotent.
-        gate?.clearPlayer(sessionWorkflowId(ensemble, targetPlayerId));
         log(`Detach signaled for "${targetPlayerId}" (deadline=${deadlineMs}ms)`);
         return { success: true };
       } catch (err) {
@@ -941,9 +929,6 @@ export function createOutboxActivities(
         // revokeIngestToken(workflowId) on detach — deferred; residual surface
         // negligible (dead holder + loopback-only + single-token replacement).
         ingestTokens?.revoke(sessionWorkflowId(ensemble, targetPlayerId));
-        // 3d MD-G — auto-disarm: drop the gate's armed-state + any pending
-        // requests for the destroyed player (idempotent; no-op for non-Pi).
-        gate?.clearPlayer(sessionWorkflowId(ensemble, targetPlayerId));
 
         if (notifyConductor) {
           try {

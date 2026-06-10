@@ -10,7 +10,6 @@ import { createScheduleActivities } from './activities/schedule-fire';
 import { createOutboxActivities } from './activities/outbox';
 import { createMaestroActivities } from './activities/maestro';
 import type { IngestTokenRegistry } from './http/ingest-registry';
-import type { GateRegistry } from './http/gate-registry';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:worker]', ...args);
 
@@ -74,7 +73,6 @@ export interface DualWorkers {
 export async function createWorkers(
   config: Config,
   ingestTokens?: IngestTokenRegistry,
-  gate?: GateRegistry,
 ): Promise<DualWorkers> {
   const connection = await createTemporalNativeConnection(config);
 
@@ -86,7 +84,7 @@ export async function createWorkers(
   // activities so the pi spawn branch can mint per-player ingest tokens and the
   // destroy path can revoke them. Same singleton the HTTP server validates
   // against (both run in this daemon process).
-  const outboxActivities = createOutboxActivities(client, config, ingestTokens, gate);
+  const outboxActivities = createOutboxActivities(client, config, ingestTokens);
   const maestroActivities = createMaestroActivities(client);
 
   const workflowBundle = await getWorkflowBundle();
