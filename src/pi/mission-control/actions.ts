@@ -1,15 +1,15 @@
 /**
  * Mission-control action client (3f) — DRIVE = HTTP (decision 1). Operator
- * controls POST to the daemon's write surface (T2) + gate endpoints (T3), the
- * SAME surface the dashboard uses — NOT in-Pi MCP tools. The widget holds the
- * ADMIN token (T3) and presents it as a bearer.
+ * controls POST to the daemon's write surface (T2), the SAME surface the
+ * dashboard uses — NOT in-Pi MCP tools. The widget holds the ADMIN token (T3)
+ * and presents it as a bearer.
  *
  * Injected fetch / readPort / token so it's unit-testable without a daemon.
  */
 import { readPortFile } from '../../http/port-file';
 import type { AnswerEntry } from '../../types';
 
-/** Env var holding the daemon admin (T3) token (writes + gate + inner tail). */
+/** Env var holding the daemon admin (T3) token (writes + inner tail). */
 export const ADMIN_TOKEN_ENV = 'AGENT_TEMPO_HTTP_ADMIN_TOKEN';
 const DEFAULT_PORT = 8473;
 
@@ -154,9 +154,6 @@ export class MissionControlActions {
   private ens(): string {
     return encodeURIComponent(this.ensemble);
   }
-  private player(p: string): string {
-    return `${this.ens()}/${encodeURIComponent(p)}`;
-  }
 
   // ── Ensemble write surface (T2) ──
   cue(to: string, message: string): Promise<ActionResult> {
@@ -255,16 +252,5 @@ export class MissionControlActions {
   }): Promise<{ ok: true; ticket: string } | { ok: false; error: string }> {
     const res = await this.postJson<{ ticket: string }>(`/v1/ensembles/${this.ens()}/coat-check`, opts);
     return res.ok ? { ok: true, ticket: res.data.ticket } : res;
-  }
-
-  // ── Operator gate plane (T3) ──
-  gateArm(playerId: string): Promise<ActionResult> {
-    return this.post(`/v1/players/${this.player(playerId)}/gate-arm`, {});
-  }
-  gateDisarm(playerId: string): Promise<ActionResult> {
-    return this.post(`/v1/players/${this.player(playerId)}/gate-disarm`, {});
-  }
-  gateDecide(playerId: string, requestId: string, decision: 'allow' | 'deny'): Promise<ActionResult> {
-    return this.post(`/v1/players/${this.player(playerId)}/gate/${encodeURIComponent(requestId)}`, { decision });
   }
 }

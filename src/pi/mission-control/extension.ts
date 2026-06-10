@@ -3,7 +3,7 @@
  * ensemble mission-control board + operator controller.
  *
  * Three ruled decisions:
- *   1. DRIVE = HTTP — controls POST to the daemon write/gate surface ({@link MissionControlActions}).
+ *   1. DRIVE = HTTP — controls POST to the daemon write surface ({@link MissionControlActions}).
  *   2. OBSERVER-ONLY — this extension NEVER claimAttachment / registers as a player.
  *   3. RENDER THROTTLE ~200ms — events fold into the in-memory {@link BoardModel};
  *      a tick re-renders only when the model changed (revision bump), so the
@@ -256,27 +256,6 @@ export class Controller {
     const [p, reason] = Controller.splitFirst(args);
     if (!p) { this.notify(ctx, 'Usage: /reset <player> [reason]'); return; }
     this.report(ctx, `reset ${p}`, await this.actions.reset(p, reason || undefined));
-  }
-
-  async cmdArm(args: string, ctx: McExtensionContext): Promise<void> {
-    const [p, mode] = Controller.splitFirst(args);
-    if (!p) { this.notify(ctx, 'Usage: /arm <player> [off]'); return; }
-    const off = mode.trim() === 'off';
-    this.report(ctx, `${off ? 'disarm' : 'arm'} ${p}`, off ? await this.actions.gateDisarm(p) : await this.actions.gateArm(p));
-  }
-
-  async cmdGate(args: string, ctx: McExtensionContext): Promise<void> {
-    const [reqId, decisionRaw] = Controller.splitFirst(args);
-    const decision = decisionRaw.trim();
-    if (!reqId || (decision !== 'allow' && decision !== 'deny')) {
-      this.notify(ctx, 'Usage: /gate <requestId> allow|deny  (decides for the tailed player)');
-      return;
-    }
-    if (!this.model.selected) {
-      this.notify(ctx, 'Select a player first with /tail <player> — gate decisions are per-player.');
-      return;
-    }
-    this.report(ctx, `gate ${reqId} ${decision}`, await this.actions.gateDecide(this.model.selected, reqId, decision));
   }
 
   // ── Bootstrap commands (#700 P1) ──
@@ -646,8 +625,6 @@ export function createMissionControlExtension(deps: MissionControlDeps = {}): (p
     pi.registerCommand('restart', { description: 'Restart a player (/restart <player> [reason])', handler: (a, ctx) => ctrl.cmdRestart(a, ctx) });
     pi.registerCommand('destroy', { description: 'Destroy a player (/destroy <player> [reason])', handler: (a, ctx) => ctrl.cmdDestroy(a, ctx) });
     pi.registerCommand('reset', { description: 'Clean-wipe a player (/reset <player> [reason])', handler: (a, ctx) => ctrl.cmdReset(a, ctx) });
-    pi.registerCommand('arm', { description: 'Arm/disarm the operator gate for a player (/arm <player> [off])', handler: (a, ctx) => ctrl.cmdArm(a, ctx) });
-    pi.registerCommand('gate', { description: 'Decide a gate request for the tailed player (/gate <reqId> allow|deny)', handler: (a, ctx) => ctrl.cmdGate(a, ctx) });
 
     // #700 P1 — bootstrap commands (ensureInfra → daemon HTTP action).
     pi.registerCommand('ensemble-up', { description: 'Bootstrap the ensemble (/ensemble-up [name] [--lineup X] [--hold])', handler: (a, ctx) => ctrl.cmdEnsembleUp(a, ctx) });

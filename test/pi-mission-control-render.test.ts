@@ -52,40 +52,6 @@ describe('mission-control renderBoard', () => {
     expect(out.join('\n')).to.contain('read(');
   });
 
-  it('renders operator-gate frames with the requestId + decision (not the bare ·)', () => {
-    const m = initBoard('demo');
-    applyTempoEvent(m, ev('player.added', summary({ playerId: 'eng' })));
-    selectPlayer(m, 'eng');
-    applyInnerFrame(m, {
-      type: 'inner.gate_pending',
-      requestId: 'req-123',
-      tool: 'bash',
-      argsSummary: 'rm -rf x',
-      classification: 'exec',
-      timeoutMs: 45000,
-      ts: 1,
-    } as InnerFrame);
-    applyInnerFrame(m, {
-      type: 'inner.gate_resolved',
-      requestId: 'req-123',
-      decision: 'deny',
-      source: 'operator',
-      ts: 2,
-    } as InnerFrame);
-    const joined = renderBoard(m).join('\n');
-    // gate_pending: operator must be able to read the requestId off the board.
-    expect(joined).to.contain('GATE req-123');
-    expect(joined).to.contain('bash');
-    expect(joined).to.contain('exec');
-    expect(joined).to.contain('45s');
-    // gate_resolved: outcome feedback.
-    expect(joined).to.contain('req-123 -> deny');
-    // neither frame fell through to the bare placeholder for its own line.
-    const gateLines = renderBoard(m).filter((l) => l.includes('GATE'));
-    expect(gateLines.length).to.equal(2);
-    for (const l of gateLines) expect(l.trim()).to.not.equal('·');
-  });
-
   it('tags cross-host players with @host when localHost is known (H3a)', () => {
     const m = initBoard('demo');
     applyTempoEvent(m, ev('player.added', summary({ playerId: 'local', hostname: 'box-1' })));
