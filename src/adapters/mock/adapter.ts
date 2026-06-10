@@ -28,6 +28,7 @@ import * as path from 'path';
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { getConfig, ENV } from '../../config';
 import { createTemporalConnection } from '../../connection';
+import { actionCountingInterceptors, withActionSource } from '../../utils/action-counters';
 import { MOCK_MODES, type AdapterDescriptor, type Message, type MockMode, type OutboxEntryInput } from '../../types';
 import { SdkAttachment } from '../sdk/base';
 import {
@@ -208,7 +209,11 @@ export class MockAttachment extends SdkAttachment {
     log(`Starting mock adapter (mode=${this.mode}, ensemble=${config.ensemble}, player=${playerId})`);
 
     const connection = await createTemporalConnection(config);
-    const client = new Client({ connection, namespace: config.temporalNamespace });
+    const client = new Client({
+      connection,
+      namespace: config.temporalNamespace,
+      interceptors: actionCountingInterceptors(),
+    });
     this.configureV2(client, os.hostname());
 
     // Wait for the MCP server's workflow to register — same pattern as
@@ -275,24 +280,27 @@ export class MockAttachment extends SdkAttachment {
     // SDK session to keep alive between iterations.
     this.polling = true;
     log('Mock poll loop started.');
-    while (this.polling) {
-      try {
-        const messages: Message[] = await pinned.query(pendingMessagesQuery);
-        for (const msg of messages) {
-          if (!this.polling) break;
-          await this.processMessage(pinned, msg);
+    // #753 — meter the poll loop's Temporal calls under 'sdk-poller'.
+    await withActionSource('sdk-poller', async () => {
+      while (this.polling) {
+        try {
+          const messages: Message[] = await pinned.query(pendingMessagesQuery);
+          for (const msg of messages) {
+            if (!this.polling) break;
+            await this.processMessage(pinned, msg);
+          }
+        } catch (err) {
+          log('poll error:', (err as Error)?.message ?? err);
         }
-      } catch (err) {
-        log('poll error:', (err as Error)?.message ?? err);
+        try {
+          await this.abortableSleep(POLL_INTERVAL_MS);
+        } catch {
+          // `abortableSleep` rejects with `aborted:stopped` on terminal/stop —
+          // we exit the loop and let cleanup finish.
+          break;
+        }
       }
-      try {
-        await this.abortableSleep(POLL_INTERVAL_MS);
-      } catch {
-        // `abortableSleep` rejects with `aborted:stopped` on terminal/stop —
-        // we exit the loop and let cleanup finish.
-        break;
-      }
-    }
+    });
     log('Mock poll loop exited.');
   }
 

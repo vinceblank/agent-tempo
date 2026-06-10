@@ -49,6 +49,7 @@
  * sanity-checks the values in this map during PR review.
  */
 import type { WorkflowExecutionInfo } from '@temporalio/client';
+import { recordAction } from './action-counters';
 
 /**
  * Per-site deadline budgets for visibility iterators (#336/#529).
@@ -190,6 +191,10 @@ export async function* iterateWithDeadline(
   /** Test-only — defaults to `Date.now`; injectable so unit tests can advance the clock. */
   now: () => number = Date.now,
 ): AsyncGenerator<WorkflowExecutionInfo> {
+  // #753 — visibility scans don't flow through the workflow-client
+  // interceptor, so they're counted here: one 'list' per invocation
+  // (per scan, not per page — see ACTION_KINDS).
+  recordAction('list');
   const deadline = now() + deadlineMs;
   let count = 0;
   for await (const entry of source) {

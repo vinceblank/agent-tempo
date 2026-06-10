@@ -32,6 +32,7 @@ import { attachmentInfoQuery, orphanSummaryQuery } from '../workflows/signals';
 import { isEnsembleAllowed } from '../config';
 import { createTempoClient } from '../client';
 import { queryHandleWithTimeout } from '../utils/query-timeout';
+import { withActionSource } from '../utils/action-counters';
 import {
   iterateWithDeadline,
   isVisibilityTimeout,
@@ -306,6 +307,17 @@ export async function queryOrphanedSessions(
   filter: OrphanQueryFilter,
   log: (...args: unknown[]) => void = () => {},
   deadlineMs: number = VISIBILITY_DEADLINES_MS.orphanQueryBoot,
+): Promise<OrphanCandidate[]> {
+  // #753 — attribute the scan's Temporal calls to the reconcile plane.
+  return withActionSource('reconcile', () =>
+    queryOrphanedSessionsInner(client, filter, log, deadlineMs));
+}
+
+async function queryOrphanedSessionsInner(
+  client: Client,
+  filter: OrphanQueryFilter,
+  log: (...args: unknown[]) => void,
+  deadlineMs: number,
 ): Promise<OrphanCandidate[]> {
   const isAlive = filter.isAdapterProcessAlive ?? isAdapterProcessAliveStub;
   const query = buildOrphanQuery({

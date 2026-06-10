@@ -15,6 +15,7 @@
  */
 import { Client, type WorkflowHandle } from '@temporalio/client';
 import { createTemporalConnection } from '../connection';
+import { actionCountingInterceptors, withActionSource } from '../utils/action-counters';
 import { getConfig, sessionWorkflowId, type Config } from '../config';
 import {
   claimAttachmentUpdate,
@@ -125,7 +126,11 @@ export class PiWorkflowClient {
   /** Build a client from config (connection-pooled; safe to share — see D12a). */
   static async connect(config: Config = getConfig()): Promise<Client> {
     const connection = await createTemporalConnection(config);
-    return new Client({ connection, namespace: config.temporalNamespace });
+    return new Client({
+      connection,
+      namespace: config.temporalNamespace,
+      interceptors: actionCountingInterceptors(),
+    });
   }
 
   get attachmentId(): string | null {
@@ -206,11 +211,12 @@ export class PiWorkflowClient {
     // Sampled per-beat; a throwing/absent provider degrades to a plain heartbeat.
     let coarse: CoarseSample | undefined;
     try { coarse = this.coarseProvider?.(); } catch { coarse = undefined; }
-    await handle.signal(heartbeatSignal, {
-      attachmentId: this.token.attachmentId,
+    // #753 — liveness-lease signals are metered as their own source.
+    await withActionSource('heartbeat', () => handle.signal(heartbeatSignal, {
+      attachmentId: this.token!.attachmentId,
       at: new Date().toISOString(),
       ...(coarse ? coarse : {}),
-    });
+    }));
   }
 
   /** Start the heartbeat loop. The timer is `unref`'d so it never holds the process open. */

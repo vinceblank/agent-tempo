@@ -3,6 +3,7 @@ import { Cron } from 'croner';
 import { conductorWorkflowId } from '../config';
 import { SessionMetadata } from '../types';
 import { resolveSession } from './resolve';
+import { tagActionSource } from '../utils/action-counters';
 import {
   iterateWithDeadline,
   isVisibilityTimeout,
@@ -48,7 +49,9 @@ export interface ScheduleActivities {
  * The returned object is registered with the worker as activities.
  */
 export function createScheduleActivities(client: Client): ScheduleActivities {
-  return {
+  // #753 — attribute every Temporal call made by these activities (however
+  // deep, e.g. resolveSession → queryHandleWithTimeout) to the scheduler.
+  return tagActionSource('schedule', {
     async computeNextCronFire(input: ComputeNextCronInput): Promise<string | null> {
       const job = new Cron(input.cronExpression, { timezone: input.timezone || 'UTC' });
       const next = job.nextRun();
@@ -156,7 +159,7 @@ export function createScheduleActivities(client: Client): ScheduleActivities {
         return { success: false, error: errorMsg };
       }
     },
-  };
+  });
 }
 
 /**

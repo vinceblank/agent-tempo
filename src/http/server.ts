@@ -68,6 +68,7 @@ import {
   writePortFileAtomic,
 } from './port-file';
 import { errorResponse, jsonResponse } from './responses';
+import { snapshotActionCounters, withActionSource } from '../utils/action-counters';
 import {
   buildEnsembleSnapshot,
   EnsembleNotFoundError,
@@ -645,6 +646,16 @@ export async function handle(
     return handleListLineups(res);
   }
 
+  // #753 — per-source Temporal action counters for the DAEMON process
+  // (maestro / aggregate / outbox / schedule / reconcile sources live
+  // here; adapter and Pi processes self-report via their periodic
+  // `[agent-tempo:action-counters]` log line instead). Pure in-memory
+  // read — zero Temporal calls.
+  if (pathname === '/v1/debug/action-counters') {
+    if (!gateTier(1)) return; // L3 — read (Tier 1).
+    return jsonResponse(res, 200, snapshotActionCounters());
+  }
+
   // /v1/state/:ensemble — single capture group.
   const stateMatch = pathname.match(/^\/v1\/state\/([^/]+)$/);
   if (stateMatch) {
@@ -850,7 +861,10 @@ async function handleState(
   ensemble: string,
 ): Promise<void> {
   try {
-    const snapshot = await buildEnsembleSnapshot(ctx.client, ensemble);
+    // #753 — the on-demand snapshot fans out the same queries as the
+    // aggregate poll; meter it under the same source.
+    const snapshot = await withActionSource('aggregate', () =>
+      buildEnsembleSnapshot(ctx.client, ensemble));
     jsonResponse(res, 200, snapshot);
   } catch (err) {
     if (err instanceof EnsembleNotFoundError) {

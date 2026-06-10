@@ -38,6 +38,7 @@ import type { Message, AdapterDescriptor } from '../../types';
 import { SdkAttachment, type SdkDeliverResult } from '../sdk/base';
 import { ENV, getConfig, resolveAdapterPidFile } from '../../config';
 import { createTemporalConnection } from '../../connection';
+import { actionCountingInterceptors, withActionSource } from '../../utils/action-counters';
 import { pendingMessagesQuery, allMessagesQuery, allSentMessagesQuery, isDestroyedQuery, receiveMessageSignal } from '../../workflows/signals';
 import { buildServerInstructions } from '../../server-tools';
 import { bootMcpBridge, type McpBridge } from './mcp-bridge';
@@ -194,6 +195,7 @@ export class DirectApiAttachment extends SdkAttachment {
     const client = new Client({
       connection,
       namespace: config.temporalNamespace,
+      interceptors: actionCountingInterceptors(),
     });
 
     // Hand the client + host to BaseAttachment so startV2Lifecycle can
@@ -321,7 +323,8 @@ export class DirectApiAttachment extends SdkAttachment {
     process.on('SIGTERM', shutdown);
 
     // Drive the poll loop until cleanup is requested.
-    await this.pollLoop(handle);
+    // #753 — meter the poll loop's Temporal calls under 'sdk-poller'.
+    await withActionSource('sdk-poller', () => this.pollLoop(handle));
     try { fs.unlinkSync(pidFile); } catch { /* already gone */ }
   }
 

@@ -36,6 +36,7 @@ import { SeqAllocator } from './event-id';
 import type { EnsembleStateV1, PlayerSummaryV1 } from './event-types';
 import { buildEnsembleSnapshot, EnsembleNotFoundError } from './snapshot';
 import { MAESTRO_ANSWER_TTL_MS } from '../utils/validation';
+import { withActionSource } from '../utils/action-counters';
 
 /** Default cadence per spec §8. */
 export const DEFAULT_POLL_INTERVAL_MS = 750;
@@ -698,6 +699,13 @@ export class AggregateRunner {
    * — the new tick owns that flag now.
    */
   async tick(): Promise<void> {
+    // #753 — every Temporal call made inside the tick (collect →
+    // buildEnsembleSnapshot → TempoClient fan-out → queryHandleWithTimeout)
+    // is attributed to the aggregate poll loop.
+    return withActionSource('aggregate', () => this.tickInner());
+  }
+
+  private async tickInner(): Promise<void> {
     if (this.inFlight) {
       this.skipCount++;
       const now = this.now();
