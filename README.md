@@ -279,6 +279,15 @@ From the TUI, `/recruit-conductor` relaunches the active ensemble's conductor �
 
 **Headless Pi players** — recruit as a background agent slot using `agent: 'pi'`. Pi players run the full tool surface — including shell — without an approval layer, exactly like the other adapters. Observe them live via the mission-control board (coarse SSE + fine `/inner` tail); control via `cue`/`pause`/`restart`/`destroy`/`reset`. See [docs/concepts.md](docs/concepts.md#command-center-and-player-supervision).
 
+**Mission-control board** — operator-only view that observes the ensemble and sends operator actions (cue, pause, restart, destroy) without joining as a player:
+
+```bash
+agent-tempo install-pi        # install Pi extensions (once per machine)
+agent-tempo command-center    # launch the board (aliases: cc, board)
+```
+
+The admin token is injected automatically for loopback daemons — no manual token setup required locally (#736).
+
 📖 [Pi integration reference → docs/design/pi-hardening-h1-h2-h3.md](docs/design/pi-hardening-h1-h2-h3.md)
 
 ## Worker Daemon
