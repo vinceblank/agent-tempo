@@ -46,6 +46,7 @@ This document is the authoritative reference for the **HTTP/SSE event source** e
 | `GET` | `/v1/ensembles/:ensemble/coat-check/:ticket` | `application/json` | **#713.** Redeem a coat-check ticket → `{ ok, ensemble, ticket, found, entry }` (`entry` includes `content`, or `null`/`found:false` when missing/expired/evicted). **Mutates fetch-audit counters** (`fetchCount` / `lastFetched*`) — it is NOT a pure read, so it is gated at **T2**, not the usual T1 read tier. See § 11d. |
 | `GET` | `/v1/agent-types` | `application/json` | Available player-type catalog (project + user + shipped, three-tier dedup). See § 11c. |
 | `GET` | `/v1/lineups` | `application/json` | Available lineup catalog (saved + shipped). See § 11c. |
+| `GET` | `/v1/debug/action-counters` | `application/json` | **#753.** Per-source Temporal action counters for the **daemon process** (`{ sinceIso, windowMs, total, bySource }`; sources: maestro/aggregate/outbox/schedule/reconcile/other × kinds: query/signal/update/start/describe/terminate/cancel/list). In-memory diagnostic for the cost-rearchitecture metering (epic #747) — zero Temporal calls; resets on daemon restart; T1 read tier. Adapter/Pi processes self-report via their periodic `[agent-tempo:action-counters]` log line instead. |
 
 **Reads via GET, writes via POST under the same auth model.** The
 read-side endpoints stay cacheable, durable, and replay-safe; the
