@@ -28,6 +28,7 @@ import type {
   DetachReason,
 } from '../types';
 import { isTerminalWorkflowError } from './terminal-error';
+import { withActionSource } from '../utils/action-counters';
 const log = (...args: unknown[]) => console.error('[agent-tempo:adapter]', ...args);
 
 // ── Hypothesis A telemetry (#258 follow-up) ─────────────────────────────
@@ -595,6 +596,11 @@ export abstract class BaseAttachment {
    * whatever comes next.
    */
   private async tickHeartbeat(): Promise<void> {
+    // #753 — liveness-lease signals are metered as their own source.
+    return withActionSource('heartbeat', () => this.tickHeartbeatInner());
+  }
+
+  private async tickHeartbeatInner(): Promise<void> {
     try {
       if (this.stopped || this.terminalFired) {
         this.logGuardTrip('heartbeat');
@@ -656,6 +662,11 @@ export abstract class BaseAttachment {
    * restart.
    */
   private async tickPhaseWatcher(): Promise<void> {
+    // #753 — relaxed-poll attachmentInfo queries are metered as their own source.
+    return withActionSource('phase-watcher', () => this.tickPhaseWatcherInner());
+  }
+
+  private async tickPhaseWatcherInner(): Promise<void> {
     try {
       if (this.stopped || this.terminalFired) {
         this.logGuardTrip('phase-watcher');

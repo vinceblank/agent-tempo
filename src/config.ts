@@ -24,6 +24,11 @@ export const ENV = {
   PLAYER_TYPE: 'AGENT_TEMPO_PLAYER_TYPE',
   CLAUDE_BIN: 'AGENT_TEMPO_CLAUDE_BIN',
   /**
+   * #753 — cadence (ms) of the periodic `[agent-tempo:action-counters]` log
+   * line each instrumented process emits. Default 5 minutes; `0` disables.
+   */
+  ACTION_LOG_INTERVAL_MS: 'AGENT_TEMPO_ACTION_LOG_INTERVAL_MS',
+  /**
    * #131 Phase C — claude-api adapter model override. Recruit-arg takes
    * precedence; this env var is the next fallback before the constants-pinned
    * default (`claude-opus-4-7`). Ignored by other adapters.

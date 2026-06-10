@@ -36,6 +36,7 @@ import type { Message, AdapterDescriptor } from '../../types';
 import { SdkAttachment, type SdkDeliverResult } from '../sdk/base';
 import { ENV, getConfig, bridgeLogPaths } from '../../config';
 import { createTemporalConnection } from '../../connection';
+import { actionCountingInterceptors, withActionSource } from '../../utils/action-counters';
 import {
   pendingMessagesQuery,
   isDestroyedQuery,
@@ -279,7 +280,11 @@ export class OpenCodeAttachment extends SdkAttachment {
 
     // (5) Connect Temporal, wait for workflow, hand client to BaseAttachment.
     const connection = await createTemporalConnection(config);
-    const client = new Client({ connection, namespace: config.temporalNamespace });
+    const client = new Client({
+      connection,
+      namespace: config.temporalNamespace,
+      interceptors: actionCountingInterceptors(),
+    });
     this.configureV2(client, os.hostname());
 
     log(`Waiting for workflow ${expectedWorkflowId} to register...`);
@@ -373,8 +378,8 @@ export class OpenCodeAttachment extends SdkAttachment {
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
 
-    // (11) Drive the poll loop.
-    await this.pollLoop(handle);
+    // (11) Drive the poll loop. #753 — meter its Temporal calls under 'sdk-poller'.
+    await withActionSource('sdk-poller', () => this.pollLoop(handle));
     try { fs.unlinkSync(pidFile); } catch { /* gone */ }
   }
 

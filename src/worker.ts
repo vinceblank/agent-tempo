@@ -10,6 +10,7 @@ import { createScheduleActivities } from './activities/schedule-fire';
 import { createOutboxActivities } from './activities/outbox';
 import { createMaestroActivities } from './activities/maestro';
 import type { IngestTokenRegistry } from './http/ingest-registry';
+import { actionCountingInterceptors } from './utils/action-counters';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:worker]', ...args);
 
@@ -78,7 +79,11 @@ export async function createWorkers(
 
   // Create a Client connection for activities that need to interact with Temporal
   const clientConnection = await createTemporalConnection(config);
-  const client = new Client({ connection: clientConnection, namespace: config.temporalNamespace });
+  const client = new Client({
+    connection: clientConnection,
+    namespace: config.temporalNamespace,
+    interceptors: actionCountingInterceptors(),
+  });
   const scheduleActivities = createScheduleActivities(client);
   // 3c Tier-2 — thread the daemon's shared IngestTokenRegistry into the outbox
   // activities so the pi spawn branch can mint per-player ingest tokens and the

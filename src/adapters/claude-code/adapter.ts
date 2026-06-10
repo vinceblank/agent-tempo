@@ -20,6 +20,7 @@
 import type { Client, WorkflowHandle } from '@temporalio/client';
 import { BaseAttachment, type BaseAttachmentOptions } from '../base';
 import { isTerminalWorkflowError } from '../terminal-error';
+import { withActionSource } from '../../utils/action-counters';
 import type { AdapterDescriptor, DetachReason } from '../../types';
 import { Message } from '../../types';
 import { ENV } from '../../config';
@@ -84,7 +85,9 @@ function startMessagePoller(
     }
   };
 
-  const poll = async () => {
+  // #753 — meter each poll tick's Temporal calls (pendingMessages query +
+  // markDelivered signal) under 'sdk-poller'.
+  const poll = () => withActionSource('sdk-poller', async () => {
     if (stopped) return;
     try {
       const messages: Message[] = await handle.query('pendingMessages');
@@ -124,7 +127,7 @@ function startMessagePoller(
     if (!stopped) {
       timeout = setTimeout(poll, currentInterval);
     }
-  };
+  });
 
   // Start the first poll
   timeout = setTimeout(poll, POLL_BASE_MS);

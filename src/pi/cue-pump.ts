@@ -63,6 +63,7 @@
  */
 import type { Message, PendingReset } from '../types';
 import type { ExtensionAPI, PiAgentSession, PiOutboundMessage, PiCustomMessageOptions } from './pi-types';
+import { withActionSource } from '../utils/action-counters';
 
 /** Source of pending cues + ack — satisfied by `PiWorkflowClient`. */
 export interface CueSource {
@@ -242,6 +243,12 @@ export class CuePump {
   async tick(): Promise<void> {
     if (this.draining) return;
     this.draining = true;
+    // #753 — meter the pump's Temporal calls (pendingMessages/pendingReset
+    // queries + markDelivered/ackReset signals) under 'pi-pump'.
+    return withActionSource('pi-pump', () => this.tickInner());
+  }
+
+  private async tickInner(): Promise<void> {
     try {
       // (0) Reset intake FIRST — a wipe lands before any cue injected this tick.
       if (this.resetSource) {

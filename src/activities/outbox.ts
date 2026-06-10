@@ -17,6 +17,7 @@ import type { ClaudeCodeHeadlessPermissionMode } from '../adapters/claude-code-h
 import { ENV } from '../config';
 import type { IngestTokenRegistry } from '../http/ingest-registry';
 import { resolveSession } from './resolve';
+import { tagActionSource } from '../utils/action-counters';
 import { resolveAgentType } from '../ensemble/agent-types';
 import { defaultPart } from '../utils/default-part';
 import { registry } from '../adapters';
@@ -371,7 +372,10 @@ export function createOutboxActivities(
   config: Config,
   ingestTokens?: IngestTokenRegistry,
 ): OutboxActivities {
-  return {
+  // #753 — attribute every Temporal call made by these activities (however
+  // deep, e.g. deliverCue → resolveSession → queryHandleWithTimeout) to the
+  // outbox dispatch plane.
+  return tagActionSource('outbox', {
     async deliverCue(input: DeliverCueInput): Promise<OutboxActivityResult> {
       const { ensemble, fromPlayerId, targetPlayerId, message, broadcastId, attachmentTicket } = input;
       try {
@@ -1204,5 +1208,5 @@ export function createOutboxActivities(
     async hardTerminateAttachment(input: HardTerminateInput): Promise<HardTerminateResult> {
       return hardTerminateAttachment(input);
     },
-  };
+  });
 }

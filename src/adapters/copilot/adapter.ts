@@ -39,6 +39,7 @@ import * as path from 'path';
 import { Client } from '@temporalio/client';
 import { getConfig, ENV, resolveAdapterPidFile } from '../../config';
 import { createTemporalConnection } from '../../connection';
+import { actionCountingInterceptors, withActionSource } from '../../utils/action-counters';
 import { Message } from '../../types';
 import type { AdapterDescriptor } from '../../types';
 import { SdkAttachment } from '../sdk/base';
@@ -218,6 +219,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
     const client = new Client({
       connection,
       namespace: config.temporalNamespace,
+      interceptors: actionCountingInterceptors(),
     });
 
     // Hand the client + host to BaseAttachment so startV2Lifecycle (below) can
@@ -718,7 +720,8 @@ export class CopilotSdkAttachment extends SdkAttachment {
       }
     };
 
-    interval = setInterval(poll, POLL_INTERVAL_MS);
+    // #753 — meter each poll tick's Temporal calls under 'sdk-poller'.
+    interval = setInterval(() => withActionSource('sdk-poller', poll), POLL_INTERVAL_MS);
     log('Message poller started. Bridge is running.');
 
     // Graceful shutdown on SIGINT/SIGTERM — signal the workflow before exiting

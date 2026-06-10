@@ -44,6 +44,7 @@ import type { AdapterDescriptor, Message, SessionMetadata } from '../../types';
 import { SdkAttachment, type SdkDeliverResult } from '../sdk/base';
 import { ENV, getConfig, resolveAdapterPidFile } from '../../config';
 import { createTemporalConnection } from '../../connection';
+import { actionCountingInterceptors, withActionSource } from '../../utils/action-counters';
 import {
   pendingMessagesQuery,
   isDestroyedQuery,
@@ -261,6 +262,7 @@ export class ClaudeCodeHeadlessAttachment extends SdkAttachment {
     const client = new Client({
       connection,
       namespace: config.temporalNamespace,
+      interceptors: actionCountingInterceptors(),
     });
     this.configureV2(client, os.hostname());
 
@@ -365,7 +367,8 @@ export class ClaudeCodeHeadlessAttachment extends SdkAttachment {
     process.on('SIGTERM', shutdown);
 
     // Drive the poll loop until cleanup is requested.
-    await this.pollLoop(handle);
+    // #753 — meter its Temporal calls under 'sdk-poller'.
+    await withActionSource('sdk-poller', () => this.pollLoop(handle));
     try { fs.unlinkSync(pidFile); } catch { /* already gone */ }
   }
 

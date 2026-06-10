@@ -10,6 +10,11 @@ import * as path from 'path';
 import * as os from 'os';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { startHttpServer, type HttpServerHandle } from '../../src/http/server';
+import {
+  recordAction,
+  withActionSource,
+  __resetActionCountersForTests,
+} from '../../src/utils/action-counters';
 import type { TempoClient } from '../../src/client/interface';
 import type { HealthV1, EnsembleStateV1 } from '../../src/http/event-types';
 import type { MaestroPlayerInfo, HostInfo } from '../../src/types';
@@ -223,6 +228,32 @@ describe('GET /v1/hosts', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body[0].hostname).toBe('eng-host');
+  });
+});
+
+describe('GET /v1/debug/action-counters (#753)', () => {
+  it('serves the in-memory per-source snapshot', async () => {
+    __resetActionCountersForTests();
+    try {
+      withActionSource('maestro', () => recordAction('query'));
+      recordAction('list', 'aggregate');
+      const b = await boot();
+      const res = await fetch(`${b.url}/v1/debug/action-counters`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.total).toBe(2);
+      expect(body.bySource.maestro).toEqual({ query: 1, total: 1 });
+      expect(body.bySource.aggregate).toEqual({ list: 1, total: 1 });
+      expect(Date.parse(body.sinceIso)).not.toBeNaN();
+    } finally {
+      __resetActionCountersForTests();
+    }
+  });
+
+  it('is GET-only', async () => {
+    const b = await boot();
+    const res = await fetch(`${b.url}/v1/debug/action-counters`, { method: 'POST' });
+    expect(res.status).toBe(405);
   });
 });
 

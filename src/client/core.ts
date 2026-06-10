@@ -16,6 +16,7 @@
 import { hostname as osHostname } from 'os';
 import { Client, WorkflowIdConflictPolicy } from '@temporalio/client';
 import { maestroWorkflowId, schedulerWorkflowId, sessionWorkflowId, conductorWorkflowId, GLOBAL_MAESTRO_WORKFLOW_ID } from '../config';
+import { recordAction } from '../utils/action-counters';
 import type {
   AttachmentPhase,
   MaestroPlayerInfo,
@@ -225,6 +226,15 @@ export function createTempoClientCore(
     return out;
   }
 
+  // #753 — visibility scans don't flow through the workflow-client
+  // interceptor; count one 'list' per scan at this seam. The
+  // `listEnsemblesBounded` path keeps calling `client.workflow.list`
+  // directly because `iterateWithDeadline` already counts it.
+  const listWorkflows = (options: Parameters<Client['workflow']['list']>[0]) => {
+    recordAction('list');
+    return client.workflow.list(options);
+  };
+
   return {
     subscribe,
     async discoverEnsembles(): Promise<EnsembleSummary[]> {
@@ -261,7 +271,7 @@ export function createTempoClientCore(
         const query = 'WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"';
         const ensembleMap = new Map<string, { count: number; hasConductor: boolean; conductorStatus?: string }>();
 
-        for await (const wf of client.workflow.list({ query })) {
+        for await (const wf of listWorkflows({ query })) {
           const name = getEnsembleName(wf);
           if (!name) continue;
 
@@ -317,7 +327,7 @@ export function createTempoClientCore(
       const byEnsemble = new Map<string, Agg>();
       try {
         const query = 'WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"';
-        for await (const wf of client.workflow.list({ query })) {
+        for await (const wf of listWorkflows({ query })) {
           const name = getEnsembleName(wf);
           if (!name) continue;
 
@@ -456,7 +466,7 @@ export function createTempoClientCore(
       try {
         const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}"`;
         const players: MaestroPlayerInfo[] = [];
-        for await (const wf of client.workflow.list({ query })) {
+        for await (const wf of listWorkflows({ query })) {
           const sa = wf.searchAttributes || {};
           const playerId = Array.isArray(sa.AgentTempoPlayerId) ? String(sa.AgentTempoPlayerId[0]) : wf.workflowId;
           // Preferred: AgentTempoIsConductor search attribute (canonical, queryable).
@@ -604,7 +614,7 @@ export function createTempoClientCore(
       try {
         // Query the player's workflow directly for metadata
         const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND AgentTempoPlayerId = "${sanitizeQueryValue(playerId)}"`;
-        for await (const wf of client.workflow.list({ query })) {
+        for await (const wf of listWorkflows({ query })) {
           const h = handle(wf.workflowId);
           // #433: unbounded — justified, `getPlayerMetadata` is not
           // reachable from `buildEnsembleSnapshot` (snapshot reads
@@ -646,7 +656,7 @@ export function createTempoClientCore(
       // Direct signal with isMaestro flag — matches web Maestro pattern
       const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND AgentTempoPlayerId = "${sanitizeQueryValue(to)}"`;
       let sent = false;
-      for await (const wf of client.workflow.list({ query })) {
+      for await (const wf of listWorkflows({ query })) {
         const h = handle(wf.workflowId);
         await h.signal('receiveMessage', {
           from: source,
@@ -678,7 +688,7 @@ export function createTempoClientCore(
 
     async terminatePlayer(ensemble: string, playerId: string): Promise<void> {
       const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND AgentTempoPlayerId = "${sanitizeQueryValue(playerId)}"`;
-      for await (const wf of client.workflow.list({ query })) {
+      for await (const wf of listWorkflows({ query })) {
         const h = handle(wf.workflowId);
         await h.terminate('terminated via TUI');
         return;
@@ -1113,7 +1123,7 @@ export function createTempoClientCore(
 
       // Terminate all session workflows in the ensemble
       const sessionQuery = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}"`;
-      for await (const wf of client.workflow.list({ query: sessionQuery })) {
+      for await (const wf of listWorkflows({ query: sessionQuery })) {
         try {
           const h = handle(wf.workflowId);
           await h.terminate('disbanded via TUI');
@@ -1142,7 +1152,7 @@ export function createTempoClientCore(
       try {
         // Lightweight check: list with limit 1
         const query = 'ExecutionStatus = "Running"';
-        for await (const _ of client.workflow.list({ query })) {
+        for await (const _ of listWorkflows({ query })) {
           return true;
         }
         return true; // Connected but no workflows
@@ -1416,7 +1426,7 @@ export function createTempoClientCore(
       // Resolve target player workflow via search attributes
       const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running" AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}" AND AgentTempoPlayerId = "${sanitizeQueryValue(targetPlayer)}"`;
       let targetHandle;
-      for await (const wf of client.workflow.list({ query })) {
+      for await (const wf of listWorkflows({ query })) {
         targetHandle = handle(wf.workflowId);
         break;
       }

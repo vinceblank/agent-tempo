@@ -30,6 +30,7 @@ import { createTemporalConnection } from './connection';
 import { InnerLoopRegistry } from './http/inner-loop';
 import { IngestTokenRegistry } from './http/ingest-registry';
 import { installGrpcShutdownGuard } from './utils/grpc-shutdown-guard';
+import { actionCountingInterceptors } from './utils/action-counters';
 import { DAEMON_PID_PATH, DAEMON_LOG_PATH, DAEMON_HEARTBEAT_PATH, HEARTBEAT_INTERVAL_MS } from './cli/daemon';
 import { createTempoClient } from './client';
 import { queryOrphanedSessions, restoreOrphansOnce, type OrphanCandidate } from './reconcile/orphans';
@@ -219,7 +220,11 @@ export async function ensureDevNamespace(
 async function ensureGlobalMaestro(config: ReturnType<typeof getConfig>): Promise<void> {
   try {
     const connection = await createTemporalConnection(config);
-    const client = new Client({ connection, namespace: config.temporalNamespace });
+    const client = new Client({
+      connection,
+      namespace: config.temporalNamespace,
+      interceptors: actionCountingInterceptors(),
+    });
 
     const input: GlobalMaestroInput = {};
     await client.workflow.start('agentGlobalMaestroWorkflow', {
@@ -1039,7 +1044,11 @@ async function main() {
   (async () => {
     try {
       const bootConnection = await createTemporalConnection(config);
-      const bootClient = new Client({ connection: bootConnection, namespace: config.temporalNamespace });
+      const bootClient = new Client({
+        connection: bootConnection,
+        namespace: config.temporalNamespace,
+        interceptors: actionCountingInterceptors(),
+      });
       await runDaemonBoot(bootClient, {
         ensureGlobalMaestro: () => ensureGlobalMaestro(config),
         sendHostProfileSignal: realSendHostProfileSignal,
@@ -1064,7 +1073,11 @@ async function main() {
   try {
     const daemonConfig = loadDaemonConfig();
     const reconcileConnection = await createTemporalConnection(config);
-    reconcileClient = new Client({ connection: reconcileConnection, namespace: config.temporalNamespace });
+    reconcileClient = new Client({
+      connection: reconcileConnection,
+      namespace: config.temporalNamespace,
+      interceptors: actionCountingInterceptors(),
+    });
 
     // Fire-and-forget reconcile; the daemon must not block on this.
     reconcileOnBoot(reconcileClient, daemonConfig).catch((err) => {

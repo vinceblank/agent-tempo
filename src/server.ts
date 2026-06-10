@@ -24,6 +24,7 @@ import { registry, InteractiveAttachment } from './adapters';
 import { resolveAgentType } from './ensemble/agent-types';
 import { installParentDeathWatchdog } from './utils/parent-death-watchdog';
 import { installGrpcShutdownGuard } from './utils/grpc-shutdown-guard';
+import { actionCountingInterceptors } from './utils/action-counters';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo]', ...args);
 
@@ -83,6 +84,7 @@ async function main() {
   const client = new Client({
     connection,
     namespace: config.temporalNamespace,
+    interceptors: actionCountingInterceptors(),
   });
 
   // Ensure the worker daemon is running (starts it if needed).

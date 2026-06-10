@@ -3,6 +3,7 @@ import { ApplicationFailure } from '@temporalio/activity';
 import { conductorWorkflowId, sessionWorkflowId } from '../config';
 import { HistoryEntry, MaestroPlayerInfo, Message, SentMessage, EnsembleChatMessage, ChatHighWater, ZERO_CHAT_HIGH_WATER } from '../types';
 import { scanEnsembleSessions, resolveSession } from './resolve';
+import { tagActionSource } from '../utils/action-counters';
 import {
   iterateWithDeadline,
   isVisibilityTimeout,
@@ -90,7 +91,9 @@ export interface MaestroActivities {
  * Registered with the shared worker.
  */
 export function createMaestroActivities(client: Client): MaestroActivities {
-  return {
+  // #753 — attribute every Temporal call made by these activities (however
+  // deep, e.g. scanEnsembleSessions → queryHandleWithTimeout) to the maestro.
+  return tagActionSource('maestro', {
     async refreshEnsembleState(ensemble: string): Promise<MaestroPlayerInfo[]> {
       try {
         const sessions = await scanEnsembleSessions(client, ensemble);
@@ -347,5 +350,5 @@ export function createMaestroActivities(client: Client): MaestroActivities {
         };
       }
     },
-  };
+  });
 }
