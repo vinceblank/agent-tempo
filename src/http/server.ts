@@ -653,7 +653,7 @@ export async function handle(
   // read — zero Temporal calls.
   if (pathname === '/v1/debug/action-counters') {
     if (!gateTier(1)) return; // L3 — read (Tier 1).
-    return jsonResponse(res, 200, snapshotActionCounters());
+    return handleActionCounters(res);
   }
 
   // /v1/state/:ensemble — single capture group.
@@ -853,6 +853,15 @@ async function handleHosts(
   // The 3 s cache lives inside `listHosts`; we don't add another layer.
   const hosts = await ctx.client.listHosts();
   jsonResponse(res, 200, hosts);
+}
+
+/**
+ * #753 — daemon-process per-source Temporal action counters. Pure in-memory
+ * read (zero Temporal calls); adapter and Pi processes self-report via their
+ * periodic `[agent-tempo:action-counters]` log line instead.
+ */
+function handleActionCounters(res: http.ServerResponse): void {
+  jsonResponse(res, 200, snapshotActionCounters());
 }
 
 async function handleState(

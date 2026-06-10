@@ -47,9 +47,10 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { WorkflowClientInterceptor } from '@temporalio/client';
+import { ENV } from '../config';
 
 /** Subsystems that initiate Temporal client calls. Keep low-cardinality. */
-export const ACTION_SOURCES = [
+const ACTION_SOURCES = [
   'maestro',
   'aggregate',
   'pi-pump',
@@ -64,7 +65,7 @@ export const ACTION_SOURCES = [
 export type ActionSource = (typeof ACTION_SOURCES)[number];
 
 /** Wire verbs counted. `list` = one `client.workflow.list()` invocation (not per page). */
-export const ACTION_KINDS = [
+const ACTION_KINDS = [
   'query',
   'signal',
   'update',
@@ -180,16 +181,19 @@ export const DEFAULT_ACTION_LOG_INTERVAL_MS = 300_000;
 
 let logTimer: NodeJS.Timeout | null = null;
 let lastLoggedTotal = 0;
+/** Set once the enable/disable decision is made — avoids re-reading the env var on every recordAction when logging is disabled. */
+let logDecisionMade = false;
 
 function logIntervalMs(): number {
-  const raw = process.env.AGENT_TEMPO_ACTION_LOG_INTERVAL_MS;
+  const raw = process.env[ENV.ACTION_LOG_INTERVAL_MS];
   if (raw === undefined || raw === '') return DEFAULT_ACTION_LOG_INTERVAL_MS;
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_ACTION_LOG_INTERVAL_MS;
 }
 
 function maybeStartLogTimer(): void {
-  if (logTimer) return;
+  if (logDecisionMade) return;
+  logDecisionMade = true;
   const intervalMs = logIntervalMs();
   if (intervalMs === 0) return;
   logTimer = setInterval(() => {
@@ -276,6 +280,7 @@ export function __resetActionCountersForTests(): void {
   total = 0;
   sinceMs = Date.now();
   lastLoggedTotal = 0;
+  logDecisionMade = false;
   if (logTimer) {
     clearInterval(logTimer);
     logTimer = null;
