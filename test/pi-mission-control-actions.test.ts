@@ -79,17 +79,6 @@ describe('MissionControlActions — write surface', () => {
     expect(r.ok).to.equal(false);
   });
 
-  it('gate arm/disarm/decide hit the player gate plane', async () => {
-    const fake = new FakeFetch();
-    fake.nextStatus = 204;
-    const a = actions(fake);
-    await a.gateArm('eng');
-    await a.gateDecide('eng', 'req-1', 'allow');
-    expect(fake.calls[0].url).to.equal('http://127.0.0.1:8473/v1/players/ens/eng/gate-arm');
-    expect(fake.calls[1].url).to.equal('http://127.0.0.1:8473/v1/players/ens/eng/gate/req-1');
-    expect(JSON.parse(fake.calls[1].body!)).to.deep.equal({ decision: 'allow' });
-  });
-
   it('returns an error (no throw) on a non-2xx response', async () => {
     const fake = new FakeFetch();
     fake.nextStatus = 403; fake.nextText = 'forbidden';
@@ -238,21 +227,6 @@ describe('mission-control Controller — commands', () => {
     await c.cmdTail('off', ctx);
     expect(c.model.selected).to.equal(null);
     expect(tailed).to.equal(null);
-  });
-
-  it('cmdGate requires a selected player + a valid decision', async () => {
-    const fake = new FakeFetch();
-    const c = new Controller('ens', actions(fake));
-    addPlayer(c, 'eng');
-    const ctx = fakeCtx();
-    await c.cmdGate('req-1 allow', ctx); // no selection yet
-    expect(ctx.notes.pop()).to.contain('Select a player');
-    c.onTailRequest = () => {};
-    await c.cmdTail('eng', ctx);
-    await c.cmdGate('req-1 maybe', ctx); // bad decision
-    expect(ctx.notes.pop()).to.contain('Usage');
-    await c.cmdGate('req-1 deny', ctx); // valid
-    expect(fake.calls.some((x) => x.url.endsWith('/gate/req-1'))).to.equal(true);
   });
 
   it('cmdReset POSTs the reset route + reports success (H5b — mirrors restart)', async () => {

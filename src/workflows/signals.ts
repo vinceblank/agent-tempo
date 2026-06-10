@@ -22,7 +22,6 @@ import type {
   OrphanSummary,
   PlayerStateEntry,
   PendingReset,
-  GuardrailPolicy,
 } from '../types';
 
 // Re-export types for convenience within workflow code
@@ -215,8 +214,6 @@ export const enqueueSpawnUpdate = defineUpdate<
     nativeResolvable?: boolean;
     /** #131 Phase C — claude-api model id carried across restart. */
     model?: string;
-    /** #700 (P2 / G) — guardrail posture carried across restart (durable). */
-    guardrailPolicy?: GuardrailPolicy;
   }]
 >('enqueueSpawn');
 

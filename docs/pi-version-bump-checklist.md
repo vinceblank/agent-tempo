@@ -129,14 +129,14 @@
 
 ---
 
-- [ ] **8. MD-C tool-gate / `noExtensions` security invariant** (S2, `src/pi/headless.ts`)
+- [ ] **8. `noExtensions` supply-chain invariant** (S2, `src/pi/headless.ts`)
 
   `noExtensions: true` still hard-excludes disk/package extensions. Re-check
   `buildPiResourceLoaderOptions` and `resource-loader.js` `reload()` merge behavior to
   confirm no extension-loading path reopened.
 
-  - **Why the gate misses it:** security invariant (`restricted` = no host exec) — behavioral,
-    not typed.
+  - **Why the gate misses it:** security invariant (recruited players load ONLY the inline
+    agent-tempo extension) — behavioral, not typed.
 
 ---
 
@@ -160,7 +160,7 @@
 
 ---
 
-- [ ] **11. Reset surface — asymmetric clean-wipe** (#677 PART B, `src/pi/reset-pump.ts`, `extension.ts`)
+- [ ] **11. Reset surface — asymmetric clean-wipe** (#677 PART B, the reset intake in `src/pi/cue-pump.ts`, `extension.ts`)
 
   Reset delivery is a **capability branch**, and the two halves depend on different Pi APIs:
   - **Headless** — `session.newSession()` (on the SDK session) still performs a clean-wipe

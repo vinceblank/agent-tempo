@@ -13,7 +13,6 @@ import {
 } from '../../src/http/inner-loop-routes';
 import { InnerLoopRegistry } from '../../src/http/inner-loop';
 import { IngestTokenRegistry } from '../../src/http/ingest-registry';
-import { GateRegistry } from '../../src/http/gate-registry';
 import { sessionWorkflowId } from '../../src/config';
 import type { InnerFrame } from '../../src/pi/inner-loop-publisher';
 
@@ -181,14 +180,14 @@ describe('handleInnerPresence — gates + count', () => {
     const res = fakeRes();
     handleInnerPresence(fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token } }), res, deps, E, P);
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body as string)).toEqual({ subscribers: 2, gateArmed: false });
+    expect(JSON.parse(res.body as string)).toEqual({ subscribers: 2 });
   });
 
   it('zero subscribers → 200 { subscribers: 0 }', () => {
     const { token, deps } = setup();
     const res = fakeRes();
     handleInnerPresence(fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token } }), res, deps, E, P);
-    expect(JSON.parse(res.body as string)).toEqual({ subscribers: 0, gateArmed: false });
+    expect(JSON.parse(res.body as string)).toEqual({ subscribers: 0 });
   });
 
   it('bad token → 403 (presence is publisher-only — no covert channel)', () => {
@@ -206,150 +205,3 @@ describe('handleInnerPresence — gates + count', () => {
   });
 });
 
-describe('3d MD-G coupling — gate_pending registers + presence carries gateArmed', () => {
-  function gateSetup() {
-    const innerLoop = new InnerLoopRegistry();
-    const ingestTokens = new IngestTokenRegistry();
-    const gate = new GateRegistry();
-    const token = ingestTokens.mint(WF);
-    return { gate, token, deps: { innerLoop, ingestTokens, gate } };
-  }
-
-  const GATE_PENDING = {
-    type: 'inner.gate_pending', requestId: 'req-9', tool: 'bash',
-    argsSummary: '{"cmd":"ls"}', classification: 'exec', timeoutMs: 45000, ts: 1,
-  };
-
-  it('an inner.gate_pending ingest registers the pending request in the gate (open)', async () => {
-    const { gate, token, deps } = gateSetup();
-    const res = fakeRes();
-    await handleInnerIngest(
-      fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token }, body: JSON.stringify(GATE_PENDING) }),
-      res, deps, E, P,
-    );
-    expect(res.statusCode).toBe(204);
-    // The pending is now registered → resolution is pending (not 404/null).
-    expect(gate.getResolution(WF, 'req-9')).toEqual({ status: 'pending' });
-  });
-
-  it('#700 (G) — gate_pending failMode:"closed" threads to open() → request auto-DENIES on its fuse', async () => {
-    const { gate, token, deps } = gateSetup();
-    const res = fakeRes();
-    const closedPending = { ...GATE_PENDING, requestId: 'req-closed', failMode: 'closed', timeoutMs: 300000 };
-    await handleInnerIngest(
-      fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token }, body: JSON.stringify(closedPending) }),
-      res, deps, E, P,
-    );
-    expect(res.statusCode).toBe(204);
-    // The pending carries failMode='closed' → it is registered (pending now); the
-    // closed fuse / auto-deny behavior is covered by the GateRegistry suite. Here
-    // we assert the seam threaded the field by registering the request at all.
-    expect(gate.getResolution(WF, 'req-closed')).toEqual({ status: 'pending' });
-  });
-
-  it('an ordinary inner frame does NOT register anything in the gate', async () => {
-    const { gate, token, deps } = gateSetup();
-    const res = fakeRes();
-    await handleInnerIngest(
-      fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token }, body: JSON.stringify(FRAME) }),
-      res, deps, E, P,
-    );
-    expect(res.statusCode).toBe(204);
-    expect(gate.pendingCount(WF)).toBe(0);
-  });
-
-  it('gate_pending ingest with NO gate wired is a no-op (still 204)', async () => {
-    const { token, deps } = setup(); // deps WITHOUT a gate
-    const res = fakeRes();
-    await handleInnerIngest(
-      fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token }, body: JSON.stringify(GATE_PENDING) }),
-      res, deps, E, P,
-    );
-    expect(res.statusCode).toBe(204);
-  });
-
-  it('presence response carries gateArmed reflecting the gate state', () => {
-    const { gate, token, deps } = gateSetup();
-    const r1 = fakeRes();
-    handleInnerPresence(fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token } }), r1, deps, E, P);
-    expect(JSON.parse(r1.body as string)).toEqual({ subscribers: 0, gateArmed: false });
-
-    gate.arm(WF, E);
-    const r2 = fakeRes();
-    handleInnerPresence(fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token } }), r2, deps, E, P);
-    expect(JSON.parse(r2.body as string)).toEqual({ subscribers: 0, gateArmed: true });
-  });
-
-  it('presence without a gate wired → gateArmed:false', () => {
-    const { token, deps } = setup();
-    const res = fakeRes();
-    handleInnerPresence(fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token } }), res, deps, E, P);
-    expect(JSON.parse(res.body as string)).toEqual({ subscribers: 0, gateArmed: false });
-  });
-});
-
-describe('#712 — daemon failMode cross-check at the ingest seam', () => {
-  // The route's GateRegistry uses real Date.now, so we assert the ENFORCED
-  // failMode via the override-audit spy (a failmode-override record proves the
-  // daemon forced 'closed' over the frame's 'open' claim) + gate.getPolicy.
-  function setupX(opts: { policy?: 'supervised' | 'monitored'; resolver?: (wf: string) => Promise<'supervised' | 'monitored' | 'autonomous' | 'observe-only' | undefined> } = {}) {
-    const audit: Array<{ kind: string; [k: string]: unknown }> = [];
-    const innerLoop = new InnerLoopRegistry();
-    const ingestTokens = new IngestTokenRegistry();
-    const gate = new GateRegistry((r) => audit.push(r as { kind: string }));
-    const token = ingestTokens.mint(WF);
-    if (opts.policy) gate.setPolicy(WF, opts.policy);
-    const deps = { innerLoop, ingestTokens, gate, ...(opts.resolver ? { resolveGuardrailPolicy: opts.resolver } : {}) };
-    return { gate, token, deps, audit };
-  }
-
-  const OPEN_CLAIM = {
-    type: 'inner.gate_pending', requestId: 'req-x', tool: 'bash',
-    argsSummary: '{"cmd":"rm -rf"}', classification: 'exec', timeoutMs: 45000, ts: 1,
-    failMode: 'open', // the self-downgrade claim the cross-check defeats
-  };
-
-  async function ingest(deps: ReturnType<typeof setupX>['deps'], token: string, frame: object) {
-    const res = fakeRes();
-    await handleInnerIngest(fakeReq({ headers: { [INGEST_TOKEN_HEADER]: token }, body: JSON.stringify(frame) }), res, deps, E, P);
-    return res;
-  }
-
-  it('★ supervised player (policy pre-populated): frame claims open → daemon enforces closed (override audited)', async () => {
-    const { token, deps, audit } = setupX({ policy: 'supervised' });
-    const res = await ingest(deps, token, OPEN_CLAIM);
-    expect(res.statusCode).toBe(204);
-    expect(audit.find((a) => a.kind === 'failmode-override')).toMatchObject({
-      claimedFailMode: 'open', enforcedFailMode: 'closed', policy: 'supervised', tool: 'bash',
-    });
-  });
-
-  it('★ lazy miss-resolve SUCCESS: unset policy → bounded resolver returns supervised → populated + enforced closed', async () => {
-    const { gate, token, deps, audit } = setupX({ resolver: async () => 'supervised' });
-    expect(gate.getPolicy(WF)).toBeUndefined();
-    await ingest(deps, token, OPEN_CLAIM);
-    expect(gate.getPolicy(WF)).toBe('supervised'); // resolver populated the gate
-    expect(audit.some((a) => a.kind === 'failmode-override')).toBe(true);
-  });
-
-  it('★ lazy miss-resolve INDETERMINATE (resolver → undefined): NO-FAIL-OPEN — policy stays unset, enforced closed', async () => {
-    const { gate, token, deps, audit } = setupX({ resolver: async () => undefined });
-    await ingest(deps, token, OPEN_CLAIM);
-    expect(gate.getPolicy(WF)).toBeUndefined(); // never populated on a failed resolve
-    // unknown policy → enforcedFailMode closed → override audited with policy:'unknown'
-    expect(audit.find((a) => a.kind === 'failmode-override')).toMatchObject({ policy: 'unknown', enforcedFailMode: 'closed' });
-  });
-
-  it('monitored player: frame claims open → honored open, NO override audited (legit MD-G)', async () => {
-    const { token, deps, audit } = setupX({ policy: 'monitored' });
-    await ingest(deps, token, OPEN_CLAIM);
-    expect(audit.some((a) => a.kind === 'failmode-override')).toBe(false);
-  });
-
-  it('resolver is NOT called when the policy is already populated (sync fast path)', async () => {
-    let called = 0;
-    const { token, deps } = setupX({ policy: 'supervised', resolver: async () => { called++; return 'supervised'; } });
-    await ingest(deps, token, OPEN_CLAIM);
-    expect(called).toBe(0); // getPolicy hit → no metadata query
-  });
-});

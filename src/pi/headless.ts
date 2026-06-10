@@ -26,9 +26,7 @@
  */
 import { getConfig, sessionWorkflowId, ENV, type Config } from '../config';
 import { probeSdkInstall } from '../utils/sdk-probe';
-import { createPiExtension, detachAllPiRuntimesForExit, setRuntimeSession, type PiToolAccess } from './extension';
-import type { GuardrailPolicy } from '../types';
-import { EXEC_TOOLS } from '../security/tool-capability';
+import { createPiExtension, detachAllPiRuntimesForExit, setRuntimeSession } from './extension';
 import { PI_PACKAGE, PI_AI_PACKAGE, checkPiNodeFloor } from './probe';
 import { seedSessionManager, type SeedableSessionManager } from './session-seed';
 import type { PiAgentSession } from './pi-types';
@@ -88,9 +86,6 @@ async function resolveModel(modelStr: string | undefined): Promise<{ model?: unk
 
 export interface RunHeadlessPiOptions {
   config?: Config;
-  toolAccess?: PiToolAccess;
-  /** #700 (P2 / G) — durable guardrail posture; absent ⇒ autonomous. */
-  guardrailPolicy?: GuardrailPolicy;
   /** `provider/model` selector; absent → Pi default. */
   model?: string;
   /** Restart-resume: prior Pi conversation id (A4 wires SessionManager). */
@@ -100,97 +95,36 @@ export interface RunHeadlessPiOptions {
 /**
  * Build the `DefaultResourceLoader` options for a headless Pi player.
  *
- * SECURITY — S2 (MD-C deny-list soundness). The `restricted` tool gate is a
- * DENY-LIST over shell/exec tool *names* (tool-capability.ts EXEC_TOOLS, via
- * `classify(name) === 'exec'` — F1 replaced extension.ts's former local set). That
- * guarantee — "restricted = no host execution" — holds ONLY IF no third-party
- * extension can register an un-blacklisted execution tool (e.g. a custom
- * `python` / `npm` / `run` tool). It therefore depends on a hard structural
- * fact: which extensions Pi loads.
+ * SECURITY — S2 (supply-chain hygiene). A daemon-spawned headless player must
+ * load ONLY the inline agent-tempo extension — never arbitrary disk/package
+ * extensions (`~/.pi/agent/extensions/`, `<cwd>/.pi/extensions/`, installed
+ * packages), which would let unreviewed third-party code run inside a recruited
+ * player's process.
  *
  * Verified against the installed Pi SDK 0.78 source (NOT assumed):
  *   - `DefaultResourceLoader.reload()` (resource-loader.js:271-276) builds
  *     `extensionPaths = noExtensions ? cliEnabledExtensions
  *                                     : merge(cliEnabledExtensions, enabledExtensions)`
  *     where `enabledExtensions` (line 229) are the DISK/package extensions from
- *     `packageManager.resolve()` (`~/.pi/agent/extensions/`, `<cwd>/.pi/extensions/`,
- *     installed packages). `loadExtensions(extensionPaths)` then loads them and
- *     MERGES with our inline factories (lines 274-276).
+ *     `packageManager.resolve()`. `loadExtensions(extensionPaths)` then loads
+ *     them and MERGES with our inline factories (lines 274-276).
  *   - `noExtensions` defaults to `false` (constructor, line 132) — so the naive
  *     loader DOES load disk extensions. That is the S2 gap.
  *
- * Fix (= security's "exclude the extensions dir", done structurally):
+ * Fix (done structurally):
  *   - `noExtensions: true` → `extensionPaths` collapses to `cliEnabledExtensions`,
  *     which is empty because we pass NO `additionalExtensionPaths`. So
  *     `loadExtensions([])` registers nothing from disk/packages.
  *   - Inline `extensionFactories` load UNCONDITIONALLY (reload() line 275 is not
  *     gated by `noExtensions`), so our agent-tempo extension still attaches.
- * Net: the ONLY tools present are Pi's built-ins (bash/read/edit/write/grep —
- * all covered by the deny-list) + our agent-tempo MCP tools (no exec). No
- * third-party tool can slip past the deny-list. Skills/prompts/themes cannot
- * register tools, so they are not a vector and are left at defaults.
+ * Net: the ONLY tools present are Pi's built-ins + our agent-tempo MCP tools.
+ * Skills/prompts/themes cannot register tools, so they are not a vector and are
+ * left at defaults.
  *
  * Kept as a pure, exported helper so the `noExtensions: true` invariant has a
  * unit regression test (test/pi-headless-loader.test.ts) without needing the Pi
  * SDK installed.
  */
-/**
- * Pi BUILT-IN mutating ("act") tool names, excluded at registration for the
- * `observe-only` no-act posture (#715). Pi's default built-ins are
- * read/bash/edit/write; `multiedit` is listed defensively (a no-op if Pi doesn't
- * register it). `bash`/exec are covered by {@link EXEC_TOOLS}. We keep the READ
- * built-ins (read/grep/glob/ls). These are Pi BUILT-IN names — deliberately NOT
- * agent-tempo MCP tool names, so excluding them never removes an agent-tempo
- * coordination tool (those stay handler-gated, commit 5).
- */
-const PI_BUILTIN_ACT_TOOLS: readonly string[] = ['write', 'edit', 'multiedit'];
-
-/**
- * #715 — compute the registration-level `excludeTools` denylist for
- * `createAgentSession`. Excluded tools are never registered → ABSENT from the
- * model's toolset AND system prompt: the LLM cannot request what it never sees.
- *
- * This is a registration-level FLOOR beneath the call-time MD-C handler + #712
- * gate. It is tamper-RESISTANT, NOT tamper-PROOF: it defends a PROMPT-INJECTED
- * agent (and holds even if the call-time gate had a bug — the tool simply isn't
- * there), but it does NOT defend against PROCESS COMPROMISE — a tampered /
- * modified extension can re-register or un-exclude tools (this is OUR code
- * passing a denylist; an attacker who modifies the code/process bypasses it).
- * That residual is OS-sandbox + supply-chain integrity, tracked as #724.
- *
- * `excludeTools` is matched by NAME against BOTH Pi built-ins AND
- * extension-registered tools (incl. agent-tempo's MCP tools via `renderToPi`), so
- * this list contains ONLY Pi-built-in / exec names — never agent-tempo tool names
- * (`cue`/`report`/`recruit`/…). Posture:
- *   - `toolAccess === 'restricted'` → exclude {@link EXEC_TOOLS} (exec/bash
- *     registration-absent; a strict upgrade of the prior call-time block, and the
- *     headless default → the model never even sees exec).
- *   - `guardrailPolicy === 'observe-only'` → also exclude the Pi built-in act
- *     tools ({@link PI_BUILTIN_ACT_TOOLS}); read/grep/glob stay. The agent-tempo
- *     MCP act tools (recruit/destroy/…) stay covered by the client-side no-act
- *     handler (commit 5) — excludeTools handles the Pi built-ins only.
- *   - `monitored` / `supervised` / `autonomous` → NO exec exclusion: those tools
- *     stay REGISTERED so they can be gated/approved per-use (#712). (`supervised`
- *     = approve-and-run, NOT exec-absent.)
- *
- * Pure + exported so the registration-absence invariant has a unit regression
- * test without the Pi SDK (mirrors {@link buildPiResourceLoaderOptions}).
- */
-export function computeExcludeTools(
-  toolAccess: PiToolAccess,
-  guardrailPolicy: GuardrailPolicy | undefined,
-): string[] {
-  const exclude = new Set<string>();
-  if (toolAccess === 'restricted') {
-    for (const t of EXEC_TOOLS) exclude.add(t);
-  }
-  if (guardrailPolicy === 'observe-only') {
-    for (const t of EXEC_TOOLS) exclude.add(t); // no-act ⊇ no-exec
-    for (const t of PI_BUILTIN_ACT_TOOLS) exclude.add(t);
-  }
-  return [...exclude];
-}
-
 export function buildPiResourceLoaderOptions(params: {
   cwd: string;
   agentDir: string;
@@ -215,7 +149,6 @@ export function buildPiResourceLoaderOptions(params: {
  */
 export async function runHeadlessPi(opts: RunHeadlessPiOptions = {}): Promise<void> {
   const config = opts.config ?? getConfig();
-  const toolAccess: PiToolAccess = opts.toolAccess ?? 'restricted';
 
   // 0) Node-floor backstop (Decision B, #645). The recruit pre-flight is the
   //    AUTHORITATIVE gate; this covers direct/manual launches that bypass recruit.
@@ -244,9 +177,8 @@ export async function runHeadlessPi(opts: RunHeadlessPiOptions = {}): Promise<vo
     return;
   }
 
-  // 3) Inline extension factory — headless mode → the MD-C tool gate is active.
-  //    #700 (P2 / G) — the guardrail posture drives the MD-G gate's failMode.
-  const extensionFactory = createPiExtension({ mode: 'headless', toolAccess, guardrailPolicy: opts.guardrailPolicy });
+  // 3) Inline extension factory — headless mode.
+  const extensionFactory = createPiExtension({ mode: 'headless' });
 
   // 4) Construct the Pi SDK session with the extension injected inline.
   const piSdk = await esmImport(PI_PACKAGE);
@@ -286,20 +218,10 @@ export async function runHeadlessPi(opts: RunHeadlessPiOptions = {}): Promise<vo
   // construct → reload() → pass-as-resourceLoader sequence.
   await resourceLoader.reload();
 
-  // #715 — registration-level exec/act exclusion (the true "agent physically
-  // lacks the tools" boundary; see computeExcludeTools). Excluded tools are never
-  // registered, so they're absent from the model's toolset + system prompt — a
-  // hard layer beyond the call-time MD-C handler + #712 gate (kept as
-  // belt-and-suspenders). Empty for monitored/supervised/autonomous+standard.
-  const excludeTools = computeExcludeTools(toolAccess, opts.guardrailPolicy);
-  if (excludeTools.length > 0) {
-    log(`#715: excluding ${excludeTools.length} tool(s) at registration (toolAccess=${toolAccess}, guardrailPolicy=${opts.guardrailPolicy ?? 'autonomous'}): ${excludeTools.join(', ')}`);
-  }
   const { session } = await createAgentSession({
     cwd: process.cwd(),
     agentDir,
     ...(model ? { model } : {}),
-    ...(excludeTools.length > 0 ? { excludeTools } : {}),
     resourceLoader,
     // H1 (#645): in-memory session (seeded above via the session-seed chokepoint).
     // H2 will seed it from agent-tempo durable state (ENV.PI_CONTINUE_SESSION
@@ -316,7 +238,7 @@ export async function runHeadlessPi(opts: RunHeadlessPiOptions = {}): Promise<vo
   const playerId = process.env[ENV.PLAYER_NAME] || `pi-${process.pid}`;
   setRuntimeSession(sessionWorkflowId(config.ensemble, playerId), session as unknown as PiAgentSession);
   log(
-    `headless Pi session bound (toolAccess=${toolAccess}, ` +
+    `headless Pi session bound (` +
     `model=${opts.model ?? 'pi-default'}${opts.continueSessionId ? `, continue=${opts.continueSessionId}` : ''}, ` +
     `sessionId=${session.sessionId ?? '?'})`,
   );

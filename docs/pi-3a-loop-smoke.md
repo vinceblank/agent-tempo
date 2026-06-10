@@ -3,9 +3,15 @@
 The end-to-end gate for Phase 3a (NOT unit-testable — needs the live stack: Pi
 SDK ≥ 0.78, Node ≥ 22.19, a Pi-authed model, a running Temporal + agent-tempo
 daemon). Proves: **recruit `agent:'pi'` → headless Pi attaches → takes a cue →
-reports → clean-detaches**, plus the MD-C tool gate.
+reports → clean-detaches**.
 
 Branch: `feat/pi-phase3a-headless`.
+
+> **Historical note (2026-06):** the MD-C `toolAccess` gate this smoke
+> originally also exercised was REMOVED with the Pi permission layers
+> (`docs/design/pi-streamline-gate-removal-cc.md`) — headless Pi players now
+> run the full tool surface. The MD-C log lines and bash-block steps below
+> were updated accordingly.
 
 ## 0. Prereqs (devops env already satisfies most)
 
@@ -35,12 +41,12 @@ Via the MCP `recruit` tool (from a Claude Code session in this repo) **or** the 
 
 ```bash
 agent-tempo recruit pi-smoke "$(pwd)" --agent pi --model anthropic/claude-opus-4-5
-# (toolAccess defaults to 'restricted'. Add --agent pi is the key flag.)
+# (--agent pi is the key flag.)
 ```
 MCP-tool equivalent:
 ```json
 { "name": "pi-smoke", "workDir": "<repo>", "agent": "pi",
-  "model": "anthropic/claude-opus-4-5", "toolAccess": "restricted",
+  "model": "anthropic/claude-opus-4-5",
   "initialMessage": "You are a headless smoke-test player. When you receive a cue, call the `report` tool with a one-line result, then wait for more cues." }
 ```
 
@@ -50,8 +56,7 @@ tail -f "$(pwd)/logs/pi-smoke.log"
 ```
 Look for, in order:
 - `registered tools (player=pi-smoke, conductor=false, mode=headless)`
-- `MD-C tool gate active (mode=headless, toolAccess=restricted)`
-- `headless Pi session bound (toolAccess=restricted, model=anthropic/claude-opus-4-5, …)`
+- `headless Pi session bound (model=anthropic/claude-opus-4-5, …)`
 - `claimed attachment <id> (lease 90000ms)`
 - `attached pi-smoke (wf agent-session-<ensemble>-pi-smoke)`
 
@@ -69,13 +74,6 @@ And `agent-tempo status` / the `ensemble` tool shows **pi-smoke** with phase
 - The conductor / recruiter receives a **report** from `pi-smoke` (visible via
   the conductor's report history / dashboard / the recruiter session).
 - `agent-tempo status` shows pi-smoke `processing` during the turn, then `awaiting`.
-
-### ✅ (bonus) MD-C gate — restricted hard-blocks Bash
-```json
-{ "playerId": "pi-smoke", "message": "Run `ls` using the Bash tool." }
-```
-Expect the agent's bash attempt to be **denied**: log line
-`MD-C: blocked 'bash' (toolAccess=restricted)`; the agent reports it couldn't run shell.
 
 ## 4. Clean detach
 
@@ -102,7 +100,6 @@ adapter SELF-CREATES its session workflow (`runHeadlessPi` →
 ```bash
 AGENT_TEMPO_DEV_MODE=1 \
 AGENT_TEMPO_ENSEMBLE=pi-smoke AGENT_TEMPO_PLAYER_NAME=pi-smoke \
-AGENT_TEMPO_TOOL_ACCESS=restricted \
 AGENT_TEMPO_PI_MODEL=anthropic/<indexed-model> \
 ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
 node dist/adapters/pi/adapter.js
@@ -121,21 +118,19 @@ node -e "const {Connection,Client}=require('@temporalio/client');const {getConfi
 # ~15s after the cue → expect a {type:'report',text:'alive'} entry = cue→report loop.
 ```
 
-MD-C bonus: `--dev cue pi-smoke "Run ls using the Bash tool"` → Terminal-1 logs
-`MD-C: blocked 'bash' (toolAccess=restricted)`. Detach: Ctrl-C Terminal 1 →
+Detach: Ctrl-C Terminal 1 →
 `received SIGTERM` → `detached (agent-exited)` → re-query `attachmentInfo` → phase
 `detached` promptly (reliable detach, not the 90s reaper).
 
 > Variant B exercises the RUNTIME (adapter → extension → singleton → claim →
-> MD-C gate → reliable detach). The recruit→entry→workflow→spawn→`toolAccess`
-> plumbing (A4) is unit-covered (compile + recruit validation/preflight tests);
-> the live gate validates the runtime loop.
+> reliable detach). The recruit→entry→workflow→spawn plumbing (A4) is
+> unit-covered (compile + recruit validation/preflight tests); the live run
+> validates the runtime loop.
 
 ## Pass criteria
 
-1. Attaches (phase `attached`, lease 90s, MD-C gate logged).
+1. Attaches (phase `attached`, lease 90s).
 2. Takes a cue + emits a `report` (the loop).
-3. MD-C restricted denies Bash (security floor).
-4. Clean-detaches promptly on stop (reliable detach, not lease-timeout).
+3. Clean-detaches promptly on stop (reliable detach, not lease-timeout).
 
 Any failure → capture `logs/pi-smoke.log` + `agent-tempo status` and route to tempo-lead.

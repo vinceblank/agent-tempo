@@ -196,7 +196,7 @@ export function loadRbacTokens(opts: {
   return { readToken, adminToken, legacyMigrated: legacy };
 }
 
-/** Access tiers (MD-E): 1 = read/observe, 2 = write/mutate, 3 = supervisory (gate/inner). */
+/** Access tiers (MD-E): 1 = read/observe, 2 = write/mutate, 3 = supervisory (inner-tail). */
 export type Tier = 1 | 2 | 3;
 
 /**
@@ -234,9 +234,9 @@ export type TierGuardResult =
 
 /** Migration hint surfaced in the 403 body so a read-token holder knows what's missing. */
 const INSUFFICIENT_TIER_HINT =
-  'This token is read-tier. Writes, the operator gate, and the inner-tail require the admin token (set AGENT_TEMPO_HTTP_ADMIN_TOKEN).';
+  'This token is read-tier. Writes and the inner-tail require the admin token (set AGENT_TEMPO_HTTP_ADMIN_TOKEN).';
 const ADMIN_UNSET_HINT =
-  'Set AGENT_TEMPO_HTTP_ADMIN_TOKEN (env-var only) to enable writes / gate / inner-tail.';
+  'Set AGENT_TEMPO_HTTP_ADMIN_TOKEN (env-var only) to enable writes / inner-tail.';
 
 /**
  * Authorization guard (3e MD-E). Assumes the shared upstream pass already settled

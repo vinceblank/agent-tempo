@@ -204,8 +204,9 @@ export interface PiTurnPayload extends PiEventPayload {
 /**
  * `tool_call` pre-execution event — Pi fires this before running a tool, letting
  * an extension allow/deny it. `toolName` is Pi's built-in or registered tool id
- * (`bash` | `read` | `edit` | `write` | `grep` | …). The MD-C headless gate reads
- * it to hard-block the shell/exec class at `toolAccess='restricted'`.
+ * (`bash` | `read` | `edit` | `write` | `grep` | …). agent-tempo registers no
+ * tool_call handler (the former Pi permission layers were removed — players run
+ * the full tool surface); the shape is kept for the structural Pi API slice.
  */
 export interface PiToolCallEvent {
   type?: 'tool_call';
@@ -309,7 +310,7 @@ export interface PiToolDefinition {
  * `newSession` is command-context-ONLY in Pi — it is NOT on the SDK session
  * object — which is exactly why an interactive Pi conductor CANNOT be auto-reset:
  * the reset pump can only NOTIFY the operator to run `/tempo-reset` themselves
- * (operator-mediated is the ceiling; see reset-pump.ts).
+ * (operator-mediated is the ceiling; see the cue pump's reset intake in cue-pump.ts).
  */
 export interface PiCommandContext {
   /** Start a FRESH session (clean-wipe, no replay). */

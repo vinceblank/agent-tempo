@@ -1,7 +1,7 @@
 /**
  * agent-tempo Pi extension — interactive (Phase 2) + headless (Phase 3a) runtime.
  *
- *   createPiExtension({ mode, toolAccess })  →  (pi: ExtensionAPI) => void
+ *   createPiExtension({ mode })  →  (pi: ExtensionAPI) => void
  *   export default = createPiExtension()      (interactive)
  *
  * Registers the FULL agent-tempo tool surface natively on Pi (shared
@@ -9,8 +9,8 @@
  * from Pi lifecycle events, holds an attachment lease + heartbeat, and pumps
  * cues into the live session. The SAME extension runs interactive (behind a
  * human `pi` CLI) and headless (injected into `createAgentSession` by the daemon
- * — Phase 3a); `mode` is the only behavioural discriminator (it gates the MD-C
- * tool_call enforcement, which applies to unsupervised headless players only).
+ * — Phase 3a); `mode` discriminates only role resolution and the interactive
+ * `/tempo-reset` command surface.
  *
  * ── Module-scope singleton (CRITICAL — researcher finding) ──
  * Pi REBUILDS the extension instance on every SessionManager switch, so
@@ -30,10 +30,9 @@
  * Determinism boundary: this module (and all of src/pi/) is CLIENT-SIDE only.
  */
 import * as os from 'os';
-import * as crypto from 'crypto';
 import type { Client, WorkflowHandle } from '@temporalio/client';
 import { getConfig, ENV, resolvePiRole, sessionWorkflowId, type Config } from '../config';
-import type { AgentType, SessionMetadata, GuardrailPolicy } from '../types';
+import type { AgentType, SessionMetadata } from '../types';
 import {
   buildAllTempoTools,
   buildServerInstructions,
@@ -41,21 +40,17 @@ import {
   type BuildServerInstructionsOpts,
 } from '../server-tools';
 import type {
-  ExtensionAPI, PiAgentSession, PiEventPayload, PiToolCallEvent, PiToolCallResult, PiExtensionContext,
+  ExtensionAPI, PiAgentSession, PiEventPayload,
   PiBeforeAgentStartEvent, PiBeforeAgentStartResult,
 } from './pi-types';
 import { PhaseDriver } from './phase-driver';
 import { PiWorkflowClient } from './workflow-client';
 import { CuePump, buildPiInjector } from './cue-pump';
-import { ResetPump } from './reset-pump';
 import { renderToPi } from './render-tools';
 import { createLazyProxy } from './lazy-proxy';
 import { probePi } from './probe';
-import { InnerLoopPublisher, truncateSummary } from './inner-loop-publisher';
+import { InnerLoopPublisher } from './inner-loop-publisher';
 import { InnerLoopHttpClient } from './inner-loop-client';
-import { GateClient } from './gate-client';
-import { classify } from '../security/tool-capability';
-import { GATE_AUTO_ALLOW_MS, GATE_CLOSED_DENY_MS } from '../http/gate-registry';
 
 const log = (...args: unknown[]): void => {
   // eslint-disable-next-line no-console
@@ -69,9 +64,8 @@ const nowIso = (): string => new Date().toISOString();
 // recruit's mirror-fallback resolve to 'claude'.
 const PI_AGENT_TYPE: AgentType = 'pi';
 
-/** Runtime mode. Headless = recruited unsupervised player (MD-C gate active). */
+/** Runtime mode. Headless = recruited daemon-spawned player (no command surface). */
 export type PiExtensionMode = 'interactive' | 'headless';
-export type PiToolAccess = 'restricted' | 'standard' | 'full';
 
 /**
  * Interactive-session breadcrumb (#645 H4 → reworded for #677).
@@ -107,28 +101,9 @@ export function noteInteractiveSessionAbsent(
 }
 
 export interface PiExtensionOptions {
-  /** Default `'interactive'`. Headless installs the MD-C tool_call gate. */
+  /** Default `'interactive'`. */
   mode?: PiExtensionMode;
-  /** MD-C tool-class policy (headless only). Default `'restricted'`. */
-  toolAccess?: PiToolAccess;
-  /**
-   * #700 (P2 / G) — durable guardrail posture (headless only). Default
-   * `'autonomous'`. Drives the MD-G gate's per-request `failMode`: `supervised`
-   * → self-arming fail-CLOSED; `monitored` → today's operator-armed fail-OPEN;
-   * `observe-only` → no-act (block all non-low-risk tools). Read from durable
-   * SessionMetadata on every (re)boot (no silent downgrade). CLIENT-COOPERATIVE
-   * in P2 (the agent honors its own policy; not tamper-proof — daemon-side
-   * enforcement is P2.1).
-   */
-  guardrailPolicy?: GuardrailPolicy;
 }
-
-// MD-C shell/exec tool-class membership is owned by `tool-capability.ts`
-// (`classify(name) === 'exec'`, content signed off by tempo-security). F1
-// import-refactor (3d): this REPLACES the former local `SHELL_TOOL_NAMES` set —
-// the canonical EXEC_TOOLS set is a SUPERSET that also blocks
-// powershell/pwsh/cmd/run, closing the gap the local list left open. Single
-// source of truth: never re-declare a shell denylist here.
 
 // ── Module-scope Temporal Client singleton (D12a: one Client per OS process) ──
 let sharedClientPromise: Promise<Client> | null = null;
@@ -162,8 +137,6 @@ export interface PiPlayerRuntime {
    * stopped on teardown.
    */
   readonly pub: InnerLoopPublisher;
-  /** 3d D14 — polls the workflow's pending reset → clean-wipe (newSession) + ack. */
-  readonly reset: ResetPump;
   session: PiAgentSession | null;
   /**
    * #677 — THIS player's CURRENT Pi `ExtensionAPI` handle. Repointed on every
@@ -185,14 +158,11 @@ export interface PiPlayerRuntime {
 const runtimes = new Map<string, PiPlayerRuntime>();
 
 /**
- * Build the Pi extension factory. `mode='headless'` installs the MD-C tool_call
- * gate; `mode='interactive'` (default) does not (the human owns their machine).
+ * Build the Pi extension factory. `mode='headless'` marks a daemon-spawned
+ * recruited player; `mode='interactive'` (default) a human-driven `pi` CLI.
  */
 export function createPiExtension(options: PiExtensionOptions = {}): (pi: ExtensionAPI) => void {
   const mode: PiExtensionMode = options.mode ?? 'interactive';
-  const toolAccess: PiToolAccess = options.toolAccess ?? 'restricted';
-  // #700 (P2 / G) — guardrail posture; absent ⇒ autonomous (no gate).
-  const guardrailPolicy: GuardrailPolicy = options.guardrailPolicy ?? 'autonomous';
 
   return function piExtension(pi: ExtensionAPI): void {
     // ── #729 role gate (MUST stay first — before probePi / getConfig /
@@ -310,90 +280,6 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
       });
     }
 
-    // ── MD-C tool-access + MD-G guardrail gate (HEADLESS ONLY) ──
-    // Interactive Pi = a human owns their machine → no gate. Headless = recruited
-    // unsupervised → MD-C governs tool access. ORDER: (1) MD-C exec-FLOOR — shell/
-    // exec HARD-BLOCKED at toolAccess='restricted'; (1b) #700 observe-only NO-ACT
-    // hard-block; (2) MD-G guardrail gate — supervised (self-arming fail-CLOSED) or
-    // monitored (operator-armed fail-OPEN) per the durable guardrailPolicy.
-    if (mode === 'headless') {
-      // 3d MD-G — the operator gate's two loopback clients, keyed to the FIXED
-      // player identity (matches the ingest token + workflowId). `gateInner`
-      // emits the gate_pending frame (the daemon's ingest side-effect registers
-      // the pending) and reports presence {subscribers, gateArmed}; `gateClient`
-      // polls the daemon for the operator's decision. Both no-op without the
-      // ingest token (so this is inert for a manually-launched headless Pi).
-      const gateInner = new InnerLoopHttpClient({ ensemble: config.ensemble, playerId: fixedPlayerId });
-      const gateClient = new GateClient({ ensemble: config.ensemble, playerId: fixedPlayerId });
-
-      (pi.on as unknown as (
-        e: string,
-        h: (ev: PiToolCallEvent, ctx?: PiExtensionContext) => PiToolCallResult | Promise<PiToolCallResult>,
-      ) => void)(
-        'tool_call',
-        async (event: PiToolCallEvent, ctx?: PiExtensionContext): Promise<PiToolCallResult> => {
-          const cls = classify(event.toolName);
-          // 1) MD-C tool-class FLOOR (fires FIRST). classify()==='exec' is the
-          //    canonical EXEC set (F1) — a SUPERSET that hard-blocks
-          //    powershell/pwsh/cmd/run at restricted. HARD-block, never gated.
-          if (cls === 'exec' && toolAccess === 'restricted') {
-            log(`MD-C: blocked '${event.toolName}' (toolAccess=restricted)`);
-            return {
-              block: true,
-              reason: `toolAccess=restricted: shell/exec tools are disabled for this headless Pi player`,
-            };
-          }
-          // 1b) #700 (G) observe-only — a NO-ACT axis (MD-C-style HARD block, not
-          //     a gate). The agent may read/observe/advise but cannot act, so ANY
-          //     non-low-risk tool is blocked outright. Client-cooperative (P2).
-          if (cls !== 'low-risk' && guardrailPolicy === 'observe-only') {
-            log(`guardrail: blocked '${event.toolName}' (guardrailPolicy=observe-only)`);
-            return {
-              block: true,
-              reason: `guardrailPolicy=observe-only: this agent may observe/advise but not act (${event.toolName} blocked)`,
-            };
-          }
-          // 2) MD-G GATE — engage for any non-low-risk tool when EITHER:
-          //    - SUPERVISED (#700): SELF-ARMING, fail-CLOSED — engages regardless
-          //      of operator arm/presence (the whole point: fail-closed must fire
-          //      when no operator is watching); failMode='closed' → daemon
-          //      auto-DENIES after GATE_CLOSED_DENY_MS, client deadline derives
-          //      ≥310s + fails-closed. OR
-          //    - MONITORED: today's MD-G — engages ONLY when an operator is armed
-          //      AND present; failMode='open' (fail-OPEN, byte-for-byte unchanged:
-          //      operator decision / 45s auto-allow / cancel / deadline → allow).
-          //    Supervised is the FLOOR — an operator arm can't downgrade it to open.
-          //    low-risk bypasses; unknown→high-blast is gated (R2 fail-safe).
-          const supervised = guardrailPolicy === 'supervised';
-          const operatorEngaged = gateInner.gateArmed(workflowId) && gateInner.subscriberCount(workflowId) > 0;
-          if (cls !== 'low-risk' && (supervised || operatorEngaged)) {
-            const failMode: 'open' | 'closed' = supervised ? 'closed' : 'open';
-            const requestId = crypto.randomUUID();
-            gateInner.publish(workflowId, {
-              type: 'inner.gate_pending',
-              requestId,
-              tool: event.toolName,
-              argsSummary: truncateSummary(event.input, 2048),
-              classification: cls as 'exec' | 'high-blast', // low-risk already returned above
-              failMode,
-              timeoutMs: supervised ? GATE_CLOSED_DENY_MS : GATE_AUTO_ALLOW_MS,
-              ts: Date.now(),
-            });
-            const effect = await gateClient.awaitDecision(requestId, { signal: ctx?.signal, failMode });
-            if (effect === 'deny') {
-              log(`MD-G: ${supervised ? 'supervised' : 'operator'} DENIED '${event.toolName}' (req ${requestId}, failMode=${failMode})`);
-              return { block: true, reason: `${supervised ? 'supervised gate' : 'operator'} denied ${event.toolName}` };
-            }
-            log(`MD-G: '${event.toolName}' permitted (req ${requestId}, failMode=${failMode})`);
-            return {};
-          }
-          // 3) not gated → permit.
-          return {};
-        },
-      );
-      log(`MD-C+MD-G tool gate active (mode=headless, toolAccess=${toolAccess}, guardrailPolicy=${guardrailPolicy})`);
-    }
-
     /** Build session metadata from the (current) identity + host. */
     function buildMetadata(): SessionMetadata {
       return {
@@ -451,6 +337,14 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
         // `rt.session.sendCustomMessage`. Reading `runtimes.get(workflowId)` (not a
         // captured `rt`) is what makes a post-rebind tick use the NEW pi.
         resolveInjector: () => buildPiInjector(runtimes.get(workflowId) ?? null),
+        // 3d D14 — reset intake on the SAME poll loop (S3 merge): each tick first
+        // drains pendingReset → session.newSession() clean-wipe + ack. Session/pi
+        // re-acquired each tick so a session switch never wipes a stale session.
+        // #677 PART B — interactive can't auto-wipe (no session field / newSession
+        // is command-context-only); the pump notifies the operator via `pi`.
+        resetSource: wf,
+        resolveSession: () => runtimes.get(workflowId)?.session ?? null,
+        resolvePi: () => runtimes.get(workflowId)?.pi ?? null,
       });
       // 3c — inner-loop publisher + its loopback-HTTP sink. The client no-ops
       // unless AGENT_TEMPO_INGEST_TOKEN is present (daemon-spawned headless
@@ -458,18 +352,8 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
       // Tier-2 forwarding. URL keyed to the FIXED playerId (matches workflowId).
       const registry = new InnerLoopHttpClient({ ensemble: config.ensemble, playerId: fixedPlayerId });
       const pub = new InnerLoopPublisher({ workflowId, registry });
-      // 3d D14 — reset poll-tick (sibling to the cue pump): polls pendingReset →
-      // session.newSession() clean-wipe + ack. resolveSession re-acquired each
-      // tick so a session switch never wipes a stale session.
-      const reset = new ResetPump({
-        source: wf,
-        resolveSession: () => runtimes.get(workflowId)?.session ?? null,
-        // #677 PART B — interactive can't auto-wipe (no session field / newSession is
-        // command-context-only); the reset pump notifies the operator via this handle.
-        resolvePi: () => runtimes.get(workflowId)?.pi ?? null,
-      });
       const rt: PiPlayerRuntime = {
-        workflowId, wf, driver, pump, pub, reset,
+        workflowId, wf, driver, pump, pub,
         session: payload.session ?? null,
         pi, // #677 — first-attach instance's pi (repointed on each rebind)
         lastTurnStartAt: null,
@@ -485,7 +369,6 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
       // bound method is wrapped so `this` survives the provider call.
       pub.start(pi);
       wf.setCoarseProvider(() => pub.getCoarseState());
-      reset.start(); // 3d D14 — begin polling for pending resets
       log(`attached ${currentPlayerId} (wf ${workflowId})`);
       return rt;
     }
@@ -543,7 +426,7 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
       rt.session = null; // switch gap: cue pump stops injecting (dodges Pi #2860)
       if (payload.reason === 'quit') {
         rt.pub.stop(); // 3c — stop observing + flush the trailing coalesce buffer
-        rt.reset.stop(); // 3d — stop the reset poll
+        rt.pump.stop(); // S3 — stop the cue+reset poll loop (workflow detaches below)
         try {
           await rt.wf.detach('agent-exited'); // requestDetach + adapterExited + stopHeartbeat
           runtimes.delete(workflowId);
@@ -567,7 +450,7 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
 export async function detachAllPiRuntimesForExit(): Promise<void> {
   for (const rt of runtimes.values()) {
     rt.pub.stop(); // 3c — stop the inner-loop publisher before detaching
-    rt.reset.stop(); // 3d — stop the reset poll before detaching
+    rt.pump.stop(); // S3 — stop the cue+reset poll loop before detaching
     try {
       await rt.wf.detach('agent-exited');
     } catch (err) {
@@ -608,7 +491,6 @@ export function __setPiClientFactoryForTests(factory: (config: Config) => Promis
 export function __resetPiRuntimesForTests(): void {
   for (const rt of runtimes.values()) {
     rt.pub.stop();
-    rt.reset.stop();
     rt.pump.stop();
     rt.wf.stopHeartbeat();
   }

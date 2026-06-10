@@ -244,73 +244,7 @@ export interface SessionMetadata {
    * (the spawn falls back to `AGENT_TEMPO_API_MODEL` env / pinned default).
    */
   model?: string;
-  /**
-   * #700 (P2 / G) — the durable guardrail posture for this autonomous agent.
-   * One knob, applied consistently to any autonomous LLM agent (headless
-   * conductor + interactive planner alike):
-   *
-   *   - `autonomous` (**default**, absent ⇒ this) — no gate; every op runs
-   *     free. vinceblank's hard requirement: hands-off orchestration is the
-   *     point, so supervision is strictly opt-in.
-   *   - `monitored` — gate armed, **fail-OPEN** (today's MD-G): a non-low-risk
-   *     op auto-ALLOWs after {@link GATE_AUTO_ALLOW_MS} if the operator doesn't
-   *     intervene. "Let the operator catch + override," not "block until yes."
-   *   - `supervised` — gate armed, **fail-CLOSED**: a non-low-risk op auto-DENIES
-   *     after `GATE_CLOSED_DENY_MS` (300s) on operator absence / daemon-down.
-   *     Silence ≠ consent.
-   *   - `observe-only` — a separate *no-act* axis (tool-access denial, MD-C
-   *     style), not a gate state; the agent may read/observe/advise but cannot
-   *     act.
-   *
-   * **Why DURABLE (not the env-path `toolAccess` uses):** a policy delivered
-   * only via spawn-env that a restart / re-attach failed to re-thread would
-   * silently DOWNGRADE a supervised agent to autonomous — that downgrade IS the
-   * guardrail bypass. Persisting it on session metadata means arm-at-boot reads
-   * the real posture on EVERY attach (across restart / migrate / re-attach), so
-   * a previously-`supervised` agent stays supervised. (tempo-architect ruling.)
-   *
-   * **★ Enforcement scope (#712/#715).** `supervised` is the daemon-enforced
-   * approval boundary for the realistic threat: a prompt-injected agent. A
-   * manipulated LLM can only *emit* tool-call requests — Pi routes every one to
-   * agent-tempo's `tool_call` handler, which engages the gate (non-`low-risk`;
-   * #712 daemon-computes `failMode` from this durable policy, falling `closed` on
-   * any lookup failure — no-fail-open, so an engaging agent can't self-downgrade).
-   * The agent **cannot** skip the gate — it doesn't control the hook.
-   *
-   * **#715 adds a registration-level floor.** For `toolAccess: 'restricted'` (and
-   * `observe-only`'s act tools) the exec/act tools are EXCLUDED at
-   * `createAgentSession` (`excludeTools`) → **absent** from the model's toolset and
-   * system prompt entirely; the LLM cannot request what it never sees. That is
-   * stronger than a call-time block — it holds even if the call-time gate had a bug
-   * (the tool simply isn't there). `supervised` with exec present keeps exec
-   * **present + gated** (approve-per-use), so this floor applies to the exec/no-act
-   * postures, not to a `supervised`+`standard` player.
-   *
-   * **Residual (all postures): process compromise** — code execution *inside* the
-   * Pi process (in-process syscalls; host RCE bypassing the handler), OR a
-   * tampered / modified extension that un-excludes or re-registers tools.
-   * `excludeTools` is OUR code passing a denylist; an attacker who modifies that
-   * code or the process bypasses it. The only defense is OS-level sandboxing +
-   * supply-chain integrity, a separate future `'sandboxed'` posture (#724). So:
-   * **tamper-RESISTANT** vs prompt-injection + an honest gate bug; **NOT
-   * tamper-PROOF** vs a compromised process. Against prompt-injection — the
-   * realistic threat — it **is** a real enforcement boundary; #724 is not a gap in
-   * that scope.
-   *
-   * **Post-restart window:** on daemon restart the in-memory ingest tokens are
-   * invalidated, so existing players' gate engagements are rejected (403) until a
-   * re-spawn re-mints. In that window a `supervised` player's gate-client
-   * fail-closes on its own derived deadline (client-side safety holds, not
-   * daemon-mediated) — same process-compromise residual, not a distinct gap.
-   */
-  guardrailPolicy?: GuardrailPolicy;
 }
-
-/**
- * #700 (P2 / G) — the durable guardrail posture for an autonomous agent.
- * See {@link SessionMetadata.guardrailPolicy}. Absent ⇒ `autonomous`.
- */
-export type GuardrailPolicy = 'autonomous' | 'monitored' | 'supervised' | 'observe-only';
 
 export interface AgentTypeInfo {
   name: string;
@@ -689,23 +623,6 @@ export interface RecruitOutboxEntry extends OutboxEntryBase {
    * when `agent !== 'claude-code-headless'`.
    */
   dangerouslySkipPermissions?: boolean;
-  /**
-   * Phase 3a / MD-C — headless Pi tool-class policy. `'restricted'` (default;
-   * Bash/shell/exec hard-blocked) | `'standard'` (scoped Bash) | `'full'`
-   * (unsandboxed; admin/force-gated at recruit). Ignored when `agent !== 'pi'`.
-   * Inline literal — types.ts is the V8-sandbox-safe shared module; do NOT import
-   * the type from src/pi or src/adapters.
-   */
-  toolAccess?: 'restricted' | 'standard' | 'full';
-  /**
-   * #700 (P2 / G) — headless Pi guardrail posture (recruit-arg). Persisted onto
-   * durable {@link SessionMetadata.guardrailPolicy} by `startRecruitedSession`,
-   * so restart / migrate / re-attach recover it from metadata (NOT this entry,
-   * which is dropped after dispatch). Ignored when `agent !== 'pi'`. Absent ⇒
-   * `autonomous`. {@link GuardrailPolicy} is defined in THIS module, so the
-   * reference is in-file (no cross-module import — sandbox-safe).
-   */
-  guardrailPolicy?: GuardrailPolicy;
 }
 
 export interface ReleaseOutboxEntry extends OutboxEntryBase {
@@ -840,13 +757,6 @@ export interface SpawnOutboxEntry extends OutboxEntryBase {
    * subprocess runs the same model the original recruit chose.
    */
   model?: string;
-  /**
-   * #700 (P2 / G) — guardrail posture carried across restart / encore / migrate.
-   * Read from durable {@link SessionMetadata.guardrailPolicy} by `deliverRestart`
-   * and forwarded into the spawn so the restarted subprocess re-arms the SAME
-   * posture (the no-silent-downgrade durability point). Absent ⇒ `autonomous`.
-   */
-  guardrailPolicy?: GuardrailPolicy;
 }
 
 /**
@@ -854,7 +764,6 @@ export interface SpawnOutboxEntry extends OutboxEntryBase {
  * runs `deliverReset` on the target, which sets a `pendingReset` flag the Pi
  * extension polls + acts on (CLEAN-WIPE → Pi `newSession()`). POLL-delivery
  * (mirrors cue/pendingMessages), NOT a direct signal into the subprocess.
- * Operator-initiated → does NOT route through the MD-G tool gate.
  */
 export interface ResetOutboxEntry extends OutboxEntryBase {
   type: 'reset';

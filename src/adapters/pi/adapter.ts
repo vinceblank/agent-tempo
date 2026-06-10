@@ -14,37 +14,15 @@
  */
 import { ENV } from '../../config';
 import { runHeadlessPi } from '../../pi/headless';
-import type { PiToolAccess } from '../../pi/extension';
-import type { GuardrailPolicy } from '../../types';
 
 const log = (...args: unknown[]): void => {
   // eslint-disable-next-line no-console
   console.error('[agent-tempo:pi]', ...args);
 };
 
-/** Normalize the env tool-access value to the MD-C policy (default 'restricted'). */
-function readToolAccess(): PiToolAccess {
-  const raw = process.env[ENV.TOOL_ACCESS];
-  return raw === 'standard' || raw === 'full' ? raw : 'restricted';
-}
-
-/**
- * #700 (P2 / G) — normalize the env guardrail posture. Unknown / absent ⇒
- * undefined (the extension defaults to 'autonomous'). The durable source is
- * SessionMetadata; this env is re-derived from it on every (re)spawn.
- */
-function readGuardrailPolicy(): GuardrailPolicy | undefined {
-  const raw = process.env[ENV.GUARDRAIL_POLICY];
-  return raw === 'autonomous' || raw === 'monitored' || raw === 'supervised' || raw === 'observe-only'
-    ? raw
-    : undefined;
-}
-
 /** Parse the spawn-provided env into options and run. Exported for testing. */
 export async function main(): Promise<void> {
   await runHeadlessPi({
-    toolAccess: readToolAccess(),
-    guardrailPolicy: readGuardrailPolicy(),
     model: process.env[ENV.PI_MODEL] || undefined,
     continueSessionId: process.env[ENV.PI_CONTINUE_SESSION] || undefined,
   });

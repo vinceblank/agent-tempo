@@ -46,8 +46,7 @@ via a module-scope singleton.
 | `zod-to-typebox.ts` | zod→TypeBox tool-schema converter (fail-loud on unsupported constructs; Phase 1 / D1) | **Pure** — unit-tested |
 | `lazy-proxy.ts` | D11 lazy `Client` / `WorkflowHandle` proxy — resolves the live target per call | **Pure** — unit-tested |
 | `workflow-client.ts` | Thin client-side Temporal wrapper (lease, heartbeat, lifecycle, outbox, cue intake) | Compile-checked (needs Temporal at runtime) |
-| `cue-pump.ts` | Polls `pendingMessages`, injects via the **per-tick re-resolved `pi.sendMessage`** handle (#677; `session.sendCustomMessage` fallback), acks via `markDelivered`; escalates an un-woken cue via `pi.sendUserMessage` | **Pure** — unit-tested |
-| `reset-pump.ts` | Polls `pendingReset`; **capability branch** — headless `session.newSession()` auto clean-wipe, interactive `pi.sendMessage` operator-notice "run `/tempo-reset`" (#677 PART B) | **Pure** — unit-tested |
+| `cue-pump.ts` | ONE 1 s poll loop, TWO intakes (S3 merge): (a) `pendingReset` — **capability branch**: headless `session.newSession()` auto clean-wipe, interactive `pi.sendMessage` operator-notice "run `/tempo-reset`" (#677 PART B); (b) `pendingMessages` — injects via the **per-tick re-resolved `pi.sendMessage`** handle (#677; `session.sendCustomMessage` fallback), acks via `markDelivered`; escalates an un-woken cue via `pi.sendUserMessage` | **Pure** — unit-tested |
 | `extension.ts` | `export default function(pi)` — registers the FULL tool surface via `renderToPi(buildAllTempoTools(...))` over lazy proxies; wires events → driver → client | Compile-checked |
 | `probe.ts` | Optional-dep preflight for the Pi packages (sdk-probe pattern) | Compile-checked |
 | `pi-types.ts` | Hand-written structural decls of Pi's `ExtensionAPI` surface | — (see limitation below) |
@@ -153,25 +152,26 @@ that callers may share; each attached session constructs its own `PiWorkflowClie
 A recruited `agent: 'pi'` player runs **headless** (no terminal, no human): the
 daemon spawns `dist/adapters/pi/adapter.js`, which calls Pi's `createAgentSession`
 with the agent-tempo extension injected inline (`createPiExtension({ mode:
-'headless', toolAccess })`). The same module-scope singleton owns the lifecycle.
+'headless' })`). The same module-scope singleton owns the lifecycle.
 
 - **Files:** `headless.ts` (runHeadlessPi: probe → resolve model → createAgentSession
   + `resourceLoader.reload()` + `bindExtensions()` → `setRuntimeSession` →
   keepAlive → reliable detach), `src/adapters/pi/adapter.ts` (env→options entry),
   `src/adapters/pi/index.ts` (registry/identity descriptor — no BaseAttachment).
-- **MD-C tool gate** (headless only): `toolAccess` `restricted` (default; bash
-  hard-blocked) | `standard` | `full`. Recruit knob → `AGENT_TEMPO_TOOL_ACCESS` →
-  the extension's `tool_call` gate (tool-class check first).
-- **MD-C deny-list soundness (S2).** The `restricted` gate is a DENY-LIST over
-  shell/exec tool *names*, so it is sound only if no third-party extension can
-  register an un-blacklisted exec tool. Verified against Pi SDK 0.78 source:
-  `DefaultResourceLoader.reload()` loads DISK/package extensions
-  (`~/.pi/agent/extensions/`, `<cwd>/.pi/extensions/`) by default
-  (`noExtensions` defaults to `false`, `resource-loader.js:132`/`271-276`). The
-  headless loader therefore passes **`noExtensions: true`** (and NO
-  `additionalExtensionPaths`) via `buildPiResourceLoaderOptions` — disk/package
-  extensions are hard-excluded while our inline factory still loads (factories
-  are not gated by `noExtensions`). Locked by `test/pi-headless-loader.test.ts`.
+- **Full tool surface.** Headless Pi players run every Pi built-in (incl. shell)
+  plus the agent-tempo MCP tools, with no permission layer — like the other
+  adapters. (The former MD-C `toolAccess` gate and MD-G operator gate were
+  removed — see `docs/design/pi-streamline-gate-removal-cc.md`.)
+- **Supply-chain hygiene (S2).** A recruited player must load ONLY the inline
+  agent-tempo extension — never arbitrary disk/package extensions. Verified
+  against Pi SDK 0.78 source: `DefaultResourceLoader.reload()` loads
+  DISK/package extensions (`~/.pi/agent/extensions/`, `<cwd>/.pi/extensions/`)
+  by default (`noExtensions` defaults to `false`,
+  `resource-loader.js:132`/`271-276`). The headless loader therefore passes
+  **`noExtensions: true`** (and NO `additionalExtensionPaths`) via
+  `buildPiResourceLoaderOptions` — disk/package extensions are hard-excluded
+  while our inline factory still loads (factories are not gated by
+  `noExtensions`). Locked by `test/pi-headless-loader.test.ts`.
   *(security, 3a review.)*
 - **Model:** `provider/model` recruit arg → pi-ai `getModel(provider, name)` →
   Pi `Model` object (NOT a string). Copilot via `probeCopilotPiPreflight`.
@@ -256,8 +256,8 @@ with the agent-tempo extension injected inline (`createPiExtension({ mode:
 
 ### Reset asymmetry (#677 PART B) — interactive cannot self-reset
 
-Reset (`reset` MCP tool → workflow `pendingReset` slot → `reset-pump.ts`) is a **capability
-branch**, and the two halves are genuinely asymmetric:
+Reset (`reset` MCP tool → workflow `pendingReset` slot → the cue pump's reset intake in
+`cue-pump.ts`) is a **capability branch**, and the two halves are genuinely asymmetric:
 
 - **Headless** can clean-wipe ITSELF: `session.newSession()` exists on the SDK session, so the
   reset pump auto-wipes in place + acks. Fully autonomous.

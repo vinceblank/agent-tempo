@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { Config, conductorWorkflowId, sessionWorkflowId } from '../config';
-import { AgentType, SessionInput, AdapterClass, AttachmentInfo, AttachmentPhase, MockMode, SessionMetadata, Message, DetachReason, GuardrailPolicy } from '../types';
+import { AgentType, SessionInput, AdapterClass, AttachmentInfo, AttachmentPhase, MockMode, SessionMetadata, Message, DetachReason } from '../types';
 import {
   PREVIEW_MAX_LENGTH,
   DEFAULT_RESTART_DETACH_DEADLINE_MS,
@@ -16,7 +16,6 @@ import { spawnInTerminal, spawnCopilotBridge, spawnClaudeApiAdapter, spawnOpenCo
 import type { ClaudeCodeHeadlessPermissionMode } from '../adapters/claude-code-headless/types';
 import { ENV } from '../config';
 import type { IngestTokenRegistry } from '../http/ingest-registry';
-import type { GateRegistry } from '../http/gate-registry';
 import { resolveSession } from './resolve';
 import { resolveAgentType } from '../ensemble/agent-types';
 import { defaultPart } from '../utils/default-part';
@@ -187,12 +186,6 @@ export interface StartRecruitedSessionInput {
    * can recover the original choice. Ignored when `agent !== 'claude-api'`.
    */
   model?: string;
-  /**
-   * #700 (P2 / G) — guardrail posture. Persisted onto
-   * `SessionMetadata.guardrailPolicy` so restart recovers it. Ignored when
-   * `agent !== 'pi'`. Absent ⇒ autonomous.
-   */
-  guardrailPolicy?: GuardrailPolicy;
 }
 
 export interface ReleasePlayerInput {
@@ -307,21 +300,6 @@ export interface SpawnProcessInput {
    * exclusive with {@link permissionMode}.
    */
   dangerouslySkipPermissions?: boolean;
-  /**
-   * Phase 3a / MD-C — headless Pi tool-class policy. Forwarded as
-   * `AGENT_TEMPO_TOOL_ACCESS`. Only meaningful when `agent === 'pi'`. One of
-   * `'restricted'` (default; Bash hard-blocked) | `'standard'` | `'full'`.
-   * Inline literal — kept off the workflow-sandbox import path (see the
-   * RecruitOutboxEntry note in src/types.ts).
-   */
-  toolAccess?: 'restricted' | 'standard' | 'full';
-  /**
-   * #700 (P2 / G) — headless Pi guardrail posture. Forwarded as
-   * `AGENT_TEMPO_GUARDRAIL_POLICY`. Sourced from durable
-   * `SessionMetadata.guardrailPolicy` on (re)spawn. Only meaningful when
-   * `agent === 'pi'`. Absent ⇒ autonomous (the extension default).
-   */
-  guardrailPolicy?: GuardrailPolicy;
 }
 
 // ── Activity result type ──
@@ -392,7 +370,6 @@ export function createOutboxActivities(
   client: Client,
   config: Config,
   ingestTokens?: IngestTokenRegistry,
-  gate?: GateRegistry,
 ): OutboxActivities {
   return {
     async deliverCue(input: DeliverCueInput): Promise<OutboxActivityResult> {
@@ -471,7 +448,7 @@ export function createOutboxActivities(
     },
 
     async startRecruitedSession(input: StartRecruitedSessionInput): Promise<RecruitResult> {
-      const { ensemble, targetName, workDir, isConductor, initialMessage, fromPlayerId, agent, systemPrompt, taskQueue, agentDefinition, agentDefinitionDescription, held, model, guardrailPolicy } = input;
+      const { ensemble, targetName, workDir, isConductor, initialMessage, fromPlayerId, agent, systemPrompt, taskQueue, agentDefinition, agentDefinitionDescription, held, model } = input;
       try {
         const workflowId = isConductor
           ? conductorWorkflowId(ensemble)
@@ -509,11 +486,6 @@ export function createOutboxActivities(
             // (different value shapes — bare vs `provider/model`) — the spawn
             // path inspects `metadata.agentType` to know which env var to set.
             ...((agent === 'claude-api' || agent === 'opencode' || agent === 'pi') && model ? { model } : {}),
-            // #700 (P2 / G) — persist the guardrail posture on DURABLE metadata so
-            // arm-at-boot reads the real posture on every (re)attach; a restart
-            // can't silently downgrade a supervised player. Only when explicitly
-            // set (absent ⇒ autonomous). Pi-only for P2.
-            ...(agent === 'pi' && guardrailPolicy ? { guardrailPolicy } : {}),
             ...(agentDefinition ? { playerType: agentDefinition } : {}),
             ...(agentDefinitionDescription ? { playerTypeDescription: agentDefinitionDescription } : {}),
             recruitedBy: fromPlayerId,
@@ -573,7 +545,7 @@ export function createOutboxActivities(
     },
 
     async spawnProcess(input: SpawnProcessInput): Promise<OutboxActivityResult> {
-      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId, mockMode, mockScenario, model, permissionMode, dangerouslySkipPermissions, toolAccess, guardrailPolicy } = input;
+      const { targetName, workDir, isConductor, agent, systemPrompt, ensemble, temporalAddress, temporalNamespace, agentDefinition, agentDefinitionPath, nativeResolvable, resume, sessionId, allowedTools, claudeBin, attachmentId, attachmentRunId, adapterId, mockMode, mockScenario, model, permissionMode, dangerouslySkipPermissions } = input;
       // Read secrets from the worker's config closure — never from workflow state
       const { temporalApiKey, temporalTlsCertPath, temporalTlsKeyPath } = config;
 
@@ -733,11 +705,10 @@ export function createOutboxActivities(
         } else if (agent === 'pi') {
           // Phase 3a — headless Pi runtime. Injects the src/pi extension into
           // Pi's createAgentSession; the module-scope singleton owns the
-          // lifecycle (claim/heartbeat/tools/cue-pump). Tool access is governed
-          // by the MD-C `toolAccess` policy (restricted hard-blocks Bash via the
-          // extension's tool_call gate), NOT per-tool allowlists.
+          // lifecycle (claim/heartbeat/tools/cue-pump). Pi players run the full
+          // Pi tool surface — per-tool allowlists are not supported.
           if (allowedTools && allowedTools.length > 0) {
-            log(`Warning: allowedTools [${allowedTools.join(', ')}] specified for pi agent "${targetName}" — Pi tool access is governed by toolAccess (MD-C), skipping allowedTools`);
+            log(`Warning: allowedTools [${allowedTools.join(', ')}] specified for pi agent "${targetName}" — Pi players run the full tool surface, skipping allowedTools`);
           }
           // 3c Tier-2 — mint a per-player ingest token scoped to this player's
           // session workflowId so the headless Pi subprocess can authenticate its
@@ -745,13 +716,6 @@ export function createOutboxActivities(
           // REPLACES) means a restart re-mints and naturally revokes the stale
           // token. Injected into the subprocess env as AGENT_TEMPO_INGEST_TOKEN.
           const ingestToken = ingestTokens?.mint(sessionWorkflowId(ensemble, targetName));
-          // #712 — record the DURABLE guardrail policy on the daemon gate at spawn
-          // (beside the ingest-token mint, same daemon process + lifecycle) so the
-          // gate's failMode cross-check is daemon-authoritative from the FIRST
-          // engagement — no lazy metadata query on the common path. Absent ⇒
-          // autonomous (the extension default). Mint REPLACES on restart; setPolicy
-          // likewise re-stamps the current durable posture (no silent downgrade).
-          gate?.setPolicy(sessionWorkflowId(ensemble, targetName), guardrailPolicy ?? 'autonomous');
           const { pid } = spawnPiHeadless({
             name: targetName,
             ensemble,
@@ -766,14 +730,12 @@ export function createOutboxActivities(
             // Restart-resume: continue the prior Pi conversation only on a
             // restart (resume=true); a fresh recruit starts a new Pi session.
             continueSessionId: resume ? sessionId : undefined,
-            toolAccess,
-            guardrailPolicy,
             attachmentId,
             attachmentRunId,
             adapterId,
             ingestToken,
           });
-          log(`Spawned pi headless adapter (pid ${pid}) in ${workDir} as "${targetName}" (toolAccess=${toolAccess ?? 'restricted'})${guardrailPolicy ? ` (guardrailPolicy=${guardrailPolicy})` : ''}${model ? ` (model=${model})` : ''}${resume && sessionId ? ` (continue=${sessionId})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
+          log(`Spawned pi headless adapter (pid ${pid}) in ${workDir} as "${targetName}"${model ? ` (model=${model})` : ''}${resume && sessionId ? ` (continue=${sessionId})` : ''}${attachmentId ? ` (attachmentId=${attachmentId})` : ''}`);
         } else {
           // Resolve agent flags: --agent (native) > --system-prompt (shipped/legacy)
           let agentFlags: string[] = [];
@@ -896,9 +858,6 @@ export function createOutboxActivities(
         // the player goes away. Mirrors the destroy-side revoke; idempotent and a
         // no-op for non-Pi players (they never minted one). Re-attach re-mints.
         ingestTokens?.revoke(sessionWorkflowId(ensemble, targetPlayerId));
-        // 3d MD-G — auto-disarm the gate on detach (the operator's gate posture
-        // shouldn't survive the player going away; re-attach re-arms). Idempotent.
-        gate?.clearPlayer(sessionWorkflowId(ensemble, targetPlayerId));
         log(`Detach signaled for "${targetPlayerId}" (deadline=${deadlineMs}ms)`);
         return { success: true };
       } catch (err) {
@@ -941,9 +900,6 @@ export function createOutboxActivities(
         // revokeIngestToken(workflowId) on detach — deferred; residual surface
         // negligible (dead holder + loopback-only + single-token replacement).
         ingestTokens?.revoke(sessionWorkflowId(ensemble, targetPlayerId));
-        // 3d MD-G — auto-disarm: drop the gate's armed-state + any pending
-        // requests for the destroyed player (idempotent; no-op for non-Pi).
-        gate?.clearPlayer(sessionWorkflowId(ensemble, targetPlayerId));
 
         if (notifyConductor) {
           try {
@@ -1220,10 +1176,6 @@ export function createOutboxActivities(
             // metadata.model field landed (which fall back to the env / default
             // chain inside the adapter).
             ...(metadata.model !== undefined ? { model: metadata.model } : {}),
-            // #700 (P2 / G) — guardrail posture carried across restart, read from
-            // DURABLE SessionMetadata so the restarted player re-arms the SAME
-            // posture (no silent downgrade). Absent ⇒ autonomous.
-            ...(metadata.guardrailPolicy !== undefined ? { guardrailPolicy: metadata.guardrailPolicy } : {}),
             ...(resolved ? {
               agentDefinition: resolved.name,
               agentDefinitionPath: resolved.path,
