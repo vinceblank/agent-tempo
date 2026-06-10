@@ -62,7 +62,7 @@ export interface InstallPiResult {
   /** Extension paths already present before this run. */
   alreadyPresent: string[];
   /**
-   * #52 — STALE agent-tempo extension paths PRUNED by this run (old-version /
+   * #738 — STALE agent-tempo extension paths PRUNED by this run (old-version /
    * moved-install entries that pointed at an agent-tempo extension but are no
    * longer the current path). Empty on a clean re-run.
    */
@@ -72,7 +72,7 @@ export interface InstallPiResult {
 }
 
 /**
- * #52 — does this settings `extensions` entry point at an agent-tempo Pi
+ * #738 — does this settings `extensions` entry point at an agent-tempo Pi
  * extension (player or command-center), of ANY version / install location?
  *
  * The motivating bug: a `pnpm` global install version-hashes the package dir
@@ -109,7 +109,7 @@ export function piSettingsPath(opts: InstallPiOptions = {}): string {
  * write when nothing changed). Never copies any extension file — install by
  * reference only (see file header).
  *
- * #52 — REPLACE, don't accumulate: before adding the current paths, PRUNE any
+ * #738 — REPLACE, don't accumulate: before adding the current paths, PRUNE any
  * STALE agent-tempo extension entries ({@link isAgentTempoExtensionPath}, minus
  * the current paths). On a `pnpm` upgrade the package dir is version-hashed, so
  * the recorded absolute path changes — without pruning, `settings.json` would
@@ -145,7 +145,7 @@ export function installPiExtensions(opts: InstallPiOptions = {}): InstallPiResul
     ? (settings.extensions as unknown[]).filter((x): x is string => typeof x === 'string')
     : [];
 
-  // #52 — prune STALE agent-tempo extension entries (an agent-tempo extension
+  // #738 — prune STALE agent-tempo extension entries (an agent-tempo extension
   // path that is NOT one of the current `want` paths — e.g. an old version-hashed
   // pnpm dir). The current paths and all non-agent-tempo entries keep their
   // original positions.

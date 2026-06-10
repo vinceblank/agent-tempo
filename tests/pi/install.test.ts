@@ -69,15 +69,15 @@ describe('pi install (#700 P1)', () => {
     const second = installPiExtensions({ home: tmpHome });
     expect(second.added).toEqual([]);
     expect(second.alreadyPresent.length).toBe(2);
-    expect(second.removed).toEqual([]); // #52 — nothing stale to prune
+    expect(second.removed).toEqual([]); // #738 — nothing stale to prune
     expect(second.extensions.length).toBe(2); // no duplicates
   });
 
-  it('★ #52 UPGRADE: prunes stale version-hashed agent-tempo paths; user extensions preserved', () => {
+  it('★ #738 UPGRADE: prunes stale version-hashed agent-tempo paths; user extensions preserved', () => {
     const settingsPath = path.join(tmpHome, '.pi', 'agent', 'settings.json');
     fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
     // A prior pnpm-global install whose version-hashed dir is now stale, plus an
-    // unrelated user extension. (Real-world #52 bug: the add-only install left
+    // unrelated user extension. (Real-world #738 bug: the add-only install left
     // BOTH the stale + new paths, and `pi` then failed on the missing stale one.)
     const stalePlayer =
       '/home/u/.local/share/pnpm/global/5/.pnpm/agent-tempo@1.7.0-beta.5_abc123/node_modules/agent-tempo/dist/pi/extension.js';
@@ -103,7 +103,7 @@ describe('pi install (#700 P1)', () => {
     expect(written.extensions).toEqual(['/user/ext.js', player, missionControl]);
   });
 
-  it('★ #52 prune is SCOPED — never removes a user extension that merely ends in extension.js', () => {
+  it('★ #738 prune is SCOPED — never removes a user extension that merely ends in extension.js', () => {
     const settingsPath = path.join(tmpHome, '.pi', 'agent', 'settings.json');
     fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
     const userExtensionJs = '/home/u/my-tools/dist/pi/extension.js'; // no agent-tempo marker
@@ -159,7 +159,7 @@ describe('pi install (#700 P1)', () => {
   });
 });
 
-describe('isAgentTempoExtensionPath (#52)', () => {
+describe('isAgentTempoExtensionPath (#738)', () => {
   it('matches pnpm version-hashed + node_modules agent-tempo extension paths (both entry points)', () => {
     expect(isAgentTempoExtensionPath('/x/.pnpm/agent-tempo@1.7.0_h/node_modules/agent-tempo/dist/pi/extension.js')).toBe(true);
     expect(isAgentTempoExtensionPath('/x/.pnpm/agent-tempo@1.7.0_h/node_modules/agent-tempo/dist/pi/mission-control/extension.js')).toBe(true);
