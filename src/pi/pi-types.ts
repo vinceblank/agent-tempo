@@ -204,8 +204,9 @@ export interface PiTurnPayload extends PiEventPayload {
 /**
  * `tool_call` pre-execution event — Pi fires this before running a tool, letting
  * an extension allow/deny it. `toolName` is Pi's built-in or registered tool id
- * (`bash` | `read` | `edit` | `write` | `grep` | …). The MD-C headless gate reads
- * it to hard-block the shell/exec class at `toolAccess='restricted'`.
+ * (`bash` | `read` | `edit` | `write` | `grep` | …). agent-tempo registers no
+ * tool_call handler (the former Pi permission layers were removed — players run
+ * the full tool surface); the shape is kept for the structural Pi API slice.
  */
 export interface PiToolCallEvent {
   type?: 'tool_call';
