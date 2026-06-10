@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.0-beta.8] - 2026-06-10
+
+> **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.
+
 ### Removed
 - **Both Pi permission layers removed — headless Pi players now run the FULL tool surface, including shell, with no approval step** (approved direction; design record: `docs/design/pi-streamline-gate-removal-cc.md`). A recruited `agent: 'pi'` player behaves exactly like the other adapters (`claude-code-headless`, `opencode`): every Pi built-in tool and every agent-tempo MCP tool executes without operator approval. Observability is unchanged (mission-control board, coarse SSE, fine `/inner` tail); control is unchanged (`cue`/`pause`/`play`/`restart`/`destroy`/`reset`). Specifically removed:
   - **MD-G operator gate** (shipped in stable 1.x, phase 3d/#636): the `gate-arm`/`gate-disarm`/`gate/:requestId` + `gate/:requestId/resolution` HTTP routes, the `GateRegistry`/gate audit JSONL (`~/.agent-tempo/gate-audit/` — old dirs are left on disk, harmless), the `inner.gate_pending`/`inner.gate_resolved` frames, the `gateArmed` presence field (presence is now `{subscribers}` only), and the mission-control `/arm` + `/gate` commands.
@@ -14,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - **`guardrailPolicy` recruit param + postures** (`'monitored' | 'supervised' | 'observe-only'`, #700 P2/G, #712, #715 — these only ever shipped in the 1.7.0 betas and never reached a stable release) including the `failMode` open/closed timeout machinery and the `AGENT_TEMPO_TOOL_ACCESS`/`AGENT_TEMPO_GUARDRAIL_POLICY` env vars.
   - Temporal wire layer: **no signal/query/update names changed** — only the optional `guardrailPolicy?`/`toolAccess?` data fields were removed from `getMetadata`/`enqueueSpawn`/outbox entries (documented in `docs/WIRE-PROTOCOL.md`; replay-safe, old in-flight workflows unaffected).
   - The `noExtensions: true` supply-chain guard on headless Pi **stays** — it blocks third-party disk/package extensions from loading into a recruited player and was never permission machinery.
+
+### Docs
+- **CLI reference expanded** — `command-center` (aliases `cc`/`board`), `install-pi`, and `migrate-from-claude-tempo` subcommands now documented in the CLI reference with flags, examples, and cross-links. Closes #745
 
 ## [1.7.0-beta.7] - 2026-06-09
 
