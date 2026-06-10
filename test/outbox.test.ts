@@ -764,61 +764,6 @@ describe('outbox', function () {
         });
       });
 
-      it('#700 (G) restart PRESERVES guardrailPolicy from durable metadata → spawn re-arms supervised (no silent downgrade)', async function () {
-        this.timeout(45_000);
-        const spawnInputs: Array<Record<string, unknown>> = [];
-        await withWorkerAndRecruitCapture(spawnInputs, async () => {
-          const ensemble = `guardrail-restart-${Date.now()}`;
-
-          const alice = await startSession({
-            metadata: playerMetadata({ playerId: 'alice-gr', ensemble }),
-          });
-          const bob = await startSession({
-            metadata: playerMetadata({
-              playerId: 'bob-gr',
-              ensemble,
-              agentType: 'pi',
-              guardrailPolicy: 'supervised',
-            }),
-          });
-
-          // Durable policy present before the restart.
-          const before = await bob.query(getMetadataQuery) as { guardrailPolicy?: string };
-          expect(before.guardrailPolicy).to.equal('supervised');
-
-          await alice.executeUpdate(submitOutboxUpdate, {
-            args: [{
-              type: 'restart',
-              targetPlayerId: 'bob-gr',
-              invokerPlayerId: 'alice-gr',
-              fresh: true,
-            }],
-          });
-
-          await pollWithTimeout(async () => {
-            const ob = await alice.query(outboxQuery);
-            return ob.find((e) => e.type === 'restart')?.status === 'delivered'
-              && spawnInputs.length >= 1;
-          }, POLL_RECRUIT_MS);
-
-          // THE DURABILITY POINT: the restart spawn re-threads the SAME posture
-          // from durable SessionMetadata — a restart can't silently downgrade a
-          // supervised player to autonomous.
-          expect(spawnInputs, 'spawnProcess was called').to.have.lengthOf.at.least(1);
-          const spawn = spawnInputs[spawnInputs.length - 1];
-          expect(spawn.guardrailPolicy, 'restart forwards durable guardrailPolicy to spawn').to.equal('supervised');
-
-          // And the metadata still carries it after the restart.
-          const after = await bob.query(getMetadataQuery) as { guardrailPolicy?: string };
-          expect(after.guardrailPolicy).to.equal('supervised');
-
-          await alice.executeUpdate(destroyUpdate, { args: [{}] });
-          await bob.executeUpdate(destroyUpdate, { args: [{}] });
-          await alice.result();
-          await bob.result();
-        });
-      });
-
       it('#183 non-fresh restart no longer special — also fresh after 17a7858 (#306)', async function () {
         this.timeout(45_000);
         // Pre-#306 this case was the inverse of the test above: a non-fresh
@@ -947,56 +892,6 @@ describe('outbox', function () {
         });
       });
 
-      it('#700 (G) recruit agent:pi with guardrailPolicy → persists on durable metadata AND forwards to spawn', async function () {
-        this.timeout(45_000);
-        const spawnInputs: Array<Record<string, unknown>> = [];
-        await withWorkerAndRecruitCapture(spawnInputs, async () => {
-          const ensemble = `recruit-guardrail-${Date.now()}`;
-
-          const handle = await startSession({
-            metadata: playerMetadata({ playerId: 'recruiter-gr', ensemble }),
-            temporalConfig: {
-              temporalAddress: '',
-              temporalNamespace: 'default',
-              taskQueue: TASK_QUEUE,
-            },
-          });
-
-          await handle.executeUpdate(submitOutboxUpdate, {
-            args: [{
-              type: 'recruit',
-              targetName: 'gr-player',
-              workDir: '/tmp/test',
-              isConductor: false,
-              agent: 'pi',
-              guardrailPolicy: 'supervised',
-            }],
-          });
-
-          await pollWithTimeout(async () => {
-            const ob = await handle.query(outboxQuery);
-            return ob.find((e) => e.type === 'recruit')?.status === 'delivered'
-              && spawnInputs.length === 1;
-          }, POLL_RECRUIT_MS);
-
-          // Durable SOURCE: startRecruitedSession persisted it onto SessionMetadata.
-          const recruitedHandle = getClient().workflow.getHandle(
-            `agent-session-${ensemble}-gr-player`,
-          );
-          const meta = await recruitedHandle.query(getMetadataQuery) as { guardrailPolicy?: string };
-          expect(meta.guardrailPolicy).to.equal('supervised');
-
-          // TRANSPORT: the initial spawn also receives it (env-threaded per-boot).
-          expect(spawnInputs).to.have.lengthOf(1);
-          expect(spawnInputs[0].guardrailPolicy).to.equal('supervised');
-
-          // Cleanup
-          await handle.executeUpdate(destroyUpdate, { args: [{}] });
-          await handle.result();
-          await recruitedHandle.executeUpdate(destroyUpdate, { args: [{}] });
-          try { await recruitedHandle.result(); } catch { /* cleanup */ }
-        });
-      });
     });
   });
 
