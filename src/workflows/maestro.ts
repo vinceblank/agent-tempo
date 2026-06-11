@@ -100,15 +100,49 @@ import {
 // Only proxy activities actually used in the workflow.
 // fetchConductorHistory is available in the activities but reserved for Phase 2 (TUI).
 
-const { refreshEnsembleState, relayCommandToConductor, fetchEnsembleChat } =
-  proxyActivities<Pick<MaestroActivities, 'refreshEnsembleState' | 'relayCommandToConductor' | 'fetchEnsembleChat'>>({
+const { refreshEnsembleState, refreshEnsembleStateV2, relayCommandToConductor, fetchEnsembleChat } =
+  proxyActivities<Pick<MaestroActivities, 'refreshEnsembleState' | 'refreshEnsembleStateV2' | 'relayCommandToConductor' | 'fetchEnsembleChat'>>({
     startToCloseTimeout: '30 seconds',
     retry: { maximumAttempts: 3 },
   });
 
 const DEFAULT_REFRESH_INTERVAL_MS = 5_000; // 5 seconds
+/**
+ * T0.1 (#748) — cloud-profile refresh cadence. The 5s default is a local-dev
+ * luxury; on Temporal Cloud every refresh tick bills (timer + activity +
+ * scan queries). 20s sits in the dispatch's 15–30s band: 15× fewer ticks
+ * than 750ms-class cadences while the board still feels live (phase truth
+ * is heartbeat-quantized at 30–60s anyway — see the design addendum §B(b)).
+ */
+const CLOUD_REFRESH_INTERVAL_MS = 20_000;
+/**
+ * T0.1 (#748) — cloud-profile cadence when the daemon reports ZERO SSE
+ * subscribers (nobody watching any board). The refresh keeps running —
+ * conductor relay, tempo buckets, and on-demand `ensemble` tool reads all
+ * still want fresh-ish state — just 3× slower. First tick after an
+ * observer connects snaps back to {@link CLOUD_REFRESH_INTERVAL_MS}.
+ */
+const CLOUD_IDLE_REFRESH_INTERVAL_MS = 60_000;
 const MAX_EVENTS = 200;
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes with no running sessions
+
+/**
+ * T0.1 (#748) — pure cadence resolver, exported for unit tests (the
+ * attachment-math precedent: pure, no Temporal imports used).
+ *
+ * Local profile (or absent — every pre-#748 maestro input): the explicit
+ * `pollIntervalMs` or the 5s default, byte-identical to pre-#748.
+ * Cloud profile: explicit `pollIntervalMs` wins; otherwise 20s with
+ * observers, 60s without.
+ */
+export function resolveRefreshIntervalMs(
+  input: Pick<MaestroInput, 'pollIntervalMs' | 'costProfile'>,
+  observersPresent: boolean,
+): number {
+  if (input.pollIntervalMs !== undefined) return input.pollIntervalMs;
+  if (input.costProfile !== 'cloud') return DEFAULT_REFRESH_INTERVAL_MS;
+  return observersPresent ? CLOUD_REFRESH_INTERVAL_MS : CLOUD_IDLE_REFRESH_INTERVAL_MS;
+}
 
 // #399 W1 (Q5.6 Flavor B) — tempo bucket sizing.
 const TEMPO_BUCKET_MS = 30_000; // 30s windows
@@ -124,7 +158,11 @@ const TEMPO_BPM_WINDOW_MS = 60_000;
 export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
   patched('v0.17-initial');
 
-  const refreshIntervalMs = input.pollIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
+  // T0.1 (#748) — input-driven, NOT patched-gated: pre-#748 runs have no
+  // costProfile field, so they resolve to the legacy 5s default and the V1
+  // refresh activity — identical commands on replay.
+  const cloudProfile = input.costProfile === 'cloud';
+  let refreshIntervalMs = resolveRefreshIntervalMs(input, /* observersPresent */ true);
 
   let players: MaestroPlayerInfo[] = input.players ?? [];
   const events: MaestroEvent[] = input.events ?? [];
@@ -555,7 +593,20 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
 
     // ── Refresh Ensemble State ──
     try {
-      const newPlayers = await refreshEnsembleState(input.ensemble);
+      // T0.1 (#748) — cloud-profile maestros (input-gated: only runs whose
+      // START input carries costProfile==='cloud'; every pre-#748 history
+      // replays the V1 branch with identical commands) use the additive V2
+      // activity: SA/memo-based ensemble-scoped scan + the daemon's SSE
+      // observer presence, which drives next tick's cadence (20s watched /
+      // 60s unwatched via resolveRefreshIntervalMs).
+      let newPlayers: MaestroPlayerInfo[];
+      if (cloudProfile) {
+        const v2 = await refreshEnsembleStateV2({ ensemble: input.ensemble });
+        newPlayers = v2.players;
+        refreshIntervalMs = resolveRefreshIntervalMs(input, v2.observersPresent);
+      } else {
+        newPlayers = await refreshEnsembleState(input.ensemble);
+      }
       const nowDate = workflowNow();
       const now = nowDate.toISOString();
       const nowMs = nowDate.getTime();
@@ -742,6 +793,9 @@ export async function agentMaestroWorkflow(input: MaestroInput): Promise<void> {
         ...(carryCoatCheck ? { coatCheck } : {}),
         // #700 P2 — carry the answer mailbox only when populated.
         ...(carryAnswers ? { answers } : {}),
+        // T0.1 (#748) — carry the cost profile so a CAN successor keeps
+        // the V2 refresh path + stretched cadence.
+        ...(input.costProfile ? { costProfile: input.costProfile } : {}),
       });
     }
   }
@@ -803,6 +857,7 @@ const globalActivities = proxyActivities<
   Pick<MaestroActivities,
     | 'discoverEnsembles'
     | 'refreshEnsembleState'
+    | 'refreshEnsembleStateV2'
     | 'relayCommandToConductor'
     | 'deliverMaestroMessage'
     | 'fetchPlayerMessages'
@@ -816,7 +871,10 @@ const globalActivities = proxyActivities<
 export async function agentGlobalMaestroWorkflow(input: GlobalMaestroInput): Promise<void> {
   patched('v0.18-global-maestro');
 
-  const refreshIntervalMs = input.pollIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
+  // T0.1 (#748) — input-driven (see agentMaestroWorkflow): pre-#748 runs
+  // have no costProfile field → legacy 5s + V1 refresh, identical commands.
+  const cloudProfile = input.costProfile === 'cloud';
+  let refreshIntervalMs = resolveRefreshIntervalMs(input, /* observersPresent */ true);
 
   let knownEnsembles: string[] = input.knownEnsembles ?? [];
   let playersByEnsemble: Record<string, MaestroPlayerInfo[]> = input.playersByEnsemble ?? {};
@@ -986,9 +1044,20 @@ export async function agentGlobalMaestroWorkflow(input: GlobalMaestroInput): Pro
     }
 
     // ── Refresh players per ensemble ──
+    // T0.1 (#748) — cloud profile: V2 (SA/memo scan) per ensemble; the
+    // observer-presence flag from the last result drives next tick's
+    // cadence (all ensembles share one daemon, so any result's flag holds).
+    let observersPresent = true;
     for (const ensemble of knownEnsembles) {
       try {
-        const newPlayers = await globalActivities.refreshEnsembleState(ensemble);
+        let newPlayers: MaestroPlayerInfo[];
+        if (cloudProfile) {
+          const v2 = await globalActivities.refreshEnsembleStateV2({ ensemble });
+          newPlayers = v2.players;
+          observersPresent = v2.observersPresent;
+        } else {
+          newPlayers = await globalActivities.refreshEnsembleState(ensemble);
+        }
         const oldPlayers = playersByEnsemble[ensemble] ?? [];
         const now = new Date().toISOString();
 
@@ -1027,6 +1096,11 @@ export async function agentGlobalMaestroWorkflow(input: GlobalMaestroInput): Pro
       if (!knownEnsembles.includes(key)) {
         delete playersByEnsemble[key];
       }
+    }
+
+    // T0.1 (#748) — cloud profile: stretch next tick when nobody is watching.
+    if (cloudProfile) {
+      refreshIntervalMs = resolveRefreshIntervalMs(input, observersPresent);
     }
 
     const globalEventsExcess = events.length - GLOBAL_MAX_EVENTS;
@@ -1075,6 +1149,8 @@ export async function agentGlobalMaestroWorkflow(input: GlobalMaestroInput): Pro
         // disappear on the next one (they won't re-signal until the next
         // daemon boot).
         hostProfiles,
+        // T0.1 (#748) — carry the cost profile across CAN.
+        ...(input.costProfile ? { costProfile: input.costProfile } : {}),
       });
     }
   }

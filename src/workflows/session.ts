@@ -227,6 +227,13 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   // AttachedHost, AttachmentState) are untouched — they appear in visibility
   // query expressions and MUST stay search attributes.
   const saDiet = patched('v1.8-sa-diet');
+  // T0.1 (#748) — the observation-path memo extension: workDir / agentType /
+  // gitBranch join the memo so the cloud-profile maestro scan can read the
+  // full player row from visibility list results (zero per-player queries).
+  // Payload-only upsertMemo change, but gated behind its own marker per the
+  // repo's conservative determinism policy. All three pass the low-churn bar
+  // (workDir/agentType set-at-start; gitBranch via rare updateMetadata).
+  const memoObservationFields = patched('v1.8-memo-observation-fields');
 
   /**
    * T0.5 — the memo mirror of the migrated read-only metadata fields.
@@ -239,6 +246,11 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     ...(input.metadata.gitRoot ? { [MEMO_KEYS.gitRoot]: input.metadata.gitRoot } : {}),
     ...(input.metadata.playerType ? { [MEMO_KEYS.playerType]: input.metadata.playerType } : {}),
     [MEMO_KEYS.isConductor]: input.metadata.isConductor === true,
+    ...(memoObservationFields ? {
+      [MEMO_KEYS.workDir]: input.metadata.workDir,
+      [MEMO_KEYS.agentType]: input.metadata.agentType || 'claude',
+      ...(input.metadata.gitBranch ? { [MEMO_KEYS.gitBranch]: input.metadata.gitBranch } : {}),
+    } : {}),
   });
 
   // Ensure search attributes are always current — critical when reconnecting

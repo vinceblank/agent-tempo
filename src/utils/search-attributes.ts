@@ -59,7 +59,23 @@ export const MEMO_KEYS = {
   playerType: 'AgentTempoPlayerType',
   isConductor: 'AgentTempoIsConductor',
   part: 'AgentTempoPart',
+  // T0.1 (#748) — observation-path extension (v1.8-memo-observation-fields):
+  // lets the cloud-profile maestro scan build the full player row from
+  // visibility list results without any per-player workflow query.
+  workDir: 'AgentTempoWorkDir',
+  agentType: 'AgentTempoAgentType',
+  gitBranch: 'AgentTempoGitBranch',
 } as const;
+
+/**
+ * Escape a value for use in Temporal visibility query strings — strips
+ * characters that could break or inject into the query. Single shared
+ * implementation (#748 consolidated the copies in client/core.ts,
+ * reconcile/orphans.ts, and activities/resolve.ts).
+ */
+export function sanitizeQueryValue(value: string): string {
+  return value.replace(/["\\\n\r]/g, '');
+}
 
 /**
  * Read the first element of a search-attribute array as a string.

@@ -761,6 +761,7 @@ describe('restoreOrphansOnce', function () {
       taskQueue: 'agent-tempo',
       ensemble: 'test-orphan-e2e',
       defaultAgent: 'claude',
+      costProfile: 'local',
     };
 
     it('orphan reattach produces enqueueSpawn with resume:false + fresh sessionId', async function () {

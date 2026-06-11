@@ -30,7 +30,7 @@
  */
 import { createHash } from 'crypto';
 import type { TempoClient } from '../client/interface';
-import type { HostProfile, EnsembleChatMessage, ScheduleEntry } from '../types';
+import type { HostProfile, EnsembleChatMessage, ScheduleEntry, AttachmentPhase } from '../types';
 import { EnsembleEventBus, type EventBus } from './event-bus';
 import { SeqAllocator } from './event-id';
 import type { EnsembleStateV1, PlayerSummaryV1 } from './event-types';
@@ -460,6 +460,18 @@ export function diffEnsembleSet(
 
 // ── Runner ──────────────────────────────────────────────────────────────
 
+/**
+ * T0.1 (#748) — confirm-on-change phase prober. Given a player identity,
+ * returns the authoritative phase from a direct `attachmentInfo` query
+ * (deterministic workflowId, bounded), or `null` when unreachable (the
+ * caller then trusts the SA-sourced phase — pre-#748 behavior).
+ */
+export type PhaseConfirmer = (
+  ensemble: string,
+  playerId: string,
+  isConductor: boolean,
+) => Promise<AttachmentPhase | null>;
+
 export interface AggregateRunnerOptions {
   client: TempoClient;
   /** Shared per-process bootEpoch — same value used everywhere. */
@@ -478,6 +490,16 @@ export interface AggregateRunnerOptions {
    * unwedge behavior.
    */
   tickWatchdogMs?: number;
+  /**
+   * T0.1 (#748) — when `'cloud'` AND `confirmPhase` is wired, SA-sourced
+   * phase TRANSITIONS detected by the diff are re-validated with one
+   * direct query per transitioning player before the `player.phase_changed`
+   * SSE event is emitted (design addendum §B(d): cost ∝ changes, not
+   * players). Absent / `'local'`: byte-identical to pre-#748.
+   */
+  costProfile?: 'local' | 'cloud';
+  /** See {@link PhaseConfirmer}. */
+  confirmPhase?: PhaseConfirmer;
 }
 
 /**
@@ -541,11 +563,17 @@ export class AggregateRunner {
    */
   private readonly tickWatchdogMs: number;
 
+  /** T0.1 (#748) — confirm-on-change wiring (cloud profile only). */
+  private readonly confirmOnChange: boolean;
+  private readonly confirmPhase?: PhaseConfirmer;
+
   constructor(opts: AggregateRunnerOptions) {
     this.client = opts.client;
     this.bootEpoch = opts.bootEpoch;
     this.pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.now = opts.now ?? Date.now;
+    this.confirmOnChange = opts.costProfile === 'cloud' && opts.confirmPhase !== undefined;
+    this.confirmPhase = opts.confirmPhase;
     this.tickWatchdogMs = opts.tickWatchdogMs ?? this.pollIntervalMs * 20;
     this.busFactory = opts.busFactory
       ?? ((ensemble, allocator) => new EnsembleEventBus({
@@ -740,6 +768,9 @@ export class AggregateRunner {
 
     try {
       const snapshot = await this.collect();
+      // T0.1 (#748) — cloud profile: re-validate SA-sourced phase
+      // transitions with a direct query before the diff emits events.
+      if (this.confirmOnChange) await this.confirmPhaseTransitions(snapshot);
       this.applyDiff(snapshot);
       // #700 P2 — resolve any outstanding Q&A asks (emits `answer` events that
       // wake the inbox-less planner). Kept inside the tick's single-flight
@@ -765,6 +796,43 @@ export class AggregateRunner {
         this.inFlight = false;
       }
     }
+  }
+
+  /**
+   * T0.1 (#748) — confirm-on-change hybrid (design addendum §B(d), the
+   * `reconcile/orphans.ts` precedent applied to the SSE plane). The
+   * SA/memo-sourced snapshot is eventually consistent; before the diff
+   * turns an apparent phase TRANSITION into a `player.phase_changed` SSE
+   * event, re-read that player's phase with one direct `attachmentInfo`
+   * query and let the authoritative answer override the snapshot. Players
+   * whose phase didn't change cost nothing; an unreachable workflow
+   * (confirmer returns `null`) falls back to the SA-sourced phase —
+   * exactly the pre-#748 behavior. Mutates `snapshot` in place.
+   *
+   * Exposed at `package`-level (not `private`) for direct unit testing.
+   */
+  async confirmPhaseTransitions(snapshot: AggregateSnapshot): Promise<void> {
+    if (!this.confirmPhase) return;
+    const confirms: Array<Promise<void>> = [];
+    for (const eState of snapshot.ensembles) {
+      const track = this.tracks.get(eState.ensemble);
+      // No track yet → every player is a fresh `player.added` (payload
+      // carries the SA phase; the next transition gets confirmed) — skip.
+      if (!track) continue;
+      for (const p of eState.players) {
+        if (!track.playerPhases.has(p.playerId)) continue; // fresh add
+        const lastPhase = track.playerPhases.get(p.playerId);
+        if (p.phase === lastPhase) continue; // no transition — free
+        confirms.push(
+          this.confirmPhase(eState.ensemble, p.playerId, p.isConductor).then((confirmed) => {
+            if (confirmed !== null && confirmed !== p.phase) {
+              p.phase = confirmed;
+            }
+          }).catch(() => { /* trust the SA-sourced phase */ }),
+        );
+      }
+    }
+    if (confirms.length > 0) await Promise.all(confirms);
   }
 
   /** Fetch the current cluster state via `TempoClient`. */

@@ -112,6 +112,12 @@ export function buildCueTool(
         // detached/gone player returns "Message sent" — wire-truthful (the
         // signal IS delivered to the workflow inbox), but operator-
         // misleading because no live adapter surfaces the message.
+        //
+        // DECISION-PATH FENCE (#748): this preflight gates an operator
+        // warning — it MUST stay a direct `attachmentInfo` query. Do NOT
+        // migrate it to the eventually-consistent SA/memo read path
+        // (observation-only). Enforced by
+        // tests/conformance/decision-path-fence.test.ts.
         let phase: AttachmentPhase | undefined;
         const phasePreflight = async () => {
           try {

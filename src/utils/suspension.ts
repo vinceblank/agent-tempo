@@ -21,6 +21,12 @@
  *
  * Additive only: no wire names are touched — `maestroPaused`, `paused`,
  * and `outboxLocked` are existing stable queries (docs/WIRE-PROTOCOL.md).
+ *
+ * DECISION-PATH FENCE (#748): this preflight feeds operator warnings about
+ * live suspension state — it MUST stay on direct workflow queries. Do NOT
+ * migrate it to the eventually-consistent SA/memo read path
+ * (observation-only). Enforced by
+ * tests/conformance/decision-path-fence.test.ts.
  */
 import type { Client, WorkflowHandle } from '@temporalio/client';
 import { maestroWorkflowId } from '../config';

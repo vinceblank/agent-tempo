@@ -278,6 +278,9 @@ the wire surface — renaming or removing one is a breaking change:
 | `AgentTempoPlayerType` | `string` | Replaces the deprecated search attribute. |
 | `AgentTempoIsConductor` | `boolean` | Replaces the deprecated search attribute. |
 | `AgentTempoPart` | `string` | **New in v1.8.** The player's current part (work description), mirrored from the `setPart` signal so observers can read it from list results without a per-player `getPart` query (T0.1, #748). |
+| `AgentTempoWorkDir` | `string` | **New in v1.8 (T0.1, #748 — `v1.8-memo-observation-fields`).** Session working directory; set at start, immutable in practice. Lets the cloud-profile maestro scan build the full player row from list results. |
+| `AgentTempoAgentType` | `string` | **New in v1.8 (T0.1, #748).** Adapter family (`claude`, `pi`, `copilot`, …); set at start. |
+| `AgentTempoGitBranch` | `string` | **New in v1.8 (T0.1, #748).** Current git branch; refreshed by the (rare) `updateMetadata` signal — may lag a local branch switch until the next metadata update (observation-grade, by design). |
 
 Readers go through the dual-read helpers in `src/utils/search-attributes.ts`
 (memo preferred, legacy SA fallback for pre-v1.8 runs); the fallback may be

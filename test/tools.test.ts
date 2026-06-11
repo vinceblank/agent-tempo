@@ -72,6 +72,7 @@ const testConfig: Config = {
   taskQueue: 'agent-tempo',
   ensemble: 'test-ensemble-tools-mock',
   defaultAgent: 'claude',
+  costProfile: 'local',
 };
 
 /**

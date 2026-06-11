@@ -33,6 +33,7 @@ import { isEnsembleAllowed } from '../config';
 import { createTempoClient } from '../client';
 import { queryHandleWithTimeout } from '../utils/query-timeout';
 import { withActionSource } from '../utils/action-counters';
+import { sanitizeQueryValue } from '../utils/search-attributes';
 import {
   iterateWithDeadline,
   isVisibilityTimeout,
@@ -131,13 +132,6 @@ export function isAdapterProcessAliveStub(): boolean {
   return false;
 }
 
-/**
- * Escape a value for interpolation into a Temporal visibility query string.
- * Mirrors the helper in `src/client/index.ts`.
- */
-function sanitizeQueryValue(value: string): string {
-  return value.replace(/["\\\n\r]/g, '');
-}
 
 /**
  * Build the visibility-query string matching the §10.1 candidate set for the

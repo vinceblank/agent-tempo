@@ -2,7 +2,7 @@ import { Client } from '@temporalio/client';
 import { ApplicationFailure } from '@temporalio/activity';
 import { conductorWorkflowId, sessionWorkflowId } from '../config';
 import { HistoryEntry, MaestroPlayerInfo, Message, SentMessage, EnsembleChatMessage, ChatHighWater, ZERO_CHAT_HIGH_WATER } from '../types';
-import { scanEnsembleSessions, resolveSession } from './resolve';
+import { scanEnsembleSessions, scanEnsembleSessionsCloud, resolveSession, type EnsembleSessionInfo } from './resolve';
 import { tagActionSource } from '../utils/action-counters';
 import {
   iterateWithDeadline,
@@ -75,9 +75,55 @@ export interface FetchEnsembleChatResult {
   error?: string;
 }
 
+/** T0.1 (#748) — result of the V2 refresh (cloud-profile maestros). */
+export interface RefreshEnsembleStateV2Result {
+  players: MaestroPlayerInfo[];
+  /**
+   * Whether the daemon currently has any live SSE subscriber (TUI, web
+   * dashboard, mission-control board). Read in-process from the
+   * AggregateRunner — zero Temporal cost. The maestro workflow stretches
+   * its next refresh timer when nobody is watching. `true` when no
+   * presence source is wired (fail-open: never stretch by accident).
+   */
+  observersPresent: boolean;
+}
+
+/**
+ * T0.1 (#748) — daemon-side observer presence source. A mutable holder
+ * because worker/activity construction happens BEFORE the daemon's
+ * AggregateRunner exists; daemon.ts fills `current` in once the HTTP/SSE
+ * plane is up (same late-wiring pattern as IngestTokenRegistry).
+ */
+export interface ObserverPresenceSource {
+  current: (() => number) | null;
+}
+
+/** Options for {@link createMaestroActivities} (T0.1, #748). */
+export interface MaestroActivityOptions {
+  /** Daemon cost profile — drives the V2 scan strategy. Default 'local'. */
+  costProfile?: 'local' | 'cloud';
+  /** Late-wired SSE subscriber count source (see {@link ObserverPresenceSource}). */
+  observerPresence?: ObserverPresenceSource;
+}
+
 /** Activity interface — used by proxyActivities in the Maestro workflow. */
 export interface MaestroActivities {
+  /**
+   * Legacy V1 refresh — the `costProfile: 'local'` path AND the replay
+   * path for every maestro started before #748.
+   * TODO(next major, #748): remove once the minimum deployment age
+   * exceeds the longest-lived pre-#748 maestro history (they replay V1);
+   * remove together with the V1 branch in workflows/maestro.ts.
+   */
   refreshEnsembleState(ensemble: string): Promise<MaestroPlayerInfo[]>;
+  /**
+   * T0.1 (#748) — additive V2: called only by maestros started with
+   * `costProfile: 'cloud'` in their input. SA/memo-based ensemble-scoped
+   * scan + in-process observer presence for workflow-side cadence
+   * stretching. V1 stays for in-flight pre-#748 maestros (replay safety)
+   * and the local profile.
+   */
+  refreshEnsembleStateV2(input: { ensemble: string }): Promise<RefreshEnsembleStateV2Result>;
   fetchConductorHistory(input: FetchConductorHistoryInput): Promise<FetchConductorHistoryResult>;
   relayCommandToConductor(input: RelayCommandInput): Promise<RelayCommandResult>;
   discoverEnsembles(): Promise<string[]>;
@@ -90,32 +136,63 @@ export interface MaestroActivities {
  * Create the Maestro activity implementations bound to a Temporal client.
  * Registered with the shared worker.
  */
-export function createMaestroActivities(client: Client): MaestroActivities {
+export function createMaestroActivities(
+  client: Client,
+  opts: MaestroActivityOptions = {},
+): MaestroActivities {
+  /** Shared row-mapper for both refresh shapes. */
+  const toPlayerInfo = (ensemble: string) => (s: EnsembleSessionInfo): MaestroPlayerInfo => ({
+    playerId: s.playerId,
+    ensemble,
+    part: s.part,
+    hostname: s.hostname,
+    workDir: s.workDir,
+    gitRoot: s.gitRoot,
+    gitBranch: s.gitBranch,
+    isConductor: s.isConductor,
+    agentType: s.agentType,
+    playerType: s.playerType,
+    phase: s.phase,
+    // #399 W1 — forward the activity-counter pair so the maestro's
+    // tempo bucket can diff across refreshes.
+    activityCount: s.activityCount,
+    lastActivityAt: s.lastActivityAt,
+  });
+
   // #753 — attribute every Temporal call made by these activities (however
   // deep, e.g. scanEnsembleSessions → queryHandleWithTimeout) to the maestro.
   return tagActionSource('maestro', {
     async refreshEnsembleState(ensemble: string): Promise<MaestroPlayerInfo[]> {
       try {
         const sessions = await scanEnsembleSessions(client, ensemble);
-        return sessions.map((s) => ({
-          playerId: s.playerId,
-          ensemble,
-          part: s.part,
-          hostname: s.hostname,
-          workDir: s.workDir,
-          gitRoot: s.gitRoot,
-          gitBranch: s.gitBranch,
-          isConductor: s.isConductor,
-          agentType: s.agentType,
-          playerType: s.playerType,
-          phase: s.phase,
-          // #399 W1 — forward the activity-counter pair so the maestro's
-          // tempo bucket can diff across refreshes.
-          activityCount: s.activityCount,
-          lastActivityAt: s.lastActivityAt,
-        }));
+        return sessions.map(toPlayerInfo(ensemble));
       } catch (err) {
         log('refreshEnsembleState failed:', err);
+        throw ApplicationFailure.nonRetryable(
+          `Failed to scan ensemble: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    },
+
+    async refreshEnsembleStateV2(input: { ensemble: string }): Promise<RefreshEnsembleStateV2Result> {
+      try {
+        // Honor the DAEMON's configured profile for the scan strategy: a
+        // cloud-input maestro on a daemon flipped back to 'local' degrades
+        // gracefully to the legacy scan (still on the stretched cadence
+        // until its next restart).
+        const sessions = opts.costProfile === 'cloud'
+          ? await scanEnsembleSessionsCloud(client, input.ensemble, log)
+          : await scanEnsembleSessions(client, input.ensemble);
+        const count = opts.observerPresence?.current?.();
+        return {
+          players: sessions.map(toPlayerInfo(input.ensemble)),
+          // Fail-open: unknown presence (no aggregate wired yet, e.g. during
+          // daemon boot) counts as "observers present" — never stretch the
+          // cadence on missing information.
+          observersPresent: count === undefined ? true : count > 0,
+        };
+      } catch (err) {
+        log('refreshEnsembleStateV2 failed:', err);
         throw ApplicationFailure.nonRetryable(
           `Failed to scan ensemble: ${err instanceof Error ? err.message : String(err)}`,
         );

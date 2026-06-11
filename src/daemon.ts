@@ -20,10 +20,16 @@ import {
   AGENT_TEMPO_HOME,
   DEV_TEMPORAL_NAMESPACE,
   GLOBAL_MAESTRO_WORKFLOW_ID,
+  conductorWorkflowId,
+  sessionWorkflowId,
   isDevMode,
   loadDaemonConfig,
   type DaemonConfig,
 } from './config';
+import type { ObserverPresenceSource } from './activities/maestro';
+import { attachmentInfoQuery } from './workflows/signals';
+import { queryHandleWithTimeout } from './utils/query-timeout';
+import type { AttachmentInfo, AttachmentPhase } from './types';
 import { emitDevBannerIfActive } from './cli/dev-banner';
 import { createWorkers } from './worker';
 import { createTemporalConnection } from './connection';
@@ -217,6 +223,32 @@ export async function ensureDevNamespace(
  * Ensure the global Maestro workflow is running.
  * Uses USE_EXISTING conflict policy so it's safe to call on every daemon start.
  */
+/**
+ * T0.1 (#748) — build the aggregate's confirm-on-change phase prober: one
+ * direct, bounded `attachmentInfo` query against the player's
+ * DETERMINISTIC workflowId (no visibility lookup, no resolveSession scan).
+ * Returns `null` on any failure — the aggregate then trusts the SA-sourced
+ * phase, exactly the pre-#748 behavior.
+ */
+function makePhaseConfirmer(client: Client) {
+  return async (
+    ensemble: string,
+    playerId: string,
+    isConductor: boolean,
+  ): Promise<AttachmentPhase | null> => {
+    try {
+      const wfId = isConductor
+        ? conductorWorkflowId(ensemble)
+        : sessionWorkflowId(ensemble, playerId);
+      const handle = client.workflow.getHandle(wfId);
+      const info = await queryHandleWithTimeout<AttachmentInfo>(handle, attachmentInfoQuery);
+      return info.phase ?? null;
+    } catch {
+      return null;
+    }
+  };
+}
+
 async function ensureGlobalMaestro(config: ReturnType<typeof getConfig>): Promise<void> {
   try {
     const connection = await createTemporalConnection(config);
@@ -226,7 +258,13 @@ async function ensureGlobalMaestro(config: ReturnType<typeof getConfig>): Promis
       interceptors: actionCountingInterceptors(),
     });
 
-    const input: GlobalMaestroInput = {};
+    // T0.1 (#748) — thread the cost profile into the global maestro so the
+    // cloud profile gets the V2 refresh path + stretched cadence. Note: an
+    // already-RUNNING global maestro keeps its old input (CAN inherits it)
+    // until it is terminated/recreated — see the ops note.
+    const input: GlobalMaestroInput = {
+      ...(config.costProfile === 'cloud' ? { costProfile: 'cloud' as const } : {}),
+    };
     await client.workflow.start('agentGlobalMaestroWorkflow', {
       workflowId: GLOBAL_MAESTRO_WORKFLOW_ID,
       taskQueue: config.taskQueue,
@@ -1020,9 +1058,15 @@ async function main() {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
+  // T0.1 (#748) — observer-presence holder for the maestro V2 refresh
+  // activity. Constructed BEFORE workers (the activity factory captures
+  // it); filled in below once the AggregateRunner exists. Until then the
+  // activity fail-opens to "observers present" (no cadence stretch).
+  const observerPresence: ObserverPresenceSource = { current: null };
+
   // Create workers (signal handlers already active via mutable refs)
   log(`Connecting to Temporal at ${config.temporalAddress} (namespace: ${config.temporalNamespace})`);
-  const workers = await createWorkers(config, ingestTokens);
+  const workers = await createWorkers(config, ingestTokens, observerPresence);
   sharedWorker = workers.sharedWorker;
   hostWorker = workers.hostWorker;
   log('Workers created — processing tasks');
@@ -1107,12 +1151,29 @@ async function main() {
       // returns `[]` in dev mode without this. Both `namespace` (already
       // baked into `reconcileClient.options.namespace`) and `taskQueue`
       // must match the daemon for poller discovery to find this host.
-      const httpClient = createTempoClient(reconcileClient, { taskQueue: config.taskQueue });
+      const httpClient = createTempoClient(reconcileClient, {
+        taskQueue: config.taskQueue,
+        // T0.1 (#748) — cloud daemons spawn cloud-profile maestro hubs.
+        costProfile: config.costProfile,
+      });
       // Single shared bootEpoch — every bus the daemon constructs uses
       // this same value, frozen for the process lifetime per §5.
       const bootEpoch = Date.now();
-      aggregateRunner = new AggregateRunner({ client: httpClient, bootEpoch });
+      aggregateRunner = new AggregateRunner({
+        client: httpClient,
+        bootEpoch,
+        // T0.1 (#748) — cloud profile: confirm SA-sourced phase transitions
+        // with ONE direct attachmentInfo query (deterministic workflowId,
+        // bounded) before emitting SSE events. Cost ∝ transitions, not
+        // players; local profile leaves this off (byte-identical).
+        costProfile: config.costProfile,
+        confirmPhase: makePhaseConfirmer(reconcileClient),
+      });
       aggregateRunner.start();
+      // T0.1 (#748) — late-wire the observer-presence source now that the
+      // aggregate exists (see ObserverPresenceSource).
+      const runner = aggregateRunner;
+      observerPresence.current = () => runner.totalSubscriberCount();
       httpServerHandle = await startHttpServer({
         client: httpClient,
         namespace: config.temporalNamespace,
