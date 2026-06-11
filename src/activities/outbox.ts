@@ -18,6 +18,7 @@ import { ENV } from '../config';
 import type { IngestTokenRegistry } from '../http/ingest-registry';
 import { resolveSession } from './resolve';
 import { tagActionSource } from '../utils/action-counters';
+import { MEMO_KEYS } from '../utils/search-attributes';
 import { resolveAgentType } from '../ensemble/agent-types';
 import { defaultPart } from '../utils/default-part';
 import { registry } from '../adapters';
@@ -529,11 +530,18 @@ export function createOutboxActivities(
           taskQueue,
           args: [sessionInput],
           workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+          // T0.5 (#747) — read-only fields ride the MEMO, not search
+          // attributes (fresh namespaces register only the 5 filter SAs).
           searchAttributes: {
-            ...(gitRoot ? { AgentTempoGitRoot: [gitRoot] } : {}),
             AgentTempoHostname: [os.hostname()],
             AgentTempoEnsemble: [ensemble],
             AgentTempoPlayerId: [targetName],
+          },
+          memo: {
+            ...(gitRoot ? { [MEMO_KEYS.gitRoot]: gitRoot } : {}),
+            ...(agentDefinition ? { [MEMO_KEYS.playerType]: agentDefinition } : {}),
+            [MEMO_KEYS.isConductor]: isConductor,
+            [MEMO_KEYS.part]: sessionInput.autoSummary,
           },
         });
 

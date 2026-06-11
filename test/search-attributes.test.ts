@@ -12,7 +12,14 @@ import {
   getAttachmentPhase,
   getEnsembleName,
   getIsConductor,
+  getMemoString,
+  getMemoBool,
+  getWorkflowMetaString,
+  getWorkflowMetaBool,
+  getPlayerType,
+  getPart,
   type SearchAttributeCarrier,
+  type WorkflowMetaCarrier,
 } from '../src/utils/search-attributes';
 
 /** Build a carrier with a single named attribute. */
@@ -139,6 +146,74 @@ describe('getIsConductor', function () {
   it('tolerates string "true" / "false" shapes', function () {
     expect(getIsConductor(carrier('AgentTempoIsConductor', ['true']))).to.equal(true);
     expect(getIsConductor(carrier('AgentTempoIsConductor', ['false']))).to.equal(false);
+  });
+});
+
+// ── T0.5 (#747) — memo readers + dual-read (memo preferred, SA fallback) ──
+
+describe('getMemoString / getMemoBool', function () {
+  it('reads typed memo values', function () {
+    const wf: WorkflowMetaCarrier = {
+      memo: { S: 'val', B: true, N: 42 },
+    };
+    expect(getMemoString(wf, 'S')).to.equal('val');
+    expect(getMemoBool(wf, 'B')).to.equal(true);
+  });
+
+  it('returns undefined for absent memo, absent key, or wrong type', function () {
+    expect(getMemoString({}, 'S')).to.be.undefined;
+    expect(getMemoString({ memo: {} }, 'S')).to.be.undefined;
+    expect(getMemoString({ memo: { S: 42 } }, 'S')).to.be.undefined;
+    expect(getMemoBool({ memo: { B: 'true' } }, 'B')).to.be.undefined;
+  });
+});
+
+describe('dual-read (memo preferred, SA fallback)', function () {
+  it('prefers the memo value when both are present', function () {
+    const wf: WorkflowMetaCarrier = {
+      memo: { AgentTempoPlayerType: 'from-memo' },
+      searchAttributes: { AgentTempoPlayerType: ['from-sa'] },
+    };
+    expect(getWorkflowMetaString(wf, 'AgentTempoPlayerType')).to.equal('from-memo');
+    expect(getPlayerType(wf)).to.equal('from-memo');
+  });
+
+  it('falls back to the legacy SA for pre-v1.8 runs (no memo)', function () {
+    const wf: WorkflowMetaCarrier = {
+      searchAttributes: { AgentTempoPlayerType: ['tempo-soloist'] },
+    };
+    expect(getPlayerType(wf)).to.equal('tempo-soloist');
+  });
+
+  it('boolean dual-read: memo false is NOT clobbered by SA true', function () {
+    // `false` is a legitimate memo value — the `??` chain must not skip it.
+    const wf: WorkflowMetaCarrier = {
+      memo: { AgentTempoIsConductor: false },
+      searchAttributes: { AgentTempoIsConductor: [true] },
+    };
+    expect(getWorkflowMetaBool(wf, 'AgentTempoIsConductor')).to.equal(false);
+    expect(getIsConductor(wf)).to.equal(false);
+  });
+
+  it('getIsConductor falls back to the legacy SA', function () {
+    expect(getIsConductor({ searchAttributes: { AgentTempoIsConductor: [true] } }))
+      .to.equal(true);
+  });
+
+  it('returns undefined when both carriers are empty', function () {
+    expect(getPlayerType({})).to.be.undefined;
+    expect(getIsConductor({})).to.be.undefined;
+  });
+});
+
+describe('getPart (memo-only — part was never an SA)', function () {
+  it('reads AgentTempoPart from the memo', function () {
+    expect(getPart({ memo: { AgentTempoPart: 'fixing things' } })).to.equal('fixing things');
+  });
+
+  it('has NO SA fallback — pre-v1.8 runs return undefined (caller uses the getPart query)', function () {
+    expect(getPart({ searchAttributes: { AgentTempoPart: ['sa-shaped'] } })).to.be.undefined;
+    expect(getPart({})).to.be.undefined;
   });
 });
 

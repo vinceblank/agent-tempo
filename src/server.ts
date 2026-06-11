@@ -25,6 +25,7 @@ import { resolveAgentType } from './ensemble/agent-types';
 import { installParentDeathWatchdog } from './utils/parent-death-watchdog';
 import { installGrpcShutdownGuard } from './utils/grpc-shutdown-guard';
 import { actionCountingInterceptors } from './utils/action-counters';
+import { MEMO_KEYS } from './utils/search-attributes';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo]', ...args);
 
@@ -147,11 +148,18 @@ async function main() {
     args: [sessionInput],
     workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
     // No execution timeout — workflows live until terminated status or stale detection.
+    // T0.5 (#747) — read-only fields ride the MEMO, not search attributes:
+    // fresh namespaces register only the 5 filter SAs, so passing the
+    // legacy read-only SAs here would fail the start outright.
     searchAttributes: {
-      ...(gitRoot ? { AgentTempoGitRoot: [gitRoot] } : {}),
       AgentTempoHostname: [os.hostname()],
       AgentTempoEnsemble: [config.ensemble],
       AgentTempoPlayerId: [playerId],
+    },
+    memo: {
+      ...(gitRoot ? { [MEMO_KEYS.gitRoot]: gitRoot } : {}),
+      [MEMO_KEYS.isConductor]: isConductor,
+      [MEMO_KEYS.part]: sessionInput.autoSummary,
     },
   });
   log(`Workflow ${workflowId} started (or reconnected)`);

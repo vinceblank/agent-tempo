@@ -243,17 +243,45 @@ The following custom Temporal search attributes are written by `agentSessionWork
 > attribute — Temporal does not auto-unregister search attributes.
 > See [`docs/ops/v0.26-migration.md`](ops/v0.26-migration.md) for the upgrade steps.
 
+> **v1.8 SA diet (#747)** — runs started on v1.8+ stop writing
+> `AgentTempoGitRoot`, `AgentTempoPlayerType`, `AgentTempoIsConductor` (migrated to the
+> **workflow memo**, same field names, plus the new memo-only `AgentTempoPart`) and
+> `AgentTempoAttachmentId` (dropped — zero readers). Fresh namespaces register only the
+> 5 filter attributes below. Operators' hand-written visibility queries on the
+> deprecated attributes silently match nothing for post-v1.8 runs — read the memo from
+> list results (or use TempoClient ≥ v1.8) instead. Existing namespaces keep the legacy
+> registrations harmlessly; see [`docs/ops/sa-diet-migration.md`](ops/sa-diet-migration.md).
+
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `AgentTempoEnsemble` | `Keyword` | Ensemble namespace (from `AGENT_TEMPO_ENSEMBLE` env var). Scopes sessions to a named group. |
 | `AgentTempoPlayerId` | `Keyword` | Human-readable player name (or hex ID before `set_name` is called). |
 | `AgentTempoHostname` | `Keyword` | Hostname of the machine running the session. Used to route spawn activities to the correct per-host task queue. |
-| `AgentTempoGitRoot` | `Keyword` | Absolute path to the git repository root on the session's host. |
-| `AgentTempoPlayerType` | `Keyword` | Agent type name (e.g. `tempo-soloist`), set from the player's agent definition. |
-| `AgentTempoIsConductor` | `Bool` | `true` for conductor workflows, absent or `false` for regular players. Set via `upsertSearchAttributes` in `agentSessionWorkflow` at startup and after `continueAsNew`. Enables efficient conductor discovery without scanning all session workflows. |
+| `AgentTempoGitRoot` | `Keyword` | **Deprecated (v1.8 SA diet)** — not written by v1.8+ runs; read from the workflow memo instead. Absolute path to the git repository root on the session's host. |
+| `AgentTempoPlayerType` | `Keyword` | **Deprecated (v1.8 SA diet)** — not written by v1.8+ runs; read from the workflow memo instead. Agent type name (e.g. `tempo-soloist`), set from the player's agent definition. |
+| `AgentTempoIsConductor` | `Bool` | **Deprecated (v1.8 SA diet)** — not written by v1.8+ runs; read from the workflow memo instead. `true` for conductor workflows. (Historical note: no code ever filtered on this attribute — discovery lists by ensemble and post-filters, with a workflowId-suffix fallback.) |
 | `AgentTempoAttachmentState` | `Keyword` | **v0.25.** Current attachment phase: `booting \| attached \| processing \| awaiting \| draining \| detached \| gone`. Enables external observers (TUI, monitoring, daemon reconcile-on-boot) to query session readiness without polling the `attachmentInfo` query. |
 | `AgentTempoAttachedHost` | `Keyword` | **v0.25.** Hostname of the machine currently holding the attachment lease. Empty string when no attachment is active (`detached` / `gone` phases). Used by daemon reconcile-on-boot to identify orphaned sessions whose adapter process may have died on this host. |
-| `AgentTempoAttachmentId` | `Keyword` | **v0.25.** UUID of the current attachment (from `claimAttachment`). Empty string when no attachment is active. Allows the daemon to correlate a specific adapter instance with the workflow that claimed it. |
+| `AgentTempoAttachmentId` | `Keyword` | **Deprecated (v1.8 SA diet)** — not written by v1.8+ runs, no replacement (zero readers existed; adapters correlate via the `claimAttachment` token). Was: UUID of the current attachment. |
+
+### Workflow memo (v1.8+)
+
+Low-churn read-only metadata rides the **workflow memo** (returned in the same
+`client.workflow.list()` results; no search-attribute cap cost). Seeded via
+`client.workflow.start({ memo })` and kept current by the workflow
+(`upsertMemo`, gated behind `patched('v1.8-sa-diet')`). Memo keys are part of
+the wire surface — renaming or removing one is a breaking change:
+
+| Memo key | Type | Description |
+|----------|------|-------------|
+| `AgentTempoGitRoot` | `string` | Replaces the deprecated search attribute. |
+| `AgentTempoPlayerType` | `string` | Replaces the deprecated search attribute. |
+| `AgentTempoIsConductor` | `boolean` | Replaces the deprecated search attribute. |
+| `AgentTempoPart` | `string` | **New in v1.8.** The player's current part (work description), mirrored from the `setPart` signal so observers can read it from list results without a per-player `getPart` query (T0.1, #748). |
+
+Readers go through the dual-read helpers in `src/utils/search-attributes.ts`
+(memo preferred, legacy SA fallback for pre-v1.8 runs); the fallback may be
+removed at the next major.
 
 ---
 

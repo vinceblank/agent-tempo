@@ -24,7 +24,7 @@ import { loadLineup, resolveLineupPath } from '../ensemble/loader';
 import { saveLineup, listLineups, readSavedLineup } from '../ensemble/saver';
 import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
 import { shouldIncludeInBroadcast, validateEnsembleName } from '../utils/validation';
-import { getAttachmentPhase, getEnsembleName } from '../utils/search-attributes';
+import { getAttachmentPhase, getEnsembleName, MEMO_KEYS } from '../utils/search-attributes';
 import { isDaemonRunning, startDaemon, stopDaemon, getDaemonStatus, isOtherProfileLikelyRunning, DAEMON_LOG_PATH } from './daemon';
 // #700 P1 — infra bootstrap moved to a shared helper (CLI `up` + `/ensemble-up`).
 import { ensureInfra, isTemporalReachable, registerSearchAttributes, DEFAULT_DB_PATH } from './ensure-infra';
@@ -175,11 +175,18 @@ async function seedConductorWorkflow(args: {
     taskQueue: config.taskQueue,
     args: [conductorInput],
     workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+    // T0.5 (#747) — read-only fields ride the MEMO, not search attributes
+    // (fresh namespaces register only the 5 filter SAs).
     searchAttributes: {
-      ...(conductorGitRoot ? { AgentTempoGitRoot: [conductorGitRoot] } : {}),
       AgentTempoHostname: [hostname()],
       AgentTempoEnsemble: [ensemble],
       AgentTempoPlayerId: [conductorName],
+    },
+    memo: {
+      ...(conductorGitRoot ? { [MEMO_KEYS.gitRoot]: conductorGitRoot } : {}),
+      ...(resolvedConductorType ? { [MEMO_KEYS.playerType]: resolvedConductorType.name } : {}),
+      [MEMO_KEYS.isConductor]: true,
+      [MEMO_KEYS.part]: conductorInput.autoSummary,
     },
   });
 }
@@ -287,11 +294,18 @@ async function applyLineupPlayersAndSchedules(args: {
         taskQueue: config.taskQueue,
         args: [playerInput],
         workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+        // T0.5 (#747) — read-only fields ride the MEMO, not search attributes
+        // (fresh namespaces register only the 5 filter SAs).
         searchAttributes: {
-          ...(playerGitRoot ? { AgentTempoGitRoot: [playerGitRoot] } : {}),
           AgentTempoHostname: [hostname()],
           AgentTempoEnsemble: [ensemble],
           AgentTempoPlayerId: [player.name],
+        },
+        memo: {
+          ...(playerGitRoot ? { [MEMO_KEYS.gitRoot]: playerGitRoot } : {}),
+          ...(resolvedPlayerType ? { [MEMO_KEYS.playerType]: resolvedPlayerType.name } : {}),
+          [MEMO_KEYS.isConductor]: false,
+          [MEMO_KEYS.part]: playerInput.autoSummary,
         },
       });
     } catch (err) {
