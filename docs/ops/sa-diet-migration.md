@@ -94,6 +94,10 @@ T0.1 (same release) adds `costProfile: 'local' | 'cloud'`
   read), cadence stretches 5s → 20s (60s when the daemon has zero SSE
   subscribers), and the daemon aggregate confirms SA-sourced phase
   transitions with one direct query before emitting SSE events.
+  Note: when an observer connects to an idle cloud maestro, the cadence
+  snap-back (60s → 20s) takes effect on the **next refresh completion** —
+  the board can feel stale for up to ~60s after opening a dashboard.
+  Expected behavior, not a bug.
 
 **⚠ Flipping `costProfile=cloud` does not move the bill until maestros
 restart.** Maestro workflows inherit their start-time input across
