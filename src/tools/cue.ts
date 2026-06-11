@@ -14,6 +14,7 @@ import {
   COAT_CHECK_TICKET_REGEX,
   validatePlayerName,
 } from '../utils/validation';
+import { checkSuspension, formatSuspensionWarning } from '../utils/suspension';
 
 /**
  * Max Levenshtein distance for a fuzzy-match candidate to surface in the
@@ -112,23 +113,40 @@ export function buildCueTool(
         // signal IS delivered to the workflow inbox), but operator-
         // misleading because no live adapter surfaces the message.
         let phase: AttachmentPhase | undefined;
-        try {
-          const info = await queryHandleWithTimeout<AttachmentInfo>(
-            resolved,
-            attachmentInfoQuery,
-            { timeoutMs: CUE_PHASE_PREFLIGHT_TIMEOUT_MS },
-          );
-          phase = info.phase;
-        } catch (err) {
-          // Query timed out or threw — workflow may be wedged. Don't
-          // penalize the operator: fall through to best-effort submit.
-          // Auto-redelivery on re-attach still applies. Stderr log keeps
-          // the observability trail without surfacing noise to the user.
-          console.error(
-            `[agent-tempo:cue] phase pre-flight failed for "${playerId}" — proceeding best-effort:`,
-            err instanceof Error ? err.message : err,
-          );
-        }
+        const phasePreflight = async () => {
+          try {
+            const info = await queryHandleWithTimeout<AttachmentInfo>(
+              resolved,
+              attachmentInfoQuery,
+              { timeoutMs: CUE_PHASE_PREFLIGHT_TIMEOUT_MS },
+            );
+            phase = info.phase;
+          } catch (err) {
+            // Query timed out or threw — workflow may be wedged. Don't
+            // penalize the operator: fall through to best-effort submit.
+            // Auto-redelivery on re-attach still applies. Stderr log keeps
+            // the observability trail without surfacing noise to the user.
+            console.error(
+              `[agent-tempo:cue] phase pre-flight failed for "${playerId}" — proceeding best-effort:`,
+              err instanceof Error ? err.message : err,
+            );
+          }
+        };
+
+        // #752: suspension pre-flight, concurrent with the phase pre-flight
+        // so the happy path pays one round-trip window, not two. Reads the
+        // ensemble (maestro), the SENDER (a paused/held sender's outbox
+        // won't dispatch this entry — the 5h-silent-wedge incident class),
+        // and the target. Soft-fails to "not suspended" — never blocks the
+        // cue.
+        const [, suspension] = await Promise.all([
+          phasePreflight(),
+          checkSuspension(client, config.ensemble, {
+            self: handle,
+            target: resolved,
+            timeoutMs: CUE_PHASE_PREFLIGHT_TIMEOUT_MS,
+          }),
+        ]);
 
         if (phase && UNDELIVERABLE_PHASES.has(phase)) {
           return fail(formatDetachedDeliveryError(playerId, phase));
@@ -142,6 +160,12 @@ export function buildCueTool(
         } as OutboxEntryInput;
         const entryId = await handle.executeUpdate(submitOutboxUpdate, { args: [entry] });
 
+        // #752: a suspended sender/target/ensemble still queues the entry
+        // durably — but say so LOUDLY instead of implying live delivery.
+        const warning = formatSuspensionWarning(suspension, { targetPlayerId: playerId });
+        if (warning) {
+          return ok(`Message to ${playerId} queued. (outbox: ${entryId})\n\n${warning}`);
+        }
         return ok(`Message sent to ${playerId}. (outbox: ${entryId})`);
       } catch (err) {
         return fail(`Failed to send message to ${playerId}: ${formatError(err)}`);

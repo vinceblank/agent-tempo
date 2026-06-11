@@ -46,10 +46,29 @@ export interface BoardModel {
   tailLimit: number;
   /** Monotonic counter — bumped on every mutation so the render tick can skip no-op ticks. */
   revision: number;
+  /**
+   * #752 — ensemble-wide pause flag. Seeded from the snapshot
+   * (`flags.paused`, OR'd with the authoritative `state === 'paused'`
+   * classification) and kept live by `flags.changed`. Drives the loud
+   * PAUSED banner in the renderer — the board previously DROPPED these
+   * flags, the exact gap behind the 5h silent-wedge incident.
+   */
+  paused: boolean;
+  /** #752 — any session in the ensemble is held (warm hold, outbox locked). */
+  held: boolean;
 }
 
 export function initBoard(ensemble: string, tailLimit = DEFAULT_TAIL_LIMIT): BoardModel {
-  return { ensemble, players: new Map(), selected: null, innerTail: [], tailLimit, revision: 0 };
+  return {
+    ensemble,
+    players: new Map(),
+    selected: null,
+    innerTail: [],
+    tailLimit,
+    revision: 0,
+    paused: false,
+    held: false,
+  };
 }
 
 /** Project a PlayerSummaryV1 (snapshot / player.added) into a row. */
@@ -83,6 +102,12 @@ export function applyTempoEvent(model: BoardModel, ev: TempoEvent): void {
         model.selected = null;
         model.innerTail = [];
       }
+      // #752 — seed the suspension flags. `state === 'paused'` is the
+      // authoritative classification; `flags.paused` is the SSE projection
+      // (mirrors the dashboard's EnsembleCard treatment). Optional-chained
+      // defensively — a pre-flags payload must not wedge the reducer.
+      model.paused = (ev.payload.flags?.paused ?? false) || ev.payload.state === 'paused';
+      model.held = ev.payload.flags?.held ?? false;
       break;
     }
     case 'player.added': {
@@ -112,6 +137,12 @@ export function applyTempoEvent(model: BoardModel, ev: TempoEvent): void {
         if (ev.payload.contextPercent !== undefined) row.contextPercent = ev.payload.contextPercent;
         row.lastActivityAt = ev.payload.at;
       }
+      break;
+    }
+    case 'flags.changed': {
+      // #752 — live pause/hold transitions (pause/play/release verbs).
+      model.paused = ev.payload.paused;
+      model.held = ev.payload.held;
       break;
     }
     default:

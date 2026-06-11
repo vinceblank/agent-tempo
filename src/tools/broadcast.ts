@@ -8,6 +8,7 @@ import type { OutboxEntryInput } from '../types';
 import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { MESSAGE_MAX, shouldIncludeInBroadcast } from '../utils/validation';
 import { getAttachmentPhase } from '../utils/search-attributes';
+import { checkSuspension, formatSuspensionWarning } from '../utils/suspension';
 
 export function buildBroadcastTool(
   client: Client,
@@ -32,6 +33,13 @@ export function buildBroadcastTool(
       const includeDisconnected = rawIncludeStale === true;
 
       try {
+        // #752: suspension pre-flight (ensemble paused + sender paused/held),
+        // kicked off concurrently with the target scan. Per-TARGET flags are
+        // deliberately NOT queried — that would add 2N queries per broadcast;
+        // the sender-side axes are the silent-queue mechanism anyway (a
+        // paused/held sender's outbox won't dispatch the fan-out entries).
+        const suspensionPromise = checkSuspension(client, config.ensemble, { self: handle });
+
         const query = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"`;
         const targets: Array<{ playerId: string; playerType?: string }> = [];
 
@@ -64,6 +72,9 @@ export function buildBroadcastTool(
         }
 
         if (targets.length === 0) {
+          // Settle the pre-flight so no dangling rejection escapes (it
+          // soft-fails internally, but keep the await for symmetry).
+          await suspensionPromise;
           return ok('No active players matched the broadcast filter.');
         }
 
@@ -88,7 +99,12 @@ export function buildBroadcastTool(
         }
 
         const names = targets.map((t) => t.playerId);
-        return ok(`Broadcast sent to ${targets.length} player${targets.length === 1 ? '' : 's'}: ${names.join(', ')}`);
+        const summary = `Broadcast sent to ${targets.length} player${targets.length === 1 ? '' : 's'}: ${names.join(', ')}`;
+
+        // #752: warn LOUDLY when the fan-out entries will sit in a
+        // suspended outbox instead of dispatching.
+        const warning = formatSuspensionWarning(await suspensionPromise);
+        return ok(warning ? `${summary}\n\n${warning}` : summary);
       } catch (err) {
         return fail(`Failed to broadcast: ${formatError(err)}`);
       }

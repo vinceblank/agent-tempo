@@ -75,4 +75,33 @@ describe('mission-control renderBoard', () => {
     applyTempoEvent(m, ev('player.activity', { playerId: 'a', ensemble: 'demo', currentTool: null, contextPercent: 73, at: 't' }));
     expect(renderBoard(m).some((l) => l.includes('73%'))).to.equal(true);
   });
+
+  // #752 — paused/held must be LOUD on the board (the 5h silent-wedge incident).
+  it('renders a [PAUSED] header marker + warning line naming the resume verb', () => {
+    const m = initBoard('demo');
+    applyTempoEvent(m, ev('flags.changed', { ensemble: 'demo', paused: true, held: false, at: 't' }));
+    const lines = renderBoard(m);
+    expect(lines[0]).to.contain('[PAUSED]');
+    expect(lines[1]).to.contain('ENSEMBLE PAUSED');
+    expect(lines[1]).to.contain('cues queue');
+    expect(lines[1]).to.contain('play');
+    expect(lines[1]).to.contain('release: true');
+  });
+
+  it('renders a [HELD] marker when only held players exist', () => {
+    const m = initBoard('demo');
+    applyTempoEvent(m, ev('flags.changed', { ensemble: 'demo', paused: false, held: true, at: 't' }));
+    const lines = renderBoard(m);
+    expect(lines[0]).to.contain('[HELD]');
+    expect(lines[1]).to.contain('HELD players');
+  });
+
+  it('renders no suspension marker on a healthy board', () => {
+    const m = initBoard('demo');
+    applyTempoEvent(m, ev('player.added', summary({ playerId: 'a' })));
+    const joined = renderBoard(m).join('\n');
+    expect(joined).to.not.contain('[PAUSED]');
+    expect(joined).to.not.contain('[HELD]');
+    expect(joined).to.not.contain('!!');
+  });
 });

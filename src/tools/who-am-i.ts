@@ -1,8 +1,12 @@
-import { WorkflowHandle } from '@temporalio/client';
+import { Client, WorkflowHandle } from '@temporalio/client';
+import { Config } from '../config';
 import { SessionMetadata, AttachmentInfo } from '../types';
 import { ok, type TempoToolDescriptor } from './descriptor';
+import { checkSuspension, formatSuspensionBanner } from '../utils/suspension';
 
 export function buildWhoAmITool(
+  client: Client,
+  config: Config,
   handle: WorkflowHandle,
   getPlayerId: () => string,
 ): TempoToolDescriptor {
@@ -11,6 +15,10 @@ export function buildWhoAmITool(
     description: 'Get your identity, role, and session details',
     params: {},
     handler: async () => {
+    // #752: suspension banner pre-flight (ensemble paused + own paused/held),
+    // concurrent with the identity queries. Soft-fails to "not suspended".
+    const suspensionPromise = checkSuspension(client, config.ensemble, { self: handle });
+
     const metadata: SessionMetadata = await handle.query('getMetadata');
     const part: string = await handle.query('getPart');
 
@@ -38,7 +46,10 @@ export function buildWhoAmITool(
       `**Phase:** ${phase ?? 'unknown'}`,
     ].filter(Boolean);
 
-    return ok(lines.join('\n'));
+    // #752: PAUSED/HELD banner leads the output so it can't be missed.
+    const banner = formatSuspensionBanner(await suspensionPromise, config.ensemble);
+    const body = lines.join('\n');
+    return ok(banner ? `${banner}\n\n${body}` : body);
     },
   };
 }

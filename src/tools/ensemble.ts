@@ -6,6 +6,7 @@ import { SessionMetadata, AttachmentPhase } from '../types';
 import { scanEnsembleSessions, type EnsembleSessionInfo } from '../activities/resolve';
 import { ok, fail, formatError, type TempoToolDescriptor } from './descriptor';
 import { formatTimeAgo } from '../utils/duration';
+import { checkSuspension, formatSuspensionBanner } from '../utils/suspension';
 
 /**
  * Default dormancy threshold (1 hour). Per #563: a `detached` player whose
@@ -71,6 +72,13 @@ export function buildEnsembleTool(
       const scope = (args.scope ?? 'all') as 'machine' | 'repo' | 'all';
       const dormantFilter = (args.dormant ?? 'show') as DormantFilter;
 
+      // #752: suspension banner pre-flight (ensemble paused + own
+      // paused/held), concurrent with the session scan. Soft-fails to
+      // "not suspended" — the listing never breaks on a missing maestro hub.
+      const suspensionPromise = checkSuspension(client, config.ensemble, {
+        self: client.workflow.getHandle(ownWorkflowId),
+      });
+
       let sessions;
       try {
         sessions = await scanEnsembleSessions(client, config.ensemble);
@@ -106,14 +114,17 @@ export function buildEnsembleTool(
       const active = enriched.filter((p) => p.dormancy === 'active');
       const dormant = enriched.filter((p) => p.dormancy === 'dormant');
 
+      // #752: PAUSED/HELD banner leads the output so it can't be missed.
+      const banner = formatSuspensionBanner(await suspensionPromise, config.ensemble);
+
       if (active.length === 0 && dormant.length === 0) {
-        return ok('No active sessions found.');
+        return ok(banner ? `${banner}\n\nNo active sessions found.` : 'No active sessions found.');
       }
 
       // #563 summary line — surface both counts so operators can see what's
       // being hidden behind the dormant filter without re-running.
       const summary = `**${config.ensemble}**: ${active.length} active, ${dormant.length} dormant`;
-      const sections: string[] = [summary];
+      const sections: string[] = banner ? [banner, summary] : [summary];
 
       const showActive = dormantFilter !== 'show-only';
       const showDormant = dormantFilter !== 'hide';
