@@ -569,6 +569,14 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   });
 
   // ── Reset (D14) — set by deliverReset, polled + acked by the Pi extension ──
+  //
+  // INVARIANT (#750): the reset path must never mutate `messages` — the Pi
+  // pump prefetches cues ALONGSIDE the reset in one `pendingIntake` query;
+  // a reset variant that drops/edits queued messages would break the
+  // prefetch-before-wipe equivalence (the prefetched cue list would no
+  // longer match post-wipe workflow state) and would require the pump to
+  // re-fetch after the wipe. If you are adding e.g. a `dropQueued: true`
+  // reset option, change the pump's intake ordering FIRST.
   setHandler(setPendingResetSignal, (r) => {
     // Latest-wins; stamp requestedAt deterministically (workflowNow, not the activity's clock).
     pendingReset = {

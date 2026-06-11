@@ -353,10 +353,12 @@ export class PiWorkflowClient {
   /**
    * `true` until a `pendingIntake` query is rejected as unregistered — i.e.
    * the session workflow predates #750. Cached so the pump pays the failed
-   * probe ONCE, not every tick, then sticks to the legacy two-query path
-   * for the lifetime of this client (a workflow only gains the handler via
-   * code deploy + continueAsNew/restart, at which point the adapter process
-   * is typically replaced too).
+   * probe ONCE, not every tick, then sticks to the legacy two-query path for
+   * the lifetime of this client. Known cost-only staleness: the Pi client
+   * handle follows continueAsNew transparently, so a pre-#750 workflow that
+   * CANs onto a #750+ worker bundle MID-SESSION keeps paying 2 queries/tick
+   * here until the extension process restarts (fresh client → fresh probe).
+   * Benign and self-healing — correctness is unaffected either way.
    */
   private combinedIntakeSupported = true;
 
