@@ -86,6 +86,7 @@ const testConfig: Config = {
   taskQueue: 'agent-tempo',
   ensemble: 'test-ensemble-restart-agent-mock',
   defaultAgent: 'claude',
+  costProfile: 'local',
 };
 
 function findEnqueue(captured: Array<{ name: string; args: unknown }>) {

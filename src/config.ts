@@ -254,8 +254,13 @@ export interface Config {
   claudeBin?: string;
   taskQueue: string;
   ensemble: string;
-  /** T0.1 (#748) — see {@link CostProfile}. Default `'local'`. */
-  costProfile: CostProfile;
+  /**
+   * T0.1 (#748) — see {@link CostProfile}. `getConfig()` always resolves
+   * it; typed OPTIONAL so hand-built Config fixtures and partial
+   * constructions don't break — every consumer treats `undefined` exactly
+   * like `'local'` (the checks are all `costProfile === 'cloud'`).
+   */
+  costProfile?: CostProfile;
 }
 
 /** Persisted config file fields (stored in ~/.agent-tempo/config.json). */

@@ -110,6 +110,7 @@ const testConfig: Config = {
   taskQueue: 'agent-tempo',
   ensemble: 'test-ensemble-restart-loadstate',
   defaultAgent: 'claude',
+  costProfile: 'local',
 };
 
 const baseMetadata = {
