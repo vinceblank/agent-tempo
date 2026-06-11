@@ -13,7 +13,8 @@
  * next delay by {@link SDK_POLL_BACKOFF_FACTOR} up to {@link SDK_POLL_MAX_MS};
  * any delivered message snaps back to {@link SDK_POLL_BASE_MS} so an active
  * conversation keeps the legacy 2s responsiveness. Steady-state idle lands
- * at one query per 30s ≈ 2,880/day — a ~16× reduction.
+ * at one query per 30s = 2,880/day — a 15× reduction (43,200 ÷ 2,880;
+ * ratio locked by a unit test).
  *
  * Trade-off (accepted in #749): the FIRST cue to a long-idle player waits up
  * to 30s before the adapter notices. Delivery itself is unchanged — the
@@ -34,7 +35,7 @@ export const SDK_POLL_BASE_MS = 2_000;
  * claude-code poller's error-backoff factor (adapter.ts) — one family of
  * curves across the codebase. */
 export const SDK_POLL_BACKOFF_FACTOR = 1.5;
-/** Idle ceiling. ~16× the base — the steady-state idle cadence. */
+/** Idle ceiling. 15× the base — the steady-state idle cadence. */
 export const SDK_POLL_MAX_MS = 30_000;
 
 /** Parse a positive-integer env override; fall back on absent/garbage. */

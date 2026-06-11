@@ -68,7 +68,7 @@ export abstract class SdkAttachment extends BaseAttachment {
   /**
    * #749 (T0.2) — shared idle-backoff delay computer for the subclass message
    * poll loops. Contract: `next(messages.length > 0)` per tick — active
-   * conversations stay at the 2s base; idle stretches to the 30s cap (~16×
+   * conversations stay at the 2s base; idle stretches to the 30s cap (15×
    * fewer billable `pendingMessages` queries on an idle player); any
    * delivered message snaps back to base. Subclasses should `reset()` at
    * poll-loop (re)start so a reconnect doesn't inherit a stale slow cadence.
