@@ -564,6 +564,16 @@ export class AggregateRunner {
   private started = false;
   /** T0.4/#751 — whether the PENDING timer was scheduled at the idle interval. */
   private idleDelayed = false;
+  /**
+   * T0.4/#751 — one-shot cadence boost consumed by {@link nextDelayMs}.
+   * `wake()` runs BEFORE the SSE handler registers the subscriber, so the
+   * wake-triggered chain link would otherwise see `subscriberCount === 0`
+   * and re-schedule at the idle interval — fresh board gets the immediate
+   * tick, then stalls up to one idle interval. The boost forces the link
+   * AFTER the wake-tick onto the full cadence; by the time it fires, the
+   * subscriber is registered and count-based logic takes over.
+   */
+  private wakeBoost = false;
   private inFlight = false;
   private skipCount = 0;
   /** Last skip-warning emit time — rate-limited so a wedged Temporal doesn't drown the log. */
@@ -654,6 +664,11 @@ export class AggregateRunner {
    * byte-identical (always `pollIntervalMs`). Exposed for unit tests.
    */
   nextDelayMs(): number {
+    if (this.wakeBoost) {
+      // One-shot — see the field doc (missed-wake wrinkle).
+      this.wakeBoost = false;
+      return this.pollIntervalMs;
+    }
     return this.cloudProfile && this.totalSubscriberCount() === 0
       ? this.idlePollIntervalMs
       : this.pollIntervalMs;
@@ -672,6 +687,7 @@ export class AggregateRunner {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    this.wakeBoost = true;
     this.runTickChain();
   }
 

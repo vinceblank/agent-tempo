@@ -211,6 +211,37 @@ describe('aggregate demand gate (#751)', () => {
     }
   });
 
+  it('wake() boosts the NEXT link to full cadence even when the subscriber registers after wake (missed-wake wrinkle)', async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = makeFakeRawClient();
+      const runner = makeRunner(fake.client, 'cloud', { idlePollIntervalMs: 60_000 });
+      // Worst case: subscriberCount is STILL 0 when the wake-triggered link
+      // reschedules — wake() runs before handleSseRequest registers the
+      // subscriber. Without the one-shot boost, the chain would re-idle
+      // for a full 60s after the wake-tick.
+      const subs = vi.spyOn(runner, 'totalSubscriberCount').mockReturnValue(0);
+
+      runner.start();
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(5_000);
+      runner.wake(); // immediate tick; reschedule consumes the boost (750ms)
+      await vi.advanceTimersByTimeAsync(0);
+      const afterWakeTick = fake.listQueries.length;
+
+      // Subscriber registration lands AFTER the boosted link was scheduled.
+      subs.mockReturnValue(1);
+
+      // The tick AFTER the wake-tick must arrive at full cadence (750ms),
+      // not at the 60s idle boundary.
+      await vi.advanceTimersByTimeAsync(DEFAULT_POLL_INTERVAL_MS + 10);
+      expect(fake.listQueries.length, 'tick after wake-tick at full cadence').toBeGreaterThan(afterWakeTick);
+      runner.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('wake() is a no-op at full cadence (subscriber already present)', async () => {
     vi.useFakeTimers();
     try {
