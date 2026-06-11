@@ -48,6 +48,7 @@ import {
   setPendingResetSignal,
   pendingResetQuery,
   ackResetSignal,
+  pendingIntakeQuery,
   getPartQuery,
   getMetadataQuery,
   pendingMessagesQuery,
@@ -638,6 +639,14 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   setHandler(getPartQuery, () => part);
   setHandler(getMetadataQuery, () => input.metadata);
   setHandler(pendingMessagesQuery, () => messages.filter((m) => !m.delivered));
+  // T0.3 (#750) — combined intake: the SAME two read expressions as
+  // `pendingMessages` (above) and `pendingReset` (reset section) in one
+  // query, so the Pi pump pays 1 billable action/tick instead of 2. Keep
+  // all three handlers serving — old pumps query the legacy pair.
+  setHandler(pendingIntakeQuery, () => ({
+    messages: messages.filter((m) => !m.delivered),
+    pendingReset,
+  }));
   setHandler(allMessagesQuery, () => messages);
   setHandler(allSentMessagesQuery, () => sentMessages);
 
