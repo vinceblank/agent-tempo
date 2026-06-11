@@ -147,11 +147,18 @@ async function main() {
     args: [sessionInput],
     workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
     // No execution timeout — workflows live until terminated status or stale detection.
+    // T0.5 (#747) — read-only fields ride the MEMO, not search attributes:
+    // fresh namespaces register only the 5 filter SAs, so passing the
+    // legacy read-only SAs here would fail the start outright.
     searchAttributes: {
-      ...(gitRoot ? { AgentTempoGitRoot: [gitRoot] } : {}),
       AgentTempoHostname: [os.hostname()],
       AgentTempoEnsemble: [config.ensemble],
       AgentTempoPlayerId: [playerId],
+    },
+    memo: {
+      ...(gitRoot ? { AgentTempoGitRoot: gitRoot } : {}),
+      AgentTempoIsConductor: isConductor,
+      AgentTempoPart: sessionInput.autoSummary,
     },
   });
   log(`Workflow ${workflowId} started (or reconnected)`);

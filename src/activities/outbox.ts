@@ -529,11 +529,18 @@ export function createOutboxActivities(
           taskQueue,
           args: [sessionInput],
           workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+          // T0.5 (#747) — read-only fields ride the MEMO, not search
+          // attributes (fresh namespaces register only the 5 filter SAs).
           searchAttributes: {
-            ...(gitRoot ? { AgentTempoGitRoot: [gitRoot] } : {}),
             AgentTempoHostname: [os.hostname()],
             AgentTempoEnsemble: [ensemble],
             AgentTempoPlayerId: [targetName],
+          },
+          memo: {
+            ...(gitRoot ? { AgentTempoGitRoot: gitRoot } : {}),
+            ...(agentDefinition ? { AgentTempoPlayerType: agentDefinition } : {}),
+            AgentTempoIsConductor: isConductor,
+            AgentTempoPart: sessionInput.autoSummary,
           },
         });
 

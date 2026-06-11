@@ -5,6 +5,7 @@ import {
   workflowInfo,
   allHandlersFinished,
   upsertSearchAttributes,
+  upsertMemo,
   uuid4,
   proxyActivities,
   patched,
@@ -208,6 +209,24 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   // still deserialize cleanly. Safe no-op today.
   patched('v0.26-pending-startup-context');
 
+  // ── T0.5 SA diet (#747) — ONE marker gates the whole diet ──
+  //
+  // New runs (incl. post-deploy CAN successors — fresh executions re-record
+  // the marker) stop writing the read-only/write-only search attributes:
+  //   - AgentTempoGitRoot / AgentTempoPlayerType / AgentTempoIsConductor
+  //     migrate to the workflow MEMO (low-churn fields only — NEVER memo
+  //     counters like activityCount/lastActivityAt: memo upserts are
+  //     billable actions, that would trade query actions for upsert actions).
+  //   - AgentTempoAttachmentId is dropped outright (zero readers anywhere;
+  //     adapters correlate via the claimAttachment token).
+  // Old histories replay the recorded SA-write branch unchanged — safe,
+  // because any namespace with such histories has the legacy SAs registered.
+  // Readers go through the dual-read helpers in utils/search-attributes.ts
+  // (memo preferred, SA fallback). Filter SAs (Ensemble, PlayerId, Hostname,
+  // AttachedHost, AttachmentState) are untouched — they appear in visibility
+  // query expressions and MUST stay search attributes.
+  const saDiet = patched('v1.8-sa-diet');
+
   // Ensure search attributes are always current — critical when reconnecting
   // via WorkflowIdConflictPolicy.USE_EXISTING, which skips the attributes
   // passed to client.workflow.start().
@@ -215,18 +234,36 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     AgentTempoEnsemble: [input.metadata.ensemble],
     AgentTempoPlayerId: [input.metadata.playerId],
     AgentTempoHostname: [input.metadata.hostname],
-    ...(input.metadata.gitRoot ? { AgentTempoGitRoot: [input.metadata.gitRoot] } : {}),
-    ...(input.metadata.playerType ? { AgentTempoPlayerType: [input.metadata.playerType] } : {}),
-    AgentTempoIsConductor: [input.metadata.isConductor === true],
+    ...(saDiet ? {} : {
+      ...(input.metadata.gitRoot ? { AgentTempoGitRoot: [input.metadata.gitRoot] } : {}),
+      ...(input.metadata.playerType ? { AgentTempoPlayerType: [input.metadata.playerType] } : {}),
+      AgentTempoIsConductor: [input.metadata.isConductor === true],
+    }),
     // v0.25 attachment search attributes — initial values for a fresh/restored workflow.
     // Updated on every phase transition below.
     AgentTempoAttachedHost: [input.currentAttachment?.hostname ?? ''],
     AgentTempoAttachmentState: [input.phase ?? 'booting'],
-    AgentTempoAttachmentId: [input.currentAttachment?.attachmentId ?? ''],
+    ...(saDiet ? {} : { AgentTempoAttachmentId: [input.currentAttachment?.attachmentId ?? ''] }),
   });
 
   // ── State (carried across continue-as-new) ──
   let part = input.part ?? input.autoSummary ?? 'No description set';
+
+  // T0.5 (#747) — memo carrier for the migrated read-only fields + part.
+  // Memo persists across continueAsNew and is returned in visibility list
+  // results; start sites additionally seed it via client.workflow.start's
+  // `memo` option so the fields are visible before the first workflow task
+  // (and on standard-visibility servers whose list results may lag memo
+  // upserts — see PR #747 T0.5 notes). Low-churn fields ONLY.
+  if (saDiet) {
+    upsertMemo({
+      ...(input.metadata.gitRoot ? { AgentTempoGitRoot: input.metadata.gitRoot } : {}),
+      ...(input.metadata.playerType ? { AgentTempoPlayerType: input.metadata.playerType } : {}),
+      AgentTempoIsConductor: input.metadata.isConductor === true,
+      AgentTempoPart: part,
+    });
+  }
+
   const messages: Message[] = input.messages ?? [];
   const sentMessages: SentMessage[] = input.sentMessages ?? [];
   const outbox: OutboxEntry[] = input.outbox ?? [];
@@ -481,6 +518,11 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
 
   setHandler(setPartSignal, (newPart) => {
     part = newPart;
+    // T0.5 (#747) — mirror part to the memo so observers (maestro refresh,
+    // daemon aggregate — T0.1) can read it from visibility list results
+    // instead of a per-player getPart query. Low-churn by nature: part
+    // changes when a player re-describes its work, not per message.
+    if (saDiet) upsertMemo({ AgentTempoPart: newPart });
     lastActivityTime = workflowNow().getTime();
     activityCount++;
     lastOutboundTime = workflowNow().getTime();
@@ -545,10 +587,21 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       AgentTempoEnsemble: [input.metadata.ensemble],
       AgentTempoPlayerId: [input.metadata.playerId],
       AgentTempoHostname: [input.metadata.hostname],
-      ...(input.metadata.gitRoot ? { AgentTempoGitRoot: [input.metadata.gitRoot] } : {}),
-      ...(input.metadata.playerType ? { AgentTempoPlayerType: [input.metadata.playerType] } : {}),
-      AgentTempoIsConductor: [input.metadata.isConductor === true],
+      ...(saDiet ? {} : {
+        ...(input.metadata.gitRoot ? { AgentTempoGitRoot: [input.metadata.gitRoot] } : {}),
+        ...(input.metadata.playerType ? { AgentTempoPlayerType: [input.metadata.playerType] } : {}),
+        AgentTempoIsConductor: [input.metadata.isConductor === true],
+      }),
     });
+    // T0.5 — keep the memo mirror current (low-churn: metadata updates are
+    // rare lifecycle events, not per-message traffic).
+    if (saDiet) {
+      upsertMemo({
+        ...(input.metadata.gitRoot ? { AgentTempoGitRoot: input.metadata.gitRoot } : {}),
+        ...(input.metadata.playerType ? { AgentTempoPlayerType: input.metadata.playerType } : {}),
+        AgentTempoIsConductor: input.metadata.isConductor === true,
+      });
+    }
     lastActivityTime = workflowNow().getTime();
     activityCount++;
   });
@@ -788,7 +841,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     }
     upsertSearchAttributes({
       AgentTempoAttachedHost: [''],
-      AgentTempoAttachmentId: [''],
+      ...(saDiet ? {} : { AgentTempoAttachmentId: [''] }),
     });
     setPhase('gone');
     // Inject a final audit message so the old adapter-completion path has something to show.
@@ -891,7 +944,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     setPhase('attached');
     upsertSearchAttributes({
       AgentTempoAttachedHost: [host],
-      AgentTempoAttachmentId: [newAttachment.attachmentId],
+      ...(saDiet ? {} : { AgentTempoAttachmentId: [newAttachment.attachmentId] }),
     });
     lastActivityTime = nowMs;
     activityCount++;
@@ -973,7 +1026,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     setPhase('detached');
     upsertSearchAttributes({
       AgentTempoAttachedHost: [''],
-      AgentTempoAttachmentId: [''],
+      ...(saDiet ? {} : { AgentTempoAttachmentId: [''] }),
     });
     // #159 Gap 1b: wake the main loop — `phase === 'detached'` isn't in the predicate
     // and the condition would otherwise sleep on the now-stale lease-expiry deadline.
@@ -1097,7 +1150,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     setPhase('detached');
     upsertSearchAttributes({
       AgentTempoAttachedHost: [''],
-      AgentTempoAttachmentId: [''],
+      ...(saDiet ? {} : { AgentTempoAttachmentId: [''] }),
     });
     lastActivityTime = workflowNow().getTime();
     activityCount++;
@@ -1526,7 +1579,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       setPhase('detached');
       upsertSearchAttributes({
         AgentTempoAttachedHost: [''],
-        AgentTempoAttachmentId: [''],
+        ...(saDiet ? {} : { AgentTempoAttachmentId: [''] }),
       });
       workflowLog.warn(`lease expired for attachment ${reaped.attachmentId} (host=${reaped.hostname})`);
     }
@@ -1600,7 +1653,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
       setPhase('detached');
       upsertSearchAttributes({
         AgentTempoAttachedHost: [''],
-        AgentTempoAttachmentId: [''],
+        ...(saDiet ? {} : { AgentTempoAttachmentId: [''] }),
       });
       if (reaped) {
         workflowLog.info(
@@ -1828,7 +1881,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
           setPhase('detached');
           upsertSearchAttributes({
             AgentTempoAttachedHost: [''],
-            AgentTempoAttachmentId: [''],
+            ...(saDiet ? {} : { AgentTempoAttachmentId: [''] }),
           });
           workflowLog.warn(
             `spawn failed for "${entry.targetName}"; rolled back attachment ${entry.attachmentId} → detached`,

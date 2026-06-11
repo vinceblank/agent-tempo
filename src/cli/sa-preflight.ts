@@ -33,19 +33,47 @@
  */
 import { execFileSync, spawnSync } from 'child_process';
 
-/** Single source of truth — must match `SEARCH_ATTRIBUTES` in `src/cli/startup.ts`. */
+/**
+ * Single source of truth for registration + verification (consumed by
+ * `src/cli/startup.ts` and the daemon boot preflight — #605).
+ *
+ * T0.5 (#747) — the SA diet trimmed this from 9 to the 5 attributes that
+ * actually appear in visibility QUERY EXPRESSIONS (filters). The read-only
+ * fields (`gitRoot`, `playerType`, `isConductor`) migrated to the workflow
+ * MEMO (no cap cost, returned in the same list results); the write-only
+ * `AgentTempoAttachmentId` was dropped outright (zero readers). Fresh
+ * namespaces register only these 5 — leaving 5 of the default 10-Keyword
+ * cap free, which also stops legacy `ClaudeTempo*` leftovers from tipping
+ * the cap before operators clean them up.
+ */
 export const REQUIRED_SEARCH_ATTRIBUTES: ReadonlyArray<{
   name: string;
   type: 'Keyword' | 'Bool';
 }> = Object.freeze([
   { name: 'AgentTempoHostname', type: 'Keyword' },
-  { name: 'AgentTempoGitRoot', type: 'Keyword' },
   { name: 'AgentTempoEnsemble', type: 'Keyword' },
   { name: 'AgentTempoPlayerId', type: 'Keyword' },
-  { name: 'AgentTempoPlayerType', type: 'Keyword' },
-  { name: 'AgentTempoIsConductor', type: 'Bool' },
   { name: 'AgentTempoAttachedHost', type: 'Keyword' },
   { name: 'AgentTempoAttachmentState', type: 'Keyword' },
+]);
+
+/**
+ * T0.5 (#747) — legacy attributes that pre-v1.8 deployments registered and
+ * pre-v1.8 workflow runs still carry. NEVER auto-unregistered (dropping a
+ * search attribute is a privileged, operator-only action — see
+ * `docs/ops/sa-diet-migration.md`); fresh namespaces simply don't register
+ * them. Kept here so tooling can name them in diagnostics and so the
+ * dual-read fallback window (memo preferred, SA fallback in
+ * `utils/search-attributes.ts`) is documented next to the list it falls
+ * back to. Dual-read fallback may be removed at the next major.
+ */
+export const LEGACY_SEARCH_ATTRIBUTES: ReadonlyArray<{
+  name: string;
+  type: 'Keyword' | 'Bool';
+}> = Object.freeze([
+  { name: 'AgentTempoGitRoot', type: 'Keyword' },
+  { name: 'AgentTempoPlayerType', type: 'Keyword' },
+  { name: 'AgentTempoIsConductor', type: 'Bool' },
   { name: 'AgentTempoAttachmentId', type: 'Keyword' },
 ]);
 

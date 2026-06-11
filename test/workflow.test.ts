@@ -585,34 +585,38 @@ describe('agentSessionWorkflow', function () {
     });
   });
 
-  // ── AgentTempoPlayerType search attribute ──
+  // ── AgentTempoPlayerType (memo since the v1.8 SA diet, #747) ──
+  //
+  // Pre-T0.5 these asserted the `AgentTempoPlayerType` SEARCH ATTRIBUTE.
+  // Post-diet, new runs carry the field on the workflow MEMO instead (the
+  // SA is deprecated and no longer written — see docs/ops/sa-diet-migration.md
+  // and test/sa-diet.test.ts for the full migration coverage).
 
-  describe('AgentTempoPlayerType search attribute', function () {
+  describe('AgentTempoPlayerType memo (v1.8 SA diet)', function () {
     /**
-     * Poll describe() until the expected search attribute value appears.
-     * The local TestWorkflowEnvironment propagates upsertSearchAttributes
-     * asynchronously, so describe() can lag briefly after the workflow
-     * executes the upsert call.
+     * Poll describe() until the memo key matches `expected`. The local
+     * TestWorkflowEnvironment applies upsertMemo asynchronously, so
+     * describe() can lag briefly after the workflow executes the call.
      */
-    async function pollSearchAttr(
+    async function pollMemoValue(
       handle: ReturnType<typeof startSession> extends Promise<infer H> ? H : never,
-      attrName: string,
-      expected: string[],
+      key: string,
+      expected: unknown,
       maxMs = 5000,
-    ): Promise<string[] | undefined> {
+    ): Promise<unknown> {
       const deadline = Date.now() + maxMs;
       while (Date.now() < deadline) {
         const desc = await handle.describe();
-        const value = desc.searchAttributes?.[attrName] as string[] | undefined;
-        if (value && value.length > 0) return value;
+        const value = desc.memo?.[key];
+        if (value === expected) return value;
         await new Promise<void>((r) => setTimeout(r, 250));
       }
       // Final read — let the assertion produce the failure message
       const desc = await handle.describe();
-      return desc.searchAttributes?.[attrName] as string[] | undefined;
+      return desc.memo?.[key];
     }
 
-    it('sets AgentTempoPlayerType search attribute when playerType is in initial metadata', async function () {
+    it('sets the AgentTempoPlayerType memo when playerType is in initial metadata', async function () {
       this.timeout(15_000);
       await withWorker(async () => {
         const handle = await startSession({
@@ -625,16 +629,20 @@ describe('agentSessionWorkflow', function () {
         // Ensure the workflow has started by querying metadata first
         await handle.query(getMetadataQuery);
 
-        // Poll until the search attribute propagates to describe()
-        const value = await pollSearchAttr(handle, 'AgentTempoPlayerType', ['tempo-soloist']);
-        expect(value).to.deep.equal(['tempo-soloist']);
+        // Poll until the memo propagates to describe()
+        const value = await pollMemoValue(handle, 'AgentTempoPlayerType', 'tempo-soloist');
+        expect(value).to.equal('tempo-soloist');
+
+        // The deprecated search attribute must NOT be written by new runs.
+        const desc = await handle.describe();
+        expect(desc.searchAttributes?.AgentTempoPlayerType).to.be.undefined;
 
         await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();
       });
     });
 
-    it('updates AgentTempoPlayerType search attribute via updateMetadata signal', async function () {
+    it('updates the AgentTempoPlayerType memo via updateMetadata signal', async function () {
       this.timeout(15_000);
       await withWorker(async () => {
         const handle = await startSession({
@@ -649,9 +657,9 @@ describe('agentSessionWorkflow', function () {
         const meta = await handle.query(getMetadataQuery);
         expect(meta.playerType).to.equal('tempo-critic');
 
-        // Poll until the search attribute propagates to describe()
-        const value = await pollSearchAttr(handle, 'AgentTempoPlayerType', ['tempo-critic']);
-        expect(value).to.deep.equal(['tempo-critic']);
+        // Poll until the memo propagates to describe()
+        const value = await pollMemoValue(handle, 'AgentTempoPlayerType', 'tempo-critic');
+        expect(value).to.equal('tempo-critic');
 
         await handle.executeUpdate(destroyUpdate, { args: [{}] });
         await handle.result();

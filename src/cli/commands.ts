@@ -175,11 +175,18 @@ async function seedConductorWorkflow(args: {
     taskQueue: config.taskQueue,
     args: [conductorInput],
     workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+    // T0.5 (#747) — read-only fields ride the MEMO, not search attributes
+    // (fresh namespaces register only the 5 filter SAs).
     searchAttributes: {
-      ...(conductorGitRoot ? { AgentTempoGitRoot: [conductorGitRoot] } : {}),
       AgentTempoHostname: [hostname()],
       AgentTempoEnsemble: [ensemble],
       AgentTempoPlayerId: [conductorName],
+    },
+    memo: {
+      ...(conductorGitRoot ? { AgentTempoGitRoot: conductorGitRoot } : {}),
+      ...(resolvedConductorType ? { AgentTempoPlayerType: resolvedConductorType.name } : {}),
+      AgentTempoIsConductor: true,
+      AgentTempoPart: conductorInput.autoSummary,
     },
   });
 }
@@ -287,11 +294,18 @@ async function applyLineupPlayersAndSchedules(args: {
         taskQueue: config.taskQueue,
         args: [playerInput],
         workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+        // T0.5 (#747) — read-only fields ride the MEMO, not search attributes
+        // (fresh namespaces register only the 5 filter SAs).
         searchAttributes: {
-          ...(playerGitRoot ? { AgentTempoGitRoot: [playerGitRoot] } : {}),
           AgentTempoHostname: [hostname()],
           AgentTempoEnsemble: [ensemble],
           AgentTempoPlayerId: [player.name],
+        },
+        memo: {
+          ...(playerGitRoot ? { AgentTempoGitRoot: playerGitRoot } : {}),
+          ...(resolvedPlayerType ? { AgentTempoPlayerType: resolvedPlayerType.name } : {}),
+          AgentTempoIsConductor: false,
+          AgentTempoPart: playerInput.autoSummary,
         },
       });
     } catch (err) {
