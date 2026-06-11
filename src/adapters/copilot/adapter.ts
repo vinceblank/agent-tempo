@@ -591,14 +591,14 @@ export class CopilotSdkAttachment extends SdkAttachment {
     };
 
     /**
-     * One poll tick. Returns the delay (ms) before the next tick, or `null`
-     * when the loop must stop (shutdown paths call `process.exit` anyway).
+     * One poll tick. Returns the delay (ms) before the next tick; the
+     * scheduler (`runPollTick`) re-checks `polling` before arming the timer,
+     * so shutdown needs no sentinel return (exit paths call `process.exit`).
      * #749: idle ticks grow the inherited `pollBackoff` toward 30s; delivered
      * messages snap back to the 2s base.
      */
-    const poll = async (): Promise<number | null> => {
-      if (!polling) return null;
-      if (processing) return POLL_INTERVAL_MS; // busy-wait at base — a turn is in flight
+    const poll = async (): Promise<number> => {
+      if (!polling || processing) return POLL_INTERVAL_MS; // stopped or busy — scheduler gates on `polling`
       pollCount++;
 
       // Periodic health check
@@ -752,7 +752,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
         log(`poll tick threw outside its handler: ${(err as Error)?.message ?? err}`);
         return POLL_INTERVAL_MS;
       });
-      if (delay !== null && polling) {
+      if (polling) {
         pollTimer = setTimeout(() => void runPollTick(), delay);
       }
     };
