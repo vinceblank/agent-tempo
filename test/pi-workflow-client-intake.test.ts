@@ -66,7 +66,10 @@ async function buildClient(client: Client): Promise<PiWorkflowClient> {
     client,
     config: { taskQueue: 'test-queue' } as Config,
     metadata: {
-      ensemble: 'test-ensemble',
+      // Plain stub value — this suite never touches the shared
+      // TestWorkflowEnvironment (the client is fully faked), so it must NOT
+      // use the reserved `test-ensemble` literal (lint:test-ensemble-literals).
+      ensemble: 'stub-ensemble',
       playerId: 'pi-player',
       hostname: 'test-host',
       workDir: '/tmp',
