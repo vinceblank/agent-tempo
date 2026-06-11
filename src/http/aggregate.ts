@@ -3,9 +3,15 @@
  *
  * **Job**: every `pollIntervalMs` (default 750), snapshot the cluster
  * state via `TempoClient`, diff against the prior snapshot, and emit
- * events to the per-ensemble + global buses. Subscriber count is
- * irrelevant — every TUI / web-dashboard reads from the same one
- * snapshot per tick.
+ * events to the per-ensemble + global buses. Every TUI / web-dashboard
+ * reads from the same one snapshot per tick.
+ *
+ * **Demand gate (T0.4/#751, #763)**: under `costProfile: 'cloud'`, zero
+ * live SSE subscribers stretches the cadence to
+ * {@link AGGREGATE_IDLE_POLL_INTERVAL_MS} (slow reconcile); the first
+ * subscriber's connect calls {@link AggregateRunner.wake} → immediate
+ * tick + full cadence. Local profile keeps the original
+ * subscriber-count-irrelevant behavior byte-identical.
  *
  * **Backpressure** (§8): serial-with-skip. If a tick's queries don't
  * complete before the next 750 ms boundary, the next tick is skipped
@@ -40,6 +46,14 @@ import { withActionSource } from '../utils/action-counters';
 
 /** Default cadence per spec §8. */
 export const DEFAULT_POLL_INTERVAL_MS = 750;
+/**
+ * T0.4/#751 (#763) — slow-reconcile cadence while the daemon is
+ * cloud-profiled AND has zero live SSE subscribers. 30s sits at the
+ * design doc's 30–60s band's fresh end: an unwatched daemon's snapshot
+ * only feeds eventual reconciliation, and `wake()` restores the 750ms
+ * cadence (with an immediate tick) the moment a board connects.
+ */
+export const AGGREGATE_IDLE_POLL_INTERVAL_MS = 30_000;
 /** How many chat-message ids to remember per ensemble. */
 const CHAT_ID_MEMORY = 1024;
 /** How many chat messages to fetch per poll — wider than the snapshot limit so bursts aren't silently lost. */
@@ -495,11 +509,18 @@ export interface AggregateRunnerOptions {
    * phase TRANSITIONS detected by the diff are re-validated with one
    * direct query per transitioning player before the `player.phase_changed`
    * SSE event is emitted (design addendum §B(d): cost ∝ changes, not
-   * players). Absent / `'local'`: byte-identical to pre-#748.
+   * players). T0.4/#751 (#763): `'cloud'` additionally enables the
+   * zero-subscriber demand gate and the per-tick prelude-reuse dedup.
+   * Absent / `'local'`: byte-identical to pre-#748.
    */
   costProfile?: 'local' | 'cloud';
   /** See {@link PhaseConfirmer}. */
   confirmPhase?: PhaseConfirmer;
+  /**
+   * T0.4/#751 — cadence while cloud-profiled with zero SSE subscribers.
+   * Default {@link AGGREGATE_IDLE_POLL_INTERVAL_MS}; tests pin lower values.
+   */
+  idlePollIntervalMs?: number;
 }
 
 /**
@@ -539,6 +560,10 @@ export class AggregateRunner {
 
   /** Loop state. */
   private timer: NodeJS.Timeout | null = null;
+  /** True once start() ran — `timer` alone can't carry this (it's null mid-tick). */
+  private started = false;
+  /** T0.4/#751 — whether the PENDING timer was scheduled at the idle interval. */
+  private idleDelayed = false;
   private inFlight = false;
   private skipCount = 0;
   /** Last skip-warning emit time — rate-limited so a wedged Temporal doesn't drown the log. */
@@ -566,13 +591,18 @@ export class AggregateRunner {
   /** T0.1 (#748) — confirm-on-change wiring (cloud profile only). */
   private readonly confirmOnChange: boolean;
   private readonly confirmPhase?: PhaseConfirmer;
+  /** T0.4/#751 — demand-gate + prelude-reuse wiring (cloud profile only). */
+  private readonly cloudProfile: boolean;
+  private readonly idlePollIntervalMs: number;
 
   constructor(opts: AggregateRunnerOptions) {
     this.client = opts.client;
     this.bootEpoch = opts.bootEpoch;
     this.pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.now = opts.now ?? Date.now;
-    this.confirmOnChange = opts.costProfile === 'cloud' && opts.confirmPhase !== undefined;
+    this.cloudProfile = opts.costProfile === 'cloud';
+    this.idlePollIntervalMs = opts.idlePollIntervalMs ?? AGGREGATE_IDLE_POLL_INTERVAL_MS;
+    this.confirmOnChange = this.cloudProfile && opts.confirmPhase !== undefined;
     this.confirmPhase = opts.confirmPhase;
     this.tickWatchdogMs = opts.tickWatchdogMs ?? this.pollIntervalMs * 20;
     this.busFactory = opts.busFactory
@@ -598,15 +628,51 @@ export class AggregateRunner {
    * folded in.
    */
   start(): void {
-    if (this.timer || this.stopped) return;
-    const tickAndSchedule = () => {
-      if (this.stopped) return;
-      void this.tick();
-      this.timer = setTimeout(tickAndSchedule, this.pollIntervalMs);
-      this.timer.unref();
-    };
+    if (this.started || this.stopped) return;
+    this.started = true;
     // Run once immediately so a fresh boot has events to serve.
-    tickAndSchedule();
+    this.runTickChain();
+  }
+
+  /** One link of the tick chain: tick now, then schedule the next link. */
+  private runTickChain(): void {
+    if (this.stopped) return;
+    void this.tick();
+    const delay = this.nextDelayMs();
+    this.idleDelayed = delay !== this.pollIntervalMs;
+    this.timer = setTimeout(() => this.runTickChain(), delay);
+    this.timer.unref();
+  }
+
+  /**
+   * T0.4/#751 (demand gate, #763) — the delay before the next tick. Cloud
+   * profile with ZERO live SSE subscribers (nobody watching any board)
+   * stretches the 750ms poll to a slow reconcile: the per-tick cost (3
+   * cluster scans + ~78 queries pre-#751) was always designed for a
+   * watched board; an unwatched daemon only needs eventual consistency.
+   * `wake()` snaps back the moment a subscriber connects. Local profile:
+   * byte-identical (always `pollIntervalMs`). Exposed for unit tests.
+   */
+  nextDelayMs(): number {
+    return this.cloudProfile && this.totalSubscriberCount() === 0
+      ? this.idlePollIntervalMs
+      : this.pollIntervalMs;
+  }
+
+  /**
+   * T0.4/#751 — first-subscriber wake: cancel a pending IDLE-stretched
+   * timer and tick immediately so a freshly opened board gets data now
+   * instead of waiting out the reconcile interval. No-op when already at
+   * full cadence (or not started / stopped) — safe to call on every SSE
+   * subscribe.
+   */
+  wake(): void {
+    if (this.stopped || !this.started || !this.idleDelayed) return;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this.runTickChain();
   }
 
   /** Stop polling. Buses stay alive — daemon owns their close lifecycle. */
@@ -881,11 +947,27 @@ export class AggregateRunner {
         try {
           // Reuse `buildEnsembleSnapshot` so the projection logic stays in
           // one place. We only need a subset, but the full builder is cheap.
+          //
+          // T0.4/#751 (#763) — cloud profile: reuse this tick's prelude
+          // instead of re-deriving it inside the builder. `knownSummary`
+          // skips the builder's `listEnsembles` existence gate (a second
+          // full cluster scan per tick); `knownHostProfiles` skips its
+          // `listHosts` re-fetch; `skipChat` skips the narrow chat fetch
+          // because the wider POLL_CHAT_LIMIT fetch below supersedes it.
+          // Local profile: byte-identical builder behavior.
           const snap: EnsembleStateV1 = await buildEnsembleSnapshot(this.client, e.name, {
             now: () => new Date(this.now()),
+            ...(this.cloudProfile ? {
+              knownSummary: e,
+              knownHostProfiles: hostProfiles,
+              skipChat: true,
+            } : {}),
           });
           // Replace chat with a wider window so the aggregate doesn't miss
           // bursts between polls. The bus's §8 cap collapses excess.
+          // (Under cloud + skipChat the narrow slice is empty, so a wider-
+          // fetch failure stalls chat events for one tick — acceptable: the
+          // next successful tick re-diffs against the chatIds LRU.)
           let chat: EnsembleChatMessage[] = snap.chat.messages;
           try {
             const wider = await this.client.getEnsembleChat(e.name, 0, POLL_CHAT_LIMIT);

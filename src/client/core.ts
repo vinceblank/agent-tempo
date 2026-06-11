@@ -76,6 +76,7 @@ import {
   getEnsembleName,
   getIsConductor,
   getPlayerType,
+  getSearchAttrString,
   sanitizeQueryValue,
   MEMO_KEYS,
 } from '../utils/search-attributes';
@@ -1276,6 +1277,34 @@ export function createTempoClientCore(
       // facing `/go` should target. Per-session query failures are
       // treated as "not held" so a single flaky workflow doesn't make
       // the whole ensemble appear held forever.
+      //
+      // T0.4/#751 (#763) — cloud profile: only the held flag is needed,
+      // so skip the legacy cluster-wide scan + its per-player
+      // getMetadata/getPart/getActivityState fan-out entirely. One
+      // ensemble-scoped list (AgentTempoEnsemble filter SA) + one bounded
+      // `outboxLocked` query per non-maestro row. This method runs on
+      // EVERY aggregate tick via the snapshot fan-out — pre-#751 it was a
+      // third full cluster scan + ~27 extra queries per tick.
+      if (opts.costProfile === 'cloud') {
+        try {
+          const query =
+            `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"` +
+            ` AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}"`;
+          for await (const wf of listWorkflows({ query })) {
+            if (getSearchAttrString(wf, 'AgentTempoPlayerId') === 'maestro') continue;
+            try {
+              const locked = await queryHandleWithTimeout(handle(wf.workflowId), outboxLockedQuery);
+              if (locked) return true;
+            } catch {
+              // Pre-`outboxLocked` workflow, terminated mid-scan, or
+              // wedged-worker timeout (#433) — skip, keep checking.
+            }
+          }
+          return false;
+        } catch {
+          return false;
+        }
+      }
       try {
         const sessions = await scanEnsembleSessions(client, ensemble);
         for (const s of sessions) {

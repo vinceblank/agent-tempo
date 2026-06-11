@@ -19,8 +19,8 @@
  * PR-1 snapshot has no provable atomicity against an event log that
  * doesn't yet exist.
  */
-import type { TempoClient } from '../client/interface';
-import type { MaestroPlayerInfo, AttachmentPhase } from '../types';
+import type { TempoClient, EnsembleSummary } from '../client/interface';
+import type { MaestroPlayerInfo, AttachmentPhase, HostProfile } from '../types';
 import { AGENT_TYPES } from '../types';
 import {
   PR1_SENTINEL_EVENT_ID,
@@ -157,6 +157,32 @@ export function toPlayerSummaryV1(
   };
 }
 
+/** Options for {@link buildEnsembleSnapshot}. */
+export interface BuildEnsembleSnapshotOpts {
+  now?: () => Date;
+  /**
+   * T0.4/#751 (#763) — the caller already holds a fresh `EnsembleSummary`
+   * for this ensemble (the aggregate tick's bounded prelude). Skips the
+   * builder's own `listEnsembles` existence gate — a full cluster scan
+   * that, when invoked from the 750ms poll, duplicated the prelude on
+   * every tick. The on-demand `/v1/state` route keeps the gate (it has
+   * no prelude to reuse).
+   */
+  knownSummary?: EnsembleSummary;
+  /**
+   * T0.4/#751 — host profiles already fetched this tick by the caller;
+   * skips the builder's `listHosts` re-fetch (the 3s cache made the
+   * duplicate cheap, not free).
+   */
+  knownHostProfiles?: Record<string, HostProfile>;
+  /**
+   * T0.4/#751 — the caller fetches its own (wider) chat window right
+   * after; skip the narrow `SNAPSHOT_CHAT_LIMIT` fetch so the maestro
+   * isn't chat-queried twice per tick.
+   */
+  skipChat?: boolean;
+}
+
 /**
  * Build the `/v1/state/:ensemble` payload. Throws
  * {@link EnsembleNotFoundError} when the requested ensemble has no live
@@ -165,12 +191,16 @@ export function toPlayerSummaryV1(
 export async function buildEnsembleSnapshot(
   client: TempoClient,
   ensemble: string,
-  opts: { now?: () => Date } = {},
+  opts: BuildEnsembleSnapshotOpts = {},
 ): Promise<EnsembleStateV1> {
   // Existence gate — `listEnsembles` is fast (single workflow.list scan)
   // and returns the canonical state classification (online/paused/offline).
-  const ensembles = await client.listEnsembles().catch(() => []);
-  const summary = ensembles.find((e) => e.name === ensemble);
+  // T0.4/#751: skipped when the caller supplies this tick's summary.
+  let summary = opts.knownSummary;
+  if (!summary) {
+    const ensembles = await client.listEnsembles().catch(() => []);
+    summary = ensembles.find((e) => e.name === ensemble);
+  }
   if (!summary) throw new EnsembleNotFoundError(ensemble);
 
   // Fan-out the rest in parallel. Each soft-fails to a sane default — the
@@ -180,11 +210,13 @@ export async function buildEnsembleSnapshot(
   // resolves so we know which session ids to query.
   const fanned = await fanOut({
     players: () => client.getPlayers(ensemble),
-    chat: () => client.getEnsembleChat(ensemble, 0, SNAPSHOT_CHAT_LIMIT),
+    chat: opts.skipChat
+      ? async () => ({ messages: [], total: 0, hasMore: false, hasConductor: false })
+      : () => client.getEnsembleChat(ensemble, 0, SNAPSHOT_CHAT_LIMIT),
     schedules: () => client.getSchedules(ensemble),
     paused: () => client.isMaestroPaused(ensemble),
     held: () => client.isAnySessionHeld(ensemble),
-    hosts: () => client.listHosts(),
+    hosts: opts.knownHostProfiles ? async () => [] : () => client.listHosts(),
     meta: () => client.getEnsembleMeta(ensemble),
   });
 
@@ -206,7 +238,9 @@ export async function buildEnsembleSnapshot(
   const schedules = fanned.schedules ?? [];
   const paused = fanned.paused === true;
   const held = fanned.held === true;
-  const hostProfiles: Record<string, import('../types').HostProfile> = {};
+  // T0.4/#751 — caller-supplied profiles win over the (skipped) re-fetch.
+  const hostProfiles: Record<string, import('../types').HostProfile> =
+    { ...(opts.knownHostProfiles ?? {}) };
   for (const h of fanned.hosts ?? []) {
     if (h.profile) hostProfiles[h.hostname] = h.profile;
   }
