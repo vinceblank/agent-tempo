@@ -27,6 +27,7 @@
 import type { WorkflowHandle } from '@temporalio/client';
 import { BaseAttachment, type BaseAttachmentOptions } from '../base';
 import { processingStartUpdate, processingEndUpdate, markDeliveredSignal } from '../../workflows/signals';
+import { IdleBackoff } from './idle-backoff';
 import type { Message, DetachReason } from '../../types';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo:sdk-adapter]', ...args);
@@ -63,6 +64,18 @@ export abstract class SdkAttachment extends BaseAttachment {
    * implementations to decide whether cancellation actually has an effect.
    */
   protected sdkInFlight = false;
+
+  /**
+   * #749 (T0.2) — shared idle-backoff delay computer for the subclass message
+   * poll loops. Contract: `next(messages.length > 0)` per tick — active
+   * conversations stay at the 2s base; idle stretches to the 30s cap (~16×
+   * fewer billable `pendingMessages` queries on an idle player); any
+   * delivered message snaps back to base. Subclasses should `reset()` at
+   * poll-loop (re)start so a reconnect doesn't inherit a stale slow cadence.
+   * Heartbeat/phase-watcher cadences (BaseAttachment) are deliberately NOT
+   * driven by this — lease math depends on them (#249).
+   */
+  protected readonly pollBackoff = new IdleBackoff();
 
   constructor(options: BaseAttachmentOptions = {}) {
     super(options);

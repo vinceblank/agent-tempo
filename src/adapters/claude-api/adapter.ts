@@ -105,7 +105,11 @@ function truncateErr(err: unknown, max = 240): string {
 
 /** Default model id — verification addendum §1 (no date suffix on direct API). */
 const DEFAULT_MODEL = 'claude-opus-4-7';
-/** Idle poll cadence (ms). Matches Copilot bridge — short enough for snappy cue delivery, loose enough not to hammer Temporal. */
+/**
+ * Busy-wait cadence (ms) while an SDK turn is in flight. The IDLE cadence is
+ * owned by the inherited `pollBackoff` (#749, T0.2): 2s base stretching to a
+ * 30s cap on empty polls, snapping back to base on any delivered message.
+ */
 const POLL_INTERVAL_MS = 2000;
 /** Workflow-register poll loop bounds. */
 const WORKFLOW_REGISTER_ATTEMPTS = 30;
@@ -347,6 +351,9 @@ export class DirectApiAttachment extends SdkAttachment {
     // wedge the player indefinitely.
     let consecutiveFailures = 0;
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    // #749: fresh poll loop (initial start OR reconnect) begins at the fast
+    // cadence — never inherit a stale 30s interval across a restart.
+    this.pollBackoff.reset();
 
     while (polling && !this.shouldStop()) {
       pollCount++;
@@ -385,13 +392,18 @@ export class DirectApiAttachment extends SdkAttachment {
         messages = await handle.query(pendingMessagesQuery);
       } catch (err) {
         log(`pendingMessages query failed: ${(err as Error)?.message ?? err}`);
-        await sleep(POLL_INTERVAL_MS);
+        // #749: grow on errors too — mirrors the interactive poller's shape
+        // (a wedged worker shouldn't be hammered at 2s).
+        await sleep(this.pollBackoff.next(false));
         continue;
       }
       if (messages.length === 0) {
-        await sleep(POLL_INTERVAL_MS);
+        // #749: idle backoff — 2s → 30s while nothing is pending.
+        await sleep(this.pollBackoff.next(false));
         continue;
       }
+      // #749: live conversation — snap back to the fast cadence.
+      this.pollBackoff.reset();
 
       processing = true;
       try {
