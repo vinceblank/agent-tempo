@@ -13,7 +13,7 @@
  *   - `submitOutbox`                         — report routing (outbox compliance)
  *   - `pendingMessages` + `markDelivered`    — cue intake + ack
  */
-import { Client, type WorkflowHandle } from '@temporalio/client';
+import { Client, QueryNotRegisteredError, type WorkflowHandle } from '@temporalio/client';
 import { createTemporalConnection } from '../connection';
 import { actionCountingInterceptors, withActionSource } from '../utils/action-counters';
 import { MEMO_KEYS } from '../utils/search-attributes';
@@ -30,6 +30,8 @@ import {
   updateMetadataSignal,
   pendingResetQuery,
   ackResetSignal,
+  pendingIntakeQuery,
+  type PendingIntake,
 } from '../workflows/signals';
 import type {
   AttachmentToken,
@@ -58,6 +60,22 @@ const log = (...args: unknown[]): void => {
   // eslint-disable-next-line no-console
   console.error('[agent-tempo:pi]', ...args);
 };
+
+/**
+ * T0.3 (#750) — classify "this workflow doesn't serve that query" so
+ * {@link PiWorkflowClient.fetchIntake} can fall back to the legacy two-query
+ * pair against pre-#750 workflows. `instanceof` covers the SDK's typed
+ * rejection; the message probes cover the same condition surfaced through
+ * wrapper layers (mirrors the defensive style of `adapters/terminal-error.ts`).
+ * Exported for unit testing.
+ */
+export function isQueryNotRegisteredError(err: unknown): boolean {
+  if (err instanceof QueryNotRegisteredError) return true;
+  const name = (err as Error)?.name ?? '';
+  if (name === 'QueryNotRegisteredError') return true;
+  const msg = (err as Error)?.message ?? '';
+  return /unknown query|query handler.*not registered|not registered on this workflow/i.test(msg);
+}
 
 /** 3c Tier-1 — coarse activity sample piggybacked onto each heartbeat. */
 export type CoarseSample = { currentTool: string | null; contextTokens?: number; contextPercent?: number };
@@ -328,6 +346,55 @@ export class PiWorkflowClient {
     if (messageIds.length === 0) return;
     const handle = this.requireHandle();
     await handle.signal(markDeliveredSignal, messageIds);
+  }
+
+  // ── Combined intake (T0.3 of #747, #750) ──
+
+  /**
+   * `true` until a `pendingIntake` query is rejected as unregistered — i.e.
+   * the session workflow predates #750. Cached so the pump pays the failed
+   * probe ONCE, not every tick, then sticks to the legacy two-query path for
+   * the lifetime of this client. Known cost-only staleness: the Pi client
+   * handle follows continueAsNew transparently, so a pre-#750 workflow that
+   * CANs onto a #750+ worker bundle MID-SESSION keeps paying 2 queries/tick
+   * here until the extension process restarts (fresh client → fresh probe).
+   * Benign and self-healing — correctness is unaffected either way.
+   */
+  private combinedIntakeSupported = true;
+
+  /**
+   * One-query intake: undelivered cues + the pending reset together —
+   * halves the pump's idle Temporal actions (2 → 1 query/tick). Falls back
+   * to the legacy `pendingMessages` + `pendingReset` pair when the workflow
+   * lacks the combined handler (pre-#750 build); genuine failures (timeouts,
+   * connection errors) propagate to the pump's existing per-tick handling.
+   */
+  async fetchIntake(): Promise<PendingIntake> {
+    if (this.combinedIntakeSupported) {
+      const handle = this.requireHandle();
+      try {
+        const intake = await handle.query(pendingIntakeQuery);
+        // Shape-guard: a real server either serves the query or rejects it
+        // as unregistered, but belt-and-braces against converter quirks /
+        // test doubles — a malformed result downgrades to the legacy pair
+        // rather than crashing the pump tick.
+        if (intake && Array.isArray(intake.messages)) return intake;
+        this.combinedIntakeSupported = false;
+        log('pendingIntake returned a malformed result — falling back to the legacy pair');
+      } catch (err) {
+        if (!isQueryNotRegisteredError(err)) throw err;
+        this.combinedIntakeSupported = false;
+        log(
+          'pendingIntake query not registered on this workflow (pre-#750 build) — ' +
+          'falling back to the legacy pendingMessages + pendingReset pair',
+        );
+      }
+    }
+    const [messages, pendingReset] = await Promise.all([
+      this.fetchPending(),
+      this.fetchPendingReset(),
+    ]);
+    return { messages, pendingReset };
   }
 
   // ── Reset intake (3d D14) ──

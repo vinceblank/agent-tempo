@@ -30,6 +30,7 @@ import {
   adapterExitedSignal,
   pendingMessagesQuery,
   pendingResetQuery,
+  pendingIntakeQuery,
   markDeliveredSignal,
 } from '../src/workflows/signals';
 import type { Message } from '../src/types';
@@ -58,6 +59,8 @@ function makeFakeClient(rec: Recorder, pendingBox: PendingBox = { cues: [] }): C
     async query(def: unknown) {
       if (def === pendingMessagesQuery) return pendingBox.cues;
       if (def === pendingResetQuery) return null;
+      // T0.3 (#750) — the extension's pump now reads the combined intake.
+      if (def === pendingIntakeQuery) return { messages: pendingBox.cues, pendingReset: null };
       return undefined;
     },
   };

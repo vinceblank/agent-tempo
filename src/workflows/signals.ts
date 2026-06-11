@@ -99,6 +99,26 @@ export const setPendingResetSignal =
 export const pendingResetQuery = defineQuery<PendingReset | null>('pendingReset');
 export const ackResetSignal = defineSignal<[string]>('ackReset');
 
+// ── Combined intake (T0.3 of #747, #750) ──
+// One query serving BOTH of the Pi cue pump's per-tick reads — the undelivered
+// message list (= `pendingMessages`) and the single-slot pending reset
+// (= `pendingReset`) — halving the pump's idle Temporal actions (2 → 1
+// query/tick; queries are billable on Temporal Cloud). ADDITIVE: the two
+// legacy queries remain served (stable wire names); new pumps fall back to
+// them against pre-#750 workflows that lack this handler. Ack surfaces are
+// unchanged (`markDelivered` / `ackReset` — same race-safe id-match
+// semantics). See docs/WIRE-PROTOCOL.md.
+
+/** Result shape of {@link pendingIntakeQuery}. */
+export interface PendingIntake {
+  /** Undelivered cues, oldest-first — identical to `pendingMessages`. */
+  messages: Message[];
+  /** The single-slot pending reset, or `null` — identical to `pendingReset`. */
+  pendingReset: PendingReset | null;
+}
+
+export const pendingIntakeQuery = defineQuery<PendingIntake>('pendingIntake');
+
 // ── Hold / Release ──
 
 /** Release a held session — unlocks the outbox and delivers the stored initial message. */

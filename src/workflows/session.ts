@@ -48,6 +48,7 @@ import {
   setPendingResetSignal,
   pendingResetQuery,
   ackResetSignal,
+  pendingIntakeQuery,
   getPartQuery,
   getMetadataQuery,
   pendingMessagesQuery,
@@ -568,6 +569,14 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   });
 
   // ── Reset (D14) — set by deliverReset, polled + acked by the Pi extension ──
+  //
+  // INVARIANT (#750): the reset path must never mutate `messages` — the Pi
+  // pump prefetches cues ALONGSIDE the reset in one `pendingIntake` query;
+  // a reset variant that drops/edits queued messages would break the
+  // prefetch-before-wipe equivalence (the prefetched cue list would no
+  // longer match post-wipe workflow state) and would require the pump to
+  // re-fetch after the wipe. If you are adding e.g. a `dropQueued: true`
+  // reset option, change the pump's intake ordering FIRST.
   setHandler(setPendingResetSignal, (r) => {
     // Latest-wins; stamp requestedAt deterministically (workflowNow, not the activity's clock).
     pendingReset = {
@@ -638,6 +647,14 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   setHandler(getPartQuery, () => part);
   setHandler(getMetadataQuery, () => input.metadata);
   setHandler(pendingMessagesQuery, () => messages.filter((m) => !m.delivered));
+  // T0.3 (#750) — combined intake: the SAME two read expressions as
+  // `pendingMessages` (above) and `pendingReset` (reset section) in one
+  // query, so the Pi pump pays 1 billable action/tick instead of 2. Keep
+  // all three handlers serving — old pumps query the legacy pair.
+  setHandler(pendingIntakeQuery, () => ({
+    messages: messages.filter((m) => !m.delivered),
+    pendingReset,
+  }));
   setHandler(allMessagesQuery, () => messages);
   setHandler(allSentMessagesQuery, () => sentMessages);
 

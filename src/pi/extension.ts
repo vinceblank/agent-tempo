@@ -343,6 +343,10 @@ export function createPiExtension(options: PiExtensionOptions = {}): (pi: Extens
         // #677 PART B — interactive can't auto-wipe (no session field / newSession
         // is command-context-only); the pump notifies the operator via `pi`.
         resetSource: wf,
+        // T0.3 (#750) — combined per-tick intake: cues + pending reset in ONE
+        // `pendingIntake` query (PiWorkflowClient falls back to the legacy
+        // pair on pre-#750 workflows). Halves the pump's idle Temporal actions.
+        intakeSource: wf,
         resolveSession: () => runtimes.get(workflowId)?.session ?? null,
         resolvePi: () => runtimes.get(workflowId)?.pi ?? null,
       });

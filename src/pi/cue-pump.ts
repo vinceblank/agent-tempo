@@ -7,7 +7,9 @@
  *
  * Pi has no reverse-RPC into a running session from Temporal, so (like the
  * existing adapters) we poll `pendingMessages` / `pendingReset` and ack via
- * `markDelivered` / `ackReset`.
+ * `markDelivered` / `ackReset`. T0.3 (#750): with an `intakeSource`, both
+ * reads collapse into ONE `pendingIntake` query per tick (legacy two-query
+ * fallback against pre-#750 workflows lives in `PiWorkflowClient.fetchIntake`).
  *
  * ── Reset intake (D14 + #677 PART B capability branch) ──
  * D14 (maintainer-ruled): reset = clean-wipe (fresh context, NO replay). Seeded
@@ -75,6 +77,17 @@ export interface CueSource {
 export interface ResetSource {
   fetchPendingReset(): Promise<PendingReset | null>;
   ackReset(resetId: string): Promise<void>;
+}
+
+/**
+ * T0.3 (#750) — combined per-tick intake (cues + pending reset in ONE
+ * Temporal query; was two). Satisfied by `PiWorkflowClient.fetchIntake`,
+ * which internally falls back to the legacy two-query pair against
+ * pre-#750 workflows. Transport-only optimization: the pump's intake
+ * ORDER (reset first, then cues) and ack semantics are unchanged.
+ */
+export interface IntakeSource {
+  fetchIntake(): Promise<{ messages: Message[]; pendingReset: PendingReset | null }>;
 }
 
 /** Resolves the CURRENT live Pi session at wipe time (re-acquired each tick — D11). */
@@ -163,6 +176,13 @@ export interface CuePumpOptions {
    * notice), then the cue intake. Absent → cue-only pump (legacy callers, tests).
    */
   resetSource?: ResetSource;
+  /**
+   * T0.3 (#750) — optional combined intake. When present, each tick issues ONE
+   * fetch for both cues and the pending reset instead of two queries; the
+   * pipeline below is otherwise identical (reset handled first, acks via
+   * `resetSource`/`source` unchanged). Absent → legacy per-intake fetches.
+   */
+  intakeSource?: IntakeSource;
   /** Live Pi session for the auto clean-wipe route (re-resolved each tick). */
   resolveSession?: SessionResolver;
   /**
@@ -188,6 +208,7 @@ export class CuePump {
   private readonly source: CueSource;
   private readonly resolveInjector: InjectorResolver;
   private readonly resetSource: ResetSource | null;
+  private readonly intakeSource: IntakeSource | null;
   private readonly resolveSession: SessionResolver;
   private readonly resolvePi: PiResolver;
   private readonly intervalMs: number;
@@ -211,6 +232,7 @@ export class CuePump {
     this.source = opts.source;
     this.resolveInjector = opts.resolveInjector;
     this.resetSource = opts.resetSource ?? null;
+    this.intakeSource = opts.intakeSource ?? null;
     this.resolveSession = opts.resolveSession ?? (() => null);
     this.resolvePi = opts.resolvePi ?? (() => null);
     this.intervalMs = opts.intervalMs ?? DEFAULT_POLL_MS;
@@ -250,10 +272,18 @@ export class CuePump {
 
   private async tickInner(): Promise<void> {
     try {
+      // T0.3 (#750): combined prefetch — ONE Temporal query serves both
+      // intakes (cues + pending reset) instead of two. Prefetching the cue
+      // list BEFORE the reset wipe is semantics-equivalent to the legacy
+      // fetch-after-wipe: `pendingMessages` is WORKFLOW-side state the
+      // Pi-side wipe never touches, and the cues are still injected AFTER
+      // the wipe below — they land in the fresh context exactly as before.
+      const intake = this.intakeSource ? await this.intakeSource.fetchIntake() : null;
+
       // (0) Reset intake FIRST — a wipe lands before any cue injected this tick.
       if (this.resetSource) {
         try {
-          await this.tickReset(this.resetSource);
+          await this.tickReset(this.resetSource, intake);
         } catch (err) {
           log('reset intake failed (cue intake continues):', err);
         }
@@ -267,7 +297,7 @@ export class CuePump {
       // a user message (which always wakes a turn). Once per cue.
       await this.maybeEscalate(injector);
 
-      const pending = await this.source.fetchPending();
+      const pending = intake ? intake.messages : await this.source.fetchPending();
       if (pending.length === 0) return;
 
       if (!injector) {
@@ -317,9 +347,17 @@ export class CuePump {
    *   3. session.newSession() avail → AUTO clean-wipe + ack (headless / session-capable).
    *   4. else pi.sendMessage avail  → operator notice (once per id) + ack (interactive).
    *   5. else                       → nothing attached yet; leave pending, retry.
+   *
+   * T0.3 (#750): when the pump prefetched a combined `intake` this tick, its
+   * `pendingReset` field is authoritative (including a known-empty `null` —
+   * no second ask); without one, query the legacy source here. Branch logic
+   * and the race-safe `ackReset(resetId)` id-match are IDENTICAL either way.
    */
-  private async tickReset(resetSource: ResetSource): Promise<void> {
-    const pr = await resetSource.fetchPendingReset();
+  private async tickReset(
+    resetSource: ResetSource,
+    intake: { pendingReset: PendingReset | null } | null,
+  ): Promise<void> {
+    const pr = intake ? intake.pendingReset : await resetSource.fetchPendingReset();
     if (!pr) {
       this.lastNotifiedResetId = null; // slot empty → forget the last notice
       return;
