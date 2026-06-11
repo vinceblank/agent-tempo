@@ -8,7 +8,7 @@ import { createTemporalNativeConnection } from './connection';
 import { createTemporalConnection } from './connection';
 import { createScheduleActivities } from './activities/schedule-fire';
 import { createOutboxActivities } from './activities/outbox';
-import { createMaestroActivities } from './activities/maestro';
+import { createMaestroActivities, type ObserverPresenceSource } from './activities/maestro';
 import type { IngestTokenRegistry } from './http/ingest-registry';
 import { actionCountingInterceptors } from './utils/action-counters';
 
@@ -74,6 +74,12 @@ export interface DualWorkers {
 export async function createWorkers(
   config: Config,
   ingestTokens?: IngestTokenRegistry,
+  /**
+   * T0.1 (#748) — late-wired SSE observer presence source for the maestro
+   * V2 refresh activity. The daemon constructs the holder before workers
+   * and fills `current` in once the AggregateRunner exists.
+   */
+  observerPresence?: ObserverPresenceSource,
 ): Promise<DualWorkers> {
   const connection = await createTemporalNativeConnection(config);
 
@@ -90,7 +96,10 @@ export async function createWorkers(
   // destroy path can revoke them. Same singleton the HTTP server validates
   // against (both run in this daemon process).
   const outboxActivities = createOutboxActivities(client, config, ingestTokens);
-  const maestroActivities = createMaestroActivities(client);
+  const maestroActivities = createMaestroActivities(client, {
+    costProfile: config.costProfile,
+    observerPresence,
+  });
 
   const workflowBundle = await getWorkflowBundle();
 

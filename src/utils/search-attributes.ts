@@ -59,6 +59,12 @@ export const MEMO_KEYS = {
   playerType: 'AgentTempoPlayerType',
   isConductor: 'AgentTempoIsConductor',
   part: 'AgentTempoPart',
+  // T0.1 (#748) — observation-path extension (v1.8-memo-observation-fields):
+  // lets the cloud-profile maestro scan build the full player row from
+  // visibility list results without any per-player workflow query.
+  workDir: 'AgentTempoWorkDir',
+  agentType: 'AgentTempoAgentType',
+  gitBranch: 'AgentTempoGitBranch',
 } as const;
 
 /**

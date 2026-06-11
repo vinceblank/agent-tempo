@@ -105,6 +105,12 @@ import { createSubscribe, type SubscribeDeps } from './subscribe';
 export interface CreateTempoClientOpts {
   subscribeDeps?: SubscribeDeps;
   taskQueue?: string;
+  /**
+   * T0.1 (#748) — cost profile threaded into maestro-hub workflow starts
+   * (`ensureMaestroSession`) so cloud daemons spawn cloud-profile hubs.
+   * Absent → 'local' behavior (byte-identical pre-#748 inputs).
+   */
+  costProfile?: 'local' | 'cloud';
 }
 
 // ── Helpers (module-private; shared with `with-spawn.ts` if needed via re-export) ──
@@ -1413,7 +1419,11 @@ export function createTempoClientCore(
           await client.workflow.start('agentMaestroWorkflow', {
             workflowId: maestroHubId,
             taskQueue: 'agent-tempo',
-            args: [{ ensemble }],
+            // T0.1 (#748) — thread the cost profile (see CreateTempoClientOpts).
+            args: [{
+              ensemble,
+              ...(opts.costProfile === 'cloud' ? { costProfile: 'cloud' as const } : {}),
+            }],
             workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
             searchAttributes: {
               AgentTempoEnsemble: [ensemble],

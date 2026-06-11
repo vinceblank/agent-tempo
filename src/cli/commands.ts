@@ -46,7 +46,13 @@ async function ensureMaestroWorkflow(client: Client, config: Config, ensemble: s
     await client.workflow.start('agentMaestroWorkflow', {
       workflowId: wfId,
       taskQueue: config.taskQueue,
-      args: [{ ensemble }],
+      // T0.1 (#748) — thread the cost profile so cloud maestros use the V2
+      // refresh + stretched/presence-gated cadence. Already-running
+      // maestros keep their old input until destroy/recreate or idle-exit.
+      args: [{
+        ensemble,
+        ...(config.costProfile === 'cloud' ? { costProfile: 'cloud' as const } : {}),
+      }],
       workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
       searchAttributes: {
         AgentTempoEnsemble: [ensemble],

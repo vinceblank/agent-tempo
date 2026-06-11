@@ -36,6 +36,10 @@ export default defineConfig({
       // #700 P1 — Pi extension install helper (install-by-reference idempotency,
       // no-loose-copy invariant, __dirname-direct path resolution). Pure fs.
       'tests/pi/**/*.test.ts',
+      // #748 — decision-path fence guard (pure fs source scan).
+      'tests/conformance/**/*.test.ts',
+      // #748 — pure workflow helpers (cadence resolver; no Temporal sandbox).
+      'tests/workflows/**/*.test.ts',
     ],
     environment: 'node',
     globals: false,

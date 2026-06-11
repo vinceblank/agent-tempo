@@ -16,6 +16,7 @@
 import { Client, type WorkflowHandle } from '@temporalio/client';
 import { createTemporalConnection } from '../connection';
 import { actionCountingInterceptors, withActionSource } from '../utils/action-counters';
+import { MEMO_KEYS } from '../utils/search-attributes';
 import { getConfig, sessionWorkflowId, type Config } from '../config';
 import {
   claimAttachmentUpdate,
@@ -163,6 +164,18 @@ export class PiWorkflowClient {
       taskQueue: this.config.taskQueue,
       workflowIdConflictPolicy: 'USE_EXISTING',
       args: [{ metadata: this.metadata, phase: 'booting' }],
+      // T0.5 (#747) / QA finding on #757 — seed the memo at birth like the
+      // other workflow.start sites, so a brand-new session created by a
+      // direct `pi -e` invocation is memo-readable in list results before
+      // its first workflow task runs (which re-upserts the same fields).
+      memo: {
+        ...(this.metadata.gitRoot ? { [MEMO_KEYS.gitRoot]: this.metadata.gitRoot } : {}),
+        ...(this.metadata.playerType ? { [MEMO_KEYS.playerType]: this.metadata.playerType } : {}),
+        [MEMO_KEYS.isConductor]: this.metadata.isConductor === true,
+        [MEMO_KEYS.workDir]: this.metadata.workDir,
+        [MEMO_KEYS.agentType]: this.metadata.agentType || 'claude',
+        ...(this.metadata.gitBranch ? { [MEMO_KEYS.gitBranch]: this.metadata.gitBranch } : {}),
+      },
     });
     return this.wfHandle;
   }

@@ -1,6 +1,15 @@
 import { Client, WorkflowHandle } from '@temporalio/client';
 import { SessionMetadata, AttachmentPhase } from '../types';
-import { getAttachmentPhase } from '../utils/search-attributes';
+import {
+  getAttachmentPhase,
+  getSearchAttrString,
+  getMemoString,
+  getWorkflowMetaString,
+  getIsConductor,
+  getPlayerType,
+  getPart,
+  MEMO_KEYS,
+} from '../utils/search-attributes';
 import { getActivityStateQuery } from '../workflows/signals';
 import { queryHandleWithTimeout } from '../utils/query-timeout';
 import {
@@ -19,6 +28,13 @@ const SESSION_LIST_QUERY = `WorkflowType = "agentSessionWorkflow" AND ExecutionS
  * consistent and may be missing or stale.
  *
  * Shared by activity files (outbox, schedule-fire) and the tools layer.
+ *
+ * DECISION-PATH FENCE (#748): this resolver feeds DECISION paths (outbox
+ * delivery addressing, schedule fires, tool targets). It must keep its
+ * direct per-session `getMetadata` queries — do NOT migrate it to the
+ * eventually-consistent SA/memo read path. Observation-only scans belong
+ * in `scanEnsembleSessionsCloud`. Enforced by
+ * tests/conformance/decision-path-fence.test.ts.
  *
  * **Deadline (#336/#529):** the visibility iterator is bounded by
  * `VISIBILITY_DEADLINES_MS.resolveSession` (default 10s). On timeout,
@@ -92,6 +108,125 @@ export interface EnsembleSessionInfo {
   lastActivityAt?: string;
 }
 
+/** Escape a value for use in Temporal visibility query strings (mirrors core.ts). */
+function sanitizeQueryValue(value: string): string {
+  return value.replace(/["\\\n\r]/g, '');
+}
+
+/**
+ * T0.1 (#748) — cloud-profile ensemble scan. Observation path ONLY (see the
+ * DECISION-PATH FENCE on {@link resolveSession}).
+ *
+ * Differences vs the legacy {@link scanEnsembleSessions}:
+ *   - The visibility query is **ensemble-scoped** via the `AgentTempoEnsemble`
+ *     filter SA — no more cluster-wide list + per-session `getMetadata`
+ *     pre-filtering (the unfiltered scan was the dominant idle-burn driver).
+ *   - For v1.8+ runs (memo-complete: `AgentTempoWorkDir` present), the entire
+ *     player row is read from the list result (SAs + memo) — **zero**
+ *     per-player queries except the BPM `getActivityState` query, which is
+ *     intentionally kept per the architect's ruling (deriving BPM from phase
+ *     transitions would change the metric's meaning).
+ *   - Pre-v1.8 runs (no observation memo) fall back to the legacy per-player
+ *     `getMetadata` + `getPart` queries — cost shrinks as old runs cycle out.
+ *
+ * Staleness: SA/memo reads are eventually consistent (tens of seconds worst
+ * case under backlog) — acceptable for the observation path per the design
+ * addendum §B; the aggregate's confirm-on-change hook re-validates phase
+ * transitions with a direct query before emitting SSE events.
+ */
+export async function scanEnsembleSessionsCloud(
+  client: Client,
+  ensemble: string,
+  log: (...args: unknown[]) => void = () => {},
+): Promise<EnsembleSessionInfo[]> {
+  const sessions: EnsembleSessionInfo[] = [];
+  const query =
+    `${SESSION_LIST_QUERY} AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}"`;
+
+  try {
+    for await (const workflow of iterateWithDeadline(
+      client.workflow.list({ query }),
+      VISIBILITY_DEADLINES_MS.scanEnsembleSessions,
+      'scanEnsembleSessionsCloud',
+    )) {
+      try {
+        const phase = getAttachmentPhase(workflow);
+        const playerId =
+          getSearchAttrString(workflow, 'AgentTempoPlayerId') ?? workflow.workflowId;
+        const hostname = getSearchAttrString(workflow, 'AgentTempoHostname') ?? '';
+
+        // v1.8-memo-observation-fields runs carry workDir on the memo — use
+        // its presence as the "memo-complete row" discriminator.
+        const workDir = getMemoString(workflow, MEMO_KEYS.workDir);
+        let row: Omit<EnsembleSessionInfo, 'workflowId' | 'activityCount' | 'lastActivityAt' | 'phase'>;
+        if (workDir !== undefined) {
+          row = {
+            playerId,
+            part: getPart(workflow) ?? '',
+            hostname,
+            workDir,
+            gitRoot: getWorkflowMetaString(workflow, MEMO_KEYS.gitRoot),
+            gitBranch: getMemoString(workflow, MEMO_KEYS.gitBranch),
+            isConductor: getIsConductor(workflow)
+              ?? (workflow.workflowId?.endsWith('-conductor') ?? false),
+            agentType: getMemoString(workflow, MEMO_KEYS.agentType) || 'claude',
+            playerType: getPlayerType(workflow),
+          };
+        } else {
+          // Legacy run (pre-v1.8 memo) — per-player query fallback, bounded
+          // (#433). Same two queries the legacy scan used.
+          const handle = client.workflow.getHandle(workflow.workflowId);
+          const metadata = await queryHandleWithTimeout<SessionMetadata>(handle, 'getMetadata');
+          const part = await queryHandleWithTimeout<string>(handle, 'getPart');
+          row = {
+            playerId: metadata.playerId,
+            part,
+            hostname: metadata.hostname,
+            workDir: metadata.workDir,
+            gitRoot: metadata.gitRoot,
+            gitBranch: metadata.gitBranch,
+            isConductor: metadata.isConductor,
+            agentType: metadata.agentType || 'claude',
+            playerType: metadata.playerType,
+          };
+        }
+
+        // BPM source — kept as a direct per-player query at the stretched
+        // cadence (architect's ruling; see design addendum §C(b)). Best-effort.
+        let activityCount: number | undefined;
+        let lastActivityAt: string | undefined;
+        try {
+          const handle = client.workflow.getHandle(workflow.workflowId);
+          const activity = await queryHandleWithTimeout(handle, getActivityStateQuery);
+          activityCount = activity.activityCount;
+          lastActivityAt = activity.lastActivityAt;
+        } catch {
+          // Session predates W2 or worker wedged — contributes zero tempo.
+        }
+
+        sessions.push({
+          workflowId: workflow.workflowId,
+          ...row,
+          phase,
+          activityCount,
+          lastActivityAt,
+        });
+      } catch {
+        // Workflow may have just completed, or a legacy-fallback query timed
+        // out (#433) — skip this row; the next tick fills it in.
+      }
+    }
+  } catch (err) {
+    if (isVisibilityTimeout(err)) {
+      log(`scanEnsembleSessionsCloud: ${err.message} — returning partial (${sessions.length} sessions)`);
+    } else {
+      throw err;
+    }
+  }
+
+  return sessions;
+}
+
 /**
  * Scan all running session workflows in an ensemble.
  * Returns metadata + part for each session. Shared by the ensemble MCP tool
@@ -103,6 +238,10 @@ export interface EnsembleSessionInfo {
  * warn log. This site is **partial-tolerant by design** — the caller
  * (maestro refresh, ensemble MCP tool) treats the result as a
  * best-effort snapshot that the next tick / re-invocation will fill in.
+ *
+ * T0.1 (#748): this legacy shape is the `costProfile: 'local'` path —
+ * byte-identical to pre-#748 behavior. The cloud profile uses
+ * {@link scanEnsembleSessionsCloud}.
  */
 export async function scanEnsembleSessions(
   client: Client,

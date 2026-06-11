@@ -29,6 +29,13 @@ export const ENV = {
    */
   ACTION_LOG_INTERVAL_MS: 'AGENT_TEMPO_ACTION_LOG_INTERVAL_MS',
   /**
+   * T0.1 (#748) — cost profile (`local` | `cloud`). `local` (default) keeps
+   * cadences/read-paths byte-identical to pre-#748; `cloud` enables the
+   * Temporal Cloud action-cost optimizations. Precedence: env > config.json
+   * > `'local'`.
+   */
+  COST_PROFILE: 'AGENT_TEMPO_COST_PROFILE',
+  /**
    * #131 Phase C — claude-api adapter model override. Recruit-arg takes
    * precedence; this env var is the next fallback before the constants-pinned
    * default (`claude-opus-4-7`). Ignored by other adapters.
@@ -209,6 +216,18 @@ export function resolvePiRole(env: NodeJS.ProcessEnv = process.env): PiRole {
 // is unconditional in v0.25.0-beta.1; the rollback flag was an emergency
 // safety net during the lifecycle rebuild and is no longer needed.
 
+/**
+ * T0.1 (#748) — cost-profile axis from the cost re-architecture
+ * (docs/design/temporal-cost-rearchitecture.md, "Constraint posture").
+ * `'local'` (default) keeps every cadence/read-path byte-identical to the
+ * pre-#748 behavior — Temporal actions are free on a local dev server and
+ * the snappy 5s maestro refresh is a feature there. `'cloud'` flips the
+ * cost-sensitive knobs: SA/memo-based maestro scans, stretched +
+ * presence-gated refresh cadence, confirm-on-change phase reads.
+ */
+export const COST_PROFILES = ['local', 'cloud'] as const;
+export type CostProfile = (typeof COST_PROFILES)[number];
+
 export interface Config {
   temporalAddress: string;
   temporalNamespace: string;
@@ -219,6 +238,8 @@ export interface Config {
   claudeBin?: string;
   taskQueue: string;
   ensemble: string;
+  /** T0.1 (#748) — see {@link CostProfile}. Default `'local'`. */
+  costProfile: CostProfile;
 }
 
 /** Persisted config file fields (stored in ~/.agent-tempo/config.json). */
@@ -250,6 +271,8 @@ export interface PersistedConfig {
    * env-var-only, never persisted).
    */
   readToken?: string;
+  /** T0.1 (#748) — cost profile. Env `AGENT_TEMPO_COST_PROFILE` wins. */
+  costProfile?: CostProfile;
 }
 
 // ── Dev profile (ADR 0014 §5) ──
@@ -757,6 +780,23 @@ export function getConfig(overrides: CliOverrides = {}): Config {
     return cliVal || readEnvWithDevCarveOut(envKey) || fileVal || temporalCliVal || undefined;
   };
 
+  /**
+   * T0.1 (#748) — resolve the cost profile: env > config.json > 'local'.
+   * Unknown values fall back to 'local' (the byte-identical default) with
+   * a one-time warning rather than throwing — a typo'd profile must not
+   * brick every CLI/daemon entry point.
+   */
+  const resolveCostProfile = (fileVal: string | undefined): CostProfile => {
+    const raw = process.env[ENV.COST_PROFILE] || fileVal;
+    if (raw === undefined || raw === '') return 'local';
+    if ((COST_PROFILES as readonly string[]).includes(raw)) return raw as CostProfile;
+    console.error(
+      `[agent-tempo:config] unknown ${ENV.COST_PROFILE}="${raw}" — falling back to 'local' ` +
+      `(valid: ${COST_PROFILES.join(' | ')})`,
+    );
+    return 'local';
+  };
+
   const config: Config = {
     temporalAddress: resolve(
       overrides.temporalAddress, ENV.TEMPORAL_ADDRESS,
@@ -797,6 +837,7 @@ export function getConfig(overrides: CliOverrides = {}): Config {
     // env-var override still wins.
     taskQueue: process.env[ENV.TASK_QUEUE] ?? (isDevMode() ? DEV_TASK_QUEUE : PROD_TASK_QUEUE),
     ensemble: process.env[ENV.ENSEMBLE] ?? 'default',
+    costProfile: resolveCostProfile(configFile.costProfile),
   };
 
   const ensembleError = validateEnsembleName(config.ensemble);
@@ -868,6 +909,14 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
   const tlsKey = resolveWithSource('temporalTlsKeyPath', overrides.temporalTlsKeyPath, ENV.TEMPORAL_TLS_KEY_PATH, configFile.temporalTlsKeyPath, temporalCli.temporalTlsKeyPath);
   const defaultAgent = resolveWithSource('defaultAgent', overrides.defaultAgent, ENV.DEFAULT_AGENT, configFile.defaultAgent, undefined, 'claude');
   const claudeBin = resolveWithSource('claudeBin', undefined, ENV.CLAUDE_BIN, configFile.claudeBin, undefined);
+  // T0.1 (#748) — same env > config.json > 'local' chain as getConfig(),
+  // with source attribution for `config show`. Unknown values fall back to
+  // 'local' (getConfig's resolver logs the warning).
+  const costProfileRaw = resolveWithSource('costProfile', undefined, ENV.COST_PROFILE, configFile.costProfile, undefined, 'local');
+  const costProfile: CostProfile =
+    (COST_PROFILES as readonly string[]).includes(costProfileRaw.value ?? '')
+      ? (costProfileRaw.value as CostProfile)
+      : 'local';
 
   return {
     config: {
@@ -880,6 +929,7 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
       claudeBin: claudeBin.value,
       taskQueue: process.env[ENV.TASK_QUEUE] ?? (isDevMode() ? DEV_TASK_QUEUE : PROD_TASK_QUEUE),
       ensemble: process.env[ENV.ENSEMBLE] ?? 'default',
+      costProfile,
     },
     sources: {
       temporalAddress: address.source,
@@ -889,6 +939,7 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
       temporalTlsKeyPath: tlsKey.source,
       defaultAgent: defaultAgent.source,
       claudeBin: claudeBin.source,
+      costProfile: costProfileRaw.source,
     },
   };
 }

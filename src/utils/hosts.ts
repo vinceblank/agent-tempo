@@ -186,6 +186,11 @@ async function describeQueuePollers(
  * mismatched daemon/maestro pair is a deployment bug worth surfacing
  * as missing-profile (which still lets the listing succeed) rather
  * than masking with extra RPCs.
+ *
+ * DECISION-PATH FENCE (#748): `recruit`'s host preflight decides whether a
+ * spawn is routed to a host — it MUST stay a direct query. Do NOT migrate
+ * it to the eventually-consistent SA/memo read path (observation-only).
+ * Enforced by tests/conformance/decision-path-fence.test.ts.
  */
 async function fetchHostProfiles(client: Client): Promise<Record<string, HostProfile> | null> {
   try {

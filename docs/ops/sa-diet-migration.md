@@ -81,6 +81,33 @@ results (start-time memos always do; agent-tempo seeds the memo at
 integration suite asserts list-result memo behavior against the bundled
 test server.
 
+## T0.1 — the `costProfile` axis (#748)
+
+T0.1 (same release) adds `costProfile: 'local' | 'cloud'`
+(`AGENT_TEMPO_COST_PROFILE` env > `config.json` > default `'local'`):
+
+- **`local`** (default): byte-identical to pre-T0.1 behavior — 5s maestro
+  refresh, legacy scan, no confirm-on-change. Right for dev servers where
+  actions are free and snappy refresh is a feature.
+- **`cloud`**: maestro refresh uses the SA/memo scan (ensemble-scoped, zero
+  per-player queries for v1.8+ runs except the BPM `getActivityState`
+  read), cadence stretches 5s → 20s (60s when the daemon has zero SSE
+  subscribers), and the daemon aggregate confirms SA-sourced phase
+  transitions with one direct query before emitting SSE events.
+
+**⚠ Flipping `costProfile=cloud` does not move the bill until maestros
+restart.** Maestro workflows inherit their start-time input across
+continue-as-new, so an already-running (per-ensemble or global) maestro
+stays on the old 5s/V1 path until it is destroyed/recreated — or until its
+natural 5-minute idle exit lets the next `ensure` restart it with the new
+input. To apply immediately: `agent-tempo shutdown` + `restore` the
+ensemble (or terminate the `agent-maestro-*` workflows; the next CLI/daemon
+touch recreates them). The same applies in reverse when flipping back to
+`local`. T0.1 also extends the workflow memo with
+`AgentTempoWorkDir`/`AgentTempoAgentType`/`AgentTempoGitBranch` — written
+by v1.8+ runs regardless of profile (zero extra actions; same single
+`upsertMemo` call).
+
 ## Rollback
 
 Downgrading the daemon/CLI to a pre-v1.8 build is safe: pre-v1.8 code never
