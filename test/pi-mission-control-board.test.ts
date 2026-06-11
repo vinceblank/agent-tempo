@@ -179,3 +179,51 @@ describe('mission-control — parseInnerSse', () => {
     expect(frames).to.have.length(0);
   });
 });
+
+describe('mission-control board — suspension flags (#752)', () => {
+  it('initBoard starts unsuspended', () => {
+    const m = initBoard('ens');
+    expect(m.paused).to.equal(false);
+    expect(m.held).to.equal(false);
+  });
+
+  it('snapshot seeds paused/held from payload.flags', () => {
+    const m = initBoard('ens');
+    applyTempoEvent(m, ev('snapshot', {
+      players: [],
+      state: 'online',
+      flags: { paused: true, held: true },
+    }));
+    expect(m.paused).to.equal(true);
+    expect(m.held).to.equal(true);
+  });
+
+  it("snapshot state === 'paused' counts even when flags.paused lags (stale projection)", () => {
+    const m = initBoard('ens');
+    applyTempoEvent(m, ev('snapshot', {
+      players: [],
+      state: 'paused',
+      flags: { paused: false, held: false },
+    }));
+    expect(m.paused).to.equal(true);
+  });
+
+  it('snapshot without flags (pre-flags payload) leaves the board unsuspended', () => {
+    const m = initBoard('ens');
+    applyTempoEvent(m, ev('snapshot', { players: [] }));
+    expect(m.paused).to.equal(false);
+    expect(m.held).to.equal(false);
+  });
+
+  it('flags.changed flips paused/held live and bumps revision', () => {
+    const m = initBoard('ens');
+    const r0 = m.revision;
+    applyTempoEvent(m, ev('flags.changed', { ensemble: 'ens', paused: true, held: false, at: 't' }));
+    expect(m.paused).to.equal(true);
+    expect(m.held).to.equal(false);
+    expect(m.revision).to.be.greaterThan(r0);
+    applyTempoEvent(m, ev('flags.changed', { ensemble: 'ens', paused: false, held: true, at: 't' }));
+    expect(m.paused).to.equal(false);
+    expect(m.held).to.equal(true);
+  });
+});

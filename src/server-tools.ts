@@ -128,7 +128,7 @@ export function buildAllTempoTools(opts: RegisterAllTempoToolsOpts): TempoToolDe
     buildSaveLineupTool(client, config, getPlayerId, isConductor),
     buildLoadLineupTool(client, config, getPlayerId, ownAgentType, handle, setPlayerId, isConductor),
     buildAgentTypesTool(),
-    buildWhoAmITool(handle, getPlayerId),
+    buildWhoAmITool(client, config, handle, getPlayerId),
     buildBroadcastTool(client, config, getPlayerId, handle),
     buildRecallTool(handle, getPlayerId),
     buildReleaseTool(client, config, getPlayerId, handle),

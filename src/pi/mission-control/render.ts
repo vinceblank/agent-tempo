@@ -77,7 +77,21 @@ function oneLine(s: string, max: number): string {
 export function renderBoard(model: BoardModel, localHost?: string): string[] {
   const ids = sortedPlayerIds(model);
   const lines: string[] = [];
-  lines.push(`MISSION CONTROL · ${model.ensemble} · ${ids.length} player${ids.length === 1 ? '' : 's'}`);
+  // #752 — suspension marker rides the header AND gets its own loud line so
+  // a paused ensemble can't sit unnoticed (the 5h silent-wedge incident).
+  let marker = '';
+  let what = '';
+  if (model.paused) {
+    marker = ' · [PAUSED]';
+    what = model.held ? 'ENSEMBLE PAUSED + HELD players' : 'ENSEMBLE PAUSED';
+  } else if (model.held) {
+    marker = ' · [HELD]';
+    what = 'HELD players';
+  }
+  lines.push(`MISSION CONTROL · ${model.ensemble} · ${ids.length} player${ids.length === 1 ? '' : 's'}${marker}`);
+  if (what) {
+    lines.push(`!! ${what} — cues queue silently; resume: play (release: true frees held players)`);
+  }
 
   if (ids.length === 0) {
     lines.push('  (no players — waiting for the ensemble…)');
