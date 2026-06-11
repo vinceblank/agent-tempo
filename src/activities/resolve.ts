@@ -19,8 +19,9 @@ import {
   VISIBILITY_DEADLINES_MS,
 } from '../utils/visibility-deadline';
 
-/** Shared query for listing running session workflows. */
-const SESSION_LIST_QUERY = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"`;
+/** Shared query for listing running session workflows. Exported for the
+ *  ensemble-scoped variants in `client/core.ts` (#751). */
+export const SESSION_LIST_QUERY = `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"`;
 
 /**
  * Resolve a session by player name.

@@ -62,7 +62,7 @@ import type {
   CoatCheckPutResult,
   CoatCheckGetInput,
 } from '../workflows/maestro-signals';
-import { resolveSession, scanEnsembleSessions } from '../activities/resolve';
+import { resolveSession, scanEnsembleSessions, SESSION_LIST_QUERY } from '../activities/resolve';
 import { restoreOrphansOnce, type RestoreOrphansSummary } from '../reconcile/orphans';
 import { queryHandleWithTimeout, DEFAULT_QUERY_TIMEOUT_MS } from '../utils/query-timeout';
 import { iterateWithDeadline, isVisibilityTimeout } from '../utils/visibility-deadline';
@@ -1288,8 +1288,7 @@ export function createTempoClientCore(
       if (opts.costProfile === 'cloud') {
         try {
           const query =
-            `WorkflowType = "agentSessionWorkflow" AND ExecutionStatus = "Running"` +
-            ` AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}"`;
+            `${SESSION_LIST_QUERY} AND AgentTempoEnsemble = "${sanitizeQueryValue(ensemble)}"`;
           for await (const wf of listWorkflows({ query })) {
             if (getSearchAttrString(wf, 'AgentTempoPlayerId') === 'maestro') continue;
             try {

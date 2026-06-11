@@ -48,6 +48,12 @@ function isWireAgentType(s: string): s is PlayerSummaryV1['agentType'] {
  */
 export const SNAPSHOT_CHAT_LIMIT = 50;
 
+/** Shared empty-chat sentinel — the `skipChat` stand-in and the fan-out
+ *  soft-fail default must stay the same shape (#751). */
+const EMPTY_CHAT = Object.freeze(
+  { messages: [], total: 0, hasMore: false, hasConductor: false },
+);
+
 /** Thrown when the ensemble doesn't exist; route handler maps to 404. */
 export class EnsembleNotFoundError extends Error {
   constructor(public readonly ensemble: string) {
@@ -211,7 +217,7 @@ export async function buildEnsembleSnapshot(
   const fanned = await fanOut({
     players: () => client.getPlayers(ensemble),
     chat: opts.skipChat
-      ? async () => ({ messages: [], total: 0, hasMore: false, hasConductor: false })
+      ? async () => EMPTY_CHAT
       : () => client.getEnsembleChat(ensemble, 0, SNAPSHOT_CHAT_LIMIT),
     schedules: () => client.getSchedules(ensemble),
     paused: () => client.isMaestroPaused(ensemble),
@@ -234,7 +240,7 @@ export async function buildEnsembleSnapshot(
   );
   const players = playerInfos.map((p, i) => toPlayerSummaryV1(p, wireMetas[i]));
 
-  const chat = fanned.chat ?? { messages: [], total: 0, hasMore: false, hasConductor: false };
+  const chat = fanned.chat ?? EMPTY_CHAT;
   const schedules = fanned.schedules ?? [];
   const paused = fanned.paused === true;
   const held = fanned.held === true;
