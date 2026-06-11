@@ -38,6 +38,7 @@ function baseConfig(): Config {
     taskQueue: 'agent-tempo',
     ensemble: 'bootstrap-mocha-test',
     defaultAgent: 'claude',
+    costProfile: 'local',
   };
 }
 

@@ -108,6 +108,13 @@ export interface MaestroActivityOptions {
 
 /** Activity interface — used by proxyActivities in the Maestro workflow. */
 export interface MaestroActivities {
+  /**
+   * Legacy V1 refresh — the `costProfile: 'local'` path AND the replay
+   * path for every maestro started before #748.
+   * TODO(next major, #748): remove once the minimum deployment age
+   * exceeds the longest-lived pre-#748 maestro history (they replay V1);
+   * remove together with the V1 branch in workflows/maestro.ts.
+   */
   refreshEnsembleState(ensemble: string): Promise<MaestroPlayerInfo[]>;
   /**
    * T0.1 (#748) — additive V2: called only by maestros started with

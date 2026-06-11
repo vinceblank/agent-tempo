@@ -8,6 +8,7 @@ import {
   getIsConductor,
   getPlayerType,
   getPart,
+  sanitizeQueryValue,
   MEMO_KEYS,
 } from '../utils/search-attributes';
 import { getActivityStateQuery } from '../workflows/signals';
@@ -108,11 +109,6 @@ export interface EnsembleSessionInfo {
   lastActivityAt?: string;
 }
 
-/** Escape a value for use in Temporal visibility query strings (mirrors core.ts). */
-function sanitizeQueryValue(value: string): string {
-  return value.replace(/["\\\n\r]/g, '');
-}
-
 /**
  * T0.1 (#748) — cloud-profile ensemble scan. Observation path ONLY (see the
  * DECISION-PATH FENCE on {@link resolveSession}).
@@ -150,6 +146,7 @@ export async function scanEnsembleSessionsCloud(
       'scanEnsembleSessionsCloud',
     )) {
       try {
+        const handle = client.workflow.getHandle(workflow.workflowId);
         const phase = getAttachmentPhase(workflow);
         const playerId =
           getSearchAttrString(workflow, 'AgentTempoPlayerId') ?? workflow.workflowId;
@@ -175,7 +172,6 @@ export async function scanEnsembleSessionsCloud(
         } else {
           // Legacy run (pre-v1.8 memo) — per-player query fallback, bounded
           // (#433). Same two queries the legacy scan used.
-          const handle = client.workflow.getHandle(workflow.workflowId);
           const metadata = await queryHandleWithTimeout<SessionMetadata>(handle, 'getMetadata');
           const part = await queryHandleWithTimeout<string>(handle, 'getPart');
           row = {
@@ -191,26 +187,9 @@ export async function scanEnsembleSessionsCloud(
           };
         }
 
-        // BPM source — kept as a direct per-player query at the stretched
-        // cadence (architect's ruling; see design addendum §C(b)). Best-effort.
-        let activityCount: number | undefined;
-        let lastActivityAt: string | undefined;
-        try {
-          const handle = client.workflow.getHandle(workflow.workflowId);
-          const activity = await queryHandleWithTimeout(handle, getActivityStateQuery);
-          activityCount = activity.activityCount;
-          lastActivityAt = activity.lastActivityAt;
-        } catch {
-          // Session predates W2 or worker wedged — contributes zero tempo.
-        }
-
-        sessions.push({
-          workflowId: workflow.workflowId,
-          ...row,
-          phase,
-          activityCount,
-          lastActivityAt,
-        });
+        // BPM fields filled in below — kept out of the enumeration loop so
+        // per-player query latency can't eat the visibility deadline.
+        sessions.push({ workflowId: workflow.workflowId, ...row, phase });
       } catch {
         // Workflow may have just completed, or a legacy-fallback query timed
         // out (#433) — skip this row; the next tick fills it in.
@@ -223,6 +202,24 @@ export async function scanEnsembleSessionsCloud(
       throw err;
     }
   }
+
+  // BPM source — kept as a direct per-player query at the stretched cadence
+  // (architect's ruling; see design addendum §C(b)). Fired in PARALLEL after
+  // enumeration: same query count, but N bounded queries (≤2s each) overlap
+  // instead of stacking sequentially against the scan's wall clock.
+  // Best-effort per player — a wedged session contributes zero tempo.
+  await Promise.all(sessions.map(async (s) => {
+    try {
+      const activity = await queryHandleWithTimeout(
+        client.workflow.getHandle(s.workflowId),
+        getActivityStateQuery,
+      );
+      s.activityCount = activity.activityCount;
+      s.lastActivityAt = activity.lastActivityAt;
+    } catch {
+      // Session predates W2 or worker wedged — contributes zero tempo.
+    }
+  }));
 
   return sessions;
 }

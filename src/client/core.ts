@@ -76,6 +76,7 @@ import {
   getEnsembleName,
   getIsConductor,
   getPlayerType,
+  sanitizeQueryValue,
   MEMO_KEYS,
 } from '../utils/search-attributes';
 import type {
@@ -114,12 +115,6 @@ export interface CreateTempoClientOpts {
 }
 
 // ── Helpers (module-private; shared with `with-spawn.ts` if needed via re-export) ──
-
-/** Escape a value for use in Temporal visibility query strings.
- *  Strips characters that could break or inject into the query. */
-function sanitizeQueryValue(value: string): string {
-  return value.replace(/["\\\n\r]/g, '');
-}
 
 /** Shared unknown-error → string helper for summary `error` fields. */
 function errMsg(err: unknown): string {

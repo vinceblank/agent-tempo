@@ -228,6 +228,22 @@ export function resolvePiRole(env: NodeJS.ProcessEnv = process.env): PiRole {
 export const COST_PROFILES = ['local', 'cloud'] as const;
 export type CostProfile = (typeof COST_PROFILES)[number];
 
+/**
+ * T0.1 (#748) — validate a raw cost-profile value (env or config.json).
+ * Unknown values fall back to 'local' (the byte-identical default) with a
+ * warning rather than throwing — a typo'd profile must not brick every
+ * CLI/daemon entry point. Shared by `getConfig` and `getConfigWithSources`.
+ */
+function parseCostProfile(raw: string | undefined): CostProfile {
+  if (raw === undefined || raw === '') return 'local';
+  if ((COST_PROFILES as readonly string[]).includes(raw)) return raw as CostProfile;
+  console.error(
+    `[agent-tempo:config] unknown ${ENV.COST_PROFILE}="${raw}" — falling back to 'local' ` +
+    `(valid: ${COST_PROFILES.join(' | ')})`,
+  );
+  return 'local';
+}
+
 export interface Config {
   temporalAddress: string;
   temporalNamespace: string;
@@ -780,22 +796,6 @@ export function getConfig(overrides: CliOverrides = {}): Config {
     return cliVal || readEnvWithDevCarveOut(envKey) || fileVal || temporalCliVal || undefined;
   };
 
-  /**
-   * T0.1 (#748) — resolve the cost profile: env > config.json > 'local'.
-   * Unknown values fall back to 'local' (the byte-identical default) with
-   * a one-time warning rather than throwing — a typo'd profile must not
-   * brick every CLI/daemon entry point.
-   */
-  const resolveCostProfile = (fileVal: string | undefined): CostProfile => {
-    const raw = process.env[ENV.COST_PROFILE] || fileVal;
-    if (raw === undefined || raw === '') return 'local';
-    if ((COST_PROFILES as readonly string[]).includes(raw)) return raw as CostProfile;
-    console.error(
-      `[agent-tempo:config] unknown ${ENV.COST_PROFILE}="${raw}" — falling back to 'local' ` +
-      `(valid: ${COST_PROFILES.join(' | ')})`,
-    );
-    return 'local';
-  };
 
   const config: Config = {
     temporalAddress: resolve(
@@ -837,7 +837,7 @@ export function getConfig(overrides: CliOverrides = {}): Config {
     // env-var override still wins.
     taskQueue: process.env[ENV.TASK_QUEUE] ?? (isDevMode() ? DEV_TASK_QUEUE : PROD_TASK_QUEUE),
     ensemble: process.env[ENV.ENSEMBLE] ?? 'default',
-    costProfile: resolveCostProfile(configFile.costProfile),
+    costProfile: parseCostProfile(process.env[ENV.COST_PROFILE] || configFile.costProfile),
   };
 
   const ensembleError = validateEnsembleName(config.ensemble);
@@ -910,13 +910,10 @@ export function getConfigWithSources(overrides: CliOverrides = {}): ConfigWithSo
   const defaultAgent = resolveWithSource('defaultAgent', overrides.defaultAgent, ENV.DEFAULT_AGENT, configFile.defaultAgent, undefined, 'claude');
   const claudeBin = resolveWithSource('claudeBin', undefined, ENV.CLAUDE_BIN, configFile.claudeBin, undefined);
   // T0.1 (#748) — same env > config.json > 'local' chain as getConfig(),
-  // with source attribution for `config show`. Unknown values fall back to
-  // 'local' (getConfig's resolver logs the warning).
+  // with source attribution for `config show`; validation shared via
+  // parseCostProfile.
   const costProfileRaw = resolveWithSource('costProfile', undefined, ENV.COST_PROFILE, configFile.costProfile, undefined, 'local');
-  const costProfile: CostProfile =
-    (COST_PROFILES as readonly string[]).includes(costProfileRaw.value ?? '')
-      ? (costProfileRaw.value as CostProfile)
-      : 'local';
+  const costProfile = parseCostProfile(costProfileRaw.value);
 
   return {
     config: {

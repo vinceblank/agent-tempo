@@ -68,6 +68,16 @@ export const MEMO_KEYS = {
 } as const;
 
 /**
+ * Escape a value for use in Temporal visibility query strings — strips
+ * characters that could break or inject into the query. Single shared
+ * implementation (#748 consolidated the copies in client/core.ts,
+ * reconcile/orphans.ts, and activities/resolve.ts).
+ */
+export function sanitizeQueryValue(value: string): string {
+  return value.replace(/["\\\n\r]/g, '');
+}
+
+/**
  * Read the first element of a search-attribute array as a string.
  *
  * Returns `undefined` when any of these holds:
