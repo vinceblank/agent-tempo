@@ -45,6 +45,23 @@ export interface WorkflowMetaCarrier extends SearchAttributeCarrier {
 }
 
 /**
+ * Canonical memo key names (T0.5, #747) — single registry shared by every
+ * write site (session workflow, the five `client.workflow.start({ memo })`
+ * seeds) and the dual-read helpers below, so a key can never silently
+ * drift between writer and reader. Wire-stable: renaming a key is a
+ * breaking change (docs/WIRE-PROTOCOL.md §Workflow memo).
+ *
+ * This module is intentionally dependency-free (only a type import), so
+ * the workflow bundle can import these constants safely.
+ */
+export const MEMO_KEYS = {
+  gitRoot: 'AgentTempoGitRoot',
+  playerType: 'AgentTempoPlayerType',
+  isConductor: 'AgentTempoIsConductor',
+  part: 'AgentTempoPart',
+} as const;
+
+/**
  * Read the first element of a search-attribute array as a string.
  *
  * Returns `undefined` when any of these holds:
@@ -112,6 +129,10 @@ export function getMemoBool(
 /**
  * Dual-read a string field: memo first (runs started on or after the
  * v1.8-sa-diet patch), legacy search attribute as fallback (older runs).
+ *
+ * TODO(next major): remove the SA fallback chain here and in
+ * {@link getWorkflowMetaBool}, and drop `LEGACY_SEARCH_ATTRIBUTES` in
+ * `src/cli/sa-preflight.ts` — see #747 and docs/ops/sa-diet-migration.md.
  */
 export function getWorkflowMetaString(
   carrier: WorkflowMetaCarrier,
@@ -175,7 +196,7 @@ export function getEnsembleName(
 export function getIsConductor(
   carrier: WorkflowMetaCarrier,
 ): boolean | undefined {
-  return getWorkflowMetaBool(carrier, 'AgentTempoIsConductor');
+  return getWorkflowMetaBool(carrier, MEMO_KEYS.isConductor);
 }
 
 /**
@@ -187,7 +208,7 @@ export function getIsConductor(
 export function getPlayerType(
   carrier: WorkflowMetaCarrier,
 ): string | undefined {
-  return getWorkflowMetaString(carrier, 'AgentTempoPlayerType');
+  return getWorkflowMetaString(carrier, MEMO_KEYS.playerType);
 }
 
 /**
@@ -200,5 +221,5 @@ export function getPlayerType(
 export function getPart(
   carrier: WorkflowMetaCarrier,
 ): string | undefined {
-  return getMemoString(carrier, 'AgentTempoPart');
+  return getMemoString(carrier, MEMO_KEYS.part);
 }

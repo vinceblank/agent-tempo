@@ -76,6 +76,7 @@ import {
   getEnsembleName,
   getIsConductor,
   getPlayerType,
+  MEMO_KEYS,
 } from '../utils/search-attributes';
 import type {
   TempoClientCore,
@@ -278,9 +279,10 @@ export function createTempoClientCore(
           const entry = ensembleMap.get(name) || { count: 0, hasConductor: false };
           entry.count++;
 
-          // Preferred: AgentTempoIsConductor search attribute (canonical, queryable).
-          // Fallback: workflow ID convention — covers the brief window after a
-          // conductor spawn before the search attribute is indexed.
+          // Preferred: memo `AgentTempoIsConductor` (v1.8 SA diet) with
+          // legacy-SA fallback via the dual-read helper. Final fallback:
+          // workflow ID convention — covers the brief window after a
+          // conductor spawn before visibility propagates.
           const isConductorFromSA = getIsConductor(wf) === true;
           const isConductorFromId = wf.workflowId?.endsWith('-conductor') ?? false;
           if (isConductorFromSA || isConductorFromId) {
@@ -336,9 +338,10 @@ export function createTempoClientCore(
           // agent — counting it produced confusing "(2 players)" rows on
           // a fresh ensemble with one real player. Mirrors the
           // `filterRealPlayers` rule used in StatusBar (cf6becd). Detect
-          // via the canonical `AgentTempoPlayerType` search attribute,
-          // with a workflow-id-suffix fallback for the brief post-start
-          // window before search attributes propagate.
+          // via the `AgentTempoPlayerType` memo (v1.8 SA diet; legacy-SA
+          // fallback via the dual-read helper), with a workflow-id-suffix
+          // fallback for the brief post-start window before visibility
+          // propagates.
           const playerType = getPlayerType(wf);
           const isMaestroSession = playerType === 'maestro'
             || (wf.workflowId?.endsWith('-maestro') ?? false);
@@ -1395,9 +1398,9 @@ export function createTempoClientCore(
             AgentTempoPlayerId: ['maestro'],
           },
           memo: {
-            AgentTempoPlayerType: 'maestro',
-            AgentTempoIsConductor: false,
-            AgentTempoPart: sessionInput.part,
+            [MEMO_KEYS.playerType]: 'maestro',
+            [MEMO_KEYS.isConductor]: false,
+            [MEMO_KEYS.part]: sessionInput.part,
           },
         });
         console.error(`[tui:client] Maestro session started: ${wfHandle.workflowId}`);

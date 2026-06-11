@@ -11,6 +11,7 @@ import {
   patched,
   log as workflowLog,
 } from '@temporalio/workflow';
+import { MEMO_KEYS } from '../utils/search-attributes';
 import { ApplicationFailure } from '@temporalio/common';
 
 /**
@@ -227,6 +228,19 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   // query expressions and MUST stay search attributes.
   const saDiet = patched('v1.8-sa-diet');
 
+  /**
+   * T0.5 — the memo mirror of the migrated read-only metadata fields.
+   * Shared by the run-start upsert and the updateMetadata handler so the
+   * two write sites can't drift. Key names come from the shared
+   * {@link MEMO_KEYS} registry (also used by the client-side
+   * `workflow.start({ memo })` seeds and the dual-read helpers).
+   */
+  const metaMemo = (): Record<string, unknown> => ({
+    ...(input.metadata.gitRoot ? { [MEMO_KEYS.gitRoot]: input.metadata.gitRoot } : {}),
+    ...(input.metadata.playerType ? { [MEMO_KEYS.playerType]: input.metadata.playerType } : {}),
+    [MEMO_KEYS.isConductor]: input.metadata.isConductor === true,
+  });
+
   // Ensure search attributes are always current — critical when reconnecting
   // via WorkflowIdConflictPolicy.USE_EXISTING, which skips the attributes
   // passed to client.workflow.start().
@@ -256,12 +270,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
   // (and on standard-visibility servers whose list results may lag memo
   // upserts — see PR #747 T0.5 notes). Low-churn fields ONLY.
   if (saDiet) {
-    upsertMemo({
-      ...(input.metadata.gitRoot ? { AgentTempoGitRoot: input.metadata.gitRoot } : {}),
-      ...(input.metadata.playerType ? { AgentTempoPlayerType: input.metadata.playerType } : {}),
-      AgentTempoIsConductor: input.metadata.isConductor === true,
-      AgentTempoPart: part,
-    });
+    upsertMemo({ ...metaMemo(), [MEMO_KEYS.part]: part });
   }
 
   const messages: Message[] = input.messages ?? [];
@@ -522,7 +531,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     // daemon aggregate — T0.1) can read it from visibility list results
     // instead of a per-player getPart query. Low-churn by nature: part
     // changes when a player re-describes its work, not per message.
-    if (saDiet) upsertMemo({ AgentTempoPart: newPart });
+    if (saDiet) upsertMemo({ [MEMO_KEYS.part]: newPart });
     lastActivityTime = workflowNow().getTime();
     activityCount++;
     lastOutboundTime = workflowNow().getTime();
@@ -595,13 +604,7 @@ export async function agentSessionWorkflow(input: SessionInput): Promise<void> {
     });
     // T0.5 — keep the memo mirror current (low-churn: metadata updates are
     // rare lifecycle events, not per-message traffic).
-    if (saDiet) {
-      upsertMemo({
-        ...(input.metadata.gitRoot ? { AgentTempoGitRoot: input.metadata.gitRoot } : {}),
-        ...(input.metadata.playerType ? { AgentTempoPlayerType: input.metadata.playerType } : {}),
-        AgentTempoIsConductor: input.metadata.isConductor === true,
-      });
-    }
+    if (saDiet) upsertMemo(metaMemo());
     lastActivityTime = workflowNow().getTime();
     activityCount++;
   });

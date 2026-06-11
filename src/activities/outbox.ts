@@ -18,6 +18,7 @@ import { ENV } from '../config';
 import type { IngestTokenRegistry } from '../http/ingest-registry';
 import { resolveSession } from './resolve';
 import { tagActionSource } from '../utils/action-counters';
+import { MEMO_KEYS } from '../utils/search-attributes';
 import { resolveAgentType } from '../ensemble/agent-types';
 import { defaultPart } from '../utils/default-part';
 import { registry } from '../adapters';
@@ -537,10 +538,10 @@ export function createOutboxActivities(
             AgentTempoPlayerId: [targetName],
           },
           memo: {
-            ...(gitRoot ? { AgentTempoGitRoot: gitRoot } : {}),
-            ...(agentDefinition ? { AgentTempoPlayerType: agentDefinition } : {}),
-            AgentTempoIsConductor: isConductor,
-            AgentTempoPart: sessionInput.autoSummary,
+            ...(gitRoot ? { [MEMO_KEYS.gitRoot]: gitRoot } : {}),
+            ...(agentDefinition ? { [MEMO_KEYS.playerType]: agentDefinition } : {}),
+            [MEMO_KEYS.isConductor]: isConductor,
+            [MEMO_KEYS.part]: sessionInput.autoSummary,
           },
         });
 

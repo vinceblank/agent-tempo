@@ -25,6 +25,7 @@ import { resolveAgentType } from './ensemble/agent-types';
 import { installParentDeathWatchdog } from './utils/parent-death-watchdog';
 import { installGrpcShutdownGuard } from './utils/grpc-shutdown-guard';
 import { actionCountingInterceptors } from './utils/action-counters';
+import { MEMO_KEYS } from './utils/search-attributes';
 
 const log = (...args: unknown[]) => console.error('[agent-tempo]', ...args);
 
@@ -156,9 +157,9 @@ async function main() {
       AgentTempoPlayerId: [playerId],
     },
     memo: {
-      ...(gitRoot ? { AgentTempoGitRoot: gitRoot } : {}),
-      AgentTempoIsConductor: isConductor,
-      AgentTempoPart: sessionInput.autoSummary,
+      ...(gitRoot ? { [MEMO_KEYS.gitRoot]: gitRoot } : {}),
+      [MEMO_KEYS.isConductor]: isConductor,
+      [MEMO_KEYS.part]: sessionInput.autoSummary,
     },
   });
   log(`Workflow ${workflowId} started (or reconnected)`);

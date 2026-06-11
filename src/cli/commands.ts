@@ -24,7 +24,7 @@ import { loadLineup, resolveLineupPath } from '../ensemble/loader';
 import { saveLineup, listLineups, readSavedLineup } from '../ensemble/saver';
 import { listAgentTypes, resolveAgentType } from '../ensemble/agent-types';
 import { shouldIncludeInBroadcast, validateEnsembleName } from '../utils/validation';
-import { getAttachmentPhase, getEnsembleName } from '../utils/search-attributes';
+import { getAttachmentPhase, getEnsembleName, MEMO_KEYS } from '../utils/search-attributes';
 import { isDaemonRunning, startDaemon, stopDaemon, getDaemonStatus, isOtherProfileLikelyRunning, DAEMON_LOG_PATH } from './daemon';
 // #700 P1 — infra bootstrap moved to a shared helper (CLI `up` + `/ensemble-up`).
 import { ensureInfra, isTemporalReachable, registerSearchAttributes, DEFAULT_DB_PATH } from './ensure-infra';
@@ -183,10 +183,10 @@ async function seedConductorWorkflow(args: {
       AgentTempoPlayerId: [conductorName],
     },
     memo: {
-      ...(conductorGitRoot ? { AgentTempoGitRoot: conductorGitRoot } : {}),
-      ...(resolvedConductorType ? { AgentTempoPlayerType: resolvedConductorType.name } : {}),
-      AgentTempoIsConductor: true,
-      AgentTempoPart: conductorInput.autoSummary,
+      ...(conductorGitRoot ? { [MEMO_KEYS.gitRoot]: conductorGitRoot } : {}),
+      ...(resolvedConductorType ? { [MEMO_KEYS.playerType]: resolvedConductorType.name } : {}),
+      [MEMO_KEYS.isConductor]: true,
+      [MEMO_KEYS.part]: conductorInput.autoSummary,
     },
   });
 }
@@ -302,10 +302,10 @@ async function applyLineupPlayersAndSchedules(args: {
           AgentTempoPlayerId: [player.name],
         },
         memo: {
-          ...(playerGitRoot ? { AgentTempoGitRoot: playerGitRoot } : {}),
-          ...(resolvedPlayerType ? { AgentTempoPlayerType: resolvedPlayerType.name } : {}),
-          AgentTempoIsConductor: false,
-          AgentTempoPart: playerInput.autoSummary,
+          ...(playerGitRoot ? { [MEMO_KEYS.gitRoot]: playerGitRoot } : {}),
+          ...(resolvedPlayerType ? { [MEMO_KEYS.playerType]: resolvedPlayerType.name } : {}),
+          [MEMO_KEYS.isConductor]: false,
+          [MEMO_KEYS.part]: playerInput.autoSummary,
         },
       });
     } catch (err) {
