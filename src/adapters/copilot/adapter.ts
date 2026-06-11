@@ -103,11 +103,17 @@ const log = (...args: unknown[]) => {
 const cleanEnv = (): Record<string, string> =>
   Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined));
 
+/**
+ * Busy-wait cadence (ms) while a turn is in flight. The IDLE cadence is owned
+ * by the inherited `pollBackoff` (#749, T0.2): 2s base stretching to a 30s
+ * cap on empty polls, snapping back to base on any delivered message.
+ */
 const POLL_INTERVAL_MS = 2000;
 const CREATE_SESSION_TIMEOUT_MS = 45_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const MAX_SESSION_RECREATIONS = 2;
-/** Check workflow status every N polls (~30s at 2s interval). */
+/** Check workflow status every N polls (30s–7.5min depending on the #749
+ * idle-backoff cadence; the busier the player, the fresher the check). */
 const WORKFLOW_STATUS_CHECK_INTERVAL = 15;
 /** Proactively recreate the Copilot session after this idle period (ms). Default 60 min. */
 const SESSION_MAX_IDLE_MS = 60 * 60 * 1000;
@@ -496,8 +502,9 @@ export class CopilotSdkAttachment extends SdkAttachment {
     let sessionRecreations = 0;
     let proactiveRecreations = 0;
     let lastActivityTime = Date.now();
-    // interval declared here, assigned after poll is defined
-    let interval: ReturnType<typeof setInterval> | undefined;
+    // #749: self-scheduling poll timer (was a fixed-2s setInterval). Declared
+    // here, armed after poll is defined.
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
 
     // Shared cleanup — disconnects session, removes PID file, stops client.
     let shuttingDown = false;
@@ -505,7 +512,7 @@ export class CopilotSdkAttachment extends SdkAttachment {
       if (shuttingDown) return;
       shuttingDown = true;
       polling = false;
-      clearInterval(interval);
+      clearTimeout(pollTimer);
       // V2 graceful detach — fires `adapterExited` so the workflow collapses
       // draining → detached immediately per §11.1. No-op if V2 was off or if
       // startV2Lifecycle never ran successfully.
@@ -583,12 +590,19 @@ export class CopilotSdkAttachment extends SdkAttachment {
       }
     };
 
-    const poll = async () => {
-      if (!polling || processing) return;
+    /**
+     * One poll tick. Returns the delay (ms) before the next tick; the
+     * scheduler (`runPollTick`) re-checks `polling` before arming the timer,
+     * so shutdown needs no sentinel return (exit paths call `process.exit`).
+     * #749: idle ticks grow the inherited `pollBackoff` toward 30s; delivered
+     * messages snap back to the 2s base.
+     */
+    const poll = async (): Promise<number> => {
+      if (!polling || processing) return POLL_INTERVAL_MS; // stopped or busy — scheduler gates on `polling`
       pollCount++;
 
       // Periodic health check
-      if (pollCount % 30 === 0) { // every ~60 seconds
+      if (pollCount % 30 === 0) { // every 30 polls (~60s busy, up to ~15min idle)
         const silenceSec = ((Date.now() - lastEventTime) / 1000).toFixed(0);
         log(`[health] poll #${pollCount}, sessionAlive=${sessionAlive}, lastEvent=${lastEventType} ${silenceSec}s ago`);
       }
@@ -648,7 +662,8 @@ export class CopilotSdkAttachment extends SdkAttachment {
 
       try {
         const messages: Message[] = await handle.query('pendingMessages');
-        if (messages.length === 0) return;
+        // #749: idle backoff — nothing pending, stretch the next poll.
+        if (messages.length === 0) return this.pollBackoff.next(false);
 
         processing = true;
         const ids = messages.map((m) => m.id);
@@ -702,6 +717,9 @@ export class CopilotSdkAttachment extends SdkAttachment {
         lastActivityTime = Date.now();
         sessionAlive = true;
         processing = false;
+        // #749: live conversation — snap back to the fast cadence so
+        // follow-up cues land at 2s responsiveness.
+        return this.pollBackoff.next(true);
       } catch (err: any) {
         processing = false;
         consecutiveFailures++;
@@ -716,12 +734,30 @@ export class CopilotSdkAttachment extends SdkAttachment {
             await cleanup();
             process.exit(2);
           }
+          // Recovered — retry promptly so pending messages drain.
+          return this.pollBackoff.next(true);
         }
+        // #749: grow on errors too — don't hammer a failing session/worker.
+        return this.pollBackoff.next(false);
       }
     };
 
+    // #749: self-scheduling poll chain (replaces the fixed-2s setInterval —
+    // a tick now schedules its successor AFTER it completes, so long ticks
+    // can no longer stack skipped-overlap invocations).
     // #753 — meter each poll tick's Temporal calls under 'sdk-poller'.
-    interval = setInterval(() => withActionSource('sdk-poller', poll), POLL_INTERVAL_MS);
+    const runPollTick = async (): Promise<void> => {
+      const delay = await withActionSource('sdk-poller', poll).catch((err) => {
+        // poll() has its own catch — this guards the scheduling chain itself.
+        log(`poll tick threw outside its handler: ${(err as Error)?.message ?? err}`);
+        return POLL_INTERVAL_MS;
+      });
+      if (polling) {
+        pollTimer = setTimeout(() => void runPollTick(), delay);
+      }
+    };
+    this.pollBackoff.reset();
+    pollTimer = setTimeout(() => void runPollTick(), POLL_INTERVAL_MS);
     log('Message poller started. Bridge is running.');
 
     // Graceful shutdown on SIGINT/SIGTERM — signal the workflow before exiting

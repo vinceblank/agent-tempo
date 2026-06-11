@@ -36,6 +36,19 @@ export const ENV = {
    */
   COST_PROFILE: 'AGENT_TEMPO_COST_PROFILE',
   /**
+   * #749 (T0.2) — SDK-adapter message-poll idle backoff overrides. The five
+   * SDK-class adapters poll `pendingMessages` at `BASE` (default 2000ms)
+   * while a conversation is active and stretch toward `MAX` (default
+   * 30000ms) while idle; any delivered message snaps back to `BASE`.
+   * Setting `MAX` equal to `BASE` pins the legacy fixed cadence (dev/test
+   * escape hatch). Values are positive integers (ms); garbage falls back
+   * to the defaults. See `src/adapters/sdk/idle-backoff.ts`. (Ships
+   * ungated by COST_PROFILE per architect ruling — delivery-path behavior
+   * stays identical across profiles.)
+   */
+  SDK_POLL_BASE_MS: 'AGENT_TEMPO_SDK_POLL_BASE_MS',
+  SDK_POLL_MAX_MS: 'AGENT_TEMPO_SDK_POLL_MAX_MS',
+  /**
    * #131 Phase C — claude-api adapter model override. Recruit-arg takes
    * precedence; this env var is the next fallback before the constants-pinned
    * default (`claude-opus-4-7`). Ignored by other adapters.

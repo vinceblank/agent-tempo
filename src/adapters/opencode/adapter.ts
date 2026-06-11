@@ -99,7 +99,8 @@ const log = (...args: unknown[]) => {
 const DEFAULT_MODEL = 'anthropic/claude-opus-4-7';
 /** Tested-pinned OpenCode SDK version — drift triggers a stderr WARNING. */
 const TESTED_OPENCODE_VERSION = '~1.14.29';
-/** Idle poll cadence — short enough for snappy cue delivery, loose on Temporal. */
+/** Busy-wait cadence (ms) while a turn is in flight. The IDLE cadence is owned
+ * by the inherited `pollBackoff` (#749): 2s base → 30s cap, reset on delivery. */
 const POLL_INTERVAL_MS = 2000;
 /** Workflow-register poll bounds. */
 const WORKFLOW_REGISTER_ATTEMPTS = 30;
@@ -391,6 +392,9 @@ export class OpenCodeAttachment extends SdkAttachment {
     let polling = true;
     let processing = false;
     let pollCount = 0;
+    // #749: fresh poll loop starts at the fast cadence — never inherit a
+    // stale 30s interval across a restart.
+    this.pollBackoff.reset();
 
     while (polling && !this.shouldStop()) {
       pollCount++;
@@ -429,13 +433,17 @@ export class OpenCodeAttachment extends SdkAttachment {
         messages = await handle.query(pendingMessagesQuery);
       } catch (err) {
         log(`pendingMessages query failed: ${(err as Error)?.message ?? err}`);
-        await sleep(POLL_INTERVAL_MS);
+        // #749: grow on errors too — don't hammer a wedged worker at 2s.
+        await sleep(this.pollBackoff.next(false));
         continue;
       }
       if (messages.length === 0) {
-        await sleep(POLL_INTERVAL_MS);
+        // #749: idle backoff — 2s → 30s while nothing is pending.
+        await sleep(this.pollBackoff.next(false));
         continue;
       }
+      // #749: live conversation — snap back to the fast cadence.
+      this.pollBackoff.reset();
 
       processing = true;
       try {

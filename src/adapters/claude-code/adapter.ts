@@ -19,6 +19,11 @@
  */
 import type { Client, WorkflowHandle } from '@temporalio/client';
 import { BaseAttachment, type BaseAttachmentOptions } from '../base';
+import {
+  SDK_POLL_BASE_MS as POLL_BASE_MS,
+  SDK_POLL_BACKOFF_FACTOR as POLL_BACKOFF_FACTOR,
+  SDK_POLL_MAX_MS as POLL_MAX_MS,
+} from '../sdk/idle-backoff';
 import { isTerminalWorkflowError } from '../terminal-error';
 import { withActionSource } from '../../utils/action-counters';
 import type { AdapterDescriptor, DetachReason } from '../../types';
@@ -44,9 +49,11 @@ export const claudeCodeDescriptor: AdapterDescriptor = {
   heartbeatMs: 60_000,
 };
 
-const POLL_BASE_MS = 2000;
-const POLL_BACKOFF_FACTOR = 1.5;
-const POLL_MAX_MS = 30000;
+// #749: one family of backoff curves across the codebase — this poller's
+// error backoff shares the SDK idle-backoff constants (values unchanged:
+// 2s base, 1.5× growth, 30s cap; imported at the top of the file). Static
+// defaults only; the AGENT_TEMPO_SDK_POLL_* env overrides apply to SDK
+// adapters, not here.
 
 /**
  * Poll a session workflow for pending messages and deliver them via `onMessages`.

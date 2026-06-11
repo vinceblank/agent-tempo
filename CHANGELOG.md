@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **SDK-adapter idle poll backoff (T0.2 of #747, closes #749)** — the five SDK-class adapters (copilot, claude-api, opencode, claude-code-headless, mock) now stretch their `pendingMessages` poll from 2s toward a 30s cap while idle and snap back to 2s on any delivered message (~15× fewer idle Temporal queries per player: 43,200 → 2,880/day). Behavior note: the **first** cue after a long idle stretch can take up to 30s to surface; conversations in progress keep the legacy 2s responsiveness. Escape hatch: set `AGENT_TEMPO_SDK_POLL_MAX_MS=2000` (= `AGENT_TEMPO_SDK_POLL_BASE_MS`) to pin the old fixed cadence. Heartbeat/lease cadences are unchanged (#249 invariants).
+
 ## [1.7.0-beta.8] - 2026-06-10
 
 > **PRERELEASE / BETA** — install with `npm i -g agent-tempo@beta`. Stable remains v1.6.2.

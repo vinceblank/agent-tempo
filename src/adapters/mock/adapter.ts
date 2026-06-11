@@ -78,7 +78,8 @@ export type { MockMode };
 /** PR-3 mode set kept as a Set for O(1) validation in the subprocess entry point. */
 const VALID_MOCK_MODES: ReadonlySet<MockMode> = new Set(MOCK_MODES);
 
-const POLL_INTERVAL_MS = 2000;
+// #749: the fixed POLL_INTERVAL_MS was retired — the poll cadence is owned by
+// the inherited `pollBackoff` (2s base → 30s idle cap, reset on delivery).
 const PER_MESSAGE_TIMEOUT_MS = 60_000;
 const WORKFLOW_REGISTER_TIMEOUT_S = 30;
 
@@ -279,12 +280,19 @@ export class MockAttachment extends SdkAttachment {
     // Poll loop — same shape as Copilot's poll, simpler because there's no
     // SDK session to keep alive between iterations.
     this.polling = true;
+    // #749: fresh poll loop starts at the fast cadence. The mock inherits
+    // the same idle backoff as production adapters ON PURPOSE — dev/prod
+    // parity on the delivery path (architect ruling on #749). E2E suites
+    // that need fixed-fast polling pin AGENT_TEMPO_SDK_POLL_MAX_MS.
+    this.pollBackoff.reset();
     log('Mock poll loop started.');
     // #753 — meter the poll loop's Temporal calls under 'sdk-poller'.
     await withActionSource('sdk-poller', async () => {
       while (this.polling) {
+        let hadMessages = false;
         try {
           const messages: Message[] = await pinned.query(pendingMessagesQuery);
+          hadMessages = messages.length > 0;
           for (const msg of messages) {
             if (!this.polling) break;
             await this.processMessage(pinned, msg);
@@ -293,7 +301,9 @@ export class MockAttachment extends SdkAttachment {
           log('poll error:', (err as Error)?.message ?? err);
         }
         try {
-          await this.abortableSleep(POLL_INTERVAL_MS);
+          // #749: idle backoff — grow on empty/error ticks, snap back to the
+          // 2s base whenever a message was processed.
+          await this.abortableSleep(this.pollBackoff.next(hadMessages));
         } catch {
           // `abortableSleep` rejects with `aborted:stopped` on terminal/stop —
           // we exit the loop and let cleanup finish.
