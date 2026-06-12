@@ -17,6 +17,7 @@ import {
   getClient,
   getNativeConnection,
   TASK_QUEUE,
+  mintTaskQueue,
 } from './helpers';
 
 describe('destroy verb — fixes #102 (graceful stop → resurrection loop)', function () {
@@ -267,6 +268,11 @@ describe('destroy verb — fixes #227 (orphan claude.exe on detached destroy)', 
     const connection = getNativeConnection();
     const bundle = { code: fs.readFileSync(findWorkflowBundle(), 'utf-8') };
     const hostTaskQueue = `agent-tempo-${hostname}`;
+    // #721 — mint a fresh queue: this inlined setup uses bare Worker.create
+    // (no slot-retry), so reusing a previously-minted queue would race the
+    // prior worker's SlotKey release unprotected. Minting also updates the
+    // live TASK_QUEUE binding, so startSession() inside `fn` agrees.
+    const taskQueue = mintTaskQueue();
 
     const captureStub = async (input: {
       ensemble: string;
@@ -280,7 +286,7 @@ describe('destroy verb — fixes #227 (orphan claude.exe on detached destroy)', 
 
     const mainWorker = await Worker.create({
       connection,
-      taskQueue: TASK_QUEUE,
+      taskQueue,
       workflowBundle: bundle,
     });
     const hostWorker = await Worker.create({
